@@ -4,6 +4,34 @@ Roadmap for making VGS run on Niri alongside Hyprland. Meant for an agent to
 execute later. Phases are ordered so a usable Niri session lands early; the
 expensive parsers come last and can be deferred without blocking the rest.
 
+## Rule zero — Hyprland does not regress
+
+Niri is **additive**. Hyprland is the shipped, daily-driven compositor and stays
+the reference implementation; nothing about it may get worse, slower, or more
+fragile in order to accommodate Niri. Concretely:
+
+- **No behaviour changes on Hyprland.** If a change alters what a Hyprland user
+  sees or how the shell behaves, it is out of scope even when it makes the Niri
+  side tidier.
+- **Do not rewrite working Hyprland paths for symmetry.** Phase 2 reroutes calls
+  through the abstraction; it is not licence to redesign code that already
+  works. Add the Niri branch, leave the Hyprland branch alone.
+- **No lowest-common-denominator abstractions.** Where the two compositors
+  genuinely differ, branch. Do not degrade a Hyprland feature to whatever both
+  can support — blur is the clearest case: it stays fully featured on Hyprland
+  and is simply absent on Niri.
+- **Every phase ends green on Hyprland**, not just at the end of the project.
+  `qs -c vshell` and `scripts/smoke-surfaces.sh` gate each phase, and a phase
+  that leaves them failing is not finished.
+- **If a Niri requirement can only be satisfied by changing Hyprland behaviour,
+  stop and raise it** rather than deciding unilaterally. That trade is the
+  user's call.
+
+The highest-risk moment for this rule is Phase 0. `isHyprland` has been a
+literal `true` for VGS's entire history, and making it a runtime value is the
+single change most likely to break Hyprland in a way no Niri test would catch —
+see the note in [Validation](#validation).
+
 ## Current state — read this first, the starting point is not what it looks like
 
 VGS **has no Niri support today**, and never did: it was removed in the first
@@ -169,14 +197,21 @@ The Go backend is nearly clean: only **37** Hyprland references, confined to
 The host runs Hyprland, so the loop straddles two machines:
 
 1. `qs -c vshell` and `scripts/smoke-surfaces.sh` on Hyprland after **every**
-   phase — the top risk of this work is regressing the working compositor.
+   phase — per [Rule zero](#rule-zero--hyprland-does-not-regress), regressing
+   the working compositor is the failure mode that matters most here.
 2. The `arch-niri-work` VM (Super+8, see above) for the actual Niri paths.
 3. `scripts/check-settings-migration.js` if any `niri*` settings key changes
    shape.
 4. Watch for behaviour that silently depends on `isHyprland` being a constant.
    Phase 0 makes it variable for the first time, so anything that reads it at
    component-construction time may now evaluate before detection completes —
-   `compositorDetected` exists for exactly this and should be honoured.
+   `compositorDetected` exists for exactly this and should be honoured. A stale
+   read fails *open* on Hyprland today (the constant is always true) and will
+   start failing *closed*, so this is a Hyprland regression risk, not a Niri one.
+5. Exercise the Hyprland-only surfaces by hand after Phase 2 — bar widgets,
+   dock, workspace switcher, overview, focus grab, greeter. These are the files
+   that call the `Hyprland` API directly, so they carry the most rewrite risk
+   and the least automated coverage.
 
 ## Sizing, honestly
 
