@@ -1106,6 +1106,12 @@ if [[ "$EMIT_JSON" == "true" ]]; then
     _models=$(jq -c --argjson now "$(date +%s)" '
         # resets_at carries fractional seconds and a +00:00 offset; strip both
         # to the plain ...Z form fromdateiso8601 accepts.
+        # Absolute reset instant, epoch seconds, 0 when unknown. The widget
+        # formats it locally so it can say "9:45 PM" rather than only "3h 53m".
+        def ep($iso):
+          if $iso == null or $iso == "" then 0
+          else ($iso | sub("\\.[0-9]+"; "") | sub("[+-][0-9][0-9]:[0-9][0-9]$"; "Z") | fromdateiso8601)
+          end;
         def cd($iso):
           if $iso == null or $iso == "" then ""
           else (($iso | sub("\\.[0-9]+"; "") | sub("[+-][0-9][0-9]:[0-9][0-9]$"; "Z") | fromdateiso8601) - $now) as $d
@@ -1124,11 +1130,12 @@ if [[ "$EMIT_JSON" == "true" ]]; then
           | { label: (.scope.model.display_name // "Model"),
               pct: ((.percent | numbers) // 0 | round),
               reset: cd(.resets_at),
+              resetAt: ep(.resets_at),
               severity: (.severity // "normal") }
         ]
         | if length > 0 then .
-          else [ (if $u.seven_day_opus   != null then {label:"Opus",   pct:(($u.seven_day_opus.utilization   // 0) | round), reset: cd($u.seven_day_opus.resets_at),   severity:"normal"} else empty end),
-                 (if $u.seven_day_sonnet != null then {label:"Sonnet", pct:(($u.seven_day_sonnet.utilization // 0) | round), reset: cd($u.seven_day_sonnet.resets_at), severity:"normal"} else empty end) ]
+          else [ (if $u.seven_day_opus   != null then {label:"Opus",   pct:(($u.seven_day_opus.utilization   // 0) | round), reset: cd($u.seven_day_opus.resets_at),   resetAt: ep($u.seven_day_opus.resets_at),   severity:"normal"} else empty end),
+                 (if $u.seven_day_sonnet != null then {label:"Sonnet", pct:(($u.seven_day_sonnet.utilization // 0) | round), reset: cd($u.seven_day_sonnet.resets_at), resetAt: ep($u.seven_day_sonnet.resets_at), severity:"normal"} else empty end) ]
           end' <<< "$usage" 2>/dev/null)
     [[ -n "$_models" ]] || _models="[]"
     # Credit-billed seats (enterprise) report no rate-limit windows at all —
@@ -1152,6 +1159,11 @@ if [[ "$EMIT_JSON" == "true" ]]; then
     [[ "$has_weekly"  == "true" ]] || has_weekly=false
     [[ "$session_pct" =~ ^-?[0-9]+$ ]] || session_pct=0
     [[ "$weekly_pct"  =~ ^-?[0-9]+$ ]] || weekly_pct=0
+    # Absolute reset instants for the widget; 0 when the API gave us nothing.
+    s_epoch=$(date -d "$session_reset" +%s 2>/dev/null) || s_epoch=0
+    w_epoch=$(date -d "$weekly_reset" +%s 2>/dev/null) || w_epoch=0
+    [[ "$s_epoch" =~ ^[0-9]+$ ]] || s_epoch=0
+    [[ "$w_epoch" =~ ^[0-9]+$ ]] || w_epoch=0
     if [[ "$has_session" != "true" && "$has_weekly" != "true" && "$_models" == "[]" && "$_spend" == "null" ]]; then
         jq -nc --arg config_dir "$CONFIG_DIR" \
             '{ok:false, error:"no usage quota reported for this account", configDir:$config_dir}'
@@ -1164,6 +1176,7 @@ if [[ "$EMIT_JSON" == "true" ]]; then
         --arg config_dir "$CONFIG_DIR" \
         --argjson has_session "$has_session" --argjson session_pct "$session_pct" --arg session_reset "$s_cd_val" \
         --argjson has_weekly "$has_weekly" --argjson weekly_pct "$weekly_pct" --arg weekly_reset "$w_cd_val" \
+        --argjson session_reset_at "$s_epoch" --argjson weekly_reset_at "$w_epoch" \
         --argjson models "$_models" \
         --argjson spend "$_spend" \
         '(([ (if $spend then $spend.pct else 0 end),
@@ -1175,8 +1188,8 @@ if [[ "$EMIT_JSON" == "true" ]]; then
             elif $peak >= 50 then "mid"
             else $class end)) as $sev
         | {ok:true, plan:$plan, class:$sev, configDir:$config_dir,
-          session: (if $has_session then {pct:$session_pct, reset:$session_reset} else null end),
-          weekly:  (if $has_weekly  then {pct:$weekly_pct,  reset:$weekly_reset}  else null end),
+          session: (if $has_session then {pct:$session_pct, reset:$session_reset, resetAt:$session_reset_at} else null end),
+          weekly:  (if $has_weekly  then {pct:$weekly_pct,  reset:$weekly_reset,  resetAt:$weekly_reset_at}  else null end),
           models: $models, spend: $spend}'
     exit 0
 fi

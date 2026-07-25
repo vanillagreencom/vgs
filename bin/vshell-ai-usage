@@ -17,8 +17,8 @@
 #
 # Output (one line of JSON):
 #   {"ok":true,"provider":"claude","plan":"Max 20x","class":"critical",
-#    "session":{"pct":16,"reset":"3h 53m"},
-#    "weekly":{"pct":85,"reset":"5d 12h"},
+#    "session":{"pct":16,"reset":"3h 53m","resetAt":1785265401},
+#    "weekly":{"pct":85,"reset":"5d 12h","resetAt":1785409199},
 #    "third":{"label":"Fable","pct":89,"reset":"5d 12h"},
 #    "accounts":[{"id":"claude","label":"you@example.com","plan":"Max 20x",
 #                 "ok":true,"class":"high","session":{...},"weekly":{...},
@@ -191,7 +191,7 @@ jq -nc \
          session: $primary.session,
          weekly: $primary.weekly,
          third: (if ($pm | length) > 0
-                 then ($pm | max_by(.pct) | {label:.label, pct:.pct, reset:.reset})
+                 then ($pm | max_by(.pct) | {label:.label, pct:.pct, reset:.reset, resetAt:(.resetAt // 0)})
                  else null end),
          accounts: $accounts,
          aggregate: {count: ($live | length),

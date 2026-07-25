@@ -1261,6 +1261,11 @@ fi
 # single worst one the {third_*} placeholders can carry. Email comes straight
 # from the usage response, so the widget can label accounts without the token.
 if [[ "$EMIT_JSON" == "true" ]]; then
+    # Codex reports reset instants as unix epochs already — claudebar converts
+    # its ISO strings to the same shape so the widget only handles one format.
+    s_epoch="${session_reset_at:-0}"; w_epoch="${weekly_reset_at:-0}"
+    [[ "$s_epoch" =~ ^[0-9]+$ ]] || s_epoch=0
+    [[ "$w_epoch" =~ ^[0-9]+$ ]] || w_epoch=0
     _cx_models=$(jq -c --argjson now "$(date +%s)" '
         def cd($at):
           if $at == null or $at == 0 then ""
@@ -1275,6 +1280,7 @@ if [[ "$EMIT_JSON" == "true" ]]; then
           | { label: ((.limit_name // .metered_feature // "Extra") | tostring),
               pct: (((.rate_limit.primary_window.used_percent | numbers) // 0) | round),
               reset: cd((.rate_limit.primary_window.reset_at | numbers) // 0),
+              resetAt: ((.rate_limit.primary_window.reset_at | numbers) // 0),
               severity: "normal" }
         ]' <<< "$usage" 2>/dev/null)
     [[ -n "$_cx_models" ]] || _cx_models="[]"
@@ -1289,10 +1295,11 @@ if [[ "$EMIT_JSON" == "true" ]]; then
         --arg config_dir "$CONFIG_DIR" \
         --argjson has_session "$has_session" --argjson session_pct "$session_pct" --arg session_reset "$s_cd_val" \
         --argjson has_weekly "$has_weekly" --argjson weekly_pct "$weekly_pct" --arg weekly_reset "$w_cd_val" \
+        --argjson session_reset_at "$s_epoch" --argjson weekly_reset_at "$w_epoch" \
         --argjson models "$_cx_models" \
         '{ok:true, plan:$plan, class:$class, email:$email, configDir:$config_dir,
-          session: (if $has_session then {pct:$session_pct, reset:$session_reset} else null end),
-          weekly:  (if $has_weekly  then {pct:$weekly_pct,  reset:$weekly_reset}  else null end),
+          session: (if $has_session then {pct:$session_pct, reset:$session_reset, resetAt:$session_reset_at} else null end),
+          weekly:  (if $has_weekly  then {pct:$weekly_pct,  reset:$weekly_reset,  resetAt:$weekly_reset_at}  else null end),
           models: $models}'
     exit 0
 fi

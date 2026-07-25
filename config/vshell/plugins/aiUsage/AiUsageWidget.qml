@@ -21,13 +21,16 @@ PluginComponent {
     property string usageClass: "low"
     property int sessionPct: 0
     property string sessionReset: ""
+    property double sessionResetAt: 0
     property bool hasSession: true  // absent when the provider reports no ~5h window (e.g. weekly-only Codex accounts)
     property int weeklyPct: 0
     property string weeklyReset: ""
+    property double weeklyResetAt: 0
     property bool hasWeekly: true
     property string thirdLabel: ""
     property int thirdPct: 0
     property string thirdReset: ""
+    property double thirdResetAt: 0
     property bool hasThird: true   // model-scoped weekly (Claude) / extra lane (Codex); hidden when the API omits it
 
     // --- Multi-account state ---
@@ -60,16 +63,16 @@ PluginComponent {
             return [];
         let out = [];
         if (account.session)
-            out.push({ label: "Session (5h)", pct: account.session.pct || 0, reset: account.session.reset || "" });
+            out.push({ label: "Session (5h)", pct: account.session.pct || 0, reset: account.session.reset || "", resetAt: account.session.resetAt || 0 });
         if (account.weekly)
-            out.push({ label: "Weekly (7d)", pct: account.weekly.pct || 0, reset: account.weekly.reset || "" });
+            out.push({ label: "Weekly (7d)", pct: account.weekly.pct || 0, reset: account.weekly.reset || "", resetAt: account.weekly.resetAt || 0 });
         const models = account.models || [];
         for (let i = 0; i < models.length; i++)
-            out.push({ label: models[i].label || "Model", pct: models[i].pct || 0, reset: models[i].reset || "" });
+            out.push({ label: models[i].label || "Model", pct: models[i].pct || 0, reset: models[i].reset || "", resetAt: models[i].resetAt || 0 });
         // Credit-billed seats have no rate-limit windows at all — their monthly
         // spend pool is the only usage there is, so it stands in for them.
         if (account.spend)
-            out.push({ label: "Credits", pct: account.spend.pct || 0, reset: "", detail: account.spend.detail || "" });
+            out.push({ label: "Credits", pct: account.spend.pct || 0, reset: "", resetAt: 0, detail: account.spend.detail || "" });
         return out;
     }
 
@@ -82,12 +85,54 @@ PluginComponent {
             return root.metersFor(list[0]);
         let out = [];
         if (root.hasSession)
-            out.push({ label: "Session (5h)", pct: root.sessionPct, reset: root.sessionReset, detail: "" });
+            out.push({ label: "Session (5h)", pct: root.sessionPct, reset: root.sessionReset, resetAt: root.sessionResetAt, detail: "" });
         if (root.hasWeekly)
-            out.push({ label: "Weekly (7d)", pct: root.weeklyPct, reset: root.weeklyReset, detail: "" });
+            out.push({ label: "Weekly (7d)", pct: root.weeklyPct, reset: root.weeklyReset, resetAt: root.weeklyResetAt, detail: "" });
         if (root.hasThird)
-            out.push({ label: root.thirdLabel, pct: root.thirdPct, reset: root.thirdReset, detail: "" });
+            out.push({ label: root.thirdLabel, pct: root.thirdPct, reset: root.thirdReset, resetAt: root.thirdResetAt, detail: "" });
         return out;
+    }
+
+    // Absolute reset instant as wall-clock text. A countdown alone ("4d 17h")
+    // makes you do the arithmetic; the clock time is what you actually plan
+    // around. Same day -> just the time, otherwise the weekday, and the date
+    // once it is far enough out that the weekday is ambiguous.
+    function formatResetAt(epoch) {
+        if (!epoch || epoch <= 0)
+            return "";
+        const when = new Date(epoch * 1000);
+        if (isNaN(when.getTime()))
+            return "";
+        const now = new Date();
+        // Past instants are stale data (a window that already rolled over);
+        // showing them would be worse than showing nothing.
+        if (when.getTime() <= now.getTime())
+            return "";
+        const time = when.toLocaleTimeString(Qt.locale(), Locale.ShortFormat);
+        const startOfDay = d => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+        const days = Math.round((startOfDay(when) - startOfDay(now)) / 86400000);
+        if (days === 0)
+            return time;
+        if (days === 1)
+            return "tomorrow " + time;
+        if (days < 7)
+            return when.toLocaleDateString(Qt.locale(), "ddd") + " " + time;
+        return when.toLocaleDateString(Qt.locale(), "d MMM") + " " + time;
+    }
+
+    // "Resets in 4d 17h · Thu 3:59 AM", degrading to whichever half we have.
+    function resetLabel(meter) {
+        if (!meter)
+            return "";
+        const at = root.formatResetAt(meter.resetAt || 0);
+        const inn = meter.reset && meter.reset !== "\u2014" ? meter.reset : "";
+        if (inn && at)
+            return "Resets in " + inn + " \u00b7 " + at;
+        if (at)
+            return "Resets " + at;
+        if (inn)
+            return "Resets in " + inn;
+        return "";
     }
 
     function providerIcon() {
@@ -167,13 +212,16 @@ PluginComponent {
             root.hasSession = !!d.session;
             root.sessionPct = (d.session && d.session.pct) || 0;
             root.sessionReset = (d.session && d.session.reset) || "";
+            root.sessionResetAt = (d.session && d.session.resetAt) || 0;
             root.hasWeekly = !!d.weekly;
             root.weeklyPct = (d.weekly && d.weekly.pct) || 0;
             root.weeklyReset = (d.weekly && d.weekly.reset) || "";
+            root.weeklyResetAt = (d.weekly && d.weekly.resetAt) || 0;
             root.hasThird = !!d.third;
             root.thirdLabel = (d.third && d.third.label) || "";
             root.thirdPct = (d.third && d.third.pct) || 0;
             root.thirdReset = (d.third && d.third.reset) || "";
+            root.thirdResetAt = (d.third && d.third.resetAt) || 0;
         } catch (e) {
             root.ok = false;
             root.errorText = "parse error";
@@ -336,8 +384,7 @@ PluginComponent {
 
                             StyledText {
                                 // A credit pool reports an amount, not a countdown.
-                                text: modelData.detail ? modelData.detail
-                                    : (modelData.reset ? ("Resets in " + modelData.reset) : "")
+                                text: modelData.detail ? modelData.detail : root.resetLabel(modelData)
                                 visible: text.length > 0
                                 font.pixelSize: Theme.fontSizeSmall
                                 color: Theme.surfaceVariantText
@@ -514,8 +561,7 @@ PluginComponent {
                                     }
 
                                     StyledText {
-                                        text: modelData.detail ? modelData.detail
-                                            : (modelData.reset ? ("Resets in " + modelData.reset) : "")
+                                        text: modelData.detail ? modelData.detail : root.resetLabel(modelData)
                                         visible: text.length > 0
                                         font.pixelSize: Theme.fontSizeSmall
                                         color: Theme.surfaceVariantText
