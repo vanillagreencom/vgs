@@ -48,10 +48,16 @@ PluginComponent {
     readonly property int aggregatePct: {
         if (!root.aggregate)
             return root.primaryPct;
-        if (root.aggregate.session !== null && root.aggregate.session !== undefined)
-            return root.aggregate.session;
+        // `pct` is the mean of each account's tightest window. The older
+        // session/weekly means are kept for compatibility but must not be the
+        // headline: averaging the 5h window alone read 8% on a pool whose
+        // weeklies were at 96-100%.
+        if (root.aggregate.pct !== null && root.aggregate.pct !== undefined)
+            return root.aggregate.pct;
         if (root.aggregate.weekly !== null && root.aggregate.weekly !== undefined)
             return root.aggregate.weekly;
+        if (root.aggregate.session !== null && root.aggregate.session !== undefined)
+            return root.aggregate.session;
         return 0;
     }
     readonly property int headlinePct: root.multiAccount ? root.aggregatePct : root.primaryPct
@@ -182,13 +188,51 @@ PluginComponent {
             return Theme.success;
         }
     }
-    readonly property color accentColor: root.ok ? classColor(root.usageClass) : Theme.error
+    readonly property color accentColor: root.ok ? classColor(root.worstClass) : Theme.error
 
-    // Headline percentage: the ~5h session when present, else the weekly window
-    // (weekly-only accounts have no session lane).
-    readonly property int primaryPct: root.hasSession ? root.sessionPct : root.weeklyPct
+    // Headline percentage: the tightest lane this account has. Same reasoning as
+    // aggregatePct — the 5h session is usually the emptiest window and says
+    // nothing about whether the weekly is about to block you.
+    readonly property int primaryPct: {
+        const lanes = root.primaryMeters || [];
+        let peak = 0;
+        for (let i = 0; i < lanes.length; i++)
+            peak = Math.max(peak, lanes[i].pct || 0);
+        if (lanes.length > 0)
+            return peak;
+        return root.hasSession ? root.sessionPct : root.weeklyPct;
+    }
 
+    // Headline for each provider, kept side by side so the pill can show both
+    // without the popout having to be on that tab. {pct, cls} or null when the
+    // provider has no signed-in accounts.
+    property var claudeHead: null
+    property var codexHead: null
+
+    function noteHeadline(provider, data) {
+        const ok = data && data.ok === true;
+        const agg = ok ? data.aggregate : null;
+        const pct = agg && agg.pct !== undefined && agg.pct !== null
+            ? agg.pct
+            : (ok ? (data.session ? data.session.pct : (data.weekly ? data.weekly.pct : 0)) : 0);
+        const head = ok ? { pct: pct, cls: (agg && agg.class) || data.class || "low" } : null;
+        if (provider === "codex")
+            root.codexHead = head;
+        else
+            root.claudeHead = head;
+    }
+
+    // "78% / 100%" — Claude on the left, Codex on the right, always in that
+    // order regardless of which tab the popout is showing. A provider you are
+    // not signed in to is dropped rather than rendered as an error.
     function pillText() {
+        const parts = [];
+        if (root.claudeHead)
+            parts.push(root.claudeHead.pct + "%");
+        if (root.codexHead)
+            parts.push(root.codexHead.pct + "%");
+        if (parts.length > 0)
+            return parts.join(" / ");
         if (root.loading && !root.ok && root.errorText === "")
             return "…";
         if (!root.ok)
@@ -196,7 +240,22 @@ PluginComponent {
         return root.headlinePct + "%";
     }
 
+    // The pill takes the worse of the two — it is a warning light, and a healthy
+    // Claude must not hide an exhausted Codex.
+    readonly property string worstClass: {
+        const rank = { low: 0, mid: 1, high: 2, critical: 3 };
+        let worst = root.usageClass;
+        const heads = [root.claudeHead, root.codexHead];
+        for (let i = 0; i < heads.length; i++) {
+            if (heads[i] && (rank[heads[i].cls] || 0) > (rank[worst] || 0))
+                worst = heads[i].cls;
+        }
+        return worst;
+    }
+
     function refresh() {
+        if (!otherProc.running)
+            otherProc.running = true;
         if (usageProc.running)
             return;
         usageProc.running = true;
@@ -224,11 +283,32 @@ PluginComponent {
         }
     }
 
+    // The provider the popout is NOT showing. Only its headline is kept, so the
+    // pill can read "claude / codex" without doubling the popout's state.
+    readonly property string otherProvider: root.provider === "codex" ? "claude" : "codex"
+
+    Process {
+        id: otherProc
+        command: [root.aiUsageCommand, "ai-usage", root.otherProvider]
+        running: false
+        stdout: StdioCollector {
+            id: otherOut
+            onStreamFinished: {
+                try {
+                    root.noteHeadline(root.otherProvider, JSON.parse((otherOut.text || "").trim()));
+                } catch (e) {
+                    root.noteHeadline(root.otherProvider, null);
+                }
+            }
+        }
+    }
+
     function parseOutput(txt) {
         root.loading = false;
         try {
             const d = JSON.parse((txt || "").trim());
             root.ok = d.ok === true;
+            root.noteHeadline(root.provider, d);
             root.accounts = d.accounts || [];
             root.aggregate = d.aggregate || null;
             if (!root.ok) {

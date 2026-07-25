@@ -169,6 +169,15 @@ jq -nc \
     | ($live | map(select(.weekly  != null))) as $week
     | (if ($sess | length) > 0 then (($sess | map(.session.pct) | add) / ($sess | length) | round) else null end) as $aggSession
     | (if ($week | length) > 0 then (($week | map(.weekly.pct)  | add) / ($week | length) | round) else null end) as $aggWeekly
+    # Headline: each account counts for its TIGHTEST window, because that is what
+    # actually blocks you — an account with a 3% session and a 96% weekly is 96%
+    # spent, not 3%. Averaging one window type across accounts (which is what
+    # $aggSession/$aggWeekly do) reported 8% on a pool that was nearly exhausted.
+    | ($live | map([ (.session.pct // empty), (.weekly.pct // empty),
+                     (.models[]?.pct // empty), (.spend.pct // empty) ]
+                   | map(select(. != null)) | max // 0)) as $tightest
+    | (if ($tightest | length) > 0
+       then (($tightest | add) / ($tightest | length) | round) else 0 end) as $aggPct
     | ([ $aggSession, $aggWeekly,
          ($live | map(.models[]?.pct) | max),
          ($live | map(.spend?.pct // empty) | max) ] | map(select(. != null)) | max // 0) as $peak
@@ -196,6 +205,7 @@ jq -nc \
          accounts: $accounts,
          aggregate: {count: ($live | length),
                      total: ($accounts | length),
+                     pct: $aggPct,
                      session: $aggSession,
                      weekly: $aggWeekly,
                      class: $aggClass}}
