@@ -241,7 +241,7 @@ ShellRoot {
 
                             UiText {
                                 anchors.centerIn: parent
-                                text: "M"
+                                text: "U"
                                 color: root.onAccent
                                 font.pixelSize: 17
                                 font.weight: Font.DemiBold
@@ -253,7 +253,7 @@ ShellRoot {
                             spacing: 2
 
                             UiText {
-                                text: "method"
+                                text: "user"
                                 font.pixelSize: 15
                                 font.weight: Font.Medium
                             }
@@ -351,9 +351,9 @@ ShellRoot {
                     Repeater {
                         model: [
                             { icon: "settings_ethernet", label: "Ethernet", sub: "Connected" },
-                            { icon: "bluetooth", label: "Enabled", sub: "HT-AX7" },
-                            { icon: "volume_up", label: "HT-AX7", sub: "39%" },
-                            { icon: "mic", label: "Shure MV7 Mono", sub: "98%" }
+                            { icon: "bluetooth", label: "Enabled", sub: "Headphones" },
+                            { icon: "volume_up", label: "Headphones", sub: "39%" },
+                            { icon: "mic", label: "Microphone", sub: "98%" }
                         ]
 
                         Rectangle {

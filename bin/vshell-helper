@@ -3512,6 +3512,11 @@ def write_preview_tree(bp: Dict[str, Any], roles: Dict[str, str], tmp: Path) -> 
                 # HOME too, so the sidebar's "Home" and the breadcrumb match the
                 # pane instead of pointing back at the real account.
                 "HOME": str(sample_home),
+                # Drop the udisks volume monitor: without it the sidebar lists
+                # this machine's drives by label, which is both machine-specific
+                # and more of the user's setup than a shipped screenshot should
+                # show. "unix" keeps only mounts the sample home implies.
+                "GIO_USE_VOLUME_MONITOR": "unix",
             },
             "cmd": fm_cmd,
         })
