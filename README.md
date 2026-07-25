@@ -3,12 +3,11 @@
 A desktop shell for Hyprland — bar, launcher, settings, lock screen and a theme engine that
 restyles your whole desktop, not just the shell.
 
-<video src="https://github.com/vanillagreencom/vgs/raw/main/docs/media/vgs-demo.mp4"
-       poster="https://github.com/vanillagreencom/vgs/raw/main/docs/media/vgs-demo-poster.jpg"
-       controls muted autoplay loop playsinline width="100%"></video>
+**Hyprland only.** Niri support is coming.
+
+[![VGS demo](docs/media/vgs-demo-poster.jpg)](docs/media/vgs-demo.mp4)
 
 *Tiling and the scrolling layout, then the theme browser, settings, and the VGS menu.*
-([download the clip](docs/media/vgs-demo.mp4) if it doesn't play inline)
 
 ## What it is
 
@@ -108,7 +107,8 @@ smaller images into 6K wallpapers.
 
 ## Requirements
 
-- **Hyprland** and **Quickshell 0.3.0**
+- **Hyprland** and **Quickshell 0.3.0**. Hyprland is currently the only supported compositor —
+  Niri support is planned ([roadmap](docs/plans/niri-support.md)).
 - Optional tools unlock optional features — a missing one greys out its widget rather than breaking
   the shell. `vshell deps status` lists what's found.
 
