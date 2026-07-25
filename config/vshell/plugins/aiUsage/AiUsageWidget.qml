@@ -12,6 +12,62 @@ PluginComponent {
     // --- Settings-backed config ---
     property string provider: pluginData.provider || "claude"
     property int refreshSeconds: pluginData.refreshSeconds || 300
+    // How the bar number is derived from the pool. "pool" = mean of each
+    // account's tightest window, "best" = the account with the most headroom,
+    // "worst" = the most exhausted account.
+    property string headlineMode: pluginData.headlineMode || "pool"
+    // Account ids the user has hidden. They stay out of the list AND out of the
+    // headline, so the number never contradicts what is on screen.
+    property var hiddenAccounts: pluginData.hiddenAccounts || []
+
+    function isHidden(id) {
+        return (root.hiddenAccounts || []).indexOf(id) !== -1;
+    }
+    function toggleHidden(id) {
+        const cur = (root.hiddenAccounts || []).slice();
+        const at = cur.indexOf(id);
+        if (at === -1)
+            cur.push(id);
+        else
+            cur.splice(at, 1);
+        root.hiddenAccounts = cur;
+        if (root.pluginService)
+            root.pluginService.savePluginData("aiUsage", "hiddenAccounts", cur);
+    }
+    function setHeadlineMode(m) {
+        root.headlineMode = m;
+        if (root.pluginService)
+            root.pluginService.savePluginData("aiUsage", "headlineMode", m);
+    }
+
+    // The tightest window an account has — what actually blocks it.
+    function accountPeak(a) {
+        if (!a)
+            return 0;
+        let peak = 0;
+        if (a.session && a.session.pct !== undefined) peak = Math.max(peak, a.session.pct);
+        if (a.weekly && a.weekly.pct !== undefined) peak = Math.max(peak, a.weekly.pct);
+        const ms = a.models || [];
+        for (let i = 0; i < ms.length; i++) peak = Math.max(peak, ms[i].pct || 0);
+        if (a.spend && a.spend.pct !== undefined) peak = Math.max(peak, a.spend.pct);
+        return peak;
+    }
+    function shownAccounts(list) {
+        return (list || []).filter(a => a && !root.isHidden(a.id));
+    }
+    // Headline over whichever accounts are visible, in the chosen mode.
+    function headlineFor(list) {
+        const peaks = root.shownAccounts(list).filter(a => a.ok).map(root.accountPeak);
+        if (peaks.length === 0)
+            return null;
+        if (root.headlineMode === "best")
+            return Math.min.apply(null, peaks);
+        if (root.headlineMode === "worst")
+            return Math.max.apply(null, peaks);
+        let sum = 0;
+        for (let i = 0; i < peaks.length; i++) sum += peaks[i];
+        return Math.round(sum / peaks.length);
+    }
 
     // --- Live state ---
     property bool loading: true
@@ -52,6 +108,9 @@ PluginComponent {
         // session/weekly means are kept for compatibility but must not be the
         // headline: averaging the 5h window alone read 8% on a pool whose
         // weeklies were at 96-100%.
+        const local = root.headlineFor(root.accounts);
+        if (local !== null)
+            return local;
         if (root.aggregate.pct !== null && root.aggregate.pct !== undefined)
             return root.aggregate.pct;
         if (root.aggregate.weekly !== null && root.aggregate.weekly !== undefined)
@@ -194,6 +253,9 @@ PluginComponent {
     // aggregatePct — the 5h session is usually the emptiest window and says
     // nothing about whether the weekly is about to block you.
     readonly property int primaryPct: {
+        const one = root.headlineFor(root.accounts);
+        if (one !== null && (root.accounts || []).length > 0)
+            return one;
         const lanes = root.primaryMeters || [];
         let peak = 0;
         for (let i = 0; i < lanes.length; i++)
@@ -206,20 +268,31 @@ PluginComponent {
     // Headline for each provider, kept side by side so the pill can show both
     // without the popout having to be on that tab. {pct, cls} or null when the
     // provider has no signed-in accounts.
-    property var claudeHead: null
-    property var codexHead: null
+    // The last payload per provider. Kept raw rather than reduced to a number,
+    // because the headline mode and the hidden-account list can change between
+    // polls and the pill has to follow them without waiting for a refetch.
+    property var claudeData: null
+    property var codexData: null
+
+    function computeHead(data) {
+        if (!data || data.ok !== true)
+            return null;
+        const agg = data.aggregate;
+        const local = root.headlineFor(data.accounts);
+        const pct = local !== null ? local
+            : (agg && agg.pct !== undefined && agg.pct !== null ? agg.pct
+            : (data.session ? data.session.pct : (data.weekly ? data.weekly.pct : 0)));
+        return { pct: pct, cls: (agg && agg.class) || data.class || "low" };
+    }
+
+    readonly property var claudeHead: root.computeHead(root.claudeData)
+    readonly property var codexHead: root.computeHead(root.codexData)
 
     function noteHeadline(provider, data) {
-        const ok = data && data.ok === true;
-        const agg = ok ? data.aggregate : null;
-        const pct = agg && agg.pct !== undefined && agg.pct !== null
-            ? agg.pct
-            : (ok ? (data.session ? data.session.pct : (data.weekly ? data.weekly.pct : 0)) : 0);
-        const head = ok ? { pct: pct, cls: (agg && agg.class) || data.class || "low" } : null;
         if (provider === "codex")
-            root.codexHead = head;
+            root.codexData = data;
         else
-            root.claudeHead = head;
+            root.claudeData = data;
     }
 
     // "78% / 100%" — Claude on the left, Codex on the right, always in that
@@ -401,16 +474,159 @@ PluginComponent {
                     return root.errorText || "Unavailable";
                 if (!root.multiAccount)
                     return root.plan || "";
-                const live = root.aggregate ? root.aggregate.count : root.accounts.length;
-                const total = root.aggregate ? root.aggregate.total : root.accounts.length;
-                const suffix = (total > live) ? (" · " + (total - live) + " unavailable") : "";
+                // Counted over what is actually on screen — saying "5 accounts"
+                // beside a number derived from four of them is just wrong.
+                const shown = root.shownAccounts(root.accounts);
+                const live = shown.filter(a => a.ok).length;
+                const hidden = root.accounts.length - shown.length;
+                const unavailable = shown.length - live;
+                let suffix = unavailable > 0 ? (" · " + unavailable + " unavailable") : "";
+                if (hidden > 0)
+                    suffix += " · " + hidden + " hidden";
                 return live + " accounts · " + root.aggregatePct + "% used" + suffix;
             }
             showCloseButton: true
 
+            property bool settingsOpen: false
+
+            // Sits left of the close button; same 32x32 hit target so the two
+            // read as a pair.
+            headerActions: Component {
+                Rectangle {
+                    width: 32
+                    height: 32
+                    radius: Theme.controlRadius
+                    color: gearArea.containsMouse ? Theme.surfaceContainerHighest
+                                                  : Theme.withAlpha(Theme.surfaceContainerHighest, 0)
+
+                    VgsIcon {
+                        anchors.centerIn: parent
+                        name: "tune"
+                        size: Theme.iconSize - 4
+                        color: popout.settingsOpen ? Theme.primary : Theme.surfaceText
+                    }
+
+                    MouseArea {
+                        id: gearArea
+                        anchors.fill: parent
+                        hoverEnabled: true
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: popout.settingsOpen = !popout.settingsOpen
+                    }
+                }
+            }
+
             Column {
                 width: parent.width
                 spacing: Theme.spacingM
+
+                // --- display settings, folded away by default ---------------
+                StyledRect {
+                    width: parent.width
+                    height: settingsCol.implicitHeight + Theme.spacingM * 2
+                    radius: Theme.cornerRadius
+                    color: Theme.surfaceContainerHigh
+                    visible: popout.settingsOpen
+
+                    Column {
+                        id: settingsCol
+                        anchors.fill: parent
+                        anchors.margins: Theme.spacingM
+                        spacing: Theme.spacingS
+
+                        StyledText {
+                            text: "Bar number"
+                            font.pixelSize: Theme.fontSizeSmall
+                            font.weight: Font.Medium
+                            color: Theme.surfaceText
+                        }
+
+                        StyledText {
+                            width: parent.width
+                            text: root.headlineMode === "best"
+                                ? "The account with the most headroom left."
+                                : (root.headlineMode === "worst"
+                                   ? "The most exhausted account."
+                                   : "Average across accounts, each counted at its tightest limit.")
+                            font.pixelSize: Theme.fontSizeSmall
+                            color: Theme.surfaceVariantText
+                            wrapMode: Text.WordWrap
+                        }
+
+                        Row {
+                            id: modeRow
+                            width: parent.width
+                            spacing: Theme.spacingXS
+
+                            Repeater {
+                                model: [
+                                    { key: "pool", label: "Average" },
+                                    { key: "best", label: "Most left" },
+                                    { key: "worst", label: "Most used" }
+                                ]
+
+                                VgsButton {
+                                    required property var modelData
+                                    text: modelData.label
+                                    width: (modeRow.width - Theme.spacingXS * 2) / 3
+                                    backgroundColor: root.headlineMode === modelData.key
+                                        ? Theme.primary : Theme.surfaceContainerHighest
+                                    textColor: root.headlineMode === modelData.key
+                                        ? Theme.primaryText : Theme.surfaceText
+                                    onClicked: root.setHeadlineMode(modelData.key)
+                                }
+                            }
+                        }
+
+                        StyledText {
+                            text: "Accounts"
+                            font.pixelSize: Theme.fontSizeSmall
+                            font.weight: Font.Medium
+                            color: Theme.surfaceText
+                            visible: (root.accounts || []).length > 1
+                            topPadding: Theme.spacingXS
+                        }
+
+                        Repeater {
+                            model: (root.accounts || []).length > 1 ? root.accounts : []
+
+                            Item {
+                                required property var modelData
+                                width: settingsCol.width
+                                height: 26
+
+                                StyledText {
+                                    anchors.left: parent.left
+                                    anchors.right: eyeIcon.left
+                                    anchors.rightMargin: Theme.spacingS
+                                    anchors.verticalCenter: parent.verticalCenter
+                                    text: modelData.label || modelData.id
+                                    elide: Text.ElideMiddle
+                                    font.pixelSize: Theme.fontSizeSmall
+                                    color: root.isHidden(modelData.id) ? Theme.surfaceVariantText
+                                                                       : Theme.surfaceText
+                                }
+
+                                VgsIcon {
+                                    id: eyeIcon
+                                    anchors.right: parent.right
+                                    anchors.verticalCenter: parent.verticalCenter
+                                    name: root.isHidden(modelData.id) ? "visibility_off" : "visibility"
+                                    size: Theme.iconSizeSmall
+                                    color: root.isHidden(modelData.id) ? Theme.surfaceVariantText
+                                                                       : Theme.primary
+                                }
+
+                                MouseArea {
+                                    anchors.fill: parent
+                                    hoverEnabled: true
+                                    cursorShape: Qt.PointingHandCursor
+                                    onClicked: root.toggleHidden(modelData.id)
+                                }
+                            }
+                        }
+                    }
+                }
 
                 // The tabs sat flush against the header and the first card.
                 // Wrapping rather than adding Column spacers keeps the gap to
@@ -514,7 +730,7 @@ PluginComponent {
                 // Several accounts: one compact row each, expanding in place to
                 // the same full-detail cards a single account gets.
                 Repeater {
-                    model: root.multiAccount ? root.accounts : []
+                    model: root.multiAccount ? root.shownAccounts(root.accounts) : []
 
                     StyledRect {
                         id: accountCard
