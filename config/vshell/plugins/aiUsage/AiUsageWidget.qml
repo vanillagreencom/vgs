@@ -137,6 +137,18 @@ PluginComponent {
         return sym + round(meter.used) + " / " + sym + round(meter.limit);
     }
 
+    // The card has room for the cents. Falls back to the engine's own string
+    // if an older helper sent only that.
+    function formatSpendExact(meter) {
+        if (!meter)
+            return "";
+        if (meter.used === undefined || meter.limit === undefined)
+            return meter.detail || "";
+        const sym = meter.currency === "USD" ? "$" : "";
+        const money = n => sym + n.toLocaleString(Qt.locale(), "f", 2);
+        return money(meter.used) + " of " + money(meter.limit);
+    }
+
     // "Resets in 4d 17h · thu 04:00", degrading to whichever half we have.
     function resetLabel(meter) {
         if (!meter)
@@ -320,10 +332,18 @@ PluginComponent {
                 width: parent.width
                 spacing: Theme.spacingM
 
-                Row {
-                    id: providerRow
+                // The tabs sat flush against the header and the first card.
+                // Wrapping rather than adding Column spacers keeps the gap to
+                // the neighbouring cards unchanged.
+                Item {
                     width: parent.width
-                    spacing: Theme.spacingS
+                    height: providerRow.implicitHeight + 10
+
+                    Row {
+                        id: providerRow
+                        width: parent.width
+                        anchors.verticalCenter: parent.verticalCenter
+                        spacing: Theme.spacingS
 
                     VgsButton {
                         text: "Claude"
@@ -341,6 +361,7 @@ PluginComponent {
                         backgroundColor: root.provider === "codex" ? Theme.primary : Theme.surfaceContainerHigh
                         textColor: root.provider === "codex" ? Theme.primaryText : Theme.surfaceText
                         onClicked: root.setProvider("codex")
+                    }
                     }
                 }
 
@@ -401,7 +422,7 @@ PluginComponent {
 
                             StyledText {
                                 // A credit pool reports an amount, not a countdown.
-                                text: modelData.detail ? modelData.detail : root.resetLabel(modelData)
+                                text: root.formatSpendExact(modelData) || root.resetLabel(modelData)
                                 visible: text.length > 0
                                 font.pixelSize: Theme.fontSizeSmall
                                 color: Theme.surfaceVariantText
@@ -450,14 +471,17 @@ PluginComponent {
 
                             Item {
                                 width: parent.width
-                                height: Math.max(emailText.implicitHeight, planText.implicitHeight)
+                                // +5 with the text pinned to the top, so the extra
+                                // height reads as space under the account line
+                                // rather than padding on both sides of it.
+                                height: Math.max(emailText.implicitHeight, planText.implicitHeight) + 5
 
                                 StyledText {
                                     id: emailText
                                     anchors.left: parent.left
                                     anchors.right: planText.left
                                     anchors.rightMargin: Theme.spacingS
-                                    anchors.verticalCenter: parent.verticalCenter
+                                    anchors.top: parent.top
                                     text: accountCard.modelData.label || accountCard.modelData.id
                                     elide: Text.ElideMiddle
                                     font.pixelSize: Theme.fontSizeMedium
@@ -468,7 +492,7 @@ PluginComponent {
                                 StyledText {
                                     id: planText
                                     anchors.right: parent.right
-                                    anchors.verticalCenter: parent.verticalCenter
+                                    anchors.verticalCenter: emailText.verticalCenter
                                     text: accountCard.modelData.ok ? (accountCard.modelData.plan || "") : "unavailable"
                                     font.pixelSize: Theme.fontSizeSmall
                                     color: Theme.surfaceVariantText
