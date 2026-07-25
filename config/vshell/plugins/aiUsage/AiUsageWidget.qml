@@ -482,7 +482,7 @@ PluginComponent {
                                     Rectangle {
                                         anchors.left: compactLabel.right
                                         anchors.leftMargin: Theme.spacingXS
-                                        anchors.right: compactPct.left
+                                        anchors.right: compactReset.left
                                         anchors.rightMargin: Theme.spacingXS
                                         anchors.verticalCenter: compactLabel.verticalCenter
                                         height: 4
@@ -507,6 +507,20 @@ PluginComponent {
                                         font.pixelSize: Theme.fontSizeSmall
                                         font.weight: Font.Medium
                                         color: accountCard.accountAccent
+                                    }
+
+                                    // The reset clock time belongs on the collapsed row too —
+                                    // otherwise it is only readable one account at a time, and
+                                    // comparing windows across accounts is the point of this view.
+                                    StyledText {
+                                        id: compactReset
+                                        anchors.right: compactPct.left
+                                        anchors.rightMargin: Theme.spacingS
+                                        anchors.top: parent.top
+                                        text: root.formatResetAt(modelData.resetAt || 0)
+                                        visible: text.length > 0
+                                        font.pixelSize: Theme.fontSizeSmall
+                                        color: Theme.surfaceVariantText
                                     }
                                 }
                             }
