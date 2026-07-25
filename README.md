@@ -23,6 +23,7 @@ follows is what VGS adds on top.
 | **Display brightness** | Per-monitor control for laptop panels, external monitors over DDC/CI, and Apple Pro Display XDR and Studio Display over USB. |
 | **Capture** | One modal for screenshots, recording and text grab, with delay, region, window and display targets. |
 | **Tailscale & Bluetooth** | Mesh VPN status and controls in the bar, and Bluetooth handling that stays out of your way. |
+| **Glass UI** | An optional iOS-style glass material for every popout and menu — translucent tinted surfaces over a saturated backdrop blur, with a specular rim and sheen. |
 
 ## Themes
 
@@ -40,6 +41,11 @@ Qt 5 · Qt 6 · tmux · Vencord · Vesktop · VS Code · WezTerm · Zed · Zen B
 Each app can be switched on or off individually. Beyond picking a theme you can pull a palette out
 of any wallpaper, hand-edit individual colour roles, restyle a whole theme (brightness, vibrancy,
 contrast, hue, temperature), and pair a light theme with a dark one so they swap together.
+
+Some targets go further than dropping a colour file. Chromium gets its theme pushed through a
+managed policy, Pi gets a generated theme linked into its agent config, and **Claude Code follows
+the light/dark mode of the theme you apply** — switch to a light theme and the CLI switches with
+it, no restart.
 
 ## Widgets
 
@@ -94,7 +100,8 @@ Screen recording with the same targets, and OCR to grab text off the screen.
 **Idle, lock and screensaver.** Lock after idle, fade to black while locked without powering
 monitors off, and wake straight to the password prompt. Optional monitor power-off and suspend
 timers with separate values on AC and battery. A video screensaver for the lock screen, an ASCII
-one for the desktop, and an idle inhibitor that suppresses the whole chain.
+screensaver for the desktop — inspired by [Omarchy](https://omarchy.org)'s, and regenerable from
+any picture — and an idle inhibitor that suppresses the whole chain.
 
 **Displays.** Arrange monitors, set resolution, refresh rate, scale and rotation, save profiles,
 and adjust gamma. Brightness works per display, including Apple Pro Display XDR and Studio Display.
