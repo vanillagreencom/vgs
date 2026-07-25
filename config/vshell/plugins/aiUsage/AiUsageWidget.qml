@@ -72,7 +72,9 @@ PluginComponent {
         // Credit-billed seats have no rate-limit windows at all — their monthly
         // spend pool is the only usage there is, so it stands in for them.
         if (account.spend)
-            out.push({ label: "Credits", pct: account.spend.pct || 0, reset: "", resetAt: 0, detail: account.spend.detail || "" });
+            out.push({ label: "Credits", pct: account.spend.pct || 0, reset: "", resetAt: 0,
+                       detail: account.spend.detail || "",
+                       used: account.spend.used, limit: account.spend.limit, currency: account.spend.currency || "USD" });
         return out;
     }
 
@@ -124,7 +126,18 @@ PluginComponent {
         return when.toLocaleDateString(Qt.locale(), "d MMM").toLowerCase() + " " + time;
     }
 
-    // "Resets in 4d 17h · Thu 3:59 AM", degrading to whichever half we have.
+    // Money for the compact row: no cents, thousands separated. At credit-pool
+    // scale the cents are noise, and this column is only as wide as the bar can
+    // spare. The expanded card keeps the engine's exact string.
+    function formatSpend(meter) {
+        if (!meter || meter.used === undefined || meter.limit === undefined)
+            return "";
+        const sym = meter.currency === "USD" ? "$" : "";
+        const round = n => Math.round(n).toLocaleString(Qt.locale(), "f", 0);
+        return sym + round(meter.used) + " / " + sym + round(meter.limit);
+    }
+
+    // "Resets in 4d 17h · thu 04:00", degrading to whichever half we have.
     function resetLabel(meter) {
         if (!meter)
             return "";
@@ -521,7 +534,7 @@ PluginComponent {
                                         anchors.right: compactPct.left
                                         anchors.rightMargin: Theme.spacingS
                                         anchors.top: parent.top
-                                        text: root.formatResetAt(modelData.resetAt || 0)
+                                        text: root.formatSpend(modelData) || root.formatResetAt(modelData.resetAt || 0)
                                         visible: text.length > 0
                                         font.pixelSize: Theme.fontSizeSmall
                                         color: Theme.surfaceVariantText

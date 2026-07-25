@@ -1143,12 +1143,22 @@ if [[ "$EMIT_JSON" == "true" ]]; then
     # lane rather than calling the account unavailable.
     _spend=$(jq -c '
         def money($m; $e): "$" + (($m / pow(10; $e)) | . * 100 | round / 100 | tostring);
+        # `used`/`limit` go out as plain major-unit numbers alongside the
+        # rendered string so the widget can format them for the width it has
+        # (the compact row wants "$2,542 / $5,000", the card wants the cents).
+        def major($m; $e): ($m / pow(10; $e));
         if (.spend.enabled == true) and (.spend.limit.amount_minor // 0) > 0 then
           {pct: ((.spend.percent | numbers) // 0 | round),
+           used: major(.spend.used.amount_minor // 0; .spend.used.exponent // 2),
+           limit: major(.spend.limit.amount_minor; .spend.limit.exponent // 2),
+           currency: (.spend.limit.currency // "USD"),
            detail: (money(.spend.used.amount_minor // 0; .spend.used.exponent // 2)
                     + " of " + money(.spend.limit.amount_minor; .spend.limit.exponent // 2))}
         elif (.extra_usage.is_enabled == true) and (.extra_usage.monthly_limit // 0) > 0 then
           {pct: ((.extra_usage.utilization | numbers) // 0 | round),
+           used: major(.extra_usage.used_credits // 0; 2),
+           limit: major(.extra_usage.monthly_limit; 2),
+           currency: (.extra_usage.currency // "USD"),
            detail: (money(.extra_usage.used_credits // 0; 2)
                     + " of " + money(.extra_usage.monthly_limit; 2))}
         else null end' <<< "$usage" 2>/dev/null)
