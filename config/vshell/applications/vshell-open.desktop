@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=VGS Chooser
+Comment=Choose an application with VanillaGreen Shell
+Exec=vshell open %u
+Terminal=false
+NoDisplay=true
+MimeType=x-scheme-handler/http;x-scheme-handler/https;text/html;application/xhtml+xml;inode/directory;
+Categories=Utility;

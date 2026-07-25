@@ -1,0 +1,11 @@
+{
+  "app": "pywalfox",
+  "template": "colors.json",
+  "destination": "~/.cache/wal/colors.json",
+  "detect": {
+    "commands": [
+      "pywalfox"
+    ]
+  },
+  "hook": "pywalfox-update"
+}

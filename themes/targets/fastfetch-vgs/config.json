@@ -1,0 +1,9 @@
+{
+  "app": "fastfetch",
+  "detect": {
+    "commands": [
+      "fastfetch"
+    ]
+  },
+  "hook": "fastfetch-logo"
+}

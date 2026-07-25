@@ -1,0 +1,531 @@
+import QtQuick
+import qs.Common
+import qs.Services
+import qs.Widgets
+
+VgsPopout {
+    id: root
+
+    layerNamespace: "vshell:dash"
+
+    property bool dashVisible: false
+    property var triggerScreen: null
+    property int currentTabIndex: 0
+    // Mode filter handed to the Themes tab when opened via IPC (theme mode toggle).
+    property string themesModeFilter: "all"
+
+    readonly property var __tabPresentation: ({
+            "overview": {
+                "icon": "dashboard",
+                "text": I18n.tr("Overview")
+            },
+            "media": {
+                "icon": "music_note",
+                "text": I18n.tr("Media")
+            },
+            "themes": {
+                "icon": "palette",
+                "text": I18n.tr("Themes")
+            },
+            "wallpaper": {
+                "icon": "wallpaper",
+                "text": I18n.tr("Wallpapers")
+            },
+            "weather": {
+                "icon": "wb_sunny",
+                "text": I18n.tr("Weather")
+            },
+            "settings": {
+                "icon": "settings",
+                "text": I18n.tr("Settings"),
+                "isAction": true
+            }
+        })
+    readonly property var orderedTabIds: SettingsData.visibleDashTabIds()
+    readonly property string currentTabId: orderedTabIds.length > 0 ? (orderedTabIds[Math.min(currentTabIndex, orderedTabIds.length - 1)] ?? "overview") : "overview"
+
+    function __isActionTab(id) {
+        return root.__tabPresentation[id]?.isAction === true;
+    }
+
+    function __resolveContentIndex(idx) {
+        if (orderedTabIds.length === 0)
+            return 0;
+        var clamped = Math.max(0, Math.min(idx, orderedTabIds.length - 1));
+        if (!__isActionTab(orderedTabIds[clamped]))
+            return clamped;
+        for (var f = clamped + 1; f < orderedTabIds.length; f++)
+            if (!__isActionTab(orderedTabIds[f]))
+                return f;
+        for (var b = clamped - 1; b >= 0; b--)
+            if (!__isActionTab(orderedTabIds[b]))
+                return b;
+        return clamped;
+    }
+
+    onOrderedTabIdsChanged: {
+        var resolved = __resolveContentIndex(currentTabIndex);
+        if (resolved !== currentTabIndex)
+            currentTabIndex = resolved;
+    }
+    onCurrentTabIndexChanged: {
+        var resolved = __resolveContentIndex(currentTabIndex);
+        if (resolved !== currentTabIndex)
+            currentTabIndex = resolved;
+    }
+
+    popupWidth: SettingsData.showWeekNumber ? 736 : 700
+    popupHeight: contentLoader.item ? contentLoader.item.implicitHeight : 500
+    triggerWidth: 80
+    screen: triggerScreen
+
+    property bool __focusArmed: false
+    property bool __contentReady: false
+
+    property var __mediaTabRef: null
+
+    property int __dropdownType: 0
+    property point __dropdownAnchor: Qt.point(0, 0)
+    property bool __dropdownRightEdge: false
+    property var __dropdownPlayer: MprisController.activePlayer
+    property var __dropdownPlayers: MprisController.availablePlayers
+
+    function __showVolumeDropdown(pos, rightEdge, player, players) {
+        __dropdownAnchor = pos;
+        __dropdownRightEdge = rightEdge;
+        __dropdownPlayer = Qt.binding(() => MprisController.activePlayer);
+        __dropdownPlayers = Qt.binding(() => MprisController.availablePlayers);
+        __dropdownType = 1;
+    }
+
+    function __showAudioDevicesDropdown(pos, rightEdge) {
+        __dropdownAnchor = pos;
+        __dropdownRightEdge = rightEdge;
+        __dropdownType = 2;
+    }
+
+    function __showPlayersDropdown(pos, rightEdge, player, players) {
+        __dropdownAnchor = pos;
+        __dropdownRightEdge = rightEdge;
+        __dropdownPlayer = Qt.binding(() => MprisController.activePlayer);
+        __dropdownPlayers = Qt.binding(() => MprisController.availablePlayers);
+        __dropdownType = 3;
+    }
+
+    function __hideDropdowns() {
+        __volumeCloseTimer.stop();
+        __dropdownType = 0;
+        if (__mediaTabRef && typeof __mediaTabRef.resetDropdownStates === "function")
+            __mediaTabRef.resetDropdownStates();
+    }
+
+    function __startCloseTimer() {
+        __volumeCloseTimer.restart();
+    }
+
+    function __stopCloseTimer() {
+        __volumeCloseTimer.stop();
+    }
+
+    Timer {
+        id: __volumeCloseTimer
+        interval: 400
+        onTriggered: {
+            if (__dropdownType !== 0) {
+                __hideDropdowns();
+            }
+        }
+    }
+
+    overlayContent: shouldBeVisible ? mediaDropdownOverlayComponent : null
+
+    Component {
+        id: mediaDropdownOverlayComponent
+
+        MediaDropdownOverlay {
+            dropdownType: root.__dropdownType
+            anchorPos: root.__dropdownAnchor
+            isRightEdge: root.__dropdownRightEdge
+            activePlayer: root.__dropdownPlayer
+            allPlayers: root.__dropdownPlayers
+            targetWindow: root.backgroundWindow
+            onCloseRequested: root.__hideDropdowns()
+            onPanelEntered: root.__stopCloseTimer()
+            onPanelExited: root.__startCloseTimer()
+            onVolumeChanged: volume => {
+                const player = root.__dropdownPlayer;
+                const isChrome = player?.identity?.toLowerCase().includes("chrome") || player?.identity?.toLowerCase().includes("chromium");
+                const usePlayerVolume = player && player.volumeSupported && !isChrome;
+                if (usePlayerVolume) {
+                    player.volume = volume;
+                } else if (AudioService.sink?.audio) {
+                    AudioService.sink.audio.volume = volume;
+                }
+            }
+            onPlayerSelected: player => {
+                const currentPlayer = MprisController.activePlayer;
+                if (currentPlayer && currentPlayer !== player && currentPlayer.canPause) {
+                    currentPlayer.pause();
+                }
+                MprisController.setActivePlayer(player);
+                root.__hideDropdowns();
+            }
+        }
+    }
+
+    function __tryFocusOnce() {
+        if (!__focusArmed)
+            return;
+        const win = root.window;
+        if (!win || !win.visible)
+            return;
+        if (!contentLoader.item)
+            return;
+        if (win.requestActivate)
+            win.requestActivate();
+        if (contentLoader.item.focusActiveTab)
+            contentLoader.item.focusActiveTab();
+        else
+            contentLoader.item.forceActiveFocus(Qt.TabFocusReason);
+
+        if (contentLoader.item.activeFocus)
+            __focusArmed = false;
+    }
+
+    onDashVisibleChanged: {
+        if (dashVisible) {
+            __focusArmed = true;
+            __contentReady = !!contentLoader.item;
+            open();
+            __tryFocusOnce();
+        } else {
+            __focusArmed = false;
+            __contentReady = false;
+            __hideDropdowns();
+            close();
+            // Reset the themes mode filter so a normal reopen defaults to "all".
+            // `theme-picker openMode` sets it again after this, right before show.
+            themesModeFilter = "all";
+        }
+    }
+
+    Connections {
+        target: contentLoader
+        function onLoaded() {
+            __contentReady = true;
+            if (__focusArmed)
+                __tryFocusOnce();
+        }
+    }
+
+    Connections {
+        target: root.window ? root.window : null
+        enabled: !!root.window
+        function onVisibleChanged() {
+            if (__focusArmed)
+                __tryFocusOnce();
+        }
+    }
+
+    onBackgroundClicked: {
+        dashVisible = false;
+    }
+
+    content: Component {
+        Rectangle {
+            id: mainContainer
+
+            LayoutMirroring.enabled: I18n.isRtl
+            LayoutMirroring.childrenInherit: true
+
+            implicitWidth: Math.max(700, pages.implicitWidth + (Theme.spacingM * 2))
+            implicitHeight: contentColumn.height + Theme.popoutPadding * 2
+            color: "transparent"
+            focus: true
+
+            // Focus the right thing for the active tab: the themes tab wants its
+            // search field focused (type-to-filter immediately), everything else
+            // keeps focus on the container for tab/list keyboard navigation.
+            function focusActiveTab() {
+                if (root.currentTabId === "themes" && themesLoader.item && themesLoader.item.focusSearch)
+                    themesLoader.item.focusSearch();
+                else
+                    mainContainer.forceActiveFocus();
+            }
+
+            Component.onCompleted: {
+                if (root.shouldBeVisible)
+                    focusActiveTab();
+            }
+
+            Connections {
+                target: root
+                function onShouldBeVisibleChanged() {
+                    if (root.shouldBeVisible)
+                        mainContainer.focusActiveTab();
+                }
+                function onCurrentTabIndexChanged() {
+                    if (root.shouldBeVisible)
+                        mainContainer.focusActiveTab();
+                }
+            }
+
+            Keys.onPressed: function (event) {
+                if (event.key === Qt.Key_Escape) {
+                    if (root.currentTabId === "wallpaper" && wallpaperLoader.item?.handleKeyEvent && wallpaperLoader.item.handleKeyEvent(event)) {
+                        event.accepted = true;
+                        return;
+                    }
+                    root.dashVisible = false;
+                    event.accepted = true;
+                    return;
+                }
+
+                if (root.currentTabId === "themes" && themesLoader.item?.handleKeyEvent) {
+                    if (themesLoader.item.handleKeyEvent(event)) {
+                        event.accepted = true;
+                        return;
+                    }
+                }
+
+                if (event.key === Qt.Key_Tab && !(event.modifiers & Qt.ShiftModifier)) {
+                    let nextIndex = root.currentTabIndex + 1;
+                    while (nextIndex < tabBar.model.length && tabBar.model[nextIndex] && tabBar.model[nextIndex].isAction) {
+                        nextIndex++;
+                    }
+                    if (nextIndex >= tabBar.model.length) {
+                        nextIndex = 0;
+                    }
+                    root.currentTabIndex = nextIndex;
+                    event.accepted = true;
+                    return;
+                }
+
+                if (event.key === Qt.Key_Backtab || (event.key === Qt.Key_Tab && (event.modifiers & Qt.ShiftModifier))) {
+                    let prevIndex = root.currentTabIndex - 1;
+                    while (prevIndex >= 0 && tabBar.model[prevIndex] && tabBar.model[prevIndex].isAction) {
+                        prevIndex--;
+                    }
+                    if (prevIndex < 0) {
+                        prevIndex = tabBar.model.length - 1;
+                        while (prevIndex >= 0 && tabBar.model[prevIndex] && tabBar.model[prevIndex].isAction) {
+                            prevIndex--;
+                        }
+                    }
+                    if (prevIndex >= 0) {
+                        root.currentTabIndex = prevIndex;
+                    }
+                    event.accepted = true;
+                    return;
+                }
+
+                if (root.currentTabId === "overview" && overviewLoader.item?.handleKeyEvent) {
+                    if (overviewLoader.item.handleKeyEvent(event)) {
+                        event.accepted = true;
+                        return;
+                    }
+                }
+
+                if (root.currentTabId === "media" && mediaLoader.item?.handleKeyEvent) {
+                    if (mediaLoader.item.handleKeyEvent(event)) {
+                        event.accepted = true;
+                        return;
+                    }
+                }
+
+                if (root.currentTabId === "wallpaper" && wallpaperLoader.item?.handleKeyEvent) {
+                    if (wallpaperLoader.item.handleKeyEvent(event)) {
+                        event.accepted = true;
+                        return;
+                    }
+                }
+            }
+
+            Column {
+                id: contentColumn
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.top: parent.top
+                anchors.margins: Theme.popoutPadding
+                spacing: Theme.spacingS
+
+                VgsTabBar {
+                    id: tabBar
+
+                    width: parent.width
+                    height: 48
+                    currentIndex: root.currentTabIndex
+                    spacing: Theme.spacingS
+                    equalWidthTabs: true
+                    enableArrowNavigation: false
+                    focus: false
+                    activeFocusOnTab: false
+                    nextFocusTarget: {
+                        const item = pages.currentItem;
+                        if (!item)
+                            return null;
+                        if (item.focusTarget)
+                            return item.focusTarget;
+                        return item;
+                    }
+
+                    model: root.orderedTabIds.map(id => root.__tabPresentation[id])
+
+                    onTabClicked: function (index) {
+                        root.currentTabIndex = index;
+                    }
+
+                    onActionTriggered: function (index) {
+                        if (root.orderedTabIds[index] === "settings") {
+                            dashVisible = false;
+                            PopoutService.focusOrToggleSettings();
+                        }
+                    }
+                }
+
+                Item {
+                    width: parent.width
+                    height: Theme.spacingXS
+                }
+
+                Item {
+                    id: pages
+                    width: parent.width
+                    height: implicitHeight
+                    implicitWidth: currentItem && currentItem.implicitWidth > 0 ? currentItem.implicitWidth : (700 - Theme.spacingM * 2)
+                    // Hold the last good height while the switched-to tab's loader
+                    // item is transiently null/unsized. Without this, the height
+                    // collapsed to the 410 fallback for a frame and the popout's
+                    // height animation flashed up-then-back on every tab switch.
+                    property real _stableHeight: 410
+                    implicitHeight: {
+                        const h = (currentItem && currentItem.implicitHeight > 0) ? currentItem.implicitHeight : 0;
+                        return h > 0 ? h : _stableHeight;
+                    }
+                    onImplicitHeightChanged: {
+                        if (currentItem && currentItem.implicitHeight > 0)
+                            _stableHeight = currentItem.implicitHeight;
+                    }
+
+                    readonly property var currentItem: {
+                        if (root.currentTabId === "overview")
+                            return overviewLoader.item;
+                        if (root.currentTabId === "media")
+                            return mediaLoader.item;
+                        if (root.currentTabId === "themes")
+                            return themesLoader.item;
+                        if (root.currentTabId === "wallpaper")
+                            return wallpaperLoader.item;
+                        if (root.currentTabId === "weather")
+                            return weatherLoader.item;
+                        return null;
+                    }
+
+                    Loader {
+                        id: overviewLoader
+                        anchors.fill: parent
+                        active: root.currentTabId === "overview"
+                        visible: active
+                        sourceComponent: Component {
+                            OverviewTab {
+                                onCloseDash: root.dashVisible = false
+                                onNavFocusRequested: mainContainer.forceActiveFocus()
+                                onSwitchToWeatherTab: {
+                                    if (SettingsData.weatherEnabled) {
+                                        root.currentTabIndex = SettingsData.dashTabIndexForId("weather");
+                                    }
+                                }
+                                onSwitchToMediaTab: {
+                                    root.currentTabIndex = SettingsData.dashTabIndexForId("media");
+                                }
+                            }
+                        }
+                    }
+
+                    Loader {
+                        id: mediaLoader
+                        anchors.fill: parent
+                        active: root.currentTabId === "media"
+                        visible: active
+                        sourceComponent: Component {
+                            MediaPlayerTab {
+                                targetScreen: root.screen
+                                popoutX: root.alignedX
+                                popoutY: root.alignedY
+                                popoutWidth: root.alignedWidth
+                                popoutHeight: root.alignedHeight
+                                contentOffsetY: Theme.spacingM + 48 + Theme.spacingS + Theme.spacingXS
+                                section: root.triggerSection
+                                barPosition: root.effectiveBarPosition
+                                Component.onCompleted: root.__mediaTabRef = this
+                                Component.onDestruction: {
+                                    if (root.__mediaTabRef === this)
+                                        root.__mediaTabRef = null;
+                                }
+                                onShowVolumeDropdown: (pos, screen, rightEdge, player, players) => {
+                                    root.__showVolumeDropdown(pos, rightEdge, player, players);
+                                }
+                                onShowAudioDevicesDropdown: (pos, screen, rightEdge) => {
+                                    root.__showAudioDevicesDropdown(pos, rightEdge);
+                                }
+                                onShowPlayersDropdown: (pos, screen, rightEdge, player, players) => {
+                                    root.__showPlayersDropdown(pos, rightEdge, player, players);
+                                }
+                                onHideDropdowns: root.__hideDropdowns()
+                                onDropdownButtonExited: root.__startCloseTimer()
+                                onDropdownButtonEntered: root.__stopCloseTimer()
+                            }
+                        }
+                    }
+
+                    Loader {
+                        id: themesLoader
+                        anchors.fill: parent
+                        active: root.currentTabId === "themes"
+                        visible: active
+                        sourceComponent: Component {
+                            ThemesTab {
+                                // Track dash visibility (not a literal true) so
+                                // onActiveChanged re-fires on reopen and resets
+                                // the search/filter, even when the Themes tab
+                                // stays selected across a close.
+                                active: root.dashVisible
+                                tabBarItem: tabBar
+                                keyForwardTarget: mainContainer
+                                targetScreen: root.screen
+                                parentPopout: root
+                                modeFilter: root.themesModeFilter
+                            }
+                        }
+                    }
+
+                    Loader {
+                        id: wallpaperLoader
+                        anchors.fill: parent
+                        active: root.currentTabId === "wallpaper"
+                        visible: active
+                        sourceComponent: Component {
+                            WallpaperTab {
+                                active: true
+                                tabBarItem: tabBar
+                                keyForwardTarget: mainContainer
+                                targetScreen: root.screen
+                                parentPopout: root
+                            }
+                        }
+                    }
+
+                    Loader {
+                        id: weatherLoader
+                        anchors.fill: parent
+                        active: root.currentTabId === "weather"
+                        visible: active
+                        sourceComponent: Component {
+                            WeatherTab {}
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

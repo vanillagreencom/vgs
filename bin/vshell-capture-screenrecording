@@ -1,0 +1,577 @@
+#!/usr/bin/env bash
+# VGS-style toggle screen recording for Hyprland using gpu-screen-recorder.
+set -euo pipefail
+
+[[ -f ~/.config/user-dirs.dirs ]] && source ~/.config/user-dirs.dirs
+
+if [[ -n ${VSHELL_SCREENRECORD_DIR:-} ]]; then
+  OUTPUT_DIR="$VSHELL_SCREENRECORD_DIR"
+elif [[ -n ${XDG_VIDEOS_DIR:-} ]]; then
+  OUTPUT_DIR="$XDG_VIDEOS_DIR/Screen Recordings"
+else
+  OUTPUT_DIR="$HOME/Videos/Screen Recordings"
+fi
+
+STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/vshell-screenrecord"
+PID_FILE="$STATE_DIR/pid"
+RAW_FILE="$STATE_DIR/raw"
+FINAL_FILE="$STATE_DIR/final"
+THUMB_FILE="$STATE_DIR/thumb"
+LOG_FILE="$STATE_DIR/gpu-screen-recorder.log"
+STATUS_FILE="$STATE_DIR/status.json"
+
+mkdir -p "$OUTPUT_DIR" "$STATE_DIR"
+
+SELECTION_RE='^(-?[0-9]+),(-?[0-9]+)[[:space:]]([0-9]+)x([0-9]+)$'
+FPS="${VSHELL_SCREENRECORD_FPS:-60}"
+CODEC="${VSHELL_SCREENRECORD_CODEC:-auto}"
+QUALITY="${VSHELL_SCREENRECORD_QUALITY:-very_high}"
+# Cursor is hidden by default (matches screenshots); pass --cursor=true or set
+# VSHELL_SCREENRECORD_CURSOR=yes to include it.
+CURSOR="${VSHELL_SCREENRECORD_CURSOR:-no}"
+DESKTOP_AUDIO="${VSHELL_SCREENRECORD_DESKTOP_AUDIO:-true}"
+MIC="${VSHELL_SCREENRECORD_MIC:-false}"
+WEBCAM="${VSHELL_SCREENRECORD_WEBCAM:-false}"
+WEBCAM_DEVICE="${VSHELL_SCREENRECORD_WEBCAM_DEVICE:-/dev/video0}"
+POSTPROCESS="${VSHELL_SCREENRECORD_POSTPROCESS:-true}"
+PORTAL="${VSHELL_SCREENRECORD_PORTAL:-false}"
+
+JQ_MONITOR_GEO='
+  def monitor_rect:
+    .x as $x | .y as $y |
+    (.width / .scale | floor) as $w |
+    (.height / .scale | floor) as $h |
+    .transform as $t |
+    if $t == 1 or $t == 3 then
+      { name: .name, x: $x, y: $y, w: $h, h: $w }
+    else
+      { name: .name, x: $x, y: $y, w: $w, h: $h }
+    end;
+  def format_geo:
+    monitor_rect | "\(.x),\(.y) \(.w)x\(.h)";
+'
+
+notify() {
+  notify-send --app-name "Screen Recording" "$@"
+}
+
+fail() {
+  notify "Screen recording failed" "$1" -u critical -t 5000 2>/dev/null || true
+  printf 'Screen recording failed: %s\n' "$1" >&2
+  exit 1
+}
+
+check_start_deps() {
+  local deps=(gpu-screen-recorder slurp hyprpicker hyprctl jq notify-send wl-copy)
+  is_true "$POSTPROCESS" && deps+=(ffmpeg ffprobe)
+  for dep in "${deps[@]}"; do
+    command -v "$dep" >/dev/null 2>&1 || fail "$dep not found"
+  done
+}
+
+# Focus bracket: the slurp overlay's exit leaves focus wherever the cursor is
+# (follow_mouse); snapshot the active window before selection and restore it
+# afterwards so starting a recording never moves focus.
+focus_snapshot() {
+  hyprctl activewindow -j 2>/dev/null | jq -r '.address // empty' || true
+}
+
+focus_restore() {
+  local addr="$1" active
+  [[ -n $addr ]] || return 0
+  active="$(focus_snapshot)"
+  [[ $active == "$addr" ]] && return 0
+  hyprctl clients -j 2>/dev/null | jq -e --arg a "$addr" 'any(.[]; .address == $a)' >/dev/null 2>&1 || return 0
+  hyprctl dispatch "hl.dsp.focus({window=\"address:$addr\"})" >/dev/null 2>&1 || true
+}
+
+open_folder() {
+  local dir="$1"
+  if command -v yazi-scratchpad-open >/dev/null 2>&1; then
+    uwsm app -- yazi-scratchpad-open "$dir"
+  else
+    uwsm app -- xdg-open "$dir"
+  fi
+}
+
+transcode_media() {
+  local file="$1"
+  if command -v vshell-transcode >/dev/null 2>&1; then
+    uwsm app -- xdg-terminal-exec --app-id=TUI.float -e vshell-transcode "$file"
+  else
+    uwsm app -- xdg-open "$file"
+  fi
+}
+
+json_escape() {
+  jq -Rn --arg value "$1" '$value'
+}
+
+write_status() {
+  local pid="$1"
+  local raw="$2"
+  local final="$3"
+  local thumb="$4"
+  local source="$5"
+  local started="$6"
+
+  cat >"$STATUS_FILE" <<EOF
+{
+  "active": true,
+  "pid": $pid,
+  "source": $(json_escape "$source"),
+  "raw": $(json_escape "$raw"),
+  "final": $(json_escape "$final"),
+  "thumbnail": $(json_escape "$thumb"),
+  "startedAt": $(json_escape "$started")
+}
+EOF
+}
+
+clear_status() {
+  rm -f "$STATUS_FILE"
+}
+
+is_true() {
+  case "${1,,}" in
+    1|true|yes|y|on) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+running_pid() {
+  [[ -r $PID_FILE ]] || return 1
+  local pid
+  pid="$(<"$PID_FILE")"
+  [[ $pid =~ ^[0-9]+$ ]] || return 1
+  kill -0 "$pid" 2>/dev/null || return 1
+  printf '%s\n' "$pid"
+}
+
+recording_status() {
+  local pid
+  if pid="$(running_pid)"; then
+    if [[ -s $STATUS_FILE ]]; then
+      cat "$STATUS_FILE"
+    else
+      jq -n --argjson pid "$pid" '{active: true, pid: $pid, source: "", startedAt: ""}'
+    fi
+    return 0
+  fi
+
+  rm -f "$PID_FILE" "$RAW_FILE" "$FINAL_FILE" "$THUMB_FILE"
+  clear_status
+  printf '{"active":false}\n'
+}
+
+postprocess() {
+  local raw="$1"
+  local final="$2"
+  local thumb="$3"
+  local tmp="${final%.*}.tmp.${final##*.}"
+
+  if ! is_true "$POSTPROCESS"; then
+    mv -f "$raw" "$final" || fail "failed to move raw recording to final path; raw kept at $raw"
+  elif ffprobe -v error -select_streams a -show_entries stream=index -of csv=p=0 "$raw" | grep -q .; then
+    if ! ffmpeg -hide_banner -loglevel warning -y \
+      -ss 0.1 -i "$raw" \
+      -map 0:v:0 -map 0:a? \
+      -c:v copy \
+      -af loudnorm=I=-14:TP=-1.5:LRA=11 \
+      -c:a aac -b:a 192k \
+      "$tmp" >>"$LOG_FILE" 2>&1; then
+      rm -f "$tmp"
+      fail "postprocess failed; raw kept at $raw. See $LOG_FILE"
+    fi
+    mv -f "$tmp" "$final" || fail "failed to move processed recording; raw kept at $raw"
+  else
+    if ! ffmpeg -hide_banner -loglevel warning -y \
+      -ss 0.1 -i "$raw" \
+      -map 0:v:0 -c:v copy -an \
+      "$tmp" >>"$LOG_FILE" 2>&1; then
+      rm -f "$tmp"
+      fail "postprocess failed; raw kept at $raw. See $LOG_FILE"
+    fi
+    mv -f "$tmp" "$final" || fail "failed to move processed recording; raw kept at $raw"
+  fi
+
+  [[ $raw == "$final" ]] || rm -f "$raw"
+  rm -f "$tmp"
+  ffmpeg -hide_banner -loglevel error -y -ss 1 -i "$final" -frames:v 1 "$thumb" >/dev/null 2>&1 || true
+}
+
+stop_recording() {
+  local pid raw final thumb action
+  pid="$(running_pid)" || {
+    rm -f "$PID_FILE" "$RAW_FILE" "$FINAL_FILE" "$THUMB_FILE"
+    notify "No active screen recording" -t 2000
+    exit 0
+  }
+
+  raw="$(<"$RAW_FILE")"
+  final="$(<"$FINAL_FILE")"
+  thumb="$(<"$THUMB_FILE")"
+
+  kill -INT "$pid" 2>/dev/null || true
+  for _ in {1..80}; do
+    kill -0 "$pid" 2>/dev/null || break
+    sleep 0.1
+  done
+  kill -0 "$pid" 2>/dev/null && kill "$pid" 2>/dev/null || true
+  wait "$pid" 2>/dev/null || true
+
+  rm -f "$PID_FILE" "$RAW_FILE" "$FINAL_FILE" "$THUMB_FILE"
+  clear_status
+
+  if [[ ! -s $raw ]]; then
+    notify "Screen recording failed" "No video was written. See $LOG_FILE" -u critical -t 5000
+    exit 1
+  fi
+
+  postprocess "$raw" "$final" "$thumb"
+  wl-copy --type text/uri-list <<<"file://$final" || true
+
+  (
+    if [[ -s $thumb ]]; then
+      action=$(notify-send \
+        --app-name "Screen Recording" \
+        --icon "video-x-generic" \
+        --hint "string:image-path:$thumb" \
+        --hint "string:x-dunst-stack-tag:vshell-screenrecord" \
+        "Screen recording saved" \
+        "$final" \
+        -t 10000 \
+        -A "open=Open" \
+        -A "folder=Open Folder" \
+        -A "transcode=Transcode")
+    else
+      action=$(notify-send \
+        --app-name "Screen Recording" \
+        --icon "video-x-generic" \
+        --hint "string:x-dunst-stack-tag:vshell-screenrecord" \
+        "Screen recording saved" \
+        "$final" \
+        -t 10000 \
+        -A "open=Open" \
+        -A "folder=Open Folder" \
+        -A "transcode=Transcode")
+    fi
+    case "$action" in
+      open) uwsm app -- xdg-open "$final" ;;
+      folder) open_folder "$(dirname "$final")" ;;
+      transcode) transcode_media "$final" ;;
+    esac
+  ) >/dev/null 2>&1 &
+
+  printf '%s\n' "$final"
+}
+
+get_monitor_rectangles() {
+  hyprctl monitors -j | jq -r "${JQ_MONITOR_GEO} .[] | format_geo"
+}
+
+get_window_rectangles() {
+  hyprctl clients -j |
+    jq -r --argjson monitors "$(hyprctl monitors -j)" '
+      ($monitors | [.[] | .activeWorkspace.id, .specialWorkspace.id] | map(select(. != null and . != 0))) as $activeWorkspaces |
+      [
+        .[]
+        | select(.mapped == true and .hidden == false)
+        | select((.workspace.id as $ws | $activeWorkspaces | index($ws)) != null)
+        | select(.size[0] > 0 and .size[1] > 0)
+        | {
+            x: .at[0],
+            y: .at[1],
+            w: .size[0],
+            h: .size[1],
+            area: (.size[0] * .size[1]),
+            focus: (.focusHistoryID // 999999)
+          }
+      ]
+      | sort_by(.area, .focus)[]
+      | "\(.x),\(.y) \(.w)x\(.h)"
+    '
+}
+
+get_rectangles() {
+  get_window_rectangles
+  get_monitor_rectangles
+}
+
+monitor_for_selection() {
+  local selection="$1"
+  hyprctl monitors -j | jq -r --arg sel "$selection" "${JQ_MONITOR_GEO}
+    .[]
+    | monitor_rect
+    | select(\"\(.x),\(.y) \(.w)x\(.h)\" == \$sel)
+    | .name
+  " | head -n1
+}
+
+selection_for_click() {
+  local click_x="$1"
+  local click_y="$2"
+
+  jq -nr \
+    --argjson clients "$(hyprctl clients -j)" \
+    --argjson monitors "$(hyprctl monitors -j)" \
+    --argjson clickX "$click_x" \
+    --argjson clickY "$click_y" \
+    "${JQ_MONITOR_GEO}
+      def contains(\$r):
+        \$clickX >= \$r.x and \$clickX < (\$r.x + \$r.w) and
+        \$clickY >= \$r.y and \$clickY < (\$r.y + \$r.h);
+
+      (\$monitors | [.[] | .activeWorkspace.id, .specialWorkspace.id] | map(select(. != null and . != 0))) as \$activeWorkspaces |
+
+      [
+        \$clients[]
+        | select(.mapped == true and .hidden == false)
+        | select((.workspace.id as \$ws | \$activeWorkspaces | index(\$ws)) != null)
+        | select(.size[0] > 0 and .size[1] > 0)
+        | {
+            x: .at[0],
+            y: .at[1],
+            w: .size[0],
+            h: .size[1],
+            area: (.size[0] * .size[1]),
+            focus: (.focusHistoryID // 999999)
+          }
+        | select(contains(.))
+      ]
+      | sort_by(.area, .focus)
+      | first as \$window |
+
+      if \$window then
+        \"\(\$window.x),\(\$window.y) \(\$window.w)x\(\$window.h)\"
+      else
+        [
+          \$monitors[]
+          | monitor_rect
+          | select(contains(.))
+        ]
+        | first as \$monitor |
+        if \$monitor then
+          \"\(\$monitor.x),\(\$monitor.y) \(\$monitor.w)x\(\$monitor.h)\"
+        else
+          empty
+        end
+      end
+    "
+}
+
+pick_selection() {
+  local mode="${1:-smart}" rects click_x click_y selection
+
+  pkill slurp >/dev/null 2>&1 && exit 0
+
+  case "$mode" in
+    region)
+      hyprpicker -r -z >/tmp/vshell-screenrecord-hyprpicker.err 2>&1 &
+      local picker_pid=$!
+      sleep 0.1
+      if ! selection=$(slurp 2>/tmp/vshell-screenrecord-slurp.err); then
+        kill "$picker_pid" 2>/dev/null || true
+        local err
+        err=$(cat /tmp/vshell-screenrecord-slurp.err 2>/dev/null || true)
+        [[ -z $err ]] && exit 0
+        fail "slurp failed: $err"
+      fi
+      kill "$picker_pid" 2>/dev/null || true
+      ;;
+    window | windows)
+      hyprpicker -r -z >/tmp/vshell-screenrecord-hyprpicker.err 2>&1 &
+      local picker_pid=$!
+      sleep 0.1
+      if ! selection=$(get_window_rectangles | slurp -r 2>/tmp/vshell-screenrecord-slurp.err); then
+        kill "$picker_pid" 2>/dev/null || true
+        local err
+        err=$(cat /tmp/vshell-screenrecord-slurp.err 2>/dev/null || true)
+        [[ -z $err ]] && exit 0
+        fail "slurp failed: $err"
+      fi
+      kill "$picker_pid" 2>/dev/null || true
+      ;;
+    display | screen | monitor)
+      hyprpicker -r -z >/tmp/vshell-screenrecord-hyprpicker.err 2>&1 &
+      local picker_pid=$!
+      sleep 0.1
+      if ! selection=$(get_monitor_rectangles | slurp -r 2>/tmp/vshell-screenrecord-slurp.err); then
+        kill "$picker_pid" 2>/dev/null || true
+        local err
+        err=$(cat /tmp/vshell-screenrecord-slurp.err 2>/dev/null || true)
+        [[ -z $err ]] && exit 0
+        fail "slurp failed: $err"
+      fi
+      kill "$picker_pid" 2>/dev/null || true
+      ;;
+    fullscreen)
+      if ! selection=$(hyprctl monitors -j | jq -r "${JQ_MONITOR_GEO} .[] | select(.focused == true) | format_geo"); then
+        fail "failed to read focused monitor"
+      fi
+      [[ -n $selection ]] || fail "no focused monitor found"
+      ;;
+    smart | *)
+      rects=$(get_rectangles)
+      hyprpicker -r -z >/tmp/vshell-screenrecord-hyprpicker.err 2>&1 &
+      local picker_pid=$!
+      sleep 0.1
+      if ! selection=$(echo "$rects" | slurp 2>/tmp/vshell-screenrecord-slurp.err); then
+        kill "$picker_pid" 2>/dev/null || true
+        local err
+        err=$(cat /tmp/vshell-screenrecord-slurp.err 2>/dev/null || true)
+        [[ -z $err ]] && exit 0
+        fail "slurp failed: $err"
+      fi
+      kill "$picker_pid" 2>/dev/null || true
+
+      if [[ $selection =~ $SELECTION_RE ]]; then
+        if ((${BASH_REMATCH[3]} * ${BASH_REMATCH[4]} < 20)); then
+          click_x="${BASH_REMATCH[1]}"
+          click_y="${BASH_REMATCH[2]}"
+          selection=$(selection_for_click "$click_x" "$click_y")
+        fi
+      fi
+      ;;
+  esac
+
+  [[ -n ${selection:-} ]] && printf '%s\n' "$selection"
+}
+
+region_arg() {
+  local selection="$1"
+  [[ $selection =~ $SELECTION_RE ]] || return 1
+  printf '%sx%s+%s+%s\n' "${BASH_REMATCH[3]}" "${BASH_REMATCH[4]}" "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}"
+}
+
+start_recording() {
+  local mode="${1:-smart}"
+  shift || true
+  local arg
+  for arg in "$@"; do
+    case "$arg" in
+      --desktop-audio=*) DESKTOP_AUDIO="${arg#--desktop-audio=}" ;;
+      --microphone=*) MIC="${arg#--microphone=}" ;;
+      --cursor=*)
+        if is_true "${arg#--cursor=}"; then
+          CURSOR="yes"
+        else
+          CURSOR="no"
+        fi
+        ;;
+      --webcam=*) WEBCAM="${arg#--webcam=}" ;;
+      *) fail "unknown recording option: $arg" ;;
+    esac
+  done
+
+  check_start_deps
+  if running_pid >/dev/null; then
+    notify "Screen recording already running" "Press the shortcut again to stop." -t 2500
+    exit 0
+  fi
+
+  local timestamp raw final thumb selection monitor capture region source started
+  timestamp="$(date +'%Y-%m-%d_%H-%M-%S')"
+  started="$(date --iso-8601=seconds)"
+  raw="$STATE_DIR/screenrecording-$timestamp.raw.mkv"
+  final="$OUTPUT_DIR/screenrecording-$timestamp.mp4"
+  thumb="$STATE_DIR/screenrecording-$timestamp.jpg"
+
+  if is_true "$PORTAL"; then
+    capture=( -w portal )
+  else
+    local pre_select_focus
+    pre_select_focus="$(focus_snapshot)"
+    selection="$(pick_selection "$mode")" || true
+    focus_restore "$pre_select_focus"
+    [[ -n ${selection:-} ]] || exit 0
+    monitor="$(monitor_for_selection "$selection")"
+    if [[ -n $monitor ]]; then
+      source="$monitor"
+      capture=( -w "$monitor" )
+    else
+      region="$(region_arg "$selection")"
+      source="region"
+      capture=( -w region -region "$region" )
+    fi
+
+    if is_true "$WEBCAM" && [[ -e $WEBCAM_DEVICE ]]; then
+      source="${source}|v4l2:${WEBCAM_DEVICE};x=74%;y=69%;width=22%;height=22%;camera_fps=30"
+      capture=( -w "$source" )
+      [[ -n ${region:-} ]] && capture+=( -region "$region" )
+    fi
+  fi
+
+  local audio_args=()
+  if [[ -n ${VSHELL_SCREENRECORD_AUDIO_SOURCES:-} ]]; then
+    IFS=',' read -ra sources <<<"$VSHELL_SCREENRECORD_AUDIO_SOURCES"
+    for source in "${sources[@]}"; do
+      [[ -n $source ]] && audio_args+=( -a "$source" )
+    done
+  else
+    is_true "$DESKTOP_AUDIO" && audio_args+=( -a default_output )
+    is_true "$MIC" && audio_args+=( -a default_input )
+  fi
+
+  : >"$LOG_FILE"
+  gpu-screen-recorder \
+    "${capture[@]}" \
+    -f "$FPS" \
+    -k "$CODEC" \
+    -q "$QUALITY" \
+    -fm cfr \
+    -cursor "$CURSOR" \
+    "${audio_args[@]}" \
+    -o "$raw" >"$LOG_FILE" 2>&1 &
+
+  local pid=$!
+  printf '%s\n' "$pid" >"$PID_FILE"
+  printf '%s\n' "$raw" >"$RAW_FILE"
+  printf '%s\n' "$final" >"$FINAL_FILE"
+  printf '%s\n' "$thumb" >"$THUMB_FILE"
+  write_status "$pid" "$raw" "$final" "$thumb" "${source:-portal}" "$started"
+
+  sleep 0.4
+  if ! kill -0 "$pid" 2>/dev/null; then
+    rm -f "$PID_FILE" "$RAW_FILE" "$FINAL_FILE" "$THUMB_FILE"
+    clear_status
+    notify "Screen recording failed" "$(tail -n 4 "$LOG_FILE")" -u critical -t 7000
+    exit 1
+  fi
+
+  notify "Screen recording started" "Press Super+Shift+R again to stop." -t 2500
+}
+
+case "${1:-toggle}" in
+  status) recording_status ;;
+  stop) stop_recording ;;
+  start)
+    shift
+    mode="${1:-smart}"
+    (($# > 0)) && shift
+    start_recording "$mode" "$@"
+    ;;
+  toggle)
+    if running_pid >/dev/null; then
+      stop_recording
+    else
+      shift
+      mode="${1:-smart}"
+      (($# > 0)) && shift
+      start_recording "$mode" "$@"
+    fi
+    ;;
+  region|window|windows|display|screen|monitor|fullscreen|smart)
+    if running_pid >/dev/null; then
+      stop_recording
+    else
+      mode="$1"
+      shift
+      start_recording "$mode" "$@"
+    fi
+    ;;
+  *)
+    echo "usage: $(basename "$0") [status|toggle|start|stop|smart|region|window|display|fullscreen]" >&2
+    exit 2
+    ;;
+esac

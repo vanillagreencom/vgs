@@ -1,0 +1,385 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+shell_name="vshell"
+script_path="$(readlink -f -- "${BASH_SOURCE[0]}")"
+script_dir="$(cd -- "$(dirname -- "$script_path")" && pwd)"
+repo_root="$(cd -- "$script_dir/.." && pwd)"
+helper="$script_dir/vshell-helper"
+export VSHELL_ROOT="$repo_root"
+
+backend_src="$repo_root/backend"
+backend_bin="${XDG_CACHE_HOME:-$HOME/.cache}/vshell/vshell-backend"
+backend_build_log="${XDG_CACHE_HOME:-$HOME/.cache}/vshell/backend-build.log"
+
+# Ensure an up-to-date backend binary exists at $backend_bin. Builds on demand
+# (dev setup is symlinked with no package build step) only when the source is
+# newer than the binary. Build output is captured to $backend_build_log. If a
+# rebuild fails but a previously-built binary exists, the last-good binary is
+# kept (a transient compile error must not silently boot a featureless shell).
+# Returns non-zero only when no usable binary can be produced. Never rebuilds on
+# the hot path.
+_ensure_backend() {
+  [[ -d "$backend_src" ]] || return 1
+  if [[ -x "$backend_bin" ]] \
+    && [[ ! "$backend_src/go.mod" -nt "$backend_bin" ]] \
+    && [[ ! "$backend_src/go.sum" -nt "$backend_bin" ]] \
+    && [[ -z "$(find "$backend_src" -name '*.go' -newer "$backend_bin" -print -quit 2>/dev/null)" ]]; then
+    return 0
+  fi
+  command -v go >/dev/null 2>&1 || { [[ -x "$backend_bin" ]] && return 0; return 1; }
+  mkdir -p "$(dirname "$backend_bin")" || return 1
+  if ( cd "$backend_src" && go build -o "$backend_bin" ./cmd/vshell-backend ) >"$backend_build_log" 2>&1; then
+    return 0
+  fi
+  if [[ -x "$backend_bin" ]]; then
+    echo "vshell: backend rebuild failed (see $backend_build_log), using cached binary" >&2
+    return 0
+  fi
+  return 1
+}
+
+_export_backend_socket() {
+  local session socket
+  # The explicit debug override always wins; VGS_SOCKET inherited from a
+  # pre-restart shell may point at a socket the new runner already unlinked,
+  # so only trust it while it is alive and rediscover otherwise.
+  [[ -n "${VGS_BACKEND_SOCKET:-}" ]] && return 0
+  [[ -n "${VGS_SOCKET:-}" && -S "${VGS_SOCKET}" ]] && return 0
+  for session in "${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"/vshell-*.session; do
+    [[ -f "$session" ]] || continue
+    socket="$(awk -F= '$1 == "socket" { print $2 }' "$session" | tail -n1)"
+    if [[ -n "$socket" && -S "$socket" ]]; then
+      export VGS_BACKEND_SOCKET="$socket"
+      return 0
+    fi
+  done
+  return 1
+}
+
+_qs_ipc_call() {
+  local out code pid
+  out="$(qs ipc -c "$shell_name" call "$@" 2>&1)" && {
+    printf '%s\n' "$out"
+    return 0
+  }
+  code=$?
+
+  # Config-path IPC can fail from SSH or unusual display environments. Fall
+  # back to the live vshell qs PID, matching the known lock recovery path.
+  pid="$(pgrep -af "qs -c $shell_name" | awk '{print $1}' | tail -n1 || true)"
+  if [[ -n "$pid" ]]; then
+    out="$(qs ipc --pid "$pid" call "$@" 2>&1)" && {
+      printf '%s\n' "$out"
+      return 0
+    }
+    code=$?
+  fi
+
+  printf '%s\n' "$out"
+  return "$code"
+}
+
+_lock_recover() {
+  local unlock=false status locked_hint
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --unlock) unlock=true ;;
+      -h|--help)
+        cat <<'EOF'
+Usage:
+  vshell lock recover [--unlock]
+
+Recreate a VGS WlSessionLock surface after Hyprland's crashed-locker fallback.
+By default this leaves the session locked so the user can authenticate normally.
+Use --unlock only for explicit SSH recovery.
+EOF
+        return 0
+        ;;
+      *) echo "vshell lock recover: unknown option: $1" >&2; return 2 ;;
+    esac
+    shift
+  done
+
+  if [[ ! -d "$repo_root/quickshell/vshell/assets/pam" && ! -e /etc/pam.d/vshell ]]; then
+    echo "vshell lock recover: warning: no bundled assets/pam or /etc/pam.d/vshell found" >&2
+  fi
+
+  hyprctl eval 'hl.config({ misc = { allow_session_lock_restore = true } })' >/dev/null 2>&1 \
+    || hyprctl keyword misc:allow_session_lock_restore true >/dev/null 2>&1 \
+    || echo "vshell lock recover: warning: could not enable allow_session_lock_restore" >&2
+
+  _qs_ipc_call lock forceReset >/dev/null
+  _qs_ipc_call lock lock >/dev/null
+
+  for _ in {1..20}; do
+    status="$(_qs_ipc_call lock status || true)"
+    if grep -q '"sessionLockSecure":true' <<<"$status"; then
+      break
+    fi
+    sleep 0.25
+  done
+
+  status="$(_qs_ipc_call lock status || true)"
+  if ! grep -q '"sessionLockSecure":true' <<<"$status"; then
+    echo "vshell lock recover: lock surface did not become secure" >&2
+    printf '%s\n' "$status" >&2
+    return 1
+  fi
+
+  if [[ "$unlock" == true ]]; then
+    echo "vshell lock recover: --unlock requested; clearing the recovered lock" >&2
+    _qs_ipc_call lock unlock >/dev/null
+    sleep 0.5
+    status="$(_qs_ipc_call lock status || true)"
+  fi
+
+  locked_hint="$(loginctl show-session "${XDG_SESSION_ID:-self}" -p LockedHint 2>/dev/null || true)"
+  printf 'hyprctl locked: '
+  hyprctl locked || true
+  printf 'lock status: %s\n' "$status"
+  [[ -n "$locked_hint" ]] && printf '%s\n' "$locked_hint"
+}
+
+_json_string() {
+  python3 -c 'import json,sys; print(json.dumps(sys.argv[1]))' "$1"
+}
+
+_open_install_desktop() {
+  local src="$repo_root/config/vshell/applications/vshell-open.desktop"
+  local dest="${XDG_DATA_HOME:-$HOME/.local/share}/applications/vshell-open.desktop"
+  [[ -f "$src" ]] || { echo "vshell open: missing $src" >&2; return 1; }
+  mkdir -p "$(dirname "$dest")"
+  cp "$src" "$dest"
+  command -v update-desktop-database >/dev/null 2>&1 && update-desktop-database "$(dirname "$dest")" >/dev/null 2>&1 || true
+  printf '%s\n' "$dest"
+}
+
+_open_target() {
+  local target="" mime="" type="" json method
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --mime) mime="${2:-}"; shift 2 ;;
+      --type) type="${2:-}"; shift 2 ;;
+      --install-desktop|install-desktop|repair-desktop) _open_install_desktop; return ;;
+      -h|--help)
+        cat <<'EOF'
+Usage:
+  vshell open [--mime MIME] [--type url|file|uri] <target>
+  vshell open --install-desktop
+EOF
+        return 0
+        ;;
+      --) shift; break ;;
+      -*) echo "vshell open: unknown option: $1" >&2; return 2 ;;
+      *)
+        [[ -z "$target" ]] || { echo "vshell open: too many targets" >&2; return 2; }
+        target="$1"
+        shift
+        ;;
+    esac
+  done
+  if [[ $# -gt 0 && -z "$target" ]]; then
+    target="$1"
+    shift
+  fi
+  [[ $# -eq 0 ]] || { echo "vshell open: too many targets" >&2; return 2; }
+  [[ -n "$target" ]] || { echo "vshell open: target required" >&2; return 2; }
+  case "$type:$target" in
+    url:*|:http://*|:https://*|:vshell://*)
+      method="browser.open"
+      json='{"target":'$(_json_string "$target")'}'
+      ;;
+    uri:*)
+      method="apppicker.open"
+      json='{"target":'$(_json_string "$target")',"requestType":"uri","mimeType":'$(_json_string "$mime")'}'
+      ;;
+    file:*|:file://*|:/*)
+      method="apppicker.open"
+      json='{"target":'$(_json_string "$target")',"requestType":"file","mimeType":'$(_json_string "$mime")'}'
+      ;;
+    *)
+      echo "vshell open: target must be http(s)/vshell URL, file URI, or absolute path" >&2
+      return 2
+      ;;
+  esac
+  _export_backend_socket || true
+  if _ensure_backend; then
+    local out
+    if out="$("$backend_bin" request "$method" "$json")"; then
+      return 0
+    fi
+    # As the default URL handler, a silent exit reads as "clicking links does
+    # nothing"; surface the backend's rejection.
+    echo "vshell open: $out" >&2
+    return 1
+  fi
+  echo "vshell open: backend unavailable" >&2
+  return 1
+}
+
+case "${1:-run}" in
+  run)
+    shift || true
+    "$helper" fonts apply --json >/dev/null 2>&1 || true
+    if _ensure_backend; then
+      exec "$backend_bin" run "$@"
+    fi
+    echo "vshell: backend unavailable (need Go toolchain and $backend_src; see $backend_build_log), starting Quickshell directly" >&2
+    exec qs -c "$shell_name" "$@"
+    ;;
+  backend)
+    shift || true
+    if _ensure_backend; then
+      case "${1:-}" in
+        request|doctor) _export_backend_socket || true ;;
+      esac
+      exec "$backend_bin" "$@"
+    fi
+    echo "vshell: backend build failed or unavailable (need Go toolchain and $backend_src; see $backend_build_log)" >&2
+    exit 1
+    ;;
+  ipc)
+    shift
+    if [[ ${1:-} == call && ${2:-} == theme ]]; then
+      case "${3:-}" in
+        toggle) exec "$helper" theme toggle ;;
+        light) exec "$helper" theme mode light ;;
+        dark) exec "$helper" theme mode dark ;;
+        getMode) exec "$helper" theme get-mode ;;
+      esac
+    fi
+    out="$(qs ipc -c "$shell_name" "$@" 2>&1)" || {
+      code=$?
+      printf '%s\n' "$out"
+      exit "$code"
+    }
+    printf '%s\n' "$out"
+    if grep -qiE 'function not found|target not found|unknown target|error:|failed' <<<"$out"; then
+      exit 1
+    fi
+    ;;
+  lock)
+    shift || true
+    case "${1:-}" in
+      recover) shift || true; _lock_recover "$@" ;;
+      *) echo "Usage: vshell lock recover [--unlock]" >&2; exit 2 ;;
+    esac
+    ;;
+  open)
+    shift || true
+    _open_target "$@"
+    ;;
+  logs|log)
+    shift || true
+    exec journalctl --user -u vshell.service "$@"
+    ;;
+  restart)
+    exec systemctl --user restart vshell.service
+    ;;
+  status)
+    exec systemctl --user status vshell.service --no-pager
+    ;;
+  theme|fonts|deps|update|ai-usage|ai|capture|screenshot|screenrecording|recording|ocr|cl|clipboard|dl|download|trash|color|keybinds|config|battery|blur|brightness|auth|greeter)
+    exec "$helper" "$@"
+    ;;
+  screensaver)
+    shift || true
+    exec "$script_dir/vshell-screensaver" "$@"
+    ;;
+  net-usage|network-usage)
+    shift || true
+    # Per-app network traffic (the bar network widget's flyout) is captured with
+    # bandwhich, which needs raw-socket capabilities. Grant them once here.
+    bandwhich_caps='cap_sys_ptrace,cap_dac_read_search,cap_net_raw,cap_net_admin+ep'
+    bandwhich_bin="$(command -v bandwhich || true)"
+    case "${1:-status}" in
+      setup)
+        if [[ -z "$bandwhich_bin" ]]; then
+          echo "vshell: bandwhich is not installed (try: paru -S bandwhich), then re-run." >&2
+          exit 1
+        fi
+        echo "vshell: granting capture capabilities to $bandwhich_bin"
+        echo "        (cap_net_raw, cap_net_admin, cap_dac_read_search, cap_sys_ptrace)"
+        if command -v sudo >/dev/null 2>&1; then
+          sudo setcap "$bandwhich_caps" "$bandwhich_bin"
+        elif command -v pkexec >/dev/null 2>&1; then
+          pkexec setcap "$bandwhich_caps" "$bandwhich_bin"
+        else
+          echo "vshell: need sudo or pkexec to apply setcap" >&2
+          exit 1
+        fi
+        echo "vshell: done -> $(getcap "$bandwhich_bin")"
+        echo "Note: re-run 'vshell net-usage setup' after a bandwhich package upgrade (setcap is reset)."
+        ;;
+      status)
+        if [[ -z "$bandwhich_bin" ]]; then
+          echo "bandwhich: not installed"
+          exit 1
+        fi
+        caps="$(getcap "$bandwhich_bin" 2>/dev/null || true)"
+        if [[ "$caps" == *cap_net_raw* ]]; then
+          echo "bandwhich: ready -> $caps"
+        else
+          echo "bandwhich: needs setup (run: vshell net-usage setup)"
+          exit 1
+        fi
+        ;;
+      *)
+        echo "Usage: vshell net-usage setup|status" >&2
+        exit 2
+        ;;
+    esac
+    ;;
+  help|-h|--help)
+    cat <<'EOF'
+Usage:
+  vshell run [qs args...]
+  vshell backend run|serve|request <method> [json]|doctor|methods [--json]
+  vshell open [--mime MIME] [--type url|file|uri] <target>
+  vshell open --install-desktop
+  vshell ipc call <target> <function> [args...]
+  vshell lock recover [--unlock]
+  vshell restart|status|logs
+  vshell theme current|list|apply|import-colors|extract-wallpaper|set-wallpaper
+  vshell theme apply-colors [--set role=#hex ...] [--persist] [--name <theme>]
+  vshell theme restyle [--brightness/--vibrancy/--contrast/--hue/--temperature N|--reset]
+  vshell theme revert <name>
+  vshell theme app-roles <app>|app-colors <app> [--set role=#hex ...|--reset]
+  vshell theme wallpapers [name]
+  vshell theme wallpaper-add <path>|wallpaper-remove <file>|wallpaper-default <file> [--theme <name>]
+  vshell theme mode <light|dark|toggle> [--transform]
+  vshell theme pick [all|dark|light]
+  vshell theme preview [name|--all] [--force]
+  vshell theme lint [name]
+  vshell theme migrate <name>|--all
+  vshell theme apps [--enable <app>|--disable <app>]
+  vshell theme regenerate <name> [--app <id>] [--yes]
+  vshell fonts status|apply|reset
+  vshell deps status|check <feature>
+  vshell update count|run <system|aur|all>
+  vshell ai-usage <claude|codex>
+  vshell capture screenshot|screenrecording|text [...]
+  vshell screensaver launch|stop|transcode <image> <output>   (decorative ascii screensaver)
+  vshell cl copy <text>
+  vshell dl [curl-like args] <url>
+  vshell trash count|put|empty
+  vshell color pick [--json|--rgb|--hsv]
+  vshell battery set-charge-limit <20-100>
+  vshell blur check|apply
+  vshell brightness list|set|adjust|increment|decrement|doctor|install-udev
+  vshell net-usage setup|status
+  vshell keybinds show hyprland
+  vshell config resolve-include <compositor> <file>
+  vshell config apply-layout hyprland [--json]
+  vshell auth sync [--terminal]
+  vshell greeter sync|run|launch-session
+  vshell greeter keyring empty [--force]
+EOF
+    ;;
+  *)
+    echo "Unknown vshell command: $1" >&2
+    echo "Run: vshell help" >&2
+    exit 2
+    ;;
+esac

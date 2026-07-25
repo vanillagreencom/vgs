@@ -1,0 +1,10 @@
+{
+  "app": "qt5ct",
+  "template": "vgs.conf",
+  "destination": "~/.config/qt5ct/colors/vgs.conf",
+  "detect": {
+    "commands": [
+      "qt5ct"
+    ]
+  }
+}

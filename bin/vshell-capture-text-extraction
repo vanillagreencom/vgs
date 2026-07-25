@@ -1,0 +1,37 @@
+#!/bin/bash
+# VGS-style region OCR: freeze, select, tesseract, copy text to clipboard.
+set -uo pipefail
+
+fail() {
+  notify-send "OCR failed" "$1" -u critical -t 4000 2>/dev/null || true
+  printf 'OCR failed: %s\n' "$1" >&2
+  exit 1
+}
+
+for dep in grim slurp hyprpicker tesseract wl-copy notify-send; do
+  command -v "$dep" >/dev/null 2>&1 || fail "$dep not found"
+done
+
+cleanup_freeze() {
+  [[ -n ${PID:-} ]] && kill "$PID" 2>/dev/null
+}
+trap cleanup_freeze EXIT
+
+hyprpicker -r -z >/tmp/vshell-ocr-hyprpicker.err 2>&1 &
+PID=$!
+sleep .1
+if ! SELECTION=$(slurp 2>/tmp/vshell-ocr-slurp.err); then
+  err=$(cat /tmp/vshell-ocr-slurp.err 2>/dev/null || true)
+  [[ -z $err ]] && exit 0
+  fail "slurp failed: $err"
+fi
+
+[[ -z $SELECTION ]] && exit 0
+
+TEXT=$(grim -g "$SELECTION" - |
+  tesseract stdin stdout --oem 1 --psm 6 -l "${VSHELL_OCR_LANGS:-eng}" --dpi 300 -c preserve_interword_spaces=1 2>/tmp/vshell-ocr-tesseract.err) || fail "capture/tesseract failed: $(cat /tmp/vshell-ocr-tesseract.err 2>/dev/null || true)"
+
+[[ -z $TEXT ]] && fail "no text detected"
+
+printf "%s" "$TEXT" | wl-copy || fail "wl-copy failed"
+notify-send "Copied text from selection to clipboard"

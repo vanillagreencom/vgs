@@ -1,0 +1,111 @@
+{
+  "version": 1,
+  "features": {
+    "base": {
+      "required": true,
+      "commands": [
+        "qs",
+        "hyprctl",
+        "jq"
+      ]
+    },
+    "theme": {
+      "required": true,
+      "commands": [
+        "python3"
+      ]
+    },
+    "greeter": {
+      "commands": [
+        "greetd",
+        "Hyprland",
+        "gnome-keyring-daemon"
+      ]
+    },
+    "clipboard": {
+      "commands": [
+        "wl-copy",
+        "wl-paste"
+      ]
+    },
+    "network-usage": {
+      "commands": [
+        "bandwhich"
+      ]
+    },
+    "capture": {
+      "commands": [
+        "grim",
+        "slurp",
+        "hyprpicker",
+        "hyprctl",
+        "jq",
+        "wl-copy",
+        "notify-send"
+      ]
+    },
+    "capture-edit": {
+      "commands": [
+        "satty"
+      ]
+    },
+    "ocr": {
+      "commands": [
+        "grim",
+        "slurp",
+        "hyprpicker",
+        "tesseract",
+        "wl-copy",
+        "notify-send"
+      ]
+    },
+    "recording": {
+      "commands": [
+        "gpu-screen-recorder",
+        "slurp",
+        "hyprpicker",
+        "hyprctl",
+        "jq",
+        "wl-copy",
+        "notify-send",
+        "ffmpeg",
+        "ffprobe"
+      ]
+    },
+    "thumbnails": {
+      "commands": [
+        "ffmpegthumbnailer"
+      ]
+    },
+    "updates-arch": {
+      "commands": [
+        "pacman",
+        "checkupdates"
+      ]
+    },
+    "updates-aur": {
+      "commands": [
+        "paru"
+      ]
+    },
+    "ai-usage": {
+      "commands": [
+        "${VSHELL_ROOT}/bin/vshell-ai-usage",
+        "${VSHELL_ROOT}/bin/claudebar",
+        "${VSHELL_ROOT}/bin/codexbar",
+        "curl",
+        "jq"
+      ]
+    },
+    "tailscale": {
+      "commands": [
+        "tailscale"
+      ]
+    },
+    "brightness": {
+      "commands": [
+        "udevadm"
+      ]
+    }
+  }
+}

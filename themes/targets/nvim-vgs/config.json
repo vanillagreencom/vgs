@@ -1,0 +1,14 @@
+{
+  "app": "neovim",
+  "template": "vgs-theme.lua",
+  "destination": "~/.local/share/vshell/theme.nvim.lua",
+  "curatedFile": "neovim.lua",
+  "curatedDestination": "~/.local/share/vshell/theme.nvim.spec.lua",
+  "curatedMode": "additional",
+  "detect": {
+    "commands": [
+      "nvim"
+    ]
+  },
+  "hook": "nvim-reload"
+}

@@ -1,0 +1,12 @@
+{
+  "app": "obsidian",
+  "template": "vgs-obsidian.css",
+  "destination": "~/.config/vshell/generated/obsidian.css",
+  "curatedFile": "obsidian.css",
+  "detect": {
+    "paths": [
+      "~/.config/obsidian"
+    ]
+  },
+  "hook": "obsidian-theme"
+}

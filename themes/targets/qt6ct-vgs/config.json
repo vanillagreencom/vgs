@@ -1,0 +1,11 @@
+{
+  "app": "qt6ct",
+  "template": "vgs.conf",
+  "destination": "~/.config/qt6ct/colors/vgs.conf",
+  "curatedFile": "qtct.conf",
+  "detect": {
+    "commands": [
+      "qt6ct"
+    ]
+  }
+}

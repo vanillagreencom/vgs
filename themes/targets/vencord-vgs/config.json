@@ -1,0 +1,11 @@
+{
+  "app": "vencord",
+  "template": "vgs-discord.css",
+  "destination": "~/.config/Vencord/themes/vgs-discord.css",
+  "curatedFile": "discord.css",
+  "detect": {
+    "paths": [
+      "~/.config/Vencord"
+    ]
+  }
+}

@@ -1,0 +1,78 @@
+# Agent and coding-harness workspaces
+# Existing tracked files stay tracked until removed from the index.
+.vstack-lock.json
+vstack.toml
+vstack.settings.toml
+.agents/
+.claude/
+.codex/
+.opencode/
+.pi/
+.aider*/
+.cursor/
+.continue/
+.gemini/
+.roo/
+.windsurf/
+
+# Local environment and secrets
+.env
+.env.*
+!.env.example
+!.env.sample
+
+# Runtime logs, scratch files, and caches
+tmp/
+.cache/
+logs/
+*.log
+*.tmp
+*.temp
+*.bak
+*.orig
+*.rej
+
+# Python helper/tooling artifacts
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+build/
+dist/
+*.egg-info/
+.venv/
+venv/
+
+# Node/QML tooling artifacts
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+.qmlcache/
+qmlcache/
+*.qmlc
+*.jsc
+
+# Quickshell/vshell live state belongs in ~/.config/vshell, not source snapshots
+config/vshell/session.json
+config/vshell/cache.json
+config/vshell/theme.json
+config/vshell/generated/
+config/vshell/runtime/
+
+# Editor and OS metadata
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# Local git worktrees (vstack worktree skill)
+/trees/

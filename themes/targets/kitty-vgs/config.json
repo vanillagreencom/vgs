@@ -1,0 +1,12 @@
+{
+  "app": "kitty",
+  "template": "vgs-theme.conf",
+  "destination": "~/.config/kitty/vgs-theme.conf",
+  "curatedFile": "kitty.conf",
+  "detect": {
+    "commands": [
+      "kitty"
+    ]
+  },
+  "hook": "kitty-reload"
+}

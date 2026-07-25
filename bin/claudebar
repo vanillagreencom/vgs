@@ -1,0 +1,1186 @@
+#!/usr/bin/env bash
+# claudebar — Claude AI plan usage widget for Waybar
+# Reads OAuth credentials from Claude CLI, shows session/weekly limits
+# with colored progress bars and Pango markup tooltip.
+#
+# Usage: claudebar [--icon ICON] [--format FORMAT] [--tooltip-format FORMAT] [--pace-tolerance N]
+#                  [--format-pace-color] [--tooltip-pace-pts] [--remaining]
+#                  [--color-low HEX] [--color-mid HEX] [--color-high HEX] [--color-critical HEX]
+#
+# Format placeholders:
+#   {icon}              󰚩 icon (Nerd Font)
+#   {plan}              Plan label (e.g. "Max 5x")
+#   {session_pct}       Session (5h) usage %
+#   {session_reset}     Session countdown (e.g. "1h 30m")
+#   {session_elapsed}   Session time elapsed % (e.g. "58")
+#   {session_bar}       Session usage progress bar (Pango-colored)
+#   {session_pace}           Session pacing icon, ratio-based (↑ ↓ →)
+#   {session_pace_indicator} Session pacing icon, point-based (↑ ↓ →)
+#   {session_pace_pct}       Session pacing deviation, ratio (e.g. "72% ahead")
+#   {session_pace_pts}       Session pacing deviation, points (e.g. "12pts ahead")
+#   {session_pace_delta}     Session pacing delta, signed (e.g. "-12", "5", "0")
+#   {session_pace_abs_delta} Session pacing delta, unsigned (e.g. "12", "5", "0")
+#   {weekly_pct}        Weekly (7d all models) usage %
+#   {weekly_reset}      Weekly countdown (e.g. "4d 1h")
+#   {weekly_elapsed}    Weekly time elapsed % (e.g. "42")
+#   {weekly_bar}        Weekly usage progress bar (Pango-colored)
+#   {weekly_pace}            Weekly pacing icon, ratio-based (↑ ↓ →)
+#   {weekly_pace_indicator}  Weekly pacing icon, point-based (↑ ↓ →)
+#   {weekly_pace_pct}        Weekly pacing deviation, ratio (e.g. "72% ahead")
+#   {weekly_pace_pts}        Weekly pacing deviation, points (e.g. "12pts ahead")
+#   {weekly_pace_delta}      Weekly pacing delta, signed (e.g. "-12", "5", "0")
+#   {weekly_pace_abs_delta}  Weekly pacing delta, unsigned (e.g. "12", "5", "0")
+#   {sonnet_pct}        Sonnet-only weekly usage %
+#   {sonnet_reset}      Sonnet countdown
+#   {sonnet_elapsed}    Sonnet time elapsed % (e.g. "42")
+#   {sonnet_bar}        Sonnet usage progress bar (Pango-colored)
+#   {sonnet_pace}            Sonnet pacing icon, ratio-based (↑ ↓ →)
+#   {sonnet_pace_indicator}  Sonnet pacing icon, point-based (↑ ↓ →)
+#   {sonnet_pace_pct}        Sonnet pacing deviation, ratio (e.g. "72% ahead")
+#   {sonnet_pace_pts}        Sonnet pacing deviation, points (e.g. "8pts ahead")
+#   {sonnet_pace_delta}      Sonnet pacing delta, signed (e.g. "-8", "3", "0")
+#   {sonnet_pace_abs_delta}  Sonnet pacing delta, unsigned (e.g. "8", "3", "0")
+#   {extra_spent}       Extra usage spent (e.g. "$2.50")
+#   {extra_limit}       Extra usage monthly limit (e.g. "$50.00")
+#   {extra_pct}         Extra usage spent %
+#   {extra_bar}         Extra usage progress bar (Pango-colored)
+#
+#   Remaining mode (battery framing; available regardless of --remaining):
+#   {session_remaining_pct}   Session remaining % (100 - used)
+#   {session_remaining_bar}   Session remaining drain bar (Pango, no marker)
+#   {weekly_remaining_pct}    Weekly remaining %
+#   {weekly_remaining_bar}    Weekly remaining drain bar
+#   {sonnet_remaining_pct}    Sonnet remaining %
+#   {sonnet_remaining_bar}    Sonnet remaining drain bar
+#
+# Default format: "{session_pct}% · {session_reset}"
+# --remaining flips the default bar text + tooltip to a "what's left" framing
+#   (e.g. "58% · 1h 30m"); {*_remaining_pct} and {*_remaining_bar} are
+#   available regardless of this flag. Fully backward compatible; opt-in.
+# Note: bar placeholders are colored by their own window's usage, independent of
+#       the surrounding bar text color (which reflects the worst window).
+
+set -euo pipefail
+
+# --- Parse args ---
+FORMAT="{session_pct}% · {session_reset}"
+TOOLTIP_FORMAT=""
+PACE_TOLERANCE=5
+REMAINING=false
+FORMAT_SET=false
+BAR_COLOR_LOW=""
+BAR_COLOR_MID=""
+BAR_COLOR_HIGH=""
+BAR_COLOR_CRITICAL=""
+BAR_ICON=""
+EMIT_JSON=false
+FORMAT_PACE_COLOR=false
+TOOLTIP_PACE_PTS=false
+FRAME=false
+FRAME_FONT="JetBrainsMono Nerd Font Mono"
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --icon)
+            [[ $# -ge 2 ]] || { echo '{"text":"⚠","tooltip":"--icon requires a value","class":"critical"}'; exit 0; }
+            BAR_ICON="$2"; shift 2 ;;
+        --format)
+            [[ $# -ge 2 ]] || { echo '{"text":"⚠","tooltip":"--format requires a value","class":"critical"}'; exit 0; }
+            FORMAT="$2"; FORMAT_SET=true; shift 2 ;;
+        --tooltip-format)
+            [[ $# -ge 2 ]] || { echo '{"text":"⚠","tooltip":"--tooltip-format requires a value","class":"critical"}'; exit 0; }
+            TOOLTIP_FORMAT="$2"; shift 2 ;;
+        --pace-tolerance)
+            [[ $# -ge 2 ]] || { echo '{"text":"⚠","tooltip":"--pace-tolerance requires a value","class":"critical"}'; exit 0; }
+            PACE_TOLERANCE="$2"; shift 2 ;;
+        --config-dir)
+            [[ $# -ge 2 ]] || { echo '{"text":"⚠","tooltip":"--config-dir requires a value","class":"critical"}'; exit 0; }
+            CONFIG_DIR="$2"; shift 2 ;;
+        --emit-json) EMIT_JSON=true; shift ;;
+        --format-pace-color) FORMAT_PACE_COLOR=true; shift ;;
+        --tooltip-pace-pts) TOOLTIP_PACE_PTS=true; shift ;;
+        --remaining) REMAINING=true; shift ;;
+        --frame) FRAME=true; shift ;;
+        --frame-font) [[ $# -ge 2 ]] || { echo '{"text":"⚠","tooltip":"--frame-font requires a value","class":"critical"}'; exit 0; }
+                      FRAME_FONT="$2"; shift 2 ;;
+        --color-low)       [[ $# -ge 2 ]] || { echo '{"text":"⚠","tooltip":"--color-low requires a value","class":"critical"}'; exit 0; }
+                           BAR_COLOR_LOW="$2"; shift 2 ;;
+        --color-mid)       [[ $# -ge 2 ]] || { echo '{"text":"⚠","tooltip":"--color-mid requires a value","class":"critical"}'; exit 0; }
+                           BAR_COLOR_MID="$2"; shift 2 ;;
+        --color-high)      [[ $# -ge 2 ]] || { echo '{"text":"⚠","tooltip":"--color-high requires a value","class":"critical"}'; exit 0; }
+                           BAR_COLOR_HIGH="$2"; shift 2 ;;
+        --color-critical)  [[ $# -ge 2 ]] || { echo '{"text":"⚠","tooltip":"--color-critical requires a value","class":"critical"}'; exit 0; }
+                           BAR_COLOR_CRITICAL="$2"; shift 2 ;;
+        *) _o="${1//\\/\\\\}"; _o="${_o//\"/\\\"}"; echo '{"text":"⚠","tooltip":"Unknown option: '"$_o"'","class":"critical"}'; exit 0 ;;
+    esac
+done
+[[ "$PACE_TOLERANCE" =~ ^[0-9]+$ ]] || { echo '{"text":"⚠","tooltip":"--pace-tolerance must be a non-negative integer","class":"critical"}'; exit 0; }
+PACE_TOLERANCE=$((10#$PACE_TOLERANCE))
+# In remaining mode, default the bar to "what's left" unless the user set their own format.
+[[ "$REMAINING" == "true" && "$FORMAT_SET" == "false" ]] && FORMAT="{session_remaining_pct}% · {session_reset}"
+
+# Account selection: --config-dir wins, else CLAUDE_CONFIG_DIR (what the
+# per-account `claude` wrappers set), else the default profile. Each account
+# gets its own cache dir so parallel accounts never share a usage.json, a
+# staleness marker, or the fetch lock — everything below derives from CACHE_DIR.
+CONFIG_DIR="${CONFIG_DIR:-${CLAUDE_CONFIG_DIR:-$HOME/.claude}}"
+CONFIG_DIR="${CONFIG_DIR%/}"
+CREDS="$CONFIG_DIR/.credentials.json"
+API_URL="https://api.anthropic.com/api/oauth/usage"
+TOKEN_URL="https://platform.claude.com/v1/oauth/token"
+CLIENT_ID="9d1c250a-e61b-44d9-88ed-5944d1962f5e" # Claude CLI OAuth client ID
+REFRESH_BUFFER=300 # refresh 5 min before expiry
+CACHE_DIR="$HOME/.cache/claudebar"
+if [[ "$CONFIG_DIR" != "$HOME/.claude" ]]; then
+    _slug="${CONFIG_DIR#"$HOME"/}"
+    _slug="${_slug//\//_}"
+    _slug="${_slug//[^a-zA-Z0-9._-]/_}"
+    CACHE_DIR="$CACHE_DIR/${_slug:-alt}"
+fi
+CACHE_TTL=60 # seconds
+
+# Transient (no-HTTP-response) failures retry on a deadline budget, not a fixed
+# attempt count. Boot-like starts (no cache, or cache older than
+# NET_BOOT_CACHE_AGE) poll up to NET_LONG_BUDGET seconds: at the first Waybar
+# exec there is nothing better to show than an empty module, and on re-execs
+# the bar keeps the previous output while we wait — waiting beats rendering
+# day-old data for a full interval. Mid-session blips keep the quick budget.
+# CLAUDEBAR_TEST_NET_* envs let the test suite shrink the budgets; they are
+# not a user interface.
+_env_uint() { if [[ "$1" =~ ^[0-9]+$ ]]; then printf '%s' "$1"; else printf '%s' "$2"; fi; }
+NET_RETRY_DELAY=$(_env_uint "${CLAUDEBAR_TEST_NET_RETRY_DELAY:-}" 2)
+NET_QUICK_BUDGET=$(_env_uint "${CLAUDEBAR_TEST_NET_QUICK_BUDGET:-}" 6)
+NET_LONG_BUDGET=$(_env_uint "${CLAUDEBAR_TEST_NET_LONG_BUDGET:-}" 20)
+NET_BOOT_CACHE_AGE=600 # cache older than this → boot-like start
+NET_WAIT_RECENT=45     # .net_wait younger than this → a sibling already waited
+
+# --- Theme colors ---
+# Blend two hex colors (#RRGGBB) by averaging their RGB components
+hex_blend() {
+    local c1="${1#\#}" c2="${2#\#}"
+    local r1=$((16#${c1:0:2})) g1=$((16#${c1:2:2})) b1=$((16#${c1:4:2}))
+    local r2=$((16#${c2:0:2})) g2=$((16#${c2:2:2})) b2=$((16#${c2:4:2}))
+    printf '#%02x%02x%02x' $(( (r1+r2)/2 )) $(( (g1+g2)/2 )) $(( (b1+b2)/2 ))
+}
+
+load_theme_colors() {
+    local theme_file="${XDG_CONFIG_HOME:-$HOME/.config}/vshell/theme.json"
+    if [[ -f "$theme_file" ]]; then
+        local accent="" foreground="" background="" color1="" color2="" color3=""
+        # VGS writes the active palette here; ANSI 1/2/3 drive the bar states.
+        IFS=$'\t' read -r accent foreground background color1 color2 color3 < <(
+            jq -r '.colors | [.accent, .foreground, .background, .red, .green, .yellow]
+                   | map(. // "") | @tsv' "$theme_file" 2>/dev/null
+        )
+        # Map theme colors to widget colors
+        [[ -n "$accent" ]]     && BLUE="$accent"
+        [[ -n "$foreground" ]] && FG="$foreground"
+        [[ -n "$color1" ]]     && { RED="$color1"; ORANGE="$color1"; }
+        [[ -n "$color2" ]]     && GREEN="$color2"
+        [[ -n "$color3" ]]     && YELLOW="$color3"
+        # DIM = midpoint between foreground and background
+        if [[ -n "$foreground" && -n "$background" ]]; then
+            DIM=$(hex_blend "$foreground" "$background")
+        fi
+        MARKER="$FG"
+        # BAR_EMPTY = slightly lighter than background (blend bg with dim)
+        if [[ -n "$background" ]]; then
+            BAR_EMPTY=$(hex_blend "$background" "$DIM")
+        fi
+    fi
+}
+
+# One Dark defaults (overridden by the active VGS theme if available)
+GREEN="#98c379"
+YELLOW="#e5c07b"
+ORANGE="#d19a66"
+RED="#e06c75"
+BLUE="#61afef"
+DIM="#5c6370"
+FG="#abb2bf"
+BAR_EMPTY="#3e4451"
+MARKER="$FG"
+load_theme_colors
+
+# Bar text colors: CLI overrides > theme > One Dark defaults
+[[ -n "$BAR_COLOR_LOW" ]]      || BAR_COLOR_LOW="$GREEN"
+[[ -n "$BAR_COLOR_MID" ]]      || BAR_COLOR_MID="$YELLOW"
+[[ -n "$BAR_COLOR_HIGH" ]]     || BAR_COLOR_HIGH="$ORANGE"
+[[ -n "$BAR_COLOR_CRITICAL" ]] || BAR_COLOR_CRITICAL="$RED"
+
+BAR_LEN=20
+
+# Window durations in seconds
+SESSION_WINDOW=$(( 5 * 3600 ))      # 5 hours
+WEEKLY_WINDOW=$(( 7 * 24 * 3600 ))  # 7 days
+
+# --- Helpers ---
+
+die() {
+    # In widget-bridge mode a failure is one account's problem, not the bar's:
+    # report it as account-shaped JSON so the caller can render the other
+    # accounts and show this one as unavailable.
+    if [[ "${EMIT_JSON:-false}" == "true" ]] && command -v jq &>/dev/null; then
+        jq -nc --arg err "$1" --arg config_dir "${CONFIG_DIR:-}" \
+            '{ok:false, error:$err, configDir:$config_dir}'
+        exit 0
+    fi
+    if command -v jq &>/dev/null; then
+        jq -nc --arg t "⚠" --arg tip "$1" '{text:$t, tooltip:$tip, class:"critical"}'
+    else
+        local _m="${1//\\/\\\\}"; _m="${_m//\"/\\\"}"
+        printf '{"text":"⚠","tooltip":"%s","class":"critical"}\n' "$_m"
+    fi
+    exit 0
+}
+
+# Soft exit for transient network failures with no usable cache. Emits a neutral
+# "Loading…" widget in the low class so Waybar styles it like normal usage and
+# doesn't draw attention to a state that will self-resolve on the next dispatch.
+loading_network() {
+    jq -nc \
+        --arg t "${BAR_ICON:+${BAR_ICON} }Loading…" \
+        --arg tip "Waiting for network — no cached usage yet.\nWill retry shortly." \
+        '{text:$t, tooltip:$tip, class:"low"}'
+    exit 0
+}
+
+# Relative age for stale messaging. Negative (clock skew) → empty, caller omits it.
+rel_age() {
+    local s=$1
+    if   (( s < 0 ));     then return 0
+    elif (( s < 60 ));    then printf 'just now'
+    elif (( s < 3600 ));  then printf '%d min ago' $(( s / 60 ))
+    elif (( s < 86400 )); then printf '%d h ago' $(( s / 3600 ))
+    else printf '%d d ago' $(( s / 86400 ))
+    fi
+}
+
+color_for() {
+    local p=$1
+    if   (( p >= 90 )); then printf '%s' "$RED"
+    elif (( p >= 75 )); then printf '%s' "$ORANGE"
+    elif (( p >= 50 )); then printf '%s' "$YELLOW"
+    else printf '%s' "$GREEN"
+    fi
+}
+
+# Color based on signed pacing delta, centered around zero:
+#   <= -10  green   (well under pace, plenty of room)
+#   -10..0  yellow  (slightly under or exactly on pace)
+#   1..+9   orange  (slightly ahead, watch it)
+#   >= +10  red     (burning fast)
+pace_color_for() {
+    local delta=${1:-0}
+    if   (( delta >= 10 ));  then printf '%s' "$RED"
+    elif (( delta > 0 ));    then printf '%s' "$ORANGE"
+    elif (( delta >= -10 )); then printf '%s' "$YELLOW"
+    else printf '%s' "$GREEN"
+    fi
+}
+
+# Build a progress bar with optional elapsed marker.
+# Usage: make_bar <pct> <color> [marker_pct] [marker_color]
+# When marker is provided, a ┃ (gate) in marker_color is placed at the elapsed
+# position, showing where you'd be if pacing evenly across the window.
+make_bar() {
+    local p=$1 color=$2 marker_pos=${3:--1} marker_color=${4:-}
+    local filled=$(( p * BAR_LEN / 100 ))
+    (( filled > BAR_LEN )) && filled=$BAR_LEN
+    (( filled < 0 )) && filled=0
+
+    local f="" e=""
+    if (( marker_pos < 0 )); then
+        printf -v f '%*s' "$filled" ''; printf -v e '%*s' "$(( BAR_LEN - filled ))" ''
+        printf "<span foreground='%s'>%s</span><span foreground='%s'>%s</span>" \
+            "$color" "${f// /█}" "$BAR_EMPTY" "${e// /░}"
+        return
+    fi
+
+    local m=$(( marker_pos * BAR_LEN / 100 ))
+    (( m > BAR_LEN - 1 )) && m=$(( BAR_LEN - 1 ))
+    local pre_f=$(( filled < m ? filled : m ))
+    local post_f=$(( filled > m + 1 ? filled - m - 1 : 0 ))
+
+    printf -v f '%*s' "$pre_f" ''; printf -v e '%*s' "$(( m - pre_f ))" ''
+    printf "<span foreground='%s'>%s</span><span foreground='%s'>%s</span>" \
+        "$color" "${f// /█}" "$BAR_EMPTY" "${e// /░}"
+    printf "<span foreground='%s'>┃</span>" "$marker_color"
+    printf -v f '%*s' "$post_f" ''; printf -v e '%*s' "$(( BAR_LEN - m - 1 - post_f ))" ''
+    printf "<span foreground='%s'>%s</span><span foreground='%s'>%s</span>" \
+        "$color" "${f// /█}" "$BAR_EMPTY" "${e// /░}"
+}
+
+countdown() {
+    local ts=$1
+    [[ -z "$ts" ]] && { echo "—"; return; }
+    local reset now diff d h m
+    reset=$(date -d "$ts" +%s 2>/dev/null) || { echo "—"; return; }
+    now=$(date +%s)
+    diff=$(( reset - now ))
+    (( diff <= 0 )) && { echo "now"; return; }
+    d=$(( diff / 86400 ))
+    h=$(( diff % 86400 / 3600 ))
+    m=$(( diff % 3600 / 60 ))
+    if (( d > 0 )); then
+        echo "${d}d ${h}h"
+    else
+        printf '%dh %02dm' "$h" "$m"
+    fi
+}
+
+# Calculate time elapsed % and pacing for a usage window.
+# Uses point-based delta (actual - expected) for the icon and delta values.
+# If you've used 22% and 78% of time elapsed, delta = -56 — intuitive,
+# bounded, and stable across the window. Also computes the original
+# ratio-based label for backward-compatible {*_pace_pct} placeholders.
+#
+# Args: usage_pct resets_at window_duration_seconds
+# Output fields (space-separated, single-token fields first):
+#   elapsed_pct pace_icon pace_indicator pace_delta pace_pct_label pace_pts_label
+calc_pacing() {
+    local usage_pct=$1 resets_at=$2 window_s=$3
+    local elapsed_pct=0 pace_icon="→" pace_indicator="→" pace_delta="0"
+    local pace_pct_label="on track" pace_pts_label="on track"
+
+    if [[ -n "$resets_at" && "$resets_at" != "0" && "$resets_at" != "null" ]] && (( window_s > 0 )); then
+        local reset_epoch remaining
+        reset_epoch=$(date -d "$resets_at" +%s 2>/dev/null) || { echo "0 → → 0 on track on track"; return; }
+        remaining=$(( reset_epoch - $(date +%s) ))
+        elapsed_pct=$(( (window_s - remaining) * 100 / window_s ))
+        (( elapsed_pct < 0 )) && elapsed_pct=0
+        (( elapsed_pct > 100 )) && elapsed_pct=100
+
+        # Point-based delta for indicator, delta, and pts label
+        local delta=$(( usage_pct - elapsed_pct ))
+        pace_delta="$delta"
+        if (( delta > 0 )); then
+            pace_indicator="↑"
+            pace_pts_label="${delta}pts ahead"
+        elif (( delta < 0 )); then
+            pace_indicator="↓"
+            pace_pts_label="$(( -delta ))pts under"
+        fi
+
+        # Ratio-based icon and label for backward-compatible {*_pace} and {*_pace_pct}
+        if (( elapsed_pct > 0 )); then
+            local pacing_x100=$(( usage_pct * 100 / elapsed_pct ))
+            if (( pacing_x100 > 100 + PACE_TOLERANCE )); then
+                local dev=$(( pacing_x100 - 100 ))
+                (( dev > 999 )) && dev=999
+                pace_icon="↑"
+                pace_pct_label="${dev}% ahead"
+            elif (( pacing_x100 < 100 - PACE_TOLERANCE )); then
+                local dev=$(( 100 - pacing_x100 ))
+                (( dev > 999 )) && dev=999
+                pace_icon="↓"
+                pace_pct_label="${dev}% under"
+            fi
+        fi
+    fi
+
+    echo "${elapsed_pct} ${pace_icon} ${pace_indicator} ${pace_delta} ${pace_pct_label} ${pace_pts_label}"
+}
+
+# --- Pre-checks ---
+for cmd in curl jq date; do
+    command -v "$cmd" &>/dev/null || die "Missing dependency: $cmd"
+done
+[[ -f "$CREDS" ]] || die "No credentials.\nRun <b>claude</b> to log in."
+
+# --- Read credentials (initial — static fields only; mutable fields re-read under lock) ---
+creds=$(<"$CREDS")
+jq -e . <<< "$creds" &>/dev/null || die "Invalid credentials file.\nRun <b>claude</b> to log in."
+sub_type=$(jq -r 'try (.claudeAiOauth.subscriptionType // "unknown") catch "unknown"' <<< "$creds")
+rate_tier=$(jq -r 'try (.claudeAiOauth.rateLimitTier // "") catch ""' <<< "$creds")
+
+# --- Cache / lock setup ---
+mkdir -p "$CACHE_DIR"
+cache_file="$CACHE_DIR/usage.json"
+stale_marker="$CACHE_DIR/.stale"
+net_wait_marker="$CACHE_DIR/.net_wait"
+_lockfile="$CACHE_DIR/.fetch.lock"
+
+_fetch_usage() {
+    if [[ -f "$cache_file" ]] && (( cache_age < CACHE_TTL )); then
+        usage=$(<"$cache_file")
+        return
+    fi
+
+    if [[ "$auth_ok" == "false" ]]; then
+        if [[ "$refresh_failure_kind" == "transient" ]]; then
+            # Network blip — stay quiet. Reuse recent cache with an in-memory
+            # stale flag, or show neutral "Loading…" if no usable cache exists.
+            # No disk markers, no desktop notification.
+            if [[ -f "$cache_file" ]] && (( cache_age <= WEEKLY_WINDOW )); then
+                usage=$(<"$cache_file")
+                transient_stale=true
+                return
+            fi
+            loading_network
+        fi
+        # Hard refresh failure (4xx/5xx, malformed) — preserve actionable signal.
+        if [[ -f "$cache_file" ]] && (( cache_age <= WEEKLY_WINDOW )); then
+            usage=$(<"$cache_file")
+            if [[ ! -f "$stale_marker" ]]; then
+                touch "$stale_marker"
+                command -v notify-send &>/dev/null && \
+                    notify-send -u normal -i dialog-warning \
+                        "Claude Usage" "Token refresh failed. Check connection or run <b>claude</b>." 2>/dev/null || true
+            fi
+        else
+            die "Token refresh failed.\nCheck connection or run <b>claude</b>."
+        fi
+        return
+    fi
+
+    # Auth OK — fetch from API. Transient failures (no HTTP response: DHCP/DNS
+    # still settling at boot, brief blip) are retried until the shared deadline —
+    # one missed dispatch otherwise means stale data for a full Waybar interval.
+    while :; do
+        # The bearer token goes over stdin, never argv: anything on the box can
+        # read /proc/<pid>/cmdline, and it was leaking into `ps` and journal output.
+        _resp_body=$(curl -s --max-time 10 -w '\n%{http_code}' "$API_URL" \
+            -H "anthropic-beta: oauth-2025-04-20" -K - <<CURLCFG
+header = "Authorization: Bearer ${access_token}"
+CURLCFG
+) || true
+        _http_code="${_resp_body##*$'\n'}"
+        _resp_body="${_resp_body%$'\n'"$_http_code"}"
+        # Normalize bogus codes (e.g. raw body without curl write-out suffix) to 000.
+        [[ "$_http_code" =~ ^[0-9]{3}$ ]] || _http_code="000"
+        if [[ "$_http_code" != "000" ]]; then break; fi
+        if (( SECONDS >= net_deadline )); then break; fi
+        sleep "$NET_RETRY_DELAY"
+    done
+
+    if [[ "$_http_code" == "200" ]] && [[ -n "$_resp_body" ]] && jq -e 'type == "object" and (has("five_hour") or has("limits") or has("spend"))' <<< "$_resp_body" &>/dev/null; then
+        usage="$_resp_body"
+        _ctmp=$(mktemp "$CACHE_DIR/.usage.XXXXXX")
+        printf '%s' "$usage" > "$_ctmp" && mv "$_ctmp" "$cache_file"
+        rm -f "$stale_marker" "$net_wait_marker" "$CACHE_DIR/.last_error"
+    elif [[ "$_http_code" == "000" ]]; then
+        # No HTTP response after the retry budget — network still settling or
+        # offline. Mark the episode so sibling instances skip their own long
+        # wait, then reuse recent cache with an in-memory stale flag (no .stale
+        # on disk), or show neutral "Loading…".
+        if [[ "$net_long" == "true" ]]; then touch "$net_wait_marker" 2>/dev/null || true; fi
+        if [[ -f "$cache_file" ]] && (( cache_age <= WEEKLY_WINDOW )); then
+            usage=$(<"$cache_file")
+            transient_stale=true
+        else
+            loading_network
+        fi
+    elif [[ -f "$cache_file" ]]; then
+        usage=$(<"$cache_file")
+        touch "$stale_marker"
+        if [[ "$_http_code" =~ ^[45][0-9]{2}$ ]]; then
+            _err_msg=$(jq -r '.error.message // empty' <<< "$_resp_body" 2>/dev/null) || true
+            printf '%s\n%s' "$_http_code" "$_err_msg" > "$CACHE_DIR/.last_error"
+        fi
+    else
+        die "API request failed.\nCheck your connection."
+    fi
+}
+
+# --- Acquire lock for the state-changing window (refresh + usage fetch) ---
+# Multi-monitor: peer instances may rotate the refresh_token between our initial
+# read and our refresh attempt; locking and re-reading prevents a stale-token
+# refresh from writing a misleading .last_error while credentials are actually fine.
+exec 9>"$_lockfile"
+# Generous wait: a boot-like sibling may hold the lock for the long budget plus
+# in-flight curls (worst ≈ NET_LONG_BUDGET + 25s refresh + 10s fetch ≈ 57s);
+# rendering late beats dying with a visible "Cache lock timeout".
+flock -w 90 9 || die "Cache lock timeout"
+
+# --- Transient retry budget (shared by token refresh and usage fetch) ---
+now_s=$(date +%s)
+cache_age=-1
+[[ -f "$cache_file" ]] && cache_age=$(( now_s - $(date -r "$cache_file" +%s) ))
+# Missing cache or future mtime (clock skew) → boot-like, never "fresh".
+if (( cache_age < 0 )); then cache_age=$(( NET_BOOT_CACHE_AGE + 1 )); fi
+net_budget=$NET_QUICK_BUDGET
+net_long=false
+if (( cache_age > NET_BOOT_CACHE_AGE )); then
+    net_budget=$NET_LONG_BUDGET
+    net_long=true
+    if [[ -f "$net_wait_marker" ]]; then
+        _nw_age=$(( now_s - $(date -r "$net_wait_marker" +%s) ))
+        # A sibling already burned the long budget this episode — single
+        # attempt, no sleeps. Future mtimes (clock skew) don't count.
+        if (( _nw_age >= 0 && _nw_age <= NET_WAIT_RECENT )); then
+            net_budget=0
+            net_long=false
+        fi
+    fi
+fi
+net_deadline=$(( SECONDS + net_budget ))
+
+# Re-read mutable credential fields under the lock.
+[[ -f "$CREDS" ]] || die "No credentials.\nRun <b>claude</b> to log in."
+creds=$(<"$CREDS")
+jq -e . <<< "$creds" &>/dev/null || die "Invalid credentials file.\nRun <b>claude</b> to log in."
+access_token=$(jq -r 'try (.claudeAiOauth.accessToken // empty) catch empty' <<< "$creds")
+refresh_token=$(jq -r 'try (.claudeAiOauth.refreshToken // empty) catch empty' <<< "$creds")
+expires_at=$(jq -r 'try (.claudeAiOauth.expiresAt // 0) catch 0' <<< "$creds")
+expires_at="${expires_at%%.*}" # truncate float (e.g. 5000.0 → 5000)
+[[ "$expires_at" =~ ^[0-9]+$ ]] || expires_at=0
+expires_s=$(( expires_at / 1000 ))
+auth_ok=true
+refresh_failure_kind=""
+transient_stale=false
+
+[[ -n "$access_token" ]] || die "No token.\nRun <b>claude</b> to log in."
+
+if (( expires_s < now_s + REFRESH_BUFFER )); then
+    # Synchronous refresh — 25s timeout covers cold boot when DHCP is still settling.
+    # Transient failures (no HTTP response) are retried until the shared deadline —
+    # same policy as the usage fetch — so a cold-boot race doesn't cost a full interval.
+    refresh_body=$(jq -nc --arg ci "$CLIENT_ID" --arg rt "$refresh_token" \
+                     '{grant_type:"refresh_token", client_id:$ci, refresh_token:$rt}')
+    while :; do
+        refresh_raw=$(curl -s --max-time 25 -w '\n%{http_code}' -X POST "$TOKEN_URL" \
+            -H "Content-Type: application/json" \
+            -H "anthropic-beta: oauth-2025-04-20" \
+            -H "User-Agent: claude-cli/1.0" \
+            --data @- <<<"$refresh_body") || true
+        refresh_code="${refresh_raw##*$'\n'}"
+        resp="${refresh_raw%$'\n'"$refresh_code"}"
+        # Normalize bogus codes (e.g. raw body without curl write-out suffix) to 000.
+        [[ "$refresh_code" =~ ^[0-9]{3}$ ]] || refresh_code="000"
+        if [[ "$refresh_code" != "000" ]]; then break; fi
+        if (( SECONDS >= net_deadline )); then break; fi
+        sleep "$NET_RETRY_DELAY"
+    done
+
+    if [[ "$refresh_code" == "200" ]] && [[ -n "$resp" ]] && jq -e '.access_token' <<< "$resp" &>/dev/null; then
+        access_token=$(jq -r '.access_token' <<< "$resp")
+        new_refresh=$(jq -r '.refresh_token // empty' <<< "$resp")
+        expires_in=$(jq -r 'try (((.expires_in | numbers) // 0) | floor | if (. > 1e12 or . < 0) then 0 else . end) catch 0' <<< "$resp")
+        expires_in="${expires_in%%.*}" # truncate float (e.g. 3600.0 → 3600)
+        [[ "$expires_in" =~ ^[0-9]+$ ]] || expires_in=3600
+        new_expires_at=$(( $(date +%s) * 1000 + expires_in * 1000 ))
+
+        tmp=$(mktemp)
+        jq --arg at "$access_token" \
+           --arg rt "${new_refresh:-$refresh_token}" \
+           --argjson ea "$new_expires_at" \
+           '.claudeAiOauth.accessToken=$at | .claudeAiOauth.refreshToken=$rt | .claudeAiOauth.expiresAt=$ea' \
+           "$CREDS" > "$tmp" && mv "$tmp" "$CREDS"
+        rm -f "$CACHE_DIR/.last_error"
+    else
+        auth_ok=false
+        if [[ "$refresh_code" == "000" ]]; then
+            # No HTTP response reached us — DHCP/DNS settling at boot, offline,
+            # or actual timeout. Mark the episode so sibling instances skip
+            # their own long wait; nothing else persists.
+            refresh_failure_kind="transient"
+            if [[ "$net_long" == "true" ]]; then touch "$net_wait_marker" 2>/dev/null || true; fi
+        else
+            refresh_failure_kind="hard"
+            # Always write a current .last_error so the tooltip reflects this refresh
+            # failure, never a leftover entry from a previous /usage call.
+            refresh_err=""
+            if [[ "$refresh_code" =~ ^[45][0-9]{2}$ ]]; then
+                # platform.claude.com returns OAuth-style {error,error_description};
+                # fall back to Anthropic-style {error:{message}} or bare {error:"<str>"}.
+                refresh_err=$(jq -r '
+                    if (.error_description | type) == "string" then .error_description
+                    elif (.error | type) == "object" and (.error | has("message")) and (.error.message | type) == "string" then .error.message
+                    elif (.error | type) == "string" then .error
+                    else "" end' <<< "$resp" 2>/dev/null) || true
+                [[ -z "$refresh_err" ]] && refresh_err="Refresh failed"
+            else
+                refresh_err="Invalid refresh response"
+            fi
+            # Best-effort write — never abort the widget if the cache dir is unwriteable.
+            _le_tmp=$(mktemp "$CACHE_DIR/.last_error.XXXXXX" 2>/dev/null) || _le_tmp=""
+            if [[ -n "$_le_tmp" ]]; then
+                if printf '%s\n%s' "$refresh_code" "$refresh_err" > "$_le_tmp" 2>/dev/null \
+                   && mv "$_le_tmp" "$CACHE_DIR/.last_error" 2>/dev/null; then
+                    :
+                else
+                    rm -f "$_le_tmp" 2>/dev/null || true
+                fi
+            fi
+        fi
+    fi
+fi
+
+_fetch_usage
+exec 9>&-
+
+# A corrupt or partially-written cache could leave $usage as invalid JSON; the
+# per-field try/catch reads can't catch a jq *parse* error, so guard the whole
+# payload here (degrades to a clear warning, still exit 0).
+jq -e -s 'length == 1' <<< "$usage" &>/dev/null || die "Invalid usage data.\nWill refresh next cycle."
+
+# --- Parse windows ---
+# round in jq -> integer literal. A bare float ("13.0") fed to printf '%.0f'
+# is rejected as "invalid number" under comma-decimal locales (es_AR, de_DE, ...),
+# where strtod won't accept the period.
+parse_pct() {
+    jq -r "try (((.$1.utilization | numbers) // 0) | round | if (. > 1e12 or . < 0) then 0 else . end) catch 0" <<< "$usage"
+}
+
+parse_reset() {
+    jq -r "try (.$1.resets_at // empty) catch empty" <<< "$usage"
+}
+
+# Remaining percent for a window: 100 - used, clamped 0..100. Clamps ONLY its own
+# output — never mutates the source used pct (that would change no-flag output).
+remaining_pct_for() {
+    local r=$(( 100 - $1 ))
+    (( r < 0 )) && r=0
+    (( r > 100 )) && r=100
+    echo "$r"
+}
+
+# Framing helpers: usage by default, "remaining" when --remaining. Centralized so the
+# no-flag path is byte-identical and the rendered bar/number never diverge.
+display_pct() {  # <used_pct>
+    if [[ "$REMAINING" == "true" ]]; then remaining_pct_for "$1"; else echo "$1"; fi
+}
+display_bar() {  # <used_pct> <elapsed> [marker_on]  (marker_on: pass "$TOOLTIP_PACE_PTS")
+    local used=$1 elapsed=$2 marker_on=${3:-}
+    local color; color=$(color_for "$used")
+    if [[ "$REMAINING" == "true" ]]; then
+        local rem; rem=$(remaining_pct_for "$used")
+        if [[ "$marker_on" == "true" ]]; then make_bar "$rem" "$color" "$(( 100 - elapsed ))" "$MARKER"
+        else make_bar "$rem" "$color"; fi
+    else
+        if [[ "$marker_on" == "true" ]]; then make_bar "$used" "$color" "$elapsed" "$MARKER"
+        else make_bar "$used" "$color"; fi
+    fi
+}
+
+session_pct=$(parse_pct five_hour)
+session_reset=$(parse_reset five_hour)
+weekly_pct=$(parse_pct seven_day)
+weekly_reset=$(parse_reset seven_day)
+
+# Model-scoped weekly limit ("third" window). Anthropic moved this out of the
+# legacy seven_day_sonnet/seven_day_opus fields (now null) into the generalized
+# limits[] array: entries with kind=="weekly_scoped" (or a weekly-group limit
+# carrying a scope) name the model via scope.model.display_name (e.g. "Fable").
+# Pick the most-consumed scoped window; fall back to the legacy fields so older
+# responses still render. The label is dynamic — no longer hard-coded "Sonnet".
+_scoped=$(jq -c 'try (
+    ([.limits[]? | select(type == "object")
+        | select(.kind == "weekly_scoped" or (.group == "weekly" and .scope != null))]
+      | max_by(.percent // 0))
+    // (if .seven_day_sonnet != null
+          then {percent: .seven_day_sonnet.utilization, resets_at: .seven_day_sonnet.resets_at, scope: {model: {display_name: "Sonnet"}}}
+        elif .seven_day_opus != null
+          then {percent: .seven_day_opus.utilization, resets_at: .seven_day_opus.resets_at, scope: {model: {display_name: "Opus"}}}
+        else null end)
+) catch null' <<< "$usage")
+has_sonnet=$(jq 'try (. != null and . != "") catch false' <<< "$_scoped")
+sonnet_pct=0
+sonnet_reset=""
+sonnet_label="Weekly (model)"
+if [[ "$has_sonnet" == "true" ]]; then
+    sonnet_pct=$(jq -r 'try (((.percent | numbers) // 0) | round | if (. > 1e12 or . < 0) then 0 else . end) catch 0' <<< "$_scoped")
+    sonnet_reset=$(jq -r 'try (.resets_at // empty) catch empty' <<< "$_scoped")
+    _lbl=$(jq -r 'try (.scope.model.display_name // empty) catch empty' <<< "$_scoped")
+    [[ -n "$_lbl" ]] && sonnet_label="$_lbl"
+fi
+
+# Uniform slot presence for the widget bridge. Session (5h) / Weekly (7d) are the
+# canonical Anthropic windows; treat them as present when the API returns them.
+has_session=$(jq 'try (.five_hour != null) catch false' <<< "$usage")
+has_weekly=$(jq 'try (.seven_day != null) catch false' <<< "$usage")
+
+session_remaining_pct=$(remaining_pct_for "$session_pct")
+weekly_remaining_pct=$(remaining_pct_for "$weekly_pct")
+sonnet_remaining_pct=$(remaining_pct_for "$sonnet_pct")
+
+# --- Extra usage ---
+has_extra=$(jq 'try (.extra_usage != null) catch false' <<< "$usage")
+extra_enabled="false"
+extra_spent=""
+extra_limit=""
+extra_pct=0
+if [[ "$has_extra" == "true" ]]; then
+    extra_enabled=$(jq -r 'try (.extra_usage.is_enabled // false) catch false' <<< "$usage")
+    if [[ "$extra_enabled" == "true" ]]; then
+        local_limit=$(jq -r 'try (((.extra_usage.monthly_limit | numbers) // 0) | floor | if (. > 1e12 or . < 0) then 0 else . end) catch 0' <<< "$usage")
+        local_used=$(jq -r 'try (((.extra_usage.used_credits | numbers) // 0) | floor | if (. > 1e12 or . < 0) then 0 else . end) catch 0' <<< "$usage")
+        # Convert cents to dollars (integer math: 5000 → "50.00")
+        # Use absolute values for formatting to avoid "$-1.-50" with negative remainders
+        _fmt_dollars() {
+            local cents=$1 sign="" abs
+            (( cents < 0 )) && sign="-" && cents=$(( -cents ))
+            abs=$cents
+            printf '%s$%d.%02d' "$sign" $(( abs / 100 )) $(( abs % 100 ))
+        }
+        extra_limit=$(_fmt_dollars "$local_limit")
+        extra_spent=$(_fmt_dollars "$local_used")
+        if (( local_limit > 0 )); then
+            extra_pct=$(( local_used * 100 / local_limit ))
+        fi
+    fi
+fi
+
+# --- Plan label ---
+plan="${sub_type^}"
+if   [[ "$rate_tier" == *"5x"* ]];  then plan+=" 5x"
+elif [[ "$rate_tier" == *"20x"* ]]; then plan+=" 20x"
+fi
+
+# --- Pacing ---
+# Output: elapsed icon indicator delta pct_label pts_label
+_s_pace=$(calc_pacing "$session_pct" "$session_reset" "$SESSION_WINDOW")
+read -r session_elapsed session_pace session_pace_indicator session_pace_delta _discard <<< "$_s_pace"
+session_pace_pct=$(cut -d' ' -f5-6 <<< "$_s_pace")
+session_pace_pts=$(cut -d' ' -f7-8 <<< "$_s_pace")
+
+_w_pace=$(calc_pacing "$weekly_pct" "$weekly_reset" "$WEEKLY_WINDOW")
+read -r weekly_elapsed weekly_pace weekly_pace_indicator weekly_pace_delta _discard <<< "$_w_pace"
+weekly_pace_pct=$(cut -d' ' -f5-6 <<< "$_w_pace")
+weekly_pace_pts=$(cut -d' ' -f7-8 <<< "$_w_pace")
+
+sonnet_elapsed=0 sonnet_pace="" sonnet_pace_indicator="" sonnet_pace_pct="" sonnet_pace_pts="" sonnet_pace_delta="0"
+if [[ "$has_sonnet" == "true" ]]; then
+    _n_pace=$(calc_pacing "$sonnet_pct" "$sonnet_reset" "$WEEKLY_WINDOW")
+    read -r sonnet_elapsed sonnet_pace sonnet_pace_indicator sonnet_pace_delta _discard <<< "$_n_pace"
+    sonnet_pace_pct=$(cut -d' ' -f5-6 <<< "$_n_pace")
+    sonnet_pace_pts=$(cut -d' ' -f7-8 <<< "$_n_pace")
+fi
+
+# --- Tooltip pace icon (ratio or point-based) ---
+if [[ "$TOOLTIP_PACE_PTS" == "true" ]]; then
+    _tip_session_pace="$session_pace_indicator"
+    _tip_weekly_pace="$weekly_pace_indicator"
+    _tip_sonnet_pace="$sonnet_pace_indicator"
+else
+    _tip_session_pace="$session_pace"
+    _tip_weekly_pace="$weekly_pace"
+    _tip_sonnet_pace="$sonnet_pace"
+fi
+
+# --- Pace colors ---
+# Sets _sp_<prefix>_{pace,indicator,pct,pts,delta,abs_delta} for apply_format.
+_precompute_pace() {
+    local pfx=$1 pace=$2 indicator=$3 pct=$4 pts=$5 delta=$6
+    if [[ "$FORMAT_PACE_COLOR" == "true" ]]; then
+        local c; c=$(pace_color_for "${delta:-0}")
+        printf -v "_sp_${pfx}_pace"      "<span foreground='%s'>%s</span>" "$c" "$pace"
+        printf -v "_sp_${pfx}_indicator" "<span foreground='%s'>%s</span>" "$c" "$indicator"
+        printf -v "_sp_${pfx}_pct"       "<span foreground='%s'>%s</span>" "$c" "$pct"
+        printf -v "_sp_${pfx}_pts"       "<span foreground='%s'>%s</span>" "$c" "$pts"
+        printf -v "_sp_${pfx}_delta"     "<span foreground='%s'>%s</span>" "$c" "$delta"
+        printf -v "_sp_${pfx}_abs_delta" "<span foreground='%s'>%s</span>" "$c" "${delta#-}"
+    else
+        printf -v "_sp_${pfx}_pace"      '%s' "$pace"
+        printf -v "_sp_${pfx}_indicator" '%s' "$indicator"
+        printf -v "_sp_${pfx}_pct"       '%s' "$pct"
+        printf -v "_sp_${pfx}_pts"       '%s' "$pts"
+        printf -v "_sp_${pfx}_delta"     '%s' "$delta"
+        printf -v "_sp_${pfx}_abs_delta" '%s' "${delta#-}"
+    fi
+}
+_precompute_pace session "$session_pace" "$session_pace_indicator" "$session_pace_pct" "$session_pace_pts" "$session_pace_delta"
+_precompute_pace weekly  "$weekly_pace"  "$weekly_pace_indicator"  "$weekly_pace_pct"  "$weekly_pace_pts"  "$weekly_pace_delta"
+_precompute_pace sonnet  "$sonnet_pace"  "$sonnet_pace_indicator"  "$sonnet_pace_pct"  "$sonnet_pace_pts"  "$sonnet_pace_delta"
+
+# --- Waybar class (granular: low, mid, high, critical) ---
+# Rate limits first; extra usage only matters when a rate limit hits 100%
+max_pct=$session_pct
+(( weekly_pct > max_pct )) && max_pct=$weekly_pct
+(( sonnet_pct > max_pct )) && max_pct=$sonnet_pct
+if (( session_pct >= 100 || weekly_pct >= 100 || sonnet_pct >= 100 )); then
+    (( extra_pct > max_pct )) && max_pct=$extra_pct
+fi
+
+class=""
+if   (( max_pct >= 90 )); then class="critical"
+elif (( max_pct >= 75 )); then class="high"
+elif (( max_pct >= 50 )); then class="mid"
+else class="low"
+fi
+
+# --- Apply format placeholders ---
+# When --format-pace-color is set, pace placeholders are individually colored
+# per window based on pacing delta. Otherwise they inherit the bar color.
+apply_format() {
+    local text="$1"
+    text="${text//\{icon\}/󰚩}"
+    text="${text//\{plan\}/$plan}"
+    text="${text//\{session_pct\}/$session_pct}"
+    text="${text//\{session_reset\}/$s_cd_val}"
+    text="${text//\{session_elapsed\}/$session_elapsed}"
+    text="${text//\{weekly_pct\}/$weekly_pct}"
+    text="${text//\{weekly_reset\}/$w_cd_val}"
+    text="${text//\{weekly_elapsed\}/$weekly_elapsed}"
+    text="${text//\{sonnet_pct\}/$sonnet_pct}"
+    text="${text//\{sonnet_label\}/$sonnet_label}"
+    text="${text//\{has_session\}/$has_session}"
+    text="${text//\{has_weekly\}/$has_weekly}"
+    text="${text//\{has_sonnet\}/$has_sonnet}"
+    # Uniform "third" aliases for the widget bridge (maps to the model-scoped window).
+    text="${text//\{has_third\}/$has_sonnet}"
+    text="${text//\{third_label\}/$sonnet_label}"
+    text="${text//\{third_pct\}/$sonnet_pct}"
+    text="${text//\{third_reset\}/$sn_cd_val}"
+    text="${text//\{session_remaining_pct\}/$session_remaining_pct}"
+    text="${text//\{weekly_remaining_pct\}/$weekly_remaining_pct}"
+    text="${text//\{sonnet_remaining_pct\}/$sonnet_remaining_pct}"
+    text="${text//\{sonnet_reset\}/$sn_cd_val}"
+    text="${text//\{sonnet_elapsed\}/$sonnet_elapsed}"
+    text="${text//\{extra_spent\}/$extra_spent}"
+    text="${text//\{extra_limit\}/$extra_limit}"
+    text="${text//\{extra_pct\}/$extra_pct}"
+    text="${text//\{session_bar\}/$format_session_bar}"
+    text="${text//\{weekly_bar\}/$format_weekly_bar}"
+    text="${text//\{sonnet_bar\}/$format_sonnet_bar}"
+    text="${text//\{extra_bar\}/$format_extra_bar}"
+    text="${text//\{session_remaining_bar\}/$format_session_remaining_bar}"
+    text="${text//\{weekly_remaining_bar\}/$format_weekly_remaining_bar}"
+    text="${text//\{sonnet_remaining_bar\}/$format_sonnet_remaining_bar}"
+
+    # Pace placeholders — pre-computed colored or plain depending on --format-pace-color.
+    text="${text//\{session_pace_indicator\}/$_sp_session_indicator}"
+    text="${text//\{session_pace_abs_delta\}/$_sp_session_abs_delta}"
+    text="${text//\{session_pace_delta\}/$_sp_session_delta}"
+    text="${text//\{session_pace_pct\}/$_sp_session_pct}"
+    text="${text//\{session_pace_pts\}/$_sp_session_pts}"
+    text="${text//\{session_pace\}/$_sp_session_pace}"
+    text="${text//\{weekly_pace_indicator\}/$_sp_weekly_indicator}"
+    text="${text//\{weekly_pace_abs_delta\}/$_sp_weekly_abs_delta}"
+    text="${text//\{weekly_pace_delta\}/$_sp_weekly_delta}"
+    text="${text//\{weekly_pace_pct\}/$_sp_weekly_pct}"
+    text="${text//\{weekly_pace_pts\}/$_sp_weekly_pts}"
+    text="${text//\{weekly_pace\}/$_sp_weekly_pace}"
+    text="${text//\{sonnet_pace_indicator\}/$_sp_sonnet_indicator}"
+    text="${text//\{sonnet_pace_abs_delta\}/$_sp_sonnet_abs_delta}"
+    text="${text//\{sonnet_pace_delta\}/$_sp_sonnet_delta}"
+    text="${text//\{sonnet_pace_pct\}/$_sp_sonnet_pct}"
+    text="${text//\{sonnet_pace_pts\}/$_sp_sonnet_pts}"
+    text="${text//\{sonnet_pace\}/$_sp_sonnet_pace}"
+
+    printf '%s' "$text"
+}
+
+# Compute countdowns once
+s_cd_val=$(countdown "$session_reset")
+w_cd_val=$(countdown "$weekly_reset")
+sn_cd_val=""
+[[ "$has_sonnet" == "true" ]] && sn_cd_val=$(countdown "$sonnet_reset")
+
+# Per-window colors and bars used by --format / --tooltip-format placeholders.
+# Each bar is colored by its own window's usage, independent of the bar text wrapper.
+session_color=$(color_for "$session_pct")
+weekly_color=$(color_for "$weekly_pct")
+sonnet_color=$(color_for "$sonnet_pct")
+extra_color=$(color_for "$extra_pct")
+format_session_bar=$(make_bar "$session_pct" "$session_color")
+format_weekly_bar=$(make_bar "$weekly_pct" "$weekly_color")
+format_sonnet_bar=$(make_bar "$sonnet_pct" "$sonnet_color")
+format_extra_bar=$(make_bar "$extra_pct" "$extra_color")
+format_session_remaining_bar=$(make_bar "$session_remaining_pct" "$session_color")
+format_weekly_remaining_bar=$(make_bar "$weekly_remaining_pct" "$weekly_color")
+format_sonnet_remaining_bar=$(make_bar "$sonnet_remaining_pct" "$sonnet_color")
+
+# Stale data indicator
+stale_icon=""
+[[ -f "$stale_marker" || "${transient_stale:-false}" == "true" ]] && stale_icon=" ⏸"
+
+bar_text=$(apply_format "$FORMAT")${stale_icon}
+
+# --- Colorize bar text via Pango ---
+case "$class" in
+    low)      bar_fg="$BAR_COLOR_LOW" ;;
+    mid)      bar_fg="$BAR_COLOR_MID" ;;
+    high)     bar_fg="$BAR_COLOR_HIGH" ;;
+    critical) bar_fg="$BAR_COLOR_CRITICAL" ;;
+    *)        bar_fg="$BAR_COLOR_LOW" ;;
+esac
+if [[ "$FORMAT_PACE_COLOR" == "true" && "$FORMAT" == *_pace* ]]; then
+    # Neutral base; pace placeholders provide their own color
+    bar_text="<span foreground='${FG}'>${BAR_ICON:+${BAR_ICON} }${bar_text}</span>"
+else
+    bar_text="<span foreground='${bar_fg}'>${BAR_ICON:+${BAR_ICON} }${bar_text}</span>"
+fi
+
+# --- Stale status note ---
+# One explicit line saying WHY the ⏸ is shown and how old the data is. Used as
+# the footer of the default tooltip and appended to custom tooltips (precedent:
+# the ⏸ icon is already appended outside custom --format).
+_updated="—"
+_data_age=""
+if [[ -f "$cache_file" ]]; then
+    _updated=$(date -r "$cache_file" +%H:%M)
+    _data_age=$(rel_age $(( $(date +%s) - $(date -r "$cache_file" +%s) )))
+fi
+_stale_note=""
+if [[ "${transient_stale:-false}" == "true" ]]; then
+    _stale_note="⏸  Waiting for network — data from ${_updated}${_data_age:+ (${_data_age})}"
+elif [[ -f "$stale_marker" ]]; then
+    _stale_note="⏸  Stale — data from ${_updated}${_data_age:+ (${_data_age})}"
+fi
+
+# --- Tooltip ---
+if [[ -n "$TOOLTIP_FORMAT" ]]; then
+    # Custom tooltip via --tooltip-format
+    t=$(apply_format "$TOOLTIP_FORMAT")
+    [[ -n "$_stale_note" ]] && t+=$'\n'"<span foreground='${ORANGE}'>${_stale_note}</span>"
+else
+    # Default rich Pango tooltip — tooltip-specific bars may carry an elapsed marker.
+    tip_session_bar=$(display_bar "$session_pct" "$session_elapsed" "$TOOLTIP_PACE_PTS")
+    tip_weekly_bar=$(display_bar "$weekly_pct" "$weekly_elapsed" "$TOOLTIP_PACE_PTS")
+    s_cd="$s_cd_val"
+    w_cd="$w_cd_val"
+
+    NL=$'\n'
+    B="<span foreground='${BLUE}'>"
+    E="</span>"
+
+    strip_tags() { sed 's/<[^>]*>//g' <<< "$1"; }
+
+    # Right-align a plain value label to a fixed column (width 6 fits "100% ↑").
+    _val_pad() { local w=6 n=${#1}; (( n > w )) && w=$n; printf '%*s' $(( w - n )) ''; }
+
+    # Collect all content lines into an array
+    lines=()
+    _tip_title="Claude ${plan}"
+    [[ "$REMAINING" == "true" ]] && _tip_title="${_tip_title} · Remaining"
+    lines+=("CENTER<span font_weight='bold' foreground='${BLUE}'>${_tip_title}</span>")
+    lines+=("SEP")
+    lines+=("")
+    lines+=(" <span foreground='${FG}'>  󰔟  Session</span>")
+    _lbl_s="$(display_pct "$session_pct")% ${_tip_session_pace}"
+    lines+=("   ${tip_session_bar}  $(_val_pad "$_lbl_s")<span font_weight='bold' foreground='${session_color}'>${_lbl_s}</span>")
+    lines+=(" <span foreground='${DIM}'>  󰥔  Resets in ${s_cd}</span>")
+    lines+=("")
+    lines+=(" <span foreground='${FG}'>  󰃰  Weekly</span>")
+    _lbl_w="$(display_pct "$weekly_pct")% ${_tip_weekly_pace}"
+    lines+=("   ${tip_weekly_bar}  $(_val_pad "$_lbl_w")<span font_weight='bold' foreground='${weekly_color}'>${_lbl_w}</span>")
+    lines+=(" <span foreground='${DIM}'>  󰥔  Resets in ${w_cd}</span>")
+
+    if [[ "$has_sonnet" == "true" ]]; then
+        tip_sonnet_bar=$(display_bar "$sonnet_pct" "$sonnet_elapsed" "$TOOLTIP_PACE_PTS")
+        sn_cd=$(countdown "$sonnet_reset")
+        lines+=("")
+        lines+=(" <span foreground='${FG}'>  󱤔  Sonnet only</span>")
+        _lbl_n="$(display_pct "$sonnet_pct")% ${_tip_sonnet_pace}"
+        lines+=("   ${tip_sonnet_bar}  $(_val_pad "$_lbl_n")<span font_weight='bold' foreground='${sonnet_color}'>${_lbl_n}</span>")
+        lines+=(" <span foreground='${DIM}'>  󰥔  Resets in ${sn_cd}</span>")
+    fi
+
+    if [[ "$extra_enabled" == "true" ]]; then
+        lines+=("")
+        lines+=("SEP")
+        lines+=(" <span foreground='${FG}'>  󰄑  Extra usage</span>")
+        lines+=("   ${format_extra_bar}  $(_val_pad "${extra_spent}")<span font_weight='bold' foreground='${extra_color}'>${extra_spent}</span>")
+        lines+=(" <span foreground='${DIM}'>  󰀓  Limit: ${extra_limit}</span>")
+    fi
+
+    # API error info (if stale)
+    if [[ -f "$CACHE_DIR/.last_error" ]]; then
+        _le_code="" _le_msg=""
+        { read -r _le_code || true; read -r _le_msg || true; } < "$CACHE_DIR/.last_error" 2>/dev/null || true
+        if [[ -n "$_le_code" ]] && [[ "$_le_code" =~ ^[0-9]+$ ]] && [[ "$_le_code" != "000" ]]; then
+            _le_msg=$(sed 's/&/\&amp;/g; s/</\&lt;/g; s/>/\&gt;/g' <<< "$_le_msg")
+            if (( _le_code >= 500 )); then
+                _err_icon="󰅚" _err_color="$RED"
+            else
+                _err_icon="󰀪" _err_color="$ORANGE"
+            fi
+            lines+=("")
+            lines+=("SEP")
+            _err_line=" <span foreground='${_err_color}'>  ${_err_icon}  HTTP ${_le_code}</span>"
+            lines+=("$_err_line")
+            if [[ -n "$_le_msg" ]]; then
+                _wbuf=""
+                for _wword in $_le_msg; do
+                    if [[ -z "$_wbuf" ]]; then
+                        _wbuf="$_wword"
+                    elif (( ${#_wbuf} + 1 + ${#_wword} <= 35 )); then
+                        _wbuf+=" $_wword"
+                    else
+                        lines+=("     <span foreground='${DIM}'>${_wbuf}</span>")
+                        _wbuf="$_wword"
+                    fi
+                done
+                [[ -n "$_wbuf" ]] && lines+=("     <span foreground='${DIM}'>${_wbuf}</span>")
+            fi
+        fi
+    fi
+
+    # Footer: explicit stale status, or "Updated HH:MM" when data is fresh.
+    lines+=("")
+    lines+=("SEP")
+    if [[ -n "$_stale_note" ]]; then
+        lines+=(" <span foreground='${ORANGE}'>  ${_stale_note}</span>")
+    else
+        lines+=(" <span foreground='${DIM}'>  󰅐  Updated ${_updated}</span>")
+    fi
+
+    # Calculate max width from content
+    max_w=0
+    for line in "${lines[@]}"; do
+        [[ "$line" == "SEP" ]] && continue
+        [[ "$line" == CENTER* ]] && line="${line#CENTER}"
+        plain=$(strip_tags "$line")
+        (( ${#plain} > max_w )) && max_w=${#plain}
+    done
+    INNER_W=$(( max_w + 1 ))
+
+    pad() {
+        local content="$1"
+        local plain=$(strip_tags "$content")
+        local len=${#plain}
+        local need=$(( INNER_W - len ))
+        (( need < 0 )) && need=0
+        local sp=""
+        printf -v sp '%*s' "$need" ''
+        printf '%s%s' "$content" "$sp"
+    }
+
+    center_pad() {
+        local content="$1"
+        local plain=$(strip_tags "$content")
+        local len=${#plain}
+        local total=$(( INNER_W - len ))
+        (( total < 0 )) && total=0
+        local lp=$(( total / 2 )) rp=$(( total - total / 2 ))
+        local ls="" rs=""
+        printf -v ls '%*s' "$lp" ''
+        printf -v rs '%*s' "$rp" ''
+        printf '%s%s%s' "$ls" "$content" "$rs"
+    }
+
+    L() { printf '%s' "${B}│${E}$(pad "$1")${B}│${E}"; }
+    LC() { printf '%s' "${B}│${E}$(center_pad "$1")${B}│${E}"; }
+
+    # Build separator dynamically
+    sep=""
+    printf -v sep '%*s' "$(( INNER_W - 2 ))" ''; sep="${sep// /─}"
+    sep=" <span foreground='${DIM}'>${sep}</span>"
+
+    border_h=""
+    printf -v border_h '%*s' "$INNER_W" ''; border_h="${border_h// /─}"
+
+    # Render tooltip
+    if [[ "$FRAME" == "true" ]]; then
+        # Framed: draw the box, then pin the whole tooltip to a complete Mono Nerd
+        # Font so text, box-drawing and icons share one uniform advance — alignment
+        # holds regardless of the user's bar font (needs JetBrainsMono Nerd Font Mono).
+        t=""
+        t+="${B}╭${border_h}╮${E}${NL}"
+        for line in "${lines[@]}"; do
+            if [[ "$line" == "SEP" ]]; then
+                t+="$(L "$sep")${NL}"
+            elif [[ "$line" == CENTER* ]]; then
+                t+="$(LC "${line#CENTER}")${NL}"
+            else
+                t+="$(L "$line")${NL}"
+            fi
+        done
+        t+="${B}╰${border_h}╯${E}"
+        _ff=$(sed 's/&/\&amp;/g; s/</\&lt;/g; s/>/\&gt;/g; s/'\''/\&apos;/g' <<< "$FRAME_FONT")
+        t="<span font_family='${_ff}'>${t}</span>"
+    else
+        # Plain (default): no border, no font pin → renders in the user's font.
+        # Nothing is aligned to a right edge, so a non-Nerd font never misaligns.
+        t=""
+        for line in "${lines[@]}"; do
+            if [[ "$line" == "SEP" ]]; then
+                t+="${sep}${NL}"
+            elif [[ "$line" == CENTER* ]]; then
+                # Leading space aligns the title with the rule and section headers.
+                t+=" ${line#CENTER}${NL}"
+            else
+                t+="${line}${NL}"
+            fi
+        done
+        t="${t%"$NL"}"
+    fi
+fi
+
+# --- Machine-readable account JSON (VGS widget bridge) ---
+# The waybar format string can only carry one model-scoped window, so the
+# widget asks for this instead: same session/weekly numbers plus EVERY
+# per-model weekly lane the API reported, rather than just the worst one.
+if [[ "$EMIT_JSON" == "true" ]]; then
+    _models=$(jq -c --argjson now "$(date +%s)" '
+        # resets_at carries fractional seconds and a +00:00 offset; strip both
+        # to the plain ...Z form fromdateiso8601 accepts.
+        def cd($iso):
+          if $iso == null or $iso == "" then ""
+          else (($iso | sub("\\.[0-9]+"; "") | sub("[+-][0-9][0-9]:[0-9][0-9]$"; "Z") | fromdateiso8601) - $now) as $d
+            | if $d <= 0 then "now"
+              elif $d >= 86400 then "\($d / 86400 | floor)d \(($d % 86400) / 3600 | floor)h"
+              elif $d >= 3600 then "\($d / 3600 | floor)h \(($d % 3600) / 60 | floor)m"
+              else "\($d / 60 | floor)m" end
+          end;
+        # Bind the payload before building the array — the fallback branch needs
+        # the original object, and piping into [ ... ] would leave it indexing
+        # the array instead (an error on accounts whose limits[] is empty).
+        . as $u
+        | [ ($u.limits // [])[]
+          | select(type == "object")
+          | select(.scope != null and .scope.model != null)
+          | { label: (.scope.model.display_name // "Model"),
+              pct: ((.percent | numbers) // 0 | round),
+              reset: cd(.resets_at),
+              severity: (.severity // "normal") }
+        ]
+        | if length > 0 then .
+          else [ (if $u.seven_day_opus   != null then {label:"Opus",   pct:(($u.seven_day_opus.utilization   // 0) | round), reset: cd($u.seven_day_opus.resets_at),   severity:"normal"} else empty end),
+                 (if $u.seven_day_sonnet != null then {label:"Sonnet", pct:(($u.seven_day_sonnet.utilization // 0) | round), reset: cd($u.seven_day_sonnet.resets_at), severity:"normal"} else empty end) ]
+          end' <<< "$usage" 2>/dev/null)
+    [[ -n "$_models" ]] || _models="[]"
+    # Credit-billed seats (enterprise) report no rate-limit windows at all —
+    # their usage is a monthly spend pool instead, so surface that as its own
+    # lane rather than calling the account unavailable.
+    _spend=$(jq -c '
+        def money($m; $e): "$" + (($m / pow(10; $e)) | . * 100 | round / 100 | tostring);
+        if (.spend.enabled == true) and (.spend.limit.amount_minor // 0) > 0 then
+          {pct: ((.spend.percent | numbers) // 0 | round),
+           detail: (money(.spend.used.amount_minor // 0; .spend.used.exponent // 2)
+                    + " of " + money(.spend.limit.amount_minor; .spend.limit.exponent // 2))}
+        elif (.extra_usage.is_enabled == true) and (.extra_usage.monthly_limit // 0) > 0 then
+          {pct: ((.extra_usage.utilization | numbers) // 0 | round),
+           detail: (money(.extra_usage.used_credits // 0; 2)
+                    + " of " + money(.extra_usage.monthly_limit; 2))}
+        else null end' <<< "$usage" 2>/dev/null)
+    [[ -n "$_spend" ]] || _spend="null"
+    # Credit-billed accounts never populate the window vars, and --argjson
+    # rejects an empty string — normalize before building the payload.
+    [[ "$has_session" == "true" ]] || has_session=false
+    [[ "$has_weekly"  == "true" ]] || has_weekly=false
+    [[ "$session_pct" =~ ^-?[0-9]+$ ]] || session_pct=0
+    [[ "$weekly_pct"  =~ ^-?[0-9]+$ ]] || weekly_pct=0
+    if [[ "$has_session" != "true" && "$has_weekly" != "true" && "$_models" == "[]" && "$_spend" == "null" ]]; then
+        jq -nc --arg config_dir "$CONFIG_DIR" \
+            '{ok:false, error:"no usage quota reported for this account", configDir:$config_dir}'
+        exit 0
+    fi
+    # Credit spend counts toward severity too — on a credit-billed seat it is the
+    # only signal there is, and the row must not read "low" at 90% spent.
+    jq -nc \
+        --arg plan "$plan" --arg class "$class" \
+        --arg config_dir "$CONFIG_DIR" \
+        --argjson has_session "$has_session" --argjson session_pct "$session_pct" --arg session_reset "$s_cd_val" \
+        --argjson has_weekly "$has_weekly" --argjson weekly_pct "$weekly_pct" --arg weekly_reset "$w_cd_val" \
+        --argjson models "$_models" \
+        --argjson spend "$_spend" \
+        '(([ (if $spend then $spend.pct else 0 end),
+            (if $has_session then $session_pct else 0 end),
+            (if $has_weekly then $weekly_pct else 0 end),
+            (($models | map(.pct)) + [0] | max) ] | max) as $peak
+         | (if   $peak >= 90 then "critical"
+            elif $peak >= 75 then "high"
+            elif $peak >= 50 then "mid"
+            else $class end)) as $sev
+        | {ok:true, plan:$plan, class:$sev, configDir:$config_dir,
+          session: (if $has_session then {pct:$session_pct, reset:$session_reset} else null end),
+          weekly:  (if $has_weekly  then {pct:$weekly_pct,  reset:$weekly_reset}  else null end),
+          models: $models, spend: $spend}'
+    exit 0
+fi
+
+# --- Output waybar JSON ---
+jq -nc --arg text "$bar_text" --arg tooltip "$t" --arg class "$class" \
+    '{text:$text, tooltip:$tooltip, class:$class}'
