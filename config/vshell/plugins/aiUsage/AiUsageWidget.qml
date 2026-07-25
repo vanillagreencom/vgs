@@ -96,7 +96,9 @@ PluginComponent {
     // Absolute reset instant as wall-clock text. A countdown alone ("4d 17h")
     // makes you do the arithmetic; the clock time is what you actually plan
     // around. Same day -> just the time, otherwise the weekday, and the date
-    // once it is far enough out that the weekday is ambiguous.
+    // once it is far enough out that the weekday is ambiguous. Kept short and
+    // lowercase ("tom 02:59", "thu 04:00") — these sit in a narrow column
+    // beside the bar, so every character costs bar width.
     function formatResetAt(epoch) {
         if (!epoch || epoch <= 0)
             return "";
@@ -108,16 +110,18 @@ PluginComponent {
         // showing them would be worse than showing nothing.
         if (when.getTime() <= now.getTime())
             return "";
-        const time = when.toLocaleTimeString(Qt.locale(), Locale.ShortFormat);
+        // 24h, explicitly — the locale short format drags in AM/PM, which is
+        // three more characters in a column that is already fighting the bar.
+        const time = when.toLocaleTimeString(Qt.locale(), "HH:mm");
         const startOfDay = d => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
         const days = Math.round((startOfDay(when) - startOfDay(now)) / 86400000);
         if (days === 0)
             return time;
         if (days === 1)
-            return "tomorrow " + time;
+            return "tom " + time;
         if (days < 7)
-            return when.toLocaleDateString(Qt.locale(), "ddd") + " " + time;
-        return when.toLocaleDateString(Qt.locale(), "d MMM") + " " + time;
+            return when.toLocaleDateString(Qt.locale(), "ddd").toLowerCase() + " " + time;
+        return when.toLocaleDateString(Qt.locale(), "d MMM").toLowerCase() + " " + time;
     }
 
     // "Resets in 4d 17h · Thu 3:59 AM", degrading to whichever half we have.
