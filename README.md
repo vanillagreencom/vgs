@@ -5,9 +5,11 @@ restyles your whole desktop, not just the shell.
 
 **Hyprland only.** Niri support is coming.
 
-[![VGS demo](docs/media/vgs-demo-poster.jpg)](docs/media/vgs-demo.mp4)
+<video src="https://github.com/user-attachments/assets/be9ffadf-ba95-4bc9-8401-02d62e30fdb2"
+       controls muted width="100%"></video>
 
-*Tiling and the scrolling layout, then the theme browser, settings, and the VGS menu.*
+*Tiling and the scrolling layout, the theme browser and wallpapers, per-app theming in settings,
+the control centre with the network panel, notifications, power modes, AI usage, and the VGS menu.*
 
 ## What it is
 

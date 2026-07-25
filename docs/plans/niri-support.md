@@ -55,6 +55,33 @@ it mid-port. Proposed:
 `AGENTS.md` currently says "Target is Hyprland + Quickshell 0.3.0 only." That
 line has to change, and the tier table above should land in the README.
 
+## Test environment — there is a dedicated Niri VM
+
+You do not need to reboot the workstation or build a VM to test this. One
+already exists, is running, and is **free to reconfigure or wipe**:
+
+- **libvirt domain `arch-niri-work`** on `qemu:///system` (verified running).
+- **Super+8** toggles it — a fullscreen scratchpad wired in
+  `~/.config/hypr/config/scratchpads.lua`, launched via
+  `~/.local/bin/arch-niri-work-viewer` →
+  `libvirt-work-vm-viewer arch-niri-work arch-niri-work-viewer`.
+- The scratchpad sets `no_shortcuts_inhibit`, so keystrokes pass through to the
+  guest instead of being eaten by the host Hyprland — which is what makes it
+  usable for testing Niri keybinds.
+- Already logged in, so no console login dance on each boot.
+
+It currently runs the **Noctalia** shell (a Quickshell shell for Niri). That is
+**not** something to preserve — remove it entirely. The VM has no other purpose;
+treat it as a scratch target for VGS-on-Niri.
+
+Two practical notes for using it:
+- Reaching it over a viewer means screenshots and video capture of the guest go
+  through the viewer window, so pixel-exact comparisons against the host are not
+  meaningful. Test behaviour there, not rendering fidelity.
+- The guest needs the VGS clone plus Quickshell 0.3.0. Decide early whether to
+  bind-mount the repo in or clone separately — a bind mount keeps the edit/test
+  loop tight but means the guest sees the host's `~/.config/vshell` paths.
+
 ---
 
 ## Phase 0 — groundwork (small, unblocks everything)
@@ -139,11 +166,11 @@ The Go backend is nearly clean: only **37** Hyprland references, confined to
 
 ## Validation
 
-There is no Niri on this workstation, so the loop is:
+The host runs Hyprland, so the loop straddles two machines:
 
 1. `qs -c vshell` and `scripts/smoke-surfaces.sh` on Hyprland after **every**
    phase — the top risk of this work is regressing the working compositor.
-2. A Niri VM or a nested Niri session for the actual Niri paths.
+2. The `arch-niri-work` VM (Super+8, see above) for the actual Niri paths.
 3. `scripts/check-settings-migration.js` if any `niri*` settings key changes
    shape.
 4. Watch for behaviour that silently depends on `isHyprland` being a constant.
