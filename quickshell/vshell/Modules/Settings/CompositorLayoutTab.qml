@@ -102,6 +102,23 @@ Item {
             return;
 
         fixingInclude = true;
+        if (CompositorService.isNiri) {
+            Proc.runCommand("fix-layout-include", [
+                Paths.vshellCli,
+                "config",
+                "repair-include",
+                "niri",
+                "layout.kdl",
+                "--json"
+            ], (output, exitCode) => {
+                fixingInclude = false;
+                if (exitCode !== 0)
+                    return;
+                checkLayoutIncludeStatus();
+                SettingsData.updateCompositorLayout();
+            });
+            return;
+        }
         const unixTime = Math.floor(Date.now() / 1000);
         const backupFile = paths.configFile + ".backup" + unixTime;
         const script = ConfigIncludeResolve.buildRepairScript({
@@ -121,20 +138,9 @@ Item {
     }
 
     function checkXrayConflicts() {
-        if (!CompositorService.isNiri)
-            return;
-        const configDir = Paths.strip(StandardPaths.writableLocation(StandardPaths.ConfigLocation));
-        const script = `cd "${configDir}/niri" 2>/dev/null || exit 0
-files="config.kdl"
-for f in $(sed -nE 's/^[[:space:]]*include[[:space:]]+"([^"]+)".*/\\1/p' config.kdl 2>/dev/null); do
-    case "$f" in vgs/*|/*vgs/*) continue ;; esac
-    [ -f "$f" ] && files="$files $f"
-done
-awk '$1 == "xray" { print FILENAME ":" FNR; exit }' $files 2>/dev/null`;
-
-        Proc.runCommand("check-xray-conflict", ["sh", "-c", script], (output, exitCode) => {
-            xrayConflictSource = exitCode === 0 ? output.trim() : "";
-        });
+        // Niri exposes no compositor blur in VGS, so there is no xray state
+        // to reconcile with external configuration.
+        xrayConflictSource = "";
     }
 
     Component.onCompleted: {
@@ -317,65 +323,7 @@ awk '$1 == "xray" { print FILENAME ":" FNR; exit }' $files 2>/dev/null`;
                 }
 
                 SettingsToggleRow {
-                    tags: ["niri", "radius", "override"]
-                    settingKey: "niriLayoutRadiusOverrideEnabled"
-                    text: I18n.tr("Manage Window Radius")
-                    description: I18n.tr("Control compositor window radius from VGS settings")
-                    checked: SettingsData.niriLayoutRadiusOverride >= 0
-                    onToggled: checked => {
-                        if (checked) {
-                            SettingsData.set("niriLayoutRadiusOverride", SettingsData.cornerRadius);
-                            return;
-                        }
-                        SettingsData.set("niriLayoutRadiusOverride", -1);
-                    }
-                }
-
-                SettingsSliderRow {
-                    tags: ["niri", "radius", "override"]
-                    settingKey: "niriLayoutRadiusOverride"
-                    text: I18n.tr("Window Corner Radius")
-                    description: I18n.tr("Rounded corners for windows")
-                    visible: SettingsData.niriLayoutRadiusOverride >= 0
-                    value: Math.max(0, SettingsData.niriLayoutRadiusOverride)
-                    minimum: 0
-                    maximum: 100
-                    unit: "px"
-                    defaultValue: SettingsData.cornerRadius
-                    onSliderValueChanged: newValue => SettingsData.set("niriLayoutRadiusOverride", newValue)
-                }
-
-                SettingsToggleRow {
-                    tags: ["niri", "border", "override"]
-                    settingKey: "niriLayoutBorderSizeEnabled"
-                    text: I18n.tr("Manage Border Size")
-                    description: I18n.tr("Control compositor border and focus-ring width from VGS settings")
-                    checked: SettingsData.niriLayoutBorderSize >= 0
-                    onToggled: checked => {
-                        if (checked) {
-                            SettingsData.set("niriLayoutBorderSize", 2);
-                            return;
-                        }
-                        SettingsData.set("niriLayoutBorderSize", -1);
-                    }
-                }
-
-                SettingsSliderRow {
-                    tags: ["niri", "border", "override"]
-                    settingKey: "niriLayoutBorderSize"
-                    text: I18n.tr("Border Size")
-                    description: I18n.tr("Width of window border and focus ring")
-                    visible: SettingsData.niriLayoutBorderSize >= 0
-                    value: Math.max(0, SettingsData.niriLayoutBorderSize)
-                    minimum: 0
-                    maximum: 10
-                    unit: "px"
-                    defaultValue: 2
-                    onSliderValueChanged: newValue => SettingsData.set("niriLayoutBorderSize", newValue)
-                }
-
-                SettingsToggleRow {
-                    visible: CompositorService.isNiri
+                    visible: false
                     tags: ["niri", "xray", "blur", "background-effect", "performance"]
                     settingKey: "niriLayoutXrayEnabled"
                     text: I18n.tr("Xray Blur Effect")
@@ -385,7 +333,7 @@ awk '$1 == "xray" { print FILENAME ":" FNR; exit }' $files 2>/dev/null`;
                 }
 
                 SettingsToggleRow {
-                    visible: CompositorService.isNiri
+                    visible: false
                     tags: ["niri", "xray", "bar", "performance"]
                     settingKey: "niriLayoutBarXrayEnabled"
                     text: I18n.tr("VGS Bar Xray")

@@ -1,7 +1,9 @@
 # Shell architecture
 
 ## Purpose
-VGS is a Hyprland-only Quickshell runtime.
+VGS is a Hyprland and Niri Quickshell runtime. Hyprland is the reference
+implementation; Niri support is additive and uses native dynamic workspaces and
+the Niri IPC event stream.
 
 Runtime name: `vshell`.
 
@@ -32,9 +34,12 @@ Runtime name: `vshell`.
 2. `shell.qml` loads common singletons, services, and modules.
 3. Services read mutable user settings/state from `~/.config/vshell` and bundled defaults/plugins from the repo.
 4. UI modules bind to services and shared theme tokens.
-5. External actions go through `bin/vshell` / `bin/vshell-helper` when work is not pure UI; system-integration state (network, logind, BlueZ, CUPS, ...) flows over the backend socket through `Services/VGSBackendService.qml`, gated on advertised capabilities with QML fallbacks.
+5. External actions go through `bin/vshell` / `bin/vshell-helper` when work is not pure UI. Niri KDL parsing and rendering is isolated in `bin/vshell_niri.py` behind that helper CLI; QML passes structured JSON rather than rendering config text. System-integration state (network, logind, BlueZ, CUPS, ...) flows over the backend socket through `Services/VGSBackendService.qml`, gated on advertised capabilities with QML fallbacks.
 6. Font rendering settings are helper-owned VGS settings. `vshell fonts apply/reset` writes fontconfig, GTK settings blocks, and supported desktop font-rendering keys; it is not part of theme generation.
-7. Hyprland shape settings are helper-owned. `vshell config apply-layout hyprland` writes `~/.config/hypr/vgs/layout.lua` from VGS settings for radius, border, gaps, and border-resize behavior; the grouped-window groupbar tabs round at half the window radius (derived, not a separate setting); dotfiles should include this fragment from the Hyprland config.
+7. Compositor shape settings are helper-owned. `vshell config apply-layout
+   hyprland` writes `~/.config/hypr/vgs/layout.lua`; `vshell config apply-layout
+   niri` writes `~/.config/niri/vgs/layout.kdl`. The compositor config includes
+   the matching VGS fragment.
 8. `vshell greeter sync` writes `/var/cache/vshell-greeter`, copied greeter runtime, `/etc/greetd/config.toml`, and `/etc/pam.d/greetd`; `vshell auth sync` writes `/etc/pam.d/vshell`, `/etc/pam.d/vshell-u2f`, and refreshes greetd PAM.
 9. Empty-password login keyring conversion is explicit: `vshell greeter keyring empty --force` backs up `~/.local/share/keyrings/login.keyring` before replacing it; normal greeter sync refuses destructive conversion.
 10. Optional widgets check helper/backends and degrade when unavailable.

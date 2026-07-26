@@ -14,7 +14,8 @@ Explicitly **not** ported from upstream:
 - `matugen`, `themes.*`, `theme.auto`, and any theme/wallpaper generation model.
   VGS theming is owned by `bin/vshell-helper`, `VGSThemeService`, and
   `vshell theme`.
-- Multi-compositor shell control paths (VGS is Hyprland-only).
+- Upstream multi-compositor shell orchestration. VGS implements its Niri paths
+  in VGS-owned QML and helper code instead of exposing upstream runtime names.
 
 Upstream is MIT-licensed; the retained license text and copyright
 (Copyright (c) 2025 Avenge Media LLC) live at `quickshell/vshell/LICENSE`,

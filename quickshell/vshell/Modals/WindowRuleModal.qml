@@ -348,15 +348,6 @@ FloatingWindow {
             actions.tiledState = true;
         if (drawBorderBgToggle.checked && isNiri)
             actions.drawBorderWithBackground = true;
-        if (isNiri) {
-            applyCond(actions, "backgroundBlur", blurCond.triState);
-            applyCond(actions, "backgroundXray", xrayCond.triState);
-        }
-        if (noiseEnabled.checked && isNiri)
-            actions.backgroundNoise = noiseSlider.value / 100;
-        if (saturationEnabled.checked && isNiri)
-            actions.backgroundSaturation = saturationSlider.value / 100;
-
         const floatX = parseInt(floatingXInput.text);
         const floatY = parseInt(floatingYInput.text);
         if (isNiri && !isNaN(floatX) && !isNaN(floatY)) {
@@ -447,10 +438,14 @@ FloatingWindow {
 
         if (isEditMode) {
             const ruleJson = JSON.stringify(ruleData);
-            Proc.runCommand("update-windowrule", [Paths.vshellCli, "config", "windowrules", "update", compositor, editingRule.id, ruleJson], (output, exitCode) => {
+            Proc.runCommand("update-windowrule", [Paths.vshellCli, "config", "windowrules", "update", compositor, editingRule.id, ruleJson], (output, exitCode, errorOutput) => {
                 root.submitting = false;
-                if (exitCode !== 0)
+                if (exitCode !== 0) {
+                    ToastService.showError(I18n.tr("Could not update window rule"),
+                        (errorOutput || output || I18n.tr("Helper exited with code %1").arg(exitCode)).trim(),
+                        "", "window-rules");
                     return;
+                }
                 if (shouldValidate)
                     NiriService.validate();
                 if (CompositorService.isMango)
@@ -460,10 +455,14 @@ FloatingWindow {
             });
         } else {
             const ruleJson = JSON.stringify(ruleData);
-            Proc.runCommand("add-windowrule", [Paths.vshellCli, "config", "windowrules", "add", compositor, ruleJson], (output, exitCode) => {
+            Proc.runCommand("add-windowrule", [Paths.vshellCli, "config", "windowrules", "add", compositor, ruleJson], (output, exitCode, errorOutput) => {
                 root.submitting = false;
-                if (exitCode !== 0)
+                if (exitCode !== 0) {
+                    ToastService.showError(I18n.tr("Could not add window rule"),
+                        (errorOutput || output || I18n.tr("Helper exited with code %1").arg(exitCode)).trim(),
+                        "", "window-rules");
                     return;
+                }
                 if (shouldValidate)
                     NiriService.validate();
                 if (CompositorService.isMango)
@@ -1228,12 +1227,12 @@ FloatingWindow {
 
                 SectionHeader {
                     title: I18n.tr("Background Effect")
-                    visible: isNiri
+                    visible: false
                 }
 
                 StyledText {
                     width: parent.width
-                    visible: isNiri
+                    visible: false
                     text: I18n.tr("Xray blurs only the wallpaper (efficient) and is the default when Blur is on. Set Xray to Off for regular full blur of everything beneath the window (more expensive).")
                     font.pixelSize: Theme.fontSizeSmall - 1
                     color: Theme.surfaceVariantText
@@ -1243,7 +1242,7 @@ FloatingWindow {
                 Flow {
                     width: parent.width
                     spacing: Theme.spacingS
-                    visible: isNiri
+                    visible: false
 
                     MatchCond {
                         id: blurCond
@@ -1265,7 +1264,7 @@ FloatingWindow {
                 Row {
                     width: parent.width
                     spacing: Theme.spacingM
-                    visible: isNiri
+                    visible: false
 
                     CheckboxRow {
                         id: noiseEnabled
@@ -1288,7 +1287,7 @@ FloatingWindow {
                 Row {
                     width: parent.width
                     spacing: Theme.spacingM
-                    visible: isNiri
+                    visible: false
 
                     CheckboxRow {
                         id: saturationEnabled

@@ -14,6 +14,13 @@ preserved here for license and provenance clarity.
 - Preserved license files: `quickshell/vshell/LICENSE` and
   `quickshell/vshell/LICENSE_CHANGE_12_11_2025.md`
 
+Niri support was reconciled against the later upstream commit
+`8bb7396362357650a80dcc8d81407095c91c7dcf` (2026-07-24). VGS adapts the Niri
+IPC event/action shapes from `quickshell/Services/NiriService.qml` and carries
+the upstream `quickshell/assets/niri.svg` at
+`quickshell/vshell/assets/niri.svg`; both remain under the preserved upstream
+license.
+
 The backend Go daemon (`backend/`) is separately adapted from the upstream Go
 core at commit `1cc9218ff6192477d52b025f5fbbc286df0f50ef`; see
 `backend/ATTRIBUTION.md` for its boundary and exclusions.

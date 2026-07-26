@@ -38,7 +38,7 @@ lines) preserved verbatim:
 | Imported colors | `vshell theme import-colors <colors.toml>` |
 | Wallpaper extraction | `vshell theme extract-wallpaper <image>` transient by default; add `--save` or use `save-current` to persist |
 | Manual palette edits | `vshell theme apply-colors --set role=#rrggbb` transient by default; `--persist` writes the merged palette into the theme's overlay `colors.toml` |
-| Whole-palette restyle | `vshell theme restyle [--brightness/--vibrancy/--contrast/--temperature -100..100 --hue -180..180 \| --reset]` stored in overlay `theme.json.adjustments` |
+| Whole-palette restyle | `vshell theme restyle [--brightness/--vibrancy/--contrast/--temperature -100..100 --hue -180..180 \| --reset]` stored in overlay `theme.json.adjustments`; `--preview` writes only live shell state for QML feedback and does not persist overlay adjustments, app targets, hooks, or `theme-current.json` |
 | Per-app color overrides | `vshell theme app-colors <app> --set role=#rrggbb` stored in overlay `app-colors.toml` |
 
 Theme packages own colors, wallpapers, and curated/generated app theme files.
@@ -88,7 +88,8 @@ All in-settings color edits are ordinary user-overlay files under
 - `theme.json.adjustments` (overlay) — optional `{brightness, vibrancy, contrast,
   hue, temperature}` restyle object (ints; b/v/c/temp -100..100, hue -180..180, 0
   neutral). Non-destructive: the pipeline is compose `colors.toml` → apply persisted
-  edits → apply the HSV adjustment transform to the 22 base colors → derive roles,
+  edits → apply the perceptual OKLab/OKLCH adjustment transform to the 22 base
+  colors → derive roles,
   so the stored `colors.toml` is never rewritten and an all-zero object is a
   byte-exact no-op. `vshell theme restyle` writes it (omitting the key when all
   zero, dropping a now-identical overlay `theme.json` so the theme reads unmodified).
@@ -124,6 +125,11 @@ for curated palettes instead of rewriting them.
 | `~/.config/vshell/theme.json` | Current normalized theme state for QML |
 | `~/.config/vshell/generated/` | Small generated helper outputs |
 | `~/.config/hypr/vgs/layout.lua` | Current Hyprland layout/shape settings output, generated from VGS settings and included by dotfiles |
+| `~/.config/niri/vgs/` | Current Niri colors, layout, outputs, cursor, keybind, and window-rule KDL fragments |
+
+All built-in packages ship `preview.png`. Preview generation for a new user
+package remains an optional development-only nested-Hyprland workflow; it is
+not part of the Niri runtime dependency set.
 
 ## Apply flow
 1. User chooses a theme, wallpaper, or imported colors.
@@ -133,7 +139,7 @@ for curated palettes instead of rewriting them.
 5. Roles: passthrough for curated themes; normalize + contrast enforcement for generated ones.
 6. For each app target: curated `apps/<file>` installs verbatim, else the template renders from roles.
 7. Helper writes `theme.json` (+ `theme-current.json`).
-8. Reload hooks refresh apps or services.
+8. Reload/setup hooks connect generated fragments to their consumers and refresh apps or services.
 9. QML theme service reloads current theme.
 
 ## Per-app toggles
@@ -156,10 +162,11 @@ Rename only with compatibility shim.
 | App | Output |
 |--------|--------|
 | Hyprland | `~/.config/hypr/vgs/colors.lua` (+ curated snippet `~/.config/hypr/vgs/theme.conf`); settings-owned shape/layout output lives separately at `~/.config/hypr/vgs/layout.lua` |
+| Niri | `~/.config/niri/vgs/colors.kdl`, with an idempotent managed include in `config.kdl`; settings-owned shape/layout, output, keybind, cursor, and window-rule fragments live beside it under `~/.config/niri/vgs/` |
 | Ghostty | `~/.config/ghostty/themes/vgs` |
 | Alacritty | `~/.config/alacritty/vgs.toml` |
-| Kitty | `~/.config/kitty/vgs-theme.conf`; hook SIGUSR1-reloads running instances |
-| Foot | `~/.config/foot/vgs-theme.ini` |
+| Kitty | `~/.config/kitty/vgs-theme.conf`; VGS preserves `kitty.conf`, adds the include once, then SIGUSR1-reloads running instances |
+| Foot | `~/.config/foot/vgs-theme.ini`; VGS preserves `foot.ini`, adds the include once, and retains the effective system config when it must create a new user config |
 | WezTerm | `~/.config/wezterm/vgs-theme.lua` |
 | tmux | `~/.config/tmux/vgs-theme.conf` or dotfiles-linked target |
 | Neovim | role table `~/.local/share/vshell/theme.nvim.lua` (always) + curated colorscheme spec `~/.local/share/vshell/theme.nvim.spec.lua` (curated themes only; removed when absent). The VGS nvim bridge (`config/vshell/nvim/vgs-theme-bridge.lua`, dofile'd from the user's nvim config) loads the current theme's colorscheme from the spec: `vgs_vendored` plugins resolve to `config/vshell/nvim/colorschemes/<dir>` and load by directory (no network), preserving each spec's `opts`. Because lazy runs `setup()` once, the bridge re-runs `setup(opts)` on every reload so a live switch re-colors. Inline-function colorschemes are invoked directly; failing both, base16 highlights from roles, else terminal ANSI. Live switch via the file watcher; a not-yet-loaded plugin needs an nvim restart. Preview generator uses the same logic |
@@ -170,7 +177,7 @@ Rename only with compatibility shim.
 | Emacs | `~/.config/emacs/vgs-theme.el` |
 | KDE colors | `~/.local/share/color-schemes/Vgs.colors` |
 | Icons | curated `icons.theme` pointer → `~/.config/vshell/generated/icons.theme`; hook gsettings-applies it unless VGS settings manage icon themes. Yaru icon themes (+ accent variants) are vendored under `config/vshell/icons/` (see its `ATTRIBUTION.md`); `ensure_bundled_icon_themes` symlinks them into `~/.local/share/icons` on apply/enumeration so pointers resolve without a system `yaru-icon-theme` install (a real system/user install of the same name wins) |
-| fastfetch | `~/.config/vshell/generated/fastfetch/logo.jpg` (theme logo, centre-cropped from the active wallpaper); `fastfetch-logo` hook renders it on apply. Opt in by pointing a fastfetch `config.jsonc` `logo.source` at that path. Optional: skips cleanly without Pillow or a wallpaper (e.g. `wallpaperSource: folder`) |
+| fastfetch | `~/.config/vshell/generated/fastfetch/logo.jpg` (theme logo, centre-cropped from the theme wallpaper role when Pillow, ImageMagick, or ffmpeg is available; otherwise that wallpaper is copied without conversion). When fastfetch is installed and no effective user/system config exists, VGS seeds a terminal-protocol-auto-detecting boxed image-logo layout at `~/.config/fastfetch/config.jsonc`; existing configs anywhere in Fastfetch's search path are never shadowed or replaced. |
 | Discord clients | `~/.config/vesktop/themes/vgs-discord.css`, `~/.config/Vencord/themes/`, `~/.config/equibop/themes/` (user enables the theme once in-app) |
 | Zen Browser | `~/.config/vshell/generated/zen/userChrome.css` (user imports into their zen chrome dir) |
 | Pywalfox | `~/.cache/wal/colors.json`; hook runs `pywalfox <mode>` + `pywalfox update` |
@@ -178,7 +185,7 @@ Rename only with compatibility shim.
 | Pi | `~/.pi/agent/themes/vgs-theme.json` |
 | Claude | hook updates `~/.claude/settings.json` `theme` to `light-ansi`/`dark-ansi` |
 | GTK | `~/.config/gtk-3.0/gtk.css`, `~/.config/gtk-4.0/gtk.css`; hook sets GNOME `color-scheme` and GTK theme for light/dark libadwaita apps |
-| Qt | `~/.config/qt6ct/colors/vgs.conf`, `~/.config/qt5ct/colors/vgs.conf` |
+| Qt | `~/.config/qt6ct/colors/vgs.conf`, `~/.config/qt5ct/colors/vgs.conf`; VGS preserves qtct settings while selecting the generated palette and enabling `custom_palette` |
 | Chromium helper | `~/.config/vshell/generated/chromium.rgb` |
 | Shell | `~/.config/vshell/theme.json` |
 | Greeter sync | `/var/cache/vshell-greeter/theme.json` plus per-user `users/<name>/theme.json` |
@@ -276,7 +283,7 @@ Writes direct when permitted; otherwise needs local privilege wrapper/enablement
 
 ## Deliberately not themed
 Verified against reference shell/theme projects (2026-07):
-niri/mangowc (VGS is Hyprland-only), upstream-only helper tools, spicetify
+mangowc, upstream-only helper tools, spicetify
 (not in either upstream anymore), firefox userchrome (pywalfox covers Firefox),
 mako/swayosd/walker/waybar/hyprlock (VGS ships its own equivalents),
 gum and keyboard.rgb (niche upstream extras; revisit on request).

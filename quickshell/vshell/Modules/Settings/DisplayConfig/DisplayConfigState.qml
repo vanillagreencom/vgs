@@ -9,6 +9,7 @@ import qs.Common
 import qs.Services
 import "../../../Common/ConfigIncludeResolve.js" as ConfigIncludeResolve
 import "../../../Common/DisplayProfileUtils.js" as DisplayProfileUtils
+import "../../../Common/LatestTransactionQueue.js" as LatestTransactionQueue
 
 Singleton {
     id: root
@@ -54,6 +55,7 @@ Singleton {
             "configurations": []
         })
     property bool _monitorsSelfWrite: false
+    property var _niriOutputTransactionState: LatestTransactionQueue.emptyState()
     // Last config entry that was applied (set by applyConfigEntry / confirmChanges).
     // Used to recover position, scale, and transform for disabled outputs that wlr
     // no longer reports a logical viewport for.
@@ -1443,17 +1445,7 @@ Singleton {
             return;
 
         fixingInclude = true;
-        const unixTime = Math.floor(Date.now() / 1000);
-        const backupFile = paths.configFile + ".backup" + unixTime;
-        const script = ConfigIncludeResolve.buildRepairScript({
-            configFile: paths.configFile,
-            backupFile: backupFile,
-            fragmentFile: paths.outputsFile,
-            grepPattern: paths.grepPattern,
-            includeLine: paths.includeLine
-        });
-
-        Proc.runCommand("fix-outputs-include", ["sh", "-c", script], (output, exitCode) => {
+        function finishIncludeRepair(output, exitCode) {
             if (exitCode !== 0) {
                 fixingInclude = false;
                 return;
@@ -1475,7 +1467,29 @@ Singleton {
             fixingInclude = false;
             checkIncludeStatus();
             WlrOutputService.requestState();
+        }
+        if (CompositorService.isNiri) {
+            Proc.runCommand("fix-outputs-include", [
+                Paths.vshellCli,
+                "config",
+                "repair-include",
+                "niri",
+                "outputs.kdl",
+                "--json"
+            ], finishIncludeRepair);
+            return;
+        }
+        const unixTime = Math.floor(Date.now() / 1000);
+        const backupFile = paths.configFile + ".backup" + unixTime;
+        const script = ConfigIncludeResolve.buildRepairScript({
+            configFile: paths.configFile,
+            backupFile: backupFile,
+            fragmentFile: paths.outputsFile,
+            grepPattern: paths.grepPattern,
+            includeLine: paths.includeLine
         });
+
+        Proc.runCommand("fix-outputs-include", ["sh", "-c", script], finishIncludeRepair);
     }
 
     function showHyprlandReadOnlyWarning() {
@@ -1579,13 +1593,7 @@ Singleton {
         case "niri":
             {
                 const niriSettings = hasExplicitSettings ? settings : buildMergedNiriSettings();
-                NiriService.generateOutputsConfig(outputsData, niriSettings, success => {
-                    if (!success) {
-                        finish(false);
-                        return;
-                    }
-                    reloadAndApplyNiriLiveOutputsConfig(outputsData, niriSettings, finish);
-                });
+                enqueueNiriOutputTransaction(outputsData, niriSettings, finish);
                 break;
             }
         case "hyprland":
@@ -1608,6 +1616,43 @@ Singleton {
             break;
         }
         return true;
+    }
+
+    function enqueueNiriOutputTransaction(outputsData, niriSettings, callback) {
+        const transition = LatestTransactionQueue.submit(_niriOutputTransactionState, {
+            outputs: JSON.parse(JSON.stringify(outputsData || {})),
+            settings: JSON.parse(JSON.stringify(niriSettings || {})),
+            callback: callback
+        });
+        _niriOutputTransactionState = transition.state;
+        if (transition.supersededRequest?.callback)
+            transition.supersededRequest.callback(false);
+        if (transition.startRequest)
+            runNiriOutputTransaction(transition.startRequest);
+    }
+
+    function runNiriOutputTransaction(request) {
+        NiriService.generateOutputsConfig(request.outputs, request.settings, success => {
+            if (!success) {
+                finishNiriOutputTransaction(request, false);
+                return;
+            }
+            reloadAndApplyNiriLiveOutputsConfig(request.outputs, request.settings, applied => {
+                finishNiriOutputTransaction(request, applied);
+            });
+        });
+    }
+
+    function finishNiriOutputTransaction(request, success) {
+        const transition = LatestTransactionQueue.complete(
+            _niriOutputTransactionState, request.generation);
+        if (transition.ignored)
+            return;
+        _niriOutputTransactionState = transition.state;
+        if (transition.completedRequest?.callback)
+            transition.completedRequest.callback(transition.completedLatest && success);
+        if (transition.startRequest)
+            runNiriOutputTransaction(transition.startRequest);
     }
 
     function niriTransformArg(transform) {
@@ -1704,7 +1749,20 @@ Singleton {
     }
 
     function reloadAndApplyNiriLiveOutputsConfig(outputsData, niriSettings, callback) {
-        Proc.runCommand("niri-reload-output-config", ["niri", "msg", "action", "load-config-file"], () => {
+        Proc.runCommand("niri-reload-output-config", [Paths.vshellCli, "config", "niri-reload"], (output, exitCode, errorOutput) => {
+            if (exitCode !== 0) {
+                let detail = errorOutput.trim();
+                try {
+                    const result = JSON.parse(output);
+                    detail = result.error || detail;
+                } catch (_) {}
+                detail = detail || I18n.tr("niri: failed to load config");
+                log.warn("Failed to reload Niri output config:", detail);
+                ToastService.showError(I18n.tr("niri: failed to load config"), detail, "", "niri-output-config");
+                if (callback)
+                    callback(false);
+                return;
+            }
             applyNiriLiveOutputsConfig(outputsData, niriSettings, callback);
         });
     }
@@ -2100,23 +2158,19 @@ Singleton {
 
         const mergedOutputs = buildOutputsWithPendingChanges();
         const mergedNiriSettings = buildMergedNiriSettings();
-        const configContent = NiriService.buildOutputsConfig(mergedOutputs, mergedNiriSettings);
+        const payload = JSON.stringify(NiriService.outputsPayload(mergedOutputs, mergedNiriSettings));
 
-        const configDir = Paths.strip(StandardPaths.writableLocation(StandardPaths.ConfigLocation));
-        const tempFile = configDir + "/niri/vgs/.outputs-validate-tmp.kdl";
-
-        Proc.runCommand("niri-validate-write-tmp", ["sh", "-c", `mkdir -p "$(dirname "${tempFile}")" && cat > "${tempFile}" << 'EOF'\n${configContent}EOF`], (output, writeExitCode) => {
-            if (writeExitCode !== 0) {
+        Proc.runCommand("niri-validate-outputs",
+            [Paths.vshellCli, "config", "niri-outputs-validate", payload],
+            (output, exitCode, errorOutput) => {
                 validatingConfig = false;
-                validationError = I18n.tr("Failed to write temp file for validation");
-                ToastService.showError(I18n.tr("Config validation failed"), validationError, "", "display-config");
-                return;
-            }
-            Proc.runCommand("niri-validate-config", ["sh", "-c", `niri validate -c "${tempFile}" 2>&1`], (validateOutput, validateExitCode) => {
-                validatingConfig = false;
-                Proc.runCommand("niri-validate-cleanup", ["rm", "-f", tempFile], () => {});
-                if (validateExitCode !== 0) {
-                    validationError = validateOutput.trim() || I18n.tr("Invalid configuration");
+                if (exitCode !== 0) {
+                    let detail = (errorOutput || output || "").trim();
+                    try {
+                        const result = JSON.parse(output);
+                        detail = result.error || detail;
+                    } catch (_) {}
+                    validationError = detail || I18n.tr("Invalid configuration");
                     ToastService.showError(I18n.tr("Config validation failed"), validationError, "", "display-config");
                     return;
                 }
@@ -2125,7 +2179,6 @@ Singleton {
                     SettingsData.saveSettings();
                 commitNiriSettingsChanges();
                 backendWriteOutputsConfig(mergedOutputs, mergedNiriSettings);
-            });
         });
     }
 

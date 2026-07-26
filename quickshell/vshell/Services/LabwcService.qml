@@ -3,7 +3,7 @@ pragma Singleton
 import QtQuick
 
 QtObject {
-    // Hyprland-only VGS: inert compatibility surface.
+    // Inert compatibility surface for unsupported Labwc branches.
     readonly property bool available: false
     readonly property string activeOutput: ""
     readonly property var windows: []

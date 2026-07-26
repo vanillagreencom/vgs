@@ -1,5 +1,5 @@
 #!/bin/bash
-# VGS-style screenshot capture for Hyprland:
+# VGS screenshot capture for Hyprland and Niri:
 # smart click-to-window/output, region drag, explicit window/display selection,
 # focused/all-display capture, delayed capture, save/copy/edit.
 set -uo pipefail
@@ -10,7 +10,18 @@ fail() {
   exit 1
 }
 
-for dep in grim slurp hyprpicker hyprctl jq wl-copy notify-send; do
+IS_NIRI=0
+if [[ -n ${NIRI_SOCKET:-} ]] && command -v niri >/dev/null 2>&1 && niri msg version >/dev/null 2>&1; then
+  IS_NIRI=1
+fi
+
+deps=(jq wl-copy notify-send)
+if ((IS_NIRI)); then
+  deps+=(niri grim wl-paste)
+else
+  deps+=(grim slurp hyprpicker hyprctl)
+fi
+for dep in "${deps[@]}"; do
   command -v "$dep" >/dev/null 2>&1 || fail "$dep not found"
 done
 
@@ -496,6 +507,116 @@ notify_screenshot_result() {
   ) >/dev/null 2>&1 &
 }
 
+notify_screenshot_copy() {
+  local filepath="$1"
+  notify-send \
+    --app-name "Screenshot" \
+    --icon "applets-screenshooter" \
+    --transient \
+    --hint "string:image-path:$filepath" \
+    "Screenshot copied to clipboard" \
+    -t 6000 >/dev/null 2>&1 &
+}
+
+capture_niri() {
+  local mode="$1"
+  local processing="$2"
+  local filename filepath action pointer capture_event capture_done clipboard_watcher
+
+  wait_for_capture_delay
+  filename="screenshot-$(date +'%Y-%m-%d_%H-%M-%S').png"
+  if [[ $processing == copy ]]; then
+    mkdir -p "$CAPTURE_STATE_DIR"
+    find "$CAPTURE_STATE_DIR" -maxdepth 1 -name 'clipboard-*.png' -mmin +1440 -delete 2>/dev/null || true
+    filepath="$CAPTURE_STATE_DIR/clipboard-$(date +'%Y-%m-%d_%H-%M-%S')-$$.png"
+  else
+    filepath="$OUTPUT_DIR/$filename"
+  fi
+  pointer=false
+  is_true "$INCLUDE_CURSOR" && pointer=true
+
+  case "$mode" in
+    window | windows) action=(niri msg action screenshot-window --write-to-disk false --show-pointer "$pointer") ;;
+    display | screen | monitor | fullscreen) action=(niri msg action screenshot-screen --write-to-disk false --show-pointer "$pointer") ;;
+    all | all-displays)
+      action=(grim)
+      is_true "$INCLUDE_CURSOR" && action+=(-c)
+      action+=("$filepath")
+      ;;
+    region | smart | *) action=(niri msg action screenshot --show-pointer "$pointer") ;;
+  esac
+
+  # Native Niri screenshot actions always publish image/png to the clipboard.
+  # Start an event watcher before opening the interactive UI so we never read a
+  # stale clipboard image after the IPC request returns.
+  if [[ ${action[0]} == niri ]]; then
+    mkdir -p "$CAPTURE_STATE_DIR"
+    capture_event=$(mktemp "$CAPTURE_STATE_DIR/.niri-screenshot.XXXXXX")
+    capture_done="${capture_event}.done"
+    wl-paste --type image/png --watch sh -c 'cat >"$1" && : >"$2"' _ \
+      "$capture_event" "$capture_done" \
+      >/dev/null 2>&1 &
+    clipboard_watcher=$!
+    sleep 0.05
+  fi
+  if ! "${action[@]}" >/dev/null; then
+    [[ -n ${clipboard_watcher:-} ]] && kill "$clipboard_watcher" 2>/dev/null || true
+    [[ -n ${capture_event:-} ]] && rm -f -- "$capture_event"
+    [[ -n ${capture_done:-} ]] && rm -f -- "$capture_done"
+    fail "Niri screenshot request failed"
+  fi
+
+  if [[ ${action[0]} == niri ]]; then
+    for _ in {1..1200}; do
+      [[ -e $capture_done ]] && break
+      sleep 0.05
+    done
+    kill "$clipboard_watcher" 2>/dev/null || true
+    wait "$clipboard_watcher" 2>/dev/null || true
+    if [[ -e $capture_done && -s $capture_event ]]; then
+      rm -f -- "$capture_done"
+      mv -- "$capture_event" "$filepath"
+    else
+      rm -f -- "$capture_event"
+      rm -f -- "$capture_done"
+      fail "Niri screenshot selection did not produce an image"
+    fi
+  fi
+  [[ -s $filepath ]] || fail "Niri screenshot did not produce an image"
+
+  case "$processing" in
+    slurp | save-copy)
+      wl-copy --type image/png <"$filepath" || fail "wl-copy failed"
+      printf '%s\n' "$filepath"
+      notify_screenshot_result "$filepath" "Screenshot saved to clipboard and file"
+      ;;
+    copy)
+      wl-copy --type image/png <"$filepath" || fail "wl-copy failed"
+      notify_screenshot_copy "$filepath"
+      ;;
+    save)
+      printf '%s\n' "$filepath"
+      notify_screenshot_result "$filepath" "Screenshot saved"
+      ;;
+    edit)
+      if [[ $SCREENSHOT_EDITOR == satty ]]; then
+        satty --app-id com.gabm.satty --filename "$filepath" \
+          --output-filename "${filepath%.*}-edited.${filepath##*.}" \
+          --actions-on-enter save-to-clipboard --save-after-copy \
+          --copy-command 'wl-copy --type image/png' || fail "editor failed"
+      else
+        "$SCREENSHOT_EDITOR" "$filepath" || fail "editor failed"
+      fi
+      ;;
+    *) fail "unknown processing mode: $processing" ;;
+  esac
+}
+
+if ((IS_NIRI)); then
+  capture_niri "$MODE" "$PROCESSING"
+  exit 0
+fi
+
 # Bracket A: the slurp overlay (and its exit) can shift focus; restore once the
 # selection is settled. The EXIT trap closes the bracket on cancel paths.
 PRE_SELECT_FOCUS=$(focus_snapshot)
@@ -586,13 +707,7 @@ case "$PROCESSING" in
     COPY_FILE="$CAPTURE_STATE_DIR/clipboard-$(date +'%Y-%m-%d_%H-%M-%S').png"
     capture_to_file "$SELECTION" "$COPY_FILE" || fail "grim failed"
     wl-copy --type image/png <"$COPY_FILE" || fail "wl-copy failed"
-    notify-send \
-      --app-name "Screenshot" \
-      --icon "applets-screenshooter" \
-      --transient \
-      --hint "string:image-path:$COPY_FILE" \
-      "Screenshot copied to clipboard" \
-      -t 6000 >/dev/null 2>&1 &
+    notify_screenshot_copy "$COPY_FILE"
     ;;
   save)
     capture_to_file "$SELECTION" "$FILEPATH" || fail "grim failed"

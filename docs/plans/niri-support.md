@@ -1,8 +1,11 @@
 # Niri as a second supported compositor (plan)
 
-Roadmap for making VGS run on Niri alongside Hyprland. Meant for an agent to
-execute later. Phases are ordered so a usable Niri session lands early; the
-expensive parsers come last and can be deferred without blocking the rest.
+**Status: completed 2026-07-25.**
+
+This was the roadmap for making VGS run on Niri alongside Hyprland. All four
+phases are now implemented. The phase descriptions and estimates below remain
+as the historical design record; the completion record at the end captures
+what shipped and how it was verified.
 
 ## Rule zero — Hyprland does not regress
 
@@ -32,9 +35,9 @@ literal `true` for VGS's entire history, and making it a runtime value is the
 single change most likely to break Hyprland in a way no Niri test would catch —
 see the note in [Validation](#validation).
 
-## Current state — read this first, the starting point is not what it looks like
+## Starting state (historical) — the starting point was not what it looked like
 
-VGS **has no Niri support today**, and never did: it was removed in the first
+At plan creation, VGS **had no Niri support**: it was removed in the first
 VGS commit (`feat: seed VGS project`), not degraded over time. What survives is
 the *wiring*, not the implementation.
 
@@ -78,7 +81,7 @@ it mid-port. Proposed:
 |---|---|
 | **Full parity** | Bar and all widgets, launcher, dash, control centre, dock, notifications, lock screen, greeter, theming, wallpapers, capture, brightness, idle/lock/screensaver, backend services |
 | **Niri-native equivalent** | Workspace switcher (Niri's dynamic workspaces), overview (`NiriOverviewOverlay`), display config (KDL output blocks), keybinds cheatsheet (KDL parse) |
-| **Not supported on Niri** | Compositor blur (`BlurService`) — Niri has no blur to drive. The window-rules editor and layout editor are Hyprland-only until Phase 4 |
+| **Not supported on Niri** | Compositor blur (`BlurService`) — Niri has no blur to drive |
 
 `AGENTS.md` currently says "Target is Hyprland + Quickshell 0.3.0 only." That
 line has to change, and the tier table above should land in the README.
@@ -227,3 +230,37 @@ A defensible first milestone is **Phases 0–2 only**, shipped as "Niri: bar,
 launcher and theming work; keybinds, window rules and layout editing are
 Hyprland-only for now." That is genuinely useful, and it is roughly a third of
 the total work.
+
+---
+
+## Completion record
+
+All planned phases shipped together:
+
+- Native Niri detection resolves the owner of the active Wayland socket, with
+  liveness-checked environment fallbacks. The same approach is shared by the
+  shell and backend so stale session variables do not select a dead compositor.
+- `NiriService` uses Niri's JSON IPC and event stream for outputs, windows,
+  workspaces, focus, layout, overview, monitor power, screenshots, and cursor
+  state. Existing shell surfaces consume it through `CompositorService`.
+- The settings UI supports Niri KDL outputs, layout, recursive keybind includes,
+  and window rules. Managed fragments are generated through the Python helper;
+  QML does not own parsing or privileged writes.
+- Capture, OCR colour sampling, portal recording, ASCII screensaver windows,
+  greeter generation, theme output/reload hooks, brightness targeting, gamma,
+  and the backend output service all have compositor-specific Niri paths.
+- Blur remains fully functional on Hyprland and is visibly unavailable with a
+  reason on Niri. Nested Hyprland theme previews remain an optional development
+  dependency rather than a Niri runtime dependency.
+- The exact upstream Niri icon is retained with commit-level attribution.
+
+Validation completed on both targets:
+
+- Host Hyprland: naming, settings migration, helper, brightness, backend
+  inventory, Python and shell syntax, Go build/vet/race tests, Quickshell smoke,
+  and surface smoke.
+- Dedicated Niri VM: live shell/service startup; backend capability and output
+  discovery; workspace/keybind/window-rule parsing; KDL config validation;
+  output application; overview, lock/unlock, display power, screenshot,
+  screensaver, theme, gamma, and greeter paths. No legacy Noctalia runtime or
+  configuration remains in the guest.

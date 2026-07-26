@@ -248,7 +248,7 @@ Item {
                 title: I18n.tr("Project")
 
                 StyledText {
-                    text: I18n.tr('VanillaGreen Shell (VGS) is a fast, deeply customizable desktop shell for <a href="https://hypr.land" style="text-decoration:none; color:%1;">Hyprland</a>.<br /><br/>It is built with <a href="https://quickshell.org" style="text-decoration:none; color:%1;">Quickshell</a>, a Qt6 framework for building desktop shells, and <a href="https://go.dev" style="text-decoration:none; color:%1;">Go</a>, a statically typed, compiled programming language.<br /><br />VGS builds on the work of <a href="https://github.com/AvengeMedia/DankMaterialShell" style="text-decoration:none; color:%1;">DankMaterialShell</a>, which it was originally forked from.').arg(Theme.primary)
+                    text: I18n.tr('VanillaGreen Shell (VGS) is a fast, deeply customizable desktop shell for <a href="https://hypr.land" style="text-decoration:none; color:%1;">Hyprland</a> and <a href="https://github.com/YaLTeR/niri" style="text-decoration:none; color:%1;">Niri</a>.<br /><br/>It is built with <a href="https://quickshell.org" style="text-decoration:none; color:%1;">Quickshell</a>, a Qt6 framework for building desktop shells, and <a href="https://go.dev" style="text-decoration:none; color:%1;">Go</a>, a statically typed, compiled programming language.<br /><br />VGS builds on the work of <a href="https://github.com/AvengeMedia/DankMaterialShell" style="text-decoration:none; color:%1;">DankMaterialShell</a>, which it was originally forked from.').arg(Theme.primary)
                     textFormat: Text.RichText
                     font.pixelSize: Theme.fontSizeMedium
                     linkColor: Theme.primary

@@ -18,6 +18,10 @@ CONFIG_HOME="${XDG_CONFIG_HOME:-$HOME/.config}"
 CLASS="org.vgs.screensaver"
 BRANDING="$CONFIG_HOME/vshell/branding/screensaver.txt"
 GHOSTTY_CONF="$CONFIG_HOME/vshell/ghostty-screensaver.conf"
+IS_NIRI=0
+if [[ -n ${NIRI_SOCKET:-} ]] && command -v niri >/dev/null 2>&1 && niri msg version >/dev/null 2>&1; then
+  IS_NIRI=1
+fi
 
 ensure_ghostty_conf() {
   [[ -f "$GHOSTTY_CONF" ]] && return 0
@@ -53,6 +57,15 @@ ensure_branding() {
 }
 
 cmd_stop() {
+  if ((IS_NIRI)); then
+    niri msg -j windows |
+      jq -r --arg c "$CLASS" '.[] | select(.app_id == $c) | .id' |
+      while IFS= read -r id; do
+        [[ -n $id ]] || continue
+        niri msg action close-window --id "$id" >/dev/null 2>&1 || true
+      done
+    return
+  fi
   hyprctl clients -j |
     jq -r --arg c "$CLASS" '.[] | select(.class == $c) | .pid' |
     while IFS= read -r pid; do
@@ -68,8 +81,13 @@ cmd_launch() {
   ensure_branding
 
   local monitor_count screensaver_count
-  monitor_count="$(hyprctl monitors -j | jq '[.[] | select(.disabled == false)] | length')"
-  screensaver_count="$(hyprctl clients -j | jq --arg c "$CLASS" '[.[] | select(.class == $c)] | length')"
+  if ((IS_NIRI)); then
+    monitor_count="$(niri msg -j outputs | jq 'length')"
+    screensaver_count="$(niri msg -j windows | jq --arg c "$CLASS" '[.[] | select(.app_id == $c)] | length')"
+  else
+    monitor_count="$(hyprctl monitors -j | jq '[.[] | select(.disabled == false)] | length')"
+    screensaver_count="$(hyprctl clients -j | jq --arg c "$CLASS" '[.[] | select(.class == $c)] | length')"
+  fi
 
   # Already covering every monitor -> nothing to do.
   (( screensaver_count >= monitor_count )) && return 0
@@ -80,6 +98,33 @@ cmd_launch() {
   fi
 
   local focused_monitor launch_cmd
+  if ((IS_NIRI)); then
+    local -a niri_launch
+    if command -v uwsm >/dev/null 2>&1; then
+      niri_launch=(uwsm app -- ghostty)
+    else
+      niri_launch=(ghostty)
+    fi
+    focused_monitor="$(niri msg -j focused-output | jq -r '.name // empty')"
+    niri msg -j outputs |
+      jq -r 'keys[]' |
+      while IFS= read -r monitor; do
+        [[ -n $monitor ]] || continue
+        niri msg action focus-monitor "$monitor" >/dev/null 2>&1 || true
+        niri msg action spawn -- "${niri_launch[@]}" \
+          "--class=$CLASS" --title=Screensaver "--config-file=$GHOSTTY_CONF" \
+          --font-size=18 -e vshell screensaver run >/dev/null
+        for _ in {1..40}; do
+          id="$(niri msg -j windows | jq -r --arg c "$CLASS" '[.[] | select(.app_id == $c)] | last | .id // empty')"
+          [[ -n $id ]] && break
+          sleep 0.05
+        done
+        [[ -n ${id:-} ]] && niri msg action fullscreen-window --id "$id" >/dev/null 2>&1 || true
+        sleep 0.25
+      done
+    [[ -n $focused_monitor ]] && niri msg action focus-monitor "$focused_monitor" >/dev/null 2>&1 || true
+    return 0
+  fi
   focused_monitor="$(hyprctl monitors -j | jq -r '.[] | select(.focused == true) | .name' | head -n1)"
   launch_cmd="uwsm app -- ghostty --class=$CLASS --title=Screensaver --config-file=$GHOSTTY_CONF --font-size=18 -e vshell screensaver run"
 
@@ -99,10 +144,15 @@ cmd_launch() {
 # --- per-window animation loop (runs inside the fullscreen ghostty) ------------
 
 _screensaver_in_focus() {
+  if ((IS_NIRI)); then
+    niri msg -j focused-window | jq -e --arg c "$CLASS" '.app_id == $c' >/dev/null 2>&1
+    return
+  fi
   hyprctl activewindow -j | jq -e --arg c "$CLASS" '.class == $c' >/dev/null 2>&1
 }
 
 _cursor_position() {
+  ((IS_NIRI)) && return 0
   hyprctl cursorpos -j 2>/dev/null | jq -r '[.x, .y] | @tsv' 2>/dev/null || true
 }
 

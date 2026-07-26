@@ -80,8 +80,8 @@ not change when connectors renumber on re-cable. `_resolve_targets` accepts:
 - stable id or name
 - legacy aliases `apple-xdr` / `apple-studio` (keybinds keep working)
 - connector name (`DP-1`)
-- role: `primary` (focused/origin monitor via `hyprctl`, else backlight, else
-  first) or `all`
+- role: `primary` (focused/origin monitor via Niri IPC or `hyprctl`, else
+  backlight, else first) or `all`
 - monitor-name substring
 
 Empty target resolves to the primary display.

@@ -3,7 +3,7 @@ pragma Singleton
 import QtQuick
 
 QtObject {
-    // Hyprland-only VGS does not use wlr-output-management.
+    // VGS uses compositor-native output control instead of wlr-output-management.
     readonly property bool wlrOutputAvailable: false
     readonly property var outputs: []
 

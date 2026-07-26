@@ -5,6 +5,8 @@ import QtQuick
 import Quickshell
 import qs.Common
 import qs.Services
+import "RestyleQueue.js" as RestyleQueue
+import "ThemeRequest.js" as ThemeRequest
 
 Singleton {
     id: root
@@ -15,7 +17,14 @@ Singleton {
     // leaks and pins `busy` true forever; a per-id map stays balanced.
     property var _pending: ({})
     property int inflight: 0
+    // Restyles have their own single-flight queue because Proc only coalesces
+    // calls that are still in its debounce window; it does not serialize
+    // processes after launch. Immutable transitions keep QML bindings notified
+    // and busy asserted across queued hand-offs.
+    property var _restyleQueueState: RestyleQueue.emptyState()
     readonly property bool busy: inflight > 0
+    readonly property bool restyling: RestyleQueue.isBusy(_restyleQueueState)
+    property var _pendingApps: ({})
     property string lastMessage: ""
     property string lastError: ""
     property var blueprints: []
@@ -112,7 +121,28 @@ Singleton {
             } catch (e) {
                 lastError = "Failed to parse theme apps: " + e;
             }
-        });
+        }, 120000, true);
+    }
+
+    function appBusy(app) {
+        return !!(_pendingApps && _pendingApps[app]);
+    }
+
+    function _setAppBusy(app, value) {
+        _pendingApps = ThemeRequest.setAppBusy(_pendingApps, app, value);
+    }
+
+    function _messageWithApplyWarnings(message, output) {
+        try {
+            const data = JSON.parse(output || "{}");
+            const warnings = (data.warnings || []).slice();
+            const applied = data.applied || data.apply || {};
+            for (const warning of (applied.warnings || []))
+                warnings.push(warning);
+            return warnings.length > 0 ? message + " · warnings: " + warnings.join("; ") : message;
+        } catch (e) {
+            return message;
+        }
     }
 
     function setAppEnabled(app, enabled) {
@@ -120,15 +150,17 @@ Singleton {
             return;
         // The helper owns the settings.json write (re-rendering the target on
         // enable); SettingsData picks the external edit up via its file watcher.
-        const flag = enabled ? "--enable" : "--disable";
-        _run("vgs-theme-app-toggle", ["theme", "apps", flag, app, "--json"], function(output, exitCode, stderr) {
+        _setAppBusy(app, true);
+        _run("vgs-theme-app-toggle-" + app, ThemeRequest.appToggleArgs(app, enabled), function(output, exitCode, stderr) {
+            _setAppBusy(app, false);
             if (exitCode !== 0) {
                 applyCompleted(false, stderr || output || ("Toggle failed: " + app));
                 return;
             }
             refreshApps();
-            applyCompleted(true, app + (enabled ? " theming enabled" : " theming disabled (last output left in place)"));
-        });
+            const message = app + (enabled ? " theming enabled" : " theming disabled (last output left in place)");
+            applyCompleted(true, _messageWithApplyWarnings(message, output));
+        }, 120000, true);
     }
 
     function editAppFile(app, themeName) {
@@ -240,7 +272,7 @@ Singleton {
             } catch (e) {
                 lastError = "Failed to parse current theme: " + e;
             }
-        });
+        }, 120000, true);
     }
 
     function refreshBlueprints() {
@@ -254,7 +286,7 @@ Singleton {
             } catch (e) {
                 lastError = "Failed to parse blueprints: " + e;
             }
-        });
+        }, 120000, true);
     }
 
     function refreshWallpapers() {
@@ -490,35 +522,63 @@ Singleton {
         });
     }
 
-    // adjustments: {brightness, vibrancy, contrast, hue, temperature} ints, 0 neutral.
-    // Stored non-destructively on the theme; Proc coalesces rapid same-id calls,
-    // so slider drags collapse into few helper runs.
-    function restyle(adjustments) {
-        const args = ["theme", "restyle", "--json"];
-        const keys = ["brightness", "vibrancy", "contrast", "hue", "temperature"];
-        for (const key of keys)
-            args.push("--" + key, String(Math.round(adjustments && adjustments[key] || 0)));
+    // Restyle requests are serialized latest-wins. A slider release while the
+    // helper is active replaces the one waiting request instead of starting a
+    // concurrent apply that could finish out of order.
+    function _submitRestyleRequest(request) {
+        const transition = RestyleQueue.submit(_restyleQueueState, request);
+        _restyleQueueState = transition.state;
+        if (transition.startRequest)
+            _startRestyleRequest(transition.startRequest);
+    }
+
+    function _startRestyleRequest(request) {
+        const reset = request && request.reset === true;
+        const preview = request && request.preview === true;
+        const args = ThemeRequest.restyleArgs(request);
         _run("vgs-theme-restyle", args, function(output, exitCode, stderr) {
-            if (exitCode !== 0) {
-                applyCompleted(false, stderr || output || "Restyle failed");
+            const transition = RestyleQueue.complete(_restyleQueueState, exitCode === 0);
+            _restyleQueueState = transition.state;
+            const policy = ThemeRequest.completionPolicy(request, transition, exitCode === 0);
+
+            if (policy.markGreeter)
+                _markGreeterThemeSyncPending();
+
+            // Do not refresh or announce a superseded result: the next helper
+            // run is the only state the sliders asked to keep.
+            if (transition.startRequest) {
+                _startRestyleRequest(transition.startRequest);
                 return;
             }
-            _markGreeterThemeSyncPending();
-            refresh();
-            applyCompleted(true, "Palette restyled");
-        });
+
+            if (policy.refresh)
+                refresh();
+            if (exitCode !== 0) {
+                if (!preview)
+                    applyCompleted(false, stderr || output || (reset ? "Restyle reset failed" : "Restyle failed"));
+                return;
+            }
+            if (policy.announce)
+                applyCompleted(true, reset ? "Restyle adjustments cleared" : "Palette restyled");
+        }, 120000, true);
+    }
+
+    // adjustments: {brightness, vibrancy, contrast, hue, temperature} ints, 0 neutral.
+    // Stored non-destructively on the theme.
+    function restyle(adjustments) {
+        const normalized = ThemeRequest.normalizeAdjustments(adjustments);
+        _submitRestyleRequest({ reset: false, preview: false, adjustments: normalized });
+    }
+
+    // Lightweight shell-only rendering for fluid feedback while a slider is
+    // moving. It neither persists adjustments nor regenerates app targets.
+    function previewRestyle(adjustments) {
+        const normalized = ThemeRequest.normalizeAdjustments(adjustments);
+        _submitRestyleRequest({ reset: false, preview: true, adjustments: normalized });
     }
 
     function resetRestyle() {
-        _run("vgs-theme-restyle", ["theme", "restyle", "--reset", "--json"], function(output, exitCode, stderr) {
-            if (exitCode !== 0) {
-                applyCompleted(false, stderr || output || "Restyle reset failed");
-                return;
-            }
-            _markGreeterThemeSyncPending();
-            refresh();
-            applyCompleted(true, "Restyle adjustments cleared");
-        });
+        _submitRestyleRequest({ reset: true });
     }
 
     function fetchAppRoles(app) {
@@ -556,7 +616,7 @@ Singleton {
             fetchAppRoles(app);
             refreshCurrent();
             refreshBlueprints();
-            applyCompleted(true, app + " " + role + " overridden");
+            applyCompleted(true, _messageWithApplyWarnings(app + " " + role + " overridden", output));
         });
     }
 
@@ -573,7 +633,7 @@ Singleton {
             fetchAppRoles(app);
             refreshCurrent();
             refreshBlueprints();
-            applyCompleted(true, app + " recolored");
+            applyCompleted(true, _messageWithApplyWarnings(app + " recolored", output));
         });
     }
 
@@ -588,7 +648,7 @@ Singleton {
             fetchAppRoles(app);
             refreshCurrent();
             refreshBlueprints();
-            applyCompleted(true, app + " color overrides cleared");
+            applyCompleted(true, _messageWithApplyWarnings(app + " color overrides cleared", output));
         });
     }
 

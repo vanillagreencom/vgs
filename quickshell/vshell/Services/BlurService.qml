@@ -17,8 +17,8 @@ Singleton {
     property string backend: "none"
     property bool _applyPending: false
 
-    readonly property bool compositorSupported: available
-    readonly property bool available: backgroundEffectSupported || hyprlandLayerBlurSupported
+    readonly property bool compositorSupported: CompositorService.isHyprland
+    readonly property bool available: compositorSupported && (backgroundEffectSupported || hyprlandLayerBlurSupported)
     readonly property bool enabled: available && (SettingsData.blurEnabled ?? false)
     readonly property bool backgroundEffectEnabled: enabled && backgroundEffectSupported && !hyprlandLayerBlurSupported
 
@@ -168,12 +168,24 @@ Singleton {
     }
 
     Connections {
-        target: Hyprland
+        target: CompositorService.isHyprland ? Hyprland : null
+        enabled: CompositorService.isHyprland
         function onRawEvent(event) {
             if (event.name === "configreloaded" || event.name === "configreload")
                 root.scheduleHyprlandApply();
         }
     }
 
-    Component.onCompleted: blurProbe.running = true
+    Connections {
+        target: CompositorService
+        function onCompositorDetectedChanged() {
+            if (CompositorService.compositorDetected && CompositorService.isHyprland)
+                blurProbe.running = true;
+        }
+    }
+
+    Component.onCompleted: {
+        if (CompositorService.compositorDetected && CompositorService.isHyprland)
+            blurProbe.running = true;
+    }
 }

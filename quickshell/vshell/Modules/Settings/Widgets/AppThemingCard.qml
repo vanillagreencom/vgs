@@ -252,7 +252,7 @@ SettingsCard {
                         VgsToggle {
                             anchors.verticalCenter: parent.verticalCenter
                             checked: appRow.modelData.enabled === true
-                            enabled: !appRow.isAlways && !VGSThemeService.busy
+                            enabled: !appRow.isAlways && !VGSThemeService.appBusy(appRow.modelData.app)
                             onToggled: checked => VGSThemeService.setAppEnabled(appRow.modelData.app, checked)
                         }
                     }

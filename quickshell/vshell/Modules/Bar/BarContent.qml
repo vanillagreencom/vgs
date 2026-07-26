@@ -9,7 +9,7 @@ import qs.Services
 Item {
     id: topBarContent
 
-    // Hyprland-only VGS: keep old Sway/I3 branches inert without loading Quickshell.I3.
+    // Keep old Sway/I3 branches inert without loading Quickshell.I3.
     QtObject {
         id: i3Shim
         readonly property var workspaces: ({ values: [] })

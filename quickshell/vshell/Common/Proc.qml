@@ -50,8 +50,12 @@ Singleton {
         const entry = _procDebouncers[id];
         if (!entry)
             return;
+        const launchedCommand = entry.command;
+        const launchedCallback = entry.callback;
+        const launchedTimeoutMs = entry.timeoutMs;
+        const launchedIsRandomId = entry.isRandomId;
         const proc = procComp.createObject(root, {
-            command: entry.command
+            command: launchedCommand
         });
         const timeoutTimer = debounceTimerComp.createObject(root);
 
@@ -63,7 +67,7 @@ Singleton {
         let errSeen = false;
         let timedOut = false;
 
-        timeoutTimer.interval = entry.timeoutMs;
+        timeoutTimer.interval = launchedTimeoutMs;
         timeoutTimer.triggered.connect(function () {
             if (!exitSeen) {
                 timedOut = true;
@@ -105,14 +109,14 @@ Singleton {
             if (!exitSeen || !outSeen || !errSeen)
                 return;
             timeoutTimer.stop();
-            if (entry && entry.callback && typeof entry.callback === "function") {
+            if (launchedCallback && typeof launchedCallback === "function") {
                 try {
                     const safeOutput = capturedOut !== null && capturedOut !== undefined ? capturedOut : "";
                     const safeError = capturedErr !== null && capturedErr !== undefined ? capturedErr : "";
                     const safeExitCode = exitCodeValue !== null && exitCodeValue !== undefined ? exitCodeValue : -1;
-                    entry.callback(safeOutput, safeExitCode, safeError);
+                    launchedCallback(safeOutput, safeExitCode, safeError);
                 } catch (e) {
-                    log.warn("runCommand callback error for command:", entry.command, "Error:", e);
+                    log.warn("runCommand callback error for command:", launchedCommand, "Error:", e);
                 }
             }
             try {
@@ -122,7 +126,7 @@ Singleton {
                 timeoutTimer.destroy();
             } catch (_) {}
 
-            if (isRandomId || entry.isRandomId) {
+            if (isRandomId || launchedIsRandomId) {
                 Qt.callLater(function () {
                     if (_procDebouncers[id]) {
                         try {
@@ -135,7 +139,7 @@ Singleton {
         }
 
         proc.running = true;
-        if (entry.timeoutMs !== noTimeout)
+        if (launchedTimeoutMs !== noTimeout)
             timeoutTimer.start();
     }
 

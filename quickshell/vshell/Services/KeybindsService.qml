@@ -266,19 +266,22 @@ Singleton {
             return;
         }
         fixing = true;
+        if (currentProvider === "niri") {
+            fixProcess.command = [
+                Paths.vshellCli,
+                "config",
+                "repair-include",
+                "niri",
+                "binds.kdl",
+                "--json"
+            ];
+            fixProcess.running = true;
+            return;
+        }
         const timestamp = Math.floor(Date.now() / 1000);
         const backupPath = `${mainConfigPath}.vgsbackup${timestamp}`;
         let script;
         switch (currentProvider) {
-        case "niri":
-            script = ConfigIncludeResolve.buildRepairScript({
-                configFile: mainConfigPath,
-                backupFile: backupPath,
-                fragmentFile: compositorConfigDir + "/vgs/binds.kdl",
-                grepPattern: 'include.*"vgs/binds.kdl"',
-                includeLine: 'include "vgs/binds.kdl"'
-            });
-            break;
         case "hyprland":
             script = ConfigIncludeResolve.buildRepairScript({
                 configFile: mainConfigPath,

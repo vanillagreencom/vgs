@@ -53,6 +53,7 @@ Item {
     readonly property var currentEntry: VGSThemeService.currentBlueprint
     readonly property bool isModifiedBuiltin: currentEntry.builtin === true && currentEntry.modified === true
     property bool revertConfirmPending: false
+    property bool syncingSliders: false
 
     Timer {
         id: revertConfirmTimer
@@ -102,7 +103,23 @@ Item {
     }
 
     function submitRestyle() {
+        restylePreviewTimer.stop();
         VGSThemeService.restyle({
+            brightness: brightnessSlider.value,
+            vibrancy: vibrancySlider.value,
+            contrast: contrastSlider.value,
+            hue: hueSlider.value,
+            temperature: temperatureSlider.value
+        });
+    }
+
+    function scheduleRestylePreview() {
+        if (!syncingSliders)
+            restylePreviewTimer.restart();
+    }
+
+    function previewRestyle() {
+        VGSThemeService.previewRestyle({
             brightness: brightnessSlider.value,
             vibrancy: vibrancySlider.value,
             contrast: contrastSlider.value,
@@ -117,15 +134,28 @@ Item {
         contrastSlider.value = values.contrast || 0;
         hueSlider.value = values.hue || 0;
         temperatureSlider.value = values.temperature || 0;
+        restylePreviewTimer.stop();
         submitRestyle();
     }
 
     function syncSlidersFromTheme() {
+        syncingSliders = true;
         brightnessSlider.value = adjustmentValue("brightness");
         vibrancySlider.value = adjustmentValue("vibrancy");
         contrastSlider.value = adjustmentValue("contrast");
         hueSlider.value = adjustmentValue("hue");
         temperatureSlider.value = adjustmentValue("temperature");
+        restylePreviewTimer.stop();
+        syncingSliders = false;
+    }
+
+    Timer {
+        id: restylePreviewTimer
+        // Helper startup is ~150 ms p95; matching that cadence avoids keeping a
+        // stale preview permanently queued while still feeling immediate.
+        interval: 160
+        repeat: false
+        onTriggered: root.previewRestyle()
     }
 
     Component.onCompleted: VGSThemeService.refresh()
@@ -175,7 +205,7 @@ Item {
                     Column {
                         width: parent.width - editHeaderActions.width - Theme.spacingS
                         anchors.verticalCenter: parent.verticalCenter
-                        spacing: 2
+                        spacing: Theme.spacingM
 
                         Row {
                             spacing: Theme.spacingS
@@ -205,21 +235,26 @@ Item {
                             }
                         }
 
-                        StyledText {
+                        Column {
                             width: parent.width
-                            wrapMode: Text.WordWrap
-                            text: I18n.tr("Click a swatch to change that color. Edits apply immediately and save to this theme; built-in themes can always be reverted to default.")
-                            color: Theme.surfaceVariantText
-                            font.pixelSize: Theme.fontSizeSmall
-                        }
+                            spacing: Theme.spacingS
 
-                        StyledText {
-                            width: parent.width
-                            visible: root.hasAdjustments
-                            wrapMode: Text.WordWrap
-                            text: I18n.tr("Restyle is active — swatches preview the adjusted result, but edits set the base color underneath the adjustments. Reset the restyle for exact color picking.")
-                            color: Theme.warning
-                            font.pixelSize: Theme.fontSizeSmall
+                            StyledText {
+                                width: parent.width
+                                wrapMode: Text.WordWrap
+                                text: I18n.tr("Select a swatch to edit its base color. Changes are saved immediately; built-in themes can always be restored.")
+                                color: Theme.surfaceVariantText
+                                font.pixelSize: Theme.fontSizeSmall
+                            }
+
+                            StyledText {
+                                width: parent.width
+                                visible: root.hasAdjustments
+                                wrapMode: Text.WordWrap
+                                text: I18n.tr("Palette adjustments are active. Swatches show the adjusted result, while edits update the underlying base palette. Reset adjustments before matching an exact color.")
+                                color: Theme.warning
+                                font.pixelSize: Theme.fontSizeSmall
+                            }
                         }
                     }
 
@@ -409,6 +444,21 @@ Item {
                     font.pixelSize: Theme.fontSizeSmall
                 }
 
+                StyledText {
+                    width: parent.width
+                    text: I18n.tr("Updating palette preview…")
+                    color: Theme.surfaceVariantText
+                    font.pixelSize: Theme.fontSizeSmall
+                    opacity: VGSThemeService.restyling ? 1 : 0
+
+                    Behavior on opacity {
+                        NumberAnimation {
+                            duration: Theme.shortDuration
+                            easing.type: Theme.standardEasing
+                        }
+                    }
+                }
+
                 Flow {
                     width: parent.width
                     spacing: Theme.spacingS
@@ -434,6 +484,7 @@ Item {
                     maximum: 100
                     defaultValue: 0
                     unit: ""
+                    onSliderValueChanged: root.scheduleRestylePreview()
                     onSliderDragFinished: root.submitRestyle()
                 }
 
@@ -445,6 +496,7 @@ Item {
                     maximum: 100
                     defaultValue: 0
                     unit: ""
+                    onSliderValueChanged: root.scheduleRestylePreview()
                     onSliderDragFinished: root.submitRestyle()
                 }
 
@@ -456,6 +508,7 @@ Item {
                     maximum: 100
                     defaultValue: 0
                     unit: ""
+                    onSliderValueChanged: root.scheduleRestylePreview()
                     onSliderDragFinished: root.submitRestyle()
                 }
 
@@ -467,6 +520,7 @@ Item {
                     maximum: 180
                     defaultValue: 0
                     unit: "°"
+                    onSliderValueChanged: root.scheduleRestylePreview()
                     onSliderDragFinished: root.submitRestyle()
                 }
 
@@ -478,6 +532,7 @@ Item {
                     maximum: 100
                     defaultValue: 0
                     unit: ""
+                    onSliderValueChanged: root.scheduleRestylePreview()
                     onSliderDragFinished: root.submitRestyle()
                 }
 

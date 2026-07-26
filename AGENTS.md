@@ -7,7 +7,8 @@ VGS = VanillaGreen Shell. Runtime name stays `vshell` because `vgs` conflicts wi
 - Agents may modify `~/dotfiles` as needed. Dotfiles stay a personal wiring/overlay layer for hyper-specific customization; portable/default behavior belongs in VGS.
 - No runtime dependency on legacy upstream shell daemons or external theme engines.
 - Rollback means reinstalling/restoring another shell if needed; VGS does not keep a disabled rollback service as part of normal workstation wiring.
-- Target is Hyprland + Quickshell 0.3.0 only.
+- Target is Hyprland or Niri + Quickshell 0.3.0 only. Hyprland remains the
+  reference implementation and Niri support must be additive.
 - Prefer helpers/libraries over large QML business logic.
 
 ## Layout
@@ -16,7 +17,7 @@ VGS = VanillaGreen Shell. Runtime name stays `vshell` because `vgs` conflicts wi
 | `quickshell/vshell/` | Quickshell runtime: shell, services, modules, widgets |
 | `config/vshell/` | Default seeds, dependency manifest, bundled plugins, shared plugin assets |
 | `bin/vshell` | CLI wrapper for `qs`, IPC, service helpers, and helper dispatch |
-| `bin/vshell-helper` | Python helper for theme engine and OS integrations |
+| `bin/vshell-helper`, `bin/vshell_niri.py` | Python helper CLI plus the isolated Niri/KDL config subsystem |
 | `bin/vshell-upscale` | One-shot local AI wallpaper upscaler (ncnn, no daemon; models cached outside the repo) |
 | `backend/` | Go backend daemon: runner/supervisor, Unix-socket protocol, system services (network, logind, BlueZ, CUPS, …) |
 | `themes/<name>/` | Built-in theme packages (`theme.json`, `colors.toml`, `backgrounds/`, curated `apps/`) |
@@ -94,6 +95,9 @@ Scope to the area touched (Go-only: inventory guard + go block; QML-only: naming
 scripts/check-naming.sh
 node --check scripts/check-settings-migration.js
 scripts/check-settings-migration.js
+node scripts/test-restyle-queue.js
+node scripts/test-theme-requests.js
+node scripts/test-latest-transaction-queue.js
 scripts/check-vshell-helper.py
 scripts/check-brightness.py
 scripts/check-backend-inventory.py

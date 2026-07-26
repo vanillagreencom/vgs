@@ -1,5 +1,5 @@
 [Unit]
-Description=VGS (Hyprland Quickshell shell)
+Description=VGS (Hyprland/Niri Quickshell shell)
 PartOf=graphical-session.target
 After=graphical-session.target
 

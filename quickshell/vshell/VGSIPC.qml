@@ -12,7 +12,7 @@ import qs.Modules.Settings.DisplayConfig
 Item {
     id: root
 
-    // Hyprland-only VGS: keep old Sway/I3 branches inert without loading Quickshell.I3.
+    // Keep old Sway/I3 branches inert without loading Quickshell.I3.
     QtObject {
         id: i3Shim
         readonly property var workspaces: ({ values: [] })
@@ -804,6 +804,30 @@ Item {
         }
 
         target: "hypr"
+    }
+
+    IpcHandler {
+        function toggleOverview(): string {
+            return CompositorService.isNiri && NiriService.toggleOverview()
+                ? "OVERVIEW_TOGGLE_SUCCESS" : "NIRI_NOT_AVAILABLE";
+        }
+
+        function screenshot(): string {
+            return CompositorService.isNiri && NiriService.screenshot()
+                ? "SCREENSHOT_STARTED" : "NIRI_NOT_AVAILABLE";
+        }
+
+        function screenshotScreen(): string {
+            return CompositorService.isNiri && NiriService.screenshotScreen()
+                ? "SCREENSHOT_STARTED" : "NIRI_NOT_AVAILABLE";
+        }
+
+        function screenshotWindow(): string {
+            return CompositorService.isNiri && NiriService.screenshotWindow()
+                ? "SCREENSHOT_STARTED" : "NIRI_NOT_AVAILABLE";
+        }
+
+        target: "niri"
     }
 
     function getBarConfig(selector: string, value: string): var {

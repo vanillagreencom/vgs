@@ -1,7 +1,7 @@
 ---
 name: vshell-dev
 description: >
-  Work on VanillaGreen Shell (VGS / vshell), a Hyprland-only Quickshell 0.3.0 runtime.
+  Work on VanillaGreen Shell (VGS / vshell), a Hyprland and Niri Quickshell 0.3.0 runtime.
   Use for shell modules, services, bundled plugins, theme engine targets, wallpaper/palette
   flows, IPC, settings UI, or removing stale legacy upstream assumptions.
 compatibility: Designed for Claude Code, Pi, Codex, and similar agents
@@ -18,7 +18,7 @@ allowed-tools: Bash Read Write Edit
 
 ## Always know
 - Runtime name is `vshell`; do not add a `vgs` CLI.
-- VGS targets Hyprland + Quickshell 0.3.0 only.
+- VGS targets Hyprland or Niri + Quickshell 0.3.0 only.
 - VGS owns themes, wallpapers, blueprints, generated app themes, and settings UI.
 - Dotfiles only wire the workstation.
 - No legacy upstream runtime dependency.
@@ -93,7 +93,7 @@ Reference: `references/plugin-development.md`.
    `apiVersion` numbers, and keeps a fallback when the capability is absent.
 4. One owner per resource: do not add a second watcher/daemon for something the
    helper or QML already owns (e.g. clipboard watching stays with
-   `vshell clipboard watch`; Hyprland output layout stays config-owned).
+   `vshell clipboard watch`; compositor output layout stays config-owned).
 5. Debug with `vshell backend doctor|methods|request <method> [json]`; a scratch
    daemon runs with `VGS_BACKEND_SOCKET=/run/user/$UID/test.sock vshell backend serve`.
 6. Never log secrets or frame payloads; exec external tools with argv arrays.

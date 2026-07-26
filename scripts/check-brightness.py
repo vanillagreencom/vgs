@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import importlib.machinery
 import importlib.util
+import os
 import sys
 from pathlib import Path
 
@@ -132,6 +133,46 @@ def test_target_resolution() -> None:
                  "label": "Apple Studio Display", "available": True, "role": "primary"}]
     check([d["id"] for d in H._resolve_targets("apple-studio", devices2)] == ["apple-studio-3685802e"],
           "legacy alias apple-studio maps to product 1114 device")
+
+
+def test_primary_connector() -> None:
+    print("primary connector:")
+    original_exists = H.command_exists
+    original_run = H.run
+    original_socket = os.environ.get("NIRI_SOCKET")
+    os.environ["NIRI_SOCKET"] = "/run/user/1000/niri.wayland-1.sock"
+    H.command_exists = lambda command: command == "niri"
+    H.run = lambda argv, **_kwargs: H.subprocess.CompletedProcess(
+        argv, 0, '{"name":"DP-3"}\n' if argv[-1] == "focused-output" else "{}\n", ""
+    )
+    try:
+        check(H._primary_connector() == "DP-3", "Niri focused output is primary")
+    finally:
+        H.command_exists = original_exists
+        H.run = original_run
+        if original_socket is None:
+            os.environ.pop("NIRI_SOCKET", None)
+        else:
+            os.environ["NIRI_SOCKET"] = original_socket
+
+    os.environ["NIRI_SOCKET"] = "/run/user/1000/stale-niri.sock"
+    H.command_exists = lambda command: command in {"niri", "hyprctl"}
+    def stale_niri_run(argv, **_kwargs):
+        if argv[0] == "niri":
+            return H.subprocess.CompletedProcess(argv, 1, "", "stale socket")
+        return H.subprocess.CompletedProcess(
+            argv, 0, '[{"name":"DP-1","focused":true,"x":0,"y":0}]\n', ""
+        )
+    H.run = stale_niri_run
+    try:
+        check(H._primary_connector() == "DP-1", "stale Niri socket falls back to Hyprland")
+    finally:
+        H.command_exists = original_exists
+        H.run = original_run
+        if original_socket is None:
+            os.environ.pop("NIRI_SOCKET", None)
+        else:
+            os.environ["NIRI_SOCKET"] = original_socket
 
 
 # --- Apple HID feature-report codec ----------------------------------------
@@ -261,6 +302,7 @@ def main() -> int:
         test_udev_generation,
         test_backend_selection,
         test_target_resolution,
+        test_primary_connector,
         test_apple_codec,
         test_ddc_parsers,
         test_edid_parser,

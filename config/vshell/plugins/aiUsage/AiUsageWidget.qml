@@ -74,7 +74,6 @@ PluginComponent {
     property bool ok: false
     property string errorText: ""
     property string plan: ""
-    property string usageClass: "low"
     property int sessionPct: 0
     property string sessionReset: ""
     property double sessionResetAt: 0
@@ -97,6 +96,8 @@ PluginComponent {
     property var aggregate: null
     readonly property bool multiAccount: (root.accounts || []).length > 1
     property string expandedAccountId: ""
+    readonly property int pillFontSize: Theme.barTextSize(
+        root.barThickness, root.barConfig?.fontScale, root.barConfig?.maximizeWidgetText)
 
     // Consumption across the whole pool: each account contributes one 100%
     // allowance, so this is consumed/available — four accounts at 50% read as
@@ -247,7 +248,23 @@ PluginComponent {
             return Theme.success;
         }
     }
-    readonly property color accentColor: root.ok ? classColor(root.worstClass) : Theme.error
+
+    // One percentage has one status colour everywhere it appears. Provider and
+    // account classes describe their worst lane, so using them for every meter
+    // made a healthy 0% lane red whenever a different lane was exhausted.
+    function percentageClass(pct) {
+        const value = Math.max(0, Math.min(Number(pct) || 0, 100));
+        if (value >= 90)
+            return "critical";
+        if (value >= 75)
+            return "high";
+        if (value >= 50)
+            return "mid";
+        return "low";
+    }
+    function percentageColor(pct) {
+        return classColor(percentageClass(pct));
+    }
 
     // Headline percentage: the tightest lane this account has. Same reasoning as
     // aggregatePct — the 5h session is usually the emptiest window and says
@@ -266,7 +283,7 @@ PluginComponent {
     }
 
     // Headline for each provider, kept side by side so the pill can show both
-    // without the popout having to be on that tab. {pct, cls} or null when the
+    // without the popout having to be on that tab. {pct} or null when the
     // provider has no signed-in accounts.
     // The last payload per provider. Kept raw rather than reduced to a number,
     // because the headline mode and the hidden-account list can change between
@@ -282,7 +299,7 @@ PluginComponent {
         const pct = local !== null ? local
             : (agg && agg.pct !== undefined && agg.pct !== null ? agg.pct
             : (data.session ? data.session.pct : (data.weekly ? data.weekly.pct : 0)));
-        return { pct: pct, cls: (agg && agg.class) || data.class || "low" };
+        return { pct: pct };
     }
 
     readonly property var claudeHead: root.computeHead(root.claudeData)
@@ -295,35 +312,19 @@ PluginComponent {
             root.claudeData = data;
     }
 
-    // "78% / 100%" — Claude on the left, Codex on the right, always in that
-    // order regardless of which tab the popout is showing. A provider you are
-    // not signed in to is dropped rather than rendered as an error.
-    function pillText() {
-        const parts = [];
+    function pillHeads() {
+        const heads = [];
         if (root.claudeHead)
-            parts.push(root.claudeHead.pct + "%");
+            heads.push({ pct: root.claudeHead.pct });
         if (root.codexHead)
-            parts.push(root.codexHead.pct + "%");
-        if (parts.length > 0)
-            return parts.join(" / ");
+            heads.push({ pct: root.codexHead.pct });
+        if (heads.length > 0)
+            return heads;
         if (root.loading && !root.ok && root.errorText === "")
-            return "…";
+            return [{ text: "…", pct: null, error: false }];
         if (!root.ok)
-            return "!";
-        return root.headlinePct + "%";
-    }
-
-    // The pill takes the worse of the two — it is a warning light, and a healthy
-    // Claude must not hide an exhausted Codex.
-    readonly property string worstClass: {
-        const rank = { low: 0, mid: 1, high: 2, critical: 3 };
-        let worst = root.usageClass;
-        const heads = [root.claudeHead, root.codexHead];
-        for (let i = 0; i < heads.length; i++) {
-            if (heads[i] && (rank[heads[i].cls] || 0) > (rank[worst] || 0))
-                worst = heads[i].cls;
-        }
-        return worst;
+            return [{ text: "!", pct: null, error: true }];
+        return [{ pct: root.headlinePct }];
     }
 
     function refresh() {
@@ -390,7 +391,6 @@ PluginComponent {
             }
             root.errorText = "";
             root.plan = d.plan || "";
-            root.usageClass = d.class || "low";
             root.hasSession = !!d.session;
             root.sessionPct = (d.session && d.session.pct) || 0;
             root.sessionReset = (d.session && d.session.reset) || "";
@@ -429,16 +429,40 @@ PluginComponent {
             VgsIcon {
                 name: root.providerIcon()
                 size: root.iconSize
-                color: root.accentColor
+                color: Theme.surfaceText
                 anchors.verticalCenter: parent.verticalCenter
             }
 
-            StyledText {
-                text: root.pillText()
-                font.pixelSize: Theme.fontSizeSmall
-                font.weight: Font.Medium
-                color: Theme.surfaceVariantText
+            Row {
+                spacing: 0
                 anchors.verticalCenter: parent.verticalCenter
+
+                Repeater {
+                    model: root.pillHeads()
+
+                    Row {
+                        required property var modelData
+                        required property int index
+                        spacing: 0
+
+                        StyledText {
+                            visible: index > 0
+                            text: " / "
+                            font.pixelSize: root.pillFontSize
+                            font.weight: Font.Medium
+                            color: Theme.surfaceVariantText
+                        }
+
+                        StyledText {
+                            text: modelData.text !== undefined ? modelData.text : (modelData.pct + "%")
+                            font.pixelSize: root.pillFontSize
+                            font.weight: Font.Medium
+                            color: modelData.error ? Theme.error
+                                : (modelData.pct === null ? Theme.surfaceVariantText
+                                                        : root.percentageColor(modelData.pct))
+                        }
+                    }
+                }
             }
         }
     }
@@ -450,14 +474,15 @@ PluginComponent {
             VgsIcon {
                 name: root.providerIcon()
                 size: root.iconSize
-                color: root.accentColor
+                color: Theme.surfaceText
                 anchors.horizontalCenter: parent.horizontalCenter
             }
 
             StyledText {
                 text: root.ok ? (root.headlinePct + "%") : (root.loading ? "…" : "!")
-                font.pixelSize: Theme.fontSizeSmall
-                color: Theme.surfaceVariantText
+                font.pixelSize: root.pillFontSize
+                color: root.ok ? root.percentageColor(root.headlinePct)
+                               : (root.loading ? Theme.surfaceVariantText : Theme.error)
                 anchors.horizontalCenter: parent.horizontalCenter
             }
         }
@@ -696,7 +721,7 @@ PluginComponent {
                                     text: modelData.pct + "%"
                                     font.pixelSize: Theme.fontSizeMedium
                                     font.weight: Font.Bold
-                                    color: root.accentColor
+                                    color: root.percentageColor(modelData.pct)
                                     anchors.right: parent.right
                                     anchors.verticalCenter: parent.verticalCenter
                                 }
@@ -712,7 +737,7 @@ PluginComponent {
                                     width: parent.width * Math.max(0, Math.min(modelData.pct, 100)) / 100
                                     height: parent.height
                                     radius: 3
-                                    color: root.accentColor
+                                    color: root.percentageColor(modelData.pct)
                                 }
                             }
 
@@ -739,8 +764,6 @@ PluginComponent {
 
                         readonly property bool expanded: root.expandedAccountId === modelData.id
                         readonly property var meters: root.metersFor(modelData)
-                        readonly property color accountAccent: modelData.ok ? root.classColor(modelData.class) : Theme.error
-
                         width: parent.width
                         height: accountCol.implicitHeight + Theme.spacingM * 2
                         radius: Theme.cornerRadius
@@ -830,7 +853,8 @@ PluginComponent {
                                             width: parent.width * Math.max(0, Math.min(modelData.pct, 100)) / 100
                                             height: parent.height
                                             radius: 2
-                                            color: accountCard.accountAccent
+                                            color: accountCard.modelData.ok
+                                                ? root.percentageColor(modelData.pct) : Theme.error
                                         }
                                     }
 
@@ -843,7 +867,8 @@ PluginComponent {
                                         text: modelData.pct + "%"
                                         font.pixelSize: Theme.fontSizeSmall
                                         font.weight: Font.Medium
-                                        color: accountCard.accountAccent
+                                        color: accountCard.modelData.ok
+                                            ? root.percentageColor(modelData.pct) : Theme.error
                                     }
 
                                     // The reset clock time belongs on the collapsed row too —
@@ -893,7 +918,8 @@ PluginComponent {
                                             text: modelData.pct + "%"
                                             font.pixelSize: Theme.fontSizeMedium
                                             font.weight: Font.Bold
-                                            color: accountCard.accountAccent
+                                            color: accountCard.modelData.ok
+                                                ? root.percentageColor(modelData.pct) : Theme.error
                                         }
                                     }
 
@@ -907,7 +933,8 @@ PluginComponent {
                                             width: parent.width * Math.max(0, Math.min(modelData.pct, 100)) / 100
                                             height: parent.height
                                             radius: 3
-                                            color: accountCard.accountAccent
+                                            color: accountCard.modelData.ok
+                                                ? root.percentageColor(modelData.pct) : Theme.error
                                         }
                                     }
 

@@ -198,11 +198,12 @@ Item {
         }
 
         checkingInclude = true;
-        Proc.runCommand("load-windowrules", [Paths.vshellCli, "config", "windowrules", "list", compositor], (output, exitCode) => {
+        Proc.runCommand("load-windowrules", [Paths.vshellCli, "config", "windowrules", "list", compositor], (output, exitCode, errorOutput) => {
             checkingInclude = false;
             if (exitCode !== 0) {
-                windowRules = [];
-                externalRules = [];
+                const detail = (errorOutput || output || I18n.tr("Helper exited with code %1").arg(exitCode)).trim();
+                Log.scoped("WindowRulesTab").warn("Failed to load window rules:", detail);
+                ToastService.showError(I18n.tr("Could not load window rules"), detail, "", "window-rules");
                 return;
             }
             try {
@@ -219,8 +220,8 @@ Item {
                     };
                 }
             } catch (e) {
-                windowRules = [];
-                externalRules = [];
+                Log.scoped("WindowRulesTab").warn("Invalid window-rule response:", e);
+                ToastService.showError(I18n.tr("Could not load window rules"), String(e), "", "window-rules");
             }
         });
     }
@@ -234,12 +235,16 @@ Item {
         if (compositor !== "niri" && compositor !== "hyprland" && compositor !== "mango")
             return;
 
-        Proc.runCommand("remove-windowrule", [Paths.vshellCli, "config", "windowrules", "remove", compositor, ruleId], (output, exitCode) => {
+        Proc.runCommand("remove-windowrule", [Paths.vshellCli, "config", "windowrules", "remove", compositor, ruleId], (output, exitCode, errorOutput) => {
             if (exitCode === 0) {
                 if (CompositorService.isMango)
                     MangoService.reloadConfig();
                 loadWindowRules();
                 rulesChanged();
+            } else {
+                ToastService.showError(I18n.tr("Could not remove window rule"),
+                    (errorOutput || output || I18n.tr("Helper exited with code %1").arg(exitCode)).trim(),
+                    "", "window-rules");
             }
         });
     }
@@ -260,12 +265,16 @@ Item {
         const [moved] = ids.splice(fromIndex, 1);
         ids.splice(toIndex, 0, moved);
 
-        Proc.runCommand("reorder-windowrules", [Paths.vshellCli, "config", "windowrules", "reorder", compositor, JSON.stringify(ids)], (output, exitCode) => {
+        Proc.runCommand("reorder-windowrules", [Paths.vshellCli, "config", "windowrules", "reorder", compositor, JSON.stringify(ids)], (output, exitCode, errorOutput) => {
             if (exitCode === 0) {
                 if (CompositorService.isMango)
                     MangoService.reloadConfig();
                 loadWindowRules();
                 rulesChanged();
+            } else {
+                ToastService.showError(I18n.tr("Could not reorder window rules"),
+                    (errorOutput || output || I18n.tr("Helper exited with code %1").arg(exitCode)).trim(),
+                    "", "window-rules");
             }
         });
     }
@@ -279,6 +288,26 @@ Item {
         if (!paths)
             return;
         fixingInclude = true;
+        if (CompositorService.isNiri) {
+            Proc.runCommand("fix-windowrules-include", [
+                Paths.vshellCli,
+                "config",
+                "repair-include",
+                "niri",
+                "windowrules.kdl",
+                "--json"
+            ], (output, exitCode, errorOutput) => {
+                fixingInclude = false;
+                if (exitCode !== 0) {
+                    ToastService.showError(I18n.tr("Could not set up window rules"),
+                        (errorOutput || output || I18n.tr("Helper exited with code %1").arg(exitCode)).trim(),
+                        "", "window-rules");
+                    return;
+                }
+                loadWindowRules();
+            });
+            return;
+        }
         const unixTime = Math.floor(Date.now() / 1000);
         const backupFile = paths.configFile + ".backup" + unixTime;
         const script = ConfigIncludeResolve.buildRepairScript({
@@ -288,10 +317,14 @@ Item {
             grepPattern: paths.grepPattern,
             includeLine: paths.includeLine
         });
-        Proc.runCommand("fix-windowrules-include", ["sh", "-c", script], (output, exitCode) => {
+        Proc.runCommand("fix-windowrules-include", ["sh", "-c", script], (output, exitCode, errorOutput) => {
             fixingInclude = false;
-            if (exitCode !== 0)
+            if (exitCode !== 0) {
+                ToastService.showError(I18n.tr("Could not set up window rules"),
+                    (errorOutput || output || I18n.tr("Helper exited with code %1").arg(exitCode)).trim(),
+                    "", "window-rules");
                 return;
+            }
             if (CompositorService.isMango)
                 MangoService.reloadConfig();
             loadWindowRules();

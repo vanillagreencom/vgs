@@ -1,9 +1,10 @@
 # VGS — VanillaGreen Shell
 
-A desktop shell for Hyprland — bar, launcher, settings, lock screen and a theme engine that
+A desktop shell for Hyprland and Niri — bar, launcher, settings, lock screen and a theme engine that
 restyles your whole desktop, not just the shell.
 
-**Hyprland only.** Niri support is coming.
+Hyprland remains the reference compositor; Niri is supported as an additive,
+native scrolling-workspace target.
 
 <video src="https://github.com/user-attachments/assets/be9ffadf-ba95-4bc9-8401-02d62e30fdb2"
        controls muted width="100%"></video>
@@ -19,7 +20,7 @@ follows is what VGS adds on top.
 
 | | |
 |---|---|
-| **A real theme engine** | The biggest difference. Themes restyle 28 apps alongside the shell, ship with wallpapers, and can be edited colour by colour. |
+| **A real theme engine** | The biggest difference. Themes restyle 29 apps alongside the shell, ship with wallpapers, and can be edited colour by colour. |
 | **Claude & Codex usage** | Plan limits in the bar, including every account you're signed into, with per-model quotas and reset countdowns. |
 | **System updates** | Repo and AUR counts in the bar; run updates in a terminal from the popout. |
 | **Display brightness** | Per-monitor control for laptop panels, external monitors over DDC/CI, and Apple Pro Display XDR and Studio Display over USB. |
@@ -37,7 +38,7 @@ Switching a theme doesn't just recolour the shell. VGS writes matching themes fo
 already use:
 
 Alacritty · btop · Chromium · Emacs · Equibop · Fastfetch · foot · Ghostty · GTK 3 · GTK 4 ·
-Helix · Hyprland · Icon theme · KDE colours · Kitty · Neovim · Obsidian · Pi · Firefox (Pywalfox) ·
+Helix · Hyprland · Niri · Icon theme · KDE colours · Kitty · Neovim · Obsidian · Pi · Firefox (Pywalfox) ·
 Qt 5 · Qt 6 · tmux · Vencord · Vesktop · VS Code · WezTerm · Zed · Zen Browser
 
 Each app can be switched on or off individually. Beyond picking a theme you can pull a palette out
@@ -48,6 +49,10 @@ Some targets go further than dropping a colour file. Chromium gets its theme pus
 managed policy, Pi gets a generated theme linked into its agent config, and **Claude Code follows
 the light/dark mode of the theme you apply** — switch to a light theme and the CLI switches with
 it, no restart.
+
+All built-in themes include committed previews. Generating a preview for a new
+user theme is an optional development workflow that currently uses a nested
+Hyprland session; Hyprland is not a runtime requirement for a Niri installation.
 
 ## Widgets
 
@@ -116,10 +121,17 @@ smaller images into 6K wallpapers.
 
 ## Requirements
 
-- **Hyprland** and **Quickshell 0.3.0**. Hyprland is currently the only supported compositor —
-  Niri support is planned ([roadmap](docs/plans/niri-support.md)).
+- **Hyprland or Niri** and **Quickshell 0.3.0**.
 - Optional tools unlock optional features — a missing one greys out its widget rather than breaking
   the shell. `vshell deps status` lists what's found.
+
+### Compositor support
+
+| Tier | Features |
+|---|---|
+| Full parity | Bar and widgets, launcher, dash, control centre, dock, notifications, lock screen, greeter, themes, wallpapers, capture, brightness, idle/lock/screensaver, and backend system services |
+| Niri-native equivalent | Dynamic per-output workspaces, Niri overview, KDL display/layout configuration, KDL keybinds, and KDL window rules |
+| Hyprland-only | Compositor blur. Niri has no compositor blur API, so its setting is disabled with an explanation. |
 
 ## Install
 
@@ -145,7 +157,7 @@ settings, user themes and plugin overrides live. Bundled plugins load from the c
 | Path | Purpose |
 |---|---|
 | `quickshell/vshell/` | Quickshell runtime: `shell.qml`, services, modules, widgets |
-| `bin/vshell`, `bin/vshell-helper` | CLI, IPC wrapper, theme engine, capture/update/AI helpers |
+| `bin/vshell`, `bin/vshell-helper`, `bin/vshell_niri.py` | CLI, IPC wrapper, theme engine, Niri/KDL config, capture/update/AI helpers |
 | `backend/` | Go daemon: network, logind, BlueZ, CUPS and other system services |
 | `config/vshell/` | Shipped defaults, dependency manifest, bundled plugins |
 | `themes/` | Built-in theme packages, wallpapers, and app target templates |
@@ -166,6 +178,7 @@ privileged writes or template rendering itself.
 
 ---
 
-MIT licensed. Built on [Quickshell](https://quickshell.org) and [Hyprland](https://hypr.land), and
+MIT licensed. Built on [Quickshell](https://quickshell.org),
+[Hyprland](https://hypr.land), [Niri](https://github.com/YaLTeR/niri), and
 on the work of [DankMaterialShell](https://github.com/AvengeMedia/DankMaterialShell), which VGS was
 forked from. Historical lineage is documented in `docs/ATTRIBUTION.md`.

@@ -25,6 +25,7 @@ import shlex
 import shutil
 import subprocess
 import sys
+import threading
 import time
 import tempfile
 import urllib.request
@@ -32,6 +33,13 @@ import tomllib
 from collections import Counter
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Tuple
+
+_HELPER_MODULE_DIR = str(Path(__file__).resolve().parent)
+if _HELPER_MODULE_DIR not in sys.path:
+    sys.path.insert(0, _HELPER_MODULE_DIR)
+
+_NIRI_SUPPORT: Any = None
+import vshell_theme_color as _theme_color
 
 try:
     from PIL import Image
@@ -131,6 +139,55 @@ def builtin_themes_dir() -> Path:
 
 def targets_dir() -> Path:
     return repo_root() / "themes" / "targets"
+
+
+_THEME_MUTATION_THREAD_LOCK = threading.RLock()
+_THEME_MUTATION_LOCK_DEPTH = 0
+_THEME_MUTATION_LOCK_FD: int | None = None
+
+
+@contextlib.contextmanager
+def theme_mutation_lock() -> Iterable[None]:
+    """Serialize theme mutations across helper processes.
+
+    Theme commands commonly compose user overlays, change one field, and write
+    the complete file back. Atomic replacement protects readers from partial
+    files, but without a transaction lock two QML/CLI helpers can still both
+    read the same old value and silently discard one another's edits. Keep one
+    process-wide flock for the outermost mutation and make nested apply calls
+    reentrant so command-level transactions can safely call apply_theme_obj().
+    """
+    global _THEME_MUTATION_LOCK_DEPTH, _THEME_MUTATION_LOCK_FD
+
+    with _THEME_MUTATION_THREAD_LOCK:
+        if _THEME_MUTATION_LOCK_DEPTH == 0:
+            lock_dir = cfg_dir()
+            lock_dir.mkdir(parents=True, exist_ok=True)
+            flags = os.O_CREAT | os.O_RDWR | getattr(os, "O_CLOEXEC", 0)
+            if hasattr(os, "O_NOFOLLOW"):
+                flags |= os.O_NOFOLLOW
+            fd = os.open(lock_dir / ".theme-mutation.lock", flags, 0o600)
+            try:
+                os.fchmod(fd, 0o600)
+                fcntl.flock(fd, fcntl.LOCK_EX)
+            except BaseException:
+                os.close(fd)
+                raise
+            _THEME_MUTATION_LOCK_FD = fd
+
+        _THEME_MUTATION_LOCK_DEPTH += 1
+        try:
+            yield
+        finally:
+            _THEME_MUTATION_LOCK_DEPTH -= 1
+            if _THEME_MUTATION_LOCK_DEPTH == 0:
+                fd = _THEME_MUTATION_LOCK_FD
+                _THEME_MUTATION_LOCK_FD = None
+                if fd is not None:
+                    try:
+                        fcntl.flock(fd, fcntl.LOCK_UN)
+                    finally:
+                        os.close(fd)
 
 
 def deps_file() -> Path:
@@ -362,8 +419,25 @@ def _hue_distance(a: float, b: float) -> float:
     return min(d, 360.0 - d)
 
 
+_theme_color.configure(_theme_color.ThemeColorRuntime(
+    clean_hex=clean_hex,
+    rgb=rgb,
+    hexc=hexc,
+    clamp=clamp,
+    contrast_ratio=contrast_ratio,
+    ensure_contrast=ensure_contrast,
+))
+color_to_oklab = _theme_color.color_to_oklab
+_oklch_max_chroma = _theme_color._oklch_max_chroma
+_bounded_lightness = _theme_color._bounded_lightness
+_relative_oklch = _theme_color._relative_oklch
+_map_oklch_lightness = _theme_color._map_oklch_lightness
+oklch_to_hex = _theme_color.oklch_to_hex
+_oklab_contrast_adjust = _theme_color._oklab_contrast_adjust
+
+
 def ensure_usable_accent(accent: str, bg: str, palette: Dict[str, str], prefer: str,
-                         min_contrast: float = 3.0) -> str:
+                         min_contrast: float = 3.0, continuous: bool = False) -> str:
     """The shell uses `accent` (Theme.primary) as a FOREGROUND for active
     indicators, selected items, and icons. A palette whose accent sits on (or too
     near) its own background — or is achromatic — makes those elements invisible
@@ -373,6 +447,10 @@ def ensure_usable_accent(accent: str, bg: str, palette: Dict[str, str], prefer: 
     preferring the same hue family so the theme keeps its identity. This is a
     derived *shell* role, so it applies to curated palettes too without touching
     their terminal ANSI colors."""
+    if continuous:
+        # Restyle sliders must not make the derived accent jump between unrelated
+        # ANSI swatches as a contrast/chroma threshold is crossed.
+        return _oklab_contrast_adjust(accent, bg, min_contrast, prefer)
     if contrast_ratio(accent, bg) >= 2.5 and color_chroma(accent) >= 0.10:
         return accent
     candidates: List[Tuple[str, float]] = []
@@ -577,87 +655,14 @@ def tune_color(value: str, sat_mul: float = 1.0, val_mul: float = 1.0) -> str:
 
 
 # --- Whole-palette restyle adjustments -----------------------------------------
-#
-# Non-destructive HSV transform applied to the base palette after composing
-# colors.toml (+ persisted edits) but before role derivation. Stored per theme in
-# the overlay theme.json `adjustments` object; an all-zero object is a byte-exact
-# no-op (the transform short-circuits so no HSV round-trip touches the colors).
-ADJUST_KEYS = ("brightness", "vibrancy", "contrast", "hue", "temperature")
-ADJUST_RANGE = {"brightness": 100, "vibrancy": 100, "contrast": 100, "hue": 180, "temperature": 100}
-# The 22 base roles a restyle operates on: 6 extended semantic roles + 16 ANSI.
-BASE_COLOR_KEYS = [
-    "background", "foreground", "accent", "cursor",
-    "selection_background", "selection_foreground",
-    *(f"color{i}" for i in range(16)),
-]
-
-
-def normalize_adjustments(raw: Any) -> Dict[str, int]:
-    """Coerce a raw adjustments payload into clamped ints for all five keys."""
-    data = raw if isinstance(raw, dict) else {}
-    out: Dict[str, int] = {}
-    for key in ADJUST_KEYS:
-        try:
-            raw_value = float(data.get(key, 0) or 0)
-            # A hand-edited overlay theme.json can carry Infinity (json.loads
-            # accepts it); round(inf) raises OverflowError, so guard non-finite.
-            value = int(round(raw_value)) if math.isfinite(raw_value) else 0
-        except (TypeError, ValueError, OverflowError):
-            value = 0
-        limit = ADJUST_RANGE[key]
-        out[key] = int(clamp(value, -limit, limit))
-    return out
-
-
-def adjustments_all_zero(adj: Dict[str, int]) -> bool:
-    return all(int(adj.get(key, 0) or 0) == 0 for key in ADJUST_KEYS)
-
-
-def apply_adjustments(colors: Dict[str, str], adj: Dict[str, int]) -> Dict[str, str]:
-    """Apply a restyle transform to every hex value in a colors map.
-
-    brightness = HSV value shift, vibrancy = saturation scale, contrast = value
-    spread around the palette mean value, hue = degrees rotation, temperature =
-    warm(+)/cool(-) pull of each hue toward the warm/cool pole. All-zero returns
-    the input unchanged (byte-exact); otherwise the transform is clamped and
-    monotonic in each parameter.
-    """
-    adj = normalize_adjustments(adj)
-    if adjustments_all_zero(adj):
-        return dict(colors)
-    brightness = adj["brightness"] / 100.0
-    vibrancy = adj["vibrancy"] / 100.0
-    contrast = adj["contrast"] / 100.0
-    hue_shift = float(adj["hue"])
-    temperature = adj["temperature"] / 100.0
-
-    values: List[float] = []
-    for key in BASE_COLOR_KEYS:
-        val = colors.get(key)
-        if isinstance(val, str) and HEX_RE.match(val.strip()):
-            values.append(colorsys.rgb_to_hsv(*[c / 255.0 for c in rgb(val)])[2])
-    mean_v = sum(values) / len(values) if values else 0.5
-    shifted_mean = clamp(mean_v + brightness, 0.0, 1.0)
-
-    def transform(value: str) -> str:
-        r, g, b = [c / 255.0 for c in rgb(value)]
-        h, s, v = colorsys.rgb_to_hsv(r, g, b)
-        s = clamp(s * (1.0 + vibrancy), 0.0, 1.0)
-        v = clamp(shifted_mean + ((v + brightness) - shifted_mean) * (1.0 + contrast), 0.0, 1.0)
-        h_deg = h * 360.0 + hue_shift
-        if temperature:
-            target = 40.0 if temperature > 0 else 220.0
-            weight = min(abs(temperature), 1.0) * 0.5
-            delta = ((target - h_deg + 180.0) % 360.0) - 180.0
-            h_deg += delta * weight
-        rr, gg, bb = colorsys.hsv_to_rgb((h_deg % 360.0) / 360.0, s, v)
-        return hexc(rr * 255, gg * 255, bb * 255)
-
-    out = dict(colors)
-    for key, val in colors.items():
-        if isinstance(val, str) and HEX_RE.match(val.strip()):
-            out[key] = transform(val)
-    return out
+# The color-space and whole-palette implementation lives in the focused module;
+# these aliases preserve the helper's stable Python/CLI surface for callers.
+ADJUST_KEYS = _theme_color.ADJUST_KEYS
+ADJUST_RANGE = _theme_color.ADJUST_RANGE
+BASE_COLOR_KEYS = _theme_color.BASE_COLOR_KEYS
+normalize_adjustments = _theme_color.normalize_adjustments
+adjustments_all_zero = _theme_color.adjustments_all_zero
+apply_adjustments = _theme_color.apply_adjustments
 
 
 def normalize_color_map(data: Dict[str, str]) -> Dict[str, str]:
@@ -1511,27 +1516,83 @@ def target_roles(bp: Dict[str, Any]) -> Dict[str, str]:
     if not curated:
         # Generated palettes only: normalize + enforce contrast. Curated palettes
         # pass through untouched so hand-picked colors reach targets verbatim.
-        roles["foreground"] = ensure_contrast(roles["foreground"], bg, 7.0, prefer_text)
-        roles["accent"] = ensure_contrast(roles["accent"], bg, 3.0, prefer_text)
-        roles["cursor"] = ensure_contrast(roles["cursor"], bg, 3.0, prefer_text)
-        roles["selection_background"] = ensure_contrast(roles["selection_background"], bg, 1.6, prefer_text)
-        roles["selection_foreground"] = ensure_contrast(roles["selection_foreground"], roles["selection_background"], 4.5)
+        roles["foreground"] = _oklab_contrast_adjust(roles["foreground"], bg, 7.0, prefer_text)
+        roles["accent"] = _oklab_contrast_adjust(roles["accent"], bg, 3.0, prefer_text)
+        roles["cursor"] = _oklab_contrast_adjust(roles["cursor"], bg, 3.0, prefer_text)
+        roles["selection_background"] = _oklab_contrast_adjust(
+            roles["selection_background"], bg, 4.5, prefer_text
+        )
+        roles["selection_foreground"] = bg
     for i, c in enumerate(colors[:16]):
         adjusted = c
         if not curated:
             minimum = 4.5 if i in {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15} else 3.0
-            adjusted = ensure_contrast(c, bg, minimum, prefer_text)
+            adjusted = _oklab_contrast_adjust(c, bg, minimum, prefer_text)
             if i == 15:
                 adjusted = roles["foreground"]
         roles[f"color{i}"] = adjusted
         roles[ANSI_NAMES[i]] = adjusted
+    # These are shell-facing roles even on curated themes. A continuous
+    # hue-preserving correction keeps restyle sweeps readable without rewriting
+    # the curated ANSI palette or introducing a special branch at zero.
+    roles["foreground"] = _oklab_contrast_adjust(roles["foreground"], bg, 7.0, prefer_text)
+    roles["cursor"] = _oklab_contrast_adjust(roles["cursor"], bg, 3.0, prefer_text)
+    roles["selection_background"] = _oklab_contrast_adjust(
+        roles["selection_background"], bg, 4.5, prefer_text
+    )
+    roles["selection_foreground"] = bg
     fg = roles["foreground"]
-    accent = ensure_usable_accent(roles["accent"], bg, roles, prefer_text)
+    accent = ensure_usable_accent(
+        roles["accent"],
+        bg,
+        roles,
+        prefer_text,
+        min_contrast=4.5,
+        continuous=True,
+    )
     roles["accent"] = accent
     dark_mode = mode != "light"
 
     def surface(amount: float) -> str:
-        return lighten(bg, amount) if dark_mode else darken(bg, amount)
+        lightness, _relative, _chroma, _hue = _relative_oklch(bg)
+        target_l = (
+            lightness + (1.0 - lightness) * amount
+            if dark_mode else lightness * (1.0 - amount)
+        )
+        return _map_oklch_lightness(bg, target_l)
+
+    def readable_surface(candidate: str, minimum: float = 4.0) -> str:
+        """Pull a surface toward bg without ever crossing its tone polarity."""
+        if contrast_ratio(fg, candidate) >= minimum:
+            return candidate
+        bg_l = color_to_oklab(bg)[0]
+        candidate_l = color_to_oklab(candidate)[0]
+        if contrast_ratio(fg, bg) < minimum:
+            return bg
+        low, high = 0.0, 1.0
+        for _ in range(18):
+            fraction = (low + high) / 2.0
+            tone = bg_l + (candidate_l - bg_l) * fraction
+            probe = _map_oklch_lightness(bg, tone)
+            if contrast_ratio(fg, probe) >= minimum:
+                low = fraction
+            else:
+                high = fraction
+        return _map_oklch_lightness(bg, bg_l + (candidate_l - bg_l) * low)
+
+    def readable_container(candidate: str, minimum: float = 4.5) -> str:
+        """Retain as much tint as possible while keeping fg readable."""
+        if contrast_ratio(fg, candidate) >= minimum:
+            return candidate
+        low, high = 0.0, 1.0
+        for _ in range(18):
+            fraction = (low + high) / 2.0
+            probe = blend(bg, candidate, fraction)
+            if contrast_ratio(fg, probe) >= minimum:
+                low = fraction
+            else:
+                high = fraction
+        return blend(bg, candidate, low)
 
     def tinted(color: str, strength: float = 0.24) -> str:
         return blend(color, bg, 1.0 - strength)
@@ -1548,11 +1609,14 @@ def target_roles(bp: Dict[str, Any]) -> Dict[str, str]:
         "info": "#60a5fa",
     })
     roles["primary"] = accent
-    roles["onPrimary"] = readable_on(accent)
-    roles["error"] = ensure_contrast(semantic_bases["error"], bg, 4.5, prefer_text)
-    roles["warning"] = ensure_contrast(semantic_bases["warning"], bg, 4.5, prefer_text)
-    roles["success"] = ensure_contrast(semantic_bases["success"], bg, 4.5, prefer_text)
-    roles["info"] = ensure_contrast(semantic_bases["info"], bg, 4.5, prefer_text)
+    # Primary/semantic colors are foreground-readable against the base surface,
+    # so using that same surface as their companion avoids a black/white
+    # readable_on() polarity flip as a slider crosses the midpoint.
+    roles["onPrimary"] = bg
+    roles["error"] = _oklab_contrast_adjust(semantic_bases["error"], bg, 4.5, prefer_text)
+    roles["warning"] = _oklab_contrast_adjust(semantic_bases["warning"], bg, 4.5, prefer_text)
+    roles["success"] = _oklab_contrast_adjust(semantic_bases["success"], bg, 4.5, prefer_text)
+    roles["info"] = _oklab_contrast_adjust(semantic_bases["info"], bg, 4.5, prefer_text)
     roles["surface"] = bg
     roles["surfaceVariant"] = surface(0.06)
     roles["surfaceContainerLowest"] = bg
@@ -1564,20 +1628,19 @@ def target_roles(bp: Dict[str, Any]) -> Dict[str, str]:
     # top containers drops below readable contrast (e.g. moon-orbit). Pull the
     # container back toward the background until foreground reads again.
     for _ck in ("surfaceContainerHigh", "surfaceContainerHighest"):
-        if contrast_ratio(fg, roles[_ck]) < 4.0:
-            roles[_ck] = ensure_contrast(roles[_ck], fg, 4.0, bg)
-    roles["primaryContainer"] = tinted(accent, 0.30)
-    roles["secondaryContainer"] = tinted(roles["cyan"], 0.24)
-    roles["tertiaryContainer"] = tinted(roles["magenta"], 0.24)
+        roles[_ck] = readable_surface(roles[_ck])
+    roles["primaryContainer"] = readable_container(tinted(accent, 0.30))
+    roles["secondaryContainer"] = readable_container(tinted(roles["cyan"], 0.24))
+    roles["tertiaryContainer"] = readable_container(tinted(roles["magenta"], 0.24))
     # M3-ish companion roles for ported app themes (vscode/zed/emacs/kde).
-    roles["secondary"] = ensure_contrast(roles["cyan"], bg, 3.0, prefer_text)
-    roles["tertiary"] = ensure_contrast(roles["magenta"], bg, 3.0, prefer_text)
-    roles["onSecondary"] = readable_on(roles["secondary"])
-    roles["onTertiary"] = readable_on(roles["tertiary"])
-    roles["onError"] = readable_on(roles["error"]) if "error" in roles else prefer_text
-    roles["onPrimaryContainer"] = ensure_contrast(fg, roles["primaryContainer"], 4.5)
-    roles["onSecondaryContainer"] = ensure_contrast(fg, roles["secondaryContainer"], 4.5)
-    roles["onTertiaryContainer"] = ensure_contrast(fg, roles["tertiaryContainer"], 4.5)
+    roles["secondary"] = _oklab_contrast_adjust(roles["cyan"], bg, 4.5, prefer_text)
+    roles["tertiary"] = _oklab_contrast_adjust(roles["magenta"], bg, 4.5, prefer_text)
+    roles["onSecondary"] = bg
+    roles["onTertiary"] = bg
+    roles["onError"] = bg
+    roles["onPrimaryContainer"] = fg
+    roles["onSecondaryContainer"] = fg
+    roles["onTertiaryContainer"] = fg
     roles["inverseSurface"] = fg
     roles["inverseOnSurface"] = bg
     roles["inversePrimary"] = roles["primaryContainer"]
@@ -1585,9 +1648,9 @@ def target_roles(bp: Dict[str, Any]) -> Dict[str, str]:
     roles["scrim"] = "#000000"
     roles["successContainer"] = tinted(roles["success"], 0.20)
     roles["warningContainer"] = tinted(roles["warning"], 0.20)
-    roles["errorContainer"] = tinted(roles["error"], 0.20)
+    roles["errorContainer"] = readable_container(tinted(roles["error"], 0.20))
     roles["infoContainer"] = tinted(roles["info"], 0.20)
-    roles["onErrorContainer"] = ensure_contrast(fg, roles["errorContainer"], 4.5)
+    roles["onErrorContainer"] = fg
     roles["outline"] = ensure_contrast(blend(fg, bg, 0.52), bg, 3.0, prefer_text)
     roles["outlineVariant"] = ensure_contrast(blend(fg, bg, 0.68), bg, 2.2, prefer_text)
     roles["muted"] = ensure_contrast(blend(fg, bg, 0.35), bg, 4.5, prefer_text)
@@ -1617,6 +1680,48 @@ def target_roles(bp: Dict[str, Any]) -> Dict[str, str]:
     return roles
 
 
+def app_target_roles(bp: Dict[str, Any], shell_roles: Dict[str, str] | None = None) -> Dict[str, str]:
+    """Keep curated base/ANSI colors byte-faithful for external app targets.
+
+    Shell readability roles may adjust foreground/selection/accent continuously,
+    but terminal and app templates must receive the curated package values.
+    Derived semantic/surface roles still come from the shell map.
+    """
+    roles = dict(shell_roles or target_roles(bp))
+    if blueprint_source(bp) != "curated":
+        return roles
+    pal = bp.get("palette", {})
+    colors = [
+        clean_hex(color, DEFAULT_COLORS[index] if index < len(DEFAULT_COLORS) else "#000000")
+        for index, color in enumerate(pal.get("colors", []))
+    ]
+    while len(colors) < 16:
+        colors.append(DEFAULT_COLORS[len(colors)])
+    ext = pal.get("extendedColors") or {}
+    raw = {
+        "background": clean_hex(ext.get("background") or colors[0], colors[0]),
+        "foreground": clean_hex(ext.get("foreground") or colors[7], colors[7]),
+        "accent": clean_hex(ext.get("accent") or colors[4], colors[4]),
+        "cursor": clean_hex(ext.get("cursor") or ext.get("accent") or colors[4], colors[4]),
+        "selection_background": clean_hex(
+            ext.get("selection_background") or ext.get("selectionBackground") or colors[4],
+            colors[4],
+        ),
+        "selection_foreground": clean_hex(
+            ext.get("selection_foreground") or ext.get("selectionForeground") or colors[15],
+            colors[15],
+        ),
+    }
+    for index, color in enumerate(colors[:16]):
+        raw[f"color{index}"] = color
+        raw[ANSI_NAMES[index]] = color
+    roles.update(raw)
+    for snake, camel in CAMEL.items():
+        if snake in raw:
+            roles[camel] = raw[snake]
+    return roles
+
+
 def render_template(text: str, roles: Dict[str, str]) -> str:
     def repl(match: re.Match[str]) -> str:
         name = match.group(1)
@@ -1639,6 +1744,24 @@ def write_file(path: Path, content: str) -> None:
     tmp = path.with_name(f"{path.name}.tmp.{os.getpid()}.{time.time_ns()}")
     tmp.write_text(content)
     tmp.replace(path)
+
+
+def _niri() -> Any:
+    """Load the Niri/KDL subsystem only for commands and hooks that use it."""
+    global _NIRI_SUPPORT
+    if _NIRI_SUPPORT is None:
+        import vshell_niri
+        vshell_niri.configure(vshell_niri.NiriRuntime(
+            home=home,
+            cfg_dir=cfg_dir,
+            run=run,
+            write_file=write_file,
+            load_settings=load_settings,
+            coerce_int=_coerce_int,
+            optional_nonnegative_int=_optional_nonnegative_int,
+        ))
+        _NIRI_SUPPORT = vshell_niri
+    return _NIRI_SUPPORT
 
 
 def write_chromium_policy(roles: Dict[str, str], allow_prompt: bool = False) -> bool:
@@ -1791,6 +1914,129 @@ def reload_nvim_hook() -> Dict[str, Any]:
     return {"hook": "nvim-reload", "ok": not failures, "reloaded": reloaded, "missingCommand": missing, "pruned": pruned, "error": "; ".join(failures)}
 
 
+_VGS_INCLUDE_BEGIN = "# BEGIN VGS managed theme include"
+_VGS_INCLUDE_END = "# END VGS managed theme include"
+
+
+def _config_include_value(line: str, separator: str) -> str:
+    stripped = line.strip()
+    if separator not in stripped:
+        return ""
+    prefix, value = stripped.split(separator, 1)
+    if prefix.strip() != "include":
+        return ""
+    value = value.split("#", 1)[0].strip().strip("\"'")
+    return value
+
+
+def _include_resolves_to(value: str, config: Path, target: Path) -> bool:
+    if not value:
+        return False
+    expanded = Path(os.path.expandvars(os.path.expanduser(value)))
+    if not expanded.is_absolute():
+        expanded = config.parent / expanded
+    try:
+        return expanded.resolve(strict=False) == target.resolve(strict=False)
+    except OSError:
+        return expanded.absolute() == target.absolute()
+
+
+def ensure_theme_include(config: Path, target: Path, include_line: str,
+                         separator: str, seed_lines: List[str] | None = None) -> Dict[str, Any]:
+    """Idempotently append one managed include while preserving user content."""
+    original = config.read_text() if config.is_file() else ""
+    if any(
+        _include_resolves_to(_config_include_value(line, separator), config, target)
+        for line in original.splitlines()
+    ):
+        return {"ok": True, "changed": False, "config": str(config), "target": str(target)}
+
+    block_lines = [_VGS_INCLUDE_BEGIN, *(seed_lines or []), include_line, _VGS_INCLUDE_END]
+    block = "\n".join(block_lines) + "\n"
+    if _VGS_INCLUDE_BEGIN in original and _VGS_INCLUDE_END in original:
+        start = original.index(_VGS_INCLUDE_BEGIN)
+        end = original.index(_VGS_INCLUDE_END, start) + len(_VGS_INCLUDE_END)
+        content = original[:start] + block.rstrip("\n") + original[end:]
+        if original.endswith("\n") and not content.endswith("\n"):
+            content += "\n"
+    else:
+        content = original
+        if content and not content.endswith("\n"):
+            content += "\n"
+        if content:
+            content += "\n"
+        content += block
+    write_file(config, content)
+    return {"ok": True, "changed": True, "config": str(config), "target": str(target)}
+
+
+def ensure_foot_theme_config() -> Dict[str, Any]:
+    config = home() / ".config" / "foot" / "foot.ini"
+    target = home() / ".config" / "foot" / "vgs-theme.ini"
+    seed_lines: List[str] = []
+    if not config.exists():
+        xdg_dirs = os.environ.get("XDG_CONFIG_DIRS", "/etc/xdg").split(":")
+        for base in (Path(item) for item in xdg_dirs if item):
+            system_config = base / "foot" / "foot.ini"
+            if system_config.is_file():
+                seed_lines.append(f"include={system_config}")
+                break
+    result = ensure_theme_include(
+        config, target, "include=~/.config/foot/vgs-theme.ini", "=", seed_lines
+    )
+    return {"hook": "foot-config", **result}
+
+
+def ensure_kitty_theme_config() -> Dict[str, Any]:
+    config = home() / ".config" / "kitty" / "kitty.conf"
+    target = home() / ".config" / "kitty" / "vgs-theme.conf"
+    result = ensure_theme_include(config, target, "include vgs-theme.conf", " ")
+    return {"hook": "kitty-config", **result}
+
+
+def ensure_niri_colors_config() -> Dict[str, Any]:
+    return {"hook": "niri-colors-config", **_niri().ensure_niri_include("colors.kdl")}
+
+
+def ensure_qtct_theme_config(version: int) -> Dict[str, Any]:
+    app = f"qt{version}ct"
+    config = home() / ".config" / app / f"{app}.conf"
+    palette = home() / ".config" / app / "colors" / "vgs.conf"
+    original = config.read_text() if config.is_file() else ""
+    lines = original.splitlines()
+    appearance_index = next(
+        (index for index, line in enumerate(lines) if line.strip().lower() == "[appearance]"),
+        -1,
+    )
+    if appearance_index < 0:
+        if lines and lines[-1].strip():
+            lines.append("")
+        lines.append("[Appearance]")
+        appearance_index = len(lines) - 1
+    section_end = next(
+        (index for index in range(appearance_index + 1, len(lines))
+         if lines[index].strip().startswith("[") and lines[index].strip().endswith("]")),
+        len(lines),
+    )
+
+    def set_key(key: str, value: str) -> None:
+        nonlocal section_end
+        for index in range(appearance_index + 1, section_end):
+            if re.match(rf"^{re.escape(key)}\s*=", lines[index].strip(), re.IGNORECASE):
+                lines[index] = f"{key}={value}"
+                return
+        lines.insert(section_end, f"{key}={value}")
+        section_end += 1
+
+    set_key("color_scheme_path", str(palette))
+    set_key("custom_palette", "true")
+    content = "\n".join(lines) + "\n"
+    changed = content != original
+    if changed:
+        write_file(config, content)
+    return {"hook": f"{app}-config", "ok": True, "changed": changed, "config": str(config)}
+
+
 def run_hook(hook: Any, roles: Dict[str, str]) -> Dict[str, Any]:
     if isinstance(hook, dict):
         name = str(hook.get("name") or hook.get("type") or "hook")
@@ -1819,6 +2065,37 @@ def run_hook(hook: Any, roles: Dict[str, str]) -> Dict[str, Any]:
                 if sockets:
                     env["HYPRLAND_INSTANCE_SIGNATURE"] = sockets[0].parent.name
         return _run_hook_cmd(hook, ["hyprctl", "reload"], env=env, timeout=10)
+    if hook == "niri-reload":
+        if not shutil.which("niri"):
+            return {"hook": hook, "ok": True, "skipped": True, "reason": "niri not found"}
+        if not os.environ.get("NIRI_SOCKET"):
+            return {"hook": hook, "ok": True, "skipped": True, "reason": "not a Niri session"}
+        return _run_hook_cmd(hook, ["niri", "msg", "action", "load-config-file"], timeout=10)
+    if hook == "niri-colors-config":
+        try:
+            return ensure_niri_colors_config()
+        except (OSError, UnicodeError) as exc:
+            return {"hook": hook, "ok": False, "error": str(exc)}
+    if hook == "foot-config":
+        try:
+            return ensure_foot_theme_config()
+        except (OSError, UnicodeError) as exc:
+            return {"hook": hook, "ok": False, "error": str(exc)}
+    if hook == "kitty-config":
+        try:
+            return ensure_kitty_theme_config()
+        except (OSError, UnicodeError) as exc:
+            return {"hook": hook, "ok": False, "error": str(exc)}
+    if hook == "qt6ct-config":
+        try:
+            return ensure_qtct_theme_config(6)
+        except (OSError, UnicodeError) as exc:
+            return {"hook": hook, "ok": False, "error": str(exc)}
+    if hook == "qt5ct-config":
+        try:
+            return ensure_qtct_theme_config(5)
+        except (OSError, UnicodeError) as exc:
+            return {"hook": hook, "ok": False, "error": str(exc)}
     if hook == "tmux-source":
         if not shutil.which("tmux"):
             return {"hook": hook, "ok": True, "skipped": True, "reason": "tmux not found"}
@@ -2360,37 +2637,159 @@ def apply_icon_theme_hook(roles: Dict[str, str]) -> Dict[str, Any]:
 
 
 def apply_fastfetch_logo_hook(roles: Dict[str, str]) -> Dict[str, Any]:
-    """Render a theme-matched fastfetch logo from the current wallpaper.
+    """Render a theme-matched fastfetch logo from the theme wallpaper role.
 
-    fastfetch shows a static image logo; this derives one from the active
-    theme's default wallpaper (centre-cropped square, downscaled) so the
+    fastfetch shows a static image logo; this derives one from the theme's
+    wallpaper role (centre-cropped square, downscaled) so the
     banner tracks the theme. Output is VGS-named at
-    ``~/.config/vshell/generated/fastfetch/logo.jpg``; point a fastfetch
-    ``config.jsonc`` ``logo.source`` at it to opt in. Optional and
-    non-destructive: skips cleanly without Pillow or a wallpaper.
+    ``~/.config/vshell/generated/fastfetch/logo.jpg``. If fastfetch has no user
+    config yet, VGS installs its portable boxed-layout seed. Existing fastfetch
+    configs are never replaced.
     """
     hook = "fastfetch-logo"
+    config_home = Path(os.environ.get("XDG_CONFIG_HOME") or (home() / ".config")) / "fastfetch"
+    config_jsonc = config_home / "config.jsonc"
+
+    # Do not shadow an effective config from another Fastfetch search root.
+    # The bundled layout is a first-run convenience, never an override.
+    config_roots = [
+        Path(os.environ.get("XDG_CONFIG_HOME") or (home() / ".config")) / "fastfetch",
+        home() / "fastfetch",
+    ]
+    config_roots.extend(
+        Path(entry) / "fastfetch"
+        for entry in (os.environ.get("XDG_CONFIG_DIRS") or "/etc/xdg").split(":")
+        if entry
+    )
+    config_roots.append(Path("/etc/fastfetch"))
+    effective_config = next(
+        (
+            root / filename
+            for root in config_roots
+            for filename in ("config.jsonc", "config.json")
+            if (root / filename).is_file()
+        ),
+        None,
+    )
+    config_seeded = False
+    if effective_config is None:
+        seed = repo_root() / "config" / "vshell" / "fastfetch" / "config.jsonc"
+        if seed.is_file():
+            write_file(config_jsonc, seed.read_text())
+            effective_config = config_jsonc
+            config_seeded = True
+
     wallpaper = roles.get("wallpaper", "")
+    fallback_wallpaper = repo_root() / "themes" / "coppernight" / "backgrounds" / "4-cats-anime.jpg"
+    used_fallback_wallpaper = False
+    if (not wallpaper or not Path(wallpaper).is_file()) and fallback_wallpaper.is_file():
+        wallpaper = str(fallback_wallpaper)
+        used_fallback_wallpaper = True
     if not wallpaper or not Path(wallpaper).is_file():
-        return {"hook": hook, "ok": True, "skipped": True, "reason": "no wallpaper for this theme"}
-    try:
-        from PIL import Image
-    except Exception:
-        return {"hook": hook, "ok": True, "skipped": True, "reason": "Pillow not available"}
+        return {
+            "hook": hook,
+            "ok": True,
+            "skipped": True,
+            "reason": "no wallpaper for this theme",
+            "config": str(effective_config or config_jsonc),
+            "configSeeded": config_seeded,
+        }
     out_dir = generated_dir() / "fastfetch"
+    out = out_dir / "logo.jpg"
+    source_state = out_dir / "source.json"
+    temp_out = out_dir / f".logo.{os.getpid()}.{time.time_ns()}.jpg"
     try:
         out_dir.mkdir(parents=True, exist_ok=True)
-        with Image.open(wallpaper) as im:
-            im = im.convert("RGB")
-            w, h = im.size
-            side = min(w, h)
-            left, top = (w - side) // 2, (h - side) // 2
-            im = im.crop((left, top, left + side, top + side)).resize((600, 600), Image.LANCZOS)
-            out = out_dir / "logo.jpg"
-            im.save(out, "JPEG", quality=90)
+        wallpaper_stat = Path(wallpaper).stat()
+        fingerprint = {
+            "path": str(Path(wallpaper).resolve()),
+            "size": wallpaper_stat.st_size,
+            "mtimeNs": wallpaper_stat.st_mtime_ns,
+        }
+        if out.is_file() and source_state.is_file():
+            with contextlib.suppress(OSError, ValueError, TypeError):
+                if json.loads(source_state.read_text()) == fingerprint:
+                    return {
+                        "hook": hook,
+                        "ok": True,
+                        "path": str(out),
+                        "config": str(effective_config or config_jsonc),
+                        "configSeeded": config_seeded,
+                        "cached": True,
+                        "fallbackWallpaper": used_fallback_wallpaper,
+                    }
+        if Image is not None:
+            with Image.open(wallpaper) as im:
+                im = im.convert("RGB")
+                w, h = im.size
+                side = min(w, h)
+                left, top = (w - side) // 2, (h - side) // 2
+                im = im.crop((left, top, left + side, top + side)).resize((600, 600), Image.LANCZOS)
+                im.save(temp_out, "JPEG", quality=90)
+        elif shutil.which("magick"):
+            proc = run([
+                "magick", wallpaper, "-auto-orient", "-resize", "600x600^",
+                "-gravity", "center", "-extent", "600x600", "-quality", "90",
+                str(temp_out),
+            ], timeout=15)
+            if proc.returncode != 0:
+                raise RuntimeError(proc.stderr.strip() or "ImageMagick failed")
+        elif shutil.which("ffmpeg"):
+            proc = run([
+                "ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-i", wallpaper,
+                "-vf", "scale=600:600:force_original_aspect_ratio=increase,crop=600:600",
+                "-frames:v", "1", str(temp_out),
+            ], timeout=15)
+            if proc.returncode != 0:
+                raise RuntimeError(proc.stderr.strip() or "ffmpeg failed")
+        else:
+            # Fastfetch decodes the source image itself. Cropping is an
+            # enhancement, so keep minimal installations functional by copying
+            # the wallpaper bytes to the stable logo path.
+            shutil.copy2(wallpaper, temp_out)
+        temp_out.replace(out)
+        write_file(source_state, json.dumps(fingerprint, sort_keys=True) + "\n")
     except Exception as exc:  # never fail an apply over a decorative logo
+        with contextlib.suppress(OSError):
+            temp_out.unlink()
+        # A newly seeded config must never point at a missing image. Preserve an
+        # existing last-known-good logo; otherwise install the shipped default
+        # wallpaper without conversion as the guaranteed low-dependency fallback.
+        if not out.is_file() and fallback_wallpaper.is_file():
+            try:
+                shutil.copy2(fallback_wallpaper, temp_out)
+                temp_out.replace(out)
+                fallback_stat = fallback_wallpaper.stat()
+                fallback_fingerprint = {
+                    "path": str(fallback_wallpaper.resolve()),
+                    "size": fallback_stat.st_size,
+                    "mtimeNs": fallback_stat.st_mtime_ns,
+                }
+                write_file(source_state, json.dumps(fallback_fingerprint, sort_keys=True) + "\n")
+                return {
+                    "hook": hook,
+                    "ok": True,
+                    "path": str(out),
+                    "config": str(effective_config or config_jsonc),
+                    "configSeeded": config_seeded,
+                    "fallbackWallpaper": True,
+                    "conversionError": str(exc),
+                }
+            except Exception:
+                with contextlib.suppress(OSError):
+                    temp_out.unlink()
+        if config_seeded and not out.is_file():
+            with contextlib.suppress(OSError):
+                config_jsonc.unlink()
         return {"hook": hook, "ok": True, "skipped": True, "optional": True, "error": str(exc)}
-    return {"hook": hook, "ok": True, "path": str(out)}
+    return {
+        "hook": hook,
+        "ok": True,
+        "path": str(out),
+        "config": str(effective_config or config_jsonc),
+        "configSeeded": config_seeded,
+        "fallbackWallpaper": used_fallback_wallpaper,
+    }
 
 
 def _quit_windowless_nautilus() -> Dict[str, Any]:
@@ -2407,12 +2806,16 @@ def _quit_windowless_nautilus() -> Dict[str, Any]:
         return {"ok": True, "skipped": True, "reason": "nautilus not found"}
     if not process_pids_by_comm("nautilus"):
         return {"ok": True, "skipped": True, "reason": "not running"}
-    if not shutil.which("hyprctl"):
-        # Cannot prove there are no open windows; leave the service alone.
-        return {"ok": True, "skipped": True, "reason": "hyprctl not found"}
     try:
-        clients = subprocess.run(["hyprctl", "clients", "-j"], text=True, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=3)
-        open_windows = [c for c in json.loads(clients.stdout or "[]") if c.get("class") == "org.gnome.Nautilus"]
+        if os.environ.get("NIRI_SOCKET") and shutil.which("niri"):
+            clients = subprocess.run(["niri", "msg", "-j", "windows"], text=True, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=3)
+            open_windows = [c for c in json.loads(clients.stdout or "[]") if c.get("app_id") == "org.gnome.Nautilus"]
+        elif shutil.which("hyprctl"):
+            clients = subprocess.run(["hyprctl", "clients", "-j"], text=True, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=3)
+            open_windows = [c for c in json.loads(clients.stdout or "[]") if c.get("class") == "org.gnome.Nautilus"]
+        else:
+            # Cannot prove there are no open windows; leave the service alone.
+            return {"ok": True, "skipped": True, "reason": "compositor window query unavailable"}
     except Exception as exc:
         return {"ok": True, "skipped": True, "reason": f"window probe failed: {exc}"}
     if open_windows:
@@ -3017,9 +3420,19 @@ def install_curated_file(path: Path, dest: Path, roles: Dict[str, str], app: str
     write_file(dest, text)
 
 
-def apply_theme_obj(bp: Dict[str, Any], only_app: str | None = None) -> Dict[str, Any]:
+def apply_theme_obj(bp: Dict[str, Any], only_app: str | None = None,
+                    only_target: str | None = None, run_hooks: bool = True) -> Dict[str, Any]:
+    """Apply one complete theme batch without interleaving another mutation."""
+    with theme_mutation_lock():
+        return _apply_theme_obj_unlocked(bp, only_app, only_target, run_hooks)
+
+
+def _apply_theme_obj_unlocked(bp: Dict[str, Any], only_app: str | None = None,
+                              only_target: str | None = None,
+                              run_hooks: bool = True) -> Dict[str, Any]:
     ensure_dirs()
     roles = target_roles(bp)
+    external_roles = app_target_roles(bp, roles)
     curated_apps: Dict[str, str] = bp.get("apps") or {}
     app_overrides = bp_app_overrides(bp)
     theme_apps = theme_apps_settings()
@@ -3028,6 +3441,8 @@ def apply_theme_obj(bp: Dict[str, Any], only_app: str | None = None) -> Dict[str
     skipped: List[str] = []
     hook_specs: List[Any] = []
     for cfg_path in sorted(targets_dir().glob("*/config.json")):
+        if only_target and cfg_path.parent.name != only_target:
+            continue
         cfg = json.loads(cfg_path.read_text())
         if only_app and str(cfg.get("app") or "") != only_app:
             continue
@@ -3051,7 +3466,11 @@ def apply_theme_obj(bp: Dict[str, Any], only_app: str | None = None) -> Dict[str
         curated_theme_name = str(cfg.get("curatedThemeFile") or "")
         curated_theme_src = curated_apps.get(curated_theme_name) if curated_theme_name else None
         app_id = str(cfg.get("app") or "")
-        target_role_map = {**roles, **app_overrides[app_id]} if app_id in app_overrides else roles
+        base_role_map = roles if cfg_path.parent.name == "vgs-shell" else external_roles
+        target_role_map = (
+            {**base_role_map, **app_overrides[app_id]}
+            if app_id in app_overrides else base_role_map
+        )
         if curated_src and curated_dest:
             install_curated_file(Path(curated_src), curated_dest, target_role_map)
             rendered.append(str(curated_dest))
@@ -3076,7 +3495,7 @@ def apply_theme_obj(bp: Dict[str, Any], only_app: str | None = None) -> Dict[str
                 hook_specs.extend(hook_value)
             else:
                 hook_specs.append(hook_value)
-    hook_results = [run_hook(hook, roles) for hook in hook_specs]
+    hook_results = [run_hook(hook, roles) for hook in hook_specs] if run_hooks else []
     warnings = []
     for result in hook_results:
         if result.get("ok"):
@@ -3084,7 +3503,7 @@ def apply_theme_obj(bp: Dict[str, Any], only_app: str | None = None) -> Dict[str
         msg = result.get("error") or result.get("stderr") or result.get("stdout") or "failed"
         warnings.append(f"{result.get('hook')}: {msg}")
         eprint(f"hook {result.get('hook')} failed: {msg}")
-    if not only_app:
+    if not only_app and not only_target:
         current = dict(bp)
         for key in ("path", "builtin", "userDir", "backgrounds", "packagedPreview"):
             current.pop(key, None)
@@ -4215,7 +4634,8 @@ def apply_color_edits(edits: List[str], name: str, mode: str | None = None, wall
 
 def theme_role_universe(bp: Dict[str, Any]) -> Dict[str, str]:
     """Hex-valued derived roles for a theme — the app-override role namespace."""
-    return {k: v for k, v in target_roles(bp).items() if isinstance(v, str) and HEX_RE.match(str(v).strip())}
+    roles = app_target_roles(bp, target_roles(bp))
+    return {k: v for k, v in roles.items() if isinstance(v, str) and HEX_RE.match(str(v).strip())}
 
 
 def app_template_roles(app: str, bp: Dict[str, Any], effective_roles: Dict[str, str]) -> List[str]:
@@ -4351,19 +4771,107 @@ def command_exists(name: str) -> bool:
     return local.exists() and os.access(local, os.X_OK)
 
 
+def _wayland_socket_owner() -> str:
+    """Return the compositor owning this process's active Wayland socket."""
+    socket_path = os.environ.get("WAYLAND_DISPLAY") or "wayland-0"
+    if not os.path.isabs(socket_path):
+        runtime_dir = os.environ.get("XDG_RUNTIME_DIR") or f"/run/user/{os.getuid()}"
+        socket_path = os.path.join(runtime_dir, socket_path)
+    try:
+        inode = ""
+        for line in Path("/proc/net/unix").read_text(errors="replace").splitlines():
+            fields = line.split()
+            if len(fields) >= 8 and fields[-1] == socket_path:
+                inode = fields[6]
+                break
+        if not inode:
+            return ""
+        target = f"socket:[{inode}]"
+        for process in Path("/proc").glob("[0-9]*"):
+            for fd in (process / "fd").glob("*"):
+                try:
+                    if os.readlink(fd) != target:
+                        continue
+                    name = (process / "comm").read_text().strip().lower()
+                    if name in {"hyprland", "niri"}:
+                        return name
+                except OSError:
+                    continue
+    except OSError:
+        pass
+    return ""
+
+
+def detect_compositor() -> Dict[str, str]:
+    owner = _wayland_socket_owner()
+    if owner:
+        return {"compositor": owner, "source": "wayland-socket-owner"}
+    if os.environ.get("NIRI_SOCKET") and command_exists("niri"):
+        try:
+            if run(["niri", "msg", "version"], timeout=2).returncode == 0:
+                return {"compositor": "niri", "source": "live-niri-ipc"}
+        except (OSError, subprocess.SubprocessError):
+            pass
+    if os.environ.get("HYPRLAND_INSTANCE_SIGNATURE") and command_exists("hyprctl"):
+        try:
+            if run(["hyprctl", "-j", "version"], timeout=2).returncode == 0:
+                return {"compositor": "hyprland", "source": "live-hyprland-ipc"}
+        except (OSError, subprocess.SubprocessError):
+            pass
+    return {"compositor": "unknown", "source": "none"}
+
+
 def feature_status() -> Dict[str, Any]:
     data = load_deps()
+    compositor = detect_compositor()["compositor"]
     features: Dict[str, Any] = {}
     for feature, spec in (data.get("features") or {}).items():
         commands = list(spec.get("commands") or [])
+        compositor_commands = {
+            str(name): list(values or [])
+            for name, values in (spec.get("compositorCommands") or {}).items()
+        }
+        selected_compositor = compositor if compositor in compositor_commands else ""
+        if selected_compositor:
+            commands.extend(compositor_commands[selected_compositor])
         missing = [cmd for cmd in commands if not command_exists(cmd)]
+        alternatives = [list(group) for group in (spec.get("anyCommands") or [])]
+        missing_alternatives = [
+            group for group in alternatives
+            if not any(command_exists(command) for command in group)
+        ]
+        missing.extend("|".join(group) for group in missing_alternatives)
+        if compositor_commands and not selected_compositor:
+            branch_missing = {
+                name: [command for command in branch if not command_exists(command)]
+                for name, branch in compositor_commands.items()
+            }
+            if not any(len(values) == 0 for values in branch_missing.values()):
+                missing.append("|".join(
+                    f"{name}:{','.join(values)}" for name, values in branch_missing.items()
+                ))
         features[feature] = {
             "available": len(missing) == 0,
             "required": bool(spec.get("required", False)),
             "commands": commands,
+            "anyCommands": alternatives,
+            "compositorCommands": compositor_commands,
+            "compositor": selected_compositor or compositor,
             "missing": missing,
         }
-    return {"version": data.get("version", 1), "features": features}
+    return {"version": data.get("version", 1), "compositor": compositor, "features": features}
+
+
+def cmd_compositor(argv: List[str]) -> int:
+    if not argv or argv[0] != "current":
+        eprint("Usage: vshell compositor current [--json]")
+        return 2
+    result = detect_compositor()
+    if "--json" in argv:
+        print(json.dumps(result))
+    else:
+        print(result["compositor"])
+    return 0
 
 
 def cmd_deps(argv: List[str]) -> int:
@@ -5154,6 +5662,25 @@ def _thunderbolt_apple() -> List[Dict[str, Any]]:
 
 
 def _primary_connector() -> str:
+    if os.environ.get("NIRI_SOCKET") and command_exists("niri"):
+        focused = run(["niri", "msg", "-j", "focused-output"])
+        try:
+            name = str((json.loads(focused.stdout or "{}") or {}).get("name") or "")
+            if name:
+                return name
+        except Exception:
+            pass
+        outputs = run(["niri", "msg", "-j", "outputs"])
+        try:
+            data = json.loads(outputs.stdout or "{}")
+            origin = next((name for name, output in data.items()
+                           if (output.get("logical") or {}).get("x") == 0
+                           and (output.get("logical") or {}).get("y") == 0), "")
+            selected = origin or next(iter(data), "")
+            if selected:
+                return selected
+        except Exception:
+            pass
     if not command_exists("hyprctl"):
         return ""
     cp = run(["hyprctl", "-j", "monitors"])
@@ -5799,7 +6326,56 @@ def cmd_capture(argv: List[str]) -> int:
     return 127
 
 
+_THEME_MUTATING_COMMANDS = {
+    "apply",
+    "apply-blueprint",
+    "apply-colors",
+    "app-colors",
+    "app-curated-recolor",
+    "clear-wallpaper",
+    "chromium-policy",
+    "delete",
+    "duplicate",
+    "edit-app",
+    "import-colors",
+    "migrate",
+    "mode",
+    "regenerate",
+    "reset-app",
+    "restyle",
+    "revert",
+    "save-current",
+    "set-pair",
+    "set-wallpaper",
+    "toggle",
+    "wallpaper-add",
+    "wallpaper-default",
+    "wallpaper-remove",
+}
+
+
+def _theme_command_mutates(argv: List[str]) -> bool:
+    """Whether a theme CLI invocation can alter theme or generated state."""
+    if not argv:
+        return False
+    command = argv[0]
+    if command in _THEME_MUTATING_COMMANDS:
+        return True
+    if command == "extract-wallpaper":
+        return "--apply" in argv or "--save" in argv
+    if command == "apps":
+        return "--enable" in argv or "--disable" in argv
+    return False
+
+
 def cmd_theme(argv: List[str]) -> int:
+    if _theme_command_mutates(argv):
+        with theme_mutation_lock():
+            return _cmd_theme_unlocked(argv)
+    return _cmd_theme_unlocked(argv)
+
+
+def _cmd_theme_unlocked(argv: List[str]) -> int:
     parser = argparse.ArgumentParser(prog="vshell theme")
     sub = parser.add_subparsers(dest="cmd", required=True)
     sub.add_parser("current").add_argument("--json", action="store_true")
@@ -5841,7 +6417,7 @@ def cmd_theme(argv: List[str]) -> int:
     p_revert = sub.add_parser("revert", help="drop a built-in theme's user overlay (reset to repo defaults)")
     p_revert.add_argument("name")
     p_revert.add_argument("--json", action="store_true")
-    p_restyle = sub.add_parser("restyle", help="non-destructive whole-palette HSV adjustments")
+    p_restyle = sub.add_parser("restyle", help="non-destructive perceptual whole-palette adjustments")
     p_restyle.add_argument("--name", default="", help="theme name (default: current)")
     p_restyle.add_argument("--brightness", type=int)
     p_restyle.add_argument("--vibrancy", type=int)
@@ -5849,6 +6425,8 @@ def cmd_theme(argv: List[str]) -> int:
     p_restyle.add_argument("--hue", type=int)
     p_restyle.add_argument("--temperature", type=int)
     p_restyle.add_argument("--reset", action="store_true", help="clear all adjustments")
+    p_restyle.add_argument("--preview", action="store_true",
+                           help="render only the live VGS shell palette without persisting")
     p_restyle.add_argument("--json", action="store_true")
     p_app_roles = sub.add_parser("app-roles", help="list the roles an app's target consumes with resolved values")
     p_app_roles.add_argument("app")
@@ -6223,6 +6801,26 @@ def cmd_theme(argv: List[str]) -> int:
                 if value is not None:
                     adj[key] = value
             adj = normalize_adjustments(adj)
+        if args.preview:
+            preview_target = dict(target)
+            preview_target["adjustments"] = adj
+            applied = False
+            if str(target.get("name")) == str(current_theme().get("name")):
+                apply_theme_obj(
+                    preview_target,
+                    only_target="vgs-shell",
+                    run_hooks=False,
+                )
+                applied = True
+            result = {
+                "success": True,
+                "preview": True,
+                "name": target.get("name"),
+                "adjustments": adj,
+                "applied": applied,
+            }
+            print(json.dumps(result, indent=2) if args.json else f"Previewed {target.get('name')}: {adj}")
+            return 0
         stored = set_theme_adjustments(pkg_dir_name, adj)
         applied = False
         if str(target.get("name")) == str(current_theme().get("name")):
@@ -7038,14 +7636,40 @@ def cmd_color(argv: List[str]) -> int:
             fmt = "rgb"
         if "--hsv" in argv:
             fmt = "hsv"
-        if not shutil.which("hyprpicker"):
-            eprint("hyprpicker not found")
+        niri_session = bool(
+            os.environ.get("NIRI_SOCKET")
+            and shutil.which("niri")
+            and run(["niri", "msg", "version"]).returncode == 0
+        )
+        if niri_session and shutil.which("slurp") and shutil.which("grim"):
+            selection = run(["slurp", "-p", "-f", "%x,%y 1x1"])
+            if selection.returncode != 0 or not selection.stdout.strip():
+                eprint(selection.stderr.strip())
+                return selection.returncode or 1
+            image = subprocess.run(
+                ["grim", "-g", selection.stdout.strip(), "-t", "ppm", "-"],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                timeout=10,
+            )
+            if image.returncode != 0:
+                eprint(image.stderr.decode(errors="replace").strip())
+                return image.returncode
+            try:
+                r, g, b = ppm_first_pixel(image.stdout)
+                hx = f"#{r:02x}{g:02x}{b:02x}"
+            except ValueError as exc:
+                eprint(str(exc))
+                return 1
+        elif shutil.which("hyprpicker"):
+            proc = run(["hyprpicker", "-q", "-r", "-l", "-f", "hex"])
+            if proc.returncode != 0:
+                eprint(proc.stderr.strip())
+                return proc.returncode
+            hx = clean_hex(proc.stdout.strip())
+        else:
+            eprint("color picking requires hyprpicker, or grim + slurp in a Niri session")
             return 1
-        proc = run(["hyprpicker", "-q", "-r", "-l", "-f", "hex"])
-        if proc.returncode != 0:
-            eprint(proc.stderr.strip())
-            return proc.returncode
-        hx = clean_hex(proc.stdout.strip())
         r, g, b = rgb(hx)
         h, s, v = colorsys.rgb_to_hsv(r / 255, g / 255, b / 255)
         if want_json:
@@ -7058,6 +7682,41 @@ def cmd_color(argv: List[str]) -> int:
             print(hx)
         return 0
     return 2
+
+
+def ppm_first_pixel(data: bytes) -> Tuple[int, int, int]:
+    if not data.startswith(b"P6"):
+        raise ValueError("grim returned an unsupported image format")
+    index = 2
+    tokens: List[bytes] = []
+    while len(tokens) < 3:
+        while index < len(data) and data[index:index + 1].isspace():
+            index += 1
+        if index < len(data) and data[index:index + 1] == b"#":
+            newline = data.find(b"\n", index)
+            if newline < 0:
+                raise ValueError("invalid PPM header")
+            index = newline + 1
+            continue
+        start = index
+        while index < len(data) and not data[index:index + 1].isspace():
+            index += 1
+        if start == index:
+            raise ValueError("invalid PPM header")
+        tokens.append(data[start:index])
+    if index >= len(data) or not data[index:index + 1].isspace():
+        raise ValueError("invalid PPM header")
+    if data[index:index + 2] == b"\r\n":
+        index += 2
+    else:
+        index += 1
+    try:
+        width, height, maximum = (int(token) for token in tokens)
+    except ValueError as exc:
+        raise ValueError("invalid PPM header") from exc
+    if width < 1 or height < 1 or maximum != 255 or len(data) < index + 3:
+        raise ValueError("invalid PPM pixel data")
+    return data[index], data[index + 1], data[index + 2]
 
 
 def hypr_binds_json() -> Dict[str, Any]:
@@ -7094,13 +7753,84 @@ def hypr_binds_json() -> Dict[str, Any]:
     return {"provider": "hyprland", "modKey": "Super", "vgsBindsIncluded": True, "vgsStatus": {"exists": True, "included": True, "readOnly": True, "configFormat": "lua", "statusMessage": "VGS reads live Hyprland binds read-only; change them in your Hyprland config"}, "binds": binds}
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 def cmd_keybinds(argv: List[str]) -> int:
     if len(argv) >= 2 and argv[0] == "show":
         provider = argv[1]
         if provider == "hyprland":
             print(json.dumps(hypr_binds_json()))
             return 0
+        if provider == "niri":
+            print(json.dumps(_niri().niri_binds_json()))
+            return 0
         print(json.dumps({"provider": provider, "binds": {}}))
+        return 0
+    if len(argv) >= 3 and argv[0] == "set" and argv[1] == "niri":
+        parser = argparse.ArgumentParser(prog="vshell keybinds set niri")
+        parser.add_argument("key")
+        parser.add_argument("action")
+        parser.add_argument("--desc", default="")
+        parser.add_argument("--replace-key", default="")
+        parser.add_argument("--cooldown-ms", type=int, default=0)
+        parser.add_argument("--allow-when-locked", action="store_true")
+        parser.add_argument("--no-repeat", action="store_true")
+        parser.add_argument("--no-inhibiting", action="store_true")
+        parser.add_argument("--flags", default="")
+        args = parser.parse_args(argv[2:])
+        try:
+            with _niri().niri_config_lock():
+                binds = [bind for bind in _niri()._load_vgs_niri_binds()
+                         if bind.get("key") not in {args.key, args.replace_key}]
+                binds.append({
+                    "key": args.key,
+                    "action": args.action,
+                    "desc": args.desc,
+                    "cooldownMs": max(0, args.cooldown_ms),
+                    "allowWhenLocked": args.allow_when_locked,
+                    "allowInhibiting": not args.no_inhibiting,
+                    "repeat": not args.no_repeat,
+                })
+                _niri()._write_vgs_niri_binds(binds)
+                reload_result = _niri()._reload_niri()
+        except ValueError as exc:
+            eprint(str(exc))
+            return 2
+        if reload_result.get("attempted") and not reload_result.get("ok"):
+            eprint(reload_result.get("stderr") or reload_result.get("stdout") or "Niri config reload failed")
+            return 1
+        return 0
+    if len(argv) >= 3 and argv[0] in {"remove", "reset"} and argv[1] == "niri":
+        key = argv[2]
+        with _niri().niri_config_lock():
+            _niri()._write_vgs_niri_binds([
+                bind for bind in _niri()._load_vgs_niri_binds()
+                if bind.get("key") != key
+            ])
+            reload_result = _niri()._reload_niri()
+        if reload_result.get("attempted") and not reload_result.get("ok"):
+            eprint(reload_result.get("stderr") or reload_result.get("stdout") or "Niri config reload failed")
+            return 1
         return 0
     if argv and argv[0] in {"set", "remove", "reset"}:
         eprint("VGS keybind editing is not implemented for this config; edit your Hyprland keybind config directly")
@@ -7109,27 +7839,100 @@ def cmd_keybinds(argv: List[str]) -> int:
 
 
 def cmd_config(argv: List[str]) -> int:
+    if len(argv) >= 3 and argv[0] == "repair-include":
+        compositor, filename = argv[1], argv[2]
+        json_output = "--json" in argv[3:]
+        if compositor != "niri":
+            eprint("include repair is helper-owned only for Niri configs")
+            return 2
+        result = _niri().ensure_niri_include(filename)
+        print(json.dumps(result, indent=2) if json_output else (
+            str(result.get("config") or result.get("error") or "")
+        ))
+        return 0 if result.get("ok") else 1
     if len(argv) >= 3 and argv[0] == "resolve-include":
         compositor, filename = argv[1], argv[2]
         conf = home() / ".config" / ("hypr/hyprland.lua" if compositor == "hyprland" else "niri/config.kdl" if compositor == "niri" else "mango/config.conf")
-        result = {"exists": conf.exists(), "included": True, "configFormat": "lua" if compositor == "hyprland" else "", "readOnly": True, "path": str(conf), "includePath": filename, "statusMessage": "VGS reads this compositor config read-only; edit it directly"}
+        if compositor == "niri":
+            result = _niri().niri_include_status(filename)
+            if not result.get("ok"):
+                eprint(result.get("error") or "invalid Niri include")
+                return 2
+        else:
+            result = {"exists": conf.exists(), "included": True, "configFormat": "lua" if compositor == "hyprland" else "", "readOnly": True, "path": str(conf), "includePath": filename, "statusMessage": "VGS reads this compositor config read-only; edit it directly"}
         print(json.dumps(result))
         return 0
     if len(argv) >= 2 and argv[0] == "apply-layout":
         parser = argparse.ArgumentParser(prog="vshell config apply-layout")
-        parser.add_argument("compositor", choices=["hyprland"])
+        parser.add_argument("compositor", choices=["hyprland", "niri"])
         parser.add_argument("--json", action="store_true")
         args = parser.parse_args(argv[1:])
-        result = apply_hyprland_layout()
+        result = apply_hyprland_layout() if args.compositor == "hyprland" else _niri().apply_niri_layout()
         if args.json:
             print(json.dumps(result, indent=2))
         else:
             print("ok" if result.get("ok") else (result.get("error") or "failed"))
         return 0 if result.get("ok") else 1
+    if len(argv) >= 2 and argv[0] == "apply-cursor" and argv[1] == "niri":
+        result = _niri().apply_niri_cursor()
+        print(json.dumps(result))
+        return 0 if result.get("ok") else 1
+    if len(argv) >= 3 and argv[0] == "niri-output-apply":
+        try:
+            config = json.loads(argv[2])
+        except Exception as exc:
+            eprint(f"invalid Niri output config: {exc}")
+            return 2
+        result = _niri().apply_niri_output(argv[1], config)
+        print(json.dumps(result))
+        return 0 if result.get("ok") else 1
+    if len(argv) == 1 and argv[0] in {"niri-outputs-current", "niri-validate", "niri-reload"}:
+        if argv[0] == "niri-outputs-current":
+            result = _niri().niri_outputs_current()
+        elif argv[0] == "niri-validate":
+            result = _niri().niri_validate_config()
+        else:
+            result = _niri().niri_reload_config()
+        print(json.dumps(result))
+        return 0 if result.get("ok") else 1
+    if len(argv) >= 2 and argv[0] in {"niri-outputs-write", "niri-outputs-validate"}:
+        try:
+            payload = json.loads(argv[1])
+            if not isinstance(payload, dict):
+                raise ValueError("payload must be an object")
+            result = (_niri().niri_outputs_write(payload)
+                      if argv[0] == "niri-outputs-write"
+                      else _niri().niri_outputs_validate(payload))
+        except (ValueError, TypeError, json.JSONDecodeError) as exc:
+            eprint(f"invalid Niri outputs payload: {exc}")
+            return 2
+        print(json.dumps(result))
+        return 0 if result.get("ok") else 1
     if len(argv) >= 3 and argv[0] == "windowrules":
         action = argv[1]
+        compositor = argv[2]
+        if compositor == "niri":
+            try:
+                if action == "list":
+                    print(json.dumps(_niri().niri_windowrules_json()))
+                    return 0
+                if action == "add" and len(argv) >= 4:
+                    result = _niri().niri_windowrule_add(json.loads(argv[3]))
+                elif action == "update" and len(argv) >= 5:
+                    result = _niri().niri_windowrule_update(argv[3], json.loads(argv[4]))
+                elif action == "remove" and len(argv) >= 4:
+                    result = _niri().niri_windowrule_remove(argv[3])
+                elif action == "reorder" and len(argv) >= 4:
+                    result = _niri().niri_windowrule_reorder(json.loads(argv[3]))
+                else:
+                    return 2
+            except (ValueError, TypeError, json.JSONDecodeError) as exc:
+                eprint(f"invalid Niri window rule: {exc}")
+                return 2
+            print(json.dumps(result))
+            return 0 if result.get("ok") else 1
         if action == "list":
-            print(json.dumps({"rules": [], "readOnly": True, "status": "VGS window rule editor is read-only for a Lua Hyprland config"}))
+            print(json.dumps({"rules": [], "readOnly": True, "status": "VGS window rule editor is read-only for this compositor config"}))
             return 0
         eprint("VGS window rule editing is not implemented for this config; edit your Hyprland window rules directly")
         return 1
@@ -7179,7 +7982,9 @@ def _hyprland_layout_payload(settings: Dict[str, Any]) -> Tuple[str, Dict[str, A
         target = "hyprland" if (hypr_radius is not None and hypr_radius != shell_radius) or hypr_border is not None else "sync"
     else:
         target = str(target_value or "sync")
-    if target not in {"sync", "quickshell", "hyprland"}:
+    if target == "hyprland":
+        target = "compositor"
+    if target not in {"sync", "quickshell", "compositor"}:
         target = "sync"
     manage_hypr_shape = target != "quickshell"
     radius = shell_radius if target == "sync" else (hypr_radius if hypr_radius is not None else shell_radius)
@@ -7269,6 +8074,60 @@ def apply_hyprland_layout() -> Dict[str, Any]:
         "layout": meta,
         "reload": reload_result,
     }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 def _clamp_float(value: Any, lo: float = 0.0, hi: float = 1.0) -> float:
@@ -7917,7 +8776,8 @@ def sync_profile_cache_unprivileged(cache_dir_path: Path, username: str) -> None
 
 def write_greetd_config(cache_dir_path: Path, autologin: bool, target_user: str, initial_session_cmd: str = "") -> None:
     cli = greeter_runtime_cli(cache_dir_path)
-    greeter_cmd = f"{shlex.quote(cli)} greeter run --compositor hyprland --cache-dir {shlex.quote(str(cache_dir_path))}"
+    compositor = choose_greeter_compositor(os.environ.get("VSHELL_GREETER_COMPOSITOR", ""))
+    greeter_cmd = f"{shlex.quote(cli)} greeter run --compositor {compositor} --cache-dir {shlex.quote(str(cache_dir_path))}"
     content = [
         "[terminal]",
         "vt = 1",
@@ -8076,7 +8936,7 @@ def cmd_greeter(argv: List[str]) -> int:
     parser = argparse.ArgumentParser(prog="vshell greeter")
     sub = parser.add_subparsers(dest="cmd", required=True)
     p_run = sub.add_parser("run")
-    p_run.add_argument("--compositor", "--command", default="hyprland", choices=["hyprland"])
+    p_run.add_argument("--compositor", "--command", default="", choices=["hyprland", "niri"])
     p_run.add_argument("--cache-dir", default=str(GREETER_CACHE_DEFAULT))
     p_run.add_argument("--debug", action="store_true")
     p_sync = sub.add_parser("sync")
@@ -8099,7 +8959,7 @@ def cmd_greeter(argv: List[str]) -> int:
     args = parser.parse_args(argv)
 
     if args.cmd == "run":
-        return greeter_run(args.cache_dir, debug=args.debug)
+        return greeter_run(args.cache_dir, debug=args.debug, requested_compositor=args.compositor)
     if args.cmd == "launch-session":
         return greeter_launch_session(Path(args.cache_dir), args.session)
     if args.cmd == "keyring":
@@ -8195,7 +9055,20 @@ def greeter_cursor_environment(cache_path: Path, base_env: Dict[str, str]) -> Di
     return {}
 
 
-def greeter_run(cache_dir_value: str, debug: bool = False) -> int:
+def choose_greeter_compositor(requested: str = "") -> str:
+    requested = requested.strip().lower()
+    if requested not in {"", "hyprland", "niri"}:
+        raise ValueError(f"Unsupported greeter compositor: {requested}")
+    if requested:
+        return requested
+    # Preserve the historical Hyprland default wherever it is installed; a
+    # Niri-only machine needs no extra setting.
+    return "hyprland" if (shutil.which("start-hyprland") or shutil.which("Hyprland")) else "niri"
+
+
+
+
+def greeter_run(cache_dir_value: str, debug: bool = False, requested_compositor: str = "") -> int:
     cache_path = Path(cache_dir_value)
     if not cache_path.is_dir():
         eprint(f"Greeter cache directory does not exist: {cache_path}. Run `vshell greeter sync`.")
@@ -8204,8 +9077,19 @@ def greeter_run(cache_dir_value: str, debug: bool = False) -> int:
     if not qs_bin:
         eprint("qs/quickshell not found")
         return 1
-    if not shutil.which("start-hyprland") and not shutil.which("Hyprland"):
+    requested_compositor = requested_compositor or os.environ.get("VSHELL_GREETER_COMPOSITOR", "")
+    have_hyprland = bool(shutil.which("start-hyprland") or shutil.which("Hyprland"))
+    have_niri = bool(shutil.which("niri"))
+    try:
+        compositor = choose_greeter_compositor(requested_compositor)
+    except ValueError as exc:
+        eprint(str(exc))
+        return 1
+    if compositor == "hyprland" and not have_hyprland:
         eprint("Hyprland not found")
+        return 1
+    if compositor == "niri" and not have_niri:
+        eprint("Niri not found")
         return 1
     qs_config = cache_path / "runtime" / "quickshell" / "vshell"
     if not qs_config.exists():
@@ -8213,16 +9097,20 @@ def greeter_run(cache_dir_value: str, debug: bool = False) -> int:
     qs_cmd = f"{shlex.quote(qs_bin)} -p {shlex.quote(str(qs_config))}"
     env = os.environ.copy()
     cursor_env = greeter_cursor_environment(cache_path, env)
-    with tempfile.NamedTemporaryFile("w", prefix="vshell-greeter-hypr-", suffix=".conf", delete=False) as tmp:
-        tmp.write("env = VSHELL_RUN_GREETER,1\n")
-        tmp.write(f"env = VSHELL_GREET_CFG_DIR,{cache_path}\n")
-        tmp.write("env = XDG_SESSION_TYPE,wayland\n")
-        for key in ("XCURSOR_PATH", "XCURSOR_THEME", "XCURSOR_SIZE"):
-            if cursor_env.get(key):
-                tmp.write(f"env = {key},{cursor_env[key]}\n")
-        tmp.write("misc {\n    disable_hyprland_logo = true\n    disable_splash_rendering = true\n}\n")
-        exit_cmd = "hyprctl dispatch 'hl.dsp.exit()' || hyprctl dispatch exit"
-        tmp.write(f"exec-once = sh -lc {shlex.quote(qs_cmd + '; ' + exit_cmd)}\n")
+    suffix = ".conf" if compositor == "hyprland" else ".kdl"
+    with tempfile.NamedTemporaryFile("w", prefix=f"vshell-greeter-{compositor}-", suffix=suffix, delete=False) as tmp:
+        if compositor == "hyprland":
+            tmp.write("env = VSHELL_RUN_GREETER,1\n")
+            tmp.write(f"env = VSHELL_GREET_CFG_DIR,{cache_path}\n")
+            tmp.write("env = XDG_SESSION_TYPE,wayland\n")
+            for key in ("XCURSOR_PATH", "XCURSOR_THEME", "XCURSOR_SIZE"):
+                if cursor_env.get(key):
+                    tmp.write(f"env = {key},{cursor_env[key]}\n")
+            tmp.write("misc {\n    disable_hyprland_logo = true\n    disable_splash_rendering = true\n}\n")
+            exit_cmd = "hyprctl dispatch 'hl.dsp.exit()' || hyprctl dispatch exit"
+            tmp.write(f"exec-once = sh -lc {shlex.quote(qs_cmd + '; ' + exit_cmd)}\n")
+        else:
+            tmp.write(_niri().niri_greeter_config(qs_cmd))
         config_path = tmp.name
     env.update({
         "VSHELL_RUN_GREETER": "1",
@@ -8239,7 +9127,12 @@ def greeter_run(cache_dir_value: str, debug: bool = False) -> int:
     env.setdefault("XDG_RUNTIME_DIR", str(cache_path / "run"))
     Path(env["XDG_RUNTIME_DIR"]).mkdir(parents=True, exist_ok=True)
     os.chmod(env["XDG_RUNTIME_DIR"], 0o700)
-    cmd = ["start-hyprland", "--", "--config", config_path] if shutil.which("start-hyprland") else ["Hyprland", "-c", config_path]
+    if compositor == "niri":
+        cmd = ["niri", "--config", config_path]
+        env["XDG_CURRENT_DESKTOP"] = "niri"
+    else:
+        cmd = ["start-hyprland", "--", "--config", config_path] if shutil.which("start-hyprland") else ["Hyprland", "-c", config_path]
+        env["XDG_CURRENT_DESKTOP"] = "Hyprland"
     if debug:
         eprint("Running", " ".join(shlex.quote(x) for x in cmd))
     os.execvpe(cmd[0], cmd, env)
@@ -8262,14 +9155,15 @@ def greeter_launch_session(cache_dir_path: Path, explicit_session: str = "") -> 
         return 1
     env = os.environ.copy()
     env.setdefault("XDG_SESSION_TYPE", "wayland")
-    env.setdefault("XDG_CURRENT_DESKTOP", "Hyprland")
+    desktop = "niri" if "niri" in Path(args[0]).name.lower() or any("niri" in arg.lower() for arg in args[:2]) else "Hyprland"
+    env.setdefault("XDG_CURRENT_DESKTOP", desktop)
     os.execvpe(args[0], args, env)
     return 1
 
 
 def main() -> int:
     if len(sys.argv) < 2:
-        eprint("Usage: vshell-helper <theme|fonts|deps|update|ai-usage|capture|cl|dl|trash|color|keybinds|config|blur|brightness|auth|greeter> ...")
+        eprint("Usage: vshell-helper <theme|fonts|deps|update|ai-usage|capture|cl|dl|trash|color|keybinds|config|compositor|blur|brightness|auth|greeter> ...")
         return 2
     cmd, argv = sys.argv[1], sys.argv[2:]
     try:
@@ -8288,6 +9182,7 @@ def main() -> int:
         if cmd == "color": return cmd_color(argv)
         if cmd == "keybinds": return cmd_keybinds(argv)
         if cmd == "config": return cmd_config(argv)
+        if cmd == "compositor": return cmd_compositor(argv)
         if cmd == "battery": return cmd_battery(argv)
         if cmd == "blur": return cmd_blur(argv)
         if cmd == "brightness": return cmd_brightness(argv)

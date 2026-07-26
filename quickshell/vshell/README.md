@@ -1,6 +1,6 @@
 # VGS / VanillaGreen Shell
 
-VGS is the active Hyprland-only Quickshell runtime for this workstation. It is self-contained for shell control, wallpaper/theme generation, clipboard history, capture workflows, and app theme output. Historical lineage is documented in the repo-root `docs/ATTRIBUTION.md`.
+VGS is the active Hyprland and Niri Quickshell runtime for this workstation. It is self-contained for shell control, wallpaper/theme generation, clipboard history, capture workflows, and app theme output. Historical lineage is documented in the repo-root `docs/ATTRIBUTION.md`.
 
 Runtime:
 - Service: `vshell.service`

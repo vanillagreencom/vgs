@@ -53,16 +53,24 @@ vshell deps status --json
 vshell deps check capture --json
 ```
 
+Manifest entries use `commands` for unconditional tools, `anyCommands` for
+same-purpose alternatives, and `compositorCommands` for complete
+Hyprland/Niri-specific command lists. `vshell deps` selects only the active
+compositor branch; without an active session, any fully available branch is
+accepted.
+
 Feature groups:
 | Feature | Purpose |
 |---------|---------|
 | `base` | Shell runtime |
 | `theme` | Theme engine |
-| `greeter` | VGS greetd greeter, Hyprland launch, GNOME keyring policy, optional fprint/U2F PAM support |
+| `greeter` | VGS greetd greeter, Hyprland or Niri launch, GNOME keyring policy, optional fprint/U2F PAM support |
 | `capture` | Screenshots |
 | `capture-edit` | Screenshot editor |
 | `ocr` | Region OCR |
 | `recording` | Screen recording |
+| `network-usage` | Per-interface traffic statistics |
+| `gamma` | Night-light color temperature |
 | `updates-arch` | Repo updates |
 | `updates-aur` | AUR updates |
 | `ai-usage` | AI usage widget backend |

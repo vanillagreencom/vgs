@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"vshell/backend/internal/compositor"
 	"vshell/backend/internal/server"
 )
 
@@ -48,11 +49,17 @@ type Manager struct {
 	srv     *server.Server
 	binary  string
 	hyprctl string
+	backend string
 	client  *http.Client
 
 	mu    sync.RWMutex
 	state State
 	cmd   *exec.Cmd
+	// Last effective wlsunset inputs. Config-only changes such as manual
+	// sunrise/sunset must not flash the display by replacing an identical
+	// process several times in one settings reapply.
+	appliedTemp  int
+	appliedGamma float64
 	// transitionTimer re-applies the config at NextTransition so the managed
 	// hyprsunset actually switches between day and night temperatures.
 	transitionTimer *time.Timer
@@ -98,19 +105,16 @@ func Register(srv *server.Server, log *slog.Logger) (*Manager, error) {
 	if log == nil {
 		log = slog.Default()
 	}
-	bin, err := exec.LookPath("hyprsunset")
+	bin, hyprctlBin, backend, err := gammaCommand()
 	if err != nil {
-		return nil, fmt.Errorf("hyprsunset not found")
-	}
-	hyprctlBin, err := exec.LookPath("hyprctl")
-	if err != nil {
-		return nil, fmt.Errorf("hyprctl not found")
+		return nil, err
 	}
 	m := &Manager{
 		log:     log,
 		srv:     srv,
 		binary:  bin,
 		hyprctl: hyprctlBin,
+		backend: backend,
 		client:  &http.Client{Timeout: 10 * time.Second},
 	}
 	m.state = m.recalculate(defaultConfig(), time.Now())
@@ -368,27 +372,53 @@ func (m *Manager) scheduleTransitionLocked(state State) {
 	})
 }
 
-// applyGammaLocked makes the running hyprsunset match state. hyprsunset only runs
-// while night mode is enabled, so nothing consumes resources when it is off:
+// applyGammaLocked makes the compositor-appropriate gamma process match state.
+// The adapter only runs while night mode is enabled, so nothing consumes
+// resources when it is off:
 //   - off  -> stop the process (release the display back to native).
 //   - on, not yet running -> start it once at the target temperature.
-//   - on, already running  -> adjust live over its hyprctl IPC socket.
+//   - Hyprland, already running -> adjust live over the hyprsunset IPC socket.
+//   - Niri, already running -> restart wlsunset with its new fixed target.
 //
-// The only process start/stop happens on the enable/disable transition itself;
-// temperature/schedule changes and the automatic day/night switch reuse the
-// running instance over IPC and therefore never restart it (which would flash the
-// screen by re-grabbing the compositor's gamma control).
+// Hyprland retains its no-flash IPC path unchanged. wlsunset has no live control
+// socket, so Niri changes require a short process replacement.
 func (m *Manager) applyGammaLocked(state State) error {
-	gammaPercent := int(math.Round(state.Config.Gamma * 100))
-	if gammaPercent <= 0 {
-		gammaPercent = 100
-	}
-
 	if !state.Config.Enabled {
 		m.stopLocked()
 		return nil
 	}
 
+	if m.backend == "wlsunset" {
+		if m.cmd != nil && m.appliedTemp == state.CurrentTemp && m.appliedGamma == state.Config.Gamma {
+			return nil
+		}
+		m.stopLocked()
+		// wlsunset rejects equal day/night temperatures. Keep its two targets
+		// one kelvin apart so its internal transition is visually fixed at the
+		// VGS-computed temperature without delegating our schedule to it.
+		lowTemp, highTemp := state.CurrentTemp, state.CurrentTemp+1
+		if highTemp > 10000 {
+			lowTemp, highTemp = 9999, 10000
+		}
+		cmd := exec.Command(m.binary,
+			"-t", strconv.Itoa(lowTemp),
+			"-T", strconv.Itoa(highTemp),
+			"-g", strconv.FormatFloat(state.Config.Gamma, 'f', 3, 64),
+		)
+		if err := cmd.Start(); err != nil {
+			return fmt.Errorf("start wlsunset: %w", err)
+		}
+		m.cmd = cmd
+		m.appliedTemp = state.CurrentTemp
+		m.appliedGamma = state.Config.Gamma
+		go m.watchLocked(cmd)
+		return nil
+	}
+
+	gammaPercent := int(math.Round(state.Config.Gamma * 100))
+	if gammaPercent <= 0 {
+		gammaPercent = 100
+	}
 	if m.cmd == nil {
 		cmd := exec.Command(m.binary,
 			"--temperature", strconv.Itoa(state.CurrentTemp),
@@ -408,8 +438,8 @@ func (m *Manager) applyGammaLocked(state State) error {
 	return m.hyprsunsetIPC("temperature", strconv.Itoa(state.CurrentTemp))
 }
 
-// watchLocked reports an unexpected hyprsunset exit so a crashed process is not
-// shown as night-light-on. A later apply restarts it.
+// watchLocked reports an unexpected gamma-adapter exit so a crashed process is
+// not shown as night-light-on. A later apply restarts it.
 func (m *Manager) watchLocked(cmd *exec.Cmd) {
 	err := cmd.Wait()
 	m.mu.Lock()
@@ -423,9 +453,32 @@ func (m *Manager) watchLocked(cmd *exec.Cmd) {
 	state := m.state
 	m.mu.Unlock()
 	if crashed {
-		m.log.Warn("hyprsunset exited unexpectedly; gamma no longer applied", "err", err)
+		m.log.Warn("gamma adapter exited unexpectedly; gamma no longer applied", "backend", m.backend, "err", err)
 		m.srv.Broadcast("gamma", state)
 	}
+}
+
+func gammaCommand() (binary, hyprctl, backend string, err error) {
+	return gammaCommandFor(compositor.Current())
+}
+
+func gammaCommandFor(current string) (binary, hyprctl, backend string, err error) {
+	if current == "niri" {
+		command, lookupErr := exec.LookPath("wlsunset")
+		if lookupErr != nil {
+			return "", "", "", fmt.Errorf("wlsunset not found")
+		}
+		return command, "", "wlsunset", nil
+	}
+	command, lookupErr := exec.LookPath("hyprsunset")
+	if lookupErr != nil {
+		return "", "", "", fmt.Errorf("hyprsunset not found")
+	}
+	hyprctlCommand, lookupErr := exec.LookPath("hyprctl")
+	if lookupErr != nil {
+		return "", "", "", fmt.Errorf("hyprctl not found")
+	}
+	return command, hyprctlCommand, "hyprsunset", nil
 }
 
 // hyprsunsetIPC changes the running hyprsunset live over its hyprctl socket. It

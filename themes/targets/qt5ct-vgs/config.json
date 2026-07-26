@@ -6,5 +6,6 @@
     "commands": [
       "qt5ct"
     ]
-  }
+  },
+  "hook": "qt5ct-config"
 }

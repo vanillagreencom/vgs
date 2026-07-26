@@ -31,6 +31,10 @@ Item {
     id: root
     readonly property var log: Log.scoped("VGS")
     readonly property var _sessionsServiceRef: SessionsService
+    // Materialize the shipped default theme on a genuinely fresh install.
+    // Without an eager reference this singleton was only constructed after
+    // opening theme-related UI, leaving MethodTheme on its fallback palette.
+    readonly property var _themeServiceRef: VGSThemeService
 
     property bool osdSurfacesLoaded: true
     property int pendingOsdResumeReloads: 0

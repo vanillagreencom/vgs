@@ -25,7 +25,7 @@ Singleton {
 
     property var methodThemeJson: ({})
     property bool colorsFileLoadFailed: false
-    property string currentTheme: "vgs-theme"
+    property string currentTheme: "coppernight"
     property string currentThemeCategory: "vgs"
     property bool isLightMode: (methodThemeJson.mode || "dark") === "light"
     readonly property string dynamic: "vgs"
@@ -35,51 +35,51 @@ Singleton {
     property bool qtThemingEnabled: false
 
     readonly property var fallbackColors: ({
-        "primary": "#7aa2f7",
-        "primaryText": "#1a1b26",
-        "secondary": "#7dcfff",
-        "tertiary": "#bb9af7",
-        "surface": "#1a1b26",
-        "surfaceText": "#c0caf5",
-        "surfaceVariant": "#32344a",
-        "surfaceVariantText": "#a9b1d6",
-        "surfaceTint": "#7aa2f7",
-        "background": "#1a1b26",
-        "backgroundText": "#c0caf5",
-        "outline": "#444b6a",
-        "outlineVariant": "#32344a",
-        "surfaceContainerLowest": "#11121d",
-        "surfaceContainerLow": "#161720",
-        "surfaceContainer": "#1f2335",
-        "surfaceContainerHigh": "#292e42",
-        "surfaceContainerHighest": "#323850",
-        "primaryContainer": "#263a5e",
-        "secondaryContainer": "#21445a",
-        "tertiaryContainer": "#3a2f5f",
-        "muted": "#a9b1d6",
-        "dim": "#787c99",
-        "error": "#f7768e",
-        "errorContainer": "#3f2630",
-        "warning": "#e0af68",
-        "warningContainer": "#3a3125",
-        "info": "#7dcfff",
-        "infoContainer": "#21445a",
-        "success": "#9ece6a",
-        "successContainer": "#2f3f2a",
-        "statusBg": "#323850",
-        "statusFg": "#c0caf5",
-        "statusMuted": "#a9b1d6",
-        "statusAccent": "#7aa2f7",
-        "statusError": "#f7768e",
-        "statusWarning": "#e0af68",
-        "statusSuccess": "#9ece6a",
-        "statusInfo": "#7dcfff",
-        "groupbarActiveBg": "#7aa2f7",
-        "groupbarActiveFg": "#1a1b26",
-        "groupbarInactiveBg": "#323850",
-        "groupbarInactiveFg": "#c0caf5",
-        "groupbarLockedBg": "#f7768e",
-        "groupbarLockedFg": "#1a1b26"
+        "primary": "#fab387",
+        "primaryText": "#000000",
+        "secondary": "#94e2d5",
+        "tertiary": "#cba6f7",
+        "surface": "#11111b",
+        "surfaceText": "#cdd6f4",
+        "surfaceVariant": "#1c1c2c",
+        "surfaceVariantText": "#8b91a8",
+        "surfaceTint": "#fab387",
+        "background": "#11111b",
+        "backgroundText": "#cdd6f4",
+        "outline": "#6b7083",
+        "outlineVariant": "#4d5060",
+        "surfaceContainerLowest": "#11111b",
+        "surfaceContainerLow": "#171725",
+        "surfaceContainer": "#1c1c2c",
+        "surfaceContainerHigh": "#232338",
+        "surfaceContainerHighest": "#2c2c46",
+        "primaryContainer": "#57423b",
+        "secondaryContainer": "#304348",
+        "tertiaryContainer": "#3e3550",
+        "muted": "#8b91a8",
+        "dim": "#7d8294",
+        "error": "#ff6b6b",
+        "errorContainer": "#41232b",
+        "warning": "#fbbf24",
+        "warningContainer": "#40341d",
+        "info": "#60a5fa",
+        "infoContainer": "#212f48",
+        "success": "#5bd77a",
+        "successContainer": "#20392e",
+        "statusBg": "#2c2c46",
+        "statusFg": "#cdd6f4",
+        "statusMuted": "#9196ac",
+        "statusAccent": "#fab387",
+        "statusError": "#ff6b6b",
+        "statusWarning": "#fbbf24",
+        "statusSuccess": "#5bd77a",
+        "statusInfo": "#60a5fa",
+        "groupbarActiveBg": "#fab387",
+        "groupbarActiveFg": "#000000",
+        "groupbarInactiveBg": "#2c2c46",
+        "groupbarInactiveFg": "#cdd6f4",
+        "groupbarLockedBg": "#fab387",
+        "groupbarLockedFg": "#000000"
     })
 
     function _colors() {
@@ -151,7 +151,7 @@ Singleton {
         "successContainer": _color("successContainer")
     })
 
-    readonly property string currentThemeName: currentThemeData.name || "vgs-theme"
+    readonly property string currentThemeName: currentThemeData.name || "coppernight"
 
     Component.onCompleted: {
         Quickshell.execDetached(["mkdir", "-p", homeDir + "/.config/vshell"]);
@@ -989,7 +989,7 @@ Singleton {
 
 
     function screenTransition() {
-        // Hyprland-only VGS applies colors through its own generator and hooks.
+        // VGS applies compositor colors through its own generator and hooks.
     }
 
     function _runThemeHelper(id, args, label) {

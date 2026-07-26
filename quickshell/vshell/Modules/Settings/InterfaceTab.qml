@@ -11,7 +11,11 @@ Item {
 
     readonly property string surfaceGeometryTarget: SettingsData.normalizedSurfaceGeometryTarget
     readonly property bool shapeTargetsQuickshell: SurfaceGeometry.appliesToQuickshell(surfaceGeometryTarget)
-    readonly property bool shapeTargetsHyprlandOnly: surfaceGeometryTarget === "hyprland" && SurfaceGeometry.appliesToHyprland(surfaceGeometryTarget)
+    readonly property bool shapeTargetsCompositorOnly: surfaceGeometryTarget === "compositor" && SurfaceGeometry.appliesToCompositor(surfaceGeometryTarget)
+    readonly property int compositorRadiusOverride: CompositorService.isNiri
+        ? SettingsData.niriLayoutRadiusOverride : SettingsData.hyprlandLayoutRadiusOverride
+    readonly property int compositorBorderOverride: CompositorService.isNiri
+        ? SettingsData.niriLayoutBorderSize : SettingsData.hyprlandLayoutBorderSize
 
     function geometryTargetIndex() {
         return SurfaceGeometry.targetIndex(surfaceGeometryTarget);
@@ -57,7 +61,11 @@ Item {
                     settingKey: "blurEnabled"
                     tags: ["theme", "flyout", "dropdown", "popup", "popout", "menu", "blur", "glass", "frosted"]
                     text: I18n.tr("Background Blur")
-                    description: BlurService.available ? I18n.tr("Blur content behind supported Quickshell flyouts and dropdowns") : I18n.tr("Requires compositor background-effect support")
+                    description: BlurService.available
+                        ? I18n.tr("Blur content behind supported Quickshell flyouts and dropdowns")
+                        : CompositorService.isNiri
+                            ? I18n.tr("Niri does not provide compositor blur")
+                            : I18n.tr("Requires compositor background-effect support")
                     checked: SettingsData.blurEnabled
                     enabled: BlurService.available
                     opacity: enabled ? 1.0 : 0.5
@@ -100,10 +108,10 @@ Item {
 
                 SettingsButtonGroupRow {
                     settingKey: "surfaceGeometryTarget"
-                    tags: ["surface", "shape", "sync", "quickshell", "hyprland"]
+                    tags: ["surface", "shape", "sync", "quickshell", "compositor", "hyprland", "niri"]
                     text: I18n.tr("Apply To")
                     description: I18n.tr("Choose which surfaces use the radius and border settings")
-                    model: [I18n.tr("Both"), I18n.tr("Quickshell"), I18n.tr("Hyprland")]
+                    model: [I18n.tr("Both"), I18n.tr("Quickshell"), I18n.tr("Compositor")]
                     currentIndex: root.geometryTargetIndex()
                     onSelectionChanged: (index, selected) => {
                         if (selected)
@@ -115,7 +123,7 @@ Item {
                     settingKey: "cornerRadius"
                     tags: ["surface", "shape", "radius", "rounding", "corner", "container", "quickshell", "hyprland"]
                     text: root.surfaceGeometryTarget === "sync" ? I18n.tr("Container Radius") : I18n.tr("Quickshell Container Radius")
-                    description: root.surfaceGeometryTarget === "sync" ? I18n.tr("Outer radius for VGS surfaces and Hyprland windows") : I18n.tr("Outer radius for VGS overlays, modals, popouts, and menus")
+                    description: root.surfaceGeometryTarget === "sync" ? I18n.tr("Outer radius for VGS surfaces and compositor windows") : I18n.tr("Outer radius for VGS overlays, modals, popouts, and menus")
                     visible: root.shapeTargetsQuickshell
                     value: SettingsData.effectiveContainerRadius
                     minimum: 0
@@ -143,7 +151,7 @@ Item {
                     settingKey: "surfaceBorderWidth"
                     tags: ["surface", "shape", "border", "thickness", "quickshell", "hyprland"]
                     text: root.surfaceGeometryTarget === "sync" ? I18n.tr("Border Thickness") : I18n.tr("Quickshell Border Thickness")
-                    description: root.surfaceGeometryTarget === "sync" ? I18n.tr("Border width for VGS surfaces and Hyprland windows") : I18n.tr("Border width for VGS overlays, modals, popouts, and menus")
+                    description: root.surfaceGeometryTarget === "sync" ? I18n.tr("Border width for VGS surfaces and compositor windows") : I18n.tr("Border width for VGS overlays, modals, popouts, and menus")
                     visible: root.shapeTargetsQuickshell
                     value: Math.max(0, Math.round(SettingsData.surfaceBorderWidth))
                     minimum: 0
@@ -154,31 +162,35 @@ Item {
                 }
 
                 SettingsSliderRow {
-                    settingKey: "hyprlandLayoutRadiusOverride"
-                    tags: ["surface", "shape", "radius", "rounding", "corner", "hyprland", "window"]
-                    text: I18n.tr("Hyprland Window Radius")
-                    description: I18n.tr("Rounded corners for Hyprland-managed windows")
-                    visible: root.shapeTargetsHyprlandOnly
-                    value: Math.min(20, SettingsData.effectiveHyprlandSurfaceRadius)
+                    settingKey: CompositorService.isNiri ? "niriLayoutRadiusOverride" : "hyprlandLayoutRadiusOverride"
+                    tags: ["surface", "shape", "radius", "rounding", "corner", "compositor", "hyprland", "niri", "window"]
+                    text: CompositorService.isNiri ? I18n.tr("Niri Window Radius") : I18n.tr("Hyprland Window Radius")
+                    description: I18n.tr("Rounded corners for compositor-managed windows")
+                    visible: root.shapeTargetsCompositorOnly
+                    value: Math.min(20, SurfaceGeometry.effectiveCompositorRadius(root.surfaceGeometryTarget,
+                        SettingsData.cornerRadius, root.compositorRadiusOverride))
                     minimum: 0
                     maximum: 20
                     unit: "px"
                     defaultValue: Math.min(20, Math.max(0, Math.round(SettingsData.cornerRadius)))
-                    onSliderValueChanged: newValue => SettingsData.set("hyprlandLayoutRadiusOverride", newValue)
+                    onSliderValueChanged: newValue => SettingsData.set(
+                        CompositorService.isNiri ? "niriLayoutRadiusOverride" : "hyprlandLayoutRadiusOverride", newValue)
                 }
 
                 SettingsSliderRow {
-                    settingKey: "hyprlandLayoutBorderSize"
-                    tags: ["surface", "shape", "border", "thickness", "hyprland", "window"]
-                    text: I18n.tr("Hyprland Border Thickness")
-                    description: I18n.tr("Border width for Hyprland-managed windows")
-                    visible: root.shapeTargetsHyprlandOnly
-                    value: SettingsData.effectiveHyprlandSurfaceBorderWidth
+                    settingKey: CompositorService.isNiri ? "niriLayoutBorderSize" : "hyprlandLayoutBorderSize"
+                    tags: ["surface", "shape", "border", "thickness", "compositor", "hyprland", "niri", "window"]
+                    text: CompositorService.isNiri ? I18n.tr("Niri Border Thickness") : I18n.tr("Hyprland Border Thickness")
+                    description: I18n.tr("Border width for compositor-managed windows")
+                    visible: root.shapeTargetsCompositorOnly
+                    value: SurfaceGeometry.effectiveCompositorBorderWidth(root.surfaceGeometryTarget,
+                        SettingsData.surfaceBorderWidth, root.compositorBorderOverride)
                     minimum: 0
                     maximum: 10
                     unit: "px"
                     defaultValue: Math.max(0, Math.round(SettingsData.surfaceBorderWidth))
-                    onSliderValueChanged: newValue => SettingsData.set("hyprlandLayoutBorderSize", newValue)
+                    onSliderValueChanged: newValue => SettingsData.set(
+                        CompositorService.isNiri ? "niriLayoutBorderSize" : "hyprlandLayoutBorderSize", newValue)
                 }
             }
         }

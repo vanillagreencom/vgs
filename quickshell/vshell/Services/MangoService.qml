@@ -3,7 +3,7 @@ pragma Singleton
 import QtQuick
 
 QtObject {
-    // Hyprland-only VGS: inert compatibility surface for shared VGS-derived widgets.
+    // Inert compatibility surface for unsupported Mango-derived branches.
     readonly property bool available: false
     readonly property var layouts: []
     readonly property string currentKeyboardLayout: ""

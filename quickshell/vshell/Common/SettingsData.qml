@@ -197,6 +197,7 @@ Singleton {
 
     readonly property string normalizedSurfaceGeometryTarget: SurfaceGeometry.normalizeTarget(surfaceGeometryTarget)
     readonly property bool surfaceGeometryAppliesToQuickshell: SurfaceGeometry.appliesToQuickshell(surfaceGeometryTarget)
+    readonly property bool surfaceGeometryAppliesToCompositor: SurfaceGeometry.appliesToCompositor(surfaceGeometryTarget)
     readonly property bool surfaceGeometryAppliesToHyprland: SurfaceGeometry.appliesToHyprland(surfaceGeometryTarget)
     readonly property int effectiveContainerRadius: SurfaceGeometry.boundedInt(cornerRadius, 15, 0, 20)
     readonly property int effectiveControlRadius: SurfaceGeometry.boundedInt(controlRadius, 10, 0, 20)

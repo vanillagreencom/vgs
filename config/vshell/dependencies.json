@@ -1,13 +1,16 @@
 {
-  "version": 1,
+  "version": 2,
   "features": {
     "base": {
       "required": true,
       "commands": [
         "qs",
-        "hyprctl",
         "jq"
-      ]
+      ],
+      "compositorCommands": {
+        "hyprland": ["hyprctl"],
+        "niri": ["niri"]
+      }
     },
     "theme": {
       "required": true,
@@ -18,8 +21,13 @@
     "greeter": {
       "commands": [
         "greetd",
-        "Hyprland",
         "gnome-keyring-daemon"
+      ],
+      "anyCommands": [
+        [
+          "Hyprland",
+          "niri"
+        ]
       ]
     },
     "clipboard": {
@@ -35,14 +43,14 @@
     },
     "capture": {
       "commands": [
-        "grim",
-        "slurp",
-        "hyprpicker",
-        "hyprctl",
         "jq",
         "wl-copy",
         "notify-send"
-      ]
+      ],
+      "compositorCommands": {
+        "hyprland": ["grim", "slurp", "hyprpicker", "hyprctl"],
+        "niri": ["niri", "grim", "wl-paste"]
+      }
     },
     "capture-edit": {
       "commands": [
@@ -53,24 +61,34 @@
       "commands": [
         "grim",
         "slurp",
-        "hyprpicker",
         "tesseract",
         "wl-copy",
         "notify-send"
-      ]
+      ],
+      "compositorCommands": {
+        "hyprland": ["hyprpicker"],
+        "niri": ["niri"]
+      }
+    },
+    "gamma": {
+      "compositorCommands": {
+        "hyprland": ["hyprsunset", "hyprctl"],
+        "niri": ["wlsunset"]
+      }
     },
     "recording": {
       "commands": [
         "gpu-screen-recorder",
-        "slurp",
-        "hyprpicker",
-        "hyprctl",
         "jq",
         "wl-copy",
         "notify-send",
         "ffmpeg",
         "ffprobe"
-      ]
+      ],
+      "compositorCommands": {
+        "hyprland": ["slurp", "hyprpicker", "hyprctl"],
+        "niri": ["niri"]
+      }
     },
     "thumbnails": {
       "commands": [

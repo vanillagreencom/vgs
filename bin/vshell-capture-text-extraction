@@ -8,7 +8,14 @@ fail() {
   exit 1
 }
 
-for dep in grim slurp hyprpicker tesseract wl-copy notify-send; do
+IS_NIRI=0
+if [[ -n ${NIRI_SOCKET:-} ]] && command -v niri >/dev/null 2>&1 && niri msg version >/dev/null 2>&1; then
+  IS_NIRI=1
+fi
+
+deps=(grim slurp tesseract wl-copy notify-send)
+((IS_NIRI)) || deps+=(hyprpicker)
+for dep in "${deps[@]}"; do
   command -v "$dep" >/dev/null 2>&1 || fail "$dep not found"
 done
 
@@ -17,9 +24,11 @@ cleanup_freeze() {
 }
 trap cleanup_freeze EXIT
 
-hyprpicker -r -z >/tmp/vshell-ocr-hyprpicker.err 2>&1 &
-PID=$!
-sleep .1
+if ((!IS_NIRI)); then
+  hyprpicker -r -z >/tmp/vshell-ocr-hyprpicker.err 2>&1 &
+  PID=$!
+  sleep .1
+fi
 if ! SELECTION=$(slurp 2>/tmp/vshell-ocr-slurp.err); then
   err=$(cat /tmp/vshell-ocr-slurp.err 2>/dev/null || true)
   [[ -z $err ]] && exit 0
