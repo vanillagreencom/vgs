@@ -1,0 +1,12 @@
+{
+    "id": "screenRecord",
+    "name": "Capture",
+    "description": "Opens capture options and shows screenshot countdown or active recording state.",
+    "version": "2.0.0",
+    "license": "MIT",
+    "author": "VanillaGreen",
+    "icon": "photo_camera",
+    "component": "./ScreenRecordWidget.qml",
+    "requires_shell": ">=1.0.0",
+    "permissions": []
+}

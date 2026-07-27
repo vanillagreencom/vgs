@@ -1,0 +1,213 @@
+#!/usr/bin/env bash
+# vshell-ai-usage — compact, span-free JSON of Claude Code / OpenAI Codex subscription
+# usage, for the VGS "aiUsage" bar widget.
+#
+# Wraps the vendored claudebar/codexbar engines (which do the OAuth refresh and
+# call the provider usage API) and re-emits a small JSON object the QML widget
+# can parse without dealing with Pango markup.
+#
+# Multi-account: people run several subscriptions side by side by pointing
+# CLAUDE_CONFIG_DIR (or CODEX_HOME) at different directories, one per wrapper
+# script. Every such directory is discovered and reported as its own account,
+# labelled by the signed-in email. Single-account machines produce a one-entry
+# list, and the top-level fields still describe that account, so the widget
+# looks and behaves exactly as it did before.
+#
+# Usage: vshell-ai-usage [claude|codex]
+#
+# Output (one line of JSON):
+#   {"ok":true,"provider":"claude","plan":"Max 20x","class":"critical",
+#    "session":{"pct":16,"reset":"3h 53m","resetAt":1785265401},
+#    "weekly":{"pct":85,"reset":"5d 12h","resetAt":1785409199},
+#    "third":{"label":"Fable","pct":89,"reset":"5d 12h"},
+#    "accounts":[{"id":"claude","label":"you@example.com","plan":"Max 20x",
+#                 "ok":true,"class":"high","session":{...},"weekly":{...},
+#                 "models":[{"label":"Fable","pct":89,"reset":"5d 12h"}]}],
+#    "aggregate":{"count":1,"session":16,"weekly":85,"class":"high"}}
+# On failure:
+#   {"ok":false,"provider":"codex","error":"..."}
+set -euo pipefail
+
+# Ensure the sibling engines (claudebar/codexbar) are found even when invoked
+# from an environment without ~/.local/bin on PATH (e.g. the shell systemd unit).
+SELF_DIR="$(cd "$(dirname "$(readlink -f "$0" 2>/dev/null || echo "$0")")" && pwd)"
+case ":$PATH:" in
+    *":$SELF_DIR:"*) : ;;
+    *) PATH="$SELF_DIR:$PATH" ;;
+esac
+export PATH
+
+# The shell (and anything it spawns) may itself be running under one account's
+# wrapper, which would otherwise silently make every lookup report that account.
+# Account selection here is always explicit via --config-dir.
+unset CLAUDE_CONFIG_DIR CODEX_HOME
+
+provider="${1:-claude}"
+
+case "$provider" in
+    claude) engine=claudebar ;;
+    codex)  engine=codexbar ;;
+    *)
+        jq -nc --arg p "$provider" '{ok:false,provider:$p,error:("unknown provider: "+$p)}'
+        exit 0
+        ;;
+esac
+
+if ! command -v "$engine" >/dev/null 2>&1; then
+    jq -nc --arg p "$provider" --arg e "$engine" '{ok:false,provider:$p,error:($e+" not found in PATH")}'
+    exit 0
+fi
+
+# --- Account discovery -------------------------------------------------------
+
+# Claude: any directory holding a .credentials.json with a claudeAiOauth block.
+# Profiles whose tokens live in the desktop keyring instead (mcpOAuth only) are
+# not pollable over this API and are left out rather than shown permanently broken.
+discover_claude() {
+    local dir
+    for dir in "$HOME/.claude" "$HOME"/.*claude*; do
+        [[ -d "$dir" ]] || continue
+        [[ -f "$dir/.credentials.json" ]] || continue
+        jq -e '.claudeAiOauth.accessToken // empty' "$dir/.credentials.json" >/dev/null 2>&1 || continue
+        printf '%s\n' "$dir"
+    done | awk '!seen[$0]++'
+}
+
+discover_codex() {
+    local dir
+    for dir in "$HOME/.codex" "$HOME"/.codex-*; do
+        [[ -d "$dir" ]] || continue
+        [[ -f "$dir/auth.json" ]] || continue
+        printf '%s\n' "$dir"
+    done | awk '!seen[$0]++'
+}
+
+# The signed-in email is the only label that means anything when several
+# accounts are on the same plan. The default profile keeps its profile JSON at
+# ~/.claude.json rather than inside the config dir, so both layouts are tried.
+label_for() {
+    local dir="$1" email=""
+    if [[ "$provider" == "claude" ]]; then
+        for candidate in "$dir/.claude.json" "$HOME/.claude.json"; do
+            [[ -f "$candidate" ]] || continue
+            email=$(jq -r '.oauthAccount.emailAddress // empty' "$candidate" 2>/dev/null || true)
+            [[ -n "$email" ]] && break
+            # Only fall back to the home-root profile for the default config dir;
+            # an alt dir without its own profile must not borrow the default's identity.
+            [[ "$dir" == "$HOME/.claude" ]] || break
+        done
+        [[ -z "$email" && -f "$dir/.auth-email-cache" ]] && email=$(head -n1 "$dir/.auth-email-cache" 2>/dev/null || true)
+    fi
+    printf '%s' "$email"
+}
+
+case "$provider" in
+    claude) mapfile -t dirs < <(discover_claude) ;;
+    codex)  mapfile -t dirs < <(discover_codex) ;;
+esac
+
+if ((${#dirs[@]} == 0)); then
+    jq -nc --arg p "$provider" '{ok:false,provider:$p,error:"no signed-in accounts found"}'
+    exit 0
+fi
+
+# --- Per-account collection --------------------------------------------------
+# Sequential on purpose: each engine keeps its own short-lived cache and fetch
+# lock per account, so walking them in turn spreads any real API calls out
+# instead of firing every account at once.
+
+accounts_json="[]"
+for dir in "${dirs[@]}"; do
+    id="$(basename "$dir")"
+    id="${id#.}"
+    raw="$("$engine" --config-dir "$dir" --emit-json 2>/dev/null || true)"
+    if [[ -z "$raw" ]] || ! jq -e . >/dev/null 2>&1 <<<"$raw"; then
+        raw='{"ok":false,"error":"no output from engine"}'
+    fi
+
+    label="$(label_for "$dir")"
+    # Codex reports the account email in its usage payload; prefer it.
+    [[ -z "$label" ]] && label="$(jq -r '.email // empty' <<<"$raw" 2>/dev/null || true)"
+    [[ -z "$label" ]] && label="$id"
+
+    accounts_json="$(jq -c \
+        --argjson acc "$accounts_json" \
+        --argjson entry "$raw" \
+        --arg id "$id" \
+        --arg label "$label" \
+        --arg dir "$dir" \
+        '$acc + [{
+            id: $id,
+            label: $label,
+            configDir: $dir,
+            ok: ($entry.ok == true),
+            # Engine messages are written for Pango tooltips and carry literal
+            # "\n" sequences; flatten them so the widget never prints them raw.
+            error: (($entry.error // null) | if . == null then null
+                    else gsub("\\\\n"; " ") | gsub("\\\\t"; " ")
+                         | gsub("[[:space:]]+"; " ") | sub("^ +"; "") | sub(" +$"; "") end),
+            plan: ($entry.plan // ""),
+            class: ($entry.class // "low"),
+            session: ($entry.session // null),
+            weekly: ($entry.weekly // null),
+            models: ($entry.models // []),
+            spend: ($entry.spend // null)
+        }]' <<<'null')"
+done
+
+# --- Aggregate + backward-compatible top level -------------------------------
+# The pill shows consumption against the whole pool, so each account counts for
+# one 100% allowance and the aggregate is consumed/available across them — five
+# accounts at 50% read as 50%, never 250%.
+
+jq -nc \
+    --arg provider "$provider" \
+    --argjson accounts "$accounts_json" \
+    '
+    ($accounts | map(select(.ok))) as $live
+    | ($live | map(select(.session != null))) as $sess
+    | ($live | map(select(.weekly  != null))) as $week
+    | (if ($sess | length) > 0 then (($sess | map(.session.pct) | add) / ($sess | length) | round) else null end) as $aggSession
+    | (if ($week | length) > 0 then (($week | map(.weekly.pct)  | add) / ($week | length) | round) else null end) as $aggWeekly
+    # Headline: each account counts for its TIGHTEST window, because that is what
+    # actually blocks you — an account with a 3% session and a 96% weekly is 96%
+    # spent, not 3%. Averaging one window type across accounts (which is what
+    # $aggSession/$aggWeekly do) reported 8% on a pool that was nearly exhausted.
+    | ($live | map([ (.session.pct // empty), (.weekly.pct // empty),
+                     (.models[]?.pct // empty), (.spend.pct // empty) ]
+                   | map(select(. != null)) | max // 0)) as $tightest
+    | (if ($tightest | length) > 0
+       then (($tightest | add) / ($tightest | length) | round) else 0 end) as $aggPct
+    | ([ $aggSession, $aggWeekly,
+         ($live | map(.models[]?.pct) | max),
+         ($live | map(.spend?.pct // empty) | max) ] | map(select(. != null)) | max // 0) as $peak
+    | (if   $peak >= 90 then "critical"
+       elif $peak >= 75 then "high"
+       elif $peak >= 50 then "mid"
+       else "low" end) as $aggClass
+    # Primary account keeps the single-account contract intact: same top-level
+    # shape the widget has always parsed, so nothing regresses with one account.
+    | ($live[0] // $accounts[0]) as $primary
+    | ($primary.models // []) as $pm
+    | if ($live | length) == 0 then
+        {ok:false, provider:$provider,
+         error: ($accounts[0].error // "usage unavailable"),
+         accounts:$accounts}
+      else
+        {ok:true, provider:$provider,
+         plan: ($primary.plan // ""),
+         class: $aggClass,
+         session: $primary.session,
+         weekly: $primary.weekly,
+         third: (if ($pm | length) > 0
+                 then ($pm | max_by(.pct) | {label:.label, pct:.pct, reset:.reset, resetAt:(.resetAt // 0)})
+                 else null end),
+         accounts: $accounts,
+         aggregate: {count: ($live | length),
+                     total: ($accounts | length),
+                     pct: $aggPct,
+                     session: $aggSession,
+                     weekly: $aggWeekly,
+                     class: $aggClass}}
+      end
+    '

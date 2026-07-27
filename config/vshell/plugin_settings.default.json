@@ -1,0 +1,14 @@
+{
+  "aiUsage": {
+    "provider": "claude",
+    "refreshSeconds": "300"
+  },
+  "tailscale": {
+    "pillMode": "count"
+  },
+  "sysUpdate": {
+    "systemUpdateCommand": "{vshell} update run system",
+    "aurUpdateCommand": "{vshell} update run aur",
+    "allUpdateCommand": "{vshell} update run all"
+  }
+}

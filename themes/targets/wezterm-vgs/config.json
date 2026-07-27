@@ -1,0 +1,11 @@
+{
+  "app": "wezterm",
+  "template": "vgs-theme.lua",
+  "destination": "~/.config/wezterm/vgs-theme.lua",
+  "curatedFile": "wezterm.lua",
+  "detect": {
+    "commands": [
+      "wezterm"
+    ]
+  }
+}

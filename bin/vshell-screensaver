@@ -1,0 +1,239 @@
+#!/bin/bash
+
+# VGS decorative screensaver runner. Launches a fullscreen ghostty window per
+# monitor (window class org.vgs.screensaver) that animates ASCII/Unicode art with
+# `tte` (Terminal Text Effects). VGS-owned; ScreensaverService drives it via
+# `vshell screensaver launch|stop`. The per-window animation loop is
+# `vshell screensaver run`; `vshell screensaver transcode` renders an image to art.
+#
+# Idle gating (inhibitors, media, fullscreen, the enabled/off setting) is owned by
+# the shell's IdleService + ScreensaverService, so this script does not re-check it.
+
+set -euo pipefail
+
+script_path="$(readlink -f -- "${BASH_SOURCE[0]}")"
+script_dir="$(cd -- "$(dirname -- "$script_path")" && pwd)"
+
+CONFIG_HOME="${XDG_CONFIG_HOME:-$HOME/.config}"
+CLASS="org.vgs.screensaver"
+BRANDING="$CONFIG_HOME/vshell/branding/screensaver.txt"
+GHOSTTY_CONF="$CONFIG_HOME/vshell/ghostty-screensaver.conf"
+IS_NIRI=0
+if [[ -n ${NIRI_SOCKET:-} ]] && command -v niri >/dev/null 2>&1 && niri msg version >/dev/null 2>&1; then
+  IS_NIRI=1
+fi
+
+ensure_ghostty_conf() {
+  [[ -f "$GHOSTTY_CONF" ]] && return 0
+  mkdir -p "$(dirname "$GHOSTTY_CONF")"
+  cat >"$GHOSTTY_CONF" <<'CONF'
+font-family = "JetBrainsMono Nerd Font Mono"
+font-size = 18
+font-style = Normal
+font-synthetic-style = true
+adjust-cell-height = 0%
+
+background = #000000
+foreground = #ffffff
+window-padding-x = 0
+window-padding-y = 0
+window-padding-balance = false
+window-decoration = false
+resize-overlay = never
+quit-after-last-window-closed = true
+confirm-close-surface = false
+scrollback-limit = 1000
+CONF
+}
+
+default_text() {
+  printf '%s\n' "$(hostname 2>/dev/null || echo vshell)"
+  printf '%s\n' "$(date '+%A %B %-d, %Y')"
+}
+
+ensure_branding() {
+  mkdir -p "$(dirname "$BRANDING")"
+  [[ -s "$BRANDING" ]] || default_text >"$BRANDING"
+}
+
+cmd_stop() {
+  if ((IS_NIRI)); then
+    niri msg -j windows |
+      jq -r --arg c "$CLASS" '.[] | select(.app_id == $c) | .id' |
+      while IFS= read -r id; do
+        [[ -n $id ]] || continue
+        niri msg action close-window --id "$id" >/dev/null 2>&1 || true
+      done
+    return
+  fi
+  hyprctl clients -j |
+    jq -r --arg c "$CLASS" '.[] | select(.class == $c) | .pid' |
+    while IFS= read -r pid; do
+      [[ -n $pid ]] || continue
+      kill "$pid" 2>/dev/null || true
+    done
+}
+
+cmd_launch() {
+  command -v tte >/dev/null 2>&1 || exit 1
+  command -v ghostty >/dev/null 2>&1 || exit 1
+  ensure_ghostty_conf
+  ensure_branding
+
+  local monitor_count screensaver_count
+  if ((IS_NIRI)); then
+    monitor_count="$(niri msg -j outputs | jq 'length')"
+    screensaver_count="$(niri msg -j windows | jq --arg c "$CLASS" '[.[] | select(.app_id == $c)] | length')"
+  else
+    monitor_count="$(hyprctl monitors -j | jq '[.[] | select(.disabled == false)] | length')"
+    screensaver_count="$(hyprctl clients -j | jq --arg c "$CLASS" '[.[] | select(.class == $c)] | length')"
+  fi
+
+  # Already covering every monitor -> nothing to do.
+  (( screensaver_count >= monitor_count )) && return 0
+  # Partial coverage (monitor hotplug etc.) -> clear and relaunch cleanly.
+  if (( screensaver_count > 0 )); then
+    cmd_stop
+    sleep 0.3
+  fi
+
+  local focused_monitor launch_cmd
+  if ((IS_NIRI)); then
+    local -a niri_launch
+    if command -v uwsm >/dev/null 2>&1; then
+      niri_launch=(uwsm app -- ghostty)
+    else
+      niri_launch=(ghostty)
+    fi
+    focused_monitor="$(niri msg -j focused-output | jq -r '.name // empty')"
+    niri msg -j outputs |
+      jq -r 'keys[]' |
+      while IFS= read -r monitor; do
+        [[ -n $monitor ]] || continue
+        niri msg action focus-monitor "$monitor" >/dev/null 2>&1 || true
+        niri msg action spawn -- "${niri_launch[@]}" \
+          "--class=$CLASS" --title=Screensaver "--config-file=$GHOSTTY_CONF" \
+          --font-size=18 -e vshell screensaver run >/dev/null
+        for _ in {1..40}; do
+          id="$(niri msg -j windows | jq -r --arg c "$CLASS" '[.[] | select(.app_id == $c)] | last | .id // empty')"
+          [[ -n $id ]] && break
+          sleep 0.05
+        done
+        [[ -n ${id:-} ]] && niri msg action fullscreen-window --id "$id" >/dev/null 2>&1 || true
+        sleep 0.25
+      done
+    [[ -n $focused_monitor ]] && niri msg action focus-monitor "$focused_monitor" >/dev/null 2>&1 || true
+    return 0
+  fi
+  focused_monitor="$(hyprctl monitors -j | jq -r '.[] | select(.focused == true) | .name' | head -n1)"
+  launch_cmd="uwsm app -- ghostty --class=$CLASS --title=Screensaver --config-file=$GHOSTTY_CONF --font-size=18 -e vshell screensaver run"
+
+  hyprctl monitors -j |
+    jq -r '.[] | select(.disabled == false) | .name' |
+    while IFS= read -r monitor; do
+      [[ -n $monitor ]] || continue
+      hyprctl dispatch "hl.dsp.focus({monitor=\"$monitor\"})" >/dev/null 2>&1 || true
+      hyprctl dispatch "hl.dsp.exec_cmd('$launch_cmd')" >/dev/null 2>&1 || true
+      sleep 0.25
+    done
+
+  [[ -n $focused_monitor ]] && hyprctl dispatch "hl.dsp.focus({monitor=\"$focused_monitor\"})" >/dev/null 2>&1 || true
+  return 0
+}
+
+# --- per-window animation loop (runs inside the fullscreen ghostty) ------------
+
+_screensaver_in_focus() {
+  if ((IS_NIRI)); then
+    niri msg -j focused-window | jq -e --arg c "$CLASS" '.app_id == $c' >/dev/null 2>&1
+    return
+  fi
+  hyprctl activewindow -j | jq -e --arg c "$CLASS" '.class == $c' >/dev/null 2>&1
+}
+
+_cursor_position() {
+  ((IS_NIRI)) && return 0
+  hyprctl cursorpos -j 2>/dev/null | jq -r '[.x, .y] | @tsv' 2>/dev/null || true
+}
+
+_run_cleanup() {
+  printf '\033[0m\033[?25h' || true
+  pkill -x tte 2>/dev/null || true
+}
+
+_run_exit() {
+  trap - INT TERM HUP QUIT
+  _run_cleanup
+  "$script_dir/vshell-screensaver" stop >/dev/null 2>&1 || true
+  exit 0
+}
+
+cmd_run() {
+  command -v tte >/dev/null 2>&1 || exit 1
+  ensure_branding
+
+  trap _run_exit INT TERM HUP QUIT
+
+  local tty_name startup_grace_until initial_cursor current_cursor
+  tty_name="$(tty 2>/dev/null || true)"
+  startup_grace_until=$(( $(date +%s) + 3 ))
+  initial_cursor=""
+
+  # Black background, clear screen, hide cursor.
+  printf '\033]11;rgb:00/00/00\007'
+  printf '\033[2J\033[H\033[?25l'
+
+  while true; do
+    tte \
+      --input-file "$BRANDING" \
+      --random-effect \
+      --frame-rate 120 \
+      --canvas-width 0 \
+      --canvas-height 0 \
+      --reuse-canvas \
+      --anchor-canvas c \
+      --anchor-text c \
+      --no-eol \
+      --no-restore-cursor &
+
+    if [[ -n $tty_name ]]; then
+      while pgrep -t "${tty_name#/dev/}" -x tte >/dev/null; do
+        if (( $(date +%s) < startup_grace_until )); then
+          sleep 0.2
+          continue
+        fi
+        [[ -z $initial_cursor ]] && initial_cursor="$(_cursor_position)"
+        current_cursor="$(_cursor_position)"
+        # Dismiss on any keypress, focus loss, or real cursor movement.
+        if read -r -n1 -t 1 ||
+          ! _screensaver_in_focus ||
+          { [[ -n $initial_cursor && -n $current_cursor ]] && [[ $current_cursor != "$initial_cursor" ]]; }; then
+          _run_exit
+        fi
+      done
+    else
+      wait $! || true
+    fi
+  done
+}
+
+case "${1:-}" in
+launch)
+  shift || true
+  cmd_launch "$@"
+  ;;
+stop)
+  cmd_stop
+  ;;
+run)
+  cmd_run
+  ;;
+transcode)
+  shift || true
+  exec "$script_dir/vshell-transcode-ascii" "$@"
+  ;;
+*)
+  echo "Usage: vshell screensaver launch|stop|run|transcode [...]" >&2
+  exit 2
+  ;;
+esac

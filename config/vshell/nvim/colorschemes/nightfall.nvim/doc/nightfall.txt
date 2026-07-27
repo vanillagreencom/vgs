@@ -1,0 +1,121 @@
+*nightfall.nvim*     For Neovim 0.10 and later     Last change: 2025 February 03
+
+                             NIGHTFALL.NVIM
+
+Nightfall.nvim is a clean, eye-friendly Neovim colorscheme with multiple flavors
+to suit your style. It integrates seamlessly with popular plugins and supports
+extended coding sessions with minimal strain.
+
+==============================================================================
+Features                                                    *nightfall_features*
+
+- Automatic caching for faster load times.
+- Treesitter support for enhanced syntax highlighting.
+- LSP integration with semantic tokens.
+- Plugin compatibility with major plugins.
+- Customizable options to suit your preferences.
+- Eye-friendly design to reduce strain.
+- Multiple flavors to match your coding style.
+- Minimalist design for improved readability.
+
+==============================================================================
+Flavors                                                      *nightfall_flavors*
+
+- Nightfall: Dark, vibrant theme inspired by Dracula.
+- Deeper Night: High contrast for better focus.
+- Maron: Warm, earthy tones for a soft feel.
+- Nord: Inspired by Onedark and Nord themes.
+
+==============================================================================
+Setup                                                          *nightfall_setup*
+
+Nightfall.nvim allows customization through a simple `setup` function. You can
+adjust transparency, highlights, and plugin integrations as needed.
+
+Example:
+>lua
+  require("nightfall").setup({
+    transparent = true,
+    dim_inactive = true,
+    integrations = {
+      flash = { enabled = true },
+    },
+  })
+<
+==============================================================================
+Compile command                                      *nightfall_compile_command*
+
+Compiles all flavors into json files to improve performance and reduce runtime
+overhead.
+
+Usage:
+  `:NightfallCompile`
+
+==============================================================================
+Overriding colors and highlights                          *nightfall_overriding*
+
+Nightfall.nvim allows you to override colors and highlight groups for precise
+control. Flavor-specific overrides take priority.
+
+Example:
+>lua
+  require("nightfall").setup({
+    color_overrides = {
+      all = { foreground = "#ffffff" },
+      nightfall = { background = "#ff0000" },
+    },
+    highlight_overrides = {
+      all = { -- This can only a table
+	Normal = { bg = "#120809" }
+      },
+      -- Can be a function or a table for a specific flavor
+      nightfall = function(colors)
+	return {
+	  Normal = { bg = colors.black }
+	}
+      end,
+      maron = {
+	Normal = { fg = "#ffffff" }
+      },
+    },
+  })
+<
+==============================================================================
+Integrations                                            *nightfall_integrations*
+
+Seamlessly integrates with various plugins. Enable or customize integrations
+as needed:
+
+>lua
+  require("nightfall").setup({
+    integrations = {
+      mini = { enabled = true, icons = true }, -- Enable support for mini.nvim
+      native_lsp = { enabled = true, semantic_tokens = true },
+      snacks = {
+	enabled = true,
+	dashboard = true,
+	indent = true,
+	picker = true,
+      },
+      blink = { enabled = true },
+      flash = { enabled = true },
+      fzf = {
+        enabled = true,
+        style = "borderless", -- or "bordered"
+      },
+      lazy = { enabled = true },
+      treesitter = { enabled = true, context = true },
+      render_markdown = { enabled = true },
+      which_key = { enabled = true },
+      noice = { enabled = true },
+      neo_tree = { enabled = true },
+      telescope = {
+        enabled = true,
+        style = "borderless", -- or "bordered"
+      },
+      nvim_cmp = { enabled = true },
+    },
+  })
+<
+==============================================================================
+vim:tw=80:ts=8:noet:ft=help:norl:

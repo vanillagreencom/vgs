@@ -1,0 +1,29 @@
+{
+  "$comment": "Source of truth for the VGS backend method/capability inventory. scripts/check-backend-inventory.py checks QML backend callsites and (when backend/ exists) Go handlers against this file. Every backend method referenced from QML must map to a capability prefix here or to an 'excluded' prefix with a removal action, otherwise CI fails. Capability names are the VGS-owned names; they mostly match the upstream names except where noted. Phases refer to docs/plans/vgs-backend-daemon.md.",
+  "capabilities": [
+    { "name": "core", "prefixes": ["ping", "getServerInfo", "subscribe"], "phase": 1, "status": "implemented" },
+    { "name": "loginctl", "prefixes": ["loginctl."], "phase": 2, "status": "implemented", "note": "lockerReady is tied to confirmed WlSessionLock.secure, never the lock request." },
+    { "name": "dbus", "prefixes": ["dbus."], "phase": 2, "status": "implemented", "note": "Subscribe-only for PrepareForSleep. call/setProperty/getProperty/getAllProperties/introspect/listNames stay unavailable until an allowlist exists (Open Decision 3)." },
+    { "name": "mime", "prefixes": ["mime.", "browser.open", "apppicker."], "phase": 3, "status": "implemented", "note": "Fed by vshell open + vshell-open.desktop. Targets validated before reaching picker/exec." },
+    { "name": "network", "prefixes": ["network."], "phase": 4, "status": "implemented", "note": "NetworkManager/nmcli backend first; IWD/networkd deferred unless needed." },
+    { "name": "freedesktop", "prefixes": ["freedesktop."], "phase": 5, "status": "implemented", "note": "AccountsService icon read/write, portal color-scheme read, icon-theme write, and screensaver inhibitors." },
+    { "name": "bluetooth", "prefixes": ["bluetooth."], "phase": 6, "status": "implemented", "note": "BlueZ state/actions plus VGS-owned pairing agent and bluetooth.pairing prompts." },
+    { "name": "clipboard", "prefixes": ["clipboard."], "phase": 7, "status": "implemented", "note": "Native Go clipboard history: the backend owns the single wl-paste watcher, the state file, and the image store, and broadcasts {available, history} on change. The helper clipboard CLI is a manual fallback sharing the same state file and lock." },
+    { "name": "gamma", "prefixes": ["wayland.gamma."], "phase": 8, "status": "implemented", "note": "Compositor adapter: managed hyprsunset with live IPC on Hyprland, managed wlsunset on Niri." },
+    { "name": "location", "prefixes": ["location."], "phase": 8, "status": "implemented", "note": "Cached IP location provider for weather/gamma state." },
+    { "name": "wallpaper", "prefixes": ["wallpaper."], "phase": 8, "status": "implemented", "note": "Scheduling/timers only in backend; actual apply calls stay in QML/VGS theme helper." },
+    { "name": "wlroutput", "prefixes": ["wlroutput."], "phase": 9, "status": "implemented", "note": "Read-only output snapshot via hyprctl on Hyprland or niri msg on Niri; configuration writes intentionally reject because VGS display config owns compositor layout." },
+    { "name": "brightness", "prefixes": ["brightness."], "phase": 9, "status": "implemented", "note": "Backend adapts the existing VGS brightness helper so Apple/XDR/Studio paths remain helper-owned." },
+    { "name": "cups", "prefixes": ["cups."], "phase": 10, "status": "implemented", "note": "Standard CUPS CLI bridge with input validation and URI redaction." },
+    { "name": "tailscale", "prefixes": ["tailscale."], "phase": 10, "status": "implemented", "note": "Backend-owned status and actions; default widgets must not shell out to tailscale directly." },
+    { "name": "sysupdate", "prefixes": ["sysupdate."], "phase": 10, "status": "implemented", "note": "Canonical update-count owner with acquire/release scheduling; helper fallback only when capability is absent." },
+    { "name": "evdev", "prefixes": ["evdev."], "phase": 10, "status": "implemented", "note": "Caps-lock state; subscription-driven." },
+    { "name": "plugins", "prefixes": ["plugins."], "phase": 11, "status": "deferred", "note": "Online plugin registry remains disabled until a VGS-aware registry exists; UI gates on capability absence." }
+  ],
+  "excluded": [
+    { "prefixes": ["themes.", "theme.auto"], "reason": "VGS themes are helper-owned (VGSThemeService / vshell theme). The upstream theme model and theme automation are excluded.", "action": "Remove themes.* wrappers and the theme.auto subscription/signal from VGSBackendService (Phase 11 / opportunistic cleanup)." },
+    { "prefixes": ["matugen."], "reason": "VGS has no matugen; palette work lives in bin/vshell-helper.", "action": "Never port." }
+  ],
+  "apiVersionGateBaseline": 0,
+  "apiVersionGateNote": "Raw numeric .apiVersion comparisons in QML are no longer allowed. Use capabilities.includes(...) / methods.includes(...) predicates. Named-constant gates (savedWifiStateApiVersion, expectedApiVersion) are excluded from this count."
+}

@@ -1,0 +1,129 @@
+{
+  "version": 2,
+  "features": {
+    "base": {
+      "required": true,
+      "commands": [
+        "qs",
+        "jq"
+      ],
+      "compositorCommands": {
+        "hyprland": ["hyprctl"],
+        "niri": ["niri"]
+      }
+    },
+    "theme": {
+      "required": true,
+      "commands": [
+        "python3"
+      ]
+    },
+    "greeter": {
+      "commands": [
+        "greetd",
+        "gnome-keyring-daemon"
+      ],
+      "anyCommands": [
+        [
+          "Hyprland",
+          "niri"
+        ]
+      ]
+    },
+    "clipboard": {
+      "commands": [
+        "wl-copy",
+        "wl-paste"
+      ]
+    },
+    "network-usage": {
+      "commands": [
+        "bandwhich"
+      ]
+    },
+    "capture": {
+      "commands": [
+        "jq",
+        "wl-copy",
+        "notify-send"
+      ],
+      "compositorCommands": {
+        "hyprland": ["grim", "slurp", "hyprpicker", "hyprctl"],
+        "niri": ["niri", "grim", "wl-paste"]
+      }
+    },
+    "capture-edit": {
+      "commands": [
+        "satty"
+      ]
+    },
+    "ocr": {
+      "commands": [
+        "grim",
+        "slurp",
+        "tesseract",
+        "wl-copy",
+        "notify-send"
+      ],
+      "compositorCommands": {
+        "hyprland": ["hyprpicker"],
+        "niri": ["niri"]
+      }
+    },
+    "gamma": {
+      "compositorCommands": {
+        "hyprland": ["hyprsunset", "hyprctl"],
+        "niri": ["wlsunset"]
+      }
+    },
+    "recording": {
+      "commands": [
+        "gpu-screen-recorder",
+        "jq",
+        "wl-copy",
+        "notify-send",
+        "ffmpeg",
+        "ffprobe"
+      ],
+      "compositorCommands": {
+        "hyprland": ["slurp", "hyprpicker", "hyprctl"],
+        "niri": ["niri"]
+      }
+    },
+    "thumbnails": {
+      "commands": [
+        "ffmpegthumbnailer"
+      ]
+    },
+    "updates-arch": {
+      "commands": [
+        "pacman",
+        "checkupdates"
+      ]
+    },
+    "updates-aur": {
+      "commands": [
+        "paru"
+      ]
+    },
+    "ai-usage": {
+      "commands": [
+        "${VSHELL_ROOT}/bin/vshell-ai-usage",
+        "${VSHELL_ROOT}/bin/claudebar",
+        "${VSHELL_ROOT}/bin/codexbar",
+        "curl",
+        "jq"
+      ]
+    },
+    "tailscale": {
+      "commands": [
+        "tailscale"
+      ]
+    },
+    "brightness": {
+      "commands": [
+        "udevadm"
+      ]
+    }
+  }
+}

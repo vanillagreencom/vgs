@@ -1,0 +1,16 @@
+{
+    "id": "tailscale",
+    "name": "Tailscale",
+    "description": "Tailscale mesh VPN status and controls, gated by the tailscale CLI.",
+    "version": "1.0.0",
+    "license": "MIT",
+    "author": "VanillaGreen",
+    "icon": "hub",
+    "component": "./TailscaleWidget.qml",
+    "settings": "./TailscaleSettings.qml",
+    "requires_shell": ">=1.0.0",
+    "permissions": [
+        "settings_read",
+        "settings_write"
+    ]
+}

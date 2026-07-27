@@ -1,0 +1,726 @@
+#!/bin/bash
+# VGS screenshot capture for Hyprland and Niri:
+# smart click-to-window/output, region drag, explicit window/display selection,
+# focused/all-display capture, delayed capture, save/copy/edit.
+set -uo pipefail
+
+fail() {
+  notify-send "Screenshot failed" "$1" -u critical -t 4000 2>/dev/null || true
+  printf 'Screenshot failed: %s\n' "$1" >&2
+  exit 1
+}
+
+IS_NIRI=0
+if [[ -n ${NIRI_SOCKET:-} ]] && command -v niri >/dev/null 2>&1 && niri msg version >/dev/null 2>&1; then
+  IS_NIRI=1
+fi
+
+deps=(jq wl-copy notify-send)
+if ((IS_NIRI)); then
+  deps+=(niri grim wl-paste)
+else
+  deps+=(grim slurp hyprpicker hyprctl)
+fi
+for dep in "${deps[@]}"; do
+  command -v "$dep" >/dev/null 2>&1 || fail "$dep not found"
+done
+
+[[ -f ~/.config/user-dirs.dirs ]] && source ~/.config/user-dirs.dirs
+
+if [[ -n ${VSHELL_SCREENSHOT_DIR:-} ]]; then
+  OUTPUT_DIR="$VSHELL_SCREENSHOT_DIR"
+elif [[ -n ${XDG_PICTURES_DIR:-} ]]; then
+  OUTPUT_DIR="$XDG_PICTURES_DIR/Screenshots"
+else
+  OUTPUT_DIR="$HOME/Pictures/Screenshots"
+fi
+
+if [[ ! -d $OUTPUT_DIR ]]; then
+  mkdir -p "$OUTPUT_DIR"
+  notify-send "Created screenshot directory: $OUTPUT_DIR" -u normal -t 2000
+fi
+
+# Pressing the binding again while selecting cancels the active slurp.
+pkill slurp && exit 0
+
+SCREENSHOT_EDITOR="${VSHELL_SCREENSHOT_EDITOR:-satty}"
+GRIM_TIMEOUT="${VSHELL_SCREENSHOT_GRIM_TIMEOUT:-10s}"
+DELAY_SECONDS=0
+# Cursor is hidden by default everywhere (keybind and modal alike);
+# pass --cursor=true (or set VSHELL_SCREENSHOT_CURSOR=yes) to include it.
+INCLUDE_CURSOR="${VSHELL_SCREENSHOT_CURSOR:-no}"
+CAPTURE_STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/vshell-capture"
+COUNTDOWN_PID_FILE="$CAPTURE_STATE_DIR/screenshot-countdown.pid"
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+VSHELL_CLI="$SCRIPT_DIR/vshell"
+COUNTDOWN_OWNED=0
+
+place_satty_window() {
+  local pid="$1"
+  local target_ws="${2:-}"
+  local existing_addresses="${3:-[]}"
+  local target_monitor="${VSHELL_SCREENSHOT_EDITOR_MONITOR:-}"
+  local editor_size="${VSHELL_SCREENSHOT_EDITOR_SIZE:-}"
+  local address=""
+
+  for _ in {1..50}; do
+    address=$(
+      hyprctl clients -j 2>/dev/null |
+        jq -r --argjson pid "$pid" --argjson existing "$existing_addresses" '
+          (
+            map(select(.pid == $pid)) +
+            map(select(.class == "com.gabm.satty" and (.address as $address | ($existing | index($address) | not))))
+          ) | .[0].address // empty
+        ' |
+        head -n1
+    )
+    [[ -n $address ]] && break
+    sleep 0.05
+  done
+
+  [[ -n $address ]] || return 0
+
+  hyprctl dispatch "hl.dsp.focus({window=\"address:$address\"})" >/dev/null 2>&1 || true
+  if [[ $target_ws =~ ^-?[0-9]+$ ]]; then
+    hyprctl dispatch "hl.dsp.window.move({ workspace = $target_ws })" >/dev/null 2>&1 || true
+    hyprctl dispatch "hl.dsp.focus({window=\"address:$address\"})" >/dev/null 2>&1 || true
+  fi
+  if [[ -n $target_monitor ]]; then
+    hyprctl dispatch "hl.dsp.window.move({monitor=\"$target_monitor\"})" >/dev/null 2>&1 || true
+  fi
+  if [[ $editor_size =~ ^([0-9]+)x([0-9]+)$ ]]; then
+    hyprctl dispatch "hl.dsp.window.resize({x=${BASH_REMATCH[1]},y=${BASH_REMATCH[2]}})" >/dev/null 2>&1 || true
+  fi
+  hyprctl dispatch 'hl.dsp.window.center()' >/dev/null 2>&1 || true
+}
+
+ARGS=()
+for arg in "$@"; do
+  case "$arg" in
+    --editor=*) SCREENSHOT_EDITOR="${arg#--editor=}" ;;
+    --delay=*) DELAY_SECONDS="${arg#--delay=}" ;;
+    --cursor=*) INCLUDE_CURSOR="${arg#--cursor=}" ;;
+    *) ARGS+=("$arg") ;;
+  esac
+done
+set -- "${ARGS[@]}"
+
+[[ $DELAY_SECONDS =~ ^[0-9]+$ ]] || fail "invalid delay: $DELAY_SECONDS"
+((DELAY_SECONDS <= 60)) || fail "delay must be 60 seconds or less"
+
+is_true() {
+  case "${1,,}" in
+    1 | true | yes | y | on) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+GRIM_ARGS=()
+is_true "$INCLUDE_CURSOR" && GRIM_ARGS+=(-c)
+
+focus_satty_target() {
+  local target_ws=""
+  local target_monitor="${VSHELL_SCREENSHOT_EDITOR_MONITOR:-}"
+  if [[ -n $target_monitor ]]; then
+    target_ws=$(hyprctl monitors -j | jq -r --arg mon "$target_monitor" '.[] | select(.name == $mon) | .activeWorkspace.id // empty' | head -n1)
+    hyprctl dispatch "hl.dsp.focus({monitor=\"$target_monitor\"})" >/dev/null 2>&1 || true
+    if [[ $target_ws =~ ^-?[0-9]+$ ]]; then
+      hyprctl dispatch "hl.dsp.focus({ workspace = $target_ws })" >/dev/null 2>&1 || true
+    fi
+    hyprctl dispatch "hl.dsp.focus({monitor=\"$target_monitor\"})" >/dev/null 2>&1 || true
+  fi
+  printf '%s\n' "$target_ws"
+}
+
+open_folder() {
+  local dir="$1"
+  if command -v yazi-scratchpad-open >/dev/null 2>&1; then
+    uwsm app -- yazi-scratchpad-open "$dir"
+  else
+    uwsm app -- xdg-open "$dir"
+  fi
+}
+
+open_editor() {
+  local filepath="$1"
+  local edited_filepath="${filepath%.*}-edited.${filepath##*.}"
+  [[ $edited_filepath == "$filepath" ]] && edited_filepath="${filepath}-edited"
+
+  if [[ $SCREENSHOT_EDITOR == "satty" ]]; then
+    # The editor legitimately holds focus while open; restore afterwards.
+    local editor_focus
+    editor_focus=$(focus_snapshot)
+    local target_ws
+    target_ws="$(focus_satty_target)"
+    local existing_satty_addresses
+    existing_satty_addresses=$(hyprctl clients -j | jq -c '[.[] | select(.class == "com.gabm.satty") | .address]')
+    satty --app-id com.gabm.satty \
+      --filename "$filepath" \
+      --output-filename "$edited_filepath" \
+      --actions-on-enter save-to-clipboard \
+      --save-after-copy \
+      --copy-command 'wl-copy --type image/png' &
+    local satty_pid=$!
+    place_satty_window "$satty_pid" "$target_ws" "$existing_satty_addresses" &
+    wait "$satty_pid"
+    focus_restore "$editor_focus"
+  else
+    "$SCREENSHOT_EDITOR" "$filepath"
+  fi
+}
+
+MODE="${1:-smart}"
+PROCESSING="${2:-slurp}"
+SELECTION_RE='^(-?[0-9]+),(-?[0-9]+)[[:space:]]([0-9]+)x([0-9]+)$'
+
+countdown_pid_is_live() {
+  local candidate="$1"
+  [[ $candidate =~ ^[0-9]+$ ]] || return 1
+  kill -0 "$candidate" 2>/dev/null || return 1
+  [[ -r /proc/$candidate/cmdline ]] || return 1
+  grep -aFq "vshell-capture-screenshot" "/proc/$candidate/cmdline"
+}
+
+cancel_delayed_capture() {
+  local capture_pid=""
+  if [[ -r $COUNTDOWN_PID_FILE ]]; then
+    capture_pid="$(<"$COUNTDOWN_PID_FILE")"
+  fi
+  if countdown_pid_is_live "$capture_pid"; then
+    kill -TERM "$capture_pid" 2>/dev/null || true
+    "$VSHELL_CLI" ipc call toast info "Screenshot cancelled" >/dev/null 2>&1 || true
+  fi
+  rm -f "$COUNTDOWN_PID_FILE"
+  "$VSHELL_CLI" ipc call capture countdownEnd >/dev/null 2>&1 || true
+}
+
+if [[ $MODE == "cancel" ]]; then
+  cancel_delayed_capture
+  exit 0
+fi
+
+JQ_MONITOR_GEO='
+  def monitor_rect:
+    .x as $x | .y as $y |
+    (.width / .scale | floor) as $w |
+    (.height / .scale | floor) as $h |
+    .transform as $t |
+    if $t == 1 or $t == 3 then
+      { x: $x, y: $y, w: $h, h: $w }
+    else
+      { x: $x, y: $y, w: $w, h: $h }
+    end;
+  def format_geo:
+    monitor_rect | "\(.x),\(.y) \(.w)x\(.h)";
+'
+
+get_monitor_rectangles() {
+  hyprctl monitors -j | jq -r "${JQ_MONITOR_GEO} .[] | format_geo"
+}
+
+get_all_displays_rectangle() {
+  hyprctl monitors -j | jq -r "${JQ_MONITOR_GEO}
+    [ .[] | monitor_rect ] as \$rects
+    | if (\$rects | length) == 0 then empty else
+        (\$rects | map(.x) | min) as \$left
+        | (\$rects | map(.y) | min) as \$top
+        | (\$rects | map(.x + .w) | max) as \$right
+        | (\$rects | map(.y + .h) | max) as \$bottom
+        | \"\(\$left),\(\$top) \(\$right - \$left)x\(\$bottom - \$top)\"
+      end
+  "
+}
+
+get_window_rectangles() {
+  hyprctl clients -j |
+    jq -r --argjson monitors "$(hyprctl monitors -j)" '
+      ($monitors | [.[] | .activeWorkspace.id, .specialWorkspace.id] | map(select(. != null and . != 0))) as $activeWorkspaces |
+      [
+        .[]
+        | select(.mapped == true and .hidden == false)
+        | select((.workspace.id as $ws | $activeWorkspaces | index($ws)) != null)
+        | select(.size[0] > 0 and .size[1] > 0)
+        | {
+            x: .at[0],
+            y: .at[1],
+            w: .size[0],
+            h: .size[1],
+            area: (.size[0] * .size[1]),
+            focus: (.focusHistoryID // 999999)
+          }
+      ]
+      | sort_by(.area, .focus)[]
+      | "\(.x),\(.y) \(.w)x\(.h)"
+    '
+}
+
+get_rectangles() {
+  get_window_rectangles
+  get_monitor_rectangles
+}
+
+selection_for_click() {
+  local click_x="$1"
+  local click_y="$2"
+
+  jq -nr \
+    --argjson clients "$(hyprctl clients -j)" \
+    --argjson monitors "$(hyprctl monitors -j)" \
+    --argjson clickX "$click_x" \
+    --argjson clickY "$click_y" \
+    "${JQ_MONITOR_GEO}
+      def contains(\$r):
+        \$clickX >= \$r.x and \$clickX < (\$r.x + \$r.w) and
+        \$clickY >= \$r.y and \$clickY < (\$r.y + \$r.h);
+
+      (\$monitors | [.[] | .activeWorkspace.id, .specialWorkspace.id] | map(select(. != null and . != 0))) as \$activeWorkspaces |
+
+      [
+        \$clients[]
+        | select(.mapped == true and .hidden == false)
+        | select((.workspace.id as \$ws | \$activeWorkspaces | index(\$ws)) != null)
+        | select(.size[0] > 0 and .size[1] > 0)
+        | {
+            x: .at[0],
+            y: .at[1],
+            w: .size[0],
+            h: .size[1],
+            area: (.size[0] * .size[1]),
+            focus: (.focusHistoryID // 999999)
+          }
+        | select(contains(.))
+      ]
+      | sort_by(.area, .focus)
+      | first as \$window |
+
+      if \$window then
+        \"\(\$window.x),\(\$window.y) \(\$window.w)x\(\$window.h)\"
+      else
+        [
+          \$monitors[]
+          | monitor_rect
+          | select(contains(.))
+        ]
+        | first as \$monitor |
+        if \$monitor then
+          \"\(\$monitor.x),\(\$monitor.y) \(\$monitor.w)x\(\$monitor.h)\"
+        else
+          empty
+        end
+      end
+    "
+}
+
+cleanup_freeze() {
+  [[ -n ${PID:-} ]] && kill "$PID" 2>/dev/null
+}
+
+# Focus bracket: capture surfaces (slurp overlay, cursor parking, the editor)
+# routinely move focus via follow_mouse; each disturbance snapshots the active
+# window first and restores it when done. Per-disturbance brackets — not one
+# global restore — so a delayed capture never clobbers focus changes the user
+# made on purpose during the countdown.
+focus_snapshot() {
+  hyprctl activewindow -j 2>/dev/null | jq -r '.address // empty'
+}
+
+focus_restore() {
+  local addr="$1" active
+  [[ -n $addr ]] || return 0
+  active=$(hyprctl activewindow -j 2>/dev/null | jq -r '.address // empty')
+  [[ $active == "$addr" ]] && return 0
+  hyprctl clients -j 2>/dev/null | jq -e --arg a "$addr" 'any(.[]; .address == $a)' >/dev/null 2>&1 || return 0
+  hyprctl dispatch "hl.dsp.focus({window=\"address:$addr\"})" >/dev/null 2>&1 || true
+}
+
+PRE_SELECT_FOCUS=""
+restore_selection_focus() {
+  if [[ -n $PRE_SELECT_FOCUS ]]; then
+    focus_restore "$PRE_SELECT_FOCUS"
+    PRE_SELECT_FOCUS=""
+  fi
+}
+
+restore_cursor() {
+  if [[ -n ${ORIGINAL_CURSOR_X:-} && -n ${ORIGINAL_CURSOR_Y:-} ]]; then
+    hyprctl dispatch "hl.dsp.cursor.move({x=${ORIGINAL_CURSOR_X},y=${ORIGINAL_CURSOR_Y}})" >/dev/null 2>&1 || true
+    ORIGINAL_CURSOR_X=""
+    ORIGINAL_CURSOR_Y=""
+  fi
+}
+
+cleanup() {
+  cleanup_freeze
+  restore_cursor
+  # Covers slurp-cancel exits where the selection bracket never closed.
+  restore_selection_focus
+  if ((COUNTDOWN_OWNED)); then
+    if [[ -r $COUNTDOWN_PID_FILE ]] && [[ $(<"$COUNTDOWN_PID_FILE") == "$$" ]]; then
+      rm -f "$COUNTDOWN_PID_FILE"
+    fi
+    "$VSHELL_CLI" ipc call capture countdownEnd >/dev/null 2>&1 || true
+    COUNTDOWN_OWNED=0
+  fi
+}
+trap cleanup EXIT
+
+stop_freeze_before_capture() {
+  if [[ -n ${PID:-} ]]; then
+    kill "$PID" 2>/dev/null || true
+    wait "$PID" 2>/dev/null || true
+    PID=""
+    sleep 0.08
+  fi
+}
+
+move_cursor_outside_selection() {
+  local selection="$1"
+  local cursor safe_point
+  local sx sy sw sh
+
+  # grim omits the cursor unless -c is passed, but hyprpicker's frozen frame
+  # can still bake it in — park the pointer outside the selection while hiding.
+  is_true "$INCLUDE_CURSOR" && return 0
+  [[ $selection =~ $SELECTION_RE ]] || return 0
+  sx="${BASH_REMATCH[1]}"
+  sy="${BASH_REMATCH[2]}"
+  sw="${BASH_REMATCH[3]}"
+  sh="${BASH_REMATCH[4]}"
+
+  cursor=$(hyprctl cursorpos -j 2>/dev/null) || return 0
+  ORIGINAL_CURSOR_X=$(jq -r '.x' <<<"$cursor")
+  ORIGINAL_CURSOR_Y=$(jq -r '.y' <<<"$cursor")
+
+  safe_point=$(
+    jq -nr \
+      --argjson monitors "$(hyprctl monitors -j)" \
+      --argjson sx "$sx" \
+      --argjson sy "$sy" \
+      --argjson sw "$sw" \
+      --argjson sh "$sh" \
+      "${JQ_MONITOR_GEO}
+        def inside(\$x; \$y):
+          \$x >= \$sx and \$x < (\$sx + \$sw) and
+          \$y >= \$sy and \$y < (\$sy + \$sh);
+
+        [
+          \$monitors[]
+          | monitor_rect
+          | [
+              { x: (.x + 1), y: (.y + 1) },
+              { x: (.x + .w - 2), y: (.y + 1) },
+              { x: (.x + .w - 2), y: (.y + .h - 2) },
+              { x: (.x + 1), y: (.y + .h - 2) }
+            ][]
+          | select((inside(.x; .y) | not))
+        ]
+        | first
+        | if . then \"\(.x) \(.y)\" else empty end
+      "
+  )
+
+  [[ -n $safe_point ]] || return 0
+  hyprctl dispatch "hl.dsp.cursor.move({x=${safe_point%% *},y=${safe_point##* }})" >/dev/null 2>&1 || true
+  sleep 0.08
+}
+
+prepare_capture() {
+  stop_freeze_before_capture
+  move_cursor_outside_selection "$1"
+}
+
+wait_for_capture_delay() {
+  local remaining previous_pid
+  ((DELAY_SECONDS > 0)) || return 0
+
+  # Release hyprpicker's frozen frame before waiting. Each countdown notice is
+  # intentionally short-lived, and the final pause lets it leave the frame.
+  stop_freeze_before_capture
+  mkdir -p "$CAPTURE_STATE_DIR"
+  if [[ -r $COUNTDOWN_PID_FILE ]]; then
+    previous_pid="$(<"$COUNTDOWN_PID_FILE")"
+    if countdown_pid_is_live "$previous_pid" && [[ $previous_pid != "$$" ]]; then
+      kill -TERM "$previous_pid" 2>/dev/null || true
+      for _ in {1..20}; do
+        kill -0 "$previous_pid" 2>/dev/null || break
+        sleep 0.05
+      done
+    fi
+  fi
+  printf '%s\n' "$$" >"$COUNTDOWN_PID_FILE"
+  COUNTDOWN_OWNED=1
+  # The countdown itself is rendered by the shell (VGS toast + bar timer chip)
+  # from these IPC ticks — no notification spam.
+  for ((remaining = DELAY_SECONDS; remaining > 0; remaining--)); do
+    "$VSHELL_CLI" ipc call capture countdown "$remaining" "$DELAY_SECONDS" "$MODE" >/dev/null 2>&1 || true
+    sleep 1
+  done
+  if [[ -r $COUNTDOWN_PID_FILE ]] && [[ $(<"$COUNTDOWN_PID_FILE") == "$$" ]]; then
+    rm -f "$COUNTDOWN_PID_FILE"
+  fi
+  "$VSHELL_CLI" ipc call capture countdownEnd >/dev/null 2>&1 || true
+  COUNTDOWN_OWNED=0
+  # Let the countdown toast finish its fade-out so it never lands in the shot.
+  sleep 0.45
+}
+
+capture_to_file() {
+  local selection="$1"
+  local filepath="$2"
+  local status
+
+  local focus_addr
+  focus_addr=$(focus_snapshot)
+  prepare_capture "$selection"
+  timeout --foreground "$GRIM_TIMEOUT" grim "${GRIM_ARGS[@]}" -g "$selection" "$filepath"
+  status=$?
+  restore_cursor
+  focus_restore "$focus_addr"
+  return "$status"
+}
+
+# Every output mode ends with the same actionable "saved" notification so the
+# result is always visible and openable, delayed or not.
+notify_screenshot_result() {
+  local filepath="$1"
+  local summary="$2"
+  local filename action
+  filename="$(basename "$filepath")"
+
+  (
+    action=$(notify-send \
+      --app-name "Screenshot" \
+      --icon "applets-screenshooter" \
+      --transient \
+      --hint "string:image-path:$filepath" \
+      --hint "string:desktop-entry:vshell-${filename%.*}" \
+      --hint "string:x-dunst-stack-tag:vshell-${filename%.*}" \
+      "$summary" \
+      "Saved: $filename" \
+      -t 10000 \
+      -A "open=Open" \
+      -A "folder=Open Folder")
+    case "$action" in
+      open) open_editor "$filepath" ;;
+      folder) open_folder "$(dirname "$filepath")" ;;
+    esac
+  ) >/dev/null 2>&1 &
+}
+
+notify_screenshot_copy() {
+  local filepath="$1"
+  notify-send \
+    --app-name "Screenshot" \
+    --icon "applets-screenshooter" \
+    --transient \
+    --hint "string:image-path:$filepath" \
+    "Screenshot copied to clipboard" \
+    -t 6000 >/dev/null 2>&1 &
+}
+
+capture_niri() {
+  local mode="$1"
+  local processing="$2"
+  local filename filepath action pointer capture_event capture_done clipboard_watcher
+
+  wait_for_capture_delay
+  filename="screenshot-$(date +'%Y-%m-%d_%H-%M-%S').png"
+  if [[ $processing == copy ]]; then
+    mkdir -p "$CAPTURE_STATE_DIR"
+    find "$CAPTURE_STATE_DIR" -maxdepth 1 -name 'clipboard-*.png' -mmin +1440 -delete 2>/dev/null || true
+    filepath="$CAPTURE_STATE_DIR/clipboard-$(date +'%Y-%m-%d_%H-%M-%S')-$$.png"
+  else
+    filepath="$OUTPUT_DIR/$filename"
+  fi
+  pointer=false
+  is_true "$INCLUDE_CURSOR" && pointer=true
+
+  case "$mode" in
+    window | windows) action=(niri msg action screenshot-window --write-to-disk false --show-pointer "$pointer") ;;
+    display | screen | monitor | fullscreen) action=(niri msg action screenshot-screen --write-to-disk false --show-pointer "$pointer") ;;
+    all | all-displays)
+      action=(grim)
+      is_true "$INCLUDE_CURSOR" && action+=(-c)
+      action+=("$filepath")
+      ;;
+    region | smart | *) action=(niri msg action screenshot --show-pointer "$pointer") ;;
+  esac
+
+  # Native Niri screenshot actions always publish image/png to the clipboard.
+  # Start an event watcher before opening the interactive UI so we never read a
+  # stale clipboard image after the IPC request returns.
+  if [[ ${action[0]} == niri ]]; then
+    mkdir -p "$CAPTURE_STATE_DIR"
+    capture_event=$(mktemp "$CAPTURE_STATE_DIR/.niri-screenshot.XXXXXX")
+    capture_done="${capture_event}.done"
+    wl-paste --type image/png --watch sh -c 'cat >"$1" && : >"$2"' _ \
+      "$capture_event" "$capture_done" \
+      >/dev/null 2>&1 &
+    clipboard_watcher=$!
+    sleep 0.05
+  fi
+  if ! "${action[@]}" >/dev/null; then
+    [[ -n ${clipboard_watcher:-} ]] && kill "$clipboard_watcher" 2>/dev/null || true
+    [[ -n ${capture_event:-} ]] && rm -f -- "$capture_event"
+    [[ -n ${capture_done:-} ]] && rm -f -- "$capture_done"
+    fail "Niri screenshot request failed"
+  fi
+
+  if [[ ${action[0]} == niri ]]; then
+    for _ in {1..1200}; do
+      [[ -e $capture_done ]] && break
+      sleep 0.05
+    done
+    kill "$clipboard_watcher" 2>/dev/null || true
+    wait "$clipboard_watcher" 2>/dev/null || true
+    if [[ -e $capture_done && -s $capture_event ]]; then
+      rm -f -- "$capture_done"
+      mv -- "$capture_event" "$filepath"
+    else
+      rm -f -- "$capture_event"
+      rm -f -- "$capture_done"
+      fail "Niri screenshot selection did not produce an image"
+    fi
+  fi
+  [[ -s $filepath ]] || fail "Niri screenshot did not produce an image"
+
+  case "$processing" in
+    slurp | save-copy)
+      wl-copy --type image/png <"$filepath" || fail "wl-copy failed"
+      printf '%s\n' "$filepath"
+      notify_screenshot_result "$filepath" "Screenshot saved to clipboard and file"
+      ;;
+    copy)
+      wl-copy --type image/png <"$filepath" || fail "wl-copy failed"
+      notify_screenshot_copy "$filepath"
+      ;;
+    save)
+      printf '%s\n' "$filepath"
+      notify_screenshot_result "$filepath" "Screenshot saved"
+      ;;
+    edit)
+      if [[ $SCREENSHOT_EDITOR == satty ]]; then
+        satty --app-id com.gabm.satty --filename "$filepath" \
+          --output-filename "${filepath%.*}-edited.${filepath##*.}" \
+          --actions-on-enter save-to-clipboard --save-after-copy \
+          --copy-command 'wl-copy --type image/png' || fail "editor failed"
+      else
+        "$SCREENSHOT_EDITOR" "$filepath" || fail "editor failed"
+      fi
+      ;;
+    *) fail "unknown processing mode: $processing" ;;
+  esac
+}
+
+if ((IS_NIRI)); then
+  capture_niri "$MODE" "$PROCESSING"
+  exit 0
+fi
+
+# Bracket A: the slurp overlay (and its exit) can shift focus; restore once the
+# selection is settled. The EXIT trap closes the bracket on cancel paths.
+PRE_SELECT_FOCUS=$(focus_snapshot)
+
+case "$MODE" in
+  region)
+    hyprpicker -r -z >/tmp/vshell-screenshot-hyprpicker.err 2>&1 &
+    PID=$!
+    sleep .1
+    if ! SELECTION=$(slurp 2>/tmp/vshell-screenshot-slurp.err); then
+      err=$(cat /tmp/vshell-screenshot-slurp.err 2>/dev/null || true)
+      [[ -z $err ]] && exit 0
+      fail "slurp failed: $err"
+    fi
+    ;;
+  window | windows)
+    hyprpicker -r -z >/tmp/vshell-screenshot-hyprpicker.err 2>&1 &
+    PID=$!
+    sleep .1
+    if ! SELECTION=$(get_window_rectangles | slurp -r 2>/tmp/vshell-screenshot-slurp.err); then
+      err=$(cat /tmp/vshell-screenshot-slurp.err 2>/dev/null || true)
+      [[ -z $err ]] && exit 0
+      fail "slurp failed: $err"
+    fi
+    ;;
+  display | screen | monitor)
+    hyprpicker -r -z >/tmp/vshell-screenshot-hyprpicker.err 2>&1 &
+    PID=$!
+    sleep .1
+    if ! SELECTION=$(get_monitor_rectangles | slurp -r 2>/tmp/vshell-screenshot-slurp.err); then
+      err=$(cat /tmp/vshell-screenshot-slurp.err 2>/dev/null || true)
+      [[ -z $err ]] && exit 0
+      fail "slurp failed: $err"
+    fi
+    ;;
+  fullscreen)
+    if ! SELECTION=$(hyprctl monitors -j | jq -r "${JQ_MONITOR_GEO} .[] | select(.focused == true) | format_geo"); then
+      fail "failed to read focused monitor"
+    fi
+    [[ -n $SELECTION ]] || fail "no focused monitor found"
+    ;;
+  all | all-displays)
+    SELECTION=$(get_all_displays_rectangle) || fail "failed to read display layout"
+    [[ -n $SELECTION ]] || fail "no displays found"
+    ;;
+  smart | *)
+    RECTS=$(get_rectangles)
+    hyprpicker -r -z >/tmp/vshell-screenshot-hyprpicker.err 2>&1 &
+    PID=$!
+    sleep .1
+    if ! SELECTION=$(echo "$RECTS" | slurp 2>/tmp/vshell-screenshot-slurp.err); then
+      err=$(cat /tmp/vshell-screenshot-slurp.err 2>/dev/null || true)
+      [[ -z $err ]] && exit 0
+      fail "slurp failed: $err"
+    fi
+
+    if [[ $SELECTION =~ $SELECTION_RE ]]; then
+      if ((${BASH_REMATCH[3]} * ${BASH_REMATCH[4]} < 20)); then
+        click_x="${BASH_REMATCH[1]}"
+        click_y="${BASH_REMATCH[2]}"
+        SELECTION=$(selection_for_click "$click_x" "$click_y")
+      fi
+    fi
+    ;;
+esac
+
+restore_selection_focus
+
+[[ -z $SELECTION ]] && exit 0
+
+wait_for_capture_delay
+
+FILENAME="screenshot-$(date +'%Y-%m-%d_%H-%M-%S').png"
+FILEPATH="$OUTPUT_DIR/$FILENAME"
+
+case "$PROCESSING" in
+  slurp | save-copy)
+    capture_to_file "$SELECTION" "$FILEPATH" || fail "grim failed"
+    echo "$FILEPATH"
+    wl-copy --type image/png <"$FILEPATH" || fail "wl-copy failed"
+    notify_screenshot_result "$FILEPATH" "Screenshot saved to clipboard and file"
+    ;;
+  copy)
+    # Capture through a state-dir file so the notification can preview it; the
+    # clipboard is the deliverable, the file is scratch and reaped after a day.
+    mkdir -p "$CAPTURE_STATE_DIR"
+    find "$CAPTURE_STATE_DIR" -maxdepth 1 -name 'clipboard-*.png' -mmin +1440 -delete 2>/dev/null || true
+    COPY_FILE="$CAPTURE_STATE_DIR/clipboard-$(date +'%Y-%m-%d_%H-%M-%S').png"
+    capture_to_file "$SELECTION" "$COPY_FILE" || fail "grim failed"
+    wl-copy --type image/png <"$COPY_FILE" || fail "wl-copy failed"
+    notify_screenshot_copy "$COPY_FILE"
+    ;;
+  save)
+    capture_to_file "$SELECTION" "$FILEPATH" || fail "grim failed"
+    echo "$FILEPATH"
+    notify_screenshot_result "$FILEPATH" "Screenshot saved"
+    ;;
+  edit)
+    capture_to_file "$SELECTION" "$FILEPATH" || fail "grim failed"
+    wl-copy --type image/png <"$FILEPATH" || fail "wl-copy failed"
+    open_editor "$FILEPATH" || fail "editor failed"
+    ;;
+  *)
+    notify-send "Unknown screenshot action: $PROCESSING" -u critical -t 3000
+    exit 2
+    ;;
+esac

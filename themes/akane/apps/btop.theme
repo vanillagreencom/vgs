@@ -1,0 +1,81 @@
+# Theme: Akane
+# By: Grenish Rai
+
+# Main bg
+theme[main_bg]="#0e1e36"   # oxford-blue
+
+# Main text color
+theme[main_fg]="#f4b999"   # peach
+
+# Title color for boxes
+theme[title]="#f4b999"     # peach
+
+# Highlight color for keyboard shortcuts
+theme[hi_fg]="#fa7e75"     # coral-pink
+
+# Background color of selected item in processes box
+theme[selected_bg]="#574f72"  # english-violet
+
+# Foreground color of selected item in processes box
+theme[selected_fg]="#f4b999"  # peach
+
+# Color of inactive/disabled text
+theme[inactive_fg]="#763c5d"  # quinacridone-magenta
+
+# Misc colors for processes box including mini cpu graphs, details memory graph and details status text
+theme[proc_misc]="#c85670"    # blush
+
+# Cpu box outline color
+theme[cpu_box]="#574f72"      # english-violet
+
+# Memory/disks box outline color
+theme[mem_box]="#574f72"      # english-violet
+
+# Net up/down box outline color
+theme[net_box]="#574f72"      # english-violet
+
+# Processes box outline color
+theme[proc_box]="#574f72"     # english-violet
+
+# Box divider line and small boxes line color
+theme[div_line]="#4a2036"     # dark-purple
+
+# Temperature graph colors
+theme[temp_start]="#9279aa"   # african-violet (cool)
+theme[temp_mid]="#f4b999"     # peach (warm)
+theme[temp_end]="#fa7e75"     # coral-pink (hot)
+
+# CPU graph colors
+theme[cpu_start]="#9279aa"
+theme[cpu_mid]="#f4b999"
+theme[cpu_end]="#fa7e75"
+
+# Mem/Disk free meter
+theme[free_start]="#9279aa"
+theme[free_mid]="#f4b999"
+theme[free_end]="#fa7e75"
+
+# Mem/Disk cached meter
+theme[cached_start]="#9279aa"
+theme[cached_mid]="#f4b999"
+theme[cached_end]="#fa7e75"
+
+# Mem/Disk available meter
+theme[available_start]="#9279aa"
+theme[available_mid]="#f4b999"
+theme[available_end]="#fa7e75"
+
+# Mem/Disk used meter
+theme[used_start]="#9279aa"
+theme[used_mid]="#f4b999"
+theme[used_end]="#fa7e75"
+
+# Download graph colors
+theme[download_start]="#9279aa"
+theme[download_mid]="#f4b999"
+theme[download_end]="#fa7e75"
+
+# Upload graph colors
+theme[upload_start]="#9279aa"
+theme[upload_mid]="#f4b999"
+theme[upload_end]="#fa7e75"

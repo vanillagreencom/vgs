@@ -1,0 +1,11 @@
+{
+  "app": "icons",
+  "curatedFile": "icons.theme",
+  "curatedDestination": "~/.config/vshell/generated/icons.theme",
+  "detect": {
+    "commands": [
+      "gsettings"
+    ]
+  },
+  "hook": "icon-theme"
+}

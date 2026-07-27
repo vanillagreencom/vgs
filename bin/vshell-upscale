@@ -1,0 +1,148 @@
+#!/usr/bin/env bash
+# vshell-upscale — one-shot local AI image upscaler for VGS wallpapers.
+#
+# Content-routed super-resolution: loads an ncnn model, upscales 4x with
+# realesrgan-ncnn-vulkan, then Lanczos-downscales to the target width (the
+# "supersample" step gives cleaner edges on flat/geometric art than hitting the
+# target scale directly). It is strictly ONE-SHOT: the model is loaded, the
+# image is processed, and the process EXITS — so the model and its VRAM are
+# released immediately. There is no daemon and nothing stays resident when idle.
+#
+# Models (downloaded once into a cache dir, never into the repo):
+#   photo art  -> ultrasharp-4x   (falls back to realesrgan-x4plus)
+#   flat art   -> digital-art-4x  (falls back to realesrgan-x4plus-anime)
+# Better-than-stock ncnn weights come from the Upscayl model set; the base
+# realesrgan binary + models come from the Real-ESRGAN release.
+#
+# Usage:
+#   vshell-upscale setup                         # fetch binary + models (once)
+#   vshell-upscale <in> <out> [options]          # upscale a single image
+#   vshell-upscale --dir <indir> <outdir> [opts] # batch a directory
+#   vshell-upscale models                        # list available models
+# Options:
+#   --type photo|art|auto   pick the model family (default: auto -> photo)
+#   --width N               downscale long edge to N px after 4x (default 6016)
+#   --scale N               upscale factor for the model (default 4)
+#   --model NAME            force a specific model name (overrides --type)
+#   --no-downscale          keep the raw 4x output (skip the Lanczos step)
+set -euo pipefail
+
+CACHE="${VSHELL_UPSCALE_HOME:-${XDG_DATA_HOME:-$HOME/.local/share}/vshell/upscale}"
+BIN="$CACHE/realesrgan-ncnn-vulkan"
+MODELS="$CACHE/models"
+
+REALESRGAN_ZIP_URL="https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.5.0/realesrgan-ncnn-vulkan-20220424-ubuntu.zip"
+UPSCAYL_RAW="https://raw.githubusercontent.com/upscayl/upscayl/main/resources/models"
+BETTER_MODELS=(ultrasharp-4x digital-art-4x remacri-4x high-fidelity-4x)
+
+MODEL_PHOTO="ultrasharp-4x";  MODEL_PHOTO_FALLBACK="realesrgan-x4plus"
+MODEL_ART="digital-art-4x";   MODEL_ART_FALLBACK="realesrgan-x4plus-anime"
+
+die() { echo "vshell-upscale: $*" >&2; exit 1; }
+have() { command -v "$1" >/dev/null 2>&1; }
+
+magick_bin() { if have magick; then echo magick; elif have convert; then echo convert; else die "ImageMagick (magick/convert) not found"; fi; }
+
+cmd_setup() {
+  have curl || die "curl not found"
+  have unzip || die "unzip not found"
+  mkdir -p "$MODELS"
+  if [ ! -x "$BIN" ]; then
+    echo "-> fetching realesrgan-ncnn-vulkan (base binary + models)"
+    tmp="$(mktemp -d)"
+    curl -fsSL "$REALESRGAN_ZIP_URL" -o "$tmp/r.zip" || die "download failed: $REALESRGAN_ZIP_URL"
+    unzip -oq "$tmp/r.zip" -d "$tmp"
+    install -m0755 "$tmp/realesrgan-ncnn-vulkan" "$BIN"
+    cp -n "$tmp"/models/*.param "$tmp"/models/*.bin "$MODELS"/ 2>/dev/null || true
+    rm -rf "$tmp"
+  fi
+  echo "-> fetching upscayl model weights (best-effort)"
+  for m in "${BETTER_MODELS[@]}"; do
+    ok=1
+    for ext in param bin; do
+      [ -f "$MODELS/$m.$ext" ] && continue
+      curl -fsSL "$UPSCAYL_RAW/$m.$ext" -o "$MODELS/$m.$ext" || { ok=0; rm -f "$MODELS/$m.$ext"; }
+    done
+    [ "$ok" = 1 ] && echo "   have $m" || echo "   (skipped $m — download failed, fallback model will be used)"
+  done
+  echo "setup complete: $CACHE"
+  cmd_models
+}
+
+cmd_models() {
+  [ -d "$MODELS" ] || die "no models yet — run: vshell-upscale setup"
+  echo "available models in $MODELS:"
+  for p in "$MODELS"/*.param; do [ -e "$p" ] || continue; echo "  $(basename "${p%.param}")"; done
+}
+
+ensure_ready() {
+  if [ ! -x "$BIN" ] || [ ! -e "$MODELS/$MODEL_PHOTO_FALLBACK.param" ]; then
+    echo "-> first run: setting up upscaler models..." >&2
+    cmd_setup >&2
+  fi
+}
+
+pick_model() { # $1=type
+  case "$1" in
+    art)   [ -f "$MODELS/$MODEL_ART.param" ]   && echo "$MODEL_ART"   || echo "$MODEL_ART_FALLBACK" ;;
+    photo) [ -f "$MODELS/$MODEL_PHOTO.param" ] && echo "$MODEL_PHOTO" || echo "$MODEL_PHOTO_FALLBACK" ;;
+    auto|*) [ -f "$MODELS/$MODEL_PHOTO.param" ] && echo "$MODEL_PHOTO" || echo "$MODEL_PHOTO_FALLBACK" ;;
+  esac
+}
+
+upscale_one() { # $1=in $2=out $3=model $4=scale $5=width $6=downscale(1/0)
+  local in="$1" out="$2" model="$3" scale="$4" width="$5" down="$6"
+  [ -f "$in" ] || die "input not found: $in"
+  local mg; mg="$(magick_bin)"
+  local tmp; tmp="$(mktemp --suffix=.png)"
+  # One-shot: load model, upscale, EXIT (VRAM released on process exit).
+  "$BIN" -i "$in" -o "$tmp" -n "$model" -s "$scale" -m "$MODELS" >/dev/null 2>&1 \
+    || die "upscale failed (model=$model). Try 'vshell-upscale models' or a different --type."
+  mkdir -p "$(dirname "$out")"
+  if [ "$down" = 1 ]; then
+    "$mg" "$tmp" -filter Lanczos -resize "${width}x>" -quality 92 "$out"
+  else
+    "$mg" "$tmp" -quality 92 "$out"
+  fi
+  rm -f "$tmp"
+  echo "  $in -> $out  [$model, $("$mg" -ping "$out" -format '%wx%h' info: 2>/dev/null || echo '?')]"
+}
+
+# ---- arg parsing ----
+[ $# -ge 1 ] || { grep -E '^# ' "$0" | sed 's/^# \{0,1\}//'; exit 1; }
+case "${1:-}" in
+  setup)  cmd_setup;  exit 0 ;;
+  models) cmd_models; exit 0 ;;
+  -h|--help) grep -E '^# ' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+esac
+
+TYPE="auto"; WIDTH=6016; SCALE=4; FORCE_MODEL=""; DOWNSCALE=1; DIR_MODE=0
+POS=()
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --type)  TYPE="$2"; shift 2 ;;
+    --width) WIDTH="$2"; shift 2 ;;
+    --scale) SCALE="$2"; shift 2 ;;
+    --model) FORCE_MODEL="$2"; shift 2 ;;
+    --no-downscale) DOWNSCALE=0; shift ;;
+    --dir) DIR_MODE=1; shift ;;
+    -*) die "unknown option: $1" ;;
+    *) POS+=("$1"); shift ;;
+  esac
+done
+[ "${#POS[@]}" -ge 2 ] || die "need <input> <output> (see --help)"
+
+ensure_ready
+MODEL="${FORCE_MODEL:-$(pick_model "$TYPE")}"
+[ -f "$MODELS/$MODEL.param" ] || die "model '$MODEL' not installed (run: vshell-upscale setup; list: vshell-upscale models)"
+
+if [ "$DIR_MODE" = 1 ]; then
+  indir="${POS[0]}"; outdir="${POS[1]}"
+  [ -d "$indir" ] || die "input dir not found: $indir"
+  shopt -s nullglob
+  for f in "$indir"/*.{png,jpg,jpeg,webp,PNG,JPG,JPEG,WEBP}; do
+    upscale_one "$f" "$outdir/$(basename "${f%.*}").jpg" "$MODEL" "$SCALE" "$WIDTH" "$DOWNSCALE"
+  done
+else
+  upscale_one "${POS[0]}" "${POS[1]}" "$MODEL" "$SCALE" "$WIDTH" "$DOWNSCALE"
+fi
