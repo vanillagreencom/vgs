@@ -1,0 +1,10 @@
+#!/usr/bin/make -f
+
+%:
+	dh $@
+
+override_dh_auto_build:
+	cd backend && go build -mod=vendor -trimpath -ldflags='-s -w -X vshell/backend/internal/registry.cliVersion=$$(cat ../VERSION)' -o ../vshell-backend ./cmd/vshell-backend
+
+override_dh_auto_install:
+	DESTDIR=$(CURDIR)/debian/vgs-shell VGS_BACKEND_BINARY=$(CURDIR)/vshell-backend packaging/install-system.sh

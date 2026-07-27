@@ -166,7 +166,8 @@ func (st *socketState) teardown() {
 	})
 }
 
-// runQuickshell spawns `qs -c vshell` (with VGS_SOCKET set when socketPath is
+// runQuickshell spawns the packaged config path when VSHELL_ROOT is available,
+// otherwise `qs -c vshell` (with VGS_SOCKET set when socketPath is
 // non-empty) and waits. A signal-initiated shutdown returns 0 (a clean stop, so
 // systemd does not record it as a failure); otherwise Quickshell's exit code is
 // propagated.
@@ -175,7 +176,14 @@ func runQuickshell(log *slog.Logger, sigCh chan os.Signal, qsArgs []string, sock
 		os.Setenv("VGS_SOCKET", socketPath)
 	}
 
-	cmd := exec.Command("qs", append([]string{"-c", "vshell"}, qsArgs...)...)
+	baseArgs := []string{"-c", "vshell"}
+	if root := os.Getenv("VSHELL_ROOT"); root != "" {
+		configPath := filepath.Join(root, "quickshell", "vshell")
+		if _, err := os.Stat(filepath.Join(configPath, "shell.qml")); err == nil {
+			baseArgs = []string{"-p", configPath}
+		}
+	}
+	cmd := exec.Command("qs", append(baseArgs, qsArgs...)...)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	cmd.Stdin = os.Stdin

@@ -1,0 +1,25 @@
+pkgname=vgs-shell
+version=0.1.0
+revision=1
+depends="quickshell jq python3"
+short_desc="VanillaGreen desktop shell for Hyprland and Niri"
+maintainer="Brad <brad@vanillagreen>"
+license="MIT"
+homepage="https://github.com/vanillagreencom/vgs"
+case "$XBPS_TARGET_MACHINE" in
+	x86_64*)
+		_arch=x86_64
+		checksum=135817331525a6878e2fdaf2f1b535280f36366631996d095bcda4e7e35e7c88
+		;;
+	aarch64*)
+		_arch=aarch64
+		checksum=221ea36fa9fe57f22c9c789c53895e336ae389d33f3f7c804153b8245346c7a4
+		;;
+	*) broken="unsupported architecture: $XBPS_TARGET_MACHINE" ;;
+esac
+distfiles="https://github.com/vanillagreencom/vgs/releases/download/v${version}/vgs-${version}-linux-${_arch}.tar.gz"
+wrksrc="vgs-${version}-linux-${_arch}"
+
+do_install() {
+	DESTDIR="$DESTDIR" PREFIX=/usr VGS_BACKEND_BINARY="$wrksrc/bin/vshell-backend" packaging/install-system.sh
+}

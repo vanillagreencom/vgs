@@ -18,7 +18,7 @@ Singleton {
     readonly property url config: `${StandardPaths.standardLocations(StandardPaths.GenericConfigLocation)[0]}/vshell`
 
     readonly property string repoRoot: Quickshell.env("VSHELL_ROOT") || strip(Qt.resolvedUrl("../../.."))
-    readonly property string vshellCli: strip(root.home) + "/.local/bin/vshell"
+    readonly property string vshellCli: repoRoot + "/bin/vshell"
 
     readonly property url imagecache: `${cache}/imagecache`
 
