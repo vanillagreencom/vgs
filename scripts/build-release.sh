@@ -25,7 +25,7 @@ cp "$root/packaging/install-system.sh" "$bundle/packaging/"
 cp -a "$root/bin/." "$bundle/bin/"
 rm -f "$bundle/bin/vshell-asdcontrol"
 cp "$root/README.md" "$root/LICENSE" "$root/VERSION" "$root/install.sh" "$root/uninstall.sh" "$bundle/"
-CGO_ENABLED=0 GOOS=linux GOARCH="$goarch" GOTOOLCHAIN="$go_toolchain" go build -C "$root/backend" -mod=vendor -trimpath \
+CGO_ENABLED=0 GOOS=linux GOARCH="$goarch" GOTOOLCHAIN="$go_toolchain" go build -C "$root/backend" -mod=vendor -buildvcs=false -trimpath \
   -ldflags="-s -w -X vshell/backend/internal/registry.cliVersion=${version#v}" \
   -o "$bundle/bin/vshell-backend" ./cmd/vshell-backend
 find "$bundle/bin" -maxdepth 1 -type f -exec chmod 0755 {} +
