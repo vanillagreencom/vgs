@@ -77,10 +77,14 @@ Singleton {
     // from the lock *request*).
     property bool isShellLocked: false
 
-    // True while the lock screen is blanked to full black after idle-while-locked
-    // (monitors stay ON — this is NOT DPMS). Drawn by LockSurface; cleared by any
-    // seat activity (the blank monitor un-idles).
-    property bool lockScreenBlanked: false
+    // True while the idle tier has blanked the lock screen to full black after
+    // idle-while-locked (monitors stay ON — this is NOT DPMS). Cleared by any seat
+    // activity (the blank monitor un-idles).
+    property bool lockScreenBlankedIdle: false
+
+    // What LockSurface actually draws: the idle tier above, OR the manual
+    // blackout latch below, which activity may NOT clear.
+    readonly property bool lockScreenBlanked: lockScreenBlankedIdle || lockBlackoutActive
 
     // ======================================================================
     //  Display power — the single owner
@@ -206,6 +210,175 @@ Singleton {
         setDisplaysOff(false, "resume", true);
     }
 
+    // ======================================================================
+    //  Manual lock blackout — jump to the end of the idle path on demand
+    // ======================================================================
+    // Locks, blanks to full black (cursor hidden, monitors still powered — same
+    // overlay the idle blank tier draws), and dims every display to its minimum.
+    //
+    // Unlike the idle tier this is a LATCH: seat activity may NOT lift it, only
+    // an explicit toggle off. That is the whole point — it holds the screen dark
+    // through mouse bumps until you ask for the prompt back, and the same toggle
+    // ramps brightness back to the levels captured on the way down.
+    //
+    // Brightness is deliberately not DPMS: the panels stay lit at 1% so waking
+    // costs nothing, avoiding the flaky Thunderbolt/XDR re-modeset that the
+    // Super+F5 secure-off path can hit.
+    property bool lockBlackoutActive: false
+    property bool blackoutLockPending: false
+    // deviceId -> brightness percentage captured before dimming.
+    property var _blackoutBrightness: ({})
+    readonly property string blackoutStatePath: {
+        const runtimeDir = Quickshell.env("XDG_RUNTIME_DIR");
+        return runtimeDir ? runtimeDir + "/vshell-lock-blackout" : "";
+    }
+
+    FileView {
+        id: blackoutStateFile
+        path: root.blackoutStatePath
+        blockLoading: true
+        blockWrites: true
+        atomicWrites: true
+        watchChanges: false
+        printErrors: false
+    }
+
+    function _blackoutDevices() {
+        return (DisplayService.devices || []).filter(d => d && d.id && DisplayService.isDisplayBrightnessClass(d.class));
+    }
+
+    function _writeBlackoutState() {
+        if (!blackoutStatePath)
+            return;
+        const saved = _blackoutBrightness || {};
+        blackoutStateFile.setText(Object.keys(saved).length > 0 ? JSON.stringify(saved) + "\n" : "");
+    }
+
+    function _dimForBlackout() {
+        // Re-blacking out while a startup restore is still in flight: that pending
+        // snapshot holds the TRUE pre-blackout levels, so keep it — reading the
+        // displays now would capture 1% and strand them there on the way back out.
+        if (blackoutRestoreTimer.running) {
+            blackoutRestoreTimer.stop();
+            for (const device of _blackoutDevices())
+                DisplayService.setBrightness(1, device.id, true);
+            return;
+        }
+        const saved = {};
+        for (const device of _blackoutDevices()) {
+            saved[device.id] = DisplayService.getDeviceBrightness(device.id);
+            // 1 (not 0) — display-class devices clamp there anyway, and a 0 write
+            // to a DDC panel can read back as "off" on the next scan.
+            DisplayService.setBrightness(1, device.id, true);
+        }
+        _blackoutBrightness = saved;
+        _writeBlackoutState();
+    }
+
+    function _restoreBlackoutBrightness() {
+        const saved = _blackoutBrightness || {};
+        for (const deviceId in saved)
+            DisplayService.setBrightness(saved[deviceId], deviceId, true);
+        _blackoutBrightness = ({});
+        _writeBlackoutState();
+    }
+
+    function _enterLockBlackout() {
+        blackoutLockPending = false;
+        if (lockBlackoutActive)
+            return;
+        // Latch first so the black overlay covers the brightness ramp.
+        lockBlackoutActive = true;
+        _dimForBlackout();
+        log.info("lock blackout ON (dimmed " + Object.keys(_blackoutBrightness).length + " display(s))");
+    }
+
+    // Off-while-unlocked is never entered directly: like requestSecureManualOff()
+    // this waits for a CONFIRMED lock surface, so a failed lock can't leave the
+    // session dark and dim with no lock behind it.
+    function startLockBlackout() {
+        if (lockBlackoutActive)
+            return;
+        if (isShellLocked) {
+            _enterLockBlackout();
+            return;
+        }
+        blackoutLockPending = true;
+        lockRequested();
+    }
+
+    function stopLockBlackout() {
+        blackoutLockPending = false;
+        if (!lockBlackoutActive)
+            return;
+        lockBlackoutActive = false;
+        _restoreBlackoutBrightness();
+        log.info("lock blackout OFF");
+    }
+
+    function toggleLockBlackout() {
+        if (lockBlackoutActive || blackoutLockPending)
+            stopLockBlackout();
+        else
+            startLockBlackout();
+    }
+
+    // A shell restart drops the latch with the old lock surface, so dimmed
+    // displays must not be left behind — brightness keys reach the shell only if
+    // the compositor bound them `locked`, which would otherwise strand the
+    // session at 1%. Devices enumerate asynchronously, hence the retry.
+    function _recoverBlackoutOnStartup() {
+        if (!blackoutStatePath)
+            return;
+        const raw = blackoutStateFile.text().trim();
+        if (!raw)
+            return;
+        let saved = null;
+        try {
+            saved = JSON.parse(raw);
+        } catch (e) {
+            saved = null;
+        }
+        if (!saved || Object.keys(saved).length === 0) {
+            _blackoutBrightness = ({});
+            _writeBlackoutState();
+            return;
+        }
+        log.info("startup: restoring brightness left dimmed by a lock blackout");
+        _blackoutBrightness = saved;
+        blackoutRestoreTimer.attempts = 0;
+        blackoutRestoreTimer.restart();
+    }
+
+    Timer {
+        id: blackoutRestoreTimer
+        interval: 500
+        repeat: true
+        running: false
+        property int attempts: 0
+        onTriggered: {
+            if (DisplayService.brightnessAvailable) {
+                stop();
+                root._restoreBlackoutBrightness();
+                return;
+            }
+            attempts++;
+            if (attempts >= 20) {
+                stop();
+                root.log.warn("startup: no brightness devices appeared; leaving blackout state file for the next start");
+            }
+        }
+    }
+
+    IpcHandler {
+        target: "blackout"
+
+        function on(): void { root.startLockBlackout(); }
+        function off(): void { root.stopLockBlackout(); }
+        function toggle(): void { root.toggleLockBlackout(); }
+        function status(): string { return root.lockBlackoutActive ? "on" : (root.blackoutLockPending ? "pending" : "off"); }
+    }
+
     // ---- Idle monitor enable/rearm ---------------------------------------
     onEnabledChanged: _applyMonitorEnableds()
     onIdleBlockedChanged: _rearmIdleMonitors()
@@ -214,7 +387,17 @@ Singleton {
     onLockTimeoutChanged: _rearmIdleMonitors()
     onSuspendTimeoutChanged: _rearmIdleMonitors()
     onPostLockMonitorTimeoutChanged: _rearmIdleMonitors()
-    onIsShellLockedChanged: _rearmIdleMonitors()
+    onIsShellLockedChanged: {
+        _rearmIdleMonitors();
+        if (isShellLocked) {
+            if (blackoutLockPending)
+                _enterLockBlackout();
+            return;
+        }
+        // Unlocked (a password typed blind under the overlay, forceReset, session
+        // recovery): drop the latch and hand the desktop back at full brightness.
+        stopLockBlackout();
+    }
 
     function _applyMonitorEnableds() {
         const base = !idleBlocked;
@@ -225,7 +408,7 @@ Singleton {
         suspendMonitor.enabled = base && suspendTimeout > 0;
         lockBlankMonitor.enabled = base && isShellLocked && SettingsData.lockScreenBlankEnabled && SettingsData.lockScreenBlankTimeout > 0;
         if (!lockBlankMonitor.enabled)
-            lockScreenBlanked = false;
+            lockScreenBlankedIdle = false;
     }
 
     function _rearmIdleMonitors() {
@@ -337,7 +520,7 @@ Singleton {
         timeout: SettingsData.lockScreenBlankTimeout > 0 ? SettingsData.lockScreenBlankTimeout : 86400
         respectInhibitors: root.respectInhibitors
         enabled: false
-        onIsIdleChanged: root.lockScreenBlanked = isIdle
+        onIsIdleChanged: root.lockScreenBlankedIdle = isIdle
     }
 
     // Wake FALLBACK: seat-level idle-notify whenever displays are off while the
@@ -414,5 +597,6 @@ Singleton {
         manualWakeBlocked = manualWakeBlockPath && manualWakeBlockFile.text().trim() === "1";
         _applyMonitorEnableds();
         Qt.callLater(_recoverDisplaysOnStartup);
+        Qt.callLater(_recoverBlackoutOnStartup);
     }
 }
