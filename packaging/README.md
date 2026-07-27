@@ -8,6 +8,7 @@ VGS installs under `/usr/lib/vshell`, exposes `/usr/bin/vshell`, and installs th
 | Fedora 43/44 | [COPR `vanillagreen/vgs-shell`](https://copr.fedorainfracloud.org/coprs/vanillagreen/vgs-shell/) | Published |
 | openSUSE Tumbleweed/Slowroll | [OBS `home:vanillagreen`](https://build.opensuse.org/package/show/home:vanillagreen/vgs-shell) | Published |
 | Debian 13 | [OBS `home:vanillagreen`](https://build.opensuse.org/package/show/home:vanillagreen/vgs-shell) | Published |
+| Ubuntu | [`debian/`](debian/) | Recipe only; no verified Quickshell 0.3.0 repository |
 | Gentoo | [VanillaGreen overlay](https://github.com/vanillagreencom/gentoo-overlay) | Published; [GURU PR #526](https://github.com/gentoo/guru/pull/526) pending |
 | Nix | [`github:vanillagreencom/vgs`](../flake.nix) | Published flake and Home Manager module |
 | Void | [`void/template`](void/template) | Recipe only; Void does not package Quickshell 0.3.0 |
