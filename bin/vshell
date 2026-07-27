@@ -9,6 +9,7 @@ helper="$script_dir/vshell-helper"
 export VSHELL_ROOT="$repo_root"
 
 backend_src="$repo_root/backend"
+packaged_backend="$script_dir/vshell-backend"
 backend_bin="${XDG_CACHE_HOME:-$HOME/.cache}/vshell/vshell-backend"
 backend_build_log="${XDG_CACHE_HOME:-$HOME/.cache}/vshell/backend-build.log"
 
@@ -20,6 +21,10 @@ backend_build_log="${XDG_CACHE_HOME:-$HOME/.cache}/vshell/backend-build.log"
 # Returns non-zero only when no usable binary can be produced. Never rebuilds on
 # the hot path.
 _ensure_backend() {
+  if [[ -x "$packaged_backend" ]]; then
+    backend_bin="$packaged_backend"
+    return 0
+  fi
   [[ -d "$backend_src" ]] || return 1
   if [[ -x "$backend_bin" ]] \
     && [[ ! "$backend_src/go.mod" -nt "$backend_bin" ]] \
@@ -219,6 +224,9 @@ EOF
 }
 
 case "${1:-run}" in
+  version|--version)
+    cat "$repo_root/VERSION"
+    ;;
   run)
     shift || true
     "$helper" fonts apply --json >/dev/null 2>&1 || true
@@ -334,6 +342,7 @@ case "${1:-run}" in
   help|-h|--help)
     cat <<'EOF'
 Usage:
+  vshell --version
   vshell run [qs args...]
   vshell backend run|serve|request <method> [json]|doctor|methods [--json]
   vshell open [--mime MIME] [--type url|file|uri] <target>

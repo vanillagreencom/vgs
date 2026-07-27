@@ -197,6 +197,9 @@ func methods(rest []string) int {
 			var live registry.ServerInfo
 			if json.Unmarshal(raw, &live) == nil && len(live.Methods) > 0 {
 				info = live
+				// Inventory may come from the running daemon, but cliVersion describes
+				// the binary answering this command.
+				info.CLIVersion = registry.CLIVersion()
 			}
 		}
 	} else {

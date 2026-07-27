@@ -1,0 +1,18 @@
+pkgname=vgs-shell
+pkgver=0.1.0
+pkgrel=1
+pkgdesc='VanillaGreen desktop shell for Hyprland and Niri'
+arch=('x86_64' 'aarch64')
+url='https://github.com/vanillagreencom/vgs'
+license=('MIT')
+depends=('quickshell' 'jq' 'python' 'systemd')
+optdepends=('hyprland: reference compositor' 'niri: scrolling compositor' 'wl-clipboard: clipboard history')
+source_x86_64=("$url/releases/download/v$pkgver/vgs-$pkgver-linux-x86_64.tar.gz")
+source_aarch64=("$url/releases/download/v$pkgver/vgs-$pkgver-linux-aarch64.tar.gz")
+sha256sums_x86_64=('135817331525a6878e2fdaf2f1b535280f36366631996d095bcda4e7e35e7c88')
+sha256sums_aarch64=('221ea36fa9fe57f22c9c789c53895e336ae389d33f3f7c804153b8245346c7a4')
+
+package() {
+  cd "vgs-$pkgver-linux-$CARCH"
+  DESTDIR="$pkgdir" VGS_BACKEND_BINARY="$PWD/bin/vshell-backend" packaging/install-system.sh
+}

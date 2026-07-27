@@ -136,21 +136,33 @@ smaller images into 6K wallpapers.
 ## Install
 
 ```bash
-git clone https://github.com/vanillagreencom/vgs.git ~/dev/vgs
-
-# point Quickshell and your PATH at it
-ln -s ~/dev/vgs/quickshell/vshell ~/.config/quickshell/vshell
-ln -s ~/dev/vgs/bin/vshell        ~/.local/bin/vshell
-
-# start it with your session
-systemctl --user enable --now vshell.service
+curl -fsSL https://raw.githubusercontent.com/vanillagreencom/vgs/v0.1.0/install.sh | bash
 ```
 
-`vshell deps status` shows which optional features your system can run. `vshell --help` covers the
-rest: themes, capture, brightness, updates and the IPC surface you can bind keys to.
+Requires Quickshell 0.3.0, `jq`, `python3`, systemd user services, and Hyprland or Niri. Works on
+x86-64 and ARM64 Linux. Run `vshell deps status` after install; optional features report their
+missing system packages instead of blocking the shell.
 
-Keep `~/.config/vshell` as a real directory, not a symlink into the repo — that is where your
-settings, user themes and plugin overrides live. Bundled plugins load from the clone.
+**Nix / Home Manager** — add the input in `flake.nix`, then import it in your Home Manager module:
+
+```nix
+inputs.vgs.url = "github:vanillagreencom/vgs";
+```
+
+```nix
+{
+  imports = [ inputs.vgs.homeManagerModules.default ];
+  programs.vgs-shell.enable = true;
+}
+```
+
+**Packages and manual installs.** Arch/AUR, Fedora RPM, Debian/Ubuntu, Gentoo, Void, and source
+recipes live in [`packaging/`](packaging/). Until a recipe has a public repository URL, use the
+one-line installer or download a checksum-verified bundle from
+[GitHub Releases](https://github.com/vanillagreencom/vgs/releases).
+
+`vshell --help` covers themes, capture, brightness, updates, and IPC. Keep `~/.config/vshell` as a
+real directory: settings, user themes, and plugin overrides live there.
 
 ## Repo layout
 

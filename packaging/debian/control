@@ -1,0 +1,15 @@
+Source: vgs-shell
+Section: x11
+Priority: optional
+Maintainer: Brad <brad@vanillagreen>
+Build-Depends: debhelper-compat (= 13), golang-any
+Standards-Version: 4.7.0
+Homepage: https://github.com/vanillagreencom/vgs
+Rules-Requires-Root: no
+
+Package: vgs-shell
+Architecture: any
+Depends: quickshell, jq, python3, systemd, ${misc:Depends}, ${shlibs:Depends}
+Description: VanillaGreen desktop shell for Hyprland and Niri
+ VGS provides a bar, launcher, settings, lock screen, notifications, capture,
+ wallpapers, and application theme generation.
