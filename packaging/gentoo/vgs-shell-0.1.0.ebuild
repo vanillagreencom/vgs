@@ -14,7 +14,7 @@ BDEPEND="dev-lang/go"
 
 src_compile() {
 	cd backend || die
-	go build -mod=vendor -trimpath -ldflags="-s -w -X vshell/backend/internal/registry.cliVersion=${PV}" -o "${T}/vshell-backend" ./cmd/vshell-backend || die
+	go build -mod=vendor -buildvcs=false -trimpath -ldflags="-s -w -X vshell/backend/internal/registry.cliVersion=${PV}" -o "${T}/vshell-backend" ./cmd/vshell-backend || die
 }
 
 src_install() {

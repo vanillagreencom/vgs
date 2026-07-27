@@ -18,7 +18,7 @@ VGS is a Quickshell desktop shell for Hyprland and Niri.
 
 %build
 cd backend
-go build -mod=vendor -trimpath -ldflags='-s -w -X vshell/backend/internal/registry.cliVersion=%{version}' -o ../vshell-backend ./cmd/vshell-backend
+go build -mod=vendor -buildvcs=false -trimpath -ldflags='-s -w -X vshell/backend/internal/registry.cliVersion=%{version}' -o ../vshell-backend ./cmd/vshell-backend
 
 %install
 DESTDIR=%{buildroot} VGS_BACKEND_BINARY="$PWD/vshell-backend" packaging/install-system.sh

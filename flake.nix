@@ -22,7 +22,7 @@
               export HOME=$TMPDIR
               export GOFLAGS=-mod=vendor
               export CGO_ENABLED=0
-              (cd backend && go build -mod=vendor -trimpath -ldflags="-s -w -X vshell/backend/internal/registry.cliVersion=$version" -o ../vshell-backend ./cmd/vshell-backend)
+              (cd backend && go build -mod=vendor -buildvcs=false -trimpath -ldflags="-s -w -X vshell/backend/internal/registry.cliVersion=$version" -o ../vshell-backend ./cmd/vshell-backend)
               runHook postBuild
             '';
             installPhase = ''
