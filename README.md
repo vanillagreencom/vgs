@@ -156,9 +156,8 @@ inputs.vgs.url = "github:vanillagreencom/vgs";
 }
 ```
 
-**Packages and manual installs.** Arch/AUR, Fedora RPM, Debian/Ubuntu, Gentoo, Void, and source
-recipes live in [`packaging/`](packaging/). Until a recipe has a public repository URL, use the
-one-line installer or download a checksum-verified bundle from
+**Packages.** AUR, Fedora COPR, openSUSE/Debian OBS, Gentoo overlay, Nix, and maintainer recipes
+are listed in [`packaging/`](packaging/). Checksum-verified bundles and source archives are on
 [GitHub Releases](https://github.com/vanillagreencom/vgs/releases).
 
 `vshell --help` covers themes, capture, brightness, updates, and IPC. Keep `~/.config/vshell` as a
