@@ -1,10 +1,12 @@
+%global debug_package %{nil}
+
 Name:           vgs-shell
 Version:        0.1.0
 Release:        1%{?dist}
 Summary:        VanillaGreen desktop shell for Hyprland and Niri
 License:        MIT
 URL:            https://github.com/vanillagreencom/vgs
-Source0:        %{url}/archive/refs/tags/v%{version}.tar.gz
+Source0:        %{url}/releases/download/v%{version}/vgs-%{version}-source.tar.gz
 BuildRequires:  golang
 Requires:       quickshell
 Requires:       jq
@@ -15,6 +17,8 @@ VGS is a Quickshell desktop shell for Hyprland and Niri.
 
 %prep
 %autosetup -n vgs-%{version}
+sed -i 's|^#!/bin/env bash$|#!/usr/bin/env bash|' \
+  config/vshell/nvim/colorschemes/tokyonight.nvim/scripts/{build,docs}
 
 %build
 cd backend
