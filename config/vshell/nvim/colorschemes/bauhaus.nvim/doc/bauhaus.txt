@@ -1,0 +1,33 @@
+*bauhaus.txt*  Bauhaus colorscheme                                                
+
+BAUHAUS                                                                  *bauhaus*
+
+Bauhaus-inspired dark theme with warm coral/sand accents and cool slate/teal
+surfaces.
+
+USAGE
+    :colorscheme bauhaus
+
+CONFIGURATION
+>lua
+    require('bauhaus').setup({
+      transparent = false,
+      -- user_overrides = function() end,
+    })
+<
+
+LUALINE
+>lua
+    require('lualine').setup({
+      options = { theme = 'bauhaus' },
+    })
+<
+
+PALETTE
+    See lua/bauhaus/palette.lua for hex values and ANSI ramps.
+
+AUTHOR
+    mcw
+
+LICENSE
+    MIT

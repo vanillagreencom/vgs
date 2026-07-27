@@ -1,0 +1,13 @@
+{
+  "app": "zed",
+  "template": "vgs.json",
+  "destination": "~/.config/zed/themes/vgs.json",
+  "curatedFile": "zed.json",
+  "detect": {
+    "commands": [
+      "zed",
+      "zeditor",
+      "zedit"
+    ]
+  }
+}

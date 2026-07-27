@@ -1,0 +1,16 @@
+{
+    "id": "aiUsage",
+    "name": "AI Usage",
+    "description": "AI provider usage widget backed by optional local ai-usage compatible command.",
+    "version": "1.0.0",
+    "license": "MIT",
+    "author": "VanillaGreen",
+    "icon": "smart_toy",
+    "component": "./AiUsageWidget.qml",
+    "settings": "./AiUsageSettings.qml",
+    "requires_shell": ">=1.0.0",
+    "permissions": [
+        "settings_read",
+        "settings_write"
+    ]
+}

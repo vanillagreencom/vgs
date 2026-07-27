@@ -1,0 +1,12 @@
+{
+  "app": "ghostty",
+  "template": "ghostty.conf",
+  "destination": "~/.config/ghostty/themes/vgs",
+  "curatedFile": "ghostty.conf",
+  "detect": {
+    "commands": [
+      "ghostty"
+    ]
+  },
+  "hook": "ghostty-reload"
+}

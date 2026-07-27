@@ -1,0 +1,45 @@
+import QtQuick
+import qs.Common
+import qs.Widgets
+
+StyledRect {
+    id: root
+
+    property string iconName: ""
+    property bool iconFilled: false
+    property int iconSize: Theme.iconSize - 4
+    property color iconColor: Theme.surfaceText
+    property color backgroundColor: "transparent"
+    property bool circular: true
+    property int buttonSize: 32
+    property var tooltipText: null
+    property string tooltipSide: "bottom"
+
+    signal clicked
+    signal entered
+    signal exited
+
+    width: buttonSize
+    height: buttonSize
+    radius: root.circular ? root.buttonSize / 2 : Theme.controlRadius
+    color: backgroundColor
+
+    VgsIcon {
+        anchors.centerIn: parent
+        name: root.iconName
+        filled: root.iconFilled
+        size: root.iconSize
+        color: root.iconColor
+    }
+
+    StateLayer {
+        disabled: !root.enabled
+        stateColor: Theme.primary
+        cornerRadius: root.radius
+        onClicked: root.clicked()
+        onEntered: root.entered()
+        onExited: root.exited()
+        tooltipText: root.tooltipText
+        tooltipSide: root.tooltipSide
+    }
+}

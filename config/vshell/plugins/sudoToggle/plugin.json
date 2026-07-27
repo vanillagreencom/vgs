@@ -1,0 +1,12 @@
+{
+    "id": "sudoToggle",
+    "name": "Passwordless Sudo",
+    "description": "Passwordless sudo status indicator for systems that provide the VGS sudo toggle helper.",
+    "version": "1.0.0",
+    "license": "MIT",
+    "author": "VanillaGreen",
+    "icon": "gpp_maybe",
+    "component": "./SudoToggleWidget.qml",
+    "requires_shell": ">=1.0.0",
+    "permissions": []
+}

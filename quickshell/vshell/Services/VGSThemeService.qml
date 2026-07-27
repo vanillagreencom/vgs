@@ -1,0 +1,735 @@
+pragma Singleton
+pragma ComponentBehavior: Bound
+
+import QtQuick
+import Quickshell
+import qs.Common
+import qs.Services
+import "RestyleQueue.js" as RestyleQueue
+import "ThemeRequest.js" as ThemeRequest
+
+Singleton {
+    id: root
+    readonly property var log: Log.scoped("VGSThemeService")
+
+    // Pending helper calls keyed by Proc command id. Proc coalesces rapid
+    // same-id calls into one launch with one callback, so a plain counter
+    // leaks and pins `busy` true forever; a per-id map stays balanced.
+    property var _pending: ({})
+    property int inflight: 0
+    // Restyles have their own single-flight queue because Proc only coalesces
+    // calls that are still in its debounce window; it does not serialize
+    // processes after launch. Immutable transitions keep QML bindings notified
+    // and busy asserted across queued hand-offs.
+    property var _restyleQueueState: RestyleQueue.emptyState()
+    readonly property bool busy: inflight > 0
+    readonly property bool restyling: RestyleQueue.isBusy(_restyleQueueState)
+    property var _pendingApps: ({})
+    property string lastMessage: ""
+    property string lastError: ""
+    property var blueprints: []
+    property var currentTheme: ({})
+    property string selectedWallpaper: ""
+    readonly property var paletteArgMap: ({
+        background: "background",
+        foreground: "foreground",
+        accent: "accent",
+        cursor: "cursor",
+        selectionBackground: "selection_background",
+        selectionForeground: "selection_foreground",
+        black: "black",
+        red: "red",
+        green: "green",
+        yellow: "yellow",
+        blue: "blue",
+        magenta: "magenta",
+        cyan: "cyan",
+        white: "white",
+        brightBlack: "bright_black",
+        brightRed: "bright_red",
+        brightGreen: "bright_green",
+        brightYellow: "bright_yellow",
+        brightBlue: "bright_blue",
+        brightMagenta: "bright_magenta",
+        brightCyan: "bright_cyan",
+        brightWhite: "bright_white"
+    })
+
+    property var themeApps: []
+    // Composed wallpaper set of the current theme: [{file, path, origin, default}]
+    property var themeWallpapers: []
+    // Per-app template roles keyed by app id: [{role, value, overridden}]
+    property var appRoles: ({})
+
+    signal blueprintsLoaded
+    signal currentLoaded
+    signal themeAppsLoaded
+    signal wallpapersLoaded
+    signal appRolesLoaded(string app)
+    signal applyCompleted(bool success, string message)
+
+    function _persistAppliedTheme(name) {
+        if (!name || typeof SettingsData === "undefined")
+            return;
+        SettingsData.set("currentThemeCategory", "vgs");
+        SettingsData.set("currentThemeName", name);
+    }
+
+    function _markGreeterThemeSyncPending() {
+        if (typeof SettingsData === "undefined" || SettingsData.isGreeterMode)
+            return;
+        SettingsData.set("greeterSyncPending", true);
+    }
+
+    // backgroundTask: long-running helper calls (preview rendering) must not
+    // count toward `busy`, or every Apply button goes dead for minutes.
+    function _run(id, args, callback, timeoutMs, backgroundTask) {
+        if (!backgroundTask) {
+            _pending[id] = true;
+            inflight = Object.keys(_pending).length;
+        }
+        lastError = "";
+        Proc.runCommand(id, [Paths.vshellCli].concat(args), function(output, exitCode, stderr) {
+            if (!backgroundTask) {
+                delete _pending[id];
+                inflight = Object.keys(_pending).length;
+            }
+            const combinedError = (stderr && stderr.trim().length > 0) ? stderr : output;
+            if (exitCode !== 0) {
+                lastError = combinedError || ("Command failed: " + args.join(" "));
+                log.warn("Command failed", args.join(" "), "exit", exitCode, lastError);
+            }
+            if (callback)
+                callback(output, exitCode, stderr || "");
+        }, 0, timeoutMs || 120000);
+    }
+
+    function refresh() {
+        refreshCurrent();
+        refreshBlueprints();
+        refreshApps();
+    }
+
+    function refreshApps() {
+        _run("vgs-theme-apps", ["theme", "apps", "--json"], function(output, exitCode) {
+            if (exitCode !== 0)
+                return;
+            try {
+                const data = JSON.parse(output || "{}");
+                themeApps = data.apps || [];
+                themeAppsLoaded();
+            } catch (e) {
+                lastError = "Failed to parse theme apps: " + e;
+            }
+        }, 120000, true);
+    }
+
+    function appBusy(app) {
+        return !!(_pendingApps && _pendingApps[app]);
+    }
+
+    function _setAppBusy(app, value) {
+        _pendingApps = ThemeRequest.setAppBusy(_pendingApps, app, value);
+    }
+
+    function _messageWithApplyWarnings(message, output) {
+        try {
+            const data = JSON.parse(output || "{}");
+            const warnings = (data.warnings || []).slice();
+            const applied = data.applied || data.apply || {};
+            for (const warning of (applied.warnings || []))
+                warnings.push(warning);
+            return warnings.length > 0 ? message + " · warnings: " + warnings.join("; ") : message;
+        } catch (e) {
+            return message;
+        }
+    }
+
+    function setAppEnabled(app, enabled) {
+        if (!app)
+            return;
+        // The helper owns the settings.json write (re-rendering the target on
+        // enable); SettingsData picks the external edit up via its file watcher.
+        _setAppBusy(app, true);
+        _run("vgs-theme-app-toggle-" + app, ThemeRequest.appToggleArgs(app, enabled), function(output, exitCode, stderr) {
+            _setAppBusy(app, false);
+            if (exitCode !== 0) {
+                applyCompleted(false, stderr || output || ("Toggle failed: " + app));
+                return;
+            }
+            refreshApps();
+            const message = app + (enabled ? " theming enabled" : " theming disabled (last output left in place)");
+            applyCompleted(true, _messageWithApplyWarnings(message, output));
+        }, 120000, true);
+    }
+
+    function editAppFile(app, themeName) {
+        const args = ["theme", "edit-app", app, "--json"];
+        if (themeName)
+            args.push("--theme", themeName);
+        _run("vgs-theme-edit-app", args, function(output, exitCode, stderr) {
+            if (exitCode !== 0) {
+                applyCompleted(false, stderr || output || ("Edit failed: " + app));
+                return;
+            }
+            try {
+                const data = JSON.parse(output || "{}");
+                if (data.path) {
+                    Quickshell.execDetached(["xdg-open", data.path]);
+                    applyCompleted(true, (data.created ? "Created " : "Opening ") + data.path);
+                }
+                refresh();
+            } catch (e) {
+                applyCompleted(false, "Failed to parse edit-app result: " + e);
+            }
+        });
+    }
+
+    function resetAppFile(app, themeName) {
+        const args = ["theme", "reset-app", app, "--json"];
+        if (themeName)
+            args.push("--theme", themeName);
+        _run("vgs-theme-reset-app", args, function(output, exitCode, stderr) {
+            if (exitCode !== 0) {
+                applyCompleted(false, stderr || output || ("Reset failed: " + app));
+                return;
+            }
+            refresh();
+            applyCompleted(true, app + " reset to generated");
+        });
+    }
+
+    function setPair(name, pair) {
+        if (!name)
+            return;
+        _run("vgs-theme-set-pair", ["theme", "set-pair", name, pair || "", "--json"], function(output, exitCode, stderr) {
+            if (exitCode !== 0) {
+                applyCompleted(false, stderr || output || "Pairing failed");
+                return;
+            }
+            refreshBlueprints();
+            applyCompleted(true, pair ? (name + " now pairs with " + pair) : (name + " pairing cleared"));
+        });
+    }
+
+    function deleteTheme(name) {
+        if (!name)
+            return;
+        _run("vgs-theme-delete", ["theme", "delete", name, "--json"], function(output, exitCode, stderr) {
+            if (exitCode !== 0) {
+                applyCompleted(false, stderr || output || ("Delete failed: " + name));
+                return;
+            }
+            refreshBlueprints();
+            applyCompleted(true, "Deleted " + name);
+        });
+    }
+
+    function duplicateTheme(name, newName) {
+        if (!name)
+            return;
+        const args = ["theme", "duplicate", name, "--json"];
+        if (newName)
+            args.push("--as", newName);
+        _run("vgs-theme-duplicate", args, function(output, exitCode, stderr) {
+            if (exitCode !== 0) {
+                applyCompleted(false, stderr || output || ("Duplicate failed: " + name));
+                return;
+            }
+            try {
+                const data = JSON.parse(output || "{}");
+                refreshBlueprints();
+                applyCompleted(true, name + " duplicated to editable user theme " + (data.name || ""));
+            } catch (e) {
+                applyCompleted(false, "Failed to parse duplicate result: " + e);
+            }
+        });
+    }
+
+    function regeneratePreview(name) {
+        if (!name || previewsGenerating)
+            return;
+        previewsGenerating = true;
+        _run("vgs-theme-preview-one", ["theme", "preview", name, "--force", "--json"], function(output, exitCode) {
+            previewsGenerating = false;
+            if (exitCode !== 0) {
+                applyCompleted(false, lastError || ("Preview generation failed: " + name));
+                return;
+            }
+            refreshBlueprints();
+            applyCompleted(true, "Preview regenerated for " + name);
+        }, 600000, true);
+    }
+
+    function refreshCurrent() {
+        _run("vgs-theme-current", ["theme", "current", "--json"], function(output, exitCode) {
+            if (exitCode !== 0)
+                return;
+            try {
+                currentTheme = JSON.parse(output || "{}");
+                selectedWallpaper = currentTheme.wallpaper || selectedWallpaper;
+                currentLoaded();
+            } catch (e) {
+                lastError = "Failed to parse current theme: " + e;
+            }
+        }, 120000, true);
+    }
+
+    function refreshBlueprints() {
+        _run("vgs-theme-list", ["theme", "list", "--json"], function(output, exitCode) {
+            if (exitCode !== 0)
+                return;
+            try {
+                const data = JSON.parse(output || "{}");
+                blueprints = data.blueprints || [];
+                blueprintsLoaded();
+            } catch (e) {
+                lastError = "Failed to parse blueprints: " + e;
+            }
+        }, 120000, true);
+    }
+
+    function refreshWallpapers() {
+        _run("vgs-theme-wallpapers", ["theme", "wallpapers", "--json"], function(output, exitCode) {
+            if (exitCode !== 0) {
+                themeWallpapers = [];
+                wallpapersLoaded();
+                return;
+            }
+            try {
+                const data = JSON.parse(output || "{}");
+                themeWallpapers = data.wallpapers || [];
+                wallpapersLoaded();
+            } catch (e) {
+                lastError = "Failed to parse theme wallpapers: " + e;
+            }
+        });
+    }
+
+    function wallpaperAdd(path) {
+        if (!path)
+            return;
+        _run("vgs-theme-wallpaper-add", ["theme", "wallpaper-add", path, "--json"], function(output, exitCode, stderr) {
+            if (exitCode !== 0) {
+                applyCompleted(false, stderr || output || ("Wallpaper add failed: " + path));
+                return;
+            }
+            refreshWallpapers();
+            refreshBlueprints();
+            applyCompleted(true, "Added wallpaper to " + (currentTheme.name || "theme"));
+        });
+    }
+
+    function wallpaperRemove(file) {
+        if (!file)
+            return;
+        _run("vgs-theme-wallpaper-remove", ["theme", "wallpaper-remove", file, "--json"], function(output, exitCode, stderr) {
+            if (exitCode !== 0) {
+                applyCompleted(false, stderr || output || ("Wallpaper remove failed: " + file));
+                return;
+            }
+            refreshWallpapers();
+            refreshBlueprints();
+            applyCompleted(true, "Removed " + file + " from " + (currentTheme.name || "theme"));
+        });
+    }
+
+    function wallpaperDefault(file) {
+        if (!file)
+            return;
+        _run("vgs-theme-wallpaper-default", ["theme", "wallpaper-default", file, "--json"], function(output, exitCode, stderr) {
+            if (exitCode !== 0) {
+                applyCompleted(false, stderr || output || ("Set default failed: " + file));
+                return;
+            }
+            refreshWallpapers();
+            refreshBlueprints();
+            applyCompleted(true, file + " is now the default wallpaper");
+        });
+    }
+
+    function applyBlueprint(name) {
+        if (!name)
+            return;
+        _run("vgs-theme-apply-" + name, ["theme", "apply", name, "--json"], function(output, exitCode, stderr) {
+            if (exitCode !== 0) {
+                applyCompleted(false, stderr || output || "Apply failed");
+                return;
+            }
+            try {
+                const data = JSON.parse(output || "{}");
+                const warnings = data.warnings || [];
+                const appliedName = data.name || name;
+                const details = [];
+                if ((data.curated || []).length > 0)
+                    details.push("curated: " + data.curated.join(", "));
+                if ((data.skipped || []).length > 0)
+                    details.push("off: " + data.skipped.join(", "));
+                if (warnings.length > 0)
+                    details.push("warnings: " + warnings.join("; "));
+                if (data.wallpaper && SettingsData.wallpaperSource === "folder")
+                    details.push("wallpaper kept (theme wallpapers off)");
+                lastMessage = "Applied " + appliedName + (details.length > 0 ? " · " + details.join(" · ") : "");
+                _persistAppliedTheme(appliedName);
+                // wallpaperSource=folder decouples the wallpaper from theme applies.
+                if (data.wallpaper && typeof SessionData !== "undefined" && SettingsData.wallpaperSource !== "folder")
+                    SessionData.setWallpaper(data.wallpaper);
+                _markGreeterThemeSyncPending();
+                refreshCurrent();
+                applyCompleted(true, lastMessage);
+            } catch (e) {
+                applyCompleted(false, "Failed to parse apply result: " + e);
+            }
+        });
+    }
+
+    function setWallpaper(path, extractColors, mode) {
+        if (!path)
+            return;
+        selectedWallpaper = path;
+        const args = ["theme", "set-wallpaper", path, "--json"];
+        if (extractColors) {
+            args.push("--extract");
+            args.push("--scheme");
+            args.push(SettingsData.matugenScheme || "scheme-tonal-spot");
+            args.push("--contrast");
+            args.push(String(SettingsData.matugenContrast || 0));
+            args.push("--mode");
+            args.push(mode || SettingsData.matugenMode || "auto");
+        }
+        _run("vgs-theme-wallpaper", args, function(output, exitCode, stderr) {
+            if (exitCode !== 0) {
+                applyCompleted(false, stderr || output || "Wallpaper apply failed");
+                return;
+            }
+            let data = {};
+            try {
+                data = JSON.parse(output || "{}");
+            } catch (e) {
+                lastError = "Failed to parse wallpaper result: " + e;
+                applyCompleted(false, lastError);
+                return;
+            }
+            const warnings = data.warnings || data.apply?.warnings || [];
+            if (data.saved)
+                _persistAppliedTheme(data.name || (data.apply && data.apply.name));
+            if (typeof SessionData !== "undefined")
+                SessionData.setWallpaper(path);
+            _markGreeterThemeSyncPending();
+            refresh();
+            const base = extractColors ? "Wallpaper colors generated and applied" : "Wallpaper applied";
+            applyCompleted(true, warnings.length > 0 ? base + " (warnings: " + warnings.join("; ") + ")" : base);
+        });
+    }
+
+    // The blueprint entry for the active theme (carries modified/builtin/
+    // adjustments/appOverrides). Empty object when the current theme matches no
+    // blueprint (legacy/manual), which the settings pages treat as unmodified.
+    readonly property var currentBlueprint: {
+        const name = currentTheme.name || "";
+        const list = blueprints || [];
+        for (let i = 0; i < list.length; i++) {
+            if (list[i].name === name)
+                return list[i];
+        }
+        return ({});
+    }
+
+    // Build the repeated `--set role=hex` args from a camelCase colors map,
+    // returning {args, count} so callers can gate on how many roles were set.
+    function _paletteSetArgs(colors) {
+        const args = [];
+        let count = 0;
+        for (const key in paletteArgMap) {
+            const value = colors ? colors[key] : "";
+            if (value) {
+                args.push("--set");
+                args.push(paletteArgMap[key] + "=" + value);
+                count++;
+            }
+        }
+        return { args: args, count: count };
+    }
+
+    function applyColors(colors, name, mode, wallpaper, saveNow) {
+        const args = ["theme", "apply-colors", "--name", name || (currentTheme.name || "manual-theme"), "--json"];
+        const selectedMode = mode || currentTheme.mode || "dark";
+        if (selectedMode === "light" || selectedMode === "dark") {
+            args.push("--mode");
+            args.push(selectedMode);
+        }
+        if (wallpaper) {
+            args.push("--wallpaper");
+            args.push(wallpaper);
+        }
+        if (saveNow)
+            args.push("--save");
+        Array.prototype.push.apply(args, _paletteSetArgs(colors).args);
+        _run("vgs-theme-apply-colors", args, function(output, exitCode, stderr) {
+            if (exitCode !== 0) {
+                applyCompleted(false, stderr || output || "Manual palette apply failed");
+                return;
+            }
+            let data = {};
+            try {
+                data = JSON.parse(output || "{}");
+            } catch (e) {
+                lastError = "Failed to parse manual palette result: " + e;
+                applyCompleted(false, lastError);
+                return;
+            }
+            const warnings = data.warnings || [];
+            if (saveNow || data.saved)
+                _persistAppliedTheme(data.name || name || currentTheme.name);
+            _markGreeterThemeSyncPending();
+            refresh();
+            const base = saveNow ? "Manual palette applied and saved" : "Manual palette applied";
+            applyCompleted(true, warnings.length > 0 ? base + " (warnings: " + warnings.join("; ") + ")" : base);
+        });
+    }
+
+    // Live palette editing: apply one or more role edits and persist them into
+    // the current theme's user overlay colors.toml (built-ins stay pristine in
+    // the repo; revertTheme drops the overlay).
+    function applyColorEdits(colors) {
+        const set = _paletteSetArgs(colors);
+        if (set.count === 0)
+            return;
+        const count = set.count;
+        const args = ["theme", "apply-colors", "--persist", "--json"].concat(set.args);
+        _run("vgs-theme-edit-colors", args, function(output, exitCode, stderr) {
+            if (exitCode !== 0) {
+                applyCompleted(false, stderr || output || "Color edit failed");
+                return;
+            }
+            _markGreeterThemeSyncPending();
+            refresh();
+            applyCompleted(true, count === 1 ? "Color updated" : count + " colors updated");
+        });
+    }
+
+    function revertTheme(name) {
+        if (!name)
+            return;
+        _run("vgs-theme-revert", ["theme", "revert", name, "--json"], function(output, exitCode, stderr) {
+            if (exitCode !== 0) {
+                applyCompleted(false, stderr || output || ("Revert failed: " + name));
+                return;
+            }
+            _markGreeterThemeSyncPending();
+            refresh();
+            applyCompleted(true, name + " reverted to default");
+        });
+    }
+
+    // Restyle requests are serialized latest-wins. A slider release while the
+    // helper is active replaces the one waiting request instead of starting a
+    // concurrent apply that could finish out of order.
+    function _submitRestyleRequest(request) {
+        const transition = RestyleQueue.submit(_restyleQueueState, request);
+        _restyleQueueState = transition.state;
+        if (transition.startRequest)
+            _startRestyleRequest(transition.startRequest);
+    }
+
+    function _startRestyleRequest(request) {
+        const reset = request && request.reset === true;
+        const preview = request && request.preview === true;
+        const args = ThemeRequest.restyleArgs(request);
+        _run("vgs-theme-restyle", args, function(output, exitCode, stderr) {
+            const transition = RestyleQueue.complete(_restyleQueueState, exitCode === 0);
+            _restyleQueueState = transition.state;
+            const policy = ThemeRequest.completionPolicy(request, transition, exitCode === 0);
+
+            if (policy.markGreeter)
+                _markGreeterThemeSyncPending();
+
+            // Do not refresh or announce a superseded result: the next helper
+            // run is the only state the sliders asked to keep.
+            if (transition.startRequest) {
+                _startRestyleRequest(transition.startRequest);
+                return;
+            }
+
+            if (policy.refresh)
+                refresh();
+            if (exitCode !== 0) {
+                if (!preview)
+                    applyCompleted(false, stderr || output || (reset ? "Restyle reset failed" : "Restyle failed"));
+                return;
+            }
+            if (policy.announce)
+                applyCompleted(true, reset ? "Restyle adjustments cleared" : "Palette restyled");
+        }, 120000, true);
+    }
+
+    // adjustments: {brightness, vibrancy, contrast, hue, temperature} ints, 0 neutral.
+    // Stored non-destructively on the theme.
+    function restyle(adjustments) {
+        const normalized = ThemeRequest.normalizeAdjustments(adjustments);
+        _submitRestyleRequest({ reset: false, preview: false, adjustments: normalized });
+    }
+
+    // Lightweight shell-only rendering for fluid feedback while a slider is
+    // moving. It neither persists adjustments nor regenerates app targets.
+    function previewRestyle(adjustments) {
+        const normalized = ThemeRequest.normalizeAdjustments(adjustments);
+        _submitRestyleRequest({ reset: false, preview: true, adjustments: normalized });
+    }
+
+    function resetRestyle() {
+        _submitRestyleRequest({ reset: true });
+    }
+
+    function fetchAppRoles(app) {
+        if (!app)
+            return;
+        _run("vgs-theme-app-roles-" + app, ["theme", "app-roles", app, "--json"], function(output, exitCode) {
+            if (exitCode !== 0)
+                return;
+            try {
+                const data = JSON.parse(output || "{}");
+                const next = Object.assign({}, appRoles);
+                // Store the full view: roles (template apps) + curatedColors (curated apps).
+                next[app] = {
+                    roles: data.roles || [],
+                    curated: data.curated === true,
+                    curatedColors: data.curatedColors || [],
+                    curatedFile: data.curatedFile || ""
+                };
+                appRoles = next;
+                appRolesLoaded(app);
+            } catch (e) {
+                lastError = "Failed to parse app roles: " + e;
+            }
+        });
+    }
+
+    function setAppColor(app, role, hex) {
+        if (!app || !role || !hex)
+            return;
+        _run("vgs-theme-app-colors-" + app, ["theme", "app-colors", app, "--set", role + "=" + hex, "--json"], function(output, exitCode, stderr) {
+            if (exitCode !== 0) {
+                applyCompleted(false, stderr || output || ("Override failed: " + app));
+                return;
+            }
+            fetchAppRoles(app);
+            refreshCurrent();
+            refreshBlueprints();
+            applyCompleted(true, _messageWithApplyWarnings(app + " " + role + " overridden", output));
+        });
+    }
+
+    // Recolor a curated app file: replace every use of one hex with another
+    // (deduped recolor-all), writing the theme's overlay curated file.
+    function recolorApp(app, fromHex, toHex) {
+        if (!app || !fromHex || !toHex)
+            return;
+        _run("vgs-theme-recolor-" + app, ["theme", "app-curated-recolor", app, "--set", fromHex + "=" + toHex, "--json"], function(output, exitCode, stderr) {
+            if (exitCode !== 0) {
+                applyCompleted(false, stderr || output || ("Recolor failed: " + app));
+                return;
+            }
+            fetchAppRoles(app);
+            refreshCurrent();
+            refreshBlueprints();
+            applyCompleted(true, _messageWithApplyWarnings(app + " recolored", output));
+        });
+    }
+
+    function resetAppColors(app) {
+        if (!app)
+            return;
+        _run("vgs-theme-app-colors-" + app, ["theme", "app-colors", app, "--reset", "--json"], function(output, exitCode, stderr) {
+            if (exitCode !== 0) {
+                applyCompleted(false, stderr || output || ("Override reset failed: " + app));
+                return;
+            }
+            fetchAppRoles(app);
+            refreshCurrent();
+            refreshBlueprints();
+            applyCompleted(true, _messageWithApplyWarnings(app + " color overrides cleared", output));
+        });
+    }
+
+    function clearWallpaper() {
+        selectedWallpaper = "";
+        _run("vgs-theme-clear-wallpaper", ["theme", "clear-wallpaper", "--json"], function(output, exitCode, stderr) {
+            if (exitCode !== 0) {
+                applyCompleted(false, stderr || output || "Wallpaper clear failed");
+                return;
+            }
+            try {
+                JSON.parse(output || "{}");
+            } catch (e) {
+                lastError = "Failed to parse wallpaper clear result: " + e;
+                applyCompleted(false, lastError);
+                return;
+            }
+            if (typeof SessionData !== "undefined")
+                SessionData.clearWallpaper();
+            _markGreeterThemeSyncPending();
+            refresh();
+            applyCompleted(true, "Wallpaper cleared");
+        });
+    }
+
+    property bool previewsGenerating: false
+
+    function generateMissingPreviews() {
+        if (previewsGenerating)
+            return;
+        // Claim the slot BEFORE any async work: preview generation stages a
+        // nested-compositor VGSPREVIEW output, and two overlapping runs crash
+        // quickshell ("removal for monitor VGSPREVIEW which was not previously
+        // tracked" -> fatal Wayland error). Callers fire this from both
+        // Component.onCompleted and onActiveChanged, so the guard must be set
+        // synchronously to guarantee single-flight.
+        previewsGenerating = true;
+        // Re-read blueprints first so the "missing" check runs on fresh preview
+        // paths (wallpaper/palette edits invalidate cached previews).
+        _run("vgs-theme-preview-check", ["theme", "list", "--json"], function(output, exitCode) {
+            if (exitCode !== 0) {
+                previewsGenerating = false;
+                return;
+            }
+            let bps;
+            try {
+                bps = JSON.parse(output || "{}").blueprints || [];
+            } catch (e) {
+                lastError = "Failed to parse blueprints: " + e;
+                previewsGenerating = false;
+                return;
+            }
+            blueprints = bps;
+            blueprintsLoaded();
+            if (!bps.some(bp => !bp.preview)) {
+                previewsGenerating = false;
+                return;
+            }
+            // One helper invocation renders every missing preview under a single
+            // hidden nested compositor rule; cached entries are skipped inside.
+            _run("vgs-theme-preview-all", ["theme", "preview", "--all", "--json"], function(o, ec) {
+                previewsGenerating = false;
+                if (ec !== 0)
+                    log.warn("Theme preview generation failed:", lastError);
+                refreshBlueprints();
+            }, 600000, true);
+        });
+    }
+
+    function saveCurrent(name) {
+        if (!name)
+            return;
+        _run("vgs-theme-save-current", ["theme", "save-current", "--name", name, "--json"], function(output, exitCode) {
+            if (exitCode !== 0) {
+                applyCompleted(false, output || "Save failed");
+                return;
+            }
+            refreshBlueprints();
+            applyCompleted(true, "Saved " + name);
+        });
+    }
+
+    Component.onCompleted: refresh()
+}

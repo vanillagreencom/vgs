@@ -1,0 +1,19 @@
+{
+    "id": "vgsMenu",
+    "name": "VGS Menu",
+    "description": "Curated shell command launcher with categories, search, and local overlay support",
+    "version": "1.0.0",
+    "license": "MIT",
+    "author": "VanillaGreen",
+    "type": "composite",
+    "capabilities": [
+        "daemon"
+    ],
+    "components": {
+        "daemon": "./VGSMenu.qml"
+    },
+    "requires_shell": ">=1.0.0",
+    "permissions": [
+        "settings_read"
+    ]
+}

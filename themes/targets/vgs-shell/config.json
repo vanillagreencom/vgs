@@ -1,0 +1,6 @@
+{
+  "app": "shell",
+  "template": "vgs-theme.json",
+  "destination": "~/.config/vshell/theme.json",
+  "hook": "shell-reload"
+}

@@ -1,0 +1,9 @@
+{
+  "app": "shell",
+  "template": "noop.txt",
+  "destination": "~/.config/vshell/generated/vgs-hook.txt",
+  "hook": [
+    "gtk-settings",
+    "claude-theme"
+  ]
+}

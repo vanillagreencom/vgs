@@ -1,0 +1,16 @@
+{
+    "id": "sysUpdate",
+    "name": "System Updates",
+    "description": "Repo/AUR update counts and terminal-launched update actions with portable backend checks.",
+    "version": "1.0.0",
+    "license": "MIT",
+    "author": "VanillaGreen",
+    "icon": "upgrade",
+    "component": "./SysUpdateWidget.qml",
+    "settings": "./SysUpdateSettings.qml",
+    "requires_shell": ">=1.0.0",
+    "permissions": [
+        "settings_read",
+        "settings_write"
+    ]
+}

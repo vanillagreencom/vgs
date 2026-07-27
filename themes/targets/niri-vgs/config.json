@@ -1,0 +1,14 @@
+{
+  "app": "niri",
+  "template": "colors.kdl",
+  "destination": "~/.config/niri/vgs/colors.kdl",
+  "detect": {
+    "commands": [
+      "niri"
+    ]
+  },
+  "hook": [
+    "niri-colors-config",
+    "niri-reload"
+  ]
+}

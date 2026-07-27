@@ -1,0 +1,12 @@
+{
+  "app": "tmux",
+  "template": "vgs-theme.conf",
+  "destination": "~/.config/tmux/vgs-theme.conf",
+  "curatedFile": "tmux.conf",
+  "detect": {
+    "commands": [
+      "tmux"
+    ]
+  },
+  "hook": "tmux-source"
+}

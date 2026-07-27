@@ -1,0 +1,219 @@
+import QtQuick
+import Quickshell
+import qs.Common
+import qs.Modals.FileBrowser
+import qs.Services
+import qs.Widgets
+import qs.Modules.Settings.Widgets
+
+FocusScope {
+    id: root
+    property var parentModal: null
+    property var cyclingIntervalOptions: [
+        { label: I18n.tr("Every 5 minutes"), value: 300 },
+        { label: I18n.tr("Every 15 minutes"), value: 900 },
+        { label: I18n.tr("Every 30 minutes"), value: 1800 },
+        { label: I18n.tr("Every hour"), value: 3600 },
+        { label: I18n.tr("Every 3 hours"), value: 10800 }
+    ]
+
+    FileBrowserModal {
+        id: wallpaperFolderBrowser
+        browserTitle: I18n.tr("Pick any image inside your wallpaper folder")
+        browserType: "wallpaper"
+        showHiddenFiles: true
+        fileExtensions: ["*.jpg", "*.jpeg", "*.png", "*.bmp", "*.gif", "*.webp", "*.jxl", "*.avif", "*.heif"]
+        onFileSelected: path => {
+            SettingsData.set("wallpaperFolder", path.substring(0, path.lastIndexOf("/")));
+            close();
+        }
+    }
+
+    VgsFlickable {
+        anchors.fill: parent
+        clip: true
+        contentWidth: width
+        contentHeight: mainColumn.height + Theme.spacingXL
+
+        Column {
+            id: mainColumn
+            width: Math.min(760, parent.width - Theme.spacingL * 2)
+            anchors.horizontalCenter: parent.horizontalCenter
+            topPadding: Theme.spacingS
+            spacing: Theme.spacingXL
+
+            ThemeSubNav {
+                width: parent.width
+                parentModal: root.parentModal
+                activeId: "wallpaper"
+            }
+
+            SettingsCard {
+                title: I18n.tr("Behavior")
+                iconName: "tune"
+                settingKey: "wallpaperBehavior"
+                width: parent.width
+
+                Row {
+                    width: parent.width
+                    spacing: Theme.spacingS
+
+                    VgsButton {
+                        variant: "secondary"
+                        text: I18n.tr("Browse Wallpapers")
+                        iconName: "wallpaper"
+                        onClicked: {
+                            const bar = KeyboardFocus.getPreferredBar("clockButtonRef") || KeyboardFocus.getPreferredBar();
+                            if (bar)
+                                bar.triggerDashTab(SettingsData.dashTabIndexForId("wallpaper"));
+                        }
+                    }
+
+                    VgsButton {
+                        variant: "secondary"
+                        text: I18n.tr("Browse Themes")
+                        iconName: "palette"
+                        onClicked: {
+                            const bar = KeyboardFocus.getPreferredBar("clockButtonRef") || KeyboardFocus.getPreferredBar();
+                            if (bar)
+                                bar.triggerDashTab(SettingsData.dashTabIndexForId("themes"));
+                        }
+                    }
+                }
+
+                SettingsDropdownRow {
+                    settingKey: "wallpaperFillMode"
+                    tags: ["wallpaper", "fill", "scale"]
+                    text: I18n.tr("Fill Mode")
+                    description: I18n.tr("How the image is scaled to your screen")
+                    options: ["Stretch", "Fit", "Fill", "Tile", "TileVertically", "TileHorizontally", "Pad"].map(m => I18n.tr(m, "wallpaper fill mode"))
+                    currentValue: {
+                        const modes = ["Stretch", "Fit", "Fill", "Tile", "TileVertically", "TileHorizontally", "Pad"];
+                        const idx = modes.indexOf(SettingsData.wallpaperFillMode || "Fill");
+                        return I18n.tr(modes[idx >= 0 ? idx : 2], "wallpaper fill mode");
+                    }
+                    onValueChanged: value => {
+                        const modes = ["Stretch", "Fit", "Fill", "Tile", "TileVertically", "TileHorizontally", "Pad"];
+                        const idx = modes.map(m => I18n.tr(m, "wallpaper fill mode")).indexOf(value);
+                        if (idx >= 0)
+                            SettingsData.set("wallpaperFillMode", modes[idx]);
+                    }
+                }
+
+                SettingsToggleRow {
+                    tab: "wallpaper"
+                    tags: ["wallpaper", "theme", "source", "folder"]
+                    settingKey: "wallpaperSource"
+                    text: I18n.tr("Wallpapers Follow Theme")
+                    description: I18n.tr("When on, themes bring their own wallpaper; when off, you pick from your folder")
+                    checked: SettingsData.wallpaperSource !== "folder"
+                    onToggled: checked => SettingsData.set("wallpaperSource", checked ? "theme" : "folder")
+                }
+
+                Row {
+                    width: parent.width
+                    spacing: Theme.spacingS
+                    visible: SettingsData.wallpaperSource === "folder"
+
+                    VgsTextField {
+                        width: parent.width - pickFolderButton.width - Theme.spacingS
+                        placeholderText: I18n.tr("Wallpaper folder (default: ~/Pictures/Wallpapers)")
+                        text: SettingsData.wallpaperFolder
+                        backgroundColor: Theme.surfaceContainerHighest
+                        onEditingFinished: {
+                            if (text !== SettingsData.wallpaperFolder)
+                                SettingsData.set("wallpaperFolder", text);
+                        }
+                    }
+
+                    VgsButton {
+                        id: pickFolderButton
+                        variant: "secondary"
+                        text: I18n.tr("Browse")
+                        onClicked: wallpaperFolderBrowser.open()
+                    }
+                }
+
+                SettingsToggleRow {
+                    tab: "wallpaper"
+                    tags: ["wallpaper", "monitor", "per-monitor"]
+                    settingKey: "perMonitorWallpaper"
+                    text: I18n.tr("Per-Monitor Wallpapers")
+                    description: I18n.tr("Assign a different wallpaper to each monitor")
+                    checked: SessionData.perMonitorWallpaper
+                    onToggled: checked => SessionData.setPerMonitorWallpaper(checked)
+                }
+
+                SettingsToggleRow {
+                    tab: "wallpaper"
+                    tags: ["wallpaper", "light", "dark", "mode"]
+                    settingKey: "perModeWallpaper"
+                    text: I18n.tr("Light/Dark Wallpapers")
+                    description: I18n.tr("Keep one wallpaper for light mode and one for dark mode")
+                    checked: SessionData.perModeWallpaper
+                    onToggled: checked => SessionData.setPerModeWallpaper(checked)
+                }
+
+                SettingsToggleRow {
+                    tab: "wallpaper"
+                    tags: ["wallpaper", "cycling", "slideshow", "interval"]
+                    settingKey: "wallpaperCyclingEnabled"
+                    text: I18n.tr("Wallpaper Cycling")
+                    description: I18n.tr("Automatically cycle through the current wallpaper set")
+                    checked: SessionData.wallpaperCyclingEnabled
+                    onToggled: checked => SessionData.setWallpaperCyclingEnabled(checked)
+                }
+
+                Row {
+                    width: parent.width
+                    spacing: Theme.spacingM
+                    visible: SessionData.wallpaperCyclingEnabled
+
+                    VgsDropdown {
+                        width: (parent.width - Theme.spacingM) / 2
+                        dropdownWidth: width
+                        currentValue: SessionData.wallpaperCyclingMode === "time" ? I18n.tr("At a fixed time") : I18n.tr("Every interval")
+                        options: [I18n.tr("Every interval"), I18n.tr("At a fixed time")]
+                        onValueChanged: value => SessionData.setWallpaperCyclingMode(value === I18n.tr("At a fixed time") ? "time" : "interval")
+                    }
+
+                    VgsDropdown {
+                        width: (parent.width - Theme.spacingM) / 2
+                        dropdownWidth: width
+                        visible: SessionData.wallpaperCyclingMode !== "time"
+                        currentValue: {
+                            const options = root.cyclingIntervalOptions;
+                            for (let i = 0; i < options.length; i++) {
+                                if (options[i].value === SessionData.wallpaperCyclingInterval)
+                                    return options[i].label;
+                            }
+                            return options[1].label;
+                        }
+                        options: root.cyclingIntervalOptions.map(o => o.label)
+                        onValueChanged: value => {
+                            const options = root.cyclingIntervalOptions;
+                            for (let i = 0; i < options.length; i++) {
+                                if (options[i].label === value) {
+                                    SessionData.setWallpaperCyclingInterval(options[i].value);
+                                    return;
+                                }
+                            }
+                        }
+                    }
+
+                    VgsTextField {
+                        width: (parent.width - Theme.spacingM) / 2
+                        visible: SessionData.wallpaperCyclingMode === "time"
+                        placeholderText: "06:00"
+                        text: SessionData.wallpaperCyclingTime
+                        backgroundColor: Theme.surfaceContainerHighest
+                        onEditingFinished: {
+                            if (/^\d{1,2}:\d{2}$/.test(text))
+                                SessionData.setWallpaperCyclingTime(text);
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

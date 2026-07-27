@@ -1,0 +1,75 @@
+# =============================
+#  Muted Cosmic BTOP Theme
+# =============================
+
+# Main background (soft dark gray)
+theme[main_bg]="#232529"
+
+# Main text (dim soft white)
+theme[main_fg]="#d4d4d4"
+
+# Title color (muted mauve)
+theme[title]="#b9aab5"
+
+# Highlights (low-saturation gray-blue)
+theme[hi_fg]="#8d99a1"
+
+# Selected background (medium gray)
+theme[selected_bg]="#6f727a"
+theme[selected_fg]="#d4d4d4"
+
+# Inactive text
+theme[inactive_fg]="#6f727a"
+
+# Misc process accents (muted mauve)
+theme[proc_misc]="#b9aab5"
+
+# Box outlines (very soft muted green)
+theme[cpu_box]="#8ea58e"
+theme[mem_box]="#8ea58e"
+theme[net_box]="#8ea58e"
+theme[proc_box]="#8ea58e"
+
+# Divider line
+theme[div_line]="#6f727a"
+
+# ===== Muted Gradients (All desaturated) =====
+
+# Temps: gray-blue → gray-violet → gray-green
+theme[temp_start]="#8d99a1"
+theme[temp_mid]="#9994a1"
+theme[temp_end]="#8ea58e"
+
+# CPU: same muted palette
+theme[cpu_start]="#8d99a1"
+theme[cpu_mid]="#9994a1"
+theme[cpu_end]="#8ea58e"
+
+# Free memory: gray-violet → muted beige
+theme[free_start]="#9994a1"
+theme[free_mid]="#b3ac96"
+theme[free_end]="#b3ac96"
+
+# Cached memory: muted beige
+theme[cached_start]="#b3ac96"
+theme[cached_mid]="#b3ac96"
+theme[cached_end]="#b3ac96"
+
+# Available memory: gray-blue (very soft)
+theme[available_start]="#8d99a1"
+theme[available_mid]="#8d99a1"
+theme[available_end]="#8d99a1"
+
+# Used memory: muted green
+theme[used_start]="#8ea58e"
+theme[used_mid]="#8ea58e"
+theme[used_end]="#8ea58e"
+
+# Network: muted beige → gray-blue → gray-violet
+theme[download_start]="#b3ac96"
+theme[download_mid]="#8d99a1"
+theme[download_end]="#9994a1"
+
+theme[upload_start]="#b3ac96"
+theme[upload_mid]="#8d99a1"
+theme[upload_end]="#9994a1"

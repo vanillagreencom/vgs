@@ -1,0 +1,14 @@
+{
+  "app": "hyprland",
+  "template": "colors.lua",
+  "destination": "~/.config/hypr/vgs/colors.lua",
+  "curatedFile": "hyprland.conf",
+  "curatedDestination": "~/.config/hypr/vgs/theme.conf",
+  "curatedMode": "additional",
+  "detect": {
+    "commands": [
+      "hyprctl"
+    ]
+  },
+  "hook": "hypr-reload"
+}

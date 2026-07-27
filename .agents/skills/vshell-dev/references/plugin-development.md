@@ -1,0 +1,94 @@
+# Bundled module development
+
+## Scope
+VGS bundled modules currently use the internal package loader and live in:
+```text
+config/vshell/plugins/<id>/
+```
+
+They are VGS-owned product components, not third-party plugins or a stable public plugin API. Widget surfaces appear in Bar → Widgets and are always available; the Plugins settings page is reserved for user and system extensions installed outside VGS.
+
+## Minimum structure
+```text
+plugin.json
+Component.qml
+Settings.qml optional
+*.js optional
+```
+
+## Manifest fields
+Common fields:
+```json
+{
+  "id": "myPlugin",
+  "name": "My Plugin",
+  "description": "Short purpose",
+  "version": "1.0.0",
+  "author": "VGS",
+  "type": "widget",
+  "component": "./MyPlugin.qml",
+  "settings": "./MyPluginSettings.qml",
+  "permissions": ["settings_read", "settings_write"]
+}
+```
+
+Composite daemon example:
+```json
+{
+  "id": "vgsMenu",
+  "name": "VGS Menu",
+  "type": "composite",
+  "capabilities": ["daemon"],
+  "components": {
+    "daemon": "./VGSMenu.qml"
+  },
+  "permissions": ["settings_read"]
+}
+```
+
+Some existing manifests may carry compatibility flags for loader decisions.
+Do not use those flags as permission to call shell commands at runtime.
+
+## QML imports
+Follow existing plugin imports. Common ones:
+```qml
+import QtQuick
+import Quickshell
+import qs.Common
+import qs.Widgets
+import qs.Services
+import qs.Modules.Plugins
+```
+
+## UI rules
+- Use VGS theme tokens through `Theme`.
+- Use `StyledRect`, `StyledText`, `VgsIcon`, `VgsButton`, `VgsToggle` where existing patterns do.
+- Avoid hardcoded hex colors.
+- Avoid custom toggles/buttons when existing widgets fit.
+- Keep bar pills compact.
+- Keep popouts aligned to token spacing.
+
+## Command rules
+Use absolute VGS helper path from QML:
+```qml
+command: [Paths.vshellCli, "..."]
+```
+
+Do not use:
+```qml
+command: ["vgs", ...]
+command: ["vshell", ...]
+```
+
+## Settings
+Settings components should read/write through existing settings services or plugin settings APIs.
+If a helper command is read-only, make UI read-only or hide mutation controls.
+Do not show controls that call unimplemented helper paths.
+
+## Validation
+For plugin QML changes:
+```bash
+qs -c vshell
+```
+
+For command-backed plugins, also test helper command directly.
