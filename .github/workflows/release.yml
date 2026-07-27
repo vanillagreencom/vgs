@@ -13,16 +13,16 @@ jobs:
         arch: [x86_64, aarch64]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
         with:
           persist-credentials: false
-      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16
         with:
           go-version: 1.23.12
           cache-dependency-path: backend/go.sum
       - run: test "v$(cat VERSION)" = "$GITHUB_REF_NAME"
       - run: scripts/build-release.sh "$(cat VERSION)" "${{ matrix.arch }}" dist
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+      - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4
         with:
           name: vgs-${{ matrix.arch }}
           path: dist/*.tar.gz
@@ -33,7 +33,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0
         with:
           pattern: vgs-*
           merge-multiple: true
