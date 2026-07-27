@@ -9,11 +9,11 @@ homepage="https://github.com/vanillagreencom/vgs"
 case "$XBPS_TARGET_MACHINE" in
 	x86_64*)
 		_arch=x86_64
-		checksum=135817331525a6878e2fdaf2f1b535280f36366631996d095bcda4e7e35e7c88
+		checksum=70b0a01808e1226c42affdd3d6e6c9a0b7c8d38bdad1456be6b71701253cef2f
 		;;
 	aarch64*)
 		_arch=aarch64
-		checksum=221ea36fa9fe57f22c9c789c53895e336ae389d33f3f7c804153b8245346c7a4
+		checksum=6a3352a89d418fe7b25dffc41c20b85f8e71407f9a5b478fc5e3f46dce9e76a3
 		;;
 	*) broken="unsupported architecture: $XBPS_TARGET_MACHINE" ;;
 esac

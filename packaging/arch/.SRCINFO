@@ -14,8 +14,8 @@ pkgbase = vgs-shell
 	optdepends = niri: scrolling compositor
 	optdepends = wl-clipboard: clipboard history
 	source_x86_64 = https://github.com/vanillagreencom/vgs/releases/download/v0.1.0/vgs-0.1.0-linux-x86_64.tar.gz
-	sha256sums_x86_64 = 135817331525a6878e2fdaf2f1b535280f36366631996d095bcda4e7e35e7c88
+	sha256sums_x86_64 = 70b0a01808e1226c42affdd3d6e6c9a0b7c8d38bdad1456be6b71701253cef2f
 	source_aarch64 = https://github.com/vanillagreencom/vgs/releases/download/v0.1.0/vgs-0.1.0-linux-aarch64.tar.gz
-	sha256sums_aarch64 = 221ea36fa9fe57f22c9c789c53895e336ae389d33f3f7c804153b8245346c7a4
+	sha256sums_aarch64 = 6a3352a89d418fe7b25dffc41c20b85f8e71407f9a5b478fc5e3f46dce9e76a3
 
 pkgname = vgs-shell
