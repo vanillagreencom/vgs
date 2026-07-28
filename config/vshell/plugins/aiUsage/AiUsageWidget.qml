@@ -52,8 +52,37 @@ PluginComponent {
         if (a.spend && a.spend.pct !== undefined) peak = Math.max(peak, a.spend.pct);
         return peak;
     }
+    function isEnterpriseAccount(account) {
+        if (!account)
+            return false;
+        if (account.enterprise === true)
+            return true;
+        // Compatibility with helper payloads from before `enterprise` was
+        // explicit. Never infer account type from the email address.
+        const plan = String(account.plan || "").toLowerCase();
+        return plan.indexOf("enterprise") === 0 || account.spend !== null && account.spend !== undefined;
+    }
+    function orderedAccounts(list) {
+        const ordered = (list || []).slice();
+        ordered.sort((a, b) => {
+            const groupA = root.isEnterpriseAccount(a) ? 1 : 0;
+            const groupB = root.isEnterpriseAccount(b) ? 1 : 0;
+            if (groupA !== groupB)
+                return groupA - groupB;
+            const labelA = String(a.label || a.id || "");
+            const labelB = String(b.label || b.id || "");
+            const foldedA = labelA.toLowerCase();
+            const foldedB = labelB.toLowerCase();
+            if (foldedA < foldedB)
+                return -1;
+            if (foldedA > foldedB)
+                return 1;
+            return labelA < labelB ? -1 : (labelA > labelB ? 1 : 0);
+        });
+        return ordered;
+    }
     function shownAccounts(list) {
-        return (list || []).filter(a => a && !root.isHidden(a.id));
+        return root.orderedAccounts(list).filter(a => a && !root.isHidden(a.id));
     }
     // Headline over whichever accounts are visible, in the chosen mode.
     function headlineFor(list) {
@@ -613,7 +642,8 @@ PluginComponent {
                         }
 
                         Repeater {
-                            model: (root.accounts || []).length > 1 ? root.accounts : []
+                            model: (root.accounts || []).length > 1
+                                ? root.orderedAccounts(root.accounts) : []
 
                             Item {
                                 required property var modelData

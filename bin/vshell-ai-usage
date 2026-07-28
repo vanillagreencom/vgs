@@ -147,6 +147,12 @@ for dir in "${dirs[@]}"; do
                     else gsub("\\\\n"; " ") | gsub("\\\\t"; " ")
                          | gsub("[[:space:]]+"; " ") | sub("^ +"; "") | sub(" +$"; "") end),
             plan: ($entry.plan // ""),
+            # Credit-billed Claude seats identify as Enterprise and expose a
+            # spend pool instead of rate-limit windows. Keep the explicit flag
+            # in the shared payload so every UI can group account types without
+            # inferring them from an email domain.
+            enterprise: (((($entry.plan // "") | ascii_downcase) | startswith("enterprise"))
+                         or ($entry.spend != null)),
             class: ($entry.class // "low"),
             session: ($entry.session // null),
             weekly: ($entry.weekly // null),
