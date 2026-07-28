@@ -156,7 +156,7 @@ inputs.vgs.url = "github:vanillagreencom/vgs";
 }
 ```
 
-**Packages.** AUR, Fedora COPR, openSUSE/Debian OBS, Gentoo overlay, Nix, and maintainer recipes
+**Packages.** AUR, Fedora COPR, Ubuntu Launchpad PPA, openSUSE/Debian OBS, Gentoo overlay, Nix, and maintainer recipes
 are listed in [`packaging/`](packaging/). Checksum-verified bundles and source archives are on
 [GitHub Releases](https://github.com/vanillagreencom/vgs/releases).
 
