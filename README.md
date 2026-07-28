@@ -28,6 +28,132 @@ follows is what VGS adds on top.
 | **Tailscale & Bluetooth** | Mesh VPN status and controls in the bar, and Bluetooth handling that stays out of your way. |
 | **Glass UI** | An optional iOS-style glass material for every popout and menu — translucent tinted surfaces over a saturated backdrop blur, with a specular rim and sheen. |
 
+## Requirements
+
+- **Hyprland or Niri** and **Quickshell 0.3.0**.
+- Optional tools unlock optional features — a missing one greys out its widget rather than breaking
+  the shell. `vshell deps status` lists what's found.
+
+### Compositor support
+
+| Tier | Features |
+|---|---|
+| Full parity | Bar and widgets, launcher, dash, control centre, dock, notifications, lock screen, greeter, themes, wallpapers, capture, brightness, idle/lock/screensaver, and backend system services |
+| Niri-native equivalent | Dynamic per-output workspaces, Niri overview, KDL display/layout configuration, KDL keybinds, and KDL window rules |
+| Hyprland-only | Compositor blur. Niri has no compositor blur API, so its setting is disabled with an explanation. |
+
+## Install
+
+Native packages are the recommended installation method. They install VGS system-wide, handle
+dependencies, and provide normal upgrades and removal.
+
+### Arch Linux
+
+Install the latest release from [AUR `vgs-shell`](https://aur.archlinux.org/packages/vgs-shell):
+
+```bash
+yay -S vgs-shell
+```
+
+Replace `yay` with your preferred AUR helper. Use
+[`vgs-shell-git`](https://aur.archlinux.org/packages/vgs-shell-git) instead for the current
+development version.
+
+### Fedora
+
+Fedora 43 and 44 are published through
+[COPR `vanillagreen/vgs-shell`](https://copr.fedorainfracloud.org/coprs/vanillagreen/vgs-shell/):
+
+```bash
+sudo dnf copr enable vanillagreen/vgs-shell
+sudo dnf install vgs-shell
+```
+
+### openSUSE
+
+For Tumbleweed:
+
+```bash
+sudo zypper ar -f https://download.opensuse.org/repositories/home:/vanillagreen/openSUSE_Tumbleweed/ vanillagreen-vgs
+sudo zypper --gpg-auto-import-keys refresh
+sudo zypper install vgs-shell
+```
+
+The [VGS OBS project](https://build.opensuse.org/package/show/home:vanillagreen/vgs-shell) also
+publishes a Slowroll build.
+
+### Debian
+
+For Debian 13, use the
+[VGS OBS repository](https://build.opensuse.org/package/show/home:vanillagreen/vgs-shell):
+
+```bash
+sudo install -d -m 0755 /etc/apt/keyrings
+curl -fsSL https://download.opensuse.org/repositories/home:/vanillagreen/Debian_13/Release.key | sudo tee /etc/apt/keyrings/vanillagreen-vgs.asc >/dev/null
+echo 'deb [signed-by=/etc/apt/keyrings/vanillagreen-vgs.asc] https://download.opensuse.org/repositories/home:/vanillagreen/Debian_13/ /' | sudo tee /etc/apt/sources.list.d/vanillagreen-vgs.list
+sudo apt update
+sudo apt install vgs-shell
+```
+
+### Ubuntu
+
+Ubuntu 26.04 needs both the Quickshell dependency PPA and the
+[VGS PPA](https://launchpad.net/~vanillagreen/+archive/ubuntu/vgs-shell):
+
+```bash
+sudo add-apt-repository ppa:avengemedia/danklinux
+sudo add-apt-repository ppa:vanillagreen/vgs-shell
+sudo apt update
+sudo apt install vgs-shell
+```
+
+### Gentoo
+
+Install from the [VanillaGreen overlay](https://github.com/vanillagreencom/gentoo-overlay):
+
+```bash
+sudo eselect repository add vanillagreen git https://github.com/vanillagreencom/gentoo-overlay.git
+sudo emaint sync -r vanillagreen
+sudo emerge --ask gui-apps/vgs-shell
+```
+
+### Nix / Home Manager
+
+Add the [VGS flake](flake.nix) input in `flake.nix`:
+
+```nix
+inputs.vgs.url = "github:vanillagreencom/vgs";
+```
+
+Then import it in your Home Manager module:
+
+```nix
+{
+  imports = [ inputs.vgs.homeManagerModules.default ];
+  programs.vgs-shell.enable = true;
+}
+```
+
+### Universal installer
+
+For other systemd-based Linux distributions, install the pinned release bundle:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/vanillagreencom/vgs/v0.1.0/install.sh | bash
+```
+
+The bundle supports x86-64 and ARM64. It requires Quickshell 0.3.0, `jq`, `python3`, systemd user
+services, and Hyprland or Niri.
+
+Run `vshell deps status` after installation. Optional features report their missing system packages
+instead of blocking the shell. Keep `~/.config/vshell` as a real directory: settings, user themes,
+and plugin overrides live there.
+
+Void currently has a maintainer recipe but no packaged Quickshell 0.3.0 dependency. See
+[`packaging/`](packaging/) for that recipe, package source files, and channel details.
+Checksum-verified bundles and source archives are available from
+[GitHub Releases](https://github.com/vanillagreencom/vgs/releases).
+
 ## Themes
 
 **79 themes ship with VGS** — Catppuccin, Gruvbox, Nord, Dracula, Rosé Pine, Tokyo Night, Kanagawa,
@@ -118,62 +244,6 @@ for the keyring prompt auto-login otherwise causes.
 
 **Wallpapers.** Per-monitor wallpapers, scheduled rotation, and a local AI upscaler for turning
 smaller images into 6K wallpapers.
-
-## Requirements
-
-- **Hyprland or Niri** and **Quickshell 0.3.0**.
-- Optional tools unlock optional features — a missing one greys out its widget rather than breaking
-  the shell. `vshell deps status` lists what's found.
-
-### Compositor support
-
-| Tier | Features |
-|---|---|
-| Full parity | Bar and widgets, launcher, dash, control centre, dock, notifications, lock screen, greeter, themes, wallpapers, capture, brightness, idle/lock/screensaver, and backend system services |
-| Niri-native equivalent | Dynamic per-output workspaces, Niri overview, KDL display/layout configuration, KDL keybinds, and KDL window rules |
-| Hyprland-only | Compositor blur. Niri has no compositor blur API, so its setting is disabled with an explanation. |
-
-## Install
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/vanillagreencom/vgs/v0.1.0/install.sh | bash
-```
-
-Requires Quickshell 0.3.0, `jq`, `python3`, systemd user services, and Hyprland or Niri. Works on
-x86-64 and ARM64 Linux. Run `vshell deps status` after install; optional features report their
-missing system packages instead of blocking the shell.
-
-**Nix / Home Manager** — add the input in `flake.nix`, then import it in your Home Manager module:
-
-```nix
-inputs.vgs.url = "github:vanillagreencom/vgs";
-```
-
-```nix
-{
-  imports = [ inputs.vgs.homeManagerModules.default ];
-  programs.vgs-shell.enable = true;
-}
-```
-
-**Packages.** AUR, Fedora COPR, Ubuntu Launchpad PPA, openSUSE/Debian OBS, Gentoo overlay, Nix, and maintainer recipes
-are listed in [`packaging/`](packaging/). Checksum-verified bundles and source archives are on
-[GitHub Releases](https://github.com/vanillagreencom/vgs/releases).
-
-`vshell --help` covers themes, capture, brightness, updates, and IPC. Keep `~/.config/vshell` as a
-real directory: settings, user themes, and plugin overrides live there.
-
-## Repo layout
-
-| Path | Purpose |
-|---|---|
-| `quickshell/vshell/` | Quickshell runtime: `shell.qml`, services, modules, widgets |
-| `bin/vshell`, `bin/vshell-helper`, `bin/vshell_niri.py` | CLI, IPC wrapper, theme engine, Niri/KDL config, capture/update/AI helpers |
-| `backend/` | Go daemon: network, logind, BlueZ, CUPS and other system services |
-| `config/vshell/` | Shipped defaults, dependency manifest, bundled plugins |
-| `themes/` | Built-in theme packages, wallpapers, and app target templates |
-| `systemd/user/vshell.service` | User service template |
-| `docs/architecture/` | Architecture references |
 
 ## Theme engine from the CLI
 

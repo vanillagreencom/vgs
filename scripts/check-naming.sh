@@ -42,13 +42,16 @@ raw="$(rg -n -S --hidden \
   "$pattern" "${paths[@]}" || true)"
 
 # Naming the upstream project in full is attribution, not residue: the About
-# page and the docs' lineage notes both have to say where VGS came from. Only
-# that exact spelling is exempt, so `DankBar`, `dms`, `danklinux` and friends
-# are still caught — including on a line that also carries the attribution.
+# page and the docs' lineage notes both have to say where VGS came from. The
+# exact external Ubuntu PPA identifier is also required in install commands.
+# Only those exact strings are exempt, so `DankBar`, `dms`, `danklinux` and
+# friends are still caught — including elsewhere on an exempted line.
 matches=""
 while IFS= read -r line; do
   [[ -n "$line" ]] || continue
-  if printf '%s' "${line//DankMaterialShell/}" | rg -q -S "$pattern"; then
+  normalized="${line//DankMaterialShell/}"
+  normalized="${normalized//ppa:avengemedia\/danklinux/}"
+  if printf '%s' "$normalized" | rg -q -S "$pattern"; then
     matches+="$line"$'\n'
   fi
 done <<< "$raw"
