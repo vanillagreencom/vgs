@@ -7,6 +7,7 @@ script_dir="$(cd -- "$(dirname -- "$script_path")" && pwd)"
 repo_root="$(cd -- "$script_dir/.." && pwd)"
 helper="$script_dir/vshell-helper"
 export VSHELL_ROOT="$repo_root"
+qs_config_path="$repo_root/quickshell/vshell"
 
 backend_src="$repo_root/backend"
 packaged_backend="$script_dir/vshell-backend"
@@ -62,27 +63,82 @@ _export_backend_socket() {
   return 1
 }
 
-_qs_ipc_call() {
+_qs_path_pids() {
+  local proc_root="${VSHELL_PROC_ROOT:-/proc}"
+  local uid proc exe candidate resolved i
+  local -a argv=()
+
+  uid="$(id -u)"
+  for proc in "$proc_root"/[0-9]*; do
+    [[ -r "$proc/cmdline" && -L "$proc/exe" ]] || continue
+    [[ "$(stat -c %u "$proc" 2>/dev/null || true)" == "$uid" ]] || continue
+    exe="$(readlink -f -- "$proc/exe" 2>/dev/null || true)"
+    case "${exe##*/}" in
+      qs|quickshell) ;;
+      *) continue ;;
+    esac
+
+    argv=()
+    mapfile -d '' -t argv <"$proc/cmdline" || true
+    candidate=""
+    for ((i = 1; i < ${#argv[@]}; i++)); do
+      case "${argv[$i]}" in
+        -p|--path)
+          ((i + 1 < ${#argv[@]})) && candidate="${argv[$((i + 1))]}"
+          break
+          ;;
+        --path=*)
+          candidate="${argv[$i]#--path=}"
+          break
+          ;;
+      esac
+    done
+    [[ -n "$candidate" ]] || continue
+    resolved="$(readlink -f -- "$candidate" 2>/dev/null || true)"
+    [[ "$resolved" == "$qs_config_path/shell.qml" ]] && resolved="${resolved%/shell.qml}"
+    [[ "$resolved" == "$qs_config_path" ]] || continue
+    printf '%s\n' "${proc##*/}"
+  done
+}
+
+_qs_ipc() {
   local out code pid
-  out="$(qs ipc -c "$shell_name" call "$@" 2>&1)" && {
+
+  # The runner launches by this exact path in both a source checkout and a
+  # packaged install. Path selection avoids depending on the caller's XDG
+  # config lookup, while --any-display keeps SSH and unusual display sessions
+  # from filtering out the live instance.
+  out="$(qs ipc -p "$qs_config_path" --any-display "$@" 2>&1)" && {
     printf '%s\n' "$out"
     return 0
   }
   code=$?
 
-  # Config-path IPC can fail from SSH or unusual display environments. Fall
-  # back to the live vshell qs PID, matching the known lock recovery path.
-  pid="$(pgrep -af "qs -c $shell_name" | awk '{print $1}' | tail -n1 || true)"
-  if [[ -n "$pid" ]]; then
-    out="$(qs ipc --pid "$pid" call "$@" 2>&1)" && {
+  # Keep compatibility with direct/fallback launches that use the named config.
+  out="$(qs ipc -c "$shell_name" --any-display "$@" 2>&1)" && {
+    printf '%s\n' "$out"
+    return 0
+  }
+  code=$?
+
+  # A direct PID bypasses config/display lookup entirely. Only consider
+  # same-user Quickshell processes whose -p argument resolves to this CLI's
+  # runtime tree; previews and unrelated qs instances are intentionally ignored.
+  while IFS= read -r pid; do
+    [[ -n "$pid" ]] || continue
+    out="$(qs ipc --pid "$pid" "$@" 2>&1)" && {
       printf '%s\n' "$out"
       return 0
     }
     code=$?
-  fi
+  done < <(_qs_path_pids)
 
   printf '%s\n' "$out"
   return "$code"
+}
+
+_qs_ipc_call() {
+  _qs_ipc call "$@"
 }
 
 _lock_recover() {
@@ -257,7 +313,7 @@ case "${1:-run}" in
         getMode) exec "$helper" theme get-mode ;;
       esac
     fi
-    out="$(qs ipc -c "$shell_name" "$@" 2>&1)" || {
+    out="$(_qs_ipc "$@" 2>&1)" || {
       code=$?
       printf '%s\n' "$out"
       exit "$code"
