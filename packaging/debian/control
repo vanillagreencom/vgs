@@ -9,7 +9,7 @@ Rules-Requires-Root: no
 
 Package: vgs-shell
 Architecture: any
-Depends: quickshell, jq, python3, systemd, ${misc:Depends}, ${shlibs:Depends}
+Depends: quickshell, jq, python3, systemd, ${misc:Depends}
 Description: VanillaGreen desktop shell for Hyprland and Niri
  VGS provides a bar, launcher, settings, lock screen, notifications, capture,
  wallpapers, and application theme generation.

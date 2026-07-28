@@ -8,7 +8,7 @@ VGS installs under `/usr/lib/vshell`, exposes `/usr/bin/vshell`, and installs th
 | Fedora 43/44 | [COPR `vanillagreen/vgs-shell`](https://copr.fedorainfracloud.org/coprs/vanillagreen/vgs-shell/) | Published |
 | openSUSE Tumbleweed/Slowroll | [OBS `home:vanillagreen`](https://build.opensuse.org/package/show/home:vanillagreen/vgs-shell) | Published |
 | Debian 13 | [OBS `home:vanillagreen`](https://build.opensuse.org/package/show/home:vanillagreen/vgs-shell) | Published |
-| Ubuntu | [`debian/`](debian/) | Recipe only; no verified Quickshell 0.3.0 repository |
+| Ubuntu 26.04 | [Launchpad PPA `vanillagreen/vgs-shell`](https://launchpad.net/~vanillagreen/+archive/ubuntu/vgs-shell) | Published; Quickshell from `ppa:avengemedia/danklinux` |
 | Gentoo | [VanillaGreen overlay](https://github.com/vanillagreencom/gentoo-overlay) | Published; [GURU PR #526](https://github.com/gentoo/guru/pull/526) pending |
 | Nix | [`github:vanillagreencom/vgs`](../flake.nix) | Published flake and Home Manager module |
 | Void | [`void/template`](void/template) | Recipe only; Void does not package Quickshell 0.3.0 |
@@ -44,6 +44,15 @@ sudo apt update
 sudo apt install vgs-shell
 ```
 
+Ubuntu 26.04:
+
+```bash
+sudo add-apt-repository ppa:avengemedia/danklinux
+sudo add-apt-repository ppa:vanillagreen/vgs-shell
+sudo apt update
+sudo apt install vgs-shell
+```
+
 Gentoo:
 
 ```bash
@@ -52,4 +61,4 @@ sudo emaint sync -r vanillagreen
 sudo emerge --ask gui-apps/vgs-shell
 ```
 
-Maintainer recipes remain in `arch/`, `fedora/`, `debian/`, `gentoo/`, and `void/`. Guix needs a packaged Quickshell dependency before VGS can publish a truthful channel. Release procedure: `.agents/skills/vgs-release/SKILL.md`.
+Maintainer recipes remain in `arch/`, `fedora/`, `debian/`, `ubuntu/`, `gentoo/`, and `void/`. Guix needs a packaged Quickshell dependency before VGS can publish a truthful channel. Release procedure: `.agents/skills/vgs-release/SKILL.md`.

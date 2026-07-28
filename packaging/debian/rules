@@ -3,9 +3,14 @@
 %:
 	dh $@
 
+override_dh_auto_clean:
+	rm -rf .gocache vshell-backend
+	dh_auto_clean
+
 override_dh_auto_build:
 	sed -i 's|^#!/bin/env bash$$|#!/usr/bin/env bash|' config/vshell/nvim/colorschemes/tokyonight.nvim/scripts/build config/vshell/nvim/colorschemes/tokyonight.nvim/scripts/docs
-	cd backend && go build -mod=vendor -buildvcs=false -trimpath -ldflags="-s -w -X vshell/backend/internal/registry.cliVersion=$$(cat ../VERSION)" -o ../vshell-backend ./cmd/vshell-backend
+	mkdir -p $(CURDIR)/.gocache
+	cd backend && GOCACHE=$(CURDIR)/.gocache CGO_ENABLED=0 go build -mod=vendor -buildvcs=false -trimpath -ldflags="-s -w -X vshell/backend/internal/registry.cliVersion=$$(cat ../VERSION)" -o ../vshell-backend ./cmd/vshell-backend
 
 override_dh_auto_install:
 	DESTDIR=$(CURDIR)/debian/vgs-shell VGS_BACKEND_BINARY=$(CURDIR)/vshell-backend packaging/install-system.sh
