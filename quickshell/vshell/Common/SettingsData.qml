@@ -449,6 +449,7 @@ Singleton {
     property bool greeterRememberLastUser: true
     property bool greeterAutoLogin: false
     property string greeterAutoLoginKeyringMode: "keep"
+    property string greeterPrimaryMonitor: ""
     property bool greeterEnableFprint: false
     property bool greeterEnableU2f: false
     property string greeterWallpaperPath: ""

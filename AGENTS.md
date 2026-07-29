@@ -66,9 +66,6 @@ Live-machine etiquette:
 - This repo drives the live shell session; `systemctl --user restart vshell.service` disrupts it — ask first unless the user requested the restart.
 - Never suspend the machine or destructively test Wi-Fi joins / Bluetooth pairing/removal as part of verification.
 
-## Known upstream issues
-- **Hyprland 0.56.0 native-Lua-config breaks `hyprctl binds -j`**: every bind registered via the Lua config's `__lua` dispatcher (this machine's `~/.config/hypr/hyprland.lua` uses Lua exclusively) serializes with unquoted bare identifiers (e.g. `"keycode": Q`, `"allow_input_capture": Close window`), producing invalid JSON. `bin/vshell-helper`'s `hypr_binds_json()` catches the parse failure and silently falls back to an empty bind list, so the keybinds cheatsheet popup (Super+/) opens with every category empty. Not a vshell regression — confirmed via `git blame` (parser unchanged since Jul 4/5) and upstream discussion [hyprwm/Hyprland#14255](https://github.com/hyprwm/Hyprland/discussions/14255). **Check each session whether a newer Hyprland release has fixed `hyprctl binds -j` JSON output for Lua-registered binds; once it has, remove this note** (and re-test the keybinds popup renders binds again).
-
 ## Theme rules
 - Built-in theme packages live in `themes/<name>/`; user themes in `~/.config/vshell/themes/<name>/` (file-level overlay, user wins).
 - Curated palettes (`source: curated`) pass through untouched; only generated palettes get contrast enforcement.

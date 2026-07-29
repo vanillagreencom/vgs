@@ -256,7 +256,11 @@ Browsing lives in the bar's center dash dropdown (`Modules/Dash/DashPopout.qml`)
 ## Preview screenshots
 `vshell theme preview [name|--all] [--force]` renders a real screenshot per blueprint: a nested Hyprland session runs ghostty+nvim (theme-driven highlights, mock neo-tree/statusline), a second ghostty showcase, the installed file manager (dolphin > nautilus > thunar) with an isolated `XDG_CONFIG_HOME` and a synthetic `HOME` (a fixed sample tree — the pane must not vary per machine or carry real filenames into a committed screenshot), and a minimal Quickshell bar+control-center replica (`quickshell/vshell-preview/shell.qml`).
 
-Mechanics (Hyprland 0.55 Lua-config hyprctl):
+Mechanics (Hyprland native-Lua config and `hyprctl`):
+
+- The nested preview compositor is launched with a transient native-Lua
+  `hyprland.lua`; VGS does not generate the legacy `.conf` format removed in
+  Hyprland 0.57.
 - The parent stages a headless output `VGSPREVIEW` (scale 1) plus a runtime `hl.window_rule` (via `hyprctl eval`) that parks `aquamarine` (nested-compositor) windows there fullscreen without focus. Runtime rules cannot be removed individually and a config reload disturbs the session, so the rule is left in place — the routine hypr-reload hook on theme apply flushes it.
 - Every preview is exactly `PREVIEW_SIZE` (1920x1080). Gaps, border width and any reserved bar area are user config, so the staging output is *created* that much larger (`preview_stage_chrome()` + measured reserved) and the nested session lands on the target size; window geometry is baked into the nested config's exec rules from the same fixed canvas. A capture that comes out at another size is retried once and logged — shipped previews cannot vary with local Hyprland settings.
 - The parent must keep rendering the headless output or the nested session's render callbacks stall; the generator pumps it with `grim -o VGSPREVIEW` while waiting.
