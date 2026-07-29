@@ -34,7 +34,7 @@ Item {
     property string hyprlandCurrentLayout: ""
     property string hyprlandKeyboard: ""
     property int hyprlandLayoutCount: 0
-    property bool isPrimaryScreen: !Quickshell.screens?.length || screenName === Quickshell.screens[0]?.name
+    property bool isPrimaryScreen: true
 
     signal launchRequested
 
@@ -871,6 +871,7 @@ Item {
     Rectangle {
         anchors.fill: parent
         color: "transparent"
+        visible: root.isPrimaryScreen
 
         MouseArea {
             anchors.fill: parent

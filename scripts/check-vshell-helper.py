@@ -7,6 +7,7 @@ import importlib.util
 import json
 import math
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -820,6 +821,124 @@ def test_shell_only_theme_preview():
     with_temp_home(run)
 
 
+def test_hyprland_preview_native_lua():
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        (root / "apps.json").write_text(json.dumps([{
+            "slot": "nvim",
+            "env": {"VGS_PREVIEW_NAME": "Test Theme"},
+            "cmd": ["ghostty", "--class=vgs.preview.nvim", "-e", "printf", "%s", "hello world"],
+        }]))
+        config = helper.preview_hyprland_config(
+            {"name": "Test Theme"},
+            {"accent": "#7aa2f7", "outline": "#444444", "background": "#101010"},
+            root,
+            {"theme_json": root / "theme.json"},
+            (1600, 900),
+        )
+        assert_equal(config.name, "hyprland.lua", "preview config extension")
+        rendered = config.read_text()
+        for expected in (
+            "hl.monitor({",
+            'mode = "1600x900@60"',
+            'hl.on("hyprland.start", function()',
+            "hl.exec_cmd(",
+            "float = true",
+            "no_anim = true",
+            "move = {20, 70}",
+            "size = {780, 810}",
+        ):
+            if expected not in rendered:
+                raise AssertionError(f"Hyprland preview config should contain {expected!r}")
+        for legacy in ("exec-once =", "misc {", "monitor="):
+            if legacy in rendered:
+                raise AssertionError(f"Hyprland preview config retained legacy syntax {legacy!r}")
+        if shutil.which("Hyprland"):
+            verified = subprocess.run(
+                ["Hyprland", "--verify-config", "--config", str(config)],
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                timeout=10,
+            )
+            if verified.returncode != 0:
+                raise AssertionError(
+                    "Hyprland rejected generated preview Lua: "
+                    + (verified.stderr or verified.stdout).strip()
+                )
+
+
+def test_greeter_primary_monitor_validation():
+    with tempfile.TemporaryDirectory() as tmp:
+        cache = Path(tmp)
+        (cache / "settings.json").write_text(json.dumps({"greeterPrimaryMonitor": "DP-1"}))
+        assert_equal(helper.greeter_primary_monitor(cache), "DP-1",
+                     "valid greeter primary monitor")
+        rendered = helper.render_hyprland_greeter_config(
+            "/usr/bin/qs -p /var/cache/vshell-greeter/runtime/quickshell/vshell",
+            cache,
+            {"XCURSOR_THEME": "Adwaita"},
+        )
+        for expected in (
+            'hl.env("VSHELL_RUN_GREETER", "1")',
+            'hl.env("XCURSOR_THEME", "Adwaita")',
+            'cursor = {\n    default_monitor = "DP-1",\n  },',
+            'hl.on("hyprland.start", function()',
+            "hl.exec_cmd(",
+        ):
+            if expected not in rendered:
+                raise AssertionError(f"Hyprland greeter config should contain {expected!r}")
+        for legacy in ("exec-once =", "misc {", "env = "):
+            if legacy in rendered:
+                raise AssertionError(f"Hyprland greeter config retained legacy syntax {legacy!r}")
+        if shutil.which("Hyprland"):
+            config = cache / "greeter.lua"
+            config.write_text(rendered)
+            verified = subprocess.run(
+                ["Hyprland", "--verify-config", "--config", str(config)],
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                timeout=10,
+            )
+            if verified.returncode != 0:
+                raise AssertionError(
+                    "Hyprland rejected generated greeter Lua: "
+                    + (verified.stderr or verified.stdout).strip()
+                )
+
+        (cache / "settings.json").write_text(json.dumps({
+            "greeterPrimaryMonitor": "DP-1\nexec-once = unsafe",
+        }))
+        assert_equal(helper.greeter_primary_monitor(cache), "",
+                     "greeter primary monitor config injection guard")
+
+        (cache / "settings.json").write_text("{}")
+        assert_equal(helper.greeter_primary_monitor(cache), "",
+                     "automatic greeter primary monitor")
+
+
+def test_greeter_runtime_helper_dependencies():
+    with tempfile.TemporaryDirectory() as tmp:
+        runtime_bin = Path(tmp) / "runtime" / "bin"
+        helper.sync_greeter_runtime_bin(runtime_bin)
+        expected = set(helper.GREETER_RUNTIME_BIN_FILES)
+        actual = {path.name for path in runtime_bin.iterdir()}
+        assert_equal(actual, expected, "cached greeter runtime files")
+        result = subprocess.run(
+            [str(runtime_bin / "vshell-helper"), "greeter", "run", "--help"],
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+        )
+        if result.returncode != 0:
+            raise AssertionError(
+                "cached greeter helper must load with its copied Python modules:\n"
+                f"{result.stderr}"
+            )
+
+
 def main():
     assert_equal(helper._theme_command_mutates(["chromium-policy"]), True,
                  "Chromium policy refresh must serialize with theme applies")
@@ -837,6 +956,9 @@ def main():
     test_vshell_blur_cli_contract()
     test_generated_theme_consumer_wiring()
     test_shell_only_theme_preview()
+    test_hyprland_preview_native_lua()
+    test_greeter_primary_monitor_validation()
+    test_greeter_runtime_helper_dependencies()
     subprocess.run(
         [sys.executable, str(REPO_ROOT / "scripts" / "check-vshell-niri.py")],
         check=True,

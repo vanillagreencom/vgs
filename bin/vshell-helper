@@ -77,6 +77,13 @@ DEFAULT_COLORS = [
     "#32344a", "#f7768e", "#9ece6a", "#e0af68", "#7aa2f7", "#ad8ee6", "#449dab", "#787c99",
     "#444b6a", "#ff7a93", "#b9f27c", "#ff9e64", "#7da6ff", "#bb9af7", "#0db9d7", "#acb0d0",
 ]
+GREETER_RUNTIME_BIN_FILES = {
+    "vshell": 0o750,
+    "vshell-helper": 0o750,
+    "vshell_theme_color.py": 0o640,
+    "vshell_niri.py": 0o640,
+    "vshell_niri_kdl.py": 0o640,
+}
 
 
 def eprint(*args: Any) -> None:
@@ -4020,8 +4027,8 @@ def preview_stage_reserved() -> Tuple[int, int]:
     return 0, 0
 
 
-def preview_hyprland_conf(bp: Dict[str, Any], roles: Dict[str, str], tmp: Path, tree: Dict[str, Any], canvas: Tuple[int, int]) -> Path:
-    """Write the nested-session Hyprland config."""
+def preview_hyprland_config(bp: Dict[str, Any], roles: Dict[str, str], tmp: Path, tree: Dict[str, Any], canvas: Tuple[int, int]) -> Path:
+    """Write the nested-session native-Lua Hyprland config."""
     width, height = canvas
     accent = roles.get("accent", "#7aa2f7").lstrip("#")
     outline = roles.get("outline", roles.get("bright_black", "#444444")).lstrip("#")
@@ -4030,35 +4037,48 @@ def preview_hyprland_conf(bp: Dict[str, Any], roles: Dict[str, str], tmp: Path, 
     qs_preview = repo_root() / "quickshell" / "vshell-preview" / "shell.qml"
 
     lines = [
-        f"monitor=,{width}x{height}@60,0x0,1",
-        "misc {",
-        "  disable_hyprland_logo = true",
-        "  disable_splash_rendering = true",
-        "  disable_watchdog_warning = true",
-        f"  background_color = 0x{bg}",
-        "}",
-        "animations {",
-        "  enabled = false",
-        "}",
-        "cursor {",
-        "  inactive_timeout = 1",
-        "}",
-        "decoration {",
-        "  rounding = 10",
-        "  blur {",
-        "    enabled = false",
-        "  }",
-        "  shadow {",
-        "    enabled = false",
-        "  }",
-        "}",
-        "general {",
-        "  gaps_in = 10",
-        "  gaps_out = 20",
-        "  border_size = 2",
-        f"  col.active_border = rgb({accent})",
-        f"  col.inactive_border = rgb({outline})",
-        "}",
+        "-- Generated transiently by VGS for theme preview capture.",
+        "hl.monitor({",
+        '  output = "",',
+        f'  mode = "{width}x{height}@60",',
+        '  position = "0x0",',
+        "  scale = 1,",
+        "})",
+        "",
+        "hl.config({",
+        "  misc = {",
+        "    disable_hyprland_logo = true,",
+        "    disable_splash_rendering = true,",
+        "    disable_watchdog_warning = true,",
+        f'    background_color = "rgb({bg})",',
+        "  },",
+        "  animations = {",
+        "    enabled = false,",
+        "  },",
+        "  cursor = {",
+        "    inactive_timeout = 1,",
+        "  },",
+        "  decoration = {",
+        "    rounding = 10,",
+        "    blur = {",
+        "      enabled = false,",
+        "    },",
+        "    shadow = {",
+        "      enabled = false,",
+        "    },",
+        "  },",
+        "  general = {",
+        "    gaps_in = 10,",
+        "    gaps_out = 20,",
+        "    border_size = 2,",
+        "    col = {",
+        f'      active_border = "rgb({accent})",',
+        f'      inactive_border = "rgb({outline})",',
+        "    },",
+        "  },",
+        "})",
+        "",
+        'hl.on("hyprland.start", function()',
     ]
     layout = preview_layout(width, height)
     apps = json.loads((tmp / "apps.json").read_text())
@@ -4067,16 +4087,43 @@ def preview_hyprland_conf(bp: Dict[str, Any], roles: Dict[str, str], tmp: Path, 
         if not rect:
             continue
         x, y, w, h = rect
-        env_prefix = " ".join(f"{k}='{v}'" for k, v in (app.get("env") or {}).items())
-        command = " ".join(app["cmd"])
-        lines.append(f"exec-once = [float;noanim;move {x} {y};size {w} {h}] env {env_prefix} {command}")
+        env_prefix = [f"{key}={value}" for key, value in (app.get("env") or {}).items()]
+        command = shlex.join(["env", *env_prefix, *[str(part) for part in app["cmd"]]])
+        lines.extend([
+            f"  hl.exec_cmd({_lua_string(command)}, {{",
+            "    float = true,",
+            "    no_anim = true,",
+            f"    move = {{{x}, {y}}},",
+            f"    size = {{{w}, {h}}},",
+            "  })",
+        ])
     if shutil.which("qs") and qs_preview.exists():
         wallpaper = preview_wallpaper(bp)
-        lines.append(f"exec-once = env VGS_PREVIEW_THEME={tree['theme_json']} VGS_PREVIEW_WALLPAPER='{wallpaper}' qs -p {qs_preview}")
-    lines.append(f"exec-once = {helper} theme preview-capture --dir {tmp} --windows {len(apps)}")
-    conf = tmp / "hyprland.conf"
-    conf.write_text("\n".join(lines) + "\n")
-    return conf
+        qs_command = shlex.join([
+            "env",
+            f"VGS_PREVIEW_THEME={tree['theme_json']}",
+            f"VGS_PREVIEW_WALLPAPER={wallpaper}",
+            "qs",
+            "-p",
+            str(qs_preview),
+        ])
+        lines.append(f"  hl.exec_cmd({_lua_string(qs_command)})")
+    capture_command = shlex.join([
+        helper,
+        "theme",
+        "preview-capture",
+        "--dir",
+        str(tmp),
+        "--windows",
+        str(len(apps)),
+    ])
+    lines.extend([
+        f"  hl.exec_cmd({_lua_string(capture_command)})",
+        "end)",
+    ])
+    config = tmp / "hyprland.lua"
+    config.write_text("\n".join(lines) + "\n")
+    return config
 
 
 def preview_hyprctl_json(*args: str) -> Any:
@@ -4192,14 +4239,14 @@ def capture_theme_preview(bp: Dict[str, Any], out_path: Path, canvas: Tuple[int,
     try:
         roles = target_roles(bp)
         tree = write_preview_tree(bp, roles, tmp)
-        conf = preview_hyprland_conf(bp, roles, tmp, tree, canvas)
+        config = preview_hyprland_config(bp, roles, tmp, tree, canvas)
         env = os.environ.copy()
         env.pop("HYPRLAND_INSTANCE_SIGNATURE", None)
         shot = tmp / "shot.png"
         done = tmp / "done"
         pump_shot = tmp / "pump.png"
         with log_path.open("w") as log:
-            proc = subprocess.Popen(["Hyprland", "--config", str(conf)], env=env, stdout=log, stderr=log, cwd=tmp)
+            proc = subprocess.Popen(["Hyprland", "--config", str(config)], env=env, stdout=log, stderr=log, cwd=tmp)
             deadline = time.time() + 60
             while time.time() < deadline and proc.poll() is None and not done.exists():
                 # The parent only renders the headless output on demand; capturing it
@@ -7973,6 +8020,11 @@ def _lua_bool(value: bool) -> str:
     return "true" if value else "false"
 
 
+def _lua_string(value: Any) -> str:
+    """Quote a scalar for native Hyprland Lua without ASCII-only \\u escapes."""
+    return json.dumps(str(value), ensure_ascii=False)
+
+
 def _lua_table(fields: Dict[str, Any], indent: str = "    ") -> List[str]:
     lines: List[str] = []
     for key, value in fields.items():
@@ -8703,6 +8755,18 @@ def chown_tree(path: Path, uid: int, gid: int, dir_mode: int = 0o2750, file_mode
         pass
 
 
+def sync_greeter_runtime_bin(runtime_bin: Path) -> None:
+    if runtime_bin.exists() and runtime_bin.is_symlink():
+        raise RuntimeError(f"Refusing symlink runtime bin directory: {runtime_bin}")
+    runtime_bin.mkdir(parents=True, exist_ok=True)
+    for name, mode in GREETER_RUNTIME_BIN_FILES.items():
+        src = repo_root() / "bin" / name
+        if not src.is_file():
+            raise RuntimeError(f"required greeter runtime file not found: {src}")
+        shutil.copy2(src, runtime_bin / name)
+        os.chmod(runtime_bin / name, mode)
+
+
 def sync_greeter_runtime(cache_dir_path: Path, gid: int) -> None:
     runtime_root = cache_dir_path / "runtime"
     runtime_qs = runtime_root / "quickshell" / "vshell"
@@ -8715,15 +8779,7 @@ def sync_greeter_runtime(cache_dir_path: Path, gid: int) -> None:
         shutil.rmtree(runtime_qs)
     runtime_qs.parent.mkdir(parents=True, exist_ok=True)
     shutil.copytree(src_qs, runtime_qs, symlinks=True)
-    runtime_bin = runtime_root / "bin"
-    if runtime_bin.exists() and runtime_bin.is_symlink():
-        raise RuntimeError(f"Refusing symlink runtime bin directory: {runtime_bin}")
-    runtime_bin.mkdir(parents=True, exist_ok=True)
-    for name in ("vshell", "vshell-helper"):
-        src = repo_root() / "bin" / name
-        if src.exists():
-            shutil.copy2(src, runtime_bin / name)
-            os.chmod(runtime_bin / name, 0o750)
+    sync_greeter_runtime_bin(runtime_root / "bin")
     chown_tree(runtime_root, 0, gid)
 
 
@@ -9067,6 +9123,64 @@ def greeter_cursor_environment(cache_path: Path, base_env: Dict[str, str]) -> Di
     return {}
 
 
+def greeter_primary_monitor(cache_path: Path) -> str:
+    settings_path = cache_path / "settings.json"
+    if not settings_path.exists():
+        return ""
+    try:
+        settings = load_json_file(settings_path)
+    except Exception:
+        return ""
+    monitor = str(settings.get("greeterPrimaryMonitor") or "").strip()
+    # Keep connector selection to real compositor-style identifiers even
+    # though the generated native-Lua config also quotes this value.
+    if monitor and not re.fullmatch(r"[A-Za-z0-9._:-]+", monitor):
+        eprint(f"Ignoring invalid greeter primary monitor: {monitor!r}")
+        return ""
+    return monitor
+
+
+def render_hyprland_greeter_config(qs_cmd: str, cache_path: Path, cursor_env: Dict[str, str]) -> str:
+    lines = [
+        "-- Generated transiently by VGS for greetd.",
+        f'hl.env("VSHELL_RUN_GREETER", {_lua_string("1")})',
+        f'hl.env("VSHELL_GREET_CFG_DIR", {_lua_string(cache_path)})',
+        f'hl.env("XDG_SESSION_TYPE", {_lua_string("wayland")})',
+    ]
+    for key in ("XCURSOR_PATH", "XCURSOR_THEME", "XCURSOR_SIZE"):
+        if cursor_env.get(key):
+            lines.append(f"hl.env({_lua_string(key)}, {_lua_string(cursor_env[key])})")
+    lines.extend([
+        "",
+        "hl.config({",
+        "  misc = {",
+        "    disable_hyprland_logo = true,",
+        "    disable_splash_rendering = true,",
+        "  },",
+    ])
+    primary_monitor = greeter_primary_monitor(cache_path)
+    if primary_monitor:
+        # Hyprland documents cursor.default_monitor as the startup output
+        # selector. GreeterContent independently uses the same connector as the
+        # sole visible owner of greetd state and input focus.
+        lines.extend([
+            "  cursor = {",
+            f"    default_monitor = {_lua_string(primary_monitor)},",
+            "  },",
+        ])
+    lines.extend([
+        "})",
+        "",
+    ])
+    exit_cmd = "hyprctl dispatch 'hl.dsp.exit()' || hyprctl dispatch exit"
+    lines.extend([
+        'hl.on("hyprland.start", function()',
+        f"  hl.exec_cmd({_lua_string(qs_cmd + '; ' + exit_cmd)})",
+        "end)",
+    ])
+    return "\n".join(lines) + "\n"
+
+
 def choose_greeter_compositor(requested: str = "") -> str:
     requested = requested.strip().lower()
     if requested not in {"", "hyprland", "niri"}:
@@ -9109,18 +9223,10 @@ def greeter_run(cache_dir_value: str, debug: bool = False, requested_compositor:
     qs_cmd = f"{shlex.quote(qs_bin)} -p {shlex.quote(str(qs_config))}"
     env = os.environ.copy()
     cursor_env = greeter_cursor_environment(cache_path, env)
-    suffix = ".conf" if compositor == "hyprland" else ".kdl"
+    suffix = ".lua" if compositor == "hyprland" else ".kdl"
     with tempfile.NamedTemporaryFile("w", prefix=f"vshell-greeter-{compositor}-", suffix=suffix, delete=False) as tmp:
         if compositor == "hyprland":
-            tmp.write("env = VSHELL_RUN_GREETER,1\n")
-            tmp.write(f"env = VSHELL_GREET_CFG_DIR,{cache_path}\n")
-            tmp.write("env = XDG_SESSION_TYPE,wayland\n")
-            for key in ("XCURSOR_PATH", "XCURSOR_THEME", "XCURSOR_SIZE"):
-                if cursor_env.get(key):
-                    tmp.write(f"env = {key},{cursor_env[key]}\n")
-            tmp.write("misc {\n    disable_hyprland_logo = true\n    disable_splash_rendering = true\n}\n")
-            exit_cmd = "hyprctl dispatch 'hl.dsp.exit()' || hyprctl dispatch exit"
-            tmp.write(f"exec-once = sh -lc {shlex.quote(qs_cmd + '; ' + exit_cmd)}\n")
+            tmp.write(render_hyprland_greeter_config(qs_cmd, cache_path, cursor_env))
         else:
             tmp.write(_niri().niri_greeter_config(qs_cmd))
         config_path = tmp.name

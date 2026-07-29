@@ -236,6 +236,7 @@
   "greeterRememberLastUser": true,
   "greeterAutoLogin": false,
   "greeterAutoLoginKeyringMode": "keep",
+  "greeterPrimaryMonitor": "",
   "greeterEnableFprint": false,
   "greeterEnableU2f": false,
   "greeterWallpaperPath": "",

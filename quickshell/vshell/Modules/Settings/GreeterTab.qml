@@ -19,6 +19,50 @@ Item {
         { label: I18n.tr("Keep encrypted keyring"), value: "keep" },
         { label: I18n.tr("Empty login keyring for auto-login"), value: "empty" }
     ]
+    readonly property string automaticMonitorLabel: I18n.tr("Automatic")
+
+    function monitorLabel(screen) {
+        const displayName = SettingsData.getScreenDisplayName(screen);
+        return displayName === screen.name ? screen.name : displayName + " (" + screen.name + ")";
+    }
+
+    function primaryMonitorOptions() {
+        const options = [automaticMonitorLabel];
+        for (let i = 0; i < Quickshell.screens.length; i++)
+            options.push(monitorLabel(Quickshell.screens[i]));
+        const configured = SettingsData.greeterPrimaryMonitor;
+        if (configured && !primaryMonitorConnected(configured))
+            options.push(I18n.tr("%1 (disconnected)").arg(configured));
+        return options;
+    }
+
+    function primaryMonitorConnected(name) {
+        for (let i = 0; i < Quickshell.screens.length; i++) {
+            if (Quickshell.screens[i].name === name)
+                return true;
+        }
+        return false;
+    }
+
+    function primaryMonitorLabel(name) {
+        if (!name)
+            return automaticMonitorLabel;
+        for (let i = 0; i < Quickshell.screens.length; i++) {
+            if (Quickshell.screens[i].name === name)
+                return monitorLabel(Quickshell.screens[i]);
+        }
+        return I18n.tr("%1 (disconnected)").arg(name);
+    }
+
+    function primaryMonitorValue(label) {
+        if (label === automaticMonitorLabel)
+            return "";
+        for (let i = 0; i < Quickshell.screens.length; i++) {
+            if (monitorLabel(Quickshell.screens[i]) === label)
+                return Quickshell.screens[i].name;
+        }
+        return SettingsData.greeterPrimaryMonitor;
+    }
 
     function keyringModeLabel(value) {
         for (let i = 0; i < keyringModeOptions.length; i++) {
@@ -241,6 +285,24 @@ Item {
                     description: I18n.tr("Preselect the last launched desktop session")
                     checked: SettingsData.greeterRememberLastSession
                     onToggled: checked => SettingsData.set("greeterRememberLastSession", checked)
+                }
+
+                SettingsDropdownRow {
+                    settingKey: "greeterPrimaryMonitor"
+                    tags: ["greeter", "login", "primary", "monitor", "display", "screen"]
+                    text: I18n.tr("Primary Monitor")
+                    description: I18n.tr("Show and focus the interactive login screen on this output after the greeter compositor starts")
+                    options: root.primaryMonitorOptions()
+                    currentValue: root.primaryMonitorLabel(SettingsData.greeterPrimaryMonitor)
+                    onValueChanged: value => SettingsData.set("greeterPrimaryMonitor", root.primaryMonitorValue(value))
+                }
+
+                StyledText {
+                    width: parent.width
+                    wrapMode: Text.WordWrap
+                    text: I18n.tr("This applies to the graphical VGS greeter after Sync. Firmware, bootloader, and disk-unlock prompts run earlier and are not controlled by VGS.")
+                    color: Theme.surfaceVariantText
+                    font.pixelSize: Theme.fontSizeSmall
                 }
 
                 SettingsToggleRow {

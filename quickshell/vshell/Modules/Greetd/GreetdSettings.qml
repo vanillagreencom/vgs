@@ -66,6 +66,7 @@ Singleton {
     property bool rememberLastSession: true
     property bool rememberLastUser: true
     property bool greeterAutoLogin: false
+    property string greeterPrimaryMonitor: ""
     property bool greeterEnableFprint: false
     property bool greeterEnableU2f: false
     property string greeterWallpaperPath: ""
@@ -150,6 +151,7 @@ Singleton {
             if (configBaseDir === root._greeterCacheDir) {
                 greeterAutoLogin = settings.greeterAutoLogin !== undefined ? settings.greeterAutoLogin : false;
             }
+            greeterPrimaryMonitor = settings.greeterPrimaryMonitor !== undefined ? settings.greeterPrimaryMonitor : "";
             greeterEnableFprint = settings.greeterEnableFprint !== undefined ? settings.greeterEnableFprint : false;
             greeterEnableU2f = settings.greeterEnableU2f !== undefined ? settings.greeterEnableU2f : false;
             greeterWallpaperPath = settings.greeterWallpaperPath !== undefined ? settings.greeterWallpaperPath : "";

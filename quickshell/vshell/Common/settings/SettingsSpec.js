@@ -238,6 +238,7 @@ var SPEC = {
     greeterRememberLastUser: { def: true, onChange: "markGreeterSyncPending" },
     greeterAutoLogin: { def: false, onChange: "scheduleGreeterAutoLoginSync" },
     greeterAutoLoginKeyringMode: { def: "keep", onChange: "scheduleGreeterAutoLoginSync" },
+    greeterPrimaryMonitor: { def: "", onChange: "markGreeterSyncPending" },
     greeterEnableFprint: { def: false, onChange: "scheduleAuthApply" },
     greeterEnableU2f: { def: false, onChange: "scheduleAuthApply" },
     greeterWallpaperPath: { def: "", onChange: "markGreeterSyncPending" },

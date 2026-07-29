@@ -4,6 +4,21 @@
 cache, VGS theme sync, auto-login launch, and opt-in empty-password
 login-keyring provisioning.
 
+## Primary display
+
+- `greeterPrimaryMonitor` stores a compositor connector name such as `DP-1`.
+  An empty value keeps automatic compositor/Quickshell ordering.
+- The graphical greeter uses that connector as the sole owner of greetd state
+  and keyboard focus. Its Hyprland session also sets
+  `cursor.default_monitor`, which places initial compositor focus there.
+- VGS generates the transient Hyprland greeter config in native Lua. Legacy
+  `.conf` configs are not used, because Hyprland removes that format in 0.57.
+- If the configured connector is absent, the greeter falls back to the first
+  connected screen so login is never stranded on a disconnected display.
+- This policy begins when greetd starts the VGS compositor. Firmware POST,
+  bootloader output, and initramfs/LUKS prompts happen earlier and cannot be
+  routed by VGS.
+
 ## Policy
 
 - `greeterAutoLoginKeyringMode = "keep"` is the safe default: the login
