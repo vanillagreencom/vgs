@@ -106,6 +106,7 @@ Singleton {
     signal locationStateUpdate(var data)
     signal sysupdateStateUpdate(var data)
     signal tailscaleStateUpdate(var data)
+    signal cloudSyncStateUpdate(var data)
 
     property bool capsLockState: false
     property bool screensaverInhibited: false
@@ -369,6 +370,8 @@ Singleton {
             sysupdateStateUpdate(data);
         } else if (service === "tailscale") {
             tailscaleStateUpdate(data);
+        } else if (service === "cloudsync") {
+            cloudSyncStateUpdate(data);
         }
     }
 

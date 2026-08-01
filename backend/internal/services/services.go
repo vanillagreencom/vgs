@@ -9,6 +9,7 @@ import (
 	"vshell/backend/internal/services/bluez"
 	"vshell/backend/internal/services/brightnessbridge"
 	"vshell/backend/internal/services/clipboard"
+	"vshell/backend/internal/services/cloudsync"
 	"vshell/backend/internal/services/cups"
 	"vshell/backend/internal/services/dbusbridge"
 	"vshell/backend/internal/services/evdev"
@@ -98,6 +99,7 @@ func RegisterAll(srv *server.Server, log *slog.Logger) func() {
 	register("cups", func() (closer, error) { return cups.Register(srv, log) })
 	register("tailscale", func() (closer, error) { return tailscale.Register(srv, log) })
 	register("sysupdate", func() (closer, error) { return sysupdate.Register(srv, log) })
+	register("cloudsync", func() (closer, error) { return cloudsync.Register(srv, log) })
 	register("evdev", func() (closer, error) { return evdev.Register(srv, log) })
 
 	return func() {

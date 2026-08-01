@@ -95,6 +95,11 @@
         "ffmpegthumbnailer"
       ]
     },
+    "launcher-zoxide": {
+      "commands": [
+        "zoxide"
+      ]
+    },
     "updates-arch": {
       "commands": [
         "pacman",
@@ -123,6 +128,19 @@
     "brightness": {
       "commands": [
         "udevadm"
+      ]
+    },
+    "cloud-sync": {
+      "commands": [
+        "rclone"
+      ]
+    },
+    "cloud-sync-stream": {
+      "anyCommands": [
+        [
+          "fusermount3",
+          "fusermount"
+        ]
       ]
     }
   }

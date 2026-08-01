@@ -18,7 +18,8 @@
     { "name": "tailscale", "prefixes": ["tailscale."], "phase": 10, "status": "implemented", "note": "Backend-owned status and actions; default widgets must not shell out to tailscale directly." },
     { "name": "sysupdate", "prefixes": ["sysupdate."], "phase": 10, "status": "implemented", "note": "Canonical update-count owner with acquire/release scheduling; helper fallback only when capability is absent." },
     { "name": "evdev", "prefixes": ["evdev."], "phase": 10, "status": "implemented", "note": "Caps-lock state; subscription-driven." },
-    { "name": "plugins", "prefixes": ["plugins."], "phase": 11, "status": "deferred", "note": "Online plugin registry remains disabled until a VGS-aware registry exists; UI gates on capability absence." }
+    { "name": "plugins", "prefixes": ["plugins."], "phase": 11, "status": "deferred", "note": "Online plugin registry remains disabled until a VGS-aware registry exists; UI gates on capability absence." },
+    { "name": "cloudsync", "prefixes": ["cloudsync."], "phase": 12, "status": "implemented", "note": "Cloud file sync on rclone. The backend is the single owner of the supervised `rclone rcd` process, sync-folder config, schedules, the inotify watcher, FUSE mounts and conflict state; QML never talks to rclone directly. Capability is absent when the rclone binary is missing." }
   ],
   "excluded": [
     { "prefixes": ["themes.", "theme.auto"], "reason": "VGS themes are helper-owned (VGSThemeService / vshell theme). The upstream theme model and theme automation are excluded.", "action": "Remove themes.* wrappers and the theme.auto subscription/signal from VGSBackendService (Phase 11 / opportunistic cleanup)." },

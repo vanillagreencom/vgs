@@ -3,6 +3,7 @@ import Quickshell
 import qs.Common
 import qs.Modals
 import qs.Modals.Changelog
+import qs.Modals.CloudSync
 import qs.Modals.Clipboard
 import qs.Modals.Capture
 import qs.Modals.Common
@@ -847,6 +848,36 @@ Item {
                     wasShown = true;
                 } else if (wasShown) {
                     PopoutService.unloadSettings();
+                }
+            }
+        }
+    }
+
+    LazyLoader {
+        id: cloudSyncModalLoader
+
+        active: false
+
+        Component.onCompleted: {
+            PopoutService.cloudSyncModalLoader = cloudSyncModalLoader;
+        }
+
+        onActiveChanged: {
+            if (active && item) {
+                PopoutService.cloudSyncModal = item;
+                PopoutService._onCloudSyncModalLoaded();
+            }
+        }
+
+        CloudSyncModal {
+            id: cloudSyncModal
+            property bool wasShown: false
+
+            onVisibleChanged: {
+                if (visible) {
+                    wasShown = true;
+                } else if (wasShown) {
+                    PopoutService.unloadCloudSync();
                 }
             }
         }
