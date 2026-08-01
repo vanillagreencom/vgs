@@ -531,7 +531,7 @@ Item {
                     switch (mode) {
                     case "files":
                         if (!DSearchService.dsearchAvailable)
-                            return I18n.tr("File search requires dsearch\nInstall from github.com/AvengeMedia/vgssearch");
+                            return I18n.tr("Launcher search is unavailable");
                         if (!hasQuery)
                             return I18n.tr("Type to search files");
                         if (root.controller.searchQuery.length < 2)

@@ -45,6 +45,13 @@ Theme packages own colors, wallpapers, and curated/generated app theme files.
 They do not own shell or compositor geometry such as corner radius, border size,
 or spacing; those live in VGS settings.
 
+Release bundles install the complete built-in wallpaper and icon assets. The
+installer supports `VGS_THEME_BUNDLE=all|core|extras`; Arch packages use `core`
+for the base package (the `coppernight` default theme and targets) and `extras`
+for the optional collection of remaining themes, wallpapers, and vendored Yaru
+icon assets. The base package remains fully functional; install the asset package
+to restore the complete built-in collection.
+
 ## Theme package format
 A theme is a directory, not a single JSON:
 

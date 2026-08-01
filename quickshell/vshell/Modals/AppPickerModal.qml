@@ -249,37 +249,6 @@ VgsModal {
                         font.weight: Font.Bold
                         color: Theme.surfaceText
                     }
-
-                    Row {
-                        spacing: Theme.spacingXS
-                        anchors.right: parent.right
-                        anchors.rightMargin: Theme.spacingS
-                        anchors.verticalCenter: parent.verticalCenter
-
-                        VgsActionButton {
-                            buttonSize: 36
-                            circular: false
-                            iconName: "view_list"
-                            iconSize: 20
-                            iconColor: root.viewMode === "list" ? Theme.primary : Theme.surfaceText
-                            backgroundColor: root.viewMode === "list" ? Theme.primaryHover : Theme.withAlpha(Theme.primaryHover, 0)
-                            onClicked: {
-                                root.viewMode = "list";
-                            }
-                        }
-
-                        VgsActionButton {
-                            buttonSize: 36
-                            circular: false
-                            iconName: "grid_view"
-                            iconSize: 20
-                            iconColor: root.viewMode === "grid" ? Theme.primary : Theme.surfaceText
-                            backgroundColor: root.viewMode === "grid" ? Theme.primaryHover : Theme.withAlpha(Theme.primaryHover, 0)
-                            onClicked: {
-                                root.viewMode = "grid";
-                            }
-                        }
-                    }
                 }
 
                 VgsTextField {
@@ -297,6 +266,7 @@ VgsModal {
                     leftIconColor: Theme.surfaceVariantText
                     leftIconFocusedColor: Theme.primary
                     showClearButton: true
+                    rightAccessoryWidth: viewModeActions.width + Theme.spacingXS
                     font.pixelSize: Theme.fontSizeLarge
                     enabled: root.shouldBeVisible
                     ignoreLeftRightKeys: root.viewMode !== "list"
@@ -344,6 +314,41 @@ VgsModal {
                         }
 
                         target: root
+                    }
+
+                    Row {
+                        id: viewModeActions
+
+                        anchors.right: parent.right
+                        anchors.rightMargin: Theme.spacingS
+                        anchors.verticalCenter: parent.verticalCenter
+                        spacing: Theme.spacingXXS
+
+                        VgsActionButton {
+                            buttonSize: 34
+                            circular: false
+                            iconName: "view_list"
+                            iconSize: 19
+                            iconColor: root.viewMode === "list" ? Theme.primary : Theme.surfaceVariantText
+                            backgroundColor: root.viewMode === "list" ? Theme.primaryHover : Theme.withAlpha(Theme.primaryHover, 0)
+                            onClicked: {
+                                root.viewMode = "list";
+                                searchField.forceActiveFocus();
+                            }
+                        }
+
+                        VgsActionButton {
+                            buttonSize: 34
+                            circular: false
+                            iconName: "grid_view"
+                            iconSize: 19
+                            iconColor: root.viewMode === "grid" ? Theme.primary : Theme.surfaceVariantText
+                            backgroundColor: root.viewMode === "grid" ? Theme.primaryHover : Theme.withAlpha(Theme.primaryHover, 0)
+                            onClicked: {
+                                root.viewMode = "grid";
+                                searchField.forceActiveFocus();
+                            }
+                        }
                     }
                 }
 

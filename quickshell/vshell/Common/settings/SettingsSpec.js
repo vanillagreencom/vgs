@@ -275,6 +275,13 @@ var SPEC = {
     launcherUseOverlayLayer: { def: false },
     launcherStyle: { def: "full" },
     spotlightBarShowModeChips: { def: false },
+    launcherSidebarShowByDefault: { def: true },
+    launcherSearchRoots: { def: ["~"] },
+    launcherSearchIgnored: { def: [".git", "node_modules", ".cache", ".local/share/Trash"] },
+    launcherSearchIgnoreMounts: { def: true },
+    launcherFolderOpenCommand: { def: "" },
+    launcherMenuUsageHistory: { def: {} },
+    launcherMenuViewModes: { def: { apps: "list", files: "list", folders: "list" } },
     keybindsFloatingWindow: { def: false },
 
     useAutoLocation: { def: false },

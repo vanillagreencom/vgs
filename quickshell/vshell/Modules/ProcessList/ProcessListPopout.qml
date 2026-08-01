@@ -226,10 +226,14 @@ VgsPopout {
                     Row {
                         id: leftInfo
                         anchors.left: parent.left
+                        anchors.right: gaugesRow.left
+                        anchors.rightMargin: Theme.spacingM
                         anchors.verticalCenter: parent.verticalCenter
                         spacing: Theme.spacingM
+                        clip: true
 
                         Rectangle {
+                            id: systemLogoContainer
                             width: Theme.fontSizeMedium * 3
                             height: width
                             radius: Theme.cornerRadius
@@ -244,24 +248,33 @@ VgsPopout {
                         }
 
                         Column {
+                            width: Math.max(0, leftInfo.width - systemLogoContainer.width - leftInfo.spacing)
                             anchors.verticalCenter: parent.verticalCenter
                             spacing: Theme.spacingXS / 2
 
                             StyledText {
+                                width: parent.width
                                 text: DgopService.hostname || "localhost"
                                 font.pixelSize: Theme.fontSizeMedium
                                 font.weight: Font.Bold
                                 color: Theme.surfaceText
+                                elide: Text.ElideRight
+                                wrapMode: Text.NoWrap
                             }
 
                             StyledText {
+                                width: parent.width
                                 text: DgopService.distribution || "Linux"
                                 font.pixelSize: Theme.fontSizeSmall
                                 color: Theme.surfaceVariantText
+                                elide: Text.ElideRight
+                                wrapMode: Text.NoWrap
                             }
 
                             Row {
+                                width: parent.width
                                 spacing: Theme.spacingS
+                                clip: true
 
                                 Row {
                                     spacing: Theme.spacingXS

@@ -47,6 +47,12 @@ follows is what VGS adds on top.
 Native packages are the recommended installation method. They install VGS system-wide, handle
 dependencies, and provide normal upgrades and removal.
 
+After installing a native package, enable the user service for your account:
+
+```bash
+systemctl --user enable --now vshell.service
+```
+
 ### Arch Linux
 
 Install the latest release from [AUR `vgs-shell`](https://aur.archlinux.org/packages/vgs-shell):
@@ -149,6 +155,9 @@ services, and Hyprland or Niri.
 Run `vshell deps status` after installation. Optional features report their missing system packages
 instead of blocking the shell. Keep `~/.config/vshell` as a real directory: settings, user themes,
 and plugin overrides live there.
+
+The universal bundle includes the full built-in wallpaper and icon asset set and starts the user
+service by default unless `install.sh --no-start` is used.
 
 Void currently has a maintainer recipe but no packaged Quickshell 0.3.0 dependency. See
 [`packaging/`](packaging/) for that recipe, package source files, and channel details.
