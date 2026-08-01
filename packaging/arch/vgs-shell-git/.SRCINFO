@@ -1,7 +1,7 @@
 pkgbase = vgs-shell-git
 	pkgdesc = VanillaGreen desktop shell for Hyprland and Niri (git)
 	pkgver = 0.1.0.r0.g0000000
-	pkgrel = 2
+	pkgrel = 3
 	url = https://github.com/vanillagreencom/vgs
 	arch = x86_64
 	arch = aarch64
@@ -18,3 +18,9 @@ pkgbase = vgs-shell-git
 	sha256sums = SKIP
 
 pkgname = vgs-shell-git
+
+pkgname = vgs-shell-assets-git
+	pkgdesc = Optional VGS themes, wallpapers, and bundled icon themes (git)
+	depends = vgs-shell-git=0.1.0.r0.g0000000-3
+	provides = vgs-shell-assets
+	conflicts = vgs-shell-assets

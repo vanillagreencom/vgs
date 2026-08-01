@@ -19,6 +19,16 @@ Arch:
 yay -S vgs-shell
 ```
 
+The base package includes the `coppernight` default theme and stays small enough
+for routine updates. Install the optional asset collection to add every bundled
+theme, wallpaper, and vendored Yaru icon theme:
+
+```bash
+yay -S vgs-shell-assets
+```
+
+For development builds, use `vgs-shell-assets-git` with `vgs-shell-git`.
+
 Fedora:
 
 ```bash
