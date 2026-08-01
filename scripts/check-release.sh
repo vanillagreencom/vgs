@@ -11,7 +11,8 @@ grep -q "version=$version" "$root/packaging/void/template"
 grep -qx "$version" "$root/quickshell/vshell/VERSION"
 ! grep -q "sha256sums=('SKIP')" "$root/packaging/arch/PKGBUILD"
 ! grep -q '^checksum=SKIP$' "$root/packaging/void/template"
-bash -n "$root/install.sh" "$root/uninstall.sh" "$root/scripts/build-release.sh" "$root/packaging/install-system.sh"
+bash -n "$root/install.sh" "$root/uninstall.sh" "$root/scripts/build-release.sh" "$root/packaging/install-system.sh" "$root/scripts/check-package-assets.sh"
+bash "$root/scripts/check-package-assets.sh"
 git diff --check
 
 tmp="$(mktemp -d)"
