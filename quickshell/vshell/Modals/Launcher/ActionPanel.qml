@@ -104,8 +104,8 @@ Rectangle {
 
     width: parent?.width ?? 200
     height: expanded && hasActions ? 52 : 0
-    color: Theme.withAlpha(Theme.surfaceContainerHigh, Theme.popupTransparency)
-    radius: Theme.cornerRadius
+    color: "transparent"
+    radius: 0
 
     clip: true
 
@@ -114,13 +114,6 @@ Rectangle {
             duration: Theme.shortDuration
             easing.type: Theme.standardEasing
         }
-    }
-
-    Rectangle {
-        anchors.top: parent.top
-        width: parent.width
-        height: 1
-        color: Theme.outlineMedium
     }
 
     Item {
@@ -202,7 +195,7 @@ Rectangle {
             anchors.right: parent.right
             anchors.verticalCenter: parent.verticalCenter
             visible: root.hasActions
-            text: "Tab"
+            text: "Tab cycle  ·  Shift+Enter close"
             font.pixelSize: Theme.fontSizeSmall - 2
             color: Theme.outlineButton
         }

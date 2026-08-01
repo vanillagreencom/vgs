@@ -14,8 +14,8 @@ Item {
     id: root
 
     property string searchQuery: ""
-    property string searchMode: "all"
-    property string previousSearchMode: "all"
+    property string searchMode: "apps"
+    property string previousSearchMode: "apps"
     property bool autoSwitchedToFiles: false
     property bool isFileSearching: false
     property var sections: []
@@ -274,7 +274,7 @@ Item {
         searchQueryRequested(targetText);
     }
 
-    property string fileSearchType: "all"
+    property string fileSearchType: "file"
     property string fileSearchExt: ""
     property string fileSearchFolder: ""
     property string fileSearchSort: "score"
@@ -287,6 +287,8 @@ Item {
     property var appCategories: []
 
     function getSectionViewMode(sectionId) {
+        if (searchMode === "files" && fileSearchType === "text")
+            return "list";
         if (sectionId === "browse_plugins")
             return "list";
         if (pluginViewPreferences[sectionId]?.enforced)
@@ -333,6 +335,8 @@ Item {
     }
 
     function canChangeSectionViewMode(sectionId) {
+        if (searchMode === "files" && fileSearchType === "text")
+            return false;
         if (sectionId === "browse_plugins")
             return false;
         return !pluginViewPreferences[sectionId]?.enforced;
@@ -424,7 +428,7 @@ Item {
         if (searchMode !== "plugins" && query.startsWith("/")) {
             var prefix = Utils.parseFileSearchPrefix(query);
             var explicitType = prefix && prefix.type !== null ? prefix.type : null;
-            var targetType = explicitType !== null ? explicitType : (SessionData.launcherLastFileSearchType || "all");
+            var targetType = explicitType !== null ? explicitType : (SessionData.launcherLastFileSearchType || "file");
             if (searchMode !== "files") {
                 setMode("files", true, targetType);
             } else if (fileSearchType !== targetType) {
@@ -457,7 +461,7 @@ Item {
         }
         searchMode = mode;
         if (mode === "files") {
-            fileSearchType = fileTypeOverride !== undefined ? fileTypeOverride : (SessionData.launcherLastFileSearchType || "all");
+            fileSearchType = fileTypeOverride !== undefined ? fileTypeOverride : (SessionData.launcherLastFileSearchType || "file");
         }
         modeChanged(mode, !isAutoSwitch && notPersist !== true);
         performSearch();
@@ -477,7 +481,7 @@ Item {
     }
 
     function cycleMode(reverse = false) {
-        var modes = ["all", "apps", "files", "plugins"];
+        var modes = ["apps", "files"];
         var currentIndex = modes.indexOf(searchMode);
         if (!reverse)
             var nextIndex = (currentIndex + 1) % modes.length;
@@ -488,11 +492,11 @@ Item {
 
     function reset() {
         searchQuery = "";
-        searchMode = "all";
-        previousSearchMode = "all";
+        searchMode = "apps";
+        previousSearchMode = "apps";
         autoSwitchedToFiles = false;
         isFileSearching = false;
-        fileSearchType = "all";
+        fileSearchType = "file";
         fileSearchExt = "";
         fileSearchFolder = "";
         fileSearchSort = "score";
@@ -1025,23 +1029,13 @@ Item {
         if (!DSearchService.dsearchAvailable)
             return;
         var fileQuery = "";
-        var effectiveType = fileSearchType || "all";
-        var includeFiles = SettingsData.launcherIncludeFilesInAll;
-        var includeFolders = SettingsData.launcherIncludeFoldersInAll;
+        var effectiveType = fileSearchType || "file";
 
         if (searchQuery.startsWith("/")) {
             var prefixInfo = Utils.parseFileSearchPrefix(searchQuery);
             fileQuery = prefixInfo ? prefixInfo.query : searchQuery.substring(1).trim();
         } else if (searchMode === "files") {
             fileQuery = searchQuery.trim();
-        } else if (searchMode === "all" && (includeFiles || includeFolders)) {
-            fileQuery = searchQuery.trim();
-            if (includeFiles && !includeFolders)
-                effectiveType = "file";
-            else if (!includeFiles && includeFolders)
-                effectiveType = "dir";
-            else
-                effectiveType = "all";
         } else {
             return;
         }
@@ -1053,52 +1047,22 @@ Item {
 
         isFileSearching = true;
 
-        var splitBothTypes = searchMode === "all" && includeFiles && includeFolders && DSearchService.supportsTypeFilter;
-        var queryTypes = splitBothTypes ? ["file", "dir"] : [effectiveType];
-        var pending = queryTypes.length;
-        var aggregatedItems = [];
-
-        for (var t = 0; t < queryTypes.length; t++) {
-            var queryType = queryTypes[t];
-            var params = {
-                limit: 20,
-                fuzzy: true,
-                sort: fileSearchSort || "score",
-                desc: true
-            };
-
-            if (DSearchService.supportsTypeFilter) {
-                params.type = (queryType && queryType !== "all") ? queryType : "all";
+        var kind = effectiveType === "dir" ? "folders" : effectiveType === "text" ? "text" : "files";
+        DSearchService.search(fileQuery, {
+            kind: kind,
+            limit: 100
+        }, function (response) {
+            isFileSearching = false;
+            if (response.error) {
+                _applyFileSearchResults([], effectiveType);
+                return;
             }
-            if (fileSearchExt) {
-                params.ext = fileSearchExt;
-            }
-            if (fileSearchFolder) {
-                params.folder = fileSearchFolder;
-            }
-
-            DSearchService.search(fileQuery, params, function (response) {
-                pending--;
-                if (!response.error) {
-                    var hits = response.result?.hits || [];
-                    for (var i = 0; i < hits.length; i++) {
-                        var hit = hits[i];
-                        var docTypes = hit.locations?.doc_type;
-                        var isDir = docTypes ? !!docTypes["dir"] : false;
-                        aggregatedItems.push(transformFileResult({
-                            path: hit.id || "",
-                            score: hit.score || 0,
-                            is_dir: isDir
-                        }));
-                    }
-                }
-                if (pending > 0)
-                    return;
-
-                isFileSearching = false;
-                _applyFileSearchResults(aggregatedItems, effectiveType);
-            });
-        }
+            var hits = response.result?.hits || [];
+            var items = [];
+            for (var i = 0; i < hits.length; i++)
+                items.push(transformFileResult(hits[i]));
+            _applyFileSearchResults(items, effectiveType);
+        });
     }
 
     function _applyFileSearchResults(fileItems, effectiveType) {
@@ -1142,8 +1106,8 @@ Item {
                 });
             }
         } else {
-            var filesIcon = showType === "dir" ? "folder" : showType === "file" ? "insert_drive_file" : "folder";
-            var filesTitle = showType === "dir" ? I18n.tr("Folders") : I18n.tr("Files");
+            var filesIcon = showType === "dir" ? "folder" : showType === "text" ? "article" : "insert_drive_file";
+            var filesTitle = showType === "dir" ? I18n.tr("Folders") : showType === "text" ? I18n.tr("Text matches") : I18n.tr("Files");
             var singlePriority = showType === "dir" ? foldersPriority : filesPriority;
             if (fileItems.length > 0) {
                 fileSections.push({
@@ -1945,7 +1909,10 @@ Item {
             }
             return;
         case "file":
-            openFile(item.data?.path);
+            if (item.data?.is_dir)
+                openFolder(item.data?.path, true);
+            else
+                openFile(item.data?.path);
             break;
         default:
             return;
@@ -1962,10 +1929,16 @@ Item {
             executeItem(item);
             break;
         case "open":
-            openFile(item.data.path);
+            if (item.data?.is_dir)
+                openFolder(item.data.path, true);
+            else
+                openFile(item.data.path);
             break;
         case "open_folder":
-            openFolder(item.data.path);
+            openFolder(item.data.path, false);
+            break;
+        case "open_with":
+            openWith(item.data.path);
             break;
         case "copy_path":
             copyToClipboard(item.data.path);
@@ -2057,11 +2030,20 @@ Item {
         Qt.openUrlExternally("file://" + path);
     }
 
-    function openFolder(path) {
+    function openWith(path) {
         if (!path)
             return;
-        var folder = path.substring(0, path.lastIndexOf("/"));
-        Qt.openUrlExternally("file://" + folder);
+        Quickshell.execDetached([Paths.vshellCli, "open", "--type", "file", path]);
+    }
+
+    function openFolder(path, openDirectory = false) {
+        if (!path)
+            return;
+        var target = openDirectory ? path : path.substring(0, path.lastIndexOf("/"));
+        var args = [Paths.vshellCli, "launcher-search", "open-folder", target];
+        if (SettingsData.launcherFolderOpenCommand)
+            args.push("--command", SettingsData.launcherFolderOpenCommand);
+        Quickshell.execDetached(args);
     }
 
     function openTerminal(path) {

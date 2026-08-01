@@ -175,7 +175,7 @@ Item {
 
                     function statusSubtitle() {
                         if ((root.controller?.searchMode ?? "") === "files" && !DSearchService.dsearchAvailable)
-                            return I18n.tr("Install dsearch to search files.");
+                            return I18n.tr("Launcher search is unavailable.");
                         if ((root.controller?.searchMode ?? "") === "files" && (root.controller?.searchQuery?.length ?? 0) < 2)
                             return I18n.tr("Type at least 2 characters to search files.");
                         return I18n.tr("Try a different search or switch filters.");

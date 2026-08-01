@@ -40,13 +40,13 @@ Item {
     readonly property int baseWidth: {
         switch (SettingsData.launcherSize) {
         case "micro":
-            return 500;
+            return 760;
         case "medium":
-            return 720;
+            return 1040;
         case "large":
-            return 860;
+            return 1220;
         default:
-            return 620;
+            return 900;
         }
     }
     readonly property int baseHeight: {
@@ -123,17 +123,18 @@ Item {
             targetQuery = SessionData.launcherLastQuery || "";
         }
 
+        spotlightContent?.prepareForOpen?.();
         if (spotlightContent.searchField) {
             spotlightContent.searchField.text = targetQuery;
             spotlightContent.searchField.selectAll();
         }
         if (spotlightContent.controller) {
-            var targetMode = mode || SessionData.getLauncherRestoreMode();
+            var targetMode = mode || "apps";
             spotlightContent.controller.searchMode = targetMode;
             spotlightContent.controller.activePluginId = "";
             spotlightContent.controller.activePluginName = "";
             spotlightContent.controller.pluginFilter = "";
-            spotlightContent.controller.fileSearchType = SessionData.launcherLastFileSearchType || "all";
+            spotlightContent.controller.fileSearchType = SessionData.launcherLastFileSearchType || "file";
             spotlightContent.controller.fileSearchExt = "";
             spotlightContent.controller.fileSearchFolder = "";
             spotlightContent.controller.fileSearchSort = "score";

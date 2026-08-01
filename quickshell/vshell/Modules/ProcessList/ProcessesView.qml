@@ -17,6 +17,12 @@ Item {
     property bool keyboardNavigationActive: false
     property int forceRefreshCount: 0
 
+    // Shared responsive table geometry. Headers and delegates consume the same
+    // values so columns cannot drift when the popout is scaled.
+    readonly property real metricColumnWidth: Math.max(88, Math.min(104, width * 0.17))
+    readonly property real pidColumnWidth: Math.max(68, Math.min(82, width * 0.13))
+    readonly property real disclosureColumnWidth: 36
+
     readonly property bool pauseUpdates: (contextMenu?.visible ?? false) || expandedPid.length > 0
     readonly property bool shouldUpdate: !pauseUpdates || forceRefreshCount > 0
     property var cachedProcesses: []
@@ -245,7 +251,7 @@ Item {
 
                 SortableHeader {
                     Layout.fillWidth: true
-                    Layout.minimumWidth: 200
+                    Layout.minimumWidth: 120
                     text: I18n.tr("Name")
                     sortKey: "name"
                     currentSort: DgopService.currentSort
@@ -255,7 +261,7 @@ Item {
                 }
 
                 SortableHeader {
-                    Layout.preferredWidth: 100
+                    Layout.preferredWidth: root.metricColumnWidth
                     text: "CPU"
                     sortKey: "cpu"
                     currentSort: DgopService.currentSort
@@ -264,7 +270,7 @@ Item {
                 }
 
                 SortableHeader {
-                    Layout.preferredWidth: 100
+                    Layout.preferredWidth: root.metricColumnWidth
                     text: I18n.tr("Memory")
                     sortKey: "memory"
                     currentSort: DgopService.currentSort
@@ -273,7 +279,7 @@ Item {
                 }
 
                 SortableHeader {
-                    Layout.preferredWidth: 80
+                    Layout.preferredWidth: root.pidColumnWidth
                     text: "PID"
                     sortKey: "pid"
                     currentSort: DgopService.currentSort
@@ -282,7 +288,7 @@ Item {
                 }
 
                 Item {
-                    Layout.preferredWidth: 40
+                    Layout.preferredWidth: root.disclosureColumnWidth
                 }
             }
         }
@@ -392,6 +398,7 @@ Item {
         readonly property bool isActive: sortKey === currentSort
 
         height: 36
+        clip: true
 
         Rectangle {
             anchors.fill: parent
@@ -424,6 +431,8 @@ Item {
                 font.weight: headerItem.isActive ? Font.Bold : Font.Medium
                 color: headerItem.isActive ? Theme.primary : Theme.surfaceText
                 opacity: headerItem.isActive ? 1 : 0.8
+                elide: Text.ElideRight
+                wrapMode: Text.NoWrap
             }
 
             VgsIcon {
@@ -525,16 +534,21 @@ Item {
                     spacing: 0
 
                     Item {
+                        id: nameCell
                         Layout.fillWidth: true
-                        Layout.minimumWidth: 200
+                        Layout.minimumWidth: 120
                         height: parent.height
+                        clip: true
 
                         Row {
+                            id: processNameRow
                             anchors.left: parent.left
+                            anchors.right: parent.right
                             anchors.verticalCenter: parent.verticalCenter
                             spacing: Theme.spacingS
 
                             VgsIcon {
+                                id: processIcon
                                 name: DgopService.getProcessIcon(processItemRoot.processCmd)
                                 size: Theme.iconSize - 4
                                 color: {
@@ -555,21 +569,24 @@ Item {
                                 font.weight: Font.Medium
                                 color: Theme.surfaceText
                                 elide: Text.ElideRight
-                                width: Math.min(implicitWidth, 280)
+                                wrapMode: Text.NoWrap
+                                width: Math.max(0, processNameRow.width - processIcon.width - processNameRow.spacing)
                                 anchors.verticalCenter: parent.verticalCenter
                             }
                         }
                     }
 
                     Item {
-                        Layout.preferredWidth: 100
+                        Layout.preferredWidth: root.metricColumnWidth
                         height: parent.height
+                        clip: true
 
                         Rectangle {
                             anchors.centerIn: parent
-                            width: 70
+                            width: Math.max(0, parent.width - Theme.spacingS)
                             height: 24
                             radius: Theme.cornerRadius
+                            clip: true
                             color: {
                                 if (processItemRoot.processCpu > 80)
                                     return Theme.errorPressed;
@@ -579,7 +596,9 @@ Item {
                             }
 
                             StyledText {
-                                anchors.centerIn: parent
+                                anchors.fill: parent
+                                anchors.leftMargin: Theme.spacingXS
+                                anchors.rightMargin: Theme.spacingXS
                                 text: DgopService.formatCpuUsage(processItemRoot.processCpu)
                                 font.pixelSize: Theme.fontSizeSmall
                                 font.family: SettingsData.monoFontFamily
@@ -591,19 +610,24 @@ Item {
                                         return Theme.warning;
                                     return Theme.surfaceText;
                                 }
+                                horizontalAlignment: Text.AlignHCenter
+                                elide: Text.ElideRight
+                                wrapMode: Text.NoWrap
                             }
                         }
                     }
 
                     Item {
-                        Layout.preferredWidth: 100
+                        Layout.preferredWidth: root.metricColumnWidth
                         height: parent.height
+                        clip: true
 
                         Rectangle {
                             anchors.centerIn: parent
-                            width: 70
+                            width: Math.max(0, parent.width - Theme.spacingS)
                             height: 24
                             radius: Theme.cornerRadius
+                            clip: true
                             color: {
                                 if (processItemRoot.processMemKB > 2 * 1024 * 1024)
                                     return Theme.errorPressed;
@@ -613,7 +637,9 @@ Item {
                             }
 
                             StyledText {
-                                anchors.centerIn: parent
+                                anchors.fill: parent
+                                anchors.leftMargin: Theme.spacingXS
+                                anchors.rightMargin: Theme.spacingXS
                                 text: DgopService.formatMemoryUsage(processItemRoot.processMemKB)
                                 font.pixelSize: Theme.fontSizeSmall
                                 font.family: SettingsData.monoFontFamily
@@ -625,25 +651,34 @@ Item {
                                         return Theme.warning;
                                     return Theme.surfaceText;
                                 }
+                                horizontalAlignment: Text.AlignHCenter
+                                elide: Text.ElideRight
+                                wrapMode: Text.NoWrap
                             }
                         }
                     }
 
                     Item {
-                        Layout.preferredWidth: 80
+                        Layout.preferredWidth: root.pidColumnWidth
                         height: parent.height
+                        clip: true
 
                         StyledText {
-                            anchors.centerIn: parent
+                            anchors.fill: parent
+                            anchors.leftMargin: Theme.spacingXS
+                            anchors.rightMargin: Theme.spacingXS
                             text: processItemRoot.processPid > 0 ? processItemRoot.processPid.toString() : ""
                             font.pixelSize: Theme.fontSizeSmall
                             font.family: SettingsData.monoFontFamily
                             color: Theme.surfaceVariantText
+                            horizontalAlignment: Text.AlignHCenter
+                            elide: Text.ElideRight
+                            wrapMode: Text.NoWrap
                         }
                     }
 
                     Item {
-                        Layout.preferredWidth: 40
+                        Layout.preferredWidth: root.disclosureColumnWidth
                         height: parent.height
 
                         VgsIcon {
@@ -701,8 +736,11 @@ Item {
                             font.family: SettingsData.monoFontFamily
                             color: Theme.surfaceText
                             Layout.fillWidth: true
+                            Layout.minimumWidth: 0
                             Layout.alignment: Qt.AlignVCenter
                             elide: Text.ElideMiddle
+                            wrapMode: Text.NoWrap
+                            clip: true
                         }
 
                         Rectangle {

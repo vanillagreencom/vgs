@@ -6,6 +6,7 @@ pkgbase = vgs-shell
 	arch = x86_64
 	arch = aarch64
 	license = MIT
+	install = vgs-shell.install
 	depends = quickshell
 	depends = jq
 	depends = python

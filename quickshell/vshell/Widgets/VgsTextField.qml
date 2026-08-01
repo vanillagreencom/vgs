@@ -41,9 +41,7 @@ StyledRect {
     property color backgroundColor: usePopupTransparency ? Theme.withAlpha(Theme.surfaceContainerHigh, Theme.popupTransparency) : Theme.surfaceContainerHigh
     property color focusedBorderColor: Theme.primary
     property color normalBorderColor: Theme.borderColor
-    // Readable placeholder/hint text — the old outlineButton (~0.5 outline) was
-    // too faint to see. surfaceVariantText is the standard muted-but-legible tone.
-    property color placeholderColor: Theme.surfaceVariantText
+    property color placeholderColor: Theme.inputHintFor(backgroundColor)
     property real borderWidth: 1
     property real focusedBorderWidth: 2
     property real cornerRadius: Theme.controlRadius

@@ -578,7 +578,7 @@ Column {
                     TextArea.flickable: TextArea {
                         id: textArea
                         placeholderText: ""
-                        placeholderTextColor: Theme.surfaceTextSecondary
+                        placeholderTextColor: Theme.inputHintText
                         font.family: SettingsData.notepadUseMonospace ? SettingsData.monoFontFamily : (SettingsData.notepadFontFamily || SettingsData.fontFamily)
                         font.pixelSize: SettingsData.notepadFontSize * SettingsData.fontScale
                         font.letterSpacing: 0

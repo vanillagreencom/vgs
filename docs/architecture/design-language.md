@@ -120,6 +120,7 @@ to a token so the wallpaper-dynamic palette drives everything:
 | Primary text | `Theme.surfaceText` |
 | Secondary text | `Theme.surfaceTextMedium` (≈0.7) |
 | Tertiary / hint text | `Theme.surfaceTextSecondary` / `surfaceVariantText` |
+| Input hint / placeholder | `Theme.inputHintFor(fieldBackground)` (`inputHintText` for the standard field surface) |
 | Accent | `Theme.primary` (+ `primaryText` on top of it) |
 | Error/warn/info/success | `Theme.error` / `warning` / `info` / `success` (+ `*Container`) |
 
@@ -137,6 +138,35 @@ material effects, not palette colors.
 | Selected / active | `Theme.surfaceSelected` | `Theme.primary` (fill) |
 | Focus (keyboard) | `Theme.focusRing` ring @ `focusRingWidth` | same |
 | Disabled | `opacity: 0.4` (or text `withAlpha(surfaceText, 0.38)`) | same |
+
+**`surfaceHover`/`surfacePressed`/`surfaceSelected` are translucent overlays,
+not fills.** They are ~8–15% washes of `surfaceVariant`, sized to sit on a
+control that is **transparent at rest** (ghost rows, nav items, list entries):
+
+```qml
+color: hovered ? Theme.surfaceHover : "transparent"   // correct
+```
+
+Assigning one to a control that is **opaque at rest** replaces its fill with an
+8% wash, so the element goes see-through on hover instead of lighting up:
+
+```qml
+color: hovered ? Theme.surfaceHover : Theme.surfaceContainer   // WRONG
+color: hovered ? Theme.hoverOn(Theme.surfaceContainer)
+                : Theme.surfaceContainer                        // correct
+```
+
+`Theme.hoverOn(base)` / `pressedOn(base)` / `selectedOn(base)` return a solid
+colour for an opaque base. Use them for cards, filled rows, and anything that
+already has a fill.
+
+They tint toward `surfaceText` (the Material "state layer" model), **not**
+toward `surfaceVariant`. `surfaceVariant` only reads as a highlight over the
+darker base surfaces; composited onto an already-elevated fill such as
+`surfaceContainerHighest` it is a near-invisible *darkening* — the opposite of
+what hover should do. Tinting toward the on-surface colour always moves away
+from the fill: lighter on dark themes, darker on light ones. On the default
+dark palette the ramp is `#2c2c43` → `#393a51` → `#404158` → `#44465e`.
 
 **Toggle** (`VgsToggle`) canonical states — match these anywhere a switch is
 hand-rolled: on → `primary` track + `primaryText` thumb; off → `surfaceVariantAlpha`

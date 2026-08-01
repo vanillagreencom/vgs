@@ -52,7 +52,10 @@ StyledRect {
     width: parent.width
     height: pluginItemColumn.implicitHeight + Theme.spacingM * 2 + settingsContainer.height
     radius: Theme.cornerRadius
-    color: (pluginMouseArea.containsMouse || updateArea.containsMouse || uninstallArea.containsMouse || reloadArea.containsMouse) ? Theme.surfacePressed : (isExpanded ? Theme.surfaceContainerHighest : Theme.surfaceContainerHigh)
+    readonly property color restColor: isExpanded ? Theme.surfaceContainerHighest : Theme.surfaceContainerHigh
+    // Composite onto the rest fill rather than replacing it with the wash,
+    // which would make the card go see-through while hovered.
+    color: (pluginMouseArea.containsMouse || updateArea.containsMouse || uninstallArea.containsMouse || reloadArea.containsMouse) ? Theme.pressedOn(restColor) : restColor
     border.width: 0
 
     MouseArea {

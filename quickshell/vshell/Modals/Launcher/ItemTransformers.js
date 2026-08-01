@@ -175,6 +175,7 @@ function transformFileResult(file, openLabel, openFolderLabel, copyPathLabel, op
     var filename = file.path ? file.path.split("/").pop() : "";
     var dirname = file.path ? file.path.substring(0, file.path.lastIndexOf("/")) : "";
     var isDir = file.is_dir || false;
+    var isTextMatch = !!file.excerpt;
 
     var actions = [];
     if (isDir) {
@@ -186,6 +187,11 @@ function transformFileResult(file, openLabel, openFolderLabel, copyPathLabel, op
             });
         }
     } else {
+        actions.push({
+            name: "Open with…",
+            icon: "apps",
+            action: "open_with"
+        });
         actions.push({
             name: openFolderLabel,
             icon: "folder_open",
@@ -201,11 +207,11 @@ function transformFileResult(file, openLabel, openFolderLabel, copyPathLabel, op
     return {
         id: file.path || "",
         type: "file",
-        name: filename,
-        subtitle: dirname,
-        icon: isDir ? "folder" : Utils.getFileIcon(filename),
+        name: isTextMatch && file.line ? filename + ":" + file.line : filename,
+        subtitle: isTextMatch ? file.excerpt.replace(/\s+/g, " ").trim() : dirname,
+        icon: isDir ? "folder" : isTextMatch ? "article" : Utils.getFileIcon(filename),
         iconType: "material",
-        section: "files",
+        section: isTextMatch ? "text" : "files",
         data: file,
         actions: actions,
         primaryAction: {

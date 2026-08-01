@@ -19,6 +19,8 @@ FocusScope {
     property alias actionPanel: actionPanel
     readonly property alias activeContextMenu: contextMenu
     property var transientSurfaceTracker: null
+    property bool fileSettingsVisible: false
+    property bool sidebarVisible: true
 
     property bool editMode: false
     property var editingApp: null
@@ -41,6 +43,11 @@ FocusScope {
 
     function focusSearchField() {
         searchField.forceActiveFocus();
+    }
+
+    function prepareForOpen() {
+        sidebarVisible = SettingsData.launcherSidebarShowByDefault;
+        fileSettingsVisible = false;
     }
 
     function closeTransientUi() {
@@ -98,6 +105,19 @@ FocusScope {
         if (!contextMenu.hasContextMenuActions(item))
             return;
         contextMenu.show(x, y, item, fromKeyboard);
+    }
+
+    function toggleSidebar() {
+        sidebarVisible = !sidebarVisible;
+    }
+
+    function cycleFileSearchType(reverse) {
+        const modes = ["file", "dir", "text"];
+        let index = modes.indexOf(controller.fileSearchType);
+        if (index < 0)
+            index = 0;
+        index = reverse ? (index - 1 + modes.length) % modes.length : (index + 1) % modes.length;
+        controller.setFileSearchType(modes[index]);
     }
 
     anchors.fill: parent
@@ -158,6 +178,16 @@ FocusScope {
         var hasCtrl = event.modifiers & Qt.ControlModifier;
         var hasAlt = event.modifiers & Qt.AltModifier;
         event.accepted = true;
+
+        if (hasCtrl && event.key === Qt.Key_B) {
+            root.toggleSidebar();
+            return;
+        }
+        if ((event.modifiers & Qt.ShiftModifier) && controller.searchMode === "files"
+                && (event.key === Qt.Key_Up || event.key === Qt.Key_Down)) {
+            filePreview.scrollBy(event.key === Qt.Key_Up ? -120 : 120);
+            return;
+        }
 
         switch (event.key) {
         case Qt.Key_Escape:
@@ -254,21 +284,25 @@ FocusScope {
             event.accepted = false;
             return;
         case Qt.Key_Tab:
-            if (actionPanel.hasActions) {
-                actionPanel.expanded ? actionPanel.cycleAction() : actionPanel.show();
-            }
+            if (actionPanel.expanded)
+                actionPanel.cycleAction(false);
+            else if (controller.searchMode === "files")
+                root.cycleFileSearchType(false);
             return;
         case Qt.Key_Backtab:
             if (actionPanel.expanded)
-                actionPanel.hide();
+                actionPanel.cycleAction(true);
+            else if (controller.searchMode === "files")
+                root.cycleFileSearchType(true);
             return;
         case Qt.Key_Return:
         case Qt.Key_Enter:
             if (event.modifiers & Qt.ShiftModifier) {
-                controller.pasteSelected();
+                if (actionPanel.hasActions)
+                    actionPanel.expanded ? actionPanel.hide() : actionPanel.show();
                 return;
             }
-            if (actionPanel.expanded && actionPanel.selectedActionIndex > 0) {
+            if (actionPanel.expanded) {
                 actionPanel.executeSelectedAction();
             } else {
                 controller.executeSelected();
@@ -284,28 +318,14 @@ FocusScope {
             return;
         case Qt.Key_1:
             if (hasCtrl || hasAlt) {
-                controller.setMode("all");
+                controller.setMode("apps");
                 return;
             }
             event.accepted = false;
             return;
         case Qt.Key_2:
             if (hasCtrl || hasAlt) {
-                controller.setMode("apps");
-                return;
-            }
-            event.accepted = false;
-            return;
-        case Qt.Key_3:
-            if (hasCtrl || hasAlt) {
                 controller.setMode("files");
-                return;
-            }
-            event.accepted = false;
-            return;
-        case Qt.Key_4:
-            if (hasCtrl || hasAlt) {
-                controller.setMode("plugins");
                 return;
             }
             event.accepted = false;
@@ -345,6 +365,7 @@ FocusScope {
 
             Row {
                 id: modeButtonsRow
+                visible: false
                 anchors.left: parent.left
                 anchors.leftMargin: Theme.spacingM
                 anchors.verticalCenter: parent.verticalCenter
@@ -440,7 +461,7 @@ FocusScope {
 
                 StyledText {
                     anchors.verticalCenter: parent.verticalCenter
-                    text: "Tab " + I18n.tr("actions")
+                    text: controller.searchMode === "files" ? "Tab " + I18n.tr("search type") : "Shift+↵ " + I18n.tr("options")
                     font.pixelSize: Theme.fontSizeSmall - 1
                     color: Theme.surfaceVariantText
                     visible: actionPanel.hasActions
@@ -503,7 +524,7 @@ FocusScope {
                 focusedBorderColor: root._launcherSearchFocusedBorderColor
                 borderWidth: 1
                 focusedBorderWidth: 2
-                leftIconName: controller.activePluginId ? "extension" : controller.searchQuery.startsWith("/") ? "folder" : "search"
+                leftIconName: root.sidebarVisible ? "left_panel_close" : "left_panel_open"
                 leftIconSize: Theme.iconSize
                 leftIconColor: Theme.surfaceVariantText
                 leftIconFocusedColor: Theme.primary
@@ -525,17 +546,35 @@ FocusScope {
 
                 Keys.onPressed: event => {
                     if (event.key === Qt.Key_Escape) {
-                        if (root.parentModal) {
+                        if (actionPanel.expanded) {
+                            actionPanel.hide();
+                        } else if (root.parentModal) {
                             root.parentModal.hide();
                         }
                         event.accepted = true;
                     } else if ((event.key === Qt.Key_Return || event.key === Qt.Key_Enter)) {
-                        if (actionPanel.expanded && actionPanel.selectedActionIndex > 0) {
+                        if (event.modifiers & Qt.ShiftModifier) {
+                            if (actionPanel.hasActions)
+                                actionPanel.expanded ? actionPanel.hide() : actionPanel.show();
+                        } else if (actionPanel.expanded) {
                             actionPanel.executeSelectedAction();
                         } else {
                             controller.executeSelected();
                         }
                         event.accepted = true;
+                    }
+                }
+
+                MouseArea {
+                    anchors.left: parent.left
+                    anchors.top: parent.top
+                    anchors.bottom: parent.bottom
+                    width: Theme.spacingM * 2 + Theme.iconSize
+                    hoverEnabled: true
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: {
+                        root.toggleSidebar();
+                        searchField.forceActiveFocus();
                     }
                 }
             }
@@ -552,11 +591,29 @@ FocusScope {
             anchors.topMargin: contentHolder.inverted && !footerBar.showFooter ? Theme.spacingM : contentStack.gap
             anchors.bottomMargin: contentHolder.inverted ? contentStack.gap : 0
             readonly property real gap: Theme.spacingXS
+            readonly property real sidebarWidth: root.sidebarVisible ? Math.min(164, parent.width * 0.22) : 0
+            readonly property real mainLeft: sidebarWidth + (root.sidebarVisible ? Theme.spacingS : 0)
             clip: false
+
+            LauncherSidebar {
+                id: launcherSidebar
+                anchors.left: parent.left
+                anchors.top: parent.top
+                anchors.bottom: parent.bottom
+                width: contentStack.sidebarWidth
+                visible: root.sidebarVisible
+                controller: root.controller
+                onCategorySelected: category => {
+                    root.fileSettingsVisible = false;
+                    root.controller.setMode(category);
+                    root.focusSearchField();
+                }
+            }
 
             Row {
                 id: categoryRow
-                width: parent.width
+                x: contentStack.mainLeft
+                width: parent.width - x
                 readonly property bool showPluginCategories: controller.activePluginCategories.length > 0
                 height: showPluginCategories ? 36 : 0
                 visible: showPluginCategories
@@ -615,7 +672,8 @@ FocusScope {
 
             Item {
                 id: fileFilterRow
-                width: parent.width
+                x: contentStack.mainLeft
+                width: parent.width - x
                 height: showFileFilters ? fileFilterContent.height : 0
                 visible: showFileFilters
                 anchors.top: parent.top
@@ -644,11 +702,6 @@ FocusScope {
                         Repeater {
                             model: [
                                 {
-                                    id: "all",
-                                    label: I18n.tr("All"),
-                                    icon: "search"
-                                },
-                                {
                                     id: "file",
                                     label: I18n.tr("Files"),
                                     icon: "insert_drive_file"
@@ -657,6 +710,11 @@ FocusScope {
                                     id: "dir",
                                     label: I18n.tr("Folders"),
                                     icon: "folder"
+                                },
+                                {
+                                    id: "text",
+                                    label: I18n.tr("Text"),
+                                    icon: "article"
                                 }
                             ]
 
@@ -711,6 +769,7 @@ FocusScope {
 
                     VgsDropdown {
                         id: sortDropdown
+                        visible: false
                         anchors.verticalCenter: parent.verticalCenter
                         width: Math.min(130, parent.width / 3)
                         compactMode: true
@@ -745,6 +804,7 @@ FocusScope {
 
                     VgsTextField {
                         id: extFilterField
+                        visible: false
                         anchors.verticalCenter: parent.verticalCenter
                         width: Math.min(100, parent.width / 4)
                         height: sortDropdown.height
@@ -756,12 +816,23 @@ FocusScope {
                             controller.setFileSearchExt(text.trim());
                         }
                     }
+
+                    Item { width: Math.max(0, parent.width - typeChips.width - settingsButton.width - Theme.spacingS); height: 1 }
+
+                    VgsActionButton {
+                        id: settingsButton
+                        anchors.verticalCenter: parent.verticalCenter
+                        iconName: root.fileSettingsVisible ? "close" : "tune"
+                        iconColor: root.fileSettingsVisible ? Theme.primary : Theme.surfaceVariantText
+                        onClicked: root.fileSettingsVisible = !root.fileSettingsVisible
+                    }
                 }
             }
 
             Item {
                 id: resultsSlot
-                width: parent.width
+                x: contentStack.mainLeft
+                width: parent.width - x
                 anchors.top: fileFilterRow.visible ? fileFilterRow.bottom : (categoryRow.visible ? categoryRow.bottom : parent.top)
                 anchors.topMargin: (fileFilterRow.visible || categoryRow.visible) ? contentStack.gap : 0
                 anchors.bottom: actionPanel.top
@@ -776,7 +847,11 @@ FocusScope {
 
                 ResultsList {
                     id: resultsList
-                    anchors.fill: parent
+                    anchors.left: parent.left
+                    anchors.top: parent.top
+                    anchors.bottom: parent.bottom
+                    anchors.right: filePreview.visible ? filePreview.left : parent.right
+                    anchors.rightMargin: filePreview.visible ? Theme.spacingS : 0
                     controller: root.controller
                     leadingSectionHeaderAtBottom: contentHolder.inverted
                     transientSurfaceTracker: root.transientSurfaceTracker
@@ -788,11 +863,31 @@ FocusScope {
                         }
                     }
                 }
+
+                FilePreviewPanel {
+                    id: filePreview
+                    anchors.top: parent.top
+                    anchors.right: parent.right
+                    anchors.bottom: parent.bottom
+                    width: Math.min(340, Math.max(260, parent.width * 0.42))
+                    visible: controller.searchMode === "files" && !root.fileSettingsVisible
+                    item: controller.selectedItem?.type === "file" ? controller.selectedItem : null
+                    matchQuery: controller.fileSearchType === "text" ? controller.searchQuery : ""
+                }
+
+                LauncherSettingsPanel {
+                    id: fileSearchSettings
+                    anchors.fill: parent
+                    visible: controller.searchMode === "files" && root.fileSettingsVisible
+                    z: 20
+                    onCloseRequested: root.fileSettingsVisible = false
+                }
             }
 
             ActionPanel {
                 id: actionPanel
-                width: parent.width
+                x: contentStack.mainLeft
+                width: parent.width - x
                 anchors.bottom: parent.bottom
                 selectedItem: controller.selectedItem
                 controller: controller
