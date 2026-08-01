@@ -340,6 +340,18 @@ Item {
 
         animationsEnabled = true;
         shouldBeVisible = true;
+        // The surface size committed above is a snapshot of alignedHeight taken
+        // mid-open, and onAlignedHeightChanged drops every update that arrives
+        // while shouldBeVisible is still false — so any layout the primed content
+        // settles between that commit and here (wrapped text metrics, a Column
+        // repositioning, a Repeater filling in from data that landed with the
+        // open) never reaches the wl_surface. The popout then renders taller than
+        // its surface and the bottom is cut off until the next open. Re-commit
+        // once this tick has drained; the envelope also covers a late shrink.
+        Qt.callLater(() => {
+            if (root.shouldBeVisible)
+                root._setAnimatedSurfaceEnvelope();
+        });
         if (screen) {
             PopoutManager.showPopout(popoutHandle);
             opened();
