@@ -9,7 +9,7 @@ VGS installs under `/usr/lib/vshell`, exposes `/usr/bin/vshell`, and installs th
 | openSUSE Tumbleweed/Slowroll | [OBS `home:vanillagreen`](https://build.opensuse.org/package/show/home:vanillagreen/vgs-shell) | Published |
 | Debian 13 | [OBS `home:vanillagreen`](https://build.opensuse.org/package/show/home:vanillagreen/vgs-shell) | Published |
 | Ubuntu 26.04 | [Launchpad PPA `vanillagreen/vgs-shell`](https://launchpad.net/~vanillagreen/+archive/ubuntu/vgs-shell) | Published; Quickshell from `ppa:avengemedia/danklinux` |
-| Gentoo | [VanillaGreen overlay](https://github.com/vanillagreencom/gentoo-overlay) | Published; [GURU PR #526](https://github.com/gentoo/guru/pull/526) pending |
+| Gentoo | [VanillaGreen overlay](https://github.com/vanillagreencom/gentoo-overlay) | Published; Quickshell from GURU; [GURU PR #530](https://github.com/gentoo/guru/pull/530) pending |
 | Nix | [`github:vanillagreencom/vgs`](../flake.nix) | Published flake and Home Manager module |
 | Void | [`void/template`](void/template) | Recipe only; Void does not package Quickshell 0.3.0 |
 
@@ -56,8 +56,9 @@ sudo apt install vgs-shell
 Gentoo:
 
 ```bash
+sudo eselect repository enable guru
 sudo eselect repository add vanillagreen git https://github.com/vanillagreencom/gentoo-overlay.git
-sudo emaint sync -r vanillagreen
+sudo emaint sync -a
 sudo emerge --ask gui-apps/vgs-shell
 ```
 
