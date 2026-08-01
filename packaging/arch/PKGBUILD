@@ -1,6 +1,6 @@
-pkgname=vgs-shell
+pkgname=('vgs-shell' 'vgs-shell-assets')
 pkgver=0.1.0
-pkgrel=2
+pkgrel=3
 pkgdesc='VanillaGreen desktop shell for Hyprland and Niri'
 arch=('x86_64' 'aarch64')
 url='https://github.com/vanillagreencom/vgs'
@@ -12,8 +12,16 @@ source_aarch64=("$url/releases/download/v$pkgver/vgs-$pkgver-linux-aarch64.tar.g
 sha256sums_x86_64=('a0bc9dfe74a9eb76513608b196ae11153dee89b370d30bf5121a9256fc23cec5')
 sha256sums_aarch64=('dee66ae3d7f81d63f6f2634b81bf487ce53a11e67635b4bfbc2a933a4e79656e')
 
-package() {
+package_vgs-shell() {
   cd "vgs-$pkgver-linux-$CARCH"
   sed -i 's|^#!/bin/env bash$|#!/usr/bin/env bash|' config/vshell/nvim/colorschemes/tokyonight.nvim/scripts/{build,docs}
-  DESTDIR="$pkgdir" VGS_BACKEND_BINARY="$PWD/bin/vshell-backend" packaging/install-system.sh
+  DESTDIR="$pkgdir" VGS_THEME_BUNDLE=core VGS_BACKEND_BINARY="$PWD/bin/vshell-backend" packaging/install-system.sh
+}
+
+package_vgs-shell-assets() {
+  pkgdesc='Optional VGS themes, wallpapers, and bundled icon themes'
+  depends=("vgs-shell=$pkgver-$pkgrel")
+
+  cd "vgs-$pkgver-linux-$CARCH"
+  DESTDIR="$pkgdir" VGS_THEME_BUNDLE=extras packaging/install-system.sh
 }

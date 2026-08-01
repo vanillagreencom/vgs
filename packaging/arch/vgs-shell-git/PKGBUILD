@@ -1,6 +1,6 @@
-pkgname=vgs-shell-git
+pkgname=('vgs-shell-git' 'vgs-shell-assets-git')
 pkgver=0.1.0.r0.g0000000
-pkgrel=2
+pkgrel=3
 pkgdesc='VanillaGreen desktop shell for Hyprland and Niri (git)'
 arch=('x86_64' 'aarch64')
 url='https://github.com/vanillagreencom/vgs'
@@ -27,7 +27,17 @@ build() {
   go build -mod=vendor -buildvcs=false -trimpath -ldflags="-s -w -X vshell/backend/internal/registry.cliVersion=$(cat ../VERSION)" -o "$srcdir/vshell-backend" ./cmd/vshell-backend
 }
 
-package() {
+package_vgs-shell-git() {
   cd "$srcdir/vgs"
-  DESTDIR="$pkgdir" VGS_BACKEND_BINARY="$srcdir/vshell-backend" packaging/install-system.sh
+  DESTDIR="$pkgdir" VGS_THEME_BUNDLE=core VGS_BACKEND_BINARY="$srcdir/vshell-backend" packaging/install-system.sh
+}
+
+package_vgs-shell-assets-git() {
+  pkgdesc='Optional VGS themes, wallpapers, and bundled icon themes (git)'
+  depends=("vgs-shell-git=$pkgver-$pkgrel")
+  provides=('vgs-shell-assets')
+  conflicts=('vgs-shell-assets')
+
+  cd "$srcdir/vgs"
+  DESTDIR="$pkgdir" VGS_THEME_BUNDLE=extras packaging/install-system.sh
 }
