@@ -31,6 +31,8 @@ Singleton {
 
     property var settingsModal: null
     property var settingsModalLoader: null
+    property var cloudSyncModal: null
+    property var cloudSyncModalLoader: null
     property var clipboardHistoryModal: null
     property var launcherModal: null
     property var launcherModalLoader: null
@@ -114,7 +116,8 @@ Singleton {
             "vpn": () => _unloadPopoutNow("vpnPopout", "vpnPopoutLoader"),
             "layout": () => _unloadPopoutNow("layoutPopout", "layoutPopoutLoader"),
             "clipboardHistory": () => _unloadPopoutNow("clipboardHistoryPopout", "clipboardHistoryPopoutLoader"),
-            "settings": () => _unloadSettingsNow()
+            "settings": () => _unloadSettingsNow(),
+            "cloudSync": () => _unloadCloudSyncNow()
         })
 
     function setPosition(popout, x, y, width, section, screen) {
@@ -456,6 +459,85 @@ Singleton {
             }
         }
         openSettingsWithTab(tabName);
+    }
+
+    // ---- Cloud Sync app ----
+    // Same lazy-load-then-act shape as Settings: the window is a real toplevel,
+    // so it is only built when someone asks for it and torn down when closed.
+    property bool _cloudSyncWantsOpen: false
+    property bool _cloudSyncWantsToggle: false
+    property string _cloudSyncPendingSection: ""
+
+    function openCloudSync() {
+        if (cloudSyncModal) {
+            cloudSyncModal.show();
+        } else if (cloudSyncModalLoader) {
+            _cloudSyncWantsOpen = true;
+            _cloudSyncWantsToggle = false;
+            cloudSyncModalLoader.activeAsync = true;
+        }
+    }
+
+    function openCloudSyncWithSection(section: string) {
+        if (cloudSyncModal) {
+            cloudSyncModal.showWithSection(section);
+            return;
+        }
+        if (cloudSyncModalLoader) {
+            _cloudSyncPendingSection = section;
+            _cloudSyncWantsOpen = true;
+            _cloudSyncWantsToggle = false;
+            cloudSyncModalLoader.activeAsync = true;
+        }
+    }
+
+    function closeCloudSync() {
+        cloudSyncModal?.hide();
+    }
+
+    function toggleCloudSync() {
+        if (cloudSyncModal) {
+            cloudSyncModal.toggle();
+        } else if (cloudSyncModalLoader) {
+            _cloudSyncWantsToggle = true;
+            _cloudSyncWantsOpen = false;
+            cloudSyncModalLoader.activeAsync = true;
+        }
+    }
+
+    function _onCloudSyncModalLoaded() {
+        if (_cloudSyncWantsOpen) {
+            _cloudSyncWantsOpen = false;
+            if (_cloudSyncPendingSection) {
+                cloudSyncModal?.showWithSection(_cloudSyncPendingSection);
+                _cloudSyncPendingSection = "";
+            } else {
+                cloudSyncModal?.show();
+            }
+            return;
+        }
+        if (_cloudSyncWantsToggle) {
+            _cloudSyncWantsToggle = false;
+            if (_cloudSyncPendingSection) {
+                cloudSyncModal?.showWithSection(_cloudSyncPendingSection);
+                _cloudSyncPendingSection = "";
+                return;
+            }
+            cloudSyncModal?.toggle();
+        }
+    }
+
+    function unloadCloudSync() {
+        _scheduleUnload("cloudSync");
+    }
+
+    function _unloadCloudSyncNow() {
+        if (!cloudSyncModalLoader)
+            return;
+        if (cloudSyncModal && cloudSyncModal.visible)
+            return;
+        cloudSyncModal = null;
+        cloudSyncModalLoader.active = false;
     }
 
     function unloadSettings() {

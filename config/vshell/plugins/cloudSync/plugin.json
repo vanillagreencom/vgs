@@ -1,0 +1,16 @@
+{
+    "id": "cloudSync",
+    "name": "Cloud Sync",
+    "description": "Cloud file sync status: live transfers, speed, account storage, and quick sync controls.",
+    "version": "1.0.0",
+    "license": "MIT",
+    "author": "VanillaGreen",
+    "icon": "cloud_sync",
+    "component": "./CloudSyncWidget.qml",
+    "settings": "./CloudSyncSettings.qml",
+    "requires_shell": ">=1.0.0",
+    "permissions": [
+        "settings_read",
+        "settings_write"
+    ]
+}

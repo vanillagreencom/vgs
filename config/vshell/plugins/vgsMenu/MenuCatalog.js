@@ -2,10 +2,22 @@
 
 var categories = [
     {
-        id: "shell",
-        label: "Shell",
-        icon: "\uea86",
-        description: "VGS settings and runtime controls"
+        id: "all",
+        label: "All",
+        icon: "\uf00a",
+        description: "Apps, actions, files, and folders"
+    },
+    {
+        id: "apps",
+        label: "Apps",
+        icon: "\uf40e",
+        description: "Installed applications"
+    },
+    {
+        id: "files",
+        label: "Files",
+        icon: "\uf07b",
+        description: "Find files, folders, and text"
     },
     {
         id: "capture",
@@ -14,20 +26,35 @@ var categories = [
         description: "Screenshots, OCR and screen recording"
     },
     {
+        id: "appearance",
+        label: "Appearance",
+        icon: "\uf1fc",
+        description: "Themes, wallpapers and screensaver"
+    },
+    {
+        id: "shell",
+        label: "Shell",
+        icon: "\uea86",
+        description: "VGS apps, settings and session controls"
+    },
+    {
         id: "system",
         label: "System",
         icon: "\uef1c",
-        description: "Portable maintenance actions"
-    },
-    {
-        id: "apps",
-        label: "Apps",
-        icon: "\uf40e",
-        description: "Common app launchers"
+        description: "Packages, maintenance and diagnostics"
     }
 ]
 
 var items = [
+    {
+        category: "shell",
+        title: "Cloud Sync",
+        subtitle: "Manage cloud accounts and synced folders",
+        icon: "\uebaa",
+        keywords: ["cloud", "sync", "drive", "dropbox", "onedrive", "rclone", "backup", "vgs"],
+        requiresCapability: "cloudsync",
+        argv: ["{vshell}", "ipc", "call", "cloudsync", "open"]
+    },
     {
         category: "shell",
         title: "VGS settings",
@@ -37,7 +64,7 @@ var items = [
         argv: ["{vshell}", "ipc", "call", "settings", "open"]
     },
     {
-        category: "shell",
+        category: "appearance",
         title: "Themes",
         subtitle: "Browse and apply themes",
         icon: "\uf1fc",
@@ -45,7 +72,7 @@ var items = [
         argv: ["{vshell}", "ipc", "call", "theme-picker", "open"]
     },
     {
-        category: "shell",
+        category: "appearance",
         title: "Wallpapers",
         subtitle: "Browse and set wallpapers",
         icon: "\uf03e",
@@ -53,7 +80,7 @@ var items = [
         argv: ["{vshell}", "ipc", "call", "theme-picker", "openWallpapers"]
     },
     {
-        category: "shell",
+        category: "appearance",
         title: "Theme settings",
         subtitle: "App theming, imports, and saving themes",
         icon: "\uf186",
@@ -61,7 +88,7 @@ var items = [
         argv: ["{vshell}", "ipc", "call", "settings", "openWith", "theme"]
     },
     {
-        category: "shell",
+        category: "appearance",
         title: "Wallpaper settings",
         subtitle: "Wallpaper behavior and theme-from-image tools",
         icon: "\uf03e",

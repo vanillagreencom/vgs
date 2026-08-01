@@ -210,6 +210,21 @@ Singleton {
                 defaultTrigger: "",
                 isLauncher: false
             },
+            "vgs_cloudsync": {
+                id: "vgs_cloudsync",
+                name: I18n.tr("Cloud Sync", "Cloud Sync window title"),
+                icon: "svg+corner:" + vgsLogoPath + "|cloud_sync",
+                cornerIcon: "cloud_sync",
+                comment: "VGS",
+                action: "ipc:cloudsync",
+                categories: ["Network", "Utility"],
+                defaultTrigger: "",
+                isLauncher: false,
+                // Hidden unless rclone is installed, matching the bar widget:
+                // a launcher entry that opens an "install rclone" screen is a
+                // dead end, not a feature.
+                requiresCapability: "cloudsync"
+            },
             "vgs_settings_search": {
                 id: "vgs_settings_search",
                 name: I18n.tr("Settings Search"),
@@ -237,14 +252,27 @@ Singleton {
         return SettingsData.getBuiltInPluginSetting(pluginId, "trigger", plugin.defaultTrigger);
     }
 
+    // capabilityAvailable gates a built-in on its backing service actually being
+    // present, so the launcher never offers an app that can only show an error.
+    function capabilityAvailable(capability) {
+        if (!capability)
+            return true;
+        if (capability === "cloudsync")
+            return CloudSyncService.available;
+        return true;
+    }
+
     readonly property var coreApps: {
         SettingsData.builtInPluginSettings;
+        CloudSyncService.available;
         const apps = [];
         for (const pluginId in builtInPlugins) {
             if (!SettingsData.getBuiltInPluginSetting(pluginId, "enabled", true))
                 continue;
             const plugin = builtInPlugins[pluginId];
             if (plugin.isLauncher)
+                continue;
+            if (!capabilityAvailable(plugin.requiresCapability))
                 continue;
             apps.push({
                 name: plugin.name,
@@ -373,6 +401,9 @@ Singleton {
             return true;
         case "color-picker":
             PopoutService.showColorPicker();
+            return true;
+        case "cloudsync":
+            PopoutService.openCloudSync();
             return true;
         }
         return false;

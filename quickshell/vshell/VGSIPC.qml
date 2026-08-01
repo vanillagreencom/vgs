@@ -1150,6 +1150,51 @@ Item {
     }
 
     IpcHandler {
+        function open(): string {
+            PopoutService.openCloudSync();
+            return "CLOUDSYNC_OPEN_SUCCESS";
+        }
+
+        function openWith(section: string): string {
+            PopoutService.openCloudSyncWithSection(section);
+            return "CLOUDSYNC_OPEN_SUCCESS";
+        }
+
+        function close(): string {
+            PopoutService.closeCloudSync();
+            return "CLOUDSYNC_CLOSE_SUCCESS";
+        }
+
+        function toggle(): string {
+            PopoutService.toggleCloudSync();
+            return "CLOUDSYNC_TOGGLE_SUCCESS";
+        }
+
+        function syncNow(): string {
+            if (!CloudSyncService.available)
+                return "CLOUDSYNC_UNAVAILABLE";
+            CloudSyncService.syncNow("", null);
+            return "CLOUDSYNC_SYNC_SUCCESS";
+        }
+
+        function pauseAll(): string {
+            if (!CloudSyncService.available)
+                return "CLOUDSYNC_UNAVAILABLE";
+            CloudSyncService.setPaused(true, null);
+            return "CLOUDSYNC_PAUSE_SUCCESS";
+        }
+
+        function resumeAll(): string {
+            if (!CloudSyncService.available)
+                return "CLOUDSYNC_UNAVAILABLE";
+            CloudSyncService.setPaused(false, null);
+            return "CLOUDSYNC_RESUME_SUCCESS";
+        }
+
+        target: "cloudsync"
+    }
+
+    IpcHandler {
         function browse(type: string) {
             const modal = PopoutService.settingsModal;
             if (modal) {

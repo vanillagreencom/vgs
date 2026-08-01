@@ -275,6 +275,24 @@
   "launcherUseOverlayLayer": false,
   "launcherStyle": "full",
   "spotlightBarShowModeChips": false,
+  "launcherSidebarShowByDefault": true,
+  "launcherSearchRoots": [
+    "~"
+  ],
+  "launcherSearchIgnored": [
+    ".git",
+    "node_modules",
+    ".cache",
+    ".local/share/Trash"
+  ],
+  "launcherSearchIgnoreMounts": true,
+  "launcherFolderOpenCommand": "",
+  "launcherMenuUsageHistory": {},
+  "launcherMenuViewModes": {
+    "apps": "list",
+    "files": "list",
+    "folders": "list"
+  },
   "keybindsFloatingWindow": false,
   "useAutoLocation": false,
   "weatherEnabled": true,
@@ -601,6 +619,10 @@
         },
         {
           "id": "sysUpdate",
+          "enabled": true
+        },
+        {
+          "id": "cloudSync",
           "enabled": true
         },
         "notificationButton",
