@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -1686,6 +1687,52 @@ func TestBrowseRejectsTraversal(t *testing.T) {
 	}
 }
 
+func TestPauseFolderDoesNotPersistWhenStreamUnmountFails(t *testing.T) {
+	m := testManager(t)
+	stream := Folder{ID: "stream", Name: "Stream", Remote: "gdrive", LocalPath: filepath.Join(t.TempDir(), "mount"), Mode: ModeStream}
+	if err := m.store.putFolder(stream); err != nil {
+		t.Fatalf("putFolder: %v", err)
+	}
+	fakeRC(t, m, map[string]http.HandlerFunc{
+		"mount/unmount": errorRoute("device is busy"),
+	})
+
+	result, err := m.handlePauseFolder(json.RawMessage(`{"id":"stream"}`))
+	if err == nil {
+		t.Fatal("pause must fail when a stream could not be unmounted")
+	}
+	if result != nil {
+		t.Fatalf("failed pause reported a success result: %#v", result)
+	}
+	stored, ok := m.store.folder(stream.ID)
+	if !ok || !reflect.DeepEqual(stored, stream) {
+		t.Fatalf("failed pause changed persisted folder state: %+v", stored)
+	}
+}
+
+func TestRemoveFolderDoesNotDeleteWhenStreamUnmountFails(t *testing.T) {
+	m := testManager(t)
+	stream := Folder{ID: "stream", Name: "Stream", Remote: "gdrive", LocalPath: filepath.Join(t.TempDir(), "mount"), Mode: ModeStream}
+	if err := m.store.putFolder(stream); err != nil {
+		t.Fatalf("putFolder: %v", err)
+	}
+	fakeRC(t, m, map[string]http.HandlerFunc{
+		"mount/unmount": errorRoute("device is busy"),
+	})
+
+	result, err := m.handleRemoveFolder(json.RawMessage(`{"id":"stream"}`))
+	if err == nil {
+		t.Fatal("remove must fail when a stream could not be unmounted")
+	}
+	if result != nil {
+		t.Fatalf("failed remove reported a success result: %#v", result)
+	}
+	stored, ok := m.store.folder(stream.ID)
+	if !ok || !reflect.DeepEqual(stored, stream) {
+		t.Fatalf("failed remove changed persisted folder state: %+v", stored)
+	}
+}
+
 func TestGlobalPauseDoesNotPersistWhenStreamUnmountFails(t *testing.T) {
 	m := testManager(t)
 	stream := Folder{ID: "stream", Name: "Stream", Remote: "gdrive", LocalPath: filepath.Join(t.TempDir(), "mount"), Mode: ModeStream}
@@ -1696,8 +1743,12 @@ func TestGlobalPauseDoesNotPersistWhenStreamUnmountFails(t *testing.T) {
 		"mount/unmount": errorRoute("device is busy"),
 	})
 
-	if _, err := m.setGlobalPaused(true); err == nil {
+	result, err := m.handlePauseAll(nil)
+	if err == nil {
 		t.Fatal("global pause must fail when a stream could not be unmounted")
+	}
+	if result != nil {
+		t.Fatalf("failed global pause reported a success result: %#v", result)
 	}
 	if m.store.snapshotSettings().Paused {
 		t.Fatal("global pause was persisted despite failed mount teardown")
