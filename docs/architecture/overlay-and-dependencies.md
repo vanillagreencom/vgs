@@ -69,6 +69,7 @@ Feature groups:
 | `capture-edit` | Screenshot editor |
 | `ocr` | Region OCR |
 | `recording` | Screen recording |
+| `launcher-zoxide` | Optional recent-directory search mode in launcher/menu |
 | `network-usage` | Per-interface traffic statistics |
 | `gamma` | Night-light color temperature |
 | `updates-arch` | Repo updates |

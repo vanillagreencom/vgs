@@ -30,6 +30,7 @@ import time
 import tempfile
 import urllib.request
 import tomllib
+import mimetypes
 from collections import Counter
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Tuple
@@ -5343,9 +5344,17 @@ def _apple_devices(include_unavailable: bool = False) -> Tuple[List[Dict[str, An
             sample = all_nodes[0]["node"] if all_nodes else ""
             any_readable = any(os.access(c["node"], os.R_OK) for c in all_nodes)
             if all_nodes and not any_readable:
+                # The rule being present but the ACL missing means the nodes enumerated
+                # before udev could apply uaccess (early boot, or before the seat went
+                # active) — a retrigger fixes that without reinstalling anything.
+                if _apple_udev_rule_state() == "installed":
+                    fix = ("Run: sudo udevadm trigger --action=change "
+                           "--subsystem-match=hidraw")
+                else:
+                    fix = "Run: sudo vshell brightness install-udev"
                 reason = (
                     f"{spec['label']}: HID control node is not accessible to this user "
-                    f"(no uaccess). Run: sudo vshell brightness install-udev"
+                    f"(no uaccess). {fix}"
                 )
             elif not chans["hidraw"] and not get_asd():
                 reason = (
@@ -6061,12 +6070,29 @@ def brightness_doctor() -> Dict[str, Any]:
             "ddcutil": command_exists("ddcutil"),
             "asdcontrol": _asd_available_hint(),
             "i2c_dev": bool(glob.glob("/dev/i2c-*")),
-            "udev_rule_installed": Path("/etc/udev/rules.d/60-vshell-apple-displays.rules").exists(),
+            "udev_rule_state": _apple_udev_rule_state(),
+            "udev_rule_installed": _apple_udev_rule_state() == "installed",
         },
     }
 
 
 # --- udev rule generation + install -----------------------------------------
+
+APPLE_UDEV_RULE_PATH = "/etc/udev/rules.d/60-vshell-apple-displays.rules"
+
+
+def _apple_udev_rule_state() -> str:
+    """installed | symlink | missing.
+
+    `symlink` matters: udevd reads its rules before /home is mounted, so a rule
+    symlinked into a home-directory dotfiles repo is invisible for devices that
+    enumerate early in boot, and those nodes never get the uaccess ACL.
+    """
+    dest = Path(APPLE_UDEV_RULE_PATH)
+    if dest.is_symlink():
+        return "symlink"
+    return "installed" if dest.exists() else "missing"
+
 
 def _apple_udev_rules_text() -> str:
     lines = [
@@ -6098,15 +6124,21 @@ def _apple_udev_rules_text() -> str:
 
 def _install_apple_udev(dry_run: bool = False) -> Dict[str, Any]:
     rule_text = _apple_udev_rules_text()
-    dest = Path("/etc/udev/rules.d/60-vshell-apple-displays.rules")
+    dest = Path(APPLE_UDEV_RULE_PATH)
     if dry_run:
         return {"ok": True, "dryRun": True, "path": str(dest), "rule": rule_text}
     if os.geteuid() != 0:
         return {"ok": False, "error": "run as root: sudo vshell brightness install-udev"}
-    existing = _read_text(dest) if dest.exists() else None
+    # A symlink here (e.g. into a dotfiles repo under /home) is unreadable when udevd
+    # starts, because /home is often a separate mount that is not up yet. Devices
+    # enumerated in that window silently miss uaccess. Always land a real file.
+    was_symlink = dest.is_symlink()
+    existing = None if was_symlink else (_read_text(dest) if dest.exists() else None)
     unchanged = existing is not None and existing.strip() == rule_text.strip()
     if not unchanged:
         dest.parent.mkdir(parents=True, exist_ok=True)
+        if was_symlink:
+            dest.unlink()
         dest.write_text(rule_text)
     if command_exists("udevadm"):
         run(["udevadm", "control", "--reload-rules"])
@@ -6117,6 +6149,7 @@ def _install_apple_udev(dry_run: bool = False) -> Dict[str, Any]:
         "ok": True,
         "path": str(dest),
         "changed": not unchanged,
+        "replacedSymlink": was_symlink,
         "status": "unchanged" if unchanged else "installed",
     }
 
@@ -6206,7 +6239,14 @@ def cmd_brightness(argv: List[str]) -> int:
               + ("" if b["ddcutil"] else "  -> install `ddcutil` for standard external monitors"))
         print(f"  asdcontrol/hidraw (Apple): {'yes' if b['asdcontrol'] else 'no'}")
         print(f"  i2c-dev nodes present:     {'yes' if b['i2c_dev'] else 'no'}")
-        print(f"  Apple udev rule installed: {'yes' if b['udev_rule_installed'] else 'no'}")
+        rule_state = b.get("udev_rule_state", "missing")
+        rule_note = {
+            "installed": "yes",
+            "symlink": "yes, but symlinked outside /etc -> unreadable at early boot; "
+                       "run `sudo vshell brightness install-udev` to land a real file",
+            "missing": "no",
+        }[rule_state]
+        print(f"  Apple udev rule installed: {rule_note}")
         print(f"\nDisplays ({report['controllable']}/{report['total']} controllable):")
         for e in report["displays"]:
             head = e.get("label") or e.get("id")
@@ -9279,6 +9319,491 @@ def greeter_launch_session(cache_dir_path: Path, explicit_session: str = "") -> 
     return 1
 
 
+def _launcher_search_score(name: str, query: str) -> float:
+    """Small, deterministic fuzzy score used after fd narrows the candidate set."""
+    haystack = name.casefold()
+    needle = query.casefold()
+    if not needle:
+        return 0.0
+    exact = haystack.find(needle)
+    if exact >= 0:
+        return 1000.0 - exact * 2.0 - max(0, len(haystack) - len(needle)) * 0.15
+    pos = -1
+    gap = 0
+    for char in needle:
+        next_pos = haystack.find(char, pos + 1)
+        if next_pos < 0:
+            return -1.0
+        if pos >= 0:
+            gap += next_pos - pos - 1
+        pos = next_pos
+    return 650.0 - gap * 4.0 - max(0, len(haystack) - len(needle)) * 0.1
+
+
+def _utf16_offset(value: str, codepoint_offset: int) -> int:
+    """Return the UTF-16 code-unit offset QML uses for String.slice()."""
+    return len(value[:max(0, codepoint_offset)].encode("utf-16-le")) // 2
+
+
+def _utf8_byte_offset_to_utf16(value: str, byte_offset: int) -> int:
+    """Translate ripgrep JSON byte offsets to QML's UTF-16 string offsets."""
+    prefix = value.encode("utf-8")[:max(0, byte_offset)].decode("utf-8", errors="ignore")
+    return len(prefix.encode("utf-16-le")) // 2
+
+
+def _launcher_literal_match_ranges(value: str, query: str, limit: int = 400) -> List[Dict[str, int]]:
+    if not value or not query:
+        return []
+    flags = 0 if any(char.isupper() for char in query) else re.IGNORECASE
+    try:
+        pattern = re.compile(query, flags)
+    except re.error:
+        pattern = re.compile(re.escape(query), flags)
+    ranges: List[Dict[str, int]] = []
+    for match in pattern.finditer(value):
+        start, end = match.span()
+        if end <= start:
+            continue
+        ranges.append({
+            "start": _utf16_offset(value, start),
+            "end": _utf16_offset(value, end),
+        })
+        if len(ranges) >= limit:
+            break
+    return ranges
+
+
+def _launcher_search_ignored(path: Path, ignores: List[str], roots: List[Path]) -> bool:
+    expanded = path.expanduser()
+    path_text = str(expanded)
+    for raw in ignores:
+        value = os.path.expandvars(os.path.expanduser(raw.strip()))
+        if not value:
+            continue
+        if os.path.isabs(value):
+            try:
+                expanded.relative_to(Path(value))
+                return True
+            except ValueError:
+                continue
+        parts = expanded.parts
+        if value in parts or expanded.name == value:
+            return True
+        for root in roots:
+            candidate = root / value
+            try:
+                expanded.relative_to(candidate)
+                return True
+            except ValueError:
+                pass
+    return False
+
+
+def _launcher_folder_path_hits(
+    query: str,
+    roots: List[Path],
+    ignores: List[str],
+    limit: int,
+) -> List[Dict[str, Any]]:
+    raw = query.strip()
+    expanded = Path(os.path.expandvars(os.path.expanduser(raw)))
+    if not expanded.is_absolute():
+        return []
+    exact = expanded.resolve(strict=False)
+    parent = exact if raw.endswith(os.sep) else exact.parent
+    partial = "" if raw.endswith(os.sep) else exact.name
+    raw_parent = raw if raw.endswith(os.sep) else raw[:raw.rfind(os.sep) + 1]
+    hits: List[Dict[str, Any]] = []
+    seen: set[str] = set()
+
+    def add(path: Path, completion: str, score: float) -> None:
+        path_text = str(path)
+        if path_text in seen or not path.is_dir() or _launcher_search_ignored(path, ignores, roots):
+            return
+        try:
+            stat = path.stat()
+        except OSError:
+            return
+        seen.add(path_text)
+        hits.append({
+            "path": path_text,
+            "name": path.name or path_text,
+            "parent": str(path.parent),
+            "is_dir": True,
+            "size": stat.st_size,
+            "mtime": int(stat.st_mtime),
+            "score": score,
+            "completion": completion,
+        })
+
+    if exact.is_dir():
+        exact_completion = raw if raw.endswith(os.sep) else raw + os.sep
+        add(exact, exact_completion, 2000.0)
+
+    try:
+        children = sorted(parent.iterdir(), key=lambda path: path.name.casefold())
+    except OSError:
+        children = []
+    folded_partial = partial.casefold()
+    for child in children:
+        if not child.is_dir() or not child.name.casefold().startswith(folded_partial):
+            continue
+        completion = raw_parent + child.name + os.sep
+        add(child, completion, 1800.0 - max(0, len(child.name) - len(partial)))
+        if len(hits) >= limit:
+            break
+    hits.sort(key=lambda hit: (-float(hit["score"]), str(hit["path"]).casefold()))
+    return hits[:limit]
+
+
+def _launcher_search_name_hits(
+    query: str,
+    kind: str,
+    roots: List[Path],
+    ignores: List[str],
+    limit: int,
+    ignore_mounts: bool,
+) -> List[Dict[str, Any]]:
+    if kind == "folders" and query.strip().startswith(("~", "/")):
+        return _launcher_folder_path_hits(query, roots, ignores, limit)
+
+    fd_bin = shutil.which("fd") or shutil.which("fdfind")
+    candidates: List[str] = []
+    if fd_bin:
+        fuzzy_pattern = ".*".join(re.escape(char) for char in query)
+        command = [
+            fd_bin, "--absolute-path", "--hidden", "--color", "never", "--print0",
+            "--ignore-case",
+        ]
+        if kind == "all":
+            command.extend(["--type", "f", "--type", "d"])
+        else:
+            command.extend(["--type", "d" if kind == "folders" else "f"])
+        if ignore_mounts:
+            command.append("--one-file-system")
+        for ignored in ignores:
+            value = ignored.strip()
+            if value and not os.path.isabs(os.path.expanduser(value)):
+                command.extend(["--exclude", value])
+        command.append(fuzzy_pattern)
+        command.extend(str(root) for root in roots)
+        completed = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=8, check=False)
+        candidates = [os.fsdecode(value) for value in completed.stdout.split(b"\0") if value]
+    else:
+        for root in roots:
+            root_device = root.stat().st_dev if ignore_mounts else None
+            for current, dirs, files in os.walk(root):
+                current_path = Path(current)
+                dirs[:] = [
+                    entry for entry in dirs
+                    if not _launcher_search_ignored(current_path / entry, ignores, roots)
+                    and (root_device is None or (current_path / entry).stat().st_dev == root_device)
+                ]
+                names = dirs if kind == "folders" else files if kind == "files" else dirs + files
+                for name in names:
+                    if _launcher_search_score(name, query) >= 0:
+                        candidates.append(str(current_path / name))
+                if len(candidates) >= max(limit * 40, 1000):
+                    break
+
+    hits: List[Dict[str, Any]] = []
+    for raw_path in candidates:
+        path = Path(raw_path)
+        if _launcher_search_ignored(path, ignores, roots):
+            continue
+        score = _launcher_search_score(path.name, query)
+        if score < 0:
+            continue
+        try:
+            stat = path.stat()
+        except OSError:
+            continue
+        hits.append({
+            "path": str(path),
+            "name": path.name,
+            "parent": str(path.parent),
+            "is_dir": path.is_dir(),
+            "size": stat.st_size,
+            "mtime": int(stat.st_mtime),
+            "score": score,
+        })
+    hits.sort(key=lambda hit: (-float(hit["score"]), -int(hit["mtime"]), str(hit["path"]).casefold()))
+    return hits[:limit]
+
+
+def _launcher_zoxide_hits(query: str, limit: int) -> List[Dict[str, Any]]:
+    zoxide_bin = shutil.which("zoxide")
+    if not zoxide_bin:
+        raise RuntimeError("zoxide is required for recent-directory search")
+    command = [zoxide_bin, "query", "-ls"]
+    command.extend(query.split())
+    completed = subprocess.run(
+        command, text=True, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+        timeout=3, check=False,
+    )
+    hits: List[Dict[str, Any]] = []
+    for raw_line in completed.stdout.splitlines():
+        match = re.match(r"^\s*([0-9.]+)\s+(.+)$", raw_line)
+        if not match:
+            continue
+        path = Path(match.group(2))
+        if not path.is_dir():
+            continue
+        try:
+            stat = path.stat()
+        except OSError:
+            continue
+        score = float(match.group(1))
+        hits.append({
+            "path": str(path),
+            "name": path.name or str(path),
+            "parent": str(path.parent),
+            "is_dir": True,
+            "size": stat.st_size,
+            "mtime": int(stat.st_mtime),
+            "score": 2000.0 + score,
+            "zoxide_score": score,
+            "completion": str(path) + os.sep,
+        })
+        if len(hits) >= limit:
+            break
+    return hits
+
+
+def _launcher_folder_openers() -> List[Dict[str, str]]:
+    openers = [{"id": "default", "label": "Preferred app", "icon": "open_in_new"}]
+    if shutil.which("yazi-scratchpad-open"):
+        openers.append({"id": "yazi", "label": "Yazi (new tab)", "icon": "terminal"})
+    elif shutil.which("yazi"):
+        openers.append({"id": "yazi", "label": "Yazi", "icon": "terminal"})
+    if shutil.which("nautilus"):
+        openers.append({"id": "nautilus", "label": "Nautilus", "icon": "folder"})
+    return openers
+
+
+def _launcher_open_folder(path: str, command_text: str = "", opener: str = "default") -> Dict[str, Any]:
+    target = str(Path(path).expanduser().resolve(strict=False))
+    if not Path(target).is_dir():
+        return {"ok": False, "error": f"Folder not found: {target}"}
+    if opener == "yazi":
+        scratchpad = shutil.which("yazi-scratchpad-open")
+        if scratchpad:
+            command = [scratchpad, target]
+        else:
+            yazi = shutil.which("yazi")
+            terminal = shutil.which("xdg-terminal-exec")
+            if not yazi or not terminal:
+                return {"ok": False, "error": "Yazi folder opener is unavailable"}
+            command = [terminal, yazi, target]
+    elif opener == "nautilus":
+        nautilus = shutil.which("nautilus")
+        if not nautilus:
+            return {"ok": False, "error": "Nautilus is unavailable"}
+        command = [nautilus, target]
+    elif command_text.strip():
+        command = shlex.split(command_text)
+        command = [part.replace("{path}", target) for part in command]
+        if not any(target in part for part in command):
+            command.append(target)
+    else:
+        command = ["gio", "open", target]
+    if not command or not shutil.which(command[0]):
+        return {"ok": False, "error": f"Folder opener not found: {command[0] if command else ''}"}
+    subprocess.Popen(command, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+    return {"ok": True, "command": command}
+
+
+def _launcher_search_text_hits(
+    query: str,
+    roots: List[Path],
+    ignores: List[str],
+    limit: int,
+    ignore_mounts: bool,
+) -> List[Dict[str, Any]]:
+    rg_bin = shutil.which("rg")
+    if not rg_bin:
+        raise RuntimeError("ripgrep is required for text search")
+    command = [
+        rg_bin, "--json", "--hidden", "--smart-case", "--max-columns", "240",
+        "--max-columns-preview", "--max-count", "4", "--no-messages",
+    ]
+    if ignore_mounts:
+        command.append("--one-file-system")
+    for ignored in ignores:
+        value = ignored.strip()
+        if not value:
+            continue
+        if os.path.isabs(os.path.expanduser(value)):
+            command.extend(["--glob", "!" + os.path.expanduser(value).rstrip("/") + "/**"])
+        else:
+            command.extend(["--glob", "!" + value.rstrip("/") + "/**"])
+    command.extend(["--", query])
+    command.extend(str(root) for root in roots)
+    hits: List[Dict[str, Any]] = []
+    process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+    try:
+        assert process.stdout is not None
+        for raw_line in process.stdout:
+            try:
+                event = json.loads(raw_line)
+                if event.get("type") != "match":
+                    continue
+                data = event["data"]
+                path = Path(data["path"]["text"])
+                if _launcher_search_ignored(path, ignores, roots):
+                    continue
+                line_number = int(data.get("line_number") or 0)
+                text = (data.get("lines", {}).get("text") or "").rstrip()
+                excerpt = text[:500]
+                excerpt_utf16_length = _utf16_offset(excerpt, len(excerpt))
+                submatches = data.get("submatches") or []
+                match_ranges = []
+                for match in submatches[:8]:
+                    start = _utf8_byte_offset_to_utf16(text, int(match["start"]))
+                    end = _utf8_byte_offset_to_utf16(text, int(match["end"]))
+                    if start >= excerpt_utf16_length:
+                        continue
+                    match_ranges.append({
+                        "start": start,
+                        "end": min(end, excerpt_utf16_length),
+                    })
+                hits.append({
+                    "path": str(path),
+                    "name": path.name,
+                    "parent": str(path.parent),
+                    "is_dir": False,
+                    "line": line_number,
+                    "excerpt": excerpt,
+                    "submatches": match_ranges,
+                    "score": 1000.0 - len(hits),
+                })
+                if len(hits) >= limit:
+                    process.terminate()
+                    break
+            except (KeyError, TypeError, ValueError, json.JSONDecodeError):
+                continue
+    finally:
+        with contextlib.suppress(subprocess.TimeoutExpired):
+            process.wait(timeout=0.5)
+        if process.poll() is None:
+            process.kill()
+            process.wait()
+    return hits
+
+
+def _launcher_preview(path: Path, lines: int, focus_line: int = 0, query: str = "") -> Dict[str, Any]:
+    if not path.exists():
+        return {"ok": False, "error": "Path no longer exists", "path": str(path)}
+    mime, _ = mimetypes.guess_type(str(path))
+    if path.is_dir():
+        entries: List[str] = []
+        def add_directory(directory: Path, prefix: str, depth: int) -> None:
+            if len(entries) >= 200 or depth > 2:
+                return
+            children = sorted(directory.iterdir(), key=lambda item: (not item.is_dir(), item.name.casefold()))
+            for child in children:
+                if len(entries) >= 200:
+                    return
+                entries.append(prefix + ("▸ " if child.is_dir() else "  ") + child.name)
+                if child.is_dir() and depth < 2:
+                    with contextlib.suppress(OSError):
+                        add_directory(child, prefix + "  ", depth + 1)
+        try:
+            add_directory(path, "", 0)
+        except OSError as exc:
+            return {"ok": False, "error": str(exc), "path": str(path)}
+        return {"ok": True, "kind": "directory", "path": str(path), "mime": "inode/directory", "text": "\n".join(entries)}
+    if mime and mime.startswith("image/"):
+        return {"ok": True, "kind": "image", "path": str(path), "mime": mime}
+    if mime and (mime.startswith("audio/") or mime.startswith("video/")):
+        return {"ok": True, "kind": "media", "path": str(path), "mime": mime}
+    try:
+        with path.open("r", encoding="utf-8", errors="replace") as stream:
+            maximum = max(20, min(lines, 1200))
+            first_line = max(1, focus_line - 18) if focus_line > 0 else 1
+            last_line = first_line + maximum - 1
+            selected = []
+            for line_number, value in enumerate(stream, 1):
+                if line_number < first_line:
+                    continue
+                if line_number > last_line:
+                    break
+                selected.append(value)
+            content = "".join(selected)
+        if "\0" in content:
+            return {"ok": True, "kind": "binary", "path": str(path), "mime": mime or "application/octet-stream", "text": "Binary file"}
+        return {
+            "ok": True,
+            "kind": "text",
+            "path": str(path),
+            "mime": mime or "text/plain",
+            "text": content,
+            "submatches": _launcher_literal_match_ranges(content, query),
+            "start_line": first_line,
+            "focus_line": focus_line,
+        }
+    except OSError as exc:
+        return {"ok": False, "error": str(exc), "path": str(path)}
+
+
+def cmd_launcher_search(argv: List[str]) -> int:
+    parser = argparse.ArgumentParser(prog="vshell launcher-search")
+    sub = parser.add_subparsers(dest="cmd", required=True)
+    search = sub.add_parser("search")
+    search.add_argument("query")
+    search.add_argument("--kind", choices=("all", "files", "folders", "text", "zoxide"), default="files")
+    search.add_argument("--root", action="append", default=[])
+    search.add_argument("--ignore", action="append", default=[])
+    search.add_argument("--ignore-mounts", action="store_true")
+    search.add_argument("--limit", type=int, default=80)
+    preview = sub.add_parser("preview")
+    preview.add_argument("path")
+    preview.add_argument("--lines", type=int, default=500)
+    preview.add_argument("--line", type=int, default=0)
+    preview.add_argument("--query", default="")
+    opener = sub.add_parser("open-folder")
+    opener.add_argument("path")
+    opener.add_argument("--command", default="")
+    opener.add_argument("--opener", choices=("default", "yazi", "nautilus"), default="default")
+    sub.add_parser("openers")
+    sub.add_parser("status")
+    args = parser.parse_args(argv)
+    if args.cmd == "status":
+        print(json.dumps({
+            "ok": True,
+            "fd": shutil.which("fd") or shutil.which("fdfind") or "",
+            "ripgrep": shutil.which("rg") or "",
+            "backend": "fd+ripgrep",
+        }))
+        return 0
+    if args.cmd == "preview":
+        print(json.dumps(_launcher_preview(
+            Path(args.path).expanduser(), args.lines, args.line, args.query
+        ), ensure_ascii=False))
+        return 0
+    if args.cmd == "openers":
+        print(json.dumps({"ok": True, "openers": _launcher_folder_openers()}, ensure_ascii=False))
+        return 0
+    if args.cmd == "open-folder":
+        result = _launcher_open_folder(args.path, args.command, args.opener)
+        print(json.dumps(result, ensure_ascii=False))
+        return 0 if result.get("ok") else 1
+    roots = [Path(value).expanduser().resolve() for value in args.root] if args.root else [home()]
+    roots = [root for root in roots if root.is_dir()]
+    if not roots:
+        print(json.dumps({"ok": False, "error": "No searchable roots"}))
+        return 1
+    limit = max(1, min(args.limit, 300))
+    if args.kind == "text":
+        hits = _launcher_search_text_hits(args.query, roots, args.ignore, limit, args.ignore_mounts)
+    elif args.kind == "zoxide":
+        hits = _launcher_zoxide_hits(args.query, limit)
+    else:
+        hits = _launcher_search_name_hits(args.query, args.kind, roots, args.ignore, limit, args.ignore_mounts)
+    print(json.dumps({"ok": True, "kind": args.kind, "query": args.query, "hits": hits}, ensure_ascii=False))
+    return 0
+
+
 def main() -> int:
     if len(sys.argv) < 2:
         eprint("Usage: vshell-helper <theme|fonts|deps|update|ai-usage|capture|cl|dl|trash|color|keybinds|config|compositor|blur|brightness|auth|greeter> ...")
@@ -9306,6 +9831,7 @@ def main() -> int:
         if cmd == "brightness": return cmd_brightness(argv)
         if cmd == "auth": return cmd_auth(argv)
         if cmd == "greeter": return cmd_greeter(argv)
+        if cmd == "launcher-search": return cmd_launcher_search(argv)
         eprint(f"Unknown VGS helper command: {cmd}")
         return 2
     except KeyboardInterrupt:
