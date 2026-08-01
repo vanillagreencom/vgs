@@ -208,9 +208,18 @@ Singleton {
 
     property color secondaryHover: withAlpha(secondary, 0.08)
 
-    property color surfaceHover: withAlpha(surfaceVariant, 0.08)
-    property color surfacePressed: withAlpha(surfaceVariant, 0.12)
-    property color surfaceSelected: withAlpha(surfaceVariant, 0.15)
+    // Interaction washes. These are translucent OVERLAYS, meant for a control
+    // that is transparent at rest (ghost rows, nav items). Assigning one as the
+    // `color` of a control that is opaque at rest replaces its fill with an 8%
+    // wash, so the element goes see-through on hover instead of lighting up —
+    // use hoverOn()/pressedOn()/selectedOn() for those.
+    readonly property real hoverOverlayAlpha: 0.08
+    readonly property real pressedOverlayAlpha: 0.12
+    readonly property real selectedOverlayAlpha: 0.15
+
+    property color surfaceHover: withAlpha(surfaceVariant, hoverOverlayAlpha)
+    property color surfacePressed: withAlpha(surfaceVariant, pressedOverlayAlpha)
+    property color surfaceSelected: withAlpha(surfaceVariant, selectedOverlayAlpha)
     property color surfaceLight: withAlpha(surfaceVariant, transparentBlurLayers ? 0.3 : 0.1)
     property color surfaceVariantAlpha: withAlpha(surfaceVariant, 0.2)
 
@@ -291,6 +300,22 @@ Singleton {
     // secondary/medium labels step up toward opaque (Apple uses vibrancy here).
     property color surfaceTextSecondary: withAlpha(surfaceText, popupGlassEffect ? 0.75 : 0.6)
     property color surfaceTextMedium: withAlpha(surfaceText, popupGlassEffect ? 0.85 : 0.7)
+    function inputHintFor(backgroundColor) {
+        if (!backgroundColor || backgroundColor.r === undefined)
+            return surfaceVariantText;
+        const luminance = backgroundColor.r * 0.2126
+            + backgroundColor.g * 0.7152
+            + backgroundColor.b * 0.0722;
+        const hue = backgroundColor.hslHue >= 0 ? backgroundColor.hslHue : 0;
+        const saturation = Math.max(0, backgroundColor.hslSaturation);
+        const lightnessShift = luminance < 0.55 ? 0.28 : -0.28;
+        const lightness = Math.max(0, Math.min(1, backgroundColor.hslLightness + lightnessShift));
+        return Qt.hsla(hue, saturation, lightness, 1);
+    }
+
+    // Standard placeholder tone. Individual fields derive from their resolved
+    // background so custom/theme surfaces retain their own hue.
+    readonly property color inputHintText: inputHintFor(surfaceContainerHigh)
 
     property color outlineButton: withAlpha(outline, 0.5)
     property color outlineLight: withAlpha(outline, Math.min(1, layerOutlineOpacity * 0.625))
@@ -1247,6 +1272,27 @@ Singleton {
         if (!c || c.r === undefined)
             return Qt.rgba(0, 0, 0, 0);
         return Qt.rgba(c.r, c.g, c.b, c.a * a);
+    }
+
+    // Composite an interaction state onto an opaque fill, returning a solid
+    // colour so a filled row can light up without losing its fill.
+    //
+    // These tint toward the on-surface colour (the Material "state layer"
+    // model) rather than toward surfaceVariant. surfaceVariant only reads as a
+    // highlight over the darker base surfaces; composited onto an already
+    // elevated fill it is a near-invisible *darkening*, which is the opposite
+    // of what a hover should do. Tinting toward surfaceText always moves away
+    // from the fill — lighter on dark themes, darker on light ones.
+    function hoverOn(base) {
+        return blend(base, surfaceText, hoverOverlayAlpha);
+    }
+
+    function pressedOn(base) {
+        return blend(base, surfaceText, pressedOverlayAlpha);
+    }
+
+    function selectedOn(base) {
+        return blend(base, surfaceText, selectedOverlayAlpha);
     }
 
     function blend(c1, c2, r) {

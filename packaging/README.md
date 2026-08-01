@@ -2,6 +2,13 @@
 
 VGS installs under `/usr/lib/vshell`, exposes `/usr/bin/vshell`, and installs the user service. Mutable state remains in `~/.config/vshell`.
 
+Native packages install `vshell.service` but do not enable or start it automatically. After package
+installation, users should run:
+
+```bash
+systemctl --user enable --now vshell.service
+```
+
 | System | Channel | Status |
 |---|---|---|
 | Arch | [AUR `vgs-shell`](https://aur.archlinux.org/packages/vgs-shell), [`vgs-shell-git`](https://aur.archlinux.org/packages/vgs-shell-git) | Published |

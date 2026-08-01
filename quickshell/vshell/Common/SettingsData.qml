@@ -488,6 +488,13 @@ Singleton {
     property bool launcherUseOverlayLayer: false
     property string launcherStyle: "full"
     property bool spotlightBarShowModeChips: false
+    property bool launcherSidebarShowByDefault: true
+    property var launcherSearchRoots: ["~"]
+    property var launcherSearchIgnored: [".git", "node_modules", ".cache", ".local/share/Trash"]
+    property bool launcherSearchIgnoreMounts: true
+    property string launcherFolderOpenCommand: ""
+    property var launcherMenuUsageHistory: ({})
+    property var launcherMenuViewModes: ({ apps: "list", files: "list", folders: "list" })
     property bool keybindsFloatingWindow: false
     onKeybindsFloatingWindowChanged: saveSettings()
 

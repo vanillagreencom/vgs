@@ -939,6 +939,75 @@ def test_greeter_runtime_helper_dependencies():
             )
 
 
+def test_launcher_search_unicode_ranges_and_preview():
+    line = "📦 café ComponentBehavior"
+    match = "ComponentBehavior"
+    byte_start = line.encode("utf-8").index(match.encode("utf-8"))
+    utf16_start = helper._utf8_byte_offset_to_utf16(line, byte_start)
+    utf16_end = helper._utf8_byte_offset_to_utf16(line, byte_start + len(match))
+    encoded = line.encode("utf-16-le")
+    assert_equal(
+        encoded[utf16_start * 2:utf16_end * 2].decode("utf-16-le"),
+        match,
+        "ripgrep byte offsets map to QML UTF-16 offsets",
+    )
+
+    ranges = helper._launcher_literal_match_ranges(line, "café")
+    assert_equal(len(ranges), 1, "preview match count")
+    highlighted = encoded[ranges[0]["start"] * 2:ranges[0]["end"] * 2].decode("utf-16-le")
+    assert_equal(highlighted, "café", "preview UTF-16 match range")
+
+    with tempfile.TemporaryDirectory() as tmp:
+        path = Path(tmp) / "unicode-preview.txt"
+        path.write_text(line + "\n", encoding="utf-8")
+        preview = helper._launcher_preview(path, 20, query=match)
+        assert_equal(preview["ok"], True, "launcher preview succeeds")
+        preview_range = preview["submatches"][0]
+        preview_encoded = preview["text"].encode("utf-16-le")
+        assert_equal(
+            preview_encoded[preview_range["start"] * 2:preview_range["end"] * 2].decode("utf-16-le"),
+            match,
+            "preview range selects the requested Unicode-safe match",
+        )
+
+        (Path(tmp) / "dev").mkdir()
+        (Path(tmp) / "Desktop").mkdir()
+        old_home = os.environ.get("HOME")
+        os.environ["HOME"] = tmp
+        try:
+            folder_hits = helper._launcher_folder_path_hits(
+                "~/de", [Path(tmp)], [], 10
+            )
+        finally:
+            if old_home is None:
+                os.environ.pop("HOME", None)
+            else:
+                os.environ["HOME"] = old_home
+        assert_equal(folder_hits[0]["name"], "dev", "folder completion ranks closest prefix first")
+        assert_equal(folder_hits[0]["completion"], "~/dev/", "folder completion preserves tilde path")
+
+
+def test_launcher_zoxide_results():
+    original_which = helper.shutil.which
+    original_run = helper.subprocess.run
+    helper.shutil.which = lambda command: "/usr/bin/zoxide" if command == "zoxide" else original_which(command)
+    with tempfile.TemporaryDirectory() as tmp:
+        first = Path(tmp) / "frequent"
+        second = Path(tmp) / "recent"
+        first.mkdir()
+        second.mkdir()
+        helper.subprocess.run = lambda *args, **kwargs: subprocess.CompletedProcess(
+            args[0], 0, stdout=f" 42.0 {first}\n 7.5 {second}\n", stderr=""
+        )
+        try:
+            hits = helper._launcher_zoxide_hits("", 10)
+        finally:
+            helper.shutil.which = original_which
+            helper.subprocess.run = original_run
+    assert_equal([hit["name"] for hit in hits], ["frequent", "recent"], "zoxide result order")
+    assert_equal(hits[0]["zoxide_score"], 42.0, "zoxide score parsing")
+
+
 def main():
     assert_equal(helper._theme_command_mutates(["chromium-policy"]), True,
                  "Chromium policy refresh must serialize with theme applies")
@@ -959,6 +1028,8 @@ def main():
     test_hyprland_preview_native_lua()
     test_greeter_primary_monitor_validation()
     test_greeter_runtime_helper_dependencies()
+    test_launcher_search_unicode_ranges_and_preview()
+    test_launcher_zoxide_results()
     subprocess.run(
         [sys.executable, str(REPO_ROOT / "scripts" / "check-vshell-niri.py")],
         check=True,
