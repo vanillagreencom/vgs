@@ -4998,13 +4998,63 @@ def _vgs_instance_order(entry: Dict[str, Any]) -> Tuple[str, int]:
     return (entry["launchTime"] or QS_UNKNOWN_LAUNCH_TIME, entry["pid"])
 
 
+def _proc_start_ticks(pid: int) -> Any:
+    """Process start time in clock ticks since boot, or None when unreadable.
+
+    Monotonic within a boot and independent of the Quickshell registry's
+    metadata, so it is the authoritative age comparison whenever both processes
+    are readable.
+    """
+    if pid <= 0:
+        return None
+    try:
+        data = (_proc_root() / str(pid) / "stat").read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+    # comm (field 2) is parenthesised and may contain spaces; everything after
+    # the final ')' starts at field 3, so starttime (field 22) is index 19.
+    fields = data.rpartition(")")[2].split()
+    if len(fields) < 20:
+        return None
+    try:
+        return int(fields[19])
+    except ValueError:
+        return None
+
+
+def _vgs_instance_precedes(peer: Dict[str, Any], own: Dict[str, Any], own_registered: bool) -> bool:
+    """True only when ``peer`` is *provably* older than ``own``.
+
+    Kernel start times decide it whenever both processes are readable. The
+    registry's launch time is only a fallback, and a *missing* launch time is
+    never treated as proof: ranking a peer above a registered shell whose launch
+    time the registry did not report would let a hand-run duplicate unseat the
+    session shell, the exact outcome this guard exists to prevent.
+    """
+    peer_start = _proc_start_ticks(peer["pid"])
+    own_start = _proc_start_ticks(own["pid"])
+    if peer_start is not None and own_start is not None:
+        if peer_start != own_start:
+            return peer_start < own_start
+        return peer["pid"] < own["pid"]
+    if not peer["launchTime"]:
+        return False
+    if not own["launchTime"]:
+        # No entry of our own yet: we started moments ago, so anything already
+        # registered with a real launch time predates us. A *registered* shell
+        # with no launch time is a degraded registry, not a young shell.
+        return not own_registered
+    if peer["launchTime"] != own["launchTime"]:
+        return peer["launchTime"] < own["launchTime"]
+    return peer["pid"] < own["pid"]
+
+
 def vgs_instance_report(pid: int = 0, shell_id: str = "", config_path: str = "") -> Dict[str, Any]:
     """Inventory of live VGS shells, plus a duplicate verdict for ``pid``.
 
-    The verdict is deliberately fail-open: when the registry cannot be read the
-    caller must keep running.  Ownership goes to the oldest live instance
-    (launch time, then pid), so only instances started *after* the session shell
-    ever see themselves as the duplicate.
+    The verdict is deliberately fail-open: when the registry cannot be read, or
+    when no peer can be *proven* older, the caller keeps running.  Only a shell
+    that a live peer demonstrably predates ever sees itself as the duplicate.
     """
     shell_path = _resolve_path(config_path) if config_path else _resolve_path(str(vgs_shell_entry()))
     listing = qs_list_instances()
@@ -5040,24 +5090,31 @@ def vgs_instance_report(pid: int = 0, shell_id: str = "", config_path: str = "")
         return report
 
     own = next((entry for entry in matches if entry["pid"] == pid), None)
-    candidates = matches
+    own_registered = own is not None
     if own is None:
-        # Not registered (yet). Treat ourselves as the youngest candidate so a
-        # registry race can never unseat the running session shell.
         own = {"pid": pid, "id": "", "shellId": shell_id, "configPath": shell_path,
                "launchTime": ""}
-        candidates = [*matches, own]
     report["self"] = own
-    owner = min(candidates, key=_vgs_instance_order)
-    report["owner"] = owner
-    if owner["pid"] != pid:
+
+    peers = [entry for entry in matches if entry["pid"] != pid]
+    older = [entry for entry in peers if _vgs_instance_precedes(entry, own, own_registered)]
+    if older:
+        owner = min(older, key=_vgs_instance_order)
+        report["owner"] = owner
         report["duplicate"] = True
         report["reason"] = (
             f"another VGS shell (pid {owner['pid']}) already owns this session; "
             "use scripts/qml-smoke.sh for validation"
         )
+        return report
+
+    report["owner"] = own
+    if any(not entry["launchTime"] for entry in peers):
+        report["reason"] = "peer launch time unknown; keeping this shell"
+    elif peers:
+        report["reason"] = "oldest instance"
     else:
-        report["reason"] = "sole instance" if len(matches) <= 1 else "oldest instance"
+        report["reason"] = "sole instance"
     return report
 
 

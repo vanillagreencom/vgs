@@ -11,6 +11,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 
@@ -1045,6 +1046,37 @@ def test_duplicate_shell_guard():
         report = helper.vgs_instance_report(pid=200, config_path=shell_path)
         assert_equal(report["duplicate"], True, "config-path match detects duplicates")
 
+        # A registry that reports no launch time for the session shell must not
+        # invert ownership: an unknown launch time is not proof of age, so the
+        # session shell keeps running rather than terminating itself.
+        undated_session = {**session, "launch_time": ""}
+        helper.qs_list_instances = lambda: {"ok": True, "instances": [undated_session, duplicate]}
+        report = helper.vgs_instance_report(pid=100, shell_id="shell-1")
+        assert_equal(report["duplicate"], False,
+                     "session shell with an unknown launch time never yields")
+        assert_equal(report["owner"]["pid"], 100, "session shell stays the owner")
+        report = helper.vgs_instance_report(pid=200, shell_id="shell-1")
+        assert_equal(report["duplicate"], False,
+                     "an unprovable peer age abstains instead of guessing")
+
+        # An undated *peer* must not unseat a dated shell either. With no kernel
+        # start times available for these synthetic pids, neither side can be
+        # proven older, so both abstain rather than guess.
+        undated_duplicate = {**duplicate, "launch_time": ""}
+        helper.qs_list_instances = lambda: {"ok": True, "instances": [session, undated_duplicate]}
+        report = helper.vgs_instance_report(pid=100, shell_id="shell-1")
+        assert_equal(report["duplicate"], False, "dated session shell keeps ownership")
+        report = helper.vgs_instance_report(pid=200, shell_id="shell-1")
+        assert_equal(report["duplicate"], False, "an undated pair abstains rather than guessing")
+
+        # Same launch time: the lower pid owns the session.
+        tied = {**duplicate, "launch_time": session["launch_time"]}
+        helper.qs_list_instances = lambda: {"ok": True, "instances": [session, tied]}
+        report = helper.vgs_instance_report(pid=200, shell_id="shell-1")
+        assert_equal(report["duplicate"], True, "tied launch times break by pid")
+        report = helper.vgs_instance_report(pid=100, shell_id="shell-1")
+        assert_equal(report["duplicate"], False, "lower pid wins a tie")
+
         # Fail open: an unreadable registry must never block a shell from starting.
         helper.qs_list_instances = lambda: {"ok": False, "error": "qs missing", "instances": []}
         report = helper.vgs_instance_report(pid=200, shell_id="shell-1")
@@ -1053,6 +1085,34 @@ def test_duplicate_shell_guard():
     finally:
         helper.qs_list_instances = original_list
         helper._pid_alive = original_alive
+
+
+def test_duplicate_shell_guard_uses_kernel_start_times():
+    """Real process ages decide ownership even when the registry has no metadata."""
+    shell_path = str(REPO_ROOT / "quickshell" / "vshell" / "shell.qml")
+    first = subprocess.Popen(["sleep", "30"])
+    # Kernel start times are jiffy-resolution; make the ordering unambiguous.
+    time.sleep(0.2)
+    second = subprocess.Popen(["sleep", "30"])
+    original_list = helper.qs_list_instances
+    try:
+        entries = [
+            {"pid": pid, "id": str(pid), "shell_id": "shell-1",
+             "config_path": shell_path, "launch_time": ""}
+            for pid in (second.pid, first.pid)
+        ]
+        helper.qs_list_instances = lambda: {"ok": True, "instances": entries}
+
+        report = helper.vgs_instance_report(pid=first.pid, shell_id="shell-1")
+        assert_equal(report["duplicate"], False, "the older process keeps ownership")
+        report = helper.vgs_instance_report(pid=second.pid, shell_id="shell-1")
+        assert_equal(report["duplicate"], True, "the younger process yields")
+        assert_equal(report["owner"]["pid"], first.pid, "owner is the older process")
+    finally:
+        helper.qs_list_instances = original_list
+        for process in (first, second):
+            process.terminate()
+            process.wait(timeout=5)
 
 
 def test_launcher_zoxide_results():
@@ -1099,6 +1159,7 @@ def main():
     test_launcher_search_unicode_ranges_and_preview()
     test_launcher_zoxide_results()
     test_duplicate_shell_guard()
+    test_duplicate_shell_guard_uses_kernel_start_times()
     subprocess.run(
         [sys.executable, str(REPO_ROOT / "scripts" / "check-vshell-niri.py")],
         check=True,

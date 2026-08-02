@@ -53,11 +53,12 @@ of movable cursors over black screens.
 
 `shell.qml` therefore runs a duplicate-instance guard before loading `VGS`:
 `vshell instances guard --pid <pid> --shell-id <id>` (helper-owned; reads the
-Quickshell instance registry for the current `XDG_RUNTIME_DIR`). Only an
-instance younger than the current owner ever yields, and it terminates itself
-instead of drawing anything. Every unknown — no CLI, unreadable registry, slow
-answer (2s deadline) — fails open, so the guard can never keep the session shell
-from starting. `VSHELL_DISABLE_INSTANCE_GUARD=1` overrides it; greeter mode
+Quickshell instance registry for the current `XDG_RUNTIME_DIR`). Age comes from
+kernel process start times, with the registry's launch time as a fallback. Only
+an instance *provably* younger than a live peer yields, and it terminates itself
+instead of drawing anything. Every unknown — no CLI, unreadable registry,
+unprovable age, no answer within 2s — fails open, so the guard can never keep
+the session shell from starting. `VSHELL_DISABLE_INSTANCE_GUARD=1` overrides it; greeter mode
 (`VSHELL_RUN_GREETER`) skips it, since the greeter runs from its own copied
 runtime.
 
