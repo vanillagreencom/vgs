@@ -22,8 +22,8 @@ ShellRoot {
     // session fights the first one for session-global resources — WlSessionLock,
     // the fade-to-lock overlay, the idle/DPMS tiers — and leaves orphaned
     // full-screen layer surfaces behind when it is killed. Validation must use
-    // scripts/qml-smoke.sh; this is the runtime backstop for a hand-run
-    // `qs -c vshell` / `qs -p quickshell/vshell`.
+    // scripts/qml-smoke.sh; this is the runtime backstop for someone who runs
+    // `qs -c vshell` or `qs -p quickshell/vshell` by hand rather than the script.
     //
     // Only a shell that a live peer *provably* predates ever yields, and every
     // unknown (no CLI, no registry, unprovable age, slow answer) fails open, so
@@ -54,6 +54,16 @@ ShellRoot {
     property bool guardDuplicate: false
     readonly property bool shellAllowed: (guardDisabled || guardResolved) && !guardDuplicate
 
+    // Every give-up path says why. A guard that quietly stops working looks
+    // exactly like "no duplicate found", which would hide the regression this
+    // whole mechanism exists to catch.
+    function failOpen(why: string): void {
+        if (guardResolved)
+            return;
+        console.warn("VGS: duplicate-instance guard inconclusive:", why, "- starting normally");
+        resolveGuard(false);
+    }
+
     function resolveGuard(duplicate: bool): void {
         if (guardResolved)
             return;
@@ -72,29 +82,49 @@ ShellRoot {
         // must not carry a second copy of that rule.
         command: [Paths.vshellCli, "instances", "guard", "--pid", String(Quickshell.processId), "--shell-id", Quickshell.shellId]
 
+        // StdioCollector is fully populated by the time exited() fires, verified
+        // against Quickshell 0.3.0; the exit code has to be read here, so this
+        // does not use onStreamFinished like the read-only collectors elsewhere.
         stdout: StdioCollector {
             id: guardOutput
         }
 
         onExited: exitCode => {
             if (exitCode !== 0) {
-                entrypoint.resolveGuard(false);
+                entrypoint.failOpen(`${Paths.vshellCli} instances guard exited ${exitCode}`);
                 return;
             }
             let verdict = null;
             try {
                 verdict = JSON.parse(guardOutput.text);
             } catch (error) {
-                entrypoint.resolveGuard(false);
+                entrypoint.failOpen("guard returned invalid JSON: " + error);
                 return;
             }
-            if (!verdict || verdict.duplicate !== true) {
-                entrypoint.resolveGuard(false);
+            if (!verdict) {
+                entrypoint.failOpen("guard returned an empty verdict");
+                return;
+            }
+            if (verdict.duplicate !== true) {
+                if (verdict.ok === false)
+                    entrypoint.failOpen("instance registry unavailable: " + (verdict.error || verdict.reason));
+                else
+                    entrypoint.resolveGuard(false);
                 return;
             }
             console.error("VGS: refusing to start a duplicate shell:", verdict.reason);
             console.error("VGS: run scripts/qml-smoke.sh for QML validation, or set VSHELL_DISABLE_INSTANCE_GUARD=1 to override.");
             entrypoint.resolveGuard(true);
+        }
+
+        // A command that never starts emits no exited(), which would otherwise
+        // leave the shell dark until the deadline below. exited() is emitted
+        // before running goes false (verified on Quickshell 0.3.0), so a normal
+        // run has always resolved by the time this fires.
+        onRunningChanged: {
+            if (running || entrypoint.guardDisabled)
+                return;
+            entrypoint.failOpen("could not run " + Paths.vshellCli);
         }
     }
 
@@ -116,7 +146,7 @@ ShellRoot {
     Timer {
         interval: 2000
         running: !entrypoint.guardDisabled && !entrypoint.guardResolved
-        onTriggered: entrypoint.resolveGuard(false)
+        onTriggered: entrypoint.failOpen("no answer within 2s")
     }
 
     Loader {

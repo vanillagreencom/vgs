@@ -62,6 +62,17 @@ the session shell from starting. `VSHELL_DISABLE_INSTANCE_GUARD=1` overrides it;
 (`VSHELL_RUN_GREETER`) skips it, since the greeter runs from its own copied
 runtime.
 
+Known limits, deliberate rather than accidental:
+- A peer is only counted when the pid is a live `qs`/`quickshell` process. A
+  registry entry can outlive its shell and the number can be reused, and acting
+  on a recycled pid would make the session shell terminate *itself*.
+- A shell launched from a different checkout (a git worktree) has a different
+  config path, so it is neither listed nor guarded. `scripts/qml-smoke.sh` is
+  still the defence there.
+- A yielding shell exits on SIGTERM, which systemd reads as a clean stop, so a
+  `vshell.service` shell that yielded is not restarted. That is why yielding
+  requires positive proof of an older live peer.
+
 Validation must never launch a shell into the live session. `scripts/qml-smoke.sh`
 is the canonical QML smoke: a static `qmllint` parse pass by default, and with
 `--nested` a real shell run inside an isolated nested compositor (own runtime

@@ -103,7 +103,7 @@ scripts/check-backend-inventory.py
 python3 -m py_compile bin/vshell-helper
 bash -n bin/vshell
 git diff --check
-scripts/qml-smoke.sh
+scripts/qml-smoke.sh --nested --require-static
 scripts/check-validation-safety.sh
 scripts/smoke-surfaces.sh
 (cd backend && go build ./... && go vet ./... && go test -race ./...)
@@ -117,10 +117,17 @@ full-screen layer surfaces behind — the session ends up as cursors over black,
 recoverable only with `vshell ipc call lock forceReset`. Never `pkill quickshell`
 either: other Quickshell applications on the seat are legitimate.
 
-- `scripts/qml-smoke.sh` is the canonical QML smoke: static parse check by
-  default, plus `--nested` to run the real shell inside an isolated nested
-  compositor (own runtime dir, own HOME, no live backend socket, no live
-  compositor IPC) with process-group-scoped cleanup.
+- `scripts/qml-smoke.sh` is the canonical QML smoke. Know what each mode covers:
+  - bare — a **parse** check only (`qmllint`, syntax errors). It does not catch
+    unresolved `qs.*` imports, missing properties, or failed process starts.
+  - `--nested` — runs the real shell inside an isolated nested compositor (own
+    runtime dir, own HOME, private bus, no live backend socket, no live
+    compositor IPC), with process-group-scoped cleanup, and fails on runtime QML
+    errors. **This is the mode that replaces what `qs -c vshell` used to cover**,
+    so use it for QML work.
+  - `--require-static` / `--require-nested` — fail instead of skipping when a
+    check's tooling is unavailable. Use them in any automated run; a plain skip
+    is otherwise indistinguishable from a pass.
 - `scripts/check-validation-safety.sh` proves validation left no extra VGS
   Quickshell instances or layer surfaces, and blocks unsafe launch instructions
   from returning to the docs.

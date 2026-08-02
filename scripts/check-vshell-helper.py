@@ -1014,9 +1014,11 @@ def test_duplicate_shell_guard():
     }
 
     original_list = helper.qs_list_instances
-    original_alive = helper._pid_alive
+    # _vgs_peer_alive confirms a pid is a live Quickshell process; these
+    # synthetic pids are not, so liveness is supplied by the fixture.
+    original_alive = helper._vgs_peer_alive
     alive = {100, 200, 300}
-    helper._pid_alive = lambda pid: pid in alive
+    helper._vgs_peer_alive = lambda pid: pid in alive
     try:
         helper.qs_list_instances = lambda: {"ok": True, "instances": []}
         report = helper.vgs_instance_report(pid=200)
@@ -1084,7 +1086,7 @@ def test_duplicate_shell_guard():
         assert_equal(report["supported"], False, "unavailable registry is reported")
     finally:
         helper.qs_list_instances = original_list
-        helper._pid_alive = original_alive
+        helper._vgs_peer_alive = original_alive
 
 
 def test_duplicate_shell_guard_uses_kernel_start_times():
@@ -1095,6 +1097,7 @@ def test_duplicate_shell_guard_uses_kernel_start_times():
     time.sleep(0.2)
     second = subprocess.Popen(["sleep", "30"])
     original_list = helper.qs_list_instances
+    original_alive = helper._vgs_peer_alive
     try:
         entries = [
             {"pid": pid, "id": str(pid), "shell_id": "shell-1",
@@ -1102,6 +1105,10 @@ def test_duplicate_shell_guard_uses_kernel_start_times():
             for pid in (second.pid, first.pid)
         ]
         helper.qs_list_instances = lambda: {"ok": True, "instances": entries}
+        # Real pids with real kernel start times, but they are `sleep`, not
+        # Quickshell: the ordering under test is _proc_start_ticks, so only
+        # liveness is stubbed.
+        helper._vgs_peer_alive = lambda pid: pid in {first.pid, second.pid}
 
         report = helper.vgs_instance_report(pid=first.pid, shell_id="shell-1")
         assert_equal(report["duplicate"], False, "the older process keeps ownership")
@@ -1110,6 +1117,7 @@ def test_duplicate_shell_guard_uses_kernel_start_times():
         assert_equal(report["owner"]["pid"], first.pid, "owner is the older process")
     finally:
         helper.qs_list_instances = original_list
+        helper._vgs_peer_alive = original_alive
         for process in (first, second):
             process.terminate()
             process.wait(timeout=5)

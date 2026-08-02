@@ -47,9 +47,11 @@ Avoid literal hex colors and raw pixel constants unless no token fits.
 
 ## Smoke test
 ```bash
-scripts/qml-smoke.sh              # static QML parse check, always safe
-scripts/qml-smoke.sh --nested     # + real shell in an isolated nested compositor
+scripts/qml-smoke.sh --nested --require-static
 ```
+
+Bare `scripts/qml-smoke.sh` is a parse check only; `--nested` is what actually
+runs the shell (in an isolated nested compositor) and catches runtime QML errors.
 
 Bad: QML `ReferenceError`, `TypeError`, process failed to start, missing binary, import errors.
 

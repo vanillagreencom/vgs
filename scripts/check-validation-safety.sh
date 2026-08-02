@@ -33,7 +33,8 @@ vgs_snapshot_prefix="check-validation-safety: "
 
 # --- 1. no unsafe launch instructions ---------------------------------------
 
-if ! SELF_TEST="$self_test" python3 - <<'PY'
+detector_rc=0
+SELF_TEST="$self_test" python3 - <<'PY' || detector_rc=$?
 import os
 import re
 import subprocess
@@ -58,10 +59,8 @@ ALLOWED_CONTEXTS = {
     "docs/architecture/backend-daemon.md": (
         "VGS_BACKEND_LISTEN_FD",
     ),
-    "quickshell/vshell/shell.qml": (
-        "this is the runtime backstop",
-        "a hand-run",
-    ),
+    # shell.qml's guard comment carries its own "rather than" on the matched
+    # line, so it needs no per-file exemption at all.
     "scripts/check-vshell-helper.py": (
         "/var/cache/vshell-greeter",
         "Config-path matching covers",
@@ -86,6 +85,9 @@ def scan(path, lines):
             continue
         if not fenced and NEGATED.search(line):
             continue
+        # Matched per line, never over a window: a neighbouring exempt line must
+        # not launder a new instruction next to it. Prose that wraps away from
+        # its exempting phrase is reworded instead.
         if any(context in line for context in allowed):
             continue
         hits.append(number)
@@ -105,6 +107,13 @@ FIXTURES = [
         "// QSArgs are extra args appended after `qs -c vshell`.",
         "// smoke it yourself with qs -c vshell",
     ], [2]),
+    # A wrapped comment must carry its own exemption on the matched line; an
+    # exempt neighbour must not launder the line below it.
+    ("quickshell/vshell/shell.qml", [
+        "// this is the runtime backstop for someone who runs",
+        "// `qs -c vshell` by hand rather than the script.",
+        "//   qs -c vshell",
+    ], [3]),
     ("docs/architecture/backend-daemon.md", [
         "```text",
         "(VGS_BACKEND_LISTEN_FD), then spawn `qs -c vshell` as a child",
@@ -141,10 +150,17 @@ for path in tracked:
 
 for violation in violations:
     print(violation, file=sys.stderr)
-sys.exit(1 if violations else 0)
+# 2 == policy violations found. Any other non-zero status is the scanner itself
+# failing (unreadable tree, git missing) and must not be reported as a clean
+# bill of health *or* as a violation.
+sys.exit(2 if violations else 0)
 PY
-then
+# $? inside an `if ! cmd` branch is the negation's status, not the command's, so
+# the status is captured directly above.
+if [[ "$detector_rc" == 2 ]]; then
   fail "unsafe direct shell launch instructions found (use scripts/qml-smoke.sh)"
+elif [[ "$detector_rc" != 0 ]]; then
+  fail "the instruction detector could not run (exit $detector_rc)"
 fi
 
 if [[ "$self_test" == true ]]; then
@@ -154,24 +170,33 @@ if [[ "$self_test" == true ]]; then
   if ! vgs_layers_regressed "$self_before" "$(printf 'DP-1\tvshell:bar\nDP-2\tvshell:bar')"; then
     fail "self-test: a closed popup must not read as damage"
   fi
-  if vgs_layers_regressed "$self_before" "$(printf 'DP-1\tvshell:bar\nDP-1\tvshell:bar\nDP-2\tvshell:bar')" 2>/dev/null; then
-    fail "self-test: a duplicated surface must be caught"
+  if vgs_layers_regressed "$self_before" "$(printf 'DP-1\tvshell:bar\nDP-1\tvshell:bar\nDP-2\tvshell:bar')" 1 2>/dev/null; then
+    fail "self-test: a second surface with one live shell must be caught"
   fi
-  if vgs_layers_regressed "$self_before" "$(printf 'DP-1\tvshell:bar\nDP-1\tvshell:fade-to-lock\nDP-2\tvshell:bar')" 2>/dev/null; then
-    fail "self-test: a new orphaned overlay must be caught"
+  # One shell raising its own fade-to-lock when the seat idles is normal.
+  if ! vgs_layers_regressed "$self_before" "$(printf 'DP-1\tvshell:bar\nDP-1\tvshell:fade-to-lock\nDP-2\tvshell:bar')" 1 2>/dev/null; then
+    fail "self-test: one shell's own overlay must not read as damage"
+  fi
+  # ...but two of them with only one shell running cannot be.
+  if vgs_layers_regressed "$self_before" "$(printf 'DP-1\tvshell:fade-to-lock\nDP-1\tvshell:fade-to-lock')" 1 2>/dev/null; then
+    fail "self-test: a doubled overlay must be caught"
   fi
   # An unreadable snapshot must never be mistaken for "nothing changed".
   if vgs_compare_snapshots "probe" "a" 0 "" 1 exact 2>/dev/null; then
     fail "self-test: a failed post-validation snapshot must not pass"
   fi
-  if ! vgs_compare_snapshots "probe" "" 2 "" 2 exact >/dev/null 2>&1; then
-    fail "self-test: no compositor session must skip, not fail"
+  if vgs_compare_snapshots "probe" "" 1 "a
+b" 0 exact 2>/dev/null; then
+    fail "self-test: a failed baseline must not discard visible damage"
   fi
-  if ! vgs_compare_snapshots "probe" "" 1 "a" 0 exact >/dev/null 2>&1; then
-    fail "self-test: a missing baseline must skip, not fail"
+  if vgs_compare_snapshots "probe" "a" 0 "" 2 exact 2>/dev/null; then
+    fail "self-test: a registry that vanished mid-run must not pass"
+  fi
+  if ! vgs_compare_snapshots "probe" "" 2 "" 2 exact >/dev/null 2>&1; then
+    fail "self-test: nothing to collect must skip, not fail"
   fi
   if [[ "$status" -eq 0 ]]; then
-    note "self-test: surface and snapshot comparison passed (6 fixtures)"
+    note "self-test: surface and snapshot comparison passed (8 fixtures)"
   fi
   exit "$status"
 fi
@@ -198,14 +223,21 @@ vgs_compare_snapshots "VGS Quickshell instances" \
   "$instances_after" "$instances_after_status" exact || status=1
 vgs_compare_snapshots "VGS layer surfaces" \
   "$layers_before" "$layers_before_status" \
-  "$layers_after" "$layers_after_status" growth || status=1
+  "$layers_after" "$layers_after_status" growth \
+  "$(printf '%s' "$instances_after" | grep -c . || true)" || status=1
 
 # The specific incident signature: more fade-to-lock overlays than monitors.
 overlays="$(printf '%s\n' "$layers_after" | grep -c 'vshell:fade-to-lock' || true)"
 if [[ "$overlays" -gt 0 ]]; then
   monitors="$(hyprctl monitors -j 2>/dev/null | python3 -c 'import json,sys; print(len(json.load(sys.stdin)))' 2>/dev/null || echo 0)"
-  if [[ "$monitors" -gt 0 && "$overlays" -gt "$monitors" ]]; then
-    fail "orphaned fade-to-lock surfaces: $overlays across $monitors monitors"
+  if [[ "$monitors" -gt 0 ]]; then
+    if [[ "$overlays" -gt "$monitors" ]]; then
+      fail "orphaned fade-to-lock surfaces: $overlays across $monitors monitors"
+    fi
+  else
+    # This is the only check that catches overlays orphaned before the run, so
+    # say when it could not run rather than passing silently.
+    note "could not count monitors; the orphaned-overlay check did not run"
   fi
 fi
 

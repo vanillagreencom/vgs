@@ -121,12 +121,15 @@ For backend changes:
 For runtime changes:
 
 ```bash
-scripts/qml-smoke.sh              # static QML parse check, always safe
-scripts/qml-smoke.sh --nested     # + real shell in an isolated nested compositor
+scripts/qml-smoke.sh --nested --require-static   # parse check + real shell in a sandbox
 scripts/check-validation-safety.sh
 ```
 
-QML errors, missing binary warnings, and process start failures are not fine.
+QML errors, missing binary warnings, and process start failures are not fine —
+but only `--nested` can see them. The bare command is a **parse** check
+(`qmllint`); it does not resolve `qs.*` imports and cannot detect a missing
+property or a failed process start. `--require-static`/`--require-nested` turn a
+skipped check into a failure, so an unavailable tool cannot read as a pass.
 
 **Never** run `qs -c vshell` or `qs -p quickshell/vshell` in a live session: that
 starts a second full VGS instance, which fights the session shell for

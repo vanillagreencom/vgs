@@ -4926,6 +4926,52 @@ def _pid_alive(pid: int) -> bool:
     return (_proc_root() / str(pid)).exists()
 
 
+def _proc_stat_fields(pid: int) -> List[str]:
+    """/proc/<pid>/stat from field 3 onward, or [] when unreadable.
+
+    comm (field 2) is parenthesised and may contain spaces, so everything after
+    the final ')' is parsed positionally: index 0 is field 3 (state).
+    """
+    if pid <= 0:
+        return []
+    try:
+        data = (_proc_root() / str(pid) / "stat").read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return []
+    return data.rpartition(")")[2].split()
+
+
+def _vgs_peer_alive(pid: int) -> bool:
+    """True when ``pid`` is a live Quickshell process *right now*.
+
+    A registry entry only records the pid a shell had. After a hard kill the
+    entry can outlive the process and the number can be reused by something
+    unrelated, and a zombie keeps a readable /proc entry while owning no
+    surfaces. Either would make the session shell rule itself the duplicate and
+    terminate itself, so a peer is confirmed against the process actually
+    running under that pid.
+    """
+    fields = _proc_stat_fields(pid)
+    if not fields:
+        return False
+    if fields[0] == "Z":  # exited, not yet reaped: owns no surfaces
+        return False
+    proc = _proc_root() / str(pid)
+    try:
+        executable = os.path.basename(os.path.realpath(proc / "exe"))
+    except OSError:
+        executable = ""
+    if executable in QS_BINARIES:
+        return True
+    # /proc/<pid>/exe is readable only for our own processes; comm is not, and
+    # is enough to reject a process that merely inherited the number.
+    try:
+        comm = (proc / "comm").read_text(encoding="utf-8", errors="replace").strip()
+    except OSError:
+        return False
+    return comm in QS_BINARIES
+
+
 def vgs_shell_entry() -> Path:
     """Path of the QML entrypoint this checkout would launch."""
     root = os.environ.get("VSHELL_ROOT", "").strip()
@@ -4952,7 +4998,10 @@ def qs_list_instances() -> Dict[str, Any]:
         if binary:
             break
     if not binary:
-        return {"ok": False, "error": "quickshell CLI (qs) not found", "instances": []}
+        # Distinct from a failed read: there is no registry to consult here at
+        # all, so a caller can skip rather than report an unverified session.
+        return {"ok": False, "error": "quickshell CLI (qs) not found",
+                "cliMissing": True, "instances": []}
     try:
         proc = subprocess.run(
             [binary, "list", "--all", "--json"],
@@ -5005,15 +5054,8 @@ def _proc_start_ticks(pid: int) -> Any:
     metadata, so it is the authoritative age comparison whenever both processes
     are readable.
     """
-    if pid <= 0:
-        return None
-    try:
-        data = (_proc_root() / str(pid) / "stat").read_text(encoding="utf-8", errors="replace")
-    except OSError:
-        return None
-    # comm (field 2) is parenthesised and may contain spaces; everything after
-    # the final ')' starts at field 3, so starttime (field 22) is index 19.
-    fields = data.rpartition(")")[2].split()
+    # starttime is field 22, i.e. index 19 once field 3 is index 0.
+    fields = _proc_stat_fields(pid)
     if len(fields) < 20:
         return None
     try:
@@ -5071,6 +5113,7 @@ def vgs_instance_report(pid: int = 0, shell_id: str = "", config_path: str = "")
     }
     if not listing["ok"]:
         report["error"] = listing.get("error", "")
+        report["cliMissing"] = bool(listing.get("cliMissing"))
         report["reason"] = "instance registry unavailable"
         return report
 
@@ -5079,7 +5122,7 @@ def vgs_instance_report(pid: int = 0, shell_id: str = "", config_path: str = "")
         entry = _vgs_instance_entry(raw)
         if not _vgs_instance_matches(entry, shell_path, shell_id):
             continue
-        if not _pid_alive(entry["pid"]):
+        if not _vgs_peer_alive(entry["pid"]):
             continue
         matches.append(entry)
     matches.sort(key=_vgs_instance_order)
@@ -5141,10 +5184,14 @@ def cmd_instances(argv: List[str]) -> int:
     report = vgs_instance_report(0, "", getattr(args, "config_path", ""))
     if args.json:
         print(json.dumps(report))
-        return 0
     if not report["ok"]:
-        eprint(f"vshell instances: {report.get('error', 'registry unavailable')}")
-        return 1
+        # 2 == no registry to consult here; 1 == the read failed. Callers that
+        # assert "validation disturbed nothing" must tell those apart.
+        if not args.json:
+            eprint(f"vshell instances: {report.get('error', 'registry unavailable')}")
+        return 2 if report.get("cliMissing") else 1
+    if args.json:
+        return 0
     if not report["instances"]:
         print("no live VGS Quickshell instances")
         return 0

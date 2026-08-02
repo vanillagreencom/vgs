@@ -12,6 +12,12 @@
 #                                          nested compositor sandbox
 #   scripts/qml-smoke.sh --require-nested fail instead of skipping when the
 #                                          sandbox cannot be built
+#   scripts/qml-smoke.sh --require-static fail instead of skipping when qmllint
+#                                          is unavailable
+#
+# The default mode is a *parse* check: it catches syntax errors across the QML
+# tree, not runtime faults. Unresolved qs.* imports and missing properties only
+# surface when the shell actually runs, which is what --nested is for.
 #
 # Both modes assert that they leave the live session byte-for-byte alone: same
 # VGS Quickshell instances, same VGS layer surfaces. Cleanup is process-group
@@ -25,6 +31,8 @@ qml_roots=("$repo_root/quickshell/vshell" "$repo_root/config/vshell/plugins")
 
 nested=false
 require_nested=false
+require_static=false
+static_ran=false
 nested_timeout=20
 compositor_timeout=15
 
@@ -36,6 +44,7 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --nested) nested=true ;;
     --require-nested) nested=true; require_nested=true ;;
+    --require-static) require_static=true ;;
     --timeout) shift; nested_timeout="${1:?--timeout needs a value}" ;;
     -h|--help) usage; exit 0 ;;
     *) echo "qml-smoke: unknown option: $1" >&2; exit 2 ;;
@@ -86,6 +95,14 @@ spawn_group() {
     sleep 0.05
   done
   if [[ -z "$spawn_pgid" ]]; then
+    # The pid file never appeared, but the command may be running anyway.
+    # Nothing may be left behind unsupervised, so adopt whatever setsid forked
+    # (parent-scoped, never a name match) before reporting the failure.
+    local child
+    for child in $(pgrep -P "$launcher" 2>/dev/null || true); do
+      track_pgid "$child"
+    done
+    kill "$launcher" 2>/dev/null || true
     return 1
   fi
   track_pgid "$spawn_pgid"
@@ -142,7 +159,8 @@ assert_live_session_untouched() {
   fi
   if ! vgs_compare_snapshots "live VGS layer surfaces" \
     "$layers_before" "$layers_before_status" \
-    "$layers_after" "$layers_after_status" growth; then
+    "$layers_after" "$layers_after_status" growth \
+  "$(printf '%s' "$instances_after" | grep -c . || true)"; then
     ok=1
   fi
   return "$ok"
@@ -174,22 +192,40 @@ find_qmllint() {
 }
 
 static_check() {
-  local linter files=() findings
+  local linter files=() findings output rc
   mapfile -t files < <(find "${qml_roots[@]}" -name '*.qml' -type f 2>/dev/null | sort)
   if [[ ${#files[@]} -eq 0 ]]; then
     fail "no QML files found under ${qml_roots[*]}"
     return
   fi
   if ! linter="$(find_qmllint)"; then
-    note "static parse check skipped: qmllint not installed (pacman -S qt6-declarative)"
+    if [[ "$require_static" == true ]]; then
+      fail "qmllint not installed (pacman -S qt6-declarative)"
+    else
+      note "static parse check skipped: qmllint not installed (pacman -S qt6-declarative)"
+    fi
     return
   fi
+  # The linter's own exit status has to be inspected separately: piping into
+  # grep would let a linter that cannot run at all (missing library, wrong
+  # architecture) look identical to a clean scan.
+  rc=0
+  output="$("$linter" "${files[@]}" 2>&1)" || rc=$?
+  # qmllint exits 0 when nothing is reported and 255 when it reports something,
+  # including the semantic warnings this check deliberately ignores. Any other
+  # status means the linter itself failed.
+  if [[ "$rc" != 0 && "$rc" != 255 ]]; then
+    printf '%s\n' "$output" | tail -n 20 >&2
+    fail "qmllint could not run (exit $rc)"
+    return
+  fi
+
   # Semantic warnings (unqualified access, uncreatable types, unresolved
   # qs.* module imports) are expected outside a Quickshell engine, so only
   # parse-level findings are treated as failures. syntax.duplicate-ids is
   # dropped as well: qmllint keeps one id table per document, but two inline
   # delegates are separate component scopes and may legally reuse an id.
-  findings="$("$linter" "${files[@]}" 2>&1 |
+  findings="$(printf '%s\n' "$output" |
     grep -E '\[syntax(\.[a-z-]+)?\]' |
     grep -v '\[syntax\.duplicate-ids\]' || true)"
   if [[ -n "$findings" ]]; then
@@ -197,6 +233,7 @@ static_check() {
     fail "QML parse errors in ${#files[@]} scanned files"
     return
   fi
+  static_ran=true
   note "static parse check passed (${#files[@]} QML files)"
 }
 
@@ -392,6 +429,10 @@ else
 fi
 
 if [[ "$status" -eq 0 ]]; then
-  note "ok"
+  if [[ "$static_ran" == false && "$nested" == false ]]; then
+    note "nothing was checked (no qmllint, and --nested was not requested)"
+  else
+    note "ok"
+  fi
 fi
 exit "$status"
