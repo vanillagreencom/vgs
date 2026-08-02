@@ -59,7 +59,7 @@ docs/architecture/        # short architecture docs
 3. For external commands, call `Paths.vshellCli`, not bare `vshell`.
 4. Gate optional features through `vshell deps` or helper unavailable JSON.
 5. Keep QML UI-focused. Move parsing/generation/privileged logic to helper.
-6. Smoke with `qs -c vshell`.
+6. Smoke with `scripts/qml-smoke.sh` — never `qs -c vshell` in a live session.
 
 Reference: `references/qml-runtime.md`.
 
@@ -121,10 +121,21 @@ For backend changes:
 For runtime changes:
 
 ```bash
-qs -c vshell
+scripts/qml-smoke.sh              # static QML parse check, always safe
+scripts/qml-smoke.sh --nested     # + real shell in an isolated nested compositor
+scripts/check-validation-safety.sh
 ```
 
-Timeout exit can be fine for smoke. QML errors, missing binary warnings, and process start failures are not fine.
+QML errors, missing binary warnings, and process start failures are not fine.
+
+**Never** run `qs -c vshell` or `qs -p quickshell/vshell` in a live session: that
+starts a second full VGS instance, which fights the session shell for
+WlSessionLock, the fade-to-lock overlay, and the idle/DPMS tiers, and leaves
+orphaned full-screen layer surfaces behind (cursors over black, recoverable only
+with `vshell ipc call lock forceReset`). Never `pkill quickshell` either — other
+Quickshell applications on the seat are legitimate. Use `vshell instances list`
+to see live VGS shells and `vshell logs -n 200` for the running shell's QML
+errors.
 
 For theme changes:
 

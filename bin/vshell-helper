@@ -4910,6 +4910,192 @@ def feature_status() -> Dict[str, Any]:
     return {"version": data.get("version", 1), "compositor": compositor, "features": features}
 
 
+QS_BINARIES = ("qs", "quickshell")
+# Sorts after every real ISO launch time, so an entry whose launch time the
+# registry did not report is treated as the youngest instance and yields.
+QS_UNKNOWN_LAUNCH_TIME = "~"
+
+
+def _proc_root() -> Path:
+    return Path(os.environ.get("VSHELL_PROC_ROOT", "/proc"))
+
+
+def _pid_alive(pid: int) -> bool:
+    if pid <= 0:
+        return False
+    return (_proc_root() / str(pid)).exists()
+
+
+def vgs_shell_entry() -> Path:
+    """Path of the QML entrypoint this checkout would launch."""
+    root = os.environ.get("VSHELL_ROOT", "").strip()
+    base = Path(root) if root else repo_root()
+    return base / "quickshell" / "vshell" / "shell.qml"
+
+
+def _resolve_path(value: str) -> str:
+    try:
+        return str(Path(value).resolve())
+    except OSError:
+        return value
+
+
+def qs_list_instances() -> Dict[str, Any]:
+    """Read the Quickshell instance registry for the current XDG_RUNTIME_DIR.
+
+    A sandboxed smoke run has its own runtime dir, so its instances are
+    intentionally invisible here.
+    """
+    binary = ""
+    for name in QS_BINARIES:
+        binary = shutil.which(name) or ""
+        if binary:
+            break
+    if not binary:
+        return {"ok": False, "error": "quickshell CLI (qs) not found", "instances": []}
+    try:
+        proc = subprocess.run(
+            [binary, "list", "--all", "--json"],
+            text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=5,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        return {"ok": False, "error": str(exc), "instances": []}
+    if proc.returncode != 0:
+        detail = (proc.stderr or "").strip() or f"qs list exited {proc.returncode}"
+        return {"ok": False, "error": detail, "instances": []}
+    try:
+        data = json.loads(proc.stdout or "[]")
+    except json.JSONDecodeError as exc:
+        return {"ok": False, "error": f"unparsable qs list output: {exc}", "instances": []}
+    if not isinstance(data, list):
+        return {"ok": False, "error": "unexpected qs list output", "instances": []}
+    return {"ok": True, "instances": [entry for entry in data if isinstance(entry, dict)]}
+
+
+def _vgs_instance_entry(entry: Dict[str, Any]) -> Dict[str, Any]:
+    try:
+        pid = int(entry.get("pid") or 0)
+    except (TypeError, ValueError):
+        pid = 0
+    return {
+        "pid": pid,
+        "id": str(entry.get("id") or ""),
+        "shellId": str(entry.get("shell_id") or ""),
+        "configPath": str(entry.get("config_path") or ""),
+        "launchTime": str(entry.get("launch_time") or ""),
+    }
+
+
+def _vgs_instance_matches(entry: Dict[str, Any], shell_path: str, shell_id: str) -> bool:
+    if shell_id and entry["shellId"] == shell_id:
+        return True
+    if not entry["configPath"]:
+        return False
+    return _resolve_path(entry["configPath"]) == shell_path
+
+
+def _vgs_instance_order(entry: Dict[str, Any]) -> Tuple[str, int]:
+    return (entry["launchTime"] or QS_UNKNOWN_LAUNCH_TIME, entry["pid"])
+
+
+def vgs_instance_report(pid: int = 0, shell_id: str = "", config_path: str = "") -> Dict[str, Any]:
+    """Inventory of live VGS shells, plus a duplicate verdict for ``pid``.
+
+    The verdict is deliberately fail-open: when the registry cannot be read the
+    caller must keep running.  Ownership goes to the oldest live instance
+    (launch time, then pid), so only instances started *after* the session shell
+    ever see themselves as the duplicate.
+    """
+    shell_path = _resolve_path(config_path) if config_path else _resolve_path(str(vgs_shell_entry()))
+    listing = qs_list_instances()
+    report: Dict[str, Any] = {
+        "ok": bool(listing["ok"]),
+        "supported": bool(listing["ok"]),
+        "shellPath": shell_path,
+        "shellId": shell_id,
+        "instances": [],
+        "self": None,
+        "owner": None,
+        "duplicate": False,
+        "reason": "",
+    }
+    if not listing["ok"]:
+        report["error"] = listing.get("error", "")
+        report["reason"] = "instance registry unavailable"
+        return report
+
+    matches = []
+    for raw in listing["instances"]:
+        entry = _vgs_instance_entry(raw)
+        if not _vgs_instance_matches(entry, shell_path, shell_id):
+            continue
+        if not _pid_alive(entry["pid"]):
+            continue
+        matches.append(entry)
+    matches.sort(key=_vgs_instance_order)
+    report["instances"] = matches
+
+    if pid <= 0:
+        report["reason"] = "listing only"
+        return report
+
+    own = next((entry for entry in matches if entry["pid"] == pid), None)
+    candidates = matches
+    if own is None:
+        # Not registered (yet). Treat ourselves as the youngest candidate so a
+        # registry race can never unseat the running session shell.
+        own = {"pid": pid, "id": "", "shellId": shell_id, "configPath": shell_path,
+               "launchTime": ""}
+        candidates = [*matches, own]
+    report["self"] = own
+    owner = min(candidates, key=_vgs_instance_order)
+    report["owner"] = owner
+    if owner["pid"] != pid:
+        report["duplicate"] = True
+        report["reason"] = (
+            f"another VGS shell (pid {owner['pid']}) already owns this session; "
+            "use scripts/qml-smoke.sh for validation"
+        )
+    else:
+        report["reason"] = "sole instance" if len(matches) <= 1 else "oldest instance"
+    return report
+
+
+def cmd_instances(argv: List[str]) -> int:
+    parser = argparse.ArgumentParser(prog="vshell instances")
+    sub = parser.add_subparsers(dest="cmd")
+    p_list = sub.add_parser("list", help="list live VGS Quickshell instances")
+    p_list.add_argument("--json", action="store_true")
+    p_list.add_argument("--config-path", default="")
+    p_guard = sub.add_parser("guard", help="duplicate-shell verdict for a pid")
+    p_guard.add_argument("--pid", type=int, required=True)
+    p_guard.add_argument("--shell-id", default="")
+    p_guard.add_argument("--config-path", default="")
+    p_guard.add_argument("--json", action="store_true")
+    if not argv or argv[0].startswith("-"):
+        argv = ["list", *(argv or [])]
+    args = parser.parse_args(argv)
+
+    if args.cmd == "guard":
+        report = vgs_instance_report(args.pid, args.shell_id, args.config_path)
+        print(json.dumps(report))
+        return 0
+
+    report = vgs_instance_report(0, "", getattr(args, "config_path", ""))
+    if args.json:
+        print(json.dumps(report))
+        return 0
+    if not report["ok"]:
+        eprint(f"vshell instances: {report.get('error', 'registry unavailable')}")
+        return 1
+    if not report["instances"]:
+        print("no live VGS Quickshell instances")
+        return 0
+    for entry in report["instances"]:
+        print(f"{entry['pid']}\t{entry['id']}\t{entry['launchTime']}\t{entry['configPath']}")
+    return 0
+
+
 def cmd_compositor(argv: List[str]) -> int:
     if not argv or argv[0] != "current":
         eprint("Usage: vshell compositor current [--json]")
@@ -9826,6 +10012,7 @@ def main() -> int:
         if cmd == "keybinds": return cmd_keybinds(argv)
         if cmd == "config": return cmd_config(argv)
         if cmd == "compositor": return cmd_compositor(argv)
+        if cmd == "instances": return cmd_instances(argv)
         if cmd == "battery": return cmd_battery(argv)
         if cmd == "blur": return cmd_blur(argv)
         if cmd == "brightness": return cmd_brightness(argv)

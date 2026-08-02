@@ -89,7 +89,7 @@ Live-machine etiquette:
 - Releases use `.agents/skills/vgs-release/SKILL.md`. Every release updates and verifies all maintained install channels; unavailable channels must be named, never silently skipped.
 
 ## Validation
-Scope to the area touched (Go-only: inventory guard + go block; QML-only: naming, `qs` smoke, surfaces; helper: py_compile + helper checks); run the full suite for cross-cutting work:
+Scope to the area touched (Go-only: inventory guard + go block; QML-only: naming, QML smoke, surfaces; helper: py_compile + helper checks); run the full suite for cross-cutting work:
 ```bash
 scripts/check-naming.sh
 node --check scripts/check-settings-migration.js
@@ -103,11 +103,31 @@ scripts/check-backend-inventory.py
 python3 -m py_compile bin/vshell-helper
 bash -n bin/vshell
 git diff --check
-qs -c vshell
+scripts/qml-smoke.sh
+scripts/check-validation-safety.sh
 scripts/smoke-surfaces.sh
 (cd backend && go build ./... && go vet ./... && go test -race ./...)
 ```
-For `qs -c vshell`, timeout is acceptable for smoke; investigate QML errors, missing binaries, and process failures.
+
+### Never launch a second shell into the live session
+Never run `qs -c vshell` or `qs -p quickshell/vshell`: each starts a **full second
+VGS instance**, which fights the session shell for session-global resources
+(WlSessionLock, the fade-to-lock overlay, idle/DPMS tiers) and leaves orphaned
+full-screen layer surfaces behind — the session ends up as cursors over black,
+recoverable only with `vshell ipc call lock forceReset`. Never `pkill quickshell`
+either: other Quickshell applications on the seat are legitimate.
+
+- `scripts/qml-smoke.sh` is the canonical QML smoke: static parse check by
+  default, plus `--nested` to run the real shell inside an isolated nested
+  compositor (own runtime dir, own HOME, no live backend socket, no live
+  compositor IPC) with process-group-scoped cleanup.
+- `scripts/check-validation-safety.sh` proves validation left no extra VGS
+  Quickshell instances or layer surfaces, and blocks unsafe launch instructions
+  from returning to the docs.
+- `vshell instances list` shows live VGS shells; a duplicate started by hand is
+  refused at runtime by the guard in `quickshell/vshell/shell.qml`.
+- To read runtime QML errors from the shell that is already running:
+  `vshell logs -n 200`.
 
 ## Do not
 - Do not introduce a `vgs` CLI binary.

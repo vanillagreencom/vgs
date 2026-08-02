@@ -39,6 +39,22 @@ v17 turned auto monitor-off off and added the blank keys.
 - **Super+Shift+Esc** → toggle the desktop ascii/video saver (`ScreensaverService`).
 - **Super+F5 / F6** → manual secure DPMS-off / on (a wake latch survives activity/resume).
 
+## Recovery
+A stray *second* VGS shell is the usual cause of "the lock is secure but its UI
+is black": each instance builds its own `vshell:fade-to-lock` overlay and races
+for `WlSessionLock`, so the surviving surfaces belong to an instance that is no
+longer driving the lock.
+
+- `hyprctl layers` → more than one `vshell:fade-to-lock` per monitor means
+  duplicate shells. `vshell instances list` names them; terminate the stray
+  **by pid** (never `pkill quickshell` — other Quickshell apps are legitimate).
+- `vshell ipc call lock forceReset` clears the shell's lock state after the
+  strays are gone; `vshell lock recover` rebuilds a secure lock surface after
+  Hyprland's crashed-locker fallback.
+- The duplicate itself is prevented at the source: validation goes through
+  `scripts/qml-smoke.sh`, and `shell.qml` refuses to bring up a duplicate
+  instance (see `docs/architecture/shell-architecture.md`).
+
 ## Not yet built
 Rendering the ascii saver *over the lock* (only the lock surface can draw while locked)
 needs the native ascii renderer — tracked in `docs/plans/screensaver-native-renderer.md`

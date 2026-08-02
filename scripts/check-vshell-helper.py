@@ -987,6 +987,74 @@ def test_launcher_search_unicode_ranges_and_preview():
         assert_equal(folder_hits[0]["completion"], "~/dev/", "folder completion preserves tilde path")
 
 
+def test_duplicate_shell_guard():
+    """A second VGS shell must yield; the session shell must never be unseated."""
+    shell_path = str(REPO_ROOT / "quickshell" / "vshell" / "shell.qml")
+    session = {
+        "pid": 100,
+        "id": "aaa",
+        "shell_id": "shell-1",
+        "config_path": shell_path,
+        "launch_time": "2026-08-01T10:00:00",
+    }
+    duplicate = {
+        "pid": 200,
+        "id": "bbb",
+        "shell_id": "shell-1",
+        "config_path": shell_path,
+        "launch_time": "2026-08-01T12:00:00",
+    }
+    other_app = {
+        "pid": 300,
+        "id": "ccc",
+        "shell_id": "other",
+        "config_path": "/home/someone/.config/quickshell/other/shell.qml",
+        "launch_time": "2026-07-01T00:00:00",
+    }
+
+    original_list = helper.qs_list_instances
+    original_alive = helper._pid_alive
+    alive = {100, 200, 300}
+    helper._pid_alive = lambda pid: pid in alive
+    try:
+        helper.qs_list_instances = lambda: {"ok": True, "instances": []}
+        report = helper.vgs_instance_report(pid=200)
+        assert_equal(report["duplicate"], False, "no peers means no duplicate")
+        assert_equal(report["reason"], "sole instance", "sole-instance reason")
+
+        helper.qs_list_instances = lambda: {"ok": True, "instances": [session, other_app]}
+        report = helper.vgs_instance_report(pid=200, shell_id="shell-1")
+        assert_equal(report["duplicate"], True, "unregistered younger shell yields")
+        assert_equal(report["owner"]["pid"], 100, "oldest instance owns the session")
+        assert_equal([entry["pid"] for entry in report["instances"]], [100],
+                     "unrelated Quickshell applications are never counted")
+
+        helper.qs_list_instances = lambda: {"ok": True, "instances": [session, duplicate]}
+        report = helper.vgs_instance_report(pid=100, shell_id="shell-1")
+        assert_equal(report["duplicate"], False, "session shell keeps ownership")
+        report = helper.vgs_instance_report(pid=200, shell_id="shell-1")
+        assert_equal(report["duplicate"], True, "registered younger shell yields")
+
+        # A dead registry entry must not unseat a live shell.
+        alive = {200}
+        report = helper.vgs_instance_report(pid=200, shell_id="shell-1")
+        assert_equal(report["duplicate"], False, "dead peers are ignored")
+        alive = {100, 200, 300}
+
+        # Config-path matching covers `qs -c vshell` vs `qs -p quickshell/vshell`.
+        report = helper.vgs_instance_report(pid=200, config_path=shell_path)
+        assert_equal(report["duplicate"], True, "config-path match detects duplicates")
+
+        # Fail open: an unreadable registry must never block a shell from starting.
+        helper.qs_list_instances = lambda: {"ok": False, "error": "qs missing", "instances": []}
+        report = helper.vgs_instance_report(pid=200, shell_id="shell-1")
+        assert_equal(report["duplicate"], False, "unavailable registry fails open")
+        assert_equal(report["supported"], False, "unavailable registry is reported")
+    finally:
+        helper.qs_list_instances = original_list
+        helper._pid_alive = original_alive
+
+
 def test_launcher_zoxide_results():
     original_which = helper.shutil.which
     original_run = helper.subprocess.run
@@ -1030,6 +1098,7 @@ def main():
     test_greeter_runtime_helper_dependencies()
     test_launcher_search_unicode_ranges_and_preview()
     test_launcher_zoxide_results()
+    test_duplicate_shell_guard()
     subprocess.run(
         [sys.executable, str(REPO_ROOT / "scripts" / "check-vshell-niri.py")],
         check=True,
