@@ -51,9 +51,10 @@ fail() { printf 'qml-smoke: FAIL: %s\n' "$*" >&2; status=1; }
 
 # shellcheck source=scripts/lib/session-snapshot.sh
 source "$repo_root/scripts/lib/session-snapshot.sh"
+vgs_snapshot_prefix="qml-smoke: "
 
-instances_before="$(vgs_snapshot_instances)"
-layers_before="$(vgs_snapshot_layers)"
+instances_before="$(vgs_snapshot_instances)" && instances_before_status=0 || instances_before_status=$?
+layers_before="$(vgs_snapshot_layers)" && layers_before_status=0 || layers_before_status=$?
 
 # --- deterministic cleanup --------------------------------------------------
 
@@ -104,9 +105,16 @@ kill_pgid() {
   kill -KILL -- "-$pgid" 2>/dev/null || true
 }
 
+# A signal handler inherits $? from whatever finished last, which is usually 0,
+# so an interrupted run would otherwise report success to CI.
 cleanup() {
-  local code=$? pgid dir index
+  local code=$? signal="${1:-}" pgid dir index
   trap - EXIT INT TERM HUP
+  case "$signal" in
+    INT) code=130 ;;
+    TERM) code=143 ;;
+    HUP) code=129 ;;
+  esac
   for ((index = ${#tracked_pgids[@]} - 1; index >= 0; index--)); do
     pgid="${tracked_pgids[index]}"
     kill_pgid "$pgid"
@@ -123,22 +131,27 @@ cleanup() {
 }
 
 assert_live_session_untouched() {
-  local ok=0 instances_after layers_after
-  instances_after="$(vgs_snapshot_instances)"
-  layers_after="$(vgs_snapshot_layers)"
-  if [[ "$instances_after" != "$instances_before" ]]; then
-    printf 'qml-smoke: FAIL: live VGS instances changed\n--- before\n%s\n--- after\n%s\n' \
-      "$instances_before" "$instances_after" >&2
+  local ok=0 instances_after layers_after instances_after_status layers_after_status
+  instances_after="$(vgs_snapshot_instances)" && instances_after_status=0 || instances_after_status=$?
+  layers_after="$(vgs_snapshot_layers)" && layers_after_status=0 || layers_after_status=$?
+
+  if ! vgs_compare_snapshots "live VGS instances" \
+    "$instances_before" "$instances_before_status" \
+    "$instances_after" "$instances_after_status" exact; then
     ok=1
   fi
-  if ! vgs_layers_regressed "$layers_before" "$layers_after"; then
-    printf 'qml-smoke: FAIL: live VGS layer surfaces multiplied (duplicate shell or orphaned overlay)\n' >&2
+  if ! vgs_compare_snapshots "live VGS layer surfaces" \
+    "$layers_before" "$layers_before_status" \
+    "$layers_after" "$layers_after_status" growth; then
     ok=1
   fi
   return "$ok"
 }
 
-trap cleanup EXIT INT TERM HUP
+trap 'cleanup' EXIT
+trap 'cleanup INT' INT
+trap 'cleanup TERM' TERM
+trap 'cleanup HUP' HUP
 
 # --- static QML parse check -------------------------------------------------
 

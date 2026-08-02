@@ -10,6 +10,7 @@
 import QtQuick
 import Quickshell
 import Quickshell.Io
+import qs.Common
 
 ShellRoot {
     id: entrypoint
@@ -24,21 +25,31 @@ ShellRoot {
     // scripts/qml-smoke.sh; this is the runtime backstop for a hand-run
     // `qs -c vshell` / `qs -p quickshell/vshell`.
     //
-    // Only a shell that is *younger* than the owning instance ever yields, and
-    // every unknown (no CLI, no registry, slow answer) fails open, so this can
-    // never keep the session shell from starting.
-    readonly property bool guardDisabled: runGreeter || Quickshell.env("VSHELL_DISABLE_INSTANCE_GUARD") === "1" || Quickshell.env("VSHELL_DISABLE_INSTANCE_GUARD") === "true"
-    // Quickshell serves QML from a virtual filesystem, so Qt.resolvedUrl() here
-    // yields qrc:/qs-blackhole, not a runnable path. shellDir is the real launch
-    // directory, and `..` resolves *through* the ~/.config/quickshell/vshell
-    // symlink when the kernel walks the path, so this works for a source
-    // checkout, a packaged install, and a hand-run `qs -c vshell` alike.
-    readonly property string vshellCli: {
-        const root = Quickshell.env("VSHELL_ROOT");
-        if (root)
-            return root + "/bin/vshell";
-        return Quickshell.shellDir + "/../../bin/vshell";
+    // Only a shell that a live peer *provably* predates ever yields, and every
+    // unknown (no CLI, no registry, unprovable age, slow answer) fails open, so
+    // this can never keep the session shell from starting.
+    //
+    // The verdict gates the load rather than only tearing a duplicate down
+    // afterwards: a shell that loads first would already have built its bar,
+    // dock, and fade-to-lock surfaces and could win WlSessionLock before the
+    // teardown lands, which is the damage this guard exists to avoid. The cost
+    // is one subprocess round trip on the startup path — measured at ~0.13 s
+    // warm, bounded by the 2 s deadline below — during which nothing is drawn.
+    //
+    // Hot reload rebuilds this tree in the *same* process, which already passed
+    // the check and already owns the session; re-running it there would only add
+    // latency and a needless window with no shell loaded. Only a freshly started
+    // process consults the guard.
+    // Biased towards "fresh": misreading a slow cold start as a reload would
+    // silently drop the guard, while re-running it on an unusually early reload
+    // only costs that one reload a moment with nothing loaded.
+    readonly property bool isReload: {
+        const launched = Quickshell.launchTime;
+        if (!launched)
+            return false;
+        return Date.now() - launched.getTime() > 30000;
     }
+    readonly property bool guardDisabled: runGreeter || isReload || Quickshell.env("VSHELL_DISABLE_INSTANCE_GUARD") === "1" || Quickshell.env("VSHELL_DISABLE_INSTANCE_GUARD") === "true"
     property bool guardResolved: false
     property bool guardDuplicate: false
     readonly property bool shellAllowed: (guardDisabled || guardResolved) && !guardDuplicate
@@ -57,7 +68,9 @@ ShellRoot {
     Process {
         id: instanceGuard
         running: !entrypoint.guardDisabled
-        command: [entrypoint.vshellCli, "instances", "guard", "--pid", String(Quickshell.processId), "--shell-id", Quickshell.shellId]
+        // Paths owns the single definition of where bin/vshell lives; the guard
+        // must not carry a second copy of that rule.
+        command: [Paths.vshellCli, "instances", "guard", "--pid", String(Quickshell.processId), "--shell-id", Quickshell.shellId]
 
         stdout: StdioCollector {
             id: guardOutput
@@ -82,8 +95,20 @@ ShellRoot {
             console.error("VGS: refusing to start a duplicate shell:", verdict.reason);
             console.error("VGS: run scripts/qml-smoke.sh for QML validation, or set VSHELL_DISABLE_INSTANCE_GUARD=1 to override.");
             entrypoint.resolveGuard(true);
-            Quickshell.execDetached(["sh", "-c", `kill -TERM ${Quickshell.processId}`]);
         }
+    }
+
+    // Quickshell 0.3.0 leaves QQmlEngine's quit()/exit() signals unconnected
+    // ("Signal QQmlEngine::quit() emitted, but no receivers connected to handle
+    // it"), so Qt.quit() does not end the process and QML has no way out except
+    // signalling its own pid. Repeat it so one failed detach cannot strand a
+    // shell that has already refused to draw anything.
+    Timer {
+        interval: 1000
+        repeat: true
+        triggeredOnStart: true
+        running: entrypoint.guardDuplicate
+        onTriggered: Quickshell.execDetached(["sh", "-c", `kill -TERM ${Quickshell.processId}`])
     }
 
     // The guard must never be able to hang startup: answer or not, the shell
