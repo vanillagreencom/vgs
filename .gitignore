@@ -22,6 +22,7 @@
 .env.*
 !.env.example
 !.env.sample
+!.env.local.example
 
 # Runtime logs, scratch files, and caches
 tmp/
