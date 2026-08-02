@@ -108,7 +108,32 @@ dev = ""
 
 github = ""
 
-linear = ""
+linear = """
+## Tracker policy: Linear is canonical; GitHub Issues is intake-only
+
+Create, label, and work issues ONLY in Linear (team vg-shell, identifiers
+VGS-<n>). GitHub Issues stays as intake: a one-way GitHub -> Linear sync
+mirrors anything filed there, and nothing syncs back. Before creating a Linear
+issue, dedupe across BOTH trackers (`gh issue list --search` + Linear cache) —
+never file the same problem twice.
+
+Link work to its issue through the branch name: `vgs-<n>-<slug>`. Linear's
+GitHub integration matches that to attach the PR, and `GH_ISSUE_PATTERN` in
+vstack.settings.toml reads the same shape. Commit subjects carry the identifier
+as the scope — `area(VGS-12): imperative summary` — per AGENTS.md § Conventions.
+
+Issue labels are live Linear issue labels. Inventory source of truth:
+
+```bash
+.agents/skills/linear/scripts/linear.sh cache labels list
+.agents/skills/linear/scripts/linear.sh sync --reconcile
+```
+
+Never create labels without explicit user authorization; if the label you want
+is missing, stop and report it rather than substituting a nearby one.
+`issues create/update --labels` replaces the full label set, so compute the
+intended final set from the current labels before updating.
+"""
 
 orch = ""
 

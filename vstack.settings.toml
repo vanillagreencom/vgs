@@ -7,13 +7,17 @@
 #BOT_NAME = ""
 #BOT_REMOTE_NAME = ""
 CI_FIX_MAX_CYCLES = "6"
-# Reviewer gate: no review bots on this repo - reviewer wait is skipped
-# (internal review, CI, and comment-hygiene gates still apply).
-PR_REVIEW_GATE = "off"
+# Reviewer gate: CodeRabbit reviews PRs on this repo, so the reviewer wait
+# applies. It normally submits a review object (APPROVED/COMMENTED); the check
+# name below is the fallback for a clean pass that submits no review object.
+PR_REVIEW_GATE = "review"
 DECISIONS_DIR = "docs/decisions"
 #GH_BOT_USERNAME = ""
-#GH_ISSUE_PATTERN = "AI-[0-9]+"
-#GIT_HOST_CLI = ".agents/skills/github/scripts/github.sh"
+# Issue IDs in branch names. Linear identifiers for team vg-shell are VGS-<n>,
+# and branches are named vgs-<n>-<slug>, which is also what Linear's GitHub
+# integration matches to link the PR back to the issue.
+GH_ISSUE_PATTERN = "vgs-[0-9]+"
+GIT_HOST_CLI = ".agents/skills/github/scripts/github.sh"
 LINEAR_FORMAT = "safe"
 ORCH_CACHE_DIR = ".cache/orchestration"
 ORCH_STATE_DIR = "tmp"
@@ -36,7 +40,7 @@ PR_REVIEW_NUDGE_SECS = "600"
 # Used by: orch (`approval-wait`). Comment body posted as the nudge — set it
 # to whatever summons this repo's review bot (e.g. "@devin review"). Empty =
 # fall back to a GitHub-native re-review request to the PR's reviewers.
-PR_REVIEW_NUDGE = ""
+PR_REVIEW_NUDGE = "@coderabbitai review"
 
 # Used by: orch (`approval-wait`, review mode). Name/context of the trusted
 # reviewer's check-run OR commit status: a success for that exact name on the
@@ -44,7 +48,7 @@ PR_REVIEW_NUDGE = ""
 # review object (e.g. "Devin Review"). Empty = review objects only. SECURITY:
 # match by name means any app could publish it — name only the trusted bot's
 # check on repos where all publishers are trusted.
-PR_REVIEW_CHECK = ""
+PR_REVIEW_CHECK = "CodeRabbit"
 
 # Used by: orch (`ci-wait`). Seconds to keep polling before failing when no CI
 # checks have registered yet. Raise for repos whose CI dispatches only after a
