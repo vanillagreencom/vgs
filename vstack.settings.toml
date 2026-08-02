@@ -48,7 +48,17 @@ PR_REVIEW_NUDGE = "@coderabbitai review"
 # review object (e.g. "Devin Review"). Empty = review objects only. SECURITY:
 # match by name means any app could publish it — name only the trusted bot's
 # check on repos where all publishers are trusted.
-PR_REVIEW_CHECK = "CodeRabbit"
+#
+# Left empty deliberately. This is a fallback for bots that publish a check but
+# submit a review object only when they have findings — neither reviewer here
+# behaves that way: CodeRabbit submits a review object on clean runs too
+# (APPROVED), and qodo-code-review posts a review object and no check/status at
+# all. Naming CodeRabbit's `CodeRabbit` commit status would only add a way for a
+# non-review to satisfy the gate: it concluded `success` with the description
+# "Review rate limited" on 2026-08-02, having reviewed nothing. With two
+# reviewers that both post review objects, a genuine outage is
+# PR_REVIEW_ON_TIMEOUT's job, not this one's.
+PR_REVIEW_CHECK = ""
 
 # Used by: orch (`ci-wait`). Seconds to keep polling before failing when no CI
 # checks have registered yet. Raise for repos whose CI dispatches only after a
