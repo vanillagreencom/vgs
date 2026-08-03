@@ -1,8 +1,10 @@
 # Agent and coding-harness workspaces
 # Existing tracked files stay tracked until removed from the index.
+# vstack.toml and vstack.settings.toml are tracked: they are project-owned
+# config (agent/skill wiring, review gates, Linear team) with no secrets —
+# those live in .env.local. The lock file stays ignored because it records
+# per-machine install state (absolute source paths, install timestamps).
 .vstack-lock.json
-vstack.toml
-vstack.settings.toml
 .agents/
 .claude/
 .codex/
@@ -20,6 +22,7 @@ vstack.settings.toml
 .env.*
 !.env.example
 !.env.sample
+!.env.local.example
 
 # Runtime logs, scratch files, and caches
 tmp/

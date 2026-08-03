@@ -85,7 +85,14 @@ Live-machine etiquette:
 - Verify backend changes against a scratch daemon (`VGS_BACKEND_SOCKET=/run/user/$UID/test.sock vshell backend serve`), not the live session socket; unix socket paths must stay short (sun_path limit).
 
 ## Conventions
-- Commit style: `area: imperative summary` (e.g. `backend:`, `frontend:`, `docs:`, `theme:`), lowercase.
+- Issue tracker: **Linear** (team `vg-shell`, identifiers `VGS-<n>`). GitHub Issues
+  is intake-only — a one-way GitHub → Linear sync mirrors it, nothing syncs back.
+  File and work issues in Linear; dedupe across both before creating one.
+- Branch names carry the issue: `vgs-<n>-<slug>`. That is what Linear's GitHub
+  integration matches to attach the PR, and what `GH_ISSUE_PATTERN` reads.
+- Commit style: `area: imperative summary` (e.g. `backend:`, `frontend:`, `docs:`,
+  `theme:`), lowercase. When the work has a Linear issue, put the identifier in
+  the scope: `area(VGS-12): imperative summary`.
 - Releases use `.agents/skills/vgs-release/SKILL.md`. Every release updates and verifies all maintained install channels; unavailable channels must be named, never silently skipped.
 
 ## Validation
