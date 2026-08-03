@@ -57,28 +57,50 @@ PluginComponent {
     // terminal gives visibility but no authentication — so this confirmation is
     // the only real gate in that configuration. A plain "click twice" is not
     // enough: an ordinary accidental double-click on a bar pill (~200 ms, far
-    // too fast to have read the toast) would satisfy it. Two independent
-    // guards, either of which alone defeats a double-click:
+    // too fast to have read the toast) would satisfy it. Three guards:
+    //   * only a real click counts at all (isDirectActivation) — without this
+    //     a hover reaches toggle() through BarHoverController and satisfies
+    //     both of the guards below rather than defeating them;
     //   * the second click is IGNORED (not counted, not cancelled) until
-    //     confirmMinMs has passed, and
-    //   * the pointer must have left the pill and come back.
+    //     confirmMinMs has passed; and
+    //   * the pointer must have left the pill since arming. Note what is
+    //     literally tracked is only the leaving: `_pointerLeftSinceArm` is set
+    //     by the pill's onExited and never cleared by re-entry. It amounts to
+    //     "left and came back" ONLY because a click requires the pointer to be
+    //     over the pill, which is guaranteed by the first guard. Do not treat
+    //     this one as load-bearing on its own.
     readonly property int confirmMinMs: 600
     readonly property int confirmWindowMs: 8000
     property real _armedAt: 0
     property bool _pointerLeftSinceArm: false
     readonly property bool _enableArmed: root._armedAt > 0
 
-    // Pure decision function. `scripts/test-sudo-toggle-confirm.js` extracts
+    // Pure decision functions. `scripts/test-sudo-toggle-confirm.js` extracts
     // THIS source text and exercises it directly, so the shipped logic is what
     // is tested. Keep it free of QML API calls.
     // BEGIN CONFIRM DECISION
-    function confirmDecision(now, armedAt, pointerLeft, windowMs, minMs) {
+    function isDirectActivation(origin) {
+        // Only a real pointer press may change sudo state. The bar's hover
+        // controller reaches pillClickAction through triggerHoverPopout ->
+        // triggerPopout, so without this a pointer merely crossing the bar
+        // could arm and then confirm a grant with no click at all — and both
+        // confirmation guards are *satisfied* by ordinary traversal rather
+        // than defeated by it, so a stronger threshold would not help.
+        return origin === "click";
+    }
+
+    function confirmDecision(origin, now, armedAt, pointerLeft, windowMs, minMs) {
+        if (!isDirectActivation(origin))
+            return "ignore";
         if (armedAt <= 0)
             return "arm";
         if (now - armedAt > windowMs)
             return "arm";
         if (now - armedAt < minMs)
             return "ignore";
+        // A click requires the pointer to be over the pill, so "left since
+        // arming" plus "a click arrived" means it left and came back. That
+        // equivalence holds only because of isDirectActivation above.
         if (!pointerLeft)
             return "ignore";
         return "fire";
@@ -114,7 +136,13 @@ PluginComponent {
         return "Passwordless sudo disabled — click to grant (permanent)";
     }
 
-    function toggle() {
+    function toggle(origin) {
+        // Nothing here may run for a synthesised activation — not the state
+        // change, not the arming step, not even a toast. `pillClickOnHover:
+        // false` already stops the known hover path; this is the invariant
+        // enforced at the decision point, so a future caller cannot reopen it.
+        if (!root.isDirectActivation(origin))
+            return;
         if (!root.available) {
             ToastService.showWarning("Passwordless sudo toggle unavailable", root.unavailableReason);
             root._probeStatus(true);
@@ -137,7 +165,7 @@ PluginComponent {
             return;
         }
 
-        const decision = root.confirmDecision(Date.now(), root._armedAt, root._pointerLeftSinceArm, root.confirmWindowMs, root.confirmMinMs);
+        const decision = root.confirmDecision(origin, Date.now(), root._armedAt, root._pointerLeftSinceArm, root.confirmWindowMs, root.confirmMinMs);
         if (decision === "ignore")
             return;  // too fast, or the pointer never left: not a confirmation
         if (decision === "arm") {
@@ -407,9 +435,17 @@ PluginComponent {
         }
     }
 
-    // Left-click runs the toggle launcher (no popout).
+    // Left-click changes sudo state (no popout). Hover must never reach this:
+    // BarHoverController calls triggerHoverPopout on every PluginComponent, and
+    // triggerPopout forwards a zero-argument pillClickAction, so with the
+    // default `pillClickOnHover` a pointer crossing the bar would arm and then
+    // confirm a grant with no click at all.
+    pillClickOnHover: false
+
     pillClickAction: function () {
-        root.toggle();
+        // The origin comes from the invoker, not from this line, so the
+        // click-only rule cannot be re-broken by a new caller.
+        root.toggle(root.pillActionOrigin);
     }
 
     horizontalBarPill: Component {

@@ -76,19 +76,37 @@ Runtime name: `vshell`.
 
     Because the terminal only guarantees visibility — sudo will not prompt when
     a `NOPASSWD` rule already matches — the widget's confirmation is the real
-    gate in that configuration. It therefore cannot be satisfied by an
-    accidental double-click: the second click is ignored until `confirmMinMs`
-    has passed *and* the pointer has left the pill and returned.
-    `scripts/test-sudo-toggle-confirm.js` extracts that decision function from
-    the QML and exercises it directly, since bundled plugins get no runtime
+    gate in that configuration, and it has to hold against two different
+    things:
+    - **An accidental double-click.** The second click is ignored (not counted,
+      not cancelled) until `confirmMinMs`, and the pointer must have left the
+      pill since arming. The tracked state is only the *leaving*; that amounts
+      to "left and came back" solely because a click requires the pointer to be
+      over the pill.
+    - **Activation that is not a click at all.** `BarHoverController` calls
+      `triggerHoverPopout` on every `PluginComponent`, and `triggerPopout`
+      forwards a zero-argument `pillClickAction`, so with `hoverPopouts`
+      enabled a pointer crossing the bar reached the action — arming, then
+      confirming, with no click. Both guards above are *satisfied* by that
+      traversal rather than defeated by it. Two changes close it:
+      `PluginComponent.pillClickOnHover` (default true, set false here) stops
+      hover from invoking the action, and `PluginComponent.pillActionOrigin`
+      tells the action how it was reached so `toggle()` can refuse anything but
+      `"click"` at the decision point. A pill whose click action changes state
+      must set `pillClickOnHover: false`.
+
+    `scripts/test-sudo-toggle-confirm.js` extracts the decision functions from
+    the QML and exercises them directly, since bundled plugins get no runtime
     coverage from the nested smoke (VGS-19).
 
     `status --json` reports `available`/`reason`, `canEnable`/`enableReason`,
     `dropinInstalled` (VGS's own rule) and `sudoNonInteractive` (whether sudo
     prompts at all right now, from any rule or a cached credential). The sudo
     probe is not run at shell start: for a non-sudoer it logs a security event
-    and mails root under the default `mail_no_user`, so the widget asks for it
-    lazily on hover and the helper skips it for users in no sudo group.
+    and mails root under the default `mail_no_user`, so the widget passes
+    `--no-sudo-probe` at startup and asks for real only once the user hovers
+    the control. It is not filtered by group membership, which would skip a
+    user granted sudo by a direct sudoers rule.
 11. Optional widgets check helper/backends and degrade when unavailable.
 
 ## Single instance per session

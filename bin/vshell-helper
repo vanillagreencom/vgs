@@ -10127,25 +10127,6 @@ def sudo_toggle_mirror_state() -> bool:
     return sudo_toggle_flag_path().is_file() or sudo_toggle_legacy_flag_path().is_file()
 
 
-def user_in_sudo_group() -> bool:
-    """Is the caller plausibly allowed to sudo at all?
-
-    Cheap and unprivileged. Used to skip the `sudo -n` probe entirely for users
-    who are not sudoers: for them sudo logs a security event and, under the
-    default `mail_no_user`, mails root — an unacceptable cost for a widget they
-    never touched.
-    """
-    try:
-        groups = {grp.getgrgid(gid).gr_name for gid in os.getgroups()}
-    except Exception:
-        return True  # cannot tell: do not suppress a probe on a guess
-    try:
-        groups.add(grp.getgrgid(os.getgid()).gr_name)
-    except Exception:
-        pass
-    return bool(groups & {"wheel", "sudo", "admin", "root"})
-
-
 def sudo_noninteractive_ok(runner: Any = None) -> bool:
     """Does sudo currently run without prompting?
 
@@ -10268,10 +10249,28 @@ def sudo_toggle_write_flag(enable: bool) -> Tuple[bool, str]:
         except OSError as exc:
             return False, f"could not open the home directory: {exc}"
 
+        def retire_legacy(state_fd: int) -> None:
+            """Drop the pre-VGS-11 mirror so one file is the truth.
+
+            Done as soon as the `state` directory is open, not at the end: on a
+            revoke where `state/vshell` does not exist the walk returns early,
+            and retiring afterwards would leave the legacy flag behind still
+            asserting "enabled" — recreating the stale-mirror state the
+            direction guard exists to catch.
+            """
+            try:
+                os.unlink(SUDO_TOGGLE_FLAG_NAME, dir_fd=state_fd)
+            except (FileNotFoundError, OSError):
+                pass
+
+        legacy_parent_index = len(dirs) - 2  # ".local/state" holds the old flag
+
         for index, part in enumerate(dirs):
             parent = open_fds[-1]
             try:
                 open_fds.append(os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=parent))
+                if index == legacy_parent_index:
+                    retire_legacy(open_fds[-1])
                 continue
             except FileNotFoundError:
                 pass
@@ -10296,21 +10295,14 @@ def sudo_toggle_write_flag(enable: bool) -> Tuple[bool, str]:
                 open_fds.append(os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=parent))
             except OSError as exc:
                 return False, f"could not open {'/'.join(dirs[:index + 1])}: {exc}"
+            if index == legacy_parent_index:
+                retire_legacy(open_fds[-1])
             try:
                 os.chown(part, owner_uid, owner_gid, dir_fd=parent, follow_symlinks=False)
             except (PermissionError, FileNotFoundError, OSError):
                 pass
 
         leaf = open_fds[-1]
-
-        # Retire the pre-VGS-11 mirror so one file is the truth. It sits in the
-        # `state` directory, whose descriptor is the one before the leaf.
-        state_fd = open_fds[-2] if len(open_fds) >= 2 else None
-        if state_fd is not None:
-            try:
-                os.unlink(SUDO_TOGGLE_FLAG_NAME, dir_fd=state_fd)
-            except (FileNotFoundError, OSError):
-                pass
 
         if not enable:
             try:
@@ -10354,11 +10346,15 @@ def sudo_toggle_status(user: str, sudo_probe: Any = None, probe_sudo: bool = Tru
         # NOPASSWD: ALL is in force by definition; no need to ask sudo (and no
         # need to put a line in the auth log).
         non_interactive = True
-    elif probe_sudo and (sudo_probe is not None or user_in_sudo_group()):
+    elif probe_sudo:
+        # Probing is always caller-initiated: the widget passes
+        # --no-sudo-probe at shell start and only asks for real once the user
+        # hovers the control, so a login never touches sudo. Group membership
+        # is deliberately NOT used to pre-filter — it would silently skip the
+        # probe for a user granted sudo by a direct sudoers rule
+        # (`alice ALL=...`), reporting them as prompting when they are not.
         non_interactive = sudo_noninteractive_ok(sudo_probe)
     else:
-        # Not probed. The widget asks for this lazily on interaction rather
-        # than at every shell start; a non-sudoer never triggers it at all.
         non_interactive = False
     can_enable, enable_reason = sudo_toggle_enable_availability()
     return {
@@ -10463,17 +10459,16 @@ def cmd_sudo_toggle(argv: List[str]) -> int:
 
     want = args.state == "on"
 
-    if want:
-        # Only the grant direction needs somewhere to prompt. Checking this for
-        # `set off` too meant a machine with no terminal could not revoke an
-        # existing grant through VGS at all.
-        can_enable, enable_reason = sudo_toggle_enable_availability()
-        if not can_enable:
-            eprint(f"vshell sudo-toggle: {enable_reason}")
-            return 1
-
     if os.geteuid() != 0:
         if want:
+            # Only the grant direction needs somewhere to prompt, and only when
+            # we still have to elevate. Checking this for `set off` too meant a
+            # machine with no terminal could not revoke an existing grant at
+            # all; checking it as root demanded a terminal that is never used.
+            can_enable, enable_reason = sudo_toggle_enable_availability()
+            if not can_enable:
+                eprint(f"vshell sudo-toggle: {enable_reason}")
+                return 1
             # Never take the quiet `sudo -n` route to ENABLE. Where sudo already
             # runs without prompting (an admin wheel NOPASSWD rule, a live
             # credential cache), that would install a permanent

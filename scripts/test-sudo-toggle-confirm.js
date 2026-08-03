@@ -27,14 +27,17 @@ const source = fs.readFileSync(WIDGET, "utf8");
 const match = source.match(/\/\/ BEGIN CONFIRM DECISION\n([\s\S]*?)\/\/ END CONFIRM DECISION/);
 assert.ok(match, "SudoToggleWidget.qml must carry the CONFIRM DECISION markers");
 
-// The extracted text is a plain `function confirmDecision(...) {...}` with no
-// QML API use, so it evaluates as ordinary JavaScript.
-const confirmDecision = new Function(`${match[1]}\nreturn confirmDecision;`)();
+// The extracted text is plain JavaScript with no QML API use, so it evaluates
+// as ordinary functions.
+const extracted = new Function(
+    `${match[1]}\nreturn { confirmDecision, isDirectActivation };`
+)();
+const { confirmDecision, isDirectActivation } = extracted;
 
 const WINDOW_MS = 8000;
 const MIN_MS = 600;
-const decide = (now, armedAt, pointerLeft) =>
-    confirmDecision(now, armedAt, pointerLeft, WINDOW_MS, MIN_MS);
+const decide = (now, armedAt, pointerLeft, origin = "click") =>
+    confirmDecision(origin, now, armedAt, pointerLeft, WINDOW_MS, MIN_MS);
 
 // Read the constants out of the QML too, so the harness cannot silently drift
 // from the values that actually ship.
@@ -85,5 +88,39 @@ assert.equal(decide(1000 + WINDOW_MS, 1000, true), "fire",
 assert.equal(decide(1200, 1000, false), "ignore");
 assert.equal(decide(3000, 1000, true), "fire",
     "an earlier ignored click must not have invalidated the arm");
+
+// --- Only a real click may act (VGS-11 round 4) ------------------------------
+//
+// BarHoverController calls triggerHoverPopout on every PluginComponent;
+// PluginComponent.triggerPopout forwards a zero-argument pillClickAction. So a
+// pointer merely crossing the bar used to reach toggle(). Both confirmation
+// guards above are SATISFIED by that traversal rather than defeated by it —
+// hover arms, the pointer moves away (setting pointerLeft), the pointer comes
+// back more than minMs later — so the origin check is the only thing that
+// stops it. The widget has no runtime coverage (VGS-19), which is why this is
+// asserted here against the extracted source.
+
+assert.equal(isDirectActivation("click"), true, "a real press must count as direct activation");
+assert.equal(isDirectActivation("hover"), false, "hover must not count as direct activation");
+assert.equal(isDirectActivation(undefined), false, "a caller passing no origin must not count");
+assert.equal(isDirectActivation(""), false, "an empty origin must not count");
+assert.equal(isDirectActivation("Click"), false, "the origin check must not be case-insensitive by accident");
+assert.equal(isDirectActivation("ipc"), false,
+    "the IPC widget toggle (vshell ipc call bar toggle sudoToggle) must not grant either");
+
+// The exact sequence the reviewer described: hover arms, pointer leaves and
+// returns after the minimum delay, well inside the window. As a click this
+// fires; as hover it must not.
+assert.equal(decide(3000, 1000, true, "click"), "fire",
+    "control: this sequence does confirm when it comes from a click");
+assert.equal(decide(3000, 1000, true, "hover"), "ignore",
+    "the same sequence reached by hover must never confirm a grant");
+
+// Hover must not even arm — an arming hover would leave the control primed for
+// a later stray activation and would toast at the user unprompted.
+assert.equal(decide(1000, 0, false, "hover"), "ignore",
+    "hover must not arm the confirmation");
+assert.equal(decide(1000 + WINDOW_MS + 1, 1000, true, "hover"), "ignore",
+    "an expired-window hover must not re-arm either");
 
 console.log("sudoToggle confirmation gate checks passed.");

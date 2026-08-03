@@ -1456,6 +1456,30 @@ def test_sudo_toggle_flag_write_refuses_symlinks():
     with_temp_home(check)
 
 
+def test_sudo_toggle_revoke_retires_legacy_flag_without_state_dir():
+    """A revoke must clear the old mirror even when the new tree is absent.
+
+    Otherwise the legacy flag keeps asserting "enabled" after the drop-in is
+    gone, which is exactly the stale-mirror state the direction guard exists to
+    catch — reintroduced by the writer itself.
+    """
+    def check(home_path: Path):
+        legacy = home_path / ".local" / "state" / "sudo-passwordless-toggle"
+        legacy.parent.mkdir(parents=True, exist_ok=True)
+        legacy.touch()
+        assert_equal((home_path / ".local" / "state" / "vshell").exists(), False,
+                     "Test setup: the new state directory must not exist yet")
+
+        ok, message = helper.sudo_toggle_write_flag(False)
+        assert_equal(ok, True, f"Revoke must succeed with no state dir: {message}")
+        assert_equal(legacy.exists(), False,
+                     "Revoke must retire the legacy flag even when the new tree is absent")
+        assert_equal(helper.sudo_toggle_mirror_state(), False,
+                     "After a revoke the mirror must read as disabled")
+
+    with_temp_home(check)
+
+
 def test_launch_terminal_rejects_immediately_failing_terminal():
     """A terminal that dies on spawn must not be reported as launched."""
     original = helper.terminal_candidates
@@ -1513,6 +1537,20 @@ def test_sudo_toggle_revoke_never_needs_a_terminal():
         assert_equal(code, 1, "Granting with no terminal must fail")
         assert_equal(calls, [], "Granting with no terminal must not elevate at all")
 
+        # An already-root caller never uses a terminal, so it must not need one.
+        helper.os.geteuid = lambda: 0
+        original_set = helper.sudo_toggle_set
+        recorded = []
+        helper.sudo_toggle_set = lambda user, want: recorded.append((user, want)) or 0
+        try:
+            code = helper.cmd_sudo_toggle(["set", "on"])
+            assert_equal(code, 0, "Root must be able to grant with no terminal installed")
+            assert_equal(len(recorded), 1, "Root must reach the privileged half directly")
+            assert_equal(recorded[0][1], True, "Root must be asked for the requested direction")
+        finally:
+            helper.sudo_toggle_set = original_set
+            helper.os.geteuid = lambda: 1000
+
         # The distinction has to be reportable, not just enforced.
         can_enable, reason = helper.sudo_toggle_enable_availability()
         assert_equal(can_enable, False, "enable-availability must be false with no terminal")
@@ -1567,6 +1605,7 @@ def main():
     test_sudo_toggle_set_refuses_stale_direction()
     test_sudo_toggle_enable_never_takes_quiet_sudo_path()
     test_sudo_toggle_flag_write_refuses_symlinks()
+    test_sudo_toggle_revoke_retires_legacy_flag_without_state_dir()
     test_launch_terminal_rejects_immediately_failing_terminal()
     test_sudo_toggle_revoke_never_needs_a_terminal()
     test_terminal_candidates_match_dependency_manifest()
