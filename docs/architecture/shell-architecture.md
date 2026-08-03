@@ -123,6 +123,23 @@ Local/private commands belong in overlays or plugin settings.
 Keep legacy metadata only where the loader still needs it for third-party compatibility.
 Do not add legacy runtime calls.
 
+### Pill actions must know how they were reached
+A widget's `pillClickAction` is not only run by a click. With `hoverPopouts`
+enabled the bar's hover controller reaches every `PluginComponent` through
+`triggerHoverPopout`, and `BarWidgetService` runs the same action for the
+`widget toggle` IPC call. Two rules follow, both enforced by
+`scripts/test-pill-hover-safety.js`:
+
+- **Hover-activation is opt-in.** `pillClickOnHover` defaults `false`, so
+  hovering falls through to the popout branch. A widget only sets it `true` when
+  running its action on hover is genuinely harmless.
+- **Destructive actions check the origin.** `PluginComponent` invokes every pill
+  action through `_runPillAction`, which sets `pillActionOrigin` and fails closed
+  to `"ipc"` when a caller does not name one; only the pills' own click handlers
+  report `"click"`. An action whose effect is unrecoverable must require that,
+  rather than trusting that it can only have been reached by a click —
+  `config/vshell/plugins/screenRecord/` is the worked example.
+
 ## External commands
 QML may use `Process` for small calls.
 Use `Paths.vshellCli` for VGS helper calls.

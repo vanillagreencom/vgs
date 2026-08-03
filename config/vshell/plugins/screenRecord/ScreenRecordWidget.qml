@@ -91,17 +91,38 @@ PluginComponent {
         }
     }
 
+    // BEGIN PILL ACTION DECISION
+    // Which pill activations may change recording state. Stopping a recording
+    // is unrecoverable and cancelling a countdown throws away the user's setup,
+    // so both require a real pointer press — PluginComponent only reports
+    // "click" from the pills' own handlers, and anything it did not originate
+    // (hover, IPC, an unannounced caller) fails closed to a non-click origin.
+    // Opening the chooser is reversible, so any origin may do it.
+    function pillActionFor(origin, countingDown, recording) {
+        const fromClick = origin === "click";
+        if (countingDown)
+            return fromClick ? "cancel" : "ignore";
+        if (recording)
+            return fromClick ? "stop" : "ignore";
+        return "chooser";
+    }
+    // END PILL ACTION DECISION
+
     pillClickAction: function (x, y, width, section, currentScreen) {
         root._cancelTip();
-        if (root.countingDown) {
+        switch (root.pillActionFor(root.pillActionOrigin, root.countingDown, root.recording)) {
+        case "cancel":
             root.cancelCountdown();
             return;
-        }
-        if (root.recording) {
+        case "stop":
             root.stopRecording();
             return;
+        case "chooser":
+            root.openChooser(currentScreen?.name || "");
+            return;
+        default:
+            return;
         }
-        root.openChooser(currentScreen?.name || "");
     }
 
     pillRightClickAction: function (x, y, width, section, currentScreen) {

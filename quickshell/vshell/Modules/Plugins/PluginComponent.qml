@@ -40,6 +40,16 @@ Item {
     property real popoutHeight: 0
     property var pillClickAction: null
     property var pillRightClickAction: null
+    // Whether hovering the pill may run pillClickAction. Opt-in, because the
+    // widgets that declare a pillClickAction are exactly the ones whose pill
+    // does something rather than opening a popout — so hover-activation is
+    // wrong for them by default and a widget author has to think about it.
+    property bool pillClickOnHover: false
+    // How the current pill action invocation was reached. Only the pills'
+    // onClicked/onRightClicked handlers say "click"; hover says "hover" and the
+    // IPC widget toggle says nothing. Default is empty so a caller that forgets
+    // to say cannot be mistaken for a user pressing the button.
+    property string pillActionOrigin: ""
 
     property Component controlCenterWidget: null
     property string ccWidgetIcon: ""
@@ -211,30 +221,13 @@ Item {
 
         onClicked: {
             if (pillClickAction) {
-                if (pillClickAction.length === 0) {
-                    pillClickAction();
-                } else {
-                    const globalPos = mapToItem(null, 0, 0);
-                    const currentScreen = parentScreen || Screen;
-                    const pos = SettingsData.getPopupTriggerPosition(globalPos, currentScreen, barThickness, width);
-                    pillClickAction(pos.x, pos.y, pos.width, section, currentScreen);
-                }
+                // The only place a genuine pointer press is announced.
+                root._runPillAction(pillClickAction, "click", horizontalPill);
             } else if (hasPopout) {
                 pluginPopout.toggle();
             }
         }
-        onRightClicked: {
-            if (pillRightClickAction) {
-                if (pillRightClickAction.length === 0) {
-                    pillRightClickAction();
-                } else {
-                    const globalPos = mapToItem(null, 0, 0);
-                    const currentScreen = parentScreen || Screen;
-                    const pos = SettingsData.getPopupTriggerPosition(globalPos, currentScreen, barThickness, width);
-                    pillRightClickAction(pos.x, pos.y, pos.width, section, currentScreen);
-                }
-            }
-        }
+        onRightClicked: root._runPillAction(pillRightClickAction, "click", horizontalPill)
     }
 
     BasePill {
@@ -272,29 +265,37 @@ Item {
 
         onClicked: {
             if (pillClickAction) {
-                if (pillClickAction.length === 0) {
-                    pillClickAction();
-                } else {
-                    const globalPos = mapToItem(null, 0, 0);
-                    const currentScreen = parentScreen || Screen;
-                    const pos = SettingsData.getPopupTriggerPosition(globalPos, currentScreen, barThickness, width);
-                    pillClickAction(pos.x, pos.y, pos.width, section, currentScreen);
-                }
+                // The only place a genuine pointer press is announced.
+                root._runPillAction(pillClickAction, "click", verticalPill);
             } else if (hasPopout) {
                 pluginPopout.toggle();
             }
         }
-        onRightClicked: {
-            if (pillRightClickAction) {
-                if (pillRightClickAction.length === 0) {
-                    pillRightClickAction();
-                } else {
-                    const globalPos = mapToItem(null, 0, 0);
-                    const currentScreen = parentScreen || Screen;
-                    const pos = SettingsData.getPopupTriggerPosition(globalPos, currentScreen, barThickness, width);
-                    pillRightClickAction(pos.x, pos.y, pos.width, section, currentScreen);
-                }
+        onRightClicked: root._runPillAction(pillRightClickAction, "click", verticalPill)
+    }
+
+    // Single invocation path for pill actions. Every caller names how the action
+    // was reached and the action can read it back, so a widget whose action is
+    // destructive or privileged can refuse anything that is not a real pointer
+    // press. Routing all the call sites through here is what stops a new branch
+    // from invoking an action without declaring an origin.
+    function _runPillAction(action, origin, pill) {
+        if (!action)
+            return;
+        const previousOrigin = root.pillActionOrigin;
+        root.pillActionOrigin = origin || "ipc";
+        try {
+            if (action.length === 0) {
+                action();
+                return;
             }
+            const target = pill || (isVertical ? verticalPill : horizontalPill);
+            const globalPos = target.mapToItem(null, 0, 0);
+            const currentScreen = parentScreen || Screen;
+            const pos = SettingsData.getPopupTriggerPosition(globalPos, currentScreen, barThickness, target.width);
+            action(pos.x, pos.y, pos.width, section, currentScreen);
+        } finally {
+            root.pillActionOrigin = previousOrigin;
         }
     }
 
@@ -304,17 +305,11 @@ Item {
         }
     }
 
-    function triggerPopout() {
+    function triggerPopout(origin) {
         if (pillClickAction) {
-            if (pillClickAction.length === 0) {
-                pillClickAction();
-                return;
-            }
-            const pill = isVertical ? verticalPill : horizontalPill;
-            const globalPos = pill.mapToItem(null, 0, 0);
-            const currentScreen = parentScreen || Screen;
-            const pos = SettingsData.getPopupTriggerPosition(globalPos, currentScreen, barThickness, pill.width);
-            pillClickAction(pos.x, pos.y, pos.width, section, currentScreen);
+            // Not a press: hover passes "hover", and the IPC widget toggle
+            // (BarWidgetService.triggerWidgetPopout) passes nothing.
+            _runPillAction(pillClickAction, origin, isVertical ? verticalPill : horizontalPill);
             return;
         }
         if (!hasPopout)
@@ -331,8 +326,12 @@ Item {
     }
 
     function triggerHoverPopout(widgetHostId) {
-        if (pillClickAction) {
-            triggerPopout();
+        // BarHoverController reaches every PluginComponent through here, so for
+        // a pill whose action changes state this turned "the pointer crossed the
+        // bar" into "the user activated the control". Fall through to the popout
+        // branch unless the widget opted in.
+        if (pillClickAction && pillClickOnHover) {
+            triggerPopout("hover");
             return;
         }
         if (!hasPopout)
