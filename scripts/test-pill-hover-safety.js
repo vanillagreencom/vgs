@@ -33,6 +33,47 @@ const PLUGIN_ROOT = path.join(repoRoot, "config", "vshell", "plugins");
 const component = fs.readFileSync(COMPONENT, "utf8");
 const screenRecord = fs.readFileSync(SCREEN_RECORD, "utf8");
 
+// Strip comments and string literals in one pass, then collapse whitespace, so
+// the checks below match call *expressions* rather than lines. A line-oriented
+// scan cannot see a call split across lines, and treats "this line is already
+// accounted for" as "this line is safe" — a second call appended to it slips
+// through. Single pass rather than sequential regexes because a `//` inside a
+// string, or a quote inside a comment, defeats the sequential version.
+function normaliseSource(src) {
+    let out = "";
+    for (let i = 0; i < src.length; ) {
+        const c = src[i];
+        const d = src[i + 1];
+        if (c === "/" && d === "/") {
+            while (i < src.length && src[i] !== "\n") i++;
+            continue;
+        }
+        if (c === "/" && d === "*") {
+            i += 2;
+            while (i < src.length && !(src[i] === "*" && src[i + 1] === "/")) i++;
+            i += 2;
+            out += " ";
+            continue;
+        }
+        if (c === '"' || c === "'" || c === "`") {
+            const quote = c;
+            i++;
+            while (i < src.length && src[i] !== quote) {
+                if (src[i] === "\\") i++;
+                i++;
+            }
+            i++;
+            out += '""';
+            continue;
+        }
+        out += c;
+        i++;
+    }
+    return out.replace(/\s+/g, " ");
+}
+
+const componentCode = normaliseSource(component);
+
 // --- 1. PluginComponent: hover-activation is opt-in --------------------------
 
 assert.match(
@@ -62,15 +103,20 @@ assert.match(
 // Every place that calls a pill action must go through _runPillAction. A direct
 // `pillClickAction(...)` call would reintroduce exactly the unguarded branch
 // this issue was about — the arity>0 path that the first fix missed.
-const directCalls = component
-    .split("\n")
-    .map((line, i) => [i + 1, line])
-    .filter(([, line]) => /(?<!_runPillAction\()\b(pillClickAction|pillRightClickAction)\s*\(/.test(line))
-    .filter(([, line]) => !/_runPillAction\(/.test(line));
+//
+// The rule needs no exemption list: passing the action along is
+// `_runPillAction(pillClickAction, ...)`, where the identifier is followed by a
+// comma, while calling it is `pillClickAction(`. So in normalised source the
+// call form must simply never appear. That leaves nothing for a formatting
+// change to hide behind — no per-line state, nothing that can be "already
+// accounted for".
+const directCalls = [
+    ...componentCode.matchAll(/\b(pillClickAction|pillRightClickAction)\s*\(/g)
+].map(m => m[0].trim());
 assert.deepEqual(
     directCalls,
     [],
-    `pill actions must only be invoked via _runPillAction; found direct calls at: ${JSON.stringify(directCalls)}`
+    `pill actions must only be invoked via _runPillAction; found direct calls: ${JSON.stringify(directCalls)}`
 );
 
 const runBody = component.match(/function _runPillAction\(action, origin, pill\)\s*\{([\s\S]*?)\n    \}/);
@@ -96,17 +142,20 @@ assert.equal(clickClaims.length, 4,
 // The default protects a widget that says nothing. This catches the other
 // direction: someone opting a destructive widget in without thinking about it.
 const OPTED_IN = []; // no bundled plugin currently opts into hover-activation
-const optIns = [];
+// A Set, because a plugin with several QML files would otherwise be reported
+// once per file and skew the diagnostic. Normalised so a commented-out opt-in
+// does not count as one.
+const optIns = new Set();
 for (const dir of fs.readdirSync(PLUGIN_ROOT, { withFileTypes: true })) {
     if (!dir.isDirectory()) continue;
     for (const file of fs.readdirSync(path.join(PLUGIN_ROOT, dir.name))) {
         if (!file.endsWith(".qml")) continue;
         const text = fs.readFileSync(path.join(PLUGIN_ROOT, dir.name, file), "utf8");
-        if (/pillClickOnHover:\s*true/.test(text)) optIns.push(dir.name);
+        if (/pillClickOnHover\s*:\s*true/.test(normaliseSource(text))) optIns.add(dir.name);
     }
 }
 assert.deepEqual(
-    optIns.sort(),
+    [...optIns].sort(),
     OPTED_IN.slice().sort(),
     "a bundled plugin opted into hover-activation; confirm its pill action is non-destructive and add it to OPTED_IN"
 );
