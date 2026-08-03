@@ -101,22 +101,47 @@ assert.match(
 // --- 2. PluginComponent: one invocation path, always naming an origin --------
 
 // Every place that calls a pill action must go through _runPillAction. A direct
-// `pillClickAction(...)` call would reintroduce exactly the unguarded branch
-// this issue was about — the arity>0 path that the first fix missed.
+// call would reintroduce exactly the unguarded branch this issue was about —
+// the arity>0 path that the first fix missed.
 //
-// The rule needs no exemption list: passing the action along is
-// `_runPillAction(pillClickAction, ...)`, where the identifier is followed by a
-// comma, while calling it is `pillClickAction(`. So in normalised source the
-// call form must simply never appear. That leaves nothing for a formatting
-// change to hide behind — no per-line state, nothing that can be "already
-// accounted for".
-const directCalls = [
-    ...componentCode.matchAll(/\b(pillClickAction|pillRightClickAction)\s*\(/g)
-].map(m => m[0].trim());
+// Allowlist rather than a list of call syntaxes, because enumerating call forms
+// only ever covers the ones someone thought of: `pillClickAction(`,
+// `pillClickAction?.()`, `.call(`, `.apply(`, `?.call(`, `["call"](` all invoke
+// it. So instead, whatever follows the identifier must be one of the few things
+// that provably is not an invocation, and everything else fails. A new syntax
+// fails closed by default instead of needing the guard extended to notice it.
+//
+// The one legitimate mention is the pass-along `_runPillAction(pillClickAction,
+// …)`, and that is checked positionally: a comma after the identifier is only
+// accepted when _runPillAction( immediately precedes it, so handing the action
+// to some other helper that calls it does not pass either.
+//
+// WHAT THIS DOES NOT COVER, so the next reader does not over-trust it: a static
+// scan cannot follow a value. Aliasing (`const f = pillClickAction; f();`),
+// reaching the property by a computed name, or stashing it on another object
+// and calling it from there are all invisible here. The guard enforces that the
+// *identifier* is only ever handed to _runPillAction — not that the underlying
+// function can never be reached another way.
+const SAFE_AFTER = /^[,)&|;:]/;
+const directCalls = [];
+for (const m of componentCode.matchAll(/\b(pillClickAction|pillRightClickAction)\b/g)) {
+    const after = componentCode.slice(m.index + m[0].length).replace(/^ +/, "");
+    if (!SAFE_AFTER.test(after)) {
+        directCalls.push(`${m[0]}${after.slice(0, 12).trimEnd()}`);
+        continue;
+    }
+    if (!after.startsWith(","))
+        continue;
+    // A comma only means "passed along", and only to the one helper allowed to
+    // invoke it.
+    const before = componentCode.slice(0, m.index).replace(/ +$/, "");
+    if (!before.endsWith("_runPillAction("))
+        directCalls.push(`${m[0]} passed to something other than _runPillAction`);
+}
 assert.deepEqual(
     directCalls,
     [],
-    `pill actions must only be invoked via _runPillAction; found direct calls: ${JSON.stringify(directCalls)}`
+    `pill actions must only be invoked via _runPillAction; found: ${JSON.stringify(directCalls)}`
 );
 
 const runBody = component.match(/function _runPillAction\(action, origin, pill\)\s*\{([\s\S]*?)\n    \}/);
