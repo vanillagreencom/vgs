@@ -15,15 +15,22 @@
 | `~/.config/vshell/settings.json` | Mutable user shell settings; not tracked |
 | `~/.config/vshell/plugin_settings.json` | Mutable user plugin enablement/settings; not tracked |
 | `~/.config/vshell/plugins/` | User plugin overrides; takes precedence over bundled plugins |
-
-A user override that reuses a **bundled id** replaces the shipped package for that id. Bundled
-ids stay auto-enabled whichever source wins (`PluginService._onManifestParsed`), so shadowing
-cannot leave the product surface unloaded — but the override still has to provide that surface.
-`vgsMenu` is the app launcher and the shell ships no fallback, so an override that drops its
-daemon surface or its `toggle()` disables the launcher; the dock and bar buttons then report
-"App launcher unavailable" via `PluginService.toggleAppLauncher()` instead of doing nothing.
 | `~/.config/vshell-local/menu.json` | Menu categories/items overlay |
 | `~/.config/vshell-local/webapps.json` | Generated webapp menu items |
+
+### Overriding a bundled id
+A user override that reuses a **bundled id** replaces the shipped package for that id.
+`PluginService._onManifestParsed` keys auto-enable on the id rather than on the winning source,
+so the override is always *enabled* — it cannot be left owned-but-never-started, and
+`disablePlugin` refuses it for the same reason.
+
+Enabled is not the same as loaded, and the override still has to provide the surface the shipped
+package did. `vgsMenu` is the app launcher and the shell ships no fallback, so an override that
+drops its daemon surface or its `toggle()` disables the launcher; the dock and bar buttons then
+report "App launcher unavailable" via `PluginService.toggleAppLauncher()` instead of doing
+nothing. An override that fails its `startupCheck` or declares an incompatible `requires_shell`
+leaves the id with no loaded package at all — there is no demotion back to the shipped one.
+That gap is tracked as VGS-24.
 
 ## Menu overlay schema
 ```json

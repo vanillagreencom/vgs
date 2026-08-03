@@ -683,6 +683,7 @@ Item {
                     SettingsData.launcherPluginOrder;
                     SettingsData.launcherIncludeFilesInAll;
                     SettingsData.launcherIncludeFoldersInAll;
+                    root.overviewSearchSettingsApply;
                     var plugins = [];
                     var builtIn = AppSearchService.getBuiltInLauncherPlugins() || {};
                     for (var pluginId in builtIn) {
@@ -711,7 +712,9 @@ Item {
                             trigger: PluginService.getPluginTrigger(pluginId) || ""
                         });
                     }
-                    if (SettingsData.launcherIncludeFilesInAll) {
+                    // Same visibility rule as the Search Options row that writes this
+                    // setting, so it is never hidden in one card and editable in another.
+                    if (root.overviewSearchSettingsApply && SettingsData.launcherIncludeFilesInAll) {
                         plugins.push({
                             id: "__files",
                             name: I18n.tr("Files"),
@@ -722,7 +725,9 @@ Item {
                             trigger: "/"
                         });
                     }
-                    if (SettingsData.launcherIncludeFoldersInAll) {
+                    // Same visibility rule as the Search Options row that writes this
+                    // setting, so it is never hidden in one card and editable in another.
+                    if (root.overviewSearchSettingsApply && SettingsData.launcherIncludeFoldersInAll) {
                         plugins.push({
                             id: "__folders",
                             name: I18n.tr("Folders"),

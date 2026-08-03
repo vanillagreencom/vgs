@@ -910,6 +910,13 @@ Singleton {
     // launcher, so a failure here has to be visible rather than a dead click.
     readonly property string appLauncherPluginId: "vgsMenu"
 
+    // The open-state half of the same seam. Core shell code binds to this
+    // rather than reaching for a `menuOpen` property on whatever object is
+    // registered for the id, so the whole launcher contract — id, toggle,
+    // open state — is declared in one place. Falls back to false, which is
+    // the safe answer for callers that yield to the launcher when it opens.
+    readonly property bool appLauncherOpen: getPluginInstance(appLauncherPluginId)?.menuOpen ?? false
+
     property bool _appLauncherTogglePending: false
 
     function toggleAppLauncher() {
@@ -933,6 +940,15 @@ Singleton {
 
     function _reportAppLauncherUnavailable() {
         _appLauncherTogglePending = false;
+        // The two failures are distinguishable and want different advice: a
+        // present component that never registered is a startup problem, and
+        // pointing that user at Settings > Plugins sends them somewhere
+        // nothing is wrong.
+        if (pluginDaemonComponents[appLauncherPluginId]) {
+            log.error("app launcher unavailable:", appLauncherPluginId, "loaded but never registered an instance");
+            ToastService.showError(I18n.tr("App launcher unavailable"), I18n.tr("The %1 launcher did not finish starting.").arg(appLauncherPluginId), "", "app-launcher-unavailable");
+            return;
+        }
         log.error("app launcher unavailable:", appLauncherPluginId, "is not loaded");
         ToastService.showError(I18n.tr("App launcher unavailable"), I18n.tr("The %1 plugin did not load. Check Settings > Plugins.").arg(appLauncherPluginId), "", "app-launcher-unavailable");
     }
