@@ -460,7 +460,7 @@ Item {
         if (loader.item)
             return loader.item;
 
-        const pairs = [[PopoutService.appDrawerLoader, PopoutService.appDrawerPopout], [PopoutService.batteryPopoutLoader, PopoutService.batteryPopout], [PopoutService.clipboardHistoryPopoutLoader, PopoutService.clipboardHistoryPopout], [PopoutService.controlCenterLoader, PopoutService.controlCenterPopout], [PopoutService.dashPopoutLoader, PopoutService.dashPopout], [PopoutService.layoutPopoutLoader, PopoutService.layoutPopout], [PopoutService.notificationCenterLoader, PopoutService.notificationCenterPopout], [PopoutService.processListPopoutLoader, PopoutService.processListPopout], [PopoutService.networkUsagePopoutLoader, PopoutService.networkUsagePopout], [PopoutService.vpnPopoutLoader, PopoutService.vpnPopout]];
+        const pairs = [[PopoutService.batteryPopoutLoader, PopoutService.batteryPopout], [PopoutService.clipboardHistoryPopoutLoader, PopoutService.clipboardHistoryPopout], [PopoutService.controlCenterLoader, PopoutService.controlCenterPopout], [PopoutService.dashPopoutLoader, PopoutService.dashPopout], [PopoutService.layoutPopoutLoader, PopoutService.layoutPopout], [PopoutService.notificationCenterLoader, PopoutService.notificationCenterPopout], [PopoutService.processListPopoutLoader, PopoutService.processListPopout], [PopoutService.networkUsagePopoutLoader, PopoutService.networkUsagePopout], [PopoutService.vpnPopoutLoader, PopoutService.vpnPopout]];
         for (let i = 0; i < pairs.length; i++) {
             if (loader === pairs[i][0] && pairs[i][1])
                 return pairs[i][1];
@@ -915,61 +915,12 @@ Item {
             widgetThickness: barWindow.widgetThickness
             barThickness: barWindow.effectiveBarThickness
             section: topBarContent.getWidgetSection(parent)
-            popoutTarget: appDrawerLoader.item
             parentScreen: barWindow.screen
             hyprlandOverviewLoader: barWindow ? barWindow.hyprlandOverviewLoader : null
 
-            function _preparePopout() {
-                appDrawerLoader.active = true;
-                if (!appDrawerLoader.item)
-                    return false;
-                const effectiveBarConfig = topBarContent.barConfig;
-                const barPosition = barWindow.axis?.edge === "left" ? 2 : (barWindow.axis?.edge === "right" ? 3 : (barWindow.axis?.edge === "top" ? 0 : 1));
-                if (appDrawerLoader.item.setBarContext)
-                    appDrawerLoader.item.setBarContext(barPosition, effectiveBarConfig?.bottomGap ?? 0);
-                if (appDrawerLoader.item.setTriggerPosition) {
-                    const globalPos = launcherButton.visualContent.mapToItem(null, 0, 0);
-                    const currentScreen = barWindow.screen;
-                    const pos = SettingsData.getPopupTriggerPosition(globalPos, currentScreen, barWindow.effectiveBarThickness, launcherButton.visualWidth, effectiveBarConfig?.spacing ?? 4, barPosition, effectiveBarConfig);
-                    appDrawerLoader.item.setTriggerPosition(pos.x, pos.y, pos.width, launcherButton.section, currentScreen, barPosition, barWindow.effectiveBarThickness, effectiveBarConfig?.spacing ?? 4, effectiveBarConfig);
-                }
-                return true;
-            }
-
-            function openWithMode(mode) {
-                if (!_preparePopout())
-                    return;
-                appDrawerLoader.item.openWithMode(mode);
-            }
-
-            function toggleWithMode(mode) {
-                if (!_preparePopout())
-                    return;
-                appDrawerLoader.item.toggleWithMode(mode);
-            }
-
-            function openWithQuery(query) {
-                if (!_preparePopout())
-                    return;
-                appDrawerLoader.item.openWithQuery(query);
-            }
-
-            function toggleWithQuery(query) {
-                if (!_preparePopout())
-                    return;
-                appDrawerLoader.item.toggleWithQuery(query);
-            }
-
-            onClicked: {
-                topBarContent.openWidgetPopout({
-                    loader: appDrawerLoader,
-                    widgetItem: launcherButton,
-                    section: launcherButton.section,
-                    triggerSource: "appDrawer",
-                    mode: "click",
-                    visualItem: launcherButton
-                });
-            }
+            // The bar launcher button and the dock launcher button share one
+            // target: the vgsMenu plugin, the shell's only app launcher.
+            onClicked: PluginService.toggleAppLauncher()
         }
     }
 

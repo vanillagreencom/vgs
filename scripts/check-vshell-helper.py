@@ -627,7 +627,6 @@ def test_hyprland_blur_script():
     script = helper._hyprland_blur_script(True, 1.5, True, 0.01)
     for namespace in (
         "slideout",
-        "spotlight:fullscreen",
         "vshell:background",
         "control-center",
         "notification-center-popout",
@@ -640,7 +639,7 @@ def test_hyprland_blur_script():
     ):
         if namespace in script:
             raise AssertionError("Hyprland blur namespace rule should exclude full-screen/screen-height surfaces")
-    for namespace in ("spotlight", "vgs-menu", "modal", "popout", "notification-popup"):
+    for namespace in ("vgs-menu", "modal", "popout", "notification-popup"):
         if namespace not in script:
             raise AssertionError("Hyprland blur namespace rule should include content-sized surfaces")
     if "special = false" not in script:
@@ -712,7 +711,7 @@ exit 0
         assert_equal(payload["opacity"], 0.08, "blur CLI opacity clamp")
 
         script = record_path.read_text()
-        if "spotlight" not in script or "vgs-menu" not in script:
+        if "vgs-menu" not in script:
             raise AssertionError("blur CLI should route content-sized namespaces into hyprctl eval")
         if "launcher-context-menu" in script or "control-center" in script:
             raise AssertionError("blur CLI should not route full-screen namespaces into hyprctl eval")

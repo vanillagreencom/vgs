@@ -28,7 +28,15 @@ Singleton {
 
     property var knownManifests: ({})
     property var pathToPluginId: ({})
+    // Ids seen from the bundled directory, whether or not a higher-priority
+    // source currently owns them. Gates the always-available invariant.
+    property var _bundledPluginIds: ({})
     property var pluginInstances: ({})
+    // Daemon-surface plugins are instantiated by the shell's daemon Instantiator
+    // (VGS.qml), which owns their lifetime. Registering the live item here lets
+    // callers reach that same instance instead of creating a second one, which
+    // would duplicate any IpcHandler the plugin declares.
+    property var daemonInstances: ({})
     property var globalVars: ({})
     property var pluginLoadErrors: ({})
 
@@ -368,6 +376,16 @@ Singleton {
         info.requires_shell = manifest.requires_shell || manifest.requires_vgs || null;
         info.requires_vgs = info.requires_shell;
 
+        // A bundled id names a VGS product module, and some of them back core
+        // UI (the app launcher has no fallback since VGS-13). A user package
+        // may still shadow one, but shadowing must not silently disable the
+        // product surface, so the id stays auto-enabled whichever source wins.
+        if (sourceTag === "bundled" && !_bundledPluginIds[manifest.id]) {
+            const knownBundled = Object.assign({}, _bundledPluginIds);
+            knownBundled[manifest.id] = true;
+            _bundledPluginIds = knownBundled;
+        }
+
         const existing = availablePlugins[manifest.id];
         const shouldReplace = (!existing) || (_sourcePriority(sourceTag) >= _sourcePriority(existing.source));
 
@@ -388,8 +406,10 @@ Singleton {
             const isPureDesktop = surfaces.length === 1 && surfaces[0] === "desktop";
             // Bundled components are VGS product modules. The package loader is
             // an implementation detail; unlike third-party plugins they are
-            // always available to the normal widget/module surfaces.
-            const enabled = isPureDesktop || sourceTag === "bundled" || SettingsData.getPluginSetting(manifest.id, "enabled", false);
+            // always available to the normal widget/module surfaces. That holds
+            // for a user package shadowing a bundled id too, otherwise the
+            // override would take over the id and then never load.
+            const enabled = isPureDesktop || _bundledPluginIds[manifest.id] === true || SettingsData.getPluginSetting(manifest.id, "enabled", false);
             if (enabled && !info.loaded)
                 runStartupGate(manifest.id);
         } else {
@@ -399,6 +419,11 @@ Singleton {
                 shadowedBy: existing.source
             };
             pathToPluginId[absPath] = manifest.id;
+            // The bundled manifest can be scanned after the override that
+            // shadows it, in which case the override was evaluated before the
+            // id was known to be bundled. Enable it now.
+            if (sourceTag === "bundled" && !existing.loaded)
+                runStartupGate(manifest.id);
         }
     }
 
@@ -820,8 +845,10 @@ Singleton {
     }
 
     function disablePlugin(pluginId) {
-        const plugin = availablePlugins[pluginId];
-        if (plugin && plugin.source === "bundled") {
+        // Keyed on the id, not the winning source: a user package shadowing a
+        // bundled id inherits the always-available invariant, so disabling it
+        // would take a VGS product surface offline through the plugin UI.
+        if (_bundledPluginIds[pluginId] === true) {
             log.warn("Bundled VGS module cannot be disabled as a third-party plugin:", pluginId);
             return false;
         }
@@ -835,31 +862,170 @@ Singleton {
         return loadPlugin(pluginId, true);
     }
 
+    // Register a daemon plugin item owned by the shell's daemon Instantiator.
+    function registerDaemonInstance(pluginId, instance) {
+        if (!instance)
+            return;
+        const next = Object.assign({}, daemonInstances);
+        next[pluginId] = instance;
+        daemonInstances = next;
+    }
+
+    // Drop a registration, by identity. A reload destroys the old delegate and
+    // builds a new one, and QML does not order those two events; comparing
+    // identity stops a late teardown from wiping the live replacement.
+    function unregisterDaemonInstance(pluginId, instance) {
+        if (!instance || daemonInstances[pluginId] !== instance)
+            return;
+        const next = Object.assign({}, daemonInstances);
+        delete next[pluginId];
+        daemonInstances = next;
+    }
+
+    // The live object for a plugin, whichever surface owns it. Prefer the
+    // shell-owned daemon item so callers never race a second instance.
+    function getPluginInstance(pluginId) {
+        return daemonInstances[pluginId] || pluginInstances[pluginId] || null;
+    }
+
     function togglePlugin(pluginId) {
-        let instance = pluginInstances[pluginId];
-
-        // Lazy instantiate daemon plugins on first toggle
-        // This respects the daemon lifecycle (not instantiated on load)
-        // while supporting toggle functionality for slideout-capable daemons
-        if (!instance && pluginDaemonComponents[pluginId]) {
-            const comp = pluginDaemonComponents[pluginId];
-            const newInstance = comp.createObject(root, {
-                "pluginId": pluginId,
-                "pluginService": root
-            });
-            if (newInstance) {
-                const newInstances = Object.assign({}, pluginInstances);
-                newInstances[pluginId] = newInstance;
-                pluginInstances = newInstances;
-                instance = newInstance;
-            }
-        }
-
+        // Daemon components are constructed by the shell's daemon Instantiator
+        // (VGS.qml), which owns their lifetime — constructing one here would
+        // duplicate every IpcHandler the plugin declares. That Instantiator is
+        // asynchronous, so "component loaded but instance not registered yet"
+        // is a normal transient state; report it as unavailable and let the
+        // caller decide, rather than racing it with a second object.
+        const instance = getPluginInstance(pluginId);
         if (instance && typeof instance.toggle === "function") {
             instance.toggle();
             return true;
         }
         return false;
+    }
+
+    // Single seam between core shell UI and the bundled launcher package. The
+    // dock button, the bar widget and the changelog card all route through
+    // here, so the plugin id is defined once and the unavailable-launcher
+    // handling lives in one place. Since VGS-13 the shell ships no fallback
+    // launcher, so a failure here has to be visible rather than a dead click.
+    readonly property string appLauncherPluginId: "vgsMenu"
+
+    // The open-state half of the same seam. Core shell code binds to this
+    // rather than reaching for a `menuOpen` property on whatever object is
+    // registered for the id, so the whole launcher contract — id, toggle,
+    // open state — is declared in one place. Falls back to false, which is
+    // the safe answer for callers that yield to the launcher when it opens.
+    readonly property bool appLauncherOpen: getPluginInstance(appLauncherPluginId)?.menuOpen ?? false
+
+    // What is queued is an absolute intent — "the launcher should be open" —
+    // not a deferred toggle. A toggle is relative, and replaying a relative
+    // operation against a state that moved while it waited is what makes a
+    // queue like this fragile: two clicks during startup would either collapse
+    // (losing one) or replay (opening and shutting the launcher in the user's
+    // face), and a registration that arrives with the launcher ALREADY open
+    // would be closed by the replay. Intent has no parity to lose. While no
+    // instance is registered the launcher is closed by definition
+    // (appLauncherOpen reads false), so every click in that window can only
+    // mean "open it", however many arrive.
+    property bool _appLauncherOpenPending: false
+
+    function toggleAppLauncher() {
+        if (togglePlugin(appLauncherPluginId)) {
+            _appLauncherOpenPending = false;
+            appLauncherRegistrationTimeout.stop();
+            return true;
+        }
+        // The daemon Instantiator is asynchronous, so a click can land after
+        // the component loads but before the instance registers. That is a
+        // transient startup state, not a failure: record the intent and let
+        // onDaemonInstancesChanged satisfy it, rather than crying wolf.
+        if (pluginDaemonComponents[appLauncherPluginId] && !daemonInstances[appLauncherPluginId]) {
+            // Deadline runs from the FIRST click. Restarting it per click
+            // would let an impatient user postpone the error indefinitely.
+            if (!_appLauncherOpenPending) {
+                _appLauncherOpenPending = true;
+                appLauncherRegistrationTimeout.restart();
+            }
+            return false;
+        }
+        _reportAppLauncherUnavailable();
+        return false;
+    }
+
+    // Satisfies a queued intent. Prefers the explicit open() over toggle() so
+    // an instance that registers already open is left alone.
+    function _openAppLauncher() {
+        const instance = getPluginInstance(appLauncherPluginId);
+        if (!instance)
+            return false;
+        if (instance.menuOpen === true)
+            return true;
+        if (typeof instance.open === "function") {
+            instance.open();
+            return true;
+        }
+        if (typeof instance.toggle === "function") {
+            instance.toggle();
+            return true;
+        }
+        return false;
+    }
+
+    function _reportAppLauncherUnavailable() {
+        _appLauncherOpenPending = false;
+        // Three distinguishable failures wanting three different pieces of
+        // advice. Pointing someone at Settings > Plugins when the plugin is
+        // loaded and merely slow sends them where nothing is wrong.
+        if (getPluginInstance(appLauncherPluginId)) {
+            log.error("app launcher unavailable:", appLauncherPluginId, "registered an instance with no callable open()/toggle()");
+            ToastService.showError(I18n.tr("App launcher unavailable"), I18n.tr("The %1 plugin registered without a launcher to open.").arg(appLauncherPluginId), "", "app-launcher-unavailable");
+            return;
+        }
+        if (pluginDaemonComponents[appLauncherPluginId]) {
+            log.error("app launcher unavailable:", appLauncherPluginId, "loaded but never registered an instance");
+            ToastService.showError(I18n.tr("App launcher unavailable"), I18n.tr("The %1 launcher did not finish starting.").arg(appLauncherPluginId), "", "app-launcher-unavailable");
+            return;
+        }
+        log.error("app launcher unavailable:", appLauncherPluginId, "is not loaded");
+        ToastService.showError(I18n.tr("App launcher unavailable"), I18n.tr("The %1 plugin did not load. Check Settings > Plugins.").arg(appLauncherPluginId), "", "app-launcher-unavailable");
+    }
+
+    onDaemonInstancesChanged: {
+        if (!_appLauncherOpenPending || !daemonInstances[appLauncherPluginId])
+            return;
+        _appLauncherOpenPending = false;
+        appLauncherRegistrationTimeout.stop();
+        // A registration that cannot serve the intent is still a dead click,
+        // and the timeout is stopped by now, so it can no longer report it.
+        // Both failure paths end in the same reporter rather than two that
+        // could disagree.
+        if (!_openAppLauncher())
+            _reportAppLauncherUnavailable();
+    }
+
+    // Bounds the queued intent above: if registration never arrives, the click
+    // has to end in a visible error rather than nothing at all.
+    Timer {
+        id: appLauncherRegistrationTimeout
+        interval: 2000
+        repeat: false
+        onTriggered: {
+            if (root._appLauncherOpenPending)
+                root._reportAppLauncherUnavailable();
+        }
+    }
+
+    // Nothing else consumes this signal, so a component load error used to
+    // reach only the log. Plugin surfaces back real product UI (the app
+    // launcher has no fallback since VGS-13), so a failed load has to be
+    // visible to the user.
+    onPluginLoadFailed: (pluginId, error) => {
+        // The startup-gate path records the error first and raises a richer
+        // toast of its own; do not replace it with this generic one.
+        if (pluginLoadErrors[pluginId])
+            return;
+        const plugin = availablePlugins[pluginId];
+        ToastService.showError(I18n.tr("%1 failed to load").arg(plugin?.name || pluginId), error || "", "", "plugin-load-" + pluginId);
     }
 
     function savePluginData(pluginId, key, value) {

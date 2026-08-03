@@ -394,6 +394,25 @@ function migrateToVersion(obj, targetVersion) {
         settings.configVersion = 18;
     }
 
+    if (currentVersion < 19) {
+        console.info("Migrating settings from version", currentVersion, "to version 19");
+        console.info("Retiring the legacy grid launcher; the vgsMenu plugin is the only app launcher");
+        // These keys only ever configured the removed launcher modal, app
+        // drawer popout and spotlight bar. The valid-key filter below would
+        // drop them anyway; deleting them here keeps the intent on the record.
+        delete settings.showLauncherButton;
+        delete settings.appLauncherViewMode;
+        delete settings.spotlightModalViewMode;
+        delete settings.appDrawerSectionViewModes;
+        delete settings.launcherUnloadOnClose;
+        delete settings.launcherUseOverlayLayer;
+        delete settings.launcherStyle;
+        delete settings.spotlightBarShowModeChips;
+        delete settings.rememberLastMode;
+        delete settings.rememberLastQuery;
+        settings.configVersion = 19;
+    }
+
     var validKeys = SpecModule.getValidKeys();
     var filtered = {};
     for (var key in settings) {

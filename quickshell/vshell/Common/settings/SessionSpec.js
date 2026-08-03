@@ -88,11 +88,9 @@ var SPEC = {
     locale: { def: "", onChange: "updateLocale" },
     timeLocale: { def: "" },
 
-    launcherLastMode: { def: "all" },
     launcherLastFileSearchType: { def: "all" },
     launcherLastQuery: { def: "" },
     launcherQueryHistory: { def: [] },
-    appDrawerLastMode: { def: "apps" },
     niriOverviewLastMode: { def: "apps" },
 
     settingsSidebarExpandedIds: { def: "," },

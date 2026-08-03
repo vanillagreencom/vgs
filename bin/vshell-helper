@@ -8587,7 +8587,6 @@ def _hyprland_blur_script(enabled: bool, strength: float, glass: bool, opacity: 
         noise = round(0.004 + strength * 0.005, 4)
     rule_enabled = "true" if enabled else "false"
     blurred_namespaces = [
-        "app-launcher",
         "battery",
         "bluetooth-pairing",
         "clipboard",
@@ -8611,7 +8610,6 @@ def _hyprland_blur_script(enabled: bool, strength: float, glass: bool, opacity: 
         "power-menu",
         "power-profiles",
         "process-list-popout",
-        "spotlight",
         "switch-user-modal",
         "system-update",
         "toast",

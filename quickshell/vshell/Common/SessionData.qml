@@ -209,11 +209,9 @@ Singleton {
     property string locale: ""
     property string timeLocale: ""
 
-    property string launcherLastMode: "all"
     property string launcherLastFileSearchType: "all"
     property string launcherLastQuery: ""
     property var launcherQueryHistory: []
-    property string appDrawerLastMode: "apps"
     property string niriOverviewLastMode: "apps"
     property string settingsSidebarExpandedIds: ","
     property string settingsSidebarCollapsedIds: ","
@@ -1220,17 +1218,6 @@ Singleton {
         I18n.useLocale(locale, locale.startsWith("en") ? "" : I18n.folder + "/" + locale + ".json");
     }
 
-    function setLauncherLastMode(mode) {
-        launcherLastMode = mode;
-        saveSettings();
-    }
-
-    function getLauncherRestoreMode() {
-        if (!SettingsData.rememberLastMode)
-            return "all";
-        return launcherLastMode || "all";
-    }
-
     function setLauncherLastFileSearchType(type) {
         launcherLastFileSearchType = type;
         saveSettings();
@@ -1270,11 +1257,6 @@ Singleton {
     function clearLauncherHistory() {
         launcherLastQuery = "";
         launcherSearchHistory = [];
-        saveSettings();
-    }
-
-    function setAppDrawerLastMode(mode) {
-        appDrawerLastMode = mode;
         saveSettings();
     }
 

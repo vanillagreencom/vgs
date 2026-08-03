@@ -248,6 +248,25 @@ def _niri_binds_from_file(path: Path) -> List[Dict[str, Any]]:
     return result
 
 def niri_binds_json() -> Dict[str, Any]:
+    # Heal VGS-generated binds that still name a retired launcher IPC target
+    # before reporting them, so Settings never shows a bind VGS knows is dead.
+    # A rewrite Niri then refused to load leaves the file and the live
+    # compositor disagreeing, so that has to travel with the payload rather
+    # than being dropped here.
+    #
+    # This is a convenience on a read path and must never take the read down
+    # with it: an unreadable or unwritable binds.kdl would otherwise abort the
+    # whole keybind query and lose Settings every other bind in the config,
+    # which are parsed independently below and are still perfectly good.
+    try:
+        migration = migrate_vgs_niri_binds()
+    except OSError as exc:
+        migration = {
+            "migrated": False,
+            "ok": False,
+            "error": f"could not migrate retired launcher binds: {exc}",
+            "reload": {"attempted": False},
+        }
     main = runtime().home() / ".config" / "niri" / "config.kdl"
     managed = niri_config_dir() / "binds.kdl"
     files = _niri_config_files(main)
@@ -262,7 +281,7 @@ def niri_binds_json() -> Dict[str, Any]:
         for entry in entries:
             binds.setdefault(_niri_bind_category(entry["action"]), []).append(entry)
     included = bool(niri_include_status("binds.kdl").get("included"))
-    return {
+    payload: Dict[str, Any] = {
         "provider": "niri",
         "modKey": "Super",
         "vgsBindsIncluded": included,
@@ -275,6 +294,9 @@ def niri_binds_json() -> Dict[str, Any]:
         },
         "binds": binds,
     }
+    if migration.get("migrated") or not migration.get("ok"):
+        payload["bindMigration"] = migration
+    return payload
 
 def _niri_action_kdl(action: str) -> str:
     try:
@@ -292,9 +314,113 @@ def _niri_action_kdl(action: str) -> str:
         return "spawn " + " ".join(json.dumps(arg) for arg in args)
     return name + ((" " + " ".join(json.dumps(arg) for arg in args)) if args else "")
 
+# VGS-13 retired the grid launcher, the app drawer and the spotlight bar; the
+# vgsMenu plugin's "vshell-menu" target is the only launcher IPC left. These
+# binds live in a VGS-generated file, so VGS has to rewrite them rather than
+# leave a user with a key that spawns against a target that no longer answers.
+_RETIRED_LAUNCHER_IPC_TARGETS = ("spotlight-bar", "spotlight", "launcher")
+_LAUNCHER_IPC_TARGET = "vshell-menu"
+# vshell-menu exposes only open/close/toggle. The retired targets also had
+# mode/query verbs; those collapse onto the plain verb rather than being dropped,
+# so a bound key keeps opening the launcher.
+_RETIRED_LAUNCHER_IPC_VERBS = {
+    "close": "close",
+    "open": "open",
+    "openWith": "open",
+    "openQuery": "open",
+    "toggle": "toggle",
+    "toggleWith": "toggle",
+    "toggleQuery": "toggle",
+}
+
+
+# "ipc call <target>" is VGS syntax, not a reserved word: another program can
+# legitimately take those as its own arguments. Only a vshell invocation may be
+# rewritten. Compared by basename so an absolute or $HOME-relative path to the
+# same CLI still counts (~/dotfiles binds both `vshell ipc call ...` and
+# `$HOME/.local/bin/vshell ipc call ...`), and quote-stripped so the first token
+# of a `sh -c "..."` command string is recognised too.
+_VSHELL_CLI_BASENAMES = frozenset({"vshell"})
+
+
+def _is_vshell_cli(token: str) -> bool:
+    return Path(token.strip("\"'")).name in _VSHELL_CLI_BASENAMES
+
+
+def _migrated_launcher_action(action: str) -> str:
+    """Rewrite a retired launcher IPC action onto vshell-menu. Identity otherwise.
+
+    Deliberately positional: only `spawn <vshell-cli> ipc call ...` is rewritten.
+    A retired target buried in a shell wrapper (`spawn sh -c "vshell ipc call
+    launcher toggle"`) is left alone rather than rewritten inside a quoted
+    command string. KeybindActions.usesRetiredIpcTarget still flags that form in
+    Settings, which is the same treatment as any bind VGS does not generate.
+    """
+    tokens = action.split()
+    # spawn <vshell-cli> ipc call <target> <verb> [args...]
+    if len(tokens) < 6 or tokens[0] != "spawn" or tokens[2:4] != ["ipc", "call"]:
+        return action
+    if not _is_vshell_cli(tokens[1]):
+        return action
+    if tokens[4] not in _RETIRED_LAUNCHER_IPC_TARGETS:
+        return action
+    verb = _RETIRED_LAUNCHER_IPC_VERBS.get(tokens[5])
+    if verb is None:
+        return action
+    return " ".join(tokens[:4] + [_LAUNCHER_IPC_TARGET, verb])
+
+
+def _migrate_retired_bind_actions(binds: List[Dict[str, Any]]) -> tuple[List[Dict[str, Any]], bool]:
+    changed = False
+    migrated: List[Dict[str, Any]] = []
+    for bind in binds:
+        action = str(bind.get("action") or "")
+        new_action = _migrated_launcher_action(action)
+        if new_action != action:
+            bind = dict(bind)
+            bind["action"] = new_action
+            changed = True
+        migrated.append(bind)
+    return migrated, changed
+
+
+_NO_MIGRATION: Dict[str, Any] = {"migrated": False, "ok": True, "reload": {"attempted": False}}
+
+
+def migrate_vgs_niri_binds() -> Dict[str, Any]:
+    """Rewrite retired launcher IPC targets in the VGS-generated binds file.
+
+    Returns {"migrated", "ok", "reload"}. Safe to call on every read: it only
+    touches VGS-owned binds.kdl, never the user's own Niri config, and it
+    rewrites (and reloads) only when a retired target is actually present.
+
+    `ok` is false when the rewrite landed but Niri refused to reload it — the
+    file then names vshell-menu while the live compositor still holds the
+    retired bind, which is exactly the state a caller must not report as
+    healthy.
+    """
+    path = niri_config_dir() / "binds.kdl"
+    if not path.is_file():
+        return dict(_NO_MIGRATION)
+    with niri_config_lock():
+        binds, changed = _migrate_retired_bind_actions(_niri_binds_from_file(path))
+        if not changed:
+            return dict(_NO_MIGRATION)
+        _write_vgs_niri_binds(binds)
+        reload_result = _reload_niri()
+    return {
+        "migrated": True,
+        "ok": not reload_result.get("attempted") or bool(reload_result.get("ok")),
+        "reload": reload_result,
+    }
+
+
 def _load_vgs_niri_binds() -> List[Dict[str, Any]]:
     path = niri_config_dir() / "binds.kdl"
-    return _niri_binds_from_file(path) if path.is_file() else []
+    if not path.is_file():
+        return []
+    binds, _ = _migrate_retired_bind_actions(_niri_binds_from_file(path))
+    return binds
 
 def _write_vgs_niri_binds(binds: List[Dict[str, Any]]) -> None:
     lines = ["// Generated by VGS. Edit through VGS Settings.", "binds {"]

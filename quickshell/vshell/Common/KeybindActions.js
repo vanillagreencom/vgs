@@ -8,9 +8,9 @@ const ACTION_TYPES = [
 ];
 
 const VGS_ACTIONS = [
-    { id: "spawn vshell ipc call spotlight toggle", label: "Default Launcher: Toggle" },
-    { id: "spawn vshell ipc call spotlight open", label: "Default Launcher: Open" },
-    { id: "spawn vshell ipc call spotlight close", label: "Default Launcher: Close" },
+    { id: "spawn vshell ipc call vshell-menu toggle", label: "App Launcher: Toggle" },
+    { id: "spawn vshell ipc call vshell-menu open", label: "App Launcher: Open" },
+    { id: "spawn vshell ipc call vshell-menu close", label: "App Launcher: Close" },
     { id: "spawn vshell ipc call defaultApp browser", label: "Default Web Browser: Open" },
     { id: "spawn vshell ipc call defaultApp fileManager", label: "Default File Manager: Open" },
     { id: "spawn vshell ipc call defaultApp mail", label: "Default Mail: Open" },
@@ -20,9 +20,6 @@ const VGS_ACTIONS = [
     { id: "spawn vshell ipc call defaultApp imageViewer", label: "Default Image Viewer: Open" },
     { id: "spawn vshell ipc call defaultApp videoPlayer", label: "Default Video Player: Open" },
     { id: "spawn vshell ipc call defaultApp musicPlayer", label: "Default Music Player: Open" },
-    { id: "spawn vshell ipc call spotlight-bar toggle", label: "Spotlight Bar: Toggle" },
-    { id: "spawn vshell ipc call spotlight-bar open", label: "Spotlight Bar: Open" },
-    { id: "spawn vshell ipc call spotlight-bar close", label: "Spotlight Bar: Close" },
     { id: "spawn vshell ipc call clipboard toggle", label: "Clipboard: Toggle" },
     { id: "spawn vshell ipc call clipboard open", label: "Clipboard: Open" },
     { id: "spawn vshell ipc call clipboard close", label: "Clipboard: Close" },
@@ -921,6 +918,47 @@ function isVgsAction(action) {
     return action.startsWith("spawn vshell ipc call ");
 }
 
+// VGS-13 retired these launcher IPC targets in favour of "vshell-menu". VGS
+// rewrites its own generated niri binds; binds in a config VGS does not own
+// (every Hyprland bind, and hand-written niri binds) can only be reported.
+const RETIRED_IPC_TARGETS = ["launcher", "spotlight", "spotlight-bar"];
+
+// "ipc call <target>" is VGS syntax, not a reserved word — another program may
+// legitimately take those as its own arguments, and `spawn notify-send ipc call
+// launcher` is a valid bind that has nothing to do with VGS. So the match is
+// keyed on the program token immediately before "ipc" being the vshell CLI.
+// Compared by basename, because ~/dotfiles binds both `vshell ipc call ...` and
+// `$HOME/.local/bin/vshell ipc call ...`; quote-stripped, so the CLI still reads
+// as vshell inside a `spawn sh -c "vshell ipc call ..."` command string.
+const VSHELL_CLI_BASENAMES = ["vshell"];
+
+function isVshellCliToken(token) {
+    if (!token)
+        return false;
+    const unquoted = String(token).replace(/^['"]+/, "").replace(/['"]+$/, "");
+    if (!unquoted)
+        return false;
+    const parts = unquoted.split("/");
+    return VSHELL_CLI_BASENAMES.indexOf(parts[parts.length - 1]) >= 0;
+}
+
+function usesRetiredIpcTarget(action) {
+    if (!action)
+        return false;
+    const tokens = String(action).split(/\s+/);
+    // Every occurrence, not just the first: a shell wrapper can put the real
+    // invocation well past the start of the action.
+    for (let i = 1; i < tokens.length; i++) {
+        if (tokens[i] !== "ipc" || tokens[i + 1] !== "call")
+            continue;
+        if (!isVshellCliToken(tokens[i - 1]))
+            continue;
+        if (RETIRED_IPC_TARGETS.indexOf(tokens[i + 2]) >= 0)
+            return true;
+    }
+    return false;
+}
+
 function isValidAction(action) {
     if (!action)
         return false;
@@ -933,6 +971,12 @@ function isValidAction(action) {
         case "spawn_shell ":
             return false;
     }
+    // A retired launcher target is a dead bind the moment it is written.
+    // Reporting one that already exists is all VGS can do for configs it does
+    // not own, but it must not accept a NEW one: this is the only gate on the
+    // save path (KeybindsService.saveBind, KeybindItem.canSave).
+    if (usesRetiredIpcTarget(action))
+        return false;
     return true;
 }
 
