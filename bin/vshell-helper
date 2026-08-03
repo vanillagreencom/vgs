@@ -8611,7 +8611,6 @@ def _hyprland_blur_script(enabled: bool, strength: float, glass: bool, opacity: 
         "power-menu",
         "power-profiles",
         "process-list-popout",
-        "spotlight",
         "switch-user-modal",
         "system-update",
         "toast",

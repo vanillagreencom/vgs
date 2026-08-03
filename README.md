@@ -254,9 +254,9 @@ monitor.
 
 ## The rest of the shell
 
-**Launcher and menus.** A full launcher and a Spotlight-style bar, both with fuzzy search, plus
-optional file search. The VGS menu is a separate, category-based command menu you can extend with
-your own entries and web apps.
+**Launcher and menus.** The VGS menu is the app launcher: a category-based command menu with fuzzy
+search and optional file search, extensible with your own entries and web apps. The bar and dock
+launcher buttons open it, as does the `vshell-menu` IPC action.
 
 **Capture.** Screenshots by region, window or display, with a delay timer and an editor handoff.
 Screen recording with the same targets, and OCR to grab text off the screen.

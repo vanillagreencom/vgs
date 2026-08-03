@@ -9,12 +9,10 @@ Item {
     id: root
 
     property var parentModal: null
-    readonly property string defaultLauncherAction: "spawn vshell ipc call spotlight toggle"
-    readonly property string spotlightBarAction: "spawn vshell ipc call spotlight-bar toggle"
+    readonly property string defaultLauncherAction: "spawn vshell ipc call vshell-menu toggle"
     readonly property int keybindDataVersion: KeybindsService._dataVersion
     readonly property bool keybindsAvailable: KeybindsService.available
-    readonly property string defaultLauncherKeybindSearch: "spotlight toggle"
-    readonly property string spotlightBarKeybindSearch: "spotlight-bar"
+    readonly property string defaultLauncherKeybindSearch: "vshell-menu"
 
     function openKeybindsSearch(query) {
         if (!root.parentModal)
@@ -65,28 +63,15 @@ Item {
             SettingsCard {
                 width: parent.width
                 iconName: "search"
-                title: I18n.tr("Default Launcher")
-                settingKey: "launcherStyle"
+                title: I18n.tr("App Launcher")
+                settingKey: "appLauncher"
 
                 StyledText {
                     width: parent.width
-                    text: SettingsData.launcherStyle === "spotlight" ? I18n.tr("Default launcher shortcuts open the minimal Spotlight Bar. The dedicated Spotlight Bar shortcut below stays independent.") : I18n.tr("Default launcher shortcuts open the full launcher with mode tabs, grid view, and action panel.")
+                    text: I18n.tr("The VGS Menu plugin is the shell's app launcher. The bar and dock launcher buttons open the same window as the shortcut below.")
                     font.pixelSize: Theme.fontSizeSmall
                     color: Theme.surfaceVariantText
                     wrapMode: Text.WordWrap
-                }
-
-                SettingsButtonGroupRow {
-                    settingKey: "launcherStyleSelector"
-                    tags: ["launcher", "style", "default", "spotlight", "full", "minimal"]
-                    text: I18n.tr("Default Opens")
-                    model: [I18n.tr("Full"), I18n.tr("Spotlight")]
-                    currentIndex: SettingsData.launcherStyle === "spotlight" ? 1 : 0
-                    onSelectionChanged: (index, selected) => {
-                        if (!selected)
-                            return;
-                        SettingsData.set("launcherStyle", index === 1 ? "spotlight" : "full");
-                    }
                 }
 
                 StyledRect {
@@ -120,7 +105,7 @@ Item {
                             spacing: Theme.spacingXXS
 
                             StyledText {
-                                text: I18n.tr("Default Launcher Shortcut")
+                                text: I18n.tr("App Launcher Shortcut")
                                 font.pixelSize: Theme.fontSizeSmall
                                 font.weight: Font.Medium
                                 color: Theme.surfaceText
@@ -129,7 +114,7 @@ Item {
                             }
 
                             StyledText {
-                                text: !root.keybindsAvailable ? I18n.tr("Bind the spotlight IPC action in your compositor config") : I18n.tr("Follows the default launcher choice selected above")
+                                text: !root.keybindsAvailable ? I18n.tr("Bind the vshell-menu IPC action in your compositor config") : I18n.tr("Opens the VGS Menu launcher")
                                 font.pixelSize: Theme.fontSizeSmall
                                 color: Theme.surfaceVariantText
                                 width: parent.width
@@ -157,109 +142,6 @@ Item {
                         cursorShape: Qt.PointingHandCursor
                         onClicked: root.openKeybindsSearch(root.defaultLauncherKeybindSearch)
                     }
-                }
-
-                SettingsToggleRow {
-                    settingKey: "launcherUseOverlayLayer"
-                    tags: ["launcher", "fullscreen", "overlay", "layer"]
-                    text: I18n.tr("Use Overlay Layer", "launcher layer toggle: use Wayland overlay layer")
-                    description: I18n.tr("Use the overlay layer when opening the launcher")
-                    checked: SettingsData.launcherUseOverlayLayer
-                    onToggled: checked => SettingsData.set("launcherUseOverlayLayer", checked)
-                }
-            }
-
-            SettingsCard {
-                width: parent.width
-                iconName: "search"
-                title: I18n.tr("Spotlight Bar")
-                settingKey: "spotlightBarLauncher"
-
-                StyledText {
-                    width: parent.width
-                    text: I18n.tr("A separate minimal launcher action that stays independent of the default launcher choice")
-                    font.pixelSize: Theme.fontSizeSmall
-                    color: Theme.surfaceVariantText
-                    wrapMode: Text.WordWrap
-                }
-
-                StyledRect {
-                    id: spotlightShortcutCard
-                    width: parent.width
-                    height: spotlightShortcutRow.implicitHeight + Theme.spacingM * 2
-                    radius: Theme.cornerRadius
-                    color: spotlightShortcutMouse.containsMouse ? Theme.withAlpha(Theme.surfaceContainerHigh, 0.48) : Theme.withAlpha(Theme.surfaceContainer, 0.35)
-                    border.color: Theme.outlineMedium
-                    border.width: 1
-
-                    Row {
-                        id: spotlightShortcutRow
-                        anchors.left: parent.left
-                        anchors.right: parent.right
-                        anchors.verticalCenter: parent.verticalCenter
-                        anchors.leftMargin: Theme.spacingM
-                        anchors.rightMargin: Theme.spacingM
-                        spacing: Theme.spacingM
-
-                        VgsIcon {
-                            name: "keyboard"
-                            size: Theme.iconSize
-                            color: Theme.primary
-                            anchors.verticalCenter: parent.verticalCenter
-                        }
-
-                        Column {
-                            width: Math.max(0, parent.width - Theme.iconSize - spotlightShortcutValue.width - Theme.spacingM * 2)
-                            anchors.verticalCenter: parent.verticalCenter
-                            spacing: Theme.spacingXXS
-
-                            StyledText {
-                                text: I18n.tr("Spotlight Bar Shortcut")
-                                font.pixelSize: Theme.fontSizeSmall
-                                font.weight: Font.Medium
-                                color: Theme.surfaceText
-                                width: parent.width
-                                elide: Text.ElideRight
-                            }
-
-                            StyledText {
-                                text: !root.keybindsAvailable ? I18n.tr("Bind the spotlight-bar IPC action in your compositor config") : I18n.tr("Uses the spotlight-bar IPC action and always opens the minimal bar")
-                                font.pixelSize: Theme.fontSizeSmall
-                                color: Theme.surfaceVariantText
-                                width: parent.width
-                                wrapMode: Text.WordWrap
-                            }
-                        }
-
-                        StyledText {
-                            id: spotlightShortcutValue
-                            text: root.keysLabel(root.spotlightBarAction)
-                            font.pixelSize: Theme.fontSizeSmall
-                            font.weight: Font.Medium
-                            color: Theme.primary
-                            anchors.verticalCenter: parent.verticalCenter
-                            horizontalAlignment: Text.AlignRight
-                            width: Math.min(170, implicitWidth)
-                            elide: Text.ElideRight
-                        }
-                    }
-
-                    MouseArea {
-                        id: spotlightShortcutMouse
-                        anchors.fill: parent
-                        hoverEnabled: true
-                        cursorShape: Qt.PointingHandCursor
-                        onClicked: root.openKeybindsSearch(root.spotlightBarKeybindSearch)
-                    }
-                }
-
-                SettingsToggleRow {
-                    settingKey: "spotlightBarShowModeChips"
-                    tags: ["launcher", "spotlight", "bar", "chips", "tabs", "modes"]
-                    text: I18n.tr("Show Mode Chips")
-                    description: I18n.tr("Show All, Apps, Files, and Plugins chips beside the Spotlight Bar input")
-                    checked: SettingsData.spotlightBarShowModeChips
-                    onToggled: checked => SettingsData.set("spotlightBarShowModeChips", checked)
                 }
             }
 
@@ -653,15 +535,6 @@ Item {
                     checked: SettingsData.launcherShowFooter
                     enabled: SettingsData.launcherSize !== "micro"
                     onToggled: checked => SettingsData.set("launcherShowFooter", checked)
-                }
-
-                SettingsToggleRow {
-                    settingKey: "launcherUnloadOnClose"
-                    tags: ["launcher", "unload", "close", "memory", "vram"]
-                    text: I18n.tr("Unload on Close")
-                    description: I18n.tr("Free VRAM and memory when closed; may add a slight delay when reopening")
-                    checked: SettingsData.launcherUnloadOnClose
-                    onToggled: checked => SettingsData.set("launcherUnloadOnClose", checked)
                 }
 
                 SettingsToggleRow {
@@ -1062,24 +935,6 @@ Item {
                     description: I18n.tr("Include desktop actions (shortcuts) in search results")
                     checked: SessionData.searchAppActions
                     onToggled: checked => SessionData.setSearchAppActions(checked)
-                }
-
-                SettingsToggleRow {
-                    settingKey: "rememberLastMode"
-                    tags: ["launcher", "remember", "last", "mode", "tab"]
-                    text: I18n.tr("Remember Last Mode")
-                    description: I18n.tr("Restore the last selected mode (tab) when the launcher is opened")
-                    checked: SettingsData.rememberLastMode
-                    onToggled: checked => SettingsData.set("rememberLastMode", checked)
-                }
-
-                SettingsToggleRow {
-                    settingKey: "rememberLastQuery"
-                    tags: ["launcher", "remember", "last", "search", "query"]
-                    text: I18n.tr("Remember Last Query")
-                    description: I18n.tr("Autofill last remembered query when opened")
-                    checked: SettingsData.rememberLastQuery
-                    onToggled: checked => SettingsData.set("rememberLastQuery", checked)
                 }
 
                 SettingsToggleRow {

@@ -111,7 +111,7 @@ Column {
                 iconName: "space_dashboard"
                 title: "Vgs Launcher V2"
                 description: "New capabilities & plugins"
-                onClicked: PopoutService.openLauncher()
+                onClicked: PluginService.togglePlugin("vgsMenu")
             }
 
             ChangelogFeatureCard {

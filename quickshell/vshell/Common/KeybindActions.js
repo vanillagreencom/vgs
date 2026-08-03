@@ -8,9 +8,9 @@ const ACTION_TYPES = [
 ];
 
 const VGS_ACTIONS = [
-    { id: "spawn vshell ipc call spotlight toggle", label: "Default Launcher: Toggle" },
-    { id: "spawn vshell ipc call spotlight open", label: "Default Launcher: Open" },
-    { id: "spawn vshell ipc call spotlight close", label: "Default Launcher: Close" },
+    { id: "spawn vshell ipc call vshell-menu toggle", label: "App Launcher: Toggle" },
+    { id: "spawn vshell ipc call vshell-menu open", label: "App Launcher: Open" },
+    { id: "spawn vshell ipc call vshell-menu close", label: "App Launcher: Close" },
     { id: "spawn vshell ipc call defaultApp browser", label: "Default Web Browser: Open" },
     { id: "spawn vshell ipc call defaultApp fileManager", label: "Default File Manager: Open" },
     { id: "spawn vshell ipc call defaultApp mail", label: "Default Mail: Open" },
@@ -20,9 +20,6 @@ const VGS_ACTIONS = [
     { id: "spawn vshell ipc call defaultApp imageViewer", label: "Default Image Viewer: Open" },
     { id: "spawn vshell ipc call defaultApp videoPlayer", label: "Default Video Player: Open" },
     { id: "spawn vshell ipc call defaultApp musicPlayer", label: "Default Music Player: Open" },
-    { id: "spawn vshell ipc call spotlight-bar toggle", label: "Spotlight Bar: Toggle" },
-    { id: "spawn vshell ipc call spotlight-bar open", label: "Spotlight Bar: Open" },
-    { id: "spawn vshell ipc call spotlight-bar close", label: "Spotlight Bar: Close" },
     { id: "spawn vshell ipc call clipboard toggle", label: "Clipboard: Toggle" },
     { id: "spawn vshell ipc call clipboard open", label: "Clipboard: Open" },
     { id: "spawn vshell ipc call clipboard close", label: "Clipboard: Close" },

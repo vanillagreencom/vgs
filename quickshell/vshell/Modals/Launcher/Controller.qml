@@ -296,7 +296,7 @@ Item {
         if (sectionViewModes[sectionId])
             return sectionViewModes[sectionId];
 
-        var savedModes = viewModeContext === "appDrawer" ? (SettingsData.appDrawerSectionViewModes || {}) : (SettingsData.spotlightSectionViewModes || {});
+        var savedModes = SettingsData.spotlightSectionViewModes || {};
         if (savedModes[sectionId])
             return savedModes[sectionId];
 
@@ -320,17 +320,9 @@ Item {
             [sectionId]: mode
         });
         viewModeVersion++;
-        if (viewModeContext === "appDrawer") {
-            var savedModes = Object.assign({}, SettingsData.appDrawerSectionViewModes || {}, {
-                [sectionId]: mode
-            });
-            SettingsData.appDrawerSectionViewModes = savedModes;
-        } else {
-            var savedModes = Object.assign({}, SettingsData.spotlightSectionViewModes || {}, {
-                [sectionId]: mode
-            });
-            SettingsData.spotlightSectionViewModes = savedModes;
-        }
+        SettingsData.spotlightSectionViewModes = Object.assign({}, SettingsData.spotlightSectionViewModes || {}, {
+            [sectionId]: mode
+        });
         viewModeChanged(sectionId, mode);
     }
 

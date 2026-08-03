@@ -29,6 +29,11 @@ Singleton {
     property var knownManifests: ({})
     property var pathToPluginId: ({})
     property var pluginInstances: ({})
+    // Daemon-surface plugins are instantiated by the shell's daemon Instantiator
+    // (VGS.qml), which owns their lifetime. Registering the live item here lets
+    // callers reach that same instance instead of creating a second one, which
+    // would duplicate any IpcHandler the plugin declares.
+    property var daemonInstances: ({})
     property var globalVars: ({})
     property var pluginLoadErrors: ({})
 
@@ -835,8 +840,25 @@ Singleton {
         return loadPlugin(pluginId, true);
     }
 
+    // Register/unregister a daemon plugin item owned by the shell's daemon
+    // Instantiator. Pass a null instance to drop the registration.
+    function registerDaemonInstance(pluginId, instance) {
+        const next = Object.assign({}, daemonInstances);
+        if (instance)
+            next[pluginId] = instance;
+        else
+            delete next[pluginId];
+        daemonInstances = next;
+    }
+
+    // The live object for a plugin, whichever surface owns it. Prefer the
+    // shell-owned daemon item so callers never race a second instance.
+    function getPluginInstance(pluginId) {
+        return daemonInstances[pluginId] || pluginInstances[pluginId] || null;
+    }
+
     function togglePlugin(pluginId) {
-        let instance = pluginInstances[pluginId];
+        let instance = getPluginInstance(pluginId);
 
         // Lazy instantiate daemon plugins on first toggle
         // This respects the daemon lifecycle (not instantiated on load)

@@ -8,9 +8,7 @@ import qs.Modals.Clipboard
 import qs.Modals.Capture
 import qs.Modals.Common
 import qs.Modals.Settings
-import qs.Modals.Launcher
 import qs.Modules
-import qs.Modules.AppDrawer
 import qs.Modules.Dash
 import qs.Modules.ControlCenter
 import qs.Modules.Dock
@@ -71,9 +69,12 @@ Item {
                         item.popoutService = PopoutService;
                     }
                     item.pluginId = pluginId;
+                    PluginService.registerDaemonInstance(pluginId, item);
                     log.info("Daemon plugin loaded:", pluginId);
                 }
             }
+
+            Component.onDestruction: PluginService.registerDaemonInstance(pluginId, null)
         }
     }
 
@@ -879,63 +880,6 @@ Item {
                 } else if (wasShown) {
                     PopoutService.unloadCloudSync();
                 }
-            }
-        }
-    }
-
-    LazyLoader {
-        id: appDrawerLoader
-
-        active: false
-
-        Component.onCompleted: {
-            PopoutService.appDrawerLoader = appDrawerLoader;
-        }
-
-        AppDrawerPopout {
-            id: appDrawerPopout
-            onPopoutClosed: PopoutService.unloadAppDrawer()
-
-            Component.onCompleted: {
-                PopoutService.appDrawerPopout = appDrawerPopout;
-            }
-        }
-    }
-
-    LazyLoader {
-        id: launcherModalLoader
-
-        active: false
-
-        Component.onCompleted: {
-            PopoutService.launcherModalLoader = launcherModalLoader;
-        }
-
-        LauncherModal {
-            id: launcherModal
-
-            Component.onCompleted: {
-                PopoutService.launcherModal = launcherModal;
-                PopoutService._onLauncherModalLoaded();
-            }
-        }
-    }
-
-    LazyLoader {
-        id: spotlightBarModalLoader
-
-        active: false
-
-        Component.onCompleted: {
-            PopoutService.spotlightBarModalLoader = spotlightBarModalLoader;
-        }
-
-        LauncherModalSpotlight {
-            id: spotlightBarModal
-
-            Component.onCompleted: {
-                PopoutService.spotlightBarModal = spotlightBarModal;
-                PopoutService._onSpotlightBarModalLoaded();
             }
         }
     }

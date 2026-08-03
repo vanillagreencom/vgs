@@ -127,7 +127,7 @@ window-rule {
         niri._write_vgs_niri_binds([{
             "key": "Mod+Space",
             "desc": "Launcher",
-            "action": "spawn vshell ipc call spotlight toggle",
+            "action": "spawn vshell ipc call vshell-menu toggle",
             "allowWhenLocked": True,
             "repeat": False,
         }])

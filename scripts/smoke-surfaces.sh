@@ -86,19 +86,11 @@ PY
 }
 
 cleanup() {
-  "$vshell_bin" ipc call spotlight close >/dev/null 2>&1 || true
   "$vshell_bin" ipc call capture close >/dev/null 2>&1 || true
   "$vshell_bin" ipc call powermenu close >/dev/null 2>&1 || true
   "$vshell_bin" ipc call vshell-menu close >/dev/null 2>&1 || true
 }
 trap cleanup EXIT
-
-"$vshell_bin" ipc call spotlight open >/dev/null
-sleep 0.35
-assert_content_sized_layer "vshell:spotlight"
-assert_layer_present "vshell:spotlight:clickcatcher"
-assert_layer_absent "vshell:spotlight:fullscreen"
-"$vshell_bin" ipc call spotlight close >/dev/null
 
 "$vshell_bin" ipc call capture open >/dev/null
 sleep 0.35
