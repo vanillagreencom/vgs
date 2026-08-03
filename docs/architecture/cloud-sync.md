@@ -256,7 +256,7 @@ and `cloud-sync-stream` in `config/vshell/dependencies.json`.
 python3 scripts/check-backend-inventory.py
 go -C backend build ./... && go -C backend vet ./... && go -C backend test -race ./...
 scripts/check-naming.sh
-qs -c vshell
+scripts/qml-smoke.sh
 ```
 
 End-to-end against a scratch daemon (never the live session socket):

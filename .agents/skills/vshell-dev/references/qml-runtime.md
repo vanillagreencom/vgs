@@ -47,8 +47,16 @@ Avoid literal hex colors and raw pixel constants unless no token fits.
 
 ## Smoke test
 ```bash
-qs -c vshell
+scripts/qml-smoke.sh --nested --require-static
 ```
 
-Expected for smoke: process keeps running or times out under wrapper.
+Bare `scripts/qml-smoke.sh` is a parse check only; `--nested` is what actually
+runs the shell (in an isolated nested compositor) and catches runtime QML errors.
+
 Bad: QML `ReferenceError`, `TypeError`, process failed to start, missing binary, import errors.
+
+Never launch the shell directly (`qs -c vshell`, `qs -p quickshell/vshell`) while
+a session shell is running: a second full instance fights the first for
+WlSessionLock, the fade-to-lock overlay, and the idle/DPMS tiers, and strands
+orphaned full-screen layer surfaces. `quickshell/vshell/shell.qml` refuses such a
+duplicate at runtime, but the smoke script is the supported path.

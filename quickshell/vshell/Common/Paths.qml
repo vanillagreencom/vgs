@@ -17,7 +17,13 @@ Singleton {
     readonly property url cache: `${StandardPaths.standardLocations(StandardPaths.GenericCacheLocation)[0]}/vshell`
     readonly property url config: `${StandardPaths.standardLocations(StandardPaths.GenericConfigLocation)[0]}/vshell`
 
-    readonly property string repoRoot: Quickshell.env("VSHELL_ROOT") || strip(Qt.resolvedUrl("../../.."))
+    // Qt.resolvedUrl() resolves inside Quickshell's virtual filesystem
+    // (qrc:/qs-blackhole), which is not a runnable path; shellDir is the real
+    // launch directory. `..` resolves through the ~/.config/quickshell/vshell
+    // symlink when the kernel walks the path, so this stays correct for a
+    // source checkout, a packaged install, and a shell started without
+    // VSHELL_ROOT.
+    readonly property string repoRoot: Quickshell.env("VSHELL_ROOT") || (Quickshell.shellDir + "/../..")
     readonly property string vshellCli: repoRoot + "/bin/vshell"
 
     readonly property url imagecache: `${cache}/imagecache`
