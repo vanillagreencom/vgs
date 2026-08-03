@@ -64,7 +64,7 @@ pkg_postinst() {
 	# Run scripts/gen-package-metadata.py --write after changing either file.
 	optfeature "launcher recent-directory search" app-shells/zoxide
 	optfeature "region OCR" app-text/tesseract
-	optfeature "GTK theme, icon theme and color-scheme application, trash instead of deleting files" dev-libs/glib
+	optfeature "GTK theme, icon theme and color-scheme application, trash instead of deleting files, launcher default folder opener" dev-libs/glib
 	optfeature "greeter and keyring integration" gnome-base/gnome-keyring
 	optfeature "screenshots, region OCR" gui-apps/grim
 	optfeature "screenshots, region OCR, screen recording" gui-apps/slurp
@@ -77,8 +77,8 @@ pkg_postinst() {
 	optfeature "AI usage widget" net-misc/curl
 	optfeature "cloud file sync" net-misc/rclone
 	optfeature "Tailscale widget" net-vpn/tailscale
-	optfeature "launcher file and text search" sys-apps/fd
-	optfeature "launcher file and text search" sys-apps/ripgrep
+	optfeature "faster launcher file search" sys-apps/fd
+	optfeature "launcher text search" sys-apps/ripgrep
 	optfeature "cloud sync streaming mounts" sys-fs/fuse
 	optfeature "screenshots, region OCR, screen recording" x11-libs/libnotify
 	# END GENERATED OPTIONAL DEPENDENCIES

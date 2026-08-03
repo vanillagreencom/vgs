@@ -9861,11 +9861,15 @@ def _launcher_zoxide_hits(query: str, limit: int) -> List[Dict[str, Any]]:
 
 
 def _launcher_folder_openers() -> List[Dict[str, str]]:
-    # Only commands VGS declares in config/vshell/dependencies.json (or that a
-    # user can install from their distribution) belong here. A private wrapper
-    # script is configured through the launcherFolderOpenCommand setting, which
-    # the "Preferred app" opener passes through as --command, rather than being
-    # probed for by name in shipped code.
+    # A wrapper script that exists only in someone's dotfiles must not be probed
+    # for by name here — configure it through the launcherFolderOpenCommand
+    # setting, which the "Preferred app" opener passes through as --command. See
+    # docs/architecture/overlay-and-dependencies.md § Probing rules.
+    #
+    # `yazi` and `nautilus` are distribution packages, so probing them is allowed,
+    # but neither is declared in dependencies.json yet: that is deferred to VGS-32
+    # along with the rest of the folder-opener routing, and recorded in the
+    # `undeclared` map at the top of that manifest.
     openers = [{"id": "default", "label": "Preferred app", "icon": "open_in_new"}]
     if shutil.which("yazi"):
         openers.append({"id": "yazi", "label": "Yazi", "icon": "terminal"})

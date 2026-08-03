@@ -30,8 +30,10 @@
     "recording": "screen recording",
     "thumbnails": "file thumbnails",
     "launcher-zoxide": "launcher recent-directory search",
-    "launcher-search": "launcher file and text search",
+    "launcher-search": "launcher text search",
+    "launcher-search-fast": "faster launcher file search",
     "trash": "trash instead of deleting files",
+    "launcher-folder-open": "launcher default folder opener",
     "updates-arch": "repo update checks",
     "updates-aur": "AUR update checks",
     "ai-usage": "AI usage widget",
@@ -203,7 +205,10 @@
       "fedora": "fontconfig",
       "gentoo": "media-libs/fontconfig"
     },
-    "pywalfox": { "arch": "python-pywalfox" },
+    "pywalfox": {
+      "description": "Firefox theming (AUR; pip elsewhere)",
+      "arch": "python-pywalfox"
+    },
 
     "checkupdates": { "arch": "pacman-contrib" },
     "paru": { "arch": "paru" },
