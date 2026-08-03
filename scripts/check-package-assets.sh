@@ -39,6 +39,10 @@ test -d "$core/usr/lib/vshell/themes/targets"
 test ! -e "$core/usr/lib/vshell/themes/tokyo-night"
 test ! -e "$core/usr/lib/vshell/config/vshell/icons"
 test -x "$core/usr/lib/vshell/bin/vshell-backend"
+# The screensaver's default art. It is the only thing standing between a fresh
+# install and a saver with nothing to draw, and it is read-only package data —
+# the runner cannot regenerate it into /usr, so dropping it here is silent.
+test -s "$core/usr/lib/vshell/config/vshell/branding/screensaver.txt"
 
 DESTDIR="$extras" VGS_THEME_BUNDLE=extras "$root/packaging/install-system.sh"
 test -f "$extras/usr/lib/vshell/themes/tokyo-night/theme.json"

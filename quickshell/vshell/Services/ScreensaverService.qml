@@ -15,6 +15,13 @@ import qs.Services
 //     running `tte`, one per monitor, via `vshell screensaver`). The art source
 //     is ~/.config/vshell/branding/screensaver.txt; picking a picture in settings
 //     regenerates that file through `vshell screensaver transcode` (braille art).
+//     With no picture picked, the runner falls back to the pre-rendered VGS logo
+//     shipped at config/vshell/branding/screensaver.txt, so the saver has art on
+//     a fresh install without ImageMagick or a first-run transcode. An empty
+//     screensaverAsciiImagePath means "use the bundled logo", not "no art": the
+//     runner reads the setting and only prefers the generated user art while a
+//     picture is still selected, so clearing the field really does go back to
+//     the logo — see bin/vshell-screensaver::resolve_branding.
 //   * "video" — native in-shell video overlays (Modules/Screensaver/
 //     ScreensaverVideoWindow.qml, one per screen, gated on `videoActive`).
 //
@@ -69,9 +76,58 @@ Singleton {
             return;
         active = true;
         log.info("start (" + (_videoUsable ? "video" : "ascii") + ")");
+        // ascii: run the launcher through a Process rather than detaching it, so
+        // a refusal (no art, or no tte/ghostty — neither is a declared VGS
+        // dependency) clears `active` instead of leaving the shell believing a
+        // saver is up with nothing on screen.
         if (!_videoUsable)
-            Quickshell.execDetached([Paths.vshellCli, "screensaver", "launch"]);
+            launchProcess.running = true;
         // video mode: overlays follow videoActive
+    }
+
+    // Set by onExited so the settle timer can tell "the launcher ran and reported"
+    // apart from "the launcher never started".
+    property bool _launchReported: false
+
+    Process {
+        id: launchProcess
+        running: false
+        command: [Paths.vshellCli, "screensaver", "launch"]
+        onExited: exitCode => {
+            root._launchReported = true;
+            if (exitCode === 0)
+                return;
+            root.log.warn("screensaver launch refused (exit " + exitCode + "); no saver is showing");
+            root._startAfterRegen = false;
+            root.active = false;
+        }
+        onRunningChanged: {
+            if (running) {
+                root._launchReported = false;
+                return;
+            }
+            // A command that cannot be spawned at all (vshell missing from PATH,
+            // exec failure) ends the process without an exit report, and `active`
+            // would stay true forever — the shell would refuse every later start
+            // with nothing on screen. `running` falling back to false is the one
+            // signal both outcomes share, so settle on it and let the timer decide.
+            launchSettleTimer.restart();
+        }
+    }
+
+    // exited and runningChanged are emitted from the same teardown, but their
+    // order is not part of Quickshell's contract, so neither handler may assume
+    // it ran first. Deferring to the next tick makes the check order-independent.
+    Timer {
+        id: launchSettleTimer
+        interval: 0
+        onTriggered: {
+            if (root._launchReported || !root.active)
+                return;
+            root.log.warn("screensaver launch never started; no saver is showing");
+            root._startAfterRegen = false;
+            root.active = false;
+        }
     }
 
     function stop() {
@@ -92,14 +148,36 @@ Singleton {
         active ? stop() : start();
     }
 
+    // Why the last transcode failed, for the settings tab. Empty means the
+    // configured picture rendered fine, or none is configured (the runner uses
+    // the bundled VGS logo). Without this the tab shows "Preparing…" and then
+    // silently nothing when ImageMagick is missing.
+    property string lastError: ""
+
+    // Any change to the picture invalidates an error about the previous one —
+    // including clearing the field, which is not a failure at all but a switch
+    // back to the bundled logo. Without this the red banner outlives its cause.
+    Connections {
+        target: SettingsData
+        function onScreensaverAsciiImagePathChanged() {
+            root.lastError = "";
+        }
+    }
+
     // Regenerate the braille art from the configured picture. Overwrites the art
     // text file the tte saver reads. Called on image selection (pre-warm) and,
-    // when stale, automatically by start() before showing the saver.
+    // when stale, automatically by start() before showing the saver. No picture
+    // is not an error: the runner falls back to the bundled logo.
     property bool generating: false
     function regenerateAscii() {
         const img = SettingsData.screensaverAsciiImagePath;
-        if (!img || generating)
+        if (!img || generating) {
+            if (!img)
+                lastError = "";
             return;
+        }
+        lastError = "";
+        transcodeProcess.capturedError = "";
         generating = true;
         _transcodingArt = img;
         transcodeProcess.command = [Paths.vshellCli, "screensaver", "transcode", img, _brandingText, "--width", "100", "--height", "40"];
@@ -109,16 +187,35 @@ Singleton {
     Process {
         id: transcodeProcess
         running: false
+        // Quickshell documents streamFinished as "the process closed stderr or
+        // exited" without ordering it against exited, so neither handler assumes
+        // it ran first: exited always sets a message, and a late stderr only
+        // refines an error that is already showing.
+        property string capturedError: ""
+        stderr: StdioCollector {
+            onStreamFinished: {
+                const detail = (text || "").trim();
+                transcodeProcess.capturedError = detail;
+                if (detail && !root.generating && root.lastError !== "")
+                    root.lastError = detail;
+            }
+        }
         onExited: (exitCode, exitStatus) => {
             root.generating = false;
             if (exitCode === 0) {
                 root._lastArt = root._transcodingArt;
+                root.lastError = "";
                 root.log.info("ascii art regenerated from", root._transcodingArt);
             } else {
-                root.log.warn("screensaver transcode failed with code", exitCode);
+                // Surface it: the common cause is a missing `magick`, and the
+                // user has no other signal that their picture was ignored.
+                root.lastError = capturedError || I18n.tr("Could not convert the picture (exit %1)").arg(exitCode);
+                root.log.warn("screensaver transcode failed with code", exitCode, root.lastError);
             }
-            // Show the saver once art is ready (or fall through with existing art
-            // on failure — never leave a Preview request hanging).
+            // Show the saver once art is ready (or fall through to the previous
+            // art / the bundled logo on failure — never leave a Preview request
+            // hanging). The runner still refuses if it can find no art at all,
+            // and launchProcess clears `active` when it does.
             if (root._startAfterRegen) {
                 root._startAfterRegen = false;
                 root._activate();

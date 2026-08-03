@@ -17,6 +17,15 @@ script_dir="$(cd -- "$(dirname -- "$script_path")" && pwd)"
 CONFIG_HOME="${XDG_CONFIG_HOME:-$HOME/.config}"
 CLASS="org.vgs.screensaver"
 BRANDING="$CONFIG_HOME/vshell/branding/screensaver.txt"
+# Package-owned default art (the VGS logo, pre-rendered). Read-only: it is the
+# fallback when the user has no art of their own, so the saver works on a fresh
+# install with no ImageMagick and no first-run transcode. `$script_dir/..` is the
+# repo root in a checkout and /usr/lib/vshell in a package, and both carry
+# config/vshell/. Regenerate after changing the logo with:
+#   vshell screensaver transcode quickshell/vshell/assets/vgslogo.svg \
+#     config/vshell/branding/screensaver.txt --width 100 --height 40
+BUNDLED_BRANDING="${VSHELL_ROOT:-$(cd -- "$script_dir/.." && pwd)}/config/vshell/branding/screensaver.txt"
+SETTINGS="$CONFIG_HOME/vshell/settings.json"
 GHOSTTY_CONF="$CONFIG_HOME/vshell/ghostty-screensaver.conf"
 IS_NIRI=0
 if [[ -n ${NIRI_SOCKET:-} ]] && command -v niri >/dev/null 2>&1 && niri msg version >/dev/null 2>&1; then
@@ -51,9 +60,44 @@ default_text() {
   printf '%s\n' "$(date '+%A %B %-d, %Y')"
 }
 
-ensure_branding() {
-  mkdir -p "$(dirname "$BRANDING")"
-  [[ -s "$BRANDING" ]] || default_text >"$BRANDING"
+# Is a source picture selected in settings? $BRANDING is generated output, not a
+# hand-authored file, so it only outranks the bundled logo while the picture it
+# was generated from is still selected. Without this, clearing the picture would
+# leave the old art in place forever, and the hostname/date card an older VGS
+# wrote once into $BRANDING would outrank the logo for every existing user.
+# Anything unreadable answers "yes", which keeps the previous behaviour rather
+# than discarding art on a bad settings read.
+picture_configured() {
+  [[ -r "$SETTINGS" ]] || return 0
+  command -v jq >/dev/null 2>&1 || return 0
+  local configured
+  configured="$(jq -r '.screensaverAsciiImagePath // ""' "$SETTINGS" 2>/dev/null)" || return 0
+  [[ -n "$configured" ]]
+}
+
+# Print the art file tte should read, most specific first:
+#   1. the user's own art — what `vshell screensaver transcode` writes — while a
+#      picture is still selected
+#   2. the bundled VGS logo, used read-only so a fresh install needs no write
+#      into ~/.config and no ImageMagick
+#   3. a generated hostname/date card, only if the user path is writable
+# Returns non-zero when no art can be produced at all, so the caller refuses to
+# launch rather than putting up an empty fullscreen window.
+resolve_branding() {
+  if [[ -s "$BRANDING" ]] && picture_configured; then
+    printf '%s\n' "$BRANDING"
+    return 0
+  fi
+  if [[ -s "$BUNDLED_BRANDING" ]]; then
+    printf '%s\n' "$BUNDLED_BRANDING"
+    return 0
+  fi
+  if mkdir -p "$(dirname "$BRANDING")" 2>/dev/null && default_text >"$BRANDING" 2>/dev/null && [[ -s "$BRANDING" ]]; then
+    printf '%s\n' "$BRANDING"
+    return 0
+  fi
+  echo "no screensaver art available (looked in $BRANDING and $BUNDLED_BRANDING)" >&2
+  return 1
 }
 
 cmd_stop() {
@@ -78,7 +122,8 @@ cmd_launch() {
   command -v tte >/dev/null 2>&1 || exit 1
   command -v ghostty >/dev/null 2>&1 || exit 1
   ensure_ghostty_conf
-  ensure_branding
+  # Refuse up front rather than covering every monitor with an empty terminal.
+  resolve_branding >/dev/null || exit 1
 
   local monitor_count screensaver_count
   if ((IS_NIRI)); then
@@ -170,7 +215,8 @@ _run_exit() {
 
 cmd_run() {
   command -v tte >/dev/null 2>&1 || exit 1
-  ensure_branding
+  local art
+  art="$(resolve_branding)" || exit 1
 
   trap _run_exit INT TERM HUP QUIT
 
@@ -184,8 +230,12 @@ cmd_run() {
   printf '\033[2J\033[H\033[?25l'
 
   while true; do
+    # Re-resolve each cycle: picking a picture in settings writes the user art
+    # while the saver is up, and it should take over on the next effect rather
+    # than staying on the bundled logo until relaunch.
+    art="$(resolve_branding)" || _run_exit
     tte \
-      --input-file "$BRANDING" \
+      --input-file "$art" \
       --random-effect \
       --frame-rate 120 \
       --canvas-width 0 \

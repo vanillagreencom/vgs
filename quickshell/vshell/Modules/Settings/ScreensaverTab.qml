@@ -136,8 +136,20 @@ Item {
                     StyledText {
                         width: parent.width
                         wrapMode: Text.WordWrap
-                        text: I18n.tr("Converts a picture into animated braille art. Leave empty to keep the current art.")
+                        text: I18n.tr("Converts a picture into animated braille art. Leave empty to use the built-in VGS logo.")
                         color: Theme.surfaceVariantText
+                        font.pixelSize: Theme.fontSizeSmall
+                    }
+
+                    StyledText {
+                        width: parent.width
+                        visible: ScreensaverService.lastError !== "" && SettingsData.screensaverAsciiImagePath !== ""
+                        wrapMode: Text.WordWrap
+                        // Converting needs ImageMagick, which VGS does not require.
+                        // Without this the field just keeps showing the picture that
+                        // was silently never rendered.
+                        text: I18n.tr("Could not convert this picture — the screensaver keeps its previous art. %1").arg(ScreensaverService.lastError)
+                        color: Theme.warning
                         font.pixelSize: Theme.fontSizeSmall
                     }
 
@@ -148,7 +160,7 @@ Item {
                         VgsTextField {
                             id: asciiImagePathField
                             width: parent.width - browseAsciiBtn.width - Theme.spacingS
-                            placeholderText: I18n.tr("/path/to/picture.png")
+                            placeholderText: I18n.tr("Built-in VGS logo")
                             text: SettingsData.screensaverAsciiImagePath
                             backgroundColor: Theme.surfaceContainerHighest
                             onTextChanged: {
