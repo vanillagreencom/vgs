@@ -169,6 +169,25 @@ Singleton {
         lockRequested();
     }
 
+    // Both waits above (requestSecureManualOff, startLockBlackout) latch state
+    // that ONLY a confirmed lock clears, then ask for a lock that may never
+    // arrive — the compositor can refuse it, or end it before it is confirmed.
+    // Lock.qml calls this from its dropped-lock recovery. The manual wake block
+    // is the dangerous one: left latched, it keeps swallowing automatic display
+    // wakes for a lock that is not coming. Only the block this pending secure-off
+    // established is released; a manual off latch (setDisplaysManual) clears
+    // secureManualOffPending, so it is never touched here.
+    function abandonPendingLockIntents(reason) {
+        if (!secureManualOffPending && !blackoutLockPending)
+            return;
+        log.warn("abandoning pending lock intents (" + (reason || "?") + ")");
+        if (secureManualOffPending) {
+            secureManualOffPending = false;
+            _setManualWakeBlocked(false);
+        }
+        blackoutLockPending = false;
+    }
+
     function completeSecureManualOff() {
         if (!secureManualOffPending || !isShellLocked)
             return;

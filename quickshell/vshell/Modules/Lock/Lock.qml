@@ -87,6 +87,19 @@ Scope {
         lockInitiatedLocally = false;
         shouldLock = false;
         customLockerSpawned = false;
+        // Clearing the lock state is not enough on its own: whatever asked for
+        // the lock may still be waiting for it behind an overlay or a latch.
+        //
+        // FadeToLockWindow is the dangerous one. Once its fade has completed it
+        // is opaque black with WlrKeyboardFocus.Exclusive, and both escapes are
+        // shut — cancelFade() early-returns after completion, and its only
+        // self-dismissal is IdleService.isShellLocked going false, which never
+        // happens for a lock that was refused before it was ever confirmed. That
+        // leaves a keyboard-capturing black screen with no lock behind it, and
+        // `vshell ipc call lock forceReset` out of reach. Recovery must never
+        // land the user somewhere worse than the state it recovered from.
+        IdleService.dismissFadeToLock();
+        IdleService.abandonPendingLockIntents("lock reset");
     }
 
     function activate() {
@@ -212,6 +225,22 @@ Scope {
         }
     }
 
+    // quickshell can end the lock without the shell asking: the compositor sends
+    // ext_session_lock_v1.finished (lock denied, or a crashed-locker fallback
+    // adopting the session), or WlSessionLock aborts the attempt itself when the
+    // protocol is unavailable or a surface fails to build. All of those run
+    // `WlSessionLock::unlock()`, which tears the surfaces down and leaves the
+    // request property reading false — but nothing clears `shouldLock`. Without
+    // this the shell sits "locked" with no lock and no UI (recoverable only via
+    // `vshell ipc call lock forceReset`), and the hot-reload suspension above
+    // stays armed indefinitely while nothing holds a lock.
+    function _handleLockDropped(): void {
+        if (!shouldLock || sessionLock.locked)
+            return;
+        console.warn("[Lock] session lock ended outside the shell; clearing lock state");
+        forceReset();
+    }
+
     Connections {
         target: sessionLock
 
@@ -221,7 +250,24 @@ Scope {
 
         function onLockedChanged() {
             root._syncConfirmedLock();
+            root._handleLockDropped();
         }
+    }
+
+    // The early-out paths in `WlSessionLock::realizeLockTarget` (no
+    // ext-session-lock-v1, null surface component) unlock while `isLocked()` is
+    // already false, so they emit no `lockedChanged` at all. Re-check once the
+    // request has settled instead of relying on a signal.
+    onShouldLockChanged: {
+        if (shouldLock)
+            lockRequestVerify.restart();
+    }
+
+    Timer {
+        id: lockRequestVerify
+        interval: 0
+        repeat: false
+        onTriggered: root._handleLockDropped()
     }
 
     Timer {
@@ -245,6 +291,95 @@ Scope {
                 IdleService.completeSecureManualOff();
             else if (SettingsData.lockScreenPowerOffMonitorsOnLock)
                 IdleService.setDisplaysOff(true, "lock");
+        }
+    }
+
+    // Hot reload must not rebuild the QML tree while a session lock is held.
+    //
+    // Reload matching never reaches this subtree, because the thing that carries
+    // old instances across generations stops at `shell.qml`'s `Loader`.
+    // `ReloadPropagator` (Scope/ShellRoot) walks its own children: a child that
+    // is itself `Reloadable` is handed the matching old child, and anything else
+    // falls into an else-branch that passes the *already-null* cast result to
+    // `Reloadable::reloadRecursive`, which is a total no-op for a null object
+    // (quickshell 0.3.0, src/core/reload.cpp). The `Loader` is not `Reloadable`,
+    // so propagation dies there and nothing below it is ever visited — making
+    // `VGS.qml`'s root `Reloadable` would not change this.
+    //
+    // Every Reloadable down here — `sessionLock` included — therefore reloads
+    // through `Reloadable::onReloadFinished`, i.e. with a null old instance, and
+    // `WlSessionLock::onReload` builds a *fresh* SessionLockManager instead of
+    // adopting the previous one. The old manager is destroyed immediately
+    // afterwards while it still owns the ext-session-lock:
+    // `~QSWaylandSessionLock` destroys the protocol object (deliberately leaving
+    // the session locked) but never clears the process-global "a lock is active"
+    // pointer, which only `unlock()` does. From that moment
+    // `SessionLockManager::lock()` always fails, while
+    // `WlSessionLock::realizeLockTarget` shows its surfaces anyway and aborts the
+    // process:
+    //     FATAL: Tried to show lockscreen surfaces without active lock
+    // (quickshell 0.3.0, src/wayland/session_lock.cpp). The abort is in the
+    // library, so the shell cannot catch it — it can only avoid entering the
+    // state that arms it.
+    //
+    // Keeping the tree, and with it the manager that owns the lock, alive for the
+    // duration of the lock is the part the shell does control. The cost is that
+    // an edit saved while the session is locked is only picked up on the next
+    // write after unlock: suspending the watcher tears it down, and resuming
+    // rebuilds it from the scanned file list without replaying missed events.
+    readonly property bool lockEngaged: shouldLock || sessionLock.locked
+    property bool hotReloadSuspended: false
+    property bool hotReloadWasWatching: false
+
+    // The snapshot below cannot be trusted on its own, for the same reason the
+    // suspension has to be re-assertable: `QuickshellSettings::mWatchFiles`
+    // defaults to TRUE, so a lock engaged before shell.qml's Component.onCompleted
+    // captures `true` even under VSHELL_DISABLE_HOT_RELOAD=1, and the resume would
+    // then switch hot reload on against an explicit policy. Resume honours the
+    // policy, not just what it saw. shell.qml still owns the policy — this reads
+    // the same environment variable rather than a value it may not have set yet.
+    readonly property bool hotReloadDisabledByPolicy: Quickshell.env("VSHELL_DISABLE_HOT_RELOAD") === "1" || Quickshell.env("VSHELL_DISABLE_HOT_RELOAD") === "true"
+
+    // Re-assertable, not one-shot: this must hold no matter who writes
+    // `Quickshell.watchFiles` or in what order. On a reload with lockAtStartup,
+    // this file's Component.onCompleted runs BEFORE shell.qml's (children
+    // complete first), so shell.qml would otherwise re-arm the watcher on top of
+    // an engaged lock and `lockEngaged` would never change again to re-suspend.
+    function _suspendHotReload(): void {
+        if (!lockEngaged)
+            return;
+        if (Quickshell.watchFiles) {
+            hotReloadWasWatching = true;
+            Quickshell.watchFiles = false;
+            console.info("[Lock] hot reload suspended for the duration of the lock");
+        }
+        hotReloadSuspended = true;
+    }
+
+    function _resumeHotReload(): void {
+        if (!hotReloadSuspended)
+            return;
+        hotReloadSuspended = false;
+        if (hotReloadWasWatching && !hotReloadDisabledByPolicy && !Quickshell.watchFiles) {
+            Quickshell.watchFiles = true;
+            console.info("[Lock] hot reload resumed after unlock");
+        }
+        hotReloadWasWatching = false;
+    }
+
+    onLockEngagedChanged: {
+        if (lockEngaged)
+            _suspendHotReload();
+        else
+            _resumeHotReload();
+    }
+
+    Connections {
+        target: Quickshell
+
+        function onWatchFilesChanged() {
+            if (root.lockEngaged && Quickshell.watchFiles)
+                root._suspendHotReload();
         }
     }
 
