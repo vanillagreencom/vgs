@@ -115,6 +115,7 @@ node scripts/test-latest-transaction-queue.js
 scripts/check-vshell-helper.py
 scripts/check-brightness.py
 scripts/check-backend-inventory.py
+node scripts/test-pill-hover-safety.js
 python3 -m py_compile bin/vshell-helper
 bash -n bin/vshell
 git diff --check
