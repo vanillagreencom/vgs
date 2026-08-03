@@ -22,12 +22,18 @@ Requires:       systemd
 # Run scripts/gen-package-metadata.py --write after changing either file.
 # AI usage widget
 Suggests:       curl
+# faster launcher file search
+Suggests:       fd-find
 # screen recording
 Suggests:       ffmpeg-free
 # file thumbnails
 Suggests:       ffmpegthumbnailer
+# font cache refresh after a font change
+Suggests:       fontconfig
 # cloud sync streaming mounts
 Suggests:       fuse3
+# GTK theme, icon theme and color-scheme application, trash instead of deleting files, launcher default folder opener
+Suggests:       glib2
 # greeter and keyring integration
 Suggests:       gnome-keyring
 # greeter and keyring integration
@@ -44,6 +50,8 @@ Suggests:       libnotify
 Suggests:       niri
 # cloud file sync
 Suggests:       rclone
+# launcher text search
+Suggests:       ripgrep
 # screenshots, region OCR, screen recording
 Suggests:       slurp
 # Tailscale widget
