@@ -27,6 +27,12 @@ Item {
     property real triggerWidth: 40
     property string triggerSection: ""
     property string positioning: "center"
+    // Large surfaces (Dash) anchor to a fixed zone chosen by bar edge x
+    // trigger section instead of centring on the widget that opened them, so
+    // they land somewhere predictable rather than drifting with the bar
+    // layout. Small popouts keep the trigger-centred default: pointing at
+    // what opened them is the useful behaviour at that size.
+    property bool zoneAnchored: false
     property int animationDuration: Theme.popoutAnimationDuration
     property real animationScaleCollapsed: Theme.effectScaleCollapsed
     property real animationOffset: Theme.effectAnimOffset
@@ -140,12 +146,19 @@ Item {
                 return "bottomRight";
             return "bottom";
         case SettingsData.Position.Left:
+            // Zone anchoring centres the surface vertically on vertical bars,
+            // so a section-biased light direction would imply an anchor the
+            // geometry no longer has.
+            if (zoneAnchored)
+                return "left";
             if (section === "left")
                 return "topLeft";
             if (section === "right")
                 return "bottomLeft";
             return "left";
         case SettingsData.Position.Right:
+            if (zoneAnchored)
+                return "right";
             if (section === "left")
                 return "topRight";
             if (section === "right")
@@ -502,11 +515,33 @@ Item {
                 return Math.max(leftGap, Math.min(screenWidth - popupWidth - rightGap, triggerX));
             case SettingsData.Position.Right:
                 return Math.max(leftGap, Math.min(screenWidth - popupWidth - rightGap, triggerX - popupWidth));
-            default:
-                const rawX = triggerX + (triggerWidth / 2) - (popupWidth / 2);
+            default: {
                 const minX = leftGap;
                 const maxX = screenWidth - popupWidth - rightGap;
+                let rawX;
+                if (zoneAnchored) {
+                    // Pinned to the zone, not to the trigger's offset within it:
+                    // anywhere in the middle third yields a screen-centred popout.
+                    switch (triggerSection) {
+                    case "left":
+                        rawX = minX;
+                        break;
+                    case "right":
+                        rawX = maxX;
+                        break;
+                    default:
+                        // Centre of the clamp window, not of the raw screen: a
+                        // bar on a perpendicular edge widens one gap, and true
+                        // visual centre is the middle of what is left. Reduces
+                        // to screen centre when both gaps match.
+                        rawX = minX + (maxX - minX) / 2;
+                        break;
+                    }
+                } else {
+                    rawX = triggerX + (triggerWidth / 2) - (popupWidth / 2);
+                }
                 return Math.max(minX, Math.min(maxX, rawX));
+            }
             }
         })(), dpr)
 
@@ -522,11 +557,14 @@ Item {
                 return Math.max(topGap, Math.min(screenHeight - popupHeight - bottomGap, triggerY - popupHeight));
             case SettingsData.Position.Top:
                 return Math.max(topGap, Math.min(screenHeight - popupHeight - bottomGap, triggerY));
-            default:
-                const rawY = triggerY - (popupHeight / 2);
+            default: {
                 const minY = topGap;
                 const maxY = screenHeight - popupHeight - bottomGap;
+                // Vertical bars collapse all three sections to one vertically
+                // centred zone; only the bar edge varies, and alignedX pins that.
+                const rawY = zoneAnchored ? (minY + (maxY - minY) / 2) : (triggerY - (popupHeight / 2));
                 return Math.max(minY, Math.min(maxY, rawY));
+            }
             }
         })(), dpr)
 
@@ -626,6 +664,12 @@ Item {
             dismissEnabled: root.hoverDismissEnabled
             dismissSuspended: root.hoverDismissSuspended
             surfaceVisible: root.shouldBeVisible
+            // A trigger-centred popout opens directly under its widget, so the
+            // cursor crosses the bar-to-surface gap almost instantly. A
+            // zone-anchored one can sit most of a screen away, and the trip is
+            // spent neither over the bar nor over the surface — the state that
+            // starts the dismiss countdown. Allow for that longer approach.
+            graceInterval: root.zoneAnchored ? 600 : 150
             globalOffsetX: root._surfaceMarginLeft
             globalOffsetY: root._fullHeight ? 0 : root._surfaceMarginTop
             onDismissRequested: root.closeFromHoverDismiss()

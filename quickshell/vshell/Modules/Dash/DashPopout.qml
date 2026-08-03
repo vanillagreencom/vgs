@@ -7,6 +7,10 @@ VgsPopout {
     id: root
 
     layerNamespace: "vshell:dash"
+    // VGS-12: the Dash is large enough that centring it on the clock read as
+    // arbitrary and drifted with the bar layout. Anchor it to the bar-edge
+    // zone its trigger sits in instead.
+    zoneAnchored: true
 
     property bool dashVisible: false
     property var triggerScreen: null

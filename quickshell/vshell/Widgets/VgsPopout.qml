@@ -16,6 +16,8 @@ Item {
     property real triggerWidth: 40
     property string triggerSection: ""
     property string positioning: "center"
+    // See VgsPopoutStandalone.zoneAnchored: opt-in for large surfaces.
+    property bool zoneAnchored: false
     property int animationDuration: Theme.popoutAnimationDuration
     property real animationScaleCollapsed: Theme.effectScaleCollapsed
     property real animationOffset: Theme.effectAnimOffset
@@ -241,6 +243,7 @@ Item {
         it.triggerWidth = Qt.binding(() => root.triggerWidth);
         it.triggerSection = Qt.binding(() => root.triggerSection);
         it.positioning = Qt.binding(() => root.positioning);
+        it.zoneAnchored = Qt.binding(() => root.zoneAnchored);
         it.animationDuration = Qt.binding(() => root.animationDuration);
         it.animationScaleCollapsed = Qt.binding(() => root.animationScaleCollapsed);
         it.animationOffset = Qt.binding(() => root.animationOffset);
