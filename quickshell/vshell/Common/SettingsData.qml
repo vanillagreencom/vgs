@@ -16,7 +16,7 @@ Singleton {
     id: root
     readonly property var log: Log.scoped("SettingsData")
 
-    readonly property int settingsConfigVersion: 18
+    readonly property int settingsConfigVersion: 19
 
     readonly property bool isGreeterMode: Quickshell.env("VSHELL_RUN_GREETER") === "1" || Quickshell.env("VSHELL_RUN_GREETER") === "true"
 
@@ -287,7 +287,6 @@ Singleton {
     property bool barInsetPaddingSyncAll: false
     onBarInsetPaddingSyncAllChanged: saveSettings()
 
-    property bool showLauncherButton: true
     property bool showWorkspaceSwitcher: true
     property bool showFocusedWindow: true
     property bool showWeather: true
@@ -463,8 +462,6 @@ Singleton {
     property var greeterSyncBaseline: ({})
     property int mediaSize: 1
 
-    property string appLauncherViewMode: "list"
-    property string spotlightModalViewMode: "list"
     property string browserPickerViewMode: "grid"
     property var browserUsageHistory: ({})
     property string appPickerViewMode: "grid"
@@ -472,22 +469,14 @@ Singleton {
     property bool sortAppsAlphabetically: false
     property int appLauncherGridColumns: 4
     property bool spotlightCloseNiriOverview: true
-    property bool rememberLastQuery: false
-    property bool rememberLastMode: true
     property var spotlightSectionViewModes: ({})
     onSpotlightSectionViewModesChanged: saveSettings()
-    property var appDrawerSectionViewModes: ({})
-    onAppDrawerSectionViewModesChanged: saveSettings()
     property bool niriOverviewOverlayEnabled: true
     property string launcherSize: "compact"
     property bool launcherShowSourceBadges: true
     property bool launcherShowFooter: true
-    property bool launcherUnloadOnClose: false
     property bool launcherIncludeFilesInAll: false
     property bool launcherIncludeFoldersInAll: false
-    property bool launcherUseOverlayLayer: false
-    property string launcherStyle: "full"
-    property bool spotlightBarShowModeChips: false
     property bool launcherSidebarShowByDefault: true
     property var launcherSearchRoots: ["~"]
     property var launcherSearchIgnored: [".git", "node_modules", ".cache", ".local/share/Trash"]
@@ -2959,7 +2948,6 @@ Singleton {
         updateListModel(leftWidgetsModel, defaultLeft);
         updateListModel(centerWidgetsModel, defaultCenter);
         updateListModel(rightWidgetsModel, defaultRight);
-        showLauncherButton = true;
         showWorkspaceSwitcher = true;
         showFocusedWindow = true;
         showWeather = true;

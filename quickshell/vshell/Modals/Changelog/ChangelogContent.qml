@@ -111,7 +111,7 @@ Column {
                 iconName: "space_dashboard"
                 title: "Vgs Launcher V2"
                 description: "New capabilities & plugins"
-                onClicked: PopoutService.openLauncher()
+                onClicked: PluginService.toggleAppLauncher()
             }
 
             ChangelogFeatureCard {
@@ -230,7 +230,17 @@ Column {
 
                 ChangelogUpgradeNote {
                     width: parent.width
-                    text: "Spotlight replaced by Vgs Launcher V2 — check settings for new options"
+                    text: "Spotlight and the grid launcher are retired — the VGS Menu is now the only app launcher"
+                }
+
+                ChangelogUpgradeNote {
+                    width: parent.width
+                    text: "BREAKING: the launcher, spotlight and spotlight-bar IPC targets are removed — rebind keys to: vshell ipc call vshell-menu toggle"
+                }
+
+                ChangelogUpgradeNote {
+                    width: parent.width
+                    text: "Niri keybinds VGS generated are rewritten automatically; Hyprland binds live in your own config and must be updated by hand"
                 }
 
                 ChangelogUpgradeNote {

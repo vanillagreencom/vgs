@@ -12,8 +12,6 @@ Singleton {
     property var controlCenterLoader: null
     property var notificationCenterPopout: null
     property var notificationCenterLoader: null
-    property var appDrawerPopout: null
-    property var appDrawerLoader: null
     property var processListPopout: null
     property var processListPopoutLoader: null
     property var networkUsagePopout: null
@@ -34,10 +32,6 @@ Singleton {
     property var cloudSyncModal: null
     property var cloudSyncModalLoader: null
     property var clipboardHistoryModal: null
-    property var launcherModal: null
-    property var launcherModalLoader: null
-    property var spotlightBarModal: null
-    property var spotlightBarModalLoader: null
     property var powerMenuModal: null
     property var processListModal: null
     property var processListModalLoader: null
@@ -109,7 +103,6 @@ Singleton {
     readonly property var _deferredUnloaders: ({
             "controlCenter": () => _unloadPopoutNow("controlCenterPopout", "controlCenterLoader"),
             "notificationCenter": () => _unloadPopoutNow("notificationCenterPopout", "notificationCenterLoader"),
-            "appDrawer": () => _unloadPopoutNow("appDrawerPopout", "appDrawerLoader"),
             "processList": () => _unloadPopoutNow("processListPopout", "processListPopoutLoader"),
             "networkUsage": () => _unloadPopoutNow("networkUsagePopout", "networkUsagePopoutLoader"),
             "battery": () => _unloadPopoutNow("batteryPopout", "batteryPopoutLoader"),
@@ -167,28 +160,6 @@ Singleton {
         if (notificationCenterPopout) {
             setPosition(notificationCenterPopout, x, y, width, section, screen);
             notificationCenterPopout.toggle();
-        }
-    }
-
-    function openAppDrawer(x, y, width, section, screen) {
-        if (appDrawerPopout) {
-            setPosition(appDrawerPopout, x, y, width, section, screen);
-            appDrawerPopout.open();
-        }
-    }
-
-    function closeAppDrawer() {
-        appDrawerPopout?.close();
-    }
-
-    function unloadAppDrawer() {
-        _scheduleUnload("appDrawer");
-    }
-
-    function toggleAppDrawer(x, y, width, section, screen) {
-        if (appDrawerPopout) {
-            setPosition(appDrawerPopout, x, y, width, section, screen);
-            appDrawerPopout.toggle();
         }
     }
 
@@ -595,178 +566,6 @@ Singleton {
 
     function unloadLayoutPopout() {
         _scheduleUnload("layout");
-    }
-
-    property bool _launcherWantsOpen: false
-    property bool _launcherWantsToggle: false
-    property string _launcherPendingQuery: ""
-    property string _launcherPendingMode: ""
-    property bool _launcherTriggerUsesOverlayLayer: false
-    property bool _launcherEdgeHoverManaged: false
-
-    function _setLauncherTriggerUsesOverlayLayer(value) {
-        _launcherTriggerUsesOverlayLayer = value === true;
-        // Disable edge-hover by default on every open/toggle path unless explicitly enabled.
-        _setLauncherEdgeHoverManaged(false);
-        if (launcherModal)
-            launcherModal.triggerUsesOverlayLayer = _launcherTriggerUsesOverlayLayer;
-    }
-
-    // Set edgeHoverManaged to enable hover retraction for edge-hover triggered launcher sessions.
-    function _setLauncherEdgeHoverManaged(value) {
-        _launcherEdgeHoverManaged = value === true;
-        if (launcherModal)
-            launcherModal.edgeHoverManaged = _launcherEdgeHoverManaged;
-    }
-
-    function openLauncher(triggerUsesOverlayLayer, edgeHoverManaged) {
-        _setLauncherTriggerUsesOverlayLayer(triggerUsesOverlayLayer);
-        _setLauncherEdgeHoverManaged(edgeHoverManaged);
-        if (launcherModal) {
-            launcherModal.show();
-        } else if (launcherModalLoader) {
-            _launcherWantsOpen = true;
-            _launcherWantsToggle = false;
-            launcherModalLoader.active = true;
-        }
-    }
-
-    function openLauncherWithQuery(query: string, triggerUsesOverlayLayer) {
-        _setLauncherTriggerUsesOverlayLayer(triggerUsesOverlayLayer);
-        if (launcherModal) {
-            launcherModal.showWithQuery(query);
-        } else if (launcherModalLoader) {
-            _launcherPendingQuery = query;
-            _launcherWantsOpen = true;
-            _launcherWantsToggle = false;
-            launcherModalLoader.active = true;
-        }
-    }
-
-    function openLauncherWithMode(mode: string, triggerUsesOverlayLayer) {
-        _setLauncherTriggerUsesOverlayLayer(triggerUsesOverlayLayer);
-        if (launcherModal) {
-            launcherModal.showWithMode(mode);
-        } else if (launcherModalLoader) {
-            _launcherPendingMode = mode;
-            _launcherWantsOpen = true;
-            _launcherWantsToggle = false;
-            launcherModalLoader.active = true;
-        }
-    }
-
-    function closeLauncher() {
-        launcherModal?.hide();
-    }
-
-    function unloadLauncher() {
-        if (launcherModalLoader) {
-            launcherModal = null;
-            launcherModalLoader.active = false;
-        }
-    }
-
-    function toggleLauncher(triggerUsesOverlayLayer) {
-        _setLauncherTriggerUsesOverlayLayer(triggerUsesOverlayLayer);
-        if (launcherModal) {
-            launcherModal.toggle();
-        } else if (launcherModalLoader) {
-            _launcherWantsToggle = true;
-            _launcherWantsOpen = false;
-            launcherModalLoader.active = true;
-        }
-    }
-
-    function toggleLauncherWithMode(mode: string, triggerUsesOverlayLayer) {
-        _setLauncherTriggerUsesOverlayLayer(triggerUsesOverlayLayer);
-        if (launcherModal) {
-            launcherModal.toggleWithMode(mode);
-        } else if (launcherModalLoader) {
-            _launcherPendingMode = mode;
-            _launcherWantsToggle = true;
-            _launcherWantsOpen = false;
-            launcherModalLoader.active = true;
-        }
-    }
-
-    function toggleLauncherWithQuery(query: string, triggerUsesOverlayLayer) {
-        _setLauncherTriggerUsesOverlayLayer(triggerUsesOverlayLayer);
-        if (launcherModal) {
-            launcherModal.toggleWithQuery(query);
-        } else if (launcherModalLoader) {
-            _launcherPendingQuery = query;
-            _launcherWantsOpen = true;
-            _launcherWantsToggle = false;
-            launcherModalLoader.active = true;
-        }
-    }
-
-    function _onLauncherModalLoaded() {
-        if (launcherModal) {
-            launcherModal.triggerUsesOverlayLayer = _launcherTriggerUsesOverlayLayer;
-            launcherModal.edgeHoverManaged = _launcherEdgeHoverManaged;
-        }
-        if (_launcherWantsOpen) {
-            _launcherWantsOpen = false;
-            if (_launcherPendingQuery) {
-                launcherModal?.showWithQuery(_launcherPendingQuery);
-                _launcherPendingQuery = "";
-            } else if (_launcherPendingMode) {
-                launcherModal?.showWithMode(_launcherPendingMode);
-                _launcherPendingMode = "";
-            } else {
-                launcherModal?.show();
-            }
-            return;
-        }
-        if (_launcherWantsToggle) {
-            _launcherWantsToggle = false;
-            if (_launcherPendingMode) {
-                launcherModal?.toggleWithMode(_launcherPendingMode);
-                _launcherPendingMode = "";
-            } else {
-                launcherModal?.toggle();
-            }
-        }
-    }
-
-    property bool _spotlightBarWantsOpen: false
-    property bool _spotlightBarWantsToggle: false
-
-    function openSpotlightBar() {
-        if (spotlightBarModal) {
-            spotlightBarModal.show();
-        } else if (spotlightBarModalLoader) {
-            _spotlightBarWantsOpen = true;
-            _spotlightBarWantsToggle = false;
-            spotlightBarModalLoader.active = true;
-        }
-    }
-
-    function closeSpotlightBar() {
-        spotlightBarModal?.hide();
-    }
-
-    function toggleSpotlightBar() {
-        if (spotlightBarModal) {
-            spotlightBarModal.toggle();
-        } else if (spotlightBarModalLoader) {
-            _spotlightBarWantsToggle = true;
-            _spotlightBarWantsOpen = false;
-            spotlightBarModalLoader.active = true;
-        }
-    }
-
-    function _onSpotlightBarModalLoaded() {
-        if (_spotlightBarWantsOpen) {
-            _spotlightBarWantsOpen = false;
-            spotlightBarModal?.show();
-            return;
-        }
-        if (_spotlightBarWantsToggle) {
-            _spotlightBarWantsToggle = false;
-            spotlightBarModal?.toggle();
-        }
     }
 
     function openPowerMenu() {

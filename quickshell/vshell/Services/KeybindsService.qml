@@ -363,6 +363,7 @@ Singleton {
             };
         }
         _maybeWarnHyprlandLegacyConf();
+        _maybeWarnBindMigrationReload(_rawData?.bindMigration);
 
         if (!_rawData?.binds) {
             _allBinds = {};
@@ -380,6 +381,7 @@ Singleton {
 
         const processed = {};
         const bindsData = _rawData.binds;
+        _maybeWarnRetiredLauncherBinds(bindsData);
         for (const cat in bindsData) {
             const binds = bindsData[cat];
             for (var i = 0; i < binds.length; i++) {
@@ -540,6 +542,49 @@ Singleton {
             return;
         _hyprlandLegacyWarnShown = true;
         ToastService.showWarning(I18n.tr("Hyprland config include missing"), I18n.tr("VGS Settings writes Lua keybinds. Add the VGS include so edits apply."), "", "hyprland-migration");
+    }
+
+    property bool _bindMigrationReloadWarnShown: false
+
+    // The helper rewrites VGS-generated niri binds off the retired launcher
+    // targets on read. If Niri then refuses to load the rewritten file, the
+    // file and the live compositor disagree — the bind on disk is correct but
+    // the key still runs the dead action — and nothing else in the UI would
+    // ever say so. Reported once per session, like the warnings above.
+    function _maybeWarnBindMigrationReload(migration) {
+        if (_bindMigrationReloadWarnShown || !migration || migration.ok !== false)
+            return;
+        _bindMigrationReloadWarnShown = true;
+        // The migration failed outright (unreadable/unwritable binds.kdl)
+        // rather than landing and failing to reload. The binds below are still
+        // good, so this is a warning about the heal, not about the query.
+        if (migration.error) {
+            ToastService.showWarning(I18n.tr("Shortcut update failed"), migration.error, "", "niri-bind-migration-reload");
+            return;
+        }
+        const detail = migration.reload?.stderr || "";
+        ToastService.showWarning(I18n.tr("Shortcut update needs a Niri reload"), detail || I18n.tr("VGS rewrote its launcher shortcuts but Niri did not reload. Reload the Niri config to apply them."), "", "niri-bind-migration-reload");
+    }
+
+    property bool _retiredLauncherBindWarnShown: false
+
+    // VGS-13 removed the launcher/spotlight/spotlight-bar IPC targets. VGS
+    // rewrites the niri binds it generated itself; anything in a config VGS
+    // does not own can only be reported, so say so once per session when the
+    // binds are already in hand rather than spawning a startup probe for it.
+    function _maybeWarnRetiredLauncherBinds(bindsData) {
+        if (_retiredLauncherBindWarnShown || !bindsData)
+            return;
+        for (const cat in bindsData) {
+            const binds = bindsData[cat] || [];
+            for (var i = 0; i < binds.length; i++) {
+                if (!Actions.usesRetiredIpcTarget(binds[i]?.action))
+                    continue;
+                _retiredLauncherBindWarnShown = true;
+                ToastService.showWarning(I18n.tr("Keybind targets a removed action"), I18n.tr("%1 still runs a retired launcher command. Rebind it to: vshell ipc call vshell-menu toggle").arg(binds[i].key || I18n.tr("A shortcut")), "", "retired-launcher-bind");
+                return;
+            }
+        }
     }
 
     function showHyprlandReadOnlyWarning() {

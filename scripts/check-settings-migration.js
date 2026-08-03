@@ -37,7 +37,7 @@ const store = loadModule(storePath, {
 const defaultSettings = JSON.parse(fs.readFileSync(defaultSettingsPath, "utf8"));
 const settingsDataSource = fs.readFileSync(settingsDataPath, "utf8");
 
-const TARGET_VERSION = 16;
+const TARGET_VERSION = 19;
 
 function clone(value) {
   return JSON.parse(JSON.stringify(value));
@@ -346,6 +346,37 @@ const hyprlandBorderGeometryMigrated = migrate({
   hyprlandLayoutBorderSize: 3,
 });
 assert.strictEqual(hyprlandBorderGeometryMigrated.surfaceGeometryTarget, "hyprland");
+
+const legacyLauncherMigrated = migrate({
+  configVersion: 18,
+  showLauncherButton: true,
+  appLauncherViewMode: "grid",
+  spotlightModalViewMode: "list",
+  appDrawerSectionViewModes: { apps: "grid" },
+  launcherUnloadOnClose: true,
+  launcherUseOverlayLayer: true,
+  launcherStyle: "spotlight",
+  spotlightBarShowModeChips: true,
+  rememberLastMode: false,
+  rememberLastQuery: true,
+  launcherSidebarShowByDefault: false,
+  appLauncherGridColumns: 6,
+});
+assertMissing(legacyLauncherMigrated, [
+  "showLauncherButton",
+  "appLauncherViewMode",
+  "spotlightModalViewMode",
+  "appDrawerSectionViewModes",
+  "launcherUnloadOnClose",
+  "launcherUseOverlayLayer",
+  "launcherStyle",
+  "spotlightBarShowModeChips",
+  "rememberLastMode",
+  "rememberLastQuery",
+]);
+// Settings the vgsMenu launcher and the app picker still read must survive.
+assert.strictEqual(legacyLauncherMigrated.launcherSidebarShowByDefault, false);
+assert.strictEqual(legacyLauncherMigrated.appLauncherGridColumns, 6);
 
 assert.strictEqual(
   store.migrateToVersion({ configVersion: TARGET_VERSION }, TARGET_VERSION),

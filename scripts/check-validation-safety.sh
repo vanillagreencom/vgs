@@ -273,7 +273,7 @@ fi
 if [[ "$self_test" == true ]]; then
   # The surface comparison must tolerate the live shell's normal popup churn
   # while still catching a duplicated or orphaned surface.
-  self_before="$(printf 'DP-1\tvshell:bar\nDP-1\tvshell:spotlight\nDP-2\tvshell:bar')"
+  self_before="$(printf 'DP-1\tvshell:bar\nDP-1\tvshell:vgs-menu\nDP-2\tvshell:bar')"
   if ! vgs_layers_regressed "$self_before" "$(printf 'DP-1\tvshell:bar\nDP-2\tvshell:bar')"; then
     fail "self-test: a closed popup must not read as damage"
   fi

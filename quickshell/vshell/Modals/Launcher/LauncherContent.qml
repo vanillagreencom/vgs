@@ -12,7 +12,6 @@ FocusScope {
     LayoutMirroring.childrenInherit: true
 
     property var parentModal: null
-    property string viewModeContext: "spotlight"
     property alias searchField: searchField
     property alias controller: controller
     property alias resultsList: resultsList
@@ -126,7 +125,6 @@ FocusScope {
     Controller {
         id: controller
         active: root.parentModal ? (root.parentModal.spotlightOpen || root.parentModal.isClosing) : true
-        viewModeContext: root.viewModeContext
 
         onItemExecuted: {
             if (root.parentModal) {

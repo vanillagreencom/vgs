@@ -301,7 +301,6 @@ Item {
         if (widgetId === "systemTray" && typeof widgetItem.openHoverAtGlobalPoint === "function")
             return true;
         switch (widgetId) {
-        case "launcherButton":
         case "clipboard":
         case "clock":
         case "music":
@@ -674,8 +673,6 @@ Item {
 
     function _loaderForWidgetId(widgetId) {
         switch (widgetId) {
-        case "launcherButton":
-            return PopoutService.appDrawerLoader;
         case "clipboard":
             return PopoutService.clipboardHistoryPopoutLoader;
         case "clock":
@@ -728,12 +725,6 @@ Item {
 
         const loader = _loaderForWidgetId(widgetId);
         switch (widgetId) {
-        case "launcherButton":
-            return barContent.openWidgetPopout(Object.assign({}, base, {
-                loader,
-                triggerSource: "appDrawer",
-                visualItem: widgetItem
-            }));
         case "clipboard":
             return barContent.openWidgetPopout(Object.assign({}, base, {
                 loader,

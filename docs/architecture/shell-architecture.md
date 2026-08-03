@@ -21,9 +21,11 @@ Runtime name: `vshell`.
 |------|------|
 | `Common/` | Shared paths, theme state, settings, session data |
 | `Services/` | Long-lived shell services and command bridges |
-| `Modules/` | Bar, settings, launcher, dash, control center, popouts, greetd greeter |
+| `Modules/` | Bar, settings, dash, control center, popouts, greetd greeter |
 | `Widgets/` | Shared visual components |
 | `config/vshell/plugins/` | Internal packages for bundled VGS modules, loaded read-only by the component service |
+| `config/vshell/plugins/vgsMenu/` | The app launcher. Required: the shell has no other launcher, and the dock/bar launcher buttons route to it |
+| `Modals/Launcher/` | Shared search UI (`LauncherContent` + `Controller`). Its only entry point is the niri overview overlay; `LauncherSettingsPanel` and `FilePreviewPanel` are also used by `vgsMenu` |
 | `config/vshell/*.default.json` | Shipped seed defaults, not live user state |
 | `config/vshell/dependencies.json` | Feature dependency manifest |
 | `~/.config/vshell/` | Mutable user settings/state and user plugin overrides |

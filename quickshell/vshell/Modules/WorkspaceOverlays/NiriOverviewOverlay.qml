@@ -14,7 +14,8 @@ Scope {
     property string searchActiveScreen: ""
     property bool isClosing: false
     property bool releaseKeyboard: false
-    readonly property bool spotlightModalOpen: PopoutService.launcherModal?.spotlightOpen ?? false
+    // The overview search yields to the app launcher (vgsMenu plugin) when it opens.
+    readonly property bool appMenuOpen: PluginService.appLauncherOpen
     property bool overlayActive: NiriService.inOverview || searchActive
 
     function showSpotlight(screenName) {
@@ -63,8 +64,8 @@ Scope {
         }
     }
 
-    onSpotlightModalOpenChanged: {
-        if (spotlightModalOpen && searchActive)
+    onAppMenuOpenChanged: {
+        if (appMenuOpen && searchActive)
             hideSpotlight();
     }
 

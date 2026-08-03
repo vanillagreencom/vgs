@@ -127,7 +127,7 @@ window-rule {
         niri._write_vgs_niri_binds([{
             "key": "Mod+Space",
             "desc": "Launcher",
-            "action": "spawn vshell ipc call spotlight toggle",
+            "action": "spawn vshell ipc call vshell-menu toggle",
             "allowWhenLocked": True,
             "repeat": False,
         }])
@@ -140,6 +140,82 @@ window-rule {
         managed = next(bind for bind in all_binds if bind["key"] == "Mod+Space")
         assert_equal(managed["allowWhenLocked"], True, "Niri bind allow-when-locked")
         assert_equal(managed["repeat"], False, "Niri bind repeat")
+
+        # VGS-13: binds VGS generated against the retired launcher IPC targets
+        # are rewritten onto vshell-menu on read, and the file is rewritten so
+        # the fix survives without the user re-editing the bind.
+        # "ipc call <target>" is VGS syntax, not a reserved word: only a vshell
+        # invocation may be rewritten. A bind that spawns some other program
+        # with the same arguments is the user's, and a read must not touch it.
+        niri._write_vgs_niri_binds([
+            {"key": "Mod+Space", "desc": "Launcher", "action": "spawn vshell ipc call spotlight toggle"},
+            {"key": "Mod+D", "desc": "Spotlight bar", "action": "spawn vshell ipc call spotlight-bar open"},
+            {"key": "Mod+Slash", "desc": "Launcher query", "action": "spawn vshell ipc call launcher toggleQuery emoji"},
+            {"key": "Mod+T", "desc": "Terminal", "action": "spawn foot"},
+            {"key": "Mod+A", "desc": "Absolute path", "action": "spawn /usr/bin/vshell ipc call spotlight toggle"},
+            {"key": "Mod+N", "desc": "Not vshell", "action": "spawn notify-send ipc call spotlight toggle"},
+            {"key": "Mod+W", "desc": "Lookalike", "action": "spawn my-vshell-wrapper ipc call launcher toggle"},
+        ])
+        migrated_binds = {bind["key"]: bind["action"] for bind in niri._load_vgs_niri_binds()}
+        assert_equal(migrated_binds["Mod+Space"], "spawn vshell ipc call vshell-menu toggle", "spotlight bind migration")
+        assert_equal(migrated_binds["Mod+D"], "spawn vshell ipc call vshell-menu open", "spotlight-bar bind migration")
+        assert_equal(migrated_binds["Mod+Slash"], "spawn vshell ipc call vshell-menu toggle", "launcher query bind migration")
+        assert_equal(migrated_binds["Mod+T"], "spawn foot", "unrelated bind left alone")
+        assert_equal(migrated_binds["Mod+A"], "spawn /usr/bin/vshell ipc call vshell-menu toggle", "absolute vshell path should still migrate")
+        assert_equal(migrated_binds["Mod+N"], "spawn notify-send ipc call spotlight toggle", "non-vshell program must not be rewritten")
+        assert_equal(migrated_binds["Mod+W"], "spawn my-vshell-wrapper ipc call launcher toggle", "lookalike program must not be rewritten")
+        assert_equal(niri.migrate_vgs_niri_binds()["migrated"], True, "bind migration should rewrite binds.kdl")
+        on_disk = (niri.niri_config_dir() / "binds.kdl").read_text()
+        # Scoped to vshell invocations: the non-vshell binds above legitimately
+        # keep their own "spotlight" argument, so a bare substring check here
+        # would now be testing the wrong thing.
+        for retired in ("spotlight-bar", "spotlight", "launcher"):
+            if f'"vshell" "ipc" "call" "{retired}"' in on_disk:
+                raise AssertionError(f"retired launcher IPC target {retired!r} survived the binds.kdl rewrite")
+        if '"notify-send" "ipc" "call" "spotlight" "toggle"' not in on_disk:
+            raise AssertionError("a non-vshell bind was rewritten by the launcher migration")
+        assert_equal(niri.migrate_vgs_niri_binds()["migrated"], False, "bind migration should be idempotent")
+
+        # A migration Niri refuses to reload leaves the file and the live
+        # compositor disagreeing; that must reach the caller, not be dropped.
+        reload_calls = []
+        original_reload = niri._reload_niri
+
+        def _failing_reload():
+            reload_calls.append("called")
+            return {"attempted": True, "ok": False, "stdout": "", "stderr": "reload rejected"}
+
+        niri._reload_niri = _failing_reload
+        try:
+            # An idempotent read must not reload at all.
+            payload = niri.niri_binds_json()
+            assert_equal(reload_calls, [], "clean read should not reload Niri")
+            assert_equal("bindMigration" in payload, False, "clean read should report no migration")
+
+            niri._write_vgs_niri_binds([
+                {"key": "Mod+Space", "desc": "Launcher", "action": "spawn vshell ipc call spotlight toggle"},
+            ])
+            result = niri.migrate_vgs_niri_binds()
+            assert_equal(result["migrated"], True, "retired bind should migrate")
+            assert_equal(result["ok"], False, "failed Niri reload must not report ok")
+            assert_equal(result["reload"]["stderr"], "reload rejected", "reload failure detail should survive")
+            assert_equal(reload_calls, ["called"], "migration should reload exactly once")
+
+            niri._write_vgs_niri_binds([
+                {"key": "Mod+Space", "desc": "Launcher", "action": "spawn vshell ipc call spotlight toggle"},
+            ])
+            payload = niri.niri_binds_json()
+            assert_equal(payload["bindMigration"]["ok"], False, "binds payload must surface the failed reload")
+        finally:
+            niri._reload_niri = original_reload
+
+        niri._write_vgs_niri_binds([{
+            "key": "Mod+Space",
+            "desc": "Launcher",
+            "action": "spawn vshell ipc call vshell-menu toggle",
+            "allowWhenLocked": True,
+            "repeat": False,
+        }])
         original_reload = niri._reload_niri
         niri._reload_niri = lambda: {
             "attempted": True, "ok": False, "stdout": "", "stderr": "reload rejected"
