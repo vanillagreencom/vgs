@@ -105,6 +105,7 @@ Feature groups:
 | `clipboard` | Clipboard history (wl-clipboard) |
 | `thumbnails` | File/image thumbnails |
 | `brightness` | Display brightness backends |
+| `sudo-toggle` | Passwordless sudo toggle widget (`vshell sudo-toggle`) |
 | `cloud-sync` | Cloud file sync (rclone) |
 | `cloud-sync-stream` | Cloud sync streaming FUSE mounts |
 

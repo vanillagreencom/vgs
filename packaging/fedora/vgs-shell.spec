@@ -54,6 +54,8 @@ Suggests:       rclone
 Suggests:       ripgrep
 # screenshots, region OCR, screen recording
 Suggests:       slurp
+# privileged actions run from the shell, sudoers validation before a drop-in is installed
+Suggests:       sudo
 # Tailscale widget
 Suggests:       tailscale
 # region OCR

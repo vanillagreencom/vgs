@@ -35,6 +35,7 @@ optdepends=(
   'ripgrep: launcher text search'
   'satty: screenshot annotation'
   'slurp: screenshots, region OCR, screen recording'
+  'sudo: privileged actions run from the shell, sudoers validation before a drop-in is installed'
   'tailscale: Tailscale widget'
   'tesseract: region OCR'
   'tesseract-data-eng: region OCR'

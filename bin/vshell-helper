@@ -10041,6 +10041,171 @@ def _launcher_preview(path: Path, lines: int, focus_line: int = 0, query: str = 
         return {"ok": False, "error": str(exc), "path": str(path)}
 
 
+# --- Passwordless sudo toggle -------------------------------------------------
+#
+# Protocol (owned by VGS; the sudoToggle plugin is the only consumer):
+#   /etc/sudoers.d/50-<user>-nopasswd-toggle   the privileged drop-in
+#   ~/.local/state/sudo-passwordless-toggle    unprivileged state mirror
+#
+# The mirror exists because /etc/sudoers.d is 0750 root:root, so the shell
+# cannot read the real state as the logged-in user. Anything that changes the
+# drop-in must update the mirror in the same operation.
+
+SUDO_TOGGLE_FLAG = ".local/state/sudo-passwordless-toggle"
+
+
+def sudo_toggle_dropin(user: str) -> Path:
+    return Path("/etc/sudoers.d") / f"50-{user}-nopasswd-toggle"
+
+
+def sudo_toggle_flag_path() -> Path:
+    return home() / SUDO_TOGGLE_FLAG
+
+
+def sudo_toggle_availability() -> Tuple[bool, str]:
+    """Can this machine run the toggle at all? (unprivileged check)"""
+    if not shutil.which("sudo"):
+        return False, "sudo is not installed"
+    if not shutil.which("visudo"):
+        return False, "visudo is not installed (usually shipped with sudo)"
+    if not Path("/etc/sudoers.d").is_dir():
+        return False, "/etc/sudoers.d does not exist; sudo has no drop-in include directory"
+    return True, ""
+
+
+def sudo_toggle_apply(dropin: Path, user: str, enable: bool, visudo_bin: str | None) -> Tuple[bool, str]:
+    """Create or remove the NOPASSWD drop-in. Runs privileged.
+
+    The candidate file is validated before it is put in place, and the staging
+    name deliberately contains a dot: sudo ignores files in sudoers.d whose name
+    contains a '.', so a half-written or invalid candidate is never in effect.
+    """
+    if not enable:
+        try:
+            dropin.unlink()
+        except FileNotFoundError:
+            pass
+        return True, "Passwordless sudo disabled"
+    if dropin.is_symlink():
+        return False, f"Refusing to write through a symlink: {dropin}"
+    staging = dropin.with_name(dropin.name + f".vgs-tmp-{os.getpid()}")
+    try:
+        staging.write_text(f"{user} ALL=(ALL) NOPASSWD: ALL\n")
+        os.chmod(staging, 0o440)
+        if visudo_bin:
+            check = subprocess.run(
+                [visudo_bin, "-cf", str(staging)],
+                text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            )
+            if check.returncode != 0:
+                detail = (check.stdout or "").strip()
+                return False, "sudoers validation failed, no change made" + (f": {detail}" if detail else "")
+        else:
+            return False, "visudo is unavailable; refusing to install an unvalidated sudoers drop-in"
+        staging.replace(dropin)
+    finally:
+        try:
+            staging.unlink()
+        except FileNotFoundError:
+            pass
+    return True, "Passwordless sudo enabled (persistent, no expiry)"
+
+
+def sudo_toggle_write_flag(enable: bool) -> None:
+    """Mirror the privileged state where the shell can read it.
+
+    Runs as root after the sudo re-exec, so the flag and the directories it
+    needs are chowned back to the logged-in user.
+    """
+    flag = sudo_toggle_flag_path()
+    owner_uid, owner_gid = os.getuid(), os.getgid()
+    if os.geteuid() == 0:
+        try:
+            pw = pwd.getpwnam(current_login_user())
+            owner_uid, owner_gid = pw.pw_uid, pw.pw_gid
+        except KeyError:
+            pass
+    if not enable:
+        try:
+            flag.unlink()
+        except FileNotFoundError:
+            pass
+        return
+    created = [p for p in (flag.parent.parent, flag.parent) if not p.exists()]
+    flag.parent.mkdir(parents=True, exist_ok=True)
+    flag.touch()
+    for path in [*created, flag]:
+        try:
+            os.chown(path, owner_uid, owner_gid)
+        except (PermissionError, FileNotFoundError):
+            pass
+
+
+def sudo_toggle_status(user: str) -> Dict[str, Any]:
+    available, reason = sudo_toggle_availability()
+    enabled = sudo_toggle_flag_path().is_file()
+    if os.geteuid() == 0:
+        # Privileged callers can see the truth; the mirror may have drifted.
+        enabled = sudo_toggle_dropin(user).is_file()
+    return {
+        "ok": True,
+        "available": available,
+        "reason": reason,
+        "enabled": enabled,
+        "user": user,
+        "dropin": str(sudo_toggle_dropin(user)),
+        "flag": str(sudo_toggle_flag_path()),
+    }
+
+
+def cmd_sudo_toggle(argv: List[str]) -> int:
+    parser = argparse.ArgumentParser(prog="vshell sudo-toggle")
+    sub = parser.add_subparsers(dest="cmd", required=True)
+    p_status = sub.add_parser("status", help="report availability and current state")
+    p_status.add_argument("--json", action="store_true")
+    p_toggle = sub.add_parser("toggle", help="flip passwordless sudo for the current user")
+    p_toggle.add_argument("--terminal", action="store_true",
+                          help="re-exec under sudo in a terminal so it can prompt for a password")
+    args = parser.parse_args(argv)
+
+    user = current_login_user()
+    if args.cmd == "status":
+        status = sudo_toggle_status(user)
+        if args.json:
+            print(json.dumps(status))
+        else:
+            state = "enabled" if status["enabled"] else "disabled"
+            print(f"passwordless sudo: {state}" if status["available"]
+                  else f"passwordless sudo: unavailable ({status['reason']})")
+        return 0 if status["available"] else 1
+
+    available, reason = sudo_toggle_availability()
+    if not available:
+        eprint(f"vshell sudo-toggle: {reason}")
+        return 1
+
+    if os.geteuid() != 0:
+        # Turning the drop-in OFF is itself a passwordless action while it is
+        # still in place, so try non-interactively first and only open a
+        # terminal when sudo actually needs to prompt. That keeps the common
+        # "switch it back off" case silent.
+        if not args.terminal:
+            quiet = ensure_root_for(["sudo-toggle", *argv])
+            if quiet == 0:
+                return 0
+        return ensure_root_for(["sudo-toggle", "toggle", "--terminal"], terminal=True) or 0
+
+    dropin = sudo_toggle_dropin(user)
+    enable = not dropin.is_file()
+    ok, message = sudo_toggle_apply(dropin, user, enable, shutil.which("visudo"))
+    if not ok:
+        eprint(f"vshell sudo-toggle: {message}")
+        return 1
+    sudo_toggle_write_flag(enable)
+    print(message)
+    return 0
+
+
 def cmd_launcher_search(argv: List[str]) -> int:
     parser = argparse.ArgumentParser(prog="vshell launcher-search")
     sub = parser.add_subparsers(dest="cmd", required=True)
@@ -10127,6 +10292,7 @@ def main() -> int:
         if cmd == "brightness": return cmd_brightness(argv)
         if cmd == "auth": return cmd_auth(argv)
         if cmd == "greeter": return cmd_greeter(argv)
+        if cmd == "sudo-toggle": return cmd_sudo_toggle(argv)
         if cmd == "launcher-search": return cmd_launcher_search(argv)
         eprint(f"Unknown VGS helper command: {cmd}")
         return 2

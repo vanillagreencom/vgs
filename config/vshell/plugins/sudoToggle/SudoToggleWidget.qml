@@ -2,6 +2,7 @@ import QtQuick
 import Quickshell
 import Quickshell.Io
 import qs.Common
+import qs.Services
 import qs.Widgets
 import qs.Modules.Plugins
 
@@ -9,26 +10,96 @@ PluginComponent {
     id: root
 
     // --- Live state: passwordless sudo is ENABLED iff the flag file exists ---
+    //
+    // The privileged drop-in lives in /etc/sudoers.d, which is unreadable to
+    // the logged-in user, so `vshell sudo-toggle` mirrors the state to a flag
+    // file this widget can watch. Protocol: docs/architecture/shell-architecture.md.
     property bool enabled: false
 
+    // Whether the toggle can run at all on this machine (sudo + visudo +
+    // /etc/sudoers.d). Assume unavailable until the probe answers, so a failed
+    // probe never leaves a control that looks operable.
+    property bool available: false
+    property string unavailableReason: "checking…"
+    property string _toggleStderr: ""
+
     readonly property string flagPath: (Quickshell.env("HOME") || "") + "/.local/state/sudo-passwordless-toggle"
-    readonly property string launchBin: (Quickshell.env("HOME") || "") + "/.local/bin/sudo-passwordless-toggle-launch"
 
     function iconName() {
         // gpp_maybe = shield with caution (elevated / less secure)
         // gpp_good  = shield with check   (secure / password required)
+        // gpp_bad   = shield with cross   (feature unavailable here)
+        if (!root.available)
+            return "gpp_bad";
         return root.enabled ? "gpp_maybe" : "gpp_good";
     }
 
     function tooltipText() {
+        if (!root.available)
+            return "Passwordless sudo toggle unavailable — " + root.unavailableReason;
         return root.enabled ? "Passwordless sudo ENABLED — click to toggle" : "Passwordless sudo disabled — click to toggle";
     }
 
     function toggle() {
-        if (root.launchBin.length > 0)
-            Quickshell.execDetached([root.launchBin]);
+        if (!root.available) {
+            ToastService.showWarning("Passwordless sudo toggle unavailable", root.unavailableReason);
+            statusProc.running = true;
+            return;
+        }
+        if (toggleProc.running)
+            return;
+        toggleProc.running = true;
         // The FileView watch + poll timer pick up the new state; nudge shortly.
         stateNudge.restart();
+    }
+
+    // Availability probe. `status` exits non-zero when the toggle cannot run,
+    // and reports why, so the widget never has to guess.
+    Process {
+        id: statusProc
+        command: [Paths.vshellCli, "sudo-toggle", "status", "--json"]
+        running: true
+        stdout: StdioCollector {
+            id: statusOut
+            onStreamFinished: {
+                try {
+                    const status = JSON.parse(statusOut.text);
+                    root.available = status.available === true;
+                    root.unavailableReason = status.reason || "unknown reason";
+                    root.enabled = status.enabled === true;
+                } catch (e) {
+                    root.available = false;
+                    root.unavailableReason = "could not read `vshell sudo-toggle status`";
+                }
+            }
+        }
+        onExited: exitCode => {
+            if (exitCode !== 0 && root.available) {
+                root.available = false;
+                root.unavailableReason = "`vshell sudo-toggle status` exited " + exitCode;
+            }
+        }
+    }
+
+    // The toggle itself. It re-execs under sudo — silently when sudo needs no
+    // password (turning the drop-in off), in a terminal when it must prompt.
+    // A failed spawn must surface: this widget's whole defect history is
+    // clicks that did nothing.
+    Process {
+        id: toggleProc
+        command: [Paths.vshellCli, "sudo-toggle", "toggle"]
+        running: false
+        stderr: StdioCollector {
+            onStreamFinished: root._toggleStderr = text || ""
+        }
+        onExited: exitCode => {
+            if (exitCode !== 0) {
+                const detail = (root._toggleStderr || "").trim();
+                ToastService.showError("Passwordless sudo toggle failed", detail || ("vshell sudo-toggle exited " + exitCode));
+                statusProc.running = true;
+            }
+            root._toggleStderr = "";
+        }
     }
 
     // Watch the flag file live. onLoaded => present (enabled),
@@ -140,7 +211,10 @@ PluginComponent {
                 name: root.iconName()
                 size: root.iconSize
                 color: Theme.widgetIconColor
-                filled: root.enabled
+                filled: root.available && root.enabled
+                // Dimmed reads as "present but not operable" — clicking still
+                // explains why rather than doing nothing.
+                opacity: root.available ? 1 : 0.4
             }
 
             // Hover-only overlay: NoButton lets clicks fall through to the
@@ -167,7 +241,8 @@ PluginComponent {
                 name: root.iconName()
                 size: root.iconSize
                 color: Theme.widgetIconColor
-                filled: root.enabled
+                filled: root.available && root.enabled
+                opacity: root.available ? 1 : 0.4
             }
 
             MouseArea {

@@ -34,6 +34,7 @@ pkgbase = vgs-shell
 	optdepends = ripgrep: launcher text search
 	optdepends = satty: screenshot annotation
 	optdepends = slurp: screenshots, region OCR, screen recording
+	optdepends = sudo: privileged actions run from the shell, sudoers validation before a drop-in is installed
 	optdepends = tailscale: Tailscale widget
 	optdepends = tesseract: region OCR
 	optdepends = tesseract-data-eng: region OCR

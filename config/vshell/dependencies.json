@@ -196,6 +196,12 @@
         "udevadm"
       ]
     },
+    "sudo-toggle": {
+      "commands": [
+        "sudo",
+        "visudo"
+      ]
+    },
     "cloud-sync": {
       "commands": [
         "rclone"

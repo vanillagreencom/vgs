@@ -1179,6 +1179,83 @@ def test_launcher_zoxide_results():
     assert_equal(hits[0]["zoxide_score"], 42.0, "zoxide score parsing")
 
 
+def test_sudo_toggle_dropin_lifecycle():
+    """Exercise the privileged drop-in writer against a temp dir (no sudo).
+
+    The real path is /etc/sudoers.d, which needs root; the function takes the
+    drop-in path so the enable/validate/disable logic is testable unprivileged.
+    """
+    visudo = shutil.which("visudo")
+    with tempfile.TemporaryDirectory() as tmp:
+        dropin = Path(tmp) / "50-tester-nopasswd-toggle"
+
+        ok, message = helper.sudo_toggle_apply(dropin, "tester", True, visudo)
+        if visudo is None:
+            assert_equal(ok, False, "Enable without visudo must refuse")
+            assert_equal(dropin.exists(), False, "Refused enable must leave no drop-in")
+            return
+        assert_equal(ok, True, f"Enable must succeed: {message}")
+        assert_equal(dropin.read_text(), "tester ALL=(ALL) NOPASSWD: ALL\n",
+                     "Drop-in content must be the NOPASSWD rule for the named user")
+        assert_equal(oct(dropin.stat().st_mode & 0o777), "0o440",
+                     "Drop-in must be mode 0440")
+        assert_equal(sorted(p.name for p in Path(tmp).iterdir()), [dropin.name],
+                     "Enable must leave no staging file behind")
+
+        # Re-enabling over an existing drop-in is idempotent, not an error.
+        ok, _ = helper.sudo_toggle_apply(dropin, "tester", True, visudo)
+        assert_equal(ok, True, "Re-enable must be idempotent")
+
+        ok, _ = helper.sudo_toggle_apply(dropin, "tester", False, visudo)
+        assert_equal(ok, True, "Disable must succeed")
+        assert_equal(dropin.exists(), False, "Disable must remove the drop-in")
+
+        # Disabling when nothing is installed is a no-op, not a failure.
+        ok, _ = helper.sudo_toggle_apply(dropin, "tester", False, visudo)
+        assert_equal(ok, True, "Disable on an absent drop-in must be a no-op")
+
+        # An invalid rule must never land: prove the validation gate can fail.
+        bad, message = helper.sudo_toggle_apply(dropin, "not a valid user spec !!", True, visudo)
+        assert_equal(bad, False, "visudo must reject a malformed user spec")
+        assert_equal(dropin.exists(), False, "Rejected candidate must not be installed")
+        assert_equal(sorted(p.name for p in Path(tmp).iterdir()), [],
+                     "Rejected candidate must leave no staging file behind")
+
+        # A symlinked drop-in path is a redirect target; refuse it.
+        link = Path(tmp) / "50-link-nopasswd-toggle"
+        link.symlink_to(Path(tmp) / "elsewhere")
+        ok, message = helper.sudo_toggle_apply(link, "tester", True, visudo)
+        assert_equal(ok, False, "Symlinked drop-in path must be refused")
+        assert_equal((Path(tmp) / "elsewhere").exists(), False,
+                     "Refused symlink must not write through to the target")
+
+
+def test_sudo_toggle_status_reads_flag_mirror():
+    """Unprivileged status comes from the ~/.local/state mirror."""
+    def check(home_path: Path):
+        flag = home_path / ".local" / "state" / "sudo-passwordless-toggle"
+        status = helper.sudo_toggle_status("tester")
+        assert_equal(status["enabled"], False, "Absent flag must read as disabled")
+        assert_equal(status["flag"], str(flag), "Status must report the mirror path")
+        assert_equal(status["dropin"], "/etc/sudoers.d/50-tester-nopasswd-toggle",
+                     "Status must report the drop-in path for the named user")
+
+        flag.parent.mkdir(parents=True, exist_ok=True)
+        flag.touch()
+        assert_equal(helper.sudo_toggle_status("tester")["enabled"], True,
+                     "Present flag must read as enabled")
+
+        # available/reason must be a real probe, not a constant.
+        available, reason = helper.sudo_toggle_availability()
+        assert_equal(available, bool(shutil.which("sudo") and shutil.which("visudo")
+                                     and Path("/etc/sudoers.d").is_dir()),
+                     "Availability must reflect the actual sudo/visudo/sudoers.d probe")
+        assert_equal(bool(reason) is not available, True,
+                     "Unavailable must carry a reason and available must not")
+
+    with_temp_home(check)
+
+
 def main():
     assert_equal(helper._theme_command_mutates(["chromium-policy"]), True,
                  "Chromium policy refresh must serialize with theme applies")
@@ -1204,6 +1281,8 @@ def main():
     test_launcher_zoxide_results()
     test_duplicate_shell_guard()
     test_duplicate_shell_guard_uses_kernel_start_times()
+    test_sudo_toggle_dropin_lifecycle()
+    test_sudo_toggle_status_reads_flag_mirror()
     subprocess.run(
         [sys.executable, str(REPO_ROOT / "scripts" / "check-vshell-niri.py")],
         check=True,

@@ -44,7 +44,17 @@ Runtime name: `vshell`.
    the matching VGS fragment.
 8. `vshell greeter sync` writes `/var/cache/vshell-greeter`, copied greeter runtime, `/etc/greetd/config.toml`, and `/etc/pam.d/greetd`; `vshell auth sync` writes `/etc/pam.d/vshell`, `/etc/pam.d/vshell-u2f`, and refreshes greetd PAM.
 9. Empty-password login keyring conversion is explicit: `vshell greeter keyring empty --force` backs up `~/.local/share/keyrings/login.keyring` before replacing it; normal greeter sync refuses destructive conversion.
-10. Optional widgets check helper/backends and degrade when unavailable.
+10. `vshell sudo-toggle` owns the passwordless-sudo protocol used by the
+    `sudoToggle` plugin: the privileged drop-in is
+    `/etc/sudoers.d/50-<user>-nopasswd-toggle`, validated with `visudo` under a
+    dot-suffixed staging name (which sudo ignores) before it is moved into
+    place, and mirrored to `~/.local/state/sudo-passwordless-toggle` because
+    `/etc/sudoers.d` is unreadable to the logged-in user. `toggle` tries
+    `sudo -n` first and only opens a terminal when sudo must prompt; the
+    terminal comes from `launch_terminal` (`$TERMINAL`, then installed
+    candidates), never a hardcoded emulator. `status --json` reports
+    `available`/`reason`/`enabled` so the widget can gate itself.
+11. Optional widgets check helper/backends and degrade when unavailable.
 
 ## Single instance per session
 One session owns one VGS shell. A second full instance competes for
