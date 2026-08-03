@@ -1,0 +1,323 @@
+# yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
+#
+# CodeRabbit configuration for VGS (VanillaGreen Shell).
+#
+# THIS FILE SUPERSEDES THE ORG/REPO UI SETTINGS ENTIRELY. It is not a delta:
+# anything configured only in the CodeRabbit dashboard stops applying the moment
+# this file lands. Every setting we depend on is therefore written out here even
+# where it matches the schema default, and the UI is documentation at best.
+#
+# Nothing here is wired into a merge gate. CodeRabbit publishes its completion
+# evidence as a commit STATUS named "CodeRabbit" (not a check-run — the GitHub
+# checks rollup hides that distinction), and orch's PR_REVIEW_CHECK is
+# deliberately empty because both reviewers on this repo submit review objects.
+# See vstack.settings.toml for that reasoning.
+
+language: en-US
+
+tone_instructions: >-
+  Be terse and technical. State the defect, the input that triggers it, and the
+  consequence. Skip praise, diff restatements, and summaries of what the code
+  already says. One finding per thread. If you are not certain a finding is
+  real, say which part you could not verify instead of dressing it up in
+  plausible rationale — a confident wrong finding costs more than a hedged one.
+
+early_access: false
+enable_free_tier: true
+inheritance: false
+
+reviews:
+  profile: chill
+  # Auto-approve once every requested change is resolved, so a
+  # changes-requested review converges without a human dismissing it.
+  request_changes_workflow: true
+
+  # Evidence surfaces. Kept on because they are cheap and the repo's tooling
+  # reads the commit status; do not turn these off without checking
+  # vstack.settings.toml first.
+  review_status: true
+  commit_status: true
+  fail_commit_status: false
+
+  # Everything below duplicates or decorates. Findings and threads are the
+  # product; a second bot (Qodo) is also posting on these PRs, and two summaries
+  # of the same diff is worse than none.
+  high_level_summary: false
+  high_level_summary_in_walkthrough: false
+  changed_files_summary: false
+  sequence_diagrams: false
+  estimate_code_review_effort: false
+  related_issues: false
+  related_prs: false
+  suggested_labels: false
+  auto_apply_labels: false
+  suggested_reviewers: false
+  auto_assign_reviewers: false
+  assess_linked_issues: false
+  poem: false
+  in_progress_fortune: false
+  collapse_walkthrough: true
+  review_details: false
+  review_progress: true
+  abort_on_close: true
+
+  # This repo has no bot-driven merge choreography; pre-merge checks would only
+  # add advisory noise next to the real gate (orch + unresolved threads).
+  pre_merge_checks:
+    title:
+      mode: "off"
+    description:
+      mode: "off"
+    docstrings:
+      mode: "off"
+    issue_assessment:
+      mode: "off"
+
+  # No unattended edits. Fixes land through the normal PR flow so they are
+  # reviewed and validated like anything else.
+  finishing_touches:
+    docstrings:
+      enabled: false
+    unit_tests:
+      enabled: false
+    autofix:
+      enabled: false
+    fix_ci:
+      enabled: false
+    resolve_merge_conflict:
+      enabled: false
+    simplify:
+      enabled: false
+
+  auto_review:
+    enabled: true
+    drafts: false
+    auto_incremental_review: true
+    # ".*" rather than naming main: auto-review has a base-branch
+    # mis-detection mode where it skips PRs targeting the default branch
+    # claiming a non-default base. This also covers stacked PRs.
+    base_branches:
+      - ".*"
+
+  # Exclude almost nothing. Vendored CODE stays reviewable on purpose — a
+  # reviewer reading a vendored bundle can find a real upstream bug, and the
+  # path_instructions below tell it to frame such findings as upstream issues
+  # rather than in-repo patches. Only unreviewable asset blobs are filtered:
+  # raster icons, cursors, wallpapers, and the bulk of the vendored Yaru icon
+  # theme (its ATTRIBUTION.md and any code stay in scope).
+  path_filters:
+    - "!**/*.png"
+    - "!**/*.jpg"
+    - "!**/*.jpeg"
+    - "!**/*.cur"
+    - "!config/vshell/icons/**/*.svg"
+    - "!config/vshell/icons/**/*.theme"
+
+  path_instructions:
+    - path: "quickshell/vshell/**/*.qml"
+      instructions: >-
+        This is Quickshell 0.3.0, NOT plain Qt/QML. Verified differences that
+        have already produced wrong review suggestions here:
+
+        (1) `Qt.quit()` and `Qt.exit()` do NOT end the process — Quickshell
+        leaves QQmlEngine's quit/exit signals unconnected and logs "no receivers
+        connected to handle it" while the process keeps running. Never suggest
+        them as a way to terminate the shell.
+
+        (2) `Qt.resolvedUrl()` resolves inside Quickshell's virtual filesystem
+        and yields `qrc:/qs-blackhole/...`, which is not a runnable path. Use
+        `Quickshell.shellDir` to derive filesystem paths.
+
+        (3) `Process` emits `exited` BEFORE `running` goes false, and a command
+        that fails to start emits no `exited` at all — code that only handles
+        `exited` will hang on a missing binary.
+
+        (4) Do not rely on PATH inherited by Quickshell. Call helpers through
+        `Paths.vshellCli`, never a bare `vshell`.
+
+        Keep QML UI-focused: parsing, generation, and privileged writes belong
+        in `bin/vshell-helper`, and QML shells out to `vshell ...`. Flag new
+        TOML/JSON parsing or template rendering in QML as misplaced.
+
+    - path: "scripts/**"
+      instructions: >-
+        These scripts are this repo's test suite; there is no test framework.
+        Judge them as tests: a check whose failure path cannot be reached is
+        vacuous. Specifically look for a suppressed exit status (`|| true`
+        swallowing a tool that failed to run), an empty result treated as a
+        clean result, and a snapshot/diff comparison that silently passes when
+        collection failed. Those exact bugs shipped here and had to be fixed.
+
+        NEVER suggest validating this repo by running `qs -c vshell` or
+        `qs -p quickshell/vshell`. Each starts a second full shell in the live
+        session, which fights the session shell for WlSessionLock and the
+        fade-to-lock overlay and strands orphaned full-screen layer surfaces —
+        a blacked-out desktop recoverable only with
+        `vshell ipc call lock forceReset`. The sandboxed
+        `scripts/qml-smoke.sh --nested` is the only supported runtime smoke.
+        Never suggest `pkill quickshell` either: other Quickshell applications
+        on the seat are legitimate; signal by pid or process group.
+
+    - path: "bin/**"
+      instructions: >-
+        `bin/vshell-helper` is a deliberately single-file ~10k-line Python CLI.
+        Do not propose splitting it into modules as a review finding; heavy
+        logic belongs here rather than in QML, which is the point. Review it for
+        behavior, not architecture.
+
+        Enforce: external tools are exec'd with argv arrays (never a shell
+        string built from user data); secrets and raw frame payloads are never
+        logged; `bin/vshell` stays a thin dispatcher.
+
+    - path: "backend/**/*.go"
+      instructions: >-
+        Every registered backend method must map to a documented capability in
+        `docs/architecture/backend-methods.json` —
+        `scripts/check-backend-inventory.py` enforces this on both the Go and
+        QML sides, so a new method without a manifest entry is a hard failure,
+        not a nit. QML must gate features on advertised `capabilities`/`methods`
+        and never on raw `apiVersion` ordinals, and must keep a working fallback
+        when a capability is absent.
+
+        One owner per resource: reject a second watcher, poller, or daemon for
+        something the helper or QML already owns. Unix socket paths must stay
+        short (sun_path limit).
+
+    - path: "backend/vendor/**"
+      instructions: >-
+        Byte-exact vendored Go modules. Read them and report real defects, but
+        NEVER propose an in-repo patch, refactor, or style fix — the tree must
+        match upstream exactly or the build's vendor verification fails. Frame
+        any genuine finding as an upstream issue to file against the module,
+        and say so explicitly in the comment.
+
+    - path: "config/vshell/nvim/colorschemes/**"
+      instructions: >-
+        Vendored third-party Neovim colorscheme plugins, carried verbatim. Same
+        rule as Go vendor: report real defects as upstream issues, never as
+        in-repo patches. Style, structure, and lint findings here are noise —
+        skip them.
+
+    - path: "themes/**"
+      instructions: >-
+        Theme packages are curated data, not code to normalize. Palettes marked
+        `source: curated` pass through the engine untouched — only generated
+        palettes get contrast enforcement, so "this color fails contrast" is not
+        a finding against a curated palette.
+
+        The per-theme files under `themes/<name>/apps/` are intentionally
+        parallel across themes; near-identical structure is the design, not
+        duplication to refactor. Generated app-theme targets must write to
+        VGS-named output paths — flag any target writing to a legacy upstream
+        path.
+
+    - path: "AGENTS.md"
+      instructions: >-
+        This is agent process instruction, not product documentation. Do not ask
+        for its content to be mirrored into `README.md`, and do not treat a
+        change here as needing user-facing release notes. The doc surfaces are
+        distinct and deliberately non-overlapping: `README.md` and
+        `quickshell/vshell/README.md` are product/user-facing; `docs/architecture/**`
+        are agent reference docs; `AGENTS.md` is process.
+
+        Do check that a claim added here matches the code it describes —
+        instructions here are executed literally by agents, so a stale command
+        or path is a real defect.
+
+    - path: "docs/**"
+      instructions: >-
+        Architecture references for agents, not user documentation — do not
+        request README cross-posting or changelog entries. Verify described
+        behavior against the implementation and flag drift; that is the main
+        value here. `docs/architecture/backend-methods.json` is a machine-read
+        manifest enforced by `scripts/check-backend-inventory.py`, not prose.
+
+    - path: "vstack*.toml"
+      instructions: >-
+        Agent-harness configuration, and the sections are NOT all hand-authored.
+        `[agent-frontmatter.*]` and `[agent-skills]` in `vstack.toml` are
+        generated and rewritten by `vstack refresh` from upstream defaults, so
+        findings about the values there (model choice, effort, sandbox-mode)
+        belong upstream, not in this repo — an in-repo edit is overwritten on
+        the next refresh. This has already produced a wrong finding about the
+        Codex `danger-full-access` sandbox mode.
+
+        `vstack.settings.toml` is public by design: it holds non-secret project
+        defaults and is committed deliberately. Every credential lives in
+        `.env.local`, which is gitignored. Do not flag values here as leaked
+        secrets, and do not ask for these options to be documented in
+        `README.md` — they are documented inline in the file itself.
+
+    - path: ".github/workflows/**"
+      instructions: >-
+        The only workflow in this repo is `release.yml`. CodeQL runs from
+        GitHub's default org-level setup, not from a workflow here, and its
+        per-language lanes (rust, ruby, c-cpp) report "skipping" because the
+        repo has little or no code in those languages — that is by design, not a
+        broken pipeline. The validation suite in AGENTS.md § Validation is run
+        locally, so "this change has no CI coverage" is not a useful finding.
+
+  tools:
+    # Security scanning: keep on. The repo carries a gitignored .env.local and a
+    # committed .env.local.example, and a leaked key is the failure that matters.
+    gitleaks:
+      enabled: true
+    trufflehog:
+      enabled: true
+    # Primary linters for the languages actually written here.
+    shellcheck:
+      enabled: true
+    golangci-lint:
+      enabled: true
+    ruff:
+      enabled: true
+    actionlint:
+      enabled: true
+    yamllint:
+      enabled: true
+    luacheck:
+      enabled: true
+    semgrep:
+      enabled: true
+    # Redundant with ruff — three Python linters triple-report one defect.
+    flake8:
+      enabled: false
+    pylint:
+      enabled: false
+    # Prose/style nits on ~110 hand-wrapped markdown docs crowd out findings.
+    markdownlint:
+      enabled: false
+    languagetool:
+      enabled: false
+
+chat:
+  auto_reply: true
+  art: false
+  # Private repo in a trusted org; keep chat scoped to org members.
+  allow_non_org_members: false
+
+knowledge_base:
+  opt_out: false
+  # Keep everything learned from this repo scoped to this repo.
+  learnings:
+    scope: local
+  issues:
+    scope: local
+  pull_requests:
+    scope: local
+  code_guidelines:
+    enabled: true
+    filePatterns:
+      - "AGENTS.md"
+      - "docs/architecture/**"
+      - ".agents/skills/vshell-dev/**"
+  # Linear is this repo's tracker (team vg-shell, identifiers VGS-<n>).
+  linear:
+    usage: enabled
+    team_keys:
+      - VGS
+  jira:
+    usage: disabled
+  web_search:
+    enabled: true
+  automatic_repository_linking: false
