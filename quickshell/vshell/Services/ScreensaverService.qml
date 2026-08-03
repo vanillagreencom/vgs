@@ -85,14 +85,46 @@ Singleton {
         // video mode: overlays follow videoActive
     }
 
+    // Set by onExited so the settle timer can tell "the launcher ran and reported"
+    // apart from "the launcher never started".
+    property bool _launchReported: false
+
     Process {
         id: launchProcess
         running: false
         command: [Paths.vshellCli, "screensaver", "launch"]
         onExited: exitCode => {
+            root._launchReported = true;
             if (exitCode === 0)
                 return;
             root.log.warn("screensaver launch refused (exit " + exitCode + "); no saver is showing");
+            root._startAfterRegen = false;
+            root.active = false;
+        }
+        onRunningChanged: {
+            if (running) {
+                root._launchReported = false;
+                return;
+            }
+            // A command that cannot be spawned at all (vshell missing from PATH,
+            // exec failure) ends the process without an exit report, and `active`
+            // would stay true forever — the shell would refuse every later start
+            // with nothing on screen. `running` falling back to false is the one
+            // signal both outcomes share, so settle on it and let the timer decide.
+            launchSettleTimer.restart();
+        }
+    }
+
+    // exited and runningChanged are emitted from the same teardown, but their
+    // order is not part of Quickshell's contract, so neither handler may assume
+    // it ran first. Deferring to the next tick makes the check order-independent.
+    Timer {
+        id: launchSettleTimer
+        interval: 0
+        onTriggered: {
+            if (root._launchReported || !root.active)
+                return;
+            root.log.warn("screensaver launch never started; no saver is showing");
             root._startAfterRegen = false;
             root.active = false;
         }
