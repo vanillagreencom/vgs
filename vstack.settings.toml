@@ -1,0 +1,138 @@
+# Public vstack settings. Keep secrets in .env.local.
+# vstack skill scripts read this [env] table after .env and before .env.local.
+
+[env]
+#BOT_CHECK_NAME = ""
+#BOT_EMAIL = ""
+#BOT_NAME = ""
+#BOT_REMOTE_NAME = ""
+CI_FIX_MAX_CYCLES = "6"
+# Reviewer gate: CodeRabbit reviews PRs on this repo, so the reviewer wait
+# applies. It normally submits a review object (APPROVED/COMMENTED); the check
+# name below is the fallback for a clean pass that submits no review object.
+PR_REVIEW_GATE = "review"
+DECISIONS_DIR = "docs/decisions"
+#GH_BOT_USERNAME = ""
+# Issue IDs in branch names. Linear identifiers for team vg-shell are VGS-<n>,
+# and branches are named vgs-<n>-<slug>, which is also what Linear's GitHub
+# integration matches to link the PR back to the issue.
+GH_ISSUE_PATTERN = "vgs-[0-9]+"
+GIT_HOST_CLI = ".agents/skills/github/scripts/github.sh"
+LINEAR_FORMAT = "safe"
+ORCH_CACHE_DIR = ".cache/orchestration"
+ORCH_STATE_DIR = "tmp"
+SECOND_OPINION_CLAUDE_CMD = "claude -p --no-session-persistence --model opus --effort max --allowedTools Bash(read-only:true),Read,Glob,Grep"
+SECOND_OPINION_CODEX_CMD = "codex exec -m gpt-5.5 -s read-only -c model_reasoning_effort=xhigh --ephemeral"
+SECOND_OPINION_TIMEOUT = "3600"
+WORKTREE_BASE_DIR = "~/dev/.worktrees/vshell"
+WORKTREE_CLI = ".agents/skills/worktree/scripts/worktree"
+WORKTREE_COPIES = ".vstack-lock.json"
+WORKTREE_DEFAULT_BRANCH = "main"
+WORKTREE_MKDIRS = "tmp"
+WORKTREE_RELATIVE_SYMLINKS = ".claude/CLAUDE.md=../AGENTS.md"
+WORKTREE_SYMLINKS = ".env.local opencode.json .agents .cursor .codex .opencode .pi .claude/settings.json .claude/agents .claude/hooks .claude/skills"
+
+# Used by: orch (`approval-wait`). Seconds without the gate's signal (for the
+# current head) before nudging the reviewer, once per head; a push resets the
+# clock. "0" disables nudging.
+PR_REVIEW_NUDGE_SECS = "600"
+
+# Used by: orch (`approval-wait`). Comment body posted as the nudge — set it
+# to whatever summons this repo's review bot (e.g. "@devin review"). Empty =
+# fall back to a GitHub-native re-review request to the PR's reviewers.
+PR_REVIEW_NUDGE = "@coderabbitai review"
+
+# Used by: orch (`approval-wait`, review mode). Name/context of the trusted
+# reviewer's check-run OR commit status: a success for that exact name on the
+# current head counts as review-received when a clean re-analysis submits no
+# review object (e.g. "Devin Review"). Empty = review objects only. SECURITY:
+# match by name means any app could publish it — name only the trusted bot's
+# check on repos where all publishers are trusted.
+#
+# Left empty deliberately. This is a fallback for bots that publish a check but
+# submit a review object only when they have findings — neither reviewer here
+# behaves that way: CodeRabbit submits a review object on clean runs too
+# (APPROVED), and qodo-code-review posts a review object and no check/status at
+# all. Naming CodeRabbit's `CodeRabbit` commit status would only add a way for a
+# non-review to satisfy the gate: it concluded `success` with the description
+# "Review rate limited" on 2026-08-02, having reviewed nothing. With two
+# reviewers that both post review objects, a genuine outage is
+# PR_REVIEW_ON_TIMEOUT's job, not this one's.
+PR_REVIEW_CHECK = ""
+
+# Used by: orch (`ci-wait`). Seconds to keep polling before failing when no CI
+# checks have registered yet. Raise for repos whose CI dispatches only after a
+# review approval (approval-gated jobs / merge queue) with slow dispatch.
+CI_WAIT_NO_CHECKS_GRACE = "180"
+
+# Used by: orch (`review-pr` / `review` / `review-codebase`). Total concurrent
+# agent-session budget of the harness runtime, counting the primary session.
+# "0" = unlimited: every reviewer launches up front and persists through
+# fix/re-review cycles. When the reviewer set exceeds the available slots,
+# review workflows run reviewers in bounded sequential waves, retiring each
+# completed session to release its slot. Codex collaboration runtime: four
+# total threads -> set "4".
+REVIEWER_SLOT_BUDGET = "0"
+
+# Used by: orch (`approval-wait`, `submit-pr` / `merge-pr` / `ci-fix`).
+# Deadline behavior when the review gate signal never arrives — the reviewer
+# posted nothing (e.g. its credits are exhausted). "block" (default) reports a
+# "timeout" and the caller prompts or keeps waiting. "proceed" instead reports
+# a distinct "proceeded" verdict and records a reviewer-down override, moving
+# to CI/merge — but ONLY when zero threads are unresolved, so an open thread
+# always blocks (it returns "comments" first) and a real comment is never
+# bypassed. CI and the comment-hygiene gate still apply. On multi-reviewer
+# repos this only fires when EVERY reviewer is silent; a single live reviewer
+# already satisfies the gate on its own.
+PR_REVIEW_ON_TIMEOUT = "block"
+
+# Used by: orch (`approval-wait`, review mode). Makes PR_REVIEW_ON_TIMEOUT=proceed
+# end-to-end on repos whose CI/branch-protection gate independently blocks
+# merges on review evidence (that gate runs on events, not on orch's wait
+# deadline, so the orch-side "proceeded" alone cannot unblock it). When this
+# names a commit-status context, a review-mode proceed posts that context as `success` on
+# the proceeded head; the repo's CI gate can accept it as an extra
+# review-evidence surface, and its status re-fire bridge re-runs the gate on
+# the event. Empty (default) = post nothing (orch-side-only opt-in — the
+# repo-side gate is untouched). SECURITY: this is a branch-protection
+# relaxation — the status lets a merge proceed with no review. It is bounded by
+# the same genuine-silence predicate as the proceed and by bot-only status
+# trust, and matched by context, so name it ONLY where every status publisher
+# is trusted (same trust model as PR_REVIEW_CHECK). See orch DEVELOPMENT.md
+# "Reviewer-outage recognition" for the repo-side gate/bridge pattern.
+PR_REVIEW_OUTAGE_CONTEXT = ""
+
+# Used by: orch (`review-pr`, via `refix-route`). Total changed lines
+# (insertions + deletions) a support-scope fix round may reach before it is
+# re-reviewed anyway. A round that cleared blockers is always re-reviewed
+# regardless of this value; this is the backstop for large rounds that no
+# blocker prompted.
+PR_REVIEW_REFIX_MAX_LINES = "200"
+
+# Used by: orch (`review-pr` § 4/§ 7, `dev-fix` § 1). How workflow decision
+# points behave. "ask" (default) presents every decision to the user.
+# "auto-recommended" executes the workflow's recommended option and logs
+# "auto-selected: [option] — [reason]" in the round record (workflow-state
+# auto_decisions) — for fleet launchers whose workers would otherwise
+# serialize on one supervisor. Decision-record revisits, scope expansion
+# beyond the issue, anything touching benchmark-host protocol, and merge
+# ALWAYS ask, in every mode.
+ORCH_DECISION_MODE = "ask"
+
+# LINEAR — which Linear team this project writes to.
+# Project-scope `vstack add` / `vstack refresh` merge these defaults into
+# <project>/vstack.settings.toml (never overwriting existing keys). Full key
+# reference: linear README.md.
+
+# Used by: linear (every command). The team every write targets.
+# There is no built-in default. A team name resolves inside whatever workspace
+# LINEAR_API_KEY reaches, so an unset value means "no target": writes refuse
+# with an actionable error and reads drop the team filter instead of guessing.
+# Set this to the project's own team name, then confirm the target with
+# `linear.sh auth-check --strict`. Only the create actions that take a team
+# (issues, projects, cycles, labels) accept `--team <name>` as a per-call
+# override; every other write needs this key.
+LINEAR_TEAM = "vg-shell"
+
+# Used by: linear. Issue identifier prefix used in examples (e.g. PROJ-123).
+LINEAR_TEAM_PREFIX = "VGS"
