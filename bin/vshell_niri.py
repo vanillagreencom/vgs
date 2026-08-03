@@ -321,11 +321,33 @@ _RETIRED_LAUNCHER_IPC_VERBS = {
 }
 
 
+# "ipc call <target>" is VGS syntax, not a reserved word: another program can
+# legitimately take those as its own arguments. Only a vshell invocation may be
+# rewritten. Compared by basename so an absolute or $HOME-relative path to the
+# same CLI still counts (~/dotfiles binds both `vshell ipc call ...` and
+# `$HOME/.local/bin/vshell ipc call ...`), and quote-stripped so the first token
+# of a `sh -c "..."` command string is recognised too.
+_VSHELL_CLI_BASENAMES = frozenset({"vshell"})
+
+
+def _is_vshell_cli(token: str) -> bool:
+    return Path(token.strip("\"'")).name in _VSHELL_CLI_BASENAMES
+
+
 def _migrated_launcher_action(action: str) -> str:
-    """Rewrite a retired launcher IPC action onto vshell-menu. Identity otherwise."""
+    """Rewrite a retired launcher IPC action onto vshell-menu. Identity otherwise.
+
+    Deliberately positional: only `spawn <vshell-cli> ipc call ...` is rewritten.
+    A retired target buried in a shell wrapper (`spawn sh -c "vshell ipc call
+    launcher toggle"`) is left alone rather than rewritten inside a quoted
+    command string. KeybindActions.usesRetiredIpcTarget still flags that form in
+    Settings, which is the same treatment as any bind VGS does not generate.
+    """
     tokens = action.split()
-    # spawn <cli> ipc call <target> <verb> [args...]
+    # spawn <vshell-cli> ipc call <target> <verb> [args...]
     if len(tokens) < 6 or tokens[0] != "spawn" or tokens[2:4] != ["ipc", "call"]:
+        return action
+    if not _is_vshell_cli(tokens[1]):
         return action
     if tokens[4] not in _RETIRED_LAUNCHER_IPC_TARGETS:
         return action

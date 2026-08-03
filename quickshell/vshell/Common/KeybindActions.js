@@ -923,14 +923,40 @@ function isVgsAction(action) {
 // (every Hyprland bind, and hand-written niri binds) can only be reported.
 const RETIRED_IPC_TARGETS = ["launcher", "spotlight", "spotlight-bar"];
 
+// "ipc call <target>" is VGS syntax, not a reserved word — another program may
+// legitimately take those as its own arguments, and `spawn notify-send ipc call
+// launcher` is a valid bind that has nothing to do with VGS. So the match is
+// keyed on the program token immediately before "ipc" being the vshell CLI.
+// Compared by basename, because ~/dotfiles binds both `vshell ipc call ...` and
+// `$HOME/.local/bin/vshell ipc call ...`; quote-stripped, so the CLI still reads
+// as vshell inside a `spawn sh -c "vshell ipc call ..."` command string.
+const VSHELL_CLI_BASENAMES = ["vshell"];
+
+function isVshellCliToken(token) {
+    if (!token)
+        return false;
+    const unquoted = String(token).replace(/^['"]+/, "").replace(/['"]+$/, "");
+    if (!unquoted)
+        return false;
+    const parts = unquoted.split("/");
+    return VSHELL_CLI_BASENAMES.indexOf(parts[parts.length - 1]) >= 0;
+}
+
 function usesRetiredIpcTarget(action) {
     if (!action)
         return false;
     const tokens = String(action).split(/\s+/);
-    const call = tokens.indexOf("ipc");
-    if (call < 0 || tokens[call + 1] !== "call")
-        return false;
-    return RETIRED_IPC_TARGETS.indexOf(tokens[call + 2]) >= 0;
+    // Every occurrence, not just the first: a shell wrapper can put the real
+    // invocation well past the start of the action.
+    for (let i = 1; i < tokens.length; i++) {
+        if (tokens[i] !== "ipc" || tokens[i + 1] !== "call")
+            continue;
+        if (!isVshellCliToken(tokens[i - 1]))
+            continue;
+        if (RETIRED_IPC_TARGETS.indexOf(tokens[i + 2]) >= 0)
+            return true;
+    }
+    return false;
 }
 
 function isValidAction(action) {
