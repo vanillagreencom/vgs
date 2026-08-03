@@ -253,7 +253,20 @@ def niri_binds_json() -> Dict[str, Any]:
     # A rewrite Niri then refused to load leaves the file and the live
     # compositor disagreeing, so that has to travel with the payload rather
     # than being dropped here.
-    migration = migrate_vgs_niri_binds()
+    #
+    # This is a convenience on a read path and must never take the read down
+    # with it: an unreadable or unwritable binds.kdl would otherwise abort the
+    # whole keybind query and lose Settings every other bind in the config,
+    # which are parsed independently below and are still perfectly good.
+    try:
+        migration = migrate_vgs_niri_binds()
+    except OSError as exc:
+        migration = {
+            "migrated": False,
+            "ok": False,
+            "error": f"could not migrate retired launcher binds: {exc}",
+            "reload": {"attempted": False},
+        }
     main = runtime().home() / ".config" / "niri" / "config.kdl"
     managed = niri_config_dir() / "binds.kdl"
     files = _niri_config_files(main)
@@ -281,7 +294,7 @@ def niri_binds_json() -> Dict[str, Any]:
         },
         "binds": binds,
     }
-    if migration.get("migrated"):
+    if migration.get("migrated") or not migration.get("ok"):
         payload["bindMigration"] = migration
     return payload
 

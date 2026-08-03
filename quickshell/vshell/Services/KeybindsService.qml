@@ -555,6 +555,13 @@ Singleton {
         if (_bindMigrationReloadWarnShown || !migration || migration.ok !== false)
             return;
         _bindMigrationReloadWarnShown = true;
+        // The migration failed outright (unreadable/unwritable binds.kdl)
+        // rather than landing and failing to reload. The binds below are still
+        // good, so this is a warning about the heal, not about the query.
+        if (migration.error) {
+            ToastService.showWarning(I18n.tr("Shortcut update failed"), migration.error, "", "niri-bind-migration-reload");
+            return;
+        }
         const detail = migration.reload?.stderr || "";
         ToastService.showWarning(I18n.tr("Shortcut update needs a Niri reload"), detail || I18n.tr("VGS rewrote its launcher shortcuts but Niri did not reload. Reload the Niri config to apply them."), "", "niri-bind-migration-reload");
     }

@@ -917,33 +917,70 @@ Singleton {
     // the safe answer for callers that yield to the launcher when it opens.
     readonly property bool appLauncherOpen: getPluginInstance(appLauncherPluginId)?.menuOpen ?? false
 
-    property bool _appLauncherTogglePending: false
+    // What is queued is an absolute intent — "the launcher should be open" —
+    // not a deferred toggle. A toggle is relative, and replaying a relative
+    // operation against a state that moved while it waited is what makes a
+    // queue like this fragile: two clicks during startup would either collapse
+    // (losing one) or replay (opening and shutting the launcher in the user's
+    // face), and a registration that arrives with the launcher ALREADY open
+    // would be closed by the replay. Intent has no parity to lose. While no
+    // instance is registered the launcher is closed by definition
+    // (appLauncherOpen reads false), so every click in that window can only
+    // mean "open it", however many arrive.
+    property bool _appLauncherOpenPending: false
 
     function toggleAppLauncher() {
         if (togglePlugin(appLauncherPluginId)) {
-            _appLauncherTogglePending = false;
+            _appLauncherOpenPending = false;
             appLauncherRegistrationTimeout.stop();
             return true;
         }
         // The daemon Instantiator is asynchronous, so a click can land after
         // the component loads but before the instance registers. That is a
-        // transient startup state, not a failure: queue the toggle and let
-        // onDaemonInstancesChanged run it, rather than crying wolf.
+        // transient startup state, not a failure: record the intent and let
+        // onDaemonInstancesChanged satisfy it, rather than crying wolf.
         if (pluginDaemonComponents[appLauncherPluginId] && !daemonInstances[appLauncherPluginId]) {
-            _appLauncherTogglePending = true;
-            appLauncherRegistrationTimeout.restart();
+            // Deadline runs from the FIRST click. Restarting it per click
+            // would let an impatient user postpone the error indefinitely.
+            if (!_appLauncherOpenPending) {
+                _appLauncherOpenPending = true;
+                appLauncherRegistrationTimeout.restart();
+            }
             return false;
         }
         _reportAppLauncherUnavailable();
         return false;
     }
 
+    // Satisfies a queued intent. Prefers the explicit open() over toggle() so
+    // an instance that registers already open is left alone.
+    function _openAppLauncher() {
+        const instance = getPluginInstance(appLauncherPluginId);
+        if (!instance)
+            return false;
+        if (instance.menuOpen === true)
+            return true;
+        if (typeof instance.open === "function") {
+            instance.open();
+            return true;
+        }
+        if (typeof instance.toggle === "function") {
+            instance.toggle();
+            return true;
+        }
+        return false;
+    }
+
     function _reportAppLauncherUnavailable() {
-        _appLauncherTogglePending = false;
-        // The two failures are distinguishable and want different advice: a
-        // present component that never registered is a startup problem, and
-        // pointing that user at Settings > Plugins sends them somewhere
-        // nothing is wrong.
+        _appLauncherOpenPending = false;
+        // Three distinguishable failures wanting three different pieces of
+        // advice. Pointing someone at Settings > Plugins when the plugin is
+        // loaded and merely slow sends them where nothing is wrong.
+        if (getPluginInstance(appLauncherPluginId)) {
+            log.error("app launcher unavailable:", appLauncherPluginId, "registered an instance with no callable open()/toggle()");
+            ToastService.showError(I18n.tr("App launcher unavailable"), I18n.tr("The %1 plugin registered without a launcher to open.").arg(appLauncherPluginId), "", "app-launcher-unavailable");
+            return;
+        }
         if (pluginDaemonComponents[appLauncherPluginId]) {
             log.error("app launcher unavailable:", appLauncherPluginId, "loaded but never registered an instance");
             ToastService.showError(I18n.tr("App launcher unavailable"), I18n.tr("The %1 launcher did not finish starting.").arg(appLauncherPluginId), "", "app-launcher-unavailable");
@@ -954,21 +991,26 @@ Singleton {
     }
 
     onDaemonInstancesChanged: {
-        if (!_appLauncherTogglePending || !daemonInstances[appLauncherPluginId])
+        if (!_appLauncherOpenPending || !daemonInstances[appLauncherPluginId])
             return;
-        _appLauncherTogglePending = false;
+        _appLauncherOpenPending = false;
         appLauncherRegistrationTimeout.stop();
-        togglePlugin(appLauncherPluginId);
+        // A registration that cannot serve the intent is still a dead click,
+        // and the timeout is stopped by now, so it can no longer report it.
+        // Both failure paths end in the same reporter rather than two that
+        // could disagree.
+        if (!_openAppLauncher())
+            _reportAppLauncherUnavailable();
     }
 
-    // Bounds the queued toggle above: if registration never arrives, the click
+    // Bounds the queued intent above: if registration never arrives, the click
     // has to end in a visible error rather than nothing at all.
     Timer {
         id: appLauncherRegistrationTimeout
         interval: 2000
         repeat: false
         onTriggered: {
-            if (root._appLauncherTogglePending)
+            if (root._appLauncherOpenPending)
                 root._reportAppLauncherUnavailable();
         }
     }
