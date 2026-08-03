@@ -67,6 +67,11 @@ vshell deps status --json
 vshell deps check capture --json
 ```
 
+The `undeclared` map at the top of the file records commands `bin/vshell-helper`
+probes but deliberately does not declare, one reason each. Nothing reads it at
+runtime; it is what tells a deliberate exclusion from drift. Adding a new probe
+means declaring the command under `features` or adding it there.
+
 Manifest entries use `commands` for unconditional tools, `anyCommands` for
 same-purpose alternatives, and `compositorCommands` for complete
 Hyprland/Niri-specific command lists. `vshell deps` selects only the active
@@ -78,12 +83,19 @@ Feature groups:
 |---------|---------|
 | `base` | Shell runtime |
 | `theme` | Theme engine |
+| `theme-gtk` | GTK theme, icon theme and color-scheme application (gsettings) |
+| `theme-firefox` | Firefox theming (pywalfox) |
+| `fonts` | Font cache refresh after a font change (fc-cache) |
 | `greeter` | VGS greetd greeter, Hyprland or Niri launch, GNOME keyring policy, optional fprint/U2F PAM support |
 | `capture` | Screenshots |
 | `capture-edit` | Screenshot editor |
 | `ocr` | Region OCR |
 | `recording` | Screen recording |
 | `launcher-zoxide` | Optional recent-directory search mode in launcher/menu |
+| `launcher-search` | Launcher text search (ripgrep). Missing means text search fails outright |
+| `launcher-search-fast` | Faster launcher file search (fd). Missing only means the built-in directory walk is used |
+| `trash` | Trash instead of deleting, keeping restore (gio) |
+| `launcher-folder-open` | Launcher "Preferred app" folder opener, which runs `gio open` |
 | `network-usage` | Per-interface traffic statistics |
 | `gamma` | Night-light color temperature |
 | `updates-arch` | Repo updates |
@@ -118,3 +130,28 @@ per-channel mechanisms are in `packaging/README.md`.
 - VGS ships defaults and bundled plugin code; `~/.config/vshell` holds mutable user state.
 - Dotfiles supplies private overlays/wiring, not whole-directory VGS config symlinks.
 - No personal command is required for default VGS startup.
+
+## Probing rules
+
+**Rule (enforced).** Shipped code must not probe for a command that exists only
+in a private dotfiles repo — one no distribution packages and VGS does not ship.
+A private wrapper belongs behind a user setting the shipped code already passes
+through (the launcher folder opener uses `launcherFolderOpenCommand`), not behind
+a `which()` on its name.
+
+Known exceptions, both of which fall back to `xdg-open` rather than advertising
+an action they cannot perform:
+
+| Site | Command |
+|------|---------|
+| `bin/vshell-capture-screenshot` § `open_folder` | `yazi-scratchpad-open` |
+| `bin/vshell-capture-screenrecording` § `open_folder` | `yazi-scratchpad-open` |
+
+**Target (not yet true).** Every distribution-installable command that gates
+user-facing behaviour should be declared under `features` in
+`dependencies.json`, so `vshell deps status` can report it. The tree does not
+satisfy this yet. Commands deliberately left undeclared are listed with their
+reason in the `undeclared` map at the top of `dependencies.json`; the remaining
+user-facing gaps (`nautilus`, `yazi`, `xdg-terminal-exec`) are tracked in
+VGS-32, and VGS-33 tracks the automated check that would keep the probe sites
+and the manifest from drifting apart again.

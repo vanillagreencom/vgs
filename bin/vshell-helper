@@ -9859,10 +9859,21 @@ def _launcher_zoxide_hits(query: str, limit: int) -> List[Dict[str, Any]]:
 
 
 def _launcher_folder_openers() -> List[Dict[str, str]]:
+    # A wrapper script that exists only in someone's dotfiles must not be probed
+    # for by name here — configure it through the launcherFolderOpenCommand
+    # setting, which the "Preferred app" opener passes through as --command. See
+    # docs/architecture/overlay-and-dependencies.md § Probing rules.
+    #
+    # `yazi` and `nautilus` are distribution packages, so probing them is allowed,
+    # but neither is declared in dependencies.json yet: that is deferred to VGS-32
+    # along with the rest of the folder-opener routing, and recorded in the
+    # `undeclared` map at the top of that manifest.
     openers = [{"id": "default", "label": "Preferred app", "icon": "open_in_new"}]
-    if shutil.which("yazi-scratchpad-open"):
-        openers.append({"id": "yazi", "label": "Yazi (new tab)", "icon": "terminal"})
-    elif shutil.which("yazi"):
+    # Yazi is a TUI, so it is only openable with a terminal spawner. Advertise it
+    # on the same condition _launcher_open_folder() runs it on, or the QML opener
+    # list (populated from `vshell launcher-search openers`) offers a choice that
+    # can only answer "unavailable".
+    if shutil.which("yazi") and shutil.which("xdg-terminal-exec"):
         openers.append({"id": "yazi", "label": "Yazi", "icon": "terminal"})
     if shutil.which("nautilus"):
         openers.append({"id": "nautilus", "label": "Nautilus", "icon": "folder"})
@@ -9874,15 +9885,11 @@ def _launcher_open_folder(path: str, command_text: str = "", opener: str = "defa
     if not Path(target).is_dir():
         return {"ok": False, "error": f"Folder not found: {target}"}
     if opener == "yazi":
-        scratchpad = shutil.which("yazi-scratchpad-open")
-        if scratchpad:
-            command = [scratchpad, target]
-        else:
-            yazi = shutil.which("yazi")
-            terminal = shutil.which("xdg-terminal-exec")
-            if not yazi or not terminal:
-                return {"ok": False, "error": "Yazi folder opener is unavailable"}
-            command = [terminal, yazi, target]
+        yazi = shutil.which("yazi")
+        terminal = shutil.which("xdg-terminal-exec")
+        if not yazi or not terminal:
+            return {"ok": False, "error": "Yazi folder opener is unavailable"}
+        command = [terminal, yazi, target]
     elif opener == "nautilus":
         nautilus = shutil.which("nautilus")
         if not nautilus:

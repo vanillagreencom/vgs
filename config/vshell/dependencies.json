@@ -1,5 +1,33 @@
 {
   "version": 2,
+  "undeclared": {
+    "$comment": [
+      "Commands bin/vshell-helper probes with shutil.which() that are deliberately",
+      "NOT declared as feature dependencies, and why. Nothing reads this at runtime;",
+      "it exists so an audit can tell a deliberate exclusion from drift, and so the",
+      "automated check tracked in VGS-33 has an allow-list to compare the probe sites",
+      "against. Adding a probe for a new command means declaring it under \"features\"",
+      "or adding it here.",
+      "",
+      "`sudo` is absent on purpose: VGS-11 declares it under a sudo-toggle group."
+    ],
+    "vshell": "Self-reference: resolves the CLI's own path.",
+    "quickshell": "Alternative binary name for the already-declared `qs`.",
+    "start-hyprland": "Optional session wrapper in the greeter launch path; falls back to `Hyprland` directly.",
+    "dbus-run-session": "Wraps the file manager when generating committed theme previews. Repo tooling, not a runtime feature.",
+    "nvim": "Theme-reload hook for an editor you may not use. Declaring it would make `deps status` report a missing dependency for everyone who does not run nvim.",
+    "tmux": "Theme-reload hook, same reasoning as `nvim`.",
+    "gdbus": "Fallback path of the ghostty theme-reload hook, behind a SIGUSR2 attempt. Same reasoning as `nvim`.",
+    "magick": "Third choice in the wallpaper-thumbnail chain, behind Pillow and the already-declared `ffmpeg`.",
+    "xclip": "X11 clipboard fallback behind the declared `wl-copy`. Unreachable in a supported Hyprland/Niri session.",
+    "g++": "Compiles the vendored third_party/asdcontrol for Apple display brightness. The preferred Apple path is pure-Python hidraw and packaging can ship a prebuilt binary, so a compiler is not a dependency of the feature.",
+    "c++": "Alternative compiler name, same reasoning as `g++`.",
+    "dolphin": "Internal: picks a file manager for generated theme previews.",
+    "thunar": "Internal: same as `dolphin`.",
+    "nautilus": "Deferred to VGS-32. Also a launcher folder opener, but declaring it now would entrench the hardcoded choice VGS-32 replaces with the XDG default-apps layer.",
+    "yazi": "Deferred to VGS-32. The launcher's Yazi opener needs `yazi` AND `xdg-terminal-exec`; declaring one half would misreport the gate.",
+    "xdg-terminal-exec": "Deferred to VGS-32, which centralises terminal resolution. Currently unowned by any landed change."
+  },
   "features": {
     "base": {
       "required": true,
@@ -16,6 +44,21 @@
       "required": true,
       "commands": [
         "python3"
+      ]
+    },
+    "theme-gtk": {
+      "commands": [
+        "gsettings"
+      ]
+    },
+    "theme-firefox": {
+      "commands": [
+        "pywalfox"
+      ]
+    },
+    "fonts": {
+      "commands": [
+        "fc-cache"
       ]
     },
     "greeter": {
@@ -98,6 +141,29 @@
     "launcher-zoxide": {
       "commands": [
         "zoxide"
+      ]
+    },
+    "launcher-search": {
+      "commands": [
+        "rg"
+      ]
+    },
+    "launcher-search-fast": {
+      "anyCommands": [
+        [
+          "fd",
+          "fdfind"
+        ]
+      ]
+    },
+    "trash": {
+      "commands": [
+        "gio"
+      ]
+    },
+    "launcher-folder-open": {
+      "commands": [
+        "gio"
       ]
     },
     "updates-arch": {
