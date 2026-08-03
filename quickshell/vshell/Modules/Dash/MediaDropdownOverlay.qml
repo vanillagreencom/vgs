@@ -61,6 +61,22 @@ Item {
             panelExited();
     }
 
+    // Panels are placed from the Dash's own screen coordinates. This overlay
+    // fills the full-screen background window, so its bounds are the output's;
+    // clamp into them or a Dash sitting against a clamp-window edge (VGS-12
+    // zone anchoring pins it there for every edge-section trigger) pushes the
+    // panel partly off-screen. Same 10px inset the other VGS menus use.
+    readonly property real __panelMargin: 10
+
+    function __panelX(panelWidth) {
+        const raw = isRightEdge ? anchorPos.x : anchorPos.x - panelWidth;
+        return Math.max(__panelMargin, Math.min(root.width - panelWidth - __panelMargin, raw));
+    }
+
+    function __panelY(panelHeight) {
+        return Math.max(__panelMargin, Math.min(root.height - panelHeight - __panelMargin, anchorPos.y - panelHeight / 2));
+    }
+
     readonly property Item __activePanel: {
         switch (dropdownType) {
         case 1:
@@ -90,8 +106,8 @@ Item {
         visible: dropdownType === 1 && volumeAvailable
         width: 60
         height: 180
-        x: isRightEdge ? anchorPos.x : anchorPos.x - width
-        y: anchorPos.y - height / 2
+        x: root.__panelX(width)
+        y: root.__panelY(height)
         radius: Theme.cornerRadius * 2
         color: Theme.floatingSurface
         border.color: Theme.outlineStrong
@@ -232,8 +248,8 @@ Item {
         visible: dropdownType === 2
         width: 280
         height: Math.max(200, Math.min(280, availableDevices.length * 50 + 100))
-        x: isRightEdge ? anchorPos.x : anchorPos.x - width
-        y: anchorPos.y - height / 2
+        x: root.__panelX(width)
+        y: root.__panelY(height)
         radius: Theme.cornerRadius * 2
         color: Theme.floatingSurface
         border.color: Theme.outlineStrong
@@ -424,8 +440,8 @@ Item {
         visible: dropdownType === 3
         width: 240
         height: Math.max(180, Math.min(240, (allPlayers?.length || 0) * 50 + 80))
-        x: isRightEdge ? anchorPos.x : anchorPos.x - width
-        y: anchorPos.y - height / 2
+        x: root.__panelX(width)
+        y: root.__panelY(height)
         radius: Theme.cornerRadius * 2
         color: Theme.floatingSurface
         border.color: Theme.outlineStrong
