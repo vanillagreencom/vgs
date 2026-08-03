@@ -314,7 +314,7 @@ knowledge_base:
     filePatterns:
       - "AGENTS.md"
       - "docs/architecture/**"
-      - ".agents/skills/vshell-dev/**"
+      - "project-skills/vshell-dev/**"
   # Linear is this repo's tracker (team vg-shell, identifiers VGS-<n>).
   linear:
     usage: enabled

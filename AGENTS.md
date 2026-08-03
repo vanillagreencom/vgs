@@ -42,7 +42,13 @@ VGS = VanillaGreen Shell. Runtime name stays `vshell` because `vgs` conflicts wi
 ## Project skills
 | Skill | Path | Notes |
 |-------|------|-------|
-| VGS development | `.agents/skills/vshell-dev/SKILL.md` | Quickshell runtime, plugins, theme engine, generated targets, Go backend daemon |
+| VGS development | `project-skills/vshell-dev/SKILL.md` | Quickshell runtime, plugins, theme engine, generated targets, Go backend daemon |
+
+Tracked project skills live in `project-skills/`, never under `.agents/skills/`
+— that mirror is untracked and symlinked wholesale into every worktree, so a
+tracked file there is unwritable by git while `git status` looks clean.
+`vstack refresh` links each `project-skills/<name>` into `.agents/skills/<name>`
+for discovery. See `project-skills/README.md`.
 
 ## Documentation resources
 Use CTX7 CLI when library/API docs are needed. Prefer pinned resource IDs over general web search.
