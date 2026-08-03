@@ -27,34 +27,6 @@
 #
 [agent-launch-instructions]
 
-generalist = ""
-
-planner = ""
-
-researcher = ""
-
-reviewer-arch = ""
-
-reviewer-correctness = ""
-
-reviewer-doc = ""
-
-reviewer-error = ""
-
-reviewer-perf = ""
-
-reviewer-quality = ""
-
-reviewer-safety = ""
-
-reviewer-security = ""
-
-reviewer-structure = ""
-
-reviewer-test = ""
-
-scout = ""
-
 
 # ── Additional Instructions ──────────────────────────
 # Adds a "## Additional Instructions" section at the
@@ -62,34 +34,6 @@ scout = ""
 # conventions, or reminders for this agent.
 #
 [agent-additional-instructions]
-
-generalist = ""
-
-planner = ""
-
-researcher = ""
-
-reviewer-arch = ""
-
-reviewer-correctness = ""
-
-reviewer-doc = ""
-
-reviewer-error = ""
-
-reviewer-perf = ""
-
-reviewer-quality = ""
-
-reviewer-safety = ""
-
-reviewer-security = ""
-
-reviewer-structure = ""
-
-reviewer-test = ""
-
-scout = ""
 
 
 # ── Skill Instructions ────────────────────────────────
@@ -129,15 +73,89 @@ Issue labels are live Linear issue labels. Inventory source of truth:
 .agents/skills/linear/scripts/linear.sh sync --reconcile
 ```
 
-Never create labels without explicit user authorization; if the label you want
-is missing, stop and report it rather than substituting a nearby one.
-`issues create/update --labels` replaces the full label set, so compute the
-intended final set from the current labels before updating.
+Use the project-management label taxonomy when assigning labels. If the
+taxonomy and live inventory disagree, stop before mutation and report the
+missing/extra label; do not substitute a nearby label. Never create labels
+without explicit user authorization.
+
+`issues create/update --labels` replaces the full issue label set. For label
+updates, compute the intended final full set from current labels: replace only
+the target exclusive category (`agent:*`), preserve unrelated
+classification/workflow labels, then pass the full validated set.
 """
 
 orch = ""
 
-project-management = ""
+project-management = """
+## Project issue label taxonomy
+
+Use this taxonomy with the linear skill's label-inventory preflight for roadmap
+creation, audit-created issues, research issues, and any other issue
+create/update path.
+
+Required for new non-historical issues:
+- Exactly one Agent label.
+- Classification and Workflow labels are optional and additive.
+- Domain labels apply when the work clearly sits in that domain.
+
+Label creation rule: if a label listed here is missing from live Linear
+inventory, stop and ask for explicit user authorization to create it. Do not
+create labels automatically and do not silently omit or substitute labels.
+
+### Agent labels (exclusive; choose exactly one)
+
+| Label | Use when |
+|-------|----------|
+| `agent:generalist` | Maintenance, docs cleanup, tooling/workflow tasks, repository organization, or mixed low-risk work — including QML/Go/helper implementation until dedicated domain agents exist. |
+| `agent:multi` | Bundle parent or coordination issue whose children span 2+ domains. Avoid on leaf implementation issues unless the issue is truly orchestration-only. |
+| `agent:human` | Manual/user-owned work, external dependency/vendor action, or work intentionally not delegated to an AI agent. |
+| `agent:researcher` | Research issue owned by the researcher workflow/agent. Must be paired with `research`. |
+
+`agent:iced` and `agent:rust` exist in live inventory but are residue from the
+label set this team was seeded from (hyprtrade); never assign them in VGS.
+Replacing them with VGS domain agents (e.g. QML/backend) is an owner decision.
+
+### Domain labels (non-exclusive; choose all that apply)
+
+| Label | Use when |
+|-------|----------|
+| `design` | Visual design language, tokens, typography, surface layout — the Flatline language in `docs/architecture/design-language.md`. |
+| `component` | Reusable widget/control work, especially primitives in `quickshell/vshell/Widgets/`. |
+
+`iced` and `rust-core` are hyprtrade residue like the agent labels above; never
+assign them in VGS.
+
+### Classification labels (non-exclusive; additive)
+
+| Label | Use when |
+|-------|----------|
+| `bug` | Defect in shipped behavior. |
+| `enhancement` | New feature or request. |
+| `chore` | Mechanical/maintenance work, no behavior change. |
+| `docs` | Documentation work. |
+| `security` | Security-relevant surface or hardening work. |
+| `refactor` | Restructure/migration/cleanup where behavior should mostly remain unchanged. |
+| `research` | Research spike/issue whose primary output is findings/decision support. Pair with `agent:researcher`. |
+| `baseline` | Establishes a measurement baseline, benchmark fixture, golden data, or pre-optimization reference. |
+
+### Workflow labels (non-exclusive; additive)
+
+| Label | Use when |
+|-------|----------|
+| `needs-research` | Blocked on unresolved research. Prefer a blocking relation to a research issue when one exists. |
+| `needs-review` | Requires an explicit review gate before execution/merge/close. |
+| `needs-safety-audit` | Concurrency, lock-free, memory/thread safety, or safety-critical validation required. |
+| `needs-perf-test` | Benchmark/profiling/performance validation required before acceptance. |
+| `critical-path` | Blocks or enables major project progress; align priority accordingly. |
+| `blocked` | External blocker only (vendor/license/access/manual dependency). For issue dependencies, use blocking relations instead. |
+| `owner-gated` | Needs an owner decision or owner-only action to proceed. |
+
+`ci-nightly` marks automated CI-failure mirrors ingested by the
+GitHub -> Linear sync; the taxonomy above does not apply to synced mirrors —
+do not retitle or relabel them to satisfy it.
+
+Do not assign the group/parent label `Agent` to issues.
+"""
 
 reviewer = ""
 
