@@ -64,12 +64,17 @@ Feature groups:
 |---------|---------|
 | `base` | Shell runtime |
 | `theme` | Theme engine |
+| `theme-gtk` | GTK theme, icon theme and color-scheme application (gsettings) |
+| `theme-firefox` | Firefox theming (pywalfox) |
+| `fonts` | Font cache refresh after a font change (fc-cache) |
 | `greeter` | VGS greetd greeter, Hyprland or Niri launch, GNOME keyring policy, optional fprint/U2F PAM support |
 | `capture` | Screenshots |
 | `capture-edit` | Screenshot editor |
 | `ocr` | Region OCR |
 | `recording` | Screen recording |
 | `launcher-zoxide` | Optional recent-directory search mode in launcher/menu |
+| `launcher-search` | Launcher file search (fd) and text search (ripgrep) |
+| `trash` | Trash instead of deleting, and the launcher's default folder opener (gio) |
 | `network-usage` | Per-interface traffic statistics |
 | `gamma` | Night-light color temperature |
 | `updates-arch` | Repo updates |
@@ -104,3 +109,7 @@ per-channel mechanisms are in `packaging/README.md`.
 - VGS ships defaults and bundled plugin code; `~/.config/vshell` holds mutable user state.
 - Dotfiles supplies private overlays/wiring, not whole-directory VGS config symlinks.
 - No personal command is required for default VGS startup.
+- Shipped code must not probe for a command VGS neither ships nor declares in
+  `dependencies.json`. A private wrapper belongs behind a user setting the
+  shipped code already passes through (the launcher folder opener uses
+  `launcherFolderOpenCommand`), not behind a `which()` on its name.

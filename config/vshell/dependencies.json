@@ -18,6 +18,21 @@
         "python3"
       ]
     },
+    "theme-gtk": {
+      "commands": [
+        "gsettings"
+      ]
+    },
+    "theme-firefox": {
+      "commands": [
+        "pywalfox"
+      ]
+    },
+    "fonts": {
+      "commands": [
+        "fc-cache"
+      ]
+    },
     "greeter": {
       "commands": [
         "greetd",
@@ -98,6 +113,22 @@
     "launcher-zoxide": {
       "commands": [
         "zoxide"
+      ]
+    },
+    "launcher-search": {
+      "commands": [
+        "rg"
+      ],
+      "anyCommands": [
+        [
+          "fd",
+          "fdfind"
+        ]
+      ]
+    },
+    "trash": {
+      "commands": [
+        "gio"
       ]
     },
     "updates-arch": {

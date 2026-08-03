@@ -17,6 +17,9 @@
   "features": {
     "base": "shell runtime",
     "theme": "theme engine",
+    "theme-gtk": "GTK theme, icon theme and color-scheme application",
+    "theme-firefox": "Firefox theming",
+    "fonts": "font cache refresh after a font change",
     "greeter": "greeter and keyring integration",
     "clipboard": "clipboard history",
     "network-usage": "per-interface network usage",
@@ -27,6 +30,8 @@
     "recording": "screen recording",
     "thumbnails": "file thumbnails",
     "launcher-zoxide": "launcher recent-directory search",
+    "launcher-search": "launcher file and text search",
+    "trash": "trash instead of deleting files",
     "updates-arch": "repo update checks",
     "updates-aur": "AUR update checks",
     "ai-usage": "AI usage widget",
@@ -165,6 +170,40 @@
       "fedora": "zoxide",
       "gentoo": "app-shells/zoxide"
     },
+    "rg": {
+      "arch": "ripgrep",
+      "debian": "ripgrep",
+      "fedora": "ripgrep",
+      "gentoo": "sys-apps/ripgrep"
+    },
+    "fd": {
+      "arch": "fd",
+      "fedora": "fd-find",
+      "gentoo": "sys-apps/fd"
+    },
+    "fdfind": {
+      "debian": "fd-find"
+    },
+
+    "gio": {
+      "arch": "glib2",
+      "debian": "libglib2.0-bin",
+      "fedora": "glib2",
+      "gentoo": "dev-libs/glib"
+    },
+    "gsettings": {
+      "arch": "glib2",
+      "debian": "libglib2.0-bin",
+      "fedora": "glib2",
+      "gentoo": "dev-libs/glib"
+    },
+    "fc-cache": {
+      "arch": "fontconfig",
+      "debian": "fontconfig",
+      "fedora": "fontconfig",
+      "gentoo": "media-libs/fontconfig"
+    },
+    "pywalfox": { "arch": "python-pywalfox" },
 
     "checkupdates": { "arch": "pacman-contrib" },
     "paru": { "arch": "paru" },
