@@ -146,7 +146,7 @@ Item {
             if (wasDragging || mouse.button !== Qt.LeftButton)
                 return;
 
-            PluginService.togglePlugin("vgsMenu");
+            PluginService.toggleAppLauncher();
         }
         onPositionChanged: mouse => {
             if (longPressing && !dragging) {

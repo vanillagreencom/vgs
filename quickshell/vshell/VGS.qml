@@ -60,6 +60,10 @@ Item {
         delegate: Loader {
             id: daemonLoader
             property string pluginId: modelData
+            // Kept so teardown can unregister by identity: `item` is not
+            // reliable during destruction, and a reload's late teardown must
+            // not clear the replacement delegate's registration.
+            property var registeredInstance: null
             sourceComponent: PluginService.pluginDaemonComponents[pluginId]
 
             onLoaded: {
@@ -69,12 +73,13 @@ Item {
                         item.popoutService = PopoutService;
                     }
                     item.pluginId = pluginId;
+                    daemonLoader.registeredInstance = item;
                     PluginService.registerDaemonInstance(pluginId, item);
                     log.info("Daemon plugin loaded:", pluginId);
                 }
             }
 
-            Component.onDestruction: PluginService.registerDaemonInstance(pluginId, null)
+            Component.onDestruction: PluginService.unregisterDaemonInstance(pluginId, daemonLoader.registeredInstance)
         }
     }
 

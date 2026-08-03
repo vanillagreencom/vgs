@@ -920,7 +920,7 @@ Item {
 
             // The bar launcher button and the dock launcher button share one
             // target: the vgsMenu plugin, the shell's only app launcher.
-            onClicked: PluginService.togglePlugin("vgsMenu")
+            onClicked: PluginService.toggleAppLauncher()
         }
     }
 

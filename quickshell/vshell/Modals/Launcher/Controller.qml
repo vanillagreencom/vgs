@@ -34,7 +34,6 @@ Item {
     property var pluginViewPreferences: ({})
     property int gridColumns: SettingsData.appLauncherGridColumns
     property int viewModeVersion: 0
-    property string viewModeContext: "spotlight"
     property bool forceLinearNavigation: false
 
     signal itemExecuted

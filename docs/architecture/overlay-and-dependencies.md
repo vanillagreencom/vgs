@@ -15,6 +15,13 @@
 | `~/.config/vshell/settings.json` | Mutable user shell settings; not tracked |
 | `~/.config/vshell/plugin_settings.json` | Mutable user plugin enablement/settings; not tracked |
 | `~/.config/vshell/plugins/` | User plugin overrides; takes precedence over bundled plugins |
+
+A user override that reuses a **bundled id** replaces the shipped package for that id. Bundled
+ids stay auto-enabled whichever source wins (`PluginService._onManifestParsed`), so shadowing
+cannot leave the product surface unloaded — but the override still has to provide that surface.
+`vgsMenu` is the app launcher and the shell ships no fallback, so an override that drops its
+daemon surface or its `toggle()` disables the launcher; the dock and bar buttons then report
+"App launcher unavailable" via `PluginService.toggleAppLauncher()` instead of doing nothing.
 | `~/.config/vshell-local/menu.json` | Menu categories/items overlay |
 | `~/.config/vshell-local/webapps.json` | Generated webapp menu items |
 

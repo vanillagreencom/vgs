@@ -10,6 +10,10 @@ Item {
 
     property var parentModal: null
     readonly property string defaultLauncherAction: "spawn vshell ipc call vshell-menu toggle"
+    // VGS-13 left the Modals/Launcher search UI with exactly one entry point:
+    // the niri overview overlay. Settings that only reach that stack are hidden
+    // elsewhere rather than presented as app-launcher settings that do nothing.
+    readonly property bool overviewSearchSettingsApply: CompositorService.isNiri && SettingsData.niriOverviewOverlayEnabled
     readonly property int keybindDataVersion: KeybindsService._dataVersion
     readonly property bool keybindsAvailable: KeybindsService.available
     readonly property string defaultLauncherKeybindSearch: "vshell-menu"
@@ -455,7 +459,8 @@ Item {
 
                 SettingsToggleRow {
                     settingKey: "sortAppsAlphabetically"
-                    tags: ["launcher", "sort", "alphabetically", "apps", "order"]
+                    visible: root.overviewSearchSettingsApply
+                    tags: ["launcher", "sort", "alphabetically", "apps", "order", "niri", "overview"]
                     text: I18n.tr("Sort Alphabetically")
                     description: I18n.tr("Sort apps alphabetically instead of by usage frequency")
                     checked: SettingsData.sortAppsAlphabetically
@@ -478,8 +483,17 @@ Item {
             SettingsCard {
                 width: parent.width
                 iconName: "tune"
-                title: I18n.tr("Appearance", "launcher appearance settings")
+                visible: root.overviewSearchSettingsApply
+                title: I18n.tr("Overview Search Appearance", "niri overview search appearance settings")
                 settingKey: "launcherAppearance"
+
+                StyledText {
+                    width: parent.width
+                    text: I18n.tr("Applies to the search overlay in the niri overview, not the VGS Menu launcher")
+                    font.pixelSize: Theme.fontSizeSmall
+                    color: Theme.surfaceVariantText
+                    wrapMode: Text.WordWrap
+                }
 
                 Column {
                     width: parent.width
@@ -939,6 +953,7 @@ Item {
 
                 SettingsToggleRow {
                     settingKey: "launcherIncludeFilesInAll"
+                    visible: root.overviewSearchSettingsApply
                     tags: ["launcher", "files", "dsearch", "all", "results", "indexed"]
                     text: I18n.tr("Include Files in All Tab")
                     description: I18n.tr("Merge indexed file results into the All tab (requires dsearch)")
@@ -948,6 +963,7 @@ Item {
 
                 SettingsToggleRow {
                     settingKey: "launcherIncludeFoldersInAll"
+                    visible: root.overviewSearchSettingsApply
                     tags: ["launcher", "folders", "dirs", "dsearch", "all", "results", "indexed"]
                     text: I18n.tr("Include Folders in All Tab")
                     description: I18n.tr("Merge indexed folder results into the All tab (requires dsearch)")

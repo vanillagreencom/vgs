@@ -140,6 +140,34 @@ window-rule {
         managed = next(bind for bind in all_binds if bind["key"] == "Mod+Space")
         assert_equal(managed["allowWhenLocked"], True, "Niri bind allow-when-locked")
         assert_equal(managed["repeat"], False, "Niri bind repeat")
+
+        # VGS-13: binds VGS generated against the retired launcher IPC targets
+        # are rewritten onto vshell-menu on read, and the file is rewritten so
+        # the fix survives without the user re-editing the bind.
+        niri._write_vgs_niri_binds([
+            {"key": "Mod+Space", "desc": "Launcher", "action": "spawn vshell ipc call spotlight toggle"},
+            {"key": "Mod+D", "desc": "Spotlight bar", "action": "spawn vshell ipc call spotlight-bar open"},
+            {"key": "Mod+Slash", "desc": "Launcher query", "action": "spawn vshell ipc call launcher toggleQuery emoji"},
+            {"key": "Mod+T", "desc": "Terminal", "action": "spawn foot"},
+        ])
+        migrated_binds = {bind["key"]: bind["action"] for bind in niri._load_vgs_niri_binds()}
+        assert_equal(migrated_binds["Mod+Space"], "spawn vshell ipc call vshell-menu toggle", "spotlight bind migration")
+        assert_equal(migrated_binds["Mod+D"], "spawn vshell ipc call vshell-menu open", "spotlight-bar bind migration")
+        assert_equal(migrated_binds["Mod+Slash"], "spawn vshell ipc call vshell-menu toggle", "launcher query bind migration")
+        assert_equal(migrated_binds["Mod+T"], "spawn foot", "unrelated bind left alone")
+        assert_equal(niri.migrate_vgs_niri_binds(), True, "bind migration should rewrite binds.kdl")
+        on_disk = (niri.niri_config_dir() / "binds.kdl").read_text()
+        if "spotlight" in on_disk:
+            raise AssertionError("retired launcher IPC target survived the binds.kdl rewrite")
+        assert_equal(niri.migrate_vgs_niri_binds(), False, "bind migration should be idempotent")
+
+        niri._write_vgs_niri_binds([{
+            "key": "Mod+Space",
+            "desc": "Launcher",
+            "action": "spawn vshell ipc call vshell-menu toggle",
+            "allowWhenLocked": True,
+            "repeat": False,
+        }])
         original_reload = niri._reload_niri
         niri._reload_niri = lambda: {
             "attempted": True, "ok": False, "stdout": "", "stderr": "reload rejected"

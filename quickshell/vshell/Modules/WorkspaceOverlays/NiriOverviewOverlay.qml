@@ -15,7 +15,7 @@ Scope {
     property bool isClosing: false
     property bool releaseKeyboard: false
     // The overview search yields to the app launcher (vgsMenu plugin) when it opens.
-    readonly property bool appMenuOpen: PluginService.daemonInstances["vgsMenu"]?.menuOpen ?? false
+    readonly property bool appMenuOpen: PluginService.getPluginInstance(PluginService.appLauncherPluginId)?.menuOpen ?? false
     property bool overlayActive: NiriService.inOverview || searchActive
 
     function showSpotlight(screenName) {

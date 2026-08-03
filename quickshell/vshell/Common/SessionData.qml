@@ -209,11 +209,9 @@ Singleton {
     property string locale: ""
     property string timeLocale: ""
 
-    property string launcherLastMode: "all"
     property string launcherLastFileSearchType: "all"
     property string launcherLastQuery: ""
     property var launcherQueryHistory: []
-    property string appDrawerLastMode: "apps"
     property string niriOverviewLastMode: "apps"
     property string settingsSidebarExpandedIds: ","
     property string settingsSidebarCollapsedIds: ","
@@ -1259,11 +1257,6 @@ Singleton {
     function clearLauncherHistory() {
         launcherLastQuery = "";
         launcherSearchHistory = [];
-        saveSettings();
-    }
-
-    function setAppDrawerLastMode(mode) {
-        appDrawerLastMode = mode;
         saveSettings();
     }
 

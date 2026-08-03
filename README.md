@@ -218,7 +218,7 @@ you want.
 
 | Widget | What it does |
 |---|---|
-| App Launcher | Opens the launcher |
+| App Launcher | Opens the VGS menu |
 | Workspaces | Current workspace, click to switch, optional app icons |
 | Focused Window | Title of the active window |
 | Running Apps | Open apps with focus indication |
@@ -239,7 +239,7 @@ you want.
 | AI Usage | Claude and Codex plan limits, per account |
 | System Updates | Repo and AUR update counts |
 | Capture | Screenshot and recording state |
-| VGS Menu | Searchable command menu with categories |
+| VGS Menu | Searchable command menu with categories — the same window the App Launcher widget and the dock launcher button open |
 | Idle Inhibitor | Keeps the screen awake |
 | Keyboard Layout | Active layout, click to switch |
 | Caps Lock | Caps lock indicator |
@@ -257,6 +257,12 @@ monitor.
 **Launcher and menus.** The VGS menu is the app launcher: a category-based command menu with fuzzy
 search and optional file search, extensible with your own entries and web apps. The bar and dock
 launcher buttons open it, as does the `vshell-menu` IPC action.
+
+> **Upgrading:** the `launcher`, `spotlight` and `spotlight-bar` IPC targets were removed when the
+> two launchers were consolidated. Rebind any key that used them to
+> `vshell ipc call vshell-menu open|close|toggle`. Niri keybinds that VGS itself generated
+> (`~/.config/niri/vgs/binds.kdl`) are rewritten for you; Hyprland keybinds live in your own config,
+> which VGS reads read-only, so update those by hand.
 
 **Capture.** Screenshots by region, window or display, with a delay timer and an editor handoff.
 Screen recording with the same targets, and OCR to grab text off the screen.
