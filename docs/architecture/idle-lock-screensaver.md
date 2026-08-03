@@ -31,9 +31,16 @@ v17 turned auto monitor-off off and added the blank keys.
 `bin/vshell-screensaver` feeds `tte` a plain-text art file, resolved in
 `resolve_branding()` most specific first:
 
-1. `~/.config/vshell/branding/screensaver.txt` — the user's art. `vshell screensaver
-   transcode` writes it, driven by `ScreensaverService.regenerateAscii()` whenever a
-   picture is picked in Settings → Screensaver.
+1. `~/.config/vshell/branding/screensaver.txt` — art generated from the picture in
+   Settings → Screensaver. `vshell screensaver transcode` writes it, driven by
+   `ScreensaverService.regenerateAscii()`. This is **generated state, not a
+   hand-authoring surface**: it only outranks the bundled logo while
+   `screensaverAsciiImagePath` is still set, which `resolve_branding` checks by
+   reading `~/.config/vshell/settings.json` with `jq`. That is what makes clearing
+   the picture actually go back to the logo, and it retires the frozen hostname/date
+   card an older VGS wrote here for users who never picked a picture. An unreadable
+   or malformed settings file answers "a picture is set", preserving the old
+   precedence rather than discarding art.
 2. `config/vshell/branding/screensaver.txt` — the pre-rendered VGS logo, shipped in the
    package (`/usr/lib/vshell/config/vshell/branding/`) and used **read-only**. This is
    why `screensaverAsciiImagePath` defaults to empty: empty means "use the bundled
@@ -45,9 +52,15 @@ v17 turned auto monitor-off off and added the blank keys.
 3. A generated hostname/date card, only if 1 and 2 are both unavailable.
 
 If none of the three can be produced, `launch` refuses instead of covering every
-monitor with an empty terminal. Transcoding a picture needs `magick`, which VGS does
-not require — when it is missing the transcode fails, `ScreensaverService.lastError`
-carries the reason to the settings tab, and the saver keeps its previous art.
+monitor with an empty terminal. It also refuses when `tte` or `ghostty` is missing —
+neither is declared in `config/vshell/dependencies.json` (VGS-14). Either way
+`ScreensaverService` runs the launcher through a `Process` and clears `active` on a
+non-zero exit, so the shell never reports a saver that is not on screen.
+
+Transcoding a picture needs `magick`, which VGS does not require — when it is missing
+the transcode fails, `ScreensaverService.lastError` carries the reason to the settings
+tab, and the saver keeps its previous art. Any change to the picture clears
+`lastError`, so the warning cannot outlive the picture it was about.
 
 ## Manual paths
 - **Super+L** → lock (`vshell ipc call lock lock`).

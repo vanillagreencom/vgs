@@ -18,8 +18,10 @@ import qs.Services
 //     With no picture picked, the runner falls back to the pre-rendered VGS logo
 //     shipped at config/vshell/branding/screensaver.txt, so the saver has art on
 //     a fresh install without ImageMagick or a first-run transcode. An empty
-//     screensaverAsciiImagePath therefore means "use the bundled logo", not
-//     "no art" — see bin/vshell-screensaver::resolve_branding.
+//     screensaverAsciiImagePath means "use the bundled logo", not "no art": the
+//     runner reads the setting and only prefers the generated user art while a
+//     picture is still selected, so clearing the field really does go back to
+//     the logo — see bin/vshell-screensaver::resolve_branding.
 //   * "video" — native in-shell video overlays (Modules/Screensaver/
 //     ScreensaverVideoWindow.qml, one per screen, gated on `videoActive`).
 //
@@ -74,9 +76,26 @@ Singleton {
             return;
         active = true;
         log.info("start (" + (_videoUsable ? "video" : "ascii") + ")");
+        // ascii: run the launcher through a Process rather than detaching it, so
+        // a refusal (no art, or no tte/ghostty — neither is a declared VGS
+        // dependency) clears `active` instead of leaving the shell believing a
+        // saver is up with nothing on screen.
         if (!_videoUsable)
-            Quickshell.execDetached([Paths.vshellCli, "screensaver", "launch"]);
+            launchProcess.running = true;
         // video mode: overlays follow videoActive
+    }
+
+    Process {
+        id: launchProcess
+        running: false
+        command: [Paths.vshellCli, "screensaver", "launch"]
+        onExited: exitCode => {
+            if (exitCode === 0)
+                return;
+            root.log.warn("screensaver launch refused (exit " + exitCode + "); no saver is showing");
+            root._startAfterRegen = false;
+            root.active = false;
+        }
     }
 
     function stop() {
@@ -103,6 +122,16 @@ Singleton {
     // silently nothing when ImageMagick is missing.
     property string lastError: ""
 
+    // Any change to the picture invalidates an error about the previous one —
+    // including clearing the field, which is not a failure at all but a switch
+    // back to the bundled logo. Without this the red banner outlives its cause.
+    Connections {
+        target: SettingsData
+        function onScreensaverAsciiImagePathChanged() {
+            root.lastError = "";
+        }
+    }
+
     // Regenerate the braille art from the configured picture. Overwrites the art
     // text file the tte saver reads. Called on image selection (pre-warm) and,
     // when stale, automatically by start() before showing the saver. No picture
@@ -110,8 +139,11 @@ Singleton {
     property bool generating: false
     function regenerateAscii() {
         const img = SettingsData.screensaverAsciiImagePath;
-        if (!img || generating)
+        if (!img || generating) {
+            if (!img)
+                lastError = "";
             return;
+        }
         lastError = "";
         transcodeProcess.capturedError = "";
         generating = true;
@@ -150,7 +182,8 @@ Singleton {
             }
             // Show the saver once art is ready (or fall through to the previous
             // art / the bundled logo on failure — never leave a Preview request
-            // hanging, and never put up an empty window).
+            // hanging). The runner still refuses if it can find no art at all,
+            // and launchProcess clears `active` when it does.
             if (root._startAfterRegen) {
                 root._startAfterRegen = false;
                 root._activate();

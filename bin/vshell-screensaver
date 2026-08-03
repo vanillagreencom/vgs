@@ -25,6 +25,7 @@ BRANDING="$CONFIG_HOME/vshell/branding/screensaver.txt"
 #   vshell screensaver transcode quickshell/vshell/assets/vgslogo.svg \
 #     config/vshell/branding/screensaver.txt --width 100 --height 40
 BUNDLED_BRANDING="${VSHELL_ROOT:-$(cd -- "$script_dir/.." && pwd)}/config/vshell/branding/screensaver.txt"
+SETTINGS="$CONFIG_HOME/vshell/settings.json"
 GHOSTTY_CONF="$CONFIG_HOME/vshell/ghostty-screensaver.conf"
 IS_NIRI=0
 if [[ -n ${NIRI_SOCKET:-} ]] && command -v niri >/dev/null 2>&1 && niri msg version >/dev/null 2>&1; then
@@ -59,15 +60,31 @@ default_text() {
   printf '%s\n' "$(date '+%A %B %-d, %Y')"
 }
 
+# Is a source picture selected in settings? $BRANDING is generated output, not a
+# hand-authored file, so it only outranks the bundled logo while the picture it
+# was generated from is still selected. Without this, clearing the picture would
+# leave the old art in place forever, and the hostname/date card an older VGS
+# wrote once into $BRANDING would outrank the logo for every existing user.
+# Anything unreadable answers "yes", which keeps the previous behaviour rather
+# than discarding art on a bad settings read.
+picture_configured() {
+  [[ -r "$SETTINGS" ]] || return 0
+  command -v jq >/dev/null 2>&1 || return 0
+  local configured
+  configured="$(jq -r '.screensaverAsciiImagePath // ""' "$SETTINGS" 2>/dev/null)" || return 0
+  [[ -n "$configured" ]]
+}
+
 # Print the art file tte should read, most specific first:
-#   1. the user's own art — what `vshell screensaver transcode` writes
+#   1. the user's own art — what `vshell screensaver transcode` writes — while a
+#      picture is still selected
 #   2. the bundled VGS logo, used read-only so a fresh install needs no write
 #      into ~/.config and no ImageMagick
 #   3. a generated hostname/date card, only if the user path is writable
 # Returns non-zero when no art can be produced at all, so the caller refuses to
 # launch rather than putting up an empty fullscreen window.
 resolve_branding() {
-  if [[ -s "$BRANDING" ]]; then
+  if [[ -s "$BRANDING" ]] && picture_configured; then
     printf '%s\n' "$BRANDING"
     return 0
   fi

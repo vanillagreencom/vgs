@@ -396,7 +396,9 @@ var SPEC = {
     // Empty means "use the bundled VGS logo" — bin/vshell-screensaver falls back
     // to the pre-rendered config/vshell/branding/screensaver.txt. Kept empty
     // rather than pointing at the bundled file so the default survives a move of
-    // the asset and needs no migration.
+    // the asset and needs no migration. resolve_branding reads this key back out
+    // of settings.json, so clearing it really does return to the logo instead of
+    // stranding the art generated from the old picture.
     screensaverAsciiImagePath: { def: "" },
     fadeToLockEnabled: { def: true },
     fadeToLockGracePeriod: { def: 5 },

@@ -143,7 +143,7 @@ Item {
 
                     StyledText {
                         width: parent.width
-                        visible: ScreensaverService.lastError !== ""
+                        visible: ScreensaverService.lastError !== "" && SettingsData.screensaverAsciiImagePath !== ""
                         wrapMode: Text.WordWrap
                         // Converting needs ImageMagick, which VGS does not require.
                         // Without this the field just keeps showing the picture that
