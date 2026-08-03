@@ -179,13 +179,27 @@ skipping: a silent skip is indistinguishable from a pass.
 
 One other local/CI difference: the bare `git diff --check` above is a
 working-tree check, so on a clean CI checkout it would inspect nothing. CI
-diffs a range instead — the base is the PR base on `pull_request`, the merge
-commit's first parent on `merge_group`, and the previous tip on a `main` push —
-which is why the job checks out with `fetch-depth: 0`. The step runs on **every**
-event rather than only on pull requests: skipping it on `merge_group` and `push`
-would leave it green without checking on precisely the two events that gate
-landing code. If no range can be resolved at all, the step fails rather than
-passing, so "did not check" can never read as "checked".
+diffs a range instead, which is why the job checks out with `fetch-depth: 0`.
+Each event has exactly one base:
+
+| Event | Whitespace base |
+|-------|-----------------|
+| `pull_request` | `github.event.pull_request.base.sha` |
+| `merge_group` | `HEAD^1` — the merge commit's first parent, so the range is everything the group adds, including a multi-PR combination no single PR range covered |
+| `push` | `github.event.before`, the previous tip of the branch |
+
+The step runs on **every** event rather than only on pull requests: skipping it
+on `merge_group` and `push` would leave it green without checking on precisely
+the two events that gate landing code.
+
+**There is no fallback base, deliberately.** If the base above cannot be
+resolved — a force-push can leave the previous tip unreachable, a
+branch-creation push sends the all-zero sha, a root commit has no first parent —
+the step prints `::error::` and **fails**. It does not substitute a narrower
+range: doing so passes while claiming coverage it does not have, which is the
+same defect as skipping the step. An unrecognised event fails the same way,
+so adding a trigger forces a conscious decision about what to compare against.
+A red run on a rewritten trunk is informative, not noise.
 
 A whole-tree whitespace check is deliberately not used: the vendored trees under
 `config/vshell/nvim/colorschemes/` and `config/vshell/icons/` carry ~2000

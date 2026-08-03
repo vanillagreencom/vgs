@@ -102,6 +102,9 @@ jobs:
       # config/vshell/nvim/colorschemes/ and config/vshell/icons/ carry ~2000
       # pre-existing whitespace findings, so it would be red from day one and
       # would need an exclusion list to maintain.
+      #
+      # The step fails rather than checking a substitute range when its base
+      # cannot be resolved; see the comment on the fallback inside the script.
       - name: Whitespace errors introduced by this change
         env:
           EVENT_NAME: ${{ github.event_name }}
@@ -109,29 +112,48 @@ jobs:
           PUSH_BEFORE: ${{ github.event.before }}
         run: |
           set -euo pipefail
+          # THERE IS NO FALLBACK BASE, DELIBERATELY. An earlier revision
+          # substituted HEAD^1 whenever the intended base would not resolve.
+          # That turned an unverifiable range into a PASS over a narrower one —
+          # green while claiming coverage it did not have, which is the same
+          # defect as the skipped step this check replaced, one layer down.
+          # Each event names exactly one base, and if that base cannot be
+          # resolved the step fails.
           case "$EVENT_NAME" in
-            pull_request) base="$PR_BASE_SHA" ;;
+            pull_request)
+              base="$PR_BASE_SHA"
+              source="the pull request base"
+              ;;
             # HEAD is the merge commit the queue built, so its first parent is
             # the queue base and the range is everything the group adds —
             # including a combination of several PRs that no single PR's own
             # range ever covered.
-            merge_group)  base="HEAD^1" ;;
-            # The previous tip of main. A force-push can leave it unreachable,
-            # which the fallback below absorbs rather than failing the build for
-            # a reason unrelated to the code.
-            push)         base="$PUSH_BEFORE" ;;
-            *)            base="" ;;
+            merge_group)
+              base="HEAD^1"
+              source="the merge commit's first parent"
+              ;;
+            push)
+              base="$PUSH_BEFORE"
+              source="the previous tip of the branch"
+              ;;
+            # Fail closed rather than guessing: adding a trigger must be a
+            # conscious decision about what this check compares against.
+            *)
+              echo "::error::whitespace check has no defined base for event $EVENT_NAME; define one before adding that trigger"
+              exit 1
+              ;;
           esac
+          # Unresolvable cases: a force-push can leave the previous tip
+          # unreachable, a branch-creation push sends the all-zero sha, and a
+          # root commit has no first parent. None of them can be papered over
+          # with a different range — "did not check" must never read as
+          # "checked", and a red run on a rewritten trunk is informative, not
+          # noise.
           if [ -z "$base" ] || ! git rev-parse --verify --quiet "$base^{commit}" >/dev/null; then
-            base="HEAD^1"
-          fi
-          # No range at all (a root commit). Fail loudly: the whole point of
-          # this step is that "did not check" must never read as "checked".
-          if ! git rev-parse --verify --quiet "$base^{commit}" >/dev/null; then
-            echo "::error::no commit range available for event $EVENT_NAME; whitespace was NOT checked"
+            echo "::error::cannot resolve $source ('$base') for event $EVENT_NAME, so the whitespace range is unknown and NOTHING was checked. Not falling back to a narrower range: that would pass while claiming coverage it does not have."
             exit 1
           fi
-          echo "whitespace range: $base...HEAD"
+          echo "whitespace range: $base...HEAD ($source)"
           git diff --check "$base...HEAD"
 
       - name: Packaging metadata and assets
