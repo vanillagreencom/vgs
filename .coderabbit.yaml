@@ -124,9 +124,13 @@ reviews:
         connected to handle it" while the process keeps running. Never suggest
         them as a way to terminate the shell.
 
-        (2) `Qt.resolvedUrl()` resolves inside Quickshell's virtual filesystem
-        and yields `qrc:/qs-blackhole/...`, which is not a runnable path. Use
-        `Quickshell.shellDir` to derive filesystem paths.
+        (2) `Qt.resolvedUrl()` resolves inside Quickshell's virtual filesystem.
+        That is correct and idiomatic for QML-internal asset URLs —
+        `FontLoader.source`, `Image.source` — and every bundled asset in this
+        repo loads that way; do NOT flag it there. It is wrong only where a real
+        filesystem path is needed, such as a path handed to a subprocess or
+        compared against /proc: there it yields `qrc:/qs-blackhole/...`, which
+        no process can open. Use `Quickshell.shellDir` for those.
 
         (3) `Process` emits `exited` BEFORE `running` goes false, and a command
         that fails to start emits no `exited` at all — code that only handles
