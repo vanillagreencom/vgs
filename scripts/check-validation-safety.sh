@@ -49,8 +49,9 @@ NEGATED = re.compile(r"never|do not|don't|must not|refus|instead of|rather than"
 # unsafe instruction added to one of these files must still be caught. Each
 # entry lists substrings that identify the known-good lines — the runner
 # describing the child it spawns, the guard explaining what it exists to stop,
-# and the greeter fixtures (a greeter runs from /var/cache, never against a
-# live session).
+# the greeter fixtures (a greeter runs from /var/cache, never against a live
+# session), and the prohibition text itself where the ban wraps onto a line that
+# no longer carries its own negation.
 ALLOWED_CONTEXTS = {
     "backend/internal/runner/runner.go": (
         "QSArgs are extra args",
@@ -64,6 +65,21 @@ ALLOWED_CONTEXTS = {
     "scripts/check-vshell-helper.py": (
         "/var/cache/vshell-greeter",
         "Config-path matching covers",
+    ),
+    # The three places that state the ban. Their opening line is negated and
+    # needs no exemption; the wrapped continuation carries the second command
+    # away from the "Never", and AGENTS.md's smoke-mode bullet names the command
+    # only to say what replaced it. These are load-bearing policy text and are
+    # not reworded to suit the scanner, so each continuation is exempted by a
+    # phrase long enough that it cannot launder an added instruction.
+    "AGENTS.md": (
+        "This is the mode that replaces what",
+    ),
+    ".coderabbit.yaml": (
+        "Each starts a second full shell in the live",
+    ),
+    ".github/copilot-instructions.md": (
+        "each start a full second VGS instance in the live",
     ),
 }
 
@@ -120,6 +136,20 @@ FIXTURES = [
         "qs -c vshell",
         "```",
     ], [3]),
+    # The prohibition text: the wrapped continuation is exempt, a real
+    # instruction added to the same file is not.
+    ("AGENTS.md", [
+        "    errors. **This is the mode that replaces what `qs -c vshell` used to cover**,",
+        "  - Or just run `qs -c vshell` yourself.",
+    ], [2]),
+    (".coderabbit.yaml", [
+        "        `qs -p quickshell/vshell`. Each starts a second full shell in the live",
+        "        Validate QML with `qs -c vshell`.",
+    ], [2]),
+    (".github/copilot-instructions.md", [
+        "`qs -p quickshell/vshell` each start a full second VGS instance in the live",
+        "Run `qs -p quickshell/vshell` to check your work.",
+    ], [2]),
 ]
 
 if os.environ.get("SELF_TEST") == "true":
