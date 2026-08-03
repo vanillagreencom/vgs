@@ -47,11 +47,23 @@ follows is what VGS adds on top.
 Native packages are the recommended installation method. They install VGS system-wide, handle
 dependencies, and provide normal upgrades and removal.
 
-After installing a native package, enable the user service for your account:
+Native packages do not enable user services on your behalf — no package can, since a user unit has to
+be enabled per account. Every native package therefore prints this step, and it is required before
+VGS appears:
 
 ```bash
 systemctl --user enable --now vshell.service
 ```
+
+Then check which optional features your system can run:
+
+```bash
+vshell deps status
+```
+
+Every feature group that reports `missing` names the commands it needs. The native packages list
+those tools as optional dependencies (`optdepends` on Arch, `Suggests:` on Debian and Fedora,
+`optfeature` hints on Gentoo), so your package manager can show them too.
 
 ### Arch Linux
 
@@ -64,6 +76,9 @@ yay -S vgs-shell
 Replace `yay` with your preferred AUR helper. Use
 [`vgs-shell-git`](https://aur.archlinux.org/packages/vgs-shell-git) instead for the current
 development version.
+
+`vgs-shell` ships the `coppernight` default theme only. Add `vgs-shell-assets` (or
+`vgs-shell-assets-git`) for every other bundled theme, its wallpapers, and the vendored icon themes.
 
 ### Fedora
 

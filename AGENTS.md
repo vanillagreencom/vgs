@@ -96,9 +96,11 @@ Live-machine etiquette:
 - Releases use `.agents/skills/vgs-release/SKILL.md`. Every release updates and verifies all maintained install channels; unavailable channels must be named, never silently skipped.
 
 ## Validation
-Scope to the area touched (Go-only: inventory guard + go block; QML-only: naming, QML smoke, surfaces; helper: py_compile + helper checks); run the full suite for cross-cutting work:
+Scope to the area touched (Go-only: inventory guard + go block; QML-only: naming, QML smoke, surfaces; helper: py_compile + helper checks; packaging: the two packaging checks); run the full suite for cross-cutting work:
 ```bash
 scripts/check-naming.sh
+scripts/gen-package-metadata.py
+scripts/check-package-assets.sh
 node --check scripts/check-settings-migration.js
 scripts/check-settings-migration.js
 node scripts/test-restyle-queue.js
