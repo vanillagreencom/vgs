@@ -11,7 +11,7 @@ suppresses the **whole flow** and also holds a systemd sleep-inhibitor lock.
 2. The lock shows its screensaver — **video** if `lockScreenVideoEnabled`, else the
    normal lock UI. (The *desktop* ascii saver — `ScreensaverService` +
    `bin/vshell-screensaver` — is a separate, default-off tier for the *unlocked*
-   idle case; see `docs/plans/screensaver-native-renderer.md`.)
+   idle case; see "Ascii saver art" below.)
 3. **5 min more idle while locked → blank to full black** (`lockScreenBlankTimeout=300`):
    the tier sets `IdleService.lockScreenBlankedIdle`, which (with the manual blackout
    latch below) drives `lockScreenBlanked` → a black overlay in `Modules/Lock/LockSurface.qml`.
@@ -26,6 +26,28 @@ suppresses the **whole flow** and also holds a systemd sleep-inhibitor lock.
 (blank to black) · `acMonitorTimeout` (monitors off, opt-in) · `acSuspendTimeout`
 (suspend, opt-in). Defaults live in `config/vshell/settings.default.json`; migration
 v17 turned auto monitor-off off and added the blank keys.
+
+## Ascii saver art
+`bin/vshell-screensaver` feeds `tte` a plain-text art file, resolved in
+`resolve_branding()` most specific first:
+
+1. `~/.config/vshell/branding/screensaver.txt` — the user's art. `vshell screensaver
+   transcode` writes it, driven by `ScreensaverService.regenerateAscii()` whenever a
+   picture is picked in Settings → Screensaver.
+2. `config/vshell/branding/screensaver.txt` — the pre-rendered VGS logo, shipped in the
+   package (`/usr/lib/vshell/config/vshell/branding/`) and used **read-only**. This is
+   why `screensaverAsciiImagePath` defaults to empty: empty means "use the bundled
+   logo", so a fresh install has art without ImageMagick, without a first-run
+   transcode, and without the package needing to write into `$HOME`. Regenerate it
+   with `vshell screensaver transcode quickshell/vshell/assets/vgslogo.svg
+   config/vshell/branding/screensaver.txt --width 100 --height 40`;
+   `scripts/check-package-assets.sh` asserts it stays in the package.
+3. A generated hostname/date card, only if 1 and 2 are both unavailable.
+
+If none of the three can be produced, `launch` refuses instead of covering every
+monitor with an empty terminal. Transcoding a picture needs `magick`, which VGS does
+not require — when it is missing the transcode fails, `ScreensaverService.lastError`
+carries the reason to the settings tab, and the saver keeps its previous art.
 
 ## Manual paths
 - **Super+L** → lock (`vshell ipc call lock lock`).
@@ -57,5 +79,5 @@ longer driving the lock.
 
 ## Not yet built
 Rendering the ascii saver *over the lock* (only the lock surface can draw while locked)
-needs the native ascii renderer — tracked in `docs/plans/screensaver-native-renderer.md`
-(Piece 3), to build alongside the native renderer.
+needs a native in-shell ascii renderer, to build alongside it. Not tracked in-repo —
+`docs/plans/screensaver-native-renderer.md` was referenced here but has never existed.

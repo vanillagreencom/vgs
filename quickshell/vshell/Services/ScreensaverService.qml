@@ -15,6 +15,11 @@ import qs.Services
 //     running `tte`, one per monitor, via `vshell screensaver`). The art source
 //     is ~/.config/vshell/branding/screensaver.txt; picking a picture in settings
 //     regenerates that file through `vshell screensaver transcode` (braille art).
+//     With no picture picked, the runner falls back to the pre-rendered VGS logo
+//     shipped at config/vshell/branding/screensaver.txt, so the saver has art on
+//     a fresh install without ImageMagick or a first-run transcode. An empty
+//     screensaverAsciiImagePath therefore means "use the bundled logo", not
+//     "no art" — see bin/vshell-screensaver::resolve_branding.
 //   * "video" — native in-shell video overlays (Modules/Screensaver/
 //     ScreensaverVideoWindow.qml, one per screen, gated on `videoActive`).
 //
@@ -92,14 +97,23 @@ Singleton {
         active ? stop() : start();
     }
 
+    // Why the last transcode failed, for the settings tab. Empty means the
+    // configured picture rendered fine, or none is configured (the runner uses
+    // the bundled VGS logo). Without this the tab shows "Preparing…" and then
+    // silently nothing when ImageMagick is missing.
+    property string lastError: ""
+
     // Regenerate the braille art from the configured picture. Overwrites the art
     // text file the tte saver reads. Called on image selection (pre-warm) and,
-    // when stale, automatically by start() before showing the saver.
+    // when stale, automatically by start() before showing the saver. No picture
+    // is not an error: the runner falls back to the bundled logo.
     property bool generating: false
     function regenerateAscii() {
         const img = SettingsData.screensaverAsciiImagePath;
         if (!img || generating)
             return;
+        lastError = "";
+        transcodeProcess.capturedError = "";
         generating = true;
         _transcodingArt = img;
         transcodeProcess.command = [Paths.vshellCli, "screensaver", "transcode", img, _brandingText, "--width", "100", "--height", "40"];
@@ -109,16 +123,34 @@ Singleton {
     Process {
         id: transcodeProcess
         running: false
+        // Quickshell documents streamFinished as "the process closed stderr or
+        // exited" without ordering it against exited, so neither handler assumes
+        // it ran first: exited always sets a message, and a late stderr only
+        // refines an error that is already showing.
+        property string capturedError: ""
+        stderr: StdioCollector {
+            onStreamFinished: {
+                const detail = (text || "").trim();
+                transcodeProcess.capturedError = detail;
+                if (detail && !root.generating && root.lastError !== "")
+                    root.lastError = detail;
+            }
+        }
         onExited: (exitCode, exitStatus) => {
             root.generating = false;
             if (exitCode === 0) {
                 root._lastArt = root._transcodingArt;
+                root.lastError = "";
                 root.log.info("ascii art regenerated from", root._transcodingArt);
             } else {
-                root.log.warn("screensaver transcode failed with code", exitCode);
+                // Surface it: the common cause is a missing `magick`, and the
+                // user has no other signal that their picture was ignored.
+                root.lastError = capturedError || I18n.tr("Could not convert the picture (exit %1)").arg(exitCode);
+                root.log.warn("screensaver transcode failed with code", exitCode, root.lastError);
             }
-            // Show the saver once art is ready (or fall through with existing art
-            // on failure — never leave a Preview request hanging).
+            // Show the saver once art is ready (or fall through to the previous
+            // art / the bundled logo on failure — never leave a Preview request
+            // hanging, and never put up an empty window).
             if (root._startAfterRegen) {
                 root._startAfterRegen = false;
                 root._activate();

@@ -771,6 +771,7 @@ Singleton {
     property int screensaverTimeout: 240
     property string screensaverType: "ascii"
     property string screensaverVideoPath: ""
+    // Empty means "use the bundled VGS logo" (see SettingsSpec.js).
     property string screensaverAsciiImagePath: ""
     property bool fadeToLockEnabled: true
     property int fadeToLockGracePeriod: 5
