@@ -39,6 +39,70 @@ v17 turned auto monitor-off off and added the blank keys.
 - **Super+Shift+Esc** → toggle the desktop ascii/video saver (`ScreensaverService`).
 - **Super+F5 / F6** → manual secure DPMS-off / on (a wake latch survives activity/resume).
 
+## Hot reload is suspended while locked
+
+`Modules/Lock/Lock.qml` keeps `Quickshell.watchFiles = false` for as long as a lock
+is engaged (`shouldLock || sessionLock.locked`) and restores the value on unlock.
+It re-asserts on `Quickshell.onWatchFilesChanged` rather than suspending once,
+because `shell.qml`'s `Component.onCompleted` can run *after* Lock's (children
+complete before parents) and would otherwise re-arm the watcher on top of an
+engaged lock. `shell.qml` owns the `VSHELL_DISABLE_HOT_RELOAD` policy and the
+startup value; it is not the last writer. Resume re-reads that policy instead of
+trusting the value it snapshotted at suspend time — `mWatchFiles` defaults to true
+in a fresh process, so a suspend that beats `shell.qml` would otherwise capture
+`true` and switch hot reload on against an explicit `VSHELL_DISABLE_HOT_RELOAD=1`.
+
+If quickshell ends the lock on its own — the compositor's
+`ext_session_lock_v1.finished` (denied lock, crashed-locker fallback), or an
+aborted attempt when the protocol is unavailable — `Lock.qml` clears `shouldLock`
+via `forceReset()` and hot reload resumes. Suspension tracks a lock that actually
+exists, so it can never strand the watcher off.
+
+`forceReset()` — the dropped-lock recovery and the `vshell ipc call lock
+forceReset` escape hatch — also tears down what was waiting on the lock, because
+clearing the lock state alone can leave the session unusable:
+
+- **The fade-to-lock overlay.** After its fade completes `FadeToLockWindow` is
+  opaque with `WlrKeyboardFocus.Exclusive`, `cancelFade()` early-returns, and its
+  only self-dismissal is `IdleService.isShellLocked` going false — which never
+  happens for a lock that was refused before it was ever confirmed. Recovery emits
+  `IdleService.dismissFadeToLock()`.
+- **Pending lock intents** (`IdleService.abandonPendingLockIntents`). Both
+  `requestSecureManualOff()` (Super+F5) and `startLockBlackout()` deliberately wait
+  for a *confirmed* lock, latching `secureManualOffPending` / `blackoutLockPending`
+  first. `manualWakeBlocked` is set with the former and swallows every automatic
+  display wake, so a lock that never arrives would leave the session unable to wake
+  itself. A manual off latch (`setDisplaysManual`) is untouched — it clears
+  `secureManualOffPending`, so recovery never releases a block it did not strand.
+
+Nothing else in this path needs unwinding: `isShellLocked`, the DPMS delay timers,
+and the idle/screensaver monitor arming are all derived from the *confirmed* lock
+and either never engaged or are reset by `_syncConfirmedLock()`.
+
+This exists because quickshell's reload matching cannot reach this subtree.
+`ReloadPropagator` (`Scope`/`ShellRoot`) hands old instances only to children that
+are themselves `Reloadable`; any other child falls into an else-branch that passes
+an already-null pointer to `Reloadable::reloadRecursive`, which then does nothing
+(`src/core/reload.cpp`). `shell.qml`'s `Loader` is not `Reloadable`, so propagation
+stops there and nothing beneath it is visited — **making `VGS.qml`'s root
+`Reloadable` would not help.** So a reload rebuilds `WlSessionLock` with a null old
+instance and a **fresh** `SessionLockManager`, then destroys the previous one
+while it still owns the ext-session-lock. `~QSWaylandSessionLock` destroys the
+protocol object — deliberately leaving the session locked — but never clears the
+process-global "a lock is active" pointer, which only `unlock()` clears. Every
+later lock request then fails inside `SessionLockManager::lock()`, and
+`WlSessionLock::realizeLockTarget` shows its surfaces regardless and aborts:
+
+```
+FATAL: Tried to show lockscreen surfaces without active lock
+```
+
+(quickshell 0.3.0, `src/wayland/session_lock.cpp`). The abort is in the library
+and cannot be caught from QML, so the shell avoids arming it instead. Trade-off:
+an edit saved while the session is locked is only picked up on the next write
+after unlock — suspending tears the watcher down, and resuming rebuilds it from
+the scanned file list without replaying missed events.
+
 ## Recovery
 A stray *second* VGS shell is the usual cause of "the lock is secure but its UI
 is black": each instance builds its own `vshell:fade-to-lock` overlay and races
