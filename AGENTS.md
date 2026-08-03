@@ -124,6 +124,64 @@ scripts/smoke-surfaces.sh
 (cd backend && go build ./... && go vet ./... && go test -race ./...)
 ```
 
+### What CI covers, and what it cannot
+
+`.github/workflows/ci.yml` runs this suite on every pull request, on
+merge-queue entries, and on `main` pushes.
+
+**Branch protection and the merge queue should require `CI / ci-ok` alone.**
+That is the workflow's one job — named for the required context rather than for
+what it does, which is the indirection a separate aggregator job would have
+bought. There are no conditional lanes that could leave a required context
+permanently skipped, so there is nothing to aggregate; if lanes are ever added,
+the work moves to new jobs and `ci-ok` becomes the aggregator over them, and
+branch protection never has to change.
+
+One job is also the cheap shape here. Measured on this repo: the static suite is
+~16s of work, and the Go block is ~6s warm / ~16s cold (build 4.4s, vet 0.8s,
+`test -race` 11.0s). At ~30s of total compute, per-job overhead — runner
+acquisition, checkout, toolchain setup — dominates, so splitting into lanes
+would multiply billed minutes to save seconds, and a change-detection job to
+gate those lanes would cost more than the work it could skip. The sibling repos
+(hyprtrade, memsira, drovr) split because their lanes run for minutes; that
+economics does not transfer. Revisit if any step crosses ~5 minutes. There is no
+nightly split for the same reason.
+
+Go caching is deliberately **off**. A cold Go run downloads 13 MB of modules but
+leaves a 296 MB `GOCACHE`; saving and restoring that to skip ~10s of compute is
+a net loss on a 2 vCPU runner. Re-measure before enabling it.
+
+The runner resolves through the shared `CI_RUNNER_2V` repository variable
+(Blacksmith when set, `ubuntu-latest` when unset — that fallback is supported
+and must keep working). Nothing here is CPU-bound or disk-hungry, so the 4V/8V
+tiers buy VGS nothing.
+
+Two checks in the list above **cannot run in CI** and stay local-only. Their
+absence is deliberate, not an oversight:
+
+| Check | Why it is local-only |
+|-------|----------------------|
+| `scripts/qml-smoke.sh --nested` | Its sandbox needs both Hyprland and `quickshell` on PATH (`scripts/qml-smoke.sh::nested_check`); neither is reasonably installable on a CI runner. CI runs the static half instead, via `scripts/check-validation-safety.sh --require-static`, which forwards the flag to the smoke. Quickshell is not needed for that half — the static check tolerates unresolved `qs.*` imports by design and fails only on `[syntax…]` findings. |
+| `scripts/smoke-surfaces.sh` | Needs a **live** Hyprland VGS session and reads `hyprctl layers`. Anywhere else it prints a skip and exits 0, so running it in CI would manufacture a false green. |
+
+The live-session half of `scripts/check-validation-safety.sh` is likewise
+inert in CI: with no compositor and no Quickshell CLI its snapshots report
+"nothing of that kind exists on this system" and pass. The repo-wide
+unsafe-launch instruction scan — the other half — runs in full.
+
+So a green PR proves the static suite and the Go block. It does **not** prove
+the shell starts or that its surfaces are sane. Run
+`scripts/qml-smoke.sh --nested --require-static` and
+`scripts/smoke-surfaces.sh` locally before finishing QML work.
+
+`--require-static` is passed in CI so a missing qmllint **fails** rather than
+skipping: a silent skip is indistinguishable from a pass.
+
+One other local/CI difference: the bare `git diff --check` above is a
+working-tree check, so on a clean CI checkout it would inspect nothing. CI runs
+`git diff --check "$BASE_SHA...HEAD"` over the pull request range instead,
+which is why the job checks out with `fetch-depth: 0`.
+
 ### Never launch a second shell into the live session
 Never run `qs -c vshell` or `qs -p quickshell/vshell`: each starts a **full second
 VGS instance**, which fights the session shell for session-global resources
