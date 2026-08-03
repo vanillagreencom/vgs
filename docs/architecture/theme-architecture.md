@@ -46,11 +46,15 @@ They do not own shell or compositor geometry such as corner radius, border size,
 or spacing; those live in VGS settings.
 
 Release bundles install the complete built-in wallpaper and icon assets. The
-installer supports `VGS_THEME_BUNDLE=all|core|extras`; Arch packages use `core`
-for the base package (the `coppernight` default theme and targets) and `extras`
-for the optional collection of remaining themes, wallpapers, and vendored Yaru
-icon assets. The base package remains fully functional; install the asset package
-to restore the complete built-in collection.
+installer supports `VGS_THEME_BUNDLE=all|core|extras` and defaults to `core`, so
+a packaging recipe that forgets the variable ships too little rather than the
+~1.1 GiB `all` bundle. The Arch, Debian, Fedora, and Void packages use `core` for
+the base package (the `coppernight` default theme and targets) and `extras` for
+the optional `vgs-shell-assets` collection of remaining themes, wallpapers, and
+vendored Yaru icon assets; Gentoo folds `extras` into `USE=extra-themes` and the
+Nix flake asks for `all`. The base package remains fully functional; install the
+asset package to restore the complete built-in collection. Bundle assignments per
+channel are tabulated in `packaging/README.md`.
 
 ## Theme package format
 A theme is a directory, not a single JSON:

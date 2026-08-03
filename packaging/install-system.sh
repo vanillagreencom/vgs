@@ -5,7 +5,11 @@ root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 dest="${DESTDIR:-}"
 prefix="${PREFIX:-/usr}"
 lib="$dest$prefix/lib/vshell"
-theme_bundle="${VGS_THEME_BUNDLE:-all}"
+# Default to the small bundle on purpose: `all` costs ~1.1 GiB of themes and
+# icons, so a packaging recipe that forgets VGS_THEME_BUNDLE should ship too
+# little rather than too much. scripts/check-package-assets.sh enforces that
+# every in-repo caller states its bundle explicitly.
+theme_bundle="${VGS_THEME_BUNDLE:-core}"
 
 case "$theme_bundle" in
   all|core|extras) ;;

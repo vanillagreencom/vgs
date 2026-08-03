@@ -1,0 +1,203 @@
+{
+  "$comment": [
+    "Distribution package names for the commands declared in",
+    "config/vshell/dependencies.json. scripts/gen-package-metadata.py joins the",
+    "two files and regenerates the optional-dependency blocks in the packaging",
+    "recipes, so the feature manifest and the packaging cannot drift apart.",
+    "",
+    "Every command in dependencies.json must appear in \"commands\" or the",
+    "generator fails. Use \"skip\" for commands already covered by a hard",
+    "dependency or shipped inside the package. Omit a distro key when the",
+    "distribution has no package for that command; the entry is then left out of",
+    "that distribution's recipe rather than guessed at.",
+    "",
+    "Package names were verified against archlinux.org, packages.debian.org",
+    "(trixie), the Fedora rawhide metadata API, and packages.gentoo.org."
+  ],
+  "features": {
+    "base": "shell runtime",
+    "theme": "theme engine",
+    "greeter": "greeter and keyring integration",
+    "clipboard": "clipboard history",
+    "network-usage": "per-interface network usage",
+    "capture": "screenshots",
+    "capture-edit": "screenshot annotation",
+    "ocr": "region OCR",
+    "gamma": "night light",
+    "recording": "screen recording",
+    "thumbnails": "file thumbnails",
+    "launcher-zoxide": "launcher recent-directory search",
+    "updates-arch": "repo update checks",
+    "updates-aur": "AUR update checks",
+    "ai-usage": "AI usage widget",
+    "tailscale": "Tailscale widget",
+    "brightness": "display brightness",
+    "cloud-sync": "cloud file sync",
+    "cloud-sync-stream": "cloud sync streaming mounts"
+  },
+  "commands": {
+    "qs": { "skip": "quickshell is a hard dependency" },
+    "jq": { "skip": "hard dependency" },
+    "python3": { "skip": "hard dependency" },
+    "udevadm": { "skip": "provided by the systemd hard dependency" },
+    "pacman": { "skip": "provided by the base system on Arch" },
+
+    "hyprctl": {
+      "description": "Hyprland compositor support",
+      "arch": "hyprland",
+      "debian": "hyprland",
+      "fedora": "hyprland"
+    },
+    "Hyprland": {
+      "description": "Hyprland compositor support",
+      "arch": "hyprland",
+      "debian": "hyprland",
+      "fedora": "hyprland"
+    },
+    "niri": {
+      "description": "Niri compositor support",
+      "arch": "niri",
+      "debian": "niri",
+      "fedora": "niri"
+    },
+
+    "greetd": {
+      "arch": "greetd",
+      "debian": "greetd",
+      "fedora": "greetd",
+      "gentoo": "gui-libs/greetd"
+    },
+    "gnome-keyring-daemon": {
+      "arch": "gnome-keyring",
+      "debian": "gnome-keyring",
+      "fedora": "gnome-keyring",
+      "gentoo": "gnome-base/gnome-keyring"
+    },
+
+    "wl-copy": {
+      "arch": "wl-clipboard",
+      "debian": "wl-clipboard",
+      "fedora": "wl-clipboard",
+      "gentoo": "gui-apps/wl-clipboard"
+    },
+    "wl-paste": {
+      "arch": "wl-clipboard",
+      "debian": "wl-clipboard",
+      "fedora": "wl-clipboard",
+      "gentoo": "gui-apps/wl-clipboard"
+    },
+
+    "bandwhich": {
+      "arch": "bandwhich",
+      "debian": "bandwhich",
+      "gentoo": "net-analyzer/bandwhich"
+    },
+
+    "notify-send": {
+      "arch": "libnotify",
+      "debian": "libnotify-bin",
+      "fedora": "libnotify",
+      "gentoo": "x11-libs/libnotify"
+    },
+    "grim": {
+      "arch": "grim",
+      "debian": "grim",
+      "fedora": "grim",
+      "gentoo": "gui-apps/grim"
+    },
+    "slurp": {
+      "arch": "slurp",
+      "debian": "slurp",
+      "fedora": "slurp",
+      "gentoo": "gui-apps/slurp"
+    },
+    "hyprpicker": {
+      "arch": "hyprpicker",
+      "debian": "hyprpicker",
+      "fedora": "hyprpicker"
+    },
+    "satty": {
+      "arch": "satty",
+      "debian": "satty"
+    },
+    "tesseract": {
+      "arch": ["tesseract", "tesseract-data-eng"],
+      "debian": ["tesseract-ocr", "tesseract-ocr-eng"],
+      "fedora": ["tesseract", "tesseract-langpack-eng"],
+      "gentoo": "app-text/tesseract"
+    },
+
+    "hyprsunset": {
+      "arch": "hyprsunset",
+      "debian": "hyprsunset"
+    },
+    "wlsunset": {
+      "arch": "wlsunset",
+      "debian": "wlsunset",
+      "fedora": "wlsunset"
+    },
+
+    "gpu-screen-recorder": {
+      "arch": "gpu-screen-recorder"
+    },
+    "ffmpeg": {
+      "arch": "ffmpeg",
+      "debian": "ffmpeg",
+      "fedora": "ffmpeg-free",
+      "gentoo": "media-video/ffmpeg"
+    },
+    "ffprobe": {
+      "arch": "ffmpeg",
+      "debian": "ffmpeg",
+      "fedora": "ffmpeg-free",
+      "gentoo": "media-video/ffmpeg"
+    },
+
+    "ffmpegthumbnailer": {
+      "arch": "ffmpegthumbnailer",
+      "debian": "ffmpegthumbnailer",
+      "fedora": "ffmpegthumbnailer",
+      "gentoo": "media-video/ffmpegthumbnailer"
+    },
+    "zoxide": {
+      "arch": "zoxide",
+      "debian": "zoxide",
+      "fedora": "zoxide",
+      "gentoo": "app-shells/zoxide"
+    },
+
+    "checkupdates": { "arch": "pacman-contrib" },
+    "paru": { "arch": "paru" },
+
+    "curl": {
+      "arch": "curl",
+      "debian": "curl",
+      "fedora": "curl",
+      "gentoo": "net-misc/curl"
+    },
+    "tailscale": {
+      "arch": "tailscale",
+      "debian": "tailscale",
+      "fedora": "tailscale",
+      "gentoo": "net-vpn/tailscale"
+    },
+    "rclone": {
+      "arch": "rclone",
+      "debian": "rclone",
+      "fedora": "rclone",
+      "gentoo": "net-misc/rclone"
+    },
+    "fusermount3": {
+      "arch": "fuse3",
+      "debian": "fuse3",
+      "fedora": "fuse3",
+      "gentoo": "sys-fs/fuse"
+    },
+    "fusermount": {
+      "arch": "fuse3",
+      "debian": "fuse3",
+      "fedora": "fuse3",
+      "gentoo": "sys-fs/fuse"
+    }
+  }
+}

@@ -2,12 +2,66 @@
 
 VGS installs under `/usr/lib/vshell`, exposes `/usr/bin/vshell`, and installs the user service. Mutable state remains in `~/.config/vshell`.
 
-Native packages install `vshell.service` but do not enable or start it automatically. After package
-installation, users should run:
+## Activation
+
+Native packages install `vshell.service` but do not enable or start it automatically, and cannot:
+a systemd *user* unit is enabled per account, and package scriptlets run as root with no reliable
+way to know which accounts want VGS. `systemctl --global enable` would opt every account on the
+machine in, which is not a decision a package gets to make. Every channel therefore prints the
+activation step instead:
 
 ```bash
 systemctl --user enable --now vshell.service
 ```
+
+| Channel | Where the message comes from |
+|---|---|
+| Arch | `arch/vgs-shell.install`, `arch/vgs-shell-git/vgs-shell-git.install` (declared by `install=` inside the `package_vgs-shell*` functions) |
+| Debian | `debian/vgs-shell.postinst` |
+| Fedora / openSUSE / OBS | `%post` in `fedora/vgs-shell.spec` |
+| Gentoo | `pkg_postinst` in `gentoo/vgs-shell-0.1.0.ebuild` |
+| Void | `void/INSTALL.msg`, installed alongside `void/template` in `srcpkgs/vgs-shell/` |
+| Nix / Home Manager | the Home Manager module owns the unit |
+| `install.sh` | enables and starts the unit unless `--no-start` is passed |
+
+## Optional dependencies
+
+`config/vshell/dependencies.json` is the source of truth for which commands back which VGS feature
+group, and `optional-packages.json` maps those commands to distribution package names.
+`scripts/gen-package-metadata.py` joins the two and rewrites the generated blocks in the Arch,
+Debian, Fedora, and Gentoo recipes:
+
+```bash
+scripts/gen-package-metadata.py            # verify the recipes match the manifest
+scripts/gen-package-metadata.py --write    # regenerate them
+```
+
+The verify mode runs in `scripts/check-release.sh`, and a command added to the manifest without a
+package mapping fails the check rather than silently going unadvertised. Do not hand-edit anything
+between the `BEGIN`/`END GENERATED OPTIONAL DEPENDENCIES` markers.
+
+Fedora uses `Suggests:` rather than `Recommends:` because dnf installs weak `Recommends` by default,
+and the list includes a login manager (`greetd`) and both supported compositors. Void has no
+weak-dependency mechanism, so its optional tools are covered by `INSTALL.msg` and
+`vshell deps status` only.
+
+## Theme bundles
+
+`install-system.sh` takes `VGS_THEME_BUNDLE=core|extras|all`. `core` is the default because `all`
+costs roughly 1.1 GiB of themes, wallpapers, and icon themes, so a recipe that forgets the variable
+now ships too little rather than too much. `scripts/check-package-assets.sh` fails if any in-repo
+recipe runs the installer without stating a bundle.
+
+| Channel | Bundle |
+|---|---|
+| Arch | `core` for `vgs-shell`, `extras` for `vgs-shell-assets` |
+| Debian | `core` for `vgs-shell`, `extras` for `vgs-shell-assets` |
+| Fedora | `core` for `vgs-shell`, `extras` for `vgs-shell-assets` |
+| Gentoo | `core`, plus `extras` with `USE=extra-themes` (on by default) |
+| Void | `core` for `vgs-shell`, `extras` for `vgs-shell-assets` |
+| Nix | `all`; the flake has no split output |
+
+## Channels
 
 | System | Channel | Status |
 |---|---|---|
@@ -18,7 +72,7 @@ systemctl --user enable --now vshell.service
 | Ubuntu 26.04 | [Launchpad PPA `vanillagreen/vgs-shell`](https://launchpad.net/~vanillagreen/+archive/ubuntu/vgs-shell) | Published; Quickshell from `ppa:avengemedia/danklinux` |
 | Gentoo | [VanillaGreen overlay](https://github.com/vanillagreencom/gentoo-overlay) | Published; Quickshell from GURU; [GURU PR #530](https://github.com/gentoo/guru/pull/530) pending |
 | Nix | [`github:vanillagreencom/vgs`](../flake.nix) | Published flake and Home Manager module |
-| Void | [`void/template`](void/template) | Recipe only; Void does not package Quickshell 0.3.0 |
+| Void | [`void/template`](void/template) plus [`void/INSTALL.msg`](void/INSTALL.msg) | Recipe only; Void does not package Quickshell 0.3.0 |
 
 Arch:
 
@@ -42,6 +96,9 @@ Fedora:
 sudo dnf copr enable vanillagreen/vgs-shell
 sudo dnf install vgs-shell
 ```
+
+Debian and Fedora split the same way as Arch: `vgs-shell-assets` carries the
+themes, wallpapers, and icon themes that `vgs-shell` leaves out.
 
 openSUSE Tumbleweed:
 

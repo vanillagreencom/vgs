@@ -27,7 +27,9 @@
             '';
             installPhase = ''
               runHook preInstall
-              DESTDIR=$out PREFIX=/usr VGS_BACKEND_BINARY=$PWD/vshell-backend ${pkgs.bash}/bin/bash packaging/install-system.sh
+              # Nix has no split output for the optional assets, so this
+              # derivation deliberately keeps the full theme and icon bundle.
+              DESTDIR=$out PREFIX=/usr VGS_THEME_BUNDLE=all VGS_BACKEND_BINARY=$PWD/vshell-backend ${pkgs.bash}/bin/bash packaging/install-system.sh
               mkdir -p $out/bin $out/lib/systemd/user
               mv $out/usr/lib/vshell $out/lib/vshell
               mv $out/usr/lib/systemd/user/vshell.service $out/lib/systemd/user/vshell.service

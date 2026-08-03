@@ -79,6 +79,24 @@ Feature groups:
 | `clipboard` | Clipboard history (wl-clipboard) |
 | `thumbnails` | File/image thumbnails |
 | `brightness` | Display brightness backends |
+| `cloud-sync` | Cloud file sync (rclone) |
+| `cloud-sync-stream` | Cloud sync streaming FUSE mounts |
+
+## Packaging metadata
+The manifest is also what the native packages advertise as optional
+dependencies. `packaging/optional-packages.json` maps every manifest command to
+a distribution package name (or a `skip` reason when a hard dependency already
+covers it), and `scripts/gen-package-metadata.py` joins the two files and
+rewrites the generated blocks in the Arch, Debian, Fedora, and Gentoo recipes.
+
+```bash
+scripts/gen-package-metadata.py            # verify
+scripts/gen-package-metadata.py --write    # regenerate
+```
+
+Adding a command to `dependencies.json` without a mapping entry fails the check,
+so the packaging cannot silently fall behind the manifest. Details and the
+per-channel mechanisms are in `packaging/README.md`.
 
 ## Rules
 - Missing optional deps must not crash shell.

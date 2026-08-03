@@ -8,6 +8,30 @@ trap 'rm -rf "$tmp"' EXIT
 core="$tmp/core"
 extras="$tmp/extras"
 
+# Every recipe that installs VGS must state which theme bundle it wants. The
+# default is `core`, so a forgotten variable ships too little instead of the
+# ~1.1 GiB `all` bundle, but silently shipping the wrong bundle is still a bug.
+# These reference the installer without running it (copy, lint, or run it with
+# an explicit bundle of their own), so they are exempt.
+non_callers=(
+  packaging/install-system.sh
+  scripts/build-release.sh
+  scripts/check-package-assets.sh
+  scripts/check-release.sh
+)
+
+missing=0
+while IFS= read -r caller; do
+  for exempt in "${non_callers[@]}"; do
+    [[ "$caller" == "$exempt" ]] && continue 2
+  done
+  if ! grep -q 'VGS_THEME_BUNDLE=[a-z]' "$root/$caller"; then
+    echo "$caller runs install-system.sh without setting VGS_THEME_BUNDLE" >&2
+    missing=1
+  fi
+done < <(git -C "$root" grep -l 'install-system\.sh' -- . ':!docs' ':!*.md')
+test "$missing" -eq 0
+
 DESTDIR="$core" VGS_THEME_BUNDLE=core VGS_BACKEND_BINARY=/bin/true \
   "$root/packaging/install-system.sh"
 test -f "$core/usr/lib/vshell/themes/coppernight/theme.json"
