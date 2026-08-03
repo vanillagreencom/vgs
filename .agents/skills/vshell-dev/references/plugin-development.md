@@ -88,7 +88,9 @@ Do not show controls that call unimplemented helper paths.
 ## Validation
 For plugin QML changes:
 ```bash
-qs -c vshell
+scripts/qml-smoke.sh
 ```
+
+Never `qs -c vshell` in a live session — it starts a second full VGS instance.
 
 For command-backed plugins, also test helper command directly.

@@ -44,6 +44,43 @@ Runtime name: `vshell`.
 9. Empty-password login keyring conversion is explicit: `vshell greeter keyring empty --force` backs up `~/.local/share/keyrings/login.keyring` before replacing it; normal greeter sync refuses destructive conversion.
 10. Optional widgets check helper/backends and degrade when unavailable.
 
+## Single instance per session
+One session owns one VGS shell. A second full instance competes for
+session-global resources — `WlSessionLock`, the `vshell:fade-to-lock` overlay,
+the idle/DPMS tiers in `Services/IdleService.qml` — and leaves orphaned
+full-screen layer surfaces behind when it dies, which presents as a live session
+of movable cursors over black screens.
+
+`shell.qml` therefore runs a duplicate-instance guard before loading `VGS`:
+`vshell instances guard --pid <pid> --shell-id <id>` (helper-owned; reads the
+Quickshell instance registry for the current `XDG_RUNTIME_DIR`). Age comes from
+kernel process start times, with the registry's launch time as a fallback. Only
+an instance *provably* younger than a live peer yields, and it terminates itself
+instead of drawing anything. Every unknown — no CLI, unreadable registry,
+unprovable age, no answer within 2s — fails open, so the guard can never keep
+the session shell from starting. `VSHELL_DISABLE_INSTANCE_GUARD=1` overrides it; greeter mode
+(`VSHELL_RUN_GREETER`) skips it, since the greeter runs from its own copied
+runtime.
+
+Known limits, deliberate rather than accidental:
+- A peer is only counted when the pid is a live `qs`/`quickshell` process. A
+  registry entry can outlive its shell and the number can be reused, and acting
+  on a recycled pid would make the session shell terminate *itself*.
+- A shell launched from a different checkout (a git worktree) has a different
+  config path, so it is neither listed nor guarded. `scripts/qml-smoke.sh` is
+  still the defence there.
+- A yielding shell exits on SIGTERM, which systemd reads as a clean stop, so a
+  `vshell.service` shell that yielded is not restarted. That is why yielding
+  requires positive proof of an older live peer.
+
+Validation must never launch a shell into the live session. `scripts/qml-smoke.sh`
+is the canonical QML smoke: a static `qmllint` parse pass by default, and with
+`--nested` a real shell run inside an isolated nested compositor (own runtime
+dir, own `HOME`/XDG dirs, private D-Bus session, no `VGS_SOCKET`, no
+`HYPRLAND_INSTANCE_SIGNATURE`) with process-group-scoped cleanup.
+`scripts/check-validation-safety.sh` asserts a validation run left the live
+instance set and layer surfaces untouched.
+
 ## IPC
 Use:
 ```bash

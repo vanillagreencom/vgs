@@ -344,7 +344,7 @@ case "${1:-run}" in
   status)
     exec systemctl --user status vshell.service --no-pager
     ;;
-  theme|fonts|deps|update|ai-usage|ai|capture|screenshot|screenrecording|recording|ocr|cl|clipboard|dl|download|trash|color|keybinds|config|compositor|battery|blur|brightness|auth|greeter|launcher-search)
+  theme|fonts|deps|update|ai-usage|ai|capture|screenshot|screenrecording|recording|ocr|cl|clipboard|dl|download|trash|color|keybinds|config|compositor|battery|blur|brightness|auth|greeter|launcher-search|instances)
     exec "$helper" "$@"
     ;;
   screensaver)
@@ -405,6 +405,8 @@ Usage:
   vshell open --install-desktop
   vshell ipc call <target> <function> [args...]
   vshell lock recover [--unlock]
+  vshell instances list [--json]
+  vshell instances guard --pid <pid> [--shell-id <id>]
   vshell restart|status|logs
   vshell theme current|list|apply|import-colors|extract-wallpaper|set-wallpaper
   vshell theme apply-colors [--set role=#hex ...] [--persist] [--name <theme>]

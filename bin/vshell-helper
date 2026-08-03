@@ -4910,6 +4910,296 @@ def feature_status() -> Dict[str, Any]:
     return {"version": data.get("version", 1), "compositor": compositor, "features": features}
 
 
+QS_BINARIES = ("qs", "quickshell")
+# Sorts after every real ISO launch time, so an entry whose launch time the
+# registry did not report is treated as the youngest instance and yields.
+QS_UNKNOWN_LAUNCH_TIME = "~"
+
+
+def _proc_root() -> Path:
+    return Path(os.environ.get("VSHELL_PROC_ROOT", "/proc"))
+
+
+def _pid_alive(pid: int) -> bool:
+    if pid <= 0:
+        return False
+    return (_proc_root() / str(pid)).exists()
+
+
+def _proc_stat_fields(pid: int) -> List[str]:
+    """/proc/<pid>/stat from field 3 onward, or [] when unreadable.
+
+    comm (field 2) is parenthesised and may contain spaces, so everything after
+    the final ')' is parsed positionally: index 0 is field 3 (state).
+    """
+    if pid <= 0:
+        return []
+    try:
+        data = (_proc_root() / str(pid) / "stat").read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return []
+    return data.rpartition(")")[2].split()
+
+
+def _vgs_peer_alive(pid: int) -> bool:
+    """True when ``pid`` is a live Quickshell process *right now*.
+
+    A registry entry only records the pid a shell had. After a hard kill the
+    entry can outlive the process and the number can be reused by something
+    unrelated, and a zombie keeps a readable /proc entry while owning no
+    surfaces. Either would make the session shell rule itself the duplicate and
+    terminate itself, so a peer is confirmed against the process actually
+    running under that pid.
+    """
+    fields = _proc_stat_fields(pid)
+    if not fields:
+        return False
+    if fields[0] == "Z":  # exited, not yet reaped: owns no surfaces
+        return False
+    proc = _proc_root() / str(pid)
+    try:
+        executable = os.path.basename(os.path.realpath(proc / "exe"))
+    except OSError:
+        executable = ""
+    if executable in QS_BINARIES:
+        return True
+    # /proc/<pid>/exe is readable only for our own processes; comm is not, and
+    # is enough to reject a process that merely inherited the number.
+    try:
+        comm = (proc / "comm").read_text(encoding="utf-8", errors="replace").strip()
+    except OSError:
+        return False
+    return comm in QS_BINARIES
+
+
+def vgs_shell_entry() -> Path:
+    """Path of the QML entrypoint this checkout would launch."""
+    root = os.environ.get("VSHELL_ROOT", "").strip()
+    base = Path(root) if root else repo_root()
+    return base / "quickshell" / "vshell" / "shell.qml"
+
+
+def _resolve_path(value: str) -> str:
+    try:
+        return str(Path(value).resolve())
+    except OSError:
+        return value
+
+
+def qs_list_instances() -> Dict[str, Any]:
+    """Read the Quickshell instance registry for the current XDG_RUNTIME_DIR.
+
+    A sandboxed smoke run has its own runtime dir, so its instances are
+    intentionally invisible here.
+    """
+    binary = ""
+    for name in QS_BINARIES:
+        binary = shutil.which(name) or ""
+        if binary:
+            break
+    if not binary:
+        # Distinct from a failed read: there is no registry to consult here at
+        # all, so a caller can skip rather than report an unverified session.
+        return {"ok": False, "error": "quickshell CLI (qs) not found",
+                "cliMissing": True, "instances": []}
+    try:
+        proc = subprocess.run(
+            [binary, "list", "--all", "--json"],
+            text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=5,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        return {"ok": False, "error": str(exc), "instances": []}
+    if proc.returncode != 0:
+        detail = (proc.stderr or "").strip() or f"qs list exited {proc.returncode}"
+        return {"ok": False, "error": detail, "instances": []}
+    try:
+        data = json.loads(proc.stdout or "[]")
+    except json.JSONDecodeError as exc:
+        return {"ok": False, "error": f"unparsable qs list output: {exc}", "instances": []}
+    if not isinstance(data, list):
+        return {"ok": False, "error": "unexpected qs list output", "instances": []}
+    return {"ok": True, "instances": [entry for entry in data if isinstance(entry, dict)]}
+
+
+def _vgs_instance_entry(entry: Dict[str, Any]) -> Dict[str, Any]:
+    try:
+        pid = int(entry.get("pid") or 0)
+    except (TypeError, ValueError):
+        pid = 0
+    return {
+        "pid": pid,
+        "id": str(entry.get("id") or ""),
+        "shellId": str(entry.get("shell_id") or ""),
+        "configPath": str(entry.get("config_path") or ""),
+        "launchTime": str(entry.get("launch_time") or ""),
+    }
+
+
+def _vgs_instance_matches(entry: Dict[str, Any], shell_path: str, shell_id: str) -> bool:
+    if shell_id and entry["shellId"] == shell_id:
+        return True
+    if not entry["configPath"]:
+        return False
+    return _resolve_path(entry["configPath"]) == shell_path
+
+
+def _vgs_instance_order(entry: Dict[str, Any]) -> Tuple[str, int]:
+    return (entry["launchTime"] or QS_UNKNOWN_LAUNCH_TIME, entry["pid"])
+
+
+def _proc_start_ticks(pid: int) -> Any:
+    """Process start time in clock ticks since boot, or None when unreadable.
+
+    Monotonic within a boot and independent of the Quickshell registry's
+    metadata, so it is the authoritative age comparison whenever both processes
+    are readable.
+    """
+    # starttime is field 22, i.e. index 19 once field 3 is index 0.
+    fields = _proc_stat_fields(pid)
+    if len(fields) < 20:
+        return None
+    try:
+        return int(fields[19])
+    except ValueError:
+        return None
+
+
+def _vgs_instance_precedes(peer: Dict[str, Any], own: Dict[str, Any], own_registered: bool) -> bool:
+    """True only when ``peer`` is *provably* older than ``own``.
+
+    Kernel start times decide it whenever both processes are readable. The
+    registry's launch time is only a fallback, and a *missing* launch time is
+    never treated as proof: ranking a peer above a registered shell whose launch
+    time the registry did not report would let a hand-run duplicate unseat the
+    session shell, the exact outcome this guard exists to prevent.
+    """
+    peer_start = _proc_start_ticks(peer["pid"])
+    own_start = _proc_start_ticks(own["pid"])
+    if peer_start is not None and own_start is not None:
+        if peer_start != own_start:
+            return peer_start < own_start
+        return peer["pid"] < own["pid"]
+    if not peer["launchTime"]:
+        return False
+    if not own["launchTime"]:
+        # No entry of our own yet: we started moments ago, so anything already
+        # registered with a real launch time predates us. A *registered* shell
+        # with no launch time is a degraded registry, not a young shell.
+        return not own_registered
+    if peer["launchTime"] != own["launchTime"]:
+        return peer["launchTime"] < own["launchTime"]
+    return peer["pid"] < own["pid"]
+
+
+def vgs_instance_report(pid: int = 0, shell_id: str = "", config_path: str = "") -> Dict[str, Any]:
+    """Inventory of live VGS shells, plus a duplicate verdict for ``pid``.
+
+    The verdict is deliberately fail-open: when the registry cannot be read, or
+    when no peer can be *proven* older, the caller keeps running.  Only a shell
+    that a live peer demonstrably predates ever sees itself as the duplicate.
+    """
+    shell_path = _resolve_path(config_path) if config_path else _resolve_path(str(vgs_shell_entry()))
+    listing = qs_list_instances()
+    report: Dict[str, Any] = {
+        "ok": bool(listing["ok"]),
+        "supported": bool(listing["ok"]),
+        "shellPath": shell_path,
+        "shellId": shell_id,
+        "instances": [],
+        "self": None,
+        "owner": None,
+        "duplicate": False,
+        "reason": "",
+    }
+    if not listing["ok"]:
+        report["error"] = listing.get("error", "")
+        report["cliMissing"] = bool(listing.get("cliMissing"))
+        report["reason"] = "instance registry unavailable"
+        return report
+
+    matches = []
+    for raw in listing["instances"]:
+        entry = _vgs_instance_entry(raw)
+        if not _vgs_instance_matches(entry, shell_path, shell_id):
+            continue
+        if not _vgs_peer_alive(entry["pid"]):
+            continue
+        matches.append(entry)
+    matches.sort(key=_vgs_instance_order)
+    report["instances"] = matches
+
+    if pid <= 0:
+        report["reason"] = "listing only"
+        return report
+
+    own = next((entry for entry in matches if entry["pid"] == pid), None)
+    own_registered = own is not None
+    if own is None:
+        own = {"pid": pid, "id": "", "shellId": shell_id, "configPath": shell_path,
+               "launchTime": ""}
+    report["self"] = own
+
+    peers = [entry for entry in matches if entry["pid"] != pid]
+    older = [entry for entry in peers if _vgs_instance_precedes(entry, own, own_registered)]
+    if older:
+        owner = min(older, key=_vgs_instance_order)
+        report["owner"] = owner
+        report["duplicate"] = True
+        report["reason"] = (
+            f"another VGS shell (pid {owner['pid']}) already owns this session; "
+            "use scripts/qml-smoke.sh for validation"
+        )
+        return report
+
+    report["owner"] = own
+    if any(not entry["launchTime"] for entry in peers):
+        report["reason"] = "peer launch time unknown; keeping this shell"
+    elif peers:
+        report["reason"] = "oldest instance"
+    else:
+        report["reason"] = "sole instance"
+    return report
+
+
+def cmd_instances(argv: List[str]) -> int:
+    parser = argparse.ArgumentParser(prog="vshell instances")
+    sub = parser.add_subparsers(dest="cmd")
+    p_list = sub.add_parser("list", help="list live VGS Quickshell instances")
+    p_list.add_argument("--json", action="store_true")
+    p_list.add_argument("--config-path", default="")
+    p_guard = sub.add_parser("guard", help="duplicate-shell verdict for a pid")
+    p_guard.add_argument("--pid", type=int, required=True)
+    p_guard.add_argument("--shell-id", default="")
+    p_guard.add_argument("--config-path", default="")
+    p_guard.add_argument("--json", action="store_true")
+    if not argv or argv[0].startswith("-"):
+        argv = ["list", *(argv or [])]
+    args = parser.parse_args(argv)
+
+    if args.cmd == "guard":
+        report = vgs_instance_report(args.pid, args.shell_id, args.config_path)
+        print(json.dumps(report))
+        return 0
+
+    report = vgs_instance_report(0, "", getattr(args, "config_path", ""))
+    if args.json:
+        print(json.dumps(report))
+    if not report["ok"]:
+        # 2 == no registry to consult here; 1 == the read failed. Callers that
+        # assert "validation disturbed nothing" must tell those apart.
+        if not args.json:
+            eprint(f"vshell instances: {report.get('error', 'registry unavailable')}")
+        return 2 if report.get("cliMissing") else 1
+    if args.json:
+        return 0
+    if not report["instances"]:
+        print("no live VGS Quickshell instances")
+        return 0
+    for entry in report["instances"]:
+        print(f"{entry['pid']}\t{entry['id']}\t{entry['launchTime']}\t{entry['configPath']}")
+    return 0
+
+
 def cmd_compositor(argv: List[str]) -> int:
     if not argv or argv[0] != "current":
         eprint("Usage: vshell compositor current [--json]")
@@ -9826,6 +10116,7 @@ def main() -> int:
         if cmd == "keybinds": return cmd_keybinds(argv)
         if cmd == "config": return cmd_config(argv)
         if cmd == "compositor": return cmd_compositor(argv)
+        if cmd == "instances": return cmd_instances(argv)
         if cmd == "battery": return cmd_battery(argv)
         if cmd == "blur": return cmd_blur(argv)
         if cmd == "brightness": return cmd_brightness(argv)

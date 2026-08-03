@@ -5,7 +5,7 @@ VGS is the active Hyprland and Niri Quickshell runtime for this workstation. It 
 Runtime:
 - Service: `vshell.service`
 - CLI: `vshell`
-- Quickshell config: `qs -c vshell`
+- Quickshell config name: `vshell` (started by `vshell.service`; do not launch a second instance by hand — use `scripts/qml-smoke.sh` to validate)
 - App id: `com.vanillagreen.vshell`
 
 Theme ownership:
