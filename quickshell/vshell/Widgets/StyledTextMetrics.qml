@@ -10,10 +10,9 @@ TextMetrics {
         const defaultFont = isMonospace ? Theme.defaultMonoFontFamily : Theme.defaultFontFamily;
 
         if (requestedFont === defaultFont) {
-            const availableFonts = Qt.fontFamilies();
-            if (!availableFonts.includes(requestedFont)) {
-                return isMonospace ? "Monospace" : "DejaVu Sans";
-            }
+            // Resolve through the bundled faces so metrics measure the exact
+            // family StyledText renders, not a system-dependent substitute.
+            return isMonospace ? Theme.bundledMonoFontName : Theme.bundledFontName;
         }
         return requestedFont;
     }

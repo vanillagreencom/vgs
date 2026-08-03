@@ -3,24 +3,13 @@ import qs.Common
 
 Text {
     property bool isMonospace: false
-    // Keep VGS lean: do not vendor large font assets here.
-    // VGS vendors its UI font; Fira Code is a system font.
-    FontLoader {
-        id: interFont
-        source: Qt.resolvedUrl("../assets/fonts/inter/InterVariable.ttf")
-    }
-
-    FontLoader {
-        id: firaCodeFont
-        source: "file:///usr/share/fonts/TTF/FiraCode-Regular.ttf"
-    }
 
     readonly property string resolvedFontFamily: {
         const requestedFont = isMonospace ? Theme.monoFontFamily : Theme.fontFamily;
         const defaultFont = isMonospace ? Theme.defaultMonoFontFamily : Theme.defaultFontFamily;
 
         if (requestedFont === defaultFont) {
-            return isMonospace ? firaCodeFont.name : interFont.name;
+            return isMonospace ? Theme.bundledMonoFontName : Theme.bundledFontName;
         }
         return requestedFont;
     }

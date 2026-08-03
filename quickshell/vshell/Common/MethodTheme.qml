@@ -14,6 +14,28 @@ Singleton {
 
     readonly property string defaultFontFamily: "Inter Variable"
     readonly property string defaultMonoFontFamily: "Fira Code"
+
+    // Both default families load once here from the bundled, relocatable assets
+    // tree, so a fresh install renders correctly with no system font packages
+    // and no distro-specific paths, and every consumer (StyledText,
+    // StyledTextMetrics) renders and measures with the same face. The mono face
+    // is the same Fira Code build VgsNFIcon already ships, so this costs no
+    // extra bytes in the package.
+    FontLoader {
+        id: bundledFontLoader
+        source: Qt.resolvedUrl("../assets/fonts/inter/InterVariable.ttf")
+    }
+
+    FontLoader {
+        id: bundledMonoFontLoader
+        source: Qt.resolvedUrl("../assets/fonts/nerd-fonts/FiraCodeNerdFont-Regular.ttf")
+    }
+
+    // A FontLoader that has not resolved yields an empty family name, which
+    // silently drops the family; fall back to the default family name so Qt
+    // falls back through a real family rather than through "".
+    readonly property string bundledFontName: bundledFontLoader.name || defaultFontFamily
+    readonly property string bundledMonoFontName: bundledMonoFontLoader.name || defaultMonoFontFamily
     readonly property string homeDir: Paths.strip(StandardPaths.writableLocation(StandardPaths.HomeLocation))
     readonly property string configDir: Paths.strip(StandardPaths.writableLocation(StandardPaths.ConfigLocation))
     readonly property string shellDir: Paths.strip(Qt.resolvedUrl(".").toString()).replace("/Common/", "")
