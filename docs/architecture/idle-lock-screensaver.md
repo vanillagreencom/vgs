@@ -39,6 +39,34 @@ v17 turned auto monitor-off off and added the blank keys.
 - **Super+Shift+Esc** → toggle the desktop ascii/video saver (`ScreensaverService`).
 - **Super+F5 / F6** → manual secure DPMS-off / on (a wake latch survives activity/resume).
 
+## Hot reload is suspended while locked
+
+`Modules/Lock/Lock.qml` sets `Quickshell.watchFiles = false` for as long as a lock
+is engaged (`shouldLock || sessionLock.locked`) and restores the value it found on
+unlock. `shell.qml` still owns the `VSHELL_DISABLE_HOT_RELOAD` policy and sets the
+startup value.
+
+This exists because quickshell's reload matching cannot reach this subtree.
+`ReloadPropagator` (`Scope`/`ShellRoot`) matches only children that are themselves
+`Reloadable`, and `VGS.qml`'s root is a QtQuick `Item`, which `Reloadable`
+documents as unmatchable. So a reload rebuilds `WlSessionLock` with a null old
+instance and a **fresh** `SessionLockManager`, then destroys the previous one
+while it still owns the ext-session-lock. `~QSWaylandSessionLock` destroys the
+protocol object — deliberately leaving the session locked — but never clears the
+process-global "a lock is active" pointer, which only `unlock()` clears. Every
+later lock request then fails inside `SessionLockManager::lock()`, and
+`WlSessionLock::realizeLockTarget` shows its surfaces regardless and aborts:
+
+```
+FATAL: Tried to show lockscreen surfaces without active lock
+```
+
+(quickshell 0.3.0, `src/wayland/session_lock.cpp`). The abort is in the library
+and cannot be caught from QML, so the shell avoids arming it instead. Trade-off:
+an edit saved while the session is locked is only picked up on the next write
+after unlock — suspending tears the watcher down, and resuming rebuilds it from
+the scanned file list without replaying missed events.
+
 ## Recovery
 A stray *second* VGS shell is the usual cause of "the lock is secure but its UI
 is black": each instance builds its own `vshell:fade-to-lock` overlay and races

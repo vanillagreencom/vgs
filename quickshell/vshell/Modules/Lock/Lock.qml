@@ -248,6 +248,56 @@ Scope {
         }
     }
 
+    // Hot reload must not rebuild the QML tree while a session lock is held.
+    //
+    // Quickshell's reload matching cannot reach anything below the Loader in
+    // shell.qml: `ReloadPropagator` (Scope/ShellRoot) only matches children that
+    // are themselves `Reloadable`, and `VGS.qml`'s root is a QtQuick Item, which
+    // Reloadable documents as unmatchable across generations. So every
+    // Reloadable in this subtree — `sessionLock` included — is rebuilt through
+    // `Reloadable::onReloadFinished`, i.e. with a null old instance, and
+    // `WlSessionLock::onReload` then builds a *fresh* SessionLockManager instead
+    // of adopting the previous one. The old manager is destroyed immediately
+    // afterwards while it still owns the ext-session-lock:
+    // `~QSWaylandSessionLock` destroys the protocol object (deliberately leaving
+    // the session locked) but never clears the process-global "a lock is active"
+    // pointer, which only `unlock()` does. From that moment
+    // `SessionLockManager::lock()` always fails, while
+    // `WlSessionLock::realizeLockTarget` shows its surfaces anyway and aborts the
+    // process:
+    //     FATAL: Tried to show lockscreen surfaces without active lock
+    // (quickshell 0.3.0, src/wayland/session_lock.cpp). The abort is in the
+    // library, so the shell cannot catch it — it can only avoid entering the
+    // state that arms it.
+    //
+    // Keeping the tree, and with it the manager that owns the lock, alive for the
+    // duration of the lock is the part the shell does control. The cost is that
+    // an edit saved while the session is locked is only picked up on the next
+    // write after unlock: suspending the watcher tears it down, and resuming
+    // rebuilds it from the scanned file list without replaying missed events.
+    readonly property bool lockEngaged: shouldLock || sessionLock.locked
+    property bool hotReloadSuspended: false
+    property bool hotReloadWasWatching: false
+
+    onLockEngagedChanged: {
+        if (lockEngaged === hotReloadSuspended)
+            return;
+        if (lockEngaged) {
+            hotReloadWasWatching = Quickshell.watchFiles;
+            hotReloadSuspended = true;
+            if (hotReloadWasWatching) {
+                Quickshell.watchFiles = false;
+                console.info("[Lock] hot reload suspended for the duration of the lock");
+            }
+        } else {
+            hotReloadSuspended = false;
+            if (hotReloadWasWatching) {
+                Quickshell.watchFiles = true;
+                console.info("[Lock] hot reload resumed after unlock");
+            }
+        }
+    }
+
     LockScreenDemo {
         id: demoWindow
     }
