@@ -1123,6 +1123,42 @@ def test_duplicate_shell_guard_uses_kernel_start_times():
             process.wait(timeout=5)
 
 
+def test_launcher_folder_opener_agreement():
+    # The advertised opener list is what Settings offers the user, so every entry
+    # in it must actually launch. Probe every combination of the binaries the two
+    # functions look at rather than restating either one's condition: the invariant
+    # under test is that they agree, not what either of them happens to check.
+    binaries = ["yazi", "nautilus", "xdg-terminal-exec", "gio"]
+    original_which = helper.shutil.which
+    original_popen = helper.subprocess.Popen
+
+    with tempfile.TemporaryDirectory() as tmp:
+        for mask in range(1 << len(binaries)):
+            present = {name for index, name in enumerate(binaries) if mask & (1 << index)}
+            # Accept the absolute form too: _launcher_open_folder() re-checks
+            # command[0], which by then is the resolved path.
+            helper.shutil.which = lambda name, _p=present: (
+                f"/usr/bin/{os.path.basename(name)}" if os.path.basename(name) in _p else None
+            )
+            helper.subprocess.Popen = lambda *a, **k: None
+            try:
+                for opener in helper._launcher_folder_openers():
+                    if opener["id"] == "default":
+                        # "Preferred app" is always offered and falls through to
+                        # `gio open`; it is not probe-gated, so it is not a claim
+                        # about an installed binary the way the others are.
+                        continue
+                    result = helper._launcher_open_folder(tmp, "", opener["id"])
+                    assert_equal(
+                        result.get("ok"), True,
+                        f"advertised opener {opener['id']!r} must launch with {sorted(present)}"
+                        f" (got {result.get('error')!r})",
+                    )
+            finally:
+                helper.shutil.which = original_which
+                helper.subprocess.Popen = original_popen
+
+
 def test_launcher_zoxide_results():
     original_which = helper.shutil.which
     original_run = helper.subprocess.run
@@ -1165,6 +1201,7 @@ def main():
     test_greeter_primary_monitor_validation()
     test_greeter_runtime_helper_dependencies()
     test_launcher_search_unicode_ranges_and_preview()
+    test_launcher_folder_opener_agreement()
     test_launcher_zoxide_results()
     test_duplicate_shell_guard()
     test_duplicate_shell_guard_uses_kernel_start_times()

@@ -9871,7 +9871,11 @@ def _launcher_folder_openers() -> List[Dict[str, str]]:
     # along with the rest of the folder-opener routing, and recorded in the
     # `undeclared` map at the top of that manifest.
     openers = [{"id": "default", "label": "Preferred app", "icon": "open_in_new"}]
-    if shutil.which("yazi"):
+    # Yazi is a TUI, so it is only openable with a terminal spawner. Advertise it
+    # on the same condition _launcher_open_folder() runs it on, or the QML opener
+    # list (populated from `vshell launcher-search openers`) offers a choice that
+    # can only answer "unavailable".
+    if shutil.which("yazi") and shutil.which("xdg-terminal-exec"):
         openers.append({"id": "yazi", "label": "Yazi", "icon": "terminal"})
     if shutil.which("nautilus"):
         openers.append({"id": "nautilus", "label": "Nautilus", "icon": "folder"})
