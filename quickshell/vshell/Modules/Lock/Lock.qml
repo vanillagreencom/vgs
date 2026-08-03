@@ -87,6 +87,19 @@ Scope {
         lockInitiatedLocally = false;
         shouldLock = false;
         customLockerSpawned = false;
+        // Clearing the lock state is not enough on its own: whatever asked for
+        // the lock may still be waiting for it behind an overlay or a latch.
+        //
+        // FadeToLockWindow is the dangerous one. Once its fade has completed it
+        // is opaque black with WlrKeyboardFocus.Exclusive, and both escapes are
+        // shut — cancelFade() early-returns after completion, and its only
+        // self-dismissal is IdleService.isShellLocked going false, which never
+        // happens for a lock that was refused before it was ever confirmed. That
+        // leaves a keyboard-capturing black screen with no lock behind it, and
+        // `vshell ipc call lock forceReset` out of reach. Recovery must never
+        // land the user somewhere worse than the state it recovered from.
+        IdleService.dismissFadeToLock();
+        IdleService.abandonPendingLockIntents("lock reset");
     }
 
     function activate() {
@@ -318,6 +331,15 @@ Scope {
     property bool hotReloadSuspended: false
     property bool hotReloadWasWatching: false
 
+    // The snapshot below cannot be trusted on its own, for the same reason the
+    // suspension has to be re-assertable: `QuickshellSettings::mWatchFiles`
+    // defaults to TRUE, so a lock engaged before shell.qml's Component.onCompleted
+    // captures `true` even under VSHELL_DISABLE_HOT_RELOAD=1, and the resume would
+    // then switch hot reload on against an explicit policy. Resume honours the
+    // policy, not just what it saw. shell.qml still owns the policy — this reads
+    // the same environment variable rather than a value it may not have set yet.
+    readonly property bool hotReloadDisabledByPolicy: Quickshell.env("VSHELL_DISABLE_HOT_RELOAD") === "1" || Quickshell.env("VSHELL_DISABLE_HOT_RELOAD") === "true"
+
     // Re-assertable, not one-shot: this must hold no matter who writes
     // `Quickshell.watchFiles` or in what order. On a reload with lockAtStartup,
     // this file's Component.onCompleted runs BEFORE shell.qml's (children
@@ -338,7 +360,7 @@ Scope {
         if (!hotReloadSuspended)
             return;
         hotReloadSuspended = false;
-        if (hotReloadWasWatching && !Quickshell.watchFiles) {
+        if (hotReloadWasWatching && !hotReloadDisabledByPolicy && !Quickshell.watchFiles) {
             Quickshell.watchFiles = true;
             console.info("[Lock] hot reload resumed after unlock");
         }

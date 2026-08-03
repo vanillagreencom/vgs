@@ -47,13 +47,37 @@ It re-asserts on `Quickshell.onWatchFilesChanged` rather than suspending once,
 because `shell.qml`'s `Component.onCompleted` can run *after* Lock's (children
 complete before parents) and would otherwise re-arm the watcher on top of an
 engaged lock. `shell.qml` owns the `VSHELL_DISABLE_HOT_RELOAD` policy and the
-startup value; it is not the last writer.
+startup value; it is not the last writer. Resume re-reads that policy instead of
+trusting the value it snapshotted at suspend time — `mWatchFiles` defaults to true
+in a fresh process, so a suspend that beats `shell.qml` would otherwise capture
+`true` and switch hot reload on against an explicit `VSHELL_DISABLE_HOT_RELOAD=1`.
 
 If quickshell ends the lock on its own — the compositor's
 `ext_session_lock_v1.finished` (denied lock, crashed-locker fallback), or an
 aborted attempt when the protocol is unavailable — `Lock.qml` clears `shouldLock`
 via `forceReset()` and hot reload resumes. Suspension tracks a lock that actually
 exists, so it can never strand the watcher off.
+
+`forceReset()` — the dropped-lock recovery and the `vshell ipc call lock
+forceReset` escape hatch — also tears down what was waiting on the lock, because
+clearing the lock state alone can leave the session unusable:
+
+- **The fade-to-lock overlay.** After its fade completes `FadeToLockWindow` is
+  opaque with `WlrKeyboardFocus.Exclusive`, `cancelFade()` early-returns, and its
+  only self-dismissal is `IdleService.isShellLocked` going false — which never
+  happens for a lock that was refused before it was ever confirmed. Recovery emits
+  `IdleService.dismissFadeToLock()`.
+- **Pending lock intents** (`IdleService.abandonPendingLockIntents`). Both
+  `requestSecureManualOff()` (Super+F5) and `startLockBlackout()` deliberately wait
+  for a *confirmed* lock, latching `secureManualOffPending` / `blackoutLockPending`
+  first. `manualWakeBlocked` is set with the former and swallows every automatic
+  display wake, so a lock that never arrives would leave the session unable to wake
+  itself. A manual off latch (`setDisplaysManual`) is untouched — it clears
+  `secureManualOffPending`, so recovery never releases a block it did not strand.
+
+Nothing else in this path needs unwinding: `isShellLocked`, the DPMS delay timers,
+and the idle/screensaver monitor arming are all derived from the *confirmed* lock
+and either never engaged or are reset by `_syncConfirmedLock()`.
 
 This exists because quickshell's reload matching cannot reach this subtree.
 `ReloadPropagator` (`Scope`/`ShellRoot`) hands old instances only to children that
