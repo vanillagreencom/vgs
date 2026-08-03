@@ -27,6 +27,12 @@ Item {
     property real triggerWidth: 40
     property string triggerSection: ""
     property string positioning: "center"
+    // Large surfaces (Dash) anchor to a fixed zone chosen by bar edge x
+    // trigger section instead of centring on the widget that opened them, so
+    // they land somewhere predictable rather than drifting with the bar
+    // layout. Small popouts keep the trigger-centred default: pointing at
+    // what opened them is the useful behaviour at that size.
+    property bool zoneAnchored: false
     property int animationDuration: Theme.popoutAnimationDuration
     property real animationScaleCollapsed: Theme.effectScaleCollapsed
     property real animationOffset: Theme.effectAnimOffset
@@ -502,11 +508,29 @@ Item {
                 return Math.max(leftGap, Math.min(screenWidth - popupWidth - rightGap, triggerX));
             case SettingsData.Position.Right:
                 return Math.max(leftGap, Math.min(screenWidth - popupWidth - rightGap, triggerX - popupWidth));
-            default:
-                const rawX = triggerX + (triggerWidth / 2) - (popupWidth / 2);
+            default: {
                 const minX = leftGap;
                 const maxX = screenWidth - popupWidth - rightGap;
+                let rawX;
+                if (zoneAnchored) {
+                    // Pinned to the zone, not to the trigger's offset within it:
+                    // anywhere in the middle third yields a screen-centred popout.
+                    switch (triggerSection) {
+                    case "left":
+                        rawX = minX;
+                        break;
+                    case "right":
+                        rawX = maxX;
+                        break;
+                    default:
+                        rawX = (screenWidth - popupWidth) / 2;
+                        break;
+                    }
+                } else {
+                    rawX = triggerX + (triggerWidth / 2) - (popupWidth / 2);
+                }
                 return Math.max(minX, Math.min(maxX, rawX));
+            }
             }
         })(), dpr)
 
@@ -522,11 +546,14 @@ Item {
                 return Math.max(topGap, Math.min(screenHeight - popupHeight - bottomGap, triggerY - popupHeight));
             case SettingsData.Position.Top:
                 return Math.max(topGap, Math.min(screenHeight - popupHeight - bottomGap, triggerY));
-            default:
-                const rawY = triggerY - (popupHeight / 2);
+            default: {
                 const minY = topGap;
                 const maxY = screenHeight - popupHeight - bottomGap;
+                // Vertical bars collapse all three sections to one vertically
+                // centred zone; only the bar edge varies, and alignedX pins that.
+                const rawY = zoneAnchored ? ((screenHeight - popupHeight) / 2) : (triggerY - (popupHeight / 2));
                 return Math.max(minY, Math.min(maxY, rawY));
+            }
             }
         })(), dpr)
 
