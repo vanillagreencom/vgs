@@ -87,6 +87,26 @@ classification/workflow labels, then pass the full validated set.
 orch = ""
 
 project-management = """
+## Linear projects
+
+Every new non-mirror issue gets exactly one project. The set (all team
+vg-shell):
+
+| Project | Scope |
+|---------|-------|
+| `Tech Debt & Bugs` | Hygiene and discovered pre-existing issues — bugs, cleanup, tooling/workflow debt that fits no feature area. |
+| `Shell Runtime & Widgets` | Quickshell runtime, modules, widget primitives, design language, idle/lock/greeter session surfaces. |
+| `Theme Engine & Wallpapers` | Themes, palettes, blueprints, generated app targets, wallpaper pipeline and upscaling. |
+| `Backend & System Services` | Go backend daemon, socket protocol/capability gating, system integrations (network, logind, BlueZ, CUPS), helper CLI. |
+| `Packaging & Install Channels` | install.sh, distro packages (Arch/Debian/Fedora/Gentoo/Void/Nix), release verification, channel upkeep. |
+| `Cloud Sync` | Supervised rclone, accounts/OAuth, sync modes and safety rails, watcher, FUSE mounts, Cloud Sync app/widget. |
+
+A bug inside a feature area goes to that area's project, not Tech Debt & Bugs;
+the hygiene project is for cross-cutting debt and pre-existing discoveries.
+Synced `nightly-ci:` mirrors arrive with no project — route them to
+`Tech Debt & Bugs` on first triage. Creating a new project is an owner
+decision: propose it, do not create it unprompted.
+
 ## Project issue label taxonomy
 
 Use this taxonomy with the linear skill's label-inventory preflight for roadmap
