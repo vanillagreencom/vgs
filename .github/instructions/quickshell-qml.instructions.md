@@ -11,9 +11,13 @@ already produced a wrong review suggestion on this repo:
   QQmlEngine's quit/exit signals unconnected; the engine logs "no receivers
   connected to handle it" and the process keeps running. Never suggest them as
   a way to terminate the shell.
-- `Qt.resolvedUrl()` resolves inside Quickshell's virtual filesystem and yields
-  `qrc:/qs-blackhole/...`, which is not a runnable path. Derive filesystem
-  paths from `Quickshell.shellDir`.
+- `Qt.resolvedUrl()` resolves inside Quickshell's virtual filesystem. That is
+  correct and idiomatic for QML-internal asset URLs — `FontLoader.source`,
+  `Image.source` — and every bundled asset in this repo loads that way, so do
+  not flag it there. It is wrong only where a real filesystem path is needed,
+  such as one handed to a subprocess or compared against `/proc`: there it
+  yields `qrc:/qs-blackhole/...`, which no process can open. Use
+  `Quickshell.shellDir` for those.
 - `Process` emits `exited` **before** `running` goes false, and a command that
   fails to start emits no `exited` at all — code that only handles `exited`
   hangs forever on a missing binary.
