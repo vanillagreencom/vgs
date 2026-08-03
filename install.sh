@@ -13,7 +13,7 @@ while [[ $# -gt 0 ]]; do
     --force) force=true; shift ;;
     -h|--help)
       echo "Usage: install.sh [--version v0.1.0] [--no-start] [--force]"
-      echo "  --force  replace paths that point outside the VGS install root"
+      echo "  --force  replace externally managed symlinks at the VGS-owned paths"
       exit 0
       ;;
     *) echo "install.sh: unknown option: $1" >&2; exit 2 ;;
@@ -68,7 +68,7 @@ check_managed_link() {
   if [[ -L "$path" ]]; then
     vgs_owned "$path" && return 0
     if [[ "$force" == true ]]; then
-      echo "install.sh: --force: replacing $path (was -> $(readlink "$path"))" >&2
+      echo "install.sh: --force: will replace $path (was -> $(readlink "$path"))" >&2
       return 0
     fi
     echo "install.sh: refusing to replace externally managed symlink: $path -> $(readlink "$path")" >&2
@@ -88,12 +88,18 @@ check_managed_link "$shell_link"
 # The service path VGS owns as a regular file; a symlink there is someone else's.
 if [[ -L "$service_path" ]]; then
   if [[ "$force" == true ]]; then
-    echo "install.sh: --force: replacing $service_path (was -> $(readlink "$service_path"))" >&2
+    echo "install.sh: --force: will replace $service_path (was -> $(readlink "$service_path"))" >&2
   else
     echo "install.sh: refusing symlinked service path: $service_path -> $(readlink "$service_path")" >&2
     echo "install.sh: move it aside, or re-run with --force to replace it." >&2
     exit 1
   fi
+elif [[ -e "$service_path" && ! -f "$service_path" ]]; then
+  # A directory (or other non-file) would survive the rm -f below and abort the
+  # install after the symlinks were already relinked; refuse in preflight.
+  echo "install.sh: refusing to replace non-file service path: $service_path" >&2
+  echo "install.sh: move it aside and re-run." >&2
+  exit 1
 fi
 
 release="${version#v}"
