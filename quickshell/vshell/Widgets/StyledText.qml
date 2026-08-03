@@ -3,8 +3,10 @@ import qs.Common
 
 Text {
     property bool isMonospace: false
-    // Keep VGS lean: do not vendor large font assets here.
-    // VGS vendors its UI font; Fira Code is a system font.
+    // Both default families load from the bundled, relocatable assets tree, so a
+    // fresh install renders correctly with no system font packages and no
+    // distro-specific paths. The mono face is the same Fira Code build VgsNFIcon
+    // already ships, so this costs no extra bytes in the package.
     FontLoader {
         id: interFont
         source: Qt.resolvedUrl("../assets/fonts/inter/InterVariable.ttf")
@@ -12,7 +14,7 @@ Text {
 
     FontLoader {
         id: firaCodeFont
-        source: "file:///usr/share/fonts/TTF/FiraCode-Regular.ttf"
+        source: Qt.resolvedUrl("../assets/fonts/nerd-fonts/FiraCodeNerdFont-Regular.ttf")
     }
 
     readonly property string resolvedFontFamily: {
@@ -20,7 +22,11 @@ Text {
         const defaultFont = isMonospace ? Theme.defaultMonoFontFamily : Theme.defaultFontFamily;
 
         if (requestedFont === defaultFont) {
-            return isMonospace ? firaCodeFont.name : interFont.name;
+            // A FontLoader that has not resolved yields an empty family name,
+            // which silently drops the family; name the family instead so Qt
+            // falls back through a real family rather than through "".
+            const bundledFont = isMonospace ? firaCodeFont.name : interFont.name;
+            return bundledFont || defaultFont;
         }
         return requestedFont;
     }
