@@ -1,0 +1,231 @@
+name: CI
+
+# Runs AGENTS.md § Validation on every pull request. Before this workflow the
+# only checks on a VGS PR were CodeQL default-setup Analyze jobs, which say
+# nothing about VGS's own suite — which is how `check-validation-safety.sh` sat
+# red on clean `main` (VGS-18) with nothing surfacing it.
+#
+# ONE JOB, DELIBERATELY. Measured on this repo: the whole static suite is ~16s
+# of work and the whole Go block is ~6s warm (build+vet 1s, `go test -race` 5s;
+# only two module dependencies, so cold is not much worse). At that scale the
+# dominant cost is per-job overhead — runner acquisition, checkout, toolchain
+# setup — which every extra job pays again. Splitting into lanes would roughly
+# triple billed minutes to save a few seconds of wall clock, and a
+# change-detection job to gate those lanes would cost more than the work it
+# could skip. The sibling repos (hyprtrade, memsira, drovr) split because their
+# Rust/desktop lanes run for minutes; that economics does not transfer here.
+# Revisit if any step below crosses ~5 minutes.
+#
+# For the same reason there is no ci-nightly.yml: nothing here is slow enough
+# to be worth deferring to a schedule.
+#
+# One job also means one stable required check. Point branch protection and the
+# merge queue at `CI / ci-ok` — there are no conditional lanes that could leave
+# a required context permanently skipped, so there is nothing for a separate
+# aggregator job to aggregate; a second job existing only to restate this one's
+# result would add a whole runner's overhead to a ~30s suite.
+#
+# The job is NAMED `ci-ok` rather than for what it does, deliberately: that is
+# the indirection an aggregator would have bought. If lanes are ever added, the
+# real work moves to new jobs and `ci-ok` becomes the aggregator over them —
+# branch protection keeps requiring the same context and never has to change.
+#
+# RUNNER: 2 vCPU via the shared CI_RUNNER_2V repository variable (Blacksmith
+# when set, `ubuntu-latest` when unset — that fallback is supported and must
+# keep working). Nothing in this suite is CPU-bound or disk-hungry, so the 4V/8V
+# tiers, and the free-disk-space dance memsira needs for its 8V lanes, buy VGS
+# nothing.
+
+on:
+  # Deliberately NO pull_request_review / pull_request_review_comment triggers.
+  # They mint a second run on the same head that the concurrency group then
+  # cancels; hyprtrade measured 37 of 43 cancellations across 100 runs coming
+  # from exactly those two triggers, and a cancelled required check on the
+  # current head blocks merge-queue enqueue.
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened, ready_for_review]
+  # Required checks must exist on merge-group shas too, or a queue entry blocks
+  # forever waiting on a context nothing creates (vstack VST-10).
+  merge_group:
+    types: [checks_requested]
+  # Post-merge signal on main. The absence of exactly this is how a permanently
+  # red check survived on main unnoticed (VGS-18). Cheap here because the job
+  # caches nothing and takes minutes-at-worst.
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  # Per-PR on pull_request; push/merge_group fall back to the ref.
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  # ONLY pull_request cancels. A synchronize means a new head sha, so the
+  # cancelled check-runs land on the superseded sha, which the merge queue
+  # ignores. Nothing may cancel a run on the CURRENT head — the queue counts
+  # every check-run on the head, and a cancelled required check there blocks
+  # enqueue.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  validate:
+    # The required-check context is `CI / ci-ok`; see the aggregator note above.
+    name: ci-ok
+    runs-on: ${{ vars.CI_RUNNER_2V || 'ubuntu-latest' }}
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          # The whitespace check below diffs against the pull request base.
+          fetch-depth: 0
+          persist-credentials: false
+
+      # Cheapest checks first, so the common failures report in seconds rather
+      # than after the Go toolchain and the Qt install.
+      - name: Naming guard
+        run: scripts/check-naming.sh
+
+      # AGENTS.md lists a bare `git diff --check`, which is a working-tree
+      # check: on a clean CI checkout it inspects nothing at all. The form that
+      # means something is a range of what the event actually introduces.
+      #
+      # UNCONDITIONAL ON PURPOSE. This step used to carry
+      # `if: github.event_name == 'pull_request'`, which left it silently
+      # skipped on merge_group and main push — green without checking, on
+      # exactly the two events that gate landing code. A usable range exists for
+      # all three events, so there is no reason to skip any of them.
+      #
+      # A whole-tree check is NOT the alternative: the vendored trees under
+      # config/vshell/nvim/colorschemes/ and config/vshell/icons/ carry ~2000
+      # pre-existing whitespace findings, so it would be red from day one and
+      # would need an exclusion list to maintain.
+      #
+      # The step fails rather than checking a substitute range when its base
+      # cannot be resolved; see the comment on the fallback inside the script.
+      - name: Whitespace errors introduced by this change
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PUSH_BEFORE: ${{ github.event.before }}
+        run: |
+          set -euo pipefail
+          # THERE IS NO FALLBACK BASE, DELIBERATELY. An earlier revision
+          # substituted HEAD^1 whenever the intended base would not resolve.
+          # That turned an unverifiable range into a PASS over a narrower one —
+          # green while claiming coverage it did not have, which is the same
+          # defect as the skipped step this check replaced, one layer down.
+          # Each event names exactly one base, and if that base cannot be
+          # resolved the step fails.
+          case "$EVENT_NAME" in
+            pull_request)
+              base="$PR_BASE_SHA"
+              source="the pull request base"
+              ;;
+            # HEAD is the merge commit the queue built, so its first parent is
+            # the queue base and the range is everything the group adds —
+            # including a combination of several PRs that no single PR's own
+            # range ever covered.
+            merge_group)
+              base="HEAD^1"
+              source="the merge commit's first parent"
+              ;;
+            push)
+              base="$PUSH_BEFORE"
+              source="the previous tip of the branch"
+              ;;
+            # Fail closed rather than guessing: adding a trigger must be a
+            # conscious decision about what this check compares against.
+            *)
+              echo "::error::whitespace check has no defined base for event $EVENT_NAME; define one before adding that trigger"
+              exit 1
+              ;;
+          esac
+          # Unresolvable cases: a force-push can leave the previous tip
+          # unreachable, a branch-creation push sends the all-zero sha, and a
+          # root commit has no first parent. None of them can be papered over
+          # with a different range — "did not check" must never read as
+          # "checked", and a red run on a rewritten trunk is informative, not
+          # noise.
+          if [ -z "$base" ] || ! git rev-parse --verify --quiet "$base^{commit}" >/dev/null; then
+            echo "::error::cannot resolve $source ('$base') for event $EVENT_NAME, so the whitespace range is unknown and NOTHING was checked. Not falling back to a narrower range: that would pass while claiming coverage it does not have."
+            exit 1
+          fi
+          echo "whitespace range: $base...HEAD ($source)"
+          git diff --check "$base...HEAD"
+
+      - name: Packaging metadata and assets
+        run: |
+          scripts/gen-package-metadata.py
+          scripts/check-package-assets.sh
+
+      - name: Settings migration
+        run: |
+          node --check scripts/check-settings-migration.js
+          scripts/check-settings-migration.js
+
+      - name: Queue and theme-request regressions
+        run: |
+          node scripts/test-restyle-queue.js
+          node scripts/test-theme-requests.js
+          node scripts/test-latest-transaction-queue.js
+
+      - name: Helper and CLI checks
+        run: |
+          scripts/check-vshell-helper.py
+          scripts/check-brightness.py
+          python3 -m py_compile bin/vshell-helper
+          bash -n bin/vshell
+
+      # AGENTS.md § Backend rules: this is what keeps the Go and QML sides of
+      # the capability inventory in agreement. Pure text analysis, no toolchain.
+      - name: Backend capability inventory
+        run: scripts/check-backend-inventory.py
+
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          # Pinned to the version release.yml builds with, so a PR cannot pass
+          # here on a toolchain the release never uses.
+          go-version: 1.23.12
+          # CACHING IS OFF ON PURPOSE, and this is the one place where measuring
+          # inverted the obvious answer. A cold run of the whole Go block takes
+          # ~16s locally (build 4.4s, vet 0.8s, `test -race` 11.0s) and the two
+          # module dependencies are a 13 MB download — but the GOCACHE it leaves
+          # behind is 296 MB. Saving and restoring that much to skip ~10s of
+          # compute is a net loss on a 2 vCPU runner, and it burns Actions cache
+          # storage the rest of the repo could use. Re-measure before enabling.
+          cache: false
+
+      - name: Go build, vet and race tests
+        working-directory: backend
+        run: |
+          go build ./...
+          go vet ./...
+          go test -race ./...
+
+      # qmllint is what `--require-static` needs, and no runner image ships Qt.
+      # This is the single most expensive step here, which is why it is last.
+      # Quickshell itself is NOT installed and does not need to be: the static
+      # check tolerates unresolved qs.* imports by design and fails only on
+      # `[syntax…]` findings.
+      - name: Install qmllint (Qt 6 declarative tooling)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends qt6-declarative-dev-tools
+
+      # Covers both halves of the safety guard in one command: the repo-wide
+      # scan for unsafe direct-launch instructions, and — via the argument it
+      # forwards to the canonical smoke — the qmllint parse pass over the whole
+      # QML tree in --require-static mode, so a missing qmllint fails loudly.
+      # A plain skip is otherwise indistinguishable from a pass.
+      #
+      # --nested is NOT passed and cannot be: that sandbox needs a real Hyprland
+      # plus a Quickshell install inside the runner. The live-session half of
+      # this guard degrades cleanly here (no compositor and no Quickshell CLI →
+      # "nothing of that kind exists on this system"), which is correct: there is
+      # no live session in CI to disturb. AGENTS.md § What CI enforces records
+      # exactly what that leaves local-only.
+      - name: Validation safety and QML static smoke
+        run: scripts/check-validation-safety.sh --require-static
