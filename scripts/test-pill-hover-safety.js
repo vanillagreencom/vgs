@@ -8,16 +8,24 @@
 // in-progress recording — unrecoverable — cancelled a countdown, or opened the
 // chooser unprompted (VGS-36).
 //
-// Two independent things are checked, because either alone can be defeated:
-//   1. PluginComponent's structural guarantees: hover-activation is opt-in, and
-//      every pill action is invoked through one path that names its origin.
-//   2. screenRecord's own decision, extracted verbatim from the shipped QML
-//      between its BEGIN/END PILL ACTION DECISION markers, so this tests the
-//      real source rather than a re-implementation of it.
+// WHAT ACTUALLY PREVENTS THE DATA LOSS is a runtime property, not this file:
+// pillActionOrigin is "" at rest and only _runPillAction ever sets it, so an
+// invocation that reaches pillClickAction by any route the code does not
+// announce arrives with a non-click origin — and screenRecord refuses to stop a
+// recording or cancel a countdown unless the origin is "click". A bypass fails
+// safe on its own. Section 4 below proves exactly that, by running the shipped
+// decision against an unannounced origin.
+//
+// The static checks are therefore a lint on the shipped source, not the thing
+// standing between a hover and a lost recording. They keep the invocation path
+// single and readable — the duplicated arity branches are how the original bug
+// hid — and they catch a default being flipped back. Read them as "the design
+// is still intact", not as "the property is proven": a static scan cannot
+// follow a value, so it can always be walked around by someone determined.
 //
 // Bundled plugins get no runtime coverage from `qml-smoke.sh --nested`
 // (VGS-19), and that smoke cannot see a ReferenceError either (VGS-31), which
-// is why this harness reads the source directly.
+// is why this reads the source directly rather than exercising the widget.
 
 "use strict";
 
@@ -33,13 +41,15 @@ const PLUGIN_ROOT = path.join(repoRoot, "config", "vshell", "plugins");
 const component = fs.readFileSync(COMPONENT, "utf8");
 const screenRecord = fs.readFileSync(SCREEN_RECORD, "utf8");
 
-// Strip comments and string literals in one pass, then collapse whitespace, so
-// the checks below match call *expressions* rather than lines. A line-oriented
-// scan cannot see a call split across lines, and treats "this line is already
-// accounted for" as "this line is safe" — a second call appended to it slips
-// through. Single pass rather than sequential regexes because a `//` inside a
-// string, or a quote inside a comment, defeats the sequential version.
-function normaliseSource(src) {
+// Strip comments, optionally blank out string contents, and collapse
+// whitespace, so the checks below match expressions rather than lines. Single
+// pass rather than sequential regexes because a `//` inside a string, or a
+// quote inside a comment, defeats the sequential version.
+//
+// Template literals keep their `${…}` interpolations: those are executable
+// code, and discarding the whole literal is how a call written inside one would
+// go unseen. Only the inert text around them is dropped.
+function normalise(src, { blankStrings = false } = {}) {
     let out = "";
     for (let i = 0; i < src.length; ) {
         const c = src[i];
@@ -55,7 +65,7 @@ function normaliseSource(src) {
             out += " ";
             continue;
         }
-        if (c === '"' || c === "'" || c === "`") {
+        if (blankStrings && (c === '"' || c === "'")) {
             const quote = c;
             i++;
             while (i < src.length && src[i] !== quote) {
@@ -66,43 +76,72 @@ function normaliseSource(src) {
             out += '""';
             continue;
         }
+        if (blankStrings && c === "`") {
+            i++;
+            out += '""';
+            while (i < src.length && src[i] !== "`") {
+                if (src[i] === "\\") { i += 2; continue; }
+                if (src[i] === "$" && src[i + 1] === "{") {
+                    i += 2;
+                    let depth = 1;
+                    out += " ";
+                    while (i < src.length) {
+                        if (src[i] === "{") depth++;
+                        else if (src[i] === "}" && --depth === 0) break;
+                        out += src[i];
+                        i++;
+                    }
+                    i++;
+                    out += " ";
+                    continue;
+                }
+                i++;
+            }
+            i++;
+            continue;
+        }
         out += c;
         i++;
     }
     return out.replace(/\s+/g, " ");
 }
 
-const componentCode = normaliseSource(component);
+// Code only, for the invocation scan. Strings cannot contribute a false match.
+const componentCode = normalise(component, { blankStrings: true });
+// Strings intact, for the assertions that are about a literal value. Comment
+// and indentation changes still cannot break these, which is the point: no
+// check here depends on how the file happens to be formatted.
+const componentText = normalise(component);
 
 // --- 1. PluginComponent: hover-activation is opt-in --------------------------
 
-assert.match(
-    component,
-    /property bool pillClickOnHover:\s*false/,
-    "pillClickOnHover must ship defaulting to false, or every widget inherits hover-activation silently"
-);
+// Substring checks over normalised text, not extracted function bodies. Body
+// extraction had to hard-code the closing brace's indentation, so reindenting
+// correct code broke CI — a false failure, which is its own harm and buys
+// nothing here: what these assert is that a specific expression is present, and
+// that does not need the enclosing structure parsed.
+const present = (needle, message) =>
+    assert.ok(componentText.includes(needle), `${message} (looked for: ${needle})`);
 
-assert.match(
-    component,
-    /property string pillActionOrigin:\s*""/,
-    "pillActionOrigin must default empty so an unannounced caller cannot read as a click"
-);
+present("property bool pillClickOnHover: false",
+    "pillClickOnHover must ship defaulting to false, or every widget inherits hover-activation silently");
 
-const hoverBody = component.match(
-    /function triggerHoverPopout\(widgetHostId\)\s*\{([\s\S]*?)\n    \}/
-);
-assert.ok(hoverBody, "PluginComponent must still declare triggerHoverPopout");
-assert.match(
-    hoverBody[1],
-    /if \(pillClickAction && pillClickOnHover\)/,
-    "triggerHoverPopout must require the opt-in before running a pill action"
-);
+present('property string pillActionOrigin: ""',
+    "pillActionOrigin must default empty so an unannounced caller cannot read as a click");
+
+present("if (pillClickAction && pillClickOnHover)",
+    "triggerHoverPopout must require the opt-in before running a pill action");
 
 // --- 2. PluginComponent: one invocation path, always naming an origin --------
 
 // Every place that calls a pill action must go through _runPillAction. A direct
 // call would reintroduce exactly the unguarded branch this issue was about —
 // the arity>0 path that the first fix missed.
+//
+// This is a design lint, not the safety net: a call that skips _runPillAction
+// leaves pillActionOrigin at "", which section 4 proves screenRecord already
+// refuses. What it buys is that the invocation path stays single and legible,
+// which is what the original duplication cost us.
 //
 // Allowlist rather than a list of call syntaxes, because enumerating call forms
 // only ever covers the ones someone thought of: `pillClickAction(`,
@@ -144,23 +183,20 @@ assert.deepEqual(
     `pill actions must only be invoked via _runPillAction; found: ${JSON.stringify(directCalls)}`
 );
 
-const runBody = component.match(/function _runPillAction\(action, origin, pill\)\s*\{([\s\S]*?)\n    \}/);
-assert.ok(runBody, "PluginComponent must declare _runPillAction");
-assert.match(
-    runBody[1],
-    /pillActionOrigin = origin \|\| "ipc"/,
-    "_runPillAction must fail closed to a non-click origin when the caller does not name one"
-);
-assert.match(
-    runBody[1],
-    /finally\s*\{[\s\S]*pillActionOrigin = previousOrigin/,
-    "_runPillAction must restore the previous origin even if the action throws"
-);
+// The two properties the runtime guarantee rests on.
+present('pillActionOrigin = origin || "ipc"',
+    "_runPillAction must fail closed to a non-click origin when the caller does not name one");
 
-// Only the pills' own handlers may claim a press.
-const clickClaims = component.match(/_runPillAction\([^)]*"click"[^)]*\)/g) || [];
+present("finally { root.pillActionOrigin = previousOrigin;",
+    "_runPillAction must restore the previous origin even if the action throws");
+
+// Only the pills' own handlers may claim a press. A count, so adding a third
+// pill fails loudly and gets a deliberate update rather than silently widening
+// what may claim one.
+const clickClaims = componentText.match(/_runPillAction\([^)]*"click"[^)]*\)/g) || [];
 assert.equal(clickClaims.length, 4,
-    'exactly the two pills\' onClicked and onRightClicked handlers may pass "click"');
+    'exactly the two pills\' onClicked and onRightClicked handlers may pass "click"; ' +
+    `found ${clickClaims.length} — if a pill was added, confirm it is a real pointer press and update this count`);
 
 // --- 3. No bundled plugin opts in without being considered -------------------
 
@@ -176,7 +212,7 @@ for (const dir of fs.readdirSync(PLUGIN_ROOT, { withFileTypes: true })) {
     for (const file of fs.readdirSync(path.join(PLUGIN_ROOT, dir.name))) {
         if (!file.endsWith(".qml")) continue;
         const text = fs.readFileSync(path.join(PLUGIN_ROOT, dir.name, file), "utf8");
-        if (/pillClickOnHover\s*:\s*true/.test(normaliseSource(text))) optIns.add(dir.name);
+        if (/pillClickOnHover\s*:\s*true/.test(normalise(text))) optIns.add(dir.name);
     }
 }
 assert.deepEqual(
@@ -208,6 +244,13 @@ assert.equal(pillActionFor("hover", true, false), "ignore",
 assert.equal(pillActionFor("click", false, true), "stop", "clicking while recording must stop it");
 assert.equal(pillActionFor("click", true, false), "cancel", "clicking during the countdown must cancel it");
 assert.equal(pillActionFor("click", false, false), "chooser", "clicking while idle opens the chooser");
+
+// THE ONE THAT MAKES A BYPASS SURVIVABLE. pillActionOrigin is "" at rest, so an
+// invocation that skips _runPillAction entirely — the thing section 2 lints for
+// and cannot fully prevent — still cannot reach a destructive branch. This is
+// why the static scan being walkable around is not a data-loss risk.
+assert.equal(pillActionFor("", false, true), "ignore",
+    "an invocation that never set an origin must not be able to stop a recording");
 
 // Anything that did not announce itself is treated as not-a-click. This is the
 // case that matters most: a future caller that forgets to pass an origin.
