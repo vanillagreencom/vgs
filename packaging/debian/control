@@ -10,6 +10,38 @@ Rules-Requires-Root: no
 Package: vgs-shell
 Architecture: any
 Depends: quickshell, jq, python3, systemd, ${misc:Depends}
+Suggests: bandwhich,
+ curl,
+ ffmpeg,
+ ffmpegthumbnailer,
+ fuse3,
+ gnome-keyring,
+ greetd,
+ grim,
+ hyprland,
+ hyprpicker,
+ hyprsunset,
+ libnotify-bin,
+ niri,
+ rclone,
+ satty,
+ slurp,
+ tailscale,
+ tesseract-ocr,
+ tesseract-ocr-eng,
+ wl-clipboard,
+ wlsunset,
+ zoxide
 Description: VanillaGreen desktop shell for Hyprland and Niri
  VGS provides a bar, launcher, settings, lock screen, notifications, capture,
  wallpapers, and application theme generation.
+ .
+ Optional features stay inert until their tool is installed; run
+ "vshell deps status" to see which feature groups are unsatisfied.
+
+Package: vgs-shell-assets
+Architecture: all
+Depends: vgs-shell (>= ${source:Version}), ${misc:Depends}
+Description: Optional VGS themes, wallpapers, and bundled icon themes
+ The vgs-shell package ships the coppernight default theme only. This package
+ adds every other bundled theme, its wallpapers, and the vendored icon themes.

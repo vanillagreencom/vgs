@@ -13,4 +13,5 @@ override_dh_auto_build:
 	cd backend && GOCACHE=$(CURDIR)/.gocache CGO_ENABLED=0 go build -mod=vendor -buildvcs=false -trimpath -ldflags="-s -w -X vshell/backend/internal/registry.cliVersion=$$(cat ../VERSION)" -o ../vshell-backend ./cmd/vshell-backend
 
 override_dh_auto_install:
-	DESTDIR=$(CURDIR)/debian/vgs-shell VGS_BACKEND_BINARY=$(CURDIR)/vshell-backend packaging/install-system.sh
+	DESTDIR=$(CURDIR)/debian/vgs-shell VGS_THEME_BUNDLE=core VGS_BACKEND_BINARY=$(CURDIR)/vshell-backend packaging/install-system.sh
+	DESTDIR=$(CURDIR)/debian/vgs-shell-assets VGS_THEME_BUNDLE=extras packaging/install-system.sh

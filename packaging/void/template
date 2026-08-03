@@ -2,6 +2,7 @@ pkgname=vgs-shell
 version=0.1.0
 revision=1
 depends="quickshell jq python3"
+subpackages="vgs-shell-assets"
 short_desc="VanillaGreen desktop shell for Hyprland and Niri"
 maintainer="Brad <brad@vanillagreen>"
 license="MIT"
@@ -21,5 +22,23 @@ distfiles="https://github.com/vanillagreencom/vgs/releases/download/v${version}/
 wrksrc="vgs-${version}-linux-${_arch}"
 
 do_install() {
-	DESTDIR="$DESTDIR" PREFIX=/usr VGS_BACKEND_BINARY="$wrksrc/bin/vshell-backend" packaging/install-system.sh
+	DESTDIR="$DESTDIR" PREFIX=/usr VGS_THEME_BUNDLE=core VGS_BACKEND_BINARY="$wrksrc/bin/vshell-backend" packaging/install-system.sh
+	DESTDIR="$DESTDIR" PREFIX=/usr VGS_THEME_BUNDLE=extras packaging/install-system.sh
+}
+
+vgs-shell-assets_package() {
+	short_desc="Optional VGS themes, wallpapers, and bundled icon themes"
+	depends="vgs-shell>=${version}_${revision}"
+	pkg_install() {
+		vmove usr/lib/vshell/config/vshell/icons
+		local theme
+		for theme in "${DESTDIR}"/usr/lib/vshell/themes/*/; do
+			theme="${theme%/}"
+			theme="${theme##*/}"
+			case "$theme" in
+				coppernight|targets) continue ;;
+			esac
+			vmove "usr/lib/vshell/themes/${theme}"
+		done
+	}
 }
