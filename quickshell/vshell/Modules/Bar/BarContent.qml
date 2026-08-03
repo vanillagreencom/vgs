@@ -404,35 +404,8 @@ Item {
         return barWindow.axis?.edge === "left" ? 2 : (barWindow.axis?.edge === "right" ? 3 : (barWindow.axis?.edge === "top" ? 0 : 1));
     }
 
-    function resolveWidgetTriggerGeometry(widgetItem, section, opts) {
+    function resolveWidgetTriggerGeometry(widgetItem, opts) {
         opts = opts || {};
-        if (opts.useCenterSection && section === "center") {
-            // Anchor the dash to the clock widget itself, not the whole center
-            // section — the section is flanked by utility toggles (sudo, screen
-            // record, privacy, idle-inhibitor) that pull the group's centre off
-            // the clock/date, making the dash look right-shifted.
-            const clock = barWindow.clockButtonRef;
-            if (!barWindow.isVertical && clock && clock.visualContent) {
-                return {
-                    triggerPos: clock.visualContent.mapToItem(null, 0, 0),
-                    triggerWidth: clock.visualWidth !== undefined ? clock.visualWidth : clock.width
-                };
-            }
-            const centerSection = barWindow.isVertical ? vCenterSection : hCenterSection;
-            if (centerSection) {
-                if (barWindow.isVertical) {
-                    const centerY = centerSection.height / 2;
-                    return {
-                        triggerPos: centerSection.mapToItem(null, 0, centerY),
-                        triggerWidth: centerSection.height
-                    };
-                }
-                return {
-                    triggerPos: centerSection.mapToItem(null, 0, 0),
-                    triggerWidth: centerSection.width
-                };
-            }
-        }
         const ref = opts.visualItem || widgetItem.visualContent || widgetItem;
         const w = opts.triggerWidth !== undefined ? opts.triggerWidth : (widgetItem.visualWidth !== undefined ? widgetItem.visualWidth : widgetItem.width);
         return {
@@ -509,8 +482,7 @@ Item {
             popout.triggerScreen = barWindow.screen;
 
         if (popout.setTriggerPosition && spec.widgetItem) {
-            const geom = resolveWidgetTriggerGeometry(spec.widgetItem, widgetSection, {
-                useCenterSection: spec.useCenterSection,
+            const geom = resolveWidgetTriggerGeometry(spec.widgetItem, {
                 visualItem: spec.visualItem,
                 triggerWidth: spec.triggerWidth
             });
@@ -1063,7 +1035,6 @@ Item {
                     tabIndex: 0,
                     triggerSource: topBarContent._dashTriggerSource(section, 0),
                     mode: "click",
-                    useCenterSection: true,
                     setTriggerScreen: true
                 });
             }
@@ -1091,7 +1062,6 @@ Item {
                     tabIndex: 1,
                     triggerSource: topBarContent._dashTriggerSource(section, 1),
                     mode: "click",
-                    useCenterSection: true,
                     setTriggerScreen: true
                 });
             }
@@ -1119,7 +1089,6 @@ Item {
                     tabIndex,
                     triggerSource: topBarContent._dashTriggerSource(section, tabIndex),
                     mode: "click",
-                    useCenterSection: true,
                     setTriggerScreen: true
                 });
             }

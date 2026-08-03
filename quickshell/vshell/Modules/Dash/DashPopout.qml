@@ -80,7 +80,6 @@ VgsPopout {
 
     popupWidth: SettingsData.showWeekNumber ? 736 : 700
     popupHeight: contentLoader.item ? contentLoader.item.implicitHeight : 500
-    triggerWidth: 80
     screen: triggerScreen
 
     property bool __focusArmed: false
