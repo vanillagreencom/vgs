@@ -918,6 +918,21 @@ function isVgsAction(action) {
     return action.startsWith("spawn vshell ipc call ");
 }
 
+// VGS-13 retired these launcher IPC targets in favour of "vshell-menu". VGS
+// rewrites its own generated niri binds; binds in a config VGS does not own
+// (every Hyprland bind, and hand-written niri binds) can only be reported.
+const RETIRED_IPC_TARGETS = ["launcher", "spotlight", "spotlight-bar"];
+
+function usesRetiredIpcTarget(action) {
+    if (!action)
+        return false;
+    const tokens = String(action).split(/\s+/);
+    const call = tokens.indexOf("ipc");
+    if (call < 0 || tokens[call + 1] !== "call")
+        return false;
+    return RETIRED_IPC_TARGETS.indexOf(tokens[call + 2]) >= 0;
+}
+
 function isValidAction(action) {
     if (!action)
         return false;

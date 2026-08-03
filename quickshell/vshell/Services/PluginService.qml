@@ -910,12 +910,64 @@ Singleton {
     // launcher, so a failure here has to be visible rather than a dead click.
     readonly property string appLauncherPluginId: "vgsMenu"
 
+    property bool _appLauncherTogglePending: false
+
     function toggleAppLauncher() {
-        if (togglePlugin(appLauncherPluginId))
+        if (togglePlugin(appLauncherPluginId)) {
+            _appLauncherTogglePending = false;
+            appLauncherRegistrationTimeout.stop();
             return true;
-        log.error("app launcher unavailable:", appLauncherPluginId, "is not loaded");
-        ToastService.showError(I18n.tr("App launcher unavailable"), I18n.tr("The %1 plugin did not load. Check Settings > Plugins.").arg(appLauncherPluginId));
+        }
+        // The daemon Instantiator is asynchronous, so a click can land after
+        // the component loads but before the instance registers. That is a
+        // transient startup state, not a failure: queue the toggle and let
+        // onDaemonInstancesChanged run it, rather than crying wolf.
+        if (pluginDaemonComponents[appLauncherPluginId] && !daemonInstances[appLauncherPluginId]) {
+            _appLauncherTogglePending = true;
+            appLauncherRegistrationTimeout.restart();
+            return false;
+        }
+        _reportAppLauncherUnavailable();
         return false;
+    }
+
+    function _reportAppLauncherUnavailable() {
+        _appLauncherTogglePending = false;
+        log.error("app launcher unavailable:", appLauncherPluginId, "is not loaded");
+        ToastService.showError(I18n.tr("App launcher unavailable"), I18n.tr("The %1 plugin did not load. Check Settings > Plugins.").arg(appLauncherPluginId), "", "app-launcher-unavailable");
+    }
+
+    onDaemonInstancesChanged: {
+        if (!_appLauncherTogglePending || !daemonInstances[appLauncherPluginId])
+            return;
+        _appLauncherTogglePending = false;
+        appLauncherRegistrationTimeout.stop();
+        togglePlugin(appLauncherPluginId);
+    }
+
+    // Bounds the queued toggle above: if registration never arrives, the click
+    // has to end in a visible error rather than nothing at all.
+    Timer {
+        id: appLauncherRegistrationTimeout
+        interval: 2000
+        repeat: false
+        onTriggered: {
+            if (root._appLauncherTogglePending)
+                root._reportAppLauncherUnavailable();
+        }
+    }
+
+    // Nothing else consumes this signal, so a component load error used to
+    // reach only the log. Plugin surfaces back real product UI (the app
+    // launcher has no fallback since VGS-13), so a failed load has to be
+    // visible to the user.
+    onPluginLoadFailed: (pluginId, error) => {
+        // The startup-gate path records the error first and raises a richer
+        // toast of its own; do not replace it with this generic one.
+        if (pluginLoadErrors[pluginId])
+            return;
+        const plugin = availablePlugins[pluginId];
+        ToastService.showError(I18n.tr("%1 failed to load").arg(plugin?.name || pluginId), error || "", "", "plugin-load-" + pluginId);
     }
 
     function savePluginData(pluginId, key, value) {

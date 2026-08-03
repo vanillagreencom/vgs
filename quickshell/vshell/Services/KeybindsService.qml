@@ -380,6 +380,7 @@ Singleton {
 
         const processed = {};
         const bindsData = _rawData.binds;
+        _maybeWarnRetiredLauncherBinds(bindsData);
         for (const cat in bindsData) {
             const binds = bindsData[cat];
             for (var i = 0; i < binds.length; i++) {
@@ -540,6 +541,27 @@ Singleton {
             return;
         _hyprlandLegacyWarnShown = true;
         ToastService.showWarning(I18n.tr("Hyprland config include missing"), I18n.tr("VGS Settings writes Lua keybinds. Add the VGS include so edits apply."), "", "hyprland-migration");
+    }
+
+    property bool _retiredLauncherBindWarnShown: false
+
+    // VGS-13 removed the launcher/spotlight/spotlight-bar IPC targets. VGS
+    // rewrites the niri binds it generated itself; anything in a config VGS
+    // does not own can only be reported, so say so once per session when the
+    // binds are already in hand rather than spawning a startup probe for it.
+    function _maybeWarnRetiredLauncherBinds(bindsData) {
+        if (_retiredLauncherBindWarnShown || !bindsData)
+            return;
+        for (const cat in bindsData) {
+            const binds = bindsData[cat] || [];
+            for (var i = 0; i < binds.length; i++) {
+                if (!Actions.usesRetiredIpcTarget(binds[i]?.action))
+                    continue;
+                _retiredLauncherBindWarnShown = true;
+                ToastService.showWarning(I18n.tr("Keybind targets a removed action"), I18n.tr("%1 still runs a retired launcher command. Rebind it to: vshell ipc call vshell-menu toggle").arg(binds[i].key || I18n.tr("A shortcut")), "", "retired-launcher-bind");
+                return;
+            }
+        }
     }
 
     function showHyprlandReadOnlyWarning() {
