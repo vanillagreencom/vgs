@@ -159,6 +159,11 @@ and plugin overrides live there.
 The universal bundle includes the full built-in wallpaper and icon asset set and starts the user
 service by default unless `install.sh --no-start` is used.
 
+The installer checks `~/.local/bin/vshell`, `~/.config/quickshell/vshell`, and
+`~/.config/systemd/user/vshell.service` before it writes anything. If one of them is managed by
+something else — GNU Stow, chezmoi, yadm — it refuses without having changed a thing; pass
+`install.sh --force` to replace those paths anyway.
+
 Void currently has a maintainer recipe but no packaged Quickshell 0.3.0 dependency. See
 [`packaging/`](packaging/) for that recipe, package source files, and channel details.
 Checksum-verified bundles and source archives are available from
