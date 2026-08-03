@@ -14,16 +14,33 @@ PluginComponent {
     // The privileged drop-in lives in /etc/sudoers.d, which is unreadable to
     // the logged-in user, so `vshell sudo-toggle` mirrors the state to a flag
     // file this widget can watch. Protocol: docs/architecture/shell-architecture.md.
+    //
+    // The mirror can go stale (drop-in removed by an admin, restored home
+    // backup), so this widget never asks the helper to "flip": it passes the
+    // direction it is displaying via `set on|off`, and the helper refuses and
+    // re-syncs when reality disagrees. Inferring direction privileged-side is
+    // what let a revoke click install a permanent grant (VGS-11).
     property bool enabled: false
 
     // Whether the toggle can run at all on this machine (sudo + visudo +
-    // /etc/sudoers.d). Assume unavailable until the probe answers, so a failed
-    // probe never leaves a control that looks operable.
+    // /etc/sudoers.d + a terminal for the prompt). Assume unavailable until
+    // the probe answers, so a failed probe never leaves a control that looks
+    // operable.
     property bool available: false
     property string unavailableReason: "checking…"
+    // sudo currently runs without prompting for some other reason (an admin
+    // NOPASSWD rule, a live credential cache). Reported so the widget does not
+    // claim "disabled" on a machine that is already passwordless.
+    property bool sudoNonInteractive: false
     property string _toggleStderr: ""
+    // Enabling is permanent and has no expiry, so it takes two clicks.
+    property bool _enableArmed: false
+    property string _pendingState: "off"
+    property bool _flagPresent: false
+    property bool _legacyFlagPresent: false
 
-    readonly property string flagPath: (Quickshell.env("HOME") || "") + "/.local/state/sudo-passwordless-toggle"
+    readonly property string flagPath: (Quickshell.env("HOME") || "") + "/.local/state/vshell/sudo-passwordless-toggle"
+    readonly property string legacyFlagPath: (Quickshell.env("HOME") || "") + "/.local/state/sudo-passwordless-toggle"
 
     function iconName() {
         // gpp_maybe = shield with caution (elevated / less secure)
@@ -37,7 +54,13 @@ PluginComponent {
     function tooltipText() {
         if (!root.available)
             return "Passwordless sudo toggle unavailable — " + root.unavailableReason;
-        return root.enabled ? "Passwordless sudo ENABLED — click to toggle" : "Passwordless sudo disabled — click to toggle";
+        if (root.enabled)
+            return "Passwordless sudo ENABLED — click to revoke";
+        if (root._enableArmed)
+            return "Click again to grant permanent passwordless sudo";
+        if (root.sudoNonInteractive)
+            return "VGS passwordless sudo rule not installed — but sudo does not prompt on this machine right now";
+        return "Passwordless sudo disabled — click to grant (permanent)";
     }
 
     function toggle() {
@@ -46,11 +69,50 @@ PluginComponent {
             statusProc.running = true;
             return;
         }
-        if (toggleProc.running)
+        if (setProc.running)
             return;
-        toggleProc.running = true;
+
+        if (root.enabled) {
+            // Revoking only ever removes privilege — no confirmation needed.
+            root._enableArmed = false;
+            armTimeout.stop();
+            root._runSet("off");
+            return;
+        }
+
+        // Granting is permanent, has no expiry, and on a machine where sudo
+        // already does not prompt it would otherwise complete with no
+        // interaction at all. Require a deliberate second click.
+        if (!root._enableArmed) {
+            root._enableArmed = true;
+            armTimeout.restart();
+            ToastService.showWarning("Grant passwordless sudo?", "Click again to install a permanent NOPASSWD rule for your user. A terminal will open so sudo can authenticate.");
+            return;
+        }
+        root._enableArmed = false;
+        armTimeout.stop();
+        root._runSet("on");
+    }
+
+    function _runSet(state) {
+        root._pendingState = state;
+        setProc.running = true;
         // The FileView watch + poll timer pick up the new state; nudge shortly.
         stateNudge.restart();
+    }
+
+    // The mirror moved under the VGS state dir; a pre-existing install still
+    // has the old file until the first change rewrites it, so both count as
+    // "enabled" until then.
+    function _refreshFromFlags() {
+        root.enabled = root._flagPresent || root._legacyFlagPresent;
+    }
+
+    Timer {
+        id: armTimeout
+        interval: 5000
+        repeat: false
+        onTriggered: root._enableArmed = false
     }
 
     // Availability probe. `status` exits non-zero when the toggle cannot run,
@@ -62,40 +124,65 @@ PluginComponent {
         stdout: StdioCollector {
             id: statusOut
             onStreamFinished: {
+                statusWatchdog.stop();
                 try {
                     const status = JSON.parse(statusOut.text);
                     root.available = status.available === true;
                     root.unavailableReason = status.reason || "unknown reason";
                     root.enabled = status.enabled === true;
+                    root.sudoNonInteractive = status.sudoNonInteractive === true;
                 } catch (e) {
                     root.available = false;
                     root.unavailableReason = "could not read `vshell sudo-toggle status`";
                 }
             }
         }
+        onRunningChanged: if (running) statusWatchdog.restart()
         onExited: exitCode => {
-            if (exitCode !== 0 && root.available) {
+            statusWatchdog.stop();
+            if (exitCode !== 0) {
+                // A non-zero exit always means unusable; never leave the
+                // placeholder reason in place.
                 root.available = false;
-                root.unavailableReason = "`vshell sudo-toggle status` exited " + exitCode;
+                if (root.unavailableReason === "" || root.unavailableReason === "checking…")
+                    root.unavailableReason = "`vshell sudo-toggle status` exited " + exitCode;
             }
         }
     }
 
-    // The toggle itself. It re-execs under sudo — silently when sudo needs no
-    // password (turning the drop-in off), in a terminal when it must prompt.
-    // A failed spawn must surface: this widget's whole defect history is
-    // clicks that did nothing.
+    // If the CLI cannot be spawned at all (wrong VSHELL_ROOT in a packaged
+    // install) neither handler above ever fires, and the tooltip would sit on
+    // "checking…" forever — a diagnosable message is the whole point here.
+    Timer {
+        id: statusWatchdog
+        interval: 10000
+        repeat: false
+        onTriggered: {
+            root.available = false;
+            root.unavailableReason = "`vshell sudo-toggle status` did not respond";
+        }
+    }
+
+    // The state change itself, always in an explicit direction. Enabling is
+    // routed through a terminal by the helper so sudo can authenticate;
+    // disabling stays silent. A failed spawn must surface: this widget's whole
+    // defect history is clicks that did nothing.
     Process {
-        id: toggleProc
-        command: [Paths.vshellCli, "sudo-toggle", "toggle"]
+        id: setProc
+        command: [Paths.vshellCli, "sudo-toggle", "set", root._pendingState]
         running: false
         stderr: StdioCollector {
             onStreamFinished: root._toggleStderr = text || ""
         }
         onExited: exitCode => {
-            if (exitCode !== 0) {
-                const detail = (root._toggleStderr || "").trim();
-                ToastService.showError("Passwordless sudo toggle failed", detail || ("vshell sudo-toggle exited " + exitCode));
+            const detail = (root._toggleStderr || "").trim();
+            if (exitCode === 3) {
+                // The helper found reality disagreed with what we displayed and
+                // deliberately changed nothing.
+                ToastService.showWarning("Passwordless sudo state was out of date", detail || "Nothing changed; the shell has re-read the current state.");
+                statusProc.running = true;
+            } else if (exitCode !== 0) {
+                ToastService.showError("Passwordless sudo change failed", detail || ("vshell sudo-toggle exited " + exitCode));
                 statusProc.running = true;
             }
             root._toggleStderr = "";
@@ -111,8 +198,30 @@ PluginComponent {
         blockLoading: false
         watchChanges: true
         printErrors: false
-        onLoaded: root.enabled = true
-        onLoadFailed: root.enabled = false
+        onLoaded: {
+            root._flagPresent = true;
+            root._refreshFromFlags();
+        }
+        onLoadFailed: {
+            root._flagPresent = false;
+            root._refreshFromFlags();
+        }
+    }
+
+    FileView {
+        id: legacyFlagView
+        path: root.legacyFlagPath
+        blockLoading: false
+        watchChanges: true
+        printErrors: false
+        onLoaded: {
+            root._legacyFlagPresent = true;
+            root._refreshFromFlags();
+        }
+        onLoadFailed: {
+            root._legacyFlagPresent = false;
+            root._refreshFromFlags();
+        }
     }
 
     Timer {
@@ -121,7 +230,10 @@ PluginComponent {
         repeat: true
         running: true
         triggeredOnStart: true
-        onTriggered: flagView.reload()
+        onTriggered: {
+            flagView.reload();
+            legacyFlagView.reload();
+        }
     }
 
     // A couple of quick re-checks right after a toggle so the icon flips
@@ -134,6 +246,7 @@ PluginComponent {
         property int ticks: 0
         onTriggered: {
             flagView.reload();
+            legacyFlagView.reload();
             ticks++;
             if (ticks >= 6) {
                 ticks = 0;

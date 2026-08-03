@@ -8839,33 +8839,64 @@ def ensure_root_for(argv: List[str], terminal: bool = False) -> int | None:
     return proc.returncode
 
 
+TERMINAL_CANDIDATES = ("ghostty", "kitty", "alacritty", "foot", "wezterm", "xterm")
+
+# How long to watch a freshly spawned terminal before treating it as launched.
+# A terminal that cannot take `-e sh -lc`, or cannot reach the display, dies
+# immediately; without this the caller reports success for a window that never
+# appeared, which is the silent-failure class VGS-11 exists to remove.
+TERMINAL_SETTLE_SECONDS = 0.75
+
+
+def terminal_candidates() -> List[List[str]]:
+    """Terminal argv prefixes to try, most preferred first ($TERMINAL wins)."""
+    candidates: List[List[str]] = []
+    configured = os.environ.get("TERMINAL", "").strip()
+    if configured:
+        try:
+            parsed = shlex.split(configured)
+        except ValueError:
+            parsed = []
+        if parsed:
+            candidates.append(parsed)
+    for term in TERMINAL_CANDIDATES:
+        if shutil.which(term):
+            candidates.append([term])
+    return [base for base in candidates
+            if base and (shutil.which(base[0]) or Path(base[0]).exists())]
+
+
+def have_terminal() -> bool:
+    return bool(terminal_candidates())
+
+
 def launch_terminal(cmd: List[str]) -> int:
     quoted = " ".join(shlex.quote(part) for part in cmd)
     script = f"{quoted}; code=$?; echo; echo 'VGS command exited with status '$code'. Press Enter to close.'; read _; exit $code"
-    configured = os.environ.get("TERMINAL", "").strip()
-    candidates: List[List[str]] = []
-    if configured:
-        candidates.append(shlex.split(configured))
-    for term in ("ghostty", "kitty", "alacritty", "foot", "wezterm", "xterm"):
-        if shutil.which(term):
-            candidates.append([term])
-    for base in candidates:
-        if not base:
-            continue
-        exe = base[0]
-        name = Path(exe).name
-        if not shutil.which(exe) and not Path(exe).exists():
-            continue
-        if name == "xterm":
-            full = [*base, "-e", "sh", "-lc", script]
-        else:
-            full = [*base, "-e", "sh", "-lc", script]
+    tried: List[str] = []
+    for base in terminal_candidates():
+        full = [*base, "-e", "sh", "-lc", script]
         try:
-            subprocess.Popen(full)
-            return 0
+            proc = subprocess.Popen(full)
         except Exception:
             continue
-    eprint("No supported terminal found for privileged VGS command")
+        tried.append(base[0])
+        try:
+            # Popen only proves the exec succeeded. Give the terminal a moment
+            # to fail on its own (bad -e handling, no display) and move to the
+            # next candidate if it does, instead of reporting a window the user
+            # never got.
+            proc.wait(timeout=TERMINAL_SETTLE_SECONDS)
+        except subprocess.TimeoutExpired:
+            return 0  # still running: the window is up
+        if proc.returncode == 0:
+            return 0  # exited cleanly and fast; nothing to distrust
+    if tried:
+        eprint("Terminal exited immediately for privileged VGS command (tried: "
+               + ", ".join(tried) + ")")
+        return 3
+    eprint("No supported terminal found for privileged VGS command (set $TERMINAL, or install one of: "
+           + ", ".join(TERMINAL_CANDIDATES) + ")")
     return 1
 
 
@@ -10044,14 +10075,27 @@ def _launcher_preview(path: Path, lines: int, focus_line: int = 0, query: str = 
 # --- Passwordless sudo toggle -------------------------------------------------
 #
 # Protocol (owned by VGS; the sudoToggle plugin is the only consumer):
-#   /etc/sudoers.d/50-<user>-nopasswd-toggle   the privileged drop-in
-#   ~/.local/state/sudo-passwordless-toggle    unprivileged state mirror
+#   /etc/sudoers.d/50-<user>-nopasswd-toggle        the privileged drop-in
+#   ~/.local/state/vshell/sudo-passwordless-toggle  unprivileged state mirror
 #
 # The mirror exists because /etc/sudoers.d is 0750 root:root, so the shell
 # cannot read the real state as the logged-in user. Anything that changes the
 # drop-in must update the mirror in the same operation.
+#
+# The mirror can still go stale behind VGS's back — an admin removing the
+# drop-in, a cleaned /etc/sudoers.d, a restored home backup. It is therefore
+# never allowed to decide a direction: callers pass the direction they showed
+# the user (`set on|off`), and the privileged half refuses and re-syncs rather
+# than doing the opposite of what was displayed. Inferring the direction
+# root-side turned a "revoke" click into a permanent NOPASSWD grant (VGS-11).
 
-SUDO_TOGGLE_FLAG = ".local/state/sudo-passwordless-toggle"
+SUDO_TOGGLE_FLAG_NAME = "sudo-passwordless-toggle"
+# Pre-VGS-11 location, outside the VGS state dir. Read for migration only.
+SUDO_TOGGLE_LEGACY_FLAG = ".local/state/sudo-passwordless-toggle"
+
+# `set` exit codes: 0 changed//already correct, 1 error, 3 displayed state was
+# stale (nothing changed, mirror re-synced, caller should re-read status).
+SUDO_TOGGLE_EXIT_STALE = 3
 
 
 def sudo_toggle_dropin(user: str) -> Path:
@@ -10059,7 +10103,36 @@ def sudo_toggle_dropin(user: str) -> Path:
 
 
 def sudo_toggle_flag_path() -> Path:
-    return home() / SUDO_TOGGLE_FLAG
+    return state_dir() / SUDO_TOGGLE_FLAG_NAME
+
+
+def sudo_toggle_legacy_flag_path() -> Path:
+    return home() / SUDO_TOGGLE_LEGACY_FLAG
+
+
+def sudo_toggle_mirror_state() -> bool:
+    """What the unprivileged side believes. Never used to pick a direction."""
+    return sudo_toggle_flag_path().is_file() or sudo_toggle_legacy_flag_path().is_file()
+
+
+def sudo_noninteractive_ok(runner: Any = None) -> bool:
+    """Does sudo currently run without prompting?
+
+    True means either a NOPASSWD rule (VGS's or someone else's) or a live
+    credential cache — sudo cannot distinguish those without invalidating the
+    cache, which would be a side effect on the user's session. Callers must
+    treat this as "does not prompt right now", not "has a NOPASSWD rule".
+    """
+    if runner is None:
+        def runner() -> int:
+            return subprocess.run(
+                ["sudo", "-n", "true"],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            ).returncode
+    try:
+        return runner() == 0
+    except Exception:
+        return False
 
 
 def sudo_toggle_availability() -> Tuple[bool, str]:
@@ -10070,6 +10143,10 @@ def sudo_toggle_availability() -> Tuple[bool, str]:
         return False, "visudo is not installed (usually shipped with sudo)"
     if not Path("/etc/sudoers.d").is_dir():
         return False, "/etc/sudoers.d does not exist; sudo has no drop-in include directory"
+    if not have_terminal():
+        # Enabling must authenticate interactively, which needs a terminal.
+        return False, ("no terminal emulator found for the password prompt; set $TERMINAL or install one of: "
+                       + ", ".join(TERMINAL_CANDIDATES))
     return True, ""
 
 
@@ -10111,11 +10188,13 @@ def sudo_toggle_apply(dropin: Path, user: str, enable: bool, visudo_bin: str | N
     return True, "Passwordless sudo enabled (persistent, no expiry)"
 
 
-def sudo_toggle_write_flag(enable: bool) -> None:
+def sudo_toggle_write_flag(enable: bool) -> Tuple[bool, str]:
     """Mirror the privileged state where the shell can read it.
 
-    Runs as root after the sudo re-exec, so the flag and the directories it
-    needs are chowned back to the logged-in user.
+    Usually runs as root after the sudo re-exec, writing into a directory the
+    unprivileged user controls, so every component is checked for symlinks and
+    nothing here ever follows one: a planted link would otherwise have root
+    create and chown an arbitrary path.
     """
     flag = sudo_toggle_flag_path()
     owner_uid, owner_gid = os.getuid(), os.getgid()
@@ -10125,37 +10204,127 @@ def sudo_toggle_write_flag(enable: bool) -> None:
             owner_uid, owner_gid = pw.pw_uid, pw.pw_gid
         except KeyError:
             pass
+
+    # Drop the pre-VGS-11 mirror in both directions so one file is the truth.
+    # unlink() removes a symlink itself and never follows it.
+    legacy = sudo_toggle_legacy_flag_path()
+    if legacy.exists() or legacy.is_symlink():
+        try:
+            legacy.unlink()
+        except OSError:
+            pass
+
     if not enable:
         try:
             flag.unlink()
         except FileNotFoundError:
             pass
-        return
-    created = [p for p in (flag.parent.parent, flag.parent) if not p.exists()]
-    flag.parent.mkdir(parents=True, exist_ok=True)
-    flag.touch()
-    for path in [*created, flag]:
+        except OSError as exc:
+            return False, f"could not clear the state mirror {flag}: {exc}"
+        return True, ""
+
+    # Create missing ancestors ourselves so each one can be checked and owned.
+    ancestors = [flag.parent.parent.parent, flag.parent.parent, flag.parent]  # ~/.local, .../state, .../vshell
+    for path in ancestors:
+        if path.is_symlink():
+            return False, f"refusing to write the state mirror through a symlinked directory: {path}"
+        if path.exists():
+            if not path.is_dir():
+                return False, f"state mirror path is not a directory: {path}"
+            continue
         try:
-            os.chown(path, owner_uid, owner_gid)
-        except (PermissionError, FileNotFoundError):
+            os.mkdir(path, 0o700)
+        except FileExistsError:
+            pass
+        except OSError as exc:
+            return False, f"could not create {path}: {exc}"
+        try:
+            os.chown(path, owner_uid, owner_gid, follow_symlinks=False)
+        except (PermissionError, FileNotFoundError, OSError):
             pass
 
+    try:
+        fd = os.open(flag, os.O_CREAT | os.O_EXCL | os.O_WRONLY | os.O_NOFOLLOW, 0o644)
+    except FileExistsError:
+        if flag.is_symlink():
+            return False, f"refusing to write the state mirror through a symlink: {flag}"
+        return True, ""  # already present and a real file: nothing to do
+    except OSError as exc:
+        return False, f"could not write the state mirror {flag}: {exc}"
+    try:
+        os.fchown(fd, owner_uid, owner_gid)
+    except (PermissionError, OSError):
+        pass
+    finally:
+        os.close(fd)
+    return True, ""
 
-def sudo_toggle_status(user: str) -> Dict[str, Any]:
+
+def sudo_toggle_status(user: str, sudo_probe: Any = None, probe_sudo: bool = True) -> Dict[str, Any]:
     available, reason = sudo_toggle_availability()
-    enabled = sudo_toggle_flag_path().is_file()
+    dropin_installed = sudo_toggle_mirror_state()
     if os.geteuid() == 0:
         # Privileged callers can see the truth; the mirror may have drifted.
-        enabled = sudo_toggle_dropin(user).is_file()
+        dropin_installed = sudo_toggle_dropin(user).is_file()
+    if dropin_installed:
+        # NOPASSWD: ALL is in force by definition; no need to ask sudo (and no
+        # need to put a line in the auth log on every shell start).
+        non_interactive = True
+    elif probe_sudo:
+        non_interactive = sudo_noninteractive_ok(sudo_probe)
+    else:
+        non_interactive = False
     return {
         "ok": True,
         "available": available,
         "reason": reason,
-        "enabled": enabled,
+        # VGS's own drop-in, as far as this caller can tell.
+        "enabled": dropin_installed,
+        "dropinInstalled": dropin_installed,
+        # Whether sudo prompts right now, from any rule or a cached credential.
+        # Lets the widget avoid claiming "disabled" on a machine that is
+        # passwordless for other reasons.
+        "sudoNonInteractive": non_interactive,
         "user": user,
         "dropin": str(sudo_toggle_dropin(user)),
         "flag": str(sudo_toggle_flag_path()),
     }
+
+
+def sudo_toggle_set(user: str, want: bool) -> int:
+    """Privileged half of `set`. Applies only the direction that was asked for."""
+    dropin = sudo_toggle_dropin(user)
+    actual = dropin.is_file()
+    mirror_before = sudo_toggle_mirror_state()
+
+    if want == actual:
+        # Nothing to do. If the mirror disagreed, the caller acted on a state
+        # the machine was not in, so re-sync and say so instead of pretending
+        # the click did what it looked like it would do.
+        ok, message = sudo_toggle_write_flag(actual)
+        if not ok:
+            eprint(f"vshell sudo-toggle: {message}")
+            return 1
+        if mirror_before != actual:
+            eprint("vshell sudo-toggle: passwordless sudo is already "
+                   + ("enabled" if actual else "disabled")
+                   + "; the shell was showing stale state. Nothing changed; state refreshed.")
+            return SUDO_TOGGLE_EXIT_STALE
+        print("passwordless sudo already " + ("enabled" if actual else "disabled"))
+        return 0
+
+    ok, message = sudo_toggle_apply(dropin, user, want, shutil.which("visudo"))
+    if not ok:
+        eprint(f"vshell sudo-toggle: {message}")
+        return 1
+    ok, flag_message = sudo_toggle_write_flag(want)
+    if not ok:
+        # The privileged change landed; a mirror we could not write would leave
+        # the widget lying, so report it rather than exiting 0.
+        eprint(f"vshell sudo-toggle: {message}, but {flag_message}")
+        return 1
+    print(message)
+    return 0
 
 
 def cmd_sudo_toggle(argv: List[str]) -> int:
@@ -10163,14 +10332,20 @@ def cmd_sudo_toggle(argv: List[str]) -> int:
     sub = parser.add_subparsers(dest="cmd", required=True)
     p_status = sub.add_parser("status", help="report availability and current state")
     p_status.add_argument("--json", action="store_true")
-    p_toggle = sub.add_parser("toggle", help="flip passwordless sudo for the current user")
+    p_status.add_argument("--no-sudo-probe", action="store_true",
+                          help="skip the `sudo -n true` check for passwordless sudo from other rules")
+    p_set = sub.add_parser("set", help="set passwordless sudo to an explicit state")
+    p_set.add_argument("state", choices=["on", "off"])
+    p_set.add_argument("--terminal", action="store_true",
+                       help="re-exec under sudo in a terminal so it can prompt for a password")
+    p_toggle = sub.add_parser("toggle", help="flip passwordless sudo (CLI convenience; UIs must use `set`)")
     p_toggle.add_argument("--terminal", action="store_true",
                           help="re-exec under sudo in a terminal so it can prompt for a password")
     args = parser.parse_args(argv)
 
     user = current_login_user()
     if args.cmd == "status":
-        status = sudo_toggle_status(user)
+        status = sudo_toggle_status(user, probe_sudo=not args.no_sudo_probe)
         if args.json:
             print(json.dumps(status))
         else:
@@ -10184,26 +10359,39 @@ def cmd_sudo_toggle(argv: List[str]) -> int:
         eprint(f"vshell sudo-toggle: {reason}")
         return 1
 
-    if os.geteuid() != 0:
-        # Turning the drop-in OFF is itself a passwordless action while it is
-        # still in place, so try non-interactively first and only open a
-        # terminal when sudo actually needs to prompt. That keeps the common
-        # "switch it back off" case silent.
-        if not args.terminal:
-            quiet = ensure_root_for(["sudo-toggle", *argv])
-            if quiet == 0:
-                return 0
-        return ensure_root_for(["sudo-toggle", "toggle", "--terminal"], terminal=True) or 0
+    if args.cmd == "toggle":
+        # Resolve the direction here, then go through the same guarded `set`
+        # path. Root-side direction inference is what let a stale mirror turn a
+        # revoke into a grant, so there is exactly one place that decides.
+        if os.geteuid() == 0:
+            want = not sudo_toggle_dropin(user).is_file()
+        else:
+            want = not sudo_toggle_mirror_state()
+        return cmd_sudo_toggle(["set", "on" if want else "off",
+                                *(["--terminal"] if args.terminal else [])])
 
-    dropin = sudo_toggle_dropin(user)
-    enable = not dropin.is_file()
-    ok, message = sudo_toggle_apply(dropin, user, enable, shutil.which("visudo"))
-    if not ok:
-        eprint(f"vshell sudo-toggle: {message}")
-        return 1
-    sudo_toggle_write_flag(enable)
-    print(message)
-    return 0
+    want = args.state == "on"
+
+    if os.geteuid() != 0:
+        if want:
+            # Never take the quiet `sudo -n` route to ENABLE. Where sudo already
+            # runs without prompting (an admin wheel NOPASSWD rule, a live
+            # credential cache), that would install a permanent
+            # `NOPASSWD: ALL` from a single bar click with no prompt, no
+            # window and no confirmation. Enabling always goes through a
+            # terminal so the user sees what is happening and sudo can
+            # authenticate.
+            return ensure_root_for(["sudo-toggle", "set", "on", "--terminal"], terminal=True) or 0
+        # Disabling only ever removes privilege, and while the drop-in is in
+        # place sudo needs no password, so the quiet path is safe here and
+        # keeps the common "switch it back off" case silent.
+        if not args.terminal:
+            quiet = ensure_root_for(["sudo-toggle", "set", "off"])
+            if quiet is not None and quiet in (0, SUDO_TOGGLE_EXIT_STALE):
+                return quiet
+        return ensure_root_for(["sudo-toggle", "set", "off", "--terminal"], terminal=True) or 0
+
+    return sudo_toggle_set(user, want)
 
 
 def cmd_launcher_search(argv: List[str]) -> int:

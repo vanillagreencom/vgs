@@ -200,6 +200,16 @@
       "commands": [
         "sudo",
         "visudo"
+      ],
+      "anyCommands": [
+        [
+          "ghostty",
+          "kitty",
+          "alacritty",
+          "foot",
+          "wezterm",
+          "xterm"
+        ]
       ]
     },
     "cloud-sync": {

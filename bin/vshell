@@ -442,7 +442,8 @@ Usage:
   vshell auth sync [--terminal]
   vshell greeter sync|run|launch-session
   vshell greeter keyring empty [--force]
-  vshell sudo-toggle status [--json]|toggle [--terminal]
+  vshell sudo-toggle status [--json] [--no-sudo-probe]
+  vshell sudo-toggle set on|off [--terminal]|toggle [--terminal]
   vshell launcher-search search <query> --kind files|folders|text [--root PATH] [--ignore PATH]
   vshell launcher-search preview <path>
 EOF

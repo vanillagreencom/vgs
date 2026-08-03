@@ -10,12 +10,14 @@ Rules-Requires-Root: no
 Package: vgs-shell
 Architecture: any
 Depends: quickshell, jq, python3, systemd, ${misc:Depends}
-Suggests: bandwhich,
+Suggests: alacritty,
+ bandwhich,
  curl,
  fd-find,
  ffmpeg,
  ffmpegthumbnailer,
  fontconfig,
+ foot,
  fuse3,
  gnome-keyring,
  greetd,
@@ -23,6 +25,7 @@ Suggests: bandwhich,
  hyprland,
  hyprpicker,
  hyprsunset,
+ kitty,
  libglib2.0-bin,
  libnotify-bin,
  niri,
@@ -36,6 +39,7 @@ Suggests: bandwhich,
  tesseract-ocr-eng,
  wl-clipboard,
  wlsunset,
+ xterm,
  zoxide
 Description: VanillaGreen desktop shell for Hyprland and Niri
  VGS provides a bar, launcher, settings, lock screen, notifications, capture,

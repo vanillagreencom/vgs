@@ -45,15 +45,34 @@ Runtime name: `vshell`.
 8. `vshell greeter sync` writes `/var/cache/vshell-greeter`, copied greeter runtime, `/etc/greetd/config.toml`, and `/etc/pam.d/greetd`; `vshell auth sync` writes `/etc/pam.d/vshell`, `/etc/pam.d/vshell-u2f`, and refreshes greetd PAM.
 9. Empty-password login keyring conversion is explicit: `vshell greeter keyring empty --force` backs up `~/.local/share/keyrings/login.keyring` before replacing it; normal greeter sync refuses destructive conversion.
 10. `vshell sudo-toggle` owns the passwordless-sudo protocol used by the
-    `sudoToggle` plugin: the privileged drop-in is
+    `sudoToggle` plugin. The privileged drop-in is
     `/etc/sudoers.d/50-<user>-nopasswd-toggle`, validated with `visudo` under a
     dot-suffixed staging name (which sudo ignores) before it is moved into
-    place, and mirrored to `~/.local/state/sudo-passwordless-toggle` because
-    `/etc/sudoers.d` is unreadable to the logged-in user. `toggle` tries
-    `sudo -n` first and only opens a terminal when sudo must prompt; the
-    terminal comes from `launch_terminal` (`$TERMINAL`, then installed
-    candidates), never a hardcoded emulator. `status --json` reports
-    `available`/`reason`/`enabled` so the widget can gate itself.
+    place, and mirrored to `~/.local/state/vshell/sudo-passwordless-toggle`
+    because `/etc/sudoers.d` is unreadable to the logged-in user. The mirror is
+    written without following symlinks at any component, since root writes it
+    into a user-controlled tree. The pre-VGS-11 path
+    `~/.local/state/sudo-passwordless-toggle` is still read for migration and
+    is retired on the next write.
+
+    Two rules keep the mirror from becoming a privilege-escalation path:
+    - **The direction is never inferred.** UIs call `set on|off` with the state
+      they displayed. When reality disagrees (drop-in removed by an admin,
+      restored home backup) the privileged half changes nothing, re-syncs the
+      mirror, and exits `3` so the caller re-reads. Inferring the direction
+      root-side turned a "revoke" click into a permanent grant.
+    - **Enabling always goes through a terminal.** Only the disable direction
+      may take the quiet `sudo -n` path. Where sudo already runs without
+      prompting, a quiet enable would install `NOPASSWD: ALL` from one click
+      with no prompt or window. The terminal comes from `launch_terminal`
+      (`$TERMINAL`, then installed candidates), never a hardcoded emulator, and
+      a candidate that dies immediately is treated as failed rather than
+      launched.
+
+    `status --json` reports `available`/`reason`, `dropinInstalled` (VGS's own
+    rule) and `sudoNonInteractive` (whether sudo prompts at all right now, from
+    any rule or a cached credential) so the widget can gate itself and avoid
+    claiming "disabled" on a machine that is already passwordless.
 11. Optional widgets check helper/backends and degrade when unavailable.
 
 ## Single instance per session

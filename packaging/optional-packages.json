@@ -232,6 +232,42 @@
       "fedora": "rclone",
       "gentoo": "net-misc/rclone"
     },
+    "ghostty": {
+      "description": "terminal for VGS password prompts",
+      "arch": "ghostty"
+    },
+    "kitty": {
+      "description": "terminal for VGS password prompts",
+      "arch": "kitty",
+      "debian": "kitty",
+      "fedora": "kitty",
+      "gentoo": "x11-terms/kitty"
+    },
+    "alacritty": {
+      "description": "terminal for VGS password prompts",
+      "arch": "alacritty",
+      "debian": "alacritty",
+      "fedora": "alacritty",
+      "gentoo": "x11-terms/alacritty"
+    },
+    "foot": {
+      "description": "terminal for VGS password prompts",
+      "arch": "foot",
+      "debian": "foot",
+      "fedora": "foot",
+      "gentoo": "gui-apps/foot"
+    },
+    "wezterm": {
+      "description": "terminal for VGS password prompts",
+      "arch": "wezterm"
+    },
+    "xterm": {
+      "description": "terminal for VGS password prompts",
+      "arch": "xterm",
+      "debian": "xterm",
+      "fedora": "xterm",
+      "gentoo": "x11-terms/xterm"
+    },
     "sudo": {
       "description": "privileged actions run from the shell",
       "arch": "sudo",
