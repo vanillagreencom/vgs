@@ -111,9 +111,8 @@ create labels automatically and do not silently omit or substitute labels.
 | `agent:human` | Manual/user-owned work, external dependency/vendor action, or work intentionally not delegated to an AI agent. |
 | `agent:researcher` | Research issue owned by the researcher workflow/agent. Must be paired with `research`. |
 
-`agent:iced` and `agent:rust` exist in live inventory but are residue from the
-label set this team was seeded from (hyprtrade); never assign them in VGS.
-Replacing them with VGS domain agents (e.g. QML/backend) is an owner decision.
+`agent:iced` and `agent:rust` are workspace-level labels inherited by every
+team; they serve other projects (hyprtrade), so never assign them in VGS.
 
 ### Domain labels (non-exclusive; choose all that apply)
 
@@ -122,8 +121,8 @@ Replacing them with VGS domain agents (e.g. QML/backend) is an owner decision.
 | `design` | Visual design language, tokens, typography, surface layout — the Flatline language in `docs/architecture/design-language.md`. |
 | `component` | Reusable widget/control work, especially primitives in `quickshell/vshell/Widgets/`. |
 
-`iced` and `rust-core` are hyprtrade residue like the agent labels above; never
-assign them in VGS.
+`iced` and `rust-core` are likewise inherited workspace labels for other
+projects; never assign them in VGS.
 
 ### Classification labels (non-exclusive; additive)
 
