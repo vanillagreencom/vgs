@@ -90,12 +90,49 @@ jobs:
 
       # AGENTS.md lists a bare `git diff --check`, which is a working-tree
       # check: on a clean CI checkout it inspects nothing at all. The form that
-      # means something here is the pull request's own range.
-      - name: Whitespace errors in the pull request range
-        if: github.event_name == 'pull_request'
+      # means something is a range of what the event actually introduces.
+      #
+      # UNCONDITIONAL ON PURPOSE. This step used to carry
+      # `if: github.event_name == 'pull_request'`, which left it silently
+      # skipped on merge_group and main push — green without checking, on
+      # exactly the two events that gate landing code. A usable range exists for
+      # all three events, so there is no reason to skip any of them.
+      #
+      # A whole-tree check is NOT the alternative: the vendored trees under
+      # config/vshell/nvim/colorschemes/ and config/vshell/icons/ carry ~2000
+      # pre-existing whitespace findings, so it would be red from day one and
+      # would need an exclusion list to maintain.
+      - name: Whitespace errors introduced by this change
         env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-        run: git diff --check "$BASE_SHA...HEAD"
+          EVENT_NAME: ${{ github.event_name }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PUSH_BEFORE: ${{ github.event.before }}
+        run: |
+          set -euo pipefail
+          case "$EVENT_NAME" in
+            pull_request) base="$PR_BASE_SHA" ;;
+            # HEAD is the merge commit the queue built, so its first parent is
+            # the queue base and the range is everything the group adds —
+            # including a combination of several PRs that no single PR's own
+            # range ever covered.
+            merge_group)  base="HEAD^1" ;;
+            # The previous tip of main. A force-push can leave it unreachable,
+            # which the fallback below absorbs rather than failing the build for
+            # a reason unrelated to the code.
+            push)         base="$PUSH_BEFORE" ;;
+            *)            base="" ;;
+          esac
+          if [ -z "$base" ] || ! git rev-parse --verify --quiet "$base^{commit}" >/dev/null; then
+            base="HEAD^1"
+          fi
+          # No range at all (a root commit). Fail loudly: the whole point of
+          # this step is that "did not check" must never read as "checked".
+          if ! git rev-parse --verify --quiet "$base^{commit}" >/dev/null; then
+            echo "::error::no commit range available for event $EVENT_NAME; whitespace was NOT checked"
+            exit 1
+          fi
+          echo "whitespace range: $base...HEAD"
+          git diff --check "$base...HEAD"
 
       - name: Packaging metadata and assets
         run: |

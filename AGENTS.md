@@ -178,9 +178,19 @@ the shell starts or that its surfaces are sane. Run
 skipping: a silent skip is indistinguishable from a pass.
 
 One other local/CI difference: the bare `git diff --check` above is a
-working-tree check, so on a clean CI checkout it would inspect nothing. CI runs
-`git diff --check "$BASE_SHA...HEAD"` over the pull request range instead,
-which is why the job checks out with `fetch-depth: 0`.
+working-tree check, so on a clean CI checkout it would inspect nothing. CI
+diffs a range instead — the base is the PR base on `pull_request`, the merge
+commit's first parent on `merge_group`, and the previous tip on a `main` push —
+which is why the job checks out with `fetch-depth: 0`. The step runs on **every**
+event rather than only on pull requests: skipping it on `merge_group` and `push`
+would leave it green without checking on precisely the two events that gate
+landing code. If no range can be resolved at all, the step fails rather than
+passing, so "did not check" can never read as "checked".
+
+A whole-tree whitespace check is deliberately not used: the vendored trees under
+`config/vshell/nvim/colorschemes/` and `config/vshell/icons/` carry ~2000
+pre-existing findings, so it would be red from day one and would need an
+exclusion list to maintain.
 
 ### Never launch a second shell into the live session
 Never run `qs -c vshell` or `qs -p quickshell/vshell`: each starts a **full second
