@@ -1257,9 +1257,9 @@ def test_sudo_toggle_status_reads_flag_mirror():
         # available/reason must be a real probe, not a constant.
         available, reason = helper.sudo_toggle_availability()
         expected = bool(shutil.which("sudo") and shutil.which("visudo")
-                        and Path("/etc/sudoers.d").is_dir() and helper.have_terminal())
+                        and Path("/etc/sudoers.d").is_dir())
         assert_equal(available, expected,
-                     "Availability must reflect the actual sudo/visudo/sudoers.d/terminal probe")
+                     "Availability must reflect the actual sudo/visudo/sudoers.d probe")
         assert_equal(bool(reason) is not available, True,
                      "Unavailable must carry a reason and available must not")
 
@@ -1461,7 +1461,7 @@ def test_launch_terminal_rejects_immediately_failing_terminal():
     original = helper.terminal_candidates
     helper.terminal_candidates = lambda: [["/bin/false"]]
     try:
-        assert_equal(helper.launch_terminal(["true"]), 3,
+        assert_equal(helper.launch_terminal(["true"]), helper.TERMINAL_EXIT_FAILED,
                      "A terminal that exits non-zero immediately must be a failure")
     finally:
         helper.terminal_candidates = original
@@ -1472,6 +1472,68 @@ def test_launch_terminal_rejects_immediately_failing_terminal():
                      "No terminal at all must report a distinct status")
     finally:
         helper.terminal_candidates = original
+
+    assert_equal(helper.TERMINAL_EXIT_FAILED == helper.SUDO_TOGGLE_EXIT_STALE, False,
+                 "A failed terminal must not be reportable as a stale-state refusal")
+
+
+def test_sudo_toggle_revoke_never_needs_a_terminal():
+    """A machine with no terminal must still be able to REVOKE (VGS-11).
+
+    Gating both directions on a terminal stranded the escalated state: the
+    drop-in stayed installed and the widget refused to act on it.
+    """
+    calls = []
+
+    original_ensure = helper.ensure_root_for
+    original_terminals = helper.terminal_candidates
+    original_avail = helper.sudo_toggle_availability
+    original_euid = helper.os.geteuid
+    helper.terminal_candidates = lambda: []          # no terminal anywhere
+    helper.sudo_toggle_availability = lambda: (True, "")
+    helper.os.geteuid = lambda: 1000
+
+    def fake_ensure_root_for(argv, terminal=False):
+        calls.append((list(argv), terminal))
+        return 0
+
+    helper.ensure_root_for = fake_ensure_root_for
+    try:
+        assert_equal(helper.have_terminal(), False, "Test setup: no terminal must be visible")
+
+        calls.clear()
+        code = helper.cmd_sudo_toggle(["set", "off"])
+        assert_equal(code, 0, "Revoking must work with no terminal installed")
+        assert_equal(len(calls), 1, "Revoke must still elevate once, on the quiet path")
+        assert_equal(calls[0][1], False, "Revoke must not need a terminal")
+
+        # Granting is the direction that genuinely needs one, and must say so.
+        calls.clear()
+        code = helper.cmd_sudo_toggle(["set", "on"])
+        assert_equal(code, 1, "Granting with no terminal must fail")
+        assert_equal(calls, [], "Granting with no terminal must not elevate at all")
+
+        # The distinction has to be reportable, not just enforced.
+        can_enable, reason = helper.sudo_toggle_enable_availability()
+        assert_equal(can_enable, False, "enable-availability must be false with no terminal")
+        assert_equal("terminal" in reason, True, "The reason must name the missing terminal")
+        available, _ = helper.sudo_toggle_availability()
+        assert_equal(available, True,
+                     "General availability must NOT depend on a terminal")
+    finally:
+        helper.ensure_root_for = original_ensure
+        helper.terminal_candidates = original_terminals
+        helper.sudo_toggle_availability = original_avail
+        helper.os.geteuid = original_euid
+
+
+def test_terminal_candidates_match_dependency_manifest():
+    """One list of terminals, two files: they must not drift apart."""
+    manifest = json.loads((REPO_ROOT / "config" / "vshell" / "dependencies.json").read_text())
+    any_commands = manifest["features"]["sudo-toggle"]["anyCommands"]
+    assert_equal(len(any_commands), 1, "sudo-toggle must declare exactly one terminal alternative set")
+    assert_equal(sorted(any_commands[0]), sorted(helper.TERMINAL_CANDIDATES),
+                 "dependencies.json terminals must match helper TERMINAL_CANDIDATES")
 
 
 def main():
@@ -1506,6 +1568,8 @@ def main():
     test_sudo_toggle_enable_never_takes_quiet_sudo_path()
     test_sudo_toggle_flag_write_refuses_symlinks()
     test_launch_terminal_rejects_immediately_failing_terminal()
+    test_sudo_toggle_revoke_never_needs_a_terminal()
+    test_terminal_candidates_match_dependency_manifest()
     subprocess.run(
         [sys.executable, str(REPO_ROOT / "scripts" / "check-vshell-niri.py")],
         check=True,

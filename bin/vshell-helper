@@ -11,6 +11,7 @@ import argparse
 import base64
 import colorsys
 import contextlib
+import errno
 import fcntl
 import glob
 import grp
@@ -23,6 +24,7 @@ import re
 import signal
 import shlex
 import shutil
+import stat
 import subprocess
 import sys
 import threading
@@ -8847,6 +8849,11 @@ TERMINAL_CANDIDATES = ("ghostty", "kitty", "alacritty", "foot", "wezterm", "xter
 # appeared, which is the silent-failure class VGS-11 exists to remove.
 TERMINAL_SETTLE_SECONDS = 0.75
 
+# launch_terminal: a candidate was spawned but died immediately, so no window
+# ever appeared. Distinct from 1 (no terminal installed at all) and from
+# SUDO_TOGGLE_EXIT_STALE, which callers must not confuse with a launch failure.
+TERMINAL_EXIT_FAILED = 4
+
 
 def terminal_candidates() -> List[List[str]]:
     """Terminal argv prefixes to try, most preferred first ($TERMINAL wins)."""
@@ -8894,7 +8901,7 @@ def launch_terminal(cmd: List[str]) -> int:
     if tried:
         eprint("Terminal exited immediately for privileged VGS command (tried: "
                + ", ".join(tried) + ")")
-        return 3
+        return TERMINAL_EXIT_FAILED
     eprint("No supported terminal found for privileged VGS command (set $TERMINAL, or install one of: "
            + ", ".join(TERMINAL_CANDIDATES) + ")")
     return 1
@@ -10093,8 +10100,13 @@ SUDO_TOGGLE_FLAG_NAME = "sudo-passwordless-toggle"
 # Pre-VGS-11 location, outside the VGS state dir. Read for migration only.
 SUDO_TOGGLE_LEGACY_FLAG = ".local/state/sudo-passwordless-toggle"
 
-# `set` exit codes: 0 changed//already correct, 1 error, 3 displayed state was
-# stale (nothing changed, mirror re-synced, caller should re-read status).
+# `set` exit codes. Keep these distinct: the widget reports a stale-state
+# refusal as an informational warning and a terminal failure as an error, so
+# one code cannot mean both.
+#   0 changed or already correct
+#   1 error
+#   3 displayed state was stale: nothing changed, mirror re-synced, re-read
+#   4 the terminal for the password prompt never came up (TERMINAL_EXIT_FAILED)
 SUDO_TOGGLE_EXIT_STALE = 3
 
 
@@ -10113,6 +10125,25 @@ def sudo_toggle_legacy_flag_path() -> Path:
 def sudo_toggle_mirror_state() -> bool:
     """What the unprivileged side believes. Never used to pick a direction."""
     return sudo_toggle_flag_path().is_file() or sudo_toggle_legacy_flag_path().is_file()
+
+
+def user_in_sudo_group() -> bool:
+    """Is the caller plausibly allowed to sudo at all?
+
+    Cheap and unprivileged. Used to skip the `sudo -n` probe entirely for users
+    who are not sudoers: for them sudo logs a security event and, under the
+    default `mail_no_user`, mails root — an unacceptable cost for a widget they
+    never touched.
+    """
+    try:
+        groups = {grp.getgrgid(gid).gr_name for gid in os.getgroups()}
+    except Exception:
+        return True  # cannot tell: do not suppress a probe on a guess
+    try:
+        groups.add(grp.getgrgid(os.getgid()).gr_name)
+    except Exception:
+        pass
+    return bool(groups & {"wheel", "sudo", "admin", "root"})
 
 
 def sudo_noninteractive_ok(runner: Any = None) -> bool:
@@ -10136,15 +10167,25 @@ def sudo_noninteractive_ok(runner: Any = None) -> bool:
 
 
 def sudo_toggle_availability() -> Tuple[bool, str]:
-    """Can this machine run the toggle at all? (unprivileged check)"""
+    """Can this machine run the toggle at all? (unprivileged check)
+
+    Deliberately does NOT require a terminal. A terminal is only needed to
+    GRANT; revoking takes the quiet `sudo -n` path, because the drop-in being
+    removed is what makes sudo passwordless. Gating both directions on a
+    terminal stranded the escalated state in place on machines with none.
+    """
     if not shutil.which("sudo"):
         return False, "sudo is not installed"
     if not shutil.which("visudo"):
         return False, "visudo is not installed (usually shipped with sudo)"
     if not Path("/etc/sudoers.d").is_dir():
         return False, "/etc/sudoers.d does not exist; sudo has no drop-in include directory"
+    return True, ""
+
+
+def sudo_toggle_enable_availability() -> Tuple[bool, str]:
+    """Extra requirement for the enable direction only: somewhere to prompt."""
     if not have_terminal():
-        # Enabling must authenticate interactively, which needs a terminal.
         return False, ("no terminal emulator found for the password prompt; set $TERMINAL or install one of: "
                        + ", ".join(TERMINAL_CANDIDATES))
     return True, ""
@@ -10205,59 +10246,102 @@ def sudo_toggle_write_flag(enable: bool) -> Tuple[bool, str]:
         except KeyError:
             pass
 
-    # Drop the pre-VGS-11 mirror in both directions so one file is the truth.
-    # unlink() removes a symlink itself and never follows it.
-    legacy = sudo_toggle_legacy_flag_path()
-    if legacy.exists() or legacy.is_symlink():
-        try:
-            legacy.unlink()
-        except OSError:
-            pass
+    # Everything below walks the tree with directory file descriptors and
+    # O_NOFOLLOW, never by path. Re-resolving a path per component leaves a
+    # window where a symlink planted between the check and the use is followed,
+    # which would have root create and chown an attacker-named directory.
+    relative = flag.relative_to(home()).parts  # (".local", "state", "vshell", "<flag>")
+    dirs, name = list(relative[:-1]), relative[-1]
 
-    if not enable:
+    open_fds: List[int] = []
+
+    def close_all() -> None:
+        for fd in reversed(open_fds):
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+
+    try:
         try:
-            flag.unlink()
-        except FileNotFoundError:
-            pass
+            open_fds.append(os.open(home(), os.O_RDONLY | os.O_DIRECTORY))
         except OSError as exc:
-            return False, f"could not clear the state mirror {flag}: {exc}"
-        return True, ""
+            return False, f"could not open the home directory: {exc}"
 
-    # Create missing ancestors ourselves so each one can be checked and owned.
-    ancestors = [flag.parent.parent.parent, flag.parent.parent, flag.parent]  # ~/.local, .../state, .../vshell
-    for path in ancestors:
-        if path.is_symlink():
-            return False, f"refusing to write the state mirror through a symlinked directory: {path}"
-        if path.exists():
-            if not path.is_dir():
-                return False, f"state mirror path is not a directory: {path}"
-            continue
+        for index, part in enumerate(dirs):
+            parent = open_fds[-1]
+            try:
+                open_fds.append(os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=parent))
+                continue
+            except FileNotFoundError:
+                pass
+            except NotADirectoryError:
+                return False, f"state mirror path component is not a directory: {'/'.join(dirs[:index + 1])}"
+            except OSError as exc:
+                # ELOOP is what O_NOFOLLOW raises on a symlinked component.
+                if exc.errno == errno.ELOOP:
+                    return False, ("refusing to write the state mirror through a symlinked directory: "
+                                   + "/".join(dirs[:index + 1]))
+                return False, f"could not open {'/'.join(dirs[:index + 1])}: {exc}"
+
+            if not enable:
+                return True, ""  # nothing to clear if the tree does not exist
+            try:
+                os.mkdir(part, 0o700, dir_fd=parent)
+            except FileExistsError:
+                pass  # lost a benign race with ourselves; reopen below
+            except OSError as exc:
+                return False, f"could not create {'/'.join(dirs[:index + 1])}: {exc}"
+            try:
+                open_fds.append(os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=parent))
+            except OSError as exc:
+                return False, f"could not open {'/'.join(dirs[:index + 1])}: {exc}"
+            try:
+                os.chown(part, owner_uid, owner_gid, dir_fd=parent, follow_symlinks=False)
+            except (PermissionError, FileNotFoundError, OSError):
+                pass
+
+        leaf = open_fds[-1]
+
+        # Retire the pre-VGS-11 mirror so one file is the truth. It sits in the
+        # `state` directory, whose descriptor is the one before the leaf.
+        state_fd = open_fds[-2] if len(open_fds) >= 2 else None
+        if state_fd is not None:
+            try:
+                os.unlink(SUDO_TOGGLE_FLAG_NAME, dir_fd=state_fd)
+            except (FileNotFoundError, OSError):
+                pass
+
+        if not enable:
+            try:
+                os.unlink(name, dir_fd=leaf)
+            except FileNotFoundError:
+                pass
+            except OSError as exc:
+                return False, f"could not clear the state mirror {flag}: {exc}"
+            return True, ""
+
         try:
-            os.mkdir(path, 0o700)
+            fd = os.open(name, os.O_CREAT | os.O_EXCL | os.O_WRONLY | os.O_NOFOLLOW, 0o644, dir_fd=leaf)
         except FileExistsError:
-            pass
+            try:
+                info = os.lstat(name, dir_fd=leaf)
+            except OSError as exc:
+                return False, f"could not inspect the state mirror {flag}: {exc}"
+            if stat.S_ISLNK(info.st_mode):
+                return False, f"refusing to write the state mirror through a symlink: {flag}"
+            return True, ""  # already present and a real file: nothing to do
         except OSError as exc:
-            return False, f"could not create {path}: {exc}"
+            return False, f"could not write the state mirror {flag}: {exc}"
         try:
-            os.chown(path, owner_uid, owner_gid, follow_symlinks=False)
-        except (PermissionError, FileNotFoundError, OSError):
+            os.fchown(fd, owner_uid, owner_gid)
+        except (PermissionError, OSError):
             pass
-
-    try:
-        fd = os.open(flag, os.O_CREAT | os.O_EXCL | os.O_WRONLY | os.O_NOFOLLOW, 0o644)
-    except FileExistsError:
-        if flag.is_symlink():
-            return False, f"refusing to write the state mirror through a symlink: {flag}"
-        return True, ""  # already present and a real file: nothing to do
-    except OSError as exc:
-        return False, f"could not write the state mirror {flag}: {exc}"
-    try:
-        os.fchown(fd, owner_uid, owner_gid)
-    except (PermissionError, OSError):
-        pass
+        finally:
+            os.close(fd)
+        return True, ""
     finally:
-        os.close(fd)
-    return True, ""
+        close_all()
 
 
 def sudo_toggle_status(user: str, sudo_probe: Any = None, probe_sudo: bool = True) -> Dict[str, Any]:
@@ -10268,12 +10352,15 @@ def sudo_toggle_status(user: str, sudo_probe: Any = None, probe_sudo: bool = Tru
         dropin_installed = sudo_toggle_dropin(user).is_file()
     if dropin_installed:
         # NOPASSWD: ALL is in force by definition; no need to ask sudo (and no
-        # need to put a line in the auth log on every shell start).
+        # need to put a line in the auth log).
         non_interactive = True
-    elif probe_sudo:
+    elif probe_sudo and (sudo_probe is not None or user_in_sudo_group()):
         non_interactive = sudo_noninteractive_ok(sudo_probe)
     else:
+        # Not probed. The widget asks for this lazily on interaction rather
+        # than at every shell start; a non-sudoer never triggers it at all.
         non_interactive = False
+    can_enable, enable_reason = sudo_toggle_enable_availability()
     return {
         "ok": True,
         "available": available,
@@ -10285,6 +10372,10 @@ def sudo_toggle_status(user: str, sudo_probe: Any = None, probe_sudo: bool = Tru
         # Lets the widget avoid claiming "disabled" on a machine that is
         # passwordless for other reasons.
         "sudoNonInteractive": non_interactive,
+        # Granting additionally needs a terminal to prompt in. Revoking never
+        # does, so this must not gate the control as a whole.
+        "canEnable": can_enable,
+        "enableReason": enable_reason,
         "user": user,
         "dropin": str(sudo_toggle_dropin(user)),
         "flag": str(sudo_toggle_flag_path()),
@@ -10371,6 +10462,15 @@ def cmd_sudo_toggle(argv: List[str]) -> int:
                                 *(["--terminal"] if args.terminal else [])])
 
     want = args.state == "on"
+
+    if want:
+        # Only the grant direction needs somewhere to prompt. Checking this for
+        # `set off` too meant a machine with no terminal could not revoke an
+        # existing grant through VGS at all.
+        can_enable, enable_reason = sudo_toggle_enable_availability()
+        if not can_enable:
+            eprint(f"vshell sudo-toggle: {enable_reason}")
+            return 1
 
     if os.geteuid() != 0:
         if want:

@@ -69,10 +69,26 @@ Runtime name: `vshell`.
       a candidate that dies immediately is treated as failed rather than
       launched.
 
-    `status --json` reports `available`/`reason`, `dropinInstalled` (VGS's own
-    rule) and `sudoNonInteractive` (whether sudo prompts at all right now, from
-    any rule or a cached credential) so the widget can gate itself and avoid
-    claiming "disabled" on a machine that is already passwordless.
+    The terminal requirement is **enable-only**. `available` covers
+    sudo/visudo/`/etc/sudoers.d`; the terminal is reported separately as
+    `canEnable`/`enableReason`. Gating both directions on it left a machine
+    with no terminal unable to revoke an existing grant.
+
+    Because the terminal only guarantees visibility — sudo will not prompt when
+    a `NOPASSWD` rule already matches — the widget's confirmation is the real
+    gate in that configuration. It therefore cannot be satisfied by an
+    accidental double-click: the second click is ignored until `confirmMinMs`
+    has passed *and* the pointer has left the pill and returned.
+    `scripts/test-sudo-toggle-confirm.js` extracts that decision function from
+    the QML and exercises it directly, since bundled plugins get no runtime
+    coverage from the nested smoke (VGS-19).
+
+    `status --json` reports `available`/`reason`, `canEnable`/`enableReason`,
+    `dropinInstalled` (VGS's own rule) and `sudoNonInteractive` (whether sudo
+    prompts at all right now, from any rule or a cached credential). The sudo
+    probe is not run at shell start: for a non-sudoer it logs a security event
+    and mails root under the default `mail_no_user`, so the widget asks for it
+    lazily on hover and the helper skips it for users in no sudo group.
 11. Optional widgets check helper/backends and degrade when unavailable.
 
 ## Single instance per session

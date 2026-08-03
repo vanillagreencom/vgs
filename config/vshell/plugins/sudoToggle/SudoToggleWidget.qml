@@ -23,18 +23,26 @@ PluginComponent {
     property bool enabled: false
 
     // Whether the toggle can run at all on this machine (sudo + visudo +
-    // /etc/sudoers.d + a terminal for the prompt). Assume unavailable until
-    // the probe answers, so a failed probe never leaves a control that looks
-    // operable.
+    // /etc/sudoers.d). Deliberately NOT gated on having a terminal: only
+    // granting needs one, and gating the whole control on it stranded an
+    // existing grant in place. Assume unavailable until the probe answers, so
+    // a failed probe never leaves a control that looks operable.
     property bool available: false
     property string unavailableReason: "checking…"
     // sudo currently runs without prompting for some other reason (an admin
     // NOPASSWD rule, a live credential cache). Reported so the widget does not
     // claim "disabled" on a machine that is already passwordless.
     property bool sudoNonInteractive: false
+    // Whether sudo has been asked at all yet. The startup probe deliberately
+    // does not run `sudo -n true` — for a non-sudoer that logs a security event
+    // and mails root on every login, for a widget they never touched — so this
+    // stays false until the user actually interacts with the control.
+    property bool sudoProbeDone: false
+    // Granting additionally needs a terminal to prompt in. Revoking never does,
+    // so this must never gate the control as a whole.
+    property bool canEnable: true
+    property string enableReason: ""
     property string _toggleStderr: ""
-    // Enabling is permanent and has no expiry, so it takes two clicks.
-    property bool _enableArmed: false
     property string _pendingState: "off"
     property bool _flagPresent: false
     property bool _legacyFlagPresent: false
@@ -42,13 +50,54 @@ PluginComponent {
     readonly property string flagPath: (Quickshell.env("HOME") || "") + "/.local/state/vshell/sudo-passwordless-toggle"
     readonly property string legacyFlagPath: (Quickshell.env("HOME") || "") + "/.local/state/sudo-passwordless-toggle"
 
+    // --- Grant confirmation -------------------------------------------------
+    //
+    // Enabling is permanent, has no expiry, and where sudo already does not
+    // prompt (a foreign wheel NOPASSWD rule, a live credential cache) the
+    // terminal gives visibility but no authentication — so this confirmation is
+    // the only real gate in that configuration. A plain "click twice" is not
+    // enough: an ordinary accidental double-click on a bar pill (~200 ms, far
+    // too fast to have read the toast) would satisfy it. Two independent
+    // guards, either of which alone defeats a double-click:
+    //   * the second click is IGNORED (not counted, not cancelled) until
+    //     confirmMinMs has passed, and
+    //   * the pointer must have left the pill and come back.
+    readonly property int confirmMinMs: 600
+    readonly property int confirmWindowMs: 8000
+    property real _armedAt: 0
+    property bool _pointerLeftSinceArm: false
+    readonly property bool _enableArmed: root._armedAt > 0
+
+    // Pure decision function. `scripts/test-sudo-toggle-confirm.js` extracts
+    // THIS source text and exercises it directly, so the shipped logic is what
+    // is tested. Keep it free of QML API calls.
+    // BEGIN CONFIRM DECISION
+    function confirmDecision(now, armedAt, pointerLeft, windowMs, minMs) {
+        if (armedAt <= 0)
+            return "arm";
+        if (now - armedAt > windowMs)
+            return "arm";
+        if (now - armedAt < minMs)
+            return "ignore";
+        if (!pointerLeft)
+            return "ignore";
+        return "fire";
+    }
+    // END CONFIRM DECISION
+
     function iconName() {
         // gpp_maybe = shield with caution (elevated / less secure)
         // gpp_good  = shield with check   (secure / password required)
         // gpp_bad   = shield with cross   (feature unavailable here)
         if (!root.available)
             return "gpp_bad";
-        return root.enabled ? "gpp_maybe" : "gpp_good";
+        if (root.enabled)
+            return "gpp_maybe";
+        // Passwordless by a rule VGS did not install: not "secure". Rendered
+        // unfilled (see `filled:` below) to distinguish it from VGS's own rule.
+        if (root.sudoNonInteractive)
+            return "gpp_maybe";
+        return "gpp_good";
     }
 
     function tooltipText() {
@@ -57,7 +106,9 @@ PluginComponent {
         if (root.enabled)
             return "Passwordless sudo ENABLED — click to revoke";
         if (root._enableArmed)
-            return "Click again to grant permanent passwordless sudo";
+            return "Move off this button, then click again to grant permanent passwordless sudo";
+        if (!root.canEnable)
+            return "Cannot grant passwordless sudo — " + root.enableReason;
         if (root.sudoNonInteractive)
             return "VGS passwordless sudo rule not installed — but sudo does not prompt on this machine right now";
         return "Passwordless sudo disabled — click to grant (permanent)";
@@ -66,32 +117,52 @@ PluginComponent {
     function toggle() {
         if (!root.available) {
             ToastService.showWarning("Passwordless sudo toggle unavailable", root.unavailableReason);
-            statusProc.running = true;
+            root._probeStatus(true);
             return;
         }
         if (setProc.running)
             return;
 
         if (root.enabled) {
-            // Revoking only ever removes privilege — no confirmation needed.
-            root._enableArmed = false;
-            armTimeout.stop();
+            // Revoking only ever removes privilege — no confirmation, and no
+            // terminal requirement, so it works even where granting cannot.
+            root._disarm();
             root._runSet("off");
             return;
         }
 
-        // Granting is permanent, has no expiry, and on a machine where sudo
-        // already does not prompt it would otherwise complete with no
-        // interaction at all. Require a deliberate second click.
-        if (!root._enableArmed) {
-            root._enableArmed = true;
-            armTimeout.restart();
-            ToastService.showWarning("Grant passwordless sudo?", "Click again to install a permanent NOPASSWD rule for your user. A terminal will open so sudo can authenticate.");
+        if (!root.canEnable) {
+            ToastService.showWarning("Cannot grant passwordless sudo", root.enableReason);
+            root._probeStatus(true);
             return;
         }
-        root._enableArmed = false;
-        armTimeout.stop();
+
+        const decision = root.confirmDecision(Date.now(), root._armedAt, root._pointerLeftSinceArm, root.confirmWindowMs, root.confirmMinMs);
+        if (decision === "ignore")
+            return;  // too fast, or the pointer never left: not a confirmation
+        if (decision === "arm") {
+            root._armedAt = Date.now();
+            root._pointerLeftSinceArm = false;
+            armTimeout.restart();
+            ToastService.showWarning("Grant passwordless sudo?", "This installs a permanent NOPASSWD rule for your user, with no expiry. Move the pointer off the button and click it again to confirm.");
+            return;
+        }
+        root._disarm();
         root._runSet("on");
+    }
+
+    function _disarm() {
+        root._armedAt = 0;
+        root._pointerLeftSinceArm = false;
+        armTimeout.stop();
+    }
+
+    // Ask sudo whether it prompts, only when the user has shown interest.
+    function _probeStatus(withSudoProbe) {
+        if (statusProc.running)
+            return;
+        root._pendingSudoProbe = withSudoProbe === true;
+        statusProc.running = true;
     }
 
     function _runSet(state) {
@@ -110,16 +181,21 @@ PluginComponent {
 
     Timer {
         id: armTimeout
-        interval: 5000
+        interval: root.confirmWindowMs
         repeat: false
-        onTriggered: root._enableArmed = false
+        onTriggered: root._disarm()
     }
 
     // Availability probe. `status` exits non-zero when the toggle cannot run,
-    // and reports why, so the widget never has to guess.
+    // and reports why, so the widget never has to guess. The startup run omits
+    // the sudo probe; a probing run happens only on interaction.
+    property bool _pendingSudoProbe: false
+
     Process {
         id: statusProc
-        command: [Paths.vshellCli, "sudo-toggle", "status", "--json"]
+        command: root._pendingSudoProbe
+            ? [Paths.vshellCli, "sudo-toggle", "status", "--json"]
+            : [Paths.vshellCli, "sudo-toggle", "status", "--json", "--no-sudo-probe"]
         running: true
         stdout: StdioCollector {
             id: statusOut
@@ -130,7 +206,14 @@ PluginComponent {
                     root.available = status.available === true;
                     root.unavailableReason = status.reason || "unknown reason";
                     root.enabled = status.enabled === true;
-                    root.sudoNonInteractive = status.sudoNonInteractive === true;
+                    root.canEnable = status.canEnable !== false;
+                    root.enableReason = status.enableReason || "";
+                    // Only trust a false when sudo was actually asked; the
+                    // startup run does not ask.
+                    if (root._pendingSudoProbe || status.sudoNonInteractive === true) {
+                        root.sudoNonInteractive = status.sudoNonInteractive === true;
+                        root.sudoProbeDone = true;
+                    }
                 } catch (e) {
                     root.available = false;
                     root.unavailableReason = "could not read `vshell sudo-toggle status`";
@@ -174,16 +257,25 @@ PluginComponent {
         stderr: StdioCollector {
             onStreamFinished: root._toggleStderr = text || ""
         }
+        // Exit codes are defined in bin/vshell-helper next to each other:
+        // 3 = displayed state was stale, nothing changed; 4 = the terminal for
+        // the prompt never came up. They must not be reported as each other.
+        readonly property int exitStale: 3
+        readonly property int exitTerminalFailed: 4
+
         onExited: exitCode => {
             const detail = (root._toggleStderr || "").trim();
-            if (exitCode === 3) {
+            if (exitCode === setProc.exitStale) {
                 // The helper found reality disagreed with what we displayed and
                 // deliberately changed nothing.
                 ToastService.showWarning("Passwordless sudo state was out of date", detail || "Nothing changed; the shell has re-read the current state.");
-                statusProc.running = true;
+                root._probeStatus(false);
+            } else if (exitCode === setProc.exitTerminalFailed) {
+                ToastService.showError("Could not open a terminal", detail || "The password prompt needs a terminal; set $TERMINAL or install one.");
+                root._probeStatus(false);
             } else if (exitCode !== 0) {
                 ToastService.showError("Passwordless sudo change failed", detail || ("vshell sudo-toggle exited " + exitCode));
-                statusProc.running = true;
+                root._probeStatus(false);
             }
             root._toggleStderr = "";
         }
@@ -278,9 +370,16 @@ PluginComponent {
     function _requestTip(item) {
         root._hoverItem = item;
         tipDelay.restart();
+        // Hovering is the first sign the user cares about this control, so it
+        // is where the sudo probe is paid — never at shell start.
+        if (!root.sudoProbeDone && root.available && !root.enabled)
+            root._probeStatus(true);
     }
 
     function _cancelTip() {
+        // Leaving the pill is half of what an enable confirmation requires; a
+        // double-click never leaves it.
+        root._pointerLeftSinceArm = true;
         tipDelay.stop();
         sharedTip.hide();
         root._hoverItem = null;
