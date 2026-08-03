@@ -57,8 +57,26 @@ PanelWindow {
             const barPosition = axis?.edge === "left" ? 2 : (axis?.edge === "right" ? 3 : (axis?.edge === "top" ? 0 : 1));
             section = clockButtonRef.section || "center";
 
-            const triggerPos = clockButtonRef.visualContent.mapToItem(null, 0, 0);
-            const triggerWidth = clockButtonRef.visualWidth;
+            let triggerPos, triggerWidth;
+            if (section === "center") {
+                const centerSection = barWindow.isVertical ? (barWindow.axis?.edge === "left" ? topBarContent.vCenterSection : topBarContent.vCenterSection) : topBarContent.hCenterSection;
+                if (centerSection) {
+                    if (barWindow.isVertical) {
+                        const centerY = centerSection.height / 2;
+                        triggerPos = centerSection.mapToItem(null, 0, centerY);
+                        triggerWidth = centerSection.height;
+                    } else {
+                        triggerPos = centerSection.mapToItem(null, 0, 0);
+                        triggerWidth = centerSection.width;
+                    }
+                } else {
+                    triggerPos = clockButtonRef.visualContent.mapToItem(null, 0, 0);
+                    triggerWidth = clockButtonRef.visualWidth;
+                }
+            } else {
+                triggerPos = clockButtonRef.visualContent.mapToItem(null, 0, 0);
+                triggerWidth = clockButtonRef.visualWidth;
+            }
 
             const pos = SettingsData.getPopupTriggerPosition(triggerPos, barWindow.screen, barWindow.effectiveBarThickness, triggerWidth, barConfig?.spacing ?? 4, barPosition, barConfig);
             dashPopoutLoader.item.setTriggerPosition(pos.x, pos.y, pos.width, section, barWindow.screen, barPosition, barWindow.effectiveBarThickness, barConfig?.spacing ?? 4, barConfig);

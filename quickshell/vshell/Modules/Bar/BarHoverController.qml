@@ -751,6 +751,7 @@ Item {
                     loader,
                     tabIndex,
                     triggerSource: dashTriggerSource(section, tabIndex),
+                    useCenterSection: true,
                     setTriggerScreen: true
                 }));
             }
