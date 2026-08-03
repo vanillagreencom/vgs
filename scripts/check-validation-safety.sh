@@ -45,27 +45,57 @@ import sys
 LAUNCH = re.compile(r"qs\s+(?:-c\s+vshell|-p\s+\S*quickshell/vshell)")
 NEGATED = re.compile(r"never|do not|don't|must not|refus|instead of|rather than", re.IGNORECASE)
 
-# Exemptions are scoped to the exact line context, never to a whole file: a new
-# unsafe instruction added to one of these files must still be caught. Each
-# entry lists substrings that identify the known-good lines — the runner
-# describing the child it spawns, the guard explaining what it exists to stop,
-# and the greeter fixtures (a greeter runs from /var/cache, never against a
-# live session).
+# Exemptions name the sanctioned OCCURRENCE, never the file and never the whole
+# line. Each entry is the exact text of a known-good mention, including the
+# command inside it; scan() deletes those spans and re-checks what is left, so an
+# instruction appended to a sanctioned line is still caught. An entry that did
+# not contain a command would exempt its whole line again, which is the bypass
+# this shape exists to prevent — exemption_defects() refuses to run in that case.
+#
+# The entries are: the runner describing the child it spawns, the greeter
+# fixtures (a greeter runs from /var/cache, never against a live session), and
+# the prohibition text itself, where the ban wraps onto a continuation line that
+# no longer carries its own negation. shell.qml's guard comment carries "rather
+# than" on the matched line, so it needs no entry at all.
 ALLOWED_CONTEXTS = {
     "backend/internal/runner/runner.go": (
-        "QSArgs are extra args",
-        "otherwise `qs -c vshell`",
+        "extra args appended after `qs -c vshell`",
+        "otherwise `qs -c vshell` (with VGS_SOCKET",
     ),
     "docs/architecture/backend-daemon.md": (
-        "VGS_BACKEND_LISTEN_FD",
+        "then spawn `qs -c vshell` as a child",
     ),
-    # shell.qml's guard comment carries its own "rather than" on the matched
-    # line, so it needs no per-file exemption at all.
     "scripts/check-vshell-helper.py": (
-        "/var/cache/vshell-greeter",
-        "Config-path matching covers",
+        "/usr/bin/qs -p /var/cache/vshell-greeter/runtime/quickshell/vshell",
+        # One span covering both commands: sequential deletion cannot use two
+        # entries that overlap on the "vs" between them.
+        "Config-path matching covers `qs -c vshell` vs `qs -p quickshell/vshell`",
+    ),
+    "AGENTS.md": (
+        "the mode that replaces what `qs -c vshell` used to cover",
+    ),
+    ".coderabbit.yaml": (
+        "`qs -p quickshell/vshell`. Each starts a second full shell",
+    ),
+    ".github/copilot-instructions.md": (
+        "`qs -p quickshell/vshell` each start a full second VGS instance",
     ),
 }
+
+
+def exemption_defects():
+    """Exemptions that do not contain the command they claim to sanction.
+
+    Deleting such a span removes only prose, so it can never exempt anything and
+    the line it was written for is reported anyway. Failing loudly points at that
+    mistake, instead of leaving someone to "fix" the false positive by going back
+    to skipping the whole matched line — which is the bypass this shape removes.
+    """
+    return [(path, span)
+            for path, spans in ALLOWED_CONTEXTS.items()
+            for span in spans
+            if not LAUNCH.search(span)]
+
 
 # This script defines the rule, so its own header and detector fixtures have to
 # spell the forbidden commands out.
@@ -83,12 +113,22 @@ def scan(path, lines):
             continue
         if not LAUNCH.search(line):
             continue
+        # KNOWN LIMIT: a negation exempts its whole line, so "Never run X, now
+        # run X" would pass. Unlike an exemption there is no span to scope a
+        # negation to, and this is prose the reader is being warned by, not an
+        # instruction someone appends to. The ALLOWED_CONTEXTS path below is the
+        # one an editor actually touches, and it is span-scoped.
         if not fenced and NEGATED.search(line):
             continue
-        # Matched per line, never over a window: a neighbouring exempt line must
-        # not launder a new instruction next to it. Prose that wraps away from
-        # its exempting phrase is reworded instead.
-        if any(context in line for context in allowed):
+        # Delete the sanctioned occurrences, then re-check what is left. Skipping
+        # the whole matched line instead would let a real instruction ride along
+        # on the end of a sanctioned one — and these are exactly the lines a doc
+        # edit lands on. Matched per line, never over a window, so an exempt
+        # neighbour cannot launder the line next to it either.
+        remainder = line
+        for span in allowed:
+            remainder = remainder.replace(span, " ")
+        if not LAUNCH.search(remainder):
             continue
         hits.append(number)
     return hits
@@ -120,6 +160,55 @@ FIXTURES = [
         "qs -c vshell",
         "```",
     ], [3]),
+    # The prohibition text: the wrapped continuation is exempt, a real
+    # instruction added to the same file is not.
+    ("AGENTS.md", [
+        "    errors. **This is the mode that replaces what `qs -c vshell` used to cover**,",
+        "  - Or just run `qs -c vshell` yourself.",
+    ], [2]),
+    (".coderabbit.yaml", [
+        "        `qs -p quickshell/vshell`. Each starts a second full shell in the live",
+        "        Validate QML with `qs -c vshell`.",
+    ], [2]),
+    (".github/copilot-instructions.md", [
+        "`qs -p quickshell/vshell` each start a full second VGS instance in the live",
+        "Run `qs -p quickshell/vshell` to check your work.",
+    ], [2]),
+    # An exemption covers its own occurrence and nothing more: appending an
+    # instruction to a sanctioned line must still be caught. Line 1 of each pair
+    # is the untouched sanctioned line, line 2 is that same line with an
+    # instruction appended.
+    ("AGENTS.md", [
+        "    errors. **This is the mode that replaces what `qs -c vshell` used to cover**,",
+        "    errors. **This is the mode that replaces what `qs -c vshell` used to cover**, or just run `qs -c vshell`.",
+    ], [2]),
+    (".coderabbit.yaml", [
+        "        `qs -p quickshell/vshell`. Each starts a second full shell in the live",
+        "        `qs -p quickshell/vshell`. Each starts a second full shell in the live; to validate, run qs -c vshell",
+    ], [2]),
+    (".github/copilot-instructions.md", [
+        "`qs -p quickshell/vshell` each start a full second VGS instance in the live",
+        "`qs -p quickshell/vshell` each start a full second VGS instance in the live — smoke yours with `qs -p quickshell/vshell`",
+    ], [2]),
+    ("backend/internal/runner/runner.go", [
+        "\t// QSArgs are extra args appended after `qs -c vshell`.",
+        "\t// QSArgs are extra args appended after `qs -c vshell`. To try it: qs -c vshell",
+    ], [2]),
+    # Two sanctioned commands on one line stay exempt, and a third does not.
+    ("scripts/check-vshell-helper.py", [
+        "        # Config-path matching covers `qs -c vshell` vs `qs -p quickshell/vshell`.",
+        "        # Config-path matching covers `qs -c vshell` vs `qs -p quickshell/vshell`. Try qs -c vshell.",
+    ], [2]),
+]
+
+# Exemption spans that must keep sanctioning their own line unchanged, paired
+# with a span that does not name any command. The self-test asserts both
+# polarities so exemption_defects() is shown able to fail, not just to pass.
+DEFECT_FIXTURES = [
+    ("`qs -p quickshell/vshell`. Each starts a second full shell", True),
+    ("extra args appended after `qs -c vshell`", True),
+    ("VGS_BACKEND_LISTEN_FD", False),
+    ("This is the mode that replaces what", False),
 ]
 
 if os.environ.get("SELF_TEST") == "true":
@@ -129,10 +218,26 @@ if os.environ.get("SELF_TEST") == "true":
         if actual != expected:
             failed = True
             print(f"self-test: {path} {lines!r}: expected {expected}, got {actual}", file=sys.stderr)
+    for span, spans_a_command in DEFECT_FIXTURES:
+        if bool(LAUNCH.search(span)) != spans_a_command:
+            failed = True
+            print(f"self-test: exemption span {span!r}: expected spans_a_command={spans_a_command}", file=sys.stderr)
+    for path, span in exemption_defects():
+        failed = True
+        print(f"self-test: exemption for {path} names no command: {span!r}", file=sys.stderr)
     if failed:
         sys.exit(1)
-    print(f"self-test: instruction detector passed ({len(FIXTURES)} fixtures)")
+    print(f"self-test: instruction detector passed ({len(FIXTURES)} fixtures, {len(DEFECT_FIXTURES)} exemption spans)")
     sys.exit(0)
+
+# A live exemption that names no command cannot exempt anything, so the scan
+# below would report the line it was written for. Say which entry is wrong
+# instead of emitting a violation whose cause is invisible.
+defects = exemption_defects()
+for path, span in defects:
+    print(f"exemption for {path} names no launch command: {span!r}", file=sys.stderr)
+if defects:
+    sys.exit(3)
 
 tracked = subprocess.run(["git", "ls-files"], text=True, stdout=subprocess.PIPE, check=True).stdout.split()
 
@@ -159,6 +264,8 @@ PY
 # the status is captured directly above.
 if [[ "$detector_rc" == 2 ]]; then
   fail "unsafe direct shell launch instructions found (use scripts/qml-smoke.sh)"
+elif [[ "$detector_rc" == 3 ]]; then
+  fail "an exemption names no launch command, so it exempts nothing (see above)"
 elif [[ "$detector_rc" != 0 ]]; then
   fail "the instruction detector could not run (exit $detector_rc)"
 fi
