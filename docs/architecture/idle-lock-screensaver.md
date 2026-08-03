@@ -41,15 +41,27 @@ v17 turned auto monitor-off off and added the blank keys.
 
 ## Hot reload is suspended while locked
 
-`Modules/Lock/Lock.qml` sets `Quickshell.watchFiles = false` for as long as a lock
-is engaged (`shouldLock || sessionLock.locked`) and restores the value it found on
-unlock. `shell.qml` still owns the `VSHELL_DISABLE_HOT_RELOAD` policy and sets the
-startup value.
+`Modules/Lock/Lock.qml` keeps `Quickshell.watchFiles = false` for as long as a lock
+is engaged (`shouldLock || sessionLock.locked`) and restores the value on unlock.
+It re-asserts on `Quickshell.onWatchFilesChanged` rather than suspending once,
+because `shell.qml`'s `Component.onCompleted` can run *after* Lock's (children
+complete before parents) and would otherwise re-arm the watcher on top of an
+engaged lock. `shell.qml` owns the `VSHELL_DISABLE_HOT_RELOAD` policy and the
+startup value; it is not the last writer.
+
+If quickshell ends the lock on its own — the compositor's
+`ext_session_lock_v1.finished` (denied lock, crashed-locker fallback), or an
+aborted attempt when the protocol is unavailable — `Lock.qml` clears `shouldLock`
+via `forceReset()` and hot reload resumes. Suspension tracks a lock that actually
+exists, so it can never strand the watcher off.
 
 This exists because quickshell's reload matching cannot reach this subtree.
-`ReloadPropagator` (`Scope`/`ShellRoot`) matches only children that are themselves
-`Reloadable`, and `VGS.qml`'s root is a QtQuick `Item`, which `Reloadable`
-documents as unmatchable. So a reload rebuilds `WlSessionLock` with a null old
+`ReloadPropagator` (`Scope`/`ShellRoot`) hands old instances only to children that
+are themselves `Reloadable`; any other child falls into an else-branch that passes
+an already-null pointer to `Reloadable::reloadRecursive`, which then does nothing
+(`src/core/reload.cpp`). `shell.qml`'s `Loader` is not `Reloadable`, so propagation
+stops there and nothing beneath it is visited — **making `VGS.qml`'s root
+`Reloadable` would not help.** So a reload rebuilds `WlSessionLock` with a null old
 instance and a **fresh** `SessionLockManager`, then destroys the previous one
 while it still owns the ext-session-lock. `~QSWaylandSessionLock` destroys the
 protocol object — deliberately leaving the session locked — but never clears the

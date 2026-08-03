@@ -71,11 +71,17 @@ ShellRoot {
         guardResolved = true;
     }
 
-    // Startup value only. Modules/Lock/Lock.qml suspends and restores this around
-    // an engaged session lock — rebuilding the tree while a lock is held orphans
-    // quickshell's session-lock manager and makes the next lock request abort the
-    // process. It restores whatever it found here, so this stays the sole owner of
-    // the VSHELL_DISABLE_HOT_RELOAD policy.
+    // Startup value only, and NOT the last word: Modules/Lock/Lock.qml suspends
+    // the watcher for as long as a session lock is engaged, because rebuilding
+    // the tree while a lock is held orphans quickshell's session-lock manager and
+    // makes the next lock request abort the process.
+    //
+    // This assignment can land *after* that suspension. Children complete before
+    // parents, so with SettingsData.lockAtStartup the Lock below has already
+    // locked and suspended by the time this runs, and writing true here re-arms
+    // the watcher under an engaged lock. Lock.qml therefore re-asserts on
+    // Quickshell.onWatchFilesChanged; this file owns only the
+    // VSHELL_DISABLE_HOT_RELOAD policy, not the live value.
     Component.onCompleted: {
         Quickshell.watchFiles = !disableHotReload;
     }

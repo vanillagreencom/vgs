@@ -212,6 +212,22 @@ Scope {
         }
     }
 
+    // quickshell can end the lock without the shell asking: the compositor sends
+    // ext_session_lock_v1.finished (lock denied, or a crashed-locker fallback
+    // adopting the session), or WlSessionLock aborts the attempt itself when the
+    // protocol is unavailable or a surface fails to build. All of those run
+    // `WlSessionLock::unlock()`, which tears the surfaces down and leaves the
+    // request property reading false — but nothing clears `shouldLock`. Without
+    // this the shell sits "locked" with no lock and no UI (recoverable only via
+    // `vshell ipc call lock forceReset`), and the hot-reload suspension above
+    // stays armed indefinitely while nothing holds a lock.
+    function _handleLockDropped(): void {
+        if (!shouldLock || sessionLock.locked)
+            return;
+        console.warn("[Lock] session lock ended outside the shell; clearing lock state");
+        forceReset();
+    }
+
     Connections {
         target: sessionLock
 
@@ -221,7 +237,24 @@ Scope {
 
         function onLockedChanged() {
             root._syncConfirmedLock();
+            root._handleLockDropped();
         }
+    }
+
+    // The early-out paths in `WlSessionLock::realizeLockTarget` (no
+    // ext-session-lock-v1, null surface component) unlock while `isLocked()` is
+    // already false, so they emit no `lockedChanged` at all. Re-check once the
+    // request has settled instead of relying on a signal.
+    onShouldLockChanged: {
+        if (shouldLock)
+            lockRequestVerify.restart();
+    }
+
+    Timer {
+        id: lockRequestVerify
+        interval: 0
+        repeat: false
+        onTriggered: root._handleLockDropped()
     }
 
     Timer {
@@ -250,14 +283,20 @@ Scope {
 
     // Hot reload must not rebuild the QML tree while a session lock is held.
     //
-    // Quickshell's reload matching cannot reach anything below the Loader in
-    // shell.qml: `ReloadPropagator` (Scope/ShellRoot) only matches children that
-    // are themselves `Reloadable`, and `VGS.qml`'s root is a QtQuick Item, which
-    // Reloadable documents as unmatchable across generations. So every
-    // Reloadable in this subtree — `sessionLock` included — is rebuilt through
-    // `Reloadable::onReloadFinished`, i.e. with a null old instance, and
-    // `WlSessionLock::onReload` then builds a *fresh* SessionLockManager instead
-    // of adopting the previous one. The old manager is destroyed immediately
+    // Reload matching never reaches this subtree, because the thing that carries
+    // old instances across generations stops at `shell.qml`'s `Loader`.
+    // `ReloadPropagator` (Scope/ShellRoot) walks its own children: a child that
+    // is itself `Reloadable` is handed the matching old child, and anything else
+    // falls into an else-branch that passes the *already-null* cast result to
+    // `Reloadable::reloadRecursive`, which is a total no-op for a null object
+    // (quickshell 0.3.0, src/core/reload.cpp). The `Loader` is not `Reloadable`,
+    // so propagation dies there and nothing below it is ever visited — making
+    // `VGS.qml`'s root `Reloadable` would not change this.
+    //
+    // Every Reloadable down here — `sessionLock` included — therefore reloads
+    // through `Reloadable::onReloadFinished`, i.e. with a null old instance, and
+    // `WlSessionLock::onReload` builds a *fresh* SessionLockManager instead of
+    // adopting the previous one. The old manager is destroyed immediately
     // afterwards while it still owns the ext-session-lock:
     // `~QSWaylandSessionLock` destroys the protocol object (deliberately leaving
     // the session locked) but never clears the process-global "a lock is active"
@@ -279,22 +318,46 @@ Scope {
     property bool hotReloadSuspended: false
     property bool hotReloadWasWatching: false
 
-    onLockEngagedChanged: {
-        if (lockEngaged === hotReloadSuspended)
+    // Re-assertable, not one-shot: this must hold no matter who writes
+    // `Quickshell.watchFiles` or in what order. On a reload with lockAtStartup,
+    // this file's Component.onCompleted runs BEFORE shell.qml's (children
+    // complete first), so shell.qml would otherwise re-arm the watcher on top of
+    // an engaged lock and `lockEngaged` would never change again to re-suspend.
+    function _suspendHotReload(): void {
+        if (!lockEngaged)
             return;
-        if (lockEngaged) {
-            hotReloadWasWatching = Quickshell.watchFiles;
-            hotReloadSuspended = true;
-            if (hotReloadWasWatching) {
-                Quickshell.watchFiles = false;
-                console.info("[Lock] hot reload suspended for the duration of the lock");
-            }
-        } else {
-            hotReloadSuspended = false;
-            if (hotReloadWasWatching) {
-                Quickshell.watchFiles = true;
-                console.info("[Lock] hot reload resumed after unlock");
-            }
+        if (Quickshell.watchFiles) {
+            hotReloadWasWatching = true;
+            Quickshell.watchFiles = false;
+            console.info("[Lock] hot reload suspended for the duration of the lock");
+        }
+        hotReloadSuspended = true;
+    }
+
+    function _resumeHotReload(): void {
+        if (!hotReloadSuspended)
+            return;
+        hotReloadSuspended = false;
+        if (hotReloadWasWatching && !Quickshell.watchFiles) {
+            Quickshell.watchFiles = true;
+            console.info("[Lock] hot reload resumed after unlock");
+        }
+        hotReloadWasWatching = false;
+    }
+
+    onLockEngagedChanged: {
+        if (lockEngaged)
+            _suspendHotReload();
+        else
+            _resumeHotReload();
+    }
+
+    Connections {
+        target: Quickshell
+
+        function onWatchFilesChanged() {
+            if (root.lockEngaged && Quickshell.watchFiles)
+                root._suspendHotReload();
         }
     }
 
