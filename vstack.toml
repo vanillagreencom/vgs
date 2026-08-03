@@ -14,6 +14,26 @@
 # ─────────────────────────────────────────────────────
 
 
+# ── Project-Owned Skills ──────────────────────────────
+# This repo's own skills are tracked in project-skills/
+# rather than inside the untracked .agents mirror, which
+# WORKTREE_SYMLINKS symlinks wholesale into every
+# worktree (VGS-17). A tracked file under a symlinked
+# path is marked assume-unchanged there, so git refuses
+# to write it while `git status` still looks clean, and
+# cherry-pick/checkout/merge fail confusingly.
+#
+# This key tells refresh where they live; it then links
+# each project-skills/<name> into .agents/skills/<name>.
+# Without it refresh refuses them as "project-owned skill
+# directory outside skills root" and exits non-zero.
+#
+# TOML: keep this a top-level key ABOVE the first table
+# header — below one it binds into that table instead
+# and silently has no effect.
+project-skills-dir = "project-skills"
+
+
 # ── Launch Instructions ───────────────────────────────
 # Adds a "## Launch Instructions" section near the top
 # of each agent file. Use this for startup tasks, required

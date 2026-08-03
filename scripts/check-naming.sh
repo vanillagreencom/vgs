@@ -14,7 +14,7 @@ candidate_paths=(
   systemd
   themes
   AGENTS.md
-  .agents/skills/vshell-dev
+  project-skills
   docs/architecture
   docs/lock-crash-incident-2026-07-04.md
 )
