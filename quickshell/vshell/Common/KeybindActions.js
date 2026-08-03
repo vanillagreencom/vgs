@@ -945,6 +945,12 @@ function isValidAction(action) {
         case "spawn_shell ":
             return false;
     }
+    // A retired launcher target is a dead bind the moment it is written.
+    // Reporting one that already exists is all VGS can do for configs it does
+    // not own, but it must not accept a NEW one: this is the only gate on the
+    // save path (KeybindsService.saveBind, KeybindItem.canSave).
+    if (usesRetiredIpcTarget(action))
+        return false;
     return true;
 }
 

@@ -155,11 +155,44 @@ window-rule {
         assert_equal(migrated_binds["Mod+D"], "spawn vshell ipc call vshell-menu open", "spotlight-bar bind migration")
         assert_equal(migrated_binds["Mod+Slash"], "spawn vshell ipc call vshell-menu toggle", "launcher query bind migration")
         assert_equal(migrated_binds["Mod+T"], "spawn foot", "unrelated bind left alone")
-        assert_equal(niri.migrate_vgs_niri_binds(), True, "bind migration should rewrite binds.kdl")
+        assert_equal(niri.migrate_vgs_niri_binds()["migrated"], True, "bind migration should rewrite binds.kdl")
         on_disk = (niri.niri_config_dir() / "binds.kdl").read_text()
         if "spotlight" in on_disk:
             raise AssertionError("retired launcher IPC target survived the binds.kdl rewrite")
-        assert_equal(niri.migrate_vgs_niri_binds(), False, "bind migration should be idempotent")
+        assert_equal(niri.migrate_vgs_niri_binds()["migrated"], False, "bind migration should be idempotent")
+
+        # A migration Niri refuses to reload leaves the file and the live
+        # compositor disagreeing; that must reach the caller, not be dropped.
+        reload_calls = []
+        original_reload = niri._reload_niri
+
+        def _failing_reload():
+            reload_calls.append("called")
+            return {"attempted": True, "ok": False, "stdout": "", "stderr": "reload rejected"}
+
+        niri._reload_niri = _failing_reload
+        try:
+            # An idempotent read must not reload at all.
+            payload = niri.niri_binds_json()
+            assert_equal(reload_calls, [], "clean read should not reload Niri")
+            assert_equal("bindMigration" in payload, False, "clean read should report no migration")
+
+            niri._write_vgs_niri_binds([
+                {"key": "Mod+Space", "desc": "Launcher", "action": "spawn vshell ipc call spotlight toggle"},
+            ])
+            result = niri.migrate_vgs_niri_binds()
+            assert_equal(result["migrated"], True, "retired bind should migrate")
+            assert_equal(result["ok"], False, "failed Niri reload must not report ok")
+            assert_equal(result["reload"]["stderr"], "reload rejected", "reload failure detail should survive")
+            assert_equal(reload_calls, ["called"], "migration should reload exactly once")
+
+            niri._write_vgs_niri_binds([
+                {"key": "Mod+Space", "desc": "Launcher", "action": "spawn vshell ipc call spotlight toggle"},
+            ])
+            payload = niri.niri_binds_json()
+            assert_equal(payload["bindMigration"]["ok"], False, "binds payload must surface the failed reload")
+        finally:
+            niri._reload_niri = original_reload
 
         niri._write_vgs_niri_binds([{
             "key": "Mod+Space",

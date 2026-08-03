@@ -250,7 +250,10 @@ def _niri_binds_from_file(path: Path) -> List[Dict[str, Any]]:
 def niri_binds_json() -> Dict[str, Any]:
     # Heal VGS-generated binds that still name a retired launcher IPC target
     # before reporting them, so Settings never shows a bind VGS knows is dead.
-    migrate_vgs_niri_binds()
+    # A rewrite Niri then refused to load leaves the file and the live
+    # compositor disagreeing, so that has to travel with the payload rather
+    # than being dropped here.
+    migration = migrate_vgs_niri_binds()
     main = runtime().home() / ".config" / "niri" / "config.kdl"
     managed = niri_config_dir() / "binds.kdl"
     files = _niri_config_files(main)
@@ -265,7 +268,7 @@ def niri_binds_json() -> Dict[str, Any]:
         for entry in entries:
             binds.setdefault(_niri_bind_category(entry["action"]), []).append(entry)
     included = bool(niri_include_status("binds.kdl").get("included"))
-    return {
+    payload: Dict[str, Any] = {
         "provider": "niri",
         "modKey": "Super",
         "vgsBindsIncluded": included,
@@ -278,6 +281,9 @@ def niri_binds_json() -> Dict[str, Any]:
         },
         "binds": binds,
     }
+    if migration.get("migrated"):
+        payload["bindMigration"] = migration
+    return payload
 
 def _niri_action_kdl(action: str) -> str:
     try:
@@ -343,22 +349,35 @@ def _migrate_retired_bind_actions(binds: List[Dict[str, Any]]) -> tuple[List[Dic
     return migrated, changed
 
 
-def migrate_vgs_niri_binds() -> bool:
+_NO_MIGRATION: Dict[str, Any] = {"migrated": False, "ok": True, "reload": {"attempted": False}}
+
+
+def migrate_vgs_niri_binds() -> Dict[str, Any]:
     """Rewrite retired launcher IPC targets in the VGS-generated binds file.
 
-    Returns True when the file was rewritten. Safe to call on every read: it
-    only touches VGS-owned binds.kdl, never the user's own Niri config.
+    Returns {"migrated", "ok", "reload"}. Safe to call on every read: it only
+    touches VGS-owned binds.kdl, never the user's own Niri config, and it
+    rewrites (and reloads) only when a retired target is actually present.
+
+    `ok` is false when the rewrite landed but Niri refused to reload it — the
+    file then names vshell-menu while the live compositor still holds the
+    retired bind, which is exactly the state a caller must not report as
+    healthy.
     """
     path = niri_config_dir() / "binds.kdl"
     if not path.is_file():
-        return False
+        return dict(_NO_MIGRATION)
     with niri_config_lock():
         binds, changed = _migrate_retired_bind_actions(_niri_binds_from_file(path))
         if not changed:
-            return False
+            return dict(_NO_MIGRATION)
         _write_vgs_niri_binds(binds)
-        _reload_niri()
-    return True
+        reload_result = _reload_niri()
+    return {
+        "migrated": True,
+        "ok": not reload_result.get("attempted") or bool(reload_result.get("ok")),
+        "reload": reload_result,
+    }
 
 
 def _load_vgs_niri_binds() -> List[Dict[str, Any]]:
