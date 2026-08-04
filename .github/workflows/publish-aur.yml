@@ -88,9 +88,21 @@ jobs:
         if: ${{ inputs.dry_run != true }}
         env:
           AUR_SSH_PRIVATE_KEY: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
-          # Pinned host key rather than a blind ssh-keyscan, which would accept
-          # whatever answers. Override with the AUR_SSH_KNOWN_HOSTS variable if
-          # the AUR ever rotates it.
+          # The host key is CONFIGURATION, not a literal in this file, and there
+          # is deliberately no fallback.
+          #
+          # There was one, and it was wrong: the blob shipped here was GitLab's
+          # ed25519 host key (SHA256:GbHLgliSsqQgBZ+EmqCAmZtjK5ZGm5YIhnyzzSSwsw8),
+          # not the AUR's, so every real publish would have failed host-key
+          # verification. A wrong pin is the worst of the options — it cannot
+          # authenticate the host it names, and a plausible-looking blob invites
+          # nobody to check it. Blind `ssh-keyscan` is no better: it trusts
+          # whatever answers, which is the thing a pin exists to prevent.
+          #
+          # So the operator supplies it, verified against the fingerprints Arch
+          # publishes on the Arch User Repository wiki page, and a missing value
+          # fails loudly like the missing key below. packaging/README.md has the
+          # one-time procedure.
           AUR_SSH_KNOWN_HOSTS: ${{ vars.AUR_SSH_KNOWN_HOSTS }}
         run: |
           set -euo pipefail
@@ -101,13 +113,20 @@ jobs:
             echo "::error::AUR_SSH_PRIVATE_KEY is not set, so nothing can be published. Add the secret, or publish by hand with scripts/publish-aur.sh and say so in the release notes."
             exit 1
           fi
+          if [ -z "$AUR_SSH_KNOWN_HOSTS" ]; then
+            echo "::error::AUR_SSH_KNOWN_HOSTS is not set. Set it to the aur.archlinux.org host key line, verified against the fingerprints on the Arch User Repository wiki page (see packaging/README.md). Refusing to guess a host key or to accept whatever answers."
+            exit 1
+          fi
           mkdir -p ~/.ssh
           chmod 700 ~/.ssh
           printf '%s\n' "$AUR_SSH_PRIVATE_KEY" > ~/.ssh/aur
           chmod 600 ~/.ssh/aur
-          printf '%s\n' "${AUR_SSH_KNOWN_HOSTS:-aur.archlinux.org ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIEuBKrPzbawxA/k2g6NcyV2CJzVDe+3E7VqjMmpTfHTf}" > ~/.ssh/known_hosts
+          printf '%s\n' "$AUR_SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts
           printf 'Host aur.archlinux.org\n  User aur\n  IdentityFile ~/.ssh/aur\n  IdentitiesOnly yes\n' > ~/.ssh/config
           chmod 600 ~/.ssh/config ~/.ssh/known_hosts
+          # Record what this run decided to trust, so a wrong value is visible
+          # in the log rather than only in a confusing verification failure.
+          ssh-keygen -lf ~/.ssh/known_hosts
 
       - name: Publish packaging/arch to the AUR
         env:
