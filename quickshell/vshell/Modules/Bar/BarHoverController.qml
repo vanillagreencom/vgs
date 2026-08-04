@@ -296,8 +296,16 @@ Item {
     function _widgetSupportsHoverPopout(widgetId, widgetItem) {
         if (!widgetId || !widgetItem)
             return false;
-        if (typeof widgetItem.triggerHoverPopout === "function")
+        if (typeof widgetItem.triggerHoverPopout === "function") {
+            // Every PluginComponent has the method, including widgets whose
+            // hover path is a no-op since hover-activation became opt-in — so
+            // the method's presence is a shape check, not a capability check.
+            // respondsToHover is the capability; only fall back to the shape
+            // when an implementer does not publish one.
+            if (widgetItem.respondsToHover !== undefined)
+                return widgetItem.respondsToHover === true;
             return true;
+        }
         if (widgetId === "systemTray" && typeof widgetItem.openHoverAtGlobalPoint === "function")
             return true;
         switch (widgetId) {
@@ -719,6 +727,11 @@ Item {
         }
 
         if (typeof widgetItem.triggerHoverPopout === "function") {
+            // Candidate collection already filters these out, but reporting
+            // "opened" for a widget that does nothing would make a stale hit
+            // look like a live popout to the caller.
+            if (widgetItem.respondsToHover !== undefined && widgetItem.respondsToHover !== true)
+                return false;
             widgetItem.triggerHoverPopout(hit.widgetId);
             return true;
         }
@@ -742,7 +755,6 @@ Item {
                     loader,
                     tabIndex,
                     triggerSource: dashTriggerSource(section, tabIndex),
-                    useCenterSection: true,
                     setTriggerScreen: true
                 }));
             }

@@ -37,9 +37,11 @@ const repoRoot = path.join(__dirname, "..");
 const COMPONENT = path.join(repoRoot, "quickshell", "vshell", "Modules", "Plugins", "PluginComponent.qml");
 const SCREEN_RECORD = path.join(repoRoot, "config", "vshell", "plugins", "screenRecord", "ScreenRecordWidget.qml");
 const PLUGIN_ROOT = path.join(repoRoot, "config", "vshell", "plugins");
+const HOVER_CONTROLLER = path.join(repoRoot, "quickshell", "vshell", "Modules", "Bar", "BarHoverController.qml");
 
 const component = fs.readFileSync(COMPONENT, "utf8");
 const screenRecord = fs.readFileSync(SCREEN_RECORD, "utf8");
+const hoverController = fs.readFileSync(HOVER_CONTROLLER, "utf8");
 
 // Strip comments, optionally blank out string contents, and collapse
 // whitespace, so the checks below match expressions rather than lines. Single
@@ -268,5 +270,59 @@ assert.equal(pillActionFor("ipc", false, false), "chooser",
 // Countdown takes precedence over recording, as the shipped order does.
 assert.equal(pillActionFor("click", true, true), "cancel",
     "a countdown must be cancelled before a recording is stopped");
+
+// --- 5. The bar asks whether hover does anything, not whether it can ---------
+
+// VGS-37. Opting out of hover-activation (section 1) left every PluginComponent
+// still exposing triggerHoverPopout, and BarHoverController read that method's
+// existence as the capability — so it armed a hover cycle for widgets whose
+// hover path returns immediately. Harmless, but it is precisely the confusion
+// that let the VGS-36 defect hide: a shape check wearing a capability check's
+// name. respondsToHover is the capability; these pin both halves of it.
+
+const controllerText = normalise(hoverController);
+
+// The declared capability, evaluated rather than string-matched: extract the
+// shipped expression and run it over the four states a widget can be in. A
+// substring assertion would pass for any rearrangement that happens to contain
+// the same words, including ones that invert the meaning.
+const respondsDecl = componentText.match(
+    /readonly property bool respondsToHover: (.+?)(?= readonly | property | function | signal |$)/
+);
+assert.ok(respondsDecl,
+    "PluginComponent must declare respondsToHover — the bar has nothing else to ask");
+
+const respondsToHover = new Function(
+    "pillClickAction", "pillClickOnHover", "hasPopout",
+    `return !!(${respondsDecl[1].trim()});`
+);
+
+// The VGS-36 shape: an action pill that deliberately does nothing on hover.
+assert.equal(respondsToHover(() => {}, false, false), false,
+    "a widget with a pill action and no hover opt-in and no popout does nothing on hover");
+// The opt-in still means what it says.
+assert.equal(respondsToHover(() => {}, true, false), true,
+    "a widget that opted into hover-activation does respond to hover");
+// A plain popout widget is unaffected — the no-behaviour-change half of VGS-37.
+assert.equal(respondsToHover(null, false, true), true,
+    "a popout widget must keep responding to hover");
+assert.equal(respondsToHover(() => {}, false, true), true,
+    "an opted-out action pill that also has a popout still opens the popout on hover");
+// Nothing to do at all.
+assert.equal(respondsToHover(null, false, false), false,
+    "a widget with neither an opt-in nor a popout does nothing on hover");
+
+// And the bar must actually consult it. The old predicate was a bare
+// `return true` under the typeof check; this fails if that comes back.
+const presentInController = (needle, message) =>
+    assert.ok(controllerText.includes(needle), `${message} (looked for: ${needle})`);
+
+presentInController('if (widgetItem.respondsToHover !== undefined) return widgetItem.respondsToHover === true;',
+    "_widgetSupportsHoverPopout must report the widget's real hover capability, not the method's existence");
+
+assert.ok(
+    !/typeof widgetItem\.triggerHoverPopout === "function"\) return true;/.test(controllerText),
+    "the method's presence alone must not arm a hover cycle — that is the shape check VGS-37 removed"
+);
 
 console.log("pill hover safety: all checks passed");
