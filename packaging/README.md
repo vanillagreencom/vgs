@@ -64,6 +64,15 @@ honoured. Two are live today: `hyprpicker` has no ebuild in `::gentoo`, so captu
 Hyprland report it missing there; and `sudo` is not put on the Nix wrapper's PATH, because it would
 shadow the setuid wrapper in `/run/wrappers/bin` with a binary that cannot elevate.
 
+The same rule covers the notification-daemon conflicts. `org.freedesktop.Notifications` is a
+first-come, first-served bus name, so every channel has to declare that a second daemon is not
+supported (VGS-56) — and every channel was declaring something slightly different. The one list is
+the `"conflicts"` section: Gentoo's blockers are generated into its `RDEPEND`, the other channels
+declare conflicts in shapes too file-specific to template and are **verified** against it, and a
+daemon a channel has no package for must be waived with a reason exactly like a required command.
+Three waivers are live: `dunst` on Arch and Debian (both provide the `notification-daemon` virtual,
+which is already conflicted) and `swaync` on Gentoo (not packaged).
+
 The channel list itself is checked too. A directory under `packaging/` that is neither generated nor
 declared unGenerated with a reason fails the run. That check exists because Void was hand-maintained
 and silently skipped: it kept `depends="quickshell jq python3"` through two rounds of packaging

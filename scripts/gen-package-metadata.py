@@ -82,6 +82,95 @@ def feature_commands(feature: dict) -> list[str]:
     return out
 
 
+def conflict_packages(mapping: dict) -> tuple[dict[str, list[str]], list[tuple[str, str, str]]]:
+    """Return ({channel: [package]}, waivers) for the daemons VGS conflicts with.
+
+    Same shape and same rule as required_packages(): a daemon with no package
+    on a channel must be waived by name with a reason. The channels had already
+    drifted apart before this existed — Fedora named four daemons, Arch and
+    Debian three, Gentoo and Void a different three (VGS-56).
+    """
+    section = mapping.get("conflicts")
+    if section is None:
+        raise GenError('packaging/optional-packages.json has no "conflicts" section')
+    daemons = section.get("daemons", {})
+    unsupported = section.get("unsupported", {})
+
+    for daemon, channels in unsupported.items():
+        if daemon not in daemons:
+            raise GenError(
+                f'"conflicts".unsupported names {daemon!r}, which is not a '
+                "conflicting daemon; the waiver would never be read"
+            )
+        unknown = set(channels) - set(REQUIRED_DISTROS)
+        if unknown:
+            raise GenError(
+                f"conflict waiver for {daemon!r} names unknown channel(s): "
+                + ", ".join(sorted(unknown))
+            )
+        for channel, reason in channels.items():
+            if not reason:
+                raise GenError(f"conflict waiver for {daemon!r} on {channel} has no reason")
+            if daemons[daemon].get(channel) is not None:
+                raise GenError(
+                    f"{daemon!r} is waived as unsupported on {channel} but the "
+                    "mapping names a package for it; drop the stale waiver"
+                )
+
+    # Nix installs into a profile rather than a distribution package set, so it
+    # has no package-relation to express a conflict with.
+    channels = tuple(channel for channel in REQUIRED_DISTROS if channel != "nix")
+    result: dict[str, list[str]] = {channel: [] for channel in channels}
+    waivers: list[tuple[str, str, str]] = []
+
+    for daemon, entry in daemons.items():
+        for channel in channels:
+            package = entry.get(channel)
+            if package is None:
+                reason = unsupported.get(daemon, {}).get(channel)
+                if reason is None:
+                    raise GenError(
+                        f"conflicting daemon {daemon!r} names no {channel} "
+                        "package. Two notification daemons on one session is "
+                        "not a supported configuration on any channel, so this "
+                        "cannot just be left out of one recipe. Add the package "
+                        f'name, or waive it in "conflicts".unsupported.{daemon}.'
+                        f"{channel} with the reason."
+                    )
+                waivers.append((daemon, channel, reason))
+                continue
+            result[channel].append(package)
+
+    return result, waivers
+
+
+def check_conflicts(conflicts: dict[str, list[str]]) -> None:
+    """Verify the recipes this script does not generate still declare them all.
+
+    Only Gentoo's blockers are generated (they live inside the generated
+    RDEPEND). The others sit in channel-specific shapes — `conflicts=()` inside
+    a package_* function, a `Conflicts:` field, an xbps `conflicts=` line — that
+    are not worth templating, but they still have to agree with the one list,
+    or the divergence this check exists to catch simply comes back.
+    """
+    missing: list[str] = []
+    for channel, packages in conflicts.items():
+        relative = CHANNEL_RECIPES.get(channel)
+        if relative is None:
+            continue
+        text = (ROOT / relative).read_text()
+        for package in packages:
+            if not re.search(rf"(?<![\w./+-]){re.escape(package)}(?![\w./+-])", text):
+                missing.append(f"{relative} does not conflict with {package}")
+
+    if missing:
+        raise GenError(
+            "notification daemon conflicts have drifted from "
+            'packaging/optional-packages.json "conflicts":\n    '
+            + "\n    ".join(missing)
+        )
+
+
 def check_channels(required: dict[str, list[str]]) -> None:
     """Fail unless every packaging channel this repo ships is accounted for.
 
@@ -309,7 +398,7 @@ def render_fedora_required(packages: list[str]) -> str:
     return "\n".join(lines)
 
 
-def render_gentoo_required(packages: list[str]) -> str:
+def render_gentoo_required(packages: list[str], blockers: list[str]) -> str:
     # The whole RDEPEND assignment is generated: a `#` inside a double-quoted
     # bash string is literal text, not a comment, so BEGIN/END markers cannot
     # live inside it the way they do in the other recipes.
@@ -320,6 +409,9 @@ def render_gentoo_required(packages: list[str]) -> str:
         'RDEPEND="',
     ]
     lines.extend(f"\t{package}" for package in packages)
+    # Blockers, not dependencies: portage reads a leading ! as "must not be
+    # installed". Two notification daemons cannot share the bus name.
+    lines.extend(f"\t!{package}" for package in blockers)
     lines.append('"')
     return "\n".join(lines)
 
@@ -460,7 +552,9 @@ def replace_srcinfo_depends(path: Path, text: str, packages: list[str]) -> str:
 
 
 def targets(
-    collected: dict[str, dict[str, list[str]]], required: dict[str, list[str]]
+    collected: dict[str, dict[str, list[str]]],
+    required: dict[str, list[str]],
+    conflicts: dict[str, list[str]],
 ) -> list[tuple[Path, str]]:
     arch = render_arch(collected["arch"])
     arch_required = render_arch_required(required["arch"])
@@ -498,7 +592,9 @@ def targets(
 
     path = ROOT / "packaging/gentoo/vgs-shell-0.1.0.ebuild"
     text = replace_gentoo_rdepend(
-        path, path.read_text(), render_gentoo_required(required["gentoo"])
+        path,
+        path.read_text(),
+        render_gentoo_required(required["gentoo"], conflicts["gentoo"]),
     )
     out.append((path, replace_block(path, text, render_gentoo(collected["gentoo"]))))
 
@@ -548,9 +644,10 @@ def main() -> int:
         manifest = json.loads(MANIFEST.read_text())
         mapping = json.loads(MAPPING.read_text())
         required, waivers = required_packages(mapping)
+        conflicts, conflict_waivers = conflict_packages(mapping)
         check_channels(required)
         collected = collect(manifest, mapping, required)
-        rendered = targets(collected, required)
+        rendered = targets(collected, required, conflicts)
     except GenError as error:
         print(f"gen-package-metadata: {error}", file=sys.stderr)
         return 1
@@ -575,12 +672,24 @@ def main() -> int:
         print("Run scripts/gen-package-metadata.py --write", file=sys.stderr)
         return 1
 
+    # Deliberately after the write: the Gentoo blockers are generated, so this
+    # has to read what this run produced rather than what was on disk before it.
+    try:
+        check_conflicts(conflicts)
+    except GenError as error:
+        print(f"gen-package-metadata: {error}", file=sys.stderr)
+        return 1
+
     counts = ", ".join(f"{distro} {len(collected[distro])}" for distro in DISTROS)
     verb = "regenerated" if args.write else "verified"
     print(f"packaging optional dependencies {verb} ({counts})")
     print(
         f"hard dependencies {verb} for every shipped channel: "
         + ", ".join(f"{channel} {len(required[channel])}" for channel in CHANNEL_RECIPES)
+    )
+    print(
+        "notification daemon conflicts verified: "
+        + ", ".join(f"{channel} {len(conflicts[channel])}" for channel in conflicts)
     )
     for channel, reason in UNGENERATED_CHANNELS.items():
         print(f"  not generated: {channel} — {reason}")
@@ -589,6 +698,8 @@ def main() -> int:
     # visible in the log rather than buried in a JSON file.
     for command, distro, reason in waivers:
         print(f"  waived: {distro} cannot require {command} — {reason}")
+    for daemon, channel, reason in conflict_waivers:
+        print(f"  waived: {channel} cannot conflict with {daemon} — {reason}")
     return 0
 
 

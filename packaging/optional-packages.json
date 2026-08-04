@@ -75,6 +75,63 @@
       "nix": ["pkgs.quickshell", "pkgs.jq", "pkgs.python3", "pkgs.bash"]
     }
   },
+  "conflicts": {
+    "$comment": [
+      "org.freedesktop.Notifications is a first-come, first-served session bus",
+      "name, so two notification daemons on one session is not a supported",
+      "configuration (VGS-56). Every channel has to say so, and every channel",
+      "was saying something slightly different: Fedora named all four, Arch and",
+      "Debian omitted dunst, Gentoo and Void omitted swaync. Some of that is",
+      "correct — a virtual name can cover a daemon — and some of it was drift.",
+      "",
+      "This section is the one list. Gentoo's blockers live inside the generated",
+      "RDEPEND, so they are generated from here; the other channels declare",
+      "conflicts in file-specific shapes and are verified against it instead, so",
+      "a daemon dropped from one recipe fails the run rather than shipping.",
+      "",
+      "A daemon with no package on a channel must be waived, with the reason —",
+      "the same rule as required.unsupported."
+    ],
+    "daemons": {
+      "notification-daemon": {
+        "arch": "notification-daemon",
+        "debian": "notification-daemon",
+        "fedora": "notification-daemon"
+      },
+      "mako": {
+        "arch": "mako",
+        "debian": "mako-notifier",
+        "fedora": "mako",
+        "gentoo": "gui-apps/mako",
+        "void": "mako"
+      },
+      "dunst": {
+        "fedora": "dunst",
+        "gentoo": "x11-misc/dunst",
+        "void": "dunst"
+      },
+      "swaync": {
+        "arch": "swaync",
+        "debian": "sway-notification-center",
+        "fedora": "swaync",
+        "void": "SwayNotificationCenter"
+      }
+    },
+    "unsupported": {
+      "notification-daemon": {
+        "gentoo": "Gentoo has no notification-daemon virtual; the daemons are blocked by name instead.",
+        "void": "xbps has no virtual package for notification daemons; they are conflicted by name instead."
+      },
+      "dunst": {
+        "arch": "dunst provides the notification-daemon virtual on Arch, which is already conflicted.",
+        "debian": "dunst Provides: notification-daemon on Debian, which is already conflicted."
+      },
+      "swaync": {
+        "gentoo": "not packaged: packages.gentoo.org returns no swaync or SwayNotificationCenter in ::gentoo (checked 2026-08-04)."
+      }
+    }
+  },
+
   "features": {
     "base": "shell runtime",
     "theme": "theme engine",
