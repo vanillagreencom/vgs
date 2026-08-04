@@ -34,7 +34,20 @@ FloatingWindow {
     property bool shouldHaveFocus: visible
     property bool allowFocusOverride: false
     property alias shouldBeVisible: settingsModal.visible
-    property bool isCompactMode: width < 700
+    // Layout floors. The content pane used to be whatever width was left over
+    // after the sidebar took its share, so a long locale or a large UI scale
+    // could squeeze it to nothing. Instead: clamp the sidebar against the
+    // window, give the content pane a real minimum, and derive the compact
+    // breakpoint from those two so the side-by-side layout is only used at
+    // widths where both actually fit.
+    readonly property int minContentWidth: 380
+    readonly property real maxSidebarWidth: Math.max(270, width * 0.4)
+    readonly property real expandedSidebarWidth: Math.min(sidebar.implicitWidth, maxSidebarWidth)
+    property bool isCompactMode: width < expandedSidebarWidth + minContentWidth
+    // Initial value only — toggleMenu(), onIsCompactModeChanged and
+    // onTabChangeRequested all assign to it, so this binding does not survive
+    // the first interaction. onIsCompactModeChanged restores it in both
+    // directions, which is what keeps the value from going stale.
     property bool menuVisible: !isCompactMode
     property bool enableAnimations: true
     property string keybindSearchQuery: ""
@@ -97,9 +110,10 @@ FloatingWindow {
 
     onIsCompactModeChanged: {
         enableAnimations = false;
-        if (!isCompactMode) {
-            menuVisible = true;
-        }
+        // Both directions: leaving compact restores the side-by-side layout,
+        // entering it drills down to the content the user was already reading
+        // (the menu button is the way back).
+        menuVisible = !isCompactMode;
         Qt.callLater(() => {
             enableAnimations = true;
         });
@@ -287,7 +301,7 @@ FloatingWindow {
                     id: sidebar
 
                     anchors.left: parent.left
-                    width: settingsModal.isCompactMode ? parent.width : sidebar.implicitWidth
+                    width: settingsModal.isCompactMode ? parent.width : settingsModal.expandedSidebarWidth
                     visible: settingsModal.isCompactMode ? settingsModal.menuVisible : true
                     parentModal: settingsModal
                     currentIndex: settingsModal.currentTabIndex
@@ -301,9 +315,17 @@ FloatingWindow {
                 }
 
                 Item {
-                    anchors.left: settingsModal.isCompactMode ? (settingsModal.menuVisible ? sidebar.right : parent.left) : sidebar.right
-                    anchors.right: parent.right
+                    // Explicit width rather than a right anchor: the pane keeps
+                    // minContentWidth even if the sidebar somehow overruns, so
+                    // it is never zero-width. In compact mode it takes the whole
+                    // window and hides outright behind the menu, which is a
+                    // deliberate drill-down with the menu button as the way back
+                    // — not an anchor collapse.
+                    anchors.left: parent.left
+                    anchors.leftMargin: settingsModal.isCompactMode ? 0 : sidebar.width
+                    width: settingsModal.isCompactMode ? parent.width : Math.max(settingsModal.minContentWidth, parent.width - sidebar.width)
                     height: parent.height
+                    visible: !settingsModal.isCompactMode || !settingsModal.menuVisible
                     clip: true
 
                     // macOS-style glass layering: the sidebar chrome carries the
