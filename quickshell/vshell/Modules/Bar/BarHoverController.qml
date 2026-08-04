@@ -184,17 +184,33 @@ Item {
         }
     }
 
-    function _watchCandidateObject(object) {
+    function _hasCandidateWatcher(object, signalName) {
+        for (let i = 0; i < _candidateWatchers.length; i++) {
+            const watcher = _candidateWatchers[i];
+            if (watcher.object === object && watcher.signalName === signalName)
+                return true;
+        }
+        return false;
+    }
+
+    // A widget that does nothing on hover is filtered out of the candidate list,
+    // so it never reaches the full watch in _buildCandidateCache — and nothing
+    // would notice it later gaining a popout or a hover opt-in. Watch the one
+    // signal that would change that answer before rejecting it, so the false to
+    // true transition invalidates the cache and hover becomes available.
+    function _watchHoverCapability(object) {
+        _watchCandidateObject(object, ["respondsToHoverChanged"]);
+    }
+
+    function _watchCandidateObject(object, onlySignals) {
         if (!object)
             return;
-        for (let i = 0; i < _candidateWatchers.length; i++) {
-            if (_candidateWatchers[i].object === object)
-                return;
-        }
 
-        const signalNames = ["xChanged", "yChanged", "widthChanged", "heightChanged", "visibleChanged", "parentChanged", "childrenChanged", "itemChanged", "activeChanged", "destroyed"];
+        const signalNames = onlySignals || ["xChanged", "yChanged", "widthChanged", "heightChanged", "visibleChanged", "parentChanged", "childrenChanged", "itemChanged", "activeChanged", "respondsToHoverChanged", "destroyed"];
         for (let i = 0; i < signalNames.length; i++) {
             const signalName = signalNames[i];
+            if (_hasCandidateWatcher(object, signalName))
+                continue;
             try {
                 const signal = object[signalName];
                 if (!signal || typeof signal.connect !== "function")
@@ -366,6 +382,7 @@ Item {
                 return;
             if (!root._itemBelongsToThisBar(widgetItem))
                 return;
+            root._watchHoverCapability(widgetItem);
             if (!root._widgetSupportsHoverPopout(widgetId, widgetItem))
                 return;
             if (!root.barContent.getWidgetVisible(widgetId))
@@ -407,6 +424,7 @@ Item {
                     existing.section = entry.section;
                 continue;
             }
+            _watchHoverCapability(entry.host.item);
             if (!_widgetSupportsHoverPopout(entry.host.widgetId, entry.host.item))
                 continue;
             candidates.push({
