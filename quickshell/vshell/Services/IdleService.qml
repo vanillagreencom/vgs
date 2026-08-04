@@ -77,6 +77,39 @@ Singleton {
     // from the lock *request*).
     property bool isShellLocked: false
 
+    // Every caller that asked while the lock was unavailable, in order. A single
+    // string would keep the first name and discard the rest — and since the
+    // defect this whole path exists to fix IS a silently dropped lock request,
+    // losing who else asked would keep part of that silence.
+    property var _pendingLockSources: []
+
+    // The one way UI code should ask for a lock. `lockComponent` is assigned in
+    // Lock.qml::_start(), which waits on the duplicate-instance guard, so there
+    // is a real window at startup where it is still null — and in a greeter, or
+    // a shell refused as a duplicate, it stays null forever. A plain
+    // `lockComponent?.activate()` turns both cases into a silent no-op at the
+    // exact moment somebody asked to lock the machine, which is not a failure
+    // mode a lock is allowed to have. So: retry across the startup window, and
+    // if it still cannot be served, say so loudly rather than drop it.
+    function requestLock(source: string): void {
+        if (lockComponent) {
+            _pendingLockSources = [];
+            uiLockRetry.stop();
+            lockComponent.activate();
+            return;
+        }
+        // De-duplicated by name, so holding a button down does not spam the log,
+        // but every DISTINCT caller is both announced and remembered.
+        if (_pendingLockSources.indexOf(source) === -1) {
+            _pendingLockSources = _pendingLockSources.concat([source]);
+            log.warn("lock requested by", source, "before the lock component was ready; retrying");
+        }
+        if (uiLockRetry.running)
+            return;
+        uiLockRetry.attempts = 0;
+        uiLockRetry.restart();
+    }
+
     // ======================================================================
     //  Surviving a hot reload
     // ======================================================================
@@ -129,7 +162,18 @@ Singleton {
         // `PersistentProperties::onReload` writes these with `setProperty`,
         // which would break a binding permanently and leave the NEXT reload
         // restoring a stale value.
+        // Set for the duration of the restore below. Without it the restore
+        // eats itself: assigning root.lockBlackoutActive fires
+        // onLockBlackoutActiveChanged SYNCHRONOUSLY, which snapshots the new
+        // generation's still-empty _blackoutBrightness over the persisted map —
+        // and the next line then "restores" that emptied value. Same for
+        // displaysApplied behind desiredDisplaysOff. A half-restored object must
+        // never be observable as a snapshot source.
+        property bool restoring: false
+
         function snapshot(): void {
+            if (restoring)
+                return;
             blackoutActive = root.lockBlackoutActive;
             blackoutBrightness = root._blackoutBrightness || ({});
             blackoutPending = root.blackoutLockPending;
@@ -140,12 +184,17 @@ Singleton {
 
         onReloaded: {
             isReload = true;
+            restoring = true;
             root.lockBlackoutActive = blackoutActive;
             root._blackoutBrightness = blackoutBrightness || ({});
             root.blackoutLockPending = blackoutPending;
             root.desiredDisplaysOff = displaysOff;
             root._lastAppliedOff = displaysApplied;
             root.secureManualOffPending = manualOffPending;
+            restoring = false;
+            // One snapshot at the end, from the fully restored object, so this
+            // generation starts with a coherent record for the NEXT reload.
+            snapshot();
         }
     }
 
@@ -154,6 +203,36 @@ Singleton {
     onDesiredDisplaysOffChanged: reloadState.snapshot()
     onSecureManualOffPendingChanged: reloadState.snapshot()
 
+
+    // Declared AFTER reloadState: that PersistentProperties must stay child
+    // index 0 of this singleton, because ReloadPropagator matches by index.
+    // scripts/check-lock-reload-order.py enforces it.
+    Timer {
+        id: uiLockRetry
+        property int attempts: 0
+        interval: 250
+        repeat: true
+        onTriggered: {
+            if (root.lockComponent) {
+                stop();
+                root.log.info("serving deferred lock request from", root._pendingLockSources.join(", "));
+                root._pendingLockSources = [];
+                root.lockComponent.activate();
+                return;
+            }
+            attempts++;
+            // shell.qml fails the duplicate-instance guard open after 2s, so a
+            // shell that is allowed to lock cannot stay componentless past that.
+            // Anything still missing here genuinely cannot lock.
+            if (attempts >= 16) {
+                stop();
+                root.log.error("lock request(s) from", root._pendingLockSources.join(", "),
+                    "DROPPED after", attempts * interval, "ms — this shell has no lock component",
+                    "(greeter, or refused as a duplicate instance)");
+                root._pendingLockSources = [];
+            }
+        }
+    }
     // True while the idle tier has blanked the lock screen to full black after
     // idle-while-locked (monitors stay ON — this is NOT DPMS). Cleared by any seat
     // activity (the blank monitor un-idles).

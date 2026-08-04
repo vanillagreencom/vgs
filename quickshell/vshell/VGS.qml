@@ -627,7 +627,7 @@ Item {
             onPopoutClosed: PopoutService.unloadControlCenter()
 
             onLockRequested: {
-                IdleService.lockComponent?.activate();
+                IdleService.requestLock("control center");
             }
 
             onSwitchUserRequested: root.showSwitchUserModal()
@@ -1250,7 +1250,7 @@ Item {
 
             onLockRequested: {
                 PopoutService.closeControlCenter();
-                IdleService.lockComponent?.activate();
+                IdleService.requestLock("power menu");
             }
 
             onSwitchUserRequested: root.showSwitchUserModal()
