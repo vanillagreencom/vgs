@@ -24,26 +24,101 @@ systemctl --user enable --now vshell.service
 | Nix / Home Manager | the Home Manager module owns the unit |
 | `install.sh` | enables and starts the unit unless `--no-start` is passed |
 
-## Optional dependencies
+## Dependencies
 
 `config/vshell/dependencies.json` is the source of truth for which commands back which VGS feature
-group, and `optional-packages.json` maps those commands to distribution package names.
-`scripts/gen-package-metadata.py` joins the two and rewrites the generated blocks in the Arch,
-Debian, Fedora, and Gentoo recipes:
+group, and `optional-packages.json` maps those commands to distribution package names and marks
+which of them are *required*. `scripts/gen-package-metadata.py` joins the two and rewrites the
+generated blocks in **every** shipped channel's recipe — hard dependencies in all six, plus the
+optional list in the four that have a weak-dependency mechanism:
+
+| Channel | Hard dependencies | Optional list |
+|---|---|---|
+| Arch, Debian, Fedora, Gentoo | generated | generated |
+| Void | generated | none — xbps has no weak dependencies; `INSTALL.msg` and `vshell deps status` cover them |
+| Nix | generated into the `wrapProgram` PATH | none — the wrapper is a PATH, not a package relation |
+| Ubuntu | n/a — the PPA builds from `packaging/debian` | n/a |
+
 
 ```bash
 scripts/gen-package-metadata.py            # verify the recipes match the manifest
 scripts/gen-package-metadata.py --write    # regenerate them
 ```
 
-The verify mode runs in `scripts/check-release.sh`, and a command added to the manifest without a
-package mapping fails the check rather than silently going unadvertised. Do not hand-edit anything
-between the `BEGIN`/`END GENERATED OPTIONAL DEPENDENCIES` markers.
+The verify mode runs in `scripts/check-release.sh` and in CI, and a command added to the manifest
+without a package mapping fails the check rather than silently going unadvertised. Do not hand-edit
+anything between the `BEGIN`/`END GENERATED` markers, or the generated `RDEPEND` in the ebuild.
+
+`optdepends` and `Suggests` are advisory: no package manager installs them by default. A command
+behind a default bar button or modal therefore has to be a **hard** dependency, or a stock install
+ships UI that reports missing tools — which is what the screenshot button did on a fresh
+`vgs-shell-git` (VGS-53). The `"required"` section of `optional-packages.json` names those commands;
+everything else stays optional and must stay absent-tolerant in the UI. `tailscale` is the reference
+case: a network daemon with its own account and system service never becomes a dependency, it just
+has to say plainly in-module that it is not installed.
+
+A required command with no package on one of those channels **fails** the generator. Leaving it out
+quietly would ship, one channel down, exactly the stock install the list exists to prevent, so it has
+to be waived by name in `"required".unsupported` with a reason — and every run prints the waivers it
+honoured. Two are live today: `hyprpicker` has no ebuild in `::gentoo`, so capture and OCR under
+Hyprland report it missing there; and `sudo` is not put on the Nix wrapper's PATH, because it would
+shadow the setuid wrapper in `/run/wrappers/bin` with a binary that cannot elevate.
+
+The same rule covers the notification-daemon conflicts. `org.freedesktop.Notifications` is a
+first-come, first-served bus name, so every channel has to declare that a second daemon is not
+supported (VGS-56) — and every channel was declaring something slightly different. The one list is
+the `"conflicts"` section: Gentoo's blockers are generated into its `RDEPEND`, the other channels
+declare conflicts in shapes too file-specific to template and are **verified** against it, and a
+daemon a channel has no package for must be waived with a reason exactly like a required command.
+Three waivers are live: `dunst` on Arch and Debian (both provide the `notification-daemon` virtual,
+which is already conflicted) and `swaync` on Gentoo (not packaged).
+
+The channel list itself is checked too. A directory under `packaging/` that is neither generated nor
+declared unGenerated with a reason fails the run. That check exists because Void was hand-maintained
+and silently skipped: it kept `depends="quickshell jq python3"` through two rounds of packaging
+fixes, still shipping the VGS-53 defect after every generated channel was correct.
+
+Terminals are the open exception. Eight are listed as alternatives, packaging cannot express "any
+one of these", and none is required — so a fresh install has no terminal for password prompts. That
+needs an `xdg-terminal-exec` style resolver rather than an eight-way optional list.
 
 Fedora uses `Suggests:` rather than `Recommends:` because dnf installs weak `Recommends` by default,
 and the list includes a login manager (`greetd`) and both supported compositors. Void has no
 weak-dependency mechanism, so its optional tools are covered by `INSTALL.msg` and
 `vshell deps status` only.
+
+## The AUR is a publishing target, not a source
+
+The AUR keeps its own git repository per package and pulls nothing from this one — `source=('git+…')`
+tracks the *source tree*, never the recipe. So `packaging/arch/` reaches users only when something
+pushes it, and twice nothing did: `VGS_THEME_BUNDLE` (VGS-5) and all 38 `optdepends` (VGS-53) were
+both fixed here and closed while every AUR install kept the old behaviour.
+
+```bash
+scripts/check-aur-sync.py            # PKGBUILD vs .SRCINFO, offline; runs in CI
+scripts/check-aur-sync.py --remote   # also diffs aur.archlinux.org; needs network
+scripts/publish-aur.sh --dry-run     # what a publish would change
+scripts/publish-aur.sh               # publish (needs AUR commit rights)
+```
+
+The offline check runs on every PR. The remote check and the push belong to
+`.github/workflows/publish-aur.yml`, which publishes both packages whenever a packaging change lands
+on main, is called again by `release.yml` after a tag, and runs a weekly drift check because a stale
+AUR package builds and installs perfectly well.
+
+`vgs-shell` points its `source_*` at release tarballs, so publishing it before those exist would
+leave `yay -S vgs-shell` unable to download its source. `publish-aur.sh` checks the URLs rather than
+assuming: it publishes the package when they resolve — so a dependency fix that leaves `pkgver`
+alone reaches stable users the day it lands — and defers only that package, with an explanation,
+between a version bump and its tag. Only a `404`/`410` defers. A DNS failure, a timeout, a `403` or
+a `5xx` **fails the run**: "not released yet" and "the runner could not reach GitHub" look identical
+if you only ask whether `curl` succeeded, and quietly skipping the publish for the second is the
+silent non-delivery this whole section exists to end. Each run then verifies exactly what it published; a package it
+deferred is not verified, because reporting expected drift as a failure would make the delivery
+signal worthless.
+
+Publishing needs an `AUR_SSH_PRIVATE_KEY` secret with commit rights; without it the workflow
+**fails** rather than skipping. Never edit the AUR side by hand — the next publish overwrites it.
 
 ## Theme bundles
 
