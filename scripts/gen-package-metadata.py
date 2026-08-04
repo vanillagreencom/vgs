@@ -54,13 +54,18 @@ def feature_commands(feature: dict) -> list[str]:
     return out
 
 
-def required_packages(mapping: dict) -> dict[str, list[str]]:
-    """Return {distro: [package]} for the commands behind first-class UI.
+def required_packages(mapping: dict) -> tuple[dict[str, list[str]], list[tuple[str, str, str]]]:
+    """Return ({distro: [package]}, waivers) for the commands behind first-class UI.
 
     optdepends and Suggests are advisory: no package manager installs them by
     default. A command that a default bar button or modal points at therefore
     has to be a real dependency, or a stock install ships UI that reports
     missing tools (VGS-53).
+
+    A required command with no package on one of the generated distributions is
+    NOT quietly left out — that would ship the same broken stock install one
+    distribution down. It has to be waived by name in `required.unsupported`,
+    with a reason, and every run prints the waivers it honoured.
     """
     section = mapping.get("required")
     if section is None:
@@ -69,7 +74,34 @@ def required_packages(mapping: dict) -> dict[str, list[str]]:
             "hard dependencies of every recipe are generated from it"
         )
     commands = mapping["commands"]
+    required = section.get("commands", [])
+    unsupported = section.get("unsupported", {})
     result: dict[str, list[str]] = {}
+    waivers: list[tuple[str, str, str]] = []
+
+    for command, distros in unsupported.items():
+        if command not in required:
+            raise GenError(
+                f'"required".unsupported names {command!r}, which is not a '
+                "required command; the waiver would never be read"
+            )
+        unknown = set(distros) - set(DISTROS)
+        if unknown:
+            raise GenError(
+                f"unsupported waiver for {command!r} names unknown "
+                "distribution(s): " + ", ".join(sorted(unknown))
+            )
+        for distro, reason in distros.items():
+            if not reason:
+                raise GenError(
+                    f"unsupported waiver for {command!r} on {distro} has no "
+                    "reason; a silent waiver is a silent drop with extra steps"
+                )
+            if commands.get(command, {}).get(distro) is not None:
+                raise GenError(
+                    f"{command!r} is waived as unsupported on {distro} but the "
+                    "mapping names a package for it; drop the stale waiver"
+                )
 
     for distro in DISTROS:
         base = section.get("base", {}).get(distro)
@@ -80,7 +112,7 @@ def required_packages(mapping: dict) -> dict[str, list[str]]:
             )
         result[distro] = list(base)
 
-    for command in section.get("commands", []):
+    for command in required:
         entry = commands.get(command)
         if entry is None:
             raise GenError(
@@ -94,8 +126,17 @@ def required_packages(mapping: dict) -> dict[str, list[str]]:
         for distro in DISTROS:
             packages = entry.get(distro)
             if packages is None:
-                # No package on this distribution: the recipe leaves it out
-                # rather than guessing, exactly as for optional commands.
+                reason = unsupported.get(command, {}).get(distro)
+                if reason is None:
+                    raise GenError(
+                        f"required command {command!r} names no {distro} "
+                        "package. A command behind default UI cannot just be "
+                        "left out of one recipe — that ships the stock install "
+                        "this list exists to prevent. Add the package name, or "
+                        f'waive it in "required".unsupported.{command}.{distro} '
+                        "with the reason it cannot be required there."
+                    )
+                waivers.append((command, distro, reason))
                 continue
             if isinstance(packages, str):
                 packages = [packages]
@@ -103,7 +144,7 @@ def required_packages(mapping: dict) -> dict[str, list[str]]:
                 if package not in result[distro]:
                     result[distro].append(package)
 
-    return result
+    return result, waivers
 
 
 def collect(
@@ -395,7 +436,7 @@ def main() -> int:
     try:
         manifest = json.loads(MANIFEST.read_text())
         mapping = json.loads(MAPPING.read_text())
-        required = required_packages(mapping)
+        required, waivers = required_packages(mapping)
         collected = collect(manifest, mapping, required)
         rendered = targets(collected, required)
     except GenError as error:
@@ -425,6 +466,11 @@ def main() -> int:
     counts = ", ".join(f"{distro} {len(collected[distro])}" for distro in DISTROS)
     verb = "regenerated" if args.write else "verified"
     print(f"packaging optional dependencies {verb} ({counts})")
+    # Printed every run, not only when they change: each line is a recipe that
+    # ships without a tool VGS considers first-class, and that should be
+    # visible in the log rather than buried in a JSON file.
+    for command, distro, reason in waivers:
+        print(f"  waived: {distro} cannot require {command} — {reason}")
     return 0
 
 

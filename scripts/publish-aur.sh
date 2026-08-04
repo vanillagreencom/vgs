@@ -78,6 +78,13 @@ for package in "${packages[@]}"; do
     install -m 644 "$source_dir/$file" "$clone/$file"
   done
 
+  # Intent-to-add first: a file the AUR does not carry at all lands untracked,
+  # and `git diff` ignores untracked files. Neither AUR repository publishes its
+  # .install scriptlet today, so without this a package whose PKGBUILD and
+  # .SRCINFO already match would report as current and the missing scriptlet
+  # would never be pushed — and --dry-run would not show it either.
+  git -C "$clone" add --intent-to-add --all
+
   if git -C "$clone" diff --quiet --exit-code; then
     echo "publish-aur: $package is already what this repo holds"
     continue

@@ -48,6 +48,12 @@ everything else stays optional and must stay absent-tolerant in the UI. `tailsca
 case: a network daemon with its own account and system service never becomes a dependency, it just
 has to say plainly in-module that it is not installed.
 
+A required command with no package on one of the generated distributions **fails** the generator.
+Leaving it out quietly would ship, one distribution down, exactly the stock install the list exists
+to prevent, so it has to be waived by name in `"required".unsupported` with a reason — and every run
+prints the waivers it honoured. One is live today: `hyprpicker` has no ebuild in `::gentoo`, so
+capture and OCR under Hyprland report it missing on Gentoo.
+
 Terminals are the open exception. Eight are listed as alternatives, packaging cannot express "any
 one of these", and none is required — so a fresh install has no terminal for password prompts. That
 needs an `xdg-terminal-exec` style resolver rather than an eight-way optional list.

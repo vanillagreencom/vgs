@@ -61,6 +61,9 @@ concurrency:
 jobs:
   publish:
     if: github.event_name != 'schedule'
+    # Reads this repo and writes only to the AUR, over SSH with its own key.
+    permissions:
+      contents: read
     runs-on: ${{ vars.CI_RUNNER_2V || 'ubuntu-latest' }}
     timeout-minutes: 10
     steps:
@@ -74,7 +77,11 @@ jobs:
       - name: Arch recipes agree internally
         run: scripts/check-aur-sync.py
 
+      # Skipped for a dry run: publish-aur.sh --dry-run clones over HTTPS and
+      # needs no key, so requiring one would break the documented read-only
+      # path for anyone without the secret.
       - name: Configure the AUR SSH key
+        if: ${{ inputs.dry_run != true }}
         env:
           AUR_SSH_PRIVATE_KEY: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
           # Pinned host key rather than a blind ssh-keyscan, which would accept
@@ -128,6 +135,8 @@ jobs:
 
   drift:
     if: github.event_name == 'schedule'
+    permissions:
+      contents: read
     runs-on: ${{ vars.CI_RUNNER_2V || 'ubuntu-latest' }}
     timeout-minutes: 10
     steps:

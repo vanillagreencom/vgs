@@ -4,6 +4,11 @@ on:
   push:
     tags: ["v*"]
 
+# Least privilege for every job that does not raise it. `publish` needs
+# contents: write to create the release; nothing else does.
+permissions:
+  contents: read
+
 jobs:
   bundle:
     permissions:
@@ -56,5 +61,9 @@ jobs:
   # VGS-53 shipped a stale package for two releases running.
   aur:
     needs: publish
+    # The called workflow's own permissions are capped by what this job grants,
+    # so state it here too rather than relying on the workflow default.
+    permissions:
+      contents: read
     uses: ./.github/workflows/publish-aur.yml
     secrets: inherit
