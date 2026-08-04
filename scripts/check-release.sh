@@ -23,6 +23,9 @@ grep -q '^	install = vgs-shell-git.install$' "$root/packaging/arch/vgs-shell-git
 test -f "$root/packaging/arch/vgs-shell-git/vgs-shell-git.install"
 
 "$root/scripts/gen-package-metadata.py"
+# The AUR serves .SRCINFO to paru and yay; a release that publishes one which
+# disagrees with its PKGBUILD advertises dependencies the package does not have.
+"$root/scripts/check-aur-sync.py"
 bash -n "$root/install.sh" "$root/uninstall.sh" "$root/scripts/build-release.sh" "$root/packaging/install-system.sh" "$root/scripts/check-package-assets.sh"
 bash "$root/scripts/check-package-assets.sh"
 git diff --check

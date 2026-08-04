@@ -156,10 +156,17 @@ jobs:
           echo "whitespace range: $base...HEAD ($source)"
           git diff --check "$base...HEAD"
 
+      # check-aur-sync.py runs without --remote here on purpose: the offline
+      # half (PKGBUILD vs .SRCINFO) is what a PR can break, and it says out
+      # loud that it did not look at what the AUR publishes. Comparing against
+      # aur.archlinux.org belongs to publish-aur.yml, which owns the push and
+      # runs a weekly drift check; putting a network fetch on every PR would
+      # make an unrelated PR red for an AUR-side problem it cannot fix.
       - name: Packaging metadata and assets
         run: |
           scripts/gen-package-metadata.py
           scripts/check-package-assets.sh
+          scripts/check-aur-sync.py
 
       - name: Settings migration
         run: |

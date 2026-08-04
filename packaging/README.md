@@ -24,26 +24,63 @@ systemctl --user enable --now vshell.service
 | Nix / Home Manager | the Home Manager module owns the unit |
 | `install.sh` | enables and starts the unit unless `--no-start` is passed |
 
-## Optional dependencies
+## Dependencies
 
 `config/vshell/dependencies.json` is the source of truth for which commands back which VGS feature
-group, and `optional-packages.json` maps those commands to distribution package names.
-`scripts/gen-package-metadata.py` joins the two and rewrites the generated blocks in the Arch,
-Debian, Fedora, and Gentoo recipes:
+group, and `optional-packages.json` maps those commands to distribution package names and marks
+which of them are *required*. `scripts/gen-package-metadata.py` joins the two and rewrites the
+generated blocks in the Arch, Debian, Fedora, and Gentoo recipes:
 
 ```bash
 scripts/gen-package-metadata.py            # verify the recipes match the manifest
 scripts/gen-package-metadata.py --write    # regenerate them
 ```
 
-The verify mode runs in `scripts/check-release.sh`, and a command added to the manifest without a
-package mapping fails the check rather than silently going unadvertised. Do not hand-edit anything
-between the `BEGIN`/`END GENERATED OPTIONAL DEPENDENCIES` markers.
+The verify mode runs in `scripts/check-release.sh` and in CI, and a command added to the manifest
+without a package mapping fails the check rather than silently going unadvertised. Do not hand-edit
+anything between the `BEGIN`/`END GENERATED` markers, or the generated `RDEPEND` in the ebuild.
+
+`optdepends` and `Suggests` are advisory: no package manager installs them by default. A command
+behind a default bar button or modal therefore has to be a **hard** dependency, or a stock install
+ships UI that reports missing tools — which is what the screenshot button did on a fresh
+`vgs-shell-git` (VGS-53). The `"required"` section of `optional-packages.json` names those commands;
+everything else stays optional and must stay absent-tolerant in the UI. `tailscale` is the reference
+case: a network daemon with its own account and system service never becomes a dependency, it just
+has to say plainly in-module that it is not installed.
+
+Terminals are the open exception. Eight are listed as alternatives, packaging cannot express "any
+one of these", and none is required — so a fresh install has no terminal for password prompts. That
+needs an `xdg-terminal-exec` style resolver rather than an eight-way optional list.
+
+Void is not generated: it is a recipe-only channel with no weak-dependency mechanism, so
+`void/template` and `void/INSTALL.msg` are maintained by hand.
 
 Fedora uses `Suggests:` rather than `Recommends:` because dnf installs weak `Recommends` by default,
 and the list includes a login manager (`greetd`) and both supported compositors. Void has no
 weak-dependency mechanism, so its optional tools are covered by `INSTALL.msg` and
 `vshell deps status` only.
+
+## The AUR is a publishing target, not a source
+
+The AUR keeps its own git repository per package and pulls nothing from this one — `source=('git+…')`
+tracks the *source tree*, never the recipe. So `packaging/arch/` reaches users only when something
+pushes it, and twice nothing did: `VGS_THEME_BUNDLE` (VGS-5) and all 38 `optdepends` (VGS-53) were
+both fixed here and closed while every AUR install kept the old behaviour.
+
+```bash
+scripts/check-aur-sync.py            # PKGBUILD vs .SRCINFO, offline; runs in CI
+scripts/check-aur-sync.py --remote   # also diffs aur.archlinux.org; needs network
+scripts/publish-aur.sh --dry-run     # what a publish would change
+scripts/publish-aur.sh               # publish (needs AUR commit rights)
+```
+
+The offline check runs on every PR. The remote check and the push belong to
+`.github/workflows/publish-aur.yml`: it publishes `vgs-shell-git` when a packaging change lands on
+main, is called by `release.yml` for `vgs-shell` once the tag's tarballs exist (its `source_*` point
+at them, so it cannot be published earlier), verifies the result, and runs a weekly drift check
+because a stale AUR package builds and installs perfectly well. Publishing needs an
+`AUR_SSH_PRIVATE_KEY` secret with commit rights; without it the workflow **fails** rather than
+skipping. Never edit the AUR side by hand — the next publish overwrites it.
 
 ## Theme bundles
 

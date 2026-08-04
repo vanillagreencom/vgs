@@ -129,11 +129,12 @@ Live-machine etiquette:
   source of truth for pending work. Read or write it only on request, or when resuming from one.
 
 ## Validation
-Scope to the area touched (Go-only: inventory guard + go block; QML-only: naming, QML smoke, surfaces; helper: py_compile + helper checks; packaging: the two packaging checks); run the full suite for cross-cutting work:
+Scope to the area touched (Go-only: inventory guard + go block; QML-only: naming, QML smoke, surfaces; helper: py_compile + helper checks; packaging: the three packaging checks); run the full suite for cross-cutting work:
 ```bash
 scripts/check-naming.sh
 scripts/gen-package-metadata.py
 scripts/check-package-assets.sh
+scripts/check-aur-sync.py
 node --check scripts/check-settings-migration.js
 scripts/check-settings-migration.js
 node scripts/test-restyle-queue.js
@@ -199,6 +200,15 @@ The live-session half of `scripts/check-validation-safety.sh` is likewise
 inert in CI: with no compositor and no Quickshell CLI its snapshots report
 "nothing of that kind exists on this system" and pass. The repo-wide
 unsafe-launch instruction scan — the other half — runs in full.
+
+`scripts/check-aur-sync.py` runs on every PR, but only its offline half:
+PKGBUILD against `.SRCINFO` inside this repo. Comparing against what
+aur.archlinux.org actually publishes needs network and is owned by
+`.github/workflows/publish-aur.yml` — which pushes `packaging/arch/` to the AUR
+and re-checks afterwards, plus a weekly drift run. A PR is never made red by an
+AUR-side problem it cannot fix, and the offline run prints what it did **not**
+check rather than implying the published package was verified. Run
+`scripts/check-aur-sync.py --remote` by hand when you want that answer now.
 
 So a green PR proves the static suite and the Go block. It does **not** prove
 the shell starts or that its surfaces are sane. Run

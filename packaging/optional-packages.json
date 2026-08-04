@@ -14,6 +14,47 @@
     "Package names were verified against archlinux.org, packages.debian.org",
     "(trixie), the Fedora rawhide metadata API, and packages.gentoo.org."
   ],
+  "required": {
+    "$comment": [
+      "Commands that back first-class, non-optional UI. optdepends/Suggests are",
+      "not installed by default by pacman, paru, apt or dnf, so a command that a",
+      "default bar button or modal points at cannot be advertised that way: the",
+      "screenshot button would report missing tools on a stock install (VGS-53).",
+      "",
+      "The line is: does a default-configuration bar button or modal point at",
+      "it. Genuinely opt-in integrations (rclone, tailscale, greetd, bandwhich,",
+      "gpu-screen-recorder, pywalfox, zoxide, ffmpegthumbnailer, satty,",
+      "tesseract) stay optional and must stay absent-tolerant in the UI.",
+      "tailscale in particular must never become a hard dependency: it is a",
+      "network daemon with its own account and system service.",
+      "",
+      "Terminals are deliberately absent: eight are listed as alternatives and",
+      "packaging has no way to express \"any one of these\". That needs an",
+      "xdg-terminal-exec style resolver, tracked separately.",
+      "",
+      "\"base\" lists the per-distribution hard dependencies that do not come from",
+      "a manifest command (the runtime itself and its interpreters), in the order",
+      "they should appear ahead of the generated ones."
+    ],
+    "commands": [
+      "grim",
+      "slurp",
+      "hyprpicker",
+      "wl-copy",
+      "wl-paste",
+      "notify-send",
+      "gio",
+      "gsettings",
+      "sudo",
+      "visudo"
+    ],
+    "base": {
+      "arch": ["quickshell", "jq", "python", "systemd"],
+      "debian": ["quickshell", "jq", "python3", "systemd"],
+      "fedora": ["quickshell", "jq", "python3", "bash", "coreutils", "systemd"],
+      "gentoo": ["${PYTHON_DEPS}", "app-misc/jq", "gui-apps/quickshell"]
+    }
+  },
   "features": {
     "base": "shell runtime",
     "theme": "theme engine",

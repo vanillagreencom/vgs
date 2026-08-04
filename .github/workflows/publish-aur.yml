@@ -1,0 +1,138 @@
+name: publish-aur
+
+# The AUR holds its own git repository per package and pulls nothing from this
+# one: `source=('git+…')` tracks the source tree, never the recipe. So a
+# packaging fix merged here reaches users only when something pushes it, and
+# twice nothing did — VGS-5 (VGS_THEME_BUNDLE) and VGS-53 (all 38 optdepends)
+# were both closed while every AUR install kept the old behaviour.
+#
+# This workflow is that something. `packaging/arch/` is the source of truth; the
+# AUR side is a publishing target that gets overwritten, never edited by hand.
+#
+# WHICH PACKAGE, WHEN. `vgs-shell-git` builds from the git HEAD, so its recipe
+# can be published the moment it changes on main. `vgs-shell` points its
+# `source_*` at release tarballs with pinned sha256sums, so publishing it before
+# the tag is built would leave AUR users with a recipe that cannot download its
+# source. It therefore publishes from release.yml, after the release exists,
+# via the workflow_call entry point below.
+#
+# The weekly run checks and publishes nothing: the failure this fixes is silent
+# by construction — a stale AUR package builds and installs perfectly well — so
+# something has to look.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - packaging/arch/**
+      - packaging/optional-packages.json
+      - config/vshell/dependencies.json
+      - scripts/publish-aur.sh
+      - scripts/check-aur-sync.py
+      - .github/workflows/publish-aur.yml
+  # Called by release.yml once the tag's artifacts are published.
+  workflow_call:
+    inputs:
+      packages:
+        type: string
+        default: vgs-shell vgs-shell-git
+  schedule:
+    - cron: "17 6 * * 1"
+  workflow_dispatch:
+    inputs:
+      packages:
+        description: Packages to publish, space separated
+        type: string
+        default: vgs-shell vgs-shell-git
+      dry_run:
+        description: Show what would be pushed without pushing it
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  # Never cancel: a cancelled run can leave one of the two packages published
+  # and the other not.
+  group: publish-aur
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    if: github.event_name != 'schedule'
+    runs-on: ${{ vars.CI_RUNNER_2V || 'ubuntu-latest' }}
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+
+      # Cheap, offline, and the one failure that must stop a publish: pushing a
+      # .SRCINFO that disagrees with its PKGBUILD ships metadata the AUR serves
+      # to paru and yay that does not describe the package they build.
+      - name: Arch recipes agree internally
+        run: scripts/check-aur-sync.py
+
+      - name: Configure the AUR SSH key
+        env:
+          AUR_SSH_PRIVATE_KEY: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
+          # Pinned host key rather than a blind ssh-keyscan, which would accept
+          # whatever answers. Override with the AUR_SSH_KNOWN_HOSTS variable if
+          # the AUR ever rotates it.
+          AUR_SSH_KNOWN_HOSTS: ${{ vars.AUR_SSH_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          if [ -z "$AUR_SSH_PRIVATE_KEY" ]; then
+            # FAIL, do not skip. A skipped publish is exactly the silent
+            # non-delivery this workflow exists to end: the run would be green
+            # while the AUR kept shipping the old recipe.
+            echo "::error::AUR_SSH_PRIVATE_KEY is not set, so nothing can be published. Add the secret, or publish by hand with scripts/publish-aur.sh and say so in the release notes."
+            exit 1
+          fi
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          printf '%s\n' "$AUR_SSH_PRIVATE_KEY" > ~/.ssh/aur
+          chmod 600 ~/.ssh/aur
+          printf '%s\n' "${AUR_SSH_KNOWN_HOSTS:-aur.archlinux.org ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIEuBKrPzbawxA/k2g6NcyV2CJzVDe+3E7VqjMmpTfHTf}" > ~/.ssh/known_hosts
+          printf 'Host aur.archlinux.org\n  User aur\n  IdentityFile ~/.ssh/aur\n  IdentitiesOnly yes\n' > ~/.ssh/config
+          chmod 600 ~/.ssh/config ~/.ssh/known_hosts
+
+      - name: Publish packaging/arch to the AUR
+        env:
+          AUR_COMMIT_NAME: ${{ vars.AUR_COMMIT_NAME }}
+          AUR_COMMIT_EMAIL: ${{ vars.AUR_COMMIT_EMAIL }}
+          DRY_RUN: ${{ inputs.dry_run }}
+          # A push to main can only publish the git package; see the header.
+          # Keyed on inputs rather than github.event_name: inside a
+          # workflow_call the event name is the CALLER's, so a release tag
+          # would read as `push` and publish the wrong half. `inputs.packages`
+          # is set for workflow_call and workflow_dispatch (both default to
+          # everything) and empty for a plain push.
+          PACKAGES: ${{ inputs.packages || 'vgs-shell-git' }}
+        run: |
+          set -euo pipefail
+          echo "publishing: $PACKAGES"
+          if [ "${DRY_RUN:-false}" = "true" ]; then
+            scripts/publish-aur.sh --dry-run $PACKAGES
+          else
+            scripts/publish-aur.sh $PACKAGES
+          fi
+
+      # Proves the push landed rather than trusting that it did. Checks both
+      # packages: if publishing vgs-shell-git left vgs-shell stale, that is
+      # worth hearing about here too.
+      - name: Published recipes match this repo
+        if: ${{ inputs.dry_run != true }}
+        run: scripts/check-aur-sync.py --remote
+
+  drift:
+    if: github.event_name == 'schedule'
+    runs-on: ${{ vars.CI_RUNNER_2V || 'ubuntu-latest' }}
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+      - name: Published AUR recipes still match this repo
+        run: scripts/check-aur-sync.py --remote

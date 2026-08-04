@@ -49,3 +49,12 @@ jobs:
           files: |
             dist/*.tar.gz
             dist/SHA256SUMS
+
+  # packaging/arch/PKGBUILD points source_* at the tarballs the job above
+  # uploads, so the AUR can only be updated once they exist. Without this step
+  # the recipe stays whatever was last pushed by hand, which is how VGS-5 and
+  # VGS-53 shipped a stale package for two releases running.
+  aur:
+    needs: publish
+    uses: ./.github/workflows/publish-aur.yml
+    secrets: inherit
