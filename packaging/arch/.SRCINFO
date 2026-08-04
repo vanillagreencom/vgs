@@ -54,6 +54,10 @@ pkgbase = vgs-shell
 
 pkgname = vgs-shell
 	install = vgs-shell.install
+	provides = notification-daemon
+	conflicts = notification-daemon
+	conflicts = mako
+	conflicts = swaync
 
 pkgname = vgs-shell-assets
 	pkgdesc = Optional VGS themes, wallpapers, and bundled icon themes

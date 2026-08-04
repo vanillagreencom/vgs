@@ -22,6 +22,8 @@ RDEPEND="
 	${PYTHON_DEPS}
 	app-misc/jq
 	gui-apps/quickshell
+	!gui-apps/mako
+	!x11-misc/dunst
 "
 BDEPEND="dev-lang/go"
 

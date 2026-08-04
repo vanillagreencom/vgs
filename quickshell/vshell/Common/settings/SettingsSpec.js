@@ -490,6 +490,7 @@ var SPEC = {
     notificationCompactMode: { def: false },
     notificationShowTimeoutBar: { def: false },
     notificationDedupeEnabled: { def: true },
+    notificationServerEnabled: { def: true },
     notificationPopupPosition: { def: 0 },
     notificationAnimationSpeed: { def: 1 },
     notificationCustomAnimationDuration: { def: 400 },
