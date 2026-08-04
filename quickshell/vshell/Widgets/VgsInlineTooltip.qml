@@ -1,7 +1,21 @@
 import QtQuick
 import QtQuick.Controls
 import qs.Common
+import qs.Widgets.Tooltip
 
+// The tooltip for content inside a window large enough to contain it: Settings
+// and the Changelog (FloatingWindow), and the big popouts (Dash, Control
+// Center, Notification Center).
+//
+// It must be an in-window popup rather than its own layer surface, because a
+// Wayland client cannot learn where its own XDG toplevel sits on screen, so
+// screen-absolute anchoring — what VgsTooltip does — cannot be computed for
+// anything inside a FloatingWindow. Positions are therefore relative to the
+// host window's contentItem, and the side is chosen from the room available
+// inside it.
+//
+// For a bar/dock/pill surface too small to contain a tooltip, use VgsTooltip
+// instead — see docs/architecture/design-language.md § Tooltips.
 Item {
     id: root
 
@@ -102,33 +116,32 @@ Item {
 
         property string text: ""
 
-        leftPadding: Theme.spacingM
-        rightPadding: Theme.spacingM
-        topPadding: Theme.spacingS
-        bottomPadding: Theme.spacingS
+        // TooltipBody carries its own padding, so the Popup adds none, and
+        // maxWidth reproduces the previous gutter: the text run is still capped
+        // at 500.
+        //
+        // One metric does change, deliberately. The cap used to apply to the
+        // Text's `width` but not its `implicitWidth`, and Popup sizes itself
+        // from the latter — so text past 500px was elided at 500 inside a box
+        // that kept growing, leaving the label stranded in a too-wide surface.
+        // Capping the body caps the box with it. Only strings long enough to
+        // elide are affected.
+        padding: 0
         closePolicy: Popup.NoAutoClose
         modal: false
         dim: false
 
-        background: Rectangle {
-            color: Theme.surfaceContainerHigh
-            radius: Theme.controlRadius
-            border.width: 1
-            border.color: Theme.outlineMedium
-        }
+        background: null
 
-        contentItem: Text {
-            id: textContent
-
-            width: Math.min(implicitWidth, 500)
+        contentItem: TooltipBody {
             text: tooltip.text
-            font.pixelSize: Theme.fontSizeSmall
-            color: Theme.surfaceText
-            wrapMode: Text.NoWrap
-            maximumLineCount: 1
-            elide: Text.ElideRight
-            horizontalAlignment: Text.AlignHCenter
-            verticalAlignment: Text.AlignVCenter
+            maxWidth: 500 + Theme.spacingM * 2
+            // A Popup inside its host window has no backdrop of its own — there
+            // is no WindowBlur behind it, unlike the layer-surface tooltip. So
+            // it takes the opaque treatment every other backdrop-less surface
+            // here takes (context menus, the OSD, the slideout), rather than
+            // painting glass over nothing.
+            blurAvailable: false
         }
 
         enter: Transition {

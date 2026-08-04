@@ -56,7 +56,7 @@ FocusScope {
 
     focus: true
 
-    VgsTooltipV2 {
+    VgsInlineTooltip {
         id: sharedTooltip
     }
 

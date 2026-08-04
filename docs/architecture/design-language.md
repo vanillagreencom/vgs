@@ -226,6 +226,50 @@ was pushed bolder. These are the knobs:
 Popout/CC/Dash cards are bespoke (no shared component); they inherit the neutral
 + flat-elevation + type language but were not individually given borders.
 
+## Tooltips
+
+One look, two hosts. Both render `Widgets/Tooltip/TooltipBody.qml`, so a tooltip
+is the same object visually wherever it appears; what differs is only how it is
+put on screen, and that is forced by Wayland rather than chosen.
+
+| Use | When | Anchoring |
+|-----|------|-----------|
+| `VgsTooltip` | The surface is too small to contain a tooltip: bar widgets, the dock, bundled plugin pills | Its own `WlrLayershell` Overlay surface. Caller passes **screen-absolute** coordinates plus `targetScreen` |
+| `VgsInlineTooltip` | The content sits in a window large enough to hold its own tooltip: Settings and Changelog (`FloatingWindow`), and the Dash / Control Center / Notification Center popouts | A `Popup` in the host window's `contentItem`. Caller passes the **anchor item**; the side is picked from the room available |
+
+**Neither can do the other's job**, which is why both exist:
+
+- A bar is a layer surface roughly one widget tall. An in-window `Popup` is
+  clamped inside its window, so a tooltip below a bar pill would be squeezed
+  into the strip. Being a separate surface also stops the tooltip stealing
+  pointer/hover from the pill it describes.
+- A `FloatingWindow` is an XDG toplevel, and **a Wayland client cannot learn
+  where its own toplevel sits on screen**. `VgsTooltip`'s screen-absolute
+  anchoring is therefore not computable for anything inside Settings or the
+  Changelog.
+
+So: pick by the host window, not by what nearby code happens to use. If you are
+writing a bar/dock/plugin widget you want `VgsTooltip`; anywhere else you want
+`VgsInlineTooltip`, and usually you want neither directly — `StateLayer` and
+`VgsActionButton` already expose `tooltipText` / `tooltipSide` and handle the
+hover delay for you.
+
+`Widgets/Tooltip/` is not part of the `qs.Widgets` surface; it holds the shared
+body only, and consumers should never import it.
+
+The one thing the shared body cannot infer is whether it has a backdrop, so each
+host declares it. `VgsTooltip` passes `blurAvailable: true` — its `WindowBlur` is
+a real backdrop. `VgsInlineTooltip` passes `false`: a `Popup` blurs nothing
+behind itself, and glass over nothing reads as a translucent surface floating on
+a hard edge. This is the same call every other backdrop-less surface makes
+(context menus, `VgsOSD`, `VgsSlideout`). Any future host of `TooltipBody` has to
+answer the same question — it is not safe to inherit the default.
+
+Reveal delays are owned by the caller and are **not** currently uniform —
+`StateLayer` waits 400 ms, the dock and the plugin pills 250 ms. That predates
+the convergence and is left alone deliberately: changing it is a behaviour
+change, not a design-language one.
+
 ## Where to look
 
 | Concern | File |
@@ -233,5 +277,6 @@ Popout/CC/Dash cards are bespoke (no shared component); they inherit the neutral
 | Form tokens, colors, elevation | `Common/Theme.qml` |
 | Rounding / spacing / motion scales | `Common/Appearance.qml` |
 | Buttons, inputs, toggles, chips, tabs | `Widgets/Vgs*.qml` |
+| Tooltips | `Widgets/VgsTooltip.qml`, `Widgets/VgsInlineTooltip.qml`, shared body in `Widgets/Tooltip/` |
 | Settings shell + nav | `Modals/Settings/*` |
 | Launcher | `Modals/Launcher/*` |

@@ -78,7 +78,7 @@ Item {
     signal sliderValueChanged(int newValue)
     signal sliderDragFinished(int finalValue)
 
-    VgsTooltipV2 {
+    VgsInlineTooltip {
         id: sharedTooltip
     }
 

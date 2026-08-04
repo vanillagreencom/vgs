@@ -85,10 +85,7 @@ FloatingWindow {
                     iconSize: Theme.iconSize - 4
                     iconColor: Theme.surfaceText
                     onClicked: root.dismiss()
-
-                    VgsTooltip {
-                        text: I18n.tr("Close")
-                    }
+                    tooltipText: I18n.tr("Close")
                 }
             }
         }
