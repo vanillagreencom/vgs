@@ -421,6 +421,7 @@ Usage:
   vshell theme lint [name]
   vshell theme migrate <name>|--all
   vshell theme apps [--enable <app>|--disable <app>]
+  vshell theme catalog list|install <name>...|--all|remove <name>...
   vshell theme regenerate <name> [--app <id>] [--yes]
   vshell fonts status|apply|reset
   vshell deps status|check <feature>

@@ -61,6 +61,23 @@ recipe runs the installer without stating a bundle.
 | Void | `core` for `vgs-shell`, `extras` for `vgs-shell-assets` |
 | Nix | `all`; the flake has no split output |
 
+`core` additionally installs `themes/catalog.json` and `themes/catalog-previews/<name>.png` —
+the download catalog plus every non-installed theme's screenshot (~23 MiB against the ~1.1 GiB
+of wallpapers that motivated the split). Without them, Settings → Themes → **Download More
+Themes** could list the other themes but not show any of them, and a base install would offer
+exactly one theme with no way to get the rest. `extras` ships neither; `all` needs neither,
+because every theme carries its own `preview.png`. Regenerate the catalog with
+`scripts/gen-theme-catalog.py --write` after adding or editing a theme package —
+`scripts/check-package-assets.sh` fails when it is stale, because a stale manifest makes every
+download of a changed theme fail its checksum.
+
+Downloads are built from the catalog's pinned `source.ref`, a release tag, so **every release must
+repoint it**: `scripts/gen-theme-catalog.py --ref vX.Y.Z --write` as part of step 1 of the release
+flow. `scripts/check-release.sh` fails when the ref does not match `VERSION`. The consequence of the
+pin is that a theme edited on `main` is downloadable only from the next release onward — until then
+the tagged file and the regenerated checksum disagree and that one theme's download fails loudly
+rather than installing something that does not match the manifest.
+
 ## Channels
 
 | System | Channel | Status |

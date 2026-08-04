@@ -22,6 +22,20 @@ grep -q "install='vgs-shell-git.install'" "$root/packaging/arch/vgs-shell-git/PK
 grep -q '^	install = vgs-shell-git.install$' "$root/packaging/arch/vgs-shell-git/.SRCINFO"
 test -f "$root/packaging/arch/vgs-shell-git/vgs-shell-git.install"
 
+# The theme download catalog builds its URLs from a pinned tag. A release that
+# ships theme changes without repointing the catalog at its own tag serves the
+# previous tag's files against the new checksums, so every download of a changed
+# theme fails. Regenerate with `scripts/gen-theme-catalog.py --ref vX.Y.Z --write`.
+python3 - "$root" "$version" <<'PY'
+import json, sys
+root, version = sys.argv[1], sys.argv[2]
+ref = json.load(open(f"{root}/themes/catalog.json"))["source"]["ref"]
+if ref != f"v{version}":
+    raise SystemExit(
+        f"themes/catalog.json is pinned to {ref}, not v{version}; "
+        f"run scripts/gen-theme-catalog.py --ref v{version} --write")
+PY
+
 "$root/scripts/gen-package-metadata.py"
 bash -n "$root/install.sh" "$root/uninstall.sh" "$root/scripts/build-release.sh" "$root/packaging/install-system.sh" "$root/scripts/check-package-assets.sh"
 bash "$root/scripts/check-package-assets.sh"

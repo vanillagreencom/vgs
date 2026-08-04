@@ -2317,7 +2317,110 @@ def test_notification_daemon_label_handles_scope_units():
                  "a daemon under a .service unit must still be named")
 
 
+def test_theme_catalog_download_verifies_every_file():
+    """A catalog download must land verbatim, and must refuse anything it cannot verify."""
+    import hashlib
+
+    def scenario(tmp: Path):
+        source = tmp / "source" / "demo"
+        (source / "apps").mkdir(parents=True)
+        (source / "theme.json").write_text('{"name":"demo","mode":"dark","source":"curated"}\n')
+        (source / "colors.toml").write_text('background = "#101010"\nforeground = "#eeeeee"\n')
+        (source / "apps" / "btop.theme").write_text("theme\n")
+        files = []
+        for rel in ("theme.json", "colors.toml", "apps/btop.theme"):
+            blob = (source / rel).read_bytes()
+            files.append({"path": rel, "size": len(blob), "sha256": hashlib.sha256(blob).hexdigest()})
+
+        builtin = tmp / "builtin"
+        builtin.mkdir()
+        (builtin / "catalog.json").write_text(json.dumps({
+            "version": 1,
+            "source": {"ref": "vTest", "baseUrl": "https://example.invalid/themes"},
+            "themes": [{"name": "demo", "mode": "dark", "files": files,
+                        "size": sum(f["size"] for f in files)}],
+        }))
+
+        original_builtin = helper.builtin_themes_dir
+        helper.builtin_themes_dir = lambda: builtin
+        os.environ["VGS_THEME_CATALOG_BASE_URL"] = "file://" + str(tmp / "source")
+        try:
+            catalog = helper.load_theme_catalog()
+            base_url, allow_local = helper.theme_catalog_base_url(catalog)
+            entry = helper.catalog_theme_entry(catalog, "demo")
+
+            result = helper.catalog_download_theme(entry, base_url, allow_local)
+            assert_equal(result["status"], "installed", "catalog download status")
+            dest = helper.user_themes_dir() / "demo"
+            for rel in ("theme.json", "colors.toml", "apps/btop.theme"):
+                assert_equal((dest / rel).read_bytes(), (source / rel).read_bytes(),
+                             f"downloaded {rel} must be byte-identical")
+            assert_equal(helper.catalog_marker("demo").get("ref"), "vTest", "download marker records the ref")
+
+            listed = [e for e in helper.catalog_entries() if e["name"] == "demo"][0]
+            assert_equal((listed["installed"], listed["downloaded"]), (True, True), "catalog list state")
+
+            again = helper.catalog_download_theme(entry, base_url, allow_local)
+            assert_equal(again["status"], "skipped", "an installed theme is not re-downloaded")
+
+            assert_equal(helper.catalog_remove_theme("demo")["status"], "removed", "catalog remove")
+            assert_equal(dest.exists(), False, "removed theme dir is gone")
+
+            # A hand-made user theme carries no marker: remove must refuse it.
+            (helper.user_themes_dir() / "mine").mkdir(parents=True)
+            try:
+                helper.catalog_remove_theme("mine")
+                raise AssertionError("removing a non-downloaded theme must fail")
+            except ValueError:
+                pass
+            assert_equal((helper.user_themes_dir() / "mine").exists(), True, "local theme survives a refused remove")
+
+            # Tampered checksum: nothing may land, not even partially.
+            tampered = json.loads(json.dumps(entry))
+            tampered["files"][0]["sha256"] = "0" * 64
+            try:
+                helper.catalog_download_theme(tampered, base_url, allow_local)
+                raise AssertionError("checksum mismatch must fail the download")
+            except ValueError:
+                pass
+            assert_equal(dest.exists(), False, "a failed download leaves no theme dir")
+            assert_equal(list(helper.user_themes_dir().glob(".catalog-*")), [],
+                         "a failed download leaves no staging dir")
+
+            for bad in ("../evil", "/etc/passwd", "apps/../../evil", ".ssh/id_rsa", "notes.txt"):
+                try:
+                    helper._catalog_check_relpath(bad)
+                    raise AssertionError(f"catalog path {bad!r} must be rejected")
+                except ValueError:
+                    pass
+
+            # https is the only scheme accepted without the test-only override.
+            try:
+                helper._catalog_fetch("file:///etc/passwd", False)
+                raise AssertionError("non-https downloads must be refused")
+            except ValueError:
+                pass
+        finally:
+            helper.builtin_themes_dir = original_builtin
+            os.environ.pop("VGS_THEME_CATALOG_BASE_URL", None)
+
+    with_temp_home(scenario)
+
+
+def test_theme_catalog_manifest_matches_the_repo():
+    """The committed catalog must describe the themes actually in the tree."""
+    catalog = json.loads((REPO_ROOT / "themes" / "catalog.json").read_text())
+    names = sorted(e["name"] for e in catalog["themes"])
+    on_disk = sorted(p.parent.name for p in (REPO_ROOT / "themes").glob("*/theme.json"))
+    assert_equal(names, on_disk, "catalog themes must match themes/ on disk")
+    assert_equal(catalog["source"]["baseUrl"].startswith("https://"), True, "catalog must download over https")
+
+
 def main():
+    assert_equal(helper._theme_command_mutates(["catalog", "install", "ayu"]), True,
+                 "catalog installs must serialize with theme applies")
+    assert_equal(helper._theme_command_mutates(["catalog", "list"]), False,
+                 "listing the catalog must not take the theme lock")
     assert_equal(helper._theme_command_mutates(["chromium-policy"]), True,
                  "Chromium policy refresh must serialize with theme applies")
     test_system_font_normalization()
@@ -2372,6 +2475,8 @@ def main():
     test_missing_terminal_reaches_the_user()
     test_terminal_wait_blocks_until_the_terminal_exits()
     test_preferred_terminal_is_tried_first()
+    test_theme_catalog_download_verifies_every_file()
+    test_theme_catalog_manifest_matches_the_repo()
     subprocess.run(
         [sys.executable, str(REPO_ROOT / "scripts" / "check-vshell-niri.py")],
         check=True,
