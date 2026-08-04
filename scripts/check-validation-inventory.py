@@ -203,6 +203,13 @@ def main() -> int:
         if head in {"node", "bash", "sh", "python3"} and len(argv) > 1:
             if SYNTAX_CHECK_FLAGS.intersection(argv[1:]):
                 continue
+            # scripts/lib/ holds LIBRARIES — imported or sourced, never run as
+            # a command. AGENTS.md § Validation says they stay non-executable
+            # deliberately, so running a library's built-in self-test through
+            # its interpreter is the correct form, not the VGS-30 defect of a
+            # doc that omits a prefix the file actually needs.
+            if any(a.startswith("scripts/lib/") for a in argv[1:]):
+                continue
             target = next((a for a in argv[1:] if not a.startswith("-")), None)
             if target and (REPO_ROOT / target).is_file():
                 problems.append(
