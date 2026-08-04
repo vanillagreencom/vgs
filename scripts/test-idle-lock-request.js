@@ -22,26 +22,14 @@
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
+// Comment- and string-aware, so a brace inside either cannot truncate a body
+// and leave the test silently covering nothing. See scripts/lib/qml-block.js.
+const { extractBlock } = require("./lib/qml-block.js");
 
 const IDLE_QML = path.join(__dirname, "..", "quickshell", "vshell", "Services", "IdleService.qml");
 const source = fs.readFileSync(IDLE_QML, "utf8");
 
 // ---- extract the shipped bodies ------------------------------------------
-
-function extractBlock(text, opener, fromIndex = 0) {
-    const start = text.indexOf(opener, fromIndex);
-    assert.notEqual(start, -1, `could not find "${opener}" in IdleService.qml`);
-    const i = text.indexOf("{", start);
-    let depth = 0;
-    for (let j = i; j < text.length; j++) {
-        if (text[j] === "{") depth++;
-        else if (text[j] === "}") {
-            depth--;
-            if (depth === 0) return text.slice(i + 1, j);
-        }
-    }
-    throw new Error(`unbalanced braces after "${opener}"`);
-}
 
 const requestBody = extractBlock(source, "function requestLock(source: string): void");
 const timerIndex = source.indexOf("id: uiLockRetry");
@@ -79,6 +67,7 @@ function compile(body, scopeArg, ...params) {
 
 function makeHarness() {
     const activations = [];
+    const infos = [];
     const warnings = [];
     const errors = [];
 
@@ -96,8 +85,9 @@ function makeHarness() {
 
     const root = {
         lockComponent: null,
-        _pendingLockSource: "",
+        _pendingLockSources: [],
         log: {
+            info: (...a) => infos.push(a.join(" ")),
             warn: (...a) => warnings.push(a.join(" ")),
             error: (...a) => errors.push(a.join(" ")),
         },
@@ -116,7 +106,7 @@ function makeHarness() {
         return true;
     }
 
-    return { root, timer, tick, activations, warnings, errors };
+    return { root, timer, tick, activations, infos, warnings, errors };
 }
 
 function withComponent(harness) {
@@ -132,7 +122,7 @@ function withComponent(harness) {
 
     assert.deepEqual(h.activations, ["activate"], "an available lock must be activated exactly once");
     assert.equal(h.timer.running, false, "no retry should be armed when the component is present");
-    assert.equal(h.root._pendingLockSource, "", "nothing should be left pending");
+    assert.deepEqual(h.root._pendingLockSources, [], "nothing should be left pending");
     assert.deepEqual(h.warnings, [], "the ready path must not warn");
 }
 
@@ -144,7 +134,7 @@ function withComponent(harness) {
 
     assert.deepEqual(h.activations, [], "nothing to activate yet");
     assert.equal(h.timer.running, true, "the request must be retained, not dropped");
-    assert.equal(h.root._pendingLockSource, "power menu", "the source must be remembered for the log");
+    assert.deepEqual(h.root._pendingLockSources, ["power menu"], "the source must be remembered for the log");
     assert.equal(h.warnings.length, 1, "the wait must be announced once");
     assert.match(h.warnings[0], /power menu/, "the warning must name the source");
 
@@ -157,7 +147,7 @@ function withComponent(harness) {
 
     assert.deepEqual(h.activations, ["activate"], "the deferred request must fire exactly once");
     assert.equal(h.timer.running, false, "the retry must stop once served");
-    assert.equal(h.root._pendingLockSource, "", "pending state must be cleared");
+    assert.deepEqual(h.root._pendingLockSources, [], "pending state must be cleared");
 
     // Further ticks must not re-fire it.
     h.tick();
@@ -165,20 +155,42 @@ function withComponent(harness) {
     assert.deepEqual(h.activations, ["activate"], "a served request must never fire twice");
 }
 
-// ---- 3. repeated requests while pending collapse to one activation --------
+// ---- 3. every distinct requester is recorded, but the lock fires once -----
 
 {
     const h = makeHarness();
     h.root.requestLock("control center");
     h.root.requestLock("power menu");
-    h.root.requestLock("control center");
+    h.root.requestLock("control center"); // a repeat of one already recorded
 
-    assert.equal(h.warnings.length, 1, "a queued request must not re-warn on every press");
-    assert.equal(h.root._pendingLockSource, "control center", "the first source stays pending");
+    // Dropping the identity of later callers would keep part of the very silence
+    // this path exists to remove, so each DISTINCT source is announced...
+    assert.equal(h.warnings.length, 2, "each distinct requester must be announced");
+    assert.match(h.warnings[0], /control center/);
+    assert.match(h.warnings[1], /power menu/);
+    // ...while a repeat of one already pending must not re-warn.
+    assert.deepEqual(
+        h.root._pendingLockSources,
+        ["control center", "power menu"],
+        "every distinct requester must be remembered, in order, without duplicates",
+    );
 
     withComponent(h);
     h.tick();
     assert.deepEqual(h.activations, ["activate"], "three presses while waiting must lock once, not three times");
+}
+
+// ---- 3b. the drop error names every caller that tried --------------------
+
+{
+    const h = makeHarness();
+    h.root.requestLock("control center");
+    h.root.requestLock("power menu");
+    while (h.tick());
+
+    assert.equal(h.errors.length, 1, "one drop report, not one per requester");
+    assert.match(h.errors[0], /control center/, "the drop must name the first requester");
+    assert.match(h.errors[0], /power menu/, "the drop must name the later requester too");
 }
 
 // ---- 4. component never appears: bounded, loud, and cleared ---------------
@@ -198,7 +210,7 @@ function withComponent(harness) {
     assert.equal(h.errors.length, 1, "giving up must be reported at error level, not silently");
     assert.match(h.errors[0], /control center/, "the error must name the source that was dropped");
     assert.match(h.errors[0], /DROPPED/, "the error must say the request was dropped");
-    assert.equal(h.root._pendingLockSource, "", "pending state must not leak past the give-up");
+    assert.deepEqual(h.root._pendingLockSources, [], "pending state must not leak past the give-up");
     assert.equal(h.timer.running, false, "the timer must be stopped on give-up");
 
     // A later request, once the shell can lock, must still work.

@@ -77,7 +77,11 @@ Singleton {
     // from the lock *request*).
     property bool isShellLocked: false
 
-    property string _pendingLockSource: ""
+    // Every caller that asked while the lock was unavailable, in order. A single
+    // string would keep the first name and discard the rest — and since the
+    // defect this whole path exists to fix IS a silently dropped lock request,
+    // losing who else asked would keep part of that silence.
+    property var _pendingLockSources: []
 
     // The one way UI code should ask for a lock. `lockComponent` is assigned in
     // Lock.qml::_start(), which waits on the duplicate-instance guard, so there
@@ -89,15 +93,19 @@ Singleton {
     // if it still cannot be served, say so loudly rather than drop it.
     function requestLock(source: string): void {
         if (lockComponent) {
-            _pendingLockSource = "";
+            _pendingLockSources = [];
             uiLockRetry.stop();
             lockComponent.activate();
             return;
         }
-        if (_pendingLockSource !== "")
+        // De-duplicated by name, so holding a button down does not spam the log,
+        // but every DISTINCT caller is both announced and remembered.
+        if (_pendingLockSources.indexOf(source) === -1) {
+            _pendingLockSources = _pendingLockSources.concat([source]);
+            log.warn("lock requested by", source, "before the lock component was ready; retrying");
+        }
+        if (uiLockRetry.running)
             return;
-        log.warn("lock requested by", source, "before the lock component was ready; retrying");
-        _pendingLockSource = source;
         uiLockRetry.attempts = 0;
         uiLockRetry.restart();
     }
@@ -207,9 +215,9 @@ Singleton {
         onTriggered: {
             if (root.lockComponent) {
                 stop();
-                const source = root._pendingLockSource;
-                root._pendingLockSource = "";
-                root.requestLock(source);
+                root.log.info("serving deferred lock request from", root._pendingLockSources.join(", "));
+                root._pendingLockSources = [];
+                root.lockComponent.activate();
                 return;
             }
             attempts++;
@@ -218,10 +226,10 @@ Singleton {
             // Anything still missing here genuinely cannot lock.
             if (attempts >= 16) {
                 stop();
-                root.log.error("lock request from", root._pendingLockSource, "DROPPED after",
-                    attempts * interval, "ms — this shell has no lock component",
+                root.log.error("lock request(s) from", root._pendingLockSources.join(", "),
+                    "DROPPED after", attempts * interval, "ms — this shell has no lock component",
                     "(greeter, or refused as a duplicate instance)");
-                root._pendingLockSource = "";
+                root._pendingLockSources = [];
             }
         }
     }

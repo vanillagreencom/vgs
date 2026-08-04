@@ -30,6 +30,9 @@
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
+// Comment- and string-aware, so a brace inside either cannot truncate a body
+// and leave the test silently covering nothing. See scripts/lib/qml-block.js.
+const { extractBlock } = require("./lib/qml-block.js");
 
 const IDLE_QML = path.join(__dirname, "..", "quickshell", "vshell", "Services", "IdleService.qml");
 const source = fs.readFileSync(IDLE_QML, "utf8");
@@ -46,21 +49,6 @@ for (const name of WATCHED) {
 }
 
 // ---- extract the shipped bodies ------------------------------------------
-
-function extractBlock(text, opener) {
-    const start = text.indexOf(opener);
-    assert.notEqual(start, -1, `could not find "${opener}" in IdleService.qml`);
-    let i = text.indexOf("{", start);
-    let depth = 0;
-    for (let j = i; j < text.length; j++) {
-        if (text[j] === "{") depth++;
-        else if (text[j] === "}") {
-            depth--;
-            if (depth === 0) return text.slice(i + 1, j);
-        }
-    }
-    throw new Error(`unbalanced braces after "${opener}"`);
-}
 
 const snapshotBody = extractBlock(source, "function snapshot(): void");
 const reloadedBody = extractBlock(source, "onReloaded:");

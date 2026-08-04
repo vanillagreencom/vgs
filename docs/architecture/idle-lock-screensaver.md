@@ -308,11 +308,22 @@ retries across the startup window (250 ms × 16, comfortably past `shell.qml`'s
 2 s guard fail-open) and then logs an error naming the source, so a request that
 genuinely cannot be served is loud rather than lost.
 
+Every distinct caller that asked while the lock was unavailable is recorded in
+`_pendingLockSources` and named in the eventual drop error — keeping only the
+first would preserve part of the silence this path exists to remove. Repeats of
+an already-pending source do not re-warn, so holding a button down cannot spam
+the log.
+
 `scripts/test-idle-lock-request.js` drives the shipped `requestLock()` and retry
 bodies against a hand-ticked model of QML's `Timer`: component present, component
-arriving late, repeated presses while pending, and the give-up path. It also
-asserts the retry window still outlasts the guard fail-open, and that `VGS.qml`
-has not reverted to `lockComponent?.activate()`.
+arriving late, several distinct requesters while pending, and the give-up path.
+It also asserts the retry window still outlasts the guard fail-open, and that
+`VGS.qml` has not reverted to `lockComponent?.activate()`.
+
+Both that test and `test-idle-reload-snapshot.js` pull the bodies out with
+`scripts/lib/qml-block.js`, which skips comments and strings rather than counting
+braces naively — a brace in either would otherwise truncate a body and leave the
+test green while covering nothing.
 
 ### How this was verified
 
