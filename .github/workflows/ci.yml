@@ -88,6 +88,12 @@ jobs:
       - name: Naming guard
         run: scripts/check-naming.sh
 
+      # Asserts this workflow and AGENTS.md § Validation still name the same
+      # checks. Four checks under scripts/ were committed and invoked by nothing
+      # at all before this existed (VGS-50).
+      - name: Validation inventory
+        run: scripts/check-validation-inventory.py
+
       # AGENTS.md lists a bare `git diff --check`, which is a working-tree
       # check: on a clean CI checkout it inspects nothing at all. The form that
       # means something is a range of what the event actually introduces.
@@ -169,6 +175,12 @@ jobs:
           scripts/check-package-assets.sh
           scripts/check-aur-sync.py
 
+      # Every external command shipped code probes must be declared in
+      # config/vshell/dependencies.json or excluded there with a reason, or
+      # `vshell deps status` reports a healthy system while a feature is dead.
+      - name: Probed-command declarations
+        run: scripts/check-command-declarations.py
+
       - name: Settings migration
         run: |
           node --check scripts/check-settings-migration.js
@@ -176,12 +188,22 @@ jobs:
 
       - name: Queue, theme-request and plugin-policy regressions
         run: |
-          node scripts/test-restyle-queue.js
-          node scripts/test-theme-requests.js
-          node scripts/test-latest-transaction-queue.js
-          node scripts/test-bundled-override.js
-          node scripts/test-idle-reload-snapshot.js
-          node scripts/test-idle-lock-request.js
+          scripts/test-restyle-queue.js
+          scripts/test-theme-requests.js
+          scripts/test-latest-transaction-queue.js
+          scripts/test-bundled-override.js
+          scripts/test-idle-reload-snapshot.js
+          scripts/test-idle-lock-request.js
+          scripts/test-sudo-toggle-confirm.js
+          scripts/test-pill-hover-safety.js
+
+      # Wired in by VGS-50: all four were committed, maintained and invoked by
+      # nothing until then.
+      - name: Fixture and capability regressions
+        run: |
+          scripts/check-display-config-fixtures.js
+          scripts/check-vgs-menu-capabilities.js
+          scripts/check-vshell-ipc.sh
 
       - name: Helper and CLI checks
         run: |
@@ -193,7 +215,9 @@ jobs:
       # AGENTS.md § Backend rules: this is what keeps the Go and QML sides of
       # the capability inventory in agreement. Pure text analysis, no toolchain.
       - name: Backend capability inventory
-        run: scripts/check-backend-inventory.py
+        run: |
+          scripts/check-backend-inventory.py
+          scripts/check-backend-inventory-tests.py
 
       # Quickshell matches reload children by index, so Lock.qml's child ORDER
       # is what keeps a session lock alive across a hot reload. Getting it wrong
@@ -222,6 +246,32 @@ jobs:
           go build ./...
           go vet ./...
           go test -race ./...
+
+      # actionlint lints `run:` blocks by shelling out to shellcheck, and with
+      # shellcheck absent it skips every one of them and still exits 0 (VGS-38).
+      # scripts/check-workflows.sh FAILS on a missing tool rather than
+      # degrading, so this pairing has to be installed, not assumed. The runner
+      # image ships shellcheck; actionlint is a single static binary.
+      - name: Install actionlint and shellcheck
+        env:
+          ACTIONLINT_VERSION: 1.7.12
+        run: |
+          set -euo pipefail
+          # The ubuntu runner image ships shellcheck, but the runner resolves
+          # through CI_RUNNER_2V and must not depend on that; install it if the
+          # image did not bring one. check-workflows.sh fails without it either
+          # way, so this can never degrade into a silent skip.
+          command -v shellcheck >/dev/null 2>&1 || {
+            sudo apt-get update
+            sudo apt-get install -y --no-install-recommends shellcheck
+          }
+          curl -fsSL -o "$RUNNER_TEMP/actionlint.tar.gz" \
+            "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz"
+          tar -xzf "$RUNNER_TEMP/actionlint.tar.gz" -C "$RUNNER_TEMP" actionlint
+          echo "$RUNNER_TEMP" >>"$GITHUB_PATH"
+
+      - name: Workflow lint (YAML and every `run:` block)
+        run: scripts/check-workflows.sh
 
       # qmllint is what `--require-static` needs, and no runner image ships Qt.
       # This is the single most expensive step here, which is why it is last.

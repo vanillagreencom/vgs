@@ -133,31 +133,52 @@ Scope to the area touched (Go-only: inventory guard + go block; QML-only: naming
 ```bash
 scripts/check-naming.sh
 python3 scripts/lib/shell_scan.py
+scripts/check-validation-inventory.py
 scripts/gen-package-metadata.py
 scripts/check-package-assets.sh
 scripts/check-aur-sync.py
+scripts/check-command-declarations.py
 node --check scripts/check-settings-migration.js
 scripts/check-settings-migration.js
-node scripts/test-restyle-queue.js
-node scripts/test-theme-requests.js
-node scripts/test-sudo-toggle-confirm.js
-node scripts/test-latest-transaction-queue.js
-node scripts/test-bundled-override.js
-node scripts/test-idle-reload-snapshot.js
-node scripts/test-idle-lock-request.js
+scripts/test-restyle-queue.js
+scripts/test-theme-requests.js
+scripts/test-sudo-toggle-confirm.js
+scripts/test-latest-transaction-queue.js
+scripts/test-bundled-override.js
+scripts/test-idle-reload-snapshot.js
+scripts/test-idle-lock-request.js
 scripts/check-vshell-helper.py
 scripts/check-brightness.py
 scripts/check-backend-inventory.py
+scripts/check-backend-inventory-tests.py
 scripts/check-lock-reload-order.py
-node scripts/test-pill-hover-safety.js
+scripts/check-display-config-fixtures.js
+scripts/check-vgs-menu-capabilities.js
+scripts/check-vshell-ipc.sh
+scripts/test-pill-hover-safety.js
 python3 -m py_compile bin/vshell-helper
 bash -n bin/vshell
 git diff --check
+scripts/check-workflows.sh
 scripts/qml-smoke.sh --nested --require-static
 scripts/check-validation-safety.sh
 scripts/smoke-surfaces.sh
 (cd backend && go build ./... && go vet ./... && go test -race ./...)
 ```
+
+Every script above is invoked bare, and every one of them carries the
+executable bit — a `node`/`bash`/`python3` prefix the doc omitted is what made
+the suite fail for anyone following it literally (VGS-30).
+`scripts/lib/session-snapshot.sh` stays non-executable on purpose: it is
+sourced, never run. `bin/vshell_niri.py`, `bin/vshell_niri_kdl.py` and
+`bin/vshell_theme_color.py` likewise — they are importable modules with no
+shebang and no `__main__`.
+
+`scripts/check-validation-inventory.py` is what keeps this list honest in both
+directions: every executable check under `scripts/` must appear here and in CI
+or carry a written exclusion, and every command here must run exactly as
+written. Four checks sat committed and never invoked by anything before it
+existed (VGS-50).
 
 ### What CI covers, and what it cannot
 
