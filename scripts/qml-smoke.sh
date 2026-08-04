@@ -484,8 +484,21 @@ EOF
   #   bare 'Error:'            over-matches process output and third-party
   #                            library chatter (ffmpeg, dbus) piped into the log.
   local error_classes='ReferenceError|TypeError|SyntaxError'
-  findings="$(grep -nE "^[[:space:]]*ERROR|is not a type|Cannot assign|Unable to assign|Failed to start process|Type .* unavailable|$error_classes" "$log" |
-    grep -vE "$sandbox_noise" || true)"
+  # `|| true` here would treat a MISSING or unreadable log exactly like a clean
+  # one: grep exits 1 for "no match" and 2 for "could not read the file", and
+  # collapsing both into an empty result reports success over a log that was
+  # never scanned. Distinguish them.
+  local grep_rc=0
+  findings="$(grep -nE "^[[:space:]]*ERROR|is not a type|Cannot assign|Unable to assign|Failed to start process|Type .* unavailable|$error_classes" "$log")" || grep_rc=$?
+  if [[ "$grep_rc" -gt 1 ]]; then
+    fail "could not scan the sandbox log for runtime errors (grep exit $grep_rc, log '$log')"
+    return
+  fi
+  findings="$(printf '%s\n' "$findings" | grep -vE "$sandbox_noise")" || grep_rc=$?
+  if [[ "$grep_rc" -gt 1 ]]; then
+    fail "could not filter sandbox noise out of the runtime findings (grep exit $grep_rc)"
+    return
+  fi
   if [[ -n "$findings" ]]; then
     printf '%s\n' "$findings" >&2
     fail "QML/runtime errors in the sandboxed shell"

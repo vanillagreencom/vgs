@@ -96,6 +96,7 @@ pkg_postinst() {
 	optfeature "faster launcher file search" sys-apps/fd
 	optfeature "launcher text search" sys-apps/ripgrep
 	optfeature "fingerprint unlock" sys-auth/fprintd
+	optfeature "privileged actions run from the shell (user management, some system settings)" sys-auth/polkit
 	optfeature "cloud sync streaming mounts" sys-fs/fuse
 	optfeature "Qt 5 application theming" x11-misc/qt5ct
 	optfeature "Qt 6 application theming" x11-misc/qt6ct

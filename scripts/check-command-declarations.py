@@ -55,6 +55,30 @@ SCAN_ROOTS = (
 
 SCAN_SUFFIXES = {".py", ".sh", ".qml", ".js", ".json", ".service", ""}
 
+# Vendored asset trees: theme data and cursor/icon binaries, not VGS code. The
+# whitespace check in ci.yml excludes the same two for the same reason. A probe
+# site cannot exist in them, and scanning them would mean either reading
+# thousands of binaries or swallowing the decode errors they raise.
+SKIP_TREES = (
+    REPO_ROOT / "config" / "vshell" / "icons",
+    REPO_ROOT / "config" / "vshell" / "nvim" / "colorschemes",
+)
+
+
+def _is_binary(path: Path) -> bool:
+    """A NUL byte near the start means the file is not text.
+
+    Compiled helpers ship under bin/ with no extension, so the extension filter
+    alone cannot tell them from shell scripts. This is a DELIBERATE skip class,
+    not a swallowed error: a binary cannot contain a `shutil.which` call, and
+    anything that fails to decode for any OTHER reason still fails the check.
+    """
+    try:
+        with path.open("rb") as handle:
+            return b"\x00" in handle.read(4096)
+    except OSError:
+        return False
+
 # Shell builtins, keywords and the interpreters a probe is expressed *in* rather
 # than *for*. `command -v sh` asks about the shell already running the script.
 _SHELL_AND_INTERPRETERS = {
@@ -128,6 +152,14 @@ COMMAND_V_RE = re.compile(r"""command\s+-v\s+["']?([A-Za-z0-9_.+@-]+)""")
 # The leading boundary matters: without it `queueCommand(["capture", ...])`
 # matches on its own name, and `capture` is a vshell subcommand — the real argv
 # head there is Paths.vshellCli, prepended by the callee.
+# The same lead-ins, but with the bracket ending the line: the head is on a
+# following line, which the per-line regex below can never reach.
+ARGV_OPEN_RE = re.compile(
+    r"""(?<![A-Za-z0-9_])(?:command|argv|execDetached\()\s*[:=(]?\s*\[\s*$""",
+    re.IGNORECASE,
+)
+ARGV_FIRST_ENTRY_RE = re.compile(r"""^["']([^"'\s]+)["']""")
+
 ARGV_HEAD_RE = re.compile(
     r"""(?<![A-Za-z0-9_])(?:command|argv|execDetached\()\s*[:=(]?\s*\[\s*["']([^"'\s]+)["']""",
     re.IGNORECASE,
@@ -164,9 +196,16 @@ def excluded_commands(manifest: dict) -> set[str]:
     }
 
 
-def scan() -> dict[str, list[str]]:
-    """command -> sorted list of "path:line" probe sites."""
+def scan() -> tuple[dict[str, list[str]], list[str]]:
+    """(command -> sorted "path:line" probe sites, unreadable files).
+
+    Unreadable files are RETURNED, not skipped. Swallowing them left the scan
+    partial while the check still reported ok — a probe inside a file that
+    could not be decoded was simply unchecked, which is this script's own
+    governing rule broken by the script itself.
+    """
     sites: dict[str, set[str]] = {}
+    unreadable: list[str] = []
 
     def record(name: str, path: Path, lineno: int) -> None:
         if not _is_command_name(name):
@@ -182,11 +221,17 @@ def scan() -> dict[str, list[str]]:
                 continue
             if path.suffix not in SCAN_SUFFIXES:
                 continue
+            if any(path.is_relative_to(tree) for tree in SKIP_TREES):
+                continue
+            if _is_binary(path):
+                continue
             try:
                 text = path.read_text(encoding="utf-8")
-            except (UnicodeDecodeError, OSError):
+            except (UnicodeDecodeError, OSError) as exc:
+                unreadable.append(f"{path.relative_to(REPO_ROOT).as_posix()}: {exc}")
                 continue
-            for lineno, line in enumerate(text.splitlines(), 1):
+            lines = text.splitlines()
+            for lineno, line in enumerate(lines, 1):
                 for match in WHICH_RE.finditer(line):
                     record(match.group(1), path, lineno)
                 for match in COMMAND_V_RE.finditer(line):
@@ -194,8 +239,31 @@ def scan() -> dict[str, list[str]]:
                 if path.suffix in (".qml", ".js"):
                     for match in ARGV_HEAD_RE.finditer(line):
                         record(match.group(1), path, lineno)
+                    # An argv array whose opening bracket ends the line puts the
+                    # command on the NEXT one — the idiomatic form once a list
+                    # grows past the margin:
+                    #
+                    #     command: [
+                    #         "some-tool",
+                    #         "--flag",
+                    #     ]
+                    #
+                    # A per-physical-line regex never sees that head at all, so
+                    # the probe went unrecorded. Look ahead past blank and
+                    # comment-only lines to the first entry.
+                    if ARGV_OPEN_RE.search(line):
+                        for offset in range(1, 6):
+                            if lineno + offset - 1 >= len(lines):
+                                break
+                            ahead = lines[lineno + offset - 1].strip()
+                            if not ahead or ahead.startswith("//"):
+                                continue
+                            head = ARGV_FIRST_ENTRY_RE.match(ahead)
+                            if head:
+                                record(head.group(1), path, lineno + offset)
+                            break
 
-    return {name: sorted(where) for name, where in sites.items()}
+    return ({name: sorted(where) for name, where in sites.items()}, unreadable)
 
 
 def main() -> int:
@@ -204,7 +272,16 @@ def main() -> int:
     excluded = excluded_commands(manifest)
     known = declared | excluded
 
-    probed = scan()
+    probed, unreadable = scan()
+    if unreadable:
+        print(
+            "check-command-declarations: FAIL: could not read shipped file(s), so the "
+            "scan was partial and proves nothing:",
+            file=sys.stderr,
+        )
+        for entry in unreadable:
+            print(f"  {entry}", file=sys.stderr)
+        return 1
     undeclared = {name: where for name, where in sorted(probed.items()) if name not in known}
 
     # An exclusion for a command nothing probes any more is stale: it claims a

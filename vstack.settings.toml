@@ -207,7 +207,33 @@ REVIEW_GATE_SHA_PREFIX_FLOOR = "7"
 # still fail closed. SECURITY: a deliberate, bounded relaxation with the
 # same trusted-publisher model as REVIEW_GATE_TRUSTED_STATUS_CONTEXTS; name
 # it only where every status publisher is trusted. Empty disables.
-REVIEW_GATE_OUTAGE_CONTEXT = "vstack-reviewer-outage"
+#
+# VGS ASSIGNMENT: DISABLED, because the "same trusted-publisher model" the
+# comment above claims is NOT implemented for this source. In
+# third_party/review-gate/scripts/review-predicate.sh the trusted-status path
+# filters publishers:
+#
+#     select(((.app.slug // "") != "") and ((.app.slug // "") != "github-actions"))
+#
+# and the outage read directly below it applies neither check — it selects on
+# `.context` and `.state == "success"` alone. So on a PUBLIC repo, anyone able
+# to post a commit status under this name substitutes for MISSING review
+# evidence entirely: the same bypass class as an empty
+# REVIEW_GATE_REVIEW_OBJECT_TRUSTED_LOGINS, through a different door.
+#
+# The predicate is vendored and held byte-identical to the vstack copy by
+# scripts/check-review-gate-vendor.sh, so patching it here is not the fix — the
+# publisher check belongs upstream. This file is not vendored, so emptying the
+# setting closes the path outright until that lands.
+#
+# DO NOT re-enable without the upstream publisher filter. VGS has no
+# orchestrator posting this today, so disabling it costs nothing: the only
+# behaviour lost is "merge anyway when every reviewer is silent", and
+# PR_REVIEW_ON_TIMEOUT = "block" already says VGS does not want that.
+#
+# (PR_REVIEW_OUTAGE_CONTEXT near the top of this file is a different setting —
+# the orch waiter's, not the gate's — and is already empty.)
+REVIEW_GATE_OUTAGE_CONTEXT = ""
 
 # Review-object trust list: logins whose review objects at the exact head
 # count as evidence. Empty = any non-author (the compatible default; on

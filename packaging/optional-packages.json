@@ -499,7 +499,13 @@
       "gentoo": "sys-fs/fuse"
     },
 
-    "pkexec": { "skip": "provided by the polkit hard dependency" },
+    "pkexec": {
+      "description": "privileged actions run from the shell (user management, some system settings)",
+      "arch": "polkit",
+      "debian": "pkexec",
+      "fedora": "polkit",
+      "gentoo": "sys-auth/polkit"
+    },
 
     "xdg-open": {
       "description": "opening files and URLs in their default application",

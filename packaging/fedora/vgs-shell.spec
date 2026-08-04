@@ -85,6 +85,8 @@ Suggests:       konsole
 Suggests:       nautilus
 # Niri compositor support
 Suggests:       niri
+# privileged actions run from the shell (user management, some system settings)
+Suggests:       polkit
 # Bluetooth audio codec selection
 Suggests:       pulseaudio-utils
 # Qt 5 application theming
