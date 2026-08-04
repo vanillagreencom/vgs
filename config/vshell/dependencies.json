@@ -20,6 +20,7 @@
     "gdbus": "Fallback path of the ghostty theme-reload hook, behind a SIGUSR2 attempt. Same reasoning as `nvim`.",
     "magick": "Third choice in the wallpaper-thumbnail chain, behind Pillow and the already-declared `ffmpeg`.",
     "xclip": "X11 clipboard fallback behind the declared `wl-copy`. Unreachable in a supported Hyprland/Niri session.",
+    "xdg-terminal-exec": "First choice of the terminal resolver, but it *launches* a terminal rather than being one: counting it as an alternative in the `terminal` group would report that group available on a system with no terminal at all, which is the VGS-54 defect. AUR-only, so it can never be a requirement either.",
     "g++": "Compiles the vendored third_party/asdcontrol for Apple display brightness. The preferred Apple path is pure-Python hidraw and packaging can ship a prebuilt binary, so a compiler is not a dependency of the feature.",
     "c++": "Alternative compiler name, same reasoning as `g++`."
   },
@@ -192,18 +193,22 @@
       ]
     },
     "sudo-toggle": {
+      "$comment": [
+        "Deliberately does NOT require the `terminal` group. Granting passwordless",
+        "sudo needs a terminal to prompt in, but reading status and REVOKING a",
+        "grant do not, and VGS-11 exists because gating both directions on a",
+        "terminal stranded machines in the escalated state. Reporting this feature",
+        "unavailable would tell a user with no terminal that they cannot take",
+        "back a grant they can, in fact, always take back."
+      ],
       "commands": [
         "sudo",
         "visudo"
-      ],
-      "requiresFeatures": [
-        "terminal"
       ]
     },
     "terminal": {
       "anyCommands": [
         [
-          "xdg-terminal-exec",
           "ghostty",
           "kitty",
           "alacritty",

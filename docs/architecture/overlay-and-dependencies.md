@@ -169,15 +169,17 @@ Go backend all call it; none of them names a terminal binary, and nothing
 outside it invokes `xdg-terminal-exec` or `uwsm`.
 
 ```bash
-vshell terminal resolve [--json]                 # what would be used, and why
-vshell terminal open [--app-id ID]               # a terminal window
-vshell terminal exec [--app-id ID|--tui] [--hold] -- <cmd> [args...]
+vshell terminal resolve [--json] [--prefer TERM]  # what would be used, and why
+vshell terminal open [--app-id ID]                # a terminal window
+vshell terminal exec [--app-id ID|--tui] [--hold] [--wait] [--prefer TERM] \
+                     -- <cmd> [args...]
 ```
 
 The chain, most preferred first:
 
 | Source | Where it comes from |
 |--------|---------------------|
+| `--prefer` | a terminal the caller already resolved and must not have discarded (the backend's `upgradeParams.terminal`) |
 | `terminalOverride` | Settings -> Launcher terminal picker, stored in `session.json` |
 | `$TERMINAL` | the session environment |
 | `xdg-terminal-exec` | the full XDG terminal spec, when it happens to be installed |
@@ -185,13 +187,32 @@ The chain, most preferred first:
 | installed terminals | `TERMINAL_CANDIDATES` in the helper, mirrored by the `terminal` feature group |
 
 `xdg-terminal-exec` is **AUR-only**, so it is an alternative and never a
-requirement: a default install with any terminal at all works. Each terminal's
+requirement: a default install with any terminal at all works. It is
+deliberately *not* one of the `terminal` feature group's alternatives — it
+launches a terminal rather than being one, so counting it would report the
+group available on a machine with no terminal installed, which is the VGS-54
+defect in a new costume. It sits in the `undeclared` map with that reason. Each terminal's
 argv shape (`-e` vs `--`, `--class=` vs `--app-id=` vs `-class`) lives in
 `TERMINAL_SPECS`; a terminal with no app-id equivalent has the app-id dropped
 rather than passed as an option it would reject. `uwsm app --` is prepended only
 when uwsm is present and the session is systemd — it is an enhancement, and
 hardcoding it is what made every VGS terminal action fail with
-`command not found` on installs without it (VGS-54).
+`command not found` on installs without it (VGS-54). Because presence does not
+prove the session can actually use it, each candidate that dies under the scope
+is retried without it before the next candidate, and `VSHELL_NO_APP_SCOPE=1`
+turns it off outright (the capture and screensaver scripts honour the same
+variable).
+
+By default `vshell terminal exec` returns as soon as the window is up. A caller
+that treats that exit as "the command finished" — the backend's upgrade
+supervisor does, and would otherwise permit a second package-manager run on top
+of a live one — must pass `--wait`, which blocks for the terminal's whole
+lifetime and returns its status.
+
+The `terminal` feature group gates *granting* passwordless sudo but deliberately
+does not gate the `sudo-toggle` group as a whole: reading status and **revoking**
+a grant need no terminal, and VGS-11 exists because gating both directions
+stranded machines in the escalated state.
 
 The file manager follows the same rule: `xdg-mime query default inode/directory`
 first — the XDG layer Settings -> Default Apps writes — then the installed

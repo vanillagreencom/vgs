@@ -1163,7 +1163,7 @@ def test_launcher_folder_opener_agreement():
                         f"/usr/bin/{os.path.basename(name)}" if os.path.basename(name) in _p else None
                     )
                     helper.subprocess.Popen = lambda *a, **k: _LiveTerminal()
-                    helper.terminal_candidates = lambda _t=has_terminal: [["kitty"]] if _t else []
+                    helper.terminal_candidates = lambda prefer=None, _t=has_terminal: [["kitty"]] if _t else []
                     helper.file_manager = lambda _m=manager: dict(_m)
                     state = f"binaries={sorted(present)} terminal={has_terminal} fm={manager.get('name')}"
                     try:
@@ -1540,14 +1540,14 @@ def test_launch_terminal_rejects_immediately_failing_terminal():
     # The systemd-scope wrapper is an environment detail; this test is about the
     # terminal itself, so spawn without it.
     helper.app_scope_prefix = lambda: []
-    helper.terminal_candidates = lambda: [["/bin/false"]]
+    helper.terminal_candidates = lambda prefer=None: [["/bin/false"]]
     try:
         assert_equal(helper.launch_terminal(["true"]), helper.TERMINAL_EXIT_FAILED,
                      "A terminal that exits non-zero immediately must be a failure")
     finally:
         helper.terminal_candidates = original
 
-    helper.terminal_candidates = lambda: []
+    helper.terminal_candidates = lambda prefer=None: []
     try:
         assert_equal(helper.launch_terminal(["true"]), 1,
                      "No terminal at all must report a distinct status")
@@ -1571,7 +1571,7 @@ def test_sudo_toggle_revoke_never_needs_a_terminal():
     original_terminals = helper.terminal_candidates
     original_avail = helper.sudo_toggle_availability
     original_euid = helper.os.geteuid
-    helper.terminal_candidates = lambda: []          # no terminal anywhere
+    helper.terminal_candidates = lambda prefer=None: []          # no terminal anywhere
     helper.sudo_toggle_availability = lambda: (True, "")
     helper.os.geteuid = lambda: 1000
 
@@ -1629,17 +1629,26 @@ def test_terminal_candidates_match_dependency_manifest():
     features = manifest["features"]
     any_commands = features["terminal"]["anyCommands"]
     assert_equal(len(any_commands), 1, "terminal must declare exactly one alternative set")
-    assert_equal(sorted(any_commands[0]),
-                 sorted(("xdg-terminal-exec",) + helper.TERMINAL_CANDIDATES),
+    assert_equal(sorted(any_commands[0]), sorted(helper.TERMINAL_CANDIDATES),
                  "dependencies.json terminals must match helper TERMINAL_CANDIDATES")
+    # `xdg-terminal-exec` launches a terminal; it is not one. Counting it here
+    # would report the group available on a machine with no terminal installed,
+    # which is exactly the VGS-54 defect.
+    assert_equal("xdg-terminal-exec" in any_commands[0], False,
+                 "a terminal launcher must not count as a terminal")
     # Terminals are declared once, by the group that owns them. Anything that
     # needs one says so by requiring that group, so there is no second list to
     # drift (VGS-32).
     for feature in ("sudo-toggle", "launcher-folder-open-yazi"):
         assert_equal(features[feature].get("anyCommands"), None,
                      f"{feature} must not restate the terminal list")
-        assert_equal("terminal" in (features[feature].get("requiresFeatures") or []), True,
-                     f"{feature} must require the terminal feature")
+    assert_equal("terminal" in (features["launcher-folder-open-yazi"].get("requiresFeatures") or []),
+                 True, "the Yazi opener must require the terminal feature")
+    # Revoking passwordless sudo needs no terminal (VGS-11), so gating the whole
+    # group on one would report the safety valve unavailable to the people who
+    # most need it.
+    assert_equal(features["sudo-toggle"].get("requiresFeatures"), None,
+                 "sudo-toggle must stay available without a terminal so a grant can be revoked")
     assert_equal(sorted(features["file-manager"]["anyCommands"][0]),
                  sorted(helper.FILE_MANAGER_CANDIDATES),
                  "dependencies.json file managers must match helper FILE_MANAGER_CANDIDATES")
@@ -1720,6 +1729,99 @@ def test_terminal_argv_shapes_per_terminal():
                  "xdg-terminal-exec separates its options with --")
     assert_equal(helper.terminal_argv(["kitty"], [], ""), ["kitty"],
                  "opening a bare terminal adds nothing")
+    # `wezterm -e` is not a valid invocation: its launcher is a subcommand.
+    assert_equal(helper.terminal_argv(["wezterm"], ["true"], "TUI.float"),
+                 ["wezterm", "start", "--class=TUI.float", "--", "true"],
+                 "wezterm runs commands through `start --`")
+    assert_equal(helper.terminal_argv(["wezterm"], [], ""), ["wezterm", "start"],
+                 "wezterm opens a bare terminal through `start` too")
+
+
+def test_terminal_falls_back_when_the_app_scope_is_unusable():
+    """uwsm being installed must not be able to break every terminal launch."""
+    original_candidates = helper.terminal_candidates
+    original_scope = helper.app_scope_prefix
+    original_popen = helper.subprocess.Popen
+    attempts = []
+
+    class _Attempt:
+        def __init__(self, scoped):
+            self.scoped = scoped
+            self.returncode = 1 if scoped else None
+
+        def wait(self, timeout=None):
+            if self.scoped:
+                return 1  # a scope the session cannot use dies immediately
+            raise helper.subprocess.TimeoutExpired("terminal", timeout)
+
+    def fake_popen(argv, **kwargs):
+        attempts.append(argv)
+        return _Attempt(argv[0].endswith("uwsm"))
+
+    helper.terminal_candidates = lambda prefer=None: [["kitty"]]
+    helper.app_scope_prefix = lambda: ["/usr/bin/uwsm", "app", "--"]
+    helper.subprocess.Popen = fake_popen
+    try:
+        assert_equal(helper.spawn_terminal(["true"]), 0,
+                     "a failing scope must fall back to launching the terminal directly")
+        assert_equal(len(attempts), 2, "the scoped attempt must be followed by a direct one")
+        assert_equal(attempts[1][0], "kitty", "the fallback must drop the uwsm prefix")
+    finally:
+        helper.terminal_candidates = original_candidates
+        helper.app_scope_prefix = original_scope
+        helper.subprocess.Popen = original_popen
+
+
+def test_terminal_wait_blocks_until_the_terminal_exits():
+    """A supervisor treating our exit as completion must get the full lifetime."""
+    original_candidates = helper.terminal_candidates
+    original_scope = helper.app_scope_prefix
+    original_popen = helper.subprocess.Popen
+    waits = []
+
+    class _LongRunning:
+        returncode = None
+
+        def wait(self, timeout=None):
+            waits.append(timeout)
+            if timeout is not None:
+                raise helper.subprocess.TimeoutExpired("terminal", timeout)
+            return 7  # the command's own status, once the window closes
+
+    helper.terminal_candidates = lambda prefer=None: [["kitty"]]
+    helper.app_scope_prefix = lambda: []
+    helper.subprocess.Popen = lambda *a, **k: _LongRunning()
+    try:
+        assert_equal(helper.spawn_terminal(["true"], wait=True), 7,
+                     "--wait must return the terminal's status, not the settle result")
+        assert_equal(waits[-1], None, "the second wait must be unbounded")
+        waits.clear()
+        assert_equal(helper.spawn_terminal(["true"]), 0,
+                     "without --wait the settle window still ends the call")
+        assert_equal(len(waits), 1, "the default path must not wait a second time")
+    finally:
+        helper.terminal_candidates = original_candidates
+        helper.app_scope_prefix = original_scope
+        helper.subprocess.Popen = original_popen
+
+
+def test_preferred_terminal_is_tried_first():
+    """A caller that resolved a terminal must not have it silently discarded."""
+    original_which = helper.shutil.which
+    original_override = helper.session_terminal_override
+    original_list = helper.xdg_terminals_list
+    helper.shutil.which = lambda name: f"/usr/bin/{name}" if name in {"kitty", "foot"} else None
+    helper.session_terminal_override = lambda: ["kitty"]
+    helper.xdg_terminals_list = lambda: []
+    try:
+        assert_equal(helper.terminal_candidates(["foot"])[0], ["foot"],
+                     "an explicit caller preference must outrank the stored setting")
+        assert_equal([["kitty"]] == helper.terminal_candidates(["foot"])[1:], True,
+                     "the normal chain must still follow the preference")
+    finally:
+        helper.shutil.which = original_which
+        helper.session_terminal_override = original_override
+        helper.xdg_terminals_list = original_list
 
 
 def _notification_env(root: Path, owner: dict | None, activation: str | None = None):
@@ -2167,6 +2269,9 @@ def main():
     test_requires_features_propagates_to_availability()
     test_terminal_resolution_prefers_the_vgs_setting()
     test_terminal_argv_shapes_per_terminal()
+    test_terminal_falls_back_when_the_app_scope_is_unusable()
+    test_terminal_wait_blocks_until_the_terminal_exits()
+    test_preferred_terminal_is_tried_first()
     subprocess.run(
         [sys.executable, str(REPO_ROOT / "scripts" / "check-vshell-niri.py")],
         check=True,

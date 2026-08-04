@@ -273,10 +273,6 @@
       "fedora": "xterm",
       "gentoo": "x11-terms/xterm"
     },
-    "xdg-terminal-exec": {
-      "description": "XDG terminal spec launcher (optional; VGS resolves a terminal without it)",
-      "arch": "xdg-terminal-exec"
-    },
     "konsole": {
       "description": "terminal for VGS terminal actions",
       "arch": "konsole",

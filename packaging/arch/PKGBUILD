@@ -52,7 +52,6 @@ optdepends=(
   'wezterm: terminal for VGS terminal actions'
   'wl-clipboard: clipboard history, screenshots, region OCR, screen recording'
   'wlsunset: night light'
-  'xdg-terminal-exec: XDG terminal spec launcher (optional; VGS resolves a terminal without it)'
   'xdg-utils: reads and sets default applications'
   'xterm: terminal for VGS terminal actions'
   'yazi: terminal file manager for the launcher Yazi folder opener'

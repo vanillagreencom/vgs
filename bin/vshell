@@ -447,7 +447,8 @@ Usage:
   vshell sudo-toggle set on|off [--terminal]|toggle [--terminal]
   vshell launcher-search search <query> --kind files|folders|text [--root PATH] [--ignore PATH]
   vshell launcher-search preview <path>
-  vshell terminal resolve [--json]|open [--app-id ID]|exec [--app-id ID] [--hold] -- <cmd...>
+  vshell terminal resolve [--json] [--prefer TERM]|open [--app-id ID]
+  vshell terminal exec [--app-id ID|--tui] [--hold] [--wait] [--prefer TERM] -- <cmd...>
 EOF
     ;;
   *)

@@ -8865,26 +8865,30 @@ def ensure_root_for(argv: List[str], terminal: bool = False) -> int | None:
 TERMINAL_CANDIDATES = ("ghostty", "kitty", "alacritty", "foot", "wezterm", "konsole", "gnome-terminal", "xterm")
 
 # Per-terminal argv shape.
-#   exec_flag  - what separates the terminal's own options from the command to
-#                run in it.
+#   subcommand - tokens that must follow the executable before any option.
+#                WezTerm is the one that needs this: its launcher is
+#                `wezterm start [options] -- cmd`, and plain `wezterm -e` is not
+#                a valid invocation.
 #   app_id_flag- how the terminal is told which app-id/class to use. A flag
 #                ending in "=" is joined to the value, anything else is passed
 #                as its own argv entry, and None means the terminal has no
 #                equivalent so the requested app-id is dropped rather than
 #                handed over as an option the terminal will reject.
+#   exec_flags - what separates the terminal's own options from the command to
+#                run in it.
 TERMINAL_SPECS: Dict[str, Dict[str, Any]] = {
-    "xdg-terminal-exec": {"exec_flag": "--", "app_id_flag": "--app-id="},
-    "ghostty": {"exec_flag": "-e", "app_id_flag": "--class="},
-    "kitty": {"exec_flag": "-e", "app_id_flag": "--class="},
-    "alacritty": {"exec_flag": "-e", "app_id_flag": "--class="},
-    "foot": {"exec_flag": "-e", "app_id_flag": "--app-id="},
-    "wezterm": {"exec_flag": "-e", "app_id_flag": None},
-    "konsole": {"exec_flag": "-e", "app_id_flag": None},
-    "gnome-terminal": {"exec_flag": "--", "app_id_flag": None},
-    "xterm": {"exec_flag": "-e", "app_id_flag": "-class"},
+    "xdg-terminal-exec": {"subcommand": [], "app_id_flag": "--app-id=", "exec_flags": ["--"]},
+    "ghostty": {"subcommand": [], "app_id_flag": "--class=", "exec_flags": ["-e"]},
+    "kitty": {"subcommand": [], "app_id_flag": "--class=", "exec_flags": ["-e"]},
+    "alacritty": {"subcommand": [], "app_id_flag": "--class=", "exec_flags": ["-e"]},
+    "foot": {"subcommand": [], "app_id_flag": "--app-id=", "exec_flags": ["-e"]},
+    "wezterm": {"subcommand": ["start"], "app_id_flag": "--class=", "exec_flags": ["--"]},
+    "konsole": {"subcommand": [], "app_id_flag": None, "exec_flags": ["-e"]},
+    "gnome-terminal": {"subcommand": [], "app_id_flag": None, "exec_flags": ["--"]},
+    "xterm": {"subcommand": [], "app_id_flag": "-class", "exec_flags": ["-e"]},
 }
 
-TERMINAL_DEFAULT_SPEC: Dict[str, Any] = {"exec_flag": "-e", "app_id_flag": None}
+TERMINAL_DEFAULT_SPEC: Dict[str, Any] = {"subcommand": [], "app_id_flag": None, "exec_flags": ["-e"]}
 
 # The app-id VGS asks for when it opens a TUI, which compositor rules float.
 TERMINAL_TUI_APP_ID = "TUI.float"
@@ -9011,10 +9015,13 @@ def session_terminal_override() -> List[str]:
         return []
 
 
-def terminal_candidates() -> List[List[str]]:
+def terminal_candidates(prefer: List[str] | None = None) -> List[List[str]]:
     """Terminal argv prefixes to try, most preferred first.
 
     Order, and why:
+      0. prefer              - a terminal the caller resolved itself and must
+                               not have silently discarded (the backend's
+                               `upgradeParams.terminal`).
       1. terminalOverride    - the VGS setting, an explicit choice the user made
                                in Settings, so it outranks everything inherited.
       2. $TERMINAL           - a per-session override.
@@ -9026,6 +9033,8 @@ def terminal_candidates() -> List[List[str]]:
                                still opens a window instead of failing.
     """
     candidates: List[List[str]] = []
+    if prefer:
+        candidates.append(list(prefer))
     override = session_terminal_override()
     if override:
         candidates.append(override)
@@ -9081,7 +9090,7 @@ def app_scope_prefix() -> List[str]:
 def terminal_argv(base: List[str], cmd: List[str], app_id: str = "") -> List[str]:
     """Full argv for running `cmd` in the terminal described by `base`."""
     spec = terminal_spec(base[0])
-    argv = list(base)
+    argv = [base[0], *spec.get("subcommand", []), *base[1:]]
     flag = spec.get("app_id_flag")
     if app_id and flag:
         if flag.endswith("="):
@@ -9089,8 +9098,7 @@ def terminal_argv(base: List[str], cmd: List[str], app_id: str = "") -> List[str
         else:
             argv.extend([flag, app_id])
     if cmd:
-        exec_flag = spec.get("exec_flag") or "-e"
-        argv.append(exec_flag)
+        argv.extend(spec.get("exec_flags") or ["-e"])
         argv.extend(cmd)
     return argv
 
@@ -9106,32 +9114,47 @@ def spawn_terminal(
     app_id: str = "",
     hold: bool = False,
     detach: bool = False,
+    wait: bool = False,
+    prefer: List[str] | None = None,
     what: str = "VGS command",
 ) -> int:
     """Run `cmd` (or an interactive shell when empty) in the resolved terminal.
 
     The single spawn path behind `vshell terminal` and `launch_terminal()`.
+
+    `wait` blocks until the terminal exits rather than returning as soon as its
+    window is up. Callers that treat this process's exit as "the command
+    finished" — the backend's upgrade supervisor does — must pass it, or they
+    will call a running package-manager transaction complete.
     """
     payload = terminal_hold_script(cmd) if (cmd and hold) else list(cmd)
     scope = app_scope_prefix()
     tried: List[str] = []
-    for base in terminal_candidates():
-        full = [*scope, *terminal_argv(base, payload, app_id)]
-        try:
-            proc = subprocess.Popen(full, start_new_session=detach)
-        except Exception:
-            continue
-        tried.append(base[0])
-        try:
-            # Popen only proves the exec succeeded. Give the terminal a moment
-            # to fail on its own (bad -e handling, no display) and move to the
-            # next candidate if it does, instead of reporting a window the user
-            # never got.
-            proc.wait(timeout=TERMINAL_SETTLE_SECONDS)
-        except subprocess.TimeoutExpired:
-            return 0  # still running: the window is up
-        if proc.returncode == 0:
-            return 0  # exited cleanly and fast; nothing to distrust
+    for base in terminal_candidates(prefer):
+        argv = terminal_argv(base, payload, app_id)
+        # The systemd scope is an enhancement. A session that cannot use uwsm
+        # (no graphical systemd session to attach to) would otherwise fail every
+        # candidate through the same unusable prefix, so each candidate falls
+        # back to launching directly before the next one is tried.
+        attempts = [[*scope, *argv], argv] if scope else [argv]
+        for full in attempts:
+            try:
+                proc = subprocess.Popen(full, start_new_session=detach)
+            except Exception:
+                continue
+            tried.append(base[0])
+            try:
+                # Popen only proves the exec succeeded. Give the terminal a
+                # moment to fail on its own (bad -e handling, no display) and
+                # move on if it does, instead of reporting a window the user
+                # never got.
+                proc.wait(timeout=TERMINAL_SETTLE_SECONDS)
+            except subprocess.TimeoutExpired:
+                if not wait:
+                    return 0  # still running: the window is up
+                return proc.wait()  # caller needs the command's whole lifetime
+            if proc.returncode == 0:
+                return 0  # exited cleanly and fast; nothing to distrust
     if tried:
         eprint(f"Terminal exited immediately for {what} (tried: " + ", ".join(tried) + ")")
         return TERMINAL_EXIT_FAILED
@@ -11619,9 +11642,14 @@ def cmd_terminal(argv: List[str]) -> int:
     """The one entry point every VGS surface uses to open a terminal."""
     usage = (
         "Usage:\n"
-        "  vshell terminal resolve [--json]\n"
-        "  vshell terminal open [--app-id ID]\n"
-        "  vshell terminal exec [--app-id ID] [--hold] -- <command> [args...]"
+        "  vshell terminal resolve [--json] [--prefer TERMINAL]\n"
+        "  vshell terminal open [--app-id ID] [--prefer TERMINAL]\n"
+        "  vshell terminal exec [--app-id ID|--tui] [--hold] [--wait]\n"
+        "                       [--prefer TERMINAL] -- <command> [args...]\n"
+        "\n"
+        "  --wait    stay alive until the terminal exits, so the caller can treat\n"
+        "            this process's exit as the command having finished.\n"
+        "  --prefer  try TERMINAL first; the normal chain still follows it."
     )
     if not argv:
         eprint(usage)
@@ -11631,9 +11659,23 @@ def cmd_terminal(argv: List[str]) -> int:
         eprint(usage)
         return 2
 
+    def _prefer_of(options: List[str]) -> List[str]:
+        for position, option in enumerate(options):
+            value = ""
+            if option == "--prefer" and position + 1 < len(options):
+                value = options[position + 1]
+            elif option.startswith("--prefer="):
+                value = option.split("=", 1)[1]
+            if value.strip():
+                try:
+                    return shlex.split(value)
+                except ValueError:
+                    return [value.strip()]
+        return []
+
     if sub == "resolve":
         as_json = "--json" in rest
-        candidates = terminal_candidates()
+        candidates = terminal_candidates(_prefer_of(rest))
         payload = {
             "ok": bool(candidates),
             "terminal": candidates[0] if candidates else [],
@@ -11651,6 +11693,8 @@ def cmd_terminal(argv: List[str]) -> int:
 
     app_id = ""
     hold = False
+    wait = False
+    prefer: List[str] = []
     cmd: List[str] = []
     index = 0
     while index < len(rest):
@@ -11660,6 +11704,8 @@ def cmd_terminal(argv: List[str]) -> int:
             break
         if arg == "--hold":
             hold = True
+        elif arg == "--wait":
+            wait = True
         elif arg == "--app-id":
             index += 1
             app_id = rest[index] if index < len(rest) else ""
@@ -11667,6 +11713,11 @@ def cmd_terminal(argv: List[str]) -> int:
             app_id = arg.split("=", 1)[1]
         elif arg == "--tui":
             app_id = TERMINAL_TUI_APP_ID
+        elif arg == "--prefer":
+            index += 1
+            prefer = _prefer_of(["--prefer", rest[index]]) if index < len(rest) else []
+        elif arg.startswith("--prefer="):
+            prefer = _prefer_of([arg])
         else:
             eprint(f"vshell terminal {sub}: unknown option: {arg}")
             eprint(usage)
@@ -11675,7 +11726,11 @@ def cmd_terminal(argv: List[str]) -> int:
     if sub == "exec" and not cmd:
         eprint("vshell terminal exec: a command is required after --")
         return 2
-    return spawn_terminal(cmd, app_id=app_id, hold=hold, detach=True,
+    return spawn_terminal(cmd, app_id=app_id, hold=hold, wait=wait, prefer=prefer,
+                          # A caller waiting on this process is supervising the
+                          # command; keep the terminal in our process group so it
+                          # dies with the supervisor rather than being orphaned.
+                          detach=not wait,
                           what="the requested terminal command" if cmd else "a terminal")
 
 

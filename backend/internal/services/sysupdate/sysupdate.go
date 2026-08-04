@@ -437,9 +437,20 @@ func (m *Manager) upgradeCommand(p upgradeParams) string {
 // installed-terminal fallback and the optional uwsm scope. The backend only
 // falls back to naming a terminal itself when the CLI is not on PATH, and never
 // to `xdg-terminal-exec`, which no supported install route provides (VGS-54).
+//
+// A terminal the caller asked for is forwarded as --prefer rather than
+// discarded: deferring resolution must not mean ignoring an explicit choice.
+// --wait keeps this process alive for the whole upgrade, because waitUpgrade
+// treats its exit as the transaction finishing; without it the helper returns
+// as soon as the window is up and a second package-manager run could start on
+// top of the first.
 func (m *Manager) terminalArgv(terminal, cmdline string) ([]string, error) {
 	if m.vshell != "" {
-		return []string{m.vshell, "terminal", "exec", "--tui", "--", "sh", "-lc", cmdline, "vshell-update"}, nil
+		argv := []string{m.vshell, "terminal", "exec", "--tui", "--wait"}
+		if terminal != "" {
+			argv = append(argv, "--prefer", terminal)
+		}
+		return append(argv, "--", "sh", "-lc", cmdline, "vshell-update"), nil
 	}
 	if terminal != "" {
 		return []string{terminal, "-e", "sh", "-lc", cmdline, "vshell-update"}, nil

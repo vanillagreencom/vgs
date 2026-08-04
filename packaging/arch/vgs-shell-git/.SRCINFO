@@ -53,7 +53,6 @@ pkgbase = vgs-shell-git
 	optdepends = wezterm: terminal for VGS terminal actions
 	optdepends = wl-clipboard: clipboard history, screenshots, region OCR, screen recording
 	optdepends = wlsunset: night light
-	optdepends = xdg-terminal-exec: XDG terminal spec launcher (optional; VGS resolves a terminal without it)
 	optdepends = xdg-utils: reads and sets default applications
 	optdepends = xterm: terminal for VGS terminal actions
 	optdepends = yazi: terminal file manager for the launcher Yazi folder opener
