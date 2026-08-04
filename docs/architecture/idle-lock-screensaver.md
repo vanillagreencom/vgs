@@ -110,6 +110,16 @@ holding it.
 `onSessionUnlocked` stays ungated on purpose: clearing lock state is always safe,
 and an inactive object must still be able to let go.
 
+That re-check has one consequence for the restore below. `_start()` runs in
+`Component.onCompleted`, which is *before* the reload pass, so on a reload while
+logind reports the session locked `shouldLock` is already true by the time
+`PersistentProperties` restores. The restore therefore must not skip on
+"`shouldLock` is already set" — doing so would drop `_adoptReloadedLock()` and
+leave `IdleService.isShellLocked` false underneath a live lock, and would leave
+`lockInitiatedLocally` at the `false` that `_adoptSessionLock()` assumes, so a
+later logind unlock would tear down a lock VGS owns. The persisted values are the
+authority; re-asserting a `true` that is already `true` is a no-op.
+
 The gate covers only *new* lock requests. Restoring a lock across a reload is
 exempt, because a lock that is restored was already owned by this process and a
 freshly started process has nothing to restore.

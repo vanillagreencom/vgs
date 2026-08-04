@@ -91,8 +91,18 @@ Scope {
         property bool held: false
         property bool heldLocally: false
 
+        // Deliberately NOT conditional on `root.shouldLock` being false.
+        // `_start()` runs in Component.onCompleted, i.e. BEFORE the reload pass,
+        // and re-checks `SessionService.locked` — so on a reload while logind
+        // reports the session locked, `shouldLock` is already true by the time
+        // this fires. Skipping on that would drop `_adoptReloadedLock` and leave
+        // `IdleService.isShellLocked` false underneath a live lock, and would
+        // leave `lockInitiatedLocally` at the `false` that `_adoptSessionLock()`
+        // assumes, making a later logind unlock tear down a lock VGS owns.
+        // The persisted values are the authority here; re-asserting a `true`
+        // that is already `true` is a no-op, and `_adoptReloadedLock` dedupes.
         onReloaded: {
-            if (!held || root.shouldLock)
+            if (!held)
                 return;
             root.lockInitiatedLocally = heldLocally;
             root.shouldLock = true;
