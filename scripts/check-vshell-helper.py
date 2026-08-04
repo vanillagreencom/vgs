@@ -1615,12 +1615,14 @@ def _notification_env(root: Path, owner: dict | None, activation: str | None = N
 
     def fake_bus(member, signature, *args):
         if owner is None:
-            return None
+            return {"value": None, "error": ""}
+        if owner.get("busError"):
+            return {"value": None, "error": owner["busError"]}
         if member == "GetNameOwner":
-            return owner["unique"]
+            return {"value": owner["unique"], "error": ""}
         if member == "GetConnectionUnixProcessID":
-            return owner["pid"]
-        return None
+            return {"value": owner["pid"], "error": ""}
+        return {"value": None, "error": ""}
 
     def fake_systemctl(argv, timeout=10.0):
         calls.append(list(argv))
@@ -1758,6 +1760,117 @@ def test_notification_unowned_bus_is_not_a_conflict():
                 os.environ[key] = value
 
 
+def test_notification_probe_failure_is_not_an_unowned_bus():
+    """A broken probe must never read as a settled session."""
+    original_bus, original_systemctl = helper._session_bus_call, helper._systemctl_user
+    original_env = {key: os.environ.get(key) for key in ("VSHELL_PROC_ROOT", "XDG_DATA_HOME", "XDG_DATA_DIRS")}
+
+    def body(tmp: Path):
+        _notification_env(tmp, {"unique": "", "pid": 0, "comm": "", "cmdline": [], "unit": "",
+                                "busError": "busctl is not installed"})
+        status = helper.notification_status()
+        assert_equal(status["state"], "unknown", "a failed probe must not be reported as unowned")
+        assert_equal(status["error"], "busctl is not installed", "the reason must survive to the caller")
+        assert_equal(status["atRisk"], False, "an unknown state claims nothing either way")
+
+    try:
+        with_temp_home(body)
+    finally:
+        helper._session_bus_call, helper._systemctl_user = original_bus, original_systemctl
+        for key, value in original_env.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+
+
+def test_notification_unowned_error_phrasings():
+    """Every bus implementation's "no owner" wording must read as unowned."""
+    for message in ("Call failed: The name does not have an owner",
+                    "Could not get owner of name 'x': no such name",
+                    "org.freedesktop.DBus.Error.NameHasNoOwner"):
+        assert helper._BUS_NO_SUCH_NAME.search(message), f"{message!r} must classify as unowned"
+    assert not helper._BUS_NO_SUCH_NAME.search("Connection timed out"), \
+        "a transport failure must not be mistaken for an unowned name"
+
+
+def test_notification_takeover_preserves_a_user_activation_file():
+    """A shadow must never destroy a file the user put there themselves."""
+    original_bus, original_systemctl = helper._session_bus_call, helper._systemctl_user
+    original_env = {key: os.environ.get(key) for key in ("VSHELL_PROC_ROOT", "XDG_DATA_HOME", "XDG_DATA_DIRS")}
+
+    def body(tmp: Path):
+        owner = {"unique": ":1.9", "pid": 4343, "comm": "mako", "cmdline": ["/usr/bin/mako"],
+                 "unit": "", "unitShow": {}}
+        _notification_env(tmp, owner)
+        # The conflicting activation file lives in the user's own data home.
+        user_file = tmp / "home" / ".local" / "share" / "dbus-1" / "services" / "fr.emersion.mako.service"
+        user_file.parent.mkdir(parents=True, exist_ok=True)
+        original = ("[D-BUS Service]\n"
+                    "Name=org.freedesktop.Notifications\n"
+                    "Exec=/home/user/bin/my-mako\n")
+        user_file.write_text(original)
+
+        result = helper.notification_takeover()
+        assert helper.NOTIFICATION_SHADOW_MARKER in user_file.read_text(), "the shadow must be in place"
+        backups = result["restore"]["backups"]
+        assert_equal(len(backups), 1, "the displaced file must be recorded exactly once")
+        saved = Path(next(iter(backups.values())))
+        assert_equal(saved.read_text(), original, "the user's file must be kept byte for byte")
+
+        helper.notification_restore()
+        assert_equal(user_file.read_text(), original, "restore must put the user's file back")
+        assert_equal(saved.exists(), False, "the saved copy must not be left behind")
+
+    try:
+        with_temp_home(body)
+    finally:
+        helper._session_bus_call, helper._systemctl_user = original_bus, original_systemctl
+        for key, value in original_env.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+
+
+def test_notification_takeover_reports_an_unrecordable_state():
+    """Changes that cannot be recorded are not reversible, so not a success."""
+    original_bus, original_systemctl = helper._session_bus_call, helper._systemctl_user
+    original_save = helper._save_takeover_record
+    original_env = {key: os.environ.get(key) for key in ("VSHELL_PROC_ROOT", "XDG_DATA_HOME", "XDG_DATA_DIRS")}
+
+    def body(tmp: Path):
+        activation = ("[D-BUS Service]\n"
+                      "Name=org.freedesktop.Notifications\n"
+                      "Exec=/usr/bin/mako\n")
+        owner = {"unique": ":1.9", "pid": 4343, "comm": "mako", "cmdline": ["/usr/bin/mako"],
+                 "unit": "", "unitShow": {}}
+        _notification_env(tmp, owner, activation)
+        helper._save_takeover_record = lambda record: "disk is read-only"
+        result = helper.notification_takeover()
+        assert_equal(result["ok"], False, "an unrecordable takeover must not report success")
+        assert any("disk is read-only" in failure for failure in result["failures"]), \
+            "the persistence failure must reach the caller"
+
+    try:
+        with_temp_home(body)
+    finally:
+        helper._session_bus_call, helper._systemctl_user = original_bus, original_systemctl
+        helper._save_takeover_record = original_save
+        for key, value in original_env.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+
+
+def test_notification_daemon_label_handles_scope_units():
+    assert_equal(helper._daemon_label("", "", "dunst.scope"), "dunst",
+                 "a daemon under a .scope unit must still be named")
+    assert_equal(helper._daemon_label("", "", "mako.service"), "mako",
+                 "a daemon under a .service unit must still be named")
+
+
 def main():
     assert_equal(helper._theme_command_mutates(["chromium-policy"]), True,
                  "Chromium policy refresh must serialize with theme applies")
@@ -1796,6 +1909,11 @@ def main():
     test_notification_ownership_detects_a_foreign_daemon()
     test_notification_ownership_recognises_the_shell_itself()
     test_notification_unowned_bus_is_not_a_conflict()
+    test_notification_probe_failure_is_not_an_unowned_bus()
+    test_notification_unowned_error_phrasings()
+    test_notification_takeover_preserves_a_user_activation_file()
+    test_notification_takeover_reports_an_unrecordable_state()
+    test_notification_daemon_label_handles_scope_units()
     subprocess.run(
         [sys.executable, str(REPO_ROOT / "scripts" / "check-vshell-niri.py")],
         check=True,

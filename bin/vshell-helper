@@ -10600,24 +10600,45 @@ def _xdg_data_dirs() -> List[Path]:
     return dirs
 
 
-def _session_bus_call(member: str, signature: str, *args: str) -> Any:
-    """Call a session bus driver method; None when it fails or is unavailable."""
+# The bus answers "nobody owns that name" with an error, so a failed call has
+# to be classified. Reporting a broken probe as an unowned bus would be the
+# same silent failure this subsystem exists to remove.
+# Phrasing differs by bus implementation and busctl version: dbus-daemon says
+# "no such name", the systemd/dbus-broker path says "The name does not have an
+# owner", and the wire error is NameHasNoOwner. All three mean unowned.
+_BUS_NO_SUCH_NAME = re.compile(r"no such name|does not have an owner|NameHasNoOwner", re.IGNORECASE)
+
+
+def _session_bus_call(member: str, signature: str, *args: str) -> Dict[str, Any]:
+    """Call a session bus driver method.
+
+    Returns ``{"value": <reply>, "error": ""}`` on success, ``{"value": None,
+    "error": ""}`` when the bus says the name has no owner, and a non-empty
+    ``error`` for everything else -- busctl missing, a timeout, an unparseable
+    reply. Callers must keep those three apart: "no owner" is a fact about the
+    session, the rest are facts about the probe.
+    """
     try:
         proc = run([
             "busctl", "--user", "--json=short", "call",
             "org.freedesktop.DBus", "/org/freedesktop/DBus",
             "org.freedesktop.DBus", member, signature, *args,
         ], timeout=5)
-    except (OSError, subprocess.SubprocessError):
-        return None
+    except FileNotFoundError:
+        return {"value": None, "error": "busctl is not installed"}
+    except (OSError, subprocess.SubprocessError) as exc:
+        return {"value": None, "error": f"busctl {member} failed: {exc}"}
     if proc.returncode != 0:
-        return None
+        message = (proc.stderr or "").strip() or f"busctl {member} exited {proc.returncode}"
+        if _BUS_NO_SUCH_NAME.search(message):
+            return {"value": None, "error": ""}
+        return {"value": None, "error": message}
     try:
         payload = json.loads(proc.stdout or "{}")
     except ValueError:
-        return None
+        return {"value": None, "error": f"busctl {member} returned unparseable output"}
     data = payload.get("data")
-    return data[0] if isinstance(data, list) and data else None
+    return {"value": data[0] if isinstance(data, list) and data else None, "error": ""}
 
 
 def _systemctl_user(argv: List[str], timeout: float = 10.0) -> subprocess.CompletedProcess[str]:
@@ -10756,19 +10777,34 @@ def _owner_is_vgs(unit: str, process: str, cmdline: str) -> bool:
 
 
 def notification_owner() -> Dict[str, Any]:
-    """Who currently holds org.freedesktop.Notifications on the session bus."""
+    """Who currently holds org.freedesktop.Notifications on the session bus.
+
+    ``error`` non-empty means the question could not be answered -- which is
+    never the same as "nobody owns it", and never the same as "someone else
+    owns it" either.
+    """
     empty = {
         "present": False, "unique": "", "pid": 0, "process": "",
-        "exe": "", "cmdline": "", "unit": "", "isVgs": False,
+        "exe": "", "cmdline": "", "unit": "", "isVgs": False, "error": "",
     }
-    unique = _session_bus_call("GetNameOwner", "s", NOTIFICATION_BUS_NAME)
+    call = _session_bus_call("GetNameOwner", "s", NOTIFICATION_BUS_NAME)
+    if call["error"]:
+        return {**empty, "error": call["error"]}
+    unique = call["value"]
     if not isinstance(unique, str) or not unique:
         return empty
-    raw_pid = _session_bus_call("GetConnectionUnixProcessID", "s", unique)
+    pid_call = _session_bus_call("GetConnectionUnixProcessID", "s", unique)
     try:
-        pid = int(raw_pid)
+        pid = int(pid_call["value"])
     except (TypeError, ValueError):
         pid = 0
+    if not pid:
+        # The name is held, but by whom cannot be established -- so neither
+        # "VGS owns it" nor "something else owns it" may be asserted.
+        return {
+            **empty, "present": True, "unique": unique,
+            "error": pid_call["error"] or f"could not identify the process behind {unique}",
+        }
     process = _proc_text(pid, "comm") if pid else ""
     cmdline = _proc_cmdline(pid) if pid else ""
     unit = _proc_unit(pid) if pid else ""
@@ -10781,11 +10817,20 @@ def notification_owner() -> Dict[str, Any]:
         "cmdline": cmdline,
         "unit": unit,
         "isVgs": _owner_is_vgs(unit, process, cmdline),
+        "error": "",
     }
 
 
+def _unit_stem(unit: str) -> str:
+    """`mako.service` / `mako.scope` -> `mako`. _proc_unit returns either."""
+    for suffix in (".service", ".scope"):
+        if unit.endswith(suffix):
+            return unit[: -len(suffix)]
+    return unit
+
+
 def _daemon_label(process: str, exec_line: str, unit: str) -> str:
-    for candidate in (process, Path(exec_line.split(" ")[0]).name if exec_line else "", unit[:-8] if unit.endswith(".service") else ""):
+    for candidate in (process, Path(exec_line.split(" ")[0]).name if exec_line else "", _unit_stem(unit)):
         if candidate and candidate in KNOWN_NOTIFICATION_DAEMONS:
             return KNOWN_NOTIFICATION_DAEMONS[candidate]
     return process or (Path(exec_line.split(" ")[0]).name if exec_line else "") or unit or "unknown"
@@ -10857,7 +10902,11 @@ def notification_status() -> Dict[str, Any]:
             "shadowed": shadowed,
         })
 
-    if owner["present"]:
+    if owner["error"]:
+        # Neither "VGS owns it" nor "something else does" may be claimed from a
+        # probe that did not answer. The shell keeps retrying on this state.
+        state = "unknown"
+    elif owner["present"]:
         state = "vgs" if owner["isVgs"] else "foreign"
     else:
         state = "unowned"
@@ -10884,6 +10933,7 @@ def notification_status() -> Dict[str, Any]:
     return {
         "busName": NOTIFICATION_BUS_NAME,
         "state": state,
+        "error": owner["error"],
         # VGS holds the name now, but something else would still be activated
         # into it on a session where VGS starts a moment later.
         "atRisk": state == "vgs" and bool(conflicts),
@@ -10891,39 +10941,60 @@ def notification_status() -> Dict[str, Any]:
         "conflicts": conflicts,
         "takeover": {"available": bool(actionable), "reason": reason},
         "restore": {
-            "available": bool(record_state["shadows"] or record_state["masked"]),
+            "available": bool(record_state["shadows"] or record_state["masked"] or record_state["backups"]),
             "shadows": record_state["shadows"],
             "masked": record_state["masked"],
+            "backups": record_state["backups"],
         },
     }
 
 
-def _load_takeover_record() -> Dict[str, List[str]]:
+def _load_takeover_record() -> Dict[str, Any]:
+    """What a previous takeover changed: shadows written, units masked, and the
+    user files those shadows displaced (shadow path -> saved original)."""
     try:
         data = json.loads(notification_state_file().read_text())
     except (OSError, ValueError):
         data = {}
     shadows = [str(item) for item in data.get("shadows", []) if isinstance(item, str)]
     masked = [str(item) for item in data.get("masked", []) if isinstance(item, str)]
-    return {"shadows": shadows, "masked": masked}
+    raw_backups = data.get("backups")
+    backups = {
+        str(key): str(value)
+        for key, value in (raw_backups.items() if isinstance(raw_backups, dict) else [])
+        if isinstance(key, str) and isinstance(value, str)
+    }
+    return {"shadows": shadows, "masked": masked, "backups": backups}
 
 
-def _save_takeover_record(record: Dict[str, List[str]]) -> None:
+def _save_takeover_record(record: Dict[str, Any]) -> str:
+    """Persist the undo record; returns "" on success or the failure message.
+
+    The caller must surface a non-empty return: a takeover that masked units
+    and wrote shadows but could not record them is not reversible, and
+    reporting it as success strands the user with changes restore cannot find.
+    """
     path = notification_state_file()
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
-        if not record["shadows"] and not record["masked"]:
+        # Saved originals outlive their shadows: a backup whose restore failed
+        # is still owed to the user, so the record only goes away when there is
+        # genuinely nothing left to undo.
+        if not record["shadows"] and not record["masked"] and not record.get("backups"):
             path.unlink(missing_ok=True)
-            return
+            return ""
         tmp = path.with_suffix(".tmp")
         tmp.write_text(json.dumps(record, indent=2) + "\n")
         tmp.chmod(0o600)
         os.replace(tmp, path)
     except OSError as exc:
-        eprint(f"vshell notifications: could not record takeover state: {exc}")
+        message = f"could not record takeover state in {path}: {exc}"
+        eprint(f"vshell notifications: {message}")
+        return message
+    return ""
 
 
-def _write_activation_shadow(source: Path) -> Path | None:
+def _write_activation_shadow(source: Path) -> Dict[str, Any]:
     """Shadow a system activation file with an inert one in the data home.
 
     D-Bus resolves an activation file name from the data directories in order
@@ -10931,9 +11002,16 @@ def _write_activation_shadow(source: Path) -> Path | None:
     Exec is deliberately a no-op: VGS owns the name whenever it runs, and when
     it does not, failing the activation is honest -- silently starting the
     daemon VGS was asked to displace is what this exists to prevent.
+
+    The file being shadowed can itself live in the data home, i.e. one the user
+    installed by hand. Writing over it would destroy it and leave restore with
+    nothing to put back, so it is moved aside first and recorded.
+
+    Returns {"path": Path|None, "backup": str, "error": str}.
     """
     target_dir = _xdg_data_home() / "dbus-1" / "services"
     target = target_dir / source.name
+    backup = ""
     body = (
         f"{NOTIFICATION_SHADOW_MARKER}\n"
         f"# Shadows {source} so the session bus does not activate a second\n"
@@ -10945,14 +11023,27 @@ def _write_activation_shadow(source: Path) -> Path | None:
     )
     try:
         target_dir.mkdir(parents=True, exist_ok=True)
+        if os.path.lexists(target):
+            try:
+                existing = target.read_text(errors="replace")
+            except OSError:
+                existing = ""
+            if NOTIFICATION_SHADOW_MARKER not in existing:
+                keep = target.with_name(target.name + ".vgs-orig")
+                index = 1
+                while os.path.lexists(keep):
+                    index += 1
+                    keep = target.with_name(f"{target.name}.vgs-orig{index}")
+                os.replace(target, keep)
+                backup = str(keep)
         tmp = target.with_suffix(".service.tmp")
         tmp.write_text(body)
         tmp.chmod(0o644)
         os.replace(tmp, target)
     except OSError as exc:
         eprint(f"vshell notifications: could not shadow {source}: {exc}")
-        return None
-    return target
+        return {"path": None, "backup": backup, "error": str(exc)}
+    return {"path": target, "backup": backup, "error": ""}
 
 
 def notification_takeover() -> Dict[str, Any]:
@@ -10973,11 +11064,16 @@ def notification_takeover() -> Dict[str, Any]:
         source = conflict["activationFile"]
         if source and not conflict["shadowed"]:
             written = _write_activation_shadow(Path(source))
-            if written is None:
-                failures.append(f"could not shadow {source}")
+            if written["backup"]:
+                # Recorded before anything else can fail: restore must be able
+                # to find a displaced user file even if the rest goes wrong.
+                record["backups"][str(written["path"] or source)] = written["backup"]
+                actions.append(f"saved the existing {source} as {written['backup']}")
+            if written["path"] is None:
+                failures.append(f"could not shadow {source}: {written['error']}")
             else:
-                if str(written) not in record["shadows"]:
-                    record["shadows"].append(str(written))
+                if str(written["path"]) not in record["shadows"]:
+                    record["shadows"].append(str(written["path"]))
                 actions.append(f"shadowed D-Bus activation of {conflict['daemon']} ({source})")
 
         unit = conflict["unit"]
@@ -11001,7 +11097,10 @@ def notification_takeover() -> Dict[str, Any]:
                 "and was not started by a user unit; quit it the way it was started"
             )
 
-    _save_takeover_record(record)
+    save_error = _save_takeover_record(record)
+    if save_error:
+        failures.append(save_error + " -- undo the changes above by hand")
+
     result = notification_status()
     result["actions"] = actions
     result["manual"] = manual
@@ -11011,28 +11110,44 @@ def notification_takeover() -> Dict[str, Any]:
 
 
 def notification_restore() -> Dict[str, Any]:
-    """Undo a previous takeover: drop the shadows, unmask what was masked."""
+    """Undo a previous takeover: drop the shadows, put back anything they
+    displaced, and unmask what was masked."""
     record = _load_takeover_record()
     actions: List[str] = []
     failures: List[str] = []
 
     kept_shadows: List[str] = []
+    kept_backups: Dict[str, str] = dict(record["backups"])
     for entry in record["shadows"]:
         path = Path(entry)
         try:
             text = path.read_text(errors="replace")
         except OSError:
-            continue  # already gone
-        if NOTIFICATION_SHADOW_MARKER not in text:
+            text = None  # already gone; a saved original may still be owed
+        if text is not None and NOTIFICATION_SHADOW_MARKER not in text:
             kept_shadows.append(entry)
             failures.append(f"{entry} was replaced by something else; left alone")
             continue
-        try:
-            path.unlink()
-            actions.append(f"removed {entry}")
-        except OSError as exc:
-            kept_shadows.append(entry)
-            failures.append(f"could not remove {entry}: {exc}")
+        if text is not None:
+            try:
+                path.unlink()
+                actions.append(f"removed {entry}")
+            except OSError as exc:
+                kept_shadows.append(entry)
+                failures.append(f"could not remove {entry}: {exc}")
+                continue
+
+        backup = kept_backups.get(entry, "")
+        if backup and os.path.lexists(backup):
+            try:
+                os.replace(backup, path)
+                actions.append(f"restored {entry} from {backup}")
+                kept_backups.pop(entry, None)
+            except OSError as exc:
+                failures.append(f"could not restore {entry} from {backup}: {exc}")
+        elif backup:
+            kept_backups.pop(entry, None)
+            failures.append(f"the saved original {backup} is gone; {entry} was not restored")
 
     kept_masks: List[str] = []
     for unit in record["masked"]:
@@ -11043,7 +11158,12 @@ def notification_restore() -> Dict[str, Any]:
             kept_masks.append(unit)
             failures.append(f"could not unmask {unit}: {(proc.stderr or '').strip()}")
 
-    _save_takeover_record({"shadows": kept_shadows, "masked": kept_masks})
+    save_error = _save_takeover_record({
+        "shadows": kept_shadows, "masked": kept_masks, "backups": kept_backups,
+    })
+    if save_error:
+        failures.append(save_error)
+
     result = notification_status()
     result["actions"] = actions
     result["manual"] = []
@@ -11054,7 +11174,9 @@ def notification_restore() -> Dict[str, Any]:
 
 def _print_notification_status(status: Dict[str, Any]) -> None:
     owner = status["owner"]
-    if status["state"] == "vgs":
+    if status["state"] == "unknown":
+        print(f"{NOTIFICATION_BUS_NAME}: could not be determined: {status['error']}")
+    elif status["state"] == "vgs":
         print(f"{NOTIFICATION_BUS_NAME}: VGS (pid {owner['pid']})")
     elif status["state"] == "foreign":
         where = owner["unit"] or owner["exe"] or "unknown"

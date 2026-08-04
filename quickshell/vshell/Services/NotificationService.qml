@@ -677,6 +677,10 @@ Singleton {
     property string serverOwnership: ""
     property string serverConflictDaemon: ""
     property string serverConflictReason: ""
+    // Why ownership could not be established, when serverOwnership is
+    // "unknown". Empty otherwise.
+    property string serverStatusError: ""
+    property bool _ownershipProbeAnswered: false
     property bool serverConflictFixable: false
     property bool serverTakeoverBusy: false
     readonly property bool serverEnabled: SettingsData.notificationServerEnabled
@@ -703,13 +707,21 @@ Singleton {
         try {
             status = JSON.parse(text);
         } catch (e) {
-            root.log.warn("could not read notification ownership:", e);
+            status = null;
+        }
+        root._ownershipProbeAnswered = true;
+        if (!status || typeof status !== "object" || !status.state) {
+            // An unreadable answer is a reportable state of its own. Returning
+            // early would leave the last known ownership standing, which is how
+            // a shell ends up quietly claiming to own a bus name it has lost.
+            root.log.warn("notification ownership probe returned no usable status");
+            root.serverOwnership = "unknown";
+            root.serverStatusError = I18n.tr("the ownership check returned nothing readable");
             return;
         }
-        if (!status || typeof status !== "object")
-            return;
 
-        root.serverOwnership = status.state || "";
+        root.serverOwnership = status.state;
+        root.serverStatusError = status.error || "";
         const conflicts = status.conflicts || [];
         const owner = status.owner || {};
         root.serverConflictDaemon = (conflicts.length > 0 ? conflicts[0].daemon : "") || owner.process || "";
@@ -735,6 +747,31 @@ Singleton {
         running: false
         stdout: StdioCollector {
             onStreamFinished: root._applyServerOwnership(text)
+        }
+        onRunningChanged: {
+            if (running) {
+                root._ownershipProbeAnswered = false;
+                return;
+            }
+            // A probe that could not be spawned never produces output, and
+            // silently keeping the previous answer is the failure mode this
+            // service exists to remove. The grace period is for the ordinary
+            // case where the process stops a moment before its output is
+            // collected.
+            probeUnansweredTimer.restart();
+        }
+    }
+
+    Timer {
+        id: probeUnansweredTimer
+        interval: 500
+        repeat: false
+        onTriggered: {
+            if (root._ownershipProbeAnswered)
+                return;
+            root.log.warn("notification ownership probe did not run");
+            root.serverOwnership = "unknown";
+            root.serverStatusError = I18n.tr("the ownership check could not be run");
         }
     }
 

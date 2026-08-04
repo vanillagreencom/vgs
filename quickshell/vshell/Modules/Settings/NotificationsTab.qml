@@ -240,6 +240,8 @@ Item {
                                     return I18n.tr("%1 is handling notifications, not VGS").arg(NotificationService.serverConflictDaemon || I18n.tr("Another app"));
                                 case "unowned":
                                     return I18n.tr("No app is handling notifications yet");
+                                case "unknown":
+                                    return I18n.tr("Cannot tell which app is handling notifications");
                                 default:
                                     return I18n.tr("Checking which app handles notifications…");
                                 }
@@ -266,6 +268,8 @@ Item {
                                     return NotificationService.serverConflictFixable ? I18n.tr("org.freedesktop.Notifications is taken, so VGS popups and history stay empty. Taking it over masks the other daemon and stops it; VGS picks the name up without a restart.") : I18n.tr("org.freedesktop.Notifications is taken and VGS cannot free it: %1.").arg(NotificationService.serverConflictReason || I18n.tr("no supported way to stop the other daemon"));
                                 case "unowned":
                                     return I18n.tr("Nothing holds org.freedesktop.Notifications on the session bus yet. VGS takes the name as soon as the bus grants it.");
+                                case "unknown":
+                                    return I18n.tr("The session bus could not be asked who owns org.freedesktop.Notifications: %1. VGS keeps checking.").arg(NotificationService.serverStatusError || I18n.tr("no reason given"));
                                 default:
                                     return I18n.tr("Reading which app owns org.freedesktop.Notifications on the session bus…");
                                 }

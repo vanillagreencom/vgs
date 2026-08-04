@@ -56,7 +56,7 @@ the helper is for.
 
 | Command | Effect |
 |---------|--------|
-| `status [--json]` | Who owns the bus name (`vgs`, `foreign`, `unowned`), every conflicting daemon found, and whether a takeover is possible. Exits non-zero when VGS does not own it. |
+| `status [--json]` | Who owns the bus name (`vgs`, `foreign`, `unowned`, `unknown`), every conflicting daemon found, and whether a takeover is possible. Exits non-zero when VGS does not own it. |
 | `takeover [--json]` | Masks and stops the conflicting user unit, and shadows its D-Bus activation file. Reversible. |
 | `restore [--json]` | Undoes exactly what `takeover` did, using the record in `~/.local/state/vshell/notification-takeover.json`. |
 
@@ -66,7 +66,16 @@ win a *future* session come from every D-Bus activation file in the XDG data
 directories that names the bus. A daemon nobody has heard of is still found;
 `KNOWN_NOTIFICATION_DAEMONS` only supplies a friendly label.
 
-Two details that are easy to get wrong:
+`unknown` is a first-class state, not a variant of `unowned`. The bus reports
+"nobody owns this name" as an *error*, so a failed `busctl` call has to be
+classified: `_BUS_NO_SUCH_NAME` matches the three phrasings that mean unowned
+(`no such name`, `does not have an owner`, `NameHasNoOwner`), and everything
+else — busctl missing, a timeout, an unparseable reply, an owner whose pid
+cannot be resolved — becomes `unknown` with the reason attached. Collapsing
+those into "unowned" would report a broken probe as a healthy session, which is
+the same silence this subsystem exists to remove.
+
+Four details that are easy to get wrong:
 
 - **The unit comes from `/proc/<pid>/cgroup`, not from busctl.** `busctl status`
   reports `Unit=user@1000.service` for everything on the user bus, which is the
@@ -78,6 +87,15 @@ Two details that are easy to get wrong:
   name and nothing is activated, and when VGS is not running, failing the
   activation is honest — silently starting the daemon the user asked to displace
   is the behaviour this exists to prevent.
+
+- **A displaced file is kept.** The activation file being shadowed can itself
+  live in the data home — one the user installed by hand. It is moved to
+  `<name>.vgs-orig` before the shadow is written, recorded in the undo state,
+  and moved back by `restore`; overwriting it would make the reversibility
+  guarantee false.
+- **An unrecordable change is a failure.** If the undo record cannot be
+  persisted, `takeover` reports `ok: false` and says so, because masks and
+  shadows that `restore` cannot find are not reversible.
 
 `takeover` never kills a process. It masks and stops the unit, the daemon
 releases the name on its own, and Quickshell's pending registration completes —
@@ -100,7 +118,11 @@ probes `vshell notifications status --json`:
   takeover.
 
 Exposed as `serverOwnership`, `serverConflict`, `serverConflictDaemon`,
-`serverConflictFixable` and `serverTakeoverBusy`. A conflict raises a **sticky**
+`serverConflictFixable`, `serverStatusError` and `serverTakeoverBusy`. A probe
+that cannot be spawned or returns nothing readable sets `unknown` with a reason
+rather than leaving the previous answer standing, and the re-check timer runs on
+every state that is not `vgs` — including `unknown`, so a failed probe can never
+switch off the only retry. A conflict raises a **sticky**
 toast (category `notification-server-conflict`, dismissed automatically when VGS
 wins the name), replaces the notification center's "Nothing to see here" empty
 state with the real reason and a *Use VGS for Notifications* button, and shows
