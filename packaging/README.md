@@ -29,7 +29,16 @@ systemctl --user enable --now vshell.service
 `config/vshell/dependencies.json` is the source of truth for which commands back which VGS feature
 group, and `optional-packages.json` maps those commands to distribution package names and marks
 which of them are *required*. `scripts/gen-package-metadata.py` joins the two and rewrites the
-generated blocks in the Arch, Debian, Fedora, and Gentoo recipes:
+generated blocks in **every** shipped channel's recipe — hard dependencies in all six, plus the
+optional list in the four that have a weak-dependency mechanism:
+
+| Channel | Hard dependencies | Optional list |
+|---|---|---|
+| Arch, Debian, Fedora, Gentoo | generated | generated |
+| Void | generated | none — xbps has no weak dependencies; `INSTALL.msg` and `vshell deps status` cover them |
+| Nix | generated into the `wrapProgram` PATH | none — the wrapper is a PATH, not a package relation |
+| Ubuntu | n/a — the PPA builds from `packaging/debian` | n/a |
+
 
 ```bash
 scripts/gen-package-metadata.py            # verify the recipes match the manifest
@@ -48,18 +57,21 @@ everything else stays optional and must stay absent-tolerant in the UI. `tailsca
 case: a network daemon with its own account and system service never becomes a dependency, it just
 has to say plainly in-module that it is not installed.
 
-A required command with no package on one of the generated distributions **fails** the generator.
-Leaving it out quietly would ship, one distribution down, exactly the stock install the list exists
-to prevent, so it has to be waived by name in `"required".unsupported` with a reason — and every run
-prints the waivers it honoured. One is live today: `hyprpicker` has no ebuild in `::gentoo`, so
-capture and OCR under Hyprland report it missing on Gentoo.
+A required command with no package on one of those channels **fails** the generator. Leaving it out
+quietly would ship, one channel down, exactly the stock install the list exists to prevent, so it has
+to be waived by name in `"required".unsupported` with a reason — and every run prints the waivers it
+honoured. Two are live today: `hyprpicker` has no ebuild in `::gentoo`, so capture and OCR under
+Hyprland report it missing there; and `sudo` is not put on the Nix wrapper's PATH, because it would
+shadow the setuid wrapper in `/run/wrappers/bin` with a binary that cannot elevate.
+
+The channel list itself is checked too. A directory under `packaging/` that is neither generated nor
+declared unGenerated with a reason fails the run. That check exists because Void was hand-maintained
+and silently skipped: it kept `depends="quickshell jq python3"` through two rounds of packaging
+fixes, still shipping the VGS-53 defect after every generated channel was correct.
 
 Terminals are the open exception. Eight are listed as alternatives, packaging cannot express "any
 one of these", and none is required — so a fresh install has no terminal for password prompts. That
 needs an `xdg-terminal-exec` style resolver rather than an eight-way optional list.
-
-Void is not generated: it is a recipe-only channel with no weak-dependency mechanism, so
-`void/template` and `void/INSTALL.msg` are maintained by hand.
 
 Fedora uses `Suggests:` rather than `Recommends:` because dnf installs weak `Recommends` by default,
 and the list includes a login manager (`greetd`) and both supported compositors. Void has no

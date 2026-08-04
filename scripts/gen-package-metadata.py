@@ -25,7 +25,35 @@ ROOT = Path(__file__).resolve().parent.parent
 MANIFEST = ROOT / "config" / "vshell" / "dependencies.json"
 MAPPING = ROOT / "packaging" / "optional-packages.json"
 
+# Channels with a weak-dependency mechanism, so they carry both the generated
+# hard dependencies and the generated optional ones.
 DISTROS = ("arch", "debian", "fedora", "gentoo")
+# Channels that get hard dependencies only. Void has no weak-dependency
+# mechanism at all (its optional tools are covered by INSTALL.msg and
+# `vshell deps status`), and the Nix wrapper is a PATH, not a package relation.
+# They were hand-maintained until VGS-53, which is how Void kept shipping
+# `depends="quickshell jq python3"` after every other channel had been fixed.
+REQUIRED_ONLY = ("void", "nix")
+REQUIRED_DISTROS = DISTROS + REQUIRED_ONLY
+
+# Every packaging channel this repo ships, and where its recipe lives. A
+# directory under packaging/ that appears in neither table fails the run: a new
+# channel must state whether its dependencies are generated, rather than being
+# quietly left out the way Void was.
+CHANNEL_RECIPES = {
+    "arch": "packaging/arch/PKGBUILD",
+    "debian": "packaging/debian/control",
+    "fedora": "packaging/fedora/vgs-shell.spec",
+    "gentoo": "packaging/gentoo/vgs-shell-0.1.0.ebuild",
+    "void": "packaging/void/template",
+    "nix": "flake.nix",
+}
+UNGENERATED_CHANNELS = {
+    "ubuntu": (
+        "README only: the Launchpad PPA builds from packaging/debian, so its "
+        "dependencies are that channel's generated ones"
+    ),
+}
 
 BEGIN = "# BEGIN GENERATED OPTIONAL DEPENDENCIES"
 END = "# END GENERATED OPTIONAL DEPENDENCIES"
@@ -52,6 +80,39 @@ def feature_commands(feature: dict) -> list[str]:
     for commands in feature.get("compositorCommands", {}).values():
         out.extend(commands)
     return out
+
+
+def check_channels(required: dict[str, list[str]]) -> None:
+    """Fail unless every packaging channel this repo ships is accounted for.
+
+    Void is why this exists. It was hand-maintained, the generator skipped it,
+    and it kept `depends="quickshell jq python3"` through two rounds of
+    packaging fixes — the VGS-53 defect still live on a shipped channel while
+    every generated one was correct. Nothing detected that, because nothing was
+    looking. A channel now has to be either generated or declared unGenerated
+    with a reason; a new directory under packaging/ that is neither fails here.
+    """
+    declared = set(CHANNEL_RECIPES) | set(UNGENERATED_CHANNELS)
+    found = {entry.name for entry in (ROOT / "packaging").iterdir() if entry.is_dir()}
+
+    undeclared = sorted(found - declared)
+    if undeclared:
+        raise GenError(
+            "packaging channel(s) " + ", ".join(undeclared) + " are not declared "
+            "in gen-package-metadata.py. Add the recipe to CHANNEL_RECIPES so "
+            "its dependencies are generated, or to UNGENERATED_CHANNELS with "
+            "the reason it needs none — a channel nothing generates is a "
+            "channel that ships the old dependencies forever."
+        )
+
+    for channel, relative in CHANNEL_RECIPES.items():
+        if not (ROOT / relative).is_file():
+            raise GenError(f"channel {channel} declares {relative}, which does not exist")
+        if channel not in required:
+            raise GenError(
+                f'channel {channel} has a generated recipe but no "required".base '
+                "entry, so its hard dependencies would be generated empty"
+            )
 
 
 def required_packages(mapping: dict) -> tuple[dict[str, list[str]], list[tuple[str, str, str]]]:
@@ -85,7 +146,7 @@ def required_packages(mapping: dict) -> tuple[dict[str, list[str]], list[tuple[s
                 f'"required".unsupported names {command!r}, which is not a '
                 "required command; the waiver would never be read"
             )
-        unknown = set(distros) - set(DISTROS)
+        unknown = set(distros) - set(REQUIRED_DISTROS)
         if unknown:
             raise GenError(
                 f"unsupported waiver for {command!r} names unknown "
@@ -103,7 +164,7 @@ def required_packages(mapping: dict) -> tuple[dict[str, list[str]], list[tuple[s
                     "mapping names a package for it; drop the stale waiver"
                 )
 
-    for distro in DISTROS:
+    for distro in REQUIRED_DISTROS:
         base = section.get("base", {}).get(distro)
         if base is None:
             raise GenError(
@@ -123,7 +184,7 @@ def required_packages(mapping: dict) -> tuple[dict[str, list[str]], list[tuple[s
                 f"required command {command!r} is marked skip; a command cannot "
                 "be both a hard dependency and already covered by one"
             )
-        for distro in DISTROS:
+        for distro in REQUIRED_DISTROS:
             packages = entry.get(distro)
             if packages is None:
                 reason = unsupported.get(command, {}).get(distro)
@@ -182,7 +243,7 @@ def collect(
                 )
             if "skip" in entry:
                 continue
-            unknown = set(entry) - {"description", "skip"} - set(DISTROS)
+            unknown = set(entry) - {"description", "skip"} - set(REQUIRED_DISTROS)
             if unknown:
                 raise GenError(
                     f"command {command!r} has unknown key(s): "
@@ -260,6 +321,26 @@ def render_gentoo_required(packages: list[str]) -> str:
     ]
     lines.extend(f"\t{package}" for package in packages)
     lines.append('"')
+    return "\n".join(lines)
+
+
+def render_void_required(packages: list[str]) -> str:
+    lines = [BEGIN_REQUIRED, NOTE, 'depends="' + " ".join(packages) + '"', END_REQUIRED]
+    return "\n".join(lines)
+
+
+def render_nix_required(packages: list[str]) -> str:
+    # Inside installPhase, which is a bash script, so these markers are shell
+    # comments. The wrapper PATH is what makes the tools reachable from the
+    # shell no matter what the user's profile holds.
+    indent = " " * 14
+    lines = [
+        indent + BEGIN_REQUIRED,
+        *(indent + line for line in NOTE.splitlines()),
+        indent + "wrapProgram $out/lib/vshell/bin/vshell \\",
+        indent + "  --prefix PATH : ${pkgs.lib.makeBinPath [ " + " ".join(packages) + " ]}",
+        indent + END_REQUIRED,
+    ]
     return "\n".join(lines)
 
 
@@ -421,6 +502,36 @@ def targets(
     )
     out.append((path, replace_block(path, text, render_gentoo(collected["gentoo"]))))
 
+    # Hard dependencies only below: neither channel has a weak-dependency
+    # mechanism to carry the optional list.
+    path = ROOT / "packaging/void/template"
+    out.append(
+        (
+            path,
+            replace_block(
+                path,
+                path.read_text(),
+                render_void_required(required["void"]),
+                BEGIN_REQUIRED,
+                END_REQUIRED,
+            ),
+        )
+    )
+
+    path = ROOT / "flake.nix"
+    out.append(
+        (
+            path,
+            replace_block(
+                path,
+                path.read_text(),
+                render_nix_required(required["nix"]),
+                BEGIN_REQUIRED,
+                END_REQUIRED,
+            ),
+        )
+    )
+
     return out
 
 
@@ -437,6 +548,7 @@ def main() -> int:
         manifest = json.loads(MANIFEST.read_text())
         mapping = json.loads(MAPPING.read_text())
         required, waivers = required_packages(mapping)
+        check_channels(required)
         collected = collect(manifest, mapping, required)
         rendered = targets(collected, required)
     except GenError as error:
@@ -466,6 +578,12 @@ def main() -> int:
     counts = ", ".join(f"{distro} {len(collected[distro])}" for distro in DISTROS)
     verb = "regenerated" if args.write else "verified"
     print(f"packaging optional dependencies {verb} ({counts})")
+    print(
+        f"hard dependencies {verb} for every shipped channel: "
+        + ", ".join(f"{channel} {len(required[channel])}" for channel in CHANNEL_RECIPES)
+    )
+    for channel, reason in UNGENERATED_CHANNELS.items():
+        print(f"  not generated: {channel} — {reason}")
     # Printed every run, not only when they change: each line is a recipe that
     # ships without a tool VGS considers first-class, and that should be
     # visible in the log rather than buried in a JSON file.
