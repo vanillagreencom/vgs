@@ -481,6 +481,65 @@ const appended = clone(
 );
 assert.deepStrictEqual(appended.barConfigs[0].rightWidgets, ["clock", "battery"]);
 
+// Every bar disabled -> no target. Inserting into a bar that cannot render
+// rewrites a layout the user deliberately turned off and shows them nothing.
+const allBarsDisabled = [
+  { id: "default", enabled: false, rightWidgets: ["clock", "controlCenterButton"] },
+  { id: "second", enabled: false, rightWidgets: ["clock"] },
+];
+const allBarsDisabledBefore = clone(allBarsDisabled);
+assert.strictEqual(barWidgets.targetBarIndex(allBarsDisabled), -1);
+assert.strictEqual(
+  barWidgets.reconcile(allBarsDisabled, [], { battery: true }),
+  null,
+  "a layout with no enabled bar has no reconciliation target"
+);
+assert.deepStrictEqual(
+  allBarsDisabled,
+  allBarsDisabledBefore,
+  "reconciliation must not mutate a deliberately disabled layout"
+);
+assert.strictEqual(barWidgets.targetBarIndex([]), -1);
+assert.strictEqual(barWidgets.targetBarIndex(null), -1);
+
+// Enabling a bar later is all it takes: reconciliation runs on every load.
+const oneBarReEnabled = clone(
+  barWidgets.reconcile(
+    [
+      { id: "default", enabled: false, rightWidgets: ["clock", "controlCenterButton"] },
+      { id: "second", enabled: true, rightWidgets: ["clock", "controlCenterButton"] },
+    ],
+    [],
+    { battery: true }
+  )
+);
+assert.deepStrictEqual(oneBarReEnabled.barConfigs[0].rightWidgets, ["clock", "controlCenterButton"]);
+assert.deepStrictEqual(oneBarReEnabled.barConfigs[1].rightWidgets, ["clock", "battery", "controlCenterButton"]);
+
+// A v19 config migrates and reconciles in the same load, and the migration is
+// only written once the asynchronous writability check answers. Whichever
+// finishes first, the held payload must not restore the battery-less layout,
+// so reconciliation folds its result into it before saving.
+const reconcileBody = (() => {
+  const start = settingsDataSource.indexOf("function reconcileHardwareBarWidgets()");
+  assert(start >= 0, "SettingsData.qml should define reconcileHardwareBarWidgets");
+  const end = settingsDataSource.indexOf("\n    }", start);
+  assert(end > start, "reconcileHardwareBarWidgets should be a closed function body");
+  return settingsDataSource.slice(start, end);
+})();
+assert(
+  /function\s+_syncPendingMigration\s*\(/.test(settingsDataSource),
+  "SettingsData.qml should define _syncPendingMigration"
+);
+assert(
+  reconcileBody.indexOf('_syncPendingMigration("barConfigs"') >= 0,
+  "reconciliation must sync the pending migration payload, or the deferred write undoes it"
+);
+assert(
+  reconcileBody.indexOf('_syncPendingMigration("barConfigs"') < reconcileBody.indexOf("updateBarConfigs()"),
+  "the pending migration must be synced before the save"
+);
+
 assert.strictEqual(
   store.migrateToVersion({ configVersion: TARGET_VERSION }, TARGET_VERSION),
   null,

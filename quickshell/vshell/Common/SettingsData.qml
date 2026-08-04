@@ -1781,6 +1781,19 @@ Singleton {
 
     property var _pendingMigration: null
 
+    // A migration is parsed at load but only written once the asynchronous
+    // writability check answers, so anything that changes settings in that
+    // window has to be folded into the held payload too. Otherwise the
+    // deferred write puts the pre-change JSON back on disk and the reload that
+    // follows undoes the change. Neither order is guaranteed: the check can
+    // answer before or after a Qt.callLater, so both sides keep the payload
+    // current rather than relying on one winning.
+    function _syncPendingMigration(key, value) {
+        if (!_pendingMigration)
+            return;
+        _pendingMigration[key] = JSON.parse(JSON.stringify(value));
+    }
+
     function _checkSettingsWritable() {
         settingsWritableCheckProcess.running = true;
     }
@@ -2357,6 +2370,10 @@ Singleton {
 
         log.info("Added bar widgets for hardware present on this machine:", result.added.join(", "));
         barConfigs = result.barConfigs;
+        // Reconciliation can land while a migration written by this same load
+        // is still waiting on the writability check; without this the pending
+        // write would restore the battery-less layout this just repaired.
+        _syncPendingMigration("barConfigs", result.barConfigs);
         updateBarConfigs();
     }
 
