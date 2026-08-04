@@ -37,7 +37,9 @@ const store = loadModule(storePath, {
 const defaultSettings = JSON.parse(fs.readFileSync(defaultSettingsPath, "utf8"));
 const settingsDataSource = fs.readFileSync(settingsDataPath, "utf8");
 
-const TARGET_VERSION = 19;
+const barWidgets = loadModule(path.join(settingsDir, "BarWidgets.js"), {});
+
+const TARGET_VERSION = 20;
 
 function clone(value) {
   return JSON.parse(JSON.stringify(value));
@@ -377,6 +379,107 @@ assertMissing(legacyLauncherMigrated, [
 // Settings the vgsMenu launcher and the app picker still read must survive.
 assert.strictEqual(legacyLauncherMigrated.launcherSidebarShowByDefault, false);
 assert.strictEqual(legacyLauncherMigrated.appLauncherGridColumns, 6);
+
+// VGS-61: bar widget lists were never reconciled against present hardware, so a
+// barConfigs authored on a desktop left a laptop with no battery indicator.
+// removedBarWidgets is what lets reconciliation tell "the user removed it" from
+// "this config never mentioned it".
+const desktopConfigOnALaptop = {
+  configVersion: 19,
+  barConfigs: [
+    {
+      id: "default",
+      enabled: true,
+      leftWidgets: ["launcherButton"],
+      centerWidgets: ["clock"],
+      rightWidgets: ["systemTray", "cpuUsage", "controlCenterButton"],
+    },
+  ],
+};
+
+const removalTrackingMigrated = migrate(desktopConfigOnALaptop);
+assert.deepStrictEqual(
+  removalTrackingMigrated.removedBarWidgets,
+  [],
+  "the removal record starts empty; seeding it from the current layout would preserve the bug"
+);
+assert.deepStrictEqual(
+  removalTrackingMigrated.barConfigs[0].rightWidgets,
+  ["systemTray", "cpuUsage", "controlCenterButton"],
+  "migration must not touch the user's widget lists"
+);
+
+const existingRemovals = migrate({
+  configVersion: 19,
+  removedBarWidgets: ["battery"],
+  barConfigs: [{ id: "default", enabled: true, rightWidgets: ["clock"] }],
+});
+assert.deepStrictEqual(existingRemovals.removedBarWidgets, ["battery"]);
+
+// Never mentioned + hardware present -> inserted ahead of controlCenterButton.
+const reconciled = clone(barWidgets.reconcile(clone(desktopConfigOnALaptop.barConfigs), [], { battery: true }));
+assert(reconciled, "a battery-less config on a laptop should be reconciled");
+assert.deepStrictEqual(reconciled.added, ["battery"]);
+assert.deepStrictEqual(reconciled.barConfigs[0].rightWidgets, [
+  "systemTray",
+  "cpuUsage",
+  "battery",
+  "controlCenterButton",
+]);
+
+// Explicit removal must keep working, forever.
+assert.strictEqual(
+  barWidgets.reconcile(clone(desktopConfigOnALaptop.barConfigs), ["battery"], { battery: true }),
+  null,
+  "a widget the user removed must never come back"
+);
+
+// No hardware, nothing to do.
+assert.strictEqual(
+  barWidgets.reconcile(clone(desktopConfigOnALaptop.barConfigs), [], { battery: false }),
+  null,
+  "a machine without a battery must not grow a battery widget"
+);
+
+// Already mentioned anywhere counts, including disabled and in another section.
+assert.strictEqual(
+  barWidgets.reconcile(
+    [{ id: "default", enabled: true, leftWidgets: [{ id: "battery", enabled: false }], rightWidgets: [] }],
+    [],
+    { battery: true }
+  ),
+  null,
+  "a disabled battery widget is still a decision the user made"
+);
+
+// Idempotent: a second pass over its own output changes nothing.
+assert.strictEqual(
+  barWidgets.reconcile(reconciled.barConfigs, [], { battery: true }),
+  null,
+  "reconciliation must not keep adding the widget on every load"
+);
+
+// Exactly one bar is touched, and it is the first enabled one.
+const multiBar = clone(
+  barWidgets.reconcile(
+    [
+      { id: "disabled", enabled: false, rightWidgets: ["clock"] },
+      { id: "laptop", enabled: true, rightWidgets: ["clock", "controlCenterButton"] },
+      { id: "second", enabled: true, rightWidgets: ["clock"] },
+    ],
+    [],
+    { battery: true }
+  )
+);
+assert.deepStrictEqual(multiBar.barConfigs[0].rightWidgets, ["clock"]);
+assert.deepStrictEqual(multiBar.barConfigs[1].rightWidgets, ["clock", "battery", "controlCenterButton"]);
+assert.deepStrictEqual(multiBar.barConfigs[2].rightWidgets, ["clock"]);
+
+// No anchor to sit ahead of -> appended rather than dropped.
+const appended = clone(
+  barWidgets.reconcile([{ id: "default", enabled: true, rightWidgets: ["clock"] }], [], { battery: true })
+);
+assert.deepStrictEqual(appended.barConfigs[0].rightWidgets, ["clock", "battery"]);
 
 assert.strictEqual(
   store.migrateToVersion({ configVersion: TARGET_VERSION }, TARGET_VERSION),

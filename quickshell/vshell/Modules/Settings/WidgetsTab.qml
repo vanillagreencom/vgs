@@ -498,13 +498,20 @@ Item {
         var widgets = getWidgetsForSection(targetSection).slice();
         widgets.push(widgetObj);
         setWidgetsForSection(targetSection, widgets);
+        SettingsData.clearBarWidgetRemoval(widgetId);
     }
 
     function removeWidgetFromSection(sectionId, widgetIndex) {
         var widgets = getWidgetsForSection(sectionId).slice();
-        if (widgetIndex >= 0 && widgetIndex < widgets.length)
-            widgets.splice(widgetIndex, 1);
+        if (widgetIndex < 0 || widgetIndex >= widgets.length)
+            return;
+        var removed = widgets[widgetIndex];
+        widgets.splice(widgetIndex, 1);
         setWidgetsForSection(sectionId, widgets);
+        // Deleting a widget is a decision worth keeping: without it, a widget
+        // the user dropped and one their config never mentioned look identical,
+        // and hardware reconciliation would put it straight back.
+        SettingsData.recordBarWidgetRemoval(typeof removed === "string" ? removed : removed?.id);
     }
 
     function cloneWidgetData(widget) {
@@ -967,6 +974,20 @@ Item {
         setWidgetsForSection(sectionId, widgets);
     }
 
+    // A widget bound to hardware this machine does not have renders nothing and
+    // says nothing about why. Say it here instead, where the user can act on it.
+    function missingHardwareWarning(widgetId, item) {
+        if (widgetId === "battery" && !BatteryService.batteryAvailable)
+            return I18n.tr("No battery was detected on this machine, so this widget stays blank.");
+        if (widgetId === "gpuTemp" && DgopService.dgopAvailable && item.pciId) {
+            var gpus = DgopService.availableGpus || [];
+            var present = gpus.some(gpu => gpu && gpu.pciId === item.pciId);
+            if (!present)
+                return I18n.tr("No GPU with PCI ID %1 is present on this machine, so this widget stays blank. Pick a GPU in this widget's options.").arg(item.pciId);
+        }
+        return undefined;
+    }
+
     function getItemsForSection(sectionId) {
         var widgets = [];
         var widgetData = getWidgetsForSection(sectionId);
@@ -1071,6 +1092,9 @@ Item {
                 if (widget.trayMaxVisibleItems !== undefined)
                     item.trayMaxVisibleItems = widget.trayMaxVisibleItems;
             }
+            var hardwareWarning = missingHardwareWarning(widgetId, item);
+            if (hardwareWarning)
+                item.warning = hardwareWarning;
             widgets.push(item);
         });
         return widgets;

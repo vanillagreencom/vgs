@@ -11,12 +11,13 @@ import qs.Services
 import "settings/SettingsSpec.js" as Spec
 import "settings/SettingsStore.js" as Store
 import "settings/SurfaceGeometry.js" as SurfaceGeometry
+import "settings/BarWidgets.js" as BarWidgets
 
 Singleton {
     id: root
     readonly property var log: Log.scoped("SettingsData")
 
-    readonly property int settingsConfigVersion: 19
+    readonly property int settingsConfigVersion: 20
 
     readonly property bool isGreeterMode: Quickshell.env("VSHELL_RUN_GREETER") === "1" || Quickshell.env("VSHELL_RUN_GREETER") === "true"
 
@@ -993,6 +994,11 @@ Singleton {
         }
     ]
 
+    // Bar widget ids the user explicitly removed, so reconciliation can tell
+    // that apart from a widget this config simply never mentioned. See
+    // settings/BarWidgets.js.
+    property var removedBarWidgets: []
+
     // Standalone bar xray is unsafe when windows can render beneath its surface
     function _standaloneBarXrayAvailable(configs) {
         const list = configs || [];
@@ -1756,6 +1762,9 @@ Singleton {
             updateCompositorCursor();
             Processes.detectQtTools();
             Qt.callLater(checkIconThemeDrift);
+            // Covers hardware already known by the time settings land; the
+            // shell re-runs this when detection completes later.
+            Qt.callLater(reconcileHardwareBarWidgets);
 
             _checkSettingsWritable();
         } catch (e) {
@@ -2293,6 +2302,62 @@ Singleton {
 
     function getBarConfig(barId) {
         return barConfigs.find(cfg => cfg.id === barId) || null;
+    }
+
+    // Whether the hardware a widget depends on exists on this machine. UPower
+    // is the battery probe because VGS already consumes it everywhere else;
+    // /sys/class/power_supply is the same answer with a filesystem poll bolted
+    // on, and chassis type is unreliable on non-x86 firmware.
+    function hardwareBarWidgetPresent(widgetId) {
+        switch (widgetId) {
+        case "battery":
+            return BatteryService.batteryAvailable;
+        }
+        return false;
+    }
+
+    function isBarWidgetRemoved(widgetId) {
+        return (removedBarWidgets || []).indexOf(widgetId) >= 0;
+    }
+
+    // Called when the user deletes a widget from a bar. Recording every removal
+    // rather than only the hardware-gated ones keeps the record meaningful for
+    // widgets that become hardware-gated later.
+    function recordBarWidgetRemoval(widgetId) {
+        if (!widgetId || isBarWidgetRemoved(widgetId))
+            return;
+        removedBarWidgets = (removedBarWidgets || []).concat([widgetId]);
+        saveSettings();
+    }
+
+    // The user put it back, so the removal no longer describes their intent.
+    function clearBarWidgetRemoval(widgetId) {
+        if (!widgetId || !isBarWidgetRemoved(widgetId))
+            return;
+        removedBarWidgets = (removedBarWidgets || []).filter(id => id !== widgetId);
+        saveSettings();
+    }
+
+    // Add hardware-gated widgets that this config has never mentioned, now that
+    // we know what hardware is actually here. Safe to call repeatedly: a widget
+    // the user removed is recorded in removedBarWidgets and stays gone.
+    function reconcileHardwareBarWidgets() {
+        if (!_hasLoaded || _parseError || _loading)
+            return;
+
+        const presence = {};
+        for (var i = 0; i < BarWidgets.HARDWARE_WIDGETS.length; i++) {
+            const id = BarWidgets.HARDWARE_WIDGETS[i].id;
+            presence[id] = hardwareBarWidgetPresent(id);
+        }
+
+        const result = BarWidgets.reconcile(barConfigs, removedBarWidgets, presence);
+        if (!result)
+            return;
+
+        log.info("Added bar widgets for hardware present on this machine:", result.added.join(", "));
+        barConfigs = result.barConfigs;
+        updateBarConfigs();
     }
 
     function isBarIpcRevealed(barId) {
