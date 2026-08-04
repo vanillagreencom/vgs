@@ -255,6 +255,18 @@ Item {
         }
     }
 
+    // UPower answers well after settings load, so a laptop only becomes a
+    // laptop some way into startup. Reconcile the bar widget lists against the
+    // hardware then — a barConfigs carried over from a desktop otherwise never
+    // grows a battery indicator, because nothing revisits that array once the
+    // user has one of their own.
+    Connections {
+        target: BatteryService
+        function onBatteryAvailableChanged() {
+            SettingsData.reconcileHardwareBarWidgets();
+        }
+    }
+
     Repeater {
         id: barRepeater
         model: ScriptModel {

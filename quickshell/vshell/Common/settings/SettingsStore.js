@@ -413,6 +413,20 @@ function migrateToVersion(obj, targetVersion) {
         settings.configVersion = 19;
     }
 
+    if (currentVersion < 20) {
+        console.info("Migrating settings from version", currentVersion, "to version 20");
+        console.info("Recording bar widget removals so hardware-gated widgets can be reconciled");
+        // Introduces removedBarWidgets. It starts empty on purpose: no existing
+        // config ever recorded a removal, so seeding it from the current bar
+        // layout would mark every widget the config simply never mentioned as
+        // "deliberately removed" and preserve exactly the bug this fixes. The
+        // cost is that a user who had already removed a hardware-gated widget
+        // gets it back once; removing it again is recorded and sticks.
+        if (!Array.isArray(settings.removedBarWidgets))
+            settings.removedBarWidgets = [];
+        settings.configVersion = 20;
+    }
+
     var validKeys = SpecModule.getValidKeys();
     var filtered = {};
     for (var key in settings) {
