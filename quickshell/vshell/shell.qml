@@ -16,6 +16,28 @@ import qs.Modules.Lock
 ShellRoot {
     id: entrypoint
 
+    // FIRST CHILD, and that is an invariant rather than a preference.
+    // `ReloadPropagator::onReload` matches `mChildren` BY INDEX and never
+    // consults `reloadableId` (quickshell 0.3.0, src/core/reload.cpp), so if
+    // anything is inserted above this and saved WHILE THE SESSION IS LOCKED,
+    // Lock's index shifts, the old object at the new index is not a
+    // ReloadPropagator, and the whole lock subtree reloads with a null old
+    // instance — a fresh SessionLockManager, the previous one destroyed still
+    // owning the ext-session-lock, and a qFatal on the next lock request.
+    // Keeping it first means added children land at index 1+ and cannot move
+    // it. scripts/check-lock-reload-order.py enforces this.
+    //
+    // The session lock also cannot sit under either Loader below: a Loader is
+    // not Reloadable, so reload propagation stops there and nothing beneath
+    // it is ever matched (the full mechanism is in Modules/Lock/Lock.qml).
+    // It is therefore always built — in the greeter too, and in a shell the
+    // duplicate guard is about to refuse — and `active` gates the behaviour:
+    // an inactive Lock takes no lock and registers no lock IPC.
+    Lock {
+        active: !entrypoint.runGreeter && entrypoint.shellAllowed
+    }
+
+
     readonly property bool runGreeter: Quickshell.env("VSHELL_RUN_GREETER") === "1" || Quickshell.env("VSHELL_RUN_GREETER") === "true"
     readonly property bool disableHotReload: Quickshell.env("VSHELL_DISABLE_HOT_RELOAD") === "1" || Quickshell.env("VSHELL_DISABLE_HOT_RELOAD") === "true"
 
@@ -148,23 +170,6 @@ ShellRoot {
         interval: 2000
         running: !entrypoint.guardDisabled && !entrypoint.guardResolved
         onTriggered: entrypoint.failOpen("no answer within 2s")
-    }
-
-    // The session lock is the one part of the shell that must NOT sit under a
-    // Loader. `ReloadPropagator` hands old instances only to children that are
-    // themselves `Reloadable`, and a `Loader` is not one, so reload matching
-    // stops dead at the loaders below and everything under them is rebuilt from
-    // nothing. For `WlSessionLock` that orphans the manager that owns the
-    // ext-session-lock and poisons every later lock request in this process (the
-    // full mechanism is documented in Modules/Lock/Lock.qml). A `Scope` IS a
-    // ReloadPropagator, so as a direct ShellRoot child the lock is matched
-    // positionally across generations and survives a hot reload intact.
-    //
-    // It is therefore always built — even in the greeter, and even in a shell
-    // the duplicate guard is about to refuse. `active` gates the behaviour
-    // instead: an inactive Lock takes no lock, and registers no lock IPC.
-    Lock {
-        active: !entrypoint.runGreeter && entrypoint.shellAllowed
     }
 
     Loader {
