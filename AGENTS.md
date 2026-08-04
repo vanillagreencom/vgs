@@ -233,16 +233,26 @@ The runner resolves through the shared `CI_RUNNER_2V` repository variable
 and must keep working). Nothing here is CPU-bound or disk-hungry, so the 4V/8V
 tiers buy VGS nothing.
 
-Three checks in the list above **cannot run in CI** and stay local-only. Their
-absence is deliberate, not an oversight, and
-`scripts/check-validation-inventory.py` holds the machine-readable copy of this
-table so the two cannot disagree silently:
+Some checks in the list above **cannot run in CI**, and one runs there only
+through another entry. Both categories are deliberate, not oversights, and
+`scripts/check-validation-inventory.py` cross-compares the two tables below
+against its own `LOCAL_ONLY` and `INDIRECT_IN_CI` maps — it fails if the prose
+and the code disagree, which is the only thing that makes the claim they cannot
+diverge silently actually true.
+
+**Local-only — CI cannot run these at all:**
 
 | Check | Why it is local-only |
 |-------|----------------------|
 | `scripts/check-label-taxonomy.py` | Compares `vstack.toml`'s label taxonomy against live Linear; CI has no Linear credentials and no local cache. It FAILS rather than skipping when the inventory is unreachable — `--allow-missing-inventory` is the explicit "I accept the sweep did not happen". |
-| `scripts/qml-smoke.sh --nested` | Its sandbox needs both Hyprland and `quickshell` on PATH (`scripts/qml-smoke.sh::nested_check`); neither is reasonably installable on a CI runner. CI runs the static half instead, via `scripts/check-validation-safety.sh --require-static`, which forwards the flag to the smoke. Quickshell is not needed for that half — the static check tolerates unresolved `qs.*` imports by design and fails only on `[syntax…]` findings. |
+| `scripts/check-review-gate-vendor.sh` | Compares the tracked engine at `third_party/review-gate/` against the `vstack refresh`-managed copy under `.agents/`, which a CI checkout does not have. |
 | `scripts/smoke-surfaces.sh` | Needs a **live** Hyprland VGS session and reads `hyprctl layers`. Anywhere else it prints a skip and exits 0, so running it in CI would manufacture a false green. |
+
+**Reached indirectly — CI runs these through another entry, not by name:**
+
+| Check | How CI reaches it |
+|-------|-------------------|
+| `scripts/qml-smoke.sh` | `scripts/check-validation-safety.sh --require-static` forwards the flag to the smoke, so the **static** half runs in CI. Only `--nested` is local-only: its sandbox needs both Hyprland and `quickshell` on PATH (`scripts/qml-smoke.sh::nested_check`), neither reasonably installable on a runner. Quickshell is not needed for the static half — it tolerates unresolved `qs.*` imports by design and fails only on `[syntax…]` findings. |
 
 The live-session half of `scripts/check-validation-safety.sh` is likewise
 inert in CI: with no compositor and no Quickshell CLI its snapshots report
@@ -276,7 +286,7 @@ Three moving parts:
 | Piece | Role |
 |-------|------|
 | `ci.yml` § `review-gate` | Evaluates the predicate from the **base** revision with a read-only checkout and posts the status. Latency optimization. |
-| `ci.yml` § `review-gate-selftest` | Ungated, no `needs`: pins the engine's decision table offline, and `scripts/test-review-gate-step.sh` pins the CI step that consumes it. A broken predicate approves nothing, so a gated selftest could never run when it matters. |
+| `ci.yml` § `review-gate-selftest` | Ungated (nothing gates *it*), but **blocking**: `ci-ok` takes `needs:` on it. Pins the engine's decision table offline, plus `scripts/test-review-gate-step.sh` for the CI step that consumes it. |
 | `approval-rerun.yml` / `approval-sweep.yml` | The convergence writers of record — non-PR triggers, default-branch checkout. The sweep every 15 minutes is what catches thread resolution, which has no Actions trigger at all. |
 
 `ci-ok` deliberately does **not** wait on the gate. The engine's default shape
@@ -295,11 +305,36 @@ false verdict — and never a crash, which posts nothing and so neither blocks n
 informs. `scripts/test-review-gate-step.sh` drives the step, extracted from the
 shipped YAML, over all of those states.
 
+**Ungated is not the same as non-blocking**, and conflating them left a hole:
+the selftest ran on every event but was not a required context, and
+`Review gate` evaluates the *base* predicate, so it stays green on a PR that
+breaks the head's predicate. A change breaking `review-predicate.sh` could
+merge with its own selftest red. `ci-ok` therefore takes `needs:
+review-gate-selftest` — blocking without gating, and it hands out no token,
+since the selftest holds only `contents: read`. `ci-ok` deliberately does not
+`needs:` the gate job, which holds `statuses: write`.
+
+All three gate writers — the `review-gate` job, `approval-rerun.yml` and
+`approval-sweep.yml` — share one repo-wide `review-gate-writer` concurrency
+group. Two writers evaluating different snapshots of the same head can post out
+of order, and an older `success` overwriting a newer `failure` reopens merge
+until the next sweep. The `review-gate` job is job-scoped into that group so the
+rest of CI keeps its per-PR group.
+
 Per-repo trust lives in `vstack.settings.toml` under `REVIEW_GATE_*`, each key
-carrying the reason for its VGS value. Two are worth knowing: no check-run or
-commit status is trusted as evidence (CodeRabbit reported `success` with
-"Review rate limited" on PR #38 — a pass proving nothing ran), and no
-comment-form reviewer is configured.
+carrying the reason for its VGS value. The one that is not optional:
+`REVIEW_GATE_REVIEW_OBJECT_TRUSTED_LOGINS` names the three reviewer bots
+explicitly. `vanillagreencom/vgs` is **public**, so an empty list — "any
+non-author" — would let any GitHub account open the gate with a drive-by
+`COMMENTED` review, with neither bot having analysed the head. A gate a
+passer-by can open is worse than no gate, because it reads as protection.
+
+`REVIEW_GATE_REVIEW_OBJECT_MIN_STATE` stays `"any"` because that list is now
+what closes the hole: of the three trusted reviewers only CodeRabbit ever
+submits `APPROVED`, so requiring approval would discard the other two. Two more
+worth knowing: no check-run or commit status is trusted as evidence (CodeRabbit
+reported `success` with "Review rate limited" on PR #38 — a pass proving nothing
+ran), and no comment-form reviewer is configured.
 
 CodeRabbit's own config is checked too. `.coderabbit.yaml` shipped a
 376-character `tone_instructions` against a documented 250-character limit;

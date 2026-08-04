@@ -187,8 +187,10 @@ else
 fi
 
 # --- state 4: the engine is PRESENT, an approving review at the head --------
+# The login must be one of REVIEW_GATE_REVIEW_OBJECT_TRUSTED_LOGINS. This repo
+# is PUBLIC, so an untrusted login opening the gate is the bypass state 4b pins.
 
-write_fixtures '[{"state":"APPROVED","commit_id":"deadbeefcafe","user":{"login":"a-reviewer"},"submitted_at":"2026-08-04T00:00:00Z"}]'
+write_fixtures '[{"state":"APPROVED","commit_id":"deadbeefcafe","user":{"login":"coderabbitai[bot]"},"submitted_at":"2026-08-04T00:00:00Z"}]'
 run_step "$present" pull_request
 rc=$?
 [[ "$rc" -eq 0 ]] && ok "engine present, approved at head: step exits 0" || bad "engine present, approved at head: exit $rc"
@@ -199,9 +201,22 @@ else
   sed -n '1,20p' "$scratch/out" >&2
 fi
 
+# --- state 4b: an UNTRUSTED login must NOT open the gate --------------------
+# vanillagreencom/vgs is public. With REVIEW_GATE_REVIEW_OBJECT_TRUSTED_LOGINS
+# empty, any GitHub account could satisfy the required merge gate with a
+# drive-by review and neither reviewer bot having analysed anything.
+
+write_fixtures '[{"state":"APPROVED","commit_id":"deadbeefcafe","user":{"login":"a-passer-by"},"submitted_at":"2026-08-04T00:00:00Z"}]'
+run_step "$present" pull_request
+if [[ "$(posted)" == "pending," ]]; then
+  ok "engine present, APPROVED by an untrusted login: stays pending"
+else
+  bad "engine present, APPROVED by an untrusted login: posted '$(posted)' — on a PUBLIC repo any account can open the gate"
+fi
+
 # --- state 5: changes requested is the ONLY red path ------------------------
 
-write_fixtures '[{"state":"CHANGES_REQUESTED","commit_id":"deadbeefcafe","user":{"login":"a-reviewer"},"submitted_at":"2026-08-04T00:00:00Z"}]'
+write_fixtures '[{"state":"CHANGES_REQUESTED","commit_id":"deadbeefcafe","user":{"login":"coderabbitai[bot]"},"submitted_at":"2026-08-04T00:00:00Z"}]'
 run_step "$present" pull_request
 [[ "$(posted)" == "failure," ]] && ok "engine present, changes requested: posts failure" || bad "engine present, changes requested: posted '$(posted)', wanted failure"
 

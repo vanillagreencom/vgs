@@ -19,9 +19,9 @@
 # tree, not runtime faults. Unresolved qs.* imports and missing properties only
 # surface when the shell actually runs, which is what --nested is for.
 #
-# --nested loads bundled plugins from config/vshell/plugins and waits for one of
-# their IPC targets before it stops observing, so plugin-owned QML is inside the
-# checked window. It fails if they never load.
+# --nested loads bundled plugins from config/vshell/plugins and waits for EVERY
+# one of them to report loaded before it stops observing, so plugin-owned QML is
+# inside the checked window. It fails if any of them never loads.
 #
 # Both modes assert that they leave the live session byte-for-byte alone: same
 # VGS Quickshell instances, same VGS layer surfaces. Cleanup is process-group
@@ -40,13 +40,9 @@ static_ran=false
 nested_timeout=40
 compositor_timeout=15
 # Bundled plugins are scanned asynchronously after the core tree loads, so they
-# appear well after the first core IPC target does. Waiting for one of them is
-# what makes plugin-owned QML part of the observed window.
-plugin_timeout=20
-# A bundled plugin's IPC target. Its presence proves config/vshell/plugins was
-# scanned, loaded and instantiated inside the sandbox; its absence is a plugin
-# loading regression, which used to pass silently.
-bundled_plugin_target="vshell-menu"
+# appear well after the first core IPC target does. Waiting for them is what
+# makes plugin-owned QML part of the observed window.
+plugin_timeout=30
 
 usage() {
   sed -n '2,20p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
@@ -276,7 +272,8 @@ host_wayland_socket() {
 
 nested_check() {
   local host_socket sandbox rt_dir conf log nested_socket candidate waited exit_code findings
-  local compositor_pgid qs_launcher qs_group loaded targets plugins_loaded
+  local compositor_pgid qs_launcher qs_group loaded targets plugins_loaded plugin_report candidate
+  local -a expected_plugins=() missing_plugins=()
   local -a sandbox_env=() dbus_wrapper=()
 
   command -v Hyprland >/dev/null 2>&1 || { nested_unavailable "Hyprland not installed"; return; }
@@ -408,16 +405,44 @@ EOF
   # answer. Stopping at the first core target ends observation before any plugin
   # QML has run, so plugin load failures, duplicate IpcHandler registrations and
   # broken entry points were invisible here — and passed as full coverage.
+  #
+  # EVERY bundled plugin, not one of them. Waiting on a single plugin's IPC
+  # target proved only that plugin loaded: the seven load through independent
+  # asynchronous FileViews with no ordering guarantee, so six could still be
+  # pending when the shell was killed, and their QML was never observed while
+  # the run reported full plugin coverage. That is the original VGS-19 defect
+  # wearing a different hat.
+  #
+  # The expected set is derived from the tree rather than hardcoded, so adding a
+  # bundled plugin extends this check automatically instead of silently not
+  # covering the new one.
+  mapfile -t expected_plugins < <(
+    find "$repo_root/config/vshell/plugins" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' 2>/dev/null | sort
+  )
+  if [[ ${#expected_plugins[@]} -eq 0 ]]; then
+    fail "no bundled plugins found under config/vshell/plugins"
+    return
+  fi
+
   plugins_loaded=false
+  plugin_report=""
   if [[ "$loaded" == true ]]; then
     for waited in $(seq 1 $((plugin_timeout * 2))); do
-      if printf '%s\n' "$targets" | grep -q "^target ${bundled_plugin_target}\$"; then
+      # `plugins list` reports one line per plugin as "<id> [loaded|disabled]",
+      # which is the only view that distinguishes "not scanned yet" from
+      # "scanned and failed to load".
+      plugin_report="$("${sandbox_env[@]}" qs ipc -p "$repo_root/quickshell/vshell" \
+        --any-display call plugins list 2>/dev/null || true)"
+      missing_plugins=()
+      for candidate in "${expected_plugins[@]}"; do
+        printf '%s\n' "$plugin_report" | grep -q "^${candidate} \[loaded\]\$" || missing_plugins+=("$candidate")
+      done
+      if [[ ${#missing_plugins[@]} -eq 0 ]]; then
         plugins_loaded=true
         break
       fi
       kill -0 -- "-$qs_group" 2>/dev/null || break
       sleep 0.5
-      targets="$("${sandbox_env[@]}" qs ipc -p "$repo_root/quickshell/vshell" --any-display show 2>/dev/null || true)"
     done
   fi
 
@@ -435,8 +460,8 @@ EOF
     return
   fi
   if [[ "$plugins_loaded" != true ]]; then
-    printf '%s\n' "$targets" | grep '^target ' >&2 || true
-    fail "bundled plugins never loaded in the sandbox: no '$bundled_plugin_target' IPC target within ${plugin_timeout}s"
+    printf 'qml-smoke: plugins list reported:\n%s\n' "${plugin_report:-<no response>}" >&2
+    fail "bundled plugins not loaded in the sandbox within ${plugin_timeout}s: ${missing_plugins[*]} (of ${#expected_plugins[@]} under config/vshell/plugins)"
     return
   fi
 
@@ -466,7 +491,7 @@ EOF
     fail "QML/runtime errors in the sandboxed shell"
     return
   fi
-  note "isolated runtime check passed (shell loaded, bundled plugins loaded, answered IPC in the sandbox)"
+  note "isolated runtime check passed (shell loaded, all ${#expected_plugins[@]} bundled plugins loaded, answered IPC in the sandbox)"
 }
 
 # --- run --------------------------------------------------------------------

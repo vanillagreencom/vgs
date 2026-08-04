@@ -28,6 +28,16 @@ import shlex
 import sys
 from pathlib import Path
 
+try:
+    import yaml
+except ModuleNotFoundError:
+    print(
+        "check-validation-inventory: FAIL: PyYAML is not installed, so ci.yml could not\n"
+        "be parsed and CI coverage was NOT checked (pacman -S python-yaml).",
+        file=sys.stderr,
+    )
+    raise SystemExit(1)
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 AGENTS = REPO_ROOT / "AGENTS.md"
 CI = REPO_ROOT / ".github" / "workflows" / "ci.yml"
@@ -77,6 +87,88 @@ def validation_commands() -> list[str]:
     return [line for line in fence.group(1).splitlines() if line.strip()]
 
 
+def ci_run_commands() -> str:
+    """Only the shell inside ci.yml's `run:` blocks, never the whole file.
+
+    A raw substring test over ci.yml counts COMMENTS as invocations. ci.yml
+    mentions several scripts in comments explaining why a step exists, so
+    deleting a check from its `run:` block while leaving the comment above it
+    kept this guard green — the exact false green it exists to prevent. It also
+    cuts the other way: a comment naming a local-only script would report a
+    failure that is not real.
+
+    A YAML parse is the honest form. Anything that is not a `run:` scalar is
+    prose about the workflow, not the workflow.
+    """
+    workflow = yaml.safe_load(CI.read_text(encoding="utf-8"))
+    runs: list[str] = []
+
+    def walk(node) -> None:
+        if isinstance(node, dict):
+            for key, value in node.items():
+                if key == "run" and isinstance(value, str):
+                    runs.append(value)
+                else:
+                    walk(value)
+        elif isinstance(node, list):
+            for item in node:
+                walk(item)
+
+    walk(workflow)
+    if not runs:
+        raise SystemExit("check-validation-inventory: ci.yml has no `run:` blocks at all")
+    # Strip shell comments too: a `#` line inside a run block is still prose.
+    lines = []
+    for block in runs:
+        for line in block.splitlines():
+            stripped = line.strip()
+            if stripped and not stripped.startswith("#"):
+                lines.append(line)
+    return "\n".join(lines)
+
+
+# The prose tables in AGENTS.md § What CI covers, keyed by the bold lead-in
+# above each. Claiming the doc and the code cannot disagree is only true if
+# something compares them; before this, nothing did, and the table had drifted
+# (it omitted check-review-gate-vendor.sh and listed qml-smoke.sh, which is
+# reached indirectly rather than being local-only).
+DOC_TABLES = {
+    "LOCAL_ONLY": "**Local-only — CI cannot run these at all:**",
+    "INDIRECT_IN_CI": "**Reached indirectly — CI runs these through another entry, not by name:**",
+}
+
+
+def documented_table(lead_in: str) -> set[str]:
+    """Script basenames named in the first column of the table after `lead_in`."""
+    text = AGENTS.read_text(encoding="utf-8")
+    start = text.find(lead_in)
+    if start == -1:
+        raise SystemExit(
+            f"check-validation-inventory: AGENTS.md has no table introduced by {lead_in!r}"
+        )
+    names: set[str] = set()
+    seen_rows = False
+    for line in text[start + len(lead_in):].splitlines():
+        stripped = line.strip()
+        if not stripped:
+            if seen_rows:
+                break
+            continue
+        if not stripped.startswith("|"):
+            break
+        cells = stripped.split("|")
+        if len(cells) < 2:
+            continue
+        first = cells[1].strip()
+        if set(first) <= {"-", ":", " "}:  # the header underline
+            continue
+        match = re.search(r"`scripts/([A-Za-z0-9._-]+)`", first)
+        if match:
+            names.add(match.group(1))
+            seen_rows = True
+    return names
+
+
 def executable_checks() -> list[str]:
     """Executable files directly under scripts/ (scripts/lib/ is libraries)."""
     return sorted(
@@ -90,7 +182,7 @@ def main() -> int:
     problems: list[str] = []
     commands = validation_commands()
     documented = "\n".join(commands)
-    ci_text = CI.read_text(encoding="utf-8")
+    ci_text = ci_run_commands()
 
     # --- every documented command runs exactly as written ---------------------
     for line in commands:
@@ -160,6 +252,20 @@ def main() -> int:
                 f"{rel} is in AGENTS.md § Validation but not in .github/workflows/ci.yml. "
                 f"Add it to the workflow, record it in LOCAL_ONLY with the reason CI cannot run it, "
                 f"or in INDIRECT_IN_CI naming the entry that reaches it."
+            )
+
+    # --- the prose tables and the maps above must agree ----------------------
+    for map_name, lead_in in DOC_TABLES.items():
+        coded = set(globals()[map_name])
+        documented_names = documented_table(lead_in)
+        for name in sorted(coded - documented_names):
+            problems.append(
+                f"scripts/{name} is in {map_name} but not in the AGENTS.md table "
+                f"introduced by {lead_in!r}"
+            )
+        for name in sorted(documented_names - coded):
+            problems.append(
+                f"scripts/{name} is in that AGENTS.md table but not in {map_name}"
             )
 
     # --- exclusions that no longer name a real file --------------------------

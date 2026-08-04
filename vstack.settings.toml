@@ -213,12 +213,35 @@ REVIEW_GATE_OUTAGE_CONTEXT = "vstack-reviewer-outage"
 # count as evidence. Empty = any non-author (the compatible default; on
 # repos with outside read-access collaborators this means any drive-by
 # COMMENTED review satisfies the gate — set the list to close that).
-REVIEW_GATE_REVIEW_OBJECT_TRUSTED_LOGINS = ""
+#
+# VGS ASSIGNMENT: POPULATED, and this one is not optional. `vanillagreencom/vgs`
+# is a PUBLIC repository, which is the maximal case of the hazard above: with
+# the list empty, ANY GitHub account could submit a drive-by COMMENTED review on
+# a head with no unresolved threads, the predicate would count it as evidence,
+# and the gate would flip to success with neither reviewer having analysed
+# anything. A gate a passer-by can open is worse than no gate, because it reads
+# as protection.
+#
+# The three logins below are the AI reviewers observed submitting review objects
+# on this repo (sampled across PRs #57, #59, #61, #62). Trust keys on the login,
+# which only GitHub can set.
+#
+# The human owner's login is deliberately ABSENT. `bmethod` authors every VGS
+# PR, and the predicate rejects review evidence from the PR author — mechanical,
+# not policy — so listing it would be inert. It is also the point of the gate:
+# the evidence has to come from an analysis the author did not perform.
+REVIEW_GATE_REVIEW_OBJECT_TRUSTED_LOGINS = "coderabbitai[bot];copilot-pull-request-reviewer[bot];qodo-code-review[bot]"
 
 # Minimum review-object state that counts as evidence: "any" (any
 # non-dismissed row) or "approved" (an APPROVED at head not withdrawn by a
 # LATER CHANGES_REQUESTED from the same login; a trailing COMMENTED never
 # supersedes an approval).
+#
+# VGS ASSIGNMENT: "any", deliberately, now that the trust list above is what
+# closes the drive-by hole. Of the three trusted reviewers only CodeRabbit ever
+# submits APPROVED; Copilot and qodo report clean runs as COMMENTED. Requiring
+# "approved" would therefore discard two of the three reviewers entirely and
+# make the gate depend on the one that has been rate-limited all day.
 REVIEW_GATE_REVIEW_OBJECT_MIN_STATE = "any"
 
 # Rerun backstop for approval-refire.sh: runs at/above this attempt count
