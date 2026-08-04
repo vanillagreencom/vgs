@@ -19,6 +19,10 @@
 # tree, not runtime faults. Unresolved qs.* imports and missing properties only
 # surface when the shell actually runs, which is what --nested is for.
 #
+# --nested loads bundled plugins from config/vshell/plugins and waits for one of
+# their IPC targets before it stops observing, so plugin-owned QML is inside the
+# checked window. It fails if they never load.
+#
 # Both modes assert that they leave the live session byte-for-byte alone: same
 # VGS Quickshell instances, same VGS layer surfaces. Cleanup is process-group
 # scoped and runs on success, failure, timeout, and interrupt. This script never
@@ -33,8 +37,16 @@ nested=false
 require_nested=false
 require_static=false
 static_ran=false
-nested_timeout=20
+nested_timeout=40
 compositor_timeout=15
+# Bundled plugins are scanned asynchronously after the core tree loads, so they
+# appear well after the first core IPC target does. Waiting for one of them is
+# what makes plugin-owned QML part of the observed window.
+plugin_timeout=20
+# A bundled plugin's IPC target. Its presence proves config/vshell/plugins was
+# scanned, loaded and instantiated inside the sandbox; its absence is a plugin
+# loading regression, which used to pass silently.
+bundled_plugin_target="vshell-menu"
 
 usage() {
   sed -n '2,20p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
@@ -264,7 +276,7 @@ host_wayland_socket() {
 
 nested_check() {
   local host_socket sandbox rt_dir conf log nested_socket candidate waited exit_code findings
-  local compositor_pgid qs_launcher qs_group loaded
+  local compositor_pgid qs_launcher qs_group loaded targets plugins_loaded
   local -a sandbox_env=() dbus_wrapper=()
 
   command -v Hyprland >/dev/null 2>&1 || { nested_unavailable "Hyprland not installed"; return; }
@@ -381,15 +393,33 @@ EOF
   # only exist once the shell tree loaded. Waiting on the timeout instead would
   # also "pass" for a shell that exited immediately.
   loaded=false
+  targets=""
   for waited in $(seq 1 $((nested_timeout * 2))); do
-    if "${sandbox_env[@]}" qs ipc -p "$repo_root/quickshell/vshell" --any-display show 2>/dev/null |
-      grep -q '^target '; then
+    targets="$("${sandbox_env[@]}" qs ipc -p "$repo_root/quickshell/vshell" --any-display show 2>/dev/null || true)"
+    if printf '%s\n' "$targets" | grep -q '^target '; then
       loaded=true
       break
     fi
     kill -0 -- "-$qs_group" 2>/dev/null || break
     sleep 0.5
   done
+
+  # Bundled plugins load asynchronously, several seconds after the core targets
+  # answer. Stopping at the first core target ends observation before any plugin
+  # QML has run, so plugin load failures, duplicate IpcHandler registrations and
+  # broken entry points were invisible here — and passed as full coverage.
+  plugins_loaded=false
+  if [[ "$loaded" == true ]]; then
+    for waited in $(seq 1 $((plugin_timeout * 2))); do
+      if printf '%s\n' "$targets" | grep -q "^target ${bundled_plugin_target}\$"; then
+        plugins_loaded=true
+        break
+      fi
+      kill -0 -- "-$qs_group" 2>/dev/null || break
+      sleep 0.5
+      targets="$("${sandbox_env[@]}" qs ipc -p "$repo_root/quickshell/vshell" --any-display show 2>/dev/null || true)"
+    done
+  fi
 
   kill_pgid "$qs_group"
   exit_code=0
@@ -404,19 +434,39 @@ EOF
     fail "sandboxed shell never exposed its IPC targets (exit code $exit_code)"
     return
   fi
+  if [[ "$plugins_loaded" != true ]]; then
+    printf '%s\n' "$targets" | grep '^target ' >&2 || true
+    fail "bundled plugins never loaded in the sandbox: no '$bundled_plugin_target' IPC target within ${plugin_timeout}s"
+    return
+  fi
 
   # Services the sandbox deliberately cannot reach (the live PipeWire socket
   # lives in the session's runtime dir, and the private bus has no peers) are
   # environment gaps, not QML defects.
   local sandbox_noise='quickshell\.service\.pipewire|Failed to connect pipewire'
-  findings="$(grep -nE '^[[:space:]]*ERROR|is not a type|Cannot assign|Unable to assign|Failed to start process|Type .* unavailable' "$log" |
+  # Error classes, each verified against a paired positive/negative control:
+  #   ReferenceError  undefined identifier in a binding or handler body
+  #   TypeError       property/method access on undefined, calling a non-function
+  #   SyntaxError     JS parse failure inside a .js import or a handler body
+  # These are prefixed by the QML file path, not by 'ERROR', so the leading
+  # anchor below never saw them.
+  #
+  # Deliberately NOT matched:
+  #   'Binding loop detected'  a warning, benign in several existing surfaces,
+  #                            and it would make the gate noisy rather than
+  #                            catching a class of defect the shell cannot run
+  #                            through.
+  #   bare 'Error:'            over-matches process output and third-party
+  #                            library chatter (ffmpeg, dbus) piped into the log.
+  local error_classes='ReferenceError|TypeError|SyntaxError'
+  findings="$(grep -nE "^[[:space:]]*ERROR|is not a type|Cannot assign|Unable to assign|Failed to start process|Type .* unavailable|$error_classes" "$log" |
     grep -vE "$sandbox_noise" || true)"
   if [[ -n "$findings" ]]; then
     printf '%s\n' "$findings" >&2
     fail "QML/runtime errors in the sandboxed shell"
     return
   fi
-  note "isolated runtime check passed (shell loaded and answered IPC in the sandbox)"
+  note "isolated runtime check passed (shell loaded, bundled plugins loaded, answered IPC in the sandbox)"
 }
 
 # --- run --------------------------------------------------------------------
