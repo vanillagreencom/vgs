@@ -2346,10 +2346,10 @@ def test_theme_catalog_download_verifies_every_file():
         os.environ["VGS_THEME_CATALOG_BASE_URL"] = "file://" + str(tmp / "source")
         try:
             catalog = helper.load_theme_catalog()
-            base_url, allow_local = helper.theme_catalog_base_url(catalog)
+            base_urls, allow_local = helper.theme_catalog_base_urls(catalog)
             entry = helper.catalog_theme_entry(catalog, "demo")
 
-            result = helper.catalog_download_theme(entry, base_url, allow_local)
+            result = helper.catalog_download_theme(entry, base_urls, allow_local)
             assert_equal(result["status"], "installed", "catalog download status")
             dest = helper.user_themes_dir() / "demo"
             for rel in ("theme.json", "colors.toml", "apps/btop.theme"):
@@ -2360,7 +2360,7 @@ def test_theme_catalog_download_verifies_every_file():
             listed = [e for e in helper.catalog_entries() if e["name"] == "demo"][0]
             assert_equal((listed["installed"], listed["downloaded"]), (True, True), "catalog list state")
 
-            again = helper.catalog_download_theme(entry, base_url, allow_local)
+            again = helper.catalog_download_theme(entry, base_urls, allow_local)
             assert_equal(again["status"], "skipped", "an installed theme is not re-downloaded")
 
             # A force re-download must never destroy the installed copy before
@@ -2368,7 +2368,7 @@ def test_theme_catalog_download_verifies_every_file():
             tampered_force = json.loads(json.dumps(entry))
             tampered_force["files"][1]["sha256"] = "1" * 64
             try:
-                helper.catalog_download_theme(tampered_force, base_url, allow_local, force=True)
+                helper.catalog_download_theme(tampered_force, base_urls, allow_local, force=True)
                 raise AssertionError("a tampered force re-download must fail")
             except ValueError:
                 pass
@@ -2388,7 +2388,7 @@ def test_theme_catalog_download_verifies_every_file():
 
             # A removal that cannot proceed must fail loudly and leave the theme
             # whole, not report success or half-delete it.
-            helper.catalog_download_theme(entry, base_url, allow_local)
+            helper.catalog_download_theme(entry, base_urls, allow_local)
             themes_root = helper.user_themes_dir()
             themes_root.chmod(0o555)
             try:
@@ -2401,6 +2401,55 @@ def test_theme_catalog_download_verifies_every_file():
             assert_equal((dest / "theme.json").is_file(), True, "theme survives a failed removal")
             assert_equal(helper.catalog_remove_theme("demo")["status"], "removed", "removal after the block")
 
+            # The theme lock must be free while bytes are moving: a `Download
+            # All` is ~1.1 GiB, and holding it would block every apply, the
+            # light/dark keybinding, wallpapers and restyles for that whole time.
+            import fcntl
+
+            lock_free_during_transfer = []
+            original_fetch = helper._catalog_fetch_verified
+
+            def probing_fetch(*fetch_args, **fetch_kwargs):
+                lock_path = helper.cfg_dir() / ".theme-mutation.lock"
+                lock_path.parent.mkdir(parents=True, exist_ok=True)
+                probe = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o600)
+                try:
+                    fcntl.flock(probe, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    lock_free_during_transfer.append(True)
+                    fcntl.flock(probe, fcntl.LOCK_UN)
+                except OSError:
+                    lock_free_during_transfer.append(False)
+                finally:
+                    os.close(probe)
+                return original_fetch(*fetch_args, **fetch_kwargs)
+
+            helper._catalog_fetch_verified = probing_fetch
+            try:
+                helper.catalog_download_theme(entry, base_urls, allow_local)
+            finally:
+                helper._catalog_fetch_verified = original_fetch
+            assert_equal(lock_free_during_transfer, [True, True, True],
+                         "the theme mutation lock must stay free while a download transfers")
+            helper.catalog_remove_theme("demo")
+
+            # A duplicate of a downloaded theme inherits the marker file, so
+            # ownership must be identity, not presence — otherwise `catalog
+            # remove` deletes the user's own copy.
+            helper.catalog_download_theme(entry, base_urls, allow_local)
+            copy = helper.user_themes_dir() / "mycopy"
+            shutil.copytree(dest, copy)
+            assert_equal(helper.catalog_owns("mycopy"), False, "a copied marker must not confer ownership")
+            try:
+                helper.catalog_remove_theme("mycopy")
+                raise AssertionError("removing a copy of a downloaded theme must fail")
+            except ValueError:
+                pass
+            assert_equal((copy / "theme.json").is_file(), True, "the user's copy survives")
+            assert_equal([e["downloaded"] for e in helper.catalog_entries() if e["name"] == "demo"], [True],
+                         "the downloaded theme is still reported as downloaded")
+            shutil.rmtree(copy)
+            assert_equal(helper.catalog_remove_theme("demo")["status"], "removed", "the original is still removable")
+
             # A hand-made user theme carries no marker: remove must refuse it.
             (helper.user_themes_dir() / "mine").mkdir(parents=True)
             try:
@@ -2410,11 +2459,32 @@ def test_theme_catalog_download_verifies_every_file():
                 pass
             assert_equal((helper.user_themes_dir() / "mine").exists(), True, "local theme survives a refused remove")
 
+            # Several locations are tried in order and only checksum-matching
+            # bytes are accepted, so a stale first location cannot serve wrong
+            # content and cannot stop a good location from working either.
+            stale = tmp / "stale" / "demo"
+            stale.mkdir(parents=True)
+            (stale / "theme.json").write_text('{"name":"demo","mode":"light"}\n')
+            (stale / "colors.toml").write_text("background = \"#ffffff\"\n")
+            (stale / "apps").mkdir()
+            (stale / "apps" / "btop.theme").write_text("stale\n")
+            stale_url = "file://" + str(tmp / "stale")
+            result = helper.catalog_download_theme(entry, [stale_url, base_urls[0]], allow_local)
+            assert_equal(result["status"], "installed", "a stale first location must fall through")
+            assert_equal((dest / "theme.json").read_bytes(), (source / "theme.json").read_bytes(),
+                         "the accepted bytes are the catalogued ones, never the stale location's")
+            helper.catalog_remove_theme("demo")
+            try:
+                helper.catalog_download_theme(entry, [stale_url], allow_local)
+                raise AssertionError("no matching location must fail the download")
+            except ValueError as exc:
+                assert_equal("no source served" in str(exc), True, "failure names the exhausted locations")
+
             # Tampered checksum: nothing may land, not even partially.
             tampered = json.loads(json.dumps(entry))
             tampered["files"][0]["sha256"] = "0" * 64
             try:
-                helper.catalog_download_theme(tampered, base_url, allow_local)
+                helper.catalog_download_theme(tampered, base_urls, allow_local)
                 raise AssertionError("checksum mismatch must fail the download")
             except ValueError:
                 pass
@@ -2487,10 +2557,14 @@ def test_theme_catalog_generator_rejects_uninstallable_packages():
 
 
 def main():
-    assert_equal(helper._theme_command_mutates(["catalog", "install", "ayu"]), True,
-                 "catalog installs must serialize with theme applies")
-    assert_equal(helper._theme_command_mutates(["catalog", "list"]), False,
-                 "listing the catalog must not take the theme lock")
+    # A catalog download is minutes to hours of network transfer. Holding the
+    # exclusive theme lock for that long would block applies, the light/dark
+    # keybinding, wallpapers and restyles; the download takes the lock itself
+    # for the directory swap, which is the only step that mutates theme state.
+    for catalog_argv in (["catalog", "install", "ayu"], ["catalog", "install", "--all"],
+                         ["catalog", "remove", "ayu"], ["catalog", "list"]):
+        assert_equal(helper._theme_command_mutates(catalog_argv), False,
+                     f"`theme {' '.join(catalog_argv)}` must not hold the theme lock for its whole run")
     assert_equal(helper._theme_command_mutates(["chromium-policy"]), True,
                  "Chromium policy refresh must serialize with theme applies")
     test_system_font_normalization()

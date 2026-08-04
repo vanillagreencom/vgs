@@ -17,6 +17,7 @@ import hashlib
 import importlib.machinery
 import importlib.util
 import json
+import subprocess
 import sys
 from pathlib import Path
 from typing import Any, Dict, List
@@ -25,6 +26,9 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 THEMES_DIR = REPO_ROOT / "themes"
 CATALOG_PATH = THEMES_DIR / "catalog.json"
 REPO_SLUG = "vanillagreencom/vgs"
+# Moving ref that always serves the tip of the trunk, declared alongside the
+# pinned release tag so a theme edited between releases stays downloadable.
+FALLBACK_REF = "main"
 CATALOG_VERSION = 1
 
 # Which files may be catalogued is decided by the installer's own validator
@@ -113,23 +117,103 @@ def theme_entry(helper: Any, theme_dir: Path) -> Dict[str, Any]:
     }
 
 
+def base_url_for(ref: str) -> str:
+    return f"https://raw.githubusercontent.com/{REPO_SLUG}/{ref}/themes"
+
+
 def build_catalog(ref: str) -> Dict[str, Any]:
     helper = load_helper()
     themes = []
     for meta in sorted(THEMES_DIR.glob("*/theme.json")):
         themes.append(theme_entry(helper, meta.parent))
+    # Two locations, in order. The checksums are taken from the working tree
+    # while the primary ref is a release tag, so a theme edited after the tag is
+    # served correctly only by the moving ref — which is exactly what a
+    # `vgs-shell-git` install off `main` needs. The checksums stay the sole
+    # authority: a location that serves the wrong bytes is rejected, not trusted.
+    refs = [ref] + ([FALLBACK_REF] if ref != FALLBACK_REF else [])
     return {
         "version": CATALOG_VERSION,
         "source": {
             "type": "github-raw",
             "repo": REPO_SLUG,
             "ref": ref,
-            "baseUrl": f"https://raw.githubusercontent.com/{REPO_SLUG}/{ref}/themes",
+            "refs": refs,
+            "baseUrl": base_url_for(ref),
+            "baseUrls": [base_url_for(r) for r in refs],
         },
         "count": len(themes),
         "totalSize": sum(t["size"] for t in themes),
         "themes": themes,
     }
+
+
+def git(*args: str) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(["git", "-C", str(REPO_ROOT), *args],
+                          capture_output=True, text=True, check=False)
+
+
+def theme_paths_changed_since(ref: str) -> List[str] | None:
+    """Theme files whose content differs from `ref`, or None if ref is unknown here."""
+    if git("rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}").returncode != 0:
+        return None
+    tracked = git("diff", "--name-only", ref, "--", "themes/", ":!themes/catalog.json")
+    untracked = git("ls-files", "--others", "--exclude-standard", "--", "themes/")
+    paths = set(tracked.stdout.split()) | set(untracked.stdout.split())
+    return sorted(p for p in paths if p and p != "themes/catalog.json")
+
+
+def check_source_drift(catalog: Dict[str, Any]) -> int:
+    """Fail when no declared location can serve the content the manifest describes.
+
+    The manifest is generated from the working tree, so its checksums describe
+    *this* tree. Whether a download works therefore depends on whether some
+    declared ref serves this tree's bytes — which is what this checks, rather
+    than the far weaker "the ref string looks right".
+    """
+    source = catalog.get("source") or {}
+    primary = str(source.get("ref") or "")
+    refs = [str(r) for r in (source.get("refs") or [primary]) if r]
+    drifted = theme_paths_changed_since(primary)
+    if drifted is None:
+        print(f"theme catalog: ref {primary} is not present locally; skipped the drift comparison "
+              f"(fetch tags to enable it)", file=sys.stderr)
+        return 0
+    if not drifted:
+        print(f"theme catalog: tree matches pinned ref {primary}")
+        return 0
+    if FALLBACK_REF not in refs:
+        print(f"theme catalog: {len(drifted)} theme file(s) differ from pinned ref {primary} and no "
+              f"moving ref is declared, so those themes cannot be downloaded by anyone:\n  "
+              + "\n  ".join(drifted[:10])
+              + f"\nRegenerate with a ref that serves this tree "
+                f"(scripts/gen-theme-catalog.py --ref <ref> --write).", file=sys.stderr)
+        return 1
+    themes = sorted({p.split("/")[1] for p in drifted if p.count("/") >= 2})
+    print(f"theme catalog: {len(drifted)} file(s) differ from pinned ref {primary} "
+          f"({', '.join(themes)}); downloads for those themes resolve through {FALLBACK_REF} "
+          f"until the next release repins the catalog.")
+    return 0
+
+
+def check_release_pin(catalog: Dict[str, Any], version: str) -> int:
+    """Release gate: the tag about to be cut must serve exactly this tree."""
+    source = catalog.get("source") or {}
+    ref = str(source.get("ref") or "")
+    if ref != f"v{version}":
+        print(f"themes/catalog.json is pinned to {ref}, not v{version}; "
+              f"run scripts/gen-theme-catalog.py --ref v{version} --write", file=sys.stderr)
+        return 1
+    # The tag will capture the committed tree, so anything uncommitted under
+    # themes/ is content the released catalog describes but the tag will not
+    # serve. That is the drift the release must not ship.
+    dirty = git("status", "--porcelain", "--", "themes/").stdout.strip()
+    if dirty:
+        print("themes/ has uncommitted changes; the release tag would not serve the catalogued "
+              f"content:\n{dirty}", file=sys.stderr)
+        return 1
+    print(f"theme catalog pinned to v{version} and committed")
+    return 0
 
 
 def default_ref() -> str:
@@ -141,8 +225,16 @@ def main(argv: List[str]) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--write", action="store_true", help="write themes/catalog.json")
     parser.add_argument("--check", action="store_true", help="fail if themes/catalog.json is stale")
-    parser.add_argument("--ref", default="", help=f"git ref to download from (default: v<VERSION>)")
+    parser.add_argument("--ref", default="", help="git ref to download from (default: v<VERSION>)")
+    parser.add_argument("--check-release-pin", metavar="VERSION", default="",
+                        help="release gate: ref must be vVERSION and themes/ must be committed")
     args = parser.parse_args(argv)
+
+    if args.check_release_pin:
+        if not CATALOG_PATH.is_file():
+            print(f"{CATALOG_PATH} is missing", file=sys.stderr)
+            return 1
+        return check_release_pin(json.loads(CATALOG_PATH.read_text()), args.check_release_pin)
 
     ref = args.ref or default_ref()
     # A regenerated catalog keeps the committed ref unless --ref says otherwise:
@@ -163,7 +255,7 @@ def main(argv: List[str]) -> int:
             print(f"{CATALOG_PATH} is stale; run scripts/gen-theme-catalog.py --write", file=sys.stderr)
             return 1
         print(f"theme catalog up to date ({catalog['count']} themes)")
-        return 0
+        return check_source_drift(catalog)
 
     if args.write:
         CATALOG_PATH.write_text(rendered)

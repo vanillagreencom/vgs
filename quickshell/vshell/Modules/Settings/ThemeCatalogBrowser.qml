@@ -3,6 +3,7 @@ pragma ComponentBehavior: Bound
 import QtQuick
 import Quickshell
 import qs.Common
+import qs.Modals.Common
 import qs.Services
 import qs.Widgets
 
@@ -81,6 +82,23 @@ FloatingWindow {
         }
         searchQuery = "";
         searchField.text = "";
+    }
+
+    // Removing deletes the theme directory, including any edits the user made to
+    // it in place, so it asks first — one stray click must not destroy work.
+    function confirmRemove(name) {
+        removeConfirm.showWithOptions({
+            "title": I18n.tr("Remove Theme"),
+            "message": I18n.tr("Delete the downloaded theme '%1'? Any changes you made to it are deleted too. You can download it again later.").arg(name),
+            "confirmText": I18n.tr("Remove"),
+            "cancelText": I18n.tr("Cancel"),
+            "confirmColor": Theme.error,
+            "onConfirm": () => VGSThemeCatalogService.remove(name)
+        });
+    }
+
+    ConfirmModal {
+        id: removeConfirm
     }
 
     Connections {
@@ -418,7 +436,7 @@ FloatingWindow {
                                         if (!cell.modelData.installed)
                                             VGSThemeCatalogService.install(cell.modelData.name);
                                         else if (cell.removable)
-                                            VGSThemeCatalogService.remove(cell.modelData.name);
+                                            root.confirmRemove(cell.modelData.name);
                                     }
                                 }
                             }

@@ -71,12 +71,18 @@ because every theme carries its own `preview.png`. Regenerate the catalog with
 `scripts/check-package-assets.sh` fails when it is stale, because a stale manifest makes every
 download of a changed theme fail its checksum.
 
-Downloads are built from the catalog's pinned `source.ref`, a release tag, so **every release must
-repoint it**: `scripts/gen-theme-catalog.py --ref vX.Y.Z --write` as part of step 1 of the release
-flow. `scripts/check-release.sh` fails when the ref does not match `VERSION`. The consequence of the
-pin is that a theme edited on `main` is downloadable only from the next release onward — until then
-the tagged file and the regenerated checksum disagree and that one theme's download fails loudly
-rather than installing something that does not match the manifest.
+Downloads resolve against `source.refs`: the pinned release tag first, then `main`. The checksums are
+generated from the working tree, so between releases an edited theme is served only by the moving
+ref — that fallback is what keeps `vgs-shell-git` (which builds from `main`) able to download edited
+themes. Only checksum-matching bytes are ever accepted, from either location.
+
+**Every release must repoint the pin**: `scripts/gen-theme-catalog.py --ref vX.Y.Z --write` as part of
+step 1 of the release flow, with `themes/` committed before `check-release.sh` runs.
+`scripts/gen-theme-catalog.py --check-release-pin $VERSION` (invoked from `check-release.sh`) fails
+both when the ref does not match `VERSION` and when `themes/` has uncommitted changes, since the tag
+captures the commit rather than the working tree. On ordinary PRs, `--check` compares the tree against
+the pinned ref with git and reports which themes now resolve through `main`, failing outright if the
+manifest describes content no declared ref can serve.
 
 ## Channels
 

@@ -4,7 +4,15 @@
     "type": "github-raw",
     "repo": "vanillagreencom/vgs",
     "ref": "v0.1.0",
-    "baseUrl": "https://raw.githubusercontent.com/vanillagreencom/vgs/v0.1.0/themes"
+    "refs": [
+      "v0.1.0",
+      "main"
+    ],
+    "baseUrl": "https://raw.githubusercontent.com/vanillagreencom/vgs/v0.1.0/themes",
+    "baseUrls": [
+      "https://raw.githubusercontent.com/vanillagreencom/vgs/v0.1.0/themes",
+      "https://raw.githubusercontent.com/vanillagreencom/vgs/main/themes"
+    ]
   },
   "count": 79,
   "totalSize": 1099213323,

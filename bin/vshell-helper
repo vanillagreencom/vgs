@@ -1297,13 +1297,25 @@ def load_theme_catalog() -> Dict[str, Any]:
     return data if isinstance(data, dict) else {}
 
 
-def theme_catalog_base_url(catalog: Dict[str, Any]) -> Tuple[str, bool]:
-    """(base URL, whether non-https schemes are allowed). Override is test-only."""
+def theme_catalog_base_urls(catalog: Dict[str, Any]) -> Tuple[List[str], bool]:
+    """(base URLs to try in order, whether non-https schemes are allowed).
+
+    More than one location, because the checksums are generated from the working
+    tree while the primary ref is a release tag: between releases a theme edited
+    on `main` is served correctly only by the moving ref. Trying a second
+    location cannot weaken anything — the committed size and sha256 remain the
+    sole authority for what is accepted, so a wrong location simply fails to
+    match and the next one is tried. The override is test-only.
+    """
     override = os.environ.get("VGS_THEME_CATALOG_BASE_URL", "").strip()
     if override:
-        return override.rstrip("/"), True
+        return [override.rstrip("/")], True
     source = catalog.get("source") or {}
-    return str(source.get("baseUrl") or "").rstrip("/"), False
+    urls = [str(u).rstrip("/") for u in (source.get("baseUrls") or []) if str(u).strip()]
+    primary = str(source.get("baseUrl") or "").rstrip("/")
+    if primary and primary not in urls:
+        urls.insert(0, primary)
+    return urls, False
 
 
 def catalog_theme_entry(catalog: Dict[str, Any], name: str) -> Dict[str, Any] | None:
@@ -1351,6 +1363,29 @@ def _catalog_fetch(url: str, allow_local: bool, max_bytes: int = CATALOG_MAX_FIL
     return data
 
 
+def _catalog_fetch_verified(name: str, rel: str, size: int, digest: str,
+                            base_urls: List[str], allow_local: bool) -> bytes:
+    """Fetch one theme file from the first location whose bytes match the manifest."""
+    quoted = f"{urllib.parse.quote(name)}/" + "/".join(
+        urllib.parse.quote(part) for part in rel.split("/"))
+    problems: List[str] = []
+    for base in base_urls:
+        url = f"{base}/{quoted}"
+        try:
+            data = _catalog_fetch(url, allow_local, max_bytes=max(size, 1) + 1024)
+        except Exception as exc:
+            problems.append(f"{base}: {exc}")
+            continue
+        if len(data) != size:
+            problems.append(f"{base}: expected {size} bytes, got {len(data)}")
+            continue
+        if hashlib.sha256(data).hexdigest() != digest:
+            problems.append(f"{base}: checksum mismatch")
+            continue
+        return data
+    raise ValueError(f"{name}/{rel}: no source served the catalogued file (" + "; ".join(problems) + ")")
+
+
 def catalog_marker(name: str) -> Dict[str, Any]:
     path = user_themes_dir() / name / CATALOG_MARKER
     if not path.is_file():
@@ -1360,6 +1395,21 @@ def catalog_marker(name: str) -> Dict[str, Any]:
     except Exception:
         return {}
     return data if isinstance(data, dict) else {}
+
+
+def catalog_owns(name: str) -> bool:
+    """Whether this exact directory is one the catalog downloaded.
+
+    The marker lives inside the theme package, and `theme duplicate` copies a
+    package wholesale — so a copy inherits the marker. Ownership therefore has to
+    be identity, not presence: the marker must name this directory, which the
+    copy's inherited marker never does.
+    """
+    dest = user_themes_dir() / name
+    marker = catalog_marker(name)
+    if not marker:
+        return False
+    return str(marker.get("name") or "") == name and str(marker.get("path") or "") == str(dest)
 
 
 def catalog_preview_path(name: str) -> str:
@@ -1382,7 +1432,7 @@ def catalog_entries() -> List[Dict[str, Any]]:
         name = str(raw.get("name") or "")
         if not name:
             continue
-        marker = catalog_marker(name)
+        marker = catalog_marker(name) if catalog_owns(name) else {}
         entries.append({
             "name": name,
             "mode": raw.get("mode", "dark"),
@@ -1404,9 +1454,16 @@ def catalog_entries() -> List[Dict[str, Any]]:
     return entries
 
 
-def catalog_download_theme(entry: Dict[str, Any], base_url: str, allow_local: bool,
+def catalog_download_theme(entry: Dict[str, Any], base_urls: List[str], allow_local: bool,
                            force: bool = False) -> Dict[str, Any]:
-    """Download one catalog theme into the user theme dir, verifying every file."""
+    """Download one catalog theme into the user theme dir, verifying every file.
+
+    Deliberately NOT run under the theme mutation lock: `install --all` is a
+    ~1.1 GiB transfer, and holding the exclusive lock for its duration would
+    block every theme apply, the light/dark keybinding, wallpaper changes and
+    restyles for hours. Only the directory swap at the end mutates theme state,
+    so only the swap takes the lock.
+    """
     name = _catalog_check_name(str(entry.get("name") or ""))
     dest = user_themes_dir() / name
     if (builtin_themes_dir() / name / "theme.json").is_file():
@@ -1414,12 +1471,12 @@ def catalog_download_theme(entry: Dict[str, Any], base_url: str, allow_local: bo
     if dest.exists():
         if not force:
             return {"name": name, "status": "skipped", "reason": "already installed"}
-        if not catalog_marker(name):
+        if not catalog_owns(name):
             raise ValueError(f"{name} is a local theme, not a downloaded one; refusing to overwrite")
     files = entry.get("files") or []
     if not files:
         raise ValueError(f"catalog entry for {name} lists no files")
-    if not base_url:
+    if not base_urls:
         raise ValueError("theme catalog has no download source")
 
     ensure_dirs()
@@ -1433,13 +1490,7 @@ def catalog_download_theme(entry: Dict[str, Any], base_url: str, allow_local: bo
             size = int((spec or {}).get("size") or 0)
             if not re.fullmatch(r"[0-9a-f]{64}", digest):
                 raise ValueError(f"{name}/{rel}: catalog entry has no usable checksum")
-            url = f"{base_url}/{urllib.parse.quote(name)}/" + "/".join(
-                urllib.parse.quote(part) for part in rel.split("/"))
-            data = _catalog_fetch(url, allow_local, max_bytes=max(size, 1) + 1024)
-            if len(data) != size:
-                raise ValueError(f"{name}/{rel}: expected {size} bytes, got {len(data)}")
-            if hashlib.sha256(data).hexdigest() != digest:
-                raise ValueError(f"{name}/{rel}: checksum mismatch")
+            data = _catalog_fetch_verified(name, rel, size, digest, base_urls, allow_local)
             target = staging / rel
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_bytes(data)
@@ -1448,6 +1499,7 @@ def catalog_download_theme(entry: Dict[str, Any], base_url: str, allow_local: bo
             raise ValueError(f"{name}: download has no theme.json")
         (staging / CATALOG_MARKER).write_text(json.dumps({
             "name": name,
+            "path": str(dest),
             "ref": str((load_theme_catalog().get("source") or {}).get("ref") or ""),
             "bytes": written,
             "installedAt": int(time.time()),
@@ -1455,40 +1507,49 @@ def catalog_download_theme(entry: Dict[str, Any], base_url: str, allow_local: bo
         # Swap, never delete-then-write: a rmtree(dest) followed by a rename
         # leaves a working theme destroyed if the process dies in between. The
         # old copy is renamed aside first (atomic), so the worst interruption
-        # window leaves the theme at <name>.replaced-* and the next run's
+        # window leaves the theme at .catalog-replaced-* and the next run's
         # _catalog_clear_stale() sweeps it.
-        replaced: Path | None = None
-        if dest.exists():
-            replaced = dest.with_name(f".catalog-replaced-{name}-{os.getpid()}")
-            shutil.rmtree(replaced, ignore_errors=True)
-            dest.replace(replaced)
-        try:
-            staging.replace(dest)
-        except OSError:
-            if replaced is not None and not dest.exists():
-                replaced.replace(dest)
-            raise
-        staging = None  # type: ignore[assignment]
-        if replaced is not None:
-            shutil.rmtree(replaced, ignore_errors=True)
+        with theme_mutation_lock():
+            replaced: Path | None = None
+            if dest.exists():
+                replaced = dest.with_name(f".catalog-replaced-{name}-{os.getpid()}")
+                _catalog_discard(replaced)
+                dest.replace(replaced)
+            try:
+                staging.replace(dest)
+            except OSError:
+                if replaced is not None and not dest.exists():
+                    replaced.replace(dest)
+                raise
+            staging = None  # type: ignore[assignment]
+            if replaced is not None:
+                _catalog_discard(replaced)
     finally:
         if staging is not None:
             shutil.rmtree(staging, ignore_errors=True)
     return {"name": name, "status": "installed", "path": str(dest), "bytes": written}
 
 
+def _catalog_discard(path: Path) -> None:
+    """Best-effort delete of a staging/replaced entry, symlinks included."""
+    if path.is_symlink():
+        with contextlib.suppress(OSError):
+            path.unlink()
+        return
+    shutil.rmtree(path, ignore_errors=True)
+
+
 def _catalog_clear_stale() -> None:
     """Sweep staging/replaced dirs a killed download may have left behind.
 
-    Safe to do unconditionally because `catalog install` runs under the theme
-    mutation lock, so no other download can own a staging dir at this point.
+    Safe to do unconditionally: a swap is the only moment another download could
+    care about these, and swaps hold the theme mutation lock.
     """
     root = user_themes_dir()
     if not root.is_dir():
         return
     for leftover in list(root.glob(".catalog-*")):
-        if leftover.is_dir():
-            shutil.rmtree(leftover, ignore_errors=True)
+        _catalog_discard(leftover)
 
 
 def current_theme_name() -> str:
@@ -1511,7 +1572,12 @@ def catalog_remove_theme(name: str) -> Dict[str, Any]:
     """Remove a downloaded theme. Never touches built-ins or hand-made user themes."""
     clean = _catalog_check_name(name)
     dest = user_themes_dir() / clean
-    if not catalog_marker(clean):
+    # Identity, not marker presence: `theme duplicate` copies the marker along
+    # with the package, and deleting someone's hand-made copy of a theme is
+    # exactly the data loss this predicate exists to prevent.
+    if not catalog_owns(clean):
+        if catalog_marker(clean):
+            raise ValueError(f"{clean} is a copy of a downloaded theme, not one the catalog installed")
         raise ValueError(f"{clean} was not downloaded from the theme catalog")
     if current_theme_name() == clean:
         raise ValueError(f"{clean} is the current theme; apply another theme first")
@@ -1521,12 +1587,13 @@ def catalog_remove_theme(name: str) -> Dict[str, Any]:
     # the subsequent delete fails the theme is already gone from the theme dirs
     # and the leftover is swept by _catalog_clear_stale().
     trash = dest.with_name(f".catalog-removing-{clean}-{os.getpid()}")
-    shutil.rmtree(trash, ignore_errors=True)
-    try:
-        dest.replace(trash)
-    except OSError as exc:
-        raise ValueError(f"could not remove {clean}: {exc}") from exc
-    shutil.rmtree(trash, ignore_errors=True)
+    _catalog_discard(trash)
+    with theme_mutation_lock():
+        try:
+            dest.replace(trash)
+        except OSError as exc:
+            raise ValueError(f"could not remove {clean}: {exc}") from exc
+    _catalog_discard(trash)
     if dest.exists():
         raise ValueError(f"could not remove {clean}: {dest} still exists")
     return {"name": clean, "status": "removed", "path": str(dest)}
@@ -7044,8 +7111,11 @@ def _theme_command_mutates(argv: List[str]) -> bool:
         return "--apply" in argv or "--save" in argv
     if command == "apps":
         return "--enable" in argv or "--disable" in argv
-    if command == "catalog":
-        return len(argv) > 1 and argv[1] in {"install", "remove"}
+    # `catalog` is deliberately absent: its downloads are minutes to hours of
+    # network transfer that mutate nothing, and it takes the lock itself around
+    # the one step that does (the directory swap). Wrapping the whole command
+    # would block theme applies, the light/dark keybinding, wallpaper changes
+    # and restyles for the length of a 1.1 GiB `install --all`.
     return False
 
 
@@ -7916,6 +7986,11 @@ def _cmd_theme_unlocked(argv: List[str]) -> int:
             meta = json.loads((dest / "theme.json").read_text())
             meta["name"] = new_name
             write_file(dest / "theme.json", json.dumps(meta, indent=2) + "\n")
+            # A copy is the user's own theme, never something the catalog may
+            # remove later. `catalog_owns()` rejects an inherited marker anyway;
+            # dropping it here keeps the copy honest on disk too.
+            with contextlib.suppress(OSError):
+                (dest / CATALOG_MARKER).unlink()
         else:
             bp = dict(bp)
             bp["name"] = new_name
@@ -7942,7 +8017,7 @@ def _cmd_theme_unlocked(argv: List[str]) -> int:
                     print(f"{'*' if entry['installed'] else ' '} {entry['name']}")
             return 0
 
-        base_url, allow_local = theme_catalog_base_url(catalog)
+        base_urls, allow_local = theme_catalog_base_urls(catalog)
         if args.catalog_cmd == "install":
             names = list(args.names)
             if args.all:
@@ -7959,7 +8034,7 @@ def _cmd_theme_unlocked(argv: List[str]) -> int:
                     failures += 1
                     continue
                 try:
-                    results.append(catalog_download_theme(entry, base_url, allow_local, force=args.force))
+                    results.append(catalog_download_theme(entry, base_urls, allow_local, force=args.force))
                 except Exception as exc:
                     results.append({"name": name, "status": "failed", "error": str(exc)})
                     failures += 1
