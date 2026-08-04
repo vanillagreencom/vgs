@@ -41,15 +41,33 @@ const barWidgets = loadModule(path.join(settingsDir, "BarWidgets.js"), {});
 
 const TARGET_VERSION = 21;
 
-// The shipped seed already carries the current schema, so it must declare the
-// current version. When it lags, a fresh install is treated as a legacy config
-// and rewritten by migrations it was never meant to need — and the drift is
-// invisible until someone reads both files side by side.
-assert.strictEqual(
-  defaultSettings.configVersion,
-  TARGET_VERSION,
-  "settings.default.json configVersion must equal the migration TARGET_VERSION; " +
-    "bump the seed marker whenever a migration is appended"
+// Three places declare the schema version, and the runtime authority is
+// SettingsData.qml's settingsConfigVersion — that is what drives migration on
+// load. Checking the seed against TARGET_VERSION alone would let the runtime
+// advance to 22 with a new migration while the seed and this constant both sat
+// at 21: green, with the new migration never exercised and fresh installs
+// seeded stale and silently rewritten on first load. Anchor all three to the
+// runtime value so the check cannot pass without checking.
+const runtimeConfigVersion = (() => {
+  const match = settingsDataSource.match(/readonly\s+property\s+int\s+settingsConfigVersion\s*:\s*(\d+)/);
+  assert(match, "SettingsData.qml should declare settingsConfigVersion");
+  return Number(match[1]);
+})();
+
+assert.deepStrictEqual(
+  {
+    "SettingsData.qml settingsConfigVersion": runtimeConfigVersion,
+    "settings.default.json configVersion": defaultSettings.configVersion,
+    "check-settings-migration.js TARGET_VERSION": TARGET_VERSION,
+  },
+  {
+    "SettingsData.qml settingsConfigVersion": runtimeConfigVersion,
+    "settings.default.json configVersion": runtimeConfigVersion,
+    "check-settings-migration.js TARGET_VERSION": runtimeConfigVersion,
+  },
+  "schema version disagreement: the runtime authority is SettingsData.qml's " +
+    "settingsConfigVersion; whichever value differs above must be brought up to it " +
+    "(append a migration, never renumber)"
 );
 
 function clone(value) {
