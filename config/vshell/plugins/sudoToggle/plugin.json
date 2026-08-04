@@ -1,7 +1,7 @@
 {
     "id": "sudoToggle",
     "name": "Passwordless Sudo",
-    "description": "Passwordless sudo status indicator for systems that provide the VGS sudo toggle helper.",
+    "description": "Toggle persistent passwordless sudo for your user. Runs `vshell sudo-toggle`, which installs or removes a validated /etc/sudoers.d drop-in; needs sudo and visudo (see `vshell deps check sudo-toggle`).",
     "version": "1.0.0",
     "license": "MIT",
     "author": "VanillaGreen",

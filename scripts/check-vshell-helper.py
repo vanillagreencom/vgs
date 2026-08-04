@@ -1179,6 +1179,425 @@ def test_launcher_zoxide_results():
     assert_equal(hits[0]["zoxide_score"], 42.0, "zoxide score parsing")
 
 
+def test_sudo_toggle_dropin_lifecycle():
+    """Exercise the privileged drop-in writer against a temp dir (no sudo).
+
+    The real path is /etc/sudoers.d, which needs root; the function takes the
+    drop-in path so the enable/validate/disable logic is testable unprivileged.
+    """
+    visudo = shutil.which("visudo")
+    with tempfile.TemporaryDirectory() as tmp:
+        dropin = Path(tmp) / "50-tester-nopasswd-toggle"
+
+        ok, message = helper.sudo_toggle_apply(dropin, "tester", True, visudo)
+        if visudo is None:
+            assert_equal(ok, False, "Enable without visudo must refuse")
+            assert_equal(dropin.exists(), False, "Refused enable must leave no drop-in")
+            return
+        assert_equal(ok, True, f"Enable must succeed: {message}")
+        assert_equal(dropin.read_text(), "tester ALL=(ALL) NOPASSWD: ALL\n",
+                     "Drop-in content must be the NOPASSWD rule for the named user")
+        assert_equal(oct(dropin.stat().st_mode & 0o777), "0o440",
+                     "Drop-in must be mode 0440")
+        assert_equal(sorted(p.name for p in Path(tmp).iterdir()), [dropin.name],
+                     "Enable must leave no staging file behind")
+
+        # Re-enabling over an existing drop-in is idempotent, not an error.
+        ok, _ = helper.sudo_toggle_apply(dropin, "tester", True, visudo)
+        assert_equal(ok, True, "Re-enable must be idempotent")
+
+        ok, _ = helper.sudo_toggle_apply(dropin, "tester", False, visudo)
+        assert_equal(ok, True, "Disable must succeed")
+        assert_equal(dropin.exists(), False, "Disable must remove the drop-in")
+
+        # Disabling when nothing is installed is a no-op, not a failure.
+        ok, _ = helper.sudo_toggle_apply(dropin, "tester", False, visudo)
+        assert_equal(ok, True, "Disable on an absent drop-in must be a no-op")
+
+        # An invalid rule must never land: prove the validation gate can fail.
+        bad, message = helper.sudo_toggle_apply(dropin, "not a valid user spec !!", True, visudo)
+        assert_equal(bad, False, "visudo must reject a malformed user spec")
+        assert_equal(dropin.exists(), False, "Rejected candidate must not be installed")
+        assert_equal(sorted(p.name for p in Path(tmp).iterdir()), [],
+                     "Rejected candidate must leave no staging file behind")
+
+        # A symlinked drop-in path is a redirect target; refuse it.
+        link = Path(tmp) / "50-link-nopasswd-toggle"
+        link.symlink_to(Path(tmp) / "elsewhere")
+        ok, message = helper.sudo_toggle_apply(link, "tester", True, visudo)
+        assert_equal(ok, False, "Symlinked drop-in path must be refused")
+        assert_equal((Path(tmp) / "elsewhere").exists(), False,
+                     "Refused symlink must not write through to the target")
+
+
+def test_sudo_toggle_status_reads_flag_mirror():
+    """Unprivileged status comes from the state mirror, old path included."""
+    def check(home_path: Path):
+        flag = home_path / ".local" / "state" / "vshell" / "sudo-passwordless-toggle"
+        legacy = home_path / ".local" / "state" / "sudo-passwordless-toggle"
+        status = helper.sudo_toggle_status("tester", probe_sudo=False)
+        assert_equal(status["enabled"], False, "Absent flag must read as disabled")
+        assert_equal(status["flag"], str(flag), "Status must report the mirror path")
+        assert_equal(status["dropin"], "/etc/sudoers.d/50-tester-nopasswd-toggle",
+                     "Status must report the drop-in path for the named user")
+
+        flag.parent.mkdir(parents=True, exist_ok=True)
+        flag.touch()
+        assert_equal(helper.sudo_toggle_status("tester", probe_sudo=False)["enabled"], True,
+                     "Present flag must read as enabled")
+        flag.unlink()
+
+        # A pre-VGS-11 install still has the mirror at the old path.
+        legacy.parent.mkdir(parents=True, exist_ok=True)
+        legacy.touch()
+        assert_equal(helper.sudo_toggle_status("tester", probe_sudo=False)["enabled"], True,
+                     "Legacy mirror path must still read as enabled (migration)")
+        legacy.unlink()
+
+        # available/reason must be a real probe, not a constant.
+        available, reason = helper.sudo_toggle_availability()
+        expected = bool(shutil.which("sudo") and shutil.which("visudo")
+                        and Path("/etc/sudoers.d").is_dir())
+        assert_equal(available, expected,
+                     "Availability must reflect the actual sudo/visudo/sudoers.d probe")
+        assert_equal(bool(reason) is not available, True,
+                     "Unavailable must carry a reason and available must not")
+
+    with_temp_home(check)
+
+
+def test_sudo_toggle_status_reports_other_passwordless_sources():
+    """`disabled` must not be claimed on a machine that already never prompts.
+
+    `sudoNonInteractive` is a separate signal from VGS's own drop-in, and it is
+    only probed when the drop-in is absent (an installed drop-in already
+    implies it, and probing on every shell start would litter the auth log).
+    """
+    def check(home_path: Path):
+        probes = []
+
+        def yes():
+            probes.append("called")
+            return 0
+
+        def no():
+            probes.append("called")
+            return 1
+
+        status = helper.sudo_toggle_status("tester", sudo_probe=yes)
+        assert_equal(status["dropinInstalled"], False, "No mirror means no VGS drop-in")
+        assert_equal(status["sudoNonInteractive"], True,
+                     "sudo not prompting must be reported even without the VGS drop-in")
+        assert_equal(len(probes), 1, "The probe must actually run when the drop-in is absent")
+
+        probes.clear()
+        assert_equal(helper.sudo_toggle_status("tester", sudo_probe=no)["sudoNonInteractive"], False,
+                     "A prompting sudo must report sudoNonInteractive false")
+
+        flag = home_path / ".local" / "state" / "vshell" / "sudo-passwordless-toggle"
+        flag.parent.mkdir(parents=True, exist_ok=True)
+        flag.touch()
+        probes.clear()
+        status = helper.sudo_toggle_status("tester", sudo_probe=no)
+        assert_equal(status["sudoNonInteractive"], True,
+                     "An installed drop-in implies sudo does not prompt")
+        assert_equal(probes, [], "The probe must be skipped when the drop-in is installed")
+
+    with_temp_home(check)
+
+
+def test_sudo_toggle_set_refuses_stale_direction():
+    """A stale mirror must never be able to turn a revoke into a grant (VGS-11).
+
+    The mirror says enabled, the drop-in is gone (admin removed it, restored
+    home backup). The user clicks what reads as 'revoke'. The old code inferred
+    `enable = not dropin.is_file()` root-side and installed NOPASSWD: ALL.
+    """
+    if shutil.which("visudo") is None:
+        return
+
+    def check(home_path: Path):
+        with tempfile.TemporaryDirectory() as tmp:
+            dropin = Path(tmp) / "50-tester-nopasswd-toggle"
+            flag = home_path / ".local" / "state" / "vshell" / "sudo-passwordless-toggle"
+            original = helper.sudo_toggle_dropin
+            helper.sudo_toggle_dropin = lambda user: dropin
+            try:
+                # Stale mirror: claims enabled, no drop-in on disk.
+                flag.parent.mkdir(parents=True, exist_ok=True)
+                flag.touch()
+                code = helper.sudo_toggle_set("tester", False)
+                assert_equal(code, helper.SUDO_TOGGLE_EXIT_STALE,
+                             "A revoke against a stale mirror must report the mismatch")
+                assert_equal(dropin.exists(), False,
+                             "A revoke must NEVER create the drop-in")
+                assert_equal(flag.exists(), False,
+                             "The stale mirror must be re-synced to reality")
+
+                # Honest enable, from an agreed-disabled state.
+                code = helper.sudo_toggle_set("tester", True)
+                assert_equal(code, 0, "Enable from an agreed state must succeed")
+                assert_equal(dropin.is_file(), True, "Enable must install the drop-in")
+                assert_equal(flag.is_file(), True, "Enable must write the mirror")
+
+                # Inverse drift: drop-in present, mirror missing, user clicks
+                # what reads as 'grant'. Benign, but still a mismatch.
+                flag.unlink()
+                code = helper.sudo_toggle_set("tester", True)
+                assert_equal(code, helper.SUDO_TOGGLE_EXIT_STALE,
+                             "A grant against a stale mirror must report the mismatch")
+                assert_equal(dropin.is_file(), True, "Drop-in must be left as it was")
+                assert_equal(flag.is_file(), True, "Mirror must be re-synced to reality")
+
+                # Agreed revoke.
+                code = helper.sudo_toggle_set("tester", False)
+                assert_equal(code, 0, "Revoke from an agreed state must succeed")
+                assert_equal(dropin.exists(), False, "Revoke must remove the drop-in")
+                assert_equal(flag.exists(), False, "Revoke must clear the mirror")
+            finally:
+                helper.sudo_toggle_dropin = original
+
+    with_temp_home(check)
+
+
+def test_sudo_toggle_enable_never_takes_quiet_sudo_path():
+    """Enabling must always go through a terminal (VGS-11).
+
+    Where `sudo -n` already succeeds — an admin wheel NOPASSWD rule, a live
+    credential cache — the quiet path would install a permanent NOPASSWD: ALL
+    from one bar click with no prompt, no window and no confirmation.
+    """
+    calls = []
+
+    original_ensure = helper.ensure_root_for
+    original_avail = helper.sudo_toggle_availability
+    original_enable_avail = helper.sudo_toggle_enable_availability
+    original_euid = helper.os.geteuid
+    helper.sudo_toggle_availability = lambda: (True, "")
+    # Must be stubbed, not inherited from the host: it probes for a terminal
+    # emulator, so leaving it live made this test pass on a developer machine
+    # (terminal installed, enable path reached) and fail on a bare CI runner
+    # (refused before `ensure_root_for` was ever called). The terminal-refusal
+    # behaviour is worth pinning, so it gets its own case below rather than
+    # being an ambient property of whoever ran the suite.
+    helper.sudo_toggle_enable_availability = lambda: (True, "")
+    helper.os.geteuid = lambda: 1000  # never take the privileged branch here
+
+    def fake_ensure_root_for(argv, terminal=False):
+        calls.append((list(argv), terminal))
+        # Stand in for a machine where `sudo -n` succeeds.
+        return 0
+
+    helper.ensure_root_for = fake_ensure_root_for
+    try:
+        calls.clear()
+        code = helper.cmd_sudo_toggle(["set", "on"])
+        assert_equal(code, 0, "Enable must report the terminal launch result")
+        assert_equal(len(calls), 1, "Enable must elevate exactly once")
+        assert_equal(calls[0][1], True,
+                     "Enable must elevate through a terminal, never the quiet sudo -n path")
+        assert_equal("on" in calls[0][0], True, "Enable must pass the explicit direction")
+
+        # Disable may use the quiet path: it only ever removes privilege.
+        calls.clear()
+        code = helper.cmd_sudo_toggle(["set", "off"])
+        assert_equal(code, 0, "Disable must succeed on the quiet path")
+        assert_equal(len(calls), 1, "A successful quiet disable must not also open a terminal")
+        assert_equal(calls[0][1], False, "Disable must try the quiet path first")
+
+        # `toggle` resolves the direction and must obey the same rule. With no
+        # mirror present the direction is 'on', so it must use a terminal.
+        def check(home_path: Path):
+            calls.clear()
+            helper.cmd_sudo_toggle(["toggle"])
+            assert_equal(len(calls), 1, "toggle must elevate exactly once")
+            assert_equal(calls[0][1], True,
+                         "toggle resolving to enable must still go through a terminal")
+            assert_equal("on" in calls[0][0], True, "toggle must convert to an explicit direction")
+
+        with_temp_home(check)
+
+        # No terminal: enabling must refuse outright rather than fall back to
+        # the quiet path, and revoking must still work — gating both directions
+        # on a terminal is what once stranded an existing grant in place.
+        helper.sudo_toggle_enable_availability = lambda: (False, "no terminal emulator found")
+        calls.clear()
+        code = helper.cmd_sudo_toggle(["set", "on"])
+        assert_equal(code, 1, "Enable with no terminal must fail")
+        assert_equal(calls, [], "Enable with no terminal must not elevate at all")
+
+        calls.clear()
+        code = helper.cmd_sudo_toggle(["set", "off"])
+        assert_equal(code, 0, "Revoke must still work with no terminal")
+        assert_equal(len(calls), 1, "Revoke with no terminal must take the quiet path")
+        assert_equal(calls[0][1], False, "Revoke must not demand a terminal")
+    finally:
+        helper.ensure_root_for = original_ensure
+        helper.sudo_toggle_availability = original_avail
+        helper.sudo_toggle_enable_availability = original_enable_avail
+        helper.os.geteuid = original_euid
+
+
+def test_sudo_toggle_flag_write_refuses_symlinks():
+    """Root writes the mirror into a user-controlled tree; never follow a link."""
+    def check(home_path: Path):
+        state = home_path / ".local" / "state"
+        state.mkdir(parents=True, exist_ok=True)
+        target = home_path / "planted"
+
+        # A symlinked state directory must be refused, not traversed. The
+        # target exists, so without the check the write would land inside it.
+        planted_dir = home_path / "planted-dir"
+        planted_dir.mkdir()
+        (state / "vshell").symlink_to(planted_dir)
+        ok, message = helper.sudo_toggle_write_flag(True)
+        assert_equal(ok, False, "A symlinked mirror directory must be refused")
+        assert_equal(sorted(p.name for p in planted_dir.iterdir()), [],
+                     "A refused write must not create anything inside the link target")
+        (state / "vshell").unlink()
+
+        # A symlinked flag file must be refused too.
+        (state / "vshell").mkdir()
+        (state / "vshell" / "sudo-passwordless-toggle").symlink_to(target)
+        ok, message = helper.sudo_toggle_write_flag(True)
+        assert_equal(ok, False, "A symlinked mirror file must be refused")
+        assert_equal(target.exists(), False, "A refused write must not create the link target")
+        (state / "vshell" / "sudo-passwordless-toggle").unlink()
+
+        # The ordinary path still works.
+        ok, message = helper.sudo_toggle_write_flag(True)
+        assert_equal(ok, True, f"A clean mirror write must succeed: {message}")
+        assert_equal((state / "vshell" / "sudo-passwordless-toggle").is_file(), True,
+                     "A clean mirror write must create a real file")
+
+        # Writing the mirror retires the pre-VGS-11 file.
+        legacy = state / "sudo-passwordless-toggle"
+        legacy.touch()
+        ok, _ = helper.sudo_toggle_write_flag(True)
+        assert_equal(ok, True, "Mirror write must succeed with a legacy file present")
+        assert_equal(legacy.exists(), False, "Mirror write must retire the legacy flag")
+
+    with_temp_home(check)
+
+
+def test_sudo_toggle_revoke_retires_legacy_flag_without_state_dir():
+    """A revoke must clear the old mirror even when the new tree is absent.
+
+    Otherwise the legacy flag keeps asserting "enabled" after the drop-in is
+    gone, which is exactly the stale-mirror state the direction guard exists to
+    catch — reintroduced by the writer itself.
+    """
+    def check(home_path: Path):
+        legacy = home_path / ".local" / "state" / "sudo-passwordless-toggle"
+        legacy.parent.mkdir(parents=True, exist_ok=True)
+        legacy.touch()
+        assert_equal((home_path / ".local" / "state" / "vshell").exists(), False,
+                     "Test setup: the new state directory must not exist yet")
+
+        ok, message = helper.sudo_toggle_write_flag(False)
+        assert_equal(ok, True, f"Revoke must succeed with no state dir: {message}")
+        assert_equal(legacy.exists(), False,
+                     "Revoke must retire the legacy flag even when the new tree is absent")
+        assert_equal(helper.sudo_toggle_mirror_state(), False,
+                     "After a revoke the mirror must read as disabled")
+
+    with_temp_home(check)
+
+
+def test_launch_terminal_rejects_immediately_failing_terminal():
+    """A terminal that dies on spawn must not be reported as launched."""
+    original = helper.terminal_candidates
+    helper.terminal_candidates = lambda: [["/bin/false"]]
+    try:
+        assert_equal(helper.launch_terminal(["true"]), helper.TERMINAL_EXIT_FAILED,
+                     "A terminal that exits non-zero immediately must be a failure")
+    finally:
+        helper.terminal_candidates = original
+
+    helper.terminal_candidates = lambda: []
+    try:
+        assert_equal(helper.launch_terminal(["true"]), 1,
+                     "No terminal at all must report a distinct status")
+    finally:
+        helper.terminal_candidates = original
+
+    assert_equal(helper.TERMINAL_EXIT_FAILED == helper.SUDO_TOGGLE_EXIT_STALE, False,
+                 "A failed terminal must not be reportable as a stale-state refusal")
+
+
+def test_sudo_toggle_revoke_never_needs_a_terminal():
+    """A machine with no terminal must still be able to REVOKE (VGS-11).
+
+    Gating both directions on a terminal stranded the escalated state: the
+    drop-in stayed installed and the widget refused to act on it.
+    """
+    calls = []
+
+    original_ensure = helper.ensure_root_for
+    original_terminals = helper.terminal_candidates
+    original_avail = helper.sudo_toggle_availability
+    original_euid = helper.os.geteuid
+    helper.terminal_candidates = lambda: []          # no terminal anywhere
+    helper.sudo_toggle_availability = lambda: (True, "")
+    helper.os.geteuid = lambda: 1000
+
+    def fake_ensure_root_for(argv, terminal=False):
+        calls.append((list(argv), terminal))
+        return 0
+
+    helper.ensure_root_for = fake_ensure_root_for
+    try:
+        assert_equal(helper.have_terminal(), False, "Test setup: no terminal must be visible")
+
+        calls.clear()
+        code = helper.cmd_sudo_toggle(["set", "off"])
+        assert_equal(code, 0, "Revoking must work with no terminal installed")
+        assert_equal(len(calls), 1, "Revoke must still elevate once, on the quiet path")
+        assert_equal(calls[0][1], False, "Revoke must not need a terminal")
+
+        # Granting is the direction that genuinely needs one, and must say so.
+        calls.clear()
+        code = helper.cmd_sudo_toggle(["set", "on"])
+        assert_equal(code, 1, "Granting with no terminal must fail")
+        assert_equal(calls, [], "Granting with no terminal must not elevate at all")
+
+        # An already-root caller never uses a terminal, so it must not need one.
+        helper.os.geteuid = lambda: 0
+        original_set = helper.sudo_toggle_set
+        recorded = []
+        helper.sudo_toggle_set = lambda user, want: recorded.append((user, want)) or 0
+        try:
+            code = helper.cmd_sudo_toggle(["set", "on"])
+            assert_equal(code, 0, "Root must be able to grant with no terminal installed")
+            assert_equal(len(recorded), 1, "Root must reach the privileged half directly")
+            assert_equal(recorded[0][1], True, "Root must be asked for the requested direction")
+        finally:
+            helper.sudo_toggle_set = original_set
+            helper.os.geteuid = lambda: 1000
+
+        # The distinction has to be reportable, not just enforced.
+        can_enable, reason = helper.sudo_toggle_enable_availability()
+        assert_equal(can_enable, False, "enable-availability must be false with no terminal")
+        assert_equal("terminal" in reason, True, "The reason must name the missing terminal")
+        available, _ = helper.sudo_toggle_availability()
+        assert_equal(available, True,
+                     "General availability must NOT depend on a terminal")
+    finally:
+        helper.ensure_root_for = original_ensure
+        helper.terminal_candidates = original_terminals
+        helper.sudo_toggle_availability = original_avail
+        helper.os.geteuid = original_euid
+
+
+def test_terminal_candidates_match_dependency_manifest():
+    """One list of terminals, two files: they must not drift apart."""
+    manifest = json.loads((REPO_ROOT / "config" / "vshell" / "dependencies.json").read_text())
+    any_commands = manifest["features"]["sudo-toggle"]["anyCommands"]
+    assert_equal(len(any_commands), 1, "sudo-toggle must declare exactly one terminal alternative set")
+    assert_equal(sorted(any_commands[0]), sorted(helper.TERMINAL_CANDIDATES),
+                 "dependencies.json terminals must match helper TERMINAL_CANDIDATES")
+
+
 def main():
     assert_equal(helper._theme_command_mutates(["chromium-policy"]), True,
                  "Chromium policy refresh must serialize with theme applies")
@@ -1204,6 +1623,16 @@ def main():
     test_launcher_zoxide_results()
     test_duplicate_shell_guard()
     test_duplicate_shell_guard_uses_kernel_start_times()
+    test_sudo_toggle_dropin_lifecycle()
+    test_sudo_toggle_status_reads_flag_mirror()
+    test_sudo_toggle_status_reports_other_passwordless_sources()
+    test_sudo_toggle_set_refuses_stale_direction()
+    test_sudo_toggle_enable_never_takes_quiet_sudo_path()
+    test_sudo_toggle_flag_write_refuses_symlinks()
+    test_sudo_toggle_revoke_retires_legacy_flag_without_state_dir()
+    test_launch_terminal_rejects_immediately_failing_terminal()
+    test_sudo_toggle_revoke_never_needs_a_terminal()
+    test_terminal_candidates_match_dependency_manifest()
     subprocess.run(
         [sys.executable, str(REPO_ROOT / "scripts" / "check-vshell-niri.py")],
         check=True,

@@ -44,7 +44,77 @@ Runtime name: `vshell`.
    the matching VGS fragment.
 8. `vshell greeter sync` writes `/var/cache/vshell-greeter`, copied greeter runtime, `/etc/greetd/config.toml`, and `/etc/pam.d/greetd`; `vshell auth sync` writes `/etc/pam.d/vshell`, `/etc/pam.d/vshell-u2f`, and refreshes greetd PAM.
 9. Empty-password login keyring conversion is explicit: `vshell greeter keyring empty --force` backs up `~/.local/share/keyrings/login.keyring` before replacing it; normal greeter sync refuses destructive conversion.
-10. Optional widgets check helper/backends and degrade when unavailable.
+10. `vshell sudo-toggle` owns the passwordless-sudo protocol used by the
+    `sudoToggle` plugin. The privileged drop-in is
+    `/etc/sudoers.d/50-<user>-nopasswd-toggle`, validated with `visudo` under a
+    dot-suffixed staging name (which sudo ignores) before it is moved into
+    place, and mirrored to `~/.local/state/vshell/sudo-passwordless-toggle`
+    because `/etc/sudoers.d` is unreadable to the logged-in user. The mirror is
+    written without following symlinks at any component, since root writes it
+    into a user-controlled tree. The pre-VGS-11 path
+    `~/.local/state/sudo-passwordless-toggle` is still read for migration and
+    is retired on the next write.
+
+    Two rules keep the mirror from becoming a privilege-escalation path:
+    - **The direction is never inferred.** UIs call `set on|off` with the state
+      they displayed. When reality disagrees (drop-in removed by an admin,
+      restored home backup) the privileged half changes nothing, re-syncs the
+      mirror, and exits `3` so the caller re-reads. Inferring the direction
+      root-side turned a "revoke" click into a permanent grant.
+    - **Enabling always goes through a terminal.** Only the disable direction
+      may take the quiet `sudo -n` path. Where sudo already runs without
+      prompting, a quiet enable would install `NOPASSWD: ALL` from one click
+      with no prompt or window. The terminal comes from `launch_terminal`
+      (`$TERMINAL`, then installed candidates), never a hardcoded emulator, and
+      a candidate that dies immediately is treated as failed rather than
+      launched.
+
+    The terminal requirement is **enable-only**. `available` covers
+    sudo/visudo/`/etc/sudoers.d`; the terminal is reported separately as
+    `canEnable`/`enableReason`. Gating both directions on it left a machine
+    with no terminal unable to revoke an existing grant.
+
+    Because the terminal only guarantees visibility — sudo will not prompt when
+    a `NOPASSWD` rule already matches — the widget's confirmation is the real
+    gate in that configuration, and it has to hold against two different
+    things:
+    - **An accidental double-click.** The second click is ignored (not counted,
+      not cancelled) until `confirmMinMs`, and the pointer must have left the
+      pill since arming. The tracked state is only the *leaving*; that amounts
+      to "left and came back" solely because a click requires the pointer to be
+      over the pill.
+    - **Activation that is not a click at all.** `BarHoverController` calls
+      `triggerHoverPopout` on every `PluginComponent`, and `triggerPopout`
+      forwards a zero-argument `pillClickAction`, so with `hoverPopouts`
+      enabled a pointer crossing the bar reached the action — arming, then
+      confirming, with no click. Both guards above are *satisfied* by that
+      traversal rather than defeated by it. Two mechanisms close it, both landed
+      in VGS-36: `PluginComponent.pillClickOnHover` (opt-in, default `false`)
+      stops hover from invoking the action, and `PluginComponent.pillActionOrigin`
+      tells the action how it was reached so `toggle()` can refuse anything but
+      `"click"` at the decision point. Unannounced invocations default to
+      `"ipc"`, so a caller that forgets to declare an origin fails closed.
+
+    `sudoToggle` is deliberately **not** in `settings.default.json`. The plugin
+    ships and is enabled, so it appears in the widget picker, but a permanent
+    no-expiry passwordless-root switch is not something a stock bar should offer
+    by default — the user places it. The guards above are what make the control
+    safe once placed; keeping it out of the default bar is what keeps it from
+    being offered to users who never asked for it.
+
+    `scripts/test-sudo-toggle-confirm.js` extracts the decision functions from
+    the QML and exercises them directly, since bundled plugins get no runtime
+    coverage from the nested smoke (VGS-19).
+
+    `status --json` reports `available`/`reason`, `canEnable`/`enableReason`,
+    `dropinInstalled` (VGS's own rule) and `sudoNonInteractive` (whether sudo
+    prompts at all right now, from any rule or a cached credential). The sudo
+    probe is not run at shell start: for a non-sudoer it logs a security event
+    and mails root under the default `mail_no_user`, so the widget passes
+    `--no-sudo-probe` at startup and asks for real only once the user hovers
+    the control. It is not filtered by group membership, which would skip a
+    user granted sudo by a direct sudoers rule.
+11. Optional widgets check helper/backends and degrade when unavailable.
 
 ## Single instance per session
 One session owns one VGS shell. A second full instance competes for

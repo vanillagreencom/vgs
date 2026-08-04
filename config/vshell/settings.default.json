@@ -586,10 +586,6 @@
           "enabled": true
         },
         {
-          "id": "sudoToggle",
-          "enabled": true
-        },
-        {
           "id": "screenRecord",
           "enabled": true
         }
