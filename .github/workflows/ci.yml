@@ -164,6 +164,7 @@ jobs:
       # make an unrelated PR red for an AUR-side problem it cannot fix.
       - name: Packaging metadata and assets
         run: |
+          python3 scripts/lib/shell_scan.py
           scripts/gen-package-metadata.py
           scripts/check-package-assets.sh
           scripts/check-aur-sync.py
