@@ -598,6 +598,12 @@ var SPEC = {
         }], onChange: "updateBarConfigs"
     },
 
+    // Bar widget ids the user explicitly removed. Without this, "removed" and
+    // "never mentioned" are the same absence, and a barConfigs authored on a
+    // desktop can never be told apart from a deliberate choice — see
+    // settings/BarWidgets.js.
+    removedBarWidgets: { def: [] },
+
     desktopClockEnabled: { def: false },
     desktopClockStyle: { def: "analog" },
     desktopClockTransparency: { def: 0.8, coerce: percentToUnit },
