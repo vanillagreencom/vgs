@@ -110,7 +110,10 @@ AUR package builds and installs perfectly well.
 leave `yay -S vgs-shell` unable to download its source. `publish-aur.sh` checks the URLs rather than
 assuming: it publishes the package when they resolve — so a dependency fix that leaves `pkgver`
 alone reaches stable users the day it lands — and defers only that package, with an explanation,
-between a version bump and its tag. Each run then verifies exactly what it published; a package it
+between a version bump and its tag. Only a `404`/`410` defers. A DNS failure, a timeout, a `403` or
+a `5xx` **fails the run**: "not released yet" and "the runner could not reach GitHub" look identical
+if you only ask whether `curl` succeeded, and quietly skipping the publish for the second is the
+silent non-delivery this whole section exists to end. Each run then verifies exactly what it published; a package it
 deferred is not verified, because reporting expected drift as a failure would make the delivery
 signal worthless.
 

@@ -63,16 +63,48 @@ trap 'rm -rf "$tmp"' EXIT
 # package is published from release.yml. Checking the URLs rather than assuming
 # lets a routine packaging change — a dependency fix that leaves pkgver alone —
 # reach stable users immediately instead of waiting for the next release.
+#
+# Three outcomes, and the difference between the last two is the whole point:
+#   0  every source resolves            -> publish
+#   1  a source is definitively absent  -> defer this package, run stays green
+#   2  the check could not be made      -> FAIL the run
+#
+# "Not released yet" and "the runner's DNS blinked" look identical if you only
+# ask whether curl succeeded, and treating the second as the first is silent
+# non-delivery — the exact failure VGS-5 and VGS-53 are about, reintroduced in
+# the tool meant to end it. curl can tell them apart, so it is asked to: a
+# transport error is a transport error, and only 404/410 means "not there".
 sources_exist() {
-  local package="$1" url
+  local package="$1" url sources code rc
+
+  if ! sources="$("$root/scripts/check-aur-sync.py" --print-sources "$package")"; then
+    echo "publish-aur: cannot read the source URLs of $package, so whether they resolve is unknown." >&2
+    return 2
+  fi
+
   while IFS= read -r url; do
     [[ -n "$url" ]] || continue
-    if ! curl -fsSI --max-time 30 --retry 2 -o /dev/null "$url"; then
-      echo "publish-aur: $package is NOT published: its source $url does not exist yet." >&2
-      echo "publish-aur: that is expected between a version bump and its release tag — release.yml publishes it once the tarballs are up. If no release is pending, the source URL is wrong." >&2
-      return 1
+    code="$(curl -sSL --head --max-time 30 --retry 2 -o /dev/null -w '%{http_code}' "$url")"
+    rc=$?
+    if [[ "$rc" -ne 0 ]]; then
+      echo "publish-aur: cannot reach $url (curl exit $rc), so whether $package's source exists is unknown." >&2
+      echo "publish-aur: not treating an unreachable host as a missing release — that would skip the publish and leave the AUR stale with a green run." >&2
+      return 2
     fi
-  done < <("$root/scripts/check-aur-sync.py" --print-sources "$package")
+    case "$code" in
+      2??) ;;
+      404|410)
+        echo "publish-aur: $package is NOT published: its source $url returned $code." >&2
+        echo "publish-aur: that is expected between a version bump and its release tag — release.yml publishes it once the tarballs are up. If no release is pending, the source URL is wrong." >&2
+        return 1
+        ;;
+      *)
+        echo "publish-aur: $url returned $code, which is neither a working source nor a missing one." >&2
+        echo "publish-aur: failing rather than guessing; a 403 or a 5xx is a fault to look at, not a release that has not happened yet." >&2
+        return 2
+        ;;
+    esac
+  done <<< "$sources"
   return 0
 }
 
@@ -82,9 +114,10 @@ for package in "${packages[@]}"; do
   source_dir="$root/$(directory_for "$package")"
   clone="$tmp/$package"
 
-  if ! sources_exist "$package"; then
-    continue
-  fi
+  sources_exist "$package" || case "$?" in
+    1) continue ;;          # deferred by design; release.yml owns it
+    *) status=1; continue ;;  # could not check: never green
+  esac
 
   if [[ "$dry_run" -eq 1 ]]; then
     remote="https://aur.archlinux.org/$package.git"

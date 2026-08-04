@@ -31,6 +31,8 @@ RDEPEND="
 	x11-libs/libnotify
 	dev-libs/glib
 	app-admin/sudo
+	!gui-apps/mako
+	!x11-misc/dunst
 "
 BDEPEND="dev-lang/go"
 
