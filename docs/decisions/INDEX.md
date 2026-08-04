@@ -7,6 +7,7 @@ was chosen, why, and what would change the answer.
 |------|-----|----------|----------|-----------|--------------|--------|------|
 | 2026-08-04 | D001 | — | Report the three Quickshell 0.3.0 defects upstream; do not vendor or patch | (b) is a process-global that permanently breaks locking for any client | Upstream fixes (b) and VGS pins a newer Quickshell | Active | [Full](D001-quickshell-0-3-0-upstream-defects.md) |
 | 2026-08-04 | D002 | — | GitHub -> Linear intake mirroring stays manual and documented as manual | Both automated options need owner-only access; wrong docs are worse than no automation | Owner enables the Linear GitHub integration or provisions a `LINEAR_API_KEY` secret | Active | [Full](D002-github-linear-intake-sync.md) |
+| 2026-08-04 | D001 | VGS-48 | Keep Quickshell's `SystemTray` as the tray's only transport | Both proposed routes add a second SNI enumerator and neither fixes the ambiguous-`Id` root cause | Quickshell exposes `contextMenu()` or an item's bus name/path, or a duplicate-`Id` misfire is reported | Active | [Full](D001-system-tray-transport.md) |
 
 ---
 
