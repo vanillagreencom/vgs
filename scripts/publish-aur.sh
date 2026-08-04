@@ -57,10 +57,34 @@ message="sync from vanillagreencom/vgs $revision"
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 
+# A recipe whose source_* point at release tarballs cannot be published before
+# those tarballs exist: `yay -S vgs-shell` would fail to download its source for
+# every user until the tag was built. This is the whole reason the stable
+# package is published from release.yml. Checking the URLs rather than assuming
+# lets a routine packaging change — a dependency fix that leaves pkgver alone —
+# reach stable users immediately instead of waiting for the next release.
+sources_exist() {
+  local package="$1" url
+  while IFS= read -r url; do
+    [[ -n "$url" ]] || continue
+    if ! curl -fsSI --max-time 30 --retry 2 -o /dev/null "$url"; then
+      echo "publish-aur: $package is NOT published: its source $url does not exist yet." >&2
+      echo "publish-aur: that is expected between a version bump and its release tag — release.yml publishes it once the tarballs are up. If no release is pending, the source URL is wrong." >&2
+      return 1
+    fi
+  done < <("$root/scripts/check-aur-sync.py" --print-sources "$package")
+  return 0
+}
+
 status=0
+published=()
 for package in "${packages[@]}"; do
   source_dir="$root/$(directory_for "$package")"
   clone="$tmp/$package"
+
+  if ! sources_exist "$package"; then
+    continue
+  fi
 
   if [[ "$dry_run" -eq 1 ]]; then
     remote="https://aur.archlinux.org/$package.git"
@@ -87,6 +111,7 @@ for package in "${packages[@]}"; do
 
   if git -C "$clone" diff --quiet --exit-code; then
     echo "publish-aur: $package is already what this repo holds"
+    published+=("$package")
     continue
   fi
 
@@ -112,6 +137,15 @@ for package in "${packages[@]}"; do
   git -C "$clone" "${identity[@]}" commit --quiet -m "$message"
   git -C "$clone" push --quiet origin HEAD:master
   echo "publish-aur: pushed $package ($message)"
+  published+=("$package")
 done
+
+# Prove the push landed, for exactly the packages this run published. Scoping
+# matters: verifying a package that was deliberately not published — one whose
+# release tarballs do not exist yet — would report drift that is expected and
+# turn a successful publish red.
+if [[ "$dry_run" -eq 0 && ${#published[@]} -gt 0 ]]; then
+  "$root/scripts/check-aur-sync.py" --remote "${published[@]}" || status=1
+fi
 
 exit "$status"

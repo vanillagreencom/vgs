@@ -165,20 +165,53 @@ def array_end(text: str, start: int) -> int:
     raise CheckError("unterminated array assignment in PKGBUILD")
 
 
+def scalar_end(text: str, start: int) -> int:
+    """Index just past a non-array value, continuations and quotes included.
+
+    A scalar does not always end at the next newline: `pkgdesc='a\nb'` and a
+    trailing backslash both continue onto the following line. Stopping at the
+    first \\n truncates the first and hands shlex an unterminated quote for the
+    second, which would fail this check — one that gates CI — on a PKGBUILD
+    makepkg reads happily.
+    """
+    quote, index = "", start
+    while index < len(text):
+        char = text[index]
+        if quote:
+            if char == quote:
+                quote = ""
+        elif char in "'\"":
+            quote = char
+        elif char == "\\" and index + 1 < len(text):
+            index += 1  # escaped character, newline included
+        elif char == "\n":
+            return index
+        index += 1
+    return len(text)
+
+
 def assignments(text: str):
     """Yield (name, [values]) for the plain assignments in `text`."""
-    for match in re.finditer(r"^[ \t]*([A-Za-z_]\w*)=", text, re.MULTILINE):
+    index = 0
+    pattern = re.compile(r"^[ \t]*([A-Za-z_]\w*)=", re.MULTILINE)
+    while (match := pattern.search(text, index)) is not None:
         name, start = match.group(1), match.end()
         if text[start : start + 1] == "(":
             end = array_end(text, start)
             raw = text[start + 1 : end]
         else:
-            end = text.find("\n", start)
-            raw = text[start : end if end != -1 else len(text)]
+            end = scalar_end(text, start)
+            raw = text[start:end]
+        # Resume after the value, so an assignment spanning several lines
+        # cannot have its continuation lines rescanned as further assignments.
+        index = end + 1
         try:
             values = shlex.split(raw, comments=True)
         except ValueError as error:
-            raise CheckError(f"cannot parse assignment to {name}: {error}") from None
+            raise CheckError(
+                f"cannot parse the assignment to {name}: {error}. The value "
+                f"read as {raw!r}"
+            ) from None
         yield name, values
 
 
@@ -279,6 +312,25 @@ def check_remote(package: str, directory: Path, files: tuple[str, ...]) -> list[
         return problems
 
 
+def remote_sources(directory: Path) -> list[str]:
+    """The http(s) URLs a package's sources are fetched from, expanded.
+
+    `git+…` and local file sources are left out: they resolve regardless of
+    whether a release exists, which is the question the caller is asking.
+    """
+    fields, _ = parse_pkgbuild(directory / "PKGBUILD")
+    urls = []
+    for key, values in fields.items():
+        if key != "source" and not key.startswith("source_"):
+            continue
+        for value in values:
+            # makepkg allows `filename::url`.
+            url = value.split("::", 1)[-1]
+            if url.startswith(("http://", "https://")):
+                urls.append(url)
+    return urls
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -286,11 +338,33 @@ def main() -> int:
         action="store_true",
         help="also diff the published AUR repositories (requires network)",
     )
+    parser.add_argument(
+        "--print-sources",
+        action="store_true",
+        help="print the http(s) source URLs of the selected packages and exit",
+    )
+    parser.add_argument(
+        "packages",
+        nargs="*",
+        choices=[*PACKAGES, []],
+        help="packages to check (default: all of them)",
+    )
     args = parser.parse_args()
+    selected = {name: PACKAGES[name] for name in (args.packages or PACKAGES)}
+
+    if args.print_sources:
+        try:
+            for _, (relative, _) in selected.items():
+                for url in remote_sources(ROOT / relative):
+                    print(url)
+        except CheckError as error:
+            print(f"check-aur-sync: {error}", file=sys.stderr)
+            return 2
+        return 0
 
     problems: list[str] = []
     try:
-        for package, (relative, files) in PACKAGES.items():
+        for package, (relative, files) in selected.items():
             directory = ROOT / relative
             for name in files:
                 if not (directory / name).is_file():
@@ -320,7 +394,7 @@ def main() -> int:
             )
         return 1
 
-    packages = ", ".join(PACKAGES)
+    packages = ", ".join(selected)
     if args.remote:
         print(f"AUR recipes match this repo ({packages})")
     else:

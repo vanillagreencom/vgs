@@ -81,12 +81,20 @@ scripts/publish-aur.sh               # publish (needs AUR commit rights)
 ```
 
 The offline check runs on every PR. The remote check and the push belong to
-`.github/workflows/publish-aur.yml`: it publishes `vgs-shell-git` when a packaging change lands on
-main, is called by `release.yml` for `vgs-shell` once the tag's tarballs exist (its `source_*` point
-at them, so it cannot be published earlier), verifies the result, and runs a weekly drift check
-because a stale AUR package builds and installs perfectly well. Publishing needs an
-`AUR_SSH_PRIVATE_KEY` secret with commit rights; without it the workflow **fails** rather than
-skipping. Never edit the AUR side by hand — the next publish overwrites it.
+`.github/workflows/publish-aur.yml`, which publishes both packages whenever a packaging change lands
+on main, is called again by `release.yml` after a tag, and runs a weekly drift check because a stale
+AUR package builds and installs perfectly well.
+
+`vgs-shell` points its `source_*` at release tarballs, so publishing it before those exist would
+leave `yay -S vgs-shell` unable to download its source. `publish-aur.sh` checks the URLs rather than
+assuming: it publishes the package when they resolve — so a dependency fix that leaves `pkgver`
+alone reaches stable users the day it lands — and defers only that package, with an explanation,
+between a version bump and its tag. Each run then verifies exactly what it published; a package it
+deferred is not verified, because reporting expected drift as a failure would make the delivery
+signal worthless.
+
+Publishing needs an `AUR_SSH_PRIVATE_KEY` secret with commit rights; without it the workflow
+**fails** rather than skipping. Never edit the AUR side by hand — the next publish overwrites it.
 
 ## Theme bundles
 
