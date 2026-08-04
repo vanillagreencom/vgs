@@ -84,6 +84,32 @@ Because it is always built, it is always built in the greeter and in a shell the
 duplicate-instance guard is about to refuse as well. `Lock.active`
 (`!runGreeter && shellAllowed`) gates the behaviour instead of a `Loader` gating
 the object: an inactive Lock takes no lock and registers no `lock` IPC target.
+
+Because that gate is a property rather than structural, it has to be applied on
+**every** path that can arm `WlSessionLock`, not just the obvious one. There are
+three:
+
+| Path | Reached from |
+|------|--------------|
+| `lock()` | UI, IPC, `IdleService.lockRequested`, `lockAtStartup` |
+| `_adoptSessionLock()` | both `SessionService` handlers (`onSessionLocked`, `onLoginctlStateChanged`) |
+| `spawnCustomLocker()` | the configured `customPowerActionLock` |
+
+The `SessionService` handlers must not assign `shouldLock` themselves. logind
+reporting a locked session is enough to arm `WlSessionLock`, so a greeter or an
+un-cleared duplicate would take a lock without ever calling `lock()` — the exact
+race this placement exists to remove, and per VGS-27 defect (a) a failed
+acquisition is an uncatchable `qFatal`, so the failure mode is a dead shell.
+
+Gating those handlers cannot cost a recovery, because a signal that arrives
+while the gate is shut is *dropped, not queued*. `_start()` therefore re-checks
+`SessionService.locked` when the object activates. That is the path that puts the
+lock UI back over a session which is still locked because a previous shell died
+holding it.
+
+`onSessionUnlocked` stays ungated on purpose: clearing lock state is always safe,
+and an inactive object must still be able to let go.
+
 The gate covers only *new* lock requests. Restoring a lock across a reload is
 exempt, because a lock that is restored was already owned by this process and a
 freshly started process has nothing to restore.

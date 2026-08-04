@@ -37,7 +37,13 @@ Scope {
     //
     // The gate is a property rather than a Loader around this object because
     // wrapping it in a Loader is what breaks reload matching in the first
-    // place. It covers only *new* lock requests: a lock restored across a hot
+    // place. Being a property rather than structural, it has to be applied on
+    // every path that can arm `WlSessionLock`, and there are three: `lock()`
+    // (local/UI and lockAtStartup), `_adoptSessionLock()` (both SessionService
+    // handlers) and `spawnCustomLocker()`.
+    //
+    // It covers only *new* lock requests. The persisted-state restore in
+    // `lockState` below is deliberately exempt: a lock restored across a hot
     // reload was already owned by this process, so restoring it can never be a
     // duplicate grab, and a freshly started process has nothing to restore.
     property bool active: true
@@ -52,6 +58,14 @@ Scope {
         IdleService.lockComponent = this;
         if (SettingsData.lockAtStartup)
             lock();
+        // logind may have reported a locked session while this object was still
+        // inactive, and a signal that arrives while the gate is shut is dropped,
+        // not queued. Re-check on activation so gating the SessionService
+        // handlers cannot cost a recovery: this is the path that puts the lock
+        // UI back over a session that is still locked because a previous shell
+        // died holding it.
+        if (SessionService.locked)
+            _adoptSessionLock();
     }
 
     Component.onCompleted: _start()
@@ -126,6 +140,8 @@ Scope {
     }
 
     function spawnCustomLocker() {
+        if (!active)
+            return;
         Quickshell.execDetached(["sh", "-c", SettingsData.customPowerActionLock]);
         // The custom locker manages its own surface; VGS never engages
         // WlSessionLock here, so isShellLocked stays false and the fade
@@ -189,18 +205,33 @@ Scope {
         lock();
     }
 
+    // logind's side of the door. `lock()` is the local/UI entry point; this is
+    // the one every SessionService path goes through, and it carries the same
+    // `active` gate — assigning `shouldLock` directly from those handlers would
+    // arm `WlSessionLock` in a greeter, or in a duplicate the instance guard has
+    // not cleared, which is exactly the race this file exists to remove.
+    //
+    // Note this is NOT the persisted-state restore path. That one (lockState
+    // below) sets `shouldLock` directly and stays deliberately exempt: it
+    // re-adopts a lock this very process already owns.
+    function _adoptSessionLock(): void {
+        if (!active || shouldLock)
+            return;
+        if (handleLoginctlCustomLock())
+            return;
+        lockInitiatedLocally = false;
+        shouldLock = true;
+    }
+
     Connections {
         target: SessionService
 
         function onSessionLocked() {
-            if (shouldLock)
-                return;
-            if (handleLoginctlCustomLock())
-                return;
-            lockInitiatedLocally = false;
-            shouldLock = true;
+            root._adoptSessionLock();
         }
 
+        // Deliberately NOT gated on `active`: clearing lock state is always
+        // safe, and an inactive object must still be able to let go.
         function onSessionUnlocked() {
             customLockerSpawned = false;
             if (!shouldLock || lockInitiatedLocally)
@@ -209,12 +240,8 @@ Scope {
         }
 
         function onLoginctlStateChanged() {
-            if (SessionService.locked && !shouldLock) {
-                if (handleLoginctlCustomLock())
-                    return;
-                lockInitiatedLocally = false;
-                shouldLock = true;
-            }
+            if (SessionService.locked)
+                root._adoptSessionLock();
         }
     }
 
