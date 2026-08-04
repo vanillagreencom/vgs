@@ -19,18 +19,45 @@
 | `~/.config/vshell-local/webapps.json` | Generated webapp menu items |
 
 ### Overriding a bundled id
-A user override that reuses a **bundled id** replaces the shipped package for that id.
-`PluginService._onManifestParsed` keys auto-enable on the id rather than on the winning source,
-so the override is always *enabled* — it cannot be left owned-but-never-started, and
-`disablePlugin` refuses it for the same reason.
+A user package replaces a shipped package for a **bundled id** only if its manifest says that is
+what it means:
 
-Enabled is not the same as loaded, and the override still has to provide the surface the shipped
-package did. `vgsMenu` is the app launcher and the shell ships no fallback, so an override that
-drops its daemon surface or its `toggle()` disables the launcher; the dock and bar buttons then
-report "App launcher unavailable" via `PluginService.toggleAppLauncher()` instead of doing
-nothing. An override that fails its `startupCheck` or declares an incompatible `requires_shell`
-leaves the id with no loaded package at all — there is no demotion back to the shipped one.
-That gap is tracked as VGS-24.
+```json
+{ "id": "vgsMenu", "overrides": "vgsMenu" }
+```
+
+`overrides` accepts the id, a list of ids, or `true` ("whatever id I declare"). Declaring it is
+the whole trust decision — the loader never infers an override from a name match.
+
+| The package | What VGS does |
+|-------------|---------------|
+| Declares the override | Replaces the shipped package, and inherits **always-available**: auto-enabled without the user turning it on, and `disablePlugin` refuses it |
+| Reuses a bundled id without `overrides` | Stays inert. The shipped package keeps the id, and a one-time toast names the collision |
+
+Always-available exists because an override that owns the id and never starts is a product surface
+that goes dark — `vgsMenu` is the app launcher and the shell ships no fallback. It is *not* extended
+to a bare collision, because auto-loading a package the user never enabled purely because its id
+matches something VGS happens to ship is a decision nobody made. Scan order does not matter: the
+bundled directory can be read after the user one, and a colliding package that got the id first is
+reclaimed when the shipped manifest is parsed.
+
+Because always-available packages cannot be disabled, Settings → Plugins does not offer them a
+disable toggle at all — it shows an "Always on" badge instead of a control that can only refuse
+(`Modules/Settings/PluginListItem.qml`). `vshell ipc call plugins disable <id>` answers
+`PLUGIN_ALWAYS_AVAILABLE: <id>`, distinct from `PLUGIN_DISABLE_FAILED`.
+
+Enabled is not the same as loaded, and an override still has to provide the surface the shipped
+package did. **The swap is gated:** `_onManifestParsed` runs the override's `startupCheck` and loads
+it *before* the shipped package is unloaded. If the gate fails, `requires_shell` is incompatible, or
+the components fail to load, the override is demoted — the shipped package keeps (or takes back) the
+id and stays loaded, and a toast names the override and the reason. An override that loads but drops
+its daemon surface or its `toggle()` is still a way to disable the launcher: the dock and bar buttons
+then report "App launcher unavailable" via `PluginService.toggleAppLauncher()` instead of doing
+nothing.
+
+`_bundledPluginIds` tracks ids seen from the bundled directory and is cleared when the last bundled
+manifest for an id disappears, so a shipped package that is removed stops making a same-id user
+package auto-enabled and undisableable.
 
 ## Menu overlay schema
 ```json

@@ -31,6 +31,13 @@ Singleton {
     // Ids seen from the bundled directory, whether or not a higher-priority
     // source currently owns them. Gates the always-available invariant.
     property var _bundledPluginIds: ({})
+    // Public, reactive view of the same map. UI binds this so it can tell an
+    // always-available VGS module from a third-party plugin instead of offering
+    // controls that cannot succeed.
+    readonly property var bundledPluginIds: _bundledPluginIds
+    // Collision reports are one-per-id-per-source for the process; a rescan of
+    // the same colliding package must not re-toast.
+    property var _reportedCollisions: ({})
     property var pluginInstances: ({})
     // Daemon-surface plugins are instantiated by the shell's daemon Instantiator
     // (VGS.qml), which owns their lifetime. Registering the live item here lets
@@ -205,6 +212,11 @@ Singleton {
                 delete pathToPluginId[path];
             });
             for (const pid in removedPluginIds) {
+                // Before promoting: a removed bundled manifest must stop
+                // marking the id always-available, or a same-id user package
+                // stays auto-enabled and undisableable for the process
+                // lifetime, and stays blocked from being promoted at all.
+                _refreshBundledId(pid);
                 if (!availablePlugins[pid])
                     promoteShadowedPlugin(pid);
             }
@@ -221,7 +233,11 @@ Singleton {
             if (pathToPluginId[path] !== pluginId)
                 continue;
             const meta = knownManifests[path];
-            if (!meta || meta.bad)
+            // `blocked` is a package that only collided with a bundled id and
+            // never claimed it; `demoted` is an override that claimed one and
+            // failed to load. Promoting either would undo the decision that set
+            // the flag, so only the shipped package is eligible.
+            if (!meta || meta.bad || meta.blocked || meta.demoted)
                 continue;
             const priority = _sourcePriority(meta.source);
             if (priority > bestPriority) {
@@ -378,21 +394,67 @@ Singleton {
 
         // A bundled id names a VGS product module, and some of them back core
         // UI (the app launcher has no fallback since VGS-13). A user package
-        // may still shadow one, but shadowing must not silently disable the
-        // product surface, so the id stays auto-enabled whichever source wins.
+        // may still replace one, but that has to be a decision, not a name
+        // collision — see _declaresBundledOverride.
         if (sourceTag === "bundled" && !_bundledPluginIds[manifest.id]) {
             const knownBundled = Object.assign({}, _bundledPluginIds);
             knownBundled[manifest.id] = true;
             _bundledPluginIds = knownBundled;
         }
 
-        const existing = availablePlugins[manifest.id];
-        const shouldReplace = (!existing) || (_sourcePriority(sourceTag) >= _sourcePriority(existing.source));
+        const existing = availablePlugins[manifest.id] || null;
+        const decision = _bundledOverrideDecision({
+            sourceTag: sourceTag,
+            pluginId: manifest.id,
+            manifest: manifest,
+            bundledId: _bundledPluginIds[manifest.id] === true,
+            existing: existing,
+            isPureDesktop: surfaces.length === 1 && surfaces[0] === "desktop",
+            userEnabled: SettingsData.getPluginSetting(manifest.id, "enabled", false) === true,
+            incomingPriority: _sourcePriority(sourceTag),
+            existingPriority: existing ? _sourcePriority(existing.source) : -1
+        });
+        info.overridesBundled = decision.overridesBundled;
+        info.alwaysAvailable = decision.alwaysAvailable;
 
-        if (shouldReplace) {
-            if (existing && existing.loaded && existing.source !== sourceTag) {
-                unloadPlugin(manifest.id);
+        if (decision.action === "block") {
+            // A package that merely reuses a shipped id stays inert: the shipped
+            // package keeps the id, and nothing the user never enabled is
+            // loaded on the strength of a name match. Declaring
+            // `"overrides": "<id>"` is the opt-in. (VGS-26)
+            knownManifests[absPath] = {
+                mtime: mtimeEpochMs,
+                source: sourceTag,
+                blocked: "bundled"
+            };
+            pathToPluginId[absPath] = manifest.id;
+            _reportBundledCollision(manifest.id, sourceTag);
+            if (existing && existing.manifestPath === absPath) {
+                // It owned the id before the bundled directory was known.
+                // Promoting the shipped manifest re-enters this function for
+                // it, which takes the id back through the reclaim path below —
+                // gated, so the running package is not torn down first.
+                promoteShadowedPlugin(manifest.id);
             }
+            return;
+        }
+
+        if (decision.action !== "shadow") {
+            if (decision.action === "reclaim") {
+                const displacedMeta = knownManifests[existing.manifestPath];
+                knownManifests[existing.manifestPath] = {
+                    mtime: displacedMeta ? displacedMeta.mtime : mtimeEpochMs,
+                    source: existing.source,
+                    blocked: "bundled"
+                };
+                _reportBundledCollision(manifest.id, existing.source);
+            }
+            // The package this one displaces, if it is currently loaded. Its
+            // teardown is deferred until the incoming package has passed its
+            // own startup gate — unloading first is what left a product surface
+            // with nothing loaded when an override turned out to be
+            // non-viable. (VGS-24)
+            const displaced = (existing && existing.loaded && existing.source !== sourceTag) ? existing : null;
             const newMap = Object.assign({}, availablePlugins);
             newMap[manifest.id] = info;
             availablePlugins = newMap;
@@ -401,17 +463,15 @@ Singleton {
                 mtime: mtimeEpochMs,
                 source: sourceTag
             };
+            if (displaced)
+                info.loaded = false;
             _updateAvailablePluginsList();
             pluginListUpdated();
-            const isPureDesktop = surfaces.length === 1 && surfaces[0] === "desktop";
-            // Bundled components are VGS product modules. The package loader is
-            // an implementation detail; unlike third-party plugins they are
-            // always available to the normal widget/module surfaces. That holds
-            // for a user package shadowing a bundled id too, otherwise the
-            // override would take over the id and then never load.
-            const enabled = isPureDesktop || _bundledPluginIds[manifest.id] === true || SettingsData.getPluginSetting(manifest.id, "enabled", false);
-            if (enabled && !info.loaded)
-                runStartupGate(manifest.id);
+            if (decision.enabled && !info.loaded) {
+                _gateThenSwap(manifest.id, displaced);
+            } else if (displaced) {
+                unloadPlugin(manifest.id);
+            }
         } else {
             knownManifests[absPath] = {
                 mtime: mtimeEpochMs,
@@ -421,10 +481,192 @@ Singleton {
             pathToPluginId[absPath] = manifest.id;
             // The bundled manifest can be scanned after the override that
             // shadows it, in which case the override was evaluated before the
-            // id was known to be bundled. Enable it now.
-            if (sourceTag === "bundled" && !existing.loaded)
-                runStartupGate(manifest.id);
+            // id was known to be bundled. Settle it now. Only a declared
+            // override can still be here: a bare collision was reclaimed above.
+            if (sourceTag === "bundled") {
+                existing.alwaysAvailable = existing.overridesBundled === true;
+                if (existing.alwaysAvailable && !existing.loaded)
+                    runStartupGate(manifest.id);
+            }
         }
+    }
+
+    // BEGIN OVERRIDE POLICY
+    // Who owns a plugin id, and whether owning it grants always-available.
+    // Pure: no QML API, no service calls, no side effects — the caller applies
+    // the verdict. scripts/test-bundled-override.js extracts this block
+    // verbatim and exercises the shipped source rather than a re-implementation
+    // of it. Keep it free of anything node cannot evaluate.
+
+    // A user or system package replaces a shipped VGS module only when its
+    // manifest says so: `"overrides": "<bundled-id>"` (or a list, or `true` for
+    // "whatever id I declare"). Reusing a shipped id without that is treated as
+    // an accident — the trust decision is the manifest's, not the loader's
+    // inference from a name match. (VGS-26)
+    function _declaresBundledOverride(manifest, pluginId) {
+        const claim = manifest.overrides;
+        if (claim === true)
+            return true;
+        if (typeof claim === "string")
+            return claim === pluginId;
+        if (Array.isArray(claim))
+            return claim.indexOf(pluginId) !== -1;
+        return false;
+    }
+
+    // action:
+    //   "block"   — inert; the shipped package keeps the id (bare collision)
+    //   "reclaim" — the shipped package takes its id back from a bare collision
+    //   "replace" — this package becomes the owner
+    //   "shadow"  — a higher-priority package keeps the id
+    function _bundledOverrideDecision(input) {
+        const sourceTag = input.sourceTag;
+        const bundledId = input.bundledId === true;
+        const existing = input.existing || null;
+        // Not gated on `bundledId`: the bundled directory may not have been
+        // scanned yet, and a package that declares an override means it whether
+        // or not this process has met the package it overrides.
+        const overridesBundled = sourceTag !== "bundled" && _declaresBundledOverride(input.manifest, input.pluginId);
+        // Always-available means "auto-enabled, and disablePlugin refuses it".
+        // A declared override inherits it, because an override that owns the id
+        // and never loads is the hole VGS-13 closed. A bare collision does not,
+        // because it does not get to own the id at all.
+        const alwaysAvailable = bundledId && (sourceTag === "bundled" || overridesBundled);
+        const enabled = input.isPureDesktop === true || alwaysAvailable || input.userEnabled === true;
+
+        if (bundledId && sourceTag !== "bundled" && !overridesBundled)
+            return {
+                "action": "block",
+                "overridesBundled": overridesBundled,
+                "alwaysAvailable": false,
+                "enabled": false
+            };
+
+        // The shipped package outranks a bare collision that got there first
+        // (the bundled directory can be scanned second), so it takes its id
+        // back rather than staying shadowed by an accident.
+        const reclaims = sourceTag === "bundled" && !!existing && existing.source !== "bundled" && existing.overridesBundled !== true;
+        let action = "shadow";
+        if (reclaims)
+            action = "reclaim";
+        else if (!existing || input.incomingPriority >= input.existingPriority)
+            action = "replace";
+        return {
+            "action": action,
+            "overridesBundled": overridesBundled,
+            "alwaysAvailable": alwaysAvailable,
+            "enabled": enabled
+        };
+    }
+    // END OVERRIDE POLICY
+
+    function _reportBundledCollision(pluginId, sourceTag) {
+        const key = pluginId + ":" + sourceTag;
+        if (_reportedCollisions[key])
+            return;
+        const next = Object.assign({}, _reportedCollisions);
+        next[key] = true;
+        _reportedCollisions = next;
+        log.warn("plugin id collides with a bundled VGS module and does not declare an override:", pluginId, "source:", sourceTag);
+        ToastService.showWarning(I18n.tr("Plugin id already used by VGS: %1").arg(pluginId), I18n.tr("The bundled module keeps this id. Add \"overrides\": \"%1\" to the plugin's plugin.json if replacing it was the intent.").arg(pluginId), "", "plugin-collision-" + pluginId);
+    }
+
+    // Run the incoming package's startup gate first, and only tear the package
+    // it displaces down once the replacement has actually loaded. A gate
+    // failure or a broken component then demotes back to the shipped package
+    // instead of leaving the id — and whatever product surface it backs —
+    // with nothing loaded at all. (VGS-24)
+    function _gateThenSwap(pluginId, displaced) {
+        if (!displaced) {
+            runStartupGate(pluginId);
+            return;
+        }
+        const incoming = availablePlugins[pluginId];
+        const requires = incoming ? incoming.requires_shell : "";
+        // Only once the shell version is actually known: it is detected by an
+        // async Process, and an unresolved version parses as 0.0.0, which would
+        // fail every `>=` requirement during the first scan.
+        if (requires && ShellVersionService.semverVersion && !checkPluginCompatibility(requires)) {
+            _demoteToShipped(pluginId, incoming, I18n.tr("It requires VGS %1.").arg(requires));
+            return;
+        }
+        _runStartupCheck(pluginId, err => {
+            if (err) {
+                _setLoadError(pluginId, err);
+                pluginLoadFailed(pluginId, err.title);
+                _demoteToShipped(pluginId, incoming, err.title);
+                return;
+            }
+            _clearLoadError(pluginId);
+            unloadPlugin(pluginId);
+            if (loadPlugin(pluginId))
+                return;
+            _demoteToShipped(pluginId, incoming, I18n.tr("The plugin's components failed to load."));
+        });
+    }
+
+    // Hand the id back to the package the override displaced. The shipped
+    // manifest is still in knownManifests (shadowed), so re-parsing it makes it
+    // the owner again; if it was never unloaded it simply keeps running.
+    function _demoteToShipped(pluginId, incoming, reason) {
+        const overridePath = incoming ? incoming.manifestPath : "";
+        if (overridePath && knownManifests[overridePath])
+            knownManifests[overridePath].demoted = true;
+        if (availablePlugins[pluginId] === incoming) {
+            const newMap = Object.assign({}, availablePlugins);
+            delete newMap[pluginId];
+            availablePlugins = newMap;
+        }
+        promoteShadowedPlugin(pluginId);
+        _updateAvailablePluginsList();
+        pluginListUpdated();
+        const name = incoming ? (incoming.name || pluginId) : pluginId;
+        log.warn("override failed to take over bundled id, demoting:", pluginId, reason);
+        ToastService.showError(I18n.tr("Plugin override failed: %1").arg(name), I18n.tr("%1 could not start, so the version bundled with VGS is still in use.").arg(reason), "", "plugin-demoted-" + pluginId);
+    }
+
+    // A bundled id must not outlive the bundled directory: a shipped package
+    // that goes away (a partial upgrade, a dev checkout switch) would otherwise
+    // keep a same-id user package auto-enabled and undisableable until the
+    // shell restarts. Called from resyncAll after the removed manifests are
+    // gone from knownManifests, which is what makes the "any left?" scan
+    // meaningful. (VGS-39)
+    function _refreshBundledId(pluginId) {
+        if (_bundledPluginIds[pluginId] !== true)
+            return;
+        for (const path in knownManifests) {
+            const meta = knownManifests[path];
+            if (meta && !meta.bad && meta.source === "bundled" && pathToPluginId[path] === pluginId)
+                return;
+        }
+        const next = Object.assign({}, _bundledPluginIds);
+        delete next[pluginId];
+        _bundledPluginIds = next;
+        // Nothing shipped owns the id any more, so packages held back purely
+        // for colliding with it are ordinary plugins again.
+        for (const path in knownManifests) {
+            const meta = knownManifests[path];
+            if (meta && meta.blocked && pathToPluginId[path] === pluginId)
+                delete meta.blocked;
+        }
+        for (const key in _reportedCollisions) {
+            if (key.indexOf(pluginId + ":") === 0) {
+                const cleared = Object.assign({}, _reportedCollisions);
+                delete cleared[key];
+                _reportedCollisions = cleared;
+            }
+        }
+    }
+
+    // True when the id is a VGS product module the shell guarantees: bundled,
+    // or a user package that declared itself the override of one. Those are
+    // auto-enabled and disablePlugin refuses them, so UI must not offer a
+    // disable affordance for them. (VGS-39)
+    function isAlwaysAvailablePlugin(pluginId) {
+        if (_bundledPluginIds[pluginId] !== true)
+            return false;
+        const plugin = availablePlugins[pluginId];
+        return !plugin || plugin.alwaysAvailable === true;
     }
 
     function unregisterPluginByPath(absPath, pluginId) {
@@ -783,46 +1025,34 @@ Singleton {
         return comp.createObject(root);
     }
 
-    function runStartupGate(pluginId, onResult) {
+    // Evaluate a package's startup gate and report the outcome — normalized
+    // error object, or null for "viable" — without loading anything. Split out
+    // so a swap can be gated before the package it would replace is torn down.
+    function _runStartupCheck(pluginId, onChecked) {
         const plugin = availablePlugins[pluginId];
         if (!plugin) {
-            if (onResult)
-                onResult(false);
-            return false;
+            onChecked({
+                "title": I18n.tr("Plugin not found"),
+                "details": ""
+            });
+            return;
         }
-
         if (!plugin.startupCheckPath) {
-            const ok = loadPlugin(pluginId);
-            if (onResult)
-                onResult(ok);
-            return ok;
+            onChecked(null);
+            return;
         }
 
         const probe = _makeStartupCheckObject(pluginId, plugin);
         const finish = result => {
             if (probe)
                 probe.destroy();
-            const err = _normalizeStartupError(result);
-            if (err) {
-                _setLoadError(pluginId, err);
-                const title = I18n.tr("%1 Startup Failed").arg(plugin.name || pluginId);
-                const body = err.details ? (err.title + "\n\n" + err.details) : err.title;
-                ToastService.showError(title, body, "", "plugin-startup-" + pluginId);
-                pluginLoadFailed(pluginId, err.title);
-                if (onResult)
-                    onResult(false);
-                return;
-            }
-            _clearLoadError(pluginId);
-            const ok = loadPlugin(pluginId);
-            if (onResult)
-                onResult(ok);
+            onChecked(_normalizeStartupError(result));
         };
 
         const check = probe ? probe.check : null;
         if (typeof check !== "function") {
             finish(null);
-            return true;
+            return;
         }
         if (check.length >= 1) {
             try {
@@ -831,7 +1061,7 @@ Singleton {
                 log.warn("startupCheck threw for", pluginId, e.message);
                 finish(null);
             }
-            return true;
+            return;
         }
         let r = null;
         try {
@@ -841,14 +1071,49 @@ Singleton {
             r = null;
         }
         finish(r);
-        return true;
+    }
+
+    function runStartupGate(pluginId, onResult) {
+        const plugin = availablePlugins[pluginId];
+        if (!plugin) {
+            if (onResult)
+                onResult(false);
+            return false;
+        }
+
+        // A gate with no startupCheck, or a synchronous one, settles before
+        // this returns. Report the real outcome to callers that read the
+        // return value (the plugin IPC does); an async gate can only answer
+        // "started", as before.
+        let settled = null;
+        _runStartupCheck(pluginId, err => {
+            if (err) {
+                _setLoadError(pluginId, err);
+                const title = I18n.tr("%1 Startup Failed").arg(plugin.name || pluginId);
+                const body = err.details ? (err.title + "\n\n" + err.details) : err.title;
+                ToastService.showError(title, body, "", "plugin-startup-" + pluginId);
+                pluginLoadFailed(pluginId, err.title);
+                settled = false;
+                if (onResult)
+                    onResult(false);
+                return;
+            }
+            _clearLoadError(pluginId);
+            const ok = loadPlugin(pluginId);
+            settled = ok;
+            if (onResult)
+                onResult(ok);
+        });
+        return settled === null ? true : settled;
     }
 
     function disablePlugin(pluginId) {
-        // Keyed on the id, not the winning source: a user package shadowing a
-        // bundled id inherits the always-available invariant, so disabling it
-        // would take a VGS product surface offline through the plugin UI.
-        if (_bundledPluginIds[pluginId] === true) {
+        // Keyed on the id and the owner's claim on it, not on the winning
+        // source: a package that declared itself the override of a bundled id
+        // inherits the always-available invariant, so disabling it would take a
+        // VGS product surface offline through the plugin UI. Callers must not
+        // offer the affordance in the first place — see isAlwaysAvailablePlugin.
+        if (isAlwaysAvailablePlugin(pluginId)) {
             log.warn("Bundled VGS module cannot be disabled as a third-party plugin:", pluginId);
             return false;
         }

@@ -116,6 +116,7 @@ node scripts/test-restyle-queue.js
 node scripts/test-theme-requests.js
 node scripts/test-sudo-toggle-confirm.js
 node scripts/test-latest-transaction-queue.js
+node scripts/test-bundled-override.js
 scripts/check-vshell-helper.py
 scripts/check-brightness.py
 scripts/check-backend-inventory.py

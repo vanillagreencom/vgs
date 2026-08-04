@@ -49,6 +49,16 @@ Composite daemon example:
 Some existing manifests may carry compatibility flags for loader decisions.
 Do not use those flags as permission to call shell commands at runtime.
 
+Replacing a bundled module from `~/.config/vshell/plugins/<id>/` needs an explicit claim:
+
+```json
+{ "id": "vgsMenu", "overrides": "vgsMenu" }
+```
+
+Without it the package stays inert and the shipped module keeps the id. With it the package is
+auto-enabled and cannot be disabled from Settings, and it is demoted back to the shipped module if
+its `startupCheck` or components fail. See `docs/architecture/overlay-and-dependencies.md`.
+
 ## QML imports
 Follow existing plugin imports. Common ones:
 ```qml
