@@ -7,6 +7,10 @@
     "author": "VanillaGreen",
     "icon": "gpp_maybe",
     "component": "./SudoToggleWidget.qml",
+    "settings": "./SudoToggleSettings.qml",
     "requires_shell": ">=1.0.0",
-    "permissions": []
+    "permissions": [
+        "settings_read",
+        "settings_write"
+    ]
 }

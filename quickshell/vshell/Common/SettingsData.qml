@@ -112,6 +112,11 @@ Singleton {
         saveSettings();
     }
 
+    // "Don't ask me again" for the sudoToggle grant modal. Only a confirmed
+    // grant may set this — see SudoGrantConfirmModal — so cancelling never
+    // silently disarms the next confirmation.
+    property bool sudoToggleSkipGrantConfirm: false
+
     property bool clipboardClickToPaste: false
     property bool clipboardEnterToPaste: false
     property bool clipboardRememberTypeFilter: false

@@ -78,17 +78,33 @@ Runtime name: `vshell`.
     a `NOPASSWD` rule already matches — the widget's confirmation is the real
     gate in that configuration, and it has to hold against two different
     things:
-    - **An accidental double-click.** The second click is ignored (not counted,
-      not cancelled) until `confirmMinMs`, and the pointer must have left the
-      pill since arming. The tracked state is only the *leaving*; that amounts
-      to "left and came back" solely because a click requires the pointer to be
-      over the pill.
+    - **An accidental double-click.** The confirmation is
+      `Modals/SudoGrantConfirmModal.qml`: a modal with explicit Cancel/Grant
+      controls, opened by the click and satisfied only by clicking the grant
+      control inside it. Cancel is the default — it is what carries focus, and
+      what Escape, a background click and the close button do — so the
+      destructive action is never one stray Return away. Until VGS-55 this was
+      a toast plus a pointer gesture (move off the pill, click again, no sooner
+      than 600 ms and within 8 s); nothing on screen was interactive and the
+      requirement was discoverable only by reading the toast.
+
+      The modal carries a **"Don't ask me again"** checkbox, unticked on every
+      prompt and honoured only by an actual confirmation — ticking it and then
+      cancelling changes nothing. It persists to
+      `SettingsData.sudoToggleSkipGrantConfirm` (a top-level settings key, not
+      plugin data, default `false`), after which a click grants immediately.
+      The plugin's settings pane, `SudoToggleSettings.qml`, is where that is
+      turned back on; the opt-out must not be a one-way door. Revoking is
+      unprompted either way.
     - **Activation that is not a click at all.** `BarHoverController` calls
       `triggerHoverPopout` on every `PluginComponent`, and `triggerPopout`
       forwards a zero-argument `pillClickAction`, so with `hoverPopouts`
       enabled a pointer crossing the bar reached the action — arming, then
-      confirming, with no click. Both guards above are *satisfied* by that
-      traversal rather than defeated by it. Two mechanisms close it, both landed
+      confirming, with no click. The pointer guards it used to face were
+      *satisfied* by that traversal rather than defeated by it; a modal cannot
+      be confirmed by traversal, but hover must still not raise one, and with
+      confirmation opted out a hover would otherwise grant outright. Two
+      mechanisms close it, both landed
       in VGS-36: `PluginComponent.pillClickOnHover` (opt-in, default `false`)
       stops hover from invoking the action, and `PluginComponent.pillActionOrigin`
       tells the action how it was reached so `toggle()` can refuse anything but
