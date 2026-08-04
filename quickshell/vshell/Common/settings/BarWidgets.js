@@ -61,14 +61,23 @@ function configsMentionWidget(barConfigs, widgetId) {
 // The bar a reconciled widget lands on: the first enabled one, so a user who
 // disabled their desktop bar and added a laptop bar gets the widget where they
 // can see it. Exactly one bar is touched — never every bar.
+//
+// -1 when there is no enabled bar. Falling back to the first bar would insert
+// the widget somewhere that cannot render it, rewriting a layout the user
+// deliberately turned off for no visible benefit. Reconciliation exists to
+// surface hardware, so with nothing on screen to surface it on, it does
+// nothing and waits for a bar to be enabled. Nothing is lost by waiting:
+// SettingsData re-runs reconciliation when a bar is enabled or added, as well
+// as on every load, so the widget appears as soon as there is somewhere to
+// put it.
 function targetBarIndex(barConfigs) {
-    if (!Array.isArray(barConfigs) || barConfigs.length === 0)
+    if (!Array.isArray(barConfigs))
         return -1;
     for (var i = 0; i < barConfigs.length; i++) {
         if (barConfigs[i] && barConfigs[i].enabled)
             return i;
     }
-    return 0;
+    return -1;
 }
 
 function insertionIndex(widgets, before) {

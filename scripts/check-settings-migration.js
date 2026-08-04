@@ -481,6 +481,109 @@ const appended = clone(
 );
 assert.deepStrictEqual(appended.barConfigs[0].rightWidgets, ["clock", "battery"]);
 
+// Every bar disabled -> no target. Inserting into a bar that cannot render
+// rewrites a layout the user deliberately turned off and shows them nothing.
+const allBarsDisabled = [
+  { id: "default", enabled: false, rightWidgets: ["clock", "controlCenterButton"] },
+  { id: "second", enabled: false, rightWidgets: ["clock"] },
+];
+const allBarsDisabledBefore = clone(allBarsDisabled);
+assert.strictEqual(barWidgets.targetBarIndex(allBarsDisabled), -1);
+assert.strictEqual(
+  barWidgets.reconcile(allBarsDisabled, [], { battery: true }),
+  null,
+  "a layout with no enabled bar has no reconciliation target"
+);
+assert.deepStrictEqual(
+  allBarsDisabled,
+  allBarsDisabledBefore,
+  "reconciliation must not mutate a deliberately disabled layout"
+);
+assert.strictEqual(barWidgets.targetBarIndex([]), -1);
+assert.strictEqual(barWidgets.targetBarIndex(null), -1);
+
+// Enabling a bar later is all it takes: reconciliation runs on every load.
+const oneBarReEnabled = clone(
+  barWidgets.reconcile(
+    [
+      { id: "default", enabled: false, rightWidgets: ["clock", "controlCenterButton"] },
+      { id: "second", enabled: true, rightWidgets: ["clock", "controlCenterButton"] },
+    ],
+    [],
+    { battery: true }
+  )
+);
+assert.deepStrictEqual(oneBarReEnabled.barConfigs[0].rightWidgets, ["clock", "controlCenterButton"]);
+assert.deepStrictEqual(oneBarReEnabled.barConfigs[1].rightWidgets, ["clock", "battery", "controlCenterButton"]);
+
+// A v19 config migrates and reconciles in the same load, but the migration can
+// only be written once the asynchronous writability check answers. Deferred
+// load steps -- reconciliation, icon-theme drift -- can save in that window, so
+// committing a payload captured at parse time would revert them, and because
+// that write bypasses _selfWrite the reload would put the reverted values back
+// in memory. SettingsData therefore holds only a flag and serializes current
+// state at commit time, which is correct under either completion ordering.
+function qmlFunctionBody(name) {
+  const start = settingsDataSource.indexOf(`function ${name}(`);
+  assert(start >= 0, `SettingsData.qml should define ${name}`);
+  const end = settingsDataSource.indexOf("\n    }", start);
+  assert(end > start, `${name} should be a closed function body`);
+  return settingsDataSource.slice(start, end);
+}
+
+assert(
+  /property\s+bool\s+_pendingMigrationWrite\s*:\s*false/.test(settingsDataSource),
+  "the pending migration should be tracked by a flag, not a held payload"
+);
+assert(
+  /_pendingMigration(?!Write)/.test(settingsDataSource) === false,
+  "SettingsData.qml must not reintroduce a held migration payload; there would be nothing to keep it in sync"
+);
+
+const writableCheckBody = qmlFunctionBody("_onWritableCheckComplete");
+assert(
+  /if\s*\(_pendingMigrationWrite\)\s*\n\s*saveSettings\(\);/.test(writableCheckBody),
+  "the migration must be committed by serializing current state, not a captured payload"
+);
+assert(
+  writableCheckBody.indexOf("settingsFile.setText") < 0,
+  "_onWritableCheckComplete must not write settings.json directly; saveSettings() is what keeps _selfWrite and the snapshot honest"
+);
+
+// With the payload gone, reconciliation just saves like any other mutation.
+const reconcileBody = qmlFunctionBody("reconcileHardwareBarWidgets");
+assert(
+  reconcileBody.indexOf("updateBarConfigs()") >= 0,
+  "reconciliation should persist through the ordinary save path"
+);
+
+// Reconciliation finds no target while every bar is disabled, so enabling or
+// adding a bar has to re-run it -- otherwise the user enables a bar and gets no
+// battery indicator until the next shell start, which is the VGS-61 symptom.
+// The gate reads the enabled count BEFORE the mutation, so it fires only on the
+// none -> some transition and never during an ordinary widget-list edit.
+const barVisibilityGate = qmlFunctionBody("_reconcileIfBarsBecameVisible");
+assert(
+  barVisibilityGate.indexOf("if (hadEnabledBar || getEnabledBarConfigs().length === 0)") >= 0,
+  "the re-run must be gated on the no-enabled-bar -> some-enabled-bar transition"
+);
+assert(
+  barVisibilityGate.indexOf("Qt.callLater(reconcileHardwareBarWidgets)") >= 0,
+  "the re-run should be deferred so it lands after the caller's update settles"
+);
+
+for (const fn of ["addBarConfig", "updateBarConfig"]) {
+  const body = qmlFunctionBody(fn);
+  const captured = body.indexOf("const hadEnabledBar = getEnabledBarConfigs().length > 0;");
+  const rerun = body.indexOf("_reconcileIfBarsBecameVisible(hadEnabledBar)");
+  assert(captured >= 0, `${fn} must record whether any bar was enabled before it mutates barConfigs`);
+  assert(rerun > captured, `${fn} must re-run reconciliation after the mutation, or a newly visible bar stays empty`);
+  assert(
+    captured < body.indexOf("barConfigs = configs;"),
+    `${fn} must read the enabled count before the mutation, or the transition is never detected`
+  );
+}
+
 assert.strictEqual(
   store.migrateToVersion({ configVersion: TARGET_VERSION }, TARGET_VERSION),
   null,
