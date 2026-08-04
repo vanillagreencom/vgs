@@ -11,6 +11,7 @@ import QtQuick
 import Quickshell
 import Quickshell.Io
 import qs.Common
+import qs.Modules.Lock
 
 ShellRoot {
     id: entrypoint
@@ -71,17 +72,6 @@ ShellRoot {
         guardResolved = true;
     }
 
-    // Startup value only, and NOT the last word: Modules/Lock/Lock.qml suspends
-    // the watcher for as long as a session lock is engaged, because rebuilding
-    // the tree while a lock is held orphans quickshell's session-lock manager and
-    // makes the next lock request abort the process.
-    //
-    // This assignment can land *after* that suspension. Children complete before
-    // parents, so with SettingsData.lockAtStartup the Lock below has already
-    // locked and suspended by the time this runs, and writing true here re-arms
-    // the watcher under an engaged lock. Lock.qml therefore re-asserts on
-    // Quickshell.onWatchFilesChanged; this file owns only the
-    // VSHELL_DISABLE_HOT_RELOAD policy, not the live value.
     Component.onCompleted: {
         Quickshell.watchFiles = !disableHotReload;
     }
@@ -158,6 +148,23 @@ ShellRoot {
         interval: 2000
         running: !entrypoint.guardDisabled && !entrypoint.guardResolved
         onTriggered: entrypoint.failOpen("no answer within 2s")
+    }
+
+    // The session lock is the one part of the shell that must NOT sit under a
+    // Loader. `ReloadPropagator` hands old instances only to children that are
+    // themselves `Reloadable`, and a `Loader` is not one, so reload matching
+    // stops dead at the loaders below and everything under them is rebuilt from
+    // nothing. For `WlSessionLock` that orphans the manager that owns the
+    // ext-session-lock and poisons every later lock request in this process (the
+    // full mechanism is documented in Modules/Lock/Lock.qml). A `Scope` IS a
+    // ReloadPropagator, so as a direct ShellRoot child the lock is matched
+    // positionally across generations and survives a hot reload intact.
+    //
+    // It is therefore always built — even in the greeter, and even in a shell
+    // the duplicate guard is about to refuse. `active` gates the behaviour
+    // instead: an inactive Lock takes no lock, and registers no lock IPC.
+    Lock {
+        active: !entrypoint.runGreeter && entrypoint.shellAllowed
     }
 
     Loader {

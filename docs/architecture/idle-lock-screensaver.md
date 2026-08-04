@@ -74,24 +74,61 @@ tab, and the saver keeps its previous art. Any change to the picture clears
 - **Super+Shift+Esc** → toggle the desktop ascii/video saver (`ScreensaverService`).
 - **Super+F5 / F6** → manual secure DPMS-off / on (a wake latch survives activity/resume).
 
-## Hot reload is suspended while locked
+## The lock survives a hot reload
 
-`Modules/Lock/Lock.qml` keeps `Quickshell.watchFiles = false` for as long as a lock
-is engaged (`shouldLock || sessionLock.locked`) and restores the value on unlock.
-It re-asserts on `Quickshell.onWatchFilesChanged` rather than suspending once,
-because `shell.qml`'s `Component.onCompleted` can run *after* Lock's (children
-complete before parents) and would otherwise re-arm the watcher on top of an
-engaged lock. `shell.qml` owns the `VSHELL_DISABLE_HOT_RELOAD` policy and the
-startup value; it is not the last writer. Resume re-reads that policy instead of
-trusting the value it snapshotted at suspend time — `mWatchFiles` defaults to true
-in a fresh process, so a suspend that beats `shell.qml` would otherwise capture
-`true` and switch hot reload on against an explicit `VSHELL_DISABLE_HOT_RELOAD=1`.
+`Lock {}` is a **direct child of `ShellRoot`** in `shell.qml`, not something
+`VGS.qml` instantiates. That placement is load-bearing, not cosmetic — see
+"Why the lock is not under a Loader" below.
+
+Because it is always built, it is always built in the greeter and in a shell the
+duplicate-instance guard is about to refuse as well. `Lock.active`
+(`!runGreeter && shellAllowed`) gates the behaviour instead of a `Loader` gating
+the object: an inactive Lock takes no lock and registers no `lock` IPC target.
+
+Because that gate is a property rather than structural, it has to be applied on
+**every** path that can arm `WlSessionLock`, not just the obvious one. There are
+three:
+
+| Path | Reached from |
+|------|--------------|
+| `lock()` | UI, IPC, `IdleService.lockRequested`, `lockAtStartup` |
+| `_adoptSessionLock()` | both `SessionService` handlers (`onSessionLocked`, `onLoginctlStateChanged`) |
+| `spawnCustomLocker()` | the configured `customPowerActionLock` |
+
+The `SessionService` handlers must not assign `shouldLock` themselves. logind
+reporting a locked session is enough to arm `WlSessionLock`, so a greeter or an
+un-cleared duplicate would take a lock without ever calling `lock()` — the exact
+race this placement exists to remove, and per VGS-27 defect (a) a failed
+acquisition is an uncatchable `qFatal`, so the failure mode is a dead shell.
+
+Gating those handlers cannot cost a recovery, because a signal that arrives
+while the gate is shut is *dropped, not queued*. `_start()` therefore re-checks
+`SessionService.locked` when the object activates. That is the path that puts the
+lock UI back over a session which is still locked because a previous shell died
+holding it.
+
+`onSessionUnlocked` stays ungated on purpose: clearing lock state is always safe,
+and an inactive object must still be able to let go.
+
+That re-check has one consequence for the restore below. `_start()` runs in
+`Component.onCompleted`, which is *before* the reload pass, so on a reload while
+logind reports the session locked `shouldLock` is already true by the time
+`PersistentProperties` restores. The restore therefore must not skip on
+"`shouldLock` is already set" — doing so would drop `_adoptReloadedLock()` and
+leave `IdleService.isShellLocked` false underneath a live lock, and would leave
+`lockInitiatedLocally` at the `false` that `_adoptSessionLock()` assumes, so a
+later logind unlock would tear down a lock VGS owns. The persisted values are the
+authority; re-asserting a `true` that is already `true` is a no-op.
+
+The gate covers only *new* lock requests. Restoring a lock across a reload is
+exempt, because a lock that is restored was already owned by this process and a
+freshly started process has nothing to restore.
 
 If quickshell ends the lock on its own — the compositor's
 `ext_session_lock_v1.finished` (denied lock, crashed-locker fallback), or an
 aborted attempt when the protocol is unavailable — `Lock.qml` clears `shouldLock`
-via `forceReset()` and hot reload resumes. Suspension tracks a lock that actually
-exists, so it can never strand the watcher off.
+via `forceReset()`, so the stale request is never carried into the next reload as
+a lock that no longer exists.
 
 `forceReset()` — the dropped-lock recovery and the `vshell ipc call lock
 forceReset` escape hatch — also tears down what was waiting on the lock, because
@@ -114,18 +151,23 @@ Nothing else in this path needs unwinding: `isShellLocked`, the DPMS delay timer
 and the idle/screensaver monitor arming are all derived from the *confirmed* lock
 and either never engaged or are reset by `_syncConfirmedLock()`.
 
-This exists because quickshell's reload matching cannot reach this subtree.
-`ReloadPropagator` (`Scope`/`ShellRoot`) hands old instances only to children that
-are themselves `Reloadable`; any other child falls into an else-branch that passes
-an already-null pointer to `Reloadable::reloadRecursive`, which then does nothing
-(`src/core/reload.cpp`). `shell.qml`'s `Loader` is not `Reloadable`, so propagation
-stops there and nothing beneath it is visited — **making `VGS.qml`'s root
-`Reloadable` would not help.** So a reload rebuilds `WlSessionLock` with a null old
-instance and a **fresh** `SessionLockManager`, then destroys the previous one
-while it still owns the ext-session-lock. `~QSWaylandSessionLock` destroys the
-protocol object — deliberately leaving the session locked — but never clears the
-process-global "a lock is active" pointer, which only `unlock()` clears. Every
-later lock request then fails inside `SessionLockManager::lock()`, and
+### Why the lock is not under a Loader
+
+`ReloadPropagator` (`Scope`/`ShellRoot`) hands old instances only to children
+that are themselves `Reloadable`; any other child falls into an else-branch that
+passes an already-null pointer to `Reloadable::reloadRecursive`, which then does
+nothing (`src/core/reload.cpp`). A `Loader` is not `Reloadable`, so propagation
+stops at `shell.qml`'s loaders and nothing beneath them is visited — **making
+`VGS.qml`'s root `Reloadable` would not help.** A `Scope` *is* a
+`ReloadPropagator`, so hoisting `Lock {}` to be a direct `ShellRoot` child is
+what puts `WlSessionLock` back within reach of reload matching.
+
+Out of reach, a reload rebuilds `WlSessionLock` with a null old instance and a
+**fresh** `SessionLockManager`, then destroys the previous one while it still
+owns the ext-session-lock. `~QSWaylandSessionLock` destroys the protocol object —
+deliberately leaving the session locked — but never clears the process-global
+"a lock is active" pointer, which only `unlock()` clears. Every later lock
+request then fails inside `SessionLockManager::lock()`, and
 `WlSessionLock::realizeLockTarget` shows its surfaces regardless and aborts:
 
 ```
@@ -133,10 +175,117 @@ FATAL: Tried to show lockscreen surfaces without active lock
 ```
 
 (quickshell 0.3.0, `src/wayland/session_lock.cpp`). The abort is in the library
-and cannot be caught from QML, so the shell avoids arming it instead. Trade-off:
-an edit saved while the session is locked is only picked up on the next write
-after unlock — suspending tears the watcher down, and resuming rebuilds it from
-the scanned file list without replaying missed events.
+and cannot be caught from QML. This is what VGS-9 avoided by suspending
+`Quickshell.watchFiles` for the duration of a lock; that workaround is gone, and
+hot reload now stays live while locked.
+
+In reach, `WlSessionLock::onReload` adopts the previous manager and rebuilds its
+surfaces against the lock that is already held.
+
+### Carrying the lock request across the reload
+
+Hoisting alone is not enough, and getting only half of it is worse than the
+abort. `WlSessionLock` reads its `locked` request while the new tree is
+completing, *before* reload matching runs, and `onReload` then branches on it:
+true adopts the old manager, false calls `unlock()` **on the old manager**. So a
+generation that came up with `shouldLock` back at its default would cleanly
+unlock the session on any file save.
+
+`Lock.qml` therefore carries the request over in a `PersistentProperties`
+(`reloadableId: "vshellSessionLockState"`) holding `held` / `heldLocally` — never
+the password buffer, which dies with the generation as it should. It is declared
+**before** `sessionLock` in the file: `ReloadPropagator` reloads its children in
+declaration order, so the restore has to land while this generation's
+`WlSessionLock` still has a null manager and its `locked: shouldLock` binding can
+still set the request.
+
+One more thing does not come back on its own. The adopted manager was already
+locked, so it emits no `locked` signal in the new generation and
+`_syncConfirmedLock()` never fires, which would leave `IdleService.isShellLocked`
+false underneath a live lock. `_adoptReloadedLock()` — posted with `Qt.callLater`
+so it runs after `WlSessionLock::onReload` — re-syncs that one value and
+`notifyLockedHint`. It deliberately skips the DPMS half of `_syncConfirmedLock()`:
+the displays are already in whatever state the lock put them in, and re-running
+the power-off delay would blank the screen out from under someone who saved a
+file while typing their password. If adoption failed outright, `sessionLock.locked`
+is false and `lockRequestVerify` (armed by `onShouldLockChanged`) has already
+cleared the stale request through `forceReset()`.
+
+### The child order is load-bearing
+
+`ReloadPropagator::onReload` matches `mChildren` **by index**. It never consults
+`Reloadable.reloadableId` — that lookup lives only in `reloadRecursive`, which a
+propagator reaches solely through its else-branch with an already-null pointer
+(`src/core/reload.cpp`). So `lockState`'s `reloadableId` is decorative; both it
+and `WlSessionLock` are matched across generations purely by position.
+
+That makes a routine edit dangerous in a way nothing else in the tree is.
+Insert a child above `WlSessionLock` in `Lock.qml` and save **while the session
+is locked**, and `qobject_cast<WlSessionLock*>` on the old object now at that
+index returns null. The reload builds a fresh `SessionLockManager`, the old one
+is destroyed still owning the ext-session-lock, and the shell aborts on the next
+lock request — a black screen with a live lock behind it, landing on a save, in
+exactly the edit-while-locked workflow this change exists to enable.
+
+Two invariants put it out of reach:
+
+| Index | Child | Why there |
+|-------|-------|-----------|
+| 0 | `PersistentProperties` (`lockState`) | must reload *before* `WlSessionLock`, since it restores the `locked` request that `onReload` branches on |
+| 1 | `WlSessionLock` (`sessionLock`) | anything added later lands at index 2+ and cannot move either |
+
+`scripts/check-lock-reload-order.py` enforces both and runs in CI. It is the only
+check in the suite that covers this: the nested smoke never locks, so nothing
+else would notice.
+
+### IdleService is rebuilt too
+
+`IdleService` is a Quickshell `Singleton`, which means a **new object per engine
+generation** — `Singleton::componentComplete` registers it by URL and
+`SingletonRegistry::onReload` only hands the old instance to `ReloadPropagator`
+child matching, never preserving properties (`src/core/singleton.cpp`). Its
+`Component.onCompleted` therefore runs on every hot reload.
+
+That was harmless while hot reload was suspended during a lock, because a new
+generation while locked could not happen. Now it can, and two functions written
+for a *process* start are wrong under a live lock:
+
+- `_recoverDisplaysOnStartup()` would see `anyDisplayOff()` and force the
+  monitors back **on** over a locked session. Nothing re-arms the off:
+  `_adoptReloadedLock()` skips the DPMS half of `_syncConfirmedLock()`, the
+  adopted manager re-emits no `secureStateChanged`, and `postLockMonitorTimeout`
+  defaults to `0`.
+- `_recoverBlackoutOnStartup()` would ramp brightness back to the persisted
+  pre-blackout levels while `lockBlackoutActive` defaulting to false lifts the
+  overlay.
+
+So `IdleService` carries its state across a reload the same way `Lock.qml`
+carries the lock request — a `PersistentProperties` (`reloadableId:
+"vshellIdleServiceState"`) holding the blackout latch and captured brightness,
+the pending intents, and the DPMS desired/applied pair. Its `isReload` flag is
+the "reload, not a start" signal, and both recovery functions return early on it.
+`reloaded()` fires only when quickshell handed over a real old instance, so a
+fresh process can never take that branch.
+
+The snapshot is written by a `snapshot()` function called from the relevant
+change handlers, plus `_applyDisplays()` and `_writeBlackoutState()` — the two
+places that write state *after* the handler that would otherwise capture it.
+These are deliberately **not** bindings: `PersistentProperties::onReload` writes
+restored values with `setProperty`, which breaks a binding permanently and would
+leave the *next* reload restoring a stale value.
+
+### How this was verified
+
+Not on the live seat. `scripts/qml-smoke.sh --nested`'s sandbox — its own
+Hyprland, its own runtime dir, private bus — is a real seat that can be locked
+without risking the workstation. Driving a probe built on it against the
+pre-change tree with the `watchFiles` suspension disabled reproduces
+`FATAL: Tried to show lockscreen surfaces without active lock` on the first
+re-lock after a reload. Against this change, three consecutive reloads while
+locked keep `sessionLockLocked`/`sessionLockSecure` true, a `grim` capture of the
+sandbox shows the lock screen still fully rendered, and unlock → re-lock →
+reload-while-locked all complete with no `FATAL` and no compositor protocol
+error.
 
 ## Recovery
 A stray *second* VGS shell is the usual cause of "the lock is secure but its UI
