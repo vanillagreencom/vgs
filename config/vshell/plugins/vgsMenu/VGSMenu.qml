@@ -7,10 +7,10 @@ import Quickshell.Hyprland
 import Quickshell.Io
 import Quickshell.Wayland
 import qs.Common
-import qs.Modals.Launcher
 import qs.Modules.Plugins
 import qs.Services
 import qs.Widgets
+import qs.Widgets.Launcher
 import "./MenuCatalog.js" as MenuCatalog
 
 PluginComponent {

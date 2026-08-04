@@ -23,9 +23,10 @@ Runtime name: `vshell`.
 | `Services/` | Long-lived shell services and command bridges |
 | `Modules/` | Bar, settings, dash, control center, popouts, greetd greeter |
 | `Widgets/` | Shared visual components |
+| `Widgets/Launcher/` | The launcher UI a bundled plugin may import: `LauncherSettingsPanel`, `FilePreviewPanel`. See "Core and the vgsMenu plugin" below |
+| `Modules/WorkspaceOverlays/OverviewSearch/` | The niri overview's inline search (`OverviewSearchContent` + `Controller`). Owned by the overview; it has no other entry point and is unreachable on Hyprland |
 | `config/vshell/plugins/` | Internal packages for bundled VGS modules, loaded read-only by the component service |
 | `config/vshell/plugins/vgsMenu/` | The app launcher. Required: the shell has no other launcher, and the dock/bar launcher buttons route to it |
-| `Modals/Launcher/` | Shared search UI (`LauncherContent` + `Controller`). Its only entry point is the niri overview overlay; `LauncherSettingsPanel` and `FilePreviewPanel` are also used by `vgsMenu` |
 | `config/vshell/*.default.json` | Shipped seed defaults, not live user state |
 | `config/vshell/dependencies.json` | Feature dependency manifest |
 | `~/.config/vshell/` | Mutable user settings/state and user plugin overrides |
@@ -209,6 +210,27 @@ Bundled packages are VGS product UX, not third-party extensions.
 Local/private commands belong in overlays or plugin settings.
 Keep legacy metadata only where the loader still needs it for third-party compatibility.
 Do not add legacy runtime calls.
+
+### Core and the vgsMenu plugin
+The app launcher is a bundled plugin that core cannot do without, so the edge
+between them is one-way and named at both ends. See
+[D001](../decisions/D001-overview-search-ownership-and-plugin-boundary.md).
+
+**Core → plugin** goes through a single seam in `PluginService`:
+`appLauncherPluginId`, `toggleAppLauncher()`, `appLauncherOpen`. The dock
+button, the bar widget and the changelog card all route through it, so the
+plugin id is written once and the unavailable-launcher handling lives in one
+place. Core shell code must not name `"vgsMenu"` directly.
+
+**Plugin → core** is limited to the sanctioned import surfaces every plugin
+already uses — `qs.Common`, `qs.Services`, `qs.Widgets`, `qs.Modules.Plugins` —
+plus `qs.Widgets.Launcher` for the two shared launcher panels. A bundled plugin
+must not import another feature's directory: that is the reach that made
+`Modals/Launcher` unmovable while `vgsMenu` depended on its internals.
+
+`Widgets/Launcher/` therefore holds only components with more than one
+consumer. A panel used solely by `vgsMenu` belongs inside the plugin; one used
+solely by the overview search belongs in `Modules/WorkspaceOverlays/OverviewSearch/`.
 
 ### Pill actions must know how they were reached
 A widget's `pillClickAction` is not only run by a click. With `hoverPopouts`

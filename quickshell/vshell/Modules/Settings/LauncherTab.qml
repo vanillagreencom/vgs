@@ -10,9 +10,11 @@ Item {
 
     property var parentModal: null
     readonly property string defaultLauncherAction: "spawn vshell ipc call vshell-menu toggle"
-    // VGS-13 left the Modals/Launcher search UI with exactly one entry point:
-    // the niri overview overlay. Settings that only reach that stack are hidden
-    // elsewhere rather than presented as app-launcher settings that do nothing.
+    // VGS-13 left the overview search UI with exactly one entry point: the niri
+    // overview overlay, which is why VGS-20 moved it under
+    // Modules/WorkspaceOverlays/OverviewSearch. Settings that only reach that
+    // stack are hidden elsewhere rather than presented as app-launcher settings
+    // that do nothing.
     readonly property bool overviewSearchSettingsApply: CompositorService.isNiri && SettingsData.niriOverviewOverlayEnabled
     readonly property int keybindDataVersion: KeybindsService._dataVersion
     readonly property bool keybindsAvailable: KeybindsService.available
@@ -569,12 +571,12 @@ Item {
                 visible: CompositorService.isNiri
 
                 SettingsToggleRow {
-                    settingKey: "spotlightCloseNiriOverview"
+                    settingKey: "overviewSearchCloseNiriOverview"
                     tags: ["launcher", "niri", "overview", "close", "launch"]
                     text: I18n.tr("Close Overview on Launch")
                     description: I18n.tr("Auto-close the niri overview when launching apps")
-                    checked: SettingsData.spotlightCloseNiriOverview
-                    onToggled: checked => SettingsData.set("spotlightCloseNiriOverview", checked)
+                    checked: SettingsData.overviewSearchCloseNiriOverview
+                    onToggled: checked => SettingsData.set("overviewSearchCloseNiriOverview", checked)
                 }
 
                 SettingsToggleRow {

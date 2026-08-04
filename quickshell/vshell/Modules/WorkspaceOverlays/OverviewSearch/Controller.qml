@@ -295,7 +295,7 @@ Item {
         if (sectionViewModes[sectionId])
             return sectionViewModes[sectionId];
 
-        var savedModes = SettingsData.spotlightSectionViewModes || {};
+        var savedModes = SettingsData.overviewSearchSectionViewModes || {};
         if (savedModes[sectionId])
             return savedModes[sectionId];
 
@@ -319,7 +319,7 @@ Item {
             [sectionId]: mode
         });
         viewModeVersion++;
-        SettingsData.spotlightSectionViewModes = Object.assign({}, SettingsData.spotlightSectionViewModes || {}, {
+        SettingsData.overviewSearchSectionViewModes = Object.assign({}, SettingsData.overviewSearchSectionViewModes || {}, {
             [sectionId]: mode
         });
         viewModeChanged(sectionId, mode);

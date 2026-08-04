@@ -3,7 +3,7 @@ pragma ComponentBehavior: Bound
 import QtQuick
 import qs.Common
 import qs.Widgets
-import "../../Common/htmlElide.js" as HtmlElide
+import "../../../Common/htmlElide.js" as HtmlElide
 
 Rectangle {
     id: root
@@ -176,7 +176,7 @@ Rectangle {
         anchors.verticalCenter: parent.verticalCenter
         spacing: Theme.spacingS
 
-        ClipboardLauncherPreview {
+        ClipboardPreview {
             width: root.hasClipboardPreview ? 56 : 0
             height: 36
             visible: root.hasClipboardPreview

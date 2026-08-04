@@ -39,7 +39,36 @@ const settingsDataSource = fs.readFileSync(settingsDataPath, "utf8");
 
 const barWidgets = loadModule(path.join(settingsDir, "BarWidgets.js"), {});
 
-const TARGET_VERSION = 20;
+const TARGET_VERSION = 21;
+
+// Three places declare the schema version, and the runtime authority is
+// SettingsData.qml's settingsConfigVersion — that is what drives migration on
+// load. Checking the seed against TARGET_VERSION alone would let the runtime
+// advance to 22 with a new migration while the seed and this constant both sat
+// at 21: green, with the new migration never exercised and fresh installs
+// seeded stale and silently rewritten on first load. Anchor all three to the
+// runtime value so the check cannot pass without checking.
+const runtimeConfigVersion = (() => {
+  const match = settingsDataSource.match(/readonly\s+property\s+int\s+settingsConfigVersion\s*:\s*(\d+)/);
+  assert(match, "SettingsData.qml should declare settingsConfigVersion");
+  return Number(match[1]);
+})();
+
+assert.deepStrictEqual(
+  {
+    "SettingsData.qml settingsConfigVersion": runtimeConfigVersion,
+    "settings.default.json configVersion": defaultSettings.configVersion,
+    "check-settings-migration.js TARGET_VERSION": TARGET_VERSION,
+  },
+  {
+    "SettingsData.qml settingsConfigVersion": runtimeConfigVersion,
+    "settings.default.json configVersion": runtimeConfigVersion,
+    "check-settings-migration.js TARGET_VERSION": runtimeConfigVersion,
+  },
+  "schema version disagreement: the runtime authority is SettingsData.qml's " +
+    "settingsConfigVersion; whichever value differs above must be brought up to it " +
+    "(append a migration, never renumber)"
+);
 
 function clone(value) {
   return JSON.parse(JSON.stringify(value));
@@ -584,10 +613,170 @@ for (const fn of ["addBarConfig", "updateBarConfig"]) {
   );
 }
 
+// v21 (VGS-21): the two surviving spotlight keys are RENAMED, not dropped, so
+// the assertions have to prove the value arrived — `assertMissing` alone would
+// pass for a migration that simply deleted them, which is the failure mode the
+// valid-key filter produces for free.
+const spotlightRenameMigrated = migrate({
+  configVersion: 19,
+  spotlightCloseNiriOverview: false,
+  spotlightSectionViewModes: { apps: "grid", files: "list" },
+});
+assertMissing(spotlightRenameMigrated, [
+  "spotlightCloseNiriOverview",
+  "spotlightSectionViewModes",
+]);
+assert.strictEqual(
+  spotlightRenameMigrated.overviewSearchCloseNiriOverview,
+  false,
+  "a non-default spotlightCloseNiriOverview must survive the rename"
+);
+assert.deepStrictEqual(
+  spotlightRenameMigrated.overviewSearchSectionViewModes,
+  { apps: "grid", files: "list" },
+  "spotlightSectionViewModes values must survive the rename"
+);
+
+// A config already carrying the new name must win over a stale old-name value,
+// rather than being clobbered by it.
+const spotlightRenameNoClobber = migrate({
+  configVersion: 19,
+  spotlightCloseNiriOverview: true,
+  overviewSearchCloseNiriOverview: false,
+});
+assert.strictEqual(
+  spotlightRenameNoClobber.overviewSearchCloseNiriOverview,
+  false,
+  "an existing new-key value must not be overwritten by the old key"
+);
+
+// The rename must not invent a value for a user who never set the old key —
+// SPEC defaults are what should apply.
+const spotlightRenameAbsent = migrate({ configVersion: 19 });
+assertMissing(spotlightRenameAbsent, [
+  "spotlightCloseNiriOverview",
+  "spotlightSectionViewModes",
+]);
+assert.strictEqual(
+  Object.prototype.hasOwnProperty.call(
+    spotlightRenameAbsent,
+    "overviewSearchCloseNiriOverview"
+  ),
+  false,
+  "an unset old key must not materialise the new key"
+);
+
 assert.strictEqual(
   store.migrateToVersion({ configVersion: TARGET_VERSION }, TARGET_VERSION),
   null,
   "current-version settings should not be rewritten"
 );
+
+// --- Assignments in the settings singletons must target declared properties --
+//
+// VGS-23: SessionData.clearLauncherHistory() assigned `launcherSearchHistory`,
+// which is declared nowhere. In QML that is not a parse error — it fails at
+// runtime — so qmllint and qml-smoke both passed it, and the function had no
+// caller, so nothing ever executed the broken line. The failure would also have
+// landed mid-way: launcherLastQuery blanked, saveSettings() never reached.
+//
+// These two singletons are where that class of typo is most expensive (they own
+// every persisted key), and both scan clean, so the check is scoped to them
+// rather than the whole tree — a repo-wide version would need an allowlist, and
+// an allowlist is how a real finding gets waved through.
+//
+// LIMITS, so the next reader does not over-trust it: whole-file declaration
+// scope, not per-function. A name declared as a local in one function counts as
+// declared everywhere in that file, so this cannot catch a genuine
+// cross-function leak. What it does catch is the assignment that names nothing
+// at all, which is the bug that shipped.
+const sessionDataPath = path.join(repoRoot, "quickshell", "vshell", "Common", "SessionData.qml");
+
+// Comments dropped and string bodies blanked in ONE pass. Sequential regexes
+// are not safe here: an earlier draft of this check used
+// `.replace(/\/\*[\s\S]*?\*\//g, "")` and a `/*` inside a string literal
+// swallowed 38 KB of SettingsData.qml, which silently hid every declaration in
+// the gap and produced 31 false positives. Newlines inside skipped regions are
+// preserved so reported line numbers stay true.
+function scrubQml(src) {
+  let out = "";
+  for (let i = 0; i < src.length; ) {
+    const c = src[i];
+    const d = src[i + 1];
+    if (c === "/" && d === "/") {
+      while (i < src.length && src[i] !== "\n") i++;
+      continue;
+    }
+    if (c === "/" && d === "*") {
+      i += 2;
+      while (i < src.length && !(src[i] === "*" && src[i + 1] === "/")) {
+        if (src[i] === "\n") out += "\n";
+        i++;
+      }
+      i += 2;
+      continue;
+    }
+    if (c === '"' || c === "'" || c === "`") {
+      const quote = c;
+      i++;
+      out += '""';
+      while (i < src.length && src[i] !== quote) {
+        if (src[i] === "\\") i++;
+        if (src[i] === "\n") out += "\n";
+        i++;
+      }
+      i++;
+      continue;
+    }
+    out += c;
+    i++;
+  }
+  return out;
+}
+
+function undeclaredAssignments(source) {
+  const text = scrubQml(source);
+  const declared = new Set();
+  const collect = (re) => {
+    for (const m of text.matchAll(re)) declared.add(m[1]);
+  };
+  collect(
+    /\b(?:readonly\s+)?property\s+(?:alias\s+)?(?:var|int|real|bool|string|double|color|point|rect|size|date|list\s*<[^>]*>|[A-Za-z][\w.]*)\s+([A-Za-z_$][\w$]*)/g
+  );
+  collect(/\b(?:let|var|const)\s+([A-Za-z_$][\w$]*)/g);
+  collect(/\bid:\s*([A-Za-z_$][\w$]*)/g);
+  collect(/\bsignal\s+([A-Za-z_$][\w$]*)/g);
+  collect(/\bfunction\s+([A-Za-z_$][\w$]*)/g);
+  // Parameters count as declared: they are assignable names in scope.
+  for (const m of text.matchAll(/\bfunction\s+[A-Za-z_$][\w$]*\s*\(([^)]*)\)/g))
+    for (const param of m[1].split(",")) {
+      const name = param.trim().split(/[=\s]/)[0];
+      if (name) declared.add(name);
+    }
+  for (const m of text.matchAll(/(?:\(([^()]*)\)|([A-Za-z_$][\w$]*))\s*=>/g))
+    for (const param of (m[1] ?? m[2] ?? "").split(",")) {
+      const name = param.trim().split(/[=\s]/)[0];
+      if (name) declared.add(name);
+    }
+
+  const findings = [];
+  text.split("\n").forEach((line, index) => {
+    // Indented bare-identifier assignment: `foo = ...`, never `foo == ...`,
+    // `foo => ...`, or a qualified `a.foo = ...` (the leading \s+ and the
+    // identifier anchor together exclude those).
+    const m = line.match(/^\s+([A-Za-z_$][\w$]*)\s*=(?!=|>)\s*\S/);
+    if (m && !declared.has(m[1])) findings.push(`${m[1]} (line ${index + 1})`);
+  });
+  return findings;
+}
+
+for (const file of [sessionDataPath, settingsDataPath]) {
+  assert.deepStrictEqual(
+    undeclaredAssignments(fs.readFileSync(file, "utf8")),
+    [],
+    `${path.basename(file)} assigns a property it never declares; ` +
+      "in QML that throws at runtime rather than failing to parse"
+  );
+}
 
 console.log("Settings migration smoke tests passed.");

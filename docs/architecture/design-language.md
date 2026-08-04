@@ -279,4 +279,5 @@ change, not a design-language one.
 | Buttons, inputs, toggles, chips, tabs | `Widgets/Vgs*.qml` |
 | Tooltips | `Widgets/VgsTooltip.qml`, `Widgets/VgsInlineTooltip.qml`, shared body in `Widgets/Tooltip/` |
 | Settings shell + nav | `Modals/Settings/*` |
-| Launcher | `Modals/Launcher/*` |
+| Shared launcher panels | `Widgets/Launcher/*` |
+| niri overview search | `Modules/WorkspaceOverlays/OverviewSearch/*` |

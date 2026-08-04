@@ -69,21 +69,21 @@ Item {
         font.weight: Font.Normal
     }
 
-    function hasContextMenuActions(spotlightItem) {
-        if (!spotlightItem)
+    function hasContextMenuActions(resultItem) {
+        if (!resultItem)
             return false;
-        if (spotlightItem.type === "app")
+        if (resultItem.type === "app")
             return true;
-        if (spotlightItem.type === "plugin" && spotlightItem.pluginId) {
-            const instance = PluginService.pluginInstances[spotlightItem.pluginId];
+        if (resultItem.type === "plugin" && resultItem.pluginId) {
+            const instance = PluginService.pluginInstances[resultItem.pluginId];
             if (!instance)
                 return false;
             if (typeof instance.getContextMenuActions !== "function")
                 return false;
-            const actions = instance.getContextMenuActions(spotlightItem.data);
+            const actions = instance.getContextMenuActions(resultItem.data);
             return Array.isArray(actions) && actions.length > 0;
         }
-        if (spotlightItem.actions && spotlightItem.actions.length > 0)
+        if (resultItem.actions && resultItem.actions.length > 0)
             return true;
         return false;
     }
@@ -244,11 +244,11 @@ Item {
         return h;
     }
 
-    function show(x, y, spotlightItem, fromKeyboard) {
-        if (!spotlightItem?.data)
+    function show(x, y, resultItem, fromKeyboard) {
+        if (!resultItem?.data)
             return;
 
-        item = spotlightItem;
+        item = resultItem;
         selectedMenuIndex = fromKeyboard ? 0 : -1;
         keyboardNavigation = fromKeyboard;
 
