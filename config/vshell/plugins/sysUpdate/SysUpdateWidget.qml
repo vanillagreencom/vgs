@@ -114,32 +114,21 @@ PluginComponent {
         return String(command || "").replace(/\{home\}/g, root.home).replace(/\{vshell\}/g, root.updateCommand);
     }
 
-    // A configured command that is a plain "program arg arg" line and uses no
-    // shell syntax at all. Anything with quoting, substitution, redirection,
-    // globbing or an operator falls outside this and needs a real shell.
-    readonly property var _plainCommandRe: /^[A-Za-z0-9_\/.:,@+-][A-Za-z0-9_\/.:,@+ \t-]*$/
-
-    function plainArgv(command) {
-        const value = String(command || "").trim();
-        if (!value.length || !_plainCommandRe.test(value))
-            return [];
-        return value.split(/[ \t]+/).filter(part => part.length > 0);
-    }
-
     function terminalArgv(command) {
+        // Keep the configured command out of `sh -c`'s positional command slot.
+        // Some terminal-launch paths can lose a trailing argv value, which turns
+        // `sh -lc <command>` into the opaque "option requires an argument" error.
+        // A fixed script plus an environment argv preserves arbitrary shell syntax
+        // while ensuring -c always has an argument and a canonical $0 value.
         // `vshell terminal` is the single terminal resolver (VGS-54/VGS-32):
         // it owns $TERMINAL, xdg-terminals.list, the installed-terminal
         // fallback and the optional uwsm scope, so nothing here may name a
-        // terminal binary, and it passes everything after `--` through as a
-        // verbatim argv array.
-        const base = [root.updateCommand, "terminal", "exec", "--tui", "--"];
-        const argv = plainArgv(command);
-        if (argv.length > 0)
-            return base.concat(argv);
-        // The user authored a shell command line (`&&`, a pipeline, quoting), so
-        // only a shell can run it. It goes in `-c`'s own argument slot with a
-        // canonical $0 — never through `eval`, which would expand it twice.
-        return base.concat(["sh", "-lc", String(command || ""), "vshell-update"]);
+        // terminal binary.
+        return [
+            root.updateCommand, "terminal", "exec", "--tui", "--",
+            "env", "VSHELL_UPDATE_COMMAND=" + command,
+            "sh", "-lc", "eval \"$VSHELL_UPDATE_COMMAND\"", "vshell-update"
+        ];
     }
 
     function launch(mode, sourcePopout) {

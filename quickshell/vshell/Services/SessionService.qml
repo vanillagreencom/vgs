@@ -236,24 +236,11 @@ Singleton {
         const finalEnv = Object.assign({}, cursorEnv, overrideEnv);
 
         if (desktopEntry.runInTerminal) {
-            // `vshell terminal` owns which terminal and how it takes -e, and
-            // passes everything after `--` through as a verbatim argv array —
-            // so the entry's own argv goes across unquoted and unparsed. Only a
-            // launch prefix that is itself shell syntax needs a shell, which is
-            // the same rule the non-terminal path below applies.
-            const base = [Paths.vshellCli, "terminal", "exec", "--"];
-            if (prefix.length > 0 && needsShellExecution(prefix)) {
-                const escapedCmd = cmd.map(arg => escapeShellArg(arg)).join(" ");
-                Quickshell.execDetached({
-                    command: base.concat(["sh", "-c", `${prefix} ${escapedCmd}`]),
-                    workingDirectory: workDir,
-                    environment: finalEnv
-                });
-                return;
-            }
-            const prefixed = prefix.length > 0 ? prefix.split(" ").concat(cmd) : cmd;
+            const escapedCmd = cmd.map(arg => escapeShellArg(arg)).join(" ");
+            const shellCmd = prefix.length > 0 ? `${prefix} ${escapedCmd}` : escapedCmd;
             Quickshell.execDetached({
-                command: base.concat(prefixed),
+                // `vshell terminal` owns which terminal and how it takes -e.
+                command: [Paths.vshellCli, "terminal", "exec", "--", "sh", "-c", shellCmd],
                 workingDirectory: workDir,
                 environment: finalEnv
             });

@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -105,7 +106,7 @@ func Register(srv *server.Server, log *slog.Logger) (*Manager, error) {
 	m.paru, _ = exec.LookPath("paru")
 	m.pacman, _ = exec.LookPath("pacman")
 	m.flatpak, _ = exec.LookPath("flatpak")
-	m.vshell, _ = exec.LookPath("vshell")
+	m.vshell = vshellCLIPath()
 	m.terminalExec, _ = exec.LookPath("xdg-terminal-exec")
 	if m.checkupdates == "" && m.paru == "" && m.flatpak == "" {
 		return nil, fmt.Errorf("no supported update counter found")
@@ -430,6 +431,31 @@ func (m *Manager) upgradeCommand(p upgradeParams) string {
 		return ""
 	}
 	return strings.Join(parts, " && ") + "; printf '\\nUpdates command finished. Press Enter to close... '; read -r _"
+}
+
+// vshellCLIPath locates the VGS CLI the same way the QML side anchors on
+// Paths.vshellCli, rather than trusting the daemon's inherited PATH. A source
+// install puts the CLI only in ~/.local/bin, which a systemd user unit need not
+// have on PATH; falling through to the xdg-terminal-exec branch there would
+// walk straight back into the VGS-54 failure. `bin/vshell` exports VSHELL_ROOT
+// before exec'ing the backend, so that is the reliable anchor.
+func vshellCLIPath() string {
+	if root := os.Getenv("VSHELL_ROOT"); root != "" {
+		path := filepath.Join(root, "bin", "vshell")
+		if st, err := os.Stat(path); err == nil && !st.IsDir() {
+			return path
+		}
+	}
+	if path, err := exec.LookPath("vshell"); err == nil {
+		return path
+	}
+	if home, err := os.UserHomeDir(); err == nil {
+		path := filepath.Join(home, ".local", "bin", "vshell")
+		if st, err := os.Stat(path); err == nil && !st.IsDir() {
+			return path
+		}
+	}
+	return ""
 }
 
 // terminalArgv defers to `vshell terminal exec`, the single terminal resolver

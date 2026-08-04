@@ -198,10 +198,24 @@ rather than passed as an option it would reject. `uwsm app --` is prepended only
 when uwsm is present and the session is systemd — it is an enhancement, and
 hardcoding it is what made every VGS terminal action fail with
 `command not found` on installs without it (VGS-54). Because presence does not
-prove the session can actually use it, each candidate that dies under the scope
-is retried without it before the next candidate, and `VSHELL_NO_APP_SCOPE=1`
+prove the session can use it, usability is settled once per process with a
+`uwsm app -- true` probe rather than by watching the payload die — retrying the
+payload unscoped would run the user's command twice. `VSHELL_NO_APP_SCOPE=1`
 turns it off outright (the capture and screensaver scripts honour the same
 variable).
+
+A terminal that exits within the settle window only means the *terminal* failed
+when the payload cannot itself exit fast, which is what `--hold`'s wrapper
+guarantees. Without `--hold` the status belongs to the user's command, so the
+next candidate is **not** tried: retrying would flash a window and re-run that
+command once per installed terminal.
+
+Failures reach the user, not just stderr. Every call site launches through
+`Quickshell.execDetached`, which discards output and exit status, so
+`vshell terminal` reports "no terminal found" through the shell's toast IPC,
+falling back to `notify-send`. A button that cannot work has to say so — a
+silent no-op is worse than the `command not found` toast VGS-54 was reported
+for.
 
 By default `vshell terminal exec` returns as soon as the window is up. A caller
 that treats that exit as "the command finished" — the backend's upgrade

@@ -1737,39 +1737,115 @@ def test_terminal_argv_shapes_per_terminal():
                  "wezterm opens a bare terminal through `start` too")
 
 
-def test_terminal_falls_back_when_the_app_scope_is_unusable():
-    """uwsm being installed must not be able to break every terminal launch."""
+def test_app_scope_is_probed_rather_than_assumed():
+    """uwsm being installed must not be able to break every terminal launch.
+
+    Usability is settled once with a no-op probe. The alternative — launch the
+    payload, watch it die, launch it again unscoped — would run the user's
+    command twice.
+    """
+    original_which = helper.shutil.which
+    original_run = helper.run
+    original_cached = helper._app_scope_usable
+    probes = []
+
+    class _Result:
+        def __init__(self, code):
+            self.returncode = code
+            self.stdout = ""
+            self.stderr = ""
+
+    def fake_run(argv, **kwargs):
+        probes.append(argv)
+        return _Result(1 if usable[0] is False else 0)
+
+    usable = [True]
+    helper.shutil.which = lambda name: "/usr/bin/uwsm" if name == "uwsm" else None
+    helper.run = fake_run
+    try:
+        helper._app_scope_usable = None
+        assert_equal(helper.app_scope_prefix(), ["/usr/bin/uwsm", "app", "--"],
+                     "a usable scope must be used")
+        assert_equal(probes[0][-1], "true", "the probe must run a no-op, not the payload")
+        helper.app_scope_prefix()
+        assert_equal(len(probes), 1, "the probe result must be cached, not re-run per launch")
+
+        usable[0] = False
+        helper._app_scope_usable = None
+        probes.clear()
+        assert_equal(helper.app_scope_prefix(), [],
+                     "a scope this session cannot use must be dropped entirely")
+    finally:
+        helper.shutil.which = original_which
+        helper.run = original_run
+        helper._app_scope_usable = original_cached
+
+
+def test_terminal_never_reruns_an_unwrapped_command():
+    """A command that fails fast must run once, not once per installed terminal.
+
+    The "distrust a fast exit" retry only tells us anything when the payload
+    cannot exit fast, which is what the hold wrapper guarantees. Without it the
+    status belongs to the user's command, and retrying would flash a window and
+    re-run it for every candidate.
+    """
     original_candidates = helper.terminal_candidates
     original_scope = helper.app_scope_prefix
     original_popen = helper.subprocess.Popen
-    attempts = []
+    launches = []
 
-    class _Attempt:
-        def __init__(self, scoped):
-            self.scoped = scoped
-            self.returncode = 1 if scoped else None
+    class _FailsFast:
+        returncode = 3
 
         def wait(self, timeout=None):
-            if self.scoped:
-                return 1  # a scope the session cannot use dies immediately
-            raise helper.subprocess.TimeoutExpired("terminal", timeout)
+            return 3
 
-    def fake_popen(argv, **kwargs):
-        attempts.append(argv)
-        return _Attempt(argv[0].endswith("uwsm"))
-
-    helper.terminal_candidates = lambda prefer=None: [["kitty"]]
-    helper.app_scope_prefix = lambda: ["/usr/bin/uwsm", "app", "--"]
-    helper.subprocess.Popen = fake_popen
+    helper.terminal_candidates = lambda prefer=None: [["kitty"], ["ghostty"], ["foot"], ["alacritty"]]
+    helper.app_scope_prefix = lambda: []
+    helper.subprocess.Popen = lambda argv, **k: (launches.append(argv), _FailsFast())[1]
     try:
-        assert_equal(helper.spawn_terminal(["true"]), 0,
-                     "a failing scope must fall back to launching the terminal directly")
-        assert_equal(len(attempts), 2, "the scoped attempt must be followed by a direct one")
-        assert_equal(attempts[1][0], "kitty", "the fallback must drop the uwsm prefix")
+        assert_equal(helper.spawn_terminal(["false"]), 3,
+                     "an unwrapped command's own status must be returned as-is")
+        assert_equal(len(launches), 1,
+                     "an unwrapped command must not be re-run on the next terminal")
+
+        launches.clear()
+        # The hold wrapper cannot exit fast, so a fast exit really is the
+        # terminal failing and every candidate is still worth trying.
+        assert_equal(helper.spawn_terminal(["false"], hold=True), helper.TERMINAL_EXIT_FAILED,
+                     "a wrapped payload exiting fast is a terminal failure")
+        assert_equal(len(launches), 4, "every candidate must be tried for a wrapped payload")
     finally:
         helper.terminal_candidates = original_candidates
         helper.app_scope_prefix = original_scope
         helper.subprocess.Popen = original_popen
+
+
+def test_missing_terminal_reaches_the_user():
+    """A detached caller sees no stderr, so "no terminal" must be reported.
+
+    Every call site launches through Quickshell.execDetached, which discards
+    output and status; without this a click on Update all does nothing and says
+    nothing, which is worse than the command-not-found toast VGS-54 reports.
+    """
+    original_candidates = helper.terminal_candidates
+    original_notify = helper.notify_user
+    reported = []
+    helper.terminal_candidates = lambda prefer=None: []
+    helper.notify_user = lambda title, details="": reported.append((title, details))
+    try:
+        assert_equal(helper.spawn_terminal(["true"], notify=True), 1,
+                     "no terminal must still be a failure status")
+        assert_equal(len(reported), 1, "the user must be told there is no terminal")
+        assert_equal("Settings" in reported[0][1], True,
+                     "the message must name the fix, not just the symptom")
+        reported.clear()
+        assert_equal(helper.spawn_terminal(["true"]), 1,
+                     "callers that can see stderr keep the quiet path")
+        assert_equal(reported, [], "a visible caller must not be toasted at")
+    finally:
+        helper.terminal_candidates = original_candidates
+        helper.notify_user = original_notify
 
 
 def test_terminal_wait_blocks_until_the_terminal_exits():
@@ -2269,7 +2345,9 @@ def main():
     test_requires_features_propagates_to_availability()
     test_terminal_resolution_prefers_the_vgs_setting()
     test_terminal_argv_shapes_per_terminal()
-    test_terminal_falls_back_when_the_app_scope_is_unusable()
+    test_app_scope_is_probed_rather_than_assumed()
+    test_terminal_never_reruns_an_unwrapped_command()
+    test_missing_terminal_reaches_the_user()
     test_terminal_wait_blocks_until_the_terminal_exits()
     test_preferred_terminal_is_tried_first()
     subprocess.run(

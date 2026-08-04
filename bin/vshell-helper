@@ -9072,19 +9072,64 @@ def terminal_spec(executable: str) -> Dict[str, Any]:
     return TERMINAL_SPECS.get(Path(executable).name, TERMINAL_DEFAULT_SPEC)
 
 
+# How long to give the one-off `uwsm app -- true` probe below.
+APP_SCOPE_PROBE_SECONDS = 5
+
+_app_scope_usable: bool | None = None
+
+
 def app_scope_prefix() -> List[str]:
-    """`uwsm app --` when the session can use it, else nothing.
+    """`uwsm app --` when the session can actually use it, else nothing.
 
     Launching into a systemd scope is an enhancement, never a requirement:
     hardcoding the prefix is what made every VGS terminal action fail with
     `command not found` on installs without uwsm.
+
+    Presence is not usability — uwsm can be installed while the current session
+    has no user manager to attach a scope to. That is settled once, up front,
+    with a no-op command, because the alternative (launch the payload, see it
+    die, launch it again without the prefix) would run the user's command twice.
     """
+    global _app_scope_usable
     if os.environ.get("VSHELL_NO_APP_SCOPE"):
         return []
     if not Path("/run/systemd/system").exists():
         return []
     uwsm = shutil.which("uwsm")
-    return [uwsm, "app", "--"] if uwsm else []
+    if not uwsm:
+        return []
+    if _app_scope_usable is None:
+        try:
+            probe = run([uwsm, "app", "--", "true"], timeout=APP_SCOPE_PROBE_SECONDS)
+            _app_scope_usable = probe.returncode == 0
+        except (OSError, subprocess.SubprocessError):
+            _app_scope_usable = False
+    return [uwsm, "app", "--"] if _app_scope_usable else []
+
+
+def notify_user(title: str, details: str = "") -> None:
+    """Put a failure in front of the user when the caller cannot see it.
+
+    Every VGS terminal call site launches through `Quickshell.execDetached`,
+    which discards stdout, stderr and the exit status — so printing here reaches
+    nobody, and a broken button looks like a button that does nothing. The
+    shell's own toast IPC is the channel that survives detachment; `notify-send`
+    is the fallback for when the shell is not the caller.
+    """
+    eprint(f"{title}: {details}" if details else title)
+    cli = shutil.which("vshell") or str(repo_root() / "bin" / "vshell")
+    try:
+        proc = run([cli, "ipc", "call", "toast", "errorWith", title, details, "", "terminal"],
+                   timeout=5)
+        if proc.returncode == 0 and "SUCCESS" in (proc.stdout or ""):
+            return
+    except (OSError, subprocess.SubprocessError):
+        pass
+    notify = shutil.which("notify-send")
+    if not notify:
+        return
+    with contextlib.suppress(OSError, subprocess.SubprocessError):
+        run([notify, "--app-name", "VGS", "-u", "critical", title, details], timeout=5)
 
 
 def terminal_argv(base: List[str], cmd: List[str], app_id: str = "") -> List[str]:
@@ -9116,6 +9161,7 @@ def spawn_terminal(
     detach: bool = False,
     wait: bool = False,
     prefer: List[str] | None = None,
+    notify: bool = False,
     what: str = "VGS command",
 ) -> int:
     """Run `cmd` (or an interactive shell when empty) in the resolved terminal.
@@ -9126,41 +9172,56 @@ def spawn_terminal(
     window is up. Callers that treat this process's exit as "the command
     finished" — the backend's upgrade supervisor does — must pass it, or they
     will call a running package-manager transaction complete.
+
+    `notify` puts a failure in front of the user instead of only on stderr. Set
+    it whenever the caller cannot see this process's output, which is every
+    `Quickshell.execDetached` call site.
     """
     payload = terminal_hold_script(cmd) if (cmd and hold) else list(cmd)
     scope = app_scope_prefix()
+    # A fast non-zero exit only means "the terminal failed" when the payload
+    # cannot itself exit fast, which is exactly what the hold wrapper
+    # guarantees. Without it the status is ambiguous, and trying the next
+    # candidate would re-run the user's command once per installed terminal.
+    retry_next_candidate = hold or not cmd
     tried: List[str] = []
     for base in terminal_candidates(prefer):
-        argv = terminal_argv(base, payload, app_id)
-        # The systemd scope is an enhancement. A session that cannot use uwsm
-        # (no graphical systemd session to attach to) would otherwise fail every
-        # candidate through the same unusable prefix, so each candidate falls
-        # back to launching directly before the next one is tried.
-        attempts = [[*scope, *argv], argv] if scope else [argv]
-        for full in attempts:
-            try:
-                proc = subprocess.Popen(full, start_new_session=detach)
-            except Exception:
-                continue
-            tried.append(base[0])
-            try:
-                # Popen only proves the exec succeeded. Give the terminal a
-                # moment to fail on its own (bad -e handling, no display) and
-                # move on if it does, instead of reporting a window the user
-                # never got.
-                proc.wait(timeout=TERMINAL_SETTLE_SECONDS)
-            except subprocess.TimeoutExpired:
-                if not wait:
-                    return 0  # still running: the window is up
-                return proc.wait()  # caller needs the command's whole lifetime
-            if proc.returncode == 0:
-                return 0  # exited cleanly and fast; nothing to distrust
+        full = [*scope, *terminal_argv(base, payload, app_id)]
+        try:
+            proc = subprocess.Popen(full, start_new_session=detach)
+        except Exception:
+            # The exec itself failed, which is unambiguously this candidate's
+            # fault and cannot have run the payload. Always move on.
+            continue
+        tried.append(base[0])
+        try:
+            # Popen only proves the exec succeeded. Give the terminal a moment
+            # to fail on its own (bad -e handling, no display) before treating
+            # the window as up.
+            proc.wait(timeout=TERMINAL_SETTLE_SECONDS)
+        except subprocess.TimeoutExpired:
+            if not wait:
+                return 0  # still running: the window is up
+            return proc.wait()  # caller needs the command's whole lifetime
+        if proc.returncode == 0:
+            return 0  # exited cleanly and fast; nothing to distrust
+        if not retry_next_candidate:
+            # The payload ran; this is its status, not a launch failure.
+            return proc.returncode
     if tried:
-        eprint(f"Terminal exited immediately for {what} (tried: " + ", ".join(tried) + ")")
+        message = f"Terminal exited immediately for {what} (tried: " + ", ".join(tried) + ")"
+        if notify:
+            notify_user("VGS could not open a terminal", message)
+        else:
+            eprint(message)
         return TERMINAL_EXIT_FAILED
-    eprint(f"No terminal found for {what}. Install one (or set $TERMINAL, or pick one in "
-           "Settings -> Default Apps -> Terminal); VGS looks for: "
-           + ", ".join(TERMINAL_CANDIDATES))
+    detail = ("Install a terminal, set $TERMINAL, or pick one in "
+              "Settings -> Default Apps -> Terminal. VGS looks for: "
+              + ", ".join(TERMINAL_CANDIDATES))
+    if notify:
+        notify_user("No terminal found", detail)
+    else:
+        eprint(f"No terminal found for {what}. " + detail)
     return 1
 
 
@@ -11726,7 +11787,9 @@ def cmd_terminal(argv: List[str]) -> int:
     if sub == "exec" and not cmd:
         eprint("vshell terminal exec: a command is required after --")
         return 2
-    return spawn_terminal(cmd, app_id=app_id, hold=hold, wait=wait, prefer=prefer,
+    # Everything that reaches this CLI was launched detached by the shell, so a
+    # failure printed to stderr would reach nobody: report it to the user.
+    return spawn_terminal(cmd, app_id=app_id, hold=hold, wait=wait, prefer=prefer, notify=True,
                           # A caller waiting on this process is supervising the
                           # command; keep the terminal in our process group so it
                           # dies with the supervisor rather than being orphaned.
