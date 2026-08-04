@@ -142,6 +142,7 @@ node scripts/test-latest-transaction-queue.js
 scripts/check-vshell-helper.py
 scripts/check-brightness.py
 scripts/check-backend-inventory.py
+scripts/check-lock-reload-order.py
 node scripts/test-pill-hover-safety.js
 python3 -m py_compile bin/vshell-helper
 bash -n bin/vshell

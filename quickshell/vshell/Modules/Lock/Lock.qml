@@ -110,6 +110,57 @@ Scope {
         }
     }
 
+    // SECOND CHILD, immediately after lockState, and that is a hard
+    // constraint rather than style. `ReloadPropagator::onReload` matches
+    // `mChildren` BY INDEX ONLY — it never consults `reloadableId`, which is
+    // read solely by `reloadRecursive`, a path this propagator reaches only
+    // with an already-null pointer (quickshell 0.3.0, src/core/reload.cpp).
+    // `lockState`'s reloadableId is therefore decorative; both objects are
+    // found by position.
+    //
+    // So inserting any child ABOVE this one and saving WHILE THE SESSION IS
+    // LOCKED shifts sessionLock's index, `qobject_cast<WlSessionLock*>` on
+    // the old object at the new index returns null, and the reload builds a
+    // fresh SessionLockManager — the exact qFatal this file exists to
+    // prevent, landing on that save, in the middle of the very workflow
+    // VGS-28 enabled. Keeping these two first means anything added later
+    // lands at index 2+ and cannot move them.
+    // scripts/check-lock-reload-order.py enforces this.
+    WlSessionLock {
+        id: sessionLock
+
+        locked: shouldLock
+
+        WlSessionLockSurface {
+            id: lockSurface
+
+            property string currentScreenName: screen?.name ?? ""
+            property bool isActiveScreen: {
+                if (Quickshell.screens.length <= 1)
+                    return true;
+                if (!SettingsData.lockScreenActiveMonitor || SettingsData.lockScreenActiveMonitor === "all")
+                    return true;
+                return currentScreenName === SettingsData.lockScreenActiveMonitor;
+            }
+
+            color: isActiveScreen ? "transparent" : SettingsData.lockScreenInactiveColor
+
+            LockSurface {
+                anchors.fill: parent
+                visible: lockSurface.isActiveScreen
+                lock: sessionLock
+                pam: sharedPam
+                sharedPasswordBuffer: root.sharedPasswordBuffer
+                screenName: lockSurface.currentScreenName
+                isLocked: shouldLock
+                onUnlockRequested: root.unlock()
+                onPasswordChanged: newPassword => {
+                    root.sharedPasswordBuffer = newPassword;
+                }
+            }
+        }
+    }
+
     // Runs one event-loop turn after the restore above, i.e. after
     // `WlSessionLock::onReload` has adopted the previous manager. The adopted
     // manager was already locked, so it emits no `locked` signal in this
@@ -268,41 +319,6 @@ Scope {
         lockSecured: root.shouldLock
         buffer: root.sharedPasswordBuffer
         onUnlockRequested: root.unlock()
-    }
-
-    WlSessionLock {
-        id: sessionLock
-
-        locked: shouldLock
-
-        WlSessionLockSurface {
-            id: lockSurface
-
-            property string currentScreenName: screen?.name ?? ""
-            property bool isActiveScreen: {
-                if (Quickshell.screens.length <= 1)
-                    return true;
-                if (!SettingsData.lockScreenActiveMonitor || SettingsData.lockScreenActiveMonitor === "all")
-                    return true;
-                return currentScreenName === SettingsData.lockScreenActiveMonitor;
-            }
-
-            color: isActiveScreen ? "transparent" : SettingsData.lockScreenInactiveColor
-
-            LockSurface {
-                anchors.fill: parent
-                visible: lockSurface.isActiveScreen
-                lock: sessionLock
-                pam: sharedPam
-                sharedPasswordBuffer: root.sharedPasswordBuffer
-                screenName: lockSurface.currentScreenName
-                isLocked: shouldLock
-                onUnlockRequested: root.unlock()
-                onPasswordChanged: newPassword => {
-                    root.sharedPasswordBuffer = newPassword;
-                }
-            }
-        }
     }
 
     // Display power is driven ONLY here, off the CONFIRMED lock state, and only

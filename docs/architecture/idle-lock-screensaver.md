@@ -211,6 +211,69 @@ file while typing their password. If adoption failed outright, `sessionLock.lock
 is false and `lockRequestVerify` (armed by `onShouldLockChanged`) has already
 cleared the stale request through `forceReset()`.
 
+### The child order is load-bearing
+
+`ReloadPropagator::onReload` matches `mChildren` **by index**. It never consults
+`Reloadable.reloadableId` — that lookup lives only in `reloadRecursive`, which a
+propagator reaches solely through its else-branch with an already-null pointer
+(`src/core/reload.cpp`). So `lockState`'s `reloadableId` is decorative; both it
+and `WlSessionLock` are matched across generations purely by position.
+
+That makes a routine edit dangerous in a way nothing else in the tree is.
+Insert a child above `WlSessionLock` in `Lock.qml` and save **while the session
+is locked**, and `qobject_cast<WlSessionLock*>` on the old object now at that
+index returns null. The reload builds a fresh `SessionLockManager`, the old one
+is destroyed still owning the ext-session-lock, and the shell aborts on the next
+lock request — a black screen with a live lock behind it, landing on a save, in
+exactly the edit-while-locked workflow this change exists to enable.
+
+Two invariants put it out of reach:
+
+| Index | Child | Why there |
+|-------|-------|-----------|
+| 0 | `PersistentProperties` (`lockState`) | must reload *before* `WlSessionLock`, since it restores the `locked` request that `onReload` branches on |
+| 1 | `WlSessionLock` (`sessionLock`) | anything added later lands at index 2+ and cannot move either |
+
+`scripts/check-lock-reload-order.py` enforces both and runs in CI. It is the only
+check in the suite that covers this: the nested smoke never locks, so nothing
+else would notice.
+
+### IdleService is rebuilt too
+
+`IdleService` is a Quickshell `Singleton`, which means a **new object per engine
+generation** — `Singleton::componentComplete` registers it by URL and
+`SingletonRegistry::onReload` only hands the old instance to `ReloadPropagator`
+child matching, never preserving properties (`src/core/singleton.cpp`). Its
+`Component.onCompleted` therefore runs on every hot reload.
+
+That was harmless while hot reload was suspended during a lock, because a new
+generation while locked could not happen. Now it can, and two functions written
+for a *process* start are wrong under a live lock:
+
+- `_recoverDisplaysOnStartup()` would see `anyDisplayOff()` and force the
+  monitors back **on** over a locked session. Nothing re-arms the off:
+  `_adoptReloadedLock()` skips the DPMS half of `_syncConfirmedLock()`, the
+  adopted manager re-emits no `secureStateChanged`, and `postLockMonitorTimeout`
+  defaults to `0`.
+- `_recoverBlackoutOnStartup()` would ramp brightness back to the persisted
+  pre-blackout levels while `lockBlackoutActive` defaulting to false lifts the
+  overlay.
+
+So `IdleService` carries its state across a reload the same way `Lock.qml`
+carries the lock request — a `PersistentProperties` (`reloadableId:
+"vshellIdleServiceState"`) holding the blackout latch and captured brightness,
+the pending intents, and the DPMS desired/applied pair. Its `isReload` flag is
+the "reload, not a start" signal, and both recovery functions return early on it.
+`reloaded()` fires only when quickshell handed over a real old instance, so a
+fresh process can never take that branch.
+
+The snapshot is written by a `snapshot()` function called from the relevant
+change handlers, plus `_applyDisplays()` and `_writeBlackoutState()` — the two
+places that write state *after* the handler that would otherwise capture it.
+These are deliberately **not** bindings: `PersistentProperties::onReload` writes
+restored values with `setProperty`, which breaks a binding permanently and would
+leave the *next* reload restoring a stale value.
+
 ### How this was verified
 
 Not on the live seat. `scripts/qml-smoke.sh --nested`'s sandbox — its own

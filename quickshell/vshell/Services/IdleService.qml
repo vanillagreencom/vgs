@@ -77,6 +77,83 @@ Singleton {
     // from the lock *request*).
     property bool isShellLocked: false
 
+    // ======================================================================
+    //  Surviving a hot reload
+    // ======================================================================
+    // IdleService is a Quickshell Singleton, which means a NEW object per engine
+    // generation: `Singleton::componentComplete` registers it by URL, and
+    // `SingletonRegistry::onReload` only hands the old instance to
+    // ReloadPropagator child matching — it does not preserve properties
+    // (quickshell 0.3.0, src/core/singleton.cpp). So `Component.onCompleted`
+    // below runs on EVERY hot reload, not only on process start.
+    //
+    // That was harmless while Lock.qml suspended `Quickshell.watchFiles` for the
+    // duration of a lock, because a new generation while locked was impossible.
+    // VGS-28 removed that suspension, so the two startup recoveries at the
+    // bottom of this file can now fire under a live lock — where they are
+    // exactly wrong. Both were written for a *process* start, where the old lock
+    // surface is genuinely gone:
+    //
+    //   - `_recoverDisplaysOnStartup()` sees `anyDisplayOff()` and forces the
+    //     monitors back ON over a still-locked session. Nothing re-arms the off:
+    //     Lock.qml's `_adoptReloadedLock()` deliberately skips the DPMS half of
+    //     `_syncConfirmedLock()`, the adopted manager re-emits no
+    //     `secureStateChanged`, and `postLockMonitorTimeout` defaults to 0.
+    //   - `_recoverBlackoutOnStartup()` ramps brightness back to the persisted
+    //     pre-blackout levels, while `lockBlackoutActive` defaulting to false
+    //     lifts the black overlay.
+    //
+    // So the state is carried across the reload the same way Lock.qml carries
+    // the lock request. `Singleton` IS a `ReloadPropagator`, so this child is
+    // matched positionally across generations.
+    PersistentProperties {
+        id: reloadState
+        reloadableId: "vshellIdleServiceState"
+
+        // False in a fresh process, true in every generation after a reload.
+        // This is the whole "is this a reload rather than a start?" signal —
+        // `PersistentProperties` emits `reloaded()` only when it was handed a
+        // real old instance (src/core/persistentprops.cpp), which cannot happen
+        // in a process that just started.
+        property bool isReload: false
+
+        property bool blackoutActive: false
+        property var blackoutBrightness: ({})
+        property bool blackoutPending: false
+        property bool displaysOff: false
+        property bool displaysApplied: false
+        property bool manualOffPending: false
+
+        // Pull the whole snapshot rather than mirroring property-by-property, so
+        // no call site can carry half the state. Deliberately not bindings:
+        // `PersistentProperties::onReload` writes these with `setProperty`,
+        // which would break a binding permanently and leave the NEXT reload
+        // restoring a stale value.
+        function snapshot(): void {
+            blackoutActive = root.lockBlackoutActive;
+            blackoutBrightness = root._blackoutBrightness || ({});
+            blackoutPending = root.blackoutLockPending;
+            displaysOff = root.desiredDisplaysOff;
+            displaysApplied = root._lastAppliedOff;
+            manualOffPending = root.secureManualOffPending;
+        }
+
+        onReloaded: {
+            isReload = true;
+            root.lockBlackoutActive = blackoutActive;
+            root._blackoutBrightness = blackoutBrightness || ({});
+            root.blackoutLockPending = blackoutPending;
+            root.desiredDisplaysOff = displaysOff;
+            root._lastAppliedOff = displaysApplied;
+            root.secureManualOffPending = manualOffPending;
+        }
+    }
+
+    onLockBlackoutActiveChanged: reloadState.snapshot()
+    onBlackoutLockPendingChanged: reloadState.snapshot()
+    onDesiredDisplaysOffChanged: reloadState.snapshot()
+    onSecureManualOffPendingChanged: reloadState.snapshot()
+
     // True while the idle tier has blanked the lock screen to full black after
     // idle-while-locked (monitors stay ON — this is NOT DPMS). Cleared by any seat
     // activity (the blank monitor un-idles).
@@ -127,6 +204,9 @@ Singleton {
         else
             CompositorService.powerOnMonitors();
         log.info("displays", desiredDisplaysOff ? "OFF" : "ON", force === true ? "(forced)" : "");
+        // _lastAppliedOff is written here, after the desiredDisplaysOff change
+        // handler has already run.
+        reloadState.snapshot();
     }
 
     function setDisplaysOff(off, reason, force) {
@@ -271,6 +351,9 @@ Singleton {
             return;
         const saved = _blackoutBrightness || {};
         blackoutStateFile.setText(Object.keys(saved).length > 0 ? JSON.stringify(saved) + "\n" : "");
+        // _enterLockBlackout() flips lockBlackoutActive BEFORE _dimForBlackout()
+        // fills the map, so the change handler alone would snapshot it empty.
+        reloadState.snapshot();
     }
 
     function _dimForBlackout() {
@@ -347,6 +430,13 @@ Singleton {
     // the compositor bound them `locked`, which would otherwise strand the
     // session at 1%. Devices enumerate asynchronously, hence the retry.
     function _recoverBlackoutOnStartup() {
+        // Same as above: on a reload the latch and the captured brightness came
+        // across in reloadState, so ramping back up here would undo a blackout
+        // that is still in force behind a locked session.
+        if (reloadState.isReload) {
+            log.info("reload: keeping the previous generation's blackout latch");
+            return;
+        }
         if (!blackoutStatePath)
             return;
         const raw = blackoutStateFile.text().trim();
@@ -594,6 +684,14 @@ Singleton {
     // manual latch instead preserves the off state, or re-locks before restoring
     // it if the compositor already brought the outputs back.
     function _recoverDisplaysOnStartup() {
+        // A hot reload is not a restart. The previous generation's DPMS state was
+        // carried over by reloadState above and is authoritative — "recovering"
+        // here would force the monitors back on over a live lock, and nothing
+        // would re-arm the off.
+        if (reloadState.isReload) {
+            log.info("reload: keeping the previous generation's display state");
+            return;
+        }
         if (manualWakeBlocked) {
             const anyOff = typeof CompositorService.anyDisplayOff === "function" && CompositorService.anyDisplayOff();
             if (anyOff || Quickshell.screens.length === 0) {
