@@ -5,7 +5,9 @@ Start it for the current user with:
 
   systemctl --user enable --now vshell.service
 
-Run vshell deps status to inspect optional feature dependencies.
+Run vshell deps status to inspect optional feature dependencies. It also
+reports which app owns org.freedesktop.Notifications; if it is not VGS,
+vshell notifications takeover hands the name back.
 EOF
 }
 
@@ -15,6 +17,8 @@ VGS was upgraded. If the shell is not already running, start it with:
 
   systemctl --user enable --now vshell.service
 
-Run vshell deps status to inspect optional feature dependencies.
+Run vshell deps status to inspect optional feature dependencies. It also
+reports which app owns org.freedesktop.Notifications; if it is not VGS,
+vshell notifications takeover hands the name back.
 EOF
 }

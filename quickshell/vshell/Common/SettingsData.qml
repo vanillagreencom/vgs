@@ -888,6 +888,10 @@ Singleton {
     property bool notificationCompactMode: false
     property bool notificationShowTimeoutBar: false
     property bool notificationDedupeEnabled: true
+    // Whether VGS registers org.freedesktop.Notifications at all. Off hands the
+    // session's notifications back to another daemon, and silences the
+    // warning VGS shows when it loses the name.
+    property bool notificationServerEnabled: true
     property int notificationPopupPosition: SettingsData.Position.Top
     property int notificationAnimationSpeed: SettingsData.AnimationSpeed.Short
     property int notificationCustomAnimationDuration: 400

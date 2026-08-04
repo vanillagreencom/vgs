@@ -23,7 +23,7 @@ Singleton {
     property var lastErrorTime: ({})
     property int errorThrottleMs: 1000
     property string currentCategory: ""
-    readonly property var stickyCategories: ["greeter-autologin-sync"]
+    readonly property var stickyCategories: ["greeter-autologin-sync", "notification-server-conflict"]
 
     function isStickyCategory(category) {
         return category && stickyCategories.indexOf(category) >= 0
