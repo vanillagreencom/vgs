@@ -130,7 +130,7 @@ overview search belongs in `OverviewSearch/`.
   over unchanged rather than fixed here, and not part of the plugin→core cycle.
 - The `launcher*` settings keys stay as they are. They are shared by both
   surfaces, so they are not misnamed; only the two `spotlight*` keys named after
-  a deleted surface were renamed (VGS-21, settings migration v20).
+  a deleted surface were renamed (VGS-21, settings migration v21).
 
 ## Verification
 
