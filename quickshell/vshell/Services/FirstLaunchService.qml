@@ -33,17 +33,19 @@ Singleton {
     Process {
         id: firstLaunchCheckProcess
 
+        // Paths are arguments, never part of the script: an apostrophe in
+        // XDG_CONFIG_HOME made the old single-quoted assignments mangle both
+        // paths, so neither file was found and every launch on such a machine
+        // reported "first" — silently suppressing the changelog for good.
         command: ["sh", "-c", `
-            SETTINGS='` + settingsPath + `'
-            MARKER='` + firstLaunchMarkerPath + `'
-            if [ -f "$MARKER" ]; then
+            if [ -f "$2" ]; then
                 echo 'skip'
-            elif [ -f "$SETTINGS" ]; then
+            elif [ -f "$1" ]; then
                 echo 'existing_user'
             else
                 echo 'first'
             fi
-        `]
+        `, "vshell-firstlaunch", settingsPath, firstLaunchMarkerPath]
         running: false
 
         stdout: SplitParser {
@@ -73,7 +75,7 @@ Singleton {
     Process {
         id: touchMarkerProcess
 
-        command: ["sh", "-c", "mkdir -p '" + configDir + "' && touch '" + firstLaunchMarkerPath + "'"]
+        command: ["sh", "-c", 'mkdir -p "$1" && touch "$2"', "vshell-firstlaunch", configDir, firstLaunchMarkerPath]
         running: false
 
         onExited: exitCode => {

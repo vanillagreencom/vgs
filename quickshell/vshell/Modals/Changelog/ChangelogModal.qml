@@ -14,6 +14,7 @@ FloatingWindow {
     signal changelogDismissed
 
     function show() {
+        dismissed = false;
         visible = true;
     }
 
@@ -24,7 +25,10 @@ FloatingWindow {
     color: Theme.surfaceContainer
     visible: false
 
-    onClosed: visible = false
+    // Every close path writes the marker. Closing through the compositor
+    // (Alt+F4, the window menu) only hid the window, so the notes came back on
+    // the next launch as though they had never been read.
+    onClosed: dismiss()
 
     FocusScope {
         id: contentFocusScope
@@ -150,7 +154,12 @@ FloatingWindow {
         targetWindow: root
     }
 
+    property bool dismissed: false
+
     function dismiss() {
+        if (dismissed)
+            return;
+        dismissed = true;
         ChangelogService.dismissChangelog();
         changelogDismissed();
         visible = false;

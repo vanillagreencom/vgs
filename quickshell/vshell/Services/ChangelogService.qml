@@ -83,8 +83,13 @@ Singleton {
             changelogDismissed = true;
             touchMarker(version);
         } else {
-            const marker = markerPathFor(version);
-            changelogCheckProcess.command = ["sh", "-c", "[ -f '" + marker + "' ] && echo 'seen' || echo 'show'"];
+            // The path is an argument, never part of the script: XDG_CONFIG_HOME
+            // may legally contain an apostrophe, and interpolating it into a
+            // single-quoted test produced invalid shell — which fails silently
+            // and leaves the changelog suppressed, the exact defect this
+            // service exists to fix. The result is the exit status, so there is
+            // no output to quote either.
+            changelogCheckProcess.command = ["sh", "-c", 'test -f "$1"', "vshell-changelog", markerPathFor(version)];
             changelogCheckProcess.running = true;
         }
     }
@@ -92,7 +97,7 @@ Singleton {
     function touchMarker(version) {
         if (!versionUsable(version))
             return;
-        touchMarkerProcess.command = ["sh", "-c", "mkdir -p '" + configDir + "' && touch '" + markerPathFor(version) + "'"];
+        touchMarkerProcess.command = ["sh", "-c", 'mkdir -p "$1" && touch "$2"', "vshell-changelog", configDir, markerPathFor(version)];
         touchMarkerProcess.running = true;
     }
 
@@ -117,20 +122,15 @@ Singleton {
 
         running: false
 
-        stdout: SplitParser {
-            onRead: data => {
-                const result = data.trim();
-                root.checkComplete = true;
-
-                switch (result) {
-                case "seen":
-                    root.changelogDismissed = true;
-                    break;
-                case "show":
-                    root.changelogRequested();
-                    break;
-                }
-            }
+        // Exit 0 means the marker exists, so this version was already seen.
+        // Any other status means it is missing (or unreadable), and the safe
+        // reading of "unreadable" is to show the notes rather than swallow them.
+        onExited: exitCode => {
+            root.checkComplete = true;
+            if (exitCode === 0)
+                root.changelogDismissed = true;
+            else
+                root.changelogRequested();
         }
     }
 
