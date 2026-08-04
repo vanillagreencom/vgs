@@ -60,18 +60,24 @@ has to say plainly in-module that it is not installed.
 A required command with no package on one of those channels **fails** the generator. Leaving it out
 quietly would ship, one channel down, exactly the stock install the list exists to prevent, so it has
 to be waived by name in `"required".unsupported` with a reason — and every run prints the waivers it
-honoured. Two are live today: `hyprpicker` has no ebuild in `::gentoo`, so capture and OCR under
-Hyprland report it missing there; and `sudo` is not put on the Nix wrapper's PATH, because it would
-shadow the setuid wrapper in `/run/wrappers/bin` with a binary that cannot elevate.
+honoured. Three are live today: `hyprpicker` on Gentoo (no ebuild in `::gentoo`, so capture and OCR
+under Hyprland report it missing there), and `sudo` and `visudo` on Nix (`pkgs.sudo` on the wrapper's
+PATH would shadow the setuid wrapper in `/run/wrappers/bin` with a binary that cannot elevate).
+The run prints them all, so that list is the authority if this paragraph ever falls behind.
 
 The same rule covers the notification-daemon conflicts. `org.freedesktop.Notifications` is a
 first-come, first-served bus name, so every channel has to declare that a second daemon is not
 supported (VGS-56) — and every channel was declaring something slightly different. The one list is
 the `"conflicts"` section: Gentoo's blockers are generated into its `RDEPEND`, the other channels
-declare conflicts in shapes too file-specific to template and are **verified** against it, and a
-daemon a channel has no package for must be waived with a reason exactly like a required command.
-Three waivers are live: `dunst` on Arch and Debian (both provide the `notification-daemon` virtual,
-which is already conflicted) and `swaync` on Gentoo (not packaged).
+declare conflicts in shapes too file-specific to template and are **verified** against it — by
+reading the declaration, not by searching the file, so a daemon named in a comment does not count —
+and a daemon a channel has no package for must be waived with a reason exactly like a required
+command. Five waivers are live: `notification-daemon` on Gentoo and Void (neither has such a virtual
+package; the daemons are blocked by name), `dunst` on Arch and Debian (both provide the
+`notification-daemon` virtual, which is already conflicted), and `swaync` on Gentoo (not packaged).
+
+Verification covers every file that ships a declaration, which is not one per channel: Arch alone has
+four — both PKGBUILDs and both `.SRCINFO`s — and those are the files published to the AUR.
 
 The channel list itself is checked too. A directory under `packaging/` that is neither generated nor
 declared unGenerated with a reason fails the run. That check exists because Void was hand-maintained
@@ -117,8 +123,29 @@ silent non-delivery this whole section exists to end. Each run then verifies exa
 deferred is not verified, because reporting expected drift as a failure would make the delivery
 signal worthless.
 
-Publishing needs an `AUR_SSH_PRIVATE_KEY` secret with commit rights; without it the workflow
-**fails** rather than skipping. Never edit the AUR side by hand — the next publish overwrites it.
+Publishing needs two pieces of configuration, and the workflow **fails** rather than skipping when
+either is absent:
+
+- `AUR_SSH_PRIVATE_KEY` — a secret holding an SSH key with commit rights on both AUR packages.
+- `AUR_SSH_KNOWN_HOSTS` — a repository variable holding the `aur.archlinux.org` host key line.
+
+There is deliberately no built-in fallback host key. An earlier revision of this workflow shipped
+one and it was **GitLab's** ed25519 key, so every real publish would have failed host-key
+verification; a plausible-looking blob in a workflow file is exactly the kind of thing nobody
+re-derives. Blind `ssh-keyscan` is not the alternative — it trusts whatever answers. Set the
+variable once, from a key you have verified:
+
+```bash
+ssh-keyscan -t ed25519 aur.archlinux.org            # the line to store
+ssh-keyscan -t ed25519 aur.archlinux.org | ssh-keygen -lf -   # its fingerprint, to compare
+```
+
+Compare that fingerprint against the ones Arch publishes on the [Arch User
+Repository](https://wiki.archlinux.org/title/Arch_User_Repository) wiki page before storing it. Each
+run prints the fingerprint it trusted, so a wrong value shows up in the log rather than only as a
+confusing verification failure.
+
+Never edit the AUR side by hand — the next publish overwrites it.
 
 ## Theme bundles
 

@@ -84,8 +84,13 @@ sources_exist() {
 
   while IFS= read -r url; do
     [[ -n "$url" ]] || continue
-    code="$(curl -sSL --head --max-time 30 --retry 2 -o /dev/null -w '%{http_code}' "$url")"
-    rc=$?
+    # `rc=0; x=$(...) || rc=$?` rather than assign-then-read-$?: under `set -e`
+    # a failing command substitution in a bare assignment aborts the script, so
+    # the classification below would never run. It survives today only because
+    # every caller invokes this function in a `||` list, which suspends errexit
+    # for the whole body — a property of the call site, not of this code.
+    rc=0
+    code="$(curl -sSL --head --max-time 30 --retry 2 -o /dev/null -w '%{http_code}' "$url")" || rc=$?
     if [[ "$rc" -ne 0 ]]; then
       echo "publish-aur: cannot reach $url (curl exit $rc), so whether $package's source exists is unknown." >&2
       echo "publish-aur: not treating an unreachable host as a missing release — that would skip the publish and leave the AUR stale with a green run." >&2
