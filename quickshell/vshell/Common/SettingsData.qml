@@ -17,7 +17,7 @@ Singleton {
     id: root
     readonly property var log: Log.scoped("SettingsData")
 
-    readonly property int settingsConfigVersion: 20
+    readonly property int settingsConfigVersion: 21
 
     readonly property bool isGreeterMode: Quickshell.env("VSHELL_RUN_GREETER") === "1" || Quickshell.env("VSHELL_RUN_GREETER") === "true"
 
@@ -474,9 +474,9 @@ Singleton {
     property var filePickerUsageHistory: ({})
     property bool sortAppsAlphabetically: false
     property int appLauncherGridColumns: 4
-    property bool spotlightCloseNiriOverview: true
-    property var spotlightSectionViewModes: ({})
-    onSpotlightSectionViewModesChanged: saveSettings()
+    property bool overviewSearchCloseNiriOverview: true
+    property var overviewSearchSectionViewModes: ({})
+    onOverviewSearchSectionViewModesChanged: saveSettings()
     property bool niriOverviewOverlayEnabled: true
     property string launcherSize: "compact"
     property bool launcherShowSourceBadges: true

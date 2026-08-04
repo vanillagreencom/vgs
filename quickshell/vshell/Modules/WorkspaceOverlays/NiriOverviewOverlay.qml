@@ -3,7 +3,7 @@ import QtQuick.Controls
 import Quickshell
 import Quickshell.Wayland
 import qs.Common
-import qs.Modals.Launcher
+import qs.Modules.WorkspaceOverlays.OverviewSearch
 import qs.Services
 import qs.Widgets
 
@@ -18,14 +18,14 @@ Scope {
     readonly property bool appMenuOpen: PluginService.appLauncherOpen
     property bool overlayActive: NiriService.inOverview || searchActive
 
-    function showSpotlight(screenName) {
+    function showSearch(screenName) {
         isClosing = false;
         releaseKeyboard = false;
         searchActive = true;
         searchActiveScreen = screenName;
     }
 
-    function hideSpotlight() {
+    function hideSearch() {
         if (!searchActive)
             return;
         isClosing = true;
@@ -33,7 +33,7 @@ Scope {
 
     function hideAndReleaseKeyboard() {
         releaseKeyboard = true;
-        hideSpotlight();
+        hideSearch();
     }
 
     function resetState() {
@@ -60,13 +60,13 @@ Scope {
         function onCurrentOutputChanged() {
             if (!NiriService.inOverview || !searchActive || searchActiveScreen === "" || searchActiveScreen === NiriService.currentOutput)
                 return;
-            hideSpotlight();
+            hideSearch();
         }
     }
 
     onAppMenuOpenChanged: {
         if (appMenuOpen && searchActive)
-            hideSpotlight();
+            hideSearch();
     }
 
     onIsClosingChanged: {
@@ -97,8 +97,8 @@ Scope {
 
                 readonly property real dpr: CompositorService.getScreenScale(screen)
                 readonly property bool isActiveScreen: screen.name === NiriService.currentOutput
-                readonly property bool shouldShowSpotlight: niriOverviewScope.searchActive && screen.name === niriOverviewScope.searchActiveScreen && !niriOverviewScope.isClosing
-                readonly property bool isSpotlightScreen: screen.name === niriOverviewScope.searchActiveScreen
+                readonly property bool shouldShowSearch: niriOverviewScope.searchActive && screen.name === niriOverviewScope.searchActiveScreen && !niriOverviewScope.isClosing
+                readonly property bool isSearchScreen: screen.name === niriOverviewScope.searchActiveScreen
                 readonly property bool overlayVisible: NiriService.inOverview || niriOverviewScope.isClosing
                 property bool hasActivePopout: !!PopoutManager.currentPopoutsByScreen[screen.name]
                 property bool hasActiveModal: !!ModalManager.currentModalsByScreen[screen.name]
@@ -121,7 +121,7 @@ Scope {
                 visible: overlayVisible
                 color: "transparent"
 
-                WlrLayershell.namespace: "vshell:niri-overview-spotlight"
+                WlrLayershell.namespace: "vshell:niri-overview-search"
                 WlrLayershell.layer: WlrLayer.Overlay
                 WlrLayershell.exclusiveZone: -1
                 WlrLayershell.keyboardFocus: {
@@ -139,24 +139,24 @@ Scope {
                 }
 
                 mask: Region {
-                    item: overlayVisible && spotlightContainer.visible ? spotlightContainer : null
+                    item: overlayVisible && searchContainer.visible ? searchContainer : null
                 }
 
                 WindowBlur {
                     targetWindow: overlayWindow
                     // Track the container's scale so blur shrinks with the content
                     // during exit — otherwise blur pops away one frame after content.
-                    readonly property real s: Math.min(1, spotlightContainer.scale)
-                    readonly property bool active: overlayWindow.shouldShowSpotlight && spotlightContainer.opacity > 0
-                    blurX: spotlightContainer.x + spotlightContainer.width * (1 - s) * 0.5
-                    blurY: spotlightContainer.y + spotlightContainer.height * (1 - s) * 0.5
-                    blurWidth: active ? spotlightContainer.width * s : 0
-                    blurHeight: active ? spotlightContainer.height * s : 0
+                    readonly property real s: Math.min(1, searchContainer.scale)
+                    readonly property bool active: overlayWindow.shouldShowSearch && searchContainer.opacity > 0
+                    blurX: searchContainer.x + searchContainer.width * (1 - s) * 0.5
+                    blurY: searchContainer.y + searchContainer.height * (1 - s) * 0.5
+                    blurWidth: active ? searchContainer.width * s : 0
+                    blurHeight: active ? searchContainer.height * s : 0
                     blurRadius: Theme.cornerRadius
                 }
 
-                onShouldShowSpotlightChanged: {
-                    if (shouldShowSpotlight) {
+                onShouldShowSearchChanged: {
+                    if (shouldShowSearch) {
                         if (launcherContent?.controller) {
                             launcherContent.controller.searchMode = SessionData.niriOverviewLastMode || "apps";
                             launcherContent.controller.performSearch();
@@ -181,7 +181,7 @@ Scope {
                     focus: true
 
                     Keys.onPressed: event => {
-                        if (overlayWindow.shouldShowSpotlight || niriOverviewScope.isClosing)
+                        if (overlayWindow.shouldShowSearch || niriOverviewScope.isClosing)
                             return;
                         if ([Qt.Key_Escape, Qt.Key_Return].includes(event.key)) {
                             NiriService.toggleOverview();
@@ -225,14 +225,14 @@ Scope {
                         const trimmedText = event.text.trim();
                         launcherContent.searchField.text = trimmedText;
                         launcherContent.controller.setSearchQuery(trimmedText);
-                        niriOverviewScope.showSpotlight(overlayWindow.screen.name);
+                        niriOverviewScope.showSearch(overlayWindow.screen.name);
                         Qt.callLater(() => launcherContent.searchField.forceActiveFocus());
                         event.accepted = true;
                     }
                 }
 
                 Item {
-                    id: spotlightContainer
+                    id: searchContainer
 
                     readonly property real _centerY: (parent.height - height) / 2
 
@@ -266,12 +266,12 @@ Scope {
                     width: Math.min(baseWidth, overlayWindow.screen.width - 100)
                     height: Math.min(baseHeight, overlayWindow.screen.height - 100)
 
-                    readonly property bool animatingOut: niriOverviewScope.isClosing && overlayWindow.isSpotlightScreen
+                    readonly property bool animatingOut: niriOverviewScope.isClosing && overlayWindow.isSearchScreen
 
-                    scale: overlayWindow.shouldShowSpotlight ? 1.0 : 0.96
-                    opacity: overlayWindow.shouldShowSpotlight ? 1 : 0
-                    visible: overlayWindow.shouldShowSpotlight || animatingOut
-                    enabled: overlayWindow.shouldShowSpotlight
+                    scale: overlayWindow.shouldShowSearch ? 1.0 : 0.96
+                    opacity: overlayWindow.shouldShowSearch ? 1 : 0
+                    visible: overlayWindow.shouldShowSearch || animatingOut
+                    enabled: overlayWindow.shouldShowSearch
 
                     layer.enabled: visible
                     layer.smooth: false
@@ -282,9 +282,9 @@ Scope {
                         NumberAnimation {
                             duration: Theme.expressiveDurations.fast
                             easing.type: Easing.BezierSpline
-                            easing.bezierCurve: spotlightContainer.visible ? Theme.expressiveCurves.expressiveFastSpatial : Theme.expressiveCurves.standardAccel
+                            easing.bezierCurve: searchContainer.visible ? Theme.expressiveCurves.expressiveFastSpatial : Theme.expressiveCurves.standardAccel
                             onRunningChanged: {
-                                if (running || !spotlightContainer.animatingOut)
+                                if (running || !searchContainer.animatingOut)
                                     return;
                                 niriOverviewScope.resetState();
                             }
@@ -295,7 +295,7 @@ Scope {
                         NumberAnimation {
                             duration: Theme.expressiveDurations.fast
                             easing.type: Easing.BezierSpline
-                            easing.bezierCurve: spotlightContainer.visible ? Theme.expressiveCurves.expressiveFastSpatial : Theme.expressiveCurves.standardAccel
+                            easing.bezierCurve: searchContainer.visible ? Theme.expressiveCurves.expressiveFastSpatial : Theme.expressiveCurves.standardAccel
                         }
                     }
 
@@ -320,19 +320,19 @@ Scope {
                             event.accepted = true;
                         }
 
-                        LauncherContent {
+                        OverviewSearchContent {
                             id: launcherContent
                             anchors.fill: parent
                             anchors.margins: 0
 
                             property var fakeParentModal: QtObject {
-                                property bool spotlightOpen: spotlightContainer.visible
+                                property bool searchOpen: searchContainer.visible
                                 property bool isClosing: niriOverviewScope.isClosing
-                                property real alignedX: spotlightContainer.x
-                                property real alignedY: spotlightContainer.y
+                                property real alignedX: searchContainer.x
+                                property real alignedY: searchContainer.y
                                 function hide() {
                                     if (niriOverviewScope.searchActive) {
-                                        niriOverviewScope.hideSpotlight();
+                                        niriOverviewScope.hideSearch();
                                         return;
                                     }
                                     NiriService.toggleOverview();
@@ -344,7 +344,7 @@ Scope {
                                 function onTextChanged() {
                                     if (launcherContent.searchField.text.length > 0 || !niriOverviewScope.searchActive)
                                         return;
-                                    niriOverviewScope.hideSpotlight();
+                                    niriOverviewScope.hideSearch();
                                 }
                             }
 

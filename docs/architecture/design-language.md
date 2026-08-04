@@ -234,4 +234,5 @@ Popout/CC/Dash cards are bespoke (no shared component); they inherit the neutral
 | Rounding / spacing / motion scales | `Common/Appearance.qml` |
 | Buttons, inputs, toggles, chips, tabs | `Widgets/Vgs*.qml` |
 | Settings shell + nav | `Modals/Settings/*` |
-| Launcher | `Modals/Launcher/*` |
+| Shared launcher panels | `Widgets/Launcher/*` |
+| niri overview search | `Modules/WorkspaceOverlays/OverviewSearch/*` |
