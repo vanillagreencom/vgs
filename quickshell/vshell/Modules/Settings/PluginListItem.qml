@@ -43,6 +43,16 @@ StyledRect {
             root.meetsRequirementsChanged();
         }
     }
+    // A package that VGS guarantees: a bundled module, or a user package whose
+    // manifest declares itself the override of one. Those are auto-enabled and
+    // PluginService.disablePlugin refuses them by design, so no disable
+    // affordance is offered — offering one would report a rule working as
+    // intended as a failure. (VGS-39)
+    property bool isAlwaysAvailable: {
+        PluginService.bundledPluginIds;
+        PluginService.availablePlugins;
+        return root.pluginId ? PluginService.isAlwaysAvailablePlugin(root.pluginId) : false;
+    }
     property bool isExpanded: expandedPluginId === pluginId
     property bool isLoaded: {
         PluginService.loadedPlugins;
@@ -310,9 +320,43 @@ StyledRect {
                     }
                 }
 
+                Rectangle {
+                    id: alwaysOnBadge
+
+                    width: alwaysOnLabel.implicitWidth + Theme.spacingS * 2
+                    height: 22
+                    radius: Theme.controlRadius
+                    color: Theme.withAlpha(Theme.primary, 0.12)
+                    visible: root.isAlwaysAvailable
+                    anchors.verticalCenter: parent.verticalCenter
+
+                    StyledText {
+                        id: alwaysOnLabel
+                        anchors.centerIn: parent
+                        text: I18n.tr("Always on")
+                        font.pixelSize: Theme.fontSizeSmall - 1
+                        font.weight: Font.Medium
+                        color: Theme.primary
+                    }
+
+                    MouseArea {
+                        anchors.fill: parent
+                        hoverEnabled: true
+                        onEntered: {
+                            if (root.sharedTooltip)
+                                root.sharedTooltip.show(I18n.tr("Ships with VGS and stays available; it cannot be disabled here"), parent, 0, 0, "top");
+                        }
+                        onExited: {
+                            if (root.sharedTooltip)
+                                root.sharedTooltip.hide();
+                        }
+                    }
+                }
+
                 VgsToggle {
                     id: pluginToggle
                     anchors.verticalCenter: parent.verticalCenter
+                    visible: !root.isAlwaysAvailable
                     checked: root.isLoaded
                     onToggled: isChecked => {
                         const currentPluginId = root.pluginId;
@@ -323,6 +367,14 @@ StyledRect {
                                 if (ok)
                                     ToastService.showInfo(I18n.tr("Plugin enabled: %1").arg(currentPluginName));
                             });
+                            return;
+                        }
+                        if (PluginService.isAlwaysAvailablePlugin(currentPluginId)) {
+                            // The toggle is hidden for these; this only catches
+                            // an id that became always-available between render
+                            // and click. Explain the rule, do not report it as
+                            // a failure.
+                            ToastService.showInfo(I18n.tr("%1 ships with VGS and stays available").arg(currentPluginName));
                             return;
                         }
                         if (PluginService.disablePlugin(currentPluginId)) {

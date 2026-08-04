@@ -166,11 +166,12 @@ jobs:
           node --check scripts/check-settings-migration.js
           scripts/check-settings-migration.js
 
-      - name: Queue and theme-request regressions
+      - name: Queue, theme-request and plugin-policy regressions
         run: |
           node scripts/test-restyle-queue.js
           node scripts/test-theme-requests.js
           node scripts/test-latest-transaction-queue.js
+          node scripts/test-bundled-override.js
 
       - name: Helper and CLI checks
         run: |
