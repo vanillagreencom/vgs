@@ -18,6 +18,10 @@ import qs.Widgets
 // Sizes stay parameters rather than constants: a pill tooltip and a settings
 // tooltip genuinely have different room, and the two callers' existing metrics
 // are preserved exactly rather than averaged into a new look.
+// `blurAvailable` is NOT optional for a caller to think about. Glass styling —
+// the translucent fill and the specular rim — only reads as glass when there is
+// a backdrop being blurred behind it. A host that provides none must say so, or
+// the body paints a see-through surface over nothing.
 VgsSurfaceChrome {
     id: root
 
@@ -30,7 +34,11 @@ VgsSurfaceChrome {
     implicitHeight: label.implicitHeight + Theme.spacingS * 2
 
     radius: Theme.controlRadius
-    surfaceColor: Theme.popupSurfaceColor(Theme.surfaceContainerHigh)
+    // Threaded through rather than left to the one-argument default: the default
+    // resolves to the blurred alpha, so a host declaring blurAvailable: false
+    // would still get a surface painted for a backdrop it does not have. Only
+    // the glass rim reads the property on its own.
+    surfaceColor: Theme.popupSurfaceColor(Theme.surfaceContainerHigh, root.blurAvailable)
     borderColor: BlurService.borderColor
     borderWidth: BlurService.borderWidth
 

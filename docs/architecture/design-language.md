@@ -257,6 +257,14 @@ hover delay for you.
 `Widgets/Tooltip/` is not part of the `qs.Widgets` surface; it holds the shared
 body only, and consumers should never import it.
 
+The one thing the shared body cannot infer is whether it has a backdrop, so each
+host declares it. `VgsTooltip` passes `blurAvailable: true` — its `WindowBlur` is
+a real backdrop. `VgsInlineTooltip` passes `false`: a `Popup` blurs nothing
+behind itself, and glass over nothing reads as a translucent surface floating on
+a hard edge. This is the same call every other backdrop-less surface makes
+(context menus, `VgsOSD`, `VgsSlideout`). Any future host of `TooltipBody` has to
+answer the same question — it is not safe to inherit the default.
+
 Reveal delays are owned by the caller and are **not** currently uniform —
 `StateLayer` waits 400 ms, the dock and the plugin pills 250 ms. That predates
 the convergence and is left alone deliberately: changing it is a behaviour

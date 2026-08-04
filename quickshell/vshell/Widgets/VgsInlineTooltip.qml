@@ -136,6 +136,12 @@ Item {
         contentItem: TooltipBody {
             text: tooltip.text
             maxWidth: 500 + Theme.spacingM * 2
+            // A Popup inside its host window has no backdrop of its own — there
+            // is no WindowBlur behind it, unlike the layer-surface tooltip. So
+            // it takes the opaque treatment every other backdrop-less surface
+            // here takes (context menus, the OSD, the slideout), rather than
+            // painting glass over nothing.
+            blurAvailable: false
         }
 
         enter: Transition {

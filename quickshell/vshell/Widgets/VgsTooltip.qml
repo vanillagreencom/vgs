@@ -91,5 +91,9 @@ PanelWindow {
         text: root.text
         maxWidth: 300
         minWidth: 120
+        // Stated rather than inherited: the WindowBlur above is this surface's
+        // backdrop, so the glass treatment has something real to sit on. If that
+        // blur ever goes, this has to go with it.
+        blurAvailable: true
     }
 }
