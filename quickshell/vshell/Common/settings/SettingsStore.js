@@ -427,6 +427,27 @@ function migrateToVersion(obj, targetVersion) {
         settings.configVersion = 20;
     }
 
+    if (currentVersion < 21) {
+        console.info("Migrating settings from version", currentVersion, "to version 21");
+        console.info("Renaming the surviving spotlight keys; both now configure the niri overview search");
+        // Rename, not drop: these two keys are live, and the valid-key filter
+        // below would silently discard a set value under its old name. Only
+        // copy when the new key is absent, so a config that has already been
+        // migrated (or hand-edited to the new name) is never overwritten by a
+        // stale duplicate.
+        var renamedIn21 = {
+            spotlightCloseNiriOverview: "overviewSearchCloseNiriOverview",
+            spotlightSectionViewModes: "overviewSearchSectionViewModes"
+        };
+        for (var oldKey in renamedIn21) {
+            var newKey = renamedIn21[oldKey];
+            if (settings[oldKey] !== undefined && settings[newKey] === undefined)
+                settings[newKey] = settings[oldKey];
+            delete settings[oldKey];
+        }
+        settings.configVersion = 21;
+    }
+
     var validKeys = SpecModule.getValidKeys();
     var filtered = {};
     for (var key in settings) {

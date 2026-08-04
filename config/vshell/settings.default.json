@@ -254,8 +254,8 @@
   "filePickerUsageHistory": {},
   "sortAppsAlphabetically": true,
   "appLauncherGridColumns": 4,
-  "spotlightCloseNiriOverview": true,
-  "spotlightSectionViewModes": {
+  "overviewSearchCloseNiriOverview": true,
+  "overviewSearchSectionViewModes": {
     "apps": "list",
     "files": "grid"
   },

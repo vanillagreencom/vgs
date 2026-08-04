@@ -1258,9 +1258,13 @@ Singleton {
         saveSettings();
     }
 
+    // The inverse of addLauncherHistory above, so it clears the same property
+    // that one writes. It said `launcherSearchHistory` — a name declared
+    // nowhere — which would have thrown at runtime, after launcherLastQuery
+    // was already blanked and before saveSettings() ran.
     function clearLauncherHistory() {
         launcherLastQuery = "";
-        launcherSearchHistory = [];
+        launcherQueryHistory = [];
         saveSettings();
     }
 

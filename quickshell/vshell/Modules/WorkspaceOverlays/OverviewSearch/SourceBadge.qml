@@ -9,10 +9,10 @@ Item {
     property int glyphSize: 14
 
     readonly property var sourceAsset: ({
-            "flatpak": "../../assets/package-sources/flatpak.svg",
-            "snap": "../../assets/package-sources/snap.svg",
-            "appimage": "../../assets/package-sources/appimage.svg",
-            "nix": "../../assets/package-sources/nix.svg"
+            "flatpak": "../../../assets/package-sources/flatpak.svg",
+            "snap": "../../../assets/package-sources/snap.svg",
+            "appimage": "../../../assets/package-sources/appimage.svg",
+            "nix": "../../../assets/package-sources/nix.svg"
         })
 
     readonly property string assetPath: sourceAsset[source] || ""
