@@ -203,7 +203,13 @@ Item {
 
             SettingsCard {
                 width: parent.width
-                iconName: NotificationService.serverConflict ? "notifications_off" : "notifications_active"
+                // "active" is a claim too: reserve it for a confirmed VGS
+                // registration, and stay neutral while ownership is unknown.
+                iconName: {
+                    if (NotificationService.serverConflict || !SettingsData.notificationServerEnabled)
+                        return "notifications_off";
+                    return NotificationService.serverOwnership === "vgs" ? "notifications_active" : "notifications";
+                }
                 title: I18n.tr("Notification Daemon")
                 settingKey: "notificationServer"
 
@@ -245,12 +251,24 @@ Item {
                             wrapMode: Text.WordWrap
                             font.pixelSize: Theme.fontSizeSmall
                             color: Theme.surfaceVariantText
+                            // Every state the helper can report gets its own
+                            // line. Ownership is claimed only for a "vgs"
+                            // result: falling back to it would have Settings
+                            // assert VGS owns the bus while the heading above
+                            // says the opposite.
                             text: {
                                 if (!SettingsData.notificationServerEnabled)
                                     return I18n.tr("Popups, the notification center and history are handled by whichever other daemon is installed.");
-                                if (NotificationService.serverConflict)
+                                switch (NotificationService.serverOwnership) {
+                                case "vgs":
+                                    return I18n.tr("VGS owns org.freedesktop.Notifications, the session-wide bus name every app sends notifications to.");
+                                case "foreign":
                                     return NotificationService.serverConflictFixable ? I18n.tr("org.freedesktop.Notifications is taken, so VGS popups and history stay empty. Taking it over masks the other daemon and stops it; VGS picks the name up without a restart.") : I18n.tr("org.freedesktop.Notifications is taken and VGS cannot free it: %1.").arg(NotificationService.serverConflictReason || I18n.tr("no supported way to stop the other daemon"));
-                                return I18n.tr("VGS owns org.freedesktop.Notifications, the session-wide bus name every app sends notifications to.");
+                                case "unowned":
+                                    return I18n.tr("Nothing holds org.freedesktop.Notifications on the session bus yet. VGS takes the name as soon as the bus grants it.");
+                                default:
+                                    return I18n.tr("Reading which app owns org.freedesktop.Notifications on the session bus…");
+                                }
                             }
                         }
                     }

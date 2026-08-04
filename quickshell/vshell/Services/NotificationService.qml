@@ -745,7 +745,13 @@ Singleton {
         stdout: StdioCollector {
             onStreamFinished: root._applyServerOwnership(text)
         }
-        onExited: (exitCode, exitStatus) => {
+        // Keyed on running rather than exited: a command that cannot be spawned
+        // at all drops running back to false without ever exiting, and clearing
+        // the busy flag only on exit would leave both takeover buttons disabled
+        // for the rest of the session. This covers both paths.
+        onRunningChanged: {
+            if (running)
+                return;
             root.serverTakeoverBusy = false;
             // Releasing the name and Quickshell re-acquiring it are two
             // asynchronous steps, so confirm rather than assume.
@@ -773,11 +779,16 @@ Singleton {
     Timer {
         id: ownershipRecheckTimer
         // Quickshell re-registers on its own the moment the current owner drops
-        // the name, so keep looking while VGS is losing -- that is how the
-        // shell notices it has won without a restart.
+        // the name, so keep looking while VGS is not the owner -- that is how
+        // the shell notices it has won without a restart.
+        //
+        // Unknown ("") counts as not the owner. A probe that failed to spawn or
+        // returned nothing leaves ownership unknown, and excluding that state
+        // here would switch off the only retry after exactly the failure this
+        // service exists to report, leaving the silence VGS-56 is about.
         interval: 30000
         repeat: true
-        running: root.serverEnabled && root.serverOwnership !== "" && root.serverOwnership !== "vgs"
+        running: root.serverEnabled && root.serverOwnership !== "vgs"
         onTriggered: root.checkServerOwnership()
     }
 
