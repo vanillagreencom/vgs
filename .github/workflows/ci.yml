@@ -69,6 +69,109 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  # THE ONE-JOB RULE HAS TWO DELIBERATE EXCEPTIONS, both structural rather
+  # than economic (VGS-41, the vstack review-gate engine):
+  #
+  #   review-gate      must post a commit status with `statuses: write`, and
+  #                    the safe trust posture (REVIEW_GATE_TRUST_PR_WORKFLOWS
+  #                    = "false") requires that the write-capable job execute
+  #                    NO PR-controlled code. Folding it into `ci-ok` would
+  #                    hand a write-capable token to the whole suite.
+  #   review-gate-selftest
+  #                    must be UNGATED and separate: a broken predicate
+  #                    approves nothing, so a selftest sharing a job with
+  #                    gated work could never run when it matters.
+  #
+  # Neither adds a lane over the same work — the measured argument against
+  # splitting `ci-ok` is unchanged.
+  #
+  # `ci-ok` deliberately does NOT take `needs: review-gate`. The engine's
+  # default shape skips heavy jobs until the gate opens, which pays off when
+  # those jobs run for minutes; VGS's whole suite is ~30s, so gating it would
+  # only delay the author's first signal and cost a re-run once review lands.
+  # The gate blocks the MERGE via its status; it is not here to save compute
+  # VGS does not spend.
+  review-gate:
+    name: Review gate
+    if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
+    runs-on: ${{ vars.CI_RUNNER_2V || 'ubuntu-latest' }}
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      pull-requests: read
+      issues: read
+      checks: read
+      statuses: write
+    steps:
+      # BASE revision, not the PR head: the safe posture never runs
+      # PR-controlled predicate code under a token that can post the status
+      # that opens the gate. `persist-credentials: false` for the same reason.
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          ref: ${{ github.event.pull_request.base.sha || github.sha }}
+          persist-credentials: false
+
+      - name: Evaluate and post the review gate
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+          EVENT_NAME: ${{ github.event_name }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -u
+          CTX="$(. third_party/review-gate/scripts/lib/settings.sh && rg_setting REVIEW_GATE_CONTEXT "Review gate")"
+          post() {
+            gh api -X POST "repos/$GH_REPO/statuses/$1" \
+              -f state="$2" -f context="$CTX" \
+              -f description="$(printf %.140s "$3")" \
+              -f target_url="$RUN_URL" >/dev/null
+          }
+          # Merge-queue entries are post-approval by construction, but the
+          # queue still requires the context on the group sha.
+          if [ "$EVENT_NAME" = "merge_group" ]; then
+            post "$GITHUB_SHA" success "merge queue entries are post-approval by construction"
+            exit 0
+          fi
+          if line="$(third_party/review-gate/scripts/review-predicate.sh)"; then
+            verdict="${line#verdict=}"; verdict="${verdict%% *}"
+            detail="${line#*detail=}"
+          else
+            # No verdict was reached (transient API failure). Fail SAFE, not
+            # red: pending keeps the merge blocked and the scheduled sweep
+            # re-evaluates.
+            verdict="error"
+            detail="review-state read failed; the scheduled sweep retries"
+          fi
+          case "$verdict" in
+            approved)          state=success ;;
+            changes-requested) state=failure ;;
+            *)                 state=pending ;;
+          esac
+          post "$HEAD_SHA" "$state" "$detail"
+          echo "review gate: $verdict ($state) — $detail"
+
+  review-gate-selftest:
+    name: Review gate selftest
+    # DELIBERATELY UNGATED: no `needs`, no approval condition, no path filter.
+    # A broken predicate approves nothing, so a gated selftest could never run
+    # when it matters. Failing here reds the build without stopping the gate
+    # job from posting — a PR with no gate status at all is stuck, not blocked.
+    runs-on: ${{ vars.CI_RUNNER_2V || 'ubuntu-latest' }}
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+      # Run from the repo root so the configured layer re-derives its cases
+      # from VGS's own REVIEW_GATE_* values, not the engine's defaults.
+      - name: Pin the review-gate decision table
+        run: third_party/review-gate/scripts/review-predicate-selftest.sh
+
   validate:
     # The required-check context is `CI / ci-ok`; see the aggregator note above.
     name: ci-ok

@@ -47,6 +47,7 @@ NOT_A_SUITE_CHECK = {
 LOCAL_ONLY = {
     "smoke-surfaces.sh": "needs a live Hyprland VGS session and reads `hyprctl layers`",
     "check-label-taxonomy.py": "reads live Linear label inventory; CI has no Linear credentials and no local cache",
+    "check-review-gate-vendor.sh": "compares the tracked engine against the vstack-managed copy under .agents/, which CI does not have",
 }
 
 # Checks CI runs through another entry rather than by name. Naming the caller
