@@ -1,4 +1,4 @@
-# D001: System tray transport stays Quickshell's native `SystemTray`
+# D003: System tray transport stays Quickshell's native `SystemTray`
 
 [← Decision Index](INDEX.md)
 
@@ -123,7 +123,7 @@ make.
   an undocumented surprise.
 - No new capability, watcher, CLI verb or backend method is introduced, and
   nothing new has to be deprecated when upstream closes the gap.
-- The TODO at `SystemTrayBar.qml:120` is replaced by a `REVISIT(D001)` pointer,
+- The TODO at `SystemTrayBar.qml:120` is replaced by a `REVISIT(D003)` pointer,
   so the intention is visible to planning rather than only to whoever opens
   that file.
 

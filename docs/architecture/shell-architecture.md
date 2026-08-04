@@ -236,7 +236,7 @@ One deliberate exception is the system tray's `ContextMenu` fallback in
 `Modules/Bar/Widgets/SystemTrayBar.qml`, which shells out because Quickshell
 0.3.0 exposes no way to make that SNI call. It stays there rather than moving
 to the helper CLI or the backend: see
-[D001](../decisions/D001-system-tray-transport.md) for the alternatives and the
+[D003](../decisions/D003-system-tray-transport.md) for the alternatives and the
 limitation that comes with keeping it.
 
 ## Local overlays

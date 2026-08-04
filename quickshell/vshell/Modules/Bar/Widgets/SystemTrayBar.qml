@@ -117,7 +117,7 @@ BasePill {
         return root.menuOpen != (root.section === "right") ? "keyboard_arrow_left" : "keyboard_arrow_right";
     }
 
-    // REVISIT(D001): the one call in this widget that is not native. Items
+    // REVISIT(D003): the one call in this widget that is not native. Items
     // without a DBusMenu (`hasMenu === false`) can only be asked to show their
     // own menu through the SNI `ContextMenu` method, which Quickshell 0.3.0
     // does not expose — and it exposes no bus name or object path either, so
@@ -125,7 +125,7 @@ BasePill {
     // rather than item-unique. With two items from one application the first
     // match wins, which may be the wrong one.
     //
-    // Known and accepted, not an open question: docs/decisions/D001-system-tray-transport.md
+    // Known and accepted, not an open question: docs/decisions/D003-system-tray-transport.md
     // weighs the alternatives (helper CLI, backend method) and keeps this in
     // place because both add a second enumerator of a registry Quickshell's
     // host already owns and neither fixes the `Id` ambiguity. Do not grow this
