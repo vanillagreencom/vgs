@@ -132,12 +132,24 @@ focus_satty_target() {
   printf '%s\n' "$target_ws"
 }
 
+# uwsm launches an app into its own systemd scope. It is an enhancement, not a
+# requirement, so it is only used when the session actually has it: hardcoding
+# the prefix is what made VGS actions fail with `command not found` on installs
+# without it (VGS-54).
+app_scope() {
+  if [[ -z ${VSHELL_NO_APP_SCOPE:-} ]] && command -v uwsm >/dev/null 2>&1; then
+    uwsm app -- "$@"
+  else
+    "$@"
+  fi
+}
+
 open_folder() {
   local dir="$1"
   if command -v yazi-scratchpad-open >/dev/null 2>&1; then
-    uwsm app -- yazi-scratchpad-open "$dir"
+    app_scope yazi-scratchpad-open "$dir"
   else
-    uwsm app -- xdg-open "$dir"
+    app_scope xdg-open "$dir"
   fi
 }
 

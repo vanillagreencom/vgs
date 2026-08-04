@@ -104,8 +104,10 @@ runtime; it is what tells a deliberate exclusion from drift. Adding a new probe
 means declaring the command under `features` or adding it there.
 
 Manifest entries use `commands` for unconditional tools, `anyCommands` for
-same-purpose alternatives, and `compositorCommands` for complete
-Hyprland/Niri-specific command lists. `vshell deps` selects only the active
+same-purpose alternatives, `compositorCommands` for complete
+Hyprland/Niri-specific command lists, and `requiresFeatures` to depend on
+another feature group rather than restating its commands — a group whose
+requirement is unavailable reports `@<feature>` in its own `missing` list. `vshell deps` selects only the active
 compositor branch; without an active session, any fully available branch is
 accepted.
 
@@ -136,7 +138,13 @@ Feature groups:
 | `clipboard` | Clipboard history (wl-clipboard) |
 | `thumbnails` | File/image thumbnails |
 | `brightness` | Display brightness backends |
-| `sudo-toggle` | Passwordless sudo toggle widget (`vshell sudo-toggle`) |
+| `sudo-toggle` | Passwordless sudo toggle widget: status and **revoke**, which need no terminal |
+| `sudo-toggle-grant` | **Granting** passwordless sudo, which needs a terminal to prompt in |
+| `terminal` | The terminal VGS opens for TUI actions. Any one alternative is enough |
+| `default-apps` | XDG default-application layer (`xdg-mime`) |
+| `file-manager` | File manager the launcher opens folders with, when the XDG default resolves to none |
+| `launcher-folder-open-yazi` | Launcher Yazi folder opener (needs `yazi` *and* `terminal`) |
+| `app-scopes` | Launching apps into their own systemd scope (`uwsm`) |
 | `cloud-sync` | Cloud file sync (rclone) |
 | `cloud-sync-stream` | Cloud sync streaming FUSE mounts |
 
@@ -183,7 +191,80 @@ an action they cannot perform:
 user-facing behaviour should be declared under `features` in
 `dependencies.json`, so `vshell deps status` can report it. The tree does not
 satisfy this yet. Commands deliberately left undeclared are listed with their
-reason in the `undeclared` map at the top of `dependencies.json`; the remaining
-user-facing gaps (`nautilus`, `yazi`, `xdg-terminal-exec`) are tracked in
-VGS-32, and VGS-33 tracks the automated check that would keep the probe sites
-and the manifest from drifting apart again.
+reason in the `undeclared` map at the top of `dependencies.json`.
+
+## Terminal and file-manager resolution
+
+VGS resolves a terminal in exactly one place: `bin/vshell-helper`, reached from
+everywhere else through the `vshell terminal` CLI. QML, plugin JS, bash and the
+Go backend all call it; none of them names a terminal binary, and nothing
+outside it invokes `xdg-terminal-exec` or `uwsm`.
+
+```bash
+vshell terminal resolve [--json] [--prefer TERM]  # what would be used, and why
+vshell terminal open [--app-id ID]                # a terminal window
+vshell terminal exec [--app-id ID|--tui] [--hold] [--wait] [--prefer TERM] \
+                     -- <cmd> [args...]
+```
+
+The chain, most preferred first:
+
+| Source | Where it comes from |
+|--------|---------------------|
+| `--prefer` | a terminal the caller already resolved and must not have discarded (the backend's `upgradeParams.terminal`) |
+| `terminalOverride` | Settings -> Launcher terminal picker, stored in `session.json` |
+| `$TERMINAL` | the session environment |
+| `xdg-terminal-exec` | the full XDG terminal spec, when it happens to be installed |
+| `xdg-terminals.list` | the same user choice, parsed directly — Settings -> Default Apps -> Terminal writes this file |
+| installed terminals | `TERMINAL_CANDIDATES` in the helper, mirrored by the `terminal` feature group |
+
+`xdg-terminal-exec` is **AUR-only**, so it is an alternative and never a
+requirement: a default install with any terminal at all works. It is
+deliberately *not* one of the `terminal` feature group's alternatives — it
+launches a terminal rather than being one, so counting it would report the
+group available on a machine with no terminal installed, which is the VGS-54
+defect in a new costume. It sits in the `undeclared` map with that reason. Each terminal's
+argv shape (`-e` vs `--`, `--class=` vs `--app-id=` vs `-class`) lives in
+`TERMINAL_SPECS`; a terminal with no app-id equivalent has the app-id dropped
+rather than passed as an option it would reject. `uwsm app --` is prepended only
+when uwsm is present and the session is systemd — it is an enhancement, and
+hardcoding it is what made every VGS terminal action fail with
+`command not found` on installs without it (VGS-54). Because presence does not
+prove the session can use it, usability is settled once per process with a
+`uwsm app -- true` probe rather than by watching the payload die — retrying the
+payload unscoped would run the user's command twice. `VSHELL_NO_APP_SCOPE=1`
+turns it off outright (the capture and screensaver scripts honour the same
+variable).
+
+A terminal that exits within the settle window only means the *terminal* failed
+when the payload cannot itself exit fast, which is what `--hold`'s wrapper
+guarantees. Without `--hold` the status belongs to the user's command, so the
+next candidate is **not** tried: retrying would flash a window and re-run that
+command once per installed terminal.
+
+Failures reach the user, not just stderr. Every call site launches through
+`Quickshell.execDetached`, which discards output and exit status, so
+`vshell terminal` reports "no terminal found" through the shell's toast IPC,
+falling back to `notify-send`. A button that cannot work has to say so — a
+silent no-op is worse than the `command not found` toast VGS-54 was reported
+for.
+
+By default `vshell terminal exec` returns as soon as the window is up. A caller
+that treats that exit as "the command finished" — the backend's upgrade
+supervisor does, and would otherwise permit a second package-manager run on top
+of a live one — must pass `--wait`, which blocks for the terminal's whole
+lifetime and returns its status.
+
+Granting passwordless sudo needs a terminal to prompt in; reading status and
+**revoking** a grant do not. The widget gates on `vshell sudo-toggle status`
+rather than on `deps`, so the safety valve works either way — but the two halves
+are separate feature groups (`sudo-toggle`, `sudo-toggle-grant`) so that
+`vshell deps status` says the same thing the runtime does. Collapsing them would
+have the reporting layer tell a terminal-less user they cannot take back a grant
+they can always take back (VGS-11).
+
+The file manager follows the same rule: `xdg-mime query default inode/directory`
+first — the XDG layer Settings -> Default Apps writes — then the installed
+candidates in the `file-manager` group. An entry with `Terminal=true` (yazi,
+ranger, lf) is opened through the terminal resolver, so a TUI default is a
+legitimate choice rather than a folder that never opens.

@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -48,13 +49,50 @@ func TestUpgradeCommandModes(t *testing.T) {
 }
 
 func TestTerminalArgvKeepsShellCommandPosition(t *testing.T) {
-	m := &Manager{uwsm: "/usr/bin/uwsm", terminalExec: "/usr/bin/xdg-terminal-exec"}
+	m := &Manager{vshell: "/usr/bin/vshell"}
 	argv, err := m.terminalArgv("", "printf harmless")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(argv) < 4 || argv[len(argv)-4] != "sh" || argv[len(argv)-3] != "-lc" || argv[len(argv)-2] != "printf harmless" || argv[len(argv)-1] != "vshell-update" {
 		t.Fatalf("terminal argv tail = %#v, want sh -lc <command> <argv0>", argv)
+	}
+}
+
+// waitUpgrade treats the launched process exiting as the upgrade finishing, so
+// the helper must be told to stay alive for the terminal's whole lifetime.
+// Without this the phase returns to idle while pacman is still running and a
+// second upgrade can be started on top of it.
+func TestTerminalArgvWaitsForTheUpgradeToFinish(t *testing.T) {
+	m := &Manager{vshell: "/usr/bin/vshell"}
+	argv, err := m.terminalArgv("", "printf harmless")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !contains(strings.Join(argv, " "), "--wait") {
+		t.Fatalf("terminal argv = %#v, want --wait", argv)
+	}
+}
+
+// An explicit terminal from upgradeParams must reach the resolver rather than
+// being dropped because the CLI happens to be on PATH.
+func TestTerminalArgvForwardsTheCallersTerminal(t *testing.T) {
+	m := &Manager{vshell: "/usr/bin/vshell"}
+	argv, err := m.terminalArgv("foot", "printf harmless")
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for i, arg := range argv {
+		if arg == "--prefer" && i+1 < len(argv) && argv[i+1] == "foot" {
+			found = true
+		}
+		if arg == "--" {
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("terminal argv = %#v, want --prefer foot before --", argv)
 	}
 }
 

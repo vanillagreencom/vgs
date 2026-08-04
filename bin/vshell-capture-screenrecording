@@ -96,21 +96,24 @@ focus_restore() {
   hyprctl dispatch "hl.dsp.focus({window=\"address:$addr\"})" >/dev/null 2>&1 || true
 }
 
-open_folder() {
-  local dir="$1"
-  if command -v yazi-scratchpad-open >/dev/null 2>&1; then
-    uwsm app -- yazi-scratchpad-open "$dir"
+# uwsm launches an app into its own systemd scope. It is an enhancement, not a
+# requirement, so it is only used when the session actually has it: hardcoding
+# the prefix is what made VGS actions fail with `command not found` on installs
+# without it (VGS-54).
+app_scope() {
+  if [[ -z ${VSHELL_NO_APP_SCOPE:-} ]] && command -v uwsm >/dev/null 2>&1; then
+    uwsm app -- "$@"
   else
-    uwsm app -- xdg-open "$dir"
+    "$@"
   fi
 }
 
-transcode_media() {
-  local file="$1"
-  if command -v vshell-transcode >/dev/null 2>&1; then
-    uwsm app -- xdg-terminal-exec --app-id=TUI.float -e vshell-transcode "$file"
+open_folder() {
+  local dir="$1"
+  if command -v yazi-scratchpad-open >/dev/null 2>&1; then
+    app_scope yazi-scratchpad-open "$dir"
   else
-    uwsm app -- xdg-open "$file"
+    app_scope xdg-open "$dir"
   fi
 }
 
@@ -253,8 +256,7 @@ stop_recording() {
         "$final" \
         -t 10000 \
         -A "open=Open" \
-        -A "folder=Open Folder" \
-        -A "transcode=Transcode")
+        -A "folder=Open Folder")
     else
       action=$(notify-send \
         --app-name "Screen Recording" \
@@ -264,13 +266,11 @@ stop_recording() {
         "$final" \
         -t 10000 \
         -A "open=Open" \
-        -A "folder=Open Folder" \
-        -A "transcode=Transcode")
+        -A "folder=Open Folder")
     fi
     case "$action" in
-      open) uwsm app -- xdg-open "$final" ;;
+      open) app_scope xdg-open "$final" ;;
       folder) open_folder "$(dirname "$final")" ;;
-      transcode) transcode_media "$final" ;;
     esac
   ) >/dev/null 2>&1 &
 

@@ -158,7 +158,9 @@ Item {
     }
 
     function getDefaultTerminal() {
-        // Run xdg-terminal-exec to get the default terminal
+        // Read back what this tab writes: the first entry of
+        // xdg-terminals.list. `vshell terminal` resolves the effective terminal
+        // from this same file (VGS-32); nothing here invokes a terminal.
         const proc = xdgGetDefaultTerminal.createObject(root, {
             running: true
         });
@@ -334,7 +336,7 @@ Item {
                     text: I18n.tr("Terminal", "Terminal")
                     category: root.appCategory.Terminal
                     tags: ["terminal", "console"]
-                    description: I18n.tr("Used for xdg-terminal-exec", "Used for xdg-terminal-exec")
+                    description: I18n.tr("Used whenever VGS opens a terminal", "Used whenever VGS opens a terminal")
                 }
                 AppSelector {
                     text: I18n.tr("Calendar", "Calendar")

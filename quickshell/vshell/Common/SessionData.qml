@@ -35,28 +35,32 @@ Singleton {
     property bool isSwitchingMode: false
     property bool suppressOSD: true
 
+    // Terminal resolution has exactly one owner: `vshell terminal` (VGS-32).
+    // Nothing in QML picks a terminal — this list only populates the Settings
+    // picker, and it is what the resolver itself found, in its own order.
+    // `terminalOverride` is a stored preference the resolver reads back out of
+    // session.json; it is not resolved here.
     readonly property var terminalOptions: ["ghostty", "kitty", "foot", "alacritty", "wezterm", "konsole", "gnome-terminal", "xterm"]
     property var installedTerminals: []
-
-    function resolveTerminal() {
-        if (terminalOverride && terminalOverride.length > 0) {
-            return terminalOverride;
-        }
-        const env = Quickshell.env("TERMINAL");
-        if (env && env.length > 0) {
-            return env;
-        }
-        return "";
-    }
 
     Process {
         id: terminalProbe
         running: true
-        command: ["sh", "-c", "for t in ghostty kitty foot alacritty wezterm konsole gnome-terminal xterm; do command -v \"$t\" >/dev/null 2>&1 && echo \"$t\"; done"]
+        command: [Paths.vshellCli, "terminal", "resolve", "--json"]
         stdout: StdioCollector {
             onStreamFinished: {
-                const found = text.trim().split("\n").filter(line => line.length > 0);
-                root.installedTerminals = found;
+                try {
+                    const payload = JSON.parse(text || "{}");
+                    const seen = [];
+                    for (const candidate of (payload.candidates || [])) {
+                        const exe = String(candidate[0] || "").split("/").pop();
+                        if (exe && exe !== "xdg-terminal-exec" && seen.indexOf(exe) === -1)
+                            seen.push(exe);
+                    }
+                    root.installedTerminals = seen;
+                } catch (e) {
+                    root.installedTerminals = [];
+                }
             }
         }
     }

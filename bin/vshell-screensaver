@@ -118,6 +118,12 @@ cmd_stop() {
     done
 }
 
+# The uwsm systemd scope is optional here for the same reason it is in the
+# capture scripts, and honours the same VSHELL_NO_APP_SCOPE opt-out.
+_use_app_scope() {
+  [[ -z ${VSHELL_NO_APP_SCOPE:-} ]] && command -v uwsm >/dev/null 2>&1
+}
+
 cmd_launch() {
   command -v tte >/dev/null 2>&1 || exit 1
   command -v ghostty >/dev/null 2>&1 || exit 1
@@ -145,7 +151,7 @@ cmd_launch() {
   local focused_monitor launch_cmd
   if ((IS_NIRI)); then
     local -a niri_launch
-    if command -v uwsm >/dev/null 2>&1; then
+    if _use_app_scope; then
       niri_launch=(uwsm app -- ghostty)
     else
       niri_launch=(ghostty)
@@ -171,7 +177,11 @@ cmd_launch() {
     return 0
   fi
   focused_monitor="$(hyprctl monitors -j | jq -r '.[] | select(.focused == true) | .name' | head -n1)"
-  launch_cmd="uwsm app -- ghostty --class=$CLASS --title=Screensaver --config-file=$GHOSTTY_CONF --font-size=18 -e vshell screensaver run"
+  local launch_prefix=""
+  if _use_app_scope; then
+    launch_prefix="uwsm app -- "
+  fi
+  launch_cmd="${launch_prefix}ghostty --class=$CLASS --title=Screensaver --config-file=$GHOSTTY_CONF --font-size=18 -e vshell screensaver run"
 
   hyprctl monitors -j |
     jq -r '.[] | select(.disabled == false) | .name' |

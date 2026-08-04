@@ -165,7 +165,7 @@ var items = [
         subtitle: "Run configured repo package update",
         icon: "\uf0aa",
         keywords: ["pacman", "update", "upgrade", "system"],
-        argv: ["uwsm", "app", "--", "xdg-terminal-exec", "--app-id=TUI.float", "-e", "{vshell}", "update", "run", "system"]
+        argv: ["{vshell}", "terminal", "exec", "--tui", "--hold", "--", "{vshell}", "update", "run", "system"]
     },
     {
         category: "system",
@@ -173,7 +173,7 @@ var items = [
         subtitle: "Run configured AUR package update if available",
         icon: "\uf0ab",
         keywords: ["aur", "paru", "update", "upgrade"],
-        argv: ["uwsm", "app", "--", "xdg-terminal-exec", "--app-id=TUI.float", "-e", "{vshell}", "update", "run", "aur"]
+        argv: ["{vshell}", "terminal", "exec", "--tui", "--hold", "--", "{vshell}", "update", "run", "aur"]
     },
     {
         category: "system",
@@ -181,7 +181,7 @@ var items = [
         subtitle: "Show VGS feature dependency status",
         icon: "\uf05a",
         keywords: ["deps", "dependencies", "features", "status"],
-        argv: ["uwsm", "app", "--", "xdg-terminal-exec", "--app-id=TUI.float", "-e", "{vshell}", "deps", "status"]
+        argv: ["{vshell}", "terminal", "exec", "--tui", "--hold", "--", "{vshell}", "deps", "status"]
     },
     {
         category: "apps",
@@ -189,7 +189,7 @@ var items = [
         subtitle: "Open default terminal",
         icon: "\uf120",
         keywords: ["terminal", "shell"],
-        argv: ["uwsm", "app", "--", "xdg-terminal-exec"]
+        argv: ["{vshell}", "terminal", "open"]
     },
     {
         category: "apps",
