@@ -22,6 +22,13 @@ import shlex
 import sys
 from pathlib import Path
 
+# The comment- and string-aware shell scanner is shared: counting braces or
+# hunting for `conflicts=` with a plain regex gets fooled by a `}` in a comment
+# or a `)` in a string, and every check that reads a PKGBUILD wants it right.
+sys.path.insert(0, str(Path(__file__).resolve().parent / "lib"))
+from shell_scan import assignments as shell_assignments  # noqa: E402
+from shell_scan import split_scopes  # noqa: E402
+
 ROOT = Path(__file__).resolve().parent.parent
 MANIFEST = ROOT / "config" / "vshell" / "dependencies.json"
 MAPPING = ROOT / "packaging" / "optional-packages.json"
@@ -193,49 +200,31 @@ def _shell_words(fragment: str, path: Path) -> set[str]:
     return set(_shell_word_list(fragment, path))
 
 
-def _shell_scopes(text: str, func: re.Pattern[str]) -> tuple[str, dict[str, str]]:
-    """Split a shell recipe into its top level and each function `func` matches.
-
-    Brace-counted rather than parsed. A recipe whose braces do not balance ends
-    up with its tail attributed to a function, so the main package looks like it
-    declares less than it does — the check then fails, which is the direction a
-    misread has to fail in.
-    """
-    top: list[str] = []
-    bodies: dict[str, list[str]] = {}
-    current: str | None = None
-    depth = 0
-    for line in text.splitlines(keepends=True):
-        if current is None:
-            match = func.match(line)
-            if match:
-                current = match.group(1)
-                bodies.setdefault(current, [])
-                depth = line.count("{") - line.count("}")
-                continue
-            top.append(line)
-            continue
-        depth += line.count("{") - line.count("}")
-        if depth <= 0:
-            current = None
-            continue
-        bodies[current].append(line)
-    return "".join(top), {name: "".join(body) for name, body in bodies.items()}
+def _shell_ordered(text: str, name: str, path: Path) -> list[str]:
+    """The words of the first `name=` assignment, in file order, or []."""
+    try:
+        fragments = shell_assignments(text, name)
+    except ValueError as error:
+        raise GenError(f"{path}: cannot read {name}=: {error}") from error
+    return _shell_word_list(fragments[0], path) if fragments else []
 
 
 def _shell_assignment(text: str, name: str, path: Path) -> set[str] | None:
-    """Every value assigned to `name`, or None when it is never assigned.
+    """Every value assigned to `name` in `text`, or None when it is never assigned.
 
     None and the empty set are different answers: an unassigned variable in a
     package function inherits the top-level one, an assigned-but-empty one
     overrides it with nothing.
     """
-    values: set[str] | None = None
-    pattern = rf"^[ \t]*{re.escape(name)}=(?:\(([^)]*)\)|\"([^\"]*)\"|(\S+))"
-    for match in re.finditer(pattern, text, re.MULTILINE):
-        if values is None:
-            values = set()
-        values |= _shell_words(next(g for g in match.groups() if g is not None), path)
+    try:
+        fragments = shell_assignments(text, name)
+    except ValueError as error:
+        raise GenError(f"{path}: cannot read {name}=: {error}") from error
+    if fragments is None:
+        return None
+    values: set[str] = set()
+    for fragment in fragments:
+        values |= _shell_words(fragment, path)
     return values
 
 
@@ -249,19 +238,14 @@ def _pkgbuild_conflicts(text: str, path: Path) -> set[str]:
     subpackage keep satisfying the check for the package that no longer
     conflicts with it.
     """
-    base = re.search(r"^pkgbase=(\S+)", text, re.MULTILINE)
-    if base is not None:
-        main = _shell_word_list(base.group(1), path)[0]
-    else:
-        # Without pkgbase, makepkg takes the FIRST pkgname as the base, so the
-        # order matters and the word list has to stay a list.
-        listed = re.search(r"^pkgname=(?:\(([^)]*)\)|(\S+))", text, re.MULTILINE)
-        names = _shell_word_list(listed.group(1) or listed.group(2), path) if listed else []
-        if not names:
-            raise GenError(f"{path}: no pkgbase= or pkgname= to identify the main package")
-        main = names[0]
+    # Without pkgbase, makepkg takes the FIRST pkgname as the base, so the order
+    # matters and these have to stay lists.
+    names = _shell_ordered(text, "pkgbase", path) or _shell_ordered(text, "pkgname", path)
+    if not names:
+        raise GenError(f"{path}: no pkgbase= or pkgname= to identify the main package")
+    main = names[0]
 
-    top, functions = _shell_scopes(text, re.compile(r"^(package(?:_[\w.+-]+)?)\s*\(\)"))
+    top, functions = split_scopes(text, re.compile(r"^(package(?:_[\w.+-]+)?)\s*\(\)"))
     body = functions.get(f"package_{main}", functions.get("package"))
     if body is None and functions:
         raise GenError(
@@ -397,9 +381,9 @@ def _template_conflicts(text: str, path: Path) -> set[str]:
     xbps subpackages are `<name>_package()` functions that set their own
     `conflicts`; only the top-level assignment is the main package's.
     """
-    if re.search(r"^pkgname=(\S+)", text, re.MULTILINE) is None:
+    if not _shell_ordered(text, "pkgname", path):
         raise GenError(f"{path}: no pkgname= to identify the main package")
-    top, _ = _shell_scopes(text, re.compile(r"^([\w.+-]+)\s*\(\)"))
+    top, _ = split_scopes(text, re.compile(r"^([\w.+-]+)\s*\(\)"))
     values = _shell_assignment(top, "conflicts", path) or set()
     return {_strip_relation(value) for value in values}
 
