@@ -214,7 +214,7 @@ Do not add legacy runtime calls.
 ### Core and the vgsMenu plugin
 The app launcher is a bundled plugin that core cannot do without, so the edge
 between them is one-way and named at both ends. See
-[D001](../decisions/D001-overview-search-ownership-and-plugin-boundary.md).
+[D004](../decisions/D004-overview-search-ownership-and-plugin-boundary.md).
 
 **Core → plugin** goes through a single seam in `PluginService`:
 `appLauncherPluginId`, `toggleAppLauncher()`, `appLauncherOpen`. The dock
