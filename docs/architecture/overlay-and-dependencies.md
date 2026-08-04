@@ -98,10 +98,18 @@ vshell deps status --json
 vshell deps check capture --json
 ```
 
-The `undeclared` map at the top of the file records commands `bin/vshell-helper`
-probes but deliberately does not declare, one reason each. Nothing reads it at
-runtime; it is what tells a deliberate exclusion from drift. Adding a new probe
-means declaring the command under `features` or adding it there.
+The `undeclared` map at the top of the file records commands shipped code probes
+but deliberately does not declare, one reason each. Nothing reads it at runtime;
+it is what tells a deliberate exclusion from drift. Adding a new probe means
+declaring the command under `features` or adding it there.
+
+`scripts/check-command-declarations.py` enforces that, in both directions: a
+probe that is neither declared nor excluded fails, and so does an exclusion for
+a command nothing probes any more. It scans `shutil.which()` in shipped Python,
+`command -v` in shipped shell, and argv-head literals in shipped QML/JS. Its
+coverage boundary — including what it deliberately does not scan, such as argv
+built from a variable and the inside of an `sh -c` payload — is written in the
+script's module docstring.
 
 Manifest entries use `commands` for unconditional tools, `anyCommands` for
 same-purpose alternatives, `compositorCommands` for complete
@@ -147,6 +155,15 @@ Feature groups:
 | `app-scopes` | Launching apps into their own systemd scope (`uwsm`) |
 | `cloud-sync` | Cloud file sync (rclone) |
 | `cloud-sync-stream` | Cloud sync streaming FUSE mounts |
+| `desktop-integration` | Opening files and URLs in their default application (xdg-utils, desktop-file-utils) |
+| `system-monitor` | CPU, GPU, memory and process widgets (dgop) |
+| `audio-visualizer` | Audio visualizer widget (cava) |
+| `calendar` | Calendar events in the dash (khal) |
+| `bluetooth-codecs` | Bluetooth audio codec selection (pactl) |
+| `launcher-type-out` | Launcher type-out into the focused window (wtype) |
+| `fingerprint-auth` | Fingerprint unlock on the lock screen and greeter (fprintd) |
+| `theme-qt` | Qt application theming (qt6ct/qt5ct) |
+| `polkit` | Privileged actions run from the shell (pkexec) |
 
 ## Packaging metadata
 The manifest is also what the native packages advertise as optional
@@ -187,11 +204,19 @@ an action they cannot perform:
 | `bin/vshell-capture-screenshot` § `open_folder` | `yazi-scratchpad-open` |
 | `bin/vshell-capture-screenrecording` § `open_folder` | `yazi-scratchpad-open` |
 
-**Target (not yet true).** Every distribution-installable command that gates
-user-facing behaviour should be declared under `features` in
-`dependencies.json`, so `vshell deps status` can report it. The tree does not
-satisfy this yet. Commands deliberately left undeclared are listed with their
-reason in the `undeclared` map at the top of `dependencies.json`.
+**Rule (enforced).** Every distribution-installable command that gates
+user-facing behaviour is declared under `features` in `dependencies.json`, so
+`vshell deps status` can report it. Commands deliberately left undeclared are
+listed with their reason in the `undeclared` map at the top of the file, and
+`scripts/check-command-declarations.py` fails on anything in neither place —
+and on a stale exclusion for a command nothing probes any more.
+
+One class of entry in that map is a debt rather than a settled decision, and
+the map is where it stays visible: `mmsg` and `yazi-scratchpad-open` are probes
+for commands VGS neither ships nor supports — `mmsg` is miracle-wm IPC, which
+can never succeed on a Hyprland or Niri session. Each falls back rather than
+advertising an action it cannot perform, but each should be removed rather than
+declared.
 
 ## Terminal and file-manager resolution
 

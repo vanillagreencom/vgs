@@ -2,12 +2,12 @@
   "version": 2,
   "undeclared": {
     "$comment": [
-      "Commands bin/vshell-helper probes with shutil.which() that are deliberately",
-      "NOT declared as feature dependencies, and why. Nothing reads this at runtime;",
-      "it exists so an audit can tell a deliberate exclusion from drift, and so the",
-      "automated check tracked in VGS-33 has an allow-list to compare the probe sites",
-      "against. Adding a probe for a new command means declaring it under \"features\"",
-      "or adding it here.",
+      "Commands shipped code probes that are deliberately NOT declared as feature",
+      "dependencies, and why. Nothing reads this at runtime; it is the allow-list",
+      "scripts/check-command-declarations.py compares the probe sites against, so an",
+      "audit can tell a deliberate exclusion from drift. Adding a probe for a new",
+      "command means declaring it under \"features\" or adding it here — the check",
+      "fails otherwise, and it fails on a stale entry here that nothing probes.",
       "",
       "`sudo` is absent on purpose: VGS-11 declares it under a sudo-toggle group."
     ],
@@ -22,7 +22,18 @@
     "xclip": "X11 clipboard fallback behind the declared `wl-copy`. Unreachable in a supported Hyprland/Niri session.",
     "xdg-terminal-exec": "First choice of the terminal resolver, but it *launches* a terminal rather than being one: counting it as an alternative in the `terminal` group would report that group available on a system with no terminal at all, which is the VGS-54 defect. AUR-only, so it can never be a requirement either.",
     "g++": "Compiles the vendored third_party/asdcontrol for Apple display brightness. The preferred Apple path is pure-Python hidraw and packaging can ship a prebuilt binary, so a compiler is not a dependency of the feature.",
-    "c++": "Alternative compiler name, same reasoning as `g++`."
+    "c++": "Alternative compiler name, same reasoning as `g++`.",
+    "uwsm": "Deferred to VGS-32, which centralises how VGS launches external apps. Hardcoded today in the vgsMenu catalog and the screensaver launcher; declaring it now would entrench the choice VGS-32 replaces.",
+    "dconf": "Alternative GTK settings backend, probed behind the already-declared `gsettings` (theme-gtk).",
+    "dcal": "Second calendar backend, probed behind the declared `khal`. No distribution packages it, so declaring it would make `deps status` ask for something a user cannot install.",
+    "tte": "terminaltexteffects, the text-effect screensaver renderer. Distributed on PyPI rather than by the distributions VGS packages for, so it has no package name to report; the screensaver falls back to its other modes.",
+    "zellij": "Second multiplexer backend of the `mux` service, alongside the already-excluded `tmux`. Declaring it would tell every user to install a multiplexer.",
+    "go": "Builds the Go backend from source when no prebuilt binary is present. A packaging and development path with an already-built-binary fallback, not a runtime feature.",
+    "nvidia-offload": "Distro-provided dGPU offload wrapper, probed opportunistically when launching an app. Absent by design on a machine without an NVIDIA GPU.",
+    "prime-run": "Same as `nvidia-offload`; the other common wrapper name.",
+    "secret-tool": "Optional round-trip verification inside the keyring bootstrap, already behind its own `command -v` guard. The keyring itself is `gnome-keyring-daemon`, declared under `greeter`.",
+    "mmsg": "miracle-wm IPC, reached by the bar's Overview pill. VGS targets Hyprland or Niri only, so this probe can never succeed on a supported session: an unsupported-compositor leftover to remove, not a dependency to declare.",
+    "yazi-scratchpad-open": "Not shipped by VGS: a personal-overlay script reached by the capture helpers, behind a fallback. Recorded so the audit keeps seeing it; the same overlay-and-dependencies.md rule applies."
   },
   "features": {
     "base": {
@@ -271,6 +282,56 @@
           "fusermount3",
           "fusermount"
         ]
+      ]
+    },
+    "desktop-integration": {
+      "commands": [
+        "xdg-open",
+        "xdg-mime",
+        "update-desktop-database"
+      ]
+    },
+    "system-monitor": {
+      "commands": [
+        "dgop"
+      ]
+    },
+    "audio-visualizer": {
+      "commands": [
+        "cava"
+      ]
+    },
+    "calendar": {
+      "commands": [
+        "khal"
+      ]
+    },
+    "bluetooth-codecs": {
+      "commands": [
+        "pactl"
+      ]
+    },
+    "launcher-type-out": {
+      "commands": [
+        "wtype"
+      ]
+    },
+    "fingerprint-auth": {
+      "commands": [
+        "fprintd-list"
+      ]
+    },
+    "theme-qt": {
+      "anyCommands": [
+        [
+          "qt6ct",
+          "qt5ct"
+        ]
+      ]
+    },
+    "polkit": {
+      "commands": [
+        "pkexec"
       ]
     }
   }
