@@ -70,6 +70,12 @@ Item {
     readonly property bool hasHorizontalPill: horizontalBarPill !== null
     readonly property bool hasVerticalPill: verticalBarPill !== null
     readonly property bool hasPopout: popoutContent !== null
+    // What triggerHoverPopout will actually do, as a property the bar can read
+    // before arming a hover cycle. Mirrors the two branches below: run the pill
+    // action if the widget opted in, otherwise open the popout if there is one.
+    // Every PluginComponent exposes triggerHoverPopout, so its mere existence
+    // says nothing about whether hovering has an effect — this does.
+    readonly property bool respondsToHover: (pillClickAction && pillClickOnHover) || hasPopout
 
     readonly property int iconSize: Theme.barIconSize(barThickness, -4, root.barConfig?.maximizeWidgetIcons, root.barConfig?.iconScale)
     readonly property int iconSizeLarge: Theme.barIconSize(barThickness, undefined, root.barConfig?.maximizeWidgetIcons, root.barConfig?.iconScale)

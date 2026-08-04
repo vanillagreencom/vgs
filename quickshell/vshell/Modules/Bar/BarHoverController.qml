@@ -184,17 +184,33 @@ Item {
         }
     }
 
-    function _watchCandidateObject(object) {
+    function _hasCandidateWatcher(object, signalName) {
+        for (let i = 0; i < _candidateWatchers.length; i++) {
+            const watcher = _candidateWatchers[i];
+            if (watcher.object === object && watcher.signalName === signalName)
+                return true;
+        }
+        return false;
+    }
+
+    // A widget that does nothing on hover is filtered out of the candidate list,
+    // so it never reaches the full watch in _buildCandidateCache — and nothing
+    // would notice it later gaining a popout or a hover opt-in. Watch the one
+    // signal that would change that answer before rejecting it, so the false to
+    // true transition invalidates the cache and hover becomes available.
+    function _watchHoverCapability(object) {
+        _watchCandidateObject(object, ["respondsToHoverChanged"]);
+    }
+
+    function _watchCandidateObject(object, onlySignals) {
         if (!object)
             return;
-        for (let i = 0; i < _candidateWatchers.length; i++) {
-            if (_candidateWatchers[i].object === object)
-                return;
-        }
 
-        const signalNames = ["xChanged", "yChanged", "widthChanged", "heightChanged", "visibleChanged", "parentChanged", "childrenChanged", "itemChanged", "activeChanged", "destroyed"];
+        const signalNames = onlySignals || ["xChanged", "yChanged", "widthChanged", "heightChanged", "visibleChanged", "parentChanged", "childrenChanged", "itemChanged", "activeChanged", "respondsToHoverChanged", "destroyed"];
         for (let i = 0; i < signalNames.length; i++) {
             const signalName = signalNames[i];
+            if (_hasCandidateWatcher(object, signalName))
+                continue;
             try {
                 const signal = object[signalName];
                 if (!signal || typeof signal.connect !== "function")
@@ -296,8 +312,16 @@ Item {
     function _widgetSupportsHoverPopout(widgetId, widgetItem) {
         if (!widgetId || !widgetItem)
             return false;
-        if (typeof widgetItem.triggerHoverPopout === "function")
+        if (typeof widgetItem.triggerHoverPopout === "function") {
+            // Every PluginComponent has the method, including widgets whose
+            // hover path is a no-op since hover-activation became opt-in — so
+            // the method's presence is a shape check, not a capability check.
+            // respondsToHover is the capability; only fall back to the shape
+            // when an implementer does not publish one.
+            if (widgetItem.respondsToHover !== undefined)
+                return widgetItem.respondsToHover === true;
             return true;
+        }
         if (widgetId === "systemTray" && typeof widgetItem.openHoverAtGlobalPoint === "function")
             return true;
         switch (widgetId) {
@@ -358,6 +382,7 @@ Item {
                 return;
             if (!root._itemBelongsToThisBar(widgetItem))
                 return;
+            root._watchHoverCapability(widgetItem);
             if (!root._widgetSupportsHoverPopout(widgetId, widgetItem))
                 return;
             if (!root.barContent.getWidgetVisible(widgetId))
@@ -399,6 +424,7 @@ Item {
                     existing.section = entry.section;
                 continue;
             }
+            _watchHoverCapability(entry.host.item);
             if (!_widgetSupportsHoverPopout(entry.host.widgetId, entry.host.item))
                 continue;
             candidates.push({
@@ -719,6 +745,11 @@ Item {
         }
 
         if (typeof widgetItem.triggerHoverPopout === "function") {
+            // Candidate collection already filters these out, but reporting
+            // "opened" for a widget that does nothing would make a stale hit
+            // look like a live popout to the caller.
+            if (widgetItem.respondsToHover !== undefined && widgetItem.respondsToHover !== true)
+                return false;
             widgetItem.triggerHoverPopout(hit.widgetId);
             return true;
         }
@@ -742,7 +773,6 @@ Item {
                     loader,
                     tabIndex,
                     triggerSource: dashTriggerSource(section, tabIndex),
-                    useCenterSection: true,
                     setTriggerScreen: true
                 }));
             }

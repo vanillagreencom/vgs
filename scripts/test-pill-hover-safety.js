@@ -37,9 +37,11 @@ const repoRoot = path.join(__dirname, "..");
 const COMPONENT = path.join(repoRoot, "quickshell", "vshell", "Modules", "Plugins", "PluginComponent.qml");
 const SCREEN_RECORD = path.join(repoRoot, "config", "vshell", "plugins", "screenRecord", "ScreenRecordWidget.qml");
 const PLUGIN_ROOT = path.join(repoRoot, "config", "vshell", "plugins");
+const HOVER_CONTROLLER = path.join(repoRoot, "quickshell", "vshell", "Modules", "Bar", "BarHoverController.qml");
 
 const component = fs.readFileSync(COMPONENT, "utf8");
 const screenRecord = fs.readFileSync(SCREEN_RECORD, "utf8");
+const hoverController = fs.readFileSync(HOVER_CONTROLLER, "utf8");
 
 // Strip comments, optionally blank out string contents, and collapse
 // whitespace, so the checks below match expressions rather than lines. Single
@@ -268,5 +270,151 @@ assert.equal(pillActionFor("ipc", false, false), "chooser",
 // Countdown takes precedence over recording, as the shipped order does.
 assert.equal(pillActionFor("click", true, true), "cancel",
     "a countdown must be cancelled before a recording is stopped");
+
+// --- 5. The bar asks whether hover does anything, not whether it can ---------
+
+// VGS-37. Opting out of hover-activation (section 1) left every PluginComponent
+// still exposing triggerHoverPopout, and BarHoverController read that method's
+// existence as the capability — so it armed a hover cycle for widgets whose
+// hover path returns immediately. Harmless, but it is precisely the confusion
+// that let the VGS-36 defect hide: a shape check wearing a capability check's
+// name. respondsToHover is the capability; these pin both halves of it.
+
+const controllerText = normalise(hoverController);
+
+// The declared capability, evaluated rather than string-matched: extract the
+// shipped expression and run it over the four states a widget can be in. A
+// substring assertion would pass for any rearrangement that happens to contain
+// the same words, including ones that invert the meaning.
+const respondsDecl = componentText.match(
+    /readonly property bool respondsToHover: (.+?)(?= readonly | property | function | signal |$)/
+);
+assert.ok(respondsDecl,
+    "PluginComponent must declare respondsToHover — the bar has nothing else to ask");
+
+const respondsToHover = new Function(
+    "pillClickAction", "pillClickOnHover", "hasPopout",
+    `return !!(${respondsDecl[1].trim()});`
+);
+
+// The VGS-36 shape: an action pill that deliberately does nothing on hover.
+assert.equal(respondsToHover(() => {}, false, false), false,
+    "a widget with a pill action and no hover opt-in and no popout does nothing on hover");
+// The opt-in still means what it says.
+assert.equal(respondsToHover(() => {}, true, false), true,
+    "a widget that opted into hover-activation does respond to hover");
+// A plain popout widget is unaffected — the no-behaviour-change half of VGS-37.
+assert.equal(respondsToHover(null, false, true), true,
+    "a popout widget must keep responding to hover");
+assert.equal(respondsToHover(() => {}, false, true), true,
+    "an opted-out action pill that also has a popout still opens the popout on hover");
+// Nothing to do at all.
+assert.equal(respondsToHover(null, false, false), false,
+    "a widget with neither an opt-in nor a popout does nothing on hover");
+
+// And the bar must actually consult it. The old predicate was a bare
+// `return true` under the typeof check; this fails if that comes back.
+const presentInController = (needle, message) =>
+    assert.ok(controllerText.includes(needle), `${message} (looked for: ${needle})`);
+
+presentInController('if (widgetItem.respondsToHover !== undefined) return widgetItem.respondsToHover === true;',
+    "_widgetSupportsHoverPopout must report the widget's real hover capability, not the method's existence");
+
+assert.ok(
+    !/typeof widgetItem\.triggerHoverPopout === "function"\) return true;/.test(controllerText),
+    "the method's presence alone must not arm a hover cycle — that is the shape check VGS-37 removed"
+);
+
+// --- 6. A widget that gains hover capability must be noticed -----------------
+
+// The other edge of section 5. Making the predicate a real capability check
+// means a widget can now be rejected for a reason that changes at runtime: a
+// fixed-geometry plugin whose respondsToHover flips false to true. The rejection
+// happens before the candidate is watched, so unless the capability signal is
+// connected on the way past, the cache stays valid and hover never becomes
+// available for that widget until some unrelated invalidation happens to land.
+
+// Brace-matched extraction on the normalised source, so the shipped functions
+// run here rather than being string-matched. Same reasoning as respondsToHover
+// above: a rearrangement that inverts the meaning must fail, not pass.
+function extractFunction(text, name) {
+    const start = text.indexOf(`function ${name}(`);
+    assert.notEqual(start, -1, `BarHoverController must still define ${name}`);
+    let depth = 0;
+    for (let i = text.indexOf("{", start); i < text.length; i++) {
+        if (text[i] === "{") depth++;
+        else if (text[i] === "}" && --depth === 0) return text.slice(start, i + 1);
+    }
+    throw new Error(`unbalanced braces extracting ${name}`);
+}
+
+// The predicate is self-contained; addCandidate is run against it plus stubs for
+// the collaborators it reaches through `root`.
+const supportsSrc = extractFunction(controllerText, "_widgetSupportsHoverPopout");
+const addCandidateSrc = extractFunction(controllerText, "addCandidate");
+
+function runAddCandidate(widgetItem) {
+    const watched = [];
+    const candidates = [];
+    const seen = new Set();
+    const root = {
+        _itemBelongsToThisBar: () => true,
+        _watchHoverCapability: item => watched.push(item),
+        barContent: { getWidgetVisible: () => true }
+    };
+    const harness = new Function(
+        "root", "candidates", "seen",
+        `${supportsSrc}\nroot._widgetSupportsHoverPopout = _widgetSupportsHoverPopout;\n` +
+        `${addCandidateSrc}\nreturn addCandidate;`
+    )(root, candidates, seen);
+    harness("fixedGeometryPlugin", widgetItem, "right");
+    return { watched, candidates };
+}
+
+// A PluginComponent that currently does nothing on hover: still not a candidate
+// (VGS-37 stands), but watched, so the transition below can be seen at all.
+const inert = { triggerHoverPopout() {}, respondsToHover: false };
+const inertRun = runAddCandidate(inert);
+assert.deepEqual(inertRun.candidates, [],
+    "a widget that does nothing on hover must still not get a hover cycle armed");
+assert.ok(inertRun.watched.includes(inert),
+    "a widget rejected for not responding to hover must be watched anyway, or its " +
+    "respondsToHover flipping to true can never invalidate the candidate cache");
+
+// The same widget after the flip is a candidate, and watching it twice is not a
+// precondition for that — the watch is about noticing, not about admission.
+const live = { triggerHoverPopout() {}, respondsToHover: true };
+const liveRun = runAddCandidate(live);
+assert.equal(liveRun.candidates.length, 1,
+    "a widget that responds to hover must become a candidate");
+assert.equal(liveRun.candidates[0].widgetItem, live);
+
+// The watch is worth nothing if it does not carry the signal that changes the
+// answer. Both lists must name it: the capability-only watch used on rejected
+// widgets, and the full watch a cached candidate gets.
+const capabilityWatch = extractFunction(controllerText, "_watchHoverCapability");
+assert.ok(/respondsToHoverChanged/.test(capabilityWatch),
+    "_watchHoverCapability must connect respondsToHoverChanged — it is the only " +
+    "signal that can change a rejected widget's answer");
+const fullWatch = extractFunction(controllerText, "_watchCandidateObject");
+assert.ok(/respondsToHoverChanged/.test(fullWatch),
+    "the default watch list must include respondsToHoverChanged so a cached " +
+    "candidate losing its hover behaviour invalidates too");
+
+// Watching per (object, signal) rather than per object, so a widget that was
+// capability-watched on the way past still picks up the geometry signals when it
+// later becomes a real candidate. Watching per object would silently skip them.
+assert.ok(/watcher\.object === object && watcher\.signalName === signalName/.test(controllerText),
+    "watcher de-duplication must be per (object, signal); per-object dedup makes a " +
+    "capability watch suppress the geometry watch that same widget needs later");
+
+// The host-discovery path reaches the same predicate and needs the same
+// ordering. It lives inside _collectHoverCandidates rather than in a function of
+// its own, so this one is positional.
+const hostWatch = controllerText.indexOf("_watchHoverCapability(entry.host.item)");
+const hostFilter = controllerText.indexOf("if (!_widgetSupportsHoverPopout(entry.host.widgetId");
+assert.ok(hostWatch !== -1 && hostFilter !== -1 && hostWatch < hostFilter,
+    "the host-discovery path must watch the widget's hover capability before the " +
+    "predicate filters it out, same as addCandidate");
 
 console.log("pill hover safety: all checks passed");
