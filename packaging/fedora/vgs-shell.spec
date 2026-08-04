@@ -45,8 +45,12 @@ Conflicts:      swaync
 Suggests:       Thunar
 # terminal for VGS terminal actions
 Suggests:       alacritty
+# audio visualizer widget
+Suggests:       cava
 # AI usage widget
 Suggests:       curl
+# desktop-entry cache refresh after installing a web app
+Suggests:       desktop-file-utils
 # file manager for the launcher folder opener
 Suggests:       dolphin
 # faster launcher file search
@@ -59,6 +63,8 @@ Suggests:       ffmpegthumbnailer
 Suggests:       fontconfig
 # terminal for VGS terminal actions
 Suggests:       foot
+# fingerprint unlock
+Suggests:       fprintd
 # cloud sync streaming mounts
 Suggests:       fuse3
 # greeter and keyring integration
@@ -69,6 +75,8 @@ Suggests:       gnome-terminal
 Suggests:       greetd
 # Hyprland compositor support
 Suggests:       hyprland
+# calendar events in the dash
+Suggests:       khal
 # terminal for VGS terminal actions
 Suggests:       kitty
 # terminal for VGS terminal actions
@@ -77,6 +85,14 @@ Suggests:       konsole
 Suggests:       nautilus
 # Niri compositor support
 Suggests:       niri
+# privileged actions run from the shell (user management, some system settings)
+Suggests:       polkit
+# Bluetooth audio codec selection
+Suggests:       pulseaudio-utils
+# Qt 5 application theming
+Suggests:       qt5ct
+# Qt 6 application theming
+Suggests:       qt6ct
 # cloud file sync
 Suggests:       rclone
 # launcher text search
@@ -89,7 +105,9 @@ Suggests:       tesseract
 Suggests:       tesseract-langpack-eng
 # night light
 Suggests:       wlsunset
-# reads and sets default applications
+# launcher type-out into the focused window
+Suggests:       wtype
+# default-application queries, opening files and URLs in their default application
 Suggests:       xdg-utils
 # terminal for VGS terminal actions
 Suggests:       xterm

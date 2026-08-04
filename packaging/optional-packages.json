@@ -165,7 +165,16 @@
     "launcher-folder-open-yazi": "launcher Yazi folder opener",
     "app-scopes": "launching apps into their own systemd scope",
     "cloud-sync": "cloud file sync",
-    "cloud-sync-stream": "cloud sync streaming mounts"
+    "cloud-sync-stream": "cloud sync streaming mounts",
+    "desktop-integration": "opening files and URLs in their default application",
+    "system-monitor": "CPU, GPU, memory and process widgets",
+    "audio-visualizer": "audio visualizer widget",
+    "calendar": "calendar events in the dash",
+    "bluetooth-codecs": "Bluetooth audio codec selection",
+    "launcher-type-out": "launcher type-out into the focused window",
+    "fingerprint-auth": "fingerprint unlock on the lock screen and greeter",
+    "theme-qt": "Qt application theming",
+    "polkit": "privileged actions run from the shell"
   },
   "commands": {
     "qs": { "skip": "quickshell is a hard dependency" },
@@ -488,6 +497,88 @@
       "debian": "fuse3",
       "fedora": "fuse3",
       "gentoo": "sys-fs/fuse"
+    },
+
+    "pkexec": {
+      "description": "privileged actions run from the shell (user management, some system settings)",
+      "arch": "polkit",
+      "debian": "pkexec",
+      "fedora": "polkit",
+      "gentoo": "sys-auth/polkit"
+    },
+
+    "xdg-open": {
+      "description": "opening files and URLs in their default application",
+      "arch": "xdg-utils",
+      "debian": "xdg-utils",
+      "fedora": "xdg-utils",
+      "gentoo": "x11-misc/xdg-utils"
+    },
+    "xdg-mime": {
+      "description": "default-application queries",
+      "arch": "xdg-utils",
+      "debian": "xdg-utils",
+      "fedora": "xdg-utils",
+      "gentoo": "x11-misc/xdg-utils"
+    },
+    "update-desktop-database": {
+      "description": "desktop-entry cache refresh after installing a web app",
+      "arch": "desktop-file-utils",
+      "debian": "desktop-file-utils",
+      "fedora": "desktop-file-utils",
+      "gentoo": "dev-util/desktop-file-utils"
+    },
+    "dgop": {
+      "description": "system metrics for the CPU/GPU/memory widgets and the process list",
+      "arch": "dgop"
+    },
+    "cava": {
+      "description": "audio visualizer widget",
+      "arch": "cava",
+      "debian": "cava",
+      "fedora": "cava",
+      "gentoo": "media-sound/cava"
+    },
+    "khal": {
+      "description": "calendar events in the dash",
+      "arch": "khal",
+      "debian": "khal",
+      "fedora": "khal"
+    },
+    "pactl": {
+      "description": "Bluetooth audio codec selection",
+      "arch": "libpulse",
+      "debian": "pulseaudio-utils",
+      "fedora": "pulseaudio-utils",
+      "gentoo": "media-libs/libpulse"
+    },
+    "wtype": {
+      "description": "launcher type-out into the focused window",
+      "arch": "wtype",
+      "debian": "wtype",
+      "fedora": "wtype",
+      "gentoo": "gui-apps/wtype"
+    },
+    "fprintd-list": {
+      "description": "fingerprint unlock",
+      "arch": "fprintd",
+      "debian": "fprintd",
+      "fedora": "fprintd",
+      "gentoo": "sys-auth/fprintd"
+    },
+    "qt6ct": {
+      "description": "Qt 6 application theming",
+      "arch": "qt6ct",
+      "debian": "qt6ct",
+      "fedora": "qt6ct",
+      "gentoo": "x11-misc/qt6ct"
+    },
+    "qt5ct": {
+      "description": "Qt 5 application theming",
+      "arch": "qt5ct",
+      "debian": "qt5ct",
+      "fedora": "qt5ct",
+      "gentoo": "x11-misc/qt5ct"
     }
   }
 }

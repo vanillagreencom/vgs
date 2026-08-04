@@ -45,6 +45,15 @@ import sys
 LAUNCH = re.compile(r"qs\s+(?:-c\s+vshell|-p\s+\S*quickshell/vshell)")
 NEGATED = re.compile(r"never|do not|don't|must not|refus|instead of|rather than", re.IGNORECASE)
 
+# A negation qualifies the sentence it is in, not the whole line. Scoping it to
+# the sentence is what closes "Never run X. Now run X." — the negation covers
+# the first clause and the trailing instruction is left to be caught. Only
+# sentence-ending punctuation followed by whitespace splits: `:` and `—`
+# introduce a clause the negation still governs ("Never do this: `qs -c vshell`
+# starts a second instance"), and a bare `.` with no space is inside a filename
+# like `qml-smoke.sh`.
+SENTENCE_SPLIT = re.compile(r"(?<=[.;!?])\s+")
+
 # Exemptions name the sanctioned OCCURRENCE, never the file and never the whole
 # line. Each entry is the exact text of a known-good mention, including the
 # command inside it; scan() deletes those spans and re-checks what is left, so an
@@ -80,6 +89,14 @@ ALLOWED_CONTEXTS = {
     ".github/copilot-instructions.md": (
         "`qs -p quickshell/vshell` each start a full second VGS instance",
     ),
+    # The prohibition wraps: "Never suggest validating this repo with `qs -c
+    # vshell` or" ends the line above, so this continuation carries a command
+    # whose negation is on the previous line. Sentence-scoping the negation
+    # (VGS-40) is what surfaced it; it is the same wrapped-continuation shape as
+    # the entries above.
+    ".github/instructions/validation-scripts.instructions.md": (
+        "`qs -p quickshell/vshell` — see",
+    ),
 }
 
 
@@ -113,13 +130,6 @@ def scan(path, lines):
             continue
         if not LAUNCH.search(line):
             continue
-        # KNOWN LIMIT: a negation exempts its whole line, so "Never run X, now
-        # run X" would pass. Unlike an exemption there is no span to scope a
-        # negation to, and this is prose the reader is being warned by, not an
-        # instruction someone appends to. The ALLOWED_CONTEXTS path below is the
-        # one an editor actually touches, and it is span-scoped.
-        if not fenced and NEGATED.search(line):
-            continue
         # Delete the sanctioned occurrences, then re-check what is left. Skipping
         # the whole matched line instead would let a real instruction ride along
         # on the end of a sanctioned one — and these are exactly the lines a doc
@@ -130,6 +140,17 @@ def scan(path, lines):
             remainder = remainder.replace(span, " ")
         if not LAUNCH.search(remainder):
             continue
+        # A negation exempts only the sentence it appears in. Exempting the
+        # whole line — what this did before — meant "Never run X. Now run X."
+        # passed, because the line was negated somewhere. Inside a fence there
+        # is no prose to negate: every line is runnable.
+        if not fenced:
+            unnegated = [
+                clause for clause in SENTENCE_SPLIT.split(remainder)
+                if LAUNCH.search(clause) and not NEGATED.search(clause)
+            ]
+            if not unnegated:
+                continue
         hits.append(number)
     return hits
 
@@ -137,6 +158,18 @@ def scan(path, lines):
 FIXTURES = [
     ("doc.md", ["```bash", "qs -c vshell", "```"], [2]),
     ("doc.md", ["Never run `qs -c vshell` in a live session."], []),
+    # VGS-40: a negation covers its own sentence, not the rest of the line.
+    ("doc.md", ["Never run `qs -c vshell`. Now run `qs -c vshell`."], [1]),
+    ("doc.md", ["Never run `qs -c vshell`; now run `qs -c vshell`."], [1]),
+    # ...and the negated sentence alone still passes when a later sentence is
+    # harmless, so the split did not simply turn every negation into a hit.
+    ("doc.md", ["Never run `qs -c vshell`. Use scripts/qml-smoke.sh instead."], []),
+    # A colon or dash introduces a clause the negation still governs, so those
+    # are not sentence boundaries.
+    ("doc.md", ["Never do this: `qs -c vshell` starts a second full instance."], []),
+    ("doc.md", ["Never do this — `qs -c vshell` starts a second full instance."], []),
+    # A dot inside a filename is not a sentence boundary either.
+    ("doc.md", ["Use scripts/qml-smoke.sh rather than `qs -c vshell`."], []),
     ("doc.md", ["Smoke with `qs -c vshell` before finishing."], [1]),
     ("doc.md", ["```bash", "qs -p /home/me/dev/vgs/quickshell/vshell", "```"], [2]),
     ("skill.md", ["Use scripts/qml-smoke.sh; do not run `qs -p quickshell/vshell`."], []),
@@ -193,6 +226,10 @@ FIXTURES = [
     ("backend/internal/runner/runner.go", [
         "\t// QSArgs are extra args appended after `qs -c vshell`.",
         "\t// QSArgs are extra args appended after `qs -c vshell`. To try it: qs -c vshell",
+    ], [2]),
+    (".github/instructions/validation-scripts.instructions.md", [
+        "`qs -p quickshell/vshell` — see `.github/copilot-instructions.md`. Never",
+        "`qs -p quickshell/vshell` — see the docs, or just run qs -c vshell",
     ], [2]),
     # Two sanctioned commands on one line stay exempt, and a third does not.
     ("scripts/check-vshell-helper.py", [

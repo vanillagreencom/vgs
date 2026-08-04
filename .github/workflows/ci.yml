@@ -69,9 +69,177 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  # THE ONE-JOB RULE HAS TWO DELIBERATE EXCEPTIONS, both structural rather
+  # than economic (VGS-41, the vstack review-gate engine):
+  #
+  #   review-gate      must post a commit status with `statuses: write`, and
+  #                    the safe trust posture (REVIEW_GATE_TRUST_PR_WORKFLOWS
+  #                    = "false") requires that the write-capable job execute
+  #                    NO PR-controlled code. Folding it into `ci-ok` would
+  #                    hand a write-capable token to the whole suite.
+  #   review-gate-selftest
+  #                    must be UNGATED and separate: a broken predicate
+  #                    approves nothing, so a selftest sharing a job with
+  #                    gated work could never run when it matters.
+  #
+  # Neither adds a lane over the same work — the measured argument against
+  # splitting `ci-ok` is unchanged.
+  #
+  # `ci-ok` deliberately does NOT take `needs: review-gate`. The engine's
+  # default shape skips heavy jobs until the gate opens, which pays off when
+  # those jobs run for minutes; VGS's whole suite is ~30s, so gating it would
+  # only delay the author's first signal and cost a re-run once review lands.
+  # The gate blocks the MERGE via its status; it is not here to save compute
+  # VGS does not spend.
+  review-gate:
+    name: Review gate
+    if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
+    # THE THIRD GATE WRITER. approval-rerun.yml and approval-sweep.yml already
+    # share this group, and the rerun workflow states the invariant: ONE
+    # repo-wide group for EVERY writer of the gate status. This job posts the
+    # same status and was sitting in the per-PR `CI-<n>` group instead, so it
+    # could interleave: a push starts this job, which reads the state as
+    # approved; a reviewer then requests changes and approval-rerun.yml posts
+    # `failure`; this job finishes and overwrites it with a `success` from its
+    # older snapshot, reopening merge until the next 15-minute sweep.
+    #
+    # Job-level concurrency overrides the workflow-level group for this job
+    # ONLY, so the rest of CI keeps its per-PR group and its cancel-on-push
+    # behaviour. cancel-in-progress is false for the same reason the other two
+    # writers set it: a cancelled writer leaves the status at whatever a
+    # possibly-older run wrote, which is the race, not a fix for it.
+    concurrency:
+      group: review-gate-writer
+      cancel-in-progress: false
+    runs-on: ${{ vars.CI_RUNNER_2V || 'ubuntu-latest' }}
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      pull-requests: read
+      issues: read
+      checks: read
+      statuses: write
+    steps:
+      # BASE revision, not the PR head: the safe posture never runs
+      # PR-controlled predicate code under a token that can post the status
+      # that opens the gate. `persist-credentials: false` for the same reason.
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          ref: ${{ github.event.pull_request.base.sha || github.sha }}
+          persist-credentials: false
+
+      - name: Evaluate and post the review gate
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+          EVENT_NAME: ${{ github.event_name }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -u
+          # Resolve the context FIRST, and survive the engine being absent.
+          # The early-exit branches below used to hardcode "Review gate": at the
+          # default that is identical, but customizing REVIEW_GATE_CONTEXT would
+          # have left the queue waiting on a context nothing posts. Sourcing is
+          # guarded rather than assumed, because the whole point of the
+          # bootstrap branch is that the engine may not be there.
+          CTX="Review gate"
+          if [ -f third_party/review-gate/scripts/lib/settings.sh ]; then
+            CTX="$(. third_party/review-gate/scripts/lib/settings.sh && rg_setting REVIEW_GATE_CONTEXT "Review gate")"
+          fi
+          post() {
+            gh api -X POST "repos/$GH_REPO/statuses/$1" \
+              -f state="$2" -f context="$CTX" \
+              -f description="$(printf %.140s "$3")" \
+              -f target_url="$RUN_URL" >/dev/null
+          }
+          # Merge-queue entries are post-approval by construction, but the
+          # queue still requires the context on the group sha. This runs BEFORE
+          # the bootstrap check: a queue entry must get its context even on the
+          # adoption PR's own group sha.
+          if [ "$EVENT_NAME" = "merge_group" ]; then
+            post "$GITHUB_SHA" success "merge queue entries are post-approval by construction"
+            exit 0
+          fi
+          # BOOTSTRAP. The checkout above is the BASE revision on purpose, and
+          # the PR that ADOPTS the engine has a base that does not contain it
+          # yet. There is no safe way out of that: reaching for the PR head's
+          # copy is exactly the PR-controlled-code-under-a-write-token shape
+          # this posture exists to prevent. So post pending and stop — merge
+          # stays blocked, which is the correct state for a head with no
+          # evaluated review evidence. From the merge of the adoption PR
+          # onwards, every base carries the engine and this branch is dead.
+          if [ ! -f third_party/review-gate/scripts/review-predicate.sh ]; then
+            post "${HEAD_SHA:-$GITHUB_SHA}" pending "the base revision has no gate engine (adoption PR); merge stays blocked"
+            echo "::notice::review gate not evaluated: no engine at the base revision. Expected only for the adoption PR."
+            exit 0
+          fi
+          if line="$(third_party/review-gate/scripts/review-predicate.sh)"; then
+            verdict="${line#verdict=}"; verdict="${verdict%% *}"
+            detail="${line#*detail=}"
+          else
+            # No verdict was reached (transient API failure). Fail SAFE, not
+            # red: pending keeps the merge blocked and the scheduled sweep
+            # re-evaluates.
+            verdict="error"
+            detail="review-state read failed; the scheduled sweep retries"
+          fi
+          case "$verdict" in
+            approved)          state=success ;;
+            changes-requested) state=failure ;;
+            *)                 state=pending ;;
+          esac
+          post "$HEAD_SHA" "$state" "$detail"
+          echo "review gate: $verdict ($state) — $detail"
+
+  review-gate-selftest:
+    name: Review gate selftest
+    # DELIBERATELY UNGATED: no `needs`, no approval condition, no path filter.
+    # A broken predicate approves nothing, so a gated selftest could never run
+    # when it matters. Failing here reds the build without stopping the gate
+    # job from posting — a PR with no gate status at all is stuck, not blocked.
+    #
+    # UNGATED IS NOT THE SAME AS NON-BLOCKING, and conflating the two left a
+    # real hole: this job is not a required context, and `Review gate` evaluates
+    # the BASE predicate, so it stays green on a PR that breaks the head's
+    # predicate. A change breaking review-predicate.sh could merge with its own
+    # selftest red. `ci-ok` therefore takes `needs:` on this job (below), which
+    # makes it blocking without gating it — the selftest still runs first, on
+    # every event, and hands out no write token, since it holds only
+    # `contents: read`.
+    runs-on: ${{ vars.CI_RUNNER_2V || 'ubuntu-latest' }}
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+      # Run from the repo root so the configured layer re-derives its cases
+      # from VGS's own REVIEW_GATE_* values, not the engine's defaults.
+      - name: Pin the review-gate decision table
+        run: third_party/review-gate/scripts/review-predicate-selftest.sh
+
+      # The predicate selftest proves the VERDICT logic; this proves the step
+      # that consumes it, over the states that actually broke — including the
+      # base-revision bootstrap, where the first version crashed and posted no
+      # status at all.
+      - name: Pin the review-gate CI step
+        run: scripts/test-review-gate-step.sh
+
   validate:
     # The required-check context is `CI / ci-ok`; see the aggregator note above.
     name: ci-ok
+    # The ONE `needs` here, and it is about blocking rather than sequencing:
+    # `ci-ok` is the required context, so depending on the selftest is what
+    # makes a broken review predicate unable to merge. It does not gate the
+    # selftest on anything, and it costs no token — the selftest is
+    # `contents: read` only. The gate job is deliberately NOT a dependency:
+    # that one holds `statuses: write`, and `ci-ok` must never wait on a
+    # write-capable job, nor delay the author's first signal on review state.
+    needs: review-gate-selftest
     runs-on: ${{ vars.CI_RUNNER_2V || 'ubuntu-latest' }}
     timeout-minutes: 15
     permissions:
@@ -87,6 +255,12 @@ jobs:
       # than after the Go toolchain and the Qt install.
       - name: Naming guard
         run: scripts/check-naming.sh
+
+      # Asserts this workflow and AGENTS.md § Validation still name the same
+      # checks. Four checks under scripts/ were committed and invoked by nothing
+      # at all before this existed (VGS-50).
+      - name: Validation inventory
+        run: scripts/check-validation-inventory.py
 
       # AGENTS.md lists a bare `git diff --check`, which is a working-tree
       # check: on a clean CI checkout it inspects nothing at all. The form that
@@ -169,6 +343,12 @@ jobs:
           scripts/check-package-assets.sh
           scripts/check-aur-sync.py
 
+      # Every external command shipped code probes must be declared in
+      # config/vshell/dependencies.json or excluded there with a reason, or
+      # `vshell deps status` reports a healthy system while a feature is dead.
+      - name: Probed-command declarations
+        run: scripts/check-command-declarations.py
+
       - name: Settings migration
         run: |
           node --check scripts/check-settings-migration.js
@@ -176,12 +356,22 @@ jobs:
 
       - name: Queue, theme-request and plugin-policy regressions
         run: |
-          node scripts/test-restyle-queue.js
-          node scripts/test-theme-requests.js
-          node scripts/test-latest-transaction-queue.js
-          node scripts/test-bundled-override.js
-          node scripts/test-idle-reload-snapshot.js
-          node scripts/test-idle-lock-request.js
+          scripts/test-restyle-queue.js
+          scripts/test-theme-requests.js
+          scripts/test-latest-transaction-queue.js
+          scripts/test-bundled-override.js
+          scripts/test-idle-reload-snapshot.js
+          scripts/test-idle-lock-request.js
+          scripts/test-sudo-toggle-confirm.js
+          scripts/test-pill-hover-safety.js
+
+      # Wired in by VGS-50: all four were committed, maintained and invoked by
+      # nothing until then.
+      - name: Fixture and capability regressions
+        run: |
+          scripts/check-display-config-fixtures.js
+          scripts/check-vgs-menu-capabilities.js
+          scripts/check-vshell-ipc.sh
 
       - name: Helper and CLI checks
         run: |
@@ -193,7 +383,9 @@ jobs:
       # AGENTS.md § Backend rules: this is what keeps the Go and QML sides of
       # the capability inventory in agreement. Pure text analysis, no toolchain.
       - name: Backend capability inventory
-        run: scripts/check-backend-inventory.py
+        run: |
+          scripts/check-backend-inventory.py
+          scripts/check-backend-inventory-tests.py
 
       # Quickshell matches reload children by index, so Lock.qml's child ORDER
       # is what keeps a session lock alive across a hot reload. Getting it wrong
@@ -222,6 +414,40 @@ jobs:
           go build ./...
           go vet ./...
           go test -race ./...
+
+      # actionlint lints `run:` blocks by shelling out to shellcheck, and with
+      # shellcheck absent it skips every one of them and still exits 0 (VGS-38).
+      # scripts/check-workflows.sh FAILS on a missing tool rather than
+      # degrading, so this pairing has to be installed, not assumed. The runner
+      # image ships shellcheck; actionlint is a single static binary.
+      - name: Install actionlint and shellcheck
+        env:
+          ACTIONLINT_VERSION: 1.7.12
+        run: |
+          set -euo pipefail
+          # The ubuntu runner image ships shellcheck, but the runner resolves
+          # through CI_RUNNER_2V and must not depend on that; install it if the
+          # image did not bring one. check-workflows.sh fails without it either
+          # way, so this can never degrade into a silent skip.
+          command -v shellcheck >/dev/null 2>&1 || {
+            sudo apt-get update
+            sudo apt-get install -y --no-install-recommends shellcheck
+          }
+          curl -fsSL -o "$RUNNER_TEMP/actionlint.tar.gz" \
+            "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz"
+          tar -xzf "$RUNNER_TEMP/actionlint.tar.gz" -C "$RUNNER_TEMP" actionlint
+          echo "$RUNNER_TEMP" >>"$GITHUB_PATH"
+
+      - name: Workflow lint (YAML and every `run:` block)
+        run: scripts/check-workflows.sh
+
+      # CodeRabbit rejects an invalid .coderabbit.yaml and reviews with DEFAULT
+      # settings, reporting nothing on the PR. VGS shipped a 376-character
+      # tone_instructions against a 250 limit, so the file was inert on every
+      # PR. Validated against the vendored schema — offline, so an endpoint
+      # outage cannot turn this into a skip.
+      - name: CodeRabbit configuration
+        run: scripts/check-coderabbit-config.py
 
       # qmllint is what `--require-static` needs, and no runner image ships Qt.
       # This is the single most expensive step here, which is why it is last.
