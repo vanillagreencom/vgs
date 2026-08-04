@@ -12,7 +12,7 @@ Item {
     focus: true
     property string highlightedId: ""
 
-    VgsTooltipV2 {
+    VgsInlineTooltip {
         id: sharedTooltip
     }
 

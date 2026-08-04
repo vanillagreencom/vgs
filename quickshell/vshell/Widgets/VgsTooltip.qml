@@ -4,7 +4,17 @@ import Quickshell.Wayland
 import qs.Common
 import qs.Services
 import qs.Widgets
+import qs.Widgets.Tooltip
 
+// The tooltip for surfaces that cannot contain one: bar widgets, the dock, and
+// bundled plugin pills all live in layer surfaces only a widget tall, so the
+// tooltip has to be its own Overlay surface. Being a separate surface is also
+// what keeps it from stealing pointer/hover from the pill it describes.
+//
+// Positions are screen-absolute, because the caller is the only thing that
+// knows where its bar edge is. For content inside a window big enough to hold
+// its own tooltip, use VgsInlineTooltip instead — see
+// docs/architecture/design-language.md § Tooltips.
 PanelWindow {
     id: root
 
@@ -32,8 +42,8 @@ PanelWindow {
     }
 
     screen: targetScreen
-    implicitWidth: Math.min(300, Math.max(120, textContent.implicitWidth + Theme.spacingM * 2))
-    implicitHeight: textContent.implicitHeight + Theme.spacingS * 2
+    implicitWidth: body.implicitWidth
+    implicitHeight: body.implicitHeight
     color: "transparent"
     visible: false
     WlrLayershell.layer: WlrLayershell.Overlay
@@ -74,24 +84,12 @@ PanelWindow {
         blurRadius: Theme.controlRadius
     }
 
-    VgsSurfaceChrome {
+    TooltipBody {
+        id: body
+
         anchors.fill: parent
-        radius: Theme.controlRadius
-        surfaceColor: Theme.popupSurfaceColor(Theme.surfaceContainerHigh)
-        borderWidth: BlurService.borderWidth
-        borderColor: BlurService.borderColor
-
-        StyledText {
-            id: textContent
-
-            anchors.centerIn: parent
-            text: root.text
-            font.pixelSize: Theme.fontSizeSmall
-            color: Theme.surfaceText
-            wrapMode: Text.NoWrap
-            maximumLineCount: 1
-            elide: Text.ElideRight
-            width: Math.min(implicitWidth, 300 - Theme.spacingM * 2)
-        }
+        text: root.text
+        maxWidth: 300
+        minWidth: 120
     }
 }

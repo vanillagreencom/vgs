@@ -22,7 +22,7 @@ Row {
     height: 40
     spacing: 0
 
-    VgsTooltipV2 {
+    VgsInlineTooltip {
         id: sharedTooltip
     }
 
