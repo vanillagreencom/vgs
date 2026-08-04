@@ -516,28 +516,45 @@ const oneBarReEnabled = clone(
 assert.deepStrictEqual(oneBarReEnabled.barConfigs[0].rightWidgets, ["clock", "controlCenterButton"]);
 assert.deepStrictEqual(oneBarReEnabled.barConfigs[1].rightWidgets, ["clock", "battery", "controlCenterButton"]);
 
-// A v19 config migrates and reconciles in the same load, and the migration is
-// only written once the asynchronous writability check answers. Whichever
-// finishes first, the held payload must not restore the battery-less layout,
-// so reconciliation folds its result into it before saving.
-const reconcileBody = (() => {
-  const start = settingsDataSource.indexOf("function reconcileHardwareBarWidgets()");
-  assert(start >= 0, "SettingsData.qml should define reconcileHardwareBarWidgets");
+// A v19 config migrates and reconciles in the same load, but the migration can
+// only be written once the asynchronous writability check answers. Deferred
+// load steps -- reconciliation, icon-theme drift -- can save in that window, so
+// committing a payload captured at parse time would revert them, and because
+// that write bypasses _selfWrite the reload would put the reverted values back
+// in memory. SettingsData therefore holds only a flag and serializes current
+// state at commit time, which is correct under either completion ordering.
+function qmlFunctionBody(name) {
+  const start = settingsDataSource.indexOf(`function ${name}(`);
+  assert(start >= 0, `SettingsData.qml should define ${name}`);
   const end = settingsDataSource.indexOf("\n    }", start);
-  assert(end > start, "reconcileHardwareBarWidgets should be a closed function body");
+  assert(end > start, `${name} should be a closed function body`);
   return settingsDataSource.slice(start, end);
-})();
+}
+
 assert(
-  /function\s+_syncPendingMigration\s*\(/.test(settingsDataSource),
-  "SettingsData.qml should define _syncPendingMigration"
+  /property\s+bool\s+_pendingMigrationWrite\s*:\s*false/.test(settingsDataSource),
+  "the pending migration should be tracked by a flag, not a held payload"
 );
 assert(
-  reconcileBody.indexOf('_syncPendingMigration("barConfigs"') >= 0,
-  "reconciliation must sync the pending migration payload, or the deferred write undoes it"
+  /_pendingMigration(?!Write)/.test(settingsDataSource) === false,
+  "SettingsData.qml must not reintroduce a held migration payload; there would be nothing to keep it in sync"
+);
+
+const writableCheckBody = qmlFunctionBody("_onWritableCheckComplete");
+assert(
+  /if\s*\(_pendingMigrationWrite\)\s*\n\s*saveSettings\(\);/.test(writableCheckBody),
+  "the migration must be committed by serializing current state, not a captured payload"
 );
 assert(
-  reconcileBody.indexOf('_syncPendingMigration("barConfigs"') < reconcileBody.indexOf("updateBarConfigs()"),
-  "the pending migration must be synced before the save"
+  writableCheckBody.indexOf("settingsFile.setText") < 0,
+  "_onWritableCheckComplete must not write settings.json directly; saveSettings() is what keeps _selfWrite and the snapshot honest"
+);
+
+// With the payload gone, reconciliation just saves like any other mutation.
+const reconcileBody = qmlFunctionBody("reconcileHardwareBarWidgets");
+assert(
+  reconcileBody.indexOf("updateBarConfigs()") >= 0,
+  "reconciliation should persist through the ordinary save path"
 );
 
 assert.strictEqual(

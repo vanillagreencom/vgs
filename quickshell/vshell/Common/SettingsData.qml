@@ -1731,7 +1731,7 @@ Singleton {
         _loading = true;
         _parseError = false;
         _hasUnsavedChanges = false;
-        _pendingMigration = null;
+        _pendingMigrationWrite = false;
 
         try {
             const txt = settingsFile.text();
@@ -1741,7 +1741,7 @@ Singleton {
             if (oldVersion < settingsConfigVersion) {
                 const migrated = Store.migrateToVersion(obj, settingsConfigVersion);
                 if (migrated) {
-                    _pendingMigration = migrated;
+                    _pendingMigrationWrite = true;
                     obj = migrated;
                 }
             }
@@ -1784,20 +1784,19 @@ Singleton {
         loadPluginSettings();
     }
 
-    property var _pendingMigration: null
-
-    // A migration is parsed at load but only written once the asynchronous
-    // writability check answers, so anything that changes settings in that
-    // window has to be folded into the held payload too. Otherwise the
-    // deferred write puts the pre-change JSON back on disk and the reload that
-    // follows undoes the change. Neither order is guaranteed: the check can
-    // answer before or after a Qt.callLater, so both sides keep the payload
-    // current rather than relying on one winning.
-    function _syncPendingMigration(key, value) {
-        if (!_pendingMigration)
-            return;
-        _pendingMigration[key] = JSON.parse(JSON.stringify(value));
-    }
+    // Whether this load migrated the file and still owes it a write. Only a
+    // flag: the migrated object itself is deliberately not held.
+    //
+    // The write has to wait for the asynchronous writability check, and
+    // loadSettings() schedules other deferred work that can save in the
+    // meantime — reconcileHardwareBarWidgets(), checkIconThemeDrift() via
+    // setIconThemeUnmanaged(), any future addition. Holding the payload
+    // captured at parse time meant committing it later reverted whatever they
+    // had written, and since that write bypasses _selfWrite the reload put the
+    // reverted values back in memory too. Keeping only a flag and serializing
+    // current state at commit time makes that whole class of race impossible
+    // instead of asking each new mutation path to remember to sync.
+    property bool _pendingMigrationWrite: false
 
     function _checkSettingsWritable() {
         settingsWritableCheckProcess.running = true;
@@ -1815,10 +1814,15 @@ Singleton {
             _hasUnsavedChanges = false;
             if (wasReadOnly)
                 log.info("settings.json is now writable");
-            if (_pendingMigration)
-                settingsFile.setText(JSON.stringify(_pendingMigration, null, 2));
+            // Commit the migration now that the file is known writable.
+            // saveSettings() serializes current state, so this persists the
+            // migration plus anything else that changed while the check was in
+            // flight, rather than reverting it. The snapshot set just above is
+            // the same serialization, so it stays accurate.
+            if (_pendingMigrationWrite)
+                saveSettings();
         }
-        _pendingMigration = null;
+        _pendingMigrationWrite = false;
     }
 
     function _checkForUnsavedChanges() {
@@ -2375,10 +2379,6 @@ Singleton {
 
         log.info("Added bar widgets for hardware present on this machine:", result.added.join(", "));
         barConfigs = result.barConfigs;
-        // Reconciliation can land while a migration written by this same load
-        // is still waiting on the writability check; without this the pending
-        // write would restore the battery-less layout this just repaired.
-        _syncPendingMigration("barConfigs", result.barConfigs);
         updateBarConfigs();
     }
 
