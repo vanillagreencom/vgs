@@ -2409,14 +2409,34 @@ Singleton {
         return revealed;
     }
 
+    // Reconciliation has no target while every bar is disabled, so it does
+    // nothing and the hardware widget stays unplaced. The moment a bar becomes
+    // visible is the next chance to place it; without this the user enables a
+    // bar and gets no battery indicator until the shell restarts, which is the
+    // VGS-61 symptom itself.
+    //
+    // Deferred so it lands after the caller's own update settles, and gated on
+    // the no-enabled-bar -> some-enabled-bar transition so it never fires
+    // during an ordinary widget-list edit. reconcile()'s guards still apply on
+    // top of that: a widget the user explicitly removed stays removed, and one
+    // the config already mentions is left alone.
+    function _reconcileIfBarsBecameVisible(hadEnabledBar) {
+        if (hadEnabledBar || getEnabledBarConfigs().length === 0)
+            return;
+        Qt.callLater(reconcileHardwareBarWidgets);
+    }
+
     function addBarConfig(config) {
+        const hadEnabledBar = getEnabledBarConfigs().length > 0;
         const configs = JSON.parse(JSON.stringify(barConfigs));
         configs.push(config);
         barConfigs = configs;
         updateBarConfigs();
+        _reconcileIfBarsBecameVisible(hadEnabledBar);
     }
 
     function updateBarConfig(barId, updates) {
+        const hadEnabledBar = getEnabledBarConfigs().length > 0;
         const configs = JSON.parse(JSON.stringify(barConfigs));
         const index = configs.findIndex(cfg => cfg.id === barId);
         if (index === -1)
@@ -2435,6 +2455,7 @@ Singleton {
         if (positionChanged) {
             NotificationService.dismissAllPopups();
         }
+        _reconcileIfBarsBecameVisible(hadEnabledBar);
     }
 
     function checkBarCollisions(barId) {

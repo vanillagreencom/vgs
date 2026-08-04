@@ -66,7 +66,10 @@ function configsMentionWidget(barConfigs, widgetId) {
 // the widget somewhere that cannot render it, rewriting a layout the user
 // deliberately turned off for no visible benefit. Reconciliation exists to
 // surface hardware, so with nothing on screen to surface it on, it does
-// nothing and waits for a bar to be enabled — it runs again on every load.
+// nothing and waits for a bar to be enabled. Nothing is lost by waiting:
+// SettingsData re-runs reconciliation when a bar is enabled or added, as well
+// as on every load, so the widget appears as soon as there is somewhere to
+// put it.
 function targetBarIndex(barConfigs) {
     if (!Array.isArray(barConfigs))
         return -1;

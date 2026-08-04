@@ -557,6 +557,33 @@ assert(
   "reconciliation should persist through the ordinary save path"
 );
 
+// Reconciliation finds no target while every bar is disabled, so enabling or
+// adding a bar has to re-run it -- otherwise the user enables a bar and gets no
+// battery indicator until the next shell start, which is the VGS-61 symptom.
+// The gate reads the enabled count BEFORE the mutation, so it fires only on the
+// none -> some transition and never during an ordinary widget-list edit.
+const barVisibilityGate = qmlFunctionBody("_reconcileIfBarsBecameVisible");
+assert(
+  barVisibilityGate.indexOf("if (hadEnabledBar || getEnabledBarConfigs().length === 0)") >= 0,
+  "the re-run must be gated on the no-enabled-bar -> some-enabled-bar transition"
+);
+assert(
+  barVisibilityGate.indexOf("Qt.callLater(reconcileHardwareBarWidgets)") >= 0,
+  "the re-run should be deferred so it lands after the caller's update settles"
+);
+
+for (const fn of ["addBarConfig", "updateBarConfig"]) {
+  const body = qmlFunctionBody(fn);
+  const captured = body.indexOf("const hadEnabledBar = getEnabledBarConfigs().length > 0;");
+  const rerun = body.indexOf("_reconcileIfBarsBecameVisible(hadEnabledBar)");
+  assert(captured >= 0, `${fn} must record whether any bar was enabled before it mutates barConfigs`);
+  assert(rerun > captured, `${fn} must re-run reconciliation after the mutation, or a newly visible bar stays empty`);
+  assert(
+    captured < body.indexOf("barConfigs = configs;"),
+    `${fn} must read the enabled count before the mutation, or the transition is never detected`
+  );
+}
+
 assert.strictEqual(
   store.migrateToVersion({ configVersion: TARGET_VERSION }, TARGET_VERSION),
   null,
