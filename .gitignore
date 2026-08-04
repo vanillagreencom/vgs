@@ -80,6 +80,8 @@ Thumbs.db
 # Local planning and research artifacts
 docs/plans/
 docs/research/
+# Session handoff (single file, never committed) — see AGENTS.md § Session handoff
+docs/handoff/
 
 # Local git worktrees (vstack worktree skill)
 /trees/

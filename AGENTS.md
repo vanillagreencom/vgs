@@ -100,6 +100,9 @@ Live-machine etiquette:
   `theme:`), lowercase. When the work has a Linear issue, put the identifier in
   the scope: `area(VGS-12): imperative summary`.
 - Releases use `.agents/skills/vgs-release/SKILL.md`. Every release updates and verifies all maintained install channels; unavailable channels must be named, never silently skipped.
+- Session handoff lives only at `docs/handoff/HANDOFF.md` (gitignored) — exactly one file,
+  overwritten in place, pruned to live context with no history or prose; Linear remains the
+  source of truth for pending work. Read or write it only on request, or when resuming from one.
 
 ## Validation
 Scope to the area touched (Go-only: inventory guard + go block; QML-only: naming, QML smoke, surfaces; helper: py_compile + helper checks; packaging: the two packaging checks); run the full suite for cross-cutting work:
