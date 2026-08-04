@@ -63,6 +63,7 @@ project-skills-dir = "project-skills"
 # Won't overwrite the skill author's own instructions.
 #
 [skill-instructions]
+review-gate = ""
 
 decider = ""
 
@@ -76,10 +77,41 @@ linear = """
 ## Tracker policy: Linear is canonical; GitHub Issues is intake-only
 
 Create, label, and work issues ONLY in Linear (team vg-shell, identifiers
-VGS-<n>). GitHub Issues stays as intake: a one-way GitHub -> Linear sync
-mirrors anything filed there, and nothing syncs back. Before creating a Linear
-issue, dedupe across BOTH trackers (`gh issue list --search` + Linear cache) —
-never file the same problem twice.
+VGS-<n>). GitHub Issues stays as intake, and nothing syncs back. Before creating
+a Linear issue, dedupe across BOTH trackers (`gh issue list --search` + Linear
+cache) — never file the same problem twice.
+
+Mirroring GitHub intake into Linear is a MANUAL triage step. No automation does
+it: there is no sync workflow under `.github/` and no Linear-side GitHub
+integration creating issues, so an unmirrored GitHub issue never reaches the
+canonical tracker and can sit unseen indefinitely. Run the triage pass when
+picking up work:
+
+```bash
+gh issue list --state open --limit 50 --json number,title,url,createdAt \
+  --jq '.[] | [.number, .createdAt, .url, .title] | @tsv'
+.agents/skills/linear/scripts/linear.sh cache issues list --all-projects
+```
+
+For each GitHub issue with no Linear counterpart, fetch title, body and url in
+one call and build the description — the full body plus a provenance line back
+to the GitHub issue — then create it in team vg-shell and work the Linear issue
+rather than the GitHub one:
+
+```bash
+gh issue view <n> --json title,body,url > /tmp/gh-<n>.json
+jq -r '(.body | sub("\\s+$"; "")) + "\n\n---\n\nMirrored from GitHub issue [" + .url + "](<" + .url + ">) (intake-only tracker)."' /tmp/gh-<n>.json > /tmp/gh-<n>-body.md
+
+.agents/skills/linear/scripts/linear.sh issues create --title "$(jq -r .title /tmp/gh-<n>.json)" \
+  --description-file /tmp/gh-<n>-body.md
+```
+
+The list query carries `url` so the triage table is actionable; `body` is
+fetched per issue rather than for all 50, and every field the description needs
+comes from these commands alone — no extra lookup.
+
+Automating this needs owner action (Linear workspace admin, or a LINEAR_API_KEY
+repo secret) — see docs/decisions/D002-github-linear-intake-sync.md.
 
 Link work to its issue through the branch name: `vgs-<n>-<slug>`. Linear's
 GitHub integration matches that to attach the PR, and `GH_ISSUE_PATTERN` in
@@ -189,9 +221,10 @@ projects; never assign them in VGS.
 | `blocked` | External blocker only (vendor/license/access/manual dependency). For issue dependencies, use blocking relations instead. |
 | `owner-gated` | Needs an owner decision or owner-only action to proceed. |
 
-`ci-nightly` marks automated CI-failure mirrors ingested by the
-GitHub -> Linear sync; the taxonomy above does not apply to synced mirrors —
-do not retitle or relabel them to satisfy it.
+`ci-nightly` marks CI-failure mirrors; the taxonomy above does not apply to
+mirrored issues — do not retitle or relabel them to satisfy it. Note there is
+no automated ingest: mirroring GitHub intake into Linear is manual, per the
+tracker policy in the linear skill instructions.
 
 Do not assign the group/parent label `Agent` to issues.
 """
@@ -220,6 +253,7 @@ generalist = [
     "dev",
     "github",
     "linear",
+    "review-gate",
 ]
 
 planner = [
