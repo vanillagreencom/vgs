@@ -126,10 +126,11 @@ BasePill {
     // match wins, which may be the wrong one.
     //
     // Known and accepted, not an open question: docs/decisions/D003-system-tray-transport.md
-    // weighs the alternatives (helper CLI, backend method) and keeps this in
-    // place because both add a second enumerator of a registry Quickshell's
-    // host already owns and neither fixes the `Id` ambiguity. Do not grow this
-    // script — if it needs more logic, it moves to `bin/vshell-helper` first.
+    // weighs the alternatives (helper CLI, backend method). Both would move
+    // this registry walk rather than remove it, neither fixes the `Id`
+    // ambiguity, and both add surface that upstream support would retire. Do
+    // not grow this script — if it needs more logic, it moves to
+    // `bin/vshell-helper` first.
     function callContextMenuFallback(trayItemId, globalX, globalY) {
         const script = ['ITEMS=$(dbus-send --session --print-reply --dest=org.kde.StatusNotifierWatcher /StatusNotifierWatcher org.freedesktop.DBus.Properties.Get string:org.kde.StatusNotifierWatcher string:RegisteredStatusNotifierItems 2>/dev/null)', 'while IFS= read -r line; do', '  line="${line#*\\\"}"', '  line="${line%\\\"*}"', '  [ -z "$line" ] && continue', '  BUS="${line%%/*}"', '  OBJ="/${line#*/}"', '  ID=$(dbus-send --session --print-reply --dest="$BUS" "$OBJ" org.freedesktop.DBus.Properties.Get string:org.kde.StatusNotifierItem string:Id 2>/dev/null | grep -oP "(?<=\\\")(.*?)(?=\\\")" | tail -1)', '  if [ "$ID" = "$1" ]; then', '    dbus-send --session --type=method_call --dest="$BUS" "$OBJ" org.kde.StatusNotifierItem.ContextMenu int32:"$2" int32:"$3"', '    exit 0', '  fi', 'done <<< "$ITEMS"',].join("\n");
         Quickshell.execDetached(["bash", "-c", script, "_", trayItemId, String(globalX), String(globalY)]);
