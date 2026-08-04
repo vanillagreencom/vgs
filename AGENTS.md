@@ -162,6 +162,7 @@ git diff --check
 scripts/check-workflows.sh
 scripts/qml-smoke.sh --nested --require-static
 scripts/check-validation-safety.sh
+scripts/check-label-taxonomy.py
 scripts/smoke-surfaces.sh
 (cd backend && go build ./... && go vet ./... && go test -race ./...)
 ```

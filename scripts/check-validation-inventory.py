@@ -46,6 +46,7 @@ NOT_A_SUITE_CHECK = {
 # readable half, so the two cannot disagree silently.
 LOCAL_ONLY = {
     "smoke-surfaces.sh": "needs a live Hyprland VGS session and reads `hyprctl layers`",
+    "check-label-taxonomy.py": "reads live Linear label inventory; CI has no Linear credentials and no local cache",
 }
 
 # Checks CI runs through another entry rather than by name. Naming the caller
