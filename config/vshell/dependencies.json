@@ -194,16 +194,29 @@
     },
     "sudo-toggle": {
       "$comment": [
-        "Deliberately does NOT require the `terminal` group. Granting passwordless",
-        "sudo needs a terminal to prompt in, but reading status and REVOKING a",
-        "grant do not, and VGS-11 exists because gating both directions on a",
-        "terminal stranded machines in the escalated state. Reporting this feature",
-        "unavailable would tell a user with no terminal that they cannot take",
-        "back a grant they can, in fact, always take back."
+        "Status and REVOKE, which deliberately need no terminal. The widget",
+        "gates on `vshell sudo-toggle status` rather than on deps, so the",
+        "safety valve works regardless; this group exists so `deps status`",
+        "says the same thing the runtime does. VGS-11 exists because gating",
+        "both directions on a terminal stranded machines in the escalated",
+        "state, so requiring `terminal` here would make the reporting layer",
+        "contradict a stated invariant."
       ],
       "commands": [
         "sudo",
         "visudo"
+      ]
+    },
+    "sudo-toggle-grant": {
+      "$comment": [
+        "The GRANT half only. Enabling passwordless sudo always goes through a",
+        "terminal so the user sees what is happening and sudo can authenticate,",
+        "so this half really is unavailable without one -- and saying so here is",
+        "what keeps the `sudo-toggle` group above honest about revoke."
+      ],
+      "requiresFeatures": [
+        "sudo-toggle",
+        "terminal"
       ]
     },
     "terminal": {

@@ -107,7 +107,8 @@ Feature groups:
 | `clipboard` | Clipboard history (wl-clipboard) |
 | `thumbnails` | File/image thumbnails |
 | `brightness` | Display brightness backends |
-| `sudo-toggle` | Passwordless sudo toggle widget (`vshell sudo-toggle`) |
+| `sudo-toggle` | Passwordless sudo toggle widget: status and **revoke**, which need no terminal |
+| `sudo-toggle-grant` | **Granting** passwordless sudo, which needs a terminal to prompt in |
 | `terminal` | The terminal VGS opens for TUI actions. Any one alternative is enough |
 | `default-apps` | XDG default-application layer (`xdg-mime`) |
 | `file-manager` | File manager the launcher opens folders with, when the XDG default resolves to none |
@@ -223,10 +224,13 @@ supervisor does, and would otherwise permit a second package-manager run on top
 of a live one — must pass `--wait`, which blocks for the terminal's whole
 lifetime and returns its status.
 
-The `terminal` feature group gates *granting* passwordless sudo but deliberately
-does not gate the `sudo-toggle` group as a whole: reading status and **revoking**
-a grant need no terminal, and VGS-11 exists because gating both directions
-stranded machines in the escalated state.
+Granting passwordless sudo needs a terminal to prompt in; reading status and
+**revoking** a grant do not. The widget gates on `vshell sudo-toggle status`
+rather than on `deps`, so the safety valve works either way — but the two halves
+are separate feature groups (`sudo-toggle`, `sudo-toggle-grant`) so that
+`vshell deps status` says the same thing the runtime does. Collapsing them would
+have the reporting layer tell a terminal-less user they cannot take back a grant
+they can always take back (VGS-11).
 
 The file manager follows the same rule: `xdg-mime query default inode/directory`
 first — the XDG layer Settings -> Default Apps writes — then the installed

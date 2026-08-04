@@ -40,6 +40,7 @@
     "tailscale": "Tailscale widget",
     "brightness": "display brightness",
     "sudo-toggle": "passwordless sudo toggle widget",
+    "sudo-toggle-grant": "granting passwordless sudo, which needs a terminal",
     "terminal": "terminal VGS opens for TUI actions",
     "default-apps": "XDG default-application layer",
     "file-manager": "file manager VGS opens folders with",

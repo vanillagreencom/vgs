@@ -1645,10 +1645,31 @@ def test_terminal_candidates_match_dependency_manifest():
     assert_equal("terminal" in (features["launcher-folder-open-yazi"].get("requiresFeatures") or []),
                  True, "the Yazi opener must require the terminal feature")
     # Revoking passwordless sudo needs no terminal (VGS-11), so gating the whole
-    # group on one would report the safety valve unavailable to the people who
-    # most need it.
+    # group on one would have `deps status` report the safety valve unavailable
+    # to exactly the people who most need it. The grant half, which really does
+    # need somewhere to prompt, is its own group.
     assert_equal(features["sudo-toggle"].get("requiresFeatures"), None,
                  "sudo-toggle must stay available without a terminal so a grant can be revoked")
+    assert_equal(sorted(features["sudo-toggle-grant"]["requiresFeatures"]),
+                 ["sudo-toggle", "terminal"],
+                 "the grant half must require both sudo and a terminal")
+
+
+def test_sudo_toggle_status_stays_available_without_a_terminal():
+    """`deps status` must not tell a terminal-less user they cannot revoke."""
+    original_exists = helper.command_exists
+    helper.command_exists = lambda name: name in {"sudo", "visudo"}
+    try:
+        features = helper.feature_status()["features"]
+        assert_equal(features["terminal"]["available"], False, "no terminal is installed here")
+        assert_equal(features["sudo-toggle"]["available"], True,
+                     "status and revoke need no terminal, so the group must stay available")
+        assert_equal(features["sudo-toggle-grant"]["available"], False,
+                     "granting does need a terminal, so that half must report unavailable")
+        assert_equal("@terminal" in features["sudo-toggle-grant"]["missing"], True,
+                     "the grant half must name the terminal it is missing")
+    finally:
+        helper.command_exists = original_exists
     assert_equal(sorted(features["file-manager"]["anyCommands"][0]),
                  sorted(helper.FILE_MANAGER_CANDIDATES),
                  "dependencies.json file managers must match helper FILE_MANAGER_CANDIDATES")
@@ -2343,6 +2364,7 @@ def main():
     test_notification_restore_starts_what_takeover_stopped()
     test_notification_status_respects_the_server_opt_out()
     test_requires_features_propagates_to_availability()
+    test_sudo_toggle_status_stays_available_without_a_terminal()
     test_terminal_resolution_prefers_the_vgs_setting()
     test_terminal_argv_shapes_per_terminal()
     test_app_scope_is_probed_rather_than_assumed()
