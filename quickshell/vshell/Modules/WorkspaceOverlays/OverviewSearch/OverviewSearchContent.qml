@@ -4,6 +4,7 @@ import QtQuick
 import qs.Common
 import qs.Services
 import qs.Widgets
+import qs.Widgets.Launcher
 
 FocusScope {
     id: root
@@ -124,19 +125,19 @@ FocusScope {
 
     Controller {
         id: controller
-        active: root.parentModal ? (root.parentModal.spotlightOpen || root.parentModal.isClosing) : true
+        active: root.parentModal ? (root.parentModal.searchOpen || root.parentModal.isClosing) : true
 
         onItemExecuted: {
             if (root.parentModal) {
                 root.parentModal.hide();
             }
-            if (SettingsData.spotlightCloseNiriOverview && NiriService.inOverview) {
+            if (SettingsData.overviewSearchCloseNiriOverview && NiriService.inOverview) {
                 NiriService.toggleOverview();
             }
         }
     }
 
-    LauncherContextMenu {
+    OverviewSearchContextMenu {
         id: contextMenu
         parent: root
         controller: root.controller
@@ -153,8 +154,8 @@ FocusScope {
         target: root.parentModal
         ignoreUnknownSignals: true
 
-        function onSpotlightOpenChanged() {
-            if (!root.parentModal?.spotlightOpen)
+        function onSearchOpenChanged() {
+            if (!root.parentModal?.searchOpen)
                 root.closeTransientUi();
         }
 
@@ -529,7 +530,7 @@ FocusScope {
                 showClearButton: true
                 textColor: Theme.surfaceText
                 font.pixelSize: Theme.fontSizeLarge
-                enabled: root.parentModal ? (root.parentModal.spotlightOpen || root.parentModal.isClosing) : true
+                enabled: root.parentModal ? (root.parentModal.searchOpen || root.parentModal.isClosing) : true
                 placeholderText: ""
                 ignoreUpDownKeys: true
                 ignoreTabKeys: true
@@ -593,8 +594,8 @@ FocusScope {
             readonly property real mainLeft: sidebarWidth + (root.sidebarVisible ? Theme.spacingS : 0)
             clip: false
 
-            LauncherSidebar {
-                id: launcherSidebar
+            OverviewSearchSidebar {
+                id: overviewSearchSidebar
                 anchors.left: parent.left
                 anchors.top: parent.top
                 anchors.bottom: parent.bottom
