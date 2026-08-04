@@ -1427,6 +1427,12 @@ Item {
             if (!PluginService.availablePlugins[pluginId])
                 return `PLUGIN_NOT_FOUND: ${pluginId}`;
 
+            // Bundled VGS modules (and declared overrides of one) are always
+            // available by design. Naming the refusal keeps it distinct from a
+            // disable that was attempted and failed.
+            if (PluginService.isAlwaysAvailablePlugin(pluginId))
+                return `PLUGIN_ALWAYS_AVAILABLE: ${pluginId}`;
+
             const success = PluginService.disablePlugin(pluginId);
             return success ? `PLUGIN_DISABLE_SUCCESS: ${pluginId}` : `PLUGIN_DISABLE_FAILED: ${pluginId}`;
         }
