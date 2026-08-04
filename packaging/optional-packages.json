@@ -14,6 +14,124 @@
     "Package names were verified against archlinux.org, packages.debian.org",
     "(trixie), the Fedora rawhide metadata API, and packages.gentoo.org."
   ],
+  "required": {
+    "$comment": [
+      "Commands that back first-class, non-optional UI. optdepends/Suggests are",
+      "not installed by default by pacman, paru, apt or dnf, so a command that a",
+      "default bar button or modal points at cannot be advertised that way: the",
+      "screenshot button would report missing tools on a stock install (VGS-53).",
+      "",
+      "The line is: does a default-configuration bar button or modal point at",
+      "it. Genuinely opt-in integrations (rclone, tailscale, greetd, bandwhich,",
+      "gpu-screen-recorder, pywalfox, zoxide, ffmpegthumbnailer, satty,",
+      "tesseract) stay optional and must stay absent-tolerant in the UI.",
+      "tailscale in particular must never become a hard dependency: it is a",
+      "network daemon with its own account and system service.",
+      "",
+      "Terminals are deliberately absent: eight are listed as alternatives and",
+      "packaging has no way to express \"any one of these\". That needs an",
+      "xdg-terminal-exec style resolver, tracked separately.",
+      "",
+      "\"base\" lists the per-distribution hard dependencies that do not come from",
+      "a manifest command (the runtime itself and its interpreters), in the order",
+      "they should appear ahead of the generated ones.",
+      "",
+      "\"unsupported\" waives a required command on a distribution that has no",
+      "package for it. It is mandatory: without a waiver the generator fails",
+      "rather than quietly leaving the command out of one recipe, which would",
+      "ship exactly the broken stock install this list exists to prevent. Each",
+      "waiver is printed on every run, and goes stale loudly — declaring one for",
+      "a command the mapping does package is an error."
+    ],
+    "unsupported": {
+      "hyprpicker": {
+        "gentoo": "not packaged: packages.gentoo.org returns no hyprpicker in ::gentoo (checked 2026-08-04), so the ebuild can neither require nor advertise it. Capture and OCR under Hyprland report it missing on Gentoo until an ebuild exists."
+      },
+      "sudo": {
+        "nix": "on NixOS the working sudo is the setuid wrapper in /run/wrappers/bin; putting pkgs.sudo on the wrapper's PATH prefix would shadow it with a binary that cannot elevate, which is worse than not providing one."
+      },
+      "visudo": {
+        "nix": "ships with the same package as sudo, and is waived for the same reason."
+      }
+    },
+    "commands": [
+      "grim",
+      "slurp",
+      "hyprpicker",
+      "wl-copy",
+      "wl-paste",
+      "notify-send",
+      "gio",
+      "gsettings",
+      "sudo",
+      "visudo"
+    ],
+    "base": {
+      "arch": ["quickshell", "jq", "python", "systemd"],
+      "debian": ["quickshell", "jq", "python3", "systemd"],
+      "fedora": ["quickshell", "jq", "python3", "bash", "coreutils", "systemd"],
+      "gentoo": ["${PYTHON_DEPS}", "app-misc/jq", "gui-apps/quickshell"],
+      "void": ["quickshell", "jq", "python3"],
+      "nix": ["pkgs.quickshell", "pkgs.jq", "pkgs.python3", "pkgs.bash"]
+    }
+  },
+  "conflicts": {
+    "$comment": [
+      "org.freedesktop.Notifications is a first-come, first-served session bus",
+      "name, so two notification daemons on one session is not a supported",
+      "configuration (VGS-56). Every channel has to say so, and every channel",
+      "was saying something slightly different: Fedora named all four, Arch and",
+      "Debian omitted dunst, Gentoo and Void omitted swaync. Some of that is",
+      "correct — a virtual name can cover a daemon — and some of it was drift.",
+      "",
+      "This section is the one list. Gentoo's blockers live inside the generated",
+      "RDEPEND, so they are generated from here; the other channels declare",
+      "conflicts in file-specific shapes and are verified against it instead, so",
+      "a daemon dropped from one recipe fails the run rather than shipping.",
+      "",
+      "A daemon with no package on a channel must be waived, with the reason —",
+      "the same rule as required.unsupported."
+    ],
+    "daemons": {
+      "notification-daemon": {
+        "arch": "notification-daemon",
+        "debian": "notification-daemon",
+        "fedora": "notification-daemon"
+      },
+      "mako": {
+        "arch": "mako",
+        "debian": "mako-notifier",
+        "fedora": "mako",
+        "gentoo": "gui-apps/mako",
+        "void": "mako"
+      },
+      "dunst": {
+        "fedora": "dunst",
+        "gentoo": "x11-misc/dunst",
+        "void": "dunst"
+      },
+      "swaync": {
+        "arch": "swaync",
+        "debian": "sway-notification-center",
+        "fedora": "swaync",
+        "void": "SwayNotificationCenter"
+      }
+    },
+    "unsupported": {
+      "notification-daemon": {
+        "gentoo": "Gentoo has no notification-daemon virtual; the daemons are blocked by name instead.",
+        "void": "xbps has no virtual package for notification daemons; they are conflicted by name instead."
+      },
+      "dunst": {
+        "arch": "dunst provides the notification-daemon virtual on Arch, which is already conflicted.",
+        "debian": "dunst Provides: notification-daemon on Debian, which is already conflicted."
+      },
+      "swaync": {
+        "gentoo": "not packaged: packages.gentoo.org returns no swaync or SwayNotificationCenter in ::gentoo (checked 2026-08-04)."
+      }
+    }
+  },
+
   "features": {
     "base": "shell runtime",
     "theme": "theme engine",
@@ -92,13 +210,17 @@
       "arch": "wl-clipboard",
       "debian": "wl-clipboard",
       "fedora": "wl-clipboard",
-      "gentoo": "gui-apps/wl-clipboard"
+      "gentoo": "gui-apps/wl-clipboard",
+      "void": "wl-clipboard",
+      "nix": "pkgs.wl-clipboard"
     },
     "wl-paste": {
       "arch": "wl-clipboard",
       "debian": "wl-clipboard",
       "fedora": "wl-clipboard",
-      "gentoo": "gui-apps/wl-clipboard"
+      "gentoo": "gui-apps/wl-clipboard",
+      "void": "wl-clipboard",
+      "nix": "pkgs.wl-clipboard"
     },
 
     "bandwhich": {
@@ -111,24 +233,32 @@
       "arch": "libnotify",
       "debian": "libnotify-bin",
       "fedora": "libnotify",
-      "gentoo": "x11-libs/libnotify"
+      "gentoo": "x11-libs/libnotify",
+      "void": "libnotify",
+      "nix": "pkgs.libnotify"
     },
     "grim": {
       "arch": "grim",
       "debian": "grim",
       "fedora": "grim",
-      "gentoo": "gui-apps/grim"
+      "gentoo": "gui-apps/grim",
+      "void": "grim",
+      "nix": "pkgs.grim"
     },
     "slurp": {
       "arch": "slurp",
       "debian": "slurp",
       "fedora": "slurp",
-      "gentoo": "gui-apps/slurp"
+      "gentoo": "gui-apps/slurp",
+      "void": "slurp",
+      "nix": "pkgs.slurp"
     },
     "hyprpicker": {
       "arch": "hyprpicker",
       "debian": "hyprpicker",
-      "fedora": "hyprpicker"
+      "fedora": "hyprpicker",
+      "void": "hyprpicker",
+      "nix": "pkgs.hyprpicker"
     },
     "satty": {
       "arch": "satty",
@@ -198,13 +328,17 @@
       "arch": "glib2",
       "debian": "libglib2.0-bin",
       "fedora": "glib2",
-      "gentoo": "dev-libs/glib"
+      "gentoo": "dev-libs/glib",
+      "void": "glib",
+      "nix": "pkgs.glib.bin"
     },
     "gsettings": {
       "arch": "glib2",
       "debian": "libglib2.0-bin",
       "fedora": "glib2",
-      "gentoo": "dev-libs/glib"
+      "gentoo": "dev-libs/glib",
+      "void": "glib",
+      "nix": "pkgs.glib.bin"
     },
     "fc-cache": {
       "arch": "fontconfig",
@@ -332,14 +466,16 @@
       "arch": "sudo",
       "debian": "sudo",
       "fedora": "sudo",
-      "gentoo": "app-admin/sudo"
+      "gentoo": "app-admin/sudo",
+      "void": "sudo"
     },
     "visudo": {
       "description": "sudoers validation before a drop-in is installed",
       "arch": "sudo",
       "debian": "sudo",
       "fedora": "sudo",
-      "gentoo": "app-admin/sudo"
+      "gentoo": "app-admin/sudo",
+      "void": "sudo"
     },
     "fusermount3": {
       "arch": "fuse3",
