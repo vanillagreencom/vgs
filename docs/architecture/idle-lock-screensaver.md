@@ -227,16 +227,23 @@ is destroyed still owning the ext-session-lock, and the shell aborts on the next
 lock request — a black screen with a live lock behind it, landing on a save, in
 exactly the edit-while-locked workflow this change exists to enable.
 
-Two invariants put it out of reach:
+Matching happens independently at **every** level of the tree, so this is not one
+invariant but three — one per propagator in the chain:
 
-| Index | Child | Why there |
-|-------|-------|-----------|
-| 0 | `PersistentProperties` (`lockState`) | must reload *before* `WlSessionLock`, since it restores the `locked` request that `onReload` branches on |
-| 1 | `WlSessionLock` (`sessionLock`) | anything added later lands at index 2+ and cannot move either |
+| File | Root | Pinned children |
+|------|------|-----------------|
+| `shell.qml` | `ShellRoot` | `[0]` `Lock` |
+| `Modules/Lock/Lock.qml` | `Scope` | `[0]` `PersistentProperties`, `[1]` `WlSessionLock` |
+| `Services/IdleService.qml` | `Singleton` | `[0]` `PersistentProperties` |
 
-`scripts/check-lock-reload-order.py` enforces both and runs in CI. It is the only
-check in the suite that covers this: the nested smoke never locks, so nothing
-else would notice.
+Pinning them at the *front* is what makes the rule liveable: anything added later
+lands at a higher index and cannot move them. `PersistentProperties` has to
+precede `WlSessionLock` specifically, because it restores the `locked` request
+that `onReload` branches on.
+
+`scripts/check-lock-reload-order.py` enforces all three and runs in CI. It is the
+only check in the suite that covers this: the nested smoke never locks, so
+nothing else would notice.
 
 ### IdleService is rebuilt too
 
@@ -273,6 +280,27 @@ places that write state *after* the handler that would otherwise capture it.
 These are deliberately **not** bindings: `PersistentProperties::onReload` writes
 restored values with `setProperty`, which breaks a binding permanently and would
 leave the *next* reload restoring a stale value.
+
+The restore itself runs under a `restoring` flag that suppresses `snapshot()`.
+Without it the restore eats its own input: assigning `root.lockBlackoutActive`
+fires `onLockBlackoutActiveChanged` **synchronously**, which snapshots the new
+generation's still-empty `_blackoutBrightness` over the persisted map — and the
+next line then restores that emptied value. `displaysApplied` behind
+`desiredDisplaysOff` has the same shape. A half-restored object must never be
+observable as a snapshot source, so the flag is cleared and one snapshot taken at
+the end.
+
+### Lock requests must not vanish
+
+`IdleService.lockComponent` is assigned in `Lock.qml::_start()`, which waits on
+the duplicate-instance guard, so it is null for a real window at startup — and in
+a greeter, or a shell refused as a duplicate, it stays null for good. UI code
+therefore calls `IdleService.requestLock(source)` rather than
+`lockComponent?.activate()`: the optional chain would turn both cases into a
+silent no-op at the moment somebody asked to lock the machine. `requestLock()`
+retries across the startup window (250 ms × 16, comfortably past `shell.qml`'s
+2 s guard fail-open) and then logs an error naming the source, so a request that
+genuinely cannot be served is loud rather than lost.
 
 ### How this was verified
 
