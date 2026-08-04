@@ -98,20 +98,25 @@ Live-machine etiquette:
   does it.** There is no sync workflow under `.github/` and no Linear-side GitHub
   integration creating issues, so an unmirrored GitHub issue is invisible to the
   canonical tracker and can sit unseen indefinitely. Run the triage pass when
-  picking up work:
+  picking up work — list both sides, then mirror anything GitHub-only:
   ```bash
-  gh issue list --state open --limit 50 --json number,title,createdAt
+  gh issue list --state open --limit 50 --json number,title,url,createdAt \
+    --jq '.[] | [.number, .createdAt, .url, .title] | @tsv'
   .agents/skills/linear/scripts/linear.sh cache issues list --all-projects
+
+  # Per GitHub-only issue: title, body and url in one fetch, then the
+  # description — full body plus the provenance line back to GitHub.
+  gh issue view <n> --json title,body,url > /tmp/gh-<n>.json
+  jq -r '(.body | sub("\\s+$"; "")) + "\n\n---\n\nMirrored from GitHub issue [" + .url + "](<" + .url + ">) (intake-only tracker)."' /tmp/gh-<n>.json > /tmp/gh-<n>-body.md
+
+  .agents/skills/linear/scripts/linear.sh issues create --title "$(jq -r .title /tmp/gh-<n>.json)" \
+    --description-file /tmp/gh-<n>-body.md
   ```
-  For each GitHub issue with no Linear counterpart, carry the title and body
-  over into team `vg-shell`, ending the description with a line naming the
-  GitHub URL it was mirrored from:
-  ```bash
-  .agents/skills/linear/scripts/linear.sh issues create \
-    --title "<GitHub title>" --description-file <body.md>
-  ```
-  Then work the Linear issue, not the GitHub one. Automating this needs owner
-  action — see `docs/decisions/D002-github-linear-intake-sync.md`.
+  The list query carries `url` so the triage table is actionable; `body` is
+  fetched per issue rather than for all 50, and every field the description
+  needs comes from these commands alone. Then work the Linear issue, not the
+  GitHub one. Automating this needs owner action — see
+  `docs/decisions/D002-github-linear-intake-sync.md`.
 - Branch names carry the issue: `vgs-<n>-<slug>`. That is what Linear's GitHub
   integration matches to attach the PR, and what `GH_ISSUE_PATTERN` reads.
 - Commit style: `area: imperative summary` (e.g. `backend:`, `frontend:`, `docs:`,

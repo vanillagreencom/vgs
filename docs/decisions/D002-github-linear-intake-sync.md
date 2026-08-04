@@ -66,9 +66,30 @@ Neither automated option is taken:
 find .github -type f -name '*.yml'
 grep -ril linear .github/ || echo "no Linear reference"
 
-# The triage pass the docs now prescribe:
-gh issue list --state open --limit 50 --json number,title,createdAt
+# The triage pass the docs now prescribe: list both sides...
+gh issue list --state open --limit 50 --json number,title,url,createdAt \
+  --jq '.[] | [.number, .createdAt, .url, .title] | @tsv'
 .agents/skills/linear/scripts/linear.sh cache issues list --all-projects
+
+# ...then, per GitHub-only issue, build the exact description to be created.
+gh issue view <n> --json title,body,url > /tmp/gh-<n>.json
+jq -r '(.body | sub("\\s+$"; "")) + "\n\n---\n\nMirrored from GitHub issue [" + .url + "](<" + .url + ">) (intake-only tracker)."' /tmp/gh-<n>.json > /tmp/gh-<n>-body.md
+
+.agents/skills/linear/scripts/linear.sh issues create --title "$(jq -r .title /tmp/gh-<n>.json)" \
+  --description-file /tmp/gh-<n>-body.md
+```
+
+`title`, `body` and `url` are all requested, so the description — including the
+provenance line — is produced from these commands alone. Verified end to end
+against GitHub #45, which had been mirrored by hand as VGS-61 before this
+decision was written: the generated description is **byte-identical** to the
+Linear issue's stored description.
+
+```bash
+gh issue view 45 --json title,body,url > /tmp/gh-45.json
+jq -r '(.body | sub("\\s+$"; "")) + "\n\n---\n\nMirrored from GitHub issue [" + .url + "](<" + .url + ">) (intake-only tracker)."' /tmp/gh-45.json > /tmp/gh-45-body.md
+.agents/skills/linear/scripts/linear.sh cache issues get VGS-61 --format=safe | jq -r .description > /tmp/vgs-61.md
+diff /tmp/gh-45-body.md /tmp/vgs-61.md   # no output
 ```
 
 ## Revisit When
