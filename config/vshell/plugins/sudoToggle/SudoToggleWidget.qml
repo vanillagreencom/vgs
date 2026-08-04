@@ -2,6 +2,7 @@ import QtQuick
 import Quickshell
 import Quickshell.Io
 import qs.Common
+import qs.Modals
 import qs.Services
 import qs.Widgets
 import qs.Modules.Plugins
@@ -55,25 +56,22 @@ PluginComponent {
     // Enabling is permanent, has no expiry, and where sudo already does not
     // prompt (a foreign wheel NOPASSWD rule, a live credential cache) the
     // terminal gives visibility but no authentication — so this confirmation is
-    // the only real gate in that configuration. A plain "click twice" is not
-    // enough: an ordinary accidental double-click on a bar pill (~200 ms, far
-    // too fast to have read the toast) would satisfy it. Three guards:
-    //   * only a real click counts at all (isDirectActivation) — without this
-    //     a hover reaches toggle() through BarHoverController and satisfies
-    //     both of the guards below rather than defeating them;
-    //   * the second click is IGNORED (not counted, not cancelled) until
-    //     confirmMinMs has passed; and
-    //   * the pointer must have left the pill since arming. Note what is
-    //     literally tracked is only the leaving: `_pointerLeftSinceArm` is set
-    //     by the pill's onExited and never cleared by re-entry. It amounts to
-    //     "left and came back" ONLY because a click requires the pointer to be
-    //     over the pill, which is guaranteed by the first guard. Do not treat
-    //     this one as load-bearing on its own.
-    readonly property int confirmMinMs: 600
-    readonly property int confirmWindowMs: 8000
-    property real _armedAt: 0
-    property bool _pointerLeftSinceArm: false
-    readonly property bool _enableArmed: root._armedAt > 0
+    // the only real gate in that configuration.
+    //
+    // Until VGS-55 the gate was a toast plus a pointer gesture (move off the
+    // pill, click again, no sooner than 600 ms and within 8 s). Nothing on
+    // screen was interactive and the requirement was discoverable only by
+    // reading the toast. It is now SudoGrantConfirmModal, which is strictly
+    // stronger: hover cannot reach it, an accidental double-click on the pill
+    // cannot confirm — its second click lands on the modal background, which
+    // declines — and granting takes an explicit activation (clicking the grant
+    // control, or moving focus to it and pressing Return) of a control that
+    // says what it does. `isDirectActivation` stays — routing hover into a
+    // modal-opening call is still wrong.
+
+    // The drop-in the helper will write, from `sudo-toggle status --json`. Shown
+    // in the modal so the rule is inspectable and removable outside the shell.
+    property string dropinPath: ""
 
     // Pure decision functions. `scripts/test-sudo-toggle-confirm.js` extracts
     // THIS source text and exercises it directly, so the shipped logic is what
@@ -83,27 +81,27 @@ PluginComponent {
         // Only a real pointer press may change sudo state. The bar's hover
         // controller reaches pillClickAction through triggerHoverPopout ->
         // triggerPopout, so without this a pointer merely crossing the bar
-        // could arm and then confirm a grant with no click at all — and both
-        // confirmation guards are *satisfied* by ordinary traversal rather
-        // than defeated by it, so a stronger threshold would not help.
+        // could open — or, with confirmation suppressed, complete — a grant
+        // with no click at all.
         return origin === "click";
     }
 
-    function confirmDecision(origin, now, armedAt, pointerLeft, windowMs, minMs) {
+    function grantDecision(origin, enabled, skipConfirm) {
         if (!isDirectActivation(origin))
             return "ignore";
-        if (armedAt <= 0)
-            return "arm";
-        if (now - armedAt > windowMs)
-            return "arm";
-        if (now - armedAt < minMs)
-            return "ignore";
-        // A click requires the pointer to be over the pill, so "left since
-        // arming" plus "a click arrived" means it left and came back. That
-        // equivalence holds only because of isDirectActivation above.
-        if (!pointerLeft)
-            return "ignore";
-        return "fire";
+        // Revoking only ever removes privilege. It is never confirmed, and the
+        // suppression flag has no say over it.
+        if (enabled)
+            return "revoke";
+        return skipConfirm === true ? "grant" : "confirm";
+    }
+
+    function confirmOutcome(action, dontAskAgain) {
+        // Ticking "don't ask me again" and then cancelling must change
+        // nothing: the box is only honoured by an actual confirmation.
+        if (action !== "confirm")
+            return { grant: false, skipFuture: false };
+        return { grant: true, skipFuture: dontAskAgain === true };
     }
     // END CONFIRM DECISION
 
@@ -127,20 +125,20 @@ PluginComponent {
             return "Passwordless sudo toggle unavailable — " + root.unavailableReason;
         if (root.enabled)
             return "Passwordless sudo ENABLED — click to revoke";
-        if (root._enableArmed)
-            return "Move off this button, then click again to grant permanent passwordless sudo";
         if (!root.canEnable)
             return "Cannot grant passwordless sudo — " + root.enableReason;
         if (root.sudoNonInteractive)
             return "VGS passwordless sudo rule not installed — but sudo does not prompt on this machine right now";
+        if (SettingsData.sudoToggleSkipGrantConfirm)
+            return "Passwordless sudo disabled — click to grant (permanent, confirmation turned off)";
         return "Passwordless sudo disabled — click to grant (permanent)";
     }
 
     function toggle(origin) {
         // Nothing here may run for a synthesised activation — not the state
-        // change, not the arming step, not even a toast. `pillClickOnHover:
-        // false` already stops the known hover path; this is the invariant
-        // enforced at the decision point, so a future caller cannot reopen it.
+        // change, not the modal, not even a toast. `pillClickOnHover: false`
+        // already stops the known hover path; this is the invariant enforced at
+        // the decision point, so a future caller cannot reopen it.
         if (!root.isDirectActivation(origin))
             return;
         if (!root.available) {
@@ -151,10 +149,13 @@ PluginComponent {
         if (setProc.running)
             return;
 
-        if (root.enabled) {
+        const decision = root.grantDecision(origin, root.enabled, SettingsData.sudoToggleSkipGrantConfirm);
+        if (decision === "ignore")
+            return;
+
+        if (decision === "revoke") {
             // Revoking only ever removes privilege — no confirmation, and no
             // terminal requirement, so it works even where granting cannot.
-            root._disarm();
             root._runSet("off");
             return;
         }
@@ -165,24 +166,40 @@ PluginComponent {
             return;
         }
 
-        const decision = root.confirmDecision(origin, Date.now(), root._armedAt, root._pointerLeftSinceArm, root.confirmWindowMs, root.confirmMinMs);
-        if (decision === "ignore")
-            return;  // too fast, or the pointer never left: not a confirmation
-        if (decision === "arm") {
-            root._armedAt = Date.now();
-            root._pointerLeftSinceArm = false;
-            armTimeout.restart();
-            ToastService.showWarning("Grant passwordless sudo?", "This installs a permanent NOPASSWD rule for your user, with no expiry. Move the pointer off the button and click it again to confirm.");
+        if (decision === "confirm") {
+            // Clicking the pill again while the prompt is up must not reset the
+            // dialog the user is part-way through answering.
+            if (!grantConfirm.shouldBeVisible)
+                grantConfirm.promptFor(root.dropinPath);
             return;
         }
-        root._disarm();
         root._runSet("on");
     }
 
-    function _disarm() {
-        root._armedAt = 0;
-        root._pointerLeftSinceArm = false;
-        armTimeout.stop();
+    // The confirmation surface. Only `confirmed` may start a grant, and only a
+    // confirmed grant may persist the suppression flag — cancelling with the
+    // box ticked leaves the next grant confirmed.
+    SudoGrantConfirmModal {
+        id: grantConfirm
+        targetScreen: root.parentScreen
+
+        onConfirmed: dontAskAgain => {
+            const outcome = root.confirmOutcome("confirm", dontAskAgain);
+            if (outcome.skipFuture)
+                SettingsData.set("sudoToggleSkipGrantConfirm", true);
+            if (!outcome.grant)
+                return;
+            // The prompt is not modal to the machine: state can move while it is
+            // open, so re-check rather than trusting what opened the dialog.
+            if (setProc.running || root.enabled)
+                return;
+            if (!root.canEnable) {
+                ToastService.showWarning("Cannot grant passwordless sudo", root.enableReason);
+                root._probeStatus(true);
+                return;
+            }
+            root._runSet("on");
+        }
     }
 
     // Ask sudo whether it prompts, only when the user has shown interest.
@@ -207,13 +224,6 @@ PluginComponent {
         root.enabled = root._flagPresent || root._legacyFlagPresent;
     }
 
-    Timer {
-        id: armTimeout
-        interval: root.confirmWindowMs
-        repeat: false
-        onTriggered: root._disarm()
-    }
-
     // Availability probe. `status` exits non-zero when the toggle cannot run,
     // and reports why, so the widget never has to guess. The startup run omits
     // the sudo probe; a probing run happens only on interaction.
@@ -236,6 +246,7 @@ PluginComponent {
                     root.enabled = status.enabled === true;
                     root.canEnable = status.canEnable !== false;
                     root.enableReason = status.enableReason || "";
+                    root.dropinPath = status.dropin || "";
                     // Only trust a false when sudo was actually asked; the
                     // startup run does not ask.
                     if (root._pendingSudoProbe || status.sudoNonInteractive === true) {
@@ -405,9 +416,6 @@ PluginComponent {
     }
 
     function _cancelTip() {
-        // Leaving the pill is half of what an enable confirmation requires; a
-        // double-click never leaves it.
-        root._pointerLeftSinceArm = true;
         tipDelay.stop();
         sharedTip.hide();
         root._hoverItem = null;
