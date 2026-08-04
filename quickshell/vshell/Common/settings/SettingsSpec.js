@@ -661,6 +661,12 @@ var SPEC = {
     launcherPluginVisibility: { def: {} },
     launcherPluginOrder: { def: [] },
 
+    // Suppresses the sudoToggle grant-confirmation modal. A top-level key, not
+    // plugin data, so it is visible and resettable next to every other setting
+    // rather than buried in `builtInPluginSettings`. Default false: the grant
+    // is confirmed until the user opts out of being asked.
+    sudoToggleSkipGrantConfirm: { def: false },
+
     barInsetPaddingShared: { def: -1 },
     barInsetPaddingSyncAll: { def: false }
 };
