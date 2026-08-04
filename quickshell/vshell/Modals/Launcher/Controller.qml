@@ -2040,9 +2040,8 @@ Item {
     function openTerminal(path) {
         if (!path)
             return;
-        var terminal = SessionData.resolveTerminal() || "xterm";
         Quickshell.execDetached({
-            command: [terminal],
+            command: [Paths.vshellCli, "terminal", "open"],
             workingDirectory: path
         });
     }

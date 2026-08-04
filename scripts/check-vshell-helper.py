@@ -1129,35 +1129,62 @@ def test_launcher_folder_opener_agreement():
     # in it must actually launch. Probe every combination of the binaries the two
     # functions look at rather than restating either one's condition: the invariant
     # under test is that they agree, not what either of them happens to check.
-    binaries = ["yazi", "nautilus", "xdg-terminal-exec", "gio"]
+    binaries = ["yazi", "gio"]
     original_which = helper.shutil.which
     original_popen = helper.subprocess.Popen
+    original_candidates = helper.terminal_candidates
+    original_manager = helper.file_manager
+
+    class _LiveTerminal:
+        """A spawned terminal that is still running when the settle window ends."""
+
+        returncode = None
+
+        def wait(self, timeout=None):
+            raise helper.subprocess.TimeoutExpired("terminal", timeout)
+
+    # Both the file manager the user configured and whether it is a TUI matter:
+    # a terminal file manager advertised without a terminal opens nothing.
+    managers = [
+        {},
+        {"argv": ["nautilus"], "name": "Files", "terminal": False, "source": "xdg-mime", "entry": ""},
+        {"argv": ["yazi"], "name": "Yazi", "terminal": True, "source": "xdg-mime", "entry": ""},
+    ]
 
     with tempfile.TemporaryDirectory() as tmp:
         for mask in range(1 << len(binaries)):
-            present = {name for index, name in enumerate(binaries) if mask & (1 << index)}
-            # Accept the absolute form too: _launcher_open_folder() re-checks
-            # command[0], which by then is the resolved path.
-            helper.shutil.which = lambda name, _p=present: (
-                f"/usr/bin/{os.path.basename(name)}" if os.path.basename(name) in _p else None
-            )
-            helper.subprocess.Popen = lambda *a, **k: None
-            try:
-                for opener in helper._launcher_folder_openers():
-                    if opener["id"] == "default":
-                        # "Preferred app" is always offered and falls through to
-                        # `gio open`; it is not probe-gated, so it is not a claim
-                        # about an installed binary the way the others are.
-                        continue
-                    result = helper._launcher_open_folder(tmp, "", opener["id"])
-                    assert_equal(
-                        result.get("ok"), True,
-                        f"advertised opener {opener['id']!r} must launch with {sorted(present)}"
-                        f" (got {result.get('error')!r})",
+            for has_terminal in (False, True):
+                for manager in managers:
+                    present = {name for index, name in enumerate(binaries) if mask & (1 << index)}
+                    present.update(manager.get("argv", [])[:1])
+                    # Accept the absolute form too: _launcher_open_folder()
+                    # re-checks command[0], which by then is the resolved path.
+                    helper.shutil.which = lambda name, _p=present: (
+                        f"/usr/bin/{os.path.basename(name)}" if os.path.basename(name) in _p else None
                     )
-            finally:
-                helper.shutil.which = original_which
-                helper.subprocess.Popen = original_popen
+                    helper.subprocess.Popen = lambda *a, **k: _LiveTerminal()
+                    helper.terminal_candidates = lambda _t=has_terminal: [["kitty"]] if _t else []
+                    helper.file_manager = lambda _m=manager: dict(_m)
+                    state = f"binaries={sorted(present)} terminal={has_terminal} fm={manager.get('name')}"
+                    try:
+                        for opener in helper._launcher_folder_openers():
+                            if opener["id"] == "default":
+                                # "Preferred app" is always offered and falls
+                                # through to `gio open`; it is not probe-gated,
+                                # so it is not a claim about an installed binary
+                                # the way the others are.
+                                continue
+                            result = helper._launcher_open_folder(tmp, "", opener["id"])
+                            assert_equal(
+                                result.get("ok"), True,
+                                f"advertised opener {opener['id']!r} must launch with {state}"
+                                f" (got {result.get('error')!r})",
+                            )
+                    finally:
+                        helper.shutil.which = original_which
+                        helper.subprocess.Popen = original_popen
+                        helper.terminal_candidates = original_candidates
+                        helper.file_manager = original_manager
 
 
 def test_launcher_zoxide_results():
@@ -1509,6 +1536,10 @@ def test_sudo_toggle_revoke_retires_legacy_flag_without_state_dir():
 def test_launch_terminal_rejects_immediately_failing_terminal():
     """A terminal that dies on spawn must not be reported as launched."""
     original = helper.terminal_candidates
+    original_scope = helper.app_scope_prefix
+    # The systemd-scope wrapper is an environment detail; this test is about the
+    # terminal itself, so spawn without it.
+    helper.app_scope_prefix = lambda: []
     helper.terminal_candidates = lambda: [["/bin/false"]]
     try:
         assert_equal(helper.launch_terminal(["true"]), helper.TERMINAL_EXIT_FAILED,
@@ -1522,6 +1553,7 @@ def test_launch_terminal_rejects_immediately_failing_terminal():
                      "No terminal at all must report a distinct status")
     finally:
         helper.terminal_candidates = original
+        helper.app_scope_prefix = original_scope
 
     assert_equal(helper.TERMINAL_EXIT_FAILED == helper.SUDO_TOGGLE_EXIT_STALE, False,
                  "A failed terminal must not be reportable as a stale-state refusal")
@@ -1594,10 +1626,100 @@ def test_sudo_toggle_revoke_never_needs_a_terminal():
 def test_terminal_candidates_match_dependency_manifest():
     """One list of terminals, two files: they must not drift apart."""
     manifest = json.loads((REPO_ROOT / "config" / "vshell" / "dependencies.json").read_text())
-    any_commands = manifest["features"]["sudo-toggle"]["anyCommands"]
-    assert_equal(len(any_commands), 1, "sudo-toggle must declare exactly one terminal alternative set")
-    assert_equal(sorted(any_commands[0]), sorted(helper.TERMINAL_CANDIDATES),
+    features = manifest["features"]
+    any_commands = features["terminal"]["anyCommands"]
+    assert_equal(len(any_commands), 1, "terminal must declare exactly one alternative set")
+    assert_equal(sorted(any_commands[0]),
+                 sorted(("xdg-terminal-exec",) + helper.TERMINAL_CANDIDATES),
                  "dependencies.json terminals must match helper TERMINAL_CANDIDATES")
+    # Terminals are declared once, by the group that owns them. Anything that
+    # needs one says so by requiring that group, so there is no second list to
+    # drift (VGS-32).
+    for feature in ("sudo-toggle", "launcher-folder-open-yazi"):
+        assert_equal(features[feature].get("anyCommands"), None,
+                     f"{feature} must not restate the terminal list")
+        assert_equal("terminal" in (features[feature].get("requiresFeatures") or []), True,
+                     f"{feature} must require the terminal feature")
+    assert_equal(sorted(features["file-manager"]["anyCommands"][0]),
+                 sorted(helper.FILE_MANAGER_CANDIDATES),
+                 "dependencies.json file managers must match helper FILE_MANAGER_CANDIDATES")
+
+
+def test_requires_features_propagates_to_availability():
+    """A group that requires an unavailable group must not report ok."""
+    original_load = helper.load_deps
+    original_exists = helper.command_exists
+    helper.load_deps = lambda: {
+        "version": 2,
+        "features": {
+            "terminal": {"anyCommands": [["kitty"]]},
+            "sudo-toggle": {"commands": ["sudo"], "requiresFeatures": ["terminal"]},
+        },
+    }
+    helper.command_exists = lambda name: name == "sudo"
+    try:
+        features = helper.feature_status()["features"]
+        assert_equal(features["terminal"]["available"], False, "terminal must be unavailable")
+        assert_equal(features["sudo-toggle"]["available"], False,
+                     "sudo-toggle must inherit the missing terminal")
+        assert_equal("@terminal" in features["sudo-toggle"]["missing"], True,
+                     "sudo-toggle must name the feature it is missing")
+    finally:
+        helper.load_deps = original_load
+        helper.command_exists = original_exists
+
+
+def test_terminal_resolution_prefers_the_vgs_setting():
+    """One resolver, and its order is the documented one."""
+    original_candidates_env = os.environ.get("TERMINAL")
+    original_which = helper.shutil.which
+    original_override = helper.session_terminal_override
+    original_list = helper.xdg_terminals_list
+    helper.shutil.which = lambda name: f"/usr/bin/{name}" if name in {"kitty", "foot", "xdg-terminal-exec"} else None
+    helper.xdg_terminals_list = lambda: []
+    try:
+        helper.session_terminal_override = lambda: ["foot"]
+        os.environ["TERMINAL"] = "kitty"
+        assert_equal(helper.terminal_candidates()[0], ["foot"],
+                     "the Settings terminal override must outrank $TERMINAL")
+
+        helper.session_terminal_override = lambda: []
+        assert_equal(helper.terminal_candidates()[0], ["kitty"],
+                     "$TERMINAL must outrank xdg-terminal-exec")
+
+        os.environ.pop("TERMINAL", None)
+        assert_equal(helper.terminal_candidates()[0], ["xdg-terminal-exec"],
+                     "xdg-terminal-exec must be preferred when installed")
+
+        helper.shutil.which = lambda name: f"/usr/bin/{name}" if name == "foot" else None
+        assert_equal(helper.terminal_candidates(), [["foot"]],
+                     "an installed terminal must still be found without xdg-terminal-exec")
+    finally:
+        helper.shutil.which = original_which
+        helper.session_terminal_override = original_override
+        helper.xdg_terminals_list = original_list
+        if original_candidates_env is None:
+            os.environ.pop("TERMINAL", None)
+        else:
+            os.environ["TERMINAL"] = original_candidates_env
+
+
+def test_terminal_argv_shapes_per_terminal():
+    """The app-id is translated per terminal, never handed over blindly."""
+    assert_equal(helper.terminal_argv(["kitty"], ["true"], "TUI.float"),
+                 ["kitty", "--class=TUI.float", "-e", "true"],
+                 "kitty takes --class=")
+    assert_equal(helper.terminal_argv(["xterm"], ["true"], "TUI.float"),
+                 ["xterm", "-class", "TUI.float", "-e", "true"],
+                 "xterm takes -class as a separate argument")
+    assert_equal(helper.terminal_argv(["konsole"], ["true"], "TUI.float"),
+                 ["konsole", "-e", "true"],
+                 "a terminal with no app-id flag must drop the app-id, not pass it")
+    assert_equal(helper.terminal_argv(["xdg-terminal-exec"], ["true"], "TUI.float"),
+                 ["xdg-terminal-exec", "--app-id=TUI.float", "--", "true"],
+                 "xdg-terminal-exec separates its options with --")
+    assert_equal(helper.terminal_argv(["kitty"], [], ""), ["kitty"],
+                 "opening a bare terminal adds nothing")
 
 
 def _notification_env(root: Path, owner: dict | None, activation: str | None = None):
@@ -2042,6 +2164,9 @@ def main():
     test_notification_takeover_never_touches_an_inherited_unit()
     test_notification_restore_starts_what_takeover_stopped()
     test_notification_status_respects_the_server_opt_out()
+    test_requires_features_propagates_to_availability()
+    test_terminal_resolution_prefers_the_vgs_setting()
+    test_terminal_argv_shapes_per_terminal()
     subprocess.run(
         [sys.executable, str(REPO_ROOT / "scripts" / "check-vshell-niri.py")],
         check=True,

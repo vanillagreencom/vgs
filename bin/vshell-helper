@@ -4908,7 +4908,17 @@ def feature_status() -> Dict[str, Any]:
             "compositorCommands": compositor_commands,
             "compositor": selected_compositor or compositor,
             "missing": missing,
+            "requiresFeatures": list(spec.get("requiresFeatures") or []),
         }
+    # Feature-to-feature requirements, resolved once every group is known. This
+    # is what lets one group own a command list (`terminal`) while the groups
+    # that need it still report unavailable, instead of restating the list.
+    for feature, entry in features.items():
+        for required in entry["requiresFeatures"]:
+            dependency = features.get(required)
+            if dependency and not dependency["available"]:
+                entry["missing"].append(f"@{required}")
+                entry["available"] = False
     return {"version": data.get("version", 1), "compositor": compositor, "features": features}
 
 
@@ -8846,7 +8856,38 @@ def ensure_root_for(argv: List[str], terminal: bool = False) -> int | None:
     return proc.returncode
 
 
-TERMINAL_CANDIDATES = ("ghostty", "kitty", "alacritty", "foot", "wezterm", "xterm")
+# VGS has exactly one terminal resolver and it is this section. QML, plugin JS,
+# bash and the Go backend all reach it through `vshell terminal ...` instead of
+# invoking a terminal — or `xdg-terminal-exec` — themselves, so the ordering
+# below is the only ordering in the tree. See
+# docs/architecture/overlay-and-dependencies.md § Terminal and file-manager
+# resolution.
+TERMINAL_CANDIDATES = ("ghostty", "kitty", "alacritty", "foot", "wezterm", "konsole", "gnome-terminal", "xterm")
+
+# Per-terminal argv shape.
+#   exec_flag  - what separates the terminal's own options from the command to
+#                run in it.
+#   app_id_flag- how the terminal is told which app-id/class to use. A flag
+#                ending in "=" is joined to the value, anything else is passed
+#                as its own argv entry, and None means the terminal has no
+#                equivalent so the requested app-id is dropped rather than
+#                handed over as an option the terminal will reject.
+TERMINAL_SPECS: Dict[str, Dict[str, Any]] = {
+    "xdg-terminal-exec": {"exec_flag": "--", "app_id_flag": "--app-id="},
+    "ghostty": {"exec_flag": "-e", "app_id_flag": "--class="},
+    "kitty": {"exec_flag": "-e", "app_id_flag": "--class="},
+    "alacritty": {"exec_flag": "-e", "app_id_flag": "--class="},
+    "foot": {"exec_flag": "-e", "app_id_flag": "--app-id="},
+    "wezterm": {"exec_flag": "-e", "app_id_flag": None},
+    "konsole": {"exec_flag": "-e", "app_id_flag": None},
+    "gnome-terminal": {"exec_flag": "--", "app_id_flag": None},
+    "xterm": {"exec_flag": "-e", "app_id_flag": "-class"},
+}
+
+TERMINAL_DEFAULT_SPEC: Dict[str, Any] = {"exec_flag": "-e", "app_id_flag": None}
+
+# The app-id VGS asks for when it opens a TUI, which compositor rules float.
+TERMINAL_TUI_APP_ID = "TUI.float"
 
 # How long to watch a freshly spawned terminal before treating it as launched.
 # A terminal that cannot take `-e sh -lc`, or cannot reach the display, dies
@@ -8860,9 +8901,134 @@ TERMINAL_SETTLE_SECONDS = 0.75
 TERMINAL_EXIT_FAILED = 4
 
 
+def xdg_config_dirs() -> List[Path]:
+    config_home = os.environ.get("XDG_CONFIG_HOME", "").strip()
+    dirs = [Path(config_home).expanduser() if config_home else home() / ".config"]
+    extra = os.environ.get("XDG_CONFIG_DIRS", "").strip() or "/etc/xdg"
+    dirs.extend(Path(part) for part in extra.split(":") if part)
+    return dirs
+
+
+def xdg_data_dirs() -> List[Path]:
+    data_home = os.environ.get("XDG_DATA_HOME", "").strip()
+    dirs = [Path(data_home).expanduser() if data_home else home() / ".local" / "share"]
+    extra = os.environ.get("XDG_DATA_DIRS", "").strip() or "/usr/local/share:/usr/share"
+    dirs.extend(Path(part) for part in extra.split(":") if part)
+    return dirs
+
+
+def desktop_entry_path(entry_id: str) -> Path | None:
+    """Locate a .desktop file by id, including `vendor-name.desktop` subdirs."""
+    name = entry_id if entry_id.endswith(".desktop") else entry_id + ".desktop"
+    for base in xdg_data_dirs():
+        candidate = base / "applications" / name
+        if candidate.is_file():
+            return candidate
+        # Entry ids may encode a subdirectory as "vendor-app.desktop".
+        if "-" in name:
+            vendor, _, rest = name.partition("-")
+            nested = base / "applications" / vendor / rest
+            if nested.is_file():
+                return nested
+    return None
+
+
+def desktop_entry_fields(path: Path) -> Dict[str, str]:
+    """Key/value pairs of a .desktop file's [Desktop Entry] group."""
+    fields: Dict[str, str] = {}
+    in_group = False
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return fields
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("[") and stripped.endswith("]"):
+            in_group = stripped == "[Desktop Entry]"
+            continue
+        if not in_group or not stripped or stripped.startswith("#"):
+            continue
+        key, sep, value = stripped.partition("=")
+        if sep:
+            fields.setdefault(key.strip(), value.strip())
+    return fields
+
+
+def desktop_entry_command(entry_id: str) -> List[str]:
+    """Executable argv for a desktop entry id, or [] when it cannot be run.
+
+    Field codes (%f, %U, …) are dropped: callers append their own target.
+    """
+    path = desktop_entry_path(entry_id)
+    if not path:
+        return []
+    fields = desktop_entry_fields(path)
+    try_exec = fields.get("TryExec", "").strip()
+    if try_exec and not (shutil.which(try_exec) or Path(try_exec).exists()):
+        return []
+    try:
+        parts = shlex.split(fields.get("Exec", ""))
+    except ValueError:
+        return []
+    argv = [part for part in parts if not re.fullmatch(r"%[a-zA-Z]", part)]
+    if not argv or not (shutil.which(argv[0]) or Path(argv[0]).exists()):
+        return []
+    return argv
+
+
+def xdg_terminals_list() -> List[str]:
+    """Desktop entry ids from xdg-terminals.list, most preferred first.
+
+    This is the file Settings -> Default Apps -> Terminal writes, and the same
+    file `xdg-terminal-exec` reads. VGS parses it directly so the user's choice
+    is still honoured when that AUR-only binary is not installed.
+    """
+    entries: List[str] = []
+    for base in xdg_config_dirs():
+        try:
+            text = (base / "xdg-terminals.list").read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        for line in text.splitlines():
+            value = line.strip()
+            if value and not value.startswith("#") and value not in entries:
+                entries.append(value)
+    return entries
+
+
+def session_terminal_override() -> List[str]:
+    """`terminalOverride` from session.json: the Settings terminal picker."""
+    try:
+        data = json.loads((state_dir() / "session.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+    value = str((data or {}).get("terminalOverride", "") or "").strip()
+    if not value:
+        return []
+    try:
+        return shlex.split(value)
+    except ValueError:
+        return []
+
+
 def terminal_candidates() -> List[List[str]]:
-    """Terminal argv prefixes to try, most preferred first ($TERMINAL wins)."""
+    """Terminal argv prefixes to try, most preferred first.
+
+    Order, and why:
+      1. terminalOverride    - the VGS setting, an explicit choice the user made
+                               in Settings, so it outranks everything inherited.
+      2. $TERMINAL           - a per-session override.
+      3. xdg-terminal-exec   - implements the whole XDG terminal spec when the
+                               user has it; AUR-only, so never required.
+      4. xdg-terminals.list  - the same user choice, read directly, so Settings
+                               -> Default Apps -> Terminal works without (3).
+      5. installed terminals - so a default install with none of the above
+                               still opens a window instead of failing.
+    """
     candidates: List[List[str]] = []
+    override = session_terminal_override()
+    if override:
+        candidates.append(override)
     configured = os.environ.get("TERMINAL", "").strip()
     if configured:
         try:
@@ -8871,25 +9037,88 @@ def terminal_candidates() -> List[List[str]]:
             parsed = []
         if parsed:
             candidates.append(parsed)
+    if shutil.which("xdg-terminal-exec"):
+        candidates.append(["xdg-terminal-exec"])
+    for entry_id in xdg_terminals_list():
+        argv = desktop_entry_command(entry_id)
+        if argv:
+            candidates.append(argv)
     for term in TERMINAL_CANDIDATES:
         if shutil.which(term):
             candidates.append([term])
-    return [base for base in candidates
-            if base and (shutil.which(base[0]) or Path(base[0]).exists())]
+    resolved: List[List[str]] = []
+    for base in candidates:
+        if not base or not (shutil.which(base[0]) or Path(base[0]).exists()):
+            continue
+        if base not in resolved:
+            resolved.append(base)
+    return resolved
 
 
 def have_terminal() -> bool:
     return bool(terminal_candidates())
 
 
-def launch_terminal(cmd: List[str]) -> int:
+def terminal_spec(executable: str) -> Dict[str, Any]:
+    return TERMINAL_SPECS.get(Path(executable).name, TERMINAL_DEFAULT_SPEC)
+
+
+def app_scope_prefix() -> List[str]:
+    """`uwsm app --` when the session can use it, else nothing.
+
+    Launching into a systemd scope is an enhancement, never a requirement:
+    hardcoding the prefix is what made every VGS terminal action fail with
+    `command not found` on installs without uwsm.
+    """
+    if os.environ.get("VSHELL_NO_APP_SCOPE"):
+        return []
+    if not Path("/run/systemd/system").exists():
+        return []
+    uwsm = shutil.which("uwsm")
+    return [uwsm, "app", "--"] if uwsm else []
+
+
+def terminal_argv(base: List[str], cmd: List[str], app_id: str = "") -> List[str]:
+    """Full argv for running `cmd` in the terminal described by `base`."""
+    spec = terminal_spec(base[0])
+    argv = list(base)
+    flag = spec.get("app_id_flag")
+    if app_id and flag:
+        if flag.endswith("="):
+            argv.append(flag + app_id)
+        else:
+            argv.extend([flag, app_id])
+    if cmd:
+        exec_flag = spec.get("exec_flag") or "-e"
+        argv.append(exec_flag)
+        argv.extend(cmd)
+    return argv
+
+
+def terminal_hold_script(cmd: List[str]) -> List[str]:
     quoted = " ".join(shlex.quote(part) for part in cmd)
     script = f"{quoted}; code=$?; echo; echo 'VGS command exited with status '$code'. Press Enter to close.'; read _; exit $code"
+    return ["sh", "-lc", script]
+
+
+def spawn_terminal(
+    cmd: List[str],
+    app_id: str = "",
+    hold: bool = False,
+    detach: bool = False,
+    what: str = "VGS command",
+) -> int:
+    """Run `cmd` (or an interactive shell when empty) in the resolved terminal.
+
+    The single spawn path behind `vshell terminal` and `launch_terminal()`.
+    """
+    payload = terminal_hold_script(cmd) if (cmd and hold) else list(cmd)
+    scope = app_scope_prefix()
     tried: List[str] = []
     for base in terminal_candidates():
-        full = [*base, "-e", "sh", "-lc", script]
+        full = [*scope, *terminal_argv(base, payload, app_id)]
         try:
-            proc = subprocess.Popen(full)
+            proc = subprocess.Popen(full, start_new_session=detach)
         except Exception:
             continue
         tried.append(base[0])
@@ -8904,12 +9133,55 @@ def launch_terminal(cmd: List[str]) -> int:
         if proc.returncode == 0:
             return 0  # exited cleanly and fast; nothing to distrust
     if tried:
-        eprint("Terminal exited immediately for privileged VGS command (tried: "
-               + ", ".join(tried) + ")")
+        eprint(f"Terminal exited immediately for {what} (tried: " + ", ".join(tried) + ")")
         return TERMINAL_EXIT_FAILED
-    eprint("No supported terminal found for privileged VGS command (set $TERMINAL, or install one of: "
-           + ", ".join(TERMINAL_CANDIDATES) + ")")
+    eprint(f"No terminal found for {what}. Install one (or set $TERMINAL, or pick one in "
+           "Settings -> Default Apps -> Terminal); VGS looks for: "
+           + ", ".join(TERMINAL_CANDIDATES))
     return 1
+
+
+def launch_terminal(cmd: List[str]) -> int:
+    return spawn_terminal(cmd, hold=True, what="privileged VGS command")
+
+
+# Same rule as terminals: one file-manager resolver, and it asks the XDG
+# default-apps layer (the one Settings -> Default Apps -> File Manager writes
+# through `xdg-mime`) before falling back to whatever is installed.
+FILE_MANAGER_CANDIDATES = ("nautilus", "dolphin", "thunar")
+
+FILE_MANAGER_MIME = "inode/directory"
+
+
+def file_manager() -> Dict[str, Any]:
+    """The user's file manager: {"argv", "source", "name"}, or {} when none."""
+    if shutil.which("xdg-mime"):
+        try:
+            proc = run(["xdg-mime", "query", "default", FILE_MANAGER_MIME], timeout=5)
+            entry_id = (proc.stdout or "").strip().splitlines()
+        except (OSError, subprocess.SubprocessError):
+            entry_id = []
+        for candidate in entry_id:
+            entry = candidate.strip()
+            argv = desktop_entry_command(entry)
+            if not argv:
+                continue
+            path = desktop_entry_path(entry)
+            fields = desktop_entry_fields(path) if path else {}
+            return {
+                "argv": argv,
+                "source": "xdg-mime",
+                "entry": entry,
+                "name": fields.get("Name", "") or Path(argv[0]).name,
+                # A TUI file manager (yazi, ranger, lf) is a legitimate default
+                # here, and launching it without a terminal opens nothing.
+                "terminal": fields.get("Terminal", "").strip().lower() == "true",
+            }
+    for name in FILE_MANAGER_CANDIDATES:
+        if shutil.which(name):
+            return {"argv": [name], "source": "installed", "entry": "", "name": name,
+                    "terminal": False}
+    return {}
 
 
 def safe_toml_string(value: str) -> str:
@@ -9907,19 +10179,19 @@ def _launcher_folder_openers() -> List[Dict[str, str]]:
     # setting, which the "Preferred app" opener passes through as --command. See
     # docs/architecture/overlay-and-dependencies.md § Probing rules.
     #
-    # `yazi` and `nautilus` are distribution packages, so probing them is allowed,
-    # but neither is declared in dependencies.json yet: that is deferred to VGS-32
-    # along with the rest of the folder-opener routing, and recorded in the
-    # `undeclared` map at the top of that manifest.
     openers = [{"id": "default", "label": "Preferred app", "icon": "open_in_new"}]
     # Yazi is a TUI, so it is only openable with a terminal spawner. Advertise it
     # on the same condition _launcher_open_folder() runs it on, or the QML opener
     # list (populated from `vshell launcher-search openers`) offers a choice that
     # can only answer "unavailable".
-    if shutil.which("yazi") and shutil.which("xdg-terminal-exec"):
+    if shutil.which("yazi") and have_terminal():
         openers.append({"id": "yazi", "label": "Yazi", "icon": "terminal"})
-    if shutil.which("nautilus"):
-        openers.append({"id": "nautilus", "label": "Nautilus", "icon": "folder"})
+    # Not a hardcoded application: whichever file manager the user has set for
+    # inode/directory, which is what Settings -> Default Apps writes.
+    manager = file_manager()
+    if manager and (have_terminal() or not manager.get("terminal")):
+        openers.append({"id": "filemanager", "label": manager.get("name") or "File manager",
+                        "icon": "folder"})
     return openers
 
 
@@ -9929,15 +10201,24 @@ def _launcher_open_folder(path: str, command_text: str = "", opener: str = "defa
         return {"ok": False, "error": f"Folder not found: {target}"}
     if opener == "yazi":
         yazi = shutil.which("yazi")
-        terminal = shutil.which("xdg-terminal-exec")
-        if not yazi or not terminal:
+        if not yazi or not have_terminal():
             return {"ok": False, "error": "Yazi folder opener is unavailable"}
-        command = [terminal, yazi, target]
-    elif opener == "nautilus":
-        nautilus = shutil.which("nautilus")
-        if not nautilus:
-            return {"ok": False, "error": "Nautilus is unavailable"}
-        command = [nautilus, target]
+        code = spawn_terminal([yazi, target], detach=True, what="the Yazi folder opener")
+        if code != 0:
+            return {"ok": False, "error": "Yazi folder opener could not start a terminal"}
+        return {"ok": True, "command": [yazi, target], "opener": "yazi"}
+    if opener in {"filemanager", "nautilus"}:
+        manager = file_manager()
+        if not manager:
+            return {"ok": False, "error": "No file manager is configured or installed"}
+        command = [*manager["argv"], target]
+        if manager.get("terminal"):
+            if not have_terminal():
+                return {"ok": False, "error": f"{manager['name']} needs a terminal, and none was found"}
+            code = spawn_terminal(command, detach=True, what="the folder opener")
+            if code != 0:
+                return {"ok": False, "error": f"{manager['name']} could not start a terminal"}
+            return {"ok": True, "command": command, "opener": "filemanager"}
     elif command_text.strip():
         command = shlex.split(command_text)
         command = [part.replace("{path}", target) for part in command]
@@ -10512,7 +10793,9 @@ def cmd_launcher_search(argv: List[str]) -> int:
     opener = sub.add_parser("open-folder")
     opener.add_argument("path")
     opener.add_argument("--command", default="")
-    opener.add_argument("--opener", choices=("default", "yazi", "nautilus"), default="default")
+    # "nautilus" is the pre-VGS-32 id for what is now the resolved file manager;
+    # accepted so a menu opened before an upgrade still opens a folder.
+    opener.add_argument("--opener", choices=("default", "yazi", "filemanager", "nautilus"), default="default")
     sub.add_parser("openers")
     sub.add_parser("status")
     args = parser.parse_args(argv)
@@ -11332,6 +11615,70 @@ def cmd_notifications(argv: List[str]) -> int:
     return 0 if result["ok"] else 1
 
 
+def cmd_terminal(argv: List[str]) -> int:
+    """The one entry point every VGS surface uses to open a terminal."""
+    usage = (
+        "Usage:\n"
+        "  vshell terminal resolve [--json]\n"
+        "  vshell terminal open [--app-id ID]\n"
+        "  vshell terminal exec [--app-id ID] [--hold] -- <command> [args...]"
+    )
+    if not argv:
+        eprint(usage)
+        return 2
+    sub, rest = argv[0], argv[1:]
+    if sub not in {"resolve", "open", "exec"}:
+        eprint(usage)
+        return 2
+
+    if sub == "resolve":
+        as_json = "--json" in rest
+        candidates = terminal_candidates()
+        payload = {
+            "ok": bool(candidates),
+            "terminal": candidates[0] if candidates else [],
+            "candidates": candidates,
+            "scope": app_scope_prefix(),
+            "xdgTerminalsList": xdg_terminals_list(),
+        }
+        if as_json:
+            print(json.dumps(payload, ensure_ascii=False))
+        elif candidates:
+            print(" ".join(candidates[0]))
+        else:
+            eprint("No terminal found. Install one of: " + ", ".join(TERMINAL_CANDIDATES))
+        return 0 if candidates else 1
+
+    app_id = ""
+    hold = False
+    cmd: List[str] = []
+    index = 0
+    while index < len(rest):
+        arg = rest[index]
+        if arg == "--":
+            cmd = rest[index + 1:]
+            break
+        if arg == "--hold":
+            hold = True
+        elif arg == "--app-id":
+            index += 1
+            app_id = rest[index] if index < len(rest) else ""
+        elif arg.startswith("--app-id="):
+            app_id = arg.split("=", 1)[1]
+        elif arg == "--tui":
+            app_id = TERMINAL_TUI_APP_ID
+        else:
+            eprint(f"vshell terminal {sub}: unknown option: {arg}")
+            eprint(usage)
+            return 2
+        index += 1
+    if sub == "exec" and not cmd:
+        eprint("vshell terminal exec: a command is required after --")
+        return 2
+    return spawn_terminal(cmd, app_id=app_id, hold=hold, detach=True,
+                          what="the requested terminal command" if cmd else "a terminal")
+
+
 def main() -> int:
     if len(sys.argv) < 2:
         eprint("Usage: vshell-helper <theme|fonts|deps|notifications|update|ai-usage|capture|cl|dl|trash|color|keybinds|config|compositor|blur|brightness|auth|greeter> ...")
@@ -11363,6 +11710,7 @@ def main() -> int:
         if cmd == "sudo-toggle": return cmd_sudo_toggle(argv)
         if cmd == "notifications": return cmd_notifications(argv)
         if cmd == "launcher-search": return cmd_launcher_search(argv)
+        if cmd == "terminal": return cmd_terminal(argv)
         eprint(f"Unknown VGS helper command: {cmd}")
         return 2
     except KeyboardInterrupt:

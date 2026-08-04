@@ -21,12 +21,7 @@
     "magick": "Third choice in the wallpaper-thumbnail chain, behind Pillow and the already-declared `ffmpeg`.",
     "xclip": "X11 clipboard fallback behind the declared `wl-copy`. Unreachable in a supported Hyprland/Niri session.",
     "g++": "Compiles the vendored third_party/asdcontrol for Apple display brightness. The preferred Apple path is pure-Python hidraw and packaging can ship a prebuilt binary, so a compiler is not a dependency of the feature.",
-    "c++": "Alternative compiler name, same reasoning as `g++`.",
-    "dolphin": "Internal: picks a file manager for generated theme previews.",
-    "thunar": "Internal: same as `dolphin`.",
-    "nautilus": "Deferred to VGS-32. Also a launcher folder opener, but declaring it now would entrench the hardcoded choice VGS-32 replaces with the XDG default-apps layer.",
-    "yazi": "Deferred to VGS-32. The launcher's Yazi opener needs `yazi` AND `xdg-terminal-exec`; declaring one half would misreport the gate.",
-    "xdg-terminal-exec": "Deferred to VGS-32, which centralises terminal resolution. Currently unowned by any landed change."
+    "c++": "Alternative compiler name, same reasoning as `g++`."
   },
   "features": {
     "base": {
@@ -201,15 +196,50 @@
         "sudo",
         "visudo"
       ],
+      "requiresFeatures": [
+        "terminal"
+      ]
+    },
+    "terminal": {
       "anyCommands": [
         [
+          "xdg-terminal-exec",
           "ghostty",
           "kitty",
           "alacritty",
           "foot",
           "wezterm",
+          "konsole",
+          "gnome-terminal",
           "xterm"
         ]
+      ]
+    },
+    "default-apps": {
+      "commands": [
+        "xdg-mime"
+      ]
+    },
+    "file-manager": {
+      "anyCommands": [
+        [
+          "nautilus",
+          "dolphin",
+          "thunar"
+        ]
+      ]
+    },
+    "launcher-folder-open-yazi": {
+      "commands": [
+        "yazi"
+      ],
+      "requiresFeatures": [
+        "terminal"
+      ]
+    },
+    "app-scopes": {
+      "commands": [
+        "uwsm"
       ]
     },
     "cloud-sync": {

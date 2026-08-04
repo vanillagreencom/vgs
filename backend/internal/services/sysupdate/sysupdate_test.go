@@ -48,7 +48,7 @@ func TestUpgradeCommandModes(t *testing.T) {
 }
 
 func TestTerminalArgvKeepsShellCommandPosition(t *testing.T) {
-	m := &Manager{uwsm: "/usr/bin/uwsm", terminalExec: "/usr/bin/xdg-terminal-exec"}
+	m := &Manager{vshell: "/usr/bin/vshell"}
 	argv, err := m.terminalArgv("", "printf harmless")
 	if err != nil {
 		t.Fatal(err)

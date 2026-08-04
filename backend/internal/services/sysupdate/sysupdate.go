@@ -27,7 +27,7 @@ type Manager struct {
 	paru         string
 	pacman       string
 	flatpak      string
-	uwsm         string
+	vshell       string
 	terminalExec string
 
 	mu            sync.Mutex
@@ -105,7 +105,7 @@ func Register(srv *server.Server, log *slog.Logger) (*Manager, error) {
 	m.paru, _ = exec.LookPath("paru")
 	m.pacman, _ = exec.LookPath("pacman")
 	m.flatpak, _ = exec.LookPath("flatpak")
-	m.uwsm, _ = exec.LookPath("uwsm")
+	m.vshell, _ = exec.LookPath("vshell")
 	m.terminalExec, _ = exec.LookPath("xdg-terminal-exec")
 	if m.checkupdates == "" && m.paru == "" && m.flatpak == "" {
 		return nil, fmt.Errorf("no supported update counter found")
@@ -432,15 +432,20 @@ func (m *Manager) upgradeCommand(p upgradeParams) string {
 	return strings.Join(parts, " && ") + "; printf '\\nUpdates command finished. Press Enter to close... '; read -r _"
 }
 
+// terminalArgv defers to `vshell terminal exec`, the single terminal resolver
+// (VGS-32): it owns the VGS setting, $TERMINAL, xdg-terminals.list, the
+// installed-terminal fallback and the optional uwsm scope. The backend only
+// falls back to naming a terminal itself when the CLI is not on PATH, and never
+// to `xdg-terminal-exec`, which no supported install route provides (VGS-54).
 func (m *Manager) terminalArgv(terminal, cmdline string) ([]string, error) {
-	if m.uwsm != "" && m.terminalExec != "" {
-		return []string{m.uwsm, "app", "--", m.terminalExec, "--app-id=TUI.float", "--", "sh", "-lc", cmdline, "vshell-update"}, nil
-	}
-	if m.terminalExec != "" {
-		return []string{m.terminalExec, "--", "sh", "-lc", cmdline, "vshell-update"}, nil
+	if m.vshell != "" {
+		return []string{m.vshell, "terminal", "exec", "--tui", "--", "sh", "-lc", cmdline, "vshell-update"}, nil
 	}
 	if terminal != "" {
 		return []string{terminal, "-e", "sh", "-lc", cmdline, "vshell-update"}, nil
+	}
+	if m.terminalExec != "" {
+		return []string{m.terminalExec, "--", "sh", "-lc", cmdline, "vshell-update"}, nil
 	}
 	return nil, fmt.Errorf("no terminal launcher found")
 }

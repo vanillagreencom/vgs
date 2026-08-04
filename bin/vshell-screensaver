@@ -171,7 +171,9 @@ cmd_launch() {
     return 0
   fi
   focused_monitor="$(hyprctl monitors -j | jq -r '.[] | select(.focused == true) | .name' | head -n1)"
-  launch_cmd="uwsm app -- ghostty --class=$CLASS --title=Screensaver --config-file=$GHOSTTY_CONF --font-size=18 -e vshell screensaver run"
+  local launch_prefix=""
+  command -v uwsm >/dev/null 2>&1 && launch_prefix="uwsm app -- "
+  launch_cmd="${launch_prefix}ghostty --class=$CLASS --title=Screensaver --config-file=$GHOSTTY_CONF --font-size=18 -e vshell screensaver run"
 
   hyprctl monitors -j |
     jq -r '.[] | select(.disabled == false) | .name' |

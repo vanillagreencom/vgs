@@ -21,28 +21,10 @@ Singleton {
     readonly property string muxType: SettingsData.muxType
     readonly property string displayName: muxType === "zellij" ? "Zellij" : "Tmux"
 
-    readonly property var terminalFlags: ({
-            "ghostty": ["-e"],
-            "kitty": ["-e"],
-            "alacritty": ["-e"],
-            "foot": [],
-            "wezterm": ["start", "--"],
-            "gnome-terminal": ["--"],
-            "xterm": ["-e"],
-            "konsole": ["-e"],
-            "st": ["-e"],
-            "terminator": ["-e"],
-            "xfce4-terminal": ["-e"]
-        })
-
-    function getTerminalFlag(terminal) {
-        return terminalFlags[terminal] ?? ["-e"];
-    }
-
-    readonly property string terminal: SessionData.resolveTerminal() || "ghostty"
-
+    // Which terminal, and how it takes a command, is `vshell terminal`'s job
+    // (VGS-32) — this service only says what to run inside it.
     function _terminalPrefix() {
-        return [terminal].concat(getTerminalFlag(terminal));
+        return [Paths.vshellCli, "terminal", "exec", "--"];
     }
 
     Process {

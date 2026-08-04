@@ -40,6 +40,11 @@
     "tailscale": "Tailscale widget",
     "brightness": "display brightness",
     "sudo-toggle": "passwordless sudo toggle widget",
+    "terminal": "terminal VGS opens for TUI actions",
+    "default-apps": "XDG default-application layer",
+    "file-manager": "file manager VGS opens folders with",
+    "launcher-folder-open-yazi": "launcher Yazi folder opener",
+    "app-scopes": "launching apps into their own systemd scope",
     "cloud-sync": "cloud file sync",
     "cloud-sync-stream": "cloud sync streaming mounts"
   },
@@ -233,40 +238,97 @@
       "gentoo": "net-misc/rclone"
     },
     "ghostty": {
-      "description": "terminal for VGS password prompts",
+      "description": "terminal for VGS terminal actions",
       "arch": "ghostty"
     },
     "kitty": {
-      "description": "terminal for VGS password prompts",
+      "description": "terminal for VGS terminal actions",
       "arch": "kitty",
       "debian": "kitty",
       "fedora": "kitty",
       "gentoo": "x11-terms/kitty"
     },
     "alacritty": {
-      "description": "terminal for VGS password prompts",
+      "description": "terminal for VGS terminal actions",
       "arch": "alacritty",
       "debian": "alacritty",
       "fedora": "alacritty",
       "gentoo": "x11-terms/alacritty"
     },
     "foot": {
-      "description": "terminal for VGS password prompts",
+      "description": "terminal for VGS terminal actions",
       "arch": "foot",
       "debian": "foot",
       "fedora": "foot",
       "gentoo": "gui-apps/foot"
     },
     "wezterm": {
-      "description": "terminal for VGS password prompts",
+      "description": "terminal for VGS terminal actions",
       "arch": "wezterm"
     },
     "xterm": {
-      "description": "terminal for VGS password prompts",
+      "description": "terminal for VGS terminal actions",
       "arch": "xterm",
       "debian": "xterm",
       "fedora": "xterm",
       "gentoo": "x11-terms/xterm"
+    },
+    "xdg-terminal-exec": {
+      "description": "XDG terminal spec launcher (optional; VGS resolves a terminal without it)",
+      "arch": "xdg-terminal-exec"
+    },
+    "konsole": {
+      "description": "terminal for VGS terminal actions",
+      "arch": "konsole",
+      "debian": "konsole",
+      "fedora": "konsole",
+      "gentoo": "kde-apps/konsole"
+    },
+    "gnome-terminal": {
+      "description": "terminal for VGS terminal actions",
+      "arch": "gnome-terminal",
+      "debian": "gnome-terminal",
+      "fedora": "gnome-terminal",
+      "gentoo": "x11-terms/gnome-terminal"
+    },
+    "xdg-mime": {
+      "description": "reads and sets default applications",
+      "arch": "xdg-utils",
+      "debian": "xdg-utils",
+      "fedora": "xdg-utils",
+      "gentoo": "x11-misc/xdg-utils"
+    },
+    "nautilus": {
+      "description": "file manager for the launcher folder opener",
+      "arch": "nautilus",
+      "debian": "nautilus",
+      "fedora": "nautilus",
+      "gentoo": "gnome-base/nautilus"
+    },
+    "dolphin": {
+      "description": "file manager for the launcher folder opener",
+      "arch": "dolphin",
+      "debian": "dolphin",
+      "fedora": "dolphin",
+      "gentoo": "kde-apps/dolphin"
+    },
+    "thunar": {
+      "description": "file manager for the launcher folder opener",
+      "arch": "thunar",
+      "debian": "thunar",
+      "fedora": "Thunar",
+      "gentoo": "xfce-base/thunar"
+    },
+    "yazi": {
+      "description": "terminal file manager for the launcher Yazi folder opener",
+      "arch": "yazi",
+      "debian": "yazi",
+      "fedora": "yazi",
+      "gentoo": "app-misc/yazi"
+    },
+    "uwsm": {
+      "description": "launches apps into their own systemd scope",
+      "arch": "uwsm"
     },
     "sudo": {
       "description": "privileged actions run from the shell",

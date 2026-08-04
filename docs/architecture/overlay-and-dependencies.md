@@ -73,8 +73,10 @@ runtime; it is what tells a deliberate exclusion from drift. Adding a new probe
 means declaring the command under `features` or adding it there.
 
 Manifest entries use `commands` for unconditional tools, `anyCommands` for
-same-purpose alternatives, and `compositorCommands` for complete
-Hyprland/Niri-specific command lists. `vshell deps` selects only the active
+same-purpose alternatives, `compositorCommands` for complete
+Hyprland/Niri-specific command lists, and `requiresFeatures` to depend on
+another feature group rather than restating its commands — a group whose
+requirement is unavailable reports `@<feature>` in its own `missing` list. `vshell deps` selects only the active
 compositor branch; without an active session, any fully available branch is
 accepted.
 
@@ -106,6 +108,11 @@ Feature groups:
 | `thumbnails` | File/image thumbnails |
 | `brightness` | Display brightness backends |
 | `sudo-toggle` | Passwordless sudo toggle widget (`vshell sudo-toggle`) |
+| `terminal` | The terminal VGS opens for TUI actions. Any one alternative is enough |
+| `default-apps` | XDG default-application layer (`xdg-mime`) |
+| `file-manager` | File manager the launcher opens folders with, when the XDG default resolves to none |
+| `launcher-folder-open-yazi` | Launcher Yazi folder opener (needs `yazi` *and* `terminal`) |
+| `app-scopes` | Launching apps into their own systemd scope (`uwsm`) |
 | `cloud-sync` | Cloud file sync (rclone) |
 | `cloud-sync-stream` | Cloud sync streaming FUSE mounts |
 
@@ -152,7 +159,42 @@ an action they cannot perform:
 user-facing behaviour should be declared under `features` in
 `dependencies.json`, so `vshell deps status` can report it. The tree does not
 satisfy this yet. Commands deliberately left undeclared are listed with their
-reason in the `undeclared` map at the top of `dependencies.json`; the remaining
-user-facing gaps (`nautilus`, `yazi`, `xdg-terminal-exec`) are tracked in
-VGS-32, and VGS-33 tracks the automated check that would keep the probe sites
-and the manifest from drifting apart again.
+reason in the `undeclared` map at the top of `dependencies.json`.
+
+## Terminal and file-manager resolution
+
+VGS resolves a terminal in exactly one place: `bin/vshell-helper`, reached from
+everywhere else through the `vshell terminal` CLI. QML, plugin JS, bash and the
+Go backend all call it; none of them names a terminal binary, and nothing
+outside it invokes `xdg-terminal-exec` or `uwsm`.
+
+```bash
+vshell terminal resolve [--json]                 # what would be used, and why
+vshell terminal open [--app-id ID]               # a terminal window
+vshell terminal exec [--app-id ID|--tui] [--hold] -- <cmd> [args...]
+```
+
+The chain, most preferred first:
+
+| Source | Where it comes from |
+|--------|---------------------|
+| `terminalOverride` | Settings -> Launcher terminal picker, stored in `session.json` |
+| `$TERMINAL` | the session environment |
+| `xdg-terminal-exec` | the full XDG terminal spec, when it happens to be installed |
+| `xdg-terminals.list` | the same user choice, parsed directly — Settings -> Default Apps -> Terminal writes this file |
+| installed terminals | `TERMINAL_CANDIDATES` in the helper, mirrored by the `terminal` feature group |
+
+`xdg-terminal-exec` is **AUR-only**, so it is an alternative and never a
+requirement: a default install with any terminal at all works. Each terminal's
+argv shape (`-e` vs `--`, `--class=` vs `--app-id=` vs `-class`) lives in
+`TERMINAL_SPECS`; a terminal with no app-id equivalent has the app-id dropped
+rather than passed as an option it would reject. `uwsm app --` is prepended only
+when uwsm is present and the session is systemd — it is an enhancement, and
+hardcoding it is what made every VGS terminal action fail with
+`command not found` on installs without it (VGS-54).
+
+The file manager follows the same rule: `xdg-mime query default inode/directory`
+first — the XDG layer Settings -> Default Apps writes — then the installed
+candidates in the `file-manager` group. An entry with `Terminal=true` (yazi,
+ranger, lf) is opened through the terminal resolver, so a TUI default is a
+legitimate choice rather than a folder that never opens.
