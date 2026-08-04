@@ -88,12 +88,19 @@ Runtime name: `vshell`.
       forwards a zero-argument `pillClickAction`, so with `hoverPopouts`
       enabled a pointer crossing the bar reached the action — arming, then
       confirming, with no click. Both guards above are *satisfied* by that
-      traversal rather than defeated by it. Two changes close it:
-      `PluginComponent.pillClickOnHover` (default true, set false here) stops
-      hover from invoking the action, and `PluginComponent.pillActionOrigin`
+      traversal rather than defeated by it. Two mechanisms close it, both landed
+      in VGS-36: `PluginComponent.pillClickOnHover` (opt-in, default `false`)
+      stops hover from invoking the action, and `PluginComponent.pillActionOrigin`
       tells the action how it was reached so `toggle()` can refuse anything but
-      `"click"` at the decision point. A pill whose click action changes state
-      must set `pillClickOnHover: false`.
+      `"click"` at the decision point. Unannounced invocations default to
+      `"ipc"`, so a caller that forgets to declare an origin fails closed.
+
+    `sudoToggle` is deliberately **not** in `settings.default.json`. The plugin
+    ships and is enabled, so it appears in the widget picker, but a permanent
+    no-expiry passwordless-root switch is not something a stock bar should offer
+    by default — the user places it. The guards above are what make the control
+    safe once placed; keeping it out of the default bar is what keeps it from
+    being offered to users who never asked for it.
 
     `scripts/test-sudo-toggle-confirm.js` extracts the decision functions from
     the QML and exercises them directly, since bundled plugins get no runtime

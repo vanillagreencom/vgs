@@ -437,9 +437,11 @@ PluginComponent {
 
     // Left-click changes sudo state (no popout). Hover must never reach this:
     // BarHoverController calls triggerHoverPopout on every PluginComponent, and
-    // triggerPopout forwards a zero-argument pillClickAction, so with the
-    // default `pillClickOnHover` a pointer crossing the bar would arm and then
-    // confirm a grant with no click at all.
+    // triggerPopout forwards a zero-argument pillClickAction, so without this a
+    // pointer crossing the bar would arm and then confirm a grant with no click
+    // at all. `pillClickOnHover` is opt-in since VGS-36, so this restates the
+    // default rather than overriding it — stated explicitly because the whole
+    // click-only rule rests on it.
     pillClickOnHover: false
 
     pillClickAction: function () {
