@@ -27,12 +27,11 @@ CATALOG_PATH = THEMES_DIR / "catalog.json"
 REPO_SLUG = "vanillagreencom/vgs"
 CATALOG_VERSION = 1
 
-# Only these files are catalogued, and the installer refuses anything else. A
-# theme package is data; nothing here is ever executed by VGS, and keeping the
-# set closed means a catalog entry can never ask a client to write outside the
-# theme's own shape.
-ALLOWED_TOP_LEVEL = {"theme.json", "colors.toml", "preview.png"}
-ALLOWED_DIRS = ("apps/", "backgrounds/")
+# Which files may be catalogued is decided by the installer's own validator
+# (`vshell-helper::_catalog_check_relpath`), never by a second copy of the rule
+# here: a generator that emitted paths the installer refuses would produce a
+# catalog entry that passes every freshness check and can never be installed.
+# A theme package is data; nothing in it is ever executed by VGS.
 
 
 def load_helper() -> Any:
@@ -44,14 +43,26 @@ def load_helper() -> Any:
     return module
 
 
-def catalog_relpaths(theme_dir: Path) -> List[str]:
+def catalog_relpaths(helper: Any, theme_dir: Path) -> List[str]:
+    """Files of a theme package that can be downloaded, per the installer's rule.
+
+    Files the installer would refuse are only skipped when they are *outside* the
+    downloadable shape (stray notes, editor droppings). A file that is inside
+    `apps/`/`backgrounds/` but unrepresentable — nested deeper than the installer
+    accepts, or a dotfile — fails generation instead of silently shipping a theme
+    that downloads incompletely.
+    """
     rels = []
     for path in sorted(theme_dir.rglob("*")):
         if not path.is_file():
             continue
         rel = path.relative_to(theme_dir).as_posix()
-        if rel in ALLOWED_TOP_LEVEL or rel.startswith(ALLOWED_DIRS):
-            rels.append(rel)
+        try:
+            rels.append(helper._catalog_check_relpath(rel))
+        except ValueError as exc:
+            top = rel.split("/")[0]
+            if top in {"apps", "backgrounds"} or rel in {"theme.json", "colors.toml", "preview.png"}:
+                raise SystemExit(f"{theme_dir.name}: {exc}") from exc
     return rels
 
 
@@ -81,7 +92,7 @@ def theme_entry(helper: Any, theme_dir: Path) -> Dict[str, Any]:
 
     files = []
     total = 0
-    for rel in catalog_relpaths(theme_dir):
+    for rel in catalog_relpaths(helper, theme_dir):
         path = theme_dir / rel
         size = path.stat().st_size
         total += size

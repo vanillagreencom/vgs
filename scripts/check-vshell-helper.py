@@ -2363,8 +2363,43 @@ def test_theme_catalog_download_verifies_every_file():
             again = helper.catalog_download_theme(entry, base_url, allow_local)
             assert_equal(again["status"], "skipped", "an installed theme is not re-downloaded")
 
+            # A force re-download must never destroy the installed copy before
+            # its replacement is in place: a failure mid-way leaves it intact.
+            tampered_force = json.loads(json.dumps(entry))
+            tampered_force["files"][1]["sha256"] = "1" * 64
+            try:
+                helper.catalog_download_theme(tampered_force, base_url, allow_local, force=True)
+                raise AssertionError("a tampered force re-download must fail")
+            except ValueError:
+                pass
+            assert_equal((dest / "theme.json").is_file(), True,
+                         "a failed force re-download must leave the installed theme in place")
+            assert_equal(sorted(p.name for p in helper.user_themes_dir().glob(".catalog-*")), [],
+                         "a failed force re-download leaves no staging or replaced dirs")
+
+            # Reading the current theme for the safety check must not apply the
+            # default theme: current_theme() writes files and runs hooks when
+            # ~/.config/vshell/theme.json is absent.
+            assert_equal((helper.cfg_dir() / "theme.json").exists(), False, "no theme state before remove")
             assert_equal(helper.catalog_remove_theme("demo")["status"], "removed", "catalog remove")
             assert_equal(dest.exists(), False, "removed theme dir is gone")
+            assert_equal((helper.cfg_dir() / "theme.json").exists(), False,
+                         "catalog remove must not apply the default theme as a side effect")
+
+            # A removal that cannot proceed must fail loudly and leave the theme
+            # whole, not report success or half-delete it.
+            helper.catalog_download_theme(entry, base_url, allow_local)
+            themes_root = helper.user_themes_dir()
+            themes_root.chmod(0o555)
+            try:
+                helper.catalog_remove_theme("demo")
+                raise AssertionError("an undeletable theme must not report removal")
+            except ValueError:
+                pass
+            finally:
+                themes_root.chmod(0o755)
+            assert_equal((dest / "theme.json").is_file(), True, "theme survives a failed removal")
+            assert_equal(helper.catalog_remove_theme("demo")["status"], "removed", "removal after the block")
 
             # A hand-made user theme carries no marker: remove must refuse it.
             (helper.user_themes_dir() / "mine").mkdir(parents=True)
@@ -2387,7 +2422,9 @@ def test_theme_catalog_download_verifies_every_file():
             assert_equal(list(helper.user_themes_dir().glob(".catalog-*")), [],
                          "a failed download leaves no staging dir")
 
-            for bad in ("../evil", "/etc/passwd", "apps/../../evil", ".ssh/id_rsa", "notes.txt"):
+            for bad in ("../evil", "/etc/passwd", "apps/../../evil", ".ssh/id_rsa", "notes.txt",
+                        "apps/.hidden", "backgrounds/.env", "apps/../theme.json", "apps/", "apps//x",
+                        "backgrounds/season/img.png", "apps\\evil", "theme.json\x00.sh"):
                 try:
                     helper._catalog_check_relpath(bad)
                     raise AssertionError(f"catalog path {bad!r} must be rejected")
@@ -2414,6 +2451,39 @@ def test_theme_catalog_manifest_matches_the_repo():
     on_disk = sorted(p.parent.name for p in (REPO_ROOT / "themes").glob("*/theme.json"))
     assert_equal(names, on_disk, "catalog themes must match themes/ on disk")
     assert_equal(catalog["source"]["baseUrl"].startswith("https://"), True, "catalog must download over https")
+    # The generator validates through the installer's own checker, so a catalogued
+    # path the installer would refuse cannot exist. Assert the invariant directly.
+    for theme in catalog["themes"]:
+        for spec in theme["files"]:
+            helper._catalog_check_relpath(spec["path"])
+
+
+def test_theme_catalog_generator_rejects_uninstallable_packages():
+    """A package the installer could not fetch must fail generation, not ship."""
+    import importlib.machinery
+    import importlib.util
+
+    loader = importlib.machinery.SourceFileLoader(
+        "gen_theme_catalog_test_module", str(REPO_ROOT / "scripts" / "gen-theme-catalog.py"))
+    spec = importlib.util.spec_from_loader(loader.name, loader)
+    generator = importlib.util.module_from_spec(spec)
+    loader.exec_module(generator)
+
+    with tempfile.TemporaryDirectory() as tmp:
+        theme_dir = Path(tmp) / "deep"
+        (theme_dir / "backgrounds" / "season").mkdir(parents=True)
+        (theme_dir / "theme.json").write_text("{}\n")
+        (theme_dir / "backgrounds" / "season" / "img.png").write_bytes(b"x")
+        try:
+            generator.catalog_relpaths(helper, theme_dir)
+            raise AssertionError("a nested backgrounds/ path must fail catalog generation")
+        except SystemExit:
+            pass
+        # Files outside the downloadable shape are skipped, not fatal.
+        shutil.rmtree(theme_dir / "backgrounds" / "season")
+        (theme_dir / "NOTES.md").write_text("scratch\n")
+        assert_equal(generator.catalog_relpaths(helper, theme_dir), ["theme.json"],
+                     "stray files are skipped without failing generation")
 
 
 def main():
@@ -2477,6 +2547,7 @@ def main():
     test_preferred_terminal_is_tried_first()
     test_theme_catalog_download_verifies_every_file()
     test_theme_catalog_manifest_matches_the_repo()
+    test_theme_catalog_generator_rejects_uninstallable_packages()
     subprocess.run(
         [sys.executable, str(REPO_ROOT / "scripts" / "check-vshell-niri.py")],
         check=True,

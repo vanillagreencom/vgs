@@ -1321,14 +1321,21 @@ def _catalog_check_name(name: str) -> str:
 
 
 def _catalog_check_relpath(rel: str) -> str:
+    """Validate one manifest path as untrusted input. Every rule here is load-bearing."""
     if not isinstance(rel, str) or not rel or rel != rel.strip():
         raise ValueError(f"invalid catalog path: {rel!r}")
-    if rel.startswith("/") or "\\" in rel or ".." in rel.split("/") or rel.startswith("."):
+    if rel.startswith("/") or "\\" in rel or "\x00" in rel:
         raise ValueError(f"unsafe catalog path: {rel!r}")
+    parts = rel.split("/")
+    if len(parts) > 2:
+        raise ValueError(f"catalog path nests too deep: {rel!r}")
+    for part in parts:
+        # Rejects "", ".", ".." and every dotfile at ANY position — a leading-dot
+        # test on the whole string would let `apps/.hidden` through.
+        if not part or part.startswith("."):
+            raise ValueError(f"unsafe catalog path component {part!r} in {rel!r}")
     if rel not in CATALOG_ALLOWED_TOP_LEVEL and not rel.startswith(CATALOG_ALLOWED_DIRS):
         raise ValueError(f"catalog path outside the theme package shape: {rel!r}")
-    if len(rel.split("/")) > 2:
-        raise ValueError(f"catalog path nests too deep: {rel!r}")
     return rel
 
 
@@ -1416,6 +1423,7 @@ def catalog_download_theme(entry: Dict[str, Any], base_url: str, allow_local: bo
         raise ValueError("theme catalog has no download source")
 
     ensure_dirs()
+    _catalog_clear_stale()
     staging = Path(tempfile.mkdtemp(prefix=f".catalog-{name}-", dir=str(user_themes_dir())))
     written = 0
     try:
@@ -1444,14 +1452,59 @@ def catalog_download_theme(entry: Dict[str, Any], base_url: str, allow_local: bo
             "bytes": written,
             "installedAt": int(time.time()),
         }, indent=2) + "\n")
+        # Swap, never delete-then-write: a rmtree(dest) followed by a rename
+        # leaves a working theme destroyed if the process dies in between. The
+        # old copy is renamed aside first (atomic), so the worst interruption
+        # window leaves the theme at <name>.replaced-* and the next run's
+        # _catalog_clear_stale() sweeps it.
+        replaced: Path | None = None
         if dest.exists():
-            shutil.rmtree(dest)
-        staging.replace(dest)
+            replaced = dest.with_name(f".catalog-replaced-{name}-{os.getpid()}")
+            shutil.rmtree(replaced, ignore_errors=True)
+            dest.replace(replaced)
+        try:
+            staging.replace(dest)
+        except OSError:
+            if replaced is not None and not dest.exists():
+                replaced.replace(dest)
+            raise
         staging = None  # type: ignore[assignment]
+        if replaced is not None:
+            shutil.rmtree(replaced, ignore_errors=True)
     finally:
         if staging is not None:
             shutil.rmtree(staging, ignore_errors=True)
     return {"name": name, "status": "installed", "path": str(dest), "bytes": written}
+
+
+def _catalog_clear_stale() -> None:
+    """Sweep staging/replaced dirs a killed download may have left behind.
+
+    Safe to do unconditionally because `catalog install` runs under the theme
+    mutation lock, so no other download can own a staging dir at this point.
+    """
+    root = user_themes_dir()
+    if not root.is_dir():
+        return
+    for leftover in list(root.glob(".catalog-*")):
+        if leftover.is_dir():
+            shutil.rmtree(leftover, ignore_errors=True)
+
+
+def current_theme_name() -> str:
+    """The applied theme's name, read-only.
+
+    `current_theme()` applies the coppernight default (writing files, running
+    hooks) when no theme state exists yet, which a read for a safety check must
+    never trigger.
+    """
+    theme_file = cfg_dir() / "theme.json"
+    if not theme_file.is_file():
+        return ""
+    try:
+        return str(json.loads(theme_file.read_text()).get("name") or "")
+    except Exception:
+        return ""
 
 
 def catalog_remove_theme(name: str) -> Dict[str, Any]:
@@ -1460,9 +1513,22 @@ def catalog_remove_theme(name: str) -> Dict[str, Any]:
     dest = user_themes_dir() / clean
     if not catalog_marker(clean):
         raise ValueError(f"{clean} was not downloaded from the theme catalog")
-    if str(current_theme().get("name") or "") == clean:
+    if current_theme_name() == clean:
         raise ValueError(f"{clean} is the current theme; apply another theme first")
-    shutil.rmtree(dest, ignore_errors=True)
+    # Rename aside first, then delete. The rename is the single operation that
+    # decides the outcome: if it fails the theme is untouched and the caller is
+    # told loudly (never `ignore_errors` + an unconditional "removed"), and if
+    # the subsequent delete fails the theme is already gone from the theme dirs
+    # and the leftover is swept by _catalog_clear_stale().
+    trash = dest.with_name(f".catalog-removing-{clean}-{os.getpid()}")
+    shutil.rmtree(trash, ignore_errors=True)
+    try:
+        dest.replace(trash)
+    except OSError as exc:
+        raise ValueError(f"could not remove {clean}: {exc}") from exc
+    shutil.rmtree(trash, ignore_errors=True)
+    if dest.exists():
+        raise ValueError(f"could not remove {clean}: {dest} still exists")
     return {"name": clean, "status": "removed", "path": str(dest)}
 
 

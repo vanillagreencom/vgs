@@ -36,6 +36,16 @@ FloatingWindow {
         });
     }
 
+    // Screenshot paths are filesystem paths, not URLs: a theme dir under a HOME
+    // with a space or `#` in it breaks a naive "file://" + path concatenation.
+    function imageUrl(path) {
+        if (!path)
+            return "";
+        if (path.startsWith("file://"))
+            return path;
+        return "file://" + path.split('/').map(s => encodeURIComponent(s)).join('/');
+    }
+
     function show() {
         if (parentModal)
             parentModal.shouldHaveFocus = false;
@@ -56,7 +66,7 @@ FloatingWindow {
 
     objectName: "themeCatalogBrowser"
     title: I18n.tr("Download Themes")
-    minimumSize: Qt.size(520, 420)
+    minimumSize: Qt.size(560, 420)
     implicitWidth: 880
     implicitHeight: 680
     color: "transparent"
@@ -195,19 +205,21 @@ FloatingWindow {
                     wrapMode: Text.WordWrap
                 }
 
-                Row {
+                // Search owns its own line and the chip groups wrap below it, so
+                // the field stays usable down to the window's minimum width
+                // instead of being squeezed to nothing by two fixed chip rows.
+                Column {
                     id: filterRow
                     anchors.left: parent.left
                     anchors.right: parent.right
                     anchors.top: descriptionText.bottom
                     anchors.topMargin: Theme.spacingM
-                    spacing: Theme.spacingM
+                    spacing: Theme.spacingS
 
                     VgsTextField {
                         id: searchField
-                        width: parent.width - modeChips.width - installChips.width - parent.spacing * 2
+                        width: parent.width
                         height: 36
-                        anchors.verticalCenter: parent.verticalCenter
                         placeholderText: I18n.tr("Search themes...")
                         backgroundColor: Theme.surfaceContainerHigh
                         leftIconName: "search"
@@ -216,26 +228,29 @@ FloatingWindow {
                         keyForwardTargets: [keyHandler]
                     }
 
-                    VgsFilterChips {
-                        id: installChips
-                        width: 250
-                        anchors.verticalCenter: parent.verticalCenter
-                        chipHeight: 36
-                        showCounts: false
-                        model: [I18n.tr("All"), I18n.tr("Not installed"), I18n.tr("Installed")]
-                        currentIndex: root.installFilters.indexOf(root.installFilter)
-                        onSelectionChanged: index => root.installFilter = root.installFilters[index] || "all"
-                    }
+                    Flow {
+                        width: parent.width
+                        spacing: Theme.spacingM
 
-                    VgsFilterChips {
-                        id: modeChips
-                        width: 190
-                        anchors.verticalCenter: parent.verticalCenter
-                        chipHeight: 36
-                        showCounts: false
-                        model: [I18n.tr("All"), I18n.tr("Dark"), I18n.tr("Light")]
-                        currentIndex: root.modeFilters.indexOf(root.modeFilter)
-                        onSelectionChanged: index => root.modeFilter = root.modeFilters[index] || "all"
+                        VgsFilterChips {
+                            id: installChips
+                            width: 250
+                            chipHeight: 36
+                            showCounts: false
+                            model: [I18n.tr("All"), I18n.tr("Not installed"), I18n.tr("Installed")]
+                            currentIndex: root.installFilters.indexOf(root.installFilter)
+                            onSelectionChanged: index => root.installFilter = root.installFilters[index] || "all"
+                        }
+
+                        VgsFilterChips {
+                            id: modeChips
+                            width: 190
+                            chipHeight: 36
+                            showCounts: false
+                            model: [I18n.tr("All"), I18n.tr("Dark"), I18n.tr("Light")]
+                            currentIndex: root.modeFilters.indexOf(root.modeFilter)
+                            onSelectionChanged: index => root.modeFilter = root.modeFilters[index] || "all"
+                        }
                     }
                 }
 
@@ -248,8 +263,16 @@ FloatingWindow {
                     anchors.bottom: parent.bottom
                     clip: true
                     visible: root.filteredEntries.length > 0
+                    // Horizontal insets between the cell edge and the preview.
+                    readonly property int cardInset: Theme.spacingXS * 2 + Theme.spacingS * 2
+                    // Everything under the preview: name row, swatches, button,
+                    // plus the column's gaps and the card's own margins.
+                    readonly property int cardControls: 22 + 10 + 30 + Theme.spacingS * 5 + Theme.spacingXS * 2
                     cellWidth: Math.floor(width / Math.max(1, Math.floor(width / 260)))
-                    cellHeight: 236
+                    // The preview is 16:9 of the card width, so a fixed cell
+                    // height overflows into the next row as soon as the window
+                    // is narrow enough to drop to one column.
+                    cellHeight: Math.round((cellWidth - cardInset) * 9 / 16) + cardControls
                     model: root.filteredEntries
 
                     delegate: Item {
@@ -287,7 +310,7 @@ FloatingWindow {
                                     Image {
                                         anchors.fill: parent
                                         visible: (cell.modelData.preview || "") !== ""
-                                        source: cell.modelData.preview ? "file://" + cell.modelData.preview : ""
+                                        source: root.imageUrl(cell.modelData.preview)
                                         fillMode: Image.PreserveAspectCrop
                                         sourceSize.width: 480
                                         asynchronous: true
@@ -310,14 +333,19 @@ FloatingWindow {
                                         width: installedLabel.implicitWidth + Theme.spacingS * 2
                                         height: 20
                                         radius: 10
-                                        color: Qt.rgba(0, 0, 0, 0.55)
+                                        // Theme tokens, not a scrim + white: the badge sits
+                                        // over an arbitrary screenshot, so it carries its own
+                                        // surface and hairline instead of hardcoded colors.
+                                        color: Theme.surfaceContainer
+                                        border.width: 1
+                                        border.color: Theme.borderColor
 
                                         StyledText {
                                             id: installedLabel
                                             anchors.centerIn: parent
                                             text: cell.modelData.builtin ? I18n.tr("Included") : I18n.tr("Installed")
                                             font.pixelSize: Theme.fontSizeSmall - 1
-                                            color: "#ffffff"
+                                            color: Theme.surfaceText
                                         }
                                     }
 
@@ -362,7 +390,7 @@ FloatingWindow {
 
                                         Rectangle {
                                             required property var modelData
-                                            width: (cell.width - Theme.spacingS * 2 - 3 * 7) / 8
+                                            width: (cell.width - grid.cardInset - 3 * 7) / 8
                                             height: 10
                                             radius: 3
                                             color: modelData
@@ -376,10 +404,15 @@ FloatingWindow {
                                     variant: cell.modelData.installed ? "secondary" : "primary"
                                     enabled: !cell.pending && (!cell.modelData.installed || cell.removable)
                                     iconName: cell.modelData.installed ? (cell.removable ? "delete" : "check") : "download"
+                                    // "Included" means the package shipped it; a
+                                    // hand-made user theme of the same name is
+                                    // "Installed" and equally not removable here.
                                     text: {
-                                        if (cell.modelData.installed)
-                                            return cell.removable ? I18n.tr("Remove") : I18n.tr("Included");
-                                        return I18n.tr("Download");
+                                        if (!cell.modelData.installed)
+                                            return I18n.tr("Download");
+                                        if (cell.removable)
+                                            return I18n.tr("Remove");
+                                        return cell.modelData.builtin ? I18n.tr("Included") : I18n.tr("Installed");
                                     }
                                     onClicked: {
                                         if (!cell.modelData.installed)
