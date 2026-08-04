@@ -76,10 +76,32 @@ linear = """
 ## Tracker policy: Linear is canonical; GitHub Issues is intake-only
 
 Create, label, and work issues ONLY in Linear (team vg-shell, identifiers
-VGS-<n>). GitHub Issues stays as intake: a one-way GitHub -> Linear sync
-mirrors anything filed there, and nothing syncs back. Before creating a Linear
-issue, dedupe across BOTH trackers (`gh issue list --search` + Linear cache) —
-never file the same problem twice.
+VGS-<n>). GitHub Issues stays as intake, and nothing syncs back. Before creating
+a Linear issue, dedupe across BOTH trackers (`gh issue list --search` + Linear
+cache) — never file the same problem twice.
+
+Mirroring GitHub intake into Linear is a MANUAL triage step. No automation does
+it: there is no sync workflow under `.github/` and no Linear-side GitHub
+integration creating issues, so an unmirrored GitHub issue never reaches the
+canonical tracker and can sit unseen indefinitely. Run the triage pass when
+picking up work:
+
+```bash
+gh issue list --state open --limit 50 --json number,title,createdAt
+.agents/skills/linear/scripts/linear.sh cache issues list --all-projects
+```
+
+For each GitHub issue with no Linear counterpart, carry the title and body over
+into team vg-shell, ending the description with a line naming the GitHub URL it
+was mirrored from, then work the Linear issue rather than the GitHub one:
+
+```bash
+.agents/skills/linear/scripts/linear.sh issues create \
+  --title "<GitHub title>" --description-file <body.md>
+```
+
+Automating this needs owner action (Linear workspace admin, or a LINEAR_API_KEY
+repo secret) — see docs/decisions/D002-github-linear-intake-sync.md.
 
 Link work to its issue through the branch name: `vgs-<n>-<slug>`. Linear's
 GitHub integration matches that to attach the PR, and `GH_ISSUE_PATTERN` in
@@ -189,9 +211,10 @@ projects; never assign them in VGS.
 | `blocked` | External blocker only (vendor/license/access/manual dependency). For issue dependencies, use blocking relations instead. |
 | `owner-gated` | Needs an owner decision or owner-only action to proceed. |
 
-`ci-nightly` marks automated CI-failure mirrors ingested by the
-GitHub -> Linear sync; the taxonomy above does not apply to synced mirrors —
-do not retitle or relabel them to satisfy it.
+`ci-nightly` marks CI-failure mirrors; the taxonomy above does not apply to
+mirrored issues — do not retitle or relabel them to satisfy it. Note there is
+no automated ingest: mirroring GitHub intake into Linear is manual, per the
+tracker policy in the linear skill instructions.
 
 Do not assign the group/parent label `Agent` to issues.
 """

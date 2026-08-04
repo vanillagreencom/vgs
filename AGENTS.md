@@ -92,8 +92,26 @@ Live-machine etiquette:
 
 ## Conventions
 - Issue tracker: **Linear** (team `vg-shell`, identifiers `VGS-<n>`). GitHub Issues
-  is intake-only — a one-way GitHub → Linear sync mirrors it, nothing syncs back.
-  File and work issues in Linear; dedupe across both before creating one.
+  is intake-only, and nothing syncs back. File and work issues in Linear; dedupe
+  across both before creating one.
+- **Mirroring GitHub intake into Linear is a manual triage step — no automation
+  does it.** There is no sync workflow under `.github/` and no Linear-side GitHub
+  integration creating issues, so an unmirrored GitHub issue is invisible to the
+  canonical tracker and can sit unseen indefinitely. Run the triage pass when
+  picking up work:
+  ```bash
+  gh issue list --state open --limit 50 --json number,title,createdAt
+  .agents/skills/linear/scripts/linear.sh cache issues list --all-projects
+  ```
+  For each GitHub issue with no Linear counterpart, carry the title and body
+  over into team `vg-shell`, ending the description with a line naming the
+  GitHub URL it was mirrored from:
+  ```bash
+  .agents/skills/linear/scripts/linear.sh issues create \
+    --title "<GitHub title>" --description-file <body.md>
+  ```
+  Then work the Linear issue, not the GitHub one. Automating this needs owner
+  action — see `docs/decisions/D002-github-linear-intake-sync.md`.
 - Branch names carry the issue: `vgs-<n>-<slug>`. That is what Linear's GitHub
   integration matches to attach the PR, and what `GH_ISSUE_PATTERN` reads.
 - Commit style: `area: imperative summary` (e.g. `backend:`, `frontend:`, `docs:`,
