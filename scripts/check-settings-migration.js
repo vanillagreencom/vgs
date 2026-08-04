@@ -41,6 +41,17 @@ const barWidgets = loadModule(path.join(settingsDir, "BarWidgets.js"), {});
 
 const TARGET_VERSION = 21;
 
+// The shipped seed already carries the current schema, so it must declare the
+// current version. When it lags, a fresh install is treated as a legacy config
+// and rewritten by migrations it was never meant to need — and the drift is
+// invisible until someone reads both files side by side.
+assert.strictEqual(
+  defaultSettings.configVersion,
+  TARGET_VERSION,
+  "settings.default.json configVersion must equal the migration TARGET_VERSION; " +
+    "bump the seed marker whenever a migration is appended"
+);
+
 function clone(value) {
   return JSON.parse(JSON.stringify(value));
 }
