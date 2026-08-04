@@ -60,7 +60,7 @@ Column {
     height: implicitHeight
     spacing: Theme.spacingM
 
-    VgsTooltipV2 {
+    VgsInlineTooltip {
         id: sharedTooltip
     }
 

@@ -43,7 +43,7 @@ Item {
     property real proxyY: 0
     property real proxyWidth: 0
 
-    VgsTooltipV2 {
+    VgsInlineTooltip {
         id: sharedTooltip
     }
 

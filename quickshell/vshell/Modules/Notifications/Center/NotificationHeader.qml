@@ -46,7 +46,7 @@ Item {
     width: parent.width
     height: headerColumn.implicitHeight
 
-    VgsTooltipV2 {
+    VgsInlineTooltip {
         id: sharedTooltip
     }
 

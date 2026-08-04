@@ -952,7 +952,7 @@ Item {
                         }
                     }
 
-                    VgsTooltipV2 {
+                    VgsInlineTooltip {
                         id: typeTooltip
                     }
                 }

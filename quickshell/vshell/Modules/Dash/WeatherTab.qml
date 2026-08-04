@@ -186,7 +186,7 @@ Item {
                     }
                 }
 
-                VgsTooltipV2 {
+                VgsInlineTooltip {
                     id: refreshButtonTooltipTwo
                 }
 
@@ -928,7 +928,7 @@ Item {
                     }
                 }
 
-                VgsTooltipV2 {
+                VgsInlineTooltip {
                     id: refreshButtonTooltip
                 }
 

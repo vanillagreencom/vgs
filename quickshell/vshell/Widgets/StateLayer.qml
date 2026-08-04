@@ -71,7 +71,7 @@ MouseArea {
         tooltip.hide();
     }
 
-    VgsTooltipV2 {
+    VgsInlineTooltip {
         id: tooltip
     }
 }
