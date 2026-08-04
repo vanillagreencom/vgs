@@ -1598,6 +1598,166 @@ def test_terminal_candidates_match_dependency_manifest():
                  "dependencies.json terminals must match helper TERMINAL_CANDIDATES")
 
 
+def _notification_env(root: Path, owner: dict | None, activation: str | None = None):
+    """Point the helper's bus, procfs and data dirs at a scratch session.
+
+    Nothing here may reach the live session bus or the live user manager: the
+    real one is running the shell these tests are checking.
+    """
+    data_home = root / "home" / ".local" / "share"
+    system_share = root / "usr" / "share"
+    if activation is not None:
+        services = system_share / "dbus-1" / "services"
+        services.mkdir(parents=True, exist_ok=True)
+        (services / "fr.emersion.mako.service").write_text(activation)
+
+    calls: list[list[str]] = []
+
+    def fake_bus(member, signature, *args):
+        if owner is None:
+            return None
+        if member == "GetNameOwner":
+            return owner["unique"]
+        if member == "GetConnectionUnixProcessID":
+            return owner["pid"]
+        return None
+
+    def fake_systemctl(argv, timeout=10.0):
+        calls.append(list(argv))
+        if argv[0] == "show":
+            unit_state = (owner or {}).get("unitShow", {})
+            body = "\n".join(f"{key}={value}" for key, value in unit_state.get(argv[1], {}).items())
+            return subprocess.CompletedProcess(argv, 0, body, "")
+        return subprocess.CompletedProcess(argv, 0, "", "")
+
+    if owner is not None:
+        proc_dir = root / "proc" / str(owner["pid"])
+        proc_dir.mkdir(parents=True, exist_ok=True)
+        (proc_dir / "comm").write_text(owner["comm"] + "\n")
+        (proc_dir / "cmdline").write_text("\0".join(owner["cmdline"]) + "\0")
+        (proc_dir / "cgroup").write_text(
+            f"0::/user.slice/user-1000.slice/user@1000.service/app.slice/{owner['unit']}\n"
+            if owner["unit"] else "0::/user.slice/user-1000.slice/session-1.scope\n"
+        )
+
+    os.environ["VSHELL_PROC_ROOT"] = str(root / "proc")
+    os.environ["XDG_DATA_HOME"] = str(data_home)
+    os.environ["XDG_DATA_DIRS"] = str(system_share)
+    helper._session_bus_call = fake_bus
+    helper._systemctl_user = fake_systemctl
+    return calls
+
+
+def test_notification_ownership_detects_a_foreign_daemon():
+    original_bus, original_systemctl = helper._session_bus_call, helper._systemctl_user
+    original_env = {key: os.environ.get(key) for key in ("VSHELL_PROC_ROOT", "XDG_DATA_HOME", "XDG_DATA_DIRS")}
+
+    def body(tmp: Path):
+        activation = (
+            "[D-BUS Service]\n"
+            "Name=org.freedesktop.Notifications\n"
+            "Exec=/usr/bin/mako\n"
+            "SystemdService=mako.service\n"
+        )
+        owner = {
+            "unique": ":1.7",
+            "pid": 4242,
+            "comm": "mako",
+            "cmdline": ["/usr/bin/mako"],
+            "unit": "mako.service",
+            "unitShow": {"mako.service": {"LoadState": "loaded", "ActiveState": "active", "UnitFileState": "disabled"}},
+        }
+        calls = _notification_env(tmp, owner, activation)
+
+        status = helper.notification_status()
+        assert_equal(status["state"], "foreign", "a mako-owned bus name must read as foreign")
+        assert_equal(status["owner"]["unit"], "mako.service", "the unit must come from the cgroup, not busctl's session unit")
+        assert_equal(len(status["conflicts"]), 1, "the owner and its activation file are one conflict, not two")
+        assert_equal(status["conflicts"][0]["daemon"], "mako", "conflict must be labelled by daemon")
+        assert_equal(status["takeover"]["available"], True, "a running user unit is takeover-able")
+
+        result = helper.notification_takeover()
+        shadow = tmp / "home" / ".local" / "share" / "dbus-1" / "services" / "fr.emersion.mako.service"
+        assert shadow.is_file(), "takeover must shadow the activation file in the data home"
+        assert helper.NOTIFICATION_SHADOW_MARKER in shadow.read_text(), "the shadow must be identifiable for restore"
+        assert_equal(["mask", "mako.service"] in calls, True, "takeover must mask the conflicting unit")
+        assert_equal(["stop", "mako.service"] in calls, True, "takeover must stop the conflicting unit")
+        assert_equal(any(call[0] in {"kill", "kill-user"} for call in calls), False, "takeover must never kill anything")
+        assert_equal(result["ok"], True, "takeover with a stoppable unit must succeed")
+
+        helper.notification_restore()
+        assert_equal(shadow.exists(), False, "restore must remove the shadow it wrote")
+        assert_equal(["unmask", "mako.service"] in calls, True, "restore must unmask what takeover masked")
+
+    try:
+        with_temp_home(body)
+    finally:
+        helper._session_bus_call, helper._systemctl_user = original_bus, original_systemctl
+        for key, value in original_env.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+
+
+def test_notification_ownership_recognises_the_shell_itself():
+    original_bus, original_systemctl = helper._session_bus_call, helper._systemctl_user
+    original_env = {key: os.environ.get(key) for key in ("VSHELL_PROC_ROOT", "XDG_DATA_HOME", "XDG_DATA_DIRS")}
+
+    def body(tmp: Path):
+        owner = {
+            "unique": ":1.55",
+            "pid": 5093,
+            "comm": "qs",
+            "cmdline": ["qs", "-p", "/home/user/.config/quickshell/vshell"],
+            "unit": "vshell.service",
+            "unitShow": {},
+        }
+        _notification_env(tmp, owner)
+        status = helper.notification_status()
+        assert_equal(status["state"], "vgs", "the shell's own registration must not read as a conflict")
+        assert_equal(status["conflicts"], [], "VGS must never list itself as a conflicting daemon")
+        assert_equal(status["atRisk"], False, "no other claimant means nothing to warn about")
+
+        # Same shell, started straight from a compositor rule rather than the
+        # unit: the cgroup gives no unit name, so the process must identify it.
+        proc_dir = tmp / "proc" / "5093"
+        proc_dir.joinpath("cgroup").write_text("0::/user.slice/user-1000.slice/session-1.scope\n")
+        assert_equal(helper.notification_status()["state"], "vgs",
+                     "a unit-less VGS process must still be recognised as VGS")
+
+    try:
+        with_temp_home(body)
+    finally:
+        helper._session_bus_call, helper._systemctl_user = original_bus, original_systemctl
+        for key, value in original_env.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+
+
+def test_notification_unowned_bus_is_not_a_conflict():
+    original_bus, original_systemctl = helper._session_bus_call, helper._systemctl_user
+    original_env = {key: os.environ.get(key) for key in ("VSHELL_PROC_ROOT", "XDG_DATA_HOME", "XDG_DATA_DIRS")}
+
+    def body(tmp: Path):
+        _notification_env(tmp, None)
+        status = helper.notification_status()
+        assert_equal(status["state"], "unowned", "no owner must read as unowned, not foreign")
+        assert_equal(status["takeover"]["available"], False, "there is nothing to take over")
+
+    try:
+        with_temp_home(body)
+    finally:
+        helper._session_bus_call, helper._systemctl_user = original_bus, original_systemctl
+        for key, value in original_env.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+
+
 def main():
     assert_equal(helper._theme_command_mutates(["chromium-policy"]), True,
                  "Chromium policy refresh must serialize with theme applies")
@@ -1633,6 +1793,9 @@ def main():
     test_launch_terminal_rejects_immediately_failing_terminal()
     test_sudo_toggle_revoke_never_needs_a_terminal()
     test_terminal_candidates_match_dependency_manifest()
+    test_notification_ownership_detects_a_foreign_daemon()
+    test_notification_ownership_recognises_the_shell_itself()
+    test_notification_unowned_bus_is_not_a_conflict()
     subprocess.run(
         [sys.executable, str(REPO_ROOT / "scripts" / "check-vshell-niri.py")],
         check=True,

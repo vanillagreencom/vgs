@@ -344,7 +344,7 @@ case "${1:-run}" in
   status)
     exec systemctl --user status vshell.service --no-pager
     ;;
-  theme|fonts|deps|update|ai-usage|ai|capture|screenshot|screenrecording|recording|ocr|cl|clipboard|dl|download|trash|color|keybinds|config|compositor|battery|blur|brightness|auth|greeter|sudo-toggle|launcher-search|instances)
+  theme|fonts|deps|notifications|update|ai-usage|ai|capture|screenshot|screenrecording|recording|ocr|cl|clipboard|dl|download|trash|color|keybinds|config|compositor|battery|blur|brightness|auth|greeter|sudo-toggle|launcher-search|instances)
     exec "$helper" "$@"
     ;;
   screensaver)
@@ -424,6 +424,7 @@ Usage:
   vshell theme regenerate <name> [--app <id>] [--yes]
   vshell fonts status|apply|reset
   vshell deps status|check <feature>
+  vshell notifications status|takeover|restore [--json]   (org.freedesktop.Notifications ownership)
   vshell update count|run <system|aur|all>
   vshell ai-usage <claude|codex>
   vshell capture screenshot|screenrecording|text [...]

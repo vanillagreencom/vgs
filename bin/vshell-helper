@@ -5225,12 +5225,17 @@ def cmd_deps(argv: List[str]) -> int:
     args = parser.parse_args(argv)
     status = feature_status()
     if args.cmd == "status":
+        # Notification ownership is not a missing-command problem, so it is not
+        # a feature group -- but a lost D-Bus race disables the shell's most
+        # visible subsystem, and this is where a user looks for that.
+        notifications = notification_status()
         if args.json:
-            print(json.dumps(status, indent=2))
+            print(json.dumps({**status, "notifications": notifications}, indent=2))
         else:
             for name, info in status.get("features", {}).items():
                 marker = "ok" if info.get("available") else "missing: " + ", ".join(info.get("missing") or [])
                 print(f"{name}: {marker}")
+            _print_notification_status(notifications)
         return 0
     if args.cmd == "check":
         info = (status.get("features") or {}).get(args.feature)
@@ -10547,9 +10552,564 @@ def cmd_launcher_search(argv: List[str]) -> int:
     return 0
 
 
+# --- notification daemon ownership -----------------------------------------
+#
+# org.freedesktop.Notifications is a first-come, first-served session bus name.
+# VGS registers it from Services/NotificationService.qml, but any notification
+# daemon already installed on the system can take it first -- usually without
+# the user ever starting it, because a D-Bus activation file makes the *first
+# notification sent after login* start the daemon. The loser gets a journal
+# warning and nothing else, so the shell looks like it simply has no
+# notifications. These helpers let VGS name the winner, and take the name back.
+
+NOTIFICATION_BUS_NAME = "org.freedesktop.Notifications"
+NOTIFICATION_SHADOW_MARKER = "# vshell notifications takeover"
+
+# Process name -> label, for readable output only. Detection never consults
+# this list: it works from who owns the bus name and from which activation
+# files claim it, so a daemon nobody has heard of is still found.
+KNOWN_NOTIFICATION_DAEMONS: Dict[str, str] = {
+    "mako": "mako",
+    "dunst": "dunst",
+    "swaync": "swaync",
+    "swaync-notification-center": "swaync",
+    "xfce4-notifyd": "xfce4-notifyd",
+    "notification-daemon": "notification-daemon",
+    "notify-osd": "notify-osd",
+    "deadd-notification-center": "deadd-notification-center",
+}
+
+
+def notification_state_file() -> Path:
+    return state_dir() / "notification-takeover.json"
+
+
+def _xdg_data_home() -> Path:
+    value = os.environ.get("XDG_DATA_HOME", "").strip()
+    return Path(value) if value.startswith("/") else home() / ".local" / "share"
+
+
+def _xdg_data_dirs() -> List[Path]:
+    """Data directories in D-Bus activation precedence order, home first."""
+    dirs = [_xdg_data_home()]
+    raw = os.environ.get("XDG_DATA_DIRS", "").strip() or "/usr/local/share:/usr/share"
+    for entry in raw.split(":"):
+        entry = entry.strip()
+        if entry.startswith("/") and Path(entry) not in dirs:
+            dirs.append(Path(entry))
+    return dirs
+
+
+def _session_bus_call(member: str, signature: str, *args: str) -> Any:
+    """Call a session bus driver method; None when it fails or is unavailable."""
+    try:
+        proc = run([
+            "busctl", "--user", "--json=short", "call",
+            "org.freedesktop.DBus", "/org/freedesktop/DBus",
+            "org.freedesktop.DBus", member, signature, *args,
+        ], timeout=5)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if proc.returncode != 0:
+        return None
+    try:
+        payload = json.loads(proc.stdout or "{}")
+    except ValueError:
+        return None
+    data = payload.get("data")
+    return data[0] if isinstance(data, list) and data else None
+
+
+def _systemctl_user(argv: List[str], timeout: float = 10.0) -> subprocess.CompletedProcess[str]:
+    try:
+        return run(["systemctl", "--user", *argv], timeout=timeout)
+    except (OSError, subprocess.SubprocessError) as exc:
+        return subprocess.CompletedProcess(argv, 1, "", str(exc))
+
+
+def _proc_text(pid: int, name: str) -> str:
+    try:
+        return (_proc_root() / str(pid) / name).read_text(errors="replace").strip()
+    except OSError:
+        return ""
+
+
+def _proc_cmdline(pid: int) -> str:
+    raw = _proc_text(pid, "cmdline")
+    return " ".join(part for part in raw.split("\0") if part)
+
+
+def _proc_exe(pid: int) -> str:
+    try:
+        return os.readlink(_proc_root() / str(pid) / "exe")
+    except OSError:
+        return ""
+
+
+def _proc_unit(pid: int) -> str:
+    """The systemd unit a pid runs under, or "" when it runs under none.
+
+    busctl's own Unit= field reports the *session* unit (user@N.service) for
+    everything on the user bus, which cannot be stopped, so the unit is read
+    from the cgroup leaf instead.
+    """
+    for line in reversed(_proc_text(pid, "cgroup").splitlines()):
+        leaf = line.rpartition(":")[2].rstrip("/").rpartition("/")[2]
+        if leaf.endswith(".service") or leaf.endswith(".scope"):
+            return leaf
+    return ""
+
+
+def _unit_is_transient(unit: str) -> bool:
+    """True for the throwaway units D-Bus activation creates per connection.
+
+    dbus-broker names them `dbus-:1.42-fr.emersion.mako@0.service`. They can be
+    stopped, but masking one is pointless: the next activation gets a new name.
+    """
+    return unit.startswith("dbus-") and "@" in unit
+
+
+def _user_unit_state(unit: str) -> Dict[str, Any]:
+    if not unit:
+        return {"exists": False, "running": False, "masked": False, "transient": False}
+    proc = _systemctl_user([
+        "show", unit, "--property=LoadState", "--property=ActiveState", "--property=UnitFileState",
+    ])
+    values: Dict[str, str] = {}
+    for line in (proc.stdout or "").splitlines():
+        key, sep, value = line.partition("=")
+        if sep:
+            values[key.strip()] = value.strip()
+    load = values.get("LoadState", "")
+    return {
+        "exists": load in {"loaded", "masked"},
+        "running": values.get("ActiveState", "") in {"active", "activating", "reloading"},
+        "masked": load == "masked" or values.get("UnitFileState", "") in {"masked", "masked-runtime"},
+        "transient": _unit_is_transient(unit),
+    }
+
+
+def _parse_dbus_service_file(path: Path) -> Dict[str, str]:
+    values: Dict[str, str] = {}
+    try:
+        text = path.read_text(errors="replace")
+    except OSError:
+        return values
+    section = ""
+    for line in text.splitlines():
+        line = line.strip()
+        if not line or line[0] in "#;":
+            continue
+        if line.startswith("[") and line.endswith("]"):
+            section = line[1:-1].strip()
+            continue
+        if section != "D-BUS Service":
+            continue
+        key, sep, value = line.partition("=")
+        if sep:
+            values[key.strip()] = value.strip()
+    return values
+
+
+def notification_activation_files() -> List[Dict[str, Any]]:
+    """Activation files claiming the notification bus name, in bus precedence.
+
+    Only the first file of a given name is effective; the same name in a later
+    data directory is shadowed by it. That is exactly the mechanism `takeover`
+    uses, by writing its own file into the user's data home.
+    """
+    out: List[Dict[str, Any]] = []
+    seen: Dict[str, bool] = {}
+    shadow_dir = _xdg_data_home() / "dbus-1" / "services"
+    for directory in _xdg_data_dirs():
+        services = directory / "dbus-1" / "services"
+        try:
+            entries = sorted(services.glob("*.service"))
+        except OSError:
+            continue
+        for path in entries:
+            values = _parse_dbus_service_file(path)
+            if values.get("Name") != NOTIFICATION_BUS_NAME:
+                continue
+            is_shadow = False
+            if path.parent == shadow_dir:
+                try:
+                    is_shadow = NOTIFICATION_SHADOW_MARKER in path.read_text(errors="replace")
+                except OSError:
+                    is_shadow = False
+            out.append({
+                "path": str(path),
+                "file": path.name,
+                "exec": values.get("Exec", ""),
+                "systemdService": values.get("SystemdService", ""),
+                "shadow": is_shadow,
+                "effective": path.name not in seen,
+            })
+            seen[path.name] = True
+    return out
+
+
+def _owner_is_vgs(unit: str, process: str, cmdline: str) -> bool:
+    if unit == "vshell.service":
+        return True
+    return process in QS_BINARIES and "vshell" in cmdline
+
+
+def notification_owner() -> Dict[str, Any]:
+    """Who currently holds org.freedesktop.Notifications on the session bus."""
+    empty = {
+        "present": False, "unique": "", "pid": 0, "process": "",
+        "exe": "", "cmdline": "", "unit": "", "isVgs": False,
+    }
+    unique = _session_bus_call("GetNameOwner", "s", NOTIFICATION_BUS_NAME)
+    if not isinstance(unique, str) or not unique:
+        return empty
+    raw_pid = _session_bus_call("GetConnectionUnixProcessID", "s", unique)
+    try:
+        pid = int(raw_pid)
+    except (TypeError, ValueError):
+        pid = 0
+    process = _proc_text(pid, "comm") if pid else ""
+    cmdline = _proc_cmdline(pid) if pid else ""
+    unit = _proc_unit(pid) if pid else ""
+    return {
+        "present": True,
+        "unique": unique,
+        "pid": pid,
+        "process": process,
+        "exe": _proc_exe(pid) if pid else "",
+        "cmdline": cmdline,
+        "unit": unit,
+        "isVgs": _owner_is_vgs(unit, process, cmdline),
+    }
+
+
+def _daemon_label(process: str, exec_line: str, unit: str) -> str:
+    for candidate in (process, Path(exec_line.split(" ")[0]).name if exec_line else "", unit[:-8] if unit.endswith(".service") else ""):
+        if candidate and candidate in KNOWN_NOTIFICATION_DAEMONS:
+            return KNOWN_NOTIFICATION_DAEMONS[candidate]
+    return process or (Path(exec_line.split(" ")[0]).name if exec_line else "") or unit or "unknown"
+
+
+def notification_status() -> Dict[str, Any]:
+    """Bus ownership, every foreign claimant found, and what can be done."""
+    owner = notification_owner()
+    activations = notification_activation_files()
+    conflicts: List[Dict[str, Any]] = []
+    by_key: Dict[str, Dict[str, Any]] = {}
+
+    def record(key: str, entry: Dict[str, Any]) -> Dict[str, Any]:
+        existing = by_key.get(key)
+        if existing is not None:
+            for name, value in entry.items():
+                if value not in ("", 0, False, None) or name not in existing:
+                    existing[name] = value
+            return existing
+        by_key[key] = entry
+        conflicts.append(entry)
+        return entry
+
+    if owner["present"] and not owner["isVgs"]:
+        unit = owner["unit"]
+        unit_state = _user_unit_state(unit)
+        record(unit or owner["exe"] or owner["unique"], {
+            "daemon": _daemon_label(owner["process"], owner["exe"], unit),
+            "holdsName": True,
+            "pid": owner["pid"],
+            "process": owner["process"],
+            "exe": owner["exe"],
+            "unit": unit,
+            "unitExists": unit_state["exists"],
+            "unitRunning": unit_state["running"],
+            "unitMasked": unit_state["masked"],
+            "unitTransient": unit_state["transient"],
+            "activationFile": "",
+            "shadowed": False,
+        })
+
+    shadow_names = {entry["file"] for entry in activations if entry["shadow"]}
+    for entry in activations:
+        if entry["shadow"]:
+            continue
+        shadowed = entry["file"] in shadow_names
+        # A file behind VGS's own shadow is still worth reporting -- its unit
+        # may be running -- but a plain duplicate in a later data directory is
+        # unreachable and says nothing.
+        if not entry["effective"] and not shadowed:
+            continue
+        unit = entry["systemdService"]
+        exec_name = Path(entry["exec"].split(" ")[0]).name if entry["exec"] else ""
+        if unit == "vshell.service" or exec_name in QS_BINARIES:
+            continue  # VGS's own activation file, if one is ever shipped
+        unit_state = _user_unit_state(unit)
+        record(unit or exec_name or entry["file"], {
+            "daemon": _daemon_label(exec_name, entry["exec"], unit),
+            "holdsName": False,
+            "pid": 0,
+            "process": exec_name,
+            "exe": entry["exec"],
+            "unit": unit,
+            "unitExists": unit_state["exists"],
+            "unitRunning": unit_state["running"],
+            "unitMasked": unit_state["masked"],
+            "unitTransient": unit_state["transient"],
+            "activationFile": entry["path"],
+            "shadowed": shadowed,
+        })
+
+    if owner["present"]:
+        state = "vgs" if owner["isVgs"] else "foreign"
+    else:
+        state = "unowned"
+
+    actionable = [
+        conflict for conflict in conflicts
+        if (conflict["activationFile"] and not conflict["shadowed"])
+        or (conflict["unitExists"] and (conflict["unitRunning"] or not conflict["unitMasked"]))
+    ]
+    manual = [
+        conflict for conflict in conflicts
+        if conflict["holdsName"] and not conflict["unitExists"]
+    ]
+    if actionable:
+        reason = ""
+    elif manual:
+        reason = f"{manual[0]['daemon']} was not started by a user unit; quit it the way it was started"
+    elif conflicts:
+        reason = "every conflicting daemon is already masked and shadowed"
+    else:
+        reason = "no conflicting notification daemon found"
+
+    record_state = _load_takeover_record()
+    return {
+        "busName": NOTIFICATION_BUS_NAME,
+        "state": state,
+        # VGS holds the name now, but something else would still be activated
+        # into it on a session where VGS starts a moment later.
+        "atRisk": state == "vgs" and bool(conflicts),
+        "owner": owner,
+        "conflicts": conflicts,
+        "takeover": {"available": bool(actionable), "reason": reason},
+        "restore": {
+            "available": bool(record_state["shadows"] or record_state["masked"]),
+            "shadows": record_state["shadows"],
+            "masked": record_state["masked"],
+        },
+    }
+
+
+def _load_takeover_record() -> Dict[str, List[str]]:
+    try:
+        data = json.loads(notification_state_file().read_text())
+    except (OSError, ValueError):
+        data = {}
+    shadows = [str(item) for item in data.get("shadows", []) if isinstance(item, str)]
+    masked = [str(item) for item in data.get("masked", []) if isinstance(item, str)]
+    return {"shadows": shadows, "masked": masked}
+
+
+def _save_takeover_record(record: Dict[str, List[str]]) -> None:
+    path = notification_state_file()
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        if not record["shadows"] and not record["masked"]:
+            path.unlink(missing_ok=True)
+            return
+        tmp = path.with_suffix(".tmp")
+        tmp.write_text(json.dumps(record, indent=2) + "\n")
+        tmp.chmod(0o600)
+        os.replace(tmp, path)
+    except OSError as exc:
+        eprint(f"vshell notifications: could not record takeover state: {exc}")
+
+
+def _write_activation_shadow(source: Path) -> Path | None:
+    """Shadow a system activation file with an inert one in the data home.
+
+    D-Bus resolves an activation file name from the data directories in order
+    and stops at the first hit, so a same-named file in XDG_DATA_HOME wins.
+    Exec is deliberately a no-op: VGS owns the name whenever it runs, and when
+    it does not, failing the activation is honest -- silently starting the
+    daemon VGS was asked to displace is what this exists to prevent.
+    """
+    target_dir = _xdg_data_home() / "dbus-1" / "services"
+    target = target_dir / source.name
+    body = (
+        f"{NOTIFICATION_SHADOW_MARKER}\n"
+        f"# Shadows {source} so the session bus does not activate a second\n"
+        f"# notification daemon into {NOTIFICATION_BUS_NAME} ahead of VGS.\n"
+        "# Undo with: vshell notifications restore\n"
+        "[D-BUS Service]\n"
+        f"Name={NOTIFICATION_BUS_NAME}\n"
+        f"Exec={shutil.which('false') or '/bin/false'}\n"
+    )
+    try:
+        target_dir.mkdir(parents=True, exist_ok=True)
+        tmp = target.with_suffix(".service.tmp")
+        tmp.write_text(body)
+        tmp.chmod(0o644)
+        os.replace(tmp, target)
+    except OSError as exc:
+        eprint(f"vshell notifications: could not shadow {source}: {exc}")
+        return None
+    return target
+
+
+def notification_takeover() -> Dict[str, Any]:
+    """Make VGS the session's notification daemon, reversibly.
+
+    Nothing is killed: the conflicting unit is masked and stopped, so it
+    releases the bus name and Quickshell's pending registration wins it back on
+    its own. A daemon that is not a user unit cannot be stopped safely from
+    here and is reported for the user to quit.
+    """
+    status = notification_status()
+    record = _load_takeover_record()
+    actions: List[str] = []
+    manual: List[str] = []
+    failures: List[str] = []
+
+    for conflict in status["conflicts"]:
+        source = conflict["activationFile"]
+        if source and not conflict["shadowed"]:
+            written = _write_activation_shadow(Path(source))
+            if written is None:
+                failures.append(f"could not shadow {source}")
+            else:
+                if str(written) not in record["shadows"]:
+                    record["shadows"].append(str(written))
+                actions.append(f"shadowed D-Bus activation of {conflict['daemon']} ({source})")
+
+        unit = conflict["unit"]
+        if conflict["unitExists"] and not conflict["unitMasked"] and not conflict["unitTransient"]:
+            proc = _systemctl_user(["mask", unit])
+            if proc.returncode == 0:
+                if unit not in record["masked"]:
+                    record["masked"].append(unit)
+                actions.append(f"masked {unit}")
+            else:
+                failures.append(f"could not mask {unit}: {(proc.stderr or '').strip()}")
+        if conflict["unitExists"] and conflict["unitRunning"]:
+            proc = _systemctl_user(["stop", unit])
+            if proc.returncode == 0:
+                actions.append(f"stopped {unit}")
+            else:
+                failures.append(f"could not stop {unit}: {(proc.stderr or '').strip()}")
+        if conflict["holdsName"] and not conflict["unitExists"]:
+            manual.append(
+                f"{conflict['daemon']} (pid {conflict['pid']}) holds {NOTIFICATION_BUS_NAME} "
+                "and was not started by a user unit; quit it the way it was started"
+            )
+
+    _save_takeover_record(record)
+    result = notification_status()
+    result["actions"] = actions
+    result["manual"] = manual
+    result["failures"] = failures
+    result["ok"] = not failures
+    return result
+
+
+def notification_restore() -> Dict[str, Any]:
+    """Undo a previous takeover: drop the shadows, unmask what was masked."""
+    record = _load_takeover_record()
+    actions: List[str] = []
+    failures: List[str] = []
+
+    kept_shadows: List[str] = []
+    for entry in record["shadows"]:
+        path = Path(entry)
+        try:
+            text = path.read_text(errors="replace")
+        except OSError:
+            continue  # already gone
+        if NOTIFICATION_SHADOW_MARKER not in text:
+            kept_shadows.append(entry)
+            failures.append(f"{entry} was replaced by something else; left alone")
+            continue
+        try:
+            path.unlink()
+            actions.append(f"removed {entry}")
+        except OSError as exc:
+            kept_shadows.append(entry)
+            failures.append(f"could not remove {entry}: {exc}")
+
+    kept_masks: List[str] = []
+    for unit in record["masked"]:
+        proc = _systemctl_user(["unmask", unit])
+        if proc.returncode == 0:
+            actions.append(f"unmasked {unit}")
+        else:
+            kept_masks.append(unit)
+            failures.append(f"could not unmask {unit}: {(proc.stderr or '').strip()}")
+
+    _save_takeover_record({"shadows": kept_shadows, "masked": kept_masks})
+    result = notification_status()
+    result["actions"] = actions
+    result["manual"] = []
+    result["failures"] = failures
+    result["ok"] = not failures
+    return result
+
+
+def _print_notification_status(status: Dict[str, Any]) -> None:
+    owner = status["owner"]
+    if status["state"] == "vgs":
+        print(f"{NOTIFICATION_BUS_NAME}: VGS (pid {owner['pid']})")
+    elif status["state"] == "foreign":
+        where = owner["unit"] or owner["exe"] or "unknown"
+        print(f"{NOTIFICATION_BUS_NAME}: {_daemon_label(owner['process'], owner['exe'], owner['unit'])} "
+              f"(pid {owner['pid']}, {where}) -- VGS notifications are inert")
+    else:
+        print(f"{NOTIFICATION_BUS_NAME}: unowned")
+    for conflict in status["conflicts"]:
+        detail = []
+        if conflict["unit"]:
+            detail.append(conflict["unit"] + (" (masked)" if conflict["unitMasked"] else ""))
+        if conflict["activationFile"]:
+            detail.append("activation " + conflict["activationFile"] + (" (shadowed)" if conflict["shadowed"] else ""))
+        print(f"  conflict: {conflict['daemon']}" + (": " + ", ".join(detail) if detail else ""))
+    if status["state"] != "vgs" or status["atRisk"]:
+        if status["takeover"]["available"]:
+            print("  fix: vshell notifications takeover")
+        elif status["takeover"]["reason"]:
+            print(f"  note: {status['takeover']['reason']}")
+
+
+def cmd_notifications(argv: List[str]) -> int:
+    parser = argparse.ArgumentParser(prog="vshell notifications")
+    sub = parser.add_subparsers(dest="cmd", required=True)
+    for name in ("status", "takeover", "restore"):
+        sub.add_parser(name).add_argument("--json", action="store_true")
+    args = parser.parse_args(argv)
+
+    if args.cmd == "status":
+        status = notification_status()
+        if args.json:
+            print(json.dumps(status, indent=2))
+        else:
+            _print_notification_status(status)
+        return 0 if status["state"] == "vgs" else 1
+
+    result = notification_takeover() if args.cmd == "takeover" else notification_restore()
+    if args.json:
+        print(json.dumps(result, indent=2))
+        return 0 if result["ok"] else 1
+    for action in result["actions"]:
+        print(action)
+    for note in result["manual"]:
+        print(f"manual: {note}")
+    for failure in result["failures"]:
+        eprint(f"vshell notifications: {failure}")
+    if not result["actions"] and not result["manual"] and not result["failures"]:
+        print("nothing to do")
+    _print_notification_status(result)
+    return 0 if result["ok"] else 1
+
+
 def main() -> int:
     if len(sys.argv) < 2:
-        eprint("Usage: vshell-helper <theme|fonts|deps|update|ai-usage|capture|cl|dl|trash|color|keybinds|config|compositor|blur|brightness|auth|greeter> ...")
+        eprint("Usage: vshell-helper <theme|fonts|deps|notifications|update|ai-usage|capture|cl|dl|trash|color|keybinds|config|compositor|blur|brightness|auth|greeter> ...")
         return 2
     cmd, argv = sys.argv[1], sys.argv[2:]
     try:
@@ -10576,6 +11136,7 @@ def main() -> int:
         if cmd == "auth": return cmd_auth(argv)
         if cmd == "greeter": return cmd_greeter(argv)
         if cmd == "sudo-toggle": return cmd_sudo_toggle(argv)
+        if cmd == "notifications": return cmd_notifications(argv)
         if cmd == "launcher-search": return cmd_launcher_search(argv)
         eprint(f"Unknown VGS helper command: {cmd}")
         return 2

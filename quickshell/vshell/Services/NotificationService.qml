@@ -669,103 +669,235 @@ Singleton {
     property var expandedMessages: ({})
     property bool popupsDisabled: false
 
-    NotificationServer {
-        id: server
+    // --- notification bus ownership ---------------------------------------
+    //
+    // "", "vgs", "foreign" or "unowned", as reported by `vshell notifications
+    // status`. The shell cannot ask Quickshell whether its registration won,
+    // so ownership is read from the session bus itself.
+    property string serverOwnership: ""
+    property string serverConflictDaemon: ""
+    property string serverConflictReason: ""
+    property bool serverConflictFixable: false
+    property bool serverTakeoverBusy: false
+    readonly property bool serverEnabled: SettingsData.notificationServerEnabled
+    // True only when VGS is meant to be the daemon and is not.
+    readonly property bool serverConflict: serverEnabled && serverOwnership === "foreign"
+    property bool _serverConflictAnnounced: false
 
-        keepOnReload: false
-        actionsSupported: true
-        actionIconsSupported: true
-        bodyHyperlinksSupported: true
-        bodyImagesSupported: true
-        bodyMarkupSupported: true
-        imageSupported: true
-        inlineReplySupported: true
-        persistenceSupported: true
+    function checkServerOwnership() {
+        if (!ownershipProcess.running)
+            ownershipProcess.running = true;
+    }
 
-        onNotification: notif => {
-            notif.tracked = true;
+    // Hands the bus name to VGS by masking and stopping the daemon holding it;
+    // Quickshell's pending registration then wins it without a shell restart.
+    function takeOverNotificationServer() {
+        if (takeoverProcess.running)
+            return;
+        root.serverTakeoverBusy = true;
+        takeoverProcess.running = true;
+    }
 
-            const policy = _evaluateNotificationPolicy(notif);
-            if (policy.drop) {
-                try {
-                    notif.dismiss();
-                } catch (e) {}
-                return;
+    function _applyServerOwnership(text) {
+        let status = null;
+        try {
+            status = JSON.parse(text);
+        } catch (e) {
+            root.log.warn("could not read notification ownership:", e);
+            return;
+        }
+        if (!status || typeof status !== "object")
+            return;
+
+        root.serverOwnership = status.state || "";
+        const conflicts = status.conflicts || [];
+        const owner = status.owner || {};
+        root.serverConflictDaemon = (conflicts.length > 0 ? conflicts[0].daemon : "") || owner.process || "";
+        root.serverConflictFixable = !!(status.takeover && status.takeover.available);
+        root.serverConflictReason = (status.takeover && status.takeover.reason) || "";
+
+        if (root.serverConflict) {
+            if (!root._serverConflictAnnounced) {
+                root._serverConflictAnnounced = true;
+                const daemon = root.serverConflictDaemon || I18n.tr("another app");
+                ToastService.showWarning(I18n.tr("%1 is handling notifications, not VGS").arg(daemon), I18n.tr("VGS could not register org.freedesktop.Notifications, so its notification center stays empty. Settings > Notifications can take it over."), "", "notification-server-conflict");
             }
+        } else {
+            if (root._serverConflictAnnounced)
+                ToastService.dismissCategory("notification-server-conflict");
+            root._serverConflictAnnounced = false;
+        }
+    }
 
-            if (SettingsData.notificationDedupeEnabled) {
-                const dedupKey = _notificationDedupKey(notif);
-                const duplicate = _findActiveDuplicate(notif);
-                if (duplicate || _hasRecentDuplicate(dedupKey)) {
-                    if (duplicate && duplicate.timer && duplicate.timer.running)
-                        duplicate.timer.restart();
+    Process {
+        id: ownershipProcess
+        command: [Paths.vshellCli, "notifications", "status", "--json"]
+        running: false
+        stdout: StdioCollector {
+            onStreamFinished: root._applyServerOwnership(text)
+        }
+    }
+
+    Process {
+        id: takeoverProcess
+        command: [Paths.vshellCli, "notifications", "takeover", "--json"]
+        running: false
+        stdout: StdioCollector {
+            onStreamFinished: root._applyServerOwnership(text)
+        }
+        onExited: (exitCode, exitStatus) => {
+            root.serverTakeoverBusy = false;
+            // Releasing the name and Quickshell re-acquiring it are two
+            // asynchronous steps, so confirm rather than assume.
+            ownershipSettleTimer.restart();
+        }
+    }
+
+    Timer {
+        id: ownershipStartupTimer
+        // Registration is attempted as the shell starts; probing immediately
+        // would race it and report a conflict that does not exist.
+        interval: 4000
+        repeat: false
+        running: true
+        onTriggered: root.checkServerOwnership()
+    }
+
+    Timer {
+        id: ownershipSettleTimer
+        interval: 1200
+        repeat: false
+        onTriggered: root.checkServerOwnership()
+    }
+
+    Timer {
+        id: ownershipRecheckTimer
+        // Quickshell re-registers on its own the moment the current owner drops
+        // the name, so keep looking while VGS is losing -- that is how the
+        // shell notices it has won without a restart.
+        interval: 30000
+        repeat: true
+        running: root.serverEnabled && root.serverOwnership !== "" && root.serverOwnership !== "vgs"
+        onTriggered: root.checkServerOwnership()
+    }
+
+    Connections {
+        target: SettingsData
+        function onNotificationServerEnabledChanged() {
+            root._serverConflictAnnounced = false;
+            ToastService.dismissCategory("notification-server-conflict");
+            ownershipSettleTimer.restart();
+        }
+    }
+
+    // org.freedesktop.Notifications is first-come, first-served on the session
+    // bus. When another notification daemon already holds it, Quickshell keeps
+    // a pending registration and every VGS notification surface stays inert, so
+    // ownership is probed below and reported instead of being left in the log.
+    // Deactivating the loader releases the name for a user who wants that.
+    LazyLoader {
+        id: serverLoader
+
+        active: SettingsData.notificationServerEnabled
+
+        NotificationServer {
+            id: server
+
+            keepOnReload: false
+            actionsSupported: true
+            actionIconsSupported: true
+            bodyHyperlinksSupported: true
+            bodyImagesSupported: true
+            bodyMarkupSupported: true
+            imageSupported: true
+            inlineReplySupported: true
+            persistenceSupported: true
+
+            onNotification: notif => {
+                notif.tracked = true;
+
+                const policy = _evaluateNotificationPolicy(notif);
+                if (policy.drop) {
                     try {
                         notif.dismiss();
                     } catch (e) {}
                     return;
                 }
-            }
 
-            if (!_ingressAllowed(policy.urgency)) {
-                if (policy.urgency !== NotificationUrgency.Critical) {
-                    try {
-                        notif.dismiss();
-                    } catch (e) {}
-                    return;
-                }
-            }
-
-            // Honor the freedesktop "suppress-sound" hint: the sender
-            // plays its own audio for this notification and asks the
-            // server not to double up.
-            const suppressSound = !!(notif.hints && notif.hints["suppress-sound"]);
-            if (SettingsData.soundsEnabled && SettingsData.soundNewNotification && !suppressSound) {
-                if (policy.urgency === NotificationUrgency.Critical) {
-                    AudioService.playCriticalNotificationSound();
-                } else {
-                    AudioService.playNormalNotificationSound();
-                }
-            }
-
-            const shouldShowPopup = !root.popupsDisabled && !SessionData.doNotDisturb && !policy.disablePopup;
-            const isTransient = notif.transient;
-            const shouldKeepInCenter = !isTransient && !policy.hideFromCenter;
-
-            if (!shouldShowPopup && !shouldKeepInCenter) {
-                try {
-                    notif.dismiss();
-                } catch (e) {}
-                return;
-            }
-
-            const wrapper = notifComponent.createObject(root, {
-                "popup": shouldShowPopup,
-                "notification": notif,
-                "urgencyOverride": policy.urgency
-            });
-
-            if (wrapper) {
-                if (SettingsData.notificationDedupeEnabled)
-                    _recordDedupKey(_notificationDedupKey(notif));
-
-                root.allWrappers.push(wrapper);
-                if (shouldKeepInCenter) {
-                    root.notifications.push(wrapper);
-                    if (_shouldSaveToHistory(wrapper.urgency, policy.disableHistory)) {
-                        root.addToHistory(wrapper);
+                if (SettingsData.notificationDedupeEnabled) {
+                    const dedupKey = _notificationDedupKey(notif);
+                    const duplicate = _findActiveDuplicate(notif);
+                    if (duplicate || _hasRecentDuplicate(dedupKey)) {
+                        if (duplicate && duplicate.timer && duplicate.timer.running)
+                            duplicate.timer.restart();
+                        try {
+                            notif.dismiss();
+                        } catch (e) {}
+                        return;
                     }
                 }
-                Qt.callLater(() => {
-                    _initWrapperPersistence(wrapper);
+
+                if (!_ingressAllowed(policy.urgency)) {
+                    if (policy.urgency !== NotificationUrgency.Critical) {
+                        try {
+                            notif.dismiss();
+                        } catch (e) {}
+                        return;
+                    }
+                }
+
+                // Honor the freedesktop "suppress-sound" hint: the sender
+                // plays its own audio for this notification and asks the
+                // server not to double up.
+                const suppressSound = !!(notif.hints && notif.hints["suppress-sound"]);
+                if (SettingsData.soundsEnabled && SettingsData.soundNewNotification && !suppressSound) {
+                    if (policy.urgency === NotificationUrgency.Critical) {
+                        AudioService.playCriticalNotificationSound();
+                    } else {
+                        AudioService.playNormalNotificationSound();
+                    }
+                }
+
+                const shouldShowPopup = !root.popupsDisabled && !SessionData.doNotDisturb && !policy.disablePopup;
+                const isTransient = notif.transient;
+                const shouldKeepInCenter = !isTransient && !policy.hideFromCenter;
+
+                if (!shouldShowPopup && !shouldKeepInCenter) {
+                    try {
+                        notif.dismiss();
+                    } catch (e) {}
+                    return;
+                }
+
+                const wrapper = notifComponent.createObject(root, {
+                    "popup": shouldShowPopup,
+                    "notification": notif,
+                    "urgencyOverride": policy.urgency
                 });
 
-                if (shouldShowPopup) {
-                    _enqueuePopup(wrapper);
-                    processQueue();
-                }
-            }
+                if (wrapper) {
+                    if (SettingsData.notificationDedupeEnabled)
+                        _recordDedupKey(_notificationDedupKey(notif));
 
-            _recomputeGroupsLater();
+                    root.allWrappers.push(wrapper);
+                    if (shouldKeepInCenter) {
+                        root.notifications.push(wrapper);
+                        if (_shouldSaveToHistory(wrapper.urgency, policy.disableHistory)) {
+                            root.addToHistory(wrapper);
+                        }
+                    }
+                    Qt.callLater(() => {
+                        _initWrapperPersistence(wrapper);
+                    });
+
+                    if (shouldShowPopup) {
+                        _enqueuePopup(wrapper);
+                        processQueue();
+                    }
+                }
+
+                _recomputeGroupsLater();
+            }
         }
     }
 

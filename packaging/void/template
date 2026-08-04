@@ -2,6 +2,9 @@ pkgname=vgs-shell
 version=0.1.0
 revision=1
 depends="quickshell jq python3"
+# One notification daemon per session: org.freedesktop.Notifications is a
+# first-come, first-served bus name.
+conflicts="mako>=0 dunst>=0"
 subpackages="vgs-shell-assets"
 short_desc="VanillaGreen desktop shell for Hyprland and Niri"
 maintainer="Brad <brad@vanillagreen>"

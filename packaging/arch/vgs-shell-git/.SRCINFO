@@ -50,7 +50,11 @@ pkgbase = vgs-shell-git
 	optdepends = xterm: terminal for VGS password prompts
 	optdepends = zoxide: launcher recent-directory search
 	provides = vgs-shell
+	provides = notification-daemon
 	conflicts = vgs-shell
+	conflicts = notification-daemon
+	conflicts = mako
+	conflicts = swaync
 	source = git+https://github.com/vanillagreencom/vgs.git
 	sha256sums = SKIP
 

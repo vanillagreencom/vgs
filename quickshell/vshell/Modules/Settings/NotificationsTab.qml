@@ -1,5 +1,6 @@
 import QtQuick
 import qs.Common
+import qs.Services
 import qs.Widgets
 import qs.Modules.Settings.Widgets
 
@@ -199,6 +200,79 @@ Item {
             width: Math.min(550, parent.width - Theme.spacingL * 2)
             anchors.horizontalCenter: parent.horizontalCenter
             spacing: Theme.spacingXL
+
+            SettingsCard {
+                width: parent.width
+                iconName: NotificationService.serverConflict ? "notifications_off" : "notifications_active"
+                title: I18n.tr("Notification Daemon")
+                settingKey: "notificationServer"
+
+                Component.onCompleted: NotificationService.checkServerOwnership()
+
+                Item {
+                    width: parent.width
+                    height: statusColumn.height
+
+                    Column {
+                        id: statusColumn
+                        width: parent.width
+                        spacing: Theme.spacingXS
+
+                        StyledText {
+                            width: parent.width
+                            wrapMode: Text.WordWrap
+                            font.pixelSize: Theme.fontSizeMedium
+                            font.weight: Font.Medium
+                            color: NotificationService.serverConflict ? Theme.error : Theme.surfaceText
+                            text: {
+                                if (!SettingsData.notificationServerEnabled)
+                                    return I18n.tr("VGS is not registered as the notification daemon");
+                                switch (NotificationService.serverOwnership) {
+                                case "vgs":
+                                    return I18n.tr("VGS is handling notifications");
+                                case "foreign":
+                                    return I18n.tr("%1 is handling notifications, not VGS").arg(NotificationService.serverConflictDaemon || I18n.tr("Another app"));
+                                case "unowned":
+                                    return I18n.tr("No app is handling notifications yet");
+                                default:
+                                    return I18n.tr("Checking which app handles notifications…");
+                                }
+                            }
+                        }
+
+                        StyledText {
+                            width: parent.width
+                            wrapMode: Text.WordWrap
+                            font.pixelSize: Theme.fontSizeSmall
+                            color: Theme.surfaceVariantText
+                            text: {
+                                if (!SettingsData.notificationServerEnabled)
+                                    return I18n.tr("Popups, the notification center and history are handled by whichever other daemon is installed.");
+                                if (NotificationService.serverConflict)
+                                    return NotificationService.serverConflictFixable ? I18n.tr("org.freedesktop.Notifications is taken, so VGS popups and history stay empty. Taking it over masks the other daemon and stops it; VGS picks the name up without a restart.") : I18n.tr("org.freedesktop.Notifications is taken and VGS cannot free it: %1.").arg(NotificationService.serverConflictReason || I18n.tr("no supported way to stop the other daemon"));
+                                return I18n.tr("VGS owns org.freedesktop.Notifications, the session-wide bus name every app sends notifications to.");
+                            }
+                        }
+                    }
+                }
+
+                VgsButton {
+                    text: NotificationService.serverTakeoverBusy ? I18n.tr("Taking over…") : I18n.tr("Use VGS for Notifications")
+                    iconName: "swap_horiz"
+                    enabled: !NotificationService.serverTakeoverBusy
+                    visible: NotificationService.serverConflict && NotificationService.serverConflictFixable
+                    onClicked: NotificationService.takeOverNotificationServer()
+                }
+
+                SettingsToggleRow {
+                    settingKey: "notificationServerEnabled"
+                    tags: ["notification", "daemon", "server", "dbus", "mako", "dunst", "swaync", "conflict"]
+                    text: I18n.tr("Use VGS for Notifications")
+                    description: SettingsData.notificationServerEnabled ? I18n.tr("VGS registers as the session's notification daemon") : I18n.tr("Another notification daemon owns the session; VGS shows no popups or history")
+                    checked: SettingsData.notificationServerEnabled
+                    onToggled: checked => SettingsData.set("notificationServerEnabled", checked)
+                }
+            }
 
             SettingsCard {
                 width: parent.width

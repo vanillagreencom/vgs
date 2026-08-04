@@ -10,6 +10,8 @@ Rules-Requires-Root: no
 Package: vgs-shell
 Architecture: any
 Depends: quickshell, jq, python3, systemd, ${misc:Depends}
+Provides: notification-daemon
+Conflicts: notification-daemon, mako-notifier, sway-notification-center
 Suggests: alacritty,
  bandwhich,
  curl,
