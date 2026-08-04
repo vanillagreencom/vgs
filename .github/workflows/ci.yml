@@ -122,6 +122,33 @@ jobs:
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           set -u
+          # Merge-queue entries are post-approval by construction, but the
+          # queue still requires the context on the group sha. This runs BEFORE
+          # the bootstrap check: a queue entry must get its context even on the
+          # adoption PR's own group sha.
+          if [ "$EVENT_NAME" = "merge_group" ]; then
+            gh api -X POST "repos/$GH_REPO/statuses/$GITHUB_SHA" \
+              -f state=success -f context="Review gate" \
+              -f description="merge queue entries are post-approval by construction" \
+              -f target_url="$RUN_URL" >/dev/null
+            exit 0
+          fi
+          # BOOTSTRAP. The checkout above is the BASE revision on purpose, and
+          # the PR that ADOPTS the engine has a base that does not contain it
+          # yet. There is no safe way out of that: reaching for the PR head's
+          # copy is exactly the PR-controlled-code-under-a-write-token shape
+          # this posture exists to prevent. So post pending and stop — merge
+          # stays blocked, which is the correct state for a head with no
+          # evaluated review evidence. From the merge of the adoption PR
+          # onwards, every base carries the engine and this branch is dead.
+          if [ ! -f third_party/review-gate/scripts/review-predicate.sh ]; then
+            gh api -X POST "repos/$GH_REPO/statuses/${HEAD_SHA:-$GITHUB_SHA}" \
+              -f state=pending -f context="Review gate" \
+              -f description="the base revision has no gate engine (adoption PR); merge stays blocked" \
+              -f target_url="$RUN_URL" >/dev/null
+            echo "::notice::review gate not evaluated: no engine at the base revision. Expected only for the adoption PR."
+            exit 0
+          fi
           CTX="$(. third_party/review-gate/scripts/lib/settings.sh && rg_setting REVIEW_GATE_CONTEXT "Review gate")"
           post() {
             gh api -X POST "repos/$GH_REPO/statuses/$1" \
@@ -129,12 +156,6 @@ jobs:
               -f description="$(printf %.140s "$3")" \
               -f target_url="$RUN_URL" >/dev/null
           }
-          # Merge-queue entries are post-approval by construction, but the
-          # queue still requires the context on the group sha.
-          if [ "$EVENT_NAME" = "merge_group" ]; then
-            post "$GITHUB_SHA" success "merge queue entries are post-approval by construction"
-            exit 0
-          fi
           if line="$(third_party/review-gate/scripts/review-predicate.sh)"; then
             verdict="${line#verdict=}"; verdict="${verdict%% *}"
             detail="${line#*detail=}"
