@@ -1371,8 +1371,16 @@ def test_sudo_toggle_enable_never_takes_quiet_sudo_path():
 
     original_ensure = helper.ensure_root_for
     original_avail = helper.sudo_toggle_availability
+    original_enable_avail = helper.sudo_toggle_enable_availability
     original_euid = helper.os.geteuid
     helper.sudo_toggle_availability = lambda: (True, "")
+    # Must be stubbed, not inherited from the host: it probes for a terminal
+    # emulator, so leaving it live made this test pass on a developer machine
+    # (terminal installed, enable path reached) and fail on a bare CI runner
+    # (refused before `ensure_root_for` was ever called). The terminal-refusal
+    # behaviour is worth pinning, so it gets its own case below rather than
+    # being an ambient property of whoever ran the suite.
+    helper.sudo_toggle_enable_availability = lambda: (True, "")
     helper.os.geteuid = lambda: 1000  # never take the privileged branch here
 
     def fake_ensure_root_for(argv, terminal=False):
@@ -1408,9 +1416,25 @@ def test_sudo_toggle_enable_never_takes_quiet_sudo_path():
             assert_equal("on" in calls[0][0], True, "toggle must convert to an explicit direction")
 
         with_temp_home(check)
+
+        # No terminal: enabling must refuse outright rather than fall back to
+        # the quiet path, and revoking must still work — gating both directions
+        # on a terminal is what once stranded an existing grant in place.
+        helper.sudo_toggle_enable_availability = lambda: (False, "no terminal emulator found")
+        calls.clear()
+        code = helper.cmd_sudo_toggle(["set", "on"])
+        assert_equal(code, 1, "Enable with no terminal must fail")
+        assert_equal(calls, [], "Enable with no terminal must not elevate at all")
+
+        calls.clear()
+        code = helper.cmd_sudo_toggle(["set", "off"])
+        assert_equal(code, 0, "Revoke must still work with no terminal")
+        assert_equal(len(calls), 1, "Revoke with no terminal must take the quiet path")
+        assert_equal(calls[0][1], False, "Revoke must not demand a terminal")
     finally:
         helper.ensure_root_for = original_ensure
         helper.sudo_toggle_availability = original_avail
+        helper.sudo_toggle_enable_availability = original_enable_avail
         helper.os.geteuid = original_euid
 
 
