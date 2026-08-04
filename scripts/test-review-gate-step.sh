@@ -26,6 +26,7 @@ set -uo pipefail
 
 repo_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 workflow="$repo_root/.github/workflows/ci.yml"
+rerun_workflow="$repo_root/.github/workflows/approval-rerun.yml"
 
 failures=0
 note() { printf 'test-review-gate-step: %s\n' "$*"; }
@@ -37,32 +38,36 @@ trap 'rm -rf -- "$scratch"' EXIT
 
 # --- extract the step body from the shipped workflow ------------------------
 
-step="$scratch/gate-step.sh"
-python3 - "$workflow" "$step" <<'PY'
+extractor="$scratch/extract-step.py"
+cat >"$extractor" <<'PY'
 import sys, pathlib
-lines = pathlib.Path(sys.argv[1]).read_text().splitlines()
+workflow, out, wanted = sys.argv[1], sys.argv[2], sys.argv[3]
+lines = pathlib.Path(workflow).read_text().splitlines()
 start = None
 for index, line in enumerate(lines):
-    if line.strip() == "- name: Evaluate and post the review gate":
+    if line.strip() == f"- name: {wanted}":
         start = index
         break
 if start is None:
-    sys.exit("could not find the 'Evaluate and post the review gate' step in ci.yml")
+    sys.exit(f"could not find the {wanted!r} step in {workflow}")
 run = None
 for index in range(start, len(lines)):
     if lines[index].strip() == "run: |":
         run = index + 1
         break
 if run is None:
-    sys.exit("the gate step has no 'run: |' block")
+    sys.exit(f"the {wanted!r} step has no 'run: |' block")
 indent = len(lines[run]) - len(lines[run].lstrip())
 body = []
 for line in lines[run:]:
     if line.strip() and (len(line) - len(line.lstrip())) < indent:
         break
     body.append(line[indent:] if len(line) >= indent else line)
-pathlib.Path(sys.argv[2]).write_text("\n".join(body).rstrip() + "\n")
+pathlib.Path(out).write_text("\n".join(body).rstrip() + "\n")
 PY
+
+step="$scratch/gate-step.sh"
+python3 "$extractor" "$workflow" "$step" "Evaluate and post the review gate"
 [[ -s "$step" ]] || { bad "extracted an empty step body"; exit 1; }
 # `shell: bash -e {0}` is what Actions runs the block under; reproduce it, or a
 # crash-on-missing-file would silently "pass" here while failing in CI.
@@ -199,6 +204,40 @@ fi
 write_fixtures '[{"state":"CHANGES_REQUESTED","commit_id":"deadbeefcafe","user":{"login":"a-reviewer"},"submitted_at":"2026-08-04T00:00:00Z"}]'
 run_step "$present" pull_request
 [[ "$(posted)" == "failure," ]] && ok "engine present, changes requested: posts failure" || bad "engine present, changes requested: posted '$(posted)', wanted failure"
+
+# --- state 6: approval-rerun.yml's bootstrap branch -------------------------
+# The same default-branch condition, in the workflow that surfaces as a CHECK
+# ON THE PR. A red check there says the PR is broken when the only fact is that
+# the gate cannot be converged yet. Observed live on PR #62.
+
+rerun_step="$scratch/rerun-step.sh"
+python3 "$extractor" "$rerun_workflow" "$rerun_step" "Converge the review gate for the PR head"
+if [[ -s "$rerun_step" ]] && bash -n "$rerun_step"; then
+  : >"$scratch/posts"
+  : >"$scratch/calls"
+  (
+    cd "$absent" || exit 1
+    PATH="$bindir:$PATH" \
+    GH_CALLS="$scratch/calls" GH_POSTS="$scratch/posts" FIXTURES="$fixtures" \
+    GH_TOKEN=fake GH_REPO=vanillagreencom/vgs PR_NUMBER=62 \
+    HEAD_SHA=deadbeefcafe PR_AUTHOR=author \
+    bash -e "$rerun_step"
+  ) >"$scratch/out" 2>&1
+  rc=$?
+  if [[ "$rc" -eq 0 ]]; then
+    ok "rerun, engine absent: exits 0 (no false red check on the PR)"
+  else
+    bad "rerun, engine absent: exit $rc — a red check claims the PR is broken when only the gate is unconvergeable"
+  fi
+  [[ "$(posted)" == "pending," ]] && ok "rerun, engine absent: posts pending" || bad "rerun, engine absent: posted '$(posted)', wanted pending"
+  if grep -q '::notice::' "$scratch/out"; then
+    ok "rerun, engine absent: says so in the log rather than passing silently"
+  else
+    bad "rerun, engine absent: exited 0 with no notice, which is a silent skip"
+  fi
+else
+  bad "could not extract approval-rerun.yml's converge step"
+fi
 
 if [[ "$failures" -eq 0 ]]; then
   note "review-gate step: all states behave as specified"

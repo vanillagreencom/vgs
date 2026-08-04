@@ -145,12 +145,31 @@ jobs:
             echo "resolved head $HEAD_SHA for PR #$PR_NUMBER (comment event carries no sha)"
           fi
           if [ ! -f third_party/review-gate/scripts/approval-refire.sh ]; then
-            # Only reachable while the PR introducing the vendored skill is
-            # unmerged (these trigger events check out the default branch) —
-            # or if the skill was deleted from the default branch, which must
-            # stay loud.
-            echo "::error::third_party/review-gate/scripts/approval-refire.sh is missing on the default branch (bootstrap PR? deleted?); no re-fire action taken"
-            exit 1
+            # These triggers check out the DEFAULT branch, which does not carry
+            # the engine until the adoption PR merges. The template exits 1
+            # here; VGS posts pending and exits 0 instead, matching ci.yml's
+            # gate job, because this one surfaces as a check ON THE PR. A red
+            # check would say the PR is broken when the only fact is that the
+            # gate cannot be converged yet — the same false-verdict problem as
+            # posting `failure` from the gate job. Pending keeps the merge
+            # blocked and says why, which is the honest state.
+            #
+            # NOT silent: the notice names the condition, and the status the
+            # merge gates on is pending rather than absent. Observed live on
+            # PR #62, whose own adoption of the engine created this window.
+            #
+            # approval-sweep.yml keeps the loud exit 1: it is scheduled, its
+            # failure blocks no PR, and a writer of record that cannot run at
+            # all must be visible in the run list.
+            gh api -X POST "repos/$GH_REPO/statuses/$HEAD_SHA" \
+              -f state=pending -f context="Review gate" \
+              -f description="the default branch has no gate engine yet (adoption PR); merge stays blocked" \
+              >/dev/null || {
+                echo "::error::could not post the bootstrap gate status for PR #$PR_NUMBER"
+                exit 1
+              }
+            echo "::notice::third_party/review-gate/scripts/approval-refire.sh is not on the default branch yet, so no re-fire ran; posted pending on $HEAD_SHA. Expected only until the adoption PR merges."
+            exit 0
           fi
           export PR_NUMBER
           exec third_party/review-gate/scripts/approval-refire.sh
