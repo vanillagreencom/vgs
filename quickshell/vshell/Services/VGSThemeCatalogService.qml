@@ -22,6 +22,9 @@ Singleton {
     property bool loading: false
     property string catalogRef: ""
     property string lastError: ""
+    // Why the catalog is empty, when it is empty for a reason the user can act
+    // on. Empty string means "loaded fine".
+    property string failureText: ""
     // name -> true while a per-theme download/remove is in flight.
     property var pendingNames: ({})
     property bool downloadingAll: false
@@ -81,10 +84,16 @@ Singleton {
 
     function refresh() {
         loading = true;
-        _run("vgs-theme-catalog-list", ["theme", "catalog", "list", "--json"], 120000, function (output, exitCode) {
+        _run("vgs-theme-catalog-list", ["theme", "catalog", "list", "--json"], 120000, function (output, exitCode, stderr) {
             loading = false;
             if (exitCode !== 0) {
+                // Includes the case where the CLI could not run at all (missing
+                // binary, timeout): say so instead of leaving an empty browser
+                // that looks like a catalog with nothing in it.
                 entries = [];
+                failureText = stderr || lastError || (exitCode === 124
+                    ? I18n.tr("Timed out reading the theme catalog")
+                    : I18n.tr("Could not read the theme catalog"));
                 catalogLoaded();
                 return;
             }
@@ -92,9 +101,11 @@ Singleton {
                 const data = JSON.parse(output || "{}");
                 entries = data.themes || [];
                 catalogRef = data.ref || "";
+                failureText = "";
                 catalogLoaded();
             } catch (e) {
                 lastError = "Failed to parse theme catalog: " + e;
+                failureText = lastError;
                 entries = [];
                 catalogLoaded();
             }

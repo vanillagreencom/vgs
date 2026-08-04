@@ -459,11 +459,20 @@ FloatingWindow {
                     StyledText {
                         anchors.horizontalCenter: parent.horizontalCenter
                         visible: !VGSThemeCatalogService.loading
-                        text: VGSThemeCatalogService.available
-                              ? I18n.tr("No themes match this filter")
-                              : I18n.tr("This install ships no theme catalog")
+                        width: Math.min(implicitWidth, root.width - Theme.spacingL * 4)
+                        horizontalAlignment: Text.AlignHCenter
+                        wrapMode: Text.WordWrap
+                        text: {
+                            if (VGSThemeCatalogService.available)
+                                return I18n.tr("No themes match this filter");
+                            // An empty browser always says why: a failed CLI call
+                            // must not look like a catalog with nothing in it.
+                            if (VGSThemeCatalogService.failureText !== "")
+                                return VGSThemeCatalogService.failureText;
+                            return I18n.tr("This install ships no theme catalog");
+                        }
                         font.pixelSize: Theme.fontSizeMedium
-                        color: Theme.surfaceVariantText
+                        color: VGSThemeCatalogService.failureText !== "" ? Theme.error : Theme.surfaceVariantText
                     }
                 }
             }
