@@ -245,6 +245,12 @@ that `onReload` branches on.
 only check in the suite that covers this: the nested smoke never locks, so
 nothing else would notice.
 
+Its matcher deliberately does **not** anchor the opening brace to end-of-line.
+`Timer {}` and `Timer { id: guard }` are valid depth-1 declarations, and an
+earlier version that required `{` to end the line reported success while exactly
+such an insertion shifted every index below it — the same false green the check
+exists to prevent.
+
 ### IdleService is rebuilt too
 
 `IdleService` is a Quickshell `Singleton`, which means a **new object per engine
@@ -301,6 +307,12 @@ silent no-op at the moment somebody asked to lock the machine. `requestLock()`
 retries across the startup window (250 ms × 16, comfortably past `shell.qml`'s
 2 s guard fail-open) and then logs an error naming the source, so a request that
 genuinely cannot be served is loud rather than lost.
+
+`scripts/test-idle-lock-request.js` drives the shipped `requestLock()` and retry
+bodies against a hand-ticked model of QML's `Timer`: component present, component
+arriving late, repeated presses while pending, and the give-up path. It also
+asserts the retry window still outlasts the guard fail-open, and that `VGS.qml`
+has not reverted to `lockComponent?.activate()`.
 
 ### How this was verified
 

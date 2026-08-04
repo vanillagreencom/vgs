@@ -66,20 +66,38 @@ EXPECTATIONS = [
 ]
 
 # A child object declaration at the root object's indentation: four spaces, a
-# capitalised type name, then `{` and nothing else. Property declarations, signal
+# capitalised type name, then an opening brace. Property declarations, signal
 # handlers and attached-property assignments all carry a `:` before any brace, so
-# `Component.onCompleted: {` and `WlrLayershell.layer: x` never match. Nested
-# objects are indented further and are matched by their own propagator, not this
-# one.
-CHILD_RE = re.compile(r"^    ([A-Z][A-Za-z0-9_.]*)\s*\{\s*$")
+# `Component.onCompleted: {` and `WlrLayershell.layer: x` never match, and QML
+# spells every one of them with a lower-case keyword or an `on`/`property`
+# prefix. Nested objects are indented further and are matched by their own
+# propagator, not this one.
+#
+# Deliberately NOT anchored to end-of-line. `Timer {}` and `Timer { id: guard }`
+# are perfectly valid depth-1 declarations, and anchoring made this check report
+# success while the inserted child shifted every index below it — the precise
+# false green it exists to prevent.
+CHILD_RE = re.compile(r"^    ([A-Z][A-Za-z0-9_.]*)\s*\{")
+
+
+def strip_block_comments(text: str) -> str:
+    """Blank out /* ... */ regions, keeping line numbering intact.
+
+    A commented-out declaration is not a child, and QML's own reload matching
+    never sees it.
+    """
+    def blank(match: re.Match) -> str:
+        return re.sub(r"[^\n]", " ", match.group(0))
+
+    return re.sub(r"/\*.*?\*/", blank, text, flags=re.DOTALL)
 
 
 def root_children(text: str) -> list[tuple[int, str]]:
     """Depth-1 child object declarations, in declaration order."""
     return [
         (lineno, match.group(1))
-        for lineno, line in enumerate(text.splitlines(), start=1)
-        if (match := CHILD_RE.match(line))
+        for lineno, line in enumerate(strip_block_comments(text).splitlines(), start=1)
+        if not line.lstrip().startswith("//") and (match := CHILD_RE.match(line))
     ]
 
 

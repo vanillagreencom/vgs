@@ -142,6 +142,7 @@ node scripts/test-sudo-toggle-confirm.js
 node scripts/test-latest-transaction-queue.js
 node scripts/test-bundled-override.js
 node scripts/test-idle-reload-snapshot.js
+node scripts/test-idle-lock-request.js
 scripts/check-vshell-helper.py
 scripts/check-brightness.py
 scripts/check-backend-inventory.py
