@@ -14,17 +14,21 @@ FloatingWindow {
     signal changelogDismissed
 
     function show() {
+        dismissed = false;
         visible = true;
     }
 
     objectName: "changelogModal"
-    title: i18n("What's New")
+    title: I18n.tr("What's New")
     minimumSize: Qt.size(modalWidth, modalHeight)
     maximumSize: Qt.size(modalWidth, modalHeight)
     color: Theme.surfaceContainer
     visible: false
 
-    onClosed: visible = false
+    // Every close path writes the marker. Closing through the compositor
+    // (Alt+F4, the window menu) only hid the window, so the notes came back on
+    // the next launch as though they had never been read.
+    onClosed: dismiss()
 
     FocusScope {
         id: contentFocusScope
@@ -83,7 +87,7 @@ FloatingWindow {
                     onClicked: root.dismiss()
 
                     VgsTooltip {
-                        text: i18n("Close")
+                        text: I18n.tr("Close")
                     }
                 }
             }
@@ -127,15 +131,15 @@ FloatingWindow {
                 spacing: Theme.spacingM
 
                 VgsButton {
-                    text: i18n("Read Full Release Notes")
+                    text: I18n.tr("Read Full Release Notes")
                     iconName: "open_in_new"
                     backgroundColor: Theme.surfaceContainerHighest
                     textColor: Theme.surfaceText
-                    onClicked: Qt.openUrlExternally("https://vgslinux.com/blog/v1-4-release")
+                    onClicked: Qt.openUrlExternally("https://github.com/vanillagreencom/vgs/releases")
                 }
 
                 VgsButton {
-                    text: i18n("Got It")
+                    text: I18n.tr("Got It")
                     iconName: "check"
                     backgroundColor: Theme.primary
                     textColor: Theme.primaryText
@@ -150,7 +154,12 @@ FloatingWindow {
         targetWindow: root
     }
 
+    property bool dismissed: false
+
     function dismiss() {
+        if (dismissed)
+            return;
+        dismissed = true;
         ChangelogService.dismissChangelog();
         changelogDismissed();
         visible = false;

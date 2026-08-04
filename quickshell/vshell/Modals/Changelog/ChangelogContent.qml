@@ -61,11 +61,13 @@ Column {
                         radius: root.badgeHeight / 2
                         color: Theme.primaryContainer
                         anchors.verticalCenter: parent.verticalCenter
+                        // CODENAME is optional and currently empty; no badge then.
+                        visible: ShellVersionService.shellCodename.length > 0
 
                         StyledText {
                             id: codenameText
                             anchors.centerIn: parent
-                            text: "Saffron Bloom"
+                            text: ShellVersionService.shellCodename
                             font.pixelSize: Theme.fontSizeSmall
                             font.weight: Font.Medium
                             color: Theme.primary
@@ -74,7 +76,7 @@ Column {
                 }
 
                 StyledText {
-                    text: "New launcher, enhanced plugin system, KDE Connect, & more"
+                    text: "One launcher, a plugin system, and a theme engine of our own"
                     font.pixelSize: Theme.fontSizeMedium
                     color: Theme.surfaceVariantText
                 }
@@ -109,25 +111,57 @@ Column {
             ChangelogFeatureCard {
                 width: (parent.width - Theme.spacingS) / 2
                 iconName: "space_dashboard"
-                title: "Vgs Launcher V2"
-                description: "New capabilities & plugins"
+                title: "VGS Menu"
+                description: "The one app launcher"
                 onClicked: PluginService.toggleAppLauncher()
             }
 
             ChangelogFeatureCard {
                 width: (parent.width - Theme.spacingS) / 2
-                iconName: "smartphone"
-                title: "Phone Connect"
-                description: "KDE Connect & Valent"
-                onClicked: Qt.openUrlExternally("https://github.com/AvengeMedia/vgs-plugins/tree/master/VgsKDEConnect")
+                iconName: "extension"
+                title: "Plugins"
+                description: "Bundled & user plugins"
+                onClicked: PopoutService.openSettingsWithTab("plugins")
+            }
+
+            ChangelogFeatureCard {
+                width: (parent.width - Theme.spacingS) / 2
+                iconName: "palette"
+                title: "Themes & Colors"
+                description: "Wallpaper palettes & app themes"
+                onClicked: PopoutService.openSettingsWithTab("theme")
+            }
+
+            ChangelogFeatureCard {
+                width: (parent.width - Theme.spacingS) / 2
+                iconName: "brightness_medium"
+                title: "Displays"
+                description: "Layout, profiles & brightness"
+                onClicked: PopoutService.openSettingsWithTab("display_config")
+            }
+
+            ChangelogFeatureCard {
+                width: (parent.width - Theme.spacingS) / 2
+                iconName: "bedtime"
+                title: "Idle, Lock & Screensaver"
+                description: "Lock, fade to black, screensavers"
+                onClicked: PopoutService.openSettingsWithTab("screensaver")
             }
 
             ChangelogFeatureCard {
                 width: (parent.width - Theme.spacingS) / 2
                 iconName: "monitor_heart"
                 title: "System Monitor"
-                description: "Redesigned process list"
+                description: "Process list & resource view"
                 onClicked: PopoutService.showProcessListModal()
+            }
+
+            ChangelogFeatureCard {
+                width: (parent.width - Theme.spacingS) / 2
+                iconName: "dock_to_bottom"
+                title: "Dock"
+                description: "Pinned apps & running windows"
+                onClicked: PopoutService.openSettingsWithTab("dock")
             }
 
             ChangelogFeatureCard {
@@ -142,42 +176,10 @@ Column {
             ChangelogFeatureCard {
                 width: (parent.width - Theme.spacingS) / 2
                 iconName: "notifications_active"
-                title: "Enhanced Notifications"
+                title: "Notifications"
                 description: "Configurable rules & styling"
                 visible: !CompositorService.isNiri
                 onClicked: PopoutService.openSettingsWithTab("notifications")
-            }
-
-            ChangelogFeatureCard {
-                width: (parent.width - Theme.spacingS) / 2
-                iconName: "dock_to_bottom"
-                title: "Dock Enhancements"
-                description: "Bar dock widget & more"
-                onClicked: PopoutService.openSettingsWithTab("dock")
-            }
-
-            ChangelogFeatureCard {
-                width: (parent.width - Theme.spacingS) / 2
-                iconName: "volume_up"
-                title: "Audio Aliases"
-                description: "Custom device names"
-                onClicked: PopoutService.openSettingsWithTab("audio")
-            }
-
-            ChangelogFeatureCard {
-                width: (parent.width - Theme.spacingS) / 2
-                iconName: "extension"
-                title: "Enhanced Plugin System"
-                description: "Enables new types of plugins"
-                onClicked: PopoutService.openSettingsWithTab("plugins")
-            }
-
-            ChangelogFeatureCard {
-                width: (parent.width - Theme.spacingS) / 2
-                iconName: "light_mode"
-                title: "Auto Light/Dark"
-                description: "Automatic mode switching"
-                onClicked: PopoutService.openSettingsWithTab("theme")
             }
         }
     }
@@ -243,18 +245,7 @@ Column {
                     text: "Niri keybinds VGS generated are rewritten automatically; Hyprland binds live in your own config and must be updated by hand"
                 }
 
-                ChangelogUpgradeNote {
-                    width: parent.width
-                    text: "Plugin API updated — third-party plugins may need updates"
-                }
             }
         }
-
-        // StyledText {
-        //     text: "See full release notes for migration steps"
-        //     font.pixelSize: Theme.fontSizeSmall
-        //     color: Theme.surfaceVariantText
-        //     width: parent.width
-        // }
     }
 }
