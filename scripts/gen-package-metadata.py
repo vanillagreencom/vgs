@@ -18,6 +18,7 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import shlex
 import sys
 from pathlib import Path
 
@@ -47,6 +48,21 @@ CHANNEL_RECIPES = {
     "gentoo": "packaging/gentoo/vgs-shell-0.1.0.ebuild",
     "void": "packaging/void/template",
     "nix": "flake.nix",
+}
+# Every file that has to declare the notification-daemon conflicts, which is not
+# the same set as CHANNEL_RECIPES: Arch alone ships four, and the three that are
+# NOT packaging/arch/PKGBUILD are precisely the ones published to the AUR.
+CONFLICT_RECIPES = {
+    "arch": (
+        "packaging/arch/PKGBUILD",
+        "packaging/arch/.SRCINFO",
+        "packaging/arch/vgs-shell-git/PKGBUILD",
+        "packaging/arch/vgs-shell-git/.SRCINFO",
+    ),
+    "debian": ("packaging/debian/control",),
+    "fedora": ("packaging/fedora/vgs-shell.spec",),
+    "gentoo": ("packaging/gentoo/vgs-shell-0.1.0.ebuild",),
+    "void": ("packaging/void/template",),
 }
 UNGENERATED_CHANNELS = {
     "ubuntu": (
@@ -96,19 +112,27 @@ def conflict_packages(mapping: dict) -> tuple[dict[str, list[str]], list[tuple[s
     daemons = section.get("daemons", {})
     unsupported = section.get("unsupported", {})
 
-    for daemon, channels in unsupported.items():
+    # Nix installs into a profile rather than a distribution package set, so it
+    # has no package-relation to express a conflict with. Validating waivers
+    # against the SAME tuple the loop below walks is the point: validating
+    # against REQUIRED_DISTROS accepted a `nix` waiver that was then never
+    # honoured and never printed — a silent state, which is exactly what the
+    # stale-waiver check exists to prevent.
+    channels = tuple(channel for channel in REQUIRED_DISTROS if channel != "nix")
+
+    for daemon, waived in unsupported.items():
         if daemon not in daemons:
             raise GenError(
                 f'"conflicts".unsupported names {daemon!r}, which is not a '
                 "conflicting daemon; the waiver would never be read"
             )
-        unknown = set(channels) - set(REQUIRED_DISTROS)
+        unknown = set(waived) - set(channels)
         if unknown:
             raise GenError(
                 f"conflict waiver for {daemon!r} names unknown channel(s): "
                 + ", ".join(sorted(unknown))
             )
-        for channel, reason in channels.items():
+        for channel, reason in waived.items():
             if not reason:
                 raise GenError(f"conflict waiver for {daemon!r} on {channel} has no reason")
             if daemons[daemon].get(channel) is not None:
@@ -117,9 +141,6 @@ def conflict_packages(mapping: dict) -> tuple[dict[str, list[str]], list[tuple[s
                     "mapping names a package for it; drop the stale waiver"
                 )
 
-    # Nix installs into a profile rather than a distribution package set, so it
-    # has no package-relation to express a conflict with.
-    channels = tuple(channel for channel in REQUIRED_DISTROS if channel != "nix")
     result: dict[str, list[str]] = {channel: [] for channel in channels}
     waivers: list[tuple[str, str, str]] = []
 
@@ -144,8 +165,48 @@ def conflict_packages(mapping: dict) -> tuple[dict[str, list[str]], list[tuple[s
     return result, waivers
 
 
+def declared_conflicts(path: Path) -> set[str]:
+    """The packages a recipe actually declares a conflict with.
+
+    Reading the declaration rather than searching the file: a package name in a
+    comment, a Suggests: line or a URL is not a conflict, and a check that
+    accepts one reports success over ground it never examined — the same defect
+    this script exists to catch, one level up.
+    """
+    text = path.read_text()
+    declared: set[str] = set()
+
+    if path.name == "PKGBUILD":
+        # Both top-level and inside a package_* function, which is where the
+        # split packages declare theirs.
+        for match in re.finditer(r"^[ \t]*conflicts=\(([^)]*)\)", text, re.MULTILINE):
+            declared.update(shlex.split(match.group(1)))
+    elif path.name == ".SRCINFO":
+        declared.update(re.findall(r"^[ \t]*conflicts = (.+)$", text, re.MULTILINE))
+    elif path.name == "control":
+        for match in re.finditer(r"^Conflicts:(.*(?:\n[ \t].*)*)", text, re.MULTILINE):
+            for entry in match.group(1).split(","):
+                # Strip any version relation: `mako-notifier (<< 1.0)`.
+                name = entry.strip().split(" ")[0].strip()
+                if name:
+                    declared.add(name)
+    elif path.suffix == ".spec":
+        declared.update(re.findall(r"^Conflicts:[ \t]*(\S+)", text, re.MULTILINE))
+    elif path.suffix == ".ebuild":
+        # Portage blockers: a leading ! inside a dependency string.
+        declared.update(re.findall(r"^[ \t]*!+([\w./+-]+)", text, re.MULTILINE))
+    elif path.name == "template":
+        for match in re.finditer(r'^[ \t]*conflicts="([^"]*)"', text, re.MULTILINE):
+            # xbps entries carry a version relation: `mako>=0`.
+            declared.update(re.split(r"[<>=]", entry)[0] for entry in match.group(1).split())
+    else:
+        raise GenError(f"{path}: no way to read conflict declarations from this file")
+
+    return {name for name in declared if name}
+
+
 def check_conflicts(conflicts: dict[str, list[str]]) -> None:
-    """Verify the recipes this script does not generate still declare them all.
+    """Verify every shipped recipe declares the whole conflict list.
 
     Only Gentoo's blockers are generated (they live inside the generated
     RDEPEND). The others sit in channel-specific shapes — `conflicts=()` inside
@@ -155,13 +216,11 @@ def check_conflicts(conflicts: dict[str, list[str]]) -> None:
     """
     missing: list[str] = []
     for channel, packages in conflicts.items():
-        relative = CHANNEL_RECIPES.get(channel)
-        if relative is None:
-            continue
-        text = (ROOT / relative).read_text()
-        for package in packages:
-            if not re.search(rf"(?<![\w./+-]){re.escape(package)}(?![\w./+-])", text):
-                missing.append(f"{relative} does not conflict with {package}")
+        for relative in CONFLICT_RECIPES.get(channel, ()):
+            declared = declared_conflicts(ROOT / relative)
+            for package in packages:
+                if package not in declared:
+                    missing.append(f"{relative} does not conflict with {package}")
 
     if missing:
         raise GenError(
