@@ -223,6 +223,27 @@ Menu overlay:
 
 Schema reference: `docs/architecture/overlay-and-dependencies.md`.
 
+## Changelog ("What's New")
+`Services/ChangelogService.qml` shows `Modals/Changelog/ChangelogModal.qml` once per
+shipped version. Three rules make that dependable:
+
+- **The version is the release, not a constant.** `currentVersion` is
+  `ShellVersionService.semverVersion`, read from `quickshell/vshell/VERSION`. A
+  release bump is what re-displays the changelog, so the notes in
+  `ChangelogContent.qml` reach users exactly when the release carrying them ships.
+  There is no separate changelog version to remember to bump.
+- **Dismissal is per version.** Clicking through writes
+  `~/.config/vshell/.changelog-<version>`; the marker for one version never
+  suppresses the next.
+- **Fresh installs are silent.** `FirstLaunchService.isFirstLaunch` suppresses the
+  modal and the marker is written anyway, so a new user does not get upgrade notes
+  for an upgrade they did not make. An existing user with no marker does see it —
+  that is the upgrade path working.
+
+Write user-visible breaking changes as `ChangelogUpgradeNote` entries in
+`ChangelogContent.qml`, and keep the feature cards pointing at settings tab ids
+that exist in `Modals/Settings/SettingsRegistry.qml`.
+
 ## Greeter/keyring note
 See `docs/architecture/greeter-auto-login-keyring.md` for the auto-login GNOME keyring decision and safety policy.
 
