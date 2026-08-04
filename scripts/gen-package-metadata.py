@@ -165,40 +165,270 @@ def conflict_packages(mapping: dict) -> tuple[dict[str, list[str]], list[tuple[s
     return result, waivers
 
 
+def _strip_relation(atom: str) -> str:
+    """`mako>=0`, `vgs-shell=0.1.0-4` and `mako-notifier (<< 1.0)` all name mako."""
+    return re.split(r"[<>=(\s]", atom.strip(), maxsplit=1)[0].strip()
+
+
+def _shell_word_list(fragment: str, path: Path) -> list[str]:
+    """Split a shell word list, honouring `#` comments.
+
+    `shlex.split` without this drops the `#` and keeps the words behind it, so
+    `# 'swaync' disabled for now` reads as a declared conflict with swaync and
+    the check passes over a package the recipe no longer conflicts with. An
+    unmatched quote inside such a comment would otherwise abort the whole
+    generator, which is why comment handling has to happen inside the lexer
+    rather than as a pre-pass.
+    """
+    lexer = shlex.shlex(fragment, posix=True)
+    lexer.whitespace_split = True
+    lexer.commenters = "#"
+    try:
+        return list(lexer)
+    except ValueError as error:
+        raise GenError(f"{path}: cannot read a shell word list: {error}") from error
+
+
+def _shell_words(fragment: str, path: Path) -> set[str]:
+    return set(_shell_word_list(fragment, path))
+
+
+def _shell_scopes(text: str, func: re.Pattern[str]) -> tuple[str, dict[str, str]]:
+    """Split a shell recipe into its top level and each function `func` matches.
+
+    Brace-counted rather than parsed. A recipe whose braces do not balance ends
+    up with its tail attributed to a function, so the main package looks like it
+    declares less than it does — the check then fails, which is the direction a
+    misread has to fail in.
+    """
+    top: list[str] = []
+    bodies: dict[str, list[str]] = {}
+    current: str | None = None
+    depth = 0
+    for line in text.splitlines(keepends=True):
+        if current is None:
+            match = func.match(line)
+            if match:
+                current = match.group(1)
+                bodies.setdefault(current, [])
+                depth = line.count("{") - line.count("}")
+                continue
+            top.append(line)
+            continue
+        depth += line.count("{") - line.count("}")
+        if depth <= 0:
+            current = None
+            continue
+        bodies[current].append(line)
+    return "".join(top), {name: "".join(body) for name, body in bodies.items()}
+
+
+def _shell_assignment(text: str, name: str, path: Path) -> set[str] | None:
+    """Every value assigned to `name`, or None when it is never assigned.
+
+    None and the empty set are different answers: an unassigned variable in a
+    package function inherits the top-level one, an assigned-but-empty one
+    overrides it with nothing.
+    """
+    values: set[str] | None = None
+    pattern = rf"^[ \t]*{re.escape(name)}=(?:\(([^)]*)\)|\"([^\"]*)\"|(\S+))"
+    for match in re.finditer(pattern, text, re.MULTILINE):
+        if values is None:
+            values = set()
+        values |= _shell_words(next(g for g in match.groups() if g is not None), path)
+    return values
+
+
+def _pkgbuild_conflicts(text: str, path: Path) -> set[str]:
+    """The main package's conflicts in a (possibly split) PKGBUILD.
+
+    makepkg runs each `package_*()` in its own scope over the top-level
+    variables, so a function that assigns `conflicts` replaces the global one
+    and a function that does not inherits it. Aggregating every function's
+    conflicts instead — what this used to do — lets a daemon moved to a
+    subpackage keep satisfying the check for the package that no longer
+    conflicts with it.
+    """
+    base = re.search(r"^pkgbase=(\S+)", text, re.MULTILINE)
+    if base is not None:
+        main = _shell_word_list(base.group(1), path)[0]
+    else:
+        # Without pkgbase, makepkg takes the FIRST pkgname as the base, so the
+        # order matters and the word list has to stay a list.
+        listed = re.search(r"^pkgname=(?:\(([^)]*)\)|(\S+))", text, re.MULTILINE)
+        names = _shell_word_list(listed.group(1) or listed.group(2), path) if listed else []
+        if not names:
+            raise GenError(f"{path}: no pkgbase= or pkgname= to identify the main package")
+        main = names[0]
+
+    top, functions = _shell_scopes(text, re.compile(r"^(package(?:_[\w.+-]+)?)\s*\(\)"))
+    body = functions.get(f"package_{main}", functions.get("package"))
+    if body is None and functions:
+        raise GenError(
+            f"{path}: no package_{main}() or package() function, so there is no "
+            "way to tell which conflicts belong to the main package"
+        )
+    scoped = _shell_assignment(body, "conflicts", path) if body is not None else None
+    if scoped is not None:
+        return scoped
+    return _shell_assignment(top, "conflicts", path) or set()
+
+
+def _srcinfo_conflicts(text: str, path: Path) -> set[str]:
+    """The main package's conflicts in a .SRCINFO.
+
+    The `pkgbase` block holds the defaults; a `pkgname` block overrides a key it
+    names for that package alone. Only the block for the package named by
+    `pkgbase` — the shell itself — is the main package.
+    """
+    base = re.search(r"^pkgbase = (\S+)", text, re.MULTILINE)
+    if base is None:
+        raise GenError(f"{path}: no pkgbase line to identify the main package")
+    main = base.group(1)
+
+    sections: list[tuple[str | None, list[str]]] = [(None, [])]
+    for line in text.splitlines():
+        named = re.match(r"^pkgname = (\S+)", line)
+        if named:
+            sections.append((named.group(1), []))
+            continue
+        sections[-1][1].append(line)
+
+    def conflicts(lines: list[str]) -> set[str] | None:
+        found = [
+            _strip_relation(match.group(1))
+            for match in (re.match(r"^[ \t]*conflicts = (.+)$", line) for line in lines)
+            if match
+        ]
+        return set(found) if found else None
+
+    for name, lines in sections[1:]:
+        if name == main:
+            return conflicts(lines) or conflicts(sections[0][1]) or set()
+    raise GenError(f"{path}: no pkgname = {main} section for the pkgbase package")
+
+
+def _control_conflicts(text: str, path: Path) -> set[str]:
+    """The main binary package's Conflicts: in a Debian control file.
+
+    Every binary package gets its own stanza, so the union across stanzas says
+    nothing about what installing the shell conflicts with.
+    """
+    stanzas: list[list[str]] = [[]]
+    for line in text.splitlines():
+        if not line.strip():
+            stanzas.append([])
+            continue
+        if line.startswith("#"):
+            continue
+        stanzas[-1].append(line)
+
+    def field(lines: list[str], name: str) -> str | None:
+        for index, line in enumerate(lines):
+            match = re.match(rf"^{name}:(.*)$", line)
+            if not match:
+                continue
+            value = [match.group(1)]
+            for follow in lines[index + 1 :]:
+                if not follow[:1].isspace():
+                    break
+                value.append(follow)
+            return "".join(value)
+        return None
+
+    source = next((field(s, "Source") for s in stanzas if field(s, "Source")), None)
+    binaries = [(field(s, "Package"), s) for s in stanzas if field(s, "Package")]
+    named = [s for name, s in binaries if source and name and name.strip() == source.strip()]
+    if named:
+        main = named[0]
+    elif len(binaries) == 1:
+        main = binaries[0][1]
+    else:
+        raise GenError(
+            f"{path}: no Package stanza matching Source: {source!r} among "
+            f"{len(binaries)} binary packages, so the main package is ambiguous"
+        )
+
+    value = field(main, "Conflicts") or ""
+    return {name for name in (_strip_relation(entry) for entry in value.split(",")) if name}
+
+
+def _spec_conflicts(text: str, path: Path) -> set[str]:
+    """The main package's Conflicts: in an RPM spec.
+
+    The preamble — everything before the first section directive — belongs to
+    the package named by `Name:`. A `%package foo` subpackage preamble that
+    follows declares foo's conflicts, not the main package's.
+    """
+    if re.search(r"^Name:[ \t]*(\S+)", text, re.MULTILINE) is None:
+        raise GenError(f"{path}: no Name: field to identify the main package")
+    end = re.search(
+        r"^%(package|description|prep|build|install|check|files|changelog|pre|post|"
+        r"preun|postun|trigger)\b",
+        text,
+        re.MULTILINE,
+    )
+    preamble = text[: end.start()] if end else text
+    preamble = re.sub(r"^[ \t]*#.*$", "", preamble, flags=re.MULTILINE)
+    return set(re.findall(r"^Conflicts:[ \t]*(\S+)", preamble, re.MULTILINE))
+
+
+def _ebuild_conflicts(text: str, path: Path) -> set[str]:
+    """Portage blockers in an ebuild's runtime dependency strings.
+
+    An ebuild builds one package, so scoping is about reading the declaration
+    rather than the file: a `!` in a comment, a `sed` expression or BDEPEND is
+    not a runtime blocker.
+    """
+    declared: set[str] = set()
+    found = False
+    for match in re.finditer(r'^(?:R|P)?DEPEND\+?="([^"]*)"', text, re.MULTILINE):
+        found = True
+        body = re.sub(r"^[ \t]*#.*$", "", match.group(1), flags=re.MULTILINE)
+        declared.update(re.findall(r"^[ \t]*!+([\w./+-]+)", body, re.MULTILINE))
+    if not found:
+        raise GenError(f"{path}: no RDEPEND/DEPEND/PDEPEND string to read blockers from")
+    return declared
+
+
+def _template_conflicts(text: str, path: Path) -> set[str]:
+    """The main package's conflicts in a Void template.
+
+    xbps subpackages are `<name>_package()` functions that set their own
+    `conflicts`; only the top-level assignment is the main package's.
+    """
+    if re.search(r"^pkgname=(\S+)", text, re.MULTILINE) is None:
+        raise GenError(f"{path}: no pkgname= to identify the main package")
+    top, _ = _shell_scopes(text, re.compile(r"^([\w.+-]+)\s*\(\)"))
+    values = _shell_assignment(top, "conflicts", path) or set()
+    return {_strip_relation(value) for value in values}
+
+
 def declared_conflicts(path: Path) -> set[str]:
-    """The packages a recipe actually declares a conflict with.
+    """The packages the recipe's MAIN package declares a conflict with.
 
     Reading the declaration rather than searching the file: a package name in a
     comment, a Suggests: line or a URL is not a conflict, and a check that
     accepts one reports success over ground it never examined — the same defect
-    this script exists to catch, one level up.
+    this script exists to catch, one level up. Scope is the other half of that:
+    every format here can ship several packages from one recipe, and a conflict
+    declared by the assets subpackage does not make installing the shell
+    conflict with anything.
     """
     text = path.read_text()
-    declared: set[str] = set()
 
     if path.name == "PKGBUILD":
-        # Both top-level and inside a package_* function, which is where the
-        # split packages declare theirs.
-        for match in re.finditer(r"^[ \t]*conflicts=\(([^)]*)\)", text, re.MULTILINE):
-            declared.update(shlex.split(match.group(1)))
+        declared = _pkgbuild_conflicts(text, path)
     elif path.name == ".SRCINFO":
-        declared.update(re.findall(r"^[ \t]*conflicts = (.+)$", text, re.MULTILINE))
+        declared = _srcinfo_conflicts(text, path)
     elif path.name == "control":
-        for match in re.finditer(r"^Conflicts:(.*(?:\n[ \t].*)*)", text, re.MULTILINE):
-            for entry in match.group(1).split(","):
-                # Strip any version relation: `mako-notifier (<< 1.0)`.
-                name = entry.strip().split(" ")[0].strip()
-                if name:
-                    declared.add(name)
+        declared = _control_conflicts(text, path)
     elif path.suffix == ".spec":
-        declared.update(re.findall(r"^Conflicts:[ \t]*(\S+)", text, re.MULTILINE))
+        declared = _spec_conflicts(text, path)
     elif path.suffix == ".ebuild":
-        # Portage blockers: a leading ! inside a dependency string.
-        declared.update(re.findall(r"^[ \t]*!+([\w./+-]+)", text, re.MULTILINE))
+        declared = _ebuild_conflicts(text, path)
     elif path.name == "template":
-        for match in re.finditer(r'^[ \t]*conflicts="([^"]*)"', text, re.MULTILINE):
-            # xbps entries carry a version relation: `mako>=0`.
-            declared.update(re.split(r"[<>=]", entry)[0] for entry in match.group(1).split())
+        declared = _template_conflicts(text, path)
     else:
         raise GenError(f"{path}: no way to read conflict declarations from this file")
 
@@ -206,13 +436,18 @@ def declared_conflicts(path: Path) -> set[str]:
 
 
 def check_conflicts(conflicts: dict[str, list[str]]) -> None:
-    """Verify every shipped recipe declares the whole conflict list.
+    """Verify every shipped recipe's MAIN package declares the whole list.
 
     Only Gentoo's blockers are generated (they live inside the generated
     RDEPEND). The others sit in channel-specific shapes — `conflicts=()` inside
     a package_* function, a `Conflicts:` field, an xbps `conflicts=` line — that
     are not worth templating, but they still have to agree with the one list,
     or the divergence this check exists to catch simply comes back.
+
+    Main package, not recipe: the shell is what claims
+    org.freedesktop.Notifications, so the conflict has to be on the package a
+    user installs to get the shell. An assets subpackage declaring it changes
+    nothing.
     """
     missing: list[str] = []
     for channel, packages in conflicts.items():
@@ -220,7 +455,7 @@ def check_conflicts(conflicts: dict[str, list[str]]) -> None:
             declared = declared_conflicts(ROOT / relative)
             for package in packages:
                 if package not in declared:
-                    missing.append(f"{relative} does not conflict with {package}")
+                    missing.append(f"{relative}: main package does not conflict with {package}")
 
     if missing:
         raise GenError(
