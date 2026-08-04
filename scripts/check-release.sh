@@ -22,6 +22,12 @@ grep -q "install='vgs-shell-git.install'" "$root/packaging/arch/vgs-shell-git/PK
 grep -q '^	install = vgs-shell-git.install$' "$root/packaging/arch/vgs-shell-git/.SRCINFO"
 test -f "$root/packaging/arch/vgs-shell-git/vgs-shell-git.install"
 
+# The theme download catalog builds its URLs from a pinned tag, and its
+# checksums come from the tree. A release must therefore pin to its own tag AND
+# have every theme file committed, or the tag it creates will not serve what the
+# catalog describes. Regenerate with `scripts/gen-theme-catalog.py --ref vX.Y.Z --write`.
+"$root/scripts/gen-theme-catalog.py" --check-release-pin "$version"
+
 "$root/scripts/gen-package-metadata.py"
 bash -n "$root/install.sh" "$root/uninstall.sh" "$root/scripts/build-release.sh" "$root/packaging/install-system.sh" "$root/scripts/check-package-assets.sh"
 bash "$root/scripts/check-package-assets.sh"

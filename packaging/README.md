@@ -61,6 +61,29 @@ recipe runs the installer without stating a bundle.
 | Void | `core` for `vgs-shell`, `extras` for `vgs-shell-assets` |
 | Nix | `all`; the flake has no split output |
 
+`core` additionally installs `themes/catalog.json` and `themes/catalog-previews/<name>.png` —
+the download catalog plus every non-installed theme's screenshot (~23 MiB against the ~1.1 GiB
+of wallpapers that motivated the split). Without them, Settings → Themes → **Download More
+Themes** could list the other themes but not show any of them, and a base install would offer
+exactly one theme with no way to get the rest. `extras` ships neither; `all` needs neither,
+because every theme carries its own `preview.png`. Regenerate the catalog with
+`scripts/gen-theme-catalog.py --write` after adding or editing a theme package —
+`scripts/check-package-assets.sh` fails when it is stale, because a stale manifest makes every
+download of a changed theme fail its checksum.
+
+Downloads resolve against `source.refs`: the pinned release tag first, then `main`. The checksums are
+generated from the working tree, so between releases an edited theme is served only by the moving
+ref — that fallback is what keeps `vgs-shell-git` (which builds from `main`) able to download edited
+themes. Only checksum-matching bytes are ever accepted, from either location.
+
+**Every release must repoint the pin**: `scripts/gen-theme-catalog.py --ref vX.Y.Z --write` as part of
+step 1 of the release flow, with `themes/` committed before `check-release.sh` runs.
+`scripts/gen-theme-catalog.py --check-release-pin $VERSION` (invoked from `check-release.sh`) fails
+both when the ref does not match `VERSION` and when `themes/` has uncommitted changes, since the tag
+captures the commit rather than the working tree. On ordinary PRs, `--check` compares the tree against
+the pinned ref with git and reports which themes now resolve through `main`, failing outright if the
+manifest describes content no declared ref can serve.
+
 ## Channels
 
 | System | Channel | Status |

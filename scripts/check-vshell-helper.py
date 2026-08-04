@@ -2317,7 +2317,254 @@ def test_notification_daemon_label_handles_scope_units():
                  "a daemon under a .service unit must still be named")
 
 
+def test_theme_catalog_download_verifies_every_file():
+    """A catalog download must land verbatim, and must refuse anything it cannot verify."""
+    import hashlib
+
+    def scenario(tmp: Path):
+        source = tmp / "source" / "demo"
+        (source / "apps").mkdir(parents=True)
+        (source / "theme.json").write_text('{"name":"demo","mode":"dark","source":"curated"}\n')
+        (source / "colors.toml").write_text('background = "#101010"\nforeground = "#eeeeee"\n')
+        (source / "apps" / "btop.theme").write_text("theme\n")
+        files = []
+        for rel in ("theme.json", "colors.toml", "apps/btop.theme"):
+            blob = (source / rel).read_bytes()
+            files.append({"path": rel, "size": len(blob), "sha256": hashlib.sha256(blob).hexdigest()})
+
+        builtin = tmp / "builtin"
+        builtin.mkdir()
+        (builtin / "catalog.json").write_text(json.dumps({
+            "version": 1,
+            "source": {"ref": "vTest", "baseUrl": "https://example.invalid/themes"},
+            "themes": [{"name": "demo", "mode": "dark", "files": files,
+                        "size": sum(f["size"] for f in files)}],
+        }))
+
+        original_builtin = helper.builtin_themes_dir
+        helper.builtin_themes_dir = lambda: builtin
+        os.environ["VGS_THEME_CATALOG_BASE_URL"] = "file://" + str(tmp / "source")
+        try:
+            catalog = helper.load_theme_catalog()
+            base_urls, allow_local = helper.theme_catalog_base_urls(catalog)
+            entry = helper.catalog_theme_entry(catalog, "demo")
+
+            result = helper.catalog_download_theme(entry, base_urls, allow_local)
+            assert_equal(result["status"], "installed", "catalog download status")
+            dest = helper.user_themes_dir() / "demo"
+            for rel in ("theme.json", "colors.toml", "apps/btop.theme"):
+                assert_equal((dest / rel).read_bytes(), (source / rel).read_bytes(),
+                             f"downloaded {rel} must be byte-identical")
+            assert_equal(helper.catalog_marker("demo").get("ref"), "vTest", "download marker records the ref")
+
+            listed = [e for e in helper.catalog_entries() if e["name"] == "demo"][0]
+            assert_equal((listed["installed"], listed["downloaded"]), (True, True), "catalog list state")
+
+            again = helper.catalog_download_theme(entry, base_urls, allow_local)
+            assert_equal(again["status"], "skipped", "an installed theme is not re-downloaded")
+
+            # A force re-download must never destroy the installed copy before
+            # its replacement is in place: a failure mid-way leaves it intact.
+            tampered_force = json.loads(json.dumps(entry))
+            tampered_force["files"][1]["sha256"] = "1" * 64
+            try:
+                helper.catalog_download_theme(tampered_force, base_urls, allow_local, force=True)
+                raise AssertionError("a tampered force re-download must fail")
+            except ValueError:
+                pass
+            assert_equal((dest / "theme.json").is_file(), True,
+                         "a failed force re-download must leave the installed theme in place")
+            assert_equal(sorted(p.name for p in helper.user_themes_dir().glob(".catalog-*")), [],
+                         "a failed force re-download leaves no staging or replaced dirs")
+
+            # Reading the current theme for the safety check must not apply the
+            # default theme: current_theme() writes files and runs hooks when
+            # ~/.config/vshell/theme.json is absent.
+            assert_equal((helper.cfg_dir() / "theme.json").exists(), False, "no theme state before remove")
+            assert_equal(helper.catalog_remove_theme("demo")["status"], "removed", "catalog remove")
+            assert_equal(dest.exists(), False, "removed theme dir is gone")
+            assert_equal((helper.cfg_dir() / "theme.json").exists(), False,
+                         "catalog remove must not apply the default theme as a side effect")
+
+            # A removal that cannot proceed must fail loudly and leave the theme
+            # whole, not report success or half-delete it.
+            helper.catalog_download_theme(entry, base_urls, allow_local)
+            themes_root = helper.user_themes_dir()
+            themes_root.chmod(0o555)
+            try:
+                helper.catalog_remove_theme("demo")
+                raise AssertionError("an undeletable theme must not report removal")
+            except ValueError:
+                pass
+            finally:
+                themes_root.chmod(0o755)
+            assert_equal((dest / "theme.json").is_file(), True, "theme survives a failed removal")
+            assert_equal(helper.catalog_remove_theme("demo")["status"], "removed", "removal after the block")
+
+            # The theme lock must be free while bytes are moving: a `Download
+            # All` is ~1.1 GiB, and holding it would block every apply, the
+            # light/dark keybinding, wallpapers and restyles for that whole time.
+            import fcntl
+
+            lock_free_during_transfer = []
+            original_fetch = helper._catalog_fetch_verified
+
+            def probing_fetch(*fetch_args, **fetch_kwargs):
+                lock_path = helper.cfg_dir() / ".theme-mutation.lock"
+                lock_path.parent.mkdir(parents=True, exist_ok=True)
+                probe = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o600)
+                try:
+                    fcntl.flock(probe, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    lock_free_during_transfer.append(True)
+                    fcntl.flock(probe, fcntl.LOCK_UN)
+                except OSError:
+                    lock_free_during_transfer.append(False)
+                finally:
+                    os.close(probe)
+                return original_fetch(*fetch_args, **fetch_kwargs)
+
+            helper._catalog_fetch_verified = probing_fetch
+            try:
+                helper.catalog_download_theme(entry, base_urls, allow_local)
+            finally:
+                helper._catalog_fetch_verified = original_fetch
+            assert_equal(lock_free_during_transfer, [True, True, True],
+                         "the theme mutation lock must stay free while a download transfers")
+            helper.catalog_remove_theme("demo")
+
+            # A duplicate of a downloaded theme inherits the marker file, so
+            # ownership must be identity, not presence — otherwise `catalog
+            # remove` deletes the user's own copy.
+            helper.catalog_download_theme(entry, base_urls, allow_local)
+            copy = helper.user_themes_dir() / "mycopy"
+            shutil.copytree(dest, copy)
+            assert_equal(helper.catalog_owns("mycopy"), False, "a copied marker must not confer ownership")
+            try:
+                helper.catalog_remove_theme("mycopy")
+                raise AssertionError("removing a copy of a downloaded theme must fail")
+            except ValueError:
+                pass
+            assert_equal((copy / "theme.json").is_file(), True, "the user's copy survives")
+            assert_equal([e["downloaded"] for e in helper.catalog_entries() if e["name"] == "demo"], [True],
+                         "the downloaded theme is still reported as downloaded")
+            shutil.rmtree(copy)
+            assert_equal(helper.catalog_remove_theme("demo")["status"], "removed", "the original is still removable")
+
+            # A hand-made user theme carries no marker: remove must refuse it.
+            (helper.user_themes_dir() / "mine").mkdir(parents=True)
+            try:
+                helper.catalog_remove_theme("mine")
+                raise AssertionError("removing a non-downloaded theme must fail")
+            except ValueError:
+                pass
+            assert_equal((helper.user_themes_dir() / "mine").exists(), True, "local theme survives a refused remove")
+
+            # Several locations are tried in order and only checksum-matching
+            # bytes are accepted, so a stale first location cannot serve wrong
+            # content and cannot stop a good location from working either.
+            stale = tmp / "stale" / "demo"
+            stale.mkdir(parents=True)
+            (stale / "theme.json").write_text('{"name":"demo","mode":"light"}\n')
+            (stale / "colors.toml").write_text("background = \"#ffffff\"\n")
+            (stale / "apps").mkdir()
+            (stale / "apps" / "btop.theme").write_text("stale\n")
+            stale_url = "file://" + str(tmp / "stale")
+            result = helper.catalog_download_theme(entry, [stale_url, base_urls[0]], allow_local)
+            assert_equal(result["status"], "installed", "a stale first location must fall through")
+            assert_equal((dest / "theme.json").read_bytes(), (source / "theme.json").read_bytes(),
+                         "the accepted bytes are the catalogued ones, never the stale location's")
+            helper.catalog_remove_theme("demo")
+            try:
+                helper.catalog_download_theme(entry, [stale_url], allow_local)
+                raise AssertionError("no matching location must fail the download")
+            except ValueError as exc:
+                assert_equal("no source served" in str(exc), True, "failure names the exhausted locations")
+
+            # Tampered checksum: nothing may land, not even partially.
+            tampered = json.loads(json.dumps(entry))
+            tampered["files"][0]["sha256"] = "0" * 64
+            try:
+                helper.catalog_download_theme(tampered, base_urls, allow_local)
+                raise AssertionError("checksum mismatch must fail the download")
+            except ValueError:
+                pass
+            assert_equal(dest.exists(), False, "a failed download leaves no theme dir")
+            assert_equal(list(helper.user_themes_dir().glob(".catalog-*")), [],
+                         "a failed download leaves no staging dir")
+
+            for bad in ("../evil", "/etc/passwd", "apps/../../evil", ".ssh/id_rsa", "notes.txt",
+                        "apps/.hidden", "backgrounds/.env", "apps/../theme.json", "apps/", "apps//x",
+                        "backgrounds/season/img.png", "apps\\evil", "theme.json\x00.sh"):
+                try:
+                    helper._catalog_check_relpath(bad)
+                    raise AssertionError(f"catalog path {bad!r} must be rejected")
+                except ValueError:
+                    pass
+
+            # https is the only scheme accepted without the test-only override.
+            try:
+                helper._catalog_fetch("file:///etc/passwd", False)
+                raise AssertionError("non-https downloads must be refused")
+            except ValueError:
+                pass
+        finally:
+            helper.builtin_themes_dir = original_builtin
+            os.environ.pop("VGS_THEME_CATALOG_BASE_URL", None)
+
+    with_temp_home(scenario)
+
+
+def test_theme_catalog_manifest_matches_the_repo():
+    """The committed catalog must describe the themes actually in the tree."""
+    catalog = json.loads((REPO_ROOT / "themes" / "catalog.json").read_text())
+    names = sorted(e["name"] for e in catalog["themes"])
+    on_disk = sorted(p.parent.name for p in (REPO_ROOT / "themes").glob("*/theme.json"))
+    assert_equal(names, on_disk, "catalog themes must match themes/ on disk")
+    assert_equal(catalog["source"]["baseUrl"].startswith("https://"), True, "catalog must download over https")
+    # The generator validates through the installer's own checker, so a catalogued
+    # path the installer would refuse cannot exist. Assert the invariant directly.
+    for theme in catalog["themes"]:
+        for spec in theme["files"]:
+            helper._catalog_check_relpath(spec["path"])
+
+
+def test_theme_catalog_generator_rejects_uninstallable_packages():
+    """A package the installer could not fetch must fail generation, not ship."""
+    import importlib.machinery
+    import importlib.util
+
+    loader = importlib.machinery.SourceFileLoader(
+        "gen_theme_catalog_test_module", str(REPO_ROOT / "scripts" / "gen-theme-catalog.py"))
+    spec = importlib.util.spec_from_loader(loader.name, loader)
+    generator = importlib.util.module_from_spec(spec)
+    loader.exec_module(generator)
+
+    with tempfile.TemporaryDirectory() as tmp:
+        theme_dir = Path(tmp) / "deep"
+        (theme_dir / "backgrounds" / "season").mkdir(parents=True)
+        (theme_dir / "theme.json").write_text("{}\n")
+        (theme_dir / "backgrounds" / "season" / "img.png").write_bytes(b"x")
+        try:
+            generator.catalog_relpaths(helper, theme_dir)
+            raise AssertionError("a nested backgrounds/ path must fail catalog generation")
+        except SystemExit:
+            pass
+        # Files outside the downloadable shape are skipped, not fatal.
+        shutil.rmtree(theme_dir / "backgrounds" / "season")
+        (theme_dir / "NOTES.md").write_text("scratch\n")
+        assert_equal(generator.catalog_relpaths(helper, theme_dir), ["theme.json"],
+                     "stray files are skipped without failing generation")
+
+
 def main():
+    # A catalog download is minutes to hours of network transfer. Holding the
+    # exclusive theme lock for that long would block applies, the light/dark
+    # keybinding, wallpapers and restyles; the download takes the lock itself
+    # for the directory swap, which is the only step that mutates theme state.
+    for catalog_argv in (["catalog", "install", "ayu"], ["catalog", "install", "--all"],
+                         ["catalog", "remove", "ayu"], ["catalog", "list"]):
+        assert_equal(helper._theme_command_mutates(catalog_argv), False,
+                     f"`theme {' '.join(catalog_argv)}` must not hold the theme lock for its whole run")
     assert_equal(helper._theme_command_mutates(["chromium-policy"]), True,
                  "Chromium policy refresh must serialize with theme applies")
     test_system_font_normalization()
@@ -2372,6 +2619,9 @@ def main():
     test_missing_terminal_reaches_the_user()
     test_terminal_wait_blocks_until_the_terminal_exits()
     test_preferred_terminal_is_tried_first()
+    test_theme_catalog_download_verifies_every_file()
+    test_theme_catalog_manifest_matches_the_repo()
+    test_theme_catalog_generator_rejects_uninstallable_packages()
     subprocess.run(
         [sys.executable, str(REPO_ROOT / "scripts" / "check-vshell-niri.py")],
         check=True,
