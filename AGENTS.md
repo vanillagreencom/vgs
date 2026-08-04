@@ -111,6 +111,7 @@ node --check scripts/check-settings-migration.js
 scripts/check-settings-migration.js
 node scripts/test-restyle-queue.js
 node scripts/test-theme-requests.js
+node scripts/test-sudo-toggle-confirm.js
 node scripts/test-latest-transaction-queue.js
 scripts/check-vshell-helper.py
 scripts/check-brightness.py
