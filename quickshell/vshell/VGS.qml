@@ -95,10 +95,6 @@ Item {
 
     DesktopWidgetLayer {}
 
-    Lock {
-        id: lock
-    }
-
     // Native video screensaver overlays (one per screen). Loaded only while
     // ScreensaverService says the video saver is active.
     Variants {
@@ -631,7 +627,7 @@ Item {
             onPopoutClosed: PopoutService.unloadControlCenter()
 
             onLockRequested: {
-                lock.activate();
+                IdleService.lockComponent?.activate();
             }
 
             onSwitchUserRequested: root.showSwitchUserModal()
@@ -1254,7 +1250,7 @@ Item {
 
             onLockRequested: {
                 PopoutService.closeControlCenter();
-                lock.activate();
+                IdleService.lockComponent?.activate();
             }
 
             onSwitchUserRequested: root.showSwitchUserModal()
