@@ -468,7 +468,13 @@ Singleton {
             _updateAvailablePluginsList();
             pluginListUpdated();
             if (decision.enabled && !info.loaded) {
-                _gateThenSwap(manifest.id, displaced);
+                // Gated whenever there is something to protect: a package still
+                // loaded under this id, or a shipped package this one is
+                // declaring itself the override of.
+                if (displaced || (decision.overridesBundled && decision.alwaysAvailable))
+                    _gateThenSwap(manifest.id, displaced);
+                else
+                    runStartupGate(manifest.id);
             } else if (displaced) {
                 unloadPlugin(manifest.id);
             }
@@ -485,8 +491,12 @@ Singleton {
             // override can still be here: a bare collision was reclaimed above.
             if (sourceTag === "bundled") {
                 existing.alwaysAvailable = existing.overridesBundled === true;
+                // Through the gated path, not runStartupGate: this manifest is
+                // exactly the fallback the override needs if it turns out to be
+                // non-viable, so the scan order must not decide whether
+                // demotion is available.
                 if (existing.alwaysAvailable && !existing.loaded)
-                    runStartupGate(manifest.id);
+                    _gateThenSwap(manifest.id, null);
             }
         }
     }
@@ -571,38 +581,129 @@ Singleton {
         ToastService.showWarning(I18n.tr("Plugin id already used by VGS: %1").arg(pluginId), I18n.tr("The bundled module keeps this id. Add \"overrides\": \"%1\" to the plugin's plugin.json if replacing it was the intent.").arg(pluginId), "", "plugin-collision-" + pluginId);
     }
 
-    // Run the incoming package's startup gate first, and only tear the package
-    // it displaces down once the replacement has actually loaded. A gate
-    // failure or a broken component then demotes back to the shipped package
-    // instead of leaving the id — and whatever product surface it backs —
-    // with nothing loaded at all. (VGS-24)
+    // Is a shipped manifest for this id still on disk? That, not "something is
+    // currently loaded", is what decides whether an override has anywhere to be
+    // demoted to — the two differ in exactly the scan order VGS-13 verified,
+    // where the override is parsed before the package it overrides.
+    function _hasShippedManifest(pluginId) {
+        for (const path in knownManifests) {
+            const meta = knownManifests[path];
+            if (meta && !meta.bad && meta.source === "bundled" && pathToPluginId[path] === pluginId)
+                return true;
+        }
+        return false;
+    }
+
+    // Load a package that is taking an id over from another package: gate it
+    // completely — compatibility, startupCheck, and component compilation —
+    // before anything is torn down. Any failure hands the id back to the
+    // shipped package rather than leaving it, and whatever product surface it
+    // backs, with nothing loaded. `displaced` is the package still loaded under
+    // this id, if any. (VGS-24)
     function _gateThenSwap(pluginId, displaced) {
-        if (!displaced) {
+        const incoming = availablePlugins[pluginId];
+        if (!incoming) {
             runStartupGate(pluginId);
             return;
         }
-        const incoming = availablePlugins[pluginId];
-        const requires = incoming ? incoming.requires_shell : "";
+        // Only the shipped package can be the fallback, and only for a package
+        // that is not itself the shipped one.
+        const canDemote = incoming.source !== "bundled" && _hasShippedManifest(pluginId);
+        const giveUp = (reason, err) => {
+            if (canDemote) {
+                _demoteToShipped(pluginId, incoming, reason);
+                return;
+            }
+            // Nothing to fall back to: report exactly as an ordinary failed
+            // startup does, and leave whatever is still loaded alone.
+            if (err) {
+                _setLoadError(pluginId, err);
+                const title = I18n.tr("%1 Startup Failed").arg(incoming.name || pluginId);
+                ToastService.showError(title, err.details ? (err.title + "\n\n" + err.details) : err.title, "", "plugin-startup-" + pluginId);
+            } else {
+                ToastService.showError(I18n.tr("Plugin failed to load: %1").arg(incoming.name || pluginId), reason, "", "plugin-startup-" + pluginId);
+            }
+            pluginLoadFailed(pluginId, err ? err.title : reason);
+        };
+
+        const requires = incoming.requires_shell;
         // Only once the shell version is actually known: it is detected by an
         // async Process, and an unresolved version parses as 0.0.0, which would
-        // fail every `>=` requirement during the first scan.
+        // fail every `>=` requirement during the first scan. An override that
+        // slips through that window is judged by the ShellVersionService
+        // Connections below, once the version lands.
         if (requires && ShellVersionService.semverVersion && !checkPluginCompatibility(requires)) {
-            _demoteToShipped(pluginId, incoming, I18n.tr("It requires VGS %1.").arg(requires));
+            giveUp(I18n.tr("It requires VGS %1.").arg(requires), null);
             return;
         }
         _runStartupCheck(pluginId, err => {
+            // A rescan can reassign the id while an async startupCheck is
+            // pending. The gate that just passed belongs to `incoming`, so it
+            // says nothing about whoever owns the id now.
+            if (availablePlugins[pluginId] !== incoming)
+                return;
             if (err) {
-                _setLoadError(pluginId, err);
-                pluginLoadFailed(pluginId, err.title);
-                _demoteToShipped(pluginId, incoming, err.title);
+                giveUp(err.title, err);
+                return;
+            }
+            // Compile before tearing anything down. loadPlugin installs its
+            // components as it goes, so a component that fails halfway through
+            // it would take the shipped surface with it; Qt caches compiled
+            // components by URL, so the compile inside loadPlugin is a lookup.
+            if (!_componentsCompile(pluginId)) {
+                giveUp(I18n.tr("The plugin's components failed to load."), null);
                 return;
             }
             _clearLoadError(pluginId);
-            unloadPlugin(pluginId);
+            if (displaced)
+                unloadPlugin(pluginId);
             if (loadPlugin(pluginId))
                 return;
-            _demoteToShipped(pluginId, incoming, I18n.tr("The plugin's components failed to load."));
+            giveUp(I18n.tr("The plugin's components failed to load."), null);
         });
+    }
+
+    // Dry-run the component compilation loadPlugin would do, without
+    // installing anything. Instantiation failures (a launcher surface whose
+    // object cannot be created) still surface from loadPlugin itself.
+    function _componentsCompile(pluginId) {
+        const plugin = availablePlugins[pluginId];
+        if (!plugin)
+            return false;
+        const componentPaths = plugin.componentPaths || {};
+        for (const surface in componentPaths) {
+            const comp = Qt.createComponent("file://" + componentPaths[surface], Component.PreferSynchronous);
+            if (comp.status === Component.Error) {
+                log.error("component error", pluginId, surface, comp.errorString());
+                return false;
+            }
+        }
+        return true;
+    }
+
+    // Shell version detection is asynchronous, so an override can take a
+    // bundled id before its requires_shell can be judged. Once the version
+    // lands, judge it: an override that is now known to be incompatible hands
+    // the id back. Only overrides — a shipped package has nothing to demote to,
+    // and refusing to load it would take the product surface down, which is the
+    // outcome this whole path exists to prevent.
+    Connections {
+        target: ShellVersionService
+
+        function onSemverVersionChanged() {
+            if (!ShellVersionService.semverVersion)
+                return;
+            for (const pluginId in root.availablePlugins) {
+                const plugin = root.availablePlugins[pluginId];
+                if (!plugin || plugin.overridesBundled !== true || !plugin.requires_shell)
+                    continue;
+                if (root.checkPluginCompatibility(plugin.requires_shell))
+                    continue;
+                if (!root._hasShippedManifest(pluginId))
+                    continue;
+                root._demoteToShipped(pluginId, plugin, I18n.tr("It requires VGS %1.").arg(plugin.requires_shell));
+            }
+        }
     }
 
     // Hand the id back to the package the override displaced. The shipped
@@ -612,6 +713,11 @@ Singleton {
         const overridePath = incoming ? incoming.manifestPath : "";
         if (overridePath && knownManifests[overridePath])
             knownManifests[overridePath].demoted = true;
+        // By identity: an override demoted after it loaded (a requires_shell
+        // recheck) has to go, but in the gate-failure case loadedPlugins still
+        // holds the shipped package, which is the thing being restored.
+        if (incoming && loadedPlugins[pluginId] === incoming)
+            unloadPlugin(pluginId);
         if (availablePlugins[pluginId] === incoming) {
             const newMap = Object.assign({}, availablePlugins);
             delete newMap[pluginId];
@@ -632,22 +738,22 @@ Singleton {
     // gone from knownManifests, which is what makes the "any left?" scan
     // meaningful. (VGS-39)
     function _refreshBundledId(pluginId) {
-        if (_bundledPluginIds[pluginId] !== true)
+        if (_bundledPluginIds[pluginId] !== true || _hasShippedManifest(pluginId))
             return;
-        for (const path in knownManifests) {
-            const meta = knownManifests[path];
-            if (meta && !meta.bad && meta.source === "bundled" && pathToPluginId[path] === pluginId)
-                return;
-        }
         const next = Object.assign({}, _bundledPluginIds);
         delete next[pluginId];
         _bundledPluginIds = next;
         // Nothing shipped owns the id any more, so packages held back purely
-        // for colliding with it are ordinary plugins again.
+        // for colliding with it are ordinary plugins again — including one that
+        // was demoted, whose only reason for being refused was the shipped
+        // competitor that has now gone. It gets promoted, runs its own startup
+        // gate like any plugin, and fails visibly if it is still broken.
         for (const path in knownManifests) {
             const meta = knownManifests[path];
-            if (meta && meta.blocked && pathToPluginId[path] === pluginId)
-                delete meta.blocked;
+            if (!meta || pathToPluginId[path] !== pluginId)
+                continue;
+            delete meta.blocked;
+            delete meta.demoted;
         }
         for (const key in _reportedCollisions) {
             if (key.indexOf(pluginId + ":") === 0) {

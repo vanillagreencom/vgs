@@ -47,10 +47,14 @@ disable toggle at all — it shows an "Always on" badge instead of a control tha
 `PLUGIN_ALWAYS_AVAILABLE: <id>`, distinct from `PLUGIN_DISABLE_FAILED`.
 
 Enabled is not the same as loaded, and an override still has to provide the surface the shipped
-package did. **The swap is gated:** `_onManifestParsed` runs the override's `startupCheck` and loads
-it *before* the shipped package is unloaded. If the gate fails, `requires_shell` is incompatible, or
-the components fail to load, the override is demoted — the shipped package keeps (or takes back) the
-id and stays loaded, and a toast names the override and the reason. An override that loads but drops
+package did. **The swap is gated:** `_onManifestParsed` runs the override's `startupCheck` and
+compiles its components *before* the shipped package is unloaded. If the gate fails, `requires_shell`
+is incompatible, or a component fails to compile, the override is demoted — the shipped package keeps
+(or takes back) the id and stays loaded, and a toast names the override and the reason. Demotion is
+available whenever a shipped manifest for the id is still on disk, so it does not depend on which
+directory was scanned first. `requires_shell` is judged once shell version detection (asynchronous)
+has produced a version; an override that took the id before then is rechecked and demoted when the
+version lands. An override that loads but drops
 its daemon surface or its `toggle()` is still a way to disable the launcher: the dock and bar buttons
 then report "App launcher unavailable" via `PluginService.toggleAppLauncher()` instead of doing
 nothing.
