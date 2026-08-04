@@ -2,8 +2,10 @@
 """Focused helper smoke tests for VGS settings-owned integration paths."""
 from __future__ import annotations
 
+import contextlib
 import importlib.machinery
 import importlib.util
+import io
 import json
 import math
 import os
@@ -1630,6 +1632,8 @@ def _notification_env(root: Path, owner: dict | None, activation: str | None = N
             unit_state = (owner or {}).get("unitShow", {})
             body = "\n".join(f"{key}={value}" for key, value in unit_state.get(argv[1], {}).items())
             return subprocess.CompletedProcess(argv, 0, body, "")
+        if argv[0] in {"mask", "stop"} and (owner or {}).get("refuse", "") == argv[1]:
+            return subprocess.CompletedProcess(argv, 1, "", "refused")
         return subprocess.CompletedProcess(argv, 0, "", "")
 
     if owner is not None:
@@ -1667,7 +1671,11 @@ def test_notification_ownership_detects_a_foreign_daemon():
             "comm": "mako",
             "cmdline": ["/usr/bin/mako"],
             "unit": "mako.service",
-            "unitShow": {"mako.service": {"LoadState": "loaded", "ActiveState": "active", "UnitFileState": "disabled"}},
+            "unitShow": {"mako.service": {
+                "LoadState": "loaded", "ActiveState": "active", "UnitFileState": "disabled",
+                "MainPID": "4242",
+                "ExecStart": "{ path=/usr/bin/mako ; argv[]=/usr/bin/mako ; ignore_errors=no }",
+            }},
         }
         calls = _notification_env(tmp, owner, activation)
 
@@ -1758,6 +1766,123 @@ def test_notification_unowned_bus_is_not_a_conflict():
                 os.environ.pop(key, None)
             else:
                 os.environ[key] = value
+
+
+def test_notification_takeover_never_touches_an_inherited_unit():
+    """The session's own unit must never be masked or stopped.
+
+    A daemon started from a compositor rule (`exec-once = mako`) has no unit of
+    its own: its cgroup leaf is the compositor's unit, so acting on it would
+    kill the graphical session and block the next login.
+    """
+    original_bus, original_systemctl = helper._session_bus_call, helper._systemctl_user
+    original_env = {key: os.environ.get(key) for key in ("VSHELL_PROC_ROOT", "XDG_DATA_HOME", "XDG_DATA_DIRS")}
+
+    def body(tmp: Path):
+        session_unit = "wayland-wm@hyprland.desktop.service"
+        owner = {
+            "unique": ":1.7",
+            "pid": 4242,
+            "comm": "mako",
+            "cmdline": ["/usr/bin/mako"],
+            "unit": session_unit,
+            "unitShow": {session_unit: {
+                "LoadState": "loaded", "ActiveState": "active", "UnitFileState": "enabled",
+                # The compositor is the unit's main process, not mako.
+                "MainPID": "3099",
+                "ExecStart": "{ path=/usr/bin/uwsm ; argv[]=/usr/bin/uwsm aux exec -- hyprland.desktop ; ignore_errors=no }",
+            }},
+        }
+        calls = _notification_env(tmp, owner)
+
+        status = helper.notification_status()
+        assert_equal(status["state"], "foreign", "the daemon still owns the bus name")
+        conflict = status["conflicts"][0]
+        assert_equal(conflict["unit"], session_unit, "the inherited unit is still reported")
+        assert_equal(conflict["unitControls"], False, "an inherited unit must never be actionable")
+        assert_equal(status["takeover"]["available"], False,
+                     "no takeover may be offered when the only lever is the session unit")
+        assert session_unit in status["takeover"]["reason"], "the reason must name the unit it refuses to touch"
+
+        result = helper.notification_takeover()
+        for verb in ("mask", "stop", "kill", "disable"):
+            assert_equal(any(call[0] == verb and session_unit in call for call in calls), False,
+                         f"takeover must never {verb} the session's own unit")
+        assert_equal(len(result["manual"]), 1, "the daemon must be handed to the user instead")
+        assert session_unit in result["manual"][0], "the manual note must explain what was left alone"
+
+    try:
+        with_temp_home(body)
+    finally:
+        helper._session_bus_call, helper._systemctl_user = original_bus, original_systemctl
+        for key, value in original_env.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+
+
+def test_notification_restore_starts_what_takeover_stopped():
+    original_bus, original_systemctl = helper._session_bus_call, helper._systemctl_user
+    original_env = {key: os.environ.get(key) for key in ("VSHELL_PROC_ROOT", "XDG_DATA_HOME", "XDG_DATA_DIRS")}
+
+    def body(tmp: Path):
+        owner = {
+            "unique": ":1.7", "pid": 4242, "comm": "mako", "cmdline": ["/usr/bin/mako"],
+            "unit": "mako.service",
+            "unitShow": {"mako.service": {
+                "LoadState": "loaded", "ActiveState": "active", "UnitFileState": "disabled",
+                "MainPID": "4242",
+                "ExecStart": "{ path=/usr/bin/mako ; argv[]=/usr/bin/mako ; ignore_errors=no }",
+            }},
+        }
+        calls = _notification_env(tmp, owner)
+        helper.notification_takeover()
+        assert_equal(["stop", "mako.service"] in calls, True, "the daemon's own unit is stoppable")
+
+        calls.clear()
+        helper.notification_restore()
+        assert_equal(["unmask", "mako.service"] in calls, True, "restore must unmask first")
+        assert_equal(["start", "mako.service"] in calls, True,
+                     "restore must put the daemon back, not leave it dead until relogin")
+        assert_equal(calls.index(["unmask", "mako.service"]) < calls.index(["start", "mako.service"]), True,
+                     "starting a masked unit would fail, so unmask must come first")
+
+    try:
+        with_temp_home(body)
+    finally:
+        helper._session_bus_call, helper._systemctl_user = original_bus, original_systemctl
+        for key, value in original_env.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+
+
+def test_notification_status_respects_the_server_opt_out():
+    """A user who turned VGS's server off is not told to fix anything."""
+    original_enabled = helper.vgs_notification_server_enabled
+    try:
+        helper.vgs_notification_server_enabled = lambda: False
+        status = {
+            "busName": helper.NOTIFICATION_BUS_NAME, "state": "foreign", "error": "",
+            "vgsServerEnabled": False, "atRisk": False,
+            "owner": {"present": True, "pid": 42, "process": "mako", "exe": "/usr/bin/mako",
+                      "unit": "mako.service", "isVgs": False, "unique": ":1.7", "cmdline": "", "error": ""},
+            "conflicts": [], "takeover": {"available": True, "reason": ""},
+            "restore": {"available": False},
+        }
+        buffer = io.StringIO()
+        with contextlib.redirect_stdout(buffer):
+            helper._print_notification_status(status)
+        printed = buffer.getvalue()
+        assert "VGS notifications are inert" not in printed, \
+            "an intentional opt-out must not be described as a broken shell"
+        assert "vshell notifications takeover" not in printed, \
+            "nothing needs fixing when the user turned the server off"
+        assert "turned off in settings" in printed, "the reason must be stated"
+    finally:
+        helper.vgs_notification_server_enabled = original_enabled
 
 
 def test_notification_probe_failure_is_not_an_unowned_bus():
@@ -1914,6 +2039,9 @@ def main():
     test_notification_takeover_preserves_a_user_activation_file()
     test_notification_takeover_reports_an_unrecordable_state()
     test_notification_daemon_label_handles_scope_units()
+    test_notification_takeover_never_touches_an_inherited_unit()
+    test_notification_restore_starts_what_takeover_stopped()
+    test_notification_status_respects_the_server_opt_out()
     subprocess.run(
         [sys.executable, str(REPO_ROOT / "scripts" / "check-vshell-niri.py")],
         check=True,

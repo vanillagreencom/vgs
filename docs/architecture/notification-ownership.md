@@ -80,6 +80,18 @@ Four details that are easy to get wrong:
 - **The unit comes from `/proc/<pid>/cgroup`, not from busctl.** `busctl status`
   reports `Unit=user@1000.service` for everything on the user bus, which is the
   session manager and cannot be stopped.
+- **A cgroup leaf is not proof of unit ownership.** It answers "which unit is
+  this process *inside*", never "which unit *is* this process". A daemon started
+  from a compositor rule (`exec-once = mako`) has no unit of its own and
+  inherits the compositor's — on Hyprland + uwsm that leaf is
+  `wayland-wm@hyprland.desktop.service`. Masking and stopping it would end the
+  graphical session and leave the next login broken until the user unmasks from
+  a TTY. So `_unit_runs_this_daemon()` gates every mask and stop: the unit is
+  acted on only when its `MainPID` is the bus owner or its `ExecStart` names the
+  owner's binary (a `SystemdService=` line in the daemon's own activation file
+  counts as the daemon declaring the unit its own). Anything else is reported
+  through `manual`, naming the unit VGS refused to touch, and no takeover is
+  offered for it.
 - **Shadowing is by file name in `$XDG_DATA_HOME/dbus-1/services/`.** D-Bus
   resolves activation files from the data directories in order and stops at the
   first hit, so a same-named file in the user's data home wins over
@@ -93,6 +105,9 @@ Four details that are easy to get wrong:
   `<name>.vgs-orig` before the shadow is written, recorded in the undo state,
   and moved back by `restore`; overwriting it would make the reversibility
   guarantee false.
+- **Restore restarts what takeover stopped.** Unmasking alone would leave the
+  user's daemon dead until the next login, which is not what "undo" means, so
+  stopped units are recorded and started again after the unmask.
 - **An unrecordable change is a failure.** If the undo record cannot be
   persisted, `takeover` reports `ok: false` and says so, because masks and
   shadows that `restore` cannot find are not reversible.
@@ -104,7 +119,10 @@ rule, say) cannot be stopped safely from here; it is reported for the user to
 quit, and the shadow still keeps it from coming back by activation.
 
 `vshell deps status` reports ownership too, since that is where a user looks
-when a subsystem is missing.
+when a subsystem is missing. Both surfaces read `notificationServerEnabled`: with
+the shell's server deliberately turned off, another daemon holding the name is
+the configured outcome, so it is reported as such — no "VGS notifications are
+inert", no takeover advice, and a zero exit.
 
 ### Shell
 
