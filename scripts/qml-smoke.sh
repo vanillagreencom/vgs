@@ -428,9 +428,14 @@ EOF
   plugin_report=""
   if [[ "$loaded" == true ]]; then
     for waited in $(seq 1 $((plugin_timeout * 2))); do
-      # `plugins list` reports one line per plugin as "<id> [loaded|disabled]",
-      # which is the only view that distinguishes "not scanned yet" from
-      # "scanned and failed to load".
+      # The `plugins` IPC target, NOT `plugin-scan`. Both expose a `list`, and
+      # they format differently: this one emits "<id> [loaded|disabled]"
+      # (VGSIPC.qml), while PluginService's own `plugin-scan list` emits
+      # tab-separated "<id>\tloaded\t<type>\t<name>". Matching the wrong
+      # emitter's shape would make every row miss, which reads as "no plugin
+      # ever loaded" — so the target and the pattern have to be quoted together.
+      # This one is used because it is the view that distinguishes "not scanned
+      # yet" (absent) from "scanned and failed to load" (present, [disabled]).
       plugin_report="$("${sandbox_env[@]}" qs ipc -p "$repo_root/quickshell/vshell" \
         --any-display call plugins list 2>/dev/null || true)"
       missing_plugins=()
@@ -460,8 +465,32 @@ EOF
     return
   fi
   if [[ "$plugins_loaded" != true ]]; then
-    printf 'qml-smoke: plugins list reported:\n%s\n' "${plugin_report:-<no response>}" >&2
-    fail "bundled plugins not loaded in the sandbox within ${plugin_timeout}s: ${missing_plugins[*]} (of ${#expected_plugins[@]} under config/vshell/plugins)"
+    # Say WHICH failure this is. "Discovered but not loaded" and "never
+    # appeared at all" have different causes, and a timeout that lists names
+    # without distinguishing them sends the reader to the wrong place — a
+    # legitimately disabled plugin would be indistinguishable from a broken
+    # one.
+    local -a not_loaded=() never_seen=()
+    for candidate in "${missing_plugins[@]}"; do
+      if printf '%s\n' "$plugin_report" | grep -q "^${candidate} \["; then
+        not_loaded+=("$candidate")
+      else
+        never_seen+=("$candidate")
+      fi
+    done
+    printf 'qml-smoke: `plugins list` reported after ${plugin_timeout}s:\n%s\n' \
+      "${plugin_report:-<no response from the plugins IPC target>}" >&2
+    if [[ ${#not_loaded[@]} -gt 0 ]]; then
+      # Every bundled plugin is force-enabled by PluginService (a bundled id
+      # backs product UI, so it loads whether or not a user setting names it)
+      # and none declares a startupCheck, so there is no legitimate way for one
+      # to sit here disabled. If that ever changes, this is where the expected
+      # set has to learn about it — a deliberately-disabled plugin must not
+      # look like a broken one.
+      fail "bundled plugin(s) scanned but NOT loaded: ${not_loaded[*]} — a bundled id is force-enabled and declares no startup gate, so this is a load failure, not a disabled plugin"
+      return
+    fi
+    fail "bundled plugin(s) never appeared in the sandbox within ${plugin_timeout}s: ${never_seen[*]} (of ${#expected_plugins[@]} under config/vshell/plugins) — the scan never reached them"
     return
   fi
 
