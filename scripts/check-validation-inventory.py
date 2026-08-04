@@ -39,6 +39,7 @@ NOT_A_SUITE_CHECK = {
     "build-release.sh": "release tooling, driven by .github/workflows/release.yml",
     "check-release.sh": "release preflight, driven by the release path and packaging/README.md",
     "check-vshell-niri.py": "the Niri half of the helper suite; invoked by scripts/check-vshell-helper.py",
+    "gen-theme-catalog.py": "theme-catalog generator; its --check mode is invoked by scripts/check-package-assets.sh and its --check-release-pin by scripts/check-release.sh",
 }
 
 # Checks the suite runs but CI cannot, with the reason CI cannot run them.
