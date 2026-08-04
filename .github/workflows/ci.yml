@@ -193,6 +193,13 @@ jobs:
       - name: Pin the review-gate decision table
         run: third_party/review-gate/scripts/review-predicate-selftest.sh
 
+      # The predicate selftest proves the VERDICT logic; this proves the step
+      # that consumes it, over the states that actually broke — including the
+      # base-revision bootstrap, where the first version crashed and posted no
+      # status at all.
+      - name: Pin the review-gate CI step
+        run: scripts/test-review-gate-step.sh
+
   validate:
     # The required-check context is `CI / ci-ok`; see the aggregator note above.
     name: ci-ok
@@ -396,6 +403,14 @@ jobs:
 
       - name: Workflow lint (YAML and every `run:` block)
         run: scripts/check-workflows.sh
+
+      # CodeRabbit rejects an invalid .coderabbit.yaml and reviews with DEFAULT
+      # settings, reporting nothing on the PR. VGS shipped a 376-character
+      # tone_instructions against a 250 limit, so the file was inert on every
+      # PR. Validated against the vendored schema — offline, so an endpoint
+      # outage cannot turn this into a skip.
+      - name: CodeRabbit configuration
+        run: scripts/check-coderabbit-config.py
 
       # qmllint is what `--require-static` needs, and no runner image ships Qt.
       # This is the single most expensive step here, which is why it is last.

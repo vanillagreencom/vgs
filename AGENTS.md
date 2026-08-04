@@ -170,7 +170,9 @@ python3 -m py_compile bin/vshell-helper
 bash -n bin/vshell
 git diff --check
 scripts/check-workflows.sh
+scripts/check-coderabbit-config.py
 scripts/check-review-gate-vendor.sh
+scripts/test-review-gate-step.sh
 third_party/review-gate/scripts/review-predicate-selftest.sh
 scripts/qml-smoke.sh --nested --require-static
 scripts/check-validation-safety.sh
@@ -274,7 +276,7 @@ Three moving parts:
 | Piece | Role |
 |-------|------|
 | `ci.yml` § `review-gate` | Evaluates the predicate from the **base** revision with a read-only checkout and posts the status. Latency optimization. |
-| `ci.yml` § `review-gate-selftest` | Ungated, no `needs`: pins the decision table offline. A broken predicate approves nothing, so a gated selftest could never run when it matters. |
+| `ci.yml` § `review-gate-selftest` | Ungated, no `needs`: pins the engine's decision table offline, and `scripts/test-review-gate-step.sh` pins the CI step that consumes it. A broken predicate approves nothing, so a gated selftest could never run when it matters. |
 | `approval-rerun.yml` / `approval-sweep.yml` | The convergence writers of record — non-PR triggers, default-branch checkout. The sweep every 15 minutes is what catches thread resolution, which has no Actions trigger at all. |
 
 `ci-ok` deliberately does **not** wait on the gate. The engine's default shape
@@ -282,11 +284,32 @@ skips heavy jobs until review lands, which pays off for lanes that run for
 minutes; VGS's whole suite is ~30s, so gating it would only delay the author's
 first signal. The gate blocks the merge, not the compute.
 
+The gate job checks out the **base** revision, never the PR head — the safe
+posture never runs PR-controlled predicate code under a token that can post the
+status which opens the gate. The permanent consequence is that a base without
+the engine (the adoption PR; a PR branched before the vendor commit; a deleted
+or renamed vendor tree) cannot be evaluated. That case posts `pending` with the
+reason and exits 0: merge stays blocked, which is correct for a head with no
+evaluated evidence. It is never `failure` — that means "changes requested", a
+false verdict — and never a crash, which posts nothing and so neither blocks nor
+informs. `scripts/test-review-gate-step.sh` drives the step, extracted from the
+shipped YAML, over all of those states.
+
 Per-repo trust lives in `vstack.settings.toml` under `REVIEW_GATE_*`, each key
 carrying the reason for its VGS value. Two are worth knowing: no check-run or
 commit status is trusted as evidence (CodeRabbit reported `success` with
 "Review rate limited" on PR #38 — a pass proving nothing ran), and no
 comment-form reviewer is configured.
+
+CodeRabbit's own config is checked too. `.coderabbit.yaml` shipped a
+376-character `tone_instructions` against a documented 250-character limit;
+CodeRabbit rejects an invalid config, reviews with **default** settings, and
+says so nowhere a PR can see — so the whole file was inert on every PR.
+`scripts/check-coderabbit-config.py` validates it against CodeRabbit's own
+schema, vendored at `third_party/coderabbit-schema/` so the check is offline and
+an endpoint outage cannot turn it into a skip. If a refreshed schema uses a
+JSON Schema keyword the validator does not implement, the check fails and names
+it rather than under-validating while reporting success.
 
 `--require-static` is passed in CI so a missing qmllint **fails** rather than
 skipping: a silent skip is indistinguishable from a pass.
