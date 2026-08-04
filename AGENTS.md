@@ -51,6 +51,16 @@ tracked file there is unwritable by git while `git status` looks clean.
 `vstack refresh` links each `project-skills/<name>` into `.agents/skills/<name>`
 for discovery. See `project-skills/README.md`.
 
+The vstack `review-gate` engine needs a **tracked** copy, because CI runs its
+predicate from a plain checkout with no vstack and no mirror. The sibling repos
+track it at `.agents/skills/review-gate/`; VGS cannot, for the reason above —
+git cannot stat through the symlinked directory, so those files report as
+deleted in every worktree and the tree is permanently dirty. VGS therefore
+vendors it at `third_party/review-gate/`, and `vstack refresh` keeps updating
+`.agents/skills/review-gate` for agent discovery.
+`scripts/check-review-gate-vendor.sh` fails when the two drift, so a refresh
+that changes the engine cannot be forgotten.
+
 ## Documentation resources
 Use CTX7 CLI when library/API docs are needed. Prefer pinned resource IDs over general web search.
 
@@ -133,44 +143,76 @@ Scope to the area touched (Go-only: inventory guard + go block; QML-only: naming
 ```bash
 scripts/check-naming.sh
 python3 scripts/lib/shell_scan.py
+scripts/check-validation-inventory.py
 scripts/gen-package-metadata.py
 scripts/check-package-assets.sh
 scripts/check-aur-sync.py
+scripts/check-command-declarations.py
 node --check scripts/check-settings-migration.js
 scripts/check-settings-migration.js
-node scripts/test-restyle-queue.js
-node scripts/test-theme-requests.js
-node scripts/test-sudo-toggle-confirm.js
-node scripts/test-latest-transaction-queue.js
-node scripts/test-bundled-override.js
-node scripts/test-idle-reload-snapshot.js
-node scripts/test-idle-lock-request.js
+scripts/test-restyle-queue.js
+scripts/test-theme-requests.js
+scripts/test-sudo-toggle-confirm.js
+scripts/test-latest-transaction-queue.js
+scripts/test-bundled-override.js
+scripts/test-idle-reload-snapshot.js
+scripts/test-idle-lock-request.js
 scripts/check-vshell-helper.py
 scripts/check-brightness.py
 scripts/check-backend-inventory.py
+scripts/check-backend-inventory-tests.py
 scripts/check-lock-reload-order.py
-node scripts/test-pill-hover-safety.js
+scripts/check-display-config-fixtures.js
+scripts/check-vgs-menu-capabilities.js
+scripts/check-vshell-ipc.sh
+scripts/test-pill-hover-safety.js
 python3 -m py_compile bin/vshell-helper
 bash -n bin/vshell
 git diff --check
+scripts/check-workflows.sh
+scripts/check-coderabbit-config.py
+scripts/check-review-gate-vendor.sh
+scripts/test-review-gate-step.sh
+third_party/review-gate/scripts/review-predicate-selftest.sh
 scripts/qml-smoke.sh --nested --require-static
 scripts/check-validation-safety.sh
+scripts/check-label-taxonomy.py
 scripts/smoke-surfaces.sh
 (cd backend && go build ./... && go vet ./... && go test -race ./...)
 ```
+
+Every script above is invoked bare, and every one of them carries the
+executable bit — a `node`/`bash`/`python3` prefix the doc omitted is what made
+the suite fail for anyone following it literally (VGS-30).
+`scripts/lib/session-snapshot.sh` stays non-executable on purpose: it is
+sourced, never run. `bin/vshell_niri.py`, `bin/vshell_niri_kdl.py` and
+`bin/vshell_theme_color.py` likewise — they are importable modules with no
+shebang and no `__main__`.
+
+`scripts/check-validation-inventory.py` is what keeps this list honest in both
+directions: every executable check under `scripts/` must appear here and in CI
+or carry a written exclusion, and every command here must run exactly as
+written. Four checks sat committed and never invoked by anything before it
+existed (VGS-50).
 
 ### What CI covers, and what it cannot
 
 `.github/workflows/ci.yml` runs this suite on every pull request, on
 merge-queue entries, and on `main` pushes.
 
-**Branch protection and the merge queue should require `CI / ci-ok` alone.**
-That is the workflow's one job — named for the required context rather than for
-what it does, which is the indirection a separate aggregator job would have
-bought. There are no conditional lanes that could leave a required context
-permanently skipped, so there is nothing to aggregate; if lanes are ever added,
-the work moves to new jobs and `ci-ok` becomes the aggregator over them, and
-branch protection never has to change.
+**The merge queue requires `CI / ci-ok`.** That is the workflow's one *suite*
+job — named for the required context rather than for what it does, which is the
+indirection a separate aggregator job would have bought. There are no
+conditional lanes that could leave a required context permanently skipped, so
+there is nothing to aggregate; if lanes are ever added, the work moves to new
+jobs and `ci-ok` becomes the aggregator over them, and branch protection never
+has to change.
+
+`Review gate` is intended as the second required context, but it is **not one
+yet**: it is added to the merge queue's required checks only after the gate has
+been observed publishing on a real PR, because requiring a context nothing
+produces would block every merge. That step is a GitHub ruleset change, not
+code. See § Review gate.
 
 One job is also the cheap shape here. Measured on this repo: the static suite is
 ~16s of work, and the Go block is ~6s warm / ~16s cold (build 4.4s, vet 0.8s,
@@ -191,13 +233,26 @@ The runner resolves through the shared `CI_RUNNER_2V` repository variable
 and must keep working). Nothing here is CPU-bound or disk-hungry, so the 4V/8V
 tiers buy VGS nothing.
 
-Two checks in the list above **cannot run in CI** and stay local-only. Their
-absence is deliberate, not an oversight:
+Some checks in the list above **cannot run in CI**, and one runs there only
+through another entry. Both categories are deliberate, not oversights, and
+`scripts/check-validation-inventory.py` cross-compares the two tables below
+against its own `LOCAL_ONLY` and `INDIRECT_IN_CI` maps — it fails if the prose
+and the code disagree, which is the only thing that makes the claim they cannot
+diverge silently actually true.
+
+**Local-only — CI cannot run these at all:**
 
 | Check | Why it is local-only |
 |-------|----------------------|
-| `scripts/qml-smoke.sh --nested` | Its sandbox needs both Hyprland and `quickshell` on PATH (`scripts/qml-smoke.sh::nested_check`); neither is reasonably installable on a CI runner. CI runs the static half instead, via `scripts/check-validation-safety.sh --require-static`, which forwards the flag to the smoke. Quickshell is not needed for that half — the static check tolerates unresolved `qs.*` imports by design and fails only on `[syntax…]` findings. |
+| `scripts/check-label-taxonomy.py` | Compares `vstack.toml`'s label taxonomy against live Linear; CI has no Linear credentials and no local cache. It FAILS rather than skipping when the inventory is unreachable — `--allow-missing-inventory` is the explicit "I accept the sweep did not happen". |
+| `scripts/check-review-gate-vendor.sh` | Compares the tracked engine at `third_party/review-gate/` against the `vstack refresh`-managed copy under `.agents/`, which a CI checkout does not have. |
 | `scripts/smoke-surfaces.sh` | Needs a **live** Hyprland VGS session and reads `hyprctl layers`. Anywhere else it prints a skip and exits 0, so running it in CI would manufacture a false green. |
+
+**Reached indirectly — CI runs these through another entry, not by name:**
+
+| Check | How CI reaches it |
+|-------|-------------------|
+| `scripts/qml-smoke.sh` | `scripts/check-validation-safety.sh --require-static` forwards the flag to the smoke, so the **static** half runs in CI. Only `--nested` is local-only: its sandbox needs both Hyprland and `quickshell` on PATH (`scripts/qml-smoke.sh::nested_check`), neither reasonably installable on a runner. Quickshell is not needed for the static half — it tolerates unresolved `qs.*` imports by design and fails only on `[syntax…]` findings. |
 
 The live-session half of `scripts/check-validation-safety.sh` is likewise
 inert in CI: with no compositor and no Quickshell CLI its snapshots report
@@ -217,6 +272,79 @@ So a green PR proves the static suite and the Go block. It does **not** prove
 the shell starts or that its surfaces are sane. Run
 `scripts/qml-smoke.sh --nested --require-static` and
 `scripts/smoke-surfaces.sh` locally before finishing QML work.
+
+### Review gate
+
+Merges gate on AI-review evidence via the vstack `review-gate` engine, vendored
+at `third_party/review-gate/`. The engine posts one commit status —
+`Review gate` — on the PR head: `pending` while no review evidence exists for
+that exact head or while threads are unresolved, `failure` on
+changes-requested, `success` only from an evidence-backed evaluation.
+
+Three moving parts:
+
+| Piece | Role |
+|-------|------|
+| `ci.yml` § `review-gate` | Evaluates the predicate from the **base** revision with a read-only checkout and posts the status. Latency optimization. |
+| `ci.yml` § `review-gate-selftest` | Ungated (nothing gates *it*), but **blocking**: `ci-ok` takes `needs:` on it. Pins the engine's decision table offline, plus `scripts/test-review-gate-step.sh` for the CI step that consumes it. |
+| `approval-rerun.yml` / `approval-sweep.yml` | The convergence writers of record — non-PR triggers, default-branch checkout. The sweep every 15 minutes is what catches thread resolution, which has no Actions trigger at all. |
+
+`ci-ok` deliberately does **not** wait on the gate. The engine's default shape
+skips heavy jobs until review lands, which pays off for lanes that run for
+minutes; VGS's whole suite is ~30s, so gating it would only delay the author's
+first signal. The gate blocks the merge, not the compute.
+
+The gate job checks out the **base** revision, never the PR head — the safe
+posture never runs PR-controlled predicate code under a token that can post the
+status which opens the gate. The permanent consequence is that a base without
+the engine (the adoption PR; a PR branched before the vendor commit; a deleted
+or renamed vendor tree) cannot be evaluated. That case posts `pending` with the
+reason and exits 0: merge stays blocked, which is correct for a head with no
+evaluated evidence. It is never `failure` — that means "changes requested", a
+false verdict — and never a crash, which posts nothing and so neither blocks nor
+informs. `scripts/test-review-gate-step.sh` drives the step, extracted from the
+shipped YAML, over all of those states.
+
+**Ungated is not the same as non-blocking**, and conflating them left a hole:
+the selftest ran on every event but was not a required context, and
+`Review gate` evaluates the *base* predicate, so it stays green on a PR that
+breaks the head's predicate. A change breaking `review-predicate.sh` could
+merge with its own selftest red. `ci-ok` therefore takes `needs:
+review-gate-selftest` — blocking without gating, and it hands out no token,
+since the selftest holds only `contents: read`. `ci-ok` deliberately does not
+`needs:` the gate job, which holds `statuses: write`.
+
+All three gate writers — the `review-gate` job, `approval-rerun.yml` and
+`approval-sweep.yml` — share one repo-wide `review-gate-writer` concurrency
+group. Two writers evaluating different snapshots of the same head can post out
+of order, and an older `success` overwriting a newer `failure` reopens merge
+until the next sweep. The `review-gate` job is job-scoped into that group so the
+rest of CI keeps its per-PR group.
+
+Per-repo trust lives in `vstack.settings.toml` under `REVIEW_GATE_*`, each key
+carrying the reason for its VGS value. The one that is not optional:
+`REVIEW_GATE_REVIEW_OBJECT_TRUSTED_LOGINS` names the three reviewer bots
+explicitly. `vanillagreencom/vgs` is **public**, so an empty list — "any
+non-author" — would let any GitHub account open the gate with a drive-by
+`COMMENTED` review, with neither bot having analysed the head. A gate a
+passer-by can open is worse than no gate, because it reads as protection.
+
+`REVIEW_GATE_REVIEW_OBJECT_MIN_STATE` stays `"any"` because that list is now
+what closes the hole: of the three trusted reviewers only CodeRabbit ever
+submits `APPROVED`, so requiring approval would discard the other two. Two more
+worth knowing: no check-run or commit status is trusted as evidence (CodeRabbit
+reported `success` with "Review rate limited" on PR #38 — a pass proving nothing
+ran), and no comment-form reviewer is configured.
+
+CodeRabbit's own config is checked too. `.coderabbit.yaml` shipped a
+376-character `tone_instructions` against a documented 250-character limit;
+CodeRabbit rejects an invalid config, reviews with **default** settings, and
+says so nowhere a PR can see — so the whole file was inert on every PR.
+`scripts/check-coderabbit-config.py` validates it against CodeRabbit's own
+schema, vendored at `third_party/coderabbit-schema/` so the check is offline and
+an endpoint outage cannot turn it into a skip. If a refreshed schema uses a
+JSON Schema keyword the validator does not implement, the check fails and names
+it rather than under-validating while reporting success.
 
 `--require-static` is passed in CI so a missing qmllint **fails** rather than
 skipping: a silent skip is indistinguishable from a pass.

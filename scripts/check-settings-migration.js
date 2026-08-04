@@ -711,7 +711,22 @@ function regexCanStartHere(out) {
   while (j >= 0 && /\s/.test(out[j])) j--;
   if (j < 0) return true;
   const ch = out[j];
+
+  // POSTFIX `++` / `--` END AN EXPRESSION, so the slash after them is division.
+  // A character-level test cannot see that: `+` and `-` are in the
+  // value-starting set below (for `a + /re/.source`), so `counter++ / "2/"` was
+  // read as opening a regex, the quote inside the string closed it, and the
+  // real closing quote then desynchronised the scanner — blanking the rest of
+  // the file, including any undeclared assignment in it. That is the same
+  // false-clean the regex handling was added to remove, one token narrower.
+  if ((ch === "+" || ch === "-") && out[j - 1] === ch) return false;
+
   if ("(,=:[!&|?{};+-*%~^<>".includes(ch)) return true;
+  // A closing bracket ends a value: `f(x) / 2`, `a[i] / 2`, `{...} / 2`.
+  if (ch === ")" || ch === "]") return false;
+  // A string literal ends a value too. Bodies are blanked but the quotes
+  // remain, so the delimiter is what is visible here.
+  if (ch === '"' || ch === "'" || ch === "`") return false;
   if (!/[\w$]/.test(ch)) return false;
   let k = j;
   while (k >= 0 && /[\w$]/.test(out[k])) k--;

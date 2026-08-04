@@ -19,6 +19,10 @@
 # tree, not runtime faults. Unresolved qs.* imports and missing properties only
 # surface when the shell actually runs, which is what --nested is for.
 #
+# --nested loads bundled plugins from config/vshell/plugins and waits for EVERY
+# one of them to report loaded before it stops observing, so plugin-owned QML is
+# inside the checked window. It fails if any of them never loads.
+#
 # Both modes assert that they leave the live session byte-for-byte alone: same
 # VGS Quickshell instances, same VGS layer surfaces. Cleanup is process-group
 # scoped and runs on success, failure, timeout, and interrupt. This script never
@@ -33,8 +37,12 @@ nested=false
 require_nested=false
 require_static=false
 static_ran=false
-nested_timeout=20
+nested_timeout=40
 compositor_timeout=15
+# Bundled plugins are scanned asynchronously after the core tree loads, so they
+# appear well after the first core IPC target does. Waiting for them is what
+# makes plugin-owned QML part of the observed window.
+plugin_timeout=30
 
 usage() {
   sed -n '2,20p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
@@ -264,7 +272,8 @@ host_wayland_socket() {
 
 nested_check() {
   local host_socket sandbox rt_dir conf log nested_socket candidate waited exit_code findings
-  local compositor_pgid qs_launcher qs_group loaded
+  local compositor_pgid qs_launcher qs_group loaded targets plugins_loaded plugin_report candidate
+  local -a expected_plugins=() missing_plugins=()
   local -a sandbox_env=() dbus_wrapper=()
 
   command -v Hyprland >/dev/null 2>&1 || { nested_unavailable "Hyprland not installed"; return; }
@@ -381,15 +390,66 @@ EOF
   # only exist once the shell tree loaded. Waiting on the timeout instead would
   # also "pass" for a shell that exited immediately.
   loaded=false
+  targets=""
   for waited in $(seq 1 $((nested_timeout * 2))); do
-    if "${sandbox_env[@]}" qs ipc -p "$repo_root/quickshell/vshell" --any-display show 2>/dev/null |
-      grep -q '^target '; then
+    targets="$("${sandbox_env[@]}" qs ipc -p "$repo_root/quickshell/vshell" --any-display show 2>/dev/null || true)"
+    if printf '%s\n' "$targets" | grep -q '^target '; then
       loaded=true
       break
     fi
     kill -0 -- "-$qs_group" 2>/dev/null || break
     sleep 0.5
   done
+
+  # Bundled plugins load asynchronously, several seconds after the core targets
+  # answer. Stopping at the first core target ends observation before any plugin
+  # QML has run, so plugin load failures, duplicate IpcHandler registrations and
+  # broken entry points were invisible here — and passed as full coverage.
+  #
+  # EVERY bundled plugin, not one of them. Waiting on a single plugin's IPC
+  # target proved only that plugin loaded: the seven load through independent
+  # asynchronous FileViews with no ordering guarantee, so six could still be
+  # pending when the shell was killed, and their QML was never observed while
+  # the run reported full plugin coverage. That is the original VGS-19 defect
+  # wearing a different hat.
+  #
+  # The expected set is derived from the tree rather than hardcoded, so adding a
+  # bundled plugin extends this check automatically instead of silently not
+  # covering the new one.
+  mapfile -t expected_plugins < <(
+    find "$repo_root/config/vshell/plugins" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' 2>/dev/null | sort
+  )
+  if [[ ${#expected_plugins[@]} -eq 0 ]]; then
+    fail "no bundled plugins found under config/vshell/plugins"
+    return
+  fi
+
+  plugins_loaded=false
+  plugin_report=""
+  if [[ "$loaded" == true ]]; then
+    for waited in $(seq 1 $((plugin_timeout * 2))); do
+      # The `plugins` IPC target, NOT `plugin-scan`. Both expose a `list`, and
+      # they format differently: this one emits "<id> [loaded|disabled]"
+      # (VGSIPC.qml), while PluginService's own `plugin-scan list` emits
+      # tab-separated "<id>\tloaded\t<type>\t<name>". Matching the wrong
+      # emitter's shape would make every row miss, which reads as "no plugin
+      # ever loaded" — so the target and the pattern have to be quoted together.
+      # This one is used because it is the view that distinguishes "not scanned
+      # yet" (absent) from "scanned and failed to load" (present, [disabled]).
+      plugin_report="$("${sandbox_env[@]}" qs ipc -p "$repo_root/quickshell/vshell" \
+        --any-display call plugins list 2>/dev/null || true)"
+      missing_plugins=()
+      for candidate in "${expected_plugins[@]}"; do
+        printf '%s\n' "$plugin_report" | grep -q "^${candidate} \[loaded\]\$" || missing_plugins+=("$candidate")
+      done
+      if [[ ${#missing_plugins[@]} -eq 0 ]]; then
+        plugins_loaded=true
+        break
+      fi
+      kill -0 -- "-$qs_group" 2>/dev/null || break
+      sleep 0.5
+    done
+  fi
 
   kill_pgid "$qs_group"
   exit_code=0
@@ -404,19 +464,76 @@ EOF
     fail "sandboxed shell never exposed its IPC targets (exit code $exit_code)"
     return
   fi
+  if [[ "$plugins_loaded" != true ]]; then
+    # Say WHICH failure this is. "Discovered but not loaded" and "never
+    # appeared at all" have different causes, and a timeout that lists names
+    # without distinguishing them sends the reader to the wrong place — a
+    # legitimately disabled plugin would be indistinguishable from a broken
+    # one.
+    local -a not_loaded=() never_seen=()
+    for candidate in "${missing_plugins[@]}"; do
+      if printf '%s\n' "$plugin_report" | grep -q "^${candidate} \["; then
+        not_loaded+=("$candidate")
+      else
+        never_seen+=("$candidate")
+      fi
+    done
+    printf 'qml-smoke: `plugins list` reported after ${plugin_timeout}s:\n%s\n' \
+      "${plugin_report:-<no response from the plugins IPC target>}" >&2
+    if [[ ${#not_loaded[@]} -gt 0 ]]; then
+      # Every bundled plugin is force-enabled by PluginService (a bundled id
+      # backs product UI, so it loads whether or not a user setting names it)
+      # and none declares a startupCheck, so there is no legitimate way for one
+      # to sit here disabled. If that ever changes, this is where the expected
+      # set has to learn about it — a deliberately-disabled plugin must not
+      # look like a broken one.
+      fail "bundled plugin(s) scanned but NOT loaded: ${not_loaded[*]} — a bundled id is force-enabled and declares no startup gate, so this is a load failure, not a disabled plugin"
+      return
+    fi
+    fail "bundled plugin(s) never appeared in the sandbox within ${plugin_timeout}s: ${never_seen[*]} (of ${#expected_plugins[@]} under config/vshell/plugins) — the scan never reached them"
+    return
+  fi
 
   # Services the sandbox deliberately cannot reach (the live PipeWire socket
   # lives in the session's runtime dir, and the private bus has no peers) are
   # environment gaps, not QML defects.
   local sandbox_noise='quickshell\.service\.pipewire|Failed to connect pipewire'
-  findings="$(grep -nE '^[[:space:]]*ERROR|is not a type|Cannot assign|Unable to assign|Failed to start process|Type .* unavailable' "$log" |
-    grep -vE "$sandbox_noise" || true)"
+  # Error classes, each verified against a paired positive/negative control:
+  #   ReferenceError  undefined identifier in a binding or handler body
+  #   TypeError       property/method access on undefined, calling a non-function
+  #   SyntaxError     JS parse failure inside a .js import or a handler body
+  # These are prefixed by the QML file path, not by 'ERROR', so the leading
+  # anchor below never saw them.
+  #
+  # Deliberately NOT matched:
+  #   'Binding loop detected'  a warning, benign in several existing surfaces,
+  #                            and it would make the gate noisy rather than
+  #                            catching a class of defect the shell cannot run
+  #                            through.
+  #   bare 'Error:'            over-matches process output and third-party
+  #                            library chatter (ffmpeg, dbus) piped into the log.
+  local error_classes='ReferenceError|TypeError|SyntaxError'
+  # `|| true` here would treat a MISSING or unreadable log exactly like a clean
+  # one: grep exits 1 for "no match" and 2 for "could not read the file", and
+  # collapsing both into an empty result reports success over a log that was
+  # never scanned. Distinguish them.
+  local grep_rc=0
+  findings="$(grep -nE "^[[:space:]]*ERROR|is not a type|Cannot assign|Unable to assign|Failed to start process|Type .* unavailable|$error_classes" "$log")" || grep_rc=$?
+  if [[ "$grep_rc" -gt 1 ]]; then
+    fail "could not scan the sandbox log for runtime errors (grep exit $grep_rc, log '$log')"
+    return
+  fi
+  findings="$(printf '%s\n' "$findings" | grep -vE "$sandbox_noise")" || grep_rc=$?
+  if [[ "$grep_rc" -gt 1 ]]; then
+    fail "could not filter sandbox noise out of the runtime findings (grep exit $grep_rc)"
+    return
+  fi
   if [[ -n "$findings" ]]; then
     printf '%s\n' "$findings" >&2
     fail "QML/runtime errors in the sandboxed shell"
     return
   fi
-  note "isolated runtime check passed (shell loaded and answered IPC in the sandbox)"
+  note "isolated runtime check passed (shell loaded, all ${#expected_plugins[@]} bundled plugins loaded, answered IPC in the sandbox)"
 }
 
 # --- run --------------------------------------------------------------------

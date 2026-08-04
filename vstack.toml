@@ -190,11 +190,16 @@ team; they serve other projects (hyprtrade), so never assign them in VGS.
 
 | Label | Use when |
 |-------|----------|
+| `ci-infra` | CI, review gates, runners, and repo tooling — the validation suite, `.github/workflows/`, packaging automation. |
+| `test` | Testing itself: coverage, harnesses, fixtures, flakes. Pairs with `ci-infra` when the harness is CI-owned. |
+| `frontend` | UI-surface work: shell surfaces, widgets, modals, settings screens under `quickshell/vshell/`. |
 | `design` | Visual design language, tokens, typography, surface layout — the Flatline language in `docs/architecture/design-language.md`. |
 | `component` | Reusable widget/control work, especially primitives in `quickshell/vshell/Widgets/`. |
 
-`iced` and `rust-core` are likewise inherited workspace labels for other
-projects; never assign them in VGS.
+Priority rule: `ci-infra` implies Urgent unless the issue deliberately records
+why it is lower. Everything VGS uses to decide whether a change is safe to merge
+lives in that category, so a defect there invalidates the evidence behind every
+other issue's "verified" claim.
 
 ### Classification labels (non-exclusive; additive)
 
@@ -220,13 +225,33 @@ projects; never assign them in VGS.
 | `critical-path` | Blocks or enables major project progress; align priority accordingly. |
 | `blocked` | External blocker only (vendor/license/access/manual dependency). For issue dependencies, use blocking relations instead. |
 | `owner-gated` | Needs an owner decision or owner-only action to proceed. |
+| `hardware-blocked` | Blocked on physical hardware or device/OS access — a second monitor, a fingerprint reader, an Apple display — rather than on a decision or another issue. |
 
 `ci-nightly` marks CI-failure mirrors; the taxonomy above does not apply to
 mirrored issues — do not retitle or relabel them to satisfy it. Note there is
 no automated ingest: mirroring GitHub intake into Linear is manual, per the
 tracker policy in the linear skill instructions.
 
-Do not assign the group/parent label `Agent` to issues.
+### Never-use labels
+
+These are live in the workspace and must never be assigned in VGS. The reason
+matters as much as the verdict: a label omitted with no explanation reads as an
+oversight, and gets "fixed" by someone assigning it.
+
+| Label | Why never |
+|-------|-----------|
+| `Agent` | Group/parent label. Assign one of its children, never the group itself. |
+| `Platform` | Group/parent label, same rule. |
+| `ios` | VGS is a Wayland shell for Hyprland or Niri. Can never apply. |
+| `macos` | Same. |
+| `windows` | Same. |
+| `cross-platform` | Same — VGS targets exactly one platform, so nothing here is cross-platform. |
+| `linux` | Vacuously true for every VGS issue, so it carries no information. |
+| `agent:iced` | Workspace-level label inherited by every team; serves hyprtrade. |
+| `agent:rust` | Same. |
+| `iced` | Same. |
+| `rust-core` | Same. |
+| `feature` | Duplicate of `enhancement` ("New capability or product behavior" vs "New feature or request"). VGS uses `enhancement`; `feature` is on zero VGS issues. It is workspace-level and may serve another team, so do not delete it — just do not assign it here. |
 """
 
 reviewer = ""

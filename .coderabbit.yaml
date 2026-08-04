@@ -15,12 +15,15 @@
 
 language: en-US
 
+# HARD LIMIT: 250 characters (CodeRabbit schema `tone_instructions.maxLength`).
+# Over it, CodeRabbit rejects the WHOLE file and reviews with default settings,
+# saying nothing on the PR. scripts/check-coderabbit-config.py enforces this and
+# every other documented limit against the vendored schema.
 tone_instructions: >-
-  Be terse and technical. State the defect, the input that triggers it, and the
-  consequence. Skip praise, diff restatements, and summaries of what the code
-  already says. One finding per thread. If you are not certain a finding is
-  real, say which part you could not verify instead of dressing it up in
-  plausible rationale — a confident wrong finding costs more than a hedged one.
+  Terse and technical. Give the defect, its triggering input, and the
+  consequence. No praise, diff restatement, or summary. One finding per thread.
+  If unsure, name the part you could not verify — a confident wrong finding
+  costs more than a hedged one.
 
 early_access: false
 enable_free_tier: true

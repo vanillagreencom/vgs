@@ -76,13 +76,17 @@ pkg_postinst() {
 	optfeature "terminal file manager for the launcher Yazi folder opener" app-misc/yazi
 	optfeature "launcher recent-directory search" app-shells/zoxide
 	optfeature "region OCR" app-text/tesseract
+	optfeature "desktop-entry cache refresh after installing a web app" dev-util/desktop-file-utils
 	optfeature "greeter and keyring integration" gnome-base/gnome-keyring
 	optfeature "file manager for the launcher folder opener" gnome-base/nautilus
 	optfeature "terminal for VGS terminal actions" gui-apps/foot
+	optfeature "launcher type-out into the focused window" gui-apps/wtype
 	optfeature "greeter and keyring integration" gui-libs/greetd
 	optfeature "file manager for the launcher folder opener" kde-apps/dolphin
 	optfeature "terminal for VGS terminal actions" kde-apps/konsole
 	optfeature "font cache refresh after a font change" media-libs/fontconfig
+	optfeature "Bluetooth audio codec selection" media-libs/libpulse
+	optfeature "audio visualizer widget" media-sound/cava
 	optfeature "screen recording" media-video/ffmpeg
 	optfeature "file thumbnails" media-video/ffmpegthumbnailer
 	optfeature "per-interface network usage" net-analyzer/bandwhich
@@ -91,8 +95,12 @@ pkg_postinst() {
 	optfeature "Tailscale widget" net-vpn/tailscale
 	optfeature "faster launcher file search" sys-apps/fd
 	optfeature "launcher text search" sys-apps/ripgrep
+	optfeature "fingerprint unlock" sys-auth/fprintd
+	optfeature "privileged actions run from the shell (user management, some system settings)" sys-auth/polkit
 	optfeature "cloud sync streaming mounts" sys-fs/fuse
-	optfeature "reads and sets default applications" x11-misc/xdg-utils
+	optfeature "Qt 5 application theming" x11-misc/qt5ct
+	optfeature "Qt 6 application theming" x11-misc/qt6ct
+	optfeature "default-application queries, opening files and URLs in their default application" x11-misc/xdg-utils
 	optfeature "terminal for VGS terminal actions" x11-terms/alacritty
 	optfeature "terminal for VGS terminal actions" x11-terms/gnome-terminal
 	optfeature "terminal for VGS terminal actions" x11-terms/kitty

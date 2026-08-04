@@ -47,7 +47,9 @@ jobs:
           merge-multiple: true
           path: dist
       - run: git archive --format=tar --prefix="vgs-$(cat VERSION)/" HEAD | gzip -n -9 > "dist/vgs-$(cat VERSION)-source.tar.gz"
-      - run: (cd dist && sha256sum *.tar.gz > SHA256SUMS)
+      # `--` so an artifact whose name starts with a dash cannot be read as an
+      # option (shellcheck SC2035).
+      - run: (cd dist && sha256sum -- *.tar.gz > SHA256SUMS)
       - uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65
         with:
           generate_release_notes: true
