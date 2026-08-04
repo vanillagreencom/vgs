@@ -10,8 +10,10 @@ import qs.Widgets
 // pill and click it again (VGS-55). That gesture was undiscoverable, had no
 // interactive affordance, and repeated on every grant forever. A modal is
 // strictly stronger than the pointer heuristics it replaces: hover cannot
-// reach it, an accidental double-click on the pill cannot dismiss it, and
-// confirming means clicking a control that says what it does.
+// reach it, and confirming takes an explicit activation of a control that says
+// what it does. The second click of a double-click on the pill lands on the
+// modal background, which declines — it can dismiss the prompt, but it can
+// never grant.
 //
 // Two safety properties are deliberate and must survive edits:
 //   * Cancel is the default action. `selectedButton` starts at `cancelButton`,

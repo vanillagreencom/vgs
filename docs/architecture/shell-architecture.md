@@ -80,8 +80,9 @@ Runtime name: `vshell`.
     things:
     - **An accidental double-click.** The confirmation is
       `Modals/SudoGrantConfirmModal.qml`: a modal with explicit Cancel/Grant
-      controls, opened by the click and satisfied only by clicking the grant
-      control inside it. Cancel is the default — it is what carries focus, and
+      controls, opened by the click and satisfied only by activating the grant
+      control inside it — clicking it, or moving focus to it and pressing
+      Return. Cancel is the default — it is what carries focus, and
       what Escape, a background click and the close button do — so the
       destructive action is never one stray Return away. Until VGS-55 this was
       a toast plus a pointer gesture (move off the pill, click again, no sooner

@@ -63,8 +63,10 @@ PluginComponent {
     // screen was interactive and the requirement was discoverable only by
     // reading the toast. It is now SudoGrantConfirmModal, which is strictly
     // stronger: hover cannot reach it, an accidental double-click on the pill
-    // cannot dismiss it, and confirming means clicking a control that says what
-    // it does. `isDirectActivation` stays — routing hover into a
+    // cannot confirm — its second click lands on the modal background, which
+    // declines — and granting takes an explicit activation (clicking the grant
+    // control, or moving focus to it and pressing Return) of a control that
+    // says what it does. `isDirectActivation` stays — routing hover into a
     // modal-opening call is still wrong.
 
     // The drop-in the helper will write, from `sudo-toggle status --json`. Shown
