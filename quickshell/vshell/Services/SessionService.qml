@@ -236,11 +236,11 @@ Singleton {
         const finalEnv = Object.assign({}, cursorEnv, overrideEnv);
 
         if (desktopEntry.runInTerminal) {
-            const terminal = SessionData.resolveTerminal() || "xterm";
             const escapedCmd = cmd.map(arg => escapeShellArg(arg)).join(" ");
             const shellCmd = prefix.length > 0 ? `${prefix} ${escapedCmd}` : escapedCmd;
             Quickshell.execDetached({
-                command: [terminal, "-e", "sh", "-c", shellCmd],
+                // `vshell terminal` owns which terminal and how it takes -e.
+                command: [Paths.vshellCli, "terminal", "exec", "--", "sh", "-c", shellCmd],
                 workingDirectory: workDir,
                 environment: finalEnv
             });

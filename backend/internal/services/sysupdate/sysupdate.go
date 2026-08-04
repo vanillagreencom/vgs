@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -27,7 +28,7 @@ type Manager struct {
 	paru         string
 	pacman       string
 	flatpak      string
-	uwsm         string
+	vshell       string
 	terminalExec string
 
 	mu            sync.Mutex
@@ -105,7 +106,7 @@ func Register(srv *server.Server, log *slog.Logger) (*Manager, error) {
 	m.paru, _ = exec.LookPath("paru")
 	m.pacman, _ = exec.LookPath("pacman")
 	m.flatpak, _ = exec.LookPath("flatpak")
-	m.uwsm, _ = exec.LookPath("uwsm")
+	m.vshell = vshellCLIPath()
 	m.terminalExec, _ = exec.LookPath("xdg-terminal-exec")
 	if m.checkupdates == "" && m.paru == "" && m.flatpak == "" {
 		return nil, fmt.Errorf("no supported update counter found")
@@ -432,15 +433,56 @@ func (m *Manager) upgradeCommand(p upgradeParams) string {
 	return strings.Join(parts, " && ") + "; printf '\\nUpdates command finished. Press Enter to close... '; read -r _"
 }
 
-func (m *Manager) terminalArgv(terminal, cmdline string) ([]string, error) {
-	if m.uwsm != "" && m.terminalExec != "" {
-		return []string{m.uwsm, "app", "--", m.terminalExec, "--app-id=TUI.float", "--", "sh", "-lc", cmdline, "vshell-update"}, nil
+// vshellCLIPath locates the VGS CLI the same way the QML side anchors on
+// Paths.vshellCli, rather than trusting the daemon's inherited PATH. A source
+// install puts the CLI only in ~/.local/bin, which a systemd user unit need not
+// have on PATH; falling through to the xdg-terminal-exec branch there would
+// walk straight back into the VGS-54 failure. `bin/vshell` exports VSHELL_ROOT
+// before exec'ing the backend, so that is the reliable anchor.
+func vshellCLIPath() string {
+	if root := os.Getenv("VSHELL_ROOT"); root != "" {
+		path := filepath.Join(root, "bin", "vshell")
+		if st, err := os.Stat(path); err == nil && !st.IsDir() {
+			return path
+		}
 	}
-	if m.terminalExec != "" {
-		return []string{m.terminalExec, "--", "sh", "-lc", cmdline, "vshell-update"}, nil
+	if path, err := exec.LookPath("vshell"); err == nil {
+		return path
+	}
+	if home, err := os.UserHomeDir(); err == nil {
+		path := filepath.Join(home, ".local", "bin", "vshell")
+		if st, err := os.Stat(path); err == nil && !st.IsDir() {
+			return path
+		}
+	}
+	return ""
+}
+
+// terminalArgv defers to `vshell terminal exec`, the single terminal resolver
+// (VGS-32): it owns the VGS setting, $TERMINAL, xdg-terminals.list, the
+// installed-terminal fallback and the optional uwsm scope. The backend only
+// falls back to naming a terminal itself when the CLI is not on PATH, and never
+// to `xdg-terminal-exec`, which no supported install route provides (VGS-54).
+//
+// A terminal the caller asked for is forwarded as --prefer rather than
+// discarded: deferring resolution must not mean ignoring an explicit choice.
+// --wait keeps this process alive for the whole upgrade, because waitUpgrade
+// treats its exit as the transaction finishing; without it the helper returns
+// as soon as the window is up and a second package-manager run could start on
+// top of the first.
+func (m *Manager) terminalArgv(terminal, cmdline string) ([]string, error) {
+	if m.vshell != "" {
+		argv := []string{m.vshell, "terminal", "exec", "--tui", "--wait"}
+		if terminal != "" {
+			argv = append(argv, "--prefer", terminal)
+		}
+		return append(argv, "--", "sh", "-lc", cmdline, "vshell-update"), nil
 	}
 	if terminal != "" {
 		return []string{terminal, "-e", "sh", "-lc", cmdline, "vshell-update"}, nil
+	}
+	if m.terminalExec != "" {
+		return []string{m.terminalExec, "--", "sh", "-lc", cmdline, "vshell-update"}, nil
 	}
 	return nil, fmt.Errorf("no terminal launcher found")
 }

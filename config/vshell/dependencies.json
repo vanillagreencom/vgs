@@ -20,13 +20,9 @@
     "gdbus": "Fallback path of the ghostty theme-reload hook, behind a SIGUSR2 attempt. Same reasoning as `nvim`.",
     "magick": "Third choice in the wallpaper-thumbnail chain, behind Pillow and the already-declared `ffmpeg`.",
     "xclip": "X11 clipboard fallback behind the declared `wl-copy`. Unreachable in a supported Hyprland/Niri session.",
+    "xdg-terminal-exec": "First choice of the terminal resolver, but it *launches* a terminal rather than being one: counting it as an alternative in the `terminal` group would report that group available on a system with no terminal at all, which is the VGS-54 defect. AUR-only, so it can never be a requirement either.",
     "g++": "Compiles the vendored third_party/asdcontrol for Apple display brightness. The preferred Apple path is pure-Python hidraw and packaging can ship a prebuilt binary, so a compiler is not a dependency of the feature.",
-    "c++": "Alternative compiler name, same reasoning as `g++`.",
-    "dolphin": "Internal: picks a file manager for generated theme previews.",
-    "thunar": "Internal: same as `dolphin`.",
-    "nautilus": "Deferred to VGS-32. Also a launcher folder opener, but declaring it now would entrench the hardcoded choice VGS-32 replaces with the XDG default-apps layer.",
-    "yazi": "Deferred to VGS-32. The launcher's Yazi opener needs `yazi` AND `xdg-terminal-exec`; declaring one half would misreport the gate.",
-    "xdg-terminal-exec": "Deferred to VGS-32, which centralises terminal resolution. Currently unowned by any landed change."
+    "c++": "Alternative compiler name, same reasoning as `g++`."
   },
   "features": {
     "base": {
@@ -197,10 +193,33 @@
       ]
     },
     "sudo-toggle": {
+      "$comment": [
+        "Status and REVOKE, which deliberately need no terminal. The widget",
+        "gates on `vshell sudo-toggle status` rather than on deps, so the",
+        "safety valve works regardless; this group exists so `deps status`",
+        "says the same thing the runtime does. VGS-11 exists because gating",
+        "both directions on a terminal stranded machines in the escalated",
+        "state, so requiring `terminal` here would make the reporting layer",
+        "contradict a stated invariant."
+      ],
       "commands": [
         "sudo",
         "visudo"
+      ]
+    },
+    "sudo-toggle-grant": {
+      "$comment": [
+        "The GRANT half only. Enabling passwordless sudo always goes through a",
+        "terminal so the user sees what is happening and sudo can authenticate,",
+        "so this half really is unavailable without one -- and saying so here is",
+        "what keeps the `sudo-toggle` group above honest about revoke."
       ],
+      "requiresFeatures": [
+        "sudo-toggle",
+        "terminal"
+      ]
+    },
+    "terminal": {
       "anyCommands": [
         [
           "ghostty",
@@ -208,8 +227,37 @@
           "alacritty",
           "foot",
           "wezterm",
+          "konsole",
+          "gnome-terminal",
           "xterm"
         ]
+      ]
+    },
+    "default-apps": {
+      "commands": [
+        "xdg-mime"
+      ]
+    },
+    "file-manager": {
+      "anyCommands": [
+        [
+          "nautilus",
+          "dolphin",
+          "thunar"
+        ]
+      ]
+    },
+    "launcher-folder-open-yazi": {
+      "commands": [
+        "yazi"
+      ],
+      "requiresFeatures": [
+        "terminal"
+      ]
+    },
+    "app-scopes": {
+      "commands": [
+        "uwsm"
       ]
     },
     "cloud-sync": {

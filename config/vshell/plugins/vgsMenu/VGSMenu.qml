@@ -837,7 +837,7 @@ PluginComponent {
             Quickshell.execDetached([Paths.vshellCli, "cl", "copy", path]);
         else if (action.id === "terminal") {
             const directory = item.data?.is_dir ? path : path.substring(0, path.lastIndexOf("/"));
-            Quickshell.execDetached({ command: [SessionData.resolveTerminal() || "xterm"], workingDirectory: directory });
+            Quickshell.execDetached({ command: [Paths.vshellCli, "terminal", "open"], workingDirectory: directory });
         }
         close();
     }

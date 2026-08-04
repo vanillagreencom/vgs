@@ -120,9 +120,12 @@ PluginComponent {
         // `sh -lc <command>` into the opaque "option requires an argument" error.
         // A fixed script plus an environment argv preserves arbitrary shell syntax
         // while ensuring -c always has an argument and a canonical $0 value.
+        // `vshell terminal` is the single terminal resolver (VGS-54/VGS-32):
+        // it owns $TERMINAL, xdg-terminals.list, the installed-terminal
+        // fallback and the optional uwsm scope, so nothing here may name a
+        // terminal binary.
         return [
-            "uwsm", "app", "--",
-            "xdg-terminal-exec", "--app-id=TUI.float", "--",
+            root.updateCommand, "terminal", "exec", "--tui", "--",
             "env", "VSHELL_UPDATE_COMMAND=" + command,
             "sh", "-lc", "eval \"$VSHELL_UPDATE_COMMAND\"", "vshell-update"
         ];
