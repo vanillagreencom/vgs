@@ -155,6 +155,27 @@ assert.ok(/permanent NOPASSWD rule/.test(modalSource) && /no expiry/.test(modalS
 assert.ok(/Don't ask me again/.test(modalSource),
     "the modal must offer the opt-out the issue asks for");
 
+// --- Every decline path really declines ---------------------------------------
+//
+// The assertions above pin which control is *selected*; these pin what the
+// dismissal paths actually do. Without them a regression could route a
+// dismissal into `confirmed` — starting a NOPASSWD request from a background
+// click or the close box — and this harness would still pass.
+
+assert.ok(/function _finish\(button\)\s*\{[\s\S]*?if \(grant\)\s*root\.confirmed\(skipFuture\);\s*else\s*root\.cancelled\(\);/.test(modalSource),
+    "cancel paths must emit cancelled rather than confirmed");
+assert.ok(/Qt\.Key_Return:[\s\S]*?Qt\.Key_Enter:[\s\S]*?root\._finish\(root\.selectedButton\)/.test(modalSource),
+    "Return and Enter must invoke the selected control, not a hardcoded one");
+assert.ok(/VgsActionButton\s*\{[\s\S]*?iconName:\s*"close"[\s\S]*?onClicked:\s*root\._finish\(root\.cancelButton\)/.test(modalSource),
+    "the close control must decline");
+// The grant control is the only thing allowed to name confirmButton. Every
+// other path passes cancelButton, or selectedButton — which is cancelButton
+// unless the user moved focus on purpose.
+assert.equal((modalSource.match(/_finish\(root\.confirmButton\)/g) || []).length, 1,
+    "exactly one control may confirm; a second confirm call site is a second grant path");
+assert.equal((modalSource.match(/root\.confirmed\(/g) || []).length, 1,
+    "the grant signal must have exactly one emitter, inside _finish");
+
 // --- The suppression flag is a normal, resettable setting ---------------------
 
 const specSource = fs.readFileSync(SETTINGS_SPEC, "utf8");
