@@ -72,6 +72,22 @@ Item {
         VGSThemeService.generateMissingPreviews();
     }
 
+    function showThemeCatalog() {
+        themeCatalogLoader.active = true;
+        if (themeCatalogLoader.item)
+            themeCatalogLoader.item.show();
+    }
+
+    LazyLoader {
+        id: themeCatalogLoader
+        active: false
+
+        ThemeCatalogBrowser {
+            id: themeCatalogBrowser
+            Component.onCompleted: themeCatalogBrowser.parentModal = root.parentModal
+        }
+    }
+
     Timer {
         id: revertConfirmTimer
         interval: 4000
@@ -268,6 +284,16 @@ Item {
                             if (bar)
                                 bar.triggerDashTab(SettingsData.dashTabIndexForId("themes"));
                         }
+                    }
+
+                    // Packages ship one theme, so "Browse Themes" alone browses a
+                    // single entry on a fresh install. This is the discovery path
+                    // for the rest.
+                    VgsButton {
+                        variant: "secondary"
+                        iconName: "cloud_download"
+                        text: I18n.tr("Download More Themes")
+                        onClicked: root.showThemeCatalog()
                     }
 
                     VgsButton {

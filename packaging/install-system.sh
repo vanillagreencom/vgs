@@ -19,6 +19,22 @@ case "$theme_bundle" in
     ;;
 esac
 
+# Screenshots of the themes this bundle does not install, so `vshell theme
+# catalog` can show them before they are downloaded. `all` needs none of this:
+# every theme ships its own preview.png.
+install_catalog_previews() {
+  install -d "$lib/themes/catalog-previews"
+  shopt -s nullglob
+  local theme name
+  for theme in "$root"/themes/*; do
+    [[ -f "$theme/theme.json" ]] || continue
+    name="${theme##*/}"
+    [[ -f "$lib/themes/$name/preview.png" ]] && continue
+    [[ -f "$theme/preview.png" ]] || continue
+    install -Dm644 "$theme/preview.png" "$lib/themes/catalog-previews/$name.png"
+  done
+}
+
 install_themes() {
   case "$theme_bundle" in
     all)
@@ -29,6 +45,14 @@ install_themes() {
       cp -a "$root/themes/coppernight" "$root/themes/targets" "$lib/themes/"
       install -Dm644 "$root/themes/BACKGROUNDS-ATTRIBUTION.md" "$lib/themes/BACKGROUNDS-ATTRIBUTION.md"
       install -Dm644 "$root/themes/THEMES-ATTRIBUTION.md" "$lib/themes/THEMES-ATTRIBUTION.md"
+      # The download catalog: what `vshell theme catalog` lists, and the pinned,
+      # checksummed manifest it verifies every downloaded file against.
+      install -Dm644 "$root/themes/catalog.json" "$lib/themes/catalog.json"
+      # Every theme's screenshot, ~23 MiB, against the ~1.1 GiB of wallpapers
+      # that motivated the split. Without them the download browser can list the
+      # other themes but not show any of them, so they belong in the base
+      # package even though their palettes and wallpapers do not.
+      install_catalog_previews
       ;;
     extras)
       install -d "$lib/themes"

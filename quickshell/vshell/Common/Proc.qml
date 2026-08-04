@@ -67,6 +67,27 @@ Singleton {
         let errSeen = false;
         let timedOut = false;
 
+        let completed = false;
+
+        function collectStreams() {
+            if (!outSeen) {
+                try {
+                    capturedOut = proc.stdout.text || "";
+                } catch (e) {
+                    capturedOut = "";
+                }
+                outSeen = true;
+            }
+            if (!errSeen) {
+                try {
+                    capturedErr = proc.stderr.text || "";
+                } catch (e) {
+                    capturedErr = "";
+                }
+                errSeen = true;
+            }
+        }
+
         timeoutTimer.interval = launchedTimeoutMs;
         timeoutTimer.triggered.connect(function () {
             if (!exitSeen) {
@@ -74,6 +95,12 @@ Singleton {
                 proc.running = false;
                 exitSeen = true;
                 exitCodeValue = 124;
+                // The timeout exists to rescue a run whose streams never finish
+                // — a process that fails to start emits no streamFinished at
+                // all — so it must satisfy the completion gate rather than wait
+                // on it, or the callback never fires and the caller hangs
+                // forever with no error.
+                collectStreams();
                 maybeComplete();
             }
         });
@@ -106,8 +133,11 @@ Singleton {
         });
 
         function maybeComplete() {
-            if (!exitSeen || !outSeen || !errSeen)
+            if (completed || !exitSeen || !outSeen || !errSeen)
                 return;
+            // A late stream signal after the timeout completed the run must not
+            // fire the callback twice or destroy the objects again.
+            completed = true;
             timeoutTimer.stop();
             if (launchedCallback && typeof launchedCallback === "function") {
                 try {
