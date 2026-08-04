@@ -698,11 +698,68 @@ const sessionDataPath = path.join(repoRoot, "quickshell", "vshell", "Common", "S
 // swallowed 38 KB of SettingsData.qml, which silently hid every declaration in
 // the gap and produced 31 false positives. Newlines inside skipped regions are
 // preserved so reported line numbers stay true.
+// A `/` opens a regex literal only where a value may begin. After a value —
+// an identifier, a literal, `)` or `]` — it is division. Keywords are the
+// exception: `return /re/` is a regex, `count / 2` is not.
+const VALUE_KEYWORDS = new Set([
+  "return", "typeof", "instanceof", "in", "of", "new", "delete", "void",
+  "throw", "case", "do", "else", "yield", "await",
+]);
+
+function regexCanStartHere(out) {
+  let j = out.length - 1;
+  while (j >= 0 && /\s/.test(out[j])) j--;
+  if (j < 0) return true;
+  const ch = out[j];
+  if ("(,=:[!&|?{};+-*%~^<>".includes(ch)) return true;
+  if (!/[\w$]/.test(ch)) return false;
+  let k = j;
+  while (k >= 0 && /[\w$]/.test(out[k])) k--;
+  return VALUE_KEYWORDS.has(out.slice(k + 1, j + 1));
+}
+
 function scrubQml(src) {
   let out = "";
   for (let i = 0; i < src.length; ) {
     const c = src[i];
     const d = src[i + 1];
+
+    // Regex literals must be skipped whole. A quote inside one is not a string
+    // delimiter, and treating it as one desynchronises the scanner for the rest
+    // of the file: `replace(/'/g, "'\\''")` at SettingsData.qml:1564 blanked
+    // everything after it, so undeclared assignments below that line were
+    // invisible and this check reported clean without examining them.
+    if (c === "/" && d !== "/" && d !== "*" && regexCanStartHere(out)) {
+      let j = i + 1;
+      let inClass = false;
+      let closed = false;
+      while (j < src.length) {
+        const ch = src[j];
+        if (ch === "\\") {
+          j += 2;
+          continue;
+        }
+        if (ch === "\n") break; // a regex literal cannot span lines
+        if (ch === "[") inClass = true;
+        else if (ch === "]") inClass = false;
+        else if (ch === "/" && !inClass) {
+          closed = true;
+          break;
+        }
+        j++;
+      }
+      if (closed) {
+        j++;
+        while (j < src.length && /[a-z]/.test(src[j])) j++; // trailing flags
+        // Stands in for the literal: no identifier, no `=`, so it cannot
+        // invent a declaration or an assignment.
+        out += "0";
+        i = j;
+        continue;
+      }
+      // Unterminated: it was division after all. Fall through and emit the `/`.
+    }
+
     if (c === "/" && d === "/") {
       while (i < src.length && src[i] !== "\n") i++;
       continue;
