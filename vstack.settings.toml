@@ -183,6 +183,10 @@ REVIEW_GATE_CONTEXT = "Review gate"
 # below routes a rate-limited/skipped/queued "pass" to NOT-EVIDENCE, and
 # newest-row semantics mean a stale success never survives a newer
 # non-success row. The empty-list posture bought nothing those two do not.
+# NOTE: CodeRabbit is disabled org-wide (owner, 2026-08-08) — its entry here
+# is inert until/unless it returns (it posts nothing to match). Kept because
+# the value is fleet-identical config; pruning happens fleet-wide in one
+# pass (vstack#1113), never as per-repo drift.
 REVIEW_GATE_TRUSTED_STATUS_CONTEXTS = "CodeRabbit;copilot-pull-request-reviewer"
 
 # A trusted "pass" must prove analysis RAN: a success whose check-run
