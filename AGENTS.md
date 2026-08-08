@@ -172,7 +172,6 @@ git diff --check
 scripts/check-workflows.sh
 scripts/check-coderabbit-config.py
 scripts/check-review-gate-vendor.sh
-scripts/test-review-gate-step.sh
 third_party/review-gate/scripts/review-predicate-selftest.sh
 scripts/qml-smoke.sh --nested --require-static
 scripts/check-validation-safety.sh
@@ -281,52 +280,39 @@ at `third_party/review-gate/`. The engine posts one commit status —
 that exact head or while threads are unresolved, `failure` on
 changes-requested, `success` only from an evidence-backed evaluation.
 
-Three moving parts:
+Two moving parts (the v2 single-writer architecture, cutover 2026-08-08 —
+replacing the old `ci.yml` gate job + `approval-rerun.yml` +
+`approval-sweep.yml` mesh):
 
 | Piece | Role |
 |-------|------|
-| `ci.yml` § `review-gate` | Evaluates the predicate from the **base** revision with a read-only checkout and posts the status. Latency optimization. |
-| `ci.yml` § `review-gate-selftest` | Ungated (nothing gates *it*), but **blocking**: `ci-ok` takes `needs:` on it. Pins the engine's decision table offline, plus `scripts/test-review-gate-step.sh` for the CI step that consumes it. |
-| `approval-rerun.yml` / `approval-sweep.yml` | The convergence writers of record — non-PR triggers, default-branch checkout. The sweep every 15 minutes is what catches thread resolution, which has no Actions trigger at all. |
+| `.github/workflows/review-gate-writer.yml` | The ONLY writer of the gate status. Runs the **default-branch** engine (`third_party/review-gate/scripts/review-writer.sh`) on every leg — PR pushes, review events, status events, merge-group entries, a 15-minute cron floor for transitions with no webhook (thread resolution; fork review evidence) — and converges every open PR per run. A PR can never influence its own gate evaluation. |
+| `ci.yml` § `review-gate-selftest` | Ungated (nothing gates *it*), but **blocking**: `ci-ok` takes `needs:` on it. Pins the engine's decision table offline against VGS's own trust values. |
 
-`ci-ok` deliberately does **not** wait on the gate. The engine's default shape
-skips heavy jobs until review lands, which pays off for lanes that run for
-minutes; VGS's whole suite is ~30s, so gating it would only delay the author's
-first signal. The gate blocks the merge, not the compute.
-
-The gate job checks out the **base** revision, never the PR head — the safe
-posture never runs PR-controlled predicate code under a token that can post the
-status which opens the gate. The permanent consequence is that a base without
-the engine (the adoption PR; a PR branched before the vendor commit; a deleted
-or renamed vendor tree) cannot be evaluated. That case posts `pending` with the
-reason and exits 0: merge stays blocked, which is correct for a head with no
-evaluated evidence. It is never `failure` — that means "changes requested", a
-false verdict — and never a crash, which posts nothing and so neither blocks nor
-informs. `scripts/test-review-gate-step.sh` drives the step, extracted from the
-shipped YAML, over all of those states.
+`ci-ok` deliberately takes no gate condition and no fast/full split. The
+engine's recommended split holds heavy jobs to the merge queue, which pays off
+for lanes that run for minutes; VGS's whole suite is ~30s, so every job runs on
+every leg. The gate blocks the merge, not the compute.
 
 **Ungated is not the same as non-blocking**, and conflating them left a hole:
-the selftest ran on every event but was not a required context, and
-`Review gate` evaluates the *base* predicate, so it stays green on a PR that
+the selftest ran on every event but was not a required context, and the writer
+evaluates the *default-branch* predicate, so the gate stays green on a PR that
 breaks the head's predicate. A change breaking `review-predicate.sh` could
 merge with its own selftest red. `ci-ok` therefore takes `needs:
 review-gate-selftest` — blocking without gating, and it hands out no token,
-since the selftest holds only `contents: read`. `ci-ok` deliberately does not
-`needs:` the gate job, which holds `statuses: write`.
+since the selftest holds only `contents: read`.
 
-All three gate writers — the `review-gate` job, `approval-rerun.yml` and
-`approval-sweep.yml` — share one repo-wide `review-gate-writer` concurrency
-group. Two writers evaluating different snapshots of the same head can post out
-of order, and an older `success` overwriting a newer `failure` reopens merge
-until the next sweep. The `review-gate` job is job-scoped into that group so the
-rest of CI keeps its per-PR group.
+Because the writer always runs the merged engine, a PR that repairs the gate
+machinery itself can never open its own gate — the ruleset's bypass actor is
+the sanctioned merge path for gate-repair-class PRs (state it in the merge
+commit; precedent drovr#444 / memsira#441 / hyprtrade#525).
 
 Per-repo trust lives in `vstack.settings.toml` under `REVIEW_GATE_*`, each key
 carrying the reason for its VGS value. The one that is not optional:
-`REVIEW_GATE_REVIEW_OBJECT_TRUSTED_LOGINS` names the three reviewer bots
+`REVIEW_GATE_REVIEW_OBJECT_TRUSTED_LOGINS` names the reviewer bots
 explicitly. `vanillagreencom/vgs` is **public**, so an empty list — "any
 non-author" — would let any GitHub account open the gate with a drive-by
-`COMMENTED` review, with neither bot having analysed the head. A gate a
+`COMMENTED` review, with no trusted bot having analysed the head. A gate a
 passer-by can open is worse than no gate, because it reads as protection.
 
 `REVIEW_GATE_REVIEW_OBJECT_MIN_STATE` stays `"any"` because that list is now

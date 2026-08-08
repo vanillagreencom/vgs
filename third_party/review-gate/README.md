@@ -1,29 +1,125 @@
 # review-gate
 
-Org-wide PR review-gate engine. One vendored predicate script is the single
-source of truth for "is this PR head reviewed?"; a commit status posted from
-its verdict blocks merge without false reds; convergence scripts and two
-scaffold workflows keep the status current as review state changes; an
-offline decision-table selftest is the engine's portable proof, run ungated
-in every consumer's CI.
+Blocks a merge until the PR head has actually been **reviewed** — by a bot, a
+human, or whatever mix a repo uses. It answers one question and posts the
+answer as a commit status your branch rules require.
 
-- `SKILL.md` — status model, evidence sources, trust model, settings keys.
-- `scripts/review-predicate.sh` — the predicate (verdict on stdout, exit 2 =
-  no verdict, take no action).
-- `scripts/approval-refire.sh` — status convergence + rerun-in-place for one
-  PR head.
-- `scripts/review-predicate-selftest.sh` — offline selftest; also generates
-  approve/near-miss cases from the invoking repo's own `REVIEW_GATE_*`
-  settings.
-- `scripts/lib/settings.sh` — env > `vstack.settings.toml` > default
-  resolution shared by the scripts.
-- `templates/` — `approval-rerun.yml` / `approval-sweep.yml` one-time
-  adoption scaffolds (repo-owned after copy).
-- `references/adoption.md` — CI wiring (both trust postures), branch
-  protection, merge-queue notes, per-repo settings, per-consumer adoption
-  shapes.
-- `vstack.settings.toml.example` — commented per-repo defaults merged into a
-  project's `vstack.settings.toml` on install/refresh.
+It does **not** check your tests. That is your branch protection's job, and
+keeping the two separate is what makes this small enough to trust.
 
-Per-repo trust lives in `vstack.settings.toml` (`REVIEW_GATE_*` keys) —
-nothing repo-specific is hard-coded in the engine.
+## How it flows
+
+```
+  ┌──────────────────────────────────────────────────────────────────┐
+  │  YOU OPEN A PR                                                   │
+  └───────────────────────────────┬──────────────────────────────────┘
+                                  │
+              ┌───────────────────┴───────────────────┐
+              │                                       │
+     ╔════════▼═════════╗                    ╔════════▼═════════╗
+     ║  YOUR CI         ║                    ║  YOUR REVIEWERS  ║
+     ║ runs your checks ║                    ║  bots + humans   ║
+     ╚════════╤═════════╝                    ╚════════╤═════════╝
+              │                                       │
+              │                          approval, or a clean-analysis
+              │                          check, or an operator override
+              │                                       │
+              │                              ┌────────▼─────────┐
+              │                              │   THE PREDICATE  │
+              │                              │ is this exact    │
+              │                              │ head reviewed?   │
+              │                              └────────┬─────────┘
+              │                                       │
+              │                              ┌────────▼─────────┐
+              │                              │   THE WRITER     │
+              │                              │ posts the answer │
+              │                              └────────┬─────────┘
+              │                                       │
+     ┌────────▼────────┐                     ┌────────▼─────────┐
+     │ "tests" ✓/✗     │                     │ "Review gate"    │
+     │ (your checks)   │                     │ ✓ reviewed       │
+     │                 │                     │ … awaiting       │
+     │                 │                     │ ✗ changes wanted │
+     └────────┬────────┘                     └────────┬─────────┘
+              │                                       │
+              └───────────────────┬───────────────────┘
+                                  │  BOTH must be green
+                    ┌─────────────▼──────────────┐
+                    │      MERGE QUEUE           │
+                    │  combines your PR with     │
+                    │  the latest main and runs  │
+                    │  the full suite on THAT    │
+                    └─────────────┬──────────────┘
+                                  │ green
+                    ┌─────────────▼──────────────┐
+                    │           MAIN             │
+                    └────────────────────────────┘
+```
+
+The two columns are independent on purpose. The gate never inspects your CI,
+and your CI never waits on the gate. Your branch rules require both.
+
+**Where the CI savings come from:** the left column does not have to be your
+full test suite. The recommended shape runs only fast, cheap checks on each
+push — so multiple rounds of bot review never re-bill the expensive tests —
+and lets the merge queue run the full suite exactly once, on the merged
+result, after review is done. Repos that want maximum signal per push can
+still run everything on every push; that is a per-repo CI choice this engine
+deliberately stays out of.
+
+## What the gate accepts as "reviewed"
+
+Different reviewers signal differently, so the predicate accepts any of:
+
+- a **review approval** at the exact head from a trusted login;
+- a **clean-analysis check or status** succeeding on that head — for bots that
+  only file a review when they have complaints (a "pass" that says *rate
+  limited* or *skipped* is treated as silence, not approval). On both
+  surfaces only the NEWEST row/run per name is considered: a reviewer
+  starting a fresh round withdraws its own older clean success, so a newer
+  pending, failed, or skip-marked run reads as silence, never as the old
+  approval;
+- a **comment-form pass** binding a trusted bot's comment to that head's sha;
+- an **operator override** status carrying a written reason — the escape
+  hatch for when every reviewer is down. It substitutes for *missing*
+  evidence only: it can never override a changes-requested or an unresolved
+  thread.
+
+A standing changes-requested or any unresolved review thread always blocks,
+whatever else is present. If an evidence read fails, the gate says so loudly
+and posts nothing rather than guessing.
+
+Push a new commit and evidence resets — it is bound to the exact head. The
+one exception is opt-in **carry-forward**: a docs-only or comment-only change
+can carry the previous head's review, so fixing a typo after review doesn't
+restart the whole cycle.
+
+## Before you adopt it
+
+Your repo must satisfy **one** of these, or untested code can reach main and
+this engine will not stop it:
+
+1. **A merge queue** whose required checks include your test suite
+   (recommended). The queue runs the suite on the merged result — once, on
+   the code that actually ships.
+2. **No held-back jobs** — every required check runs on every push.
+
+The failure mode this prevents: if you hold tests back until review and have
+no queue, GitHub records the held-back tests as *skipped*, and skipped counts
+as satisfied. A reviewed PR would merge untested.
+
+## Files
+
+| File | What it is |
+|---|---|
+| `SKILL.md` | The agent-facing contract: decision table, settings, operations. |
+| `scripts/review-predicate.sh` | Answers "is this head reviewed?" — verdict on stdout, exit 2 means no verdict, take no action. |
+| `scripts/review-writer.sh` | Posts that answer as the commit status. The whole writer. |
+| `scripts/review-predicate-selftest.sh` | Offline proof of the decision table; runs ungated in CI so a broken predicate reds its own job instead of approving everything. |
+| `templates/review-gate-writer.yml` | The one workflow to copy in. Repo-owned after copying. |
+| `tests/e2e-sandbox.sh` | Live replay against a throwaway repo — re-run it before changing the engine. |
+| `references/adoption.md` | Wiring, branch rules, per-repo settings. |
+| `references/settings.md` | Every `REVIEW_GATE_*` key and the security reasoning behind the trust ones. |
+
+Nothing repo-specific is hard-coded: consumers vendor `scripts/` via
+`vstack refresh` and configure trust in their own `vstack.settings.toml`.
