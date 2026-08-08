@@ -34,6 +34,9 @@ Item {
     property string hyprlandCurrentLayout: ""
     property string hyprlandKeyboard: ""
     property int hyprlandLayoutCount: 0
+    // Owns the greetd conversation, the memory writes and the keyboard. Exactly
+    // one screen may be primary; the rest render the same UI as live mirrors,
+    // driven by the shared GreeterState singleton.
     property bool isPrimaryScreen: true
 
     signal launchRequested
@@ -871,7 +874,14 @@ Item {
     Rectangle {
         anchors.fill: parent
         color: "transparent"
-        visible: root.isPrimaryScreen
+        // Rendered on every screen, not just the primary one: the login prompt
+        // should be readable wherever the user is looking. Username, password
+        // dots and auth status all read from the GreeterState singleton, so the
+        // non-primary copies mirror the real session rather than forking it.
+        // Input stays single-owner — GreeterSurface grants WlrKeyboardFocus
+        // only to the primary screen, and the greetd/GreetdMemory Connections
+        // below remain gated on isPrimaryScreen.
+        visible: true
 
         MouseArea {
             anchors.fill: parent

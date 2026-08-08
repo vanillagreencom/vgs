@@ -10234,6 +10234,9 @@ def cmd_greeter(argv: List[str]) -> int:
             return 1
     ensure_cache_dir(cache_dir_path, gid, run_uid=guid)
     sync_greeter_runtime(cache_dir_path, gid)
+    monitor_layout = capture_user_monitor_layout(target_user)
+    if monitor_layout:
+        write_json_file(cache_dir_path / GREETER_MONITORS_FILENAME, {"monitors": monitor_layout}, gid)
     theme = current_theme_json()
     session = current_session_json(theme)
     sync_profile_cache(cache_dir_path, target_user, settings, theme, session, gid, root_profile=True, run_uid=guid)
@@ -10312,6 +10315,82 @@ def greeter_primary_monitor(cache_path: Path) -> str:
     return monitor
 
 
+GREETER_MONITORS_FILENAME = "monitors.json"
+
+
+def _lua_number(value: float) -> str:
+    """Render a whole scale as `2`, not `2.0` — matching how monitor scales are
+    written by hand elsewhere and keeping the generated config diff-friendly."""
+    return str(int(value)) if float(value).is_integer() else repr(float(value))
+
+
+def capture_user_monitor_layout(target_user: str) -> List[Dict[str, Any]]:
+    """Snapshot the user's live Hyprland outputs for the greeter to reproduce.
+
+    The greeter compositor otherwise starts every output untransformed, so a
+    physically rotated panel renders the login UI sideways. `transform` is the
+    field that actually matters here; scale keeps the UI the size the user
+    already tuned for.
+
+    `greeter sync` re-execs itself as root, so the invoking session's Hyprland
+    environment is gone by the time this runs. Locate the instance socket under
+    the target user's runtime dir rather than trusting an inherited
+    HYPRLAND_INSTANCE_SIGNATURE.
+    """
+    try:
+        uid = pwd.getpwnam(target_user).pw_uid
+    except KeyError:
+        return []
+    hypr_dir = Path(f"/run/user/{uid}/hypr")
+    if not hypr_dir.is_dir():
+        return []
+    try:
+        instances = sorted(
+            (p for p in hypr_dir.iterdir() if p.is_dir()),
+            key=lambda p: p.stat().st_mtime,
+            reverse=True,
+        )
+    except OSError:
+        return []
+
+    for instance in instances:
+        env = {
+            **os.environ,
+            "HYPRLAND_INSTANCE_SIGNATURE": instance.name,
+            "XDG_RUNTIME_DIR": f"/run/user/{uid}",
+        }
+        try:
+            monitors = json.loads(run(["hyprctl", "monitors", "-j"], env=env).stdout or "[]")
+        except Exception:
+            continue
+        captured: List[Dict[str, Any]] = []
+        for monitor in monitors:
+            name = str(monitor.get("name") or "").strip()
+            # Same connector-shaped guard as greeter_primary_monitor: these
+            # names are interpolated into generated native Lua.
+            if not name or not re.fullmatch(r"[A-Za-z0-9._:-]+", name):
+                continue
+            # Virtual outputs (e.g. the Sunshine headless sink) do not exist at
+            # greetd time; a rule for an absent output is inert, but there is no
+            # reason to carry them.
+            if name.startswith("HEADLESS-"):
+                continue
+            captured.append({
+                "name": name,
+                "scale": float(monitor.get("scale") or 1) or 1.0,
+                "transform": int(monitor.get("transform") or 0),
+            })
+        if captured:
+            return captured
+    return []
+
+
+def greeter_monitor_layout(cache_path: Path) -> List[Dict[str, Any]]:
+    data = load_json_file(cache_path / GREETER_MONITORS_FILENAME)
+    monitors = data.get("monitors")
+    return monitors if isinstance(monitors, list) else []
+
+
 def render_hyprland_greeter_config(qs_cmd: str, cache_path: Path, cursor_env: Dict[str, str]) -> str:
     lines = [
         "-- Generated transiently by VGS for greetd.",
@@ -10322,6 +10401,26 @@ def render_hyprland_greeter_config(qs_cmd: str, cache_path: Path, cursor_env: Di
     for key in ("XCURSOR_PATH", "XCURSOR_THEME", "XCURSOR_SIZE"):
         if cursor_env.get(key):
             lines.append(f"hl.env({_lua_string(key)}, {_lua_string(cursor_env[key])})")
+    lines.append("")
+    # Reproduce the user's output orientation. `mode`/`position` stay at
+    # preferred/auto on purpose: the greeter only needs each panel upright and
+    # legibly scaled, and a captured mode string that no longer matches (cable
+    # swap, different EDID at greetd time) would be a way to lose the login
+    # screen entirely.
+    for monitor in greeter_monitor_layout(cache_path):
+        name = str(monitor.get("name") or "").strip()
+        if not name or not re.fullmatch(r"[A-Za-z0-9._:-]+", name):
+            continue
+        lines.extend([
+            "hl.monitor({",
+            f"  output = {_lua_string(name)},",
+            '  mode = "preferred",',
+            '  position = "auto",',
+            f"  scale = {_lua_number(float(monitor.get('scale') or 1) or 1.0)},",
+            f"  transform = {int(monitor.get('transform') or 0)},",
+            "})",
+        ])
+
     lines.extend([
         "",
         "hl.config({",
