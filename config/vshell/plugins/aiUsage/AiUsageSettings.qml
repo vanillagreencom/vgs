@@ -19,7 +19,7 @@ PluginSettings {
 
     StyledText {
         width: parent.width
-        text: "Show Claude Code or OpenAI Codex subscription usage in the bar. Click the widget to switch providers and see the full breakdown."
+        text: "Show Claude Code or OpenAI Codex subscription usage in the bar. Click the widget to switch providers and see the full breakdown; the gear inside that popout holds the display options — which number the bar shows, renewal dates, and which accounts are listed."
         font.pixelSize: Theme.fontSizeSmall
         color: Theme.surfaceVariantText
         wrapMode: Text.WordWrap
@@ -46,13 +46,6 @@ PluginSettings {
                     { value: "claude", label: "Claude" },
                     { value: "codex", label: "Codex" }
                 ]
-            }
-
-            ToggleSetting {
-                settingKey: "showRenewalDates"
-                label: "Show renewal dates"
-                description: "Add the absolute date and time each usage window renews under its bar, alongside the countdown. Windows the provider gives no renewal time for (credit pools) stay as they are."
-                defaultValue: false
             }
 
             StringSetting {

@@ -19,6 +19,8 @@ PluginComponent {
     // Opt-in absolute renewal dates under every bar. Off by default: the popout
     // already carries the abbreviated instant beside the countdown, and someone
     // who never opens settings must see the widget exactly as it looked before.
+    // Strictly `=== true`, so an absent key, a persisted "false" string, or any
+    // other truthy leftover still reads as off.
     property bool showRenewalDates: pluginData.showRenewalDates === true
     // Account ids the user has hidden. They stay out of the list AND out of the
     // headline, so the number never contradicts what is on screen.
@@ -42,6 +44,11 @@ PluginComponent {
         root.headlineMode = m;
         if (root.pluginService)
             root.pluginService.savePluginData("aiUsage", "headlineMode", m);
+    }
+    function setShowRenewalDates(on) {
+        root.showRenewalDates = on === true;
+        if (root.pluginService)
+            root.pluginService.savePluginData("aiUsage", "showRenewalDates", root.showRenewalDates);
     }
 
     // The tightest window an account has — what actually blocks it.
@@ -194,6 +201,25 @@ PluginComponent {
         return out;
     }
 
+    // The one gate both reset formatters below share: a usable, still-future
+    // instant, or null. Single-sourced because the staleness rule is a
+    // judgement, not an implementation detail — when it lived in both
+    // formatters, changing it in one would have silently desynchronised the
+    // abbreviated column from the renewal line printed under it.
+    //
+    // Past instants are stale data (a window that already rolled over between
+    // polls); showing them would be worse than showing nothing.
+    function upcomingInstant(epoch) {
+        if (!epoch || epoch <= 0)
+            return null;
+        const when = new Date(epoch * 1000);
+        if (isNaN(when.getTime()))
+            return null;
+        if (when.getTime() <= Date.now())
+            return null;
+        return when;
+    }
+
     // Absolute reset instant as wall-clock text. A countdown alone ("4d 17h")
     // makes you do the arithmetic; the clock time is what you actually plan
     // around. Same day -> just the time, otherwise the weekday, and the date
@@ -201,16 +227,10 @@ PluginComponent {
     // lowercase ("tom 02:59", "thu 04:00") — these sit in a narrow column
     // beside the bar, so every character costs bar width.
     function formatResetAt(epoch) {
-        if (!epoch || epoch <= 0)
-            return "";
-        const when = new Date(epoch * 1000);
-        if (isNaN(when.getTime()))
+        const when = root.upcomingInstant(epoch);
+        if (!when)
             return "";
         const now = new Date();
-        // Past instants are stale data (a window that already rolled over);
-        // showing them would be worse than showing nothing.
-        if (when.getTime() <= now.getTime())
-            return "";
         // 24h, explicitly — the locale short format drags in AM/PM, which is
         // three more characters in a column that is already fighting the bar.
         const time = when.toLocaleTimeString(Qt.locale(), "HH:mm");
@@ -226,19 +246,13 @@ PluginComponent {
     }
 
     // The unabbreviated renewal instant, for the opt-in line that gets a row of
-    // its own. `formatResetAt` has to fit in a narrow column beside a bar and
-    // drops the year and the day-of-month once a weekday is unambiguous; here
-    // there is room to spell it out, which is the point of the setting.
+    // its own. `formatResetAt` has to fit in a narrow column beside a bar, so it
+    // always drops the year, and drops the day-of-month while the weekday is
+    // unambiguous; here there is room to spell it out, which is the point of
+    // the setting.
     function formatRenewalDate(epoch) {
-        if (!epoch || epoch <= 0)
-            return "";
-        const when = new Date(epoch * 1000);
-        if (isNaN(when.getTime()))
-            return "";
-        // Same staleness rule as formatResetAt: an instant already in the past
-        // is a window that rolled over between polls, and dating it is worse
-        // than saying nothing.
-        if (when.getTime() <= Date.now())
+        const when = root.upcomingInstant(epoch);
+        if (!when)
             return "";
         // Composed from the same two calls formatResetAt uses rather than one
         // toLocaleString, so both formatters go through identical API surface.
@@ -248,9 +262,10 @@ PluginComponent {
     }
 
     // "Renews Thu 7 Aug 2026, 04:00", or "" when this meter has no renewal
-    // epoch to show — credit pools carry none, and the helper sends 0 wherever
-    // the provider omitted one. Empty means the bar renders exactly as it does
-    // with the setting off, never a placeholder or an epoch-zero date.
+    // epoch to show — credit pools carry none, and `bin/vshell-ai-usage`
+    // (`resetAt: (.resetAt // 0)`) sends 0 wherever the provider omitted one.
+    // Empty means the bar renders exactly as it does with the setting off,
+    // never a placeholder or an epoch-zero date.
     function renewalLine(meter) {
         if (!root.showRenewalDates || !meter)
             return "";
@@ -282,10 +297,18 @@ PluginComponent {
     }
 
     // "Resets in 4d 17h · thu 04:00", degrading to whichever half we have.
+    //
+    // Used only by the two full-detail card sites, which is why the renewal
+    // line can be deferred to unconditionally here: when it is on it prints the
+    // same instant, unabbreviated, on the row directly below, and carrying an
+    // abbreviated copy as well says one thing twice in two formats. The
+    // countdown is the half the renewal line does NOT carry, so that is what
+    // stays. When the epoch is absent or stale both are empty anyway, and this
+    // degrades to exactly the string it produced before.
     function resetLabel(meter) {
         if (!meter)
             return "";
-        const at = root.formatResetAt(meter.resetAt || 0);
+        const at = root.showRenewalDates ? "" : root.formatResetAt(meter.resetAt || 0);
         const inn = meter.reset && meter.reset !== "\u2014" ? meter.reset : "";
         if (inn && at)
             return "Resets in " + inn + " \u00b7 " + at;
@@ -669,6 +692,18 @@ PluginComponent {
                             }
                         }
 
+                        // Same class of control as "Bar number" above: it shapes
+                        // what this popout renders, so it lives with the other
+                        // display options rather than in the file-based pane.
+                        VgsToggle {
+                            width: parent.width
+                            horizontalPadding: 0
+                            text: "Show renewal dates"
+                            description: "The absolute date each window renews, under its bar."
+                            checked: root.showRenewalDates
+                            onToggled: isChecked => root.setShowRenewalDates(isChecked)
+                        }
+
                         StyledText {
                             text: "Accounts"
                             font.pixelSize: Theme.fontSizeSmall
@@ -897,14 +932,30 @@ PluginComponent {
                                 model: accountCard.expanded ? [] : accountCard.meters
 
                                 Item {
+                                    id: compactRow
+
                                     required property var modelData
+
+                                    // Evaluated once and shared. The row's height
+                                    // must key off "is there a renewal string",
+                                    // NOT off compactRenewal.visible — Item.visible
+                                    // is effective visibility, so that would make
+                                    // this row's layout arithmetic depend on whether
+                                    // some ancestor happens to be shown.
+                                    readonly property string renewalText: root.renewalLine(modelData)
+                                    readonly property bool hasRenewal: renewalText !== ""
+                                    // Single-sourced: the gap below is both this
+                                    // row's reserved height and the child's anchor
+                                    // margin, and restating it in two places is how
+                                    // the row ends up clipped or padded.
+                                    readonly property int renewalGap: 1
 
                                     width: accountCol.width
                                     // The renewal line, when on, stacks under the
                                     // one-line summary; the trailing 5 stays the
                                     // gap to the next window either way.
                                     height: compactLabel.implicitHeight + 5
-                                            + (compactRenewal.visible ? compactRenewal.implicitHeight + 1 : 0)
+                                            + (hasRenewal ? compactRenewal.implicitHeight + renewalGap : 0)
 
                                     StyledText {
                                         id: compactLabel
@@ -952,12 +1003,19 @@ PluginComponent {
                                     // The reset clock time belongs on the collapsed row too —
                                     // otherwise it is only readable one account at a time, and
                                     // comparing windows across accounts is the point of this view.
+                                    //
+                                    // Unless the renewal line is showing: its date fully contains
+                                    // this abbreviation, so keeping both prints the same instant
+                                    // twice, one directly above the other. The spend half is
+                                    // unaffected — a credit pool has no renewal epoch, so its
+                                    // amount is never in competition with a renewal line.
                                     StyledText {
                                         id: compactReset
                                         anchors.right: compactPct.left
                                         anchors.rightMargin: Theme.spacingS
                                         anchors.top: parent.top
-                                        text: root.formatSpend(modelData) || root.formatResetAt(modelData.resetAt || 0)
+                                        text: root.formatSpend(modelData)
+                                              || (compactRow.hasRenewal ? "" : root.formatResetAt(modelData.resetAt || 0))
                                         visible: text.length > 0
                                         font.pixelSize: Theme.fontSizeSmall
                                         color: Theme.surfaceVariantText
@@ -968,9 +1026,9 @@ PluginComponent {
                                         anchors.left: compactLabel.left
                                         anchors.right: parent.right
                                         anchors.top: compactLabel.bottom
-                                        anchors.topMargin: 1
-                                        text: root.renewalLine(modelData)
-                                        visible: text.length > 0
+                                        anchors.topMargin: compactRow.renewalGap
+                                        text: compactRow.renewalText
+                                        visible: compactRow.hasRenewal
                                         elide: Text.ElideRight
                                         font.pixelSize: Theme.fontSizeSmall
                                         color: Theme.surfaceVariantText
