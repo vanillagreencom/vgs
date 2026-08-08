@@ -47,10 +47,21 @@ PluginComponent {
         if (root.pluginService)
             root.pluginService.savePluginData("aiUsage", "headlineMode", m);
     }
+    // Persist ONLY — never assign to showRenewalDates. That property is a
+    // binding on pluginData, and an imperative assignment would destroy it, so
+    // from the first toggle onward this instance would stop following
+    // pluginDataChanged. The bar loads one aiUsage instance per display, so the
+    // instance you clicked would freeze while the others kept tracking the
+    // stored value: two bars disagreeing about one setting.
+    //
+    // Persisting is sufficient and reaches every instance. The round trip is
+    // synchronous: savePluginData writes through SettingsData.setPluginSetting,
+    // which updates the in-memory pluginSettings BEFORE PluginService emits
+    // pluginDataChanged; each PluginComponent's Connections then reloads
+    // pluginData from that same in-memory state, and the binding re-evaluates.
     function setShowRenewalDates(on) {
-        root.showRenewalDates = on === true;
         if (root.pluginService)
-            root.pluginService.savePluginData("aiUsage", "showRenewalDates", root.showRenewalDates);
+            root.pluginService.savePluginData("aiUsage", "showRenewalDates", on === true);
     }
 
     // The tightest window an account has — what actually blocks it.
@@ -1054,6 +1065,19 @@ PluginComponent {
                                         anchors.topMargin: compactRow.renewalGap
                                         text: compactRow.renewalText
                                         visible: compactRow.hasRenewal
+                                        // NoWrap is load-bearing, not cosmetic.
+                                        // StyledText defaults to WordWrap, and
+                                        // this element's width IS bounded (left
+                                        // and right anchors), so the default
+                                        // wraps a long or localized string to a
+                                        // second line — and compactRow.height
+                                        // reads implicitHeight, so the row would
+                                        // silently grow, unevenly across accounts
+                                        // and locales. With NoWrap the string
+                                        // elides instead and implicitHeight is
+                                        // genuinely one line's worth, which is
+                                        // what that height arithmetic assumes.
+                                        wrapMode: Text.NoWrap
                                         elide: Text.ElideRight
                                         font.pixelSize: Theme.fontSizeSmall
                                         color: Theme.surfaceVariantText

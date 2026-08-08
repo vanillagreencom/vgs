@@ -291,6 +291,21 @@ assert.match(heightBinding, /renewalGap/,
 assert.match(binding(renewalSpan, "anchors\\.topMargin", "compactRenewal"), /renewalGap/,
     "the anchor margin must use the same renewalGap the height reserves");
 
+// The single-line contract, which the base class actively works against:
+// StyledText defaults to `wrapMode: Text.WordWrap`, and this element's width is
+// bounded by its left/right anchors, so WITHOUT an explicit override a long or
+// localized string wraps to a second line — and the height above, which reads
+// implicitHeight, quietly grows with it. The default being the wrong one is
+// exactly why this needs pinning: removing the override reintroduces the bug
+// silently, and nothing else in the suite would notice.
+// Only wrapMode is pinned. Eliding is StyledText's own default (ElideRight, the
+// line after wrapMode in its declaration), so an overflowing NoWrap line elides
+// whether or not this element restates it — asserting the redundant local
+// declaration would fail a harmless cleanup while proving nothing extra.
+assert.match(renewalSpan, /wrapMode:\s*Text\.NoWrap/,
+    "compactRenewal must set wrapMode explicitly to NoWrap — StyledText defaults to " +
+    "WordWrap, which makes the collapsed row's single-line height arithmetic wrong");
+
 // The gap is a spacing-scale token, not a raw number: design-language.md § 4
 // admits only spacingXXS/XS/S/M/L/XL, and sizes a label↔description gap — which
 // is what the renewal line is to the summary row — at spacingXXS.
@@ -366,17 +381,32 @@ for (const [given, expected] of [[true, true], [false, false], ["true", false], 
         pluginService: { savePluginData: (id, key, value) => saved.push([id, key, value]) },
     });
     root.setShowRenewalDates(given);
-    assert.equal(root.showRenewalDates, expected,
-        `setShowRenewalDates(${JSON.stringify(given)}) must set the property to ${expected}`);
     assert.deepEqual(saved, [["aiUsage", "showRenewalDates", expected]],
         `setShowRenewalDates(${JSON.stringify(given)}) must persist the boolean ${expected}`);
 }
 
+// And it must persist ONLY. showRenewalDates is a binding on pluginData;
+// assigning to it imperatively destroys that binding, so the instance that was
+// clicked stops following pluginDataChanged from then on. The bar runs one
+// aiUsage instance per display, so the visible symptom is two bars disagreeing
+// about one stored setting — which no amount of round-trip testing on a single
+// instance would reveal. The write-through path is what makes assignment
+// unnecessary: PluginService.savePluginData updates SettingsData's in-memory
+// pluginSettings before it emits pluginDataChanged, and every PluginComponent
+// reloads from that.
+assert.doesNotMatch(bodies.setShowRenewalDates, /root\.showRenewalDates\s*=/,
+    "setShowRenewalDates must not assign to the bound property — persist only, and let " +
+    "the pluginData binding carry the new value to every instance");
+
 // No pluginService (the widget can exist before one is wired) must not throw.
+// Nothing is persisted and nothing changes: there is no store to write to and
+// so no pluginDataChanged to come back. That is the honest outcome of a
+// persist-only setter, and better than a local assignment that would look like
+// it worked while silently breaking the binding.
 const detached = makeRoot({ pluginService: null });
 detached.setShowRenewalDates(true);
-assert.equal(detached.showRenewalDates, true,
-    "the toggle must still take effect in-session when there is nothing to persist to");
+assert.equal(detached.showRenewalDates, false,
+    "with nothing to persist to, the setter must be a no-op rather than clobbering the binding");
 
 // ---- 6. exactly one control, and it exists ---------------------------------
 
