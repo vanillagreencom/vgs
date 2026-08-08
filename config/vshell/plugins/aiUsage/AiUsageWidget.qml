@@ -969,8 +969,11 @@ PluginComponent {
                                     // Single-sourced: the gap below is both this
                                     // row's reserved height and the child's anchor
                                     // margin, and restating it in two places is how
-                                    // the row ends up clipped or padded.
-                                    readonly property int renewalGap: 1
+                                    // the row ends up clipped or padded. On the
+                                    // spacing scale — the renewal line is the
+                                    // description to the summary row's label, which
+                                    // design-language.md § 4 sizes at spacingXXS.
+                                    readonly property int renewalGap: Theme.spacingXXS
 
                                     width: accountCol.width
                                     // The renewal line, when on, stacks under the

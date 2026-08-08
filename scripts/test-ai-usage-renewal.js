@@ -291,6 +291,54 @@ assert.match(heightBinding, /renewalGap/,
 assert.match(binding(renewalSpan, "anchors\\.topMargin", "compactRenewal"), /renewalGap/,
     "the anchor margin must use the same renewalGap the height reserves");
 
+// The gap is a spacing-scale token, not a raw number: design-language.md § 4
+// admits only spacingXXS/XS/S/M/L/XL, and sizes a label↔description gap — which
+// is what the renewal line is to the summary row — at spacingXXS.
+assert.match(compactDelegate, /readonly property int renewalGap:\s*Theme\.spacing/,
+    "renewalGap must come from the spacing scale rather than a hardcoded pixel count");
+
+// ---- 4c. the other two render sites ----------------------------------------
+
+// Acceptance criterion 2 is "EVERY progress bar ... gains a small line below
+// it", and the popout draws bars in three places, not one. Section 4b pins only
+// the collapsed row, so deleting the renewal StyledText from either full-detail
+// card left this suite green while breaking the criterion outright — and the
+// nested smoke cannot see it, because it loads the plugin with the setting off.
+//
+// Same idiom as 4b: extract each delegate by the unique Repeater model line
+// immediately preceding it, so a sibling delegate's renewal line cannot satisfy
+// another's assertion.
+const renderSites = [
+    {
+        what: "the single-account full-detail card",
+        opener: "model: (root.ok && !root.multiAccount) ? root.primaryMeters : []",
+        landmark: /id: rowCol/,
+    },
+    {
+        what: "the expanded per-account card",
+        opener: "model: accountCard.expanded ? accountCard.meters : []",
+        landmark: /modelData\.detail \? modelData\.detail : root\.resetLabel\(modelData\)/,
+    },
+];
+
+for (const site of renderSites) {
+    const delegate = extractBlock(source, site.opener);
+    assert.match(delegate, site.landmark, `extraction must have landed on ${site.what}`);
+
+    const at = delegate.search(/text:\s*root\.renewalLine\(modelData\)/);
+    assert.notEqual(at, -1,
+        `${site.what} must render a renewal line — acceptance criterion 2 covers every ` +
+        "progress bar in the popout, not only the collapsed multi-account rows");
+
+    // Scoped to the renewal element itself — the sibling detail/reset line in
+    // these cards carries the same visible binding, and would otherwise satisfy
+    // this on its own. Rendering unconditionally would put an empty row under
+    // every bar with no usable epoch, the "no placeholder" half of the criterion.
+    const element = delegate.slice(at, delegate.indexOf("}", at));
+    assert.match(element, /visible:\s*text\.length > 0/,
+        `${site.what} must hide its renewal line when there is no renewal string`);
+}
+
 // ---- 5. the default, and the persisted value -------------------------------
 
 // The property declaration itself, evaluated rather than string-matched: a
