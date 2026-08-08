@@ -7,9 +7,11 @@
 #BOT_NAME = ""
 #BOT_REMOTE_NAME = ""
 CI_FIX_MAX_CYCLES = "6"
-# Reviewer gate: CodeRabbit reviews PRs on this repo, so the reviewer wait
-# applies. It normally submits a review object (APPROVED/COMMENTED); the check
-# name below is the fallback for a clean pass that submits no review object.
+# Reviewer gate: AI bots review PRs on this repo (Copilot via the "Copilot
+# review for default branch" ruleset, qodo, Codex; CodeRabbit is disabled
+# org-wide since 2026-08-08), so the reviewer wait applies. They submit
+# review objects; the check name below is the fallback for a clean pass that
+# submits no review object.
 PR_REVIEW_GATE = "review"
 DECISIONS_DIR = "docs/decisions"
 #GH_BOT_USERNAME = ""
@@ -40,7 +42,10 @@ PR_REVIEW_NUDGE_SECS = "600"
 # Used by: orch (`approval-wait`). Comment body posted as the nudge — set it
 # to whatever summons this repo's review bot (e.g. "@devin review"). Empty =
 # fall back to a GitHub-native re-review request to the PR's reviewers.
-PR_REVIEW_NUDGE = "@coderabbitai review"
+# Empty here since 2026-08-08: the previous "@coderabbitai review" handle
+# went dead when the owner disabled CodeRabbit org-wide; the native
+# re-review fallback re-triggers the remaining bots.
+PR_REVIEW_NUDGE = ""
 
 # Used by: orch (`approval-wait`, review mode). Name/context of the trusted
 # reviewer's check-run OR commit status: a success for that exact name on the
@@ -50,14 +55,11 @@ PR_REVIEW_NUDGE = "@coderabbitai review"
 # check on repos where all publishers are trusted.
 #
 # Left empty deliberately. This is a fallback for bots that publish a check but
-# submit a review object only when they have findings — neither reviewer here
-# behaves that way: CodeRabbit submits a review object on clean runs too
-# (APPROVED), and qodo-code-review posts a review object and no check/status at
-# all. Naming CodeRabbit's `CodeRabbit` commit status would only add a way for a
-# non-review to satisfy the gate: it concluded `success` with the description
-# "Review rate limited" on 2026-08-02, having reviewed nothing. With two
-# reviewers that both post review objects, a genuine outage is
-# PR_REVIEW_ON_TIMEOUT's job, not this one's.
+# submit a review object only when they have findings — no reviewer here
+# behaves that way: Copilot, qodo and Codex all post review objects (as did
+# CodeRabbit before its 2026-08-08 org-wide disable). With reviewers that
+# post review objects, a genuine outage is PR_REVIEW_ON_TIMEOUT's job, not
+# this one's.
 PR_REVIEW_CHECK = ""
 
 # Used by: orch (`ci-wait`). Seconds to keep polling before failing when no CI
@@ -84,7 +86,11 @@ REVIEWER_SLOT_BUDGET = "0"
 # bypassed. CI and the comment-hygiene gate still apply. On multi-reviewer
 # repos this only fires when EVERY reviewer is silent; a single live reviewer
 # already satisfies the gate on its own.
-PR_REVIEW_ON_TIMEOUT = "block"
+# "proceed" is the fleet standard (owner decision 2026-08-06, no human in
+# the loop except human-contributor PRs): genuine total reviewer silence
+# past the wait deadline proceeds with the logged attestation instead of
+# stalling the fleet on a dead reviewer.
+PR_REVIEW_ON_TIMEOUT = "proceed"
 
 # Used by: orch (`approval-wait`, review mode). Makes PR_REVIEW_ON_TIMEOUT=proceed
 # end-to-end on repos whose CI/branch-protection gate independently blocks
@@ -100,7 +106,11 @@ PR_REVIEW_ON_TIMEOUT = "block"
 # trust, and matched by context, so name it ONLY where every status publisher
 # is trusted (same trust model as PR_REVIEW_CHECK). See orch DEVELOPMENT.md
 # "Reviewer-outage recognition" for the repo-side gate/bridge pattern.
-PR_REVIEW_OUTAGE_CONTEXT = ""
+# Fleet-standard context (paired with REVIEW_GATE_OVERRIDE_CONTEXT below so
+# a proceed converges the required gate status end-to-end; the override is
+# operator-PAT-posted — never Actions-posted — which is what
+# REVIEW_GATE_STATUS_PUBLISHER_REJECT relies on).
+PR_REVIEW_OUTAGE_CONTEXT = "vstack-reviewer-outage"
 
 # Used by: orch (`review-pr`, via `refix-route`). Total changed lines
 # (insertions + deletions) a support-scope fix round may reach before it is
@@ -165,16 +175,15 @@ REVIEW_GATE_CONTEXT = "Review gate"
 # check/status under the name "Devin Review":
 # REVIEW_GATE_TRUSTED_STATUS_CONTEXTS = "Devin Review"
 #
-# VGS ASSIGNMENT: DISABLED, and this is a measured decision rather than an
-# unset default. Both reviewers VGS has submit a review OBJECT on a clean run
-# — CodeRabbit is live, Copilot review is enabled by the
-# "Copilot review for default branch" ruleset — so no check/status is needed
-# as a fallback. Trusting CodeRabbit's `CodeRabbit` commit status would only
-# add a way for a non-review to satisfy the gate: on PR #38 it concluded
-# `success` with the description "Review rate limited", having analysed
-# nothing. Re-enable only with a measured clean-pass-without-object case in
-# hand.
-REVIEW_GATE_TRUSTED_STATUS_CONTEXTS = ""
+# VGS ASSIGNMENT: the fleet-identical standard (v2 cutover, 2026-08-08 —
+# the same alignment memsira#444 and drovr#448 made). The earlier VGS
+# rationale for "" — CodeRabbit's `CodeRabbit` status concluding `success`
+# with "Review rate limited" on PR #38 having analysed nothing — is
+# SUPERSEDED by two engine properties: REVIEW_GATE_CHECKRUN_SKIP_PATTERNS
+# below routes a rate-limited/skipped/queued "pass" to NOT-EVIDENCE, and
+# newest-row semantics mean a stale success never survives a newer
+# non-success row. The empty-list posture bought nothing those two do not.
+REVIEW_GATE_TRUSTED_STATUS_CONTEXTS = "CodeRabbit;copilot-pull-request-reviewer"
 
 # A trusted "pass" must prove analysis RAN: a success whose check-run
 # output/status description contains one of these case-insensitive
@@ -201,39 +210,23 @@ REVIEW_GATE_COMMENT_REVIEWERS = ""
 # git's short-sha default. A degenerate prefix must not match every head.
 REVIEW_GATE_SHA_PREFIX_FLOOR = "7"
 
-# Reviewer-outage attestation: commit-status context a trusted orchestrator
-# posts on the head ONLY on genuine total reviewer silence. Substitutes for
-# MISSING review evidence only — changes-requested and unresolved threads
-# still fail closed. SECURITY: a deliberate, bounded relaxation with the
-# same trusted-publisher model as REVIEW_GATE_TRUSTED_STATUS_CONTEXTS; name
-# it only where every status publisher is trusted. Empty disables.
+# Operator-override attestation (v2 key; the legacy alias
+# REVIEW_GATE_OUTAGE_CONTEXT still resolves but new installs set only this):
+# commit-status context a trusted orchestrator posts on the head ONLY on
+# genuine total reviewer silence. Substitutes for MISSING review evidence
+# only — changes-requested and unresolved threads still fail closed.
 #
-# VGS ASSIGNMENT: DISABLED, because the "same trusted-publisher model" the
-# comment above claims is NOT implemented for this source. In
-# third_party/review-gate/scripts/review-predicate.sh the trusted-status path
-# filters publishers:
-#
-#     select(((.app.slug // "") != "") and ((.app.slug // "") != "github-actions"))
-#
-# and the outage read directly below it applies neither check — it selects on
-# `.context` and `.state == "success"` alone. So on a PUBLIC repo, anyone able
-# to post a commit status under this name substitutes for MISSING review
-# evidence entirely: the same bypass class as an empty
-# REVIEW_GATE_REVIEW_OBJECT_TRUSTED_LOGINS, through a different door.
-#
-# The predicate is vendored and held byte-identical to the vstack copy by
-# scripts/check-review-gate-vendor.sh, so patching it here is not the fix — the
-# publisher check belongs upstream. This file is not vendored, so emptying the
-# setting closes the path outright until that lands.
-#
-# DO NOT re-enable without the upstream publisher filter. VGS has no
-# orchestrator posting this today, so disabling it costs nothing: the only
-# behaviour lost is "merge anyway when every reviewer is silent", and
-# PR_REVIEW_ON_TIMEOUT = "block" already says VGS does not want that.
-#
-# (PR_REVIEW_OUTAGE_CONTEXT near the top of this file is a different setting —
-# the orch waiter's, not the gate's — and is already empty.)
-REVIEW_GATE_OUTAGE_CONTEXT = ""
+# VGS ASSIGNMENT: ENABLED at the fleet-standard context (v2 cutover,
+# 2026-08-08), paired with PR_REVIEW_OUTAGE_CONTEXT above so a
+# PR_REVIEW_ON_TIMEOUT=proceed converges the required gate status
+# end-to-end. The earlier VGS rationale for disabling — the v1 predicate's
+# outage read applied no publisher filter, so on this PUBLIC repo anyone
+# able to post a status under the context name could substitute for missing
+# evidence — is RESOLVED upstream: the v2 predicate applies
+# REVIEW_GATE_STATUS_PUBLISHER_REJECT to the override read too, and the
+# override is operator-PAT-posted (never github-actions[bot]), which that
+# reject list below enforces.
+REVIEW_GATE_OVERRIDE_CONTEXT = "vstack-reviewer-outage"
 
 # Review-object trust list: logins whose review objects at the exact head
 # count as evidence. Empty = any non-author (the compatible default; on
@@ -248,15 +241,19 @@ REVIEW_GATE_OUTAGE_CONTEXT = ""
 # anything. A gate a passer-by can open is worse than no gate, because it reads
 # as protection.
 #
-# The three logins below are the AI reviewers observed submitting review objects
-# on this repo (sampled across PRs #57, #59, #61, #62). Trust keys on the login,
-# which only GitHub can set.
+# The logins below are the AI reviewers submitting review objects on this
+# repo (sampled across PRs #57, #59, #61, #62; chatgpt-codex-connector[bot]
+# added fleet-wide by owner decision 2026-08-08 — it reviews actively, and
+# an untrusted active reviewer is a deadlock: its reviews are invisible as
+# evidence while still counting as engagement that holds off the
+# proceed-on-timeout fallback). Trust keys on the login, which only GitHub
+# can set.
 #
 # The human owner's login is deliberately ABSENT. `bmethod` authors every VGS
 # PR, and the predicate rejects review evidence from the PR author — mechanical,
 # not policy — so listing it would be inert. It is also the point of the gate:
 # the evidence has to come from an analysis the author did not perform.
-REVIEW_GATE_REVIEW_OBJECT_TRUSTED_LOGINS = "coderabbitai[bot];copilot-pull-request-reviewer[bot];qodo-code-review[bot]"
+REVIEW_GATE_REVIEW_OBJECT_TRUSTED_LOGINS = "coderabbitai[bot];copilot-pull-request-reviewer[bot];qodo-code-review[bot];chatgpt-codex-connector[bot]"
 
 # Minimum review-object state that counts as evidence: "any" (any
 # non-dismissed row) or "approved" (an APPROVED at head not withdrawn by a
@@ -270,18 +267,17 @@ REVIEW_GATE_REVIEW_OBJECT_TRUSTED_LOGINS = "coderabbitai[bot];copilot-pull-reque
 # make the gate depend on the one that has been rate-limited all day.
 REVIEW_GATE_REVIEW_OBJECT_MIN_STATE = "any"
 
-# Rerun backstop for approval-refire.sh: runs at/above this attempt count
-# are left alone (gh run rerun retries manually). The cap exists for
-# pathological evidence ping-pong, not normal review cycles.
-REVIEW_GATE_MAX_RERUN_ATTEMPTS = "5"
+# PR-triggered workflows must not be able to mint trusted contexts or the
+# operator override: commit statuses created by github-actions[bot] are
+# never evidence (fleet standard). Safe here because the override is
+# operator-PAT-posted under v2, and required after the cutover because this
+# is a PUBLIC repo whose trusted contexts and override are name-matched.
+REVIEW_GATE_STATUS_PUBLISHER_REJECT = "github-actions[bot]"
 
-# Trust posture for the CI gate job (consumed by workflow WIRING, not by the
-# scripts — see references/adoption.md). SECURITY: "false" (default, safe) =
-# the gate job runs the predicate from the BASE revision with a read-only
-# token and posts the status from a separate minimal-permission step; a PR
-# cannot execute its own predicate copy under a write-capable token. "true"
-# = deliberately self-evaluating (PR-head predicate) for the bootstrap
-# property that a gate-fix PR can open its own gate — defensible only on
-# private, effectively single-author repos; this key makes that choice
-# explicit and visible.
-REVIEW_GATE_TRUST_PR_WORKFLOWS = "false"
+# Docs-only deltas carry ancestor evidence forward (owner decision
+# 2026-08-08, fleet-wide): a final docs-only push keeps its review evidence
+# instead of forcing one more re-review round. "comments" is deliberately
+# NOT enabled — its classifier is line-lexical and cannot see enclosing
+# heredocs/multiline strings; "docs" has no such residual. Code changes
+# always require fresh evidence.
+REVIEW_GATE_CARRY_FORWARD = "docs"
