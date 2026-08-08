@@ -874,10 +874,15 @@ Item {
         // should be readable wherever the user is looking. Username, password
         // dots and auth status all read from the GreeterState singleton, so the
         // non-primary copies mirror the real session rather than forking it.
-        // Input stays single-owner — GreeterSurface grants WlrKeyboardFocus
-        // only to the primary screen, and the greetd/GreetdMemory Connections
-        // below remain gated on isPrimaryScreen.
         visible: true
+        // Display-only on mirrors. WlrKeyboardFocus.None keeps their keystrokes
+        // out, but that says nothing about the pointer: without this the user
+        // picker, submit and external-auth buttons, session dropdown, layout
+        // switcher and power button stay clickable on every output, mutating
+        // shared state and calling Greetd from an instance whose own greetd
+        // Connections are disabled. Disabling the subtree leaves the mirrors
+        // pixel-identical while keeping the primary the sole interactive owner.
+        enabled: root.isPrimaryScreen
 
         MouseArea {
             anchors.fill: parent
