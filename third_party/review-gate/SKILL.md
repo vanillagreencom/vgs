@@ -11,8 +11,6 @@ metadata:
   version: "2.0.0"
 ---
 
-> **Never edit this file directly.** To make additions or modifications, edit the appropriate section in `./vstack.toml`. Then run `vstack refresh`.
-
 # Review Gate
 
 > **Problem with this skill?** Run `vstack report` — it files to the owning repo automatically. Do not hand-file.
