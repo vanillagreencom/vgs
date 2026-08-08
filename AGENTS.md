@@ -1,5 +1,7 @@
 # AGENTS.md
 
+Reviewing a PR as a review bot? Follow `review-bots.md` (repo root) — reviewer context stays there, not here.
+
 VGS = VanillaGreen Shell. Runtime name stays `vshell` because `vgs` conflicts with LVM `vgs`.
 
 ## Mission

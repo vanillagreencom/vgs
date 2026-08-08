@@ -285,3 +285,8 @@ REVIEW_GATE_STATUS_PUBLISHER_REJECT = "github-actions[bot]"
 # heredocs/multiline strings; "docs" has no such residual. Code changes
 # always require fresh evidence.
 REVIEW_GATE_CARRY_FORWARD = "docs"
+# Policy-bearing markdown and vendored engine/skill trees are "docs" by
+# extension but are obeyed mechanically by agents and reviewers — a push
+# editing them gets a fresh review instead of carrying ancestor evidence
+# (closes the residual accepted when the docs class was enabled).
+REVIEW_GATE_CARRY_FORWARD_EXCLUDE = "*AGENTS.md;*CLAUDE.md;.github/*;*review-bots.md;third_party/*;project-skills/*"
