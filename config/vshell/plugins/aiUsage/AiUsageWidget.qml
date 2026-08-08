@@ -54,11 +54,19 @@ PluginComponent {
     // instance you clicked would freeze while the others kept tracking the
     // stored value: two bars disagreeing about one setting.
     //
-    // Persisting is sufficient and reaches every instance. The round trip is
-    // synchronous: savePluginData writes through SettingsData.setPluginSetting,
-    // which updates the in-memory pluginSettings BEFORE PluginService emits
-    // pluginDataChanged; each PluginComponent's Connections then reloads
-    // pluginData from that same in-memory state, and the binding re-evaluates.
+    // Persisting is sufficient and reaches every instance. savePluginData
+    // writes through SettingsData.setPluginSetting, which updates the in-memory
+    // pluginSettings BEFORE pluginDataChanged is emitted; each
+    // PluginComponent's Connections then reloads pluginData from that same
+    // in-memory state and the binding re-evaluates.
+    //
+    // WHEN that re-evaluation lands depends on which service is in play, so do
+    // not build on it being immediate. The global PluginService — the one a bar
+    // plugin like this uses — emits pluginDataChanged synchronously. The
+    // instance-scoped services do not: DesktopPluginWrapper and
+    // PluginDesktopWidgetSettings both defer via Qt.callLater, so rebinding is
+    // next-tick there. Persist-only is correct under both, because it depends
+    // on the write-through happening, not on when the signal fires.
     function setShowRenewalDates(on) {
         if (root.pluginService)
             root.pluginService.savePluginData("aiUsage", "showRenewalDates", on === true);

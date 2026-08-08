@@ -39,6 +39,63 @@ const SETTINGS = path.join(repoRoot, "config", "vshell", "plugins", "aiUsage", "
 const source = fs.readFileSync(WIDGET, "utf8");
 const settingsSource = fs.readFileSync(SETTINGS, "utf8");
 
+// Drop comments, keep everything else — string literals included, verbatim.
+// For assertions that must NOT match, prose is the false-positive risk and
+// string contents are load-bearing evidence, so this removes the first without
+// touching the second. Single pass rather than sequential regexes, because a
+// `//` inside a string, or a quote inside a comment, defeats that version.
+function stripComments(src) {
+    let out = "";
+    for (let i = 0; i < src.length; ) {
+        const c = src[i];
+        const d = src[i + 1];
+        if (c === "/" && d === "/") {
+            while (i < src.length && src[i] !== "\n") i++;
+            continue;
+        }
+        if (c === "/" && d === "*") {
+            i += 2;
+            while (i < src.length && !(src[i] === "*" && src[i + 1] === "/")) i++;
+            i += 2;
+            out += " ";
+            continue;
+        }
+        if (c === '"' || c === "'" || c === "`") {
+            out += c;
+            i++;
+            while (i < src.length && src[i] !== c) {
+                // Copy an escape and whatever it escapes as one unit, so \" does
+                // not read as the closing quote.
+                if (src[i] === "\\" && i + 1 < src.length) {
+                    out += src[i] + src[i + 1];
+                    i += 2;
+                    continue;
+                }
+                out += src[i];
+                i++;
+            }
+            if (i < src.length) {
+                out += src[i];
+                i++;
+            }
+            continue;
+        }
+        out += c;
+        i++;
+    }
+    return out;
+}
+
+// The helper has to be shown capable of both jobs before it is trusted with
+// them: a guard that silently stopped stripping, or started eating strings,
+// would turn the assertion below into a permanent pass.
+assert.equal(stripComments('a // root.x = 1\nb'), "a \nb", "stripComments must drop line comments");
+assert.equal(stripComments("a /* root.x = 1 */ b"), "a   b", "stripComments must drop block comments");
+assert.equal(stripComments('f("// not a comment")'), 'f("// not a comment")',
+    "stripComments must not treat a // inside a string as a comment");
+assert.equal(stripComments('f("a\\"// b")'), 'f("a\\"// b")',
+    "stripComments must respect escaped quotes when scanning a string");
+
 // ---- a fixed clock, and Qt's date API in miniature -------------------------
 
 // Local-time construction, not an ISO string: the feature formats in the user's
@@ -394,9 +451,31 @@ for (const [given, expected] of [[true, true], [false, false], ["true", false], 
 // unnecessary: PluginService.savePluginData updates SettingsData's in-memory
 // pluginSettings before it emits pluginDataChanged, and every PluginComponent
 // reloads from that.
-assert.doesNotMatch(bodies.setShowRenewalDates, /root\.showRenewalDates\s*=/,
-    "setShowRenewalDates must not assign to the bound property — persist only, and let " +
-    "the pluginData binding carry the new value to every instance");
+// Matched against the body with COMMENTS STRIPPED and strings kept. Both
+// halves matter, and the first version of this guard got both wrong:
+//
+//  - Comments stripped, because extractBlock returns the raw source. A comment
+//    saying "never assign root.showRenewalDates here" tripped the guard, which
+//    is a false failure in the one check standing between us and a real
+//    regression — the worst place to have one.
+//  - Strings KEPT, because bracket notation is how the assignment comes back
+//    past a dot-only pattern. Blanking string literals would turn
+//    root["showRenewalDates"] = x into root[""] = x and hide it again. The
+//    savePluginData("aiUsage", "showRenewalDates", …) call is not a false
+//    match: the pattern requires an `=` after the property reference.
+//
+// The `=(?!=)` tail is what keeps a legitimate READ — root.showRenewalDates
+// === something — from reading as a write.
+//
+// Not covered, and a static scan cannot cover it: a computed key
+// (root[someVar] = …) or an alias. This pins the spellings someone would
+// actually reach for, and fails closed on neither.
+const setterCode = stripComments(bodies.setShowRenewalDates);
+assert.doesNotMatch(
+    setterCode,
+    /root\s*(?:\.\s*showRenewalDates|\[\s*["']showRenewalDates["']\s*\])\s*=(?!=)/,
+    "setShowRenewalDates must not assign to the bound property, in any spelling — persist " +
+    "only, and let the pluginData binding carry the new value to every instance");
 
 // No pluginService (the widget can exist before one is wired) must not throw.
 // Nothing is persisted and nothing changes: there is no store to write to and
