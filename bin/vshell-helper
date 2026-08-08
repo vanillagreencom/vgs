@@ -10235,8 +10235,16 @@ def cmd_greeter(argv: List[str]) -> int:
     ensure_cache_dir(cache_dir_path, gid, run_uid=guid)
     sync_greeter_runtime(cache_dir_path, gid)
     monitor_layout = capture_user_monitor_layout(target_user)
+    monitors_path = cache_dir_path / GREETER_MONITORS_FILENAME
     if monitor_layout:
-        write_json_file(cache_dir_path / GREETER_MONITORS_FILENAME, {"monitors": monitor_layout}, gid)
+        write_json_file(monitors_path, {"monitors": monitor_layout}, gid)
+    elif monitors_path.exists():
+        # Deliberately keep the previous snapshot: sync is a root command that is
+        # legitimately run from a TTY or over ssh, where the user's compositor is
+        # simply not reachable, and the last known orientation beats none at all.
+        # Say so, though — a silently stale layout would rotate the greeter wrong
+        # after a monitor change with no indication why.
+        eprint(f"Could not read the current monitor layout; greeter keeps the previous {monitors_path}")
     theme = current_theme_json()
     session = current_session_json(theme)
     sync_profile_cache(cache_dir_path, target_user, settings, theme, session, gid, root_profile=True, run_uid=guid)
@@ -10324,6 +10332,31 @@ def _lua_number(value: float) -> str:
     return str(int(value)) if float(value).is_integer() else repr(float(value))
 
 
+def _sane_monitor_scale(value: Any) -> float | None:
+    """Validate a scale before it is rendered into the greeter's Lua config.
+
+    `nan`/`inf` would reach the config as bare `nan`/`inf` literals and a zero or
+    negative scale is not a mode Hyprland can bring up — either way the greeter
+    fails to start, which on a login screen means locked out.
+    """
+    try:
+        scale = float(value if value is not None else 1)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(scale) or not (0 < scale <= 10):
+        return None
+    return scale
+
+
+def _sane_monitor_transform(value: Any) -> int | None:
+    """wl_output transforms are 0-7; anything else is not a rotation."""
+    try:
+        transform = int(value if value is not None else 0)
+    except (TypeError, ValueError):
+        return None
+    return transform if 0 <= transform <= 7 else None
+
+
 def capture_user_monitor_layout(target_user: str) -> List[Dict[str, Any]]:
     """Snapshot the user's live Hyprland outputs for the greeter to reproduce.
 
@@ -10375,11 +10408,12 @@ def capture_user_monitor_layout(target_user: str) -> List[Dict[str, Any]]:
             # reason to carry them.
             if name.startswith("HEADLESS-"):
                 continue
-            captured.append({
-                "name": name,
-                "scale": float(monitor.get("scale") or 1) or 1.0,
-                "transform": int(monitor.get("transform") or 0),
-            })
+            scale = _sane_monitor_scale(monitor.get("scale"))
+            transform = _sane_monitor_transform(monitor.get("transform"))
+            if scale is None or transform is None:
+                eprint(f"Ignoring monitor {name} with unusable scale/transform for the greeter")
+                continue
+            captured.append({"name": name, "scale": scale, "transform": transform})
         if captured:
             return captured
     return []
@@ -10411,13 +10445,21 @@ def render_hyprland_greeter_config(qs_cmd: str, cache_path: Path, cursor_env: Di
         name = str(monitor.get("name") or "").strip()
         if not name or not re.fullmatch(r"[A-Za-z0-9._:-]+", name):
             continue
+        # Re-validate at render time, not just at capture: monitors.json is a
+        # file on disk that can predate these checks or be edited by hand, and a
+        # bad literal here costs the login screen.
+        scale = _sane_monitor_scale(monitor.get("scale"))
+        transform = _sane_monitor_transform(monitor.get("transform"))
+        if scale is None or transform is None:
+            eprint(f"Skipping greeter monitor rule for {name}: unusable scale/transform")
+            continue
         lines.extend([
             "hl.monitor({",
             f"  output = {_lua_string(name)},",
             '  mode = "preferred",',
             '  position = "auto",',
-            f"  scale = {_lua_number(float(monitor.get('scale') or 1) or 1.0)},",
-            f"  transform = {int(monitor.get('transform') or 0)},",
+            f"  scale = {_lua_number(scale)},",
+            f"  transform = {transform},",
             "})",
         ])
 

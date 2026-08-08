@@ -42,8 +42,6 @@ Item {
     signal launchRequested
 
     property bool weatherInitialized: false
-    property bool awaitingExternalAuth: false
-    property bool pendingPasswordResponse: false
     property bool passwordSubmitRequested: false
     property bool cancelingExternalAuthForPassword: false
     property int defaultAuthTimeoutMs: 10000
@@ -51,9 +49,7 @@ Item {
     property int memoryFlushDelayMs: 120
     property string pendingLaunchCommand: ""
     property var pendingLaunchEnv: []
-    property int passwordFailureCount: 0
     property int passwordAttemptLimitHint: 0
-    property string authFeedbackMessage: ""
     property string greetdPamText: ""
     property string systemAuthPamText: ""
     property string commonAuthPamText: ""
@@ -251,7 +247,7 @@ Item {
             return I18n.tr("Too many failed attempts - account may be locked");
         if (GreeterState.pamState === "fail") {
             if (passwordAttemptLimitHint > 0) {
-                const attempt = Math.max(1, Math.min(passwordFailureCount, passwordAttemptLimitHint));
+                const attempt = Math.max(1, Math.min(GreeterState.passwordFailureCount, passwordAttemptLimitHint));
                 const remaining = Math.max(passwordAttemptLimitHint - attempt, 0);
                 if (remaining > 0) {
                     return I18n.tr("Incorrect password - attempt %1 of %2 (lockout may follow)").arg(attempt).arg(passwordAttemptLimitHint);
@@ -265,7 +261,7 @@ Item {
 
     function clearAuthFeedback() {
         GreeterState.pamState = "";
-        authFeedbackMessage = "";
+        GreeterState.authFeedbackMessage = "";
     }
 
     function resetPasswordSessionTransition(clearSubmitRequest) {
@@ -503,14 +499,14 @@ Item {
             return;
         root.manualUsernameEntry = false;
         root.skipAutoSelectUser = true;
-        awaitingExternalAuth = false;
-        pendingPasswordResponse = false;
+        GreeterState.awaitingExternalAuth = false;
+        GreeterState.pendingPasswordResponse = false;
         passwordSubmitRequested = false;
         resetPasswordSessionTransition(true);
         authTimeout.interval = defaultAuthTimeoutMs;
         authTimeout.stop();
         clearAuthFeedback();
-        passwordFailureCount = 0;
+        GreeterState.passwordFailureCount = 0;
         externalAuthAutoStartedForUser = "";
         if (Greetd.state !== GreetdState.Inactive)
             Greetd.cancelSession();
@@ -538,7 +534,7 @@ Item {
         if (!user)
             return;
         if (GreeterState.username !== user) {
-            passwordFailureCount = 0;
+            GreeterState.passwordFailureCount = 0;
             clearAuthFeedback();
             externalAuthAutoStartedForUser = "";
         }
@@ -553,15 +549,15 @@ Item {
         root.userListOpen = false;
         PortalService.getGreeterUserProfileImage(user);
         GreeterState.passwordBuffer = "";
-        pendingPasswordResponse = false;
+        GreeterState.pendingPasswordResponse = false;
         resetPasswordSessionTransition(true);
         maybeAutoStartExternalAuth();
     }
 
     function submitBufferedPassword() {
-        pendingPasswordResponse = false;
+        GreeterState.pendingPasswordResponse = false;
         resetPasswordSessionTransition(true);
-        awaitingExternalAuth = false;
+        GreeterState.awaitingExternalAuth = false;
         authTimeout.interval = defaultAuthTimeoutMs;
         authTimeout.restart();
         // Some PAM stacks expect an explicit empty response to advance U2F/fprint or fail normally.
@@ -578,21 +574,21 @@ Item {
         if (cancelingExternalAuthForPassword)
             return;
         if (passwordSessionTransitionRetryCount >= maxPasswordSessionTransitionRetries) {
-            pendingPasswordResponse = false;
-            awaitingExternalAuth = false;
+            GreeterState.pendingPasswordResponse = false;
+            GreeterState.awaitingExternalAuth = false;
             authTimeout.interval = defaultAuthTimeoutMs;
             authTimeout.stop();
             resetPasswordSessionTransition(true);
             GreeterState.pamState = "error";
-            authFeedbackMessage = currentAuthMessage();
+            GreeterState.authFeedbackMessage = currentAuthMessage();
             placeholderDelay.restart();
             Greetd.cancelSession();
             return;
         }
         cancelingExternalAuthForPassword = true;
         passwordSessionTransitionRetryCount = passwordSessionTransitionRetryCount + 1;
-        awaitingExternalAuth = false;
-        pendingPasswordResponse = false;
+        GreeterState.awaitingExternalAuth = false;
+        GreeterState.pendingPasswordResponse = false;
         authTimeout.interval = defaultAuthTimeoutMs;
         authTimeout.stop();
         Greetd.cancelSession();
@@ -606,7 +602,7 @@ Item {
             return;
         const hasPasswordBuffer = GreeterState.passwordBuffer && GreeterState.passwordBuffer.length > 0;
         if (Greetd.state !== GreetdState.Inactive) {
-            if (pendingPasswordResponse && submitPassword)
+            if (GreeterState.pendingPasswordResponse && submitPassword)
                 submitBufferedPassword();
             else if (submitPassword)
                 passwordSubmitRequested = true;
@@ -619,12 +615,12 @@ Item {
         }
         if (!submitPassword && !hasPasswordBuffer && !root.greeterExternalAuthAvailable)
             return;
-        pendingPasswordResponse = false;
+        GreeterState.pendingPasswordResponse = false;
         passwordSubmitRequested = submitPassword;
-        awaitingExternalAuth = !submitPassword && !hasPasswordBuffer && root.greeterExternalAuthAvailable;
+        GreeterState.awaitingExternalAuth = !submitPassword && !hasPasswordBuffer && root.greeterExternalAuthAvailable;
         // Use greeterExternalAuthAvailable so systems with pam_fprintd but no hardware don't incur the 30 s wait.
         const waitingOnPamExternalBeforePassword = submitPassword && root.greeterExternalAuthAvailable;
-        authTimeout.interval = (awaitingExternalAuth || waitingOnPamExternalBeforePassword) ? externalAuthTimeoutMs : defaultAuthTimeoutMs;
+        authTimeout.interval = (GreeterState.awaitingExternalAuth || waitingOnPamExternalBeforePassword) ? externalAuthTimeoutMs : defaultAuthTimeoutMs;
         authTimeout.restart();
         Greetd.createSession(GreeterState.username);
     }
@@ -1252,7 +1248,7 @@ Item {
                                 if (GreeterState.unlocking) {
                                     return I18n.tr("Logging in...");
                                 }
-                                if (Greetd.state !== GreetdState.Inactive && !awaitingExternalAuth && !pendingPasswordResponse) {
+                                if (Greetd.state !== GreetdState.Inactive && !GreeterState.awaitingExternalAuth && !GreeterState.pendingPasswordResponse) {
                                     return I18n.tr("Authenticating...");
                                 }
                                 if (GreeterState.showPasswordInput) {
@@ -1263,7 +1259,7 @@ Item {
                                 }
                                 return I18n.tr("Username...");
                             }
-                            color: (GreeterState.unlocking || (Greetd.state !== GreetdState.Inactive && !awaitingExternalAuth && !pendingPasswordResponse)) ? Theme.primary : Theme.outline
+                            color: (GreeterState.unlocking || (Greetd.state !== GreetdState.Inactive && !GreeterState.awaitingExternalAuth && !GreeterState.pendingPasswordResponse)) ? Theme.primary : Theme.outline
                             font.pixelSize: Theme.fontSizeMedium
                             opacity: (GreeterState.showPasswordInput ? GreeterState.passwordBuffer.length === 0 : (root.showUserPicker ? false : GreeterState.usernameInput.length === 0)) ? 1 : 0
 
@@ -1320,7 +1316,7 @@ Item {
                             anchors.verticalCenter: parent.verticalCenter
                             iconName: parent.showPassword ? "visibility_off" : "visibility"
                             buttonSize: 32
-                            visible: GreeterState.showPasswordInput && GreeterState.passwordBuffer.length > 0 && (Greetd.state === GreetdState.Inactive || awaitingExternalAuth || pendingPasswordResponse) && !GreeterState.unlocking
+                            visible: GreeterState.showPasswordInput && GreeterState.passwordBuffer.length > 0 && (Greetd.state === GreetdState.Inactive || GreeterState.awaitingExternalAuth || GreeterState.pendingPasswordResponse) && !GreeterState.unlocking
                             enabled: visible
                             onClicked: parent.showPassword = !parent.showPassword
                         }
@@ -1332,7 +1328,7 @@ Item {
                             anchors.verticalCenter: parent.verticalCenter
                             iconName: root.greeterPamHasFprint ? "fingerprint" : "key"
                             buttonSize: 32
-                            visible: GreeterState.showPasswordInput && root.greeterExternalAuthAvailable && GreeterState.passwordBuffer.length === 0 && (Greetd.state === GreetdState.Inactive || awaitingExternalAuth || pendingPasswordResponse) && !GreeterState.unlocking
+                            visible: GreeterState.showPasswordInput && root.greeterExternalAuthAvailable && GreeterState.passwordBuffer.length === 0 && (Greetd.state === GreetdState.Inactive || GreeterState.awaitingExternalAuth || GreeterState.pendingPasswordResponse) && !GreeterState.unlocking
                             enabled: visible
                             onClicked: root.startAuthSession(false)
                         }
@@ -1344,7 +1340,7 @@ Item {
                             anchors.verticalCenter: parent.verticalCenter
                             iconName: "keyboard"
                             buttonSize: 32
-                            visible: (Greetd.state === GreetdState.Inactive || awaitingExternalAuth || pendingPasswordResponse) && !GreeterState.unlocking && (!root.showUserPicker || GreeterState.showPasswordInput)
+                            visible: (Greetd.state === GreetdState.Inactive || GreeterState.awaitingExternalAuth || GreeterState.pendingPasswordResponse) && !GreeterState.unlocking && (!root.showUserPicker || GreeterState.showPasswordInput)
                             enabled: visible
                             onClicked: {
                                 if (keyboard_controller.isKeyboardActive) {
@@ -1363,7 +1359,7 @@ Item {
                             anchors.verticalCenter: parent.verticalCenter
                             iconName: "keyboard_return"
                             buttonSize: 36
-                            visible: (Greetd.state === GreetdState.Inactive || awaitingExternalAuth || pendingPasswordResponse) && !GreeterState.unlocking && (!root.showUserPicker || GreeterState.showPasswordInput)
+                            visible: (Greetd.state === GreetdState.Inactive || GreeterState.awaitingExternalAuth || GreeterState.pendingPasswordResponse) && !GreeterState.unlocking && (!root.showUserPicker || GreeterState.showPasswordInput)
                             enabled: true
                             onClicked: {
                                 if (GreeterState.showPasswordInput) {
@@ -1427,16 +1423,16 @@ Item {
 
                 StyledText {
                     Layout.fillWidth: true
-                    Layout.preferredHeight: root.authFeedbackMessage !== "" ? 38 : 0
+                    Layout.preferredHeight: GreeterState.authFeedbackMessage !== "" ? 38 : 0
                     Layout.topMargin: -Theme.spacingS
                     Layout.bottomMargin: -Theme.spacingS
-                    text: root.authFeedbackMessage
+                    text: GreeterState.authFeedbackMessage
                     color: Theme.error
                     font.pixelSize: Theme.fontSizeSmall
                     horizontalAlignment: Text.AlignHCenter
                     wrapMode: Text.WordWrap
                     maximumLineCount: 2
-                    opacity: root.authFeedbackMessage !== "" ? 1 : 0
+                    opacity: GreeterState.authFeedbackMessage !== "" ? 1 : 0
 
                     Behavior on opacity {
                         NumberAnimation {
@@ -1950,8 +1946,8 @@ Item {
             if (responseRequired) {
                 cancelingExternalAuthForPassword = false;
                 passwordSessionTransitionRetryCount = 0;
-                awaitingExternalAuth = false;
-                pendingPasswordResponse = true;
+                GreeterState.awaitingExternalAuth = false;
+                GreeterState.pendingPasswordResponse = true;
                 const hasPasswordBuffer = GreeterState.passwordBuffer && GreeterState.passwordBuffer.length > 0;
                 if (!passwordSubmitRequested && hasPasswordBuffer)
                     passwordSubmitRequested = true;
@@ -1965,11 +1961,11 @@ Item {
                 }
                 return;
             }
-            pendingPasswordResponse = false;
+            GreeterState.pendingPasswordResponse = false;
             const externalPrompt = root.isExternalAuthPrompt(message, responseRequired);
             if (!passwordSubmitRequested)
-                awaitingExternalAuth = root.greeterExternalAuthAvailable && externalPrompt;
-            if (awaitingExternalAuth || (passwordSubmitRequested && externalPrompt && root.greeterPamHasExternalAuth))
+                GreeterState.awaitingExternalAuth = root.greeterExternalAuthAvailable && externalPrompt;
+            if (GreeterState.awaitingExternalAuth || (passwordSubmitRequested && externalPrompt && root.greeterPamHasExternalAuth))
                 authTimeout.interval = externalAuthTimeoutMs;
             else
                 authTimeout.interval = defaultAuthTimeoutMs;
@@ -1979,8 +1975,8 @@ Item {
         function onStateChanged() {
             if (Greetd.state === GreetdState.Inactive) {
                 const resumePasswordSubmit = cancelingExternalAuthForPassword && passwordSubmitRequested;
-                awaitingExternalAuth = false;
-                pendingPasswordResponse = false;
+                GreeterState.awaitingExternalAuth = false;
+                GreeterState.pendingPasswordResponse = false;
                 cancelingExternalAuthForPassword = false;
                 authTimeout.interval = defaultAuthTimeoutMs;
                 authTimeout.stop();
@@ -1995,19 +1991,19 @@ Item {
         }
 
         function onReadyToLaunch() {
-            awaitingExternalAuth = false;
-            pendingPasswordResponse = false;
+            GreeterState.awaitingExternalAuth = false;
+            GreeterState.pendingPasswordResponse = false;
             resetPasswordSessionTransition(true);
             authTimeout.interval = defaultAuthTimeoutMs;
             authTimeout.stop();
-            passwordFailureCount = 0;
+            GreeterState.passwordFailureCount = 0;
             clearAuthFeedback();
             const sessionCmd = GreeterState.selectedSession || GreeterState.sessionExecs[GreeterState.currentSessionIndex];
             const sessionPath = GreeterState.selectedSessionPath || GreeterState.sessionPaths[GreeterState.currentSessionIndex];
             const sessionDesktopId = GreeterState.selectedSessionDesktopId || GreeterState.sessionDesktopIds[GreeterState.currentSessionIndex] || desktopIdFromPath(sessionPath);
             if (!sessionCmd) {
                 GreeterState.pamState = "error";
-                authFeedbackMessage = currentAuthMessage();
+                GreeterState.authFeedbackMessage = currentAuthMessage();
                 placeholderDelay.restart();
                 return;
             }
@@ -2032,8 +2028,8 @@ Item {
         }
 
         function onAuthFailure(message) {
-            awaitingExternalAuth = false;
-            pendingPasswordResponse = false;
+            GreeterState.awaitingExternalAuth = false;
+            GreeterState.pendingPasswordResponse = false;
             resetPasswordSessionTransition(true);
             authTimeout.interval = defaultAuthTimeoutMs;
             authTimeout.stop();
@@ -2043,9 +2039,9 @@ Item {
                 GreeterState.pamState = "max";
             } else {
                 GreeterState.pamState = "fail";
-                passwordFailureCount = passwordFailureCount + 1;
+                GreeterState.passwordFailureCount = GreeterState.passwordFailureCount + 1;
             }
-            authFeedbackMessage = currentAuthMessage();
+            GreeterState.authFeedbackMessage = currentAuthMessage();
             GreeterState.passwordBuffer = "";
             inputField.text = "";
             placeholderDelay.restart();
@@ -2053,15 +2049,15 @@ Item {
         }
 
         function onError(error) {
-            awaitingExternalAuth = false;
-            pendingPasswordResponse = false;
+            GreeterState.awaitingExternalAuth = false;
+            GreeterState.pendingPasswordResponse = false;
             resetPasswordSessionTransition(true);
             authTimeout.interval = defaultAuthTimeoutMs;
             authTimeout.stop();
             launchTimeout.stop();
             GreeterState.unlocking = false;
             GreeterState.pamState = "error";
-            authFeedbackMessage = currentAuthMessage();
+            GreeterState.authFeedbackMessage = currentAuthMessage();
             GreeterState.passwordBuffer = "";
             inputField.text = "";
             placeholderDelay.restart();
@@ -2089,12 +2085,12 @@ Item {
         onTriggered: {
             if (GreeterState.unlocking || Greetd.state === GreetdState.Inactive)
                 return;
-            awaitingExternalAuth = false;
-            pendingPasswordResponse = false;
+            GreeterState.awaitingExternalAuth = false;
+            GreeterState.pendingPasswordResponse = false;
             resetPasswordSessionTransition(true);
             authTimeout.interval = defaultAuthTimeoutMs;
             GreeterState.pamState = "error";
-            authFeedbackMessage = currentAuthMessage();
+            GreeterState.authFeedbackMessage = currentAuthMessage();
             GreeterState.passwordBuffer = "";
             inputField.text = "";
             placeholderDelay.restart();
@@ -2108,11 +2104,11 @@ Item {
         onTriggered: {
             if (!GreeterState.unlocking)
                 return;
-            pendingPasswordResponse = false;
+            GreeterState.pendingPasswordResponse = false;
             resetPasswordSessionTransition(true);
             GreeterState.unlocking = false;
             GreeterState.pamState = "error";
-            authFeedbackMessage = currentAuthMessage();
+            GreeterState.authFeedbackMessage = currentAuthMessage();
             placeholderDelay.restart();
             Greetd.cancelSession();
         }
