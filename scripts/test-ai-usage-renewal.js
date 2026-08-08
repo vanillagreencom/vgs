@@ -267,6 +267,16 @@ assert.match(resetText, /formatSpend/,
     "compactReset must still show a credit pool's amount: a credit pool has no renewal epoch, " +
     "so its amount is never in competition with a renewal line");
 
+// How hasRenewal is DEFINED, not just where it is used. Pinning only the uses
+// left a live mutant: redefining the property as `compactRenewal.visible`
+// reintroduces the exact effective-visibility dependency the assertions below
+// describe, while the height binding still contains the token `hasRenewal` and
+// still does not contain `compactRenewal.visible` — so both of them passed.
+assert.match(compactDelegate, /readonly property bool hasRenewal:\s*root\.hasRenewalLine\(modelData\)/,
+    "hasRenewal must be defined as the shared meter-local predicate; defining it from " +
+    "compactRenewal.visible puts effective visibility back into the layout arithmetic " +
+    "no matter what the height binding says");
+
 const heightBinding = binding(compactDelegate, "height", "the collapsed row");
 assert.match(heightBinding, /hasRenewal/,
     "the row must reserve its extra height on 'is there a renewal string'");

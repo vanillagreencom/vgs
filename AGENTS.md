@@ -274,14 +274,33 @@ the shell starts or that its surfaces are sane. Run
 `scripts/qml-smoke.sh --nested --require-static --require-nested` and
 `scripts/smoke-surfaces.sh` locally before finishing QML work.
 
-Two things about *where* those run. `smoke-surfaces.sh` must run **from the
-main checkout, never from a worktree**, where it fails silently rather than
-skipping (see the local-only table above). And `--require-nested` is part of
-the command above because a scripted run on a machine that has Hyprland and
-`quickshell` — this workstation does — must not be able to skip the compositor
-half and still exit `ok`. CI never passes it and never could: it reaches only
-the static half, per the indirect-checks table. What the flags themselves do is
-the `--require-static` / `--require-nested` bullet further down.
+Two things about *where* those run.
+
+`smoke-surfaces.sh` must run **from the main checkout, never from a worktree**,
+where it fails silently rather than skipping (see the local-only table above).
+
+The smoke's nested half needs **`WAYLAND_DISPLAY` pointing at the host
+compositor socket**, and an agent tool shell (Claude Code and friends) does not
+inherit it even though the socket is right there at
+`$XDG_RUNTIME_DIR/wayland-1`. Hyprland and `quickshell` being installed is not
+sufficient. So in such a shell the line above, run verbatim, exits 1 with
+`no host Wayland socket to nest inside`; export the variable first, or run:
+
+```bash
+WAYLAND_DISPLAY=wayland-1 scripts/qml-smoke.sh --nested --require-static --require-nested
+```
+
+That failure is the flag working: `--require-nested` is in the canonical command
+precisely so a run that could not start a compositor says so instead of skipping
+to `ok`. Note that `scripts/check-validation-inventory.py` cannot catch this
+class of problem at all — it cross-references command *names* against CI and
+this document and never executes them, so "every command here must run exactly
+as written" is a rule it enforces on paper and you enforce in practice.
+
+CI is the one place `--require-nested` does not belong, and CI never passes it:
+it reaches only the static half, per the indirect-checks table. What the flags
+themselves do is the `--require-static` / `--require-nested` bullet further
+down.
 
 ### Review gate
 
@@ -405,8 +424,12 @@ either: other Quickshell applications on the seat are legitimate.
     errors. **This is the mode that replaces what `qs -c vshell` used to cover**,
     so use it for QML work.
   - `--require-static` / `--require-nested` — fail instead of skipping when a
-    check's tooling is unavailable. Use them in any automated run; a plain skip
-    is otherwise indistinguishable from a pass.
+    check's tooling is unavailable; a plain skip is otherwise indistinguishable
+    from a pass. `--require-static` belongs in every automated run, CI included
+    (CI passes it). `--require-nested` belongs in local and scripted runs only —
+    CI has no compositor to nest inside, so requiring it there would fail every
+    run. It also needs `WAYLAND_DISPLAY`, which an agent shell lacks; see § What
+    CI covers.
 - `scripts/check-validation-safety.sh` proves validation left no extra VGS
   Quickshell instances or layer surfaces, and blocks unsafe launch instructions
   from returning to the docs.

@@ -949,12 +949,21 @@ PluginComponent {
 
                                     required property var modelData
 
-                                    // Evaluated once and shared. The row's height
-                                    // must key off "is there a renewal string",
-                                    // NOT off compactRenewal.visible — Item.visible
-                                    // is effective visibility, so that would make
-                                    // this row's layout arithmetic depend on whether
-                                    // some ancestor happens to be shown.
+                                    // The string, and whether there is one. Two
+                                    // calls rather than deriving the second from
+                                    // the first: `hasRenewalLine` is the single
+                                    // predicate every suppression site shares, and
+                                    // keeping this row on it is what stops the rule
+                                    // drifting here. They cannot disagree —
+                                    // hasRenewalLine is defined in terms of
+                                    // renewalLine — and the cost is one extra call
+                                    // per window per poll.
+                                    //
+                                    // hasRenewal, NOT compactRenewal.visible, is
+                                    // what the height below keys off: Item.visible
+                                    // is effective visibility, so using it would
+                                    // make this row's layout arithmetic depend on
+                                    // whether some ancestor happens to be shown.
                                     readonly property string renewalText: root.renewalLine(modelData)
                                     readonly property bool hasRenewal: root.hasRenewalLine(modelData)
                                     // Single-sourced: the gap below is both this
