@@ -246,7 +246,7 @@ diverge silently actually true.
 |-------|----------------------|
 | `scripts/check-label-taxonomy.py` | Compares `vstack.toml`'s label taxonomy against live Linear; CI has no Linear credentials and no local cache. It FAILS rather than skipping when the inventory is unreachable — `--allow-missing-inventory` is the explicit "I accept the sweep did not happen". |
 | `scripts/check-review-gate-vendor.sh` | Compares the tracked engine at `third_party/review-gate/` against the `vstack refresh`-managed copy under `.agents/`, which a CI checkout does not have. |
-| `scripts/smoke-surfaces.sh` | Needs a **live** Hyprland VGS session and reads `hyprctl layers`. Anywhere else it prints a skip and exits 0, so running it in CI would manufacture a false green. |
+| `scripts/smoke-surfaces.sh` | Needs a **live** Hyprland VGS session and reads `hyprctl layers`. Anywhere else it prints a skip and exits 0, so running it in CI would manufacture a false green. **It also cannot run from a worktree**: it drives `$repo_root/bin/vshell`, whose IPC lookup is keyed to *its own* `quickshell/vshell` path, so from `.worktrees/…` it never matches the live shell (which runs the main checkout's tree) and dies on `set -e` with a bare exit 255 and no diagnostic — a silent failure, not the documented skip. Run it from the main checkout after the branch is merged or checked out there. |
 
 **Reached indirectly — CI runs these through another entry, not by name:**
 

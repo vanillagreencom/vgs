@@ -16,6 +16,10 @@ PluginComponent {
     // account's tightest window, "best" = the account with the most headroom,
     // "worst" = the most exhausted account.
     property string headlineMode: pluginData.headlineMode || "pool"
+    // Opt-in absolute renewal dates under every bar. Off by default: the popout
+    // already carries the abbreviated instant beside the countdown, and someone
+    // who never opens settings must see the widget exactly as it looked before.
+    property bool showRenewalDates: pluginData.showRenewalDates === true
     // Account ids the user has hidden. They stay out of the list AND out of the
     // headline, so the number never contradicts what is on screen.
     property var hiddenAccounts: pluginData.hiddenAccounts || []
@@ -219,6 +223,39 @@ PluginComponent {
         if (days < 7)
             return when.toLocaleDateString(Qt.locale(), "ddd").toLowerCase() + " " + time;
         return when.toLocaleDateString(Qt.locale(), "d MMM").toLowerCase() + " " + time;
+    }
+
+    // The unabbreviated renewal instant, for the opt-in line that gets a row of
+    // its own. `formatResetAt` has to fit in a narrow column beside a bar and
+    // drops the year and the day-of-month once a weekday is unambiguous; here
+    // there is room to spell it out, which is the point of the setting.
+    function formatRenewalDate(epoch) {
+        if (!epoch || epoch <= 0)
+            return "";
+        const when = new Date(epoch * 1000);
+        if (isNaN(when.getTime()))
+            return "";
+        // Same staleness rule as formatResetAt: an instant already in the past
+        // is a window that rolled over between polls, and dating it is worse
+        // than saying nothing.
+        if (when.getTime() <= Date.now())
+            return "";
+        // Composed from the same two calls formatResetAt uses rather than one
+        // toLocaleString, so both formatters go through identical API surface.
+        // 24h for the same reason: AM/PM buys nothing and costs width.
+        return when.toLocaleDateString(Qt.locale(), "ddd d MMM yyyy")
+             + ", " + when.toLocaleTimeString(Qt.locale(), "HH:mm");
+    }
+
+    // "Renews Thu 7 Aug 2026, 04:00", or "" when this meter has no renewal
+    // epoch to show — credit pools carry none, and the helper sends 0 wherever
+    // the provider omitted one. Empty means the bar renders exactly as it does
+    // with the setting off, never a placeholder or an epoch-zero date.
+    function renewalLine(meter) {
+        if (!root.showRenewalDates || !meter)
+            return "";
+        const at = root.formatRenewalDate(meter.resetAt || 0);
+        return at ? "Renews " + at : "";
     }
 
     // Money for the compact row: no cents, thousands separated. At credit-pool
@@ -778,6 +815,13 @@ PluginComponent {
                                 font.pixelSize: Theme.fontSizeSmall
                                 color: Theme.surfaceVariantText
                             }
+
+                            StyledText {
+                                text: root.renewalLine(modelData)
+                                visible: text.length > 0
+                                font.pixelSize: Theme.fontSizeSmall
+                                color: Theme.surfaceVariantText
+                            }
                         }
                     }
                 }
@@ -856,7 +900,11 @@ PluginComponent {
                                     required property var modelData
 
                                     width: accountCol.width
+                                    // The renewal line, when on, stacks under the
+                                    // one-line summary; the trailing 5 stays the
+                                    // gap to the next window either way.
                                     height: compactLabel.implicitHeight + 5
+                                            + (compactRenewal.visible ? compactRenewal.implicitHeight + 1 : 0)
 
                                     StyledText {
                                         id: compactLabel
@@ -911,6 +959,19 @@ PluginComponent {
                                         anchors.top: parent.top
                                         text: root.formatSpend(modelData) || root.formatResetAt(modelData.resetAt || 0)
                                         visible: text.length > 0
+                                        font.pixelSize: Theme.fontSizeSmall
+                                        color: Theme.surfaceVariantText
+                                    }
+
+                                    StyledText {
+                                        id: compactRenewal
+                                        anchors.left: compactLabel.left
+                                        anchors.right: parent.right
+                                        anchors.top: compactLabel.bottom
+                                        anchors.topMargin: 1
+                                        text: root.renewalLine(modelData)
+                                        visible: text.length > 0
+                                        elide: Text.ElideRight
                                         font.pixelSize: Theme.fontSizeSmall
                                         color: Theme.surfaceVariantText
                                     }
@@ -970,6 +1031,13 @@ PluginComponent {
 
                                     StyledText {
                                         text: modelData.detail ? modelData.detail : root.resetLabel(modelData)
+                                        visible: text.length > 0
+                                        font.pixelSize: Theme.fontSizeSmall
+                                        color: Theme.surfaceVariantText
+                                    }
+
+                                    StyledText {
+                                        text: root.renewalLine(modelData)
                                         visible: text.length > 0
                                         font.pixelSize: Theme.fontSizeSmall
                                         color: Theme.surfaceVariantText

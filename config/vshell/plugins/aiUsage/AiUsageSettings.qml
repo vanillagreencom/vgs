@@ -48,6 +48,13 @@ PluginSettings {
                 ]
             }
 
+            ToggleSetting {
+                settingKey: "showRenewalDates"
+                label: "Show renewal dates"
+                description: "Add the absolute date and time each usage window renews under its bar, alongside the countdown. Windows the provider gives no renewal time for (credit pools) stay as they are."
+                defaultValue: false
+            }
+
             StringSetting {
                 settingKey: "refreshSeconds"
                 label: "Refresh Interval (seconds)"
