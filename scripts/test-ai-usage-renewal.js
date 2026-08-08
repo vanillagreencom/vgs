@@ -94,6 +94,7 @@ const bodies = {
     formatResetAt: extractBlock(source, "function formatResetAt(epoch)"),
     formatRenewalDate: extractBlock(source, "function formatRenewalDate(epoch)"),
     renewalLine: extractBlock(source, "function renewalLine(meter)"),
+    hasRenewalLine: extractBlock(source, "function hasRenewalLine(meter)"),
     resetLabel: extractBlock(source, "function resetLabel(meter)"),
     setShowRenewalDates: extractBlock(source, "function setShowRenewalDates(on)"),
 };
@@ -112,6 +113,7 @@ const PARAM = {
     formatResetAt: "epoch",
     formatRenewalDate: "epoch",
     renewalLine: "meter",
+    hasRenewalLine: "meter",
     resetLabel: "meter",
     setShowRenewalDates: "on",
 };
@@ -218,6 +220,67 @@ assert.equal(on.resetLabel(staleMeter), "Resets in 4h 2m",
 
 assert.equal(on.resetLabel(null), "", "resetLabel must tolerate a null meter");
 
+// One rule, one predicate. Both suppression sites must ask hasRenewalLine — a
+// site keyed off the global showRenewalDates instead would drop the instant for
+// a meter that renders no renewal line, losing it outright.
+assert.equal(on.hasRenewalLine(liveMeter), true, "a meter with a future epoch has a renewal line");
+assert.equal(on.hasRenewalLine(staleMeter), false, "a stale epoch means no renewal line to defer to");
+assert.equal(off.hasRenewalLine(liveMeter), false, "with the setting off nothing has a renewal line");
+assert.match(bodies.resetLabel, /hasRenewalLine\(meter\)/,
+    "resetLabel must suppress on the meter-local predicate, not on the global mode");
+
+// ---- 4b. the collapsed row's shape -----------------------------------------
+
+// The functions above are only half the dedupe: the collapsed multi-account row
+// does its own suppression in a binding, and no amount of function-level
+// assertion can see it. Reverting that binding to the pre-fix
+// `formatSpend(...) || formatResetAt(...)` left this suite green, so the exact
+// regression this change exists to fix could come back unnoticed. These pin the
+// binding shapes instead, scoped to the delegate so an unrelated occurrence
+// elsewhere in a 1000-line file cannot satisfy them.
+
+// The Repeater's model line is the unique literal immediately before the
+// delegate, so extractBlock lands on the delegate's own braces.
+const compactDelegate = extractBlock(source, "model: accountCard.expanded ? [] : accountCard.meters");
+assert.match(compactDelegate, /id: compactRow/,
+    "extraction must have landed on the collapsed-row delegate");
+
+// A property binding plus any continuation lines, which start with an operator.
+function binding(body, prop, what) {
+    const m = body.match(new RegExp(`\\n\\s*${prop}:\\s*([^\\n]*(?:\\n\\s*[+\\-?:|&][^\\n]*)*)`));
+    assert.ok(m, `expected a ${prop} binding on ${what}`);
+    return m[1];
+}
+
+// Only the span belonging to each child, so compactRenewal's own bindings
+// cannot stand in for compactReset's.
+const resetSpan = compactDelegate.slice(
+    compactDelegate.indexOf("id: compactReset"), compactDelegate.indexOf("id: compactRenewal"));
+const renewalSpan = compactDelegate.slice(compactDelegate.indexOf("id: compactRenewal"));
+assert.ok(resetSpan && renewalSpan, "the delegate must still declare compactReset and compactRenewal");
+
+const resetText = binding(resetSpan, "text", "compactReset");
+assert.match(resetText, /hasRenewal/,
+    "compactReset must defer its instant when the row prints a renewal line — without this, " +
+    "the collapsed row shows the same instant twice, once abbreviated and once in full");
+assert.match(resetText, /formatSpend/,
+    "compactReset must still show a credit pool's amount: a credit pool has no renewal epoch, " +
+    "so its amount is never in competition with a renewal line");
+
+const heightBinding = binding(compactDelegate, "height", "the collapsed row");
+assert.match(heightBinding, /hasRenewal/,
+    "the row must reserve its extra height on 'is there a renewal string'");
+assert.doesNotMatch(heightBinding, /compactRenewal\.visible/,
+    "the height must NOT key off Item.visible — that is effective visibility, which would make " +
+    "this row's layout arithmetic depend on whether some ancestor happens to be shown");
+
+// The gap is one number in two places; restating it is how the row ends up
+// clipped or padded.
+assert.match(heightBinding, /renewalGap/,
+    "the reserved height must use renewalGap rather than restating the literal");
+assert.match(binding(renewalSpan, "anchors\\.topMargin", "compactRenewal"), /renewalGap/,
+    "the anchor margin must use the same renewalGap the height reserves");
+
 // ---- 5. the default, and the persisted value -------------------------------
 
 // The property declaration itself, evaluated rather than string-matched: a
@@ -257,7 +320,7 @@ detached.setShowRenewalDates(true);
 assert.equal(detached.showRenewalDates, true,
     "the toggle must still take effect in-session when there is nothing to persist to");
 
-// ---- 6. one control, one key ------------------------------------------------
+// ---- 6. exactly one control, and it exists ---------------------------------
 
 // VGS-67 review: the toggle lives in the popout's gear pane, beside the other
 // display-shaping options. A second control for the same key in the file-based
@@ -268,5 +331,24 @@ assert.doesNotMatch(settingsSource, /showRenewalDates/,
 assert.match(source, /savePluginData\("aiUsage", "showRenewalDates"/,
     "the gear-pane toggle must persist under the same plugin-data key, so moving " +
     "the control migrates no state");
+
+// And the control has to BE there. The assertion above is satisfied by the
+// setter alone, which this test calls itself — so deleting the gear-pane toggle
+// outright left the suite green while making the setting unreachable from any
+// UI at all, the gear pane now being the only place it lives.
+//
+// The StyledRect wrapping the gear pane is identified by its visibility
+// binding, so this lands on the settings column rather than on some other
+// Column in the popout.
+const gearPane = extractBlock(source, "visible: popout.settingsOpen");
+assert.match(gearPane, /id: settingsCol/, "extraction must have landed on the gear settings pane");
+
+assert.match(gearPane, /VgsToggle\s*\{/,
+    "the gear pane must carry a toggle control — without one the setting is unreachable");
+assert.match(gearPane, /checked:\s*root\.showRenewalDates/,
+    "the gear-pane toggle must reflect the current value, or it can show 'off' while it is on");
+assert.match(gearPane, /onToggled:[^\n]*root\.setShowRenewalDates\(/,
+    "the gear-pane toggle must write through setShowRenewalDates, which is what coerces " +
+    "the stored value to a real boolean");
 
 console.log("ai usage renewal dates: all checks passed");

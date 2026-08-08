@@ -16,11 +16,13 @@ PluginComponent {
     // account's tightest window, "best" = the account with the most headroom,
     // "worst" = the most exhausted account.
     property string headlineMode: pluginData.headlineMode || "pool"
-    // Opt-in absolute renewal dates under every bar. Off by default: the popout
-    // already carries the abbreviated instant beside the countdown, and someone
-    // who never opens settings must see the widget exactly as it looked before.
-    // Strictly `=== true`, so an absent key, a persisted "false" string, or any
-    // other truthy leftover still reads as off.
+    // Opt-in absolute renewal dates under every bar. Off by default: while off,
+    // the popout carries the abbreviated instant beside the countdown, and
+    // someone who never opens the popout's gear pane must see the widget
+    // exactly as it looked before. Turning it on replaces that abbreviation
+    // rather than adding to it — the sites that showed it defer to the renewal
+    // line (see `hasRenewalLine`). Strictly `=== true`, so an absent key, a
+    // persisted "false" string, or any other truthy leftover still reads as off.
     property bool showRenewalDates: pluginData.showRenewalDates === true
     // Account ids the user has hidden. They stay out of the list AND out of the
     // headline, so the number never contradicts what is on screen.
@@ -273,6 +275,18 @@ PluginComponent {
         return at ? "Renews " + at : "";
     }
 
+    // "Will a renewal line actually print beneath this meter's bar?" — the one
+    // condition under which a site may drop its abbreviated instant, because
+    // that is exactly when the same instant is spelled out unabbreviated
+    // directly below. A property of the meter, not of the global mode: a site
+    // that keyed off `showRenewalDates` alone would suppress the instant for a
+    // meter that renders no renewal line, losing it outright. Every suppression
+    // site must ask this, so a future caller of `resetLabel` inherits the right
+    // behaviour rather than the trap.
+    function hasRenewalLine(meter) {
+        return root.renewalLine(meter) !== "";
+    }
+
     // Money for the compact row: no cents, thousands separated. At credit-pool
     // scale the cents are noise, and this column is only as wide as the bar can
     // spare. The expanded card keeps the engine's exact string.
@@ -298,17 +312,16 @@ PluginComponent {
 
     // "Resets in 4d 17h · thu 04:00", degrading to whichever half we have.
     //
-    // Used only by the two full-detail card sites, which is why the renewal
-    // line can be deferred to unconditionally here: when it is on it prints the
+    // Defers to the renewal line when this meter has one: that line prints the
     // same instant, unabbreviated, on the row directly below, and carrying an
     // abbreviated copy as well says one thing twice in two formats. The
     // countdown is the half the renewal line does NOT carry, so that is what
-    // stays. When the epoch is absent or stale both are empty anyway, and this
-    // degrades to exactly the string it produced before.
+    // stays. When there is no renewal line — setting off, or no usable epoch —
+    // this produces exactly the string it always did.
     function resetLabel(meter) {
         if (!meter)
             return "";
-        const at = root.showRenewalDates ? "" : root.formatResetAt(meter.resetAt || 0);
+        const at = root.hasRenewalLine(meter) ? "" : root.formatResetAt(meter.resetAt || 0);
         const inn = meter.reset && meter.reset !== "\u2014" ? meter.reset : "";
         if (inn && at)
             return "Resets in " + inn + " \u00b7 " + at;
@@ -943,7 +956,7 @@ PluginComponent {
                                     // this row's layout arithmetic depend on whether
                                     // some ancestor happens to be shown.
                                     readonly property string renewalText: root.renewalLine(modelData)
-                                    readonly property bool hasRenewal: renewalText !== ""
+                                    readonly property bool hasRenewal: root.hasRenewalLine(modelData)
                                     // Single-sourced: the gap below is both this
                                     // row's reserved height and the child's anchor
                                     // margin, and restating it in two places is how

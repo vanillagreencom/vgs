@@ -175,7 +175,7 @@ scripts/check-coderabbit-config.py
 scripts/check-review-gate-vendor.sh
 scripts/test-review-gate-step.sh
 third_party/review-gate/scripts/review-predicate-selftest.sh
-scripts/qml-smoke.sh --nested --require-static
+scripts/qml-smoke.sh --nested --require-static --require-nested
 scripts/check-validation-safety.sh
 scripts/check-label-taxonomy.py
 scripts/smoke-surfaces.sh
@@ -271,14 +271,17 @@ check rather than implying the published package was verified. Run
 
 So a green PR proves the static suite and the Go block. It does **not** prove
 the shell starts or that its surfaces are sane. Run
-`scripts/qml-smoke.sh --nested --require-static` and
-`scripts/smoke-surfaces.sh` locally before finishing QML work — but run
-`smoke-surfaces.sh` **from the main checkout, never from a worktree**, where it
-fails silently rather than skipping (see the local-only table above). Add
-`--require-nested` to the smoke in any automated run: without a
-`WAYLAND_DISPLAY` to nest inside it skips the compositor half and still exits
-`ok`, so the documented command can return green having started no shell at
-all.
+`scripts/qml-smoke.sh --nested --require-static --require-nested` and
+`scripts/smoke-surfaces.sh` locally before finishing QML work.
+
+Two things about *where* those run. `smoke-surfaces.sh` must run **from the
+main checkout, never from a worktree**, where it fails silently rather than
+skipping (see the local-only table above). And `--require-nested` is part of
+the command above because a scripted run on a machine that has Hyprland and
+`quickshell` — this workstation does — must not be able to skip the compositor
+half and still exit `ok`. CI never passes it and never could: it reaches only
+the static half, per the indirect-checks table. What the flags themselves do is
+the `--require-static` / `--require-nested` bullet further down.
 
 ### Review gate
 
