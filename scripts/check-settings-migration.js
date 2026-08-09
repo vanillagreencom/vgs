@@ -39,7 +39,7 @@ const settingsDataSource = fs.readFileSync(settingsDataPath, "utf8");
 
 const barWidgets = loadModule(path.join(settingsDir, "BarWidgets.js"), {});
 
-const TARGET_VERSION = 22;
+const TARGET_VERSION = 23;
 
 // Three places declare the schema version, and the runtime authority is
 // SettingsData.qml's settingsConfigVersion — that is what drives migration on
@@ -873,6 +873,64 @@ function undeclaredAssignments(source) {
   });
   return findings;
 }
+
+// v23 (VGS-62): scratchpads. The migration must introduce the key without
+// inventing content — a pad VGS did not generate is still owned by the user's
+// compositor config, and adopting it would give one special workspace two
+// owners generating competing rules.
+const scratchpadsMigrated = migrate({ configVersion: 22 });
+assert.deepStrictEqual(
+  scratchpadsMigrated.scratchpads,
+  [],
+  "scratchpads must be seeded empty, never imported from the compositor"
+);
+
+// A config that already carries pads keeps them verbatim: this is user content,
+// not a derived cache, so migration must never rewrite or re-key it.
+const existingScratchpads = migrate({
+  configVersion: 22,
+  scratchpads: [{ id: "term", name: "Terminal", command: "ghostty", keybind: "SUPER, T" }],
+});
+assert.deepStrictEqual(existingScratchpads.scratchpads, [
+  { id: "term", name: "Terminal", command: "ghostty", keybind: "SUPER, T" },
+]);
+
+// v22 and v23 were authored on separate branches and both originally claimed
+// 22. Two migrations sharing one version number is a corrupt upgrade path:
+// whichever landed second would silently skip its own step for every user who
+// had already run the first, because `currentVersion < 22` was by then false.
+// These assertions pin the ORDERED CHAIN rather than either step alone — a
+// single config must arrive with BOTH applied, which is exactly what a
+// renumbering mistake breaks.
+for (const from of [1, 19, 21, 22]) {
+  const walked = migrate({ configVersion: from });
+  assert.strictEqual(
+    walked.configVersion,
+    23,
+    `a v${from} config must land on the current schema version`
+  );
+  assert.deepStrictEqual(
+    walked.scratchpads,
+    [],
+    `a v${from} config must arrive with the v23 scratchpads key`
+  );
+  // v21 and older also have to pick up the v22 step on the way past it; a v22
+  // config is already spent and must keep the value it arrived with.
+  if (from < 22)
+    assert.strictEqual(
+      walked.notificationFirstRunTakeoverDone,
+      true,
+      `a v${from} config must also arrive with the v22 takeover one-shot spent`
+    );
+}
+
+// The two steps are independent: neither may clobber the other's key.
+const bothSteps = migrate({
+  configVersion: 21,
+  scratchpads: [{ id: "keep", command: "x", classRegex: "^x$" }],
+});
+assert.strictEqual(bothSteps.notificationFirstRunTakeoverDone, true);
+assert.deepStrictEqual(bothSteps.scratchpads, [{ id: "keep", command: "x", classRegex: "^x$" }]);
 
 for (const file of [sessionDataPath, settingsDataPath]) {
   assert.deepStrictEqual(

@@ -42,6 +42,7 @@ VGS = VanillaGreen Shell. Runtime name stays `vshell` because `vgs` conflicts wi
 | `docs/architecture/wallpaper-upscaling.md` | Upscaling wallpapers to 6K with `bin/vshell-upscale` (one-shot local AI, model routing, cache, why no diffusion/daemon) |
 | `docs/architecture/remote-desktop.md` | Touching the Sunshine remote-desktop host: `vshell remote-desktop`, the virtual-output lifecycle, the streaming-vs-listening indicator, or the `remoteDesktop` plugin |
 | `docs/architecture/cloud-sync.md` | Touching cloud file sync: the supervised `rclone rcd` process, accounts/OAuth, sync modes and safety rails, the inotify watcher, FUSE mounts, or the Cloud Sync app/widget |
+| `docs/architecture/scratchpads.md` | Touching scratchpads: the `scratchpads` setting, percentage sizing and anchors, the generated `hypr/vgs/scratchpads.lua`, `vshell scratchpad ...`, or the reveal-time re-assert |
 
 ## Project skills
 | Skill | Path | Notes |

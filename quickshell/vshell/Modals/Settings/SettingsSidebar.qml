@@ -187,6 +187,11 @@ Rectangle {
                     "text": I18n.tr("Window Rules"),
                     "icon": "rule",
                     "windowRulesCapable": true
+                },
+                {
+                    "id": "scratchpads",
+                    "text": I18n.tr("Scratchpads"),
+                    "icon": "picture_in_picture"
                 }
             ]
         },

@@ -463,6 +463,19 @@ function migrateToVersion(obj, targetVersion) {
         settings.configVersion = 22;
     }
 
+    if (currentVersion < 23) {
+        console.info("Migrating settings from version", currentVersion, "to version 23");
+        console.info("Introducing scratchpads (VGS-62); starts empty so no compositor config is generated until one is defined");
+        // Deliberately seeded empty rather than imported from the compositor.
+        // A pad VGS did not generate is still owned by the user's own config,
+        // and adopting it here would make VGS generate a second, competing set
+        // of rules for the same special workspace — two owners for one
+        // resource. Import stays a user action.
+        if (!Array.isArray(settings.scratchpads))
+            settings.scratchpads = [];
+        settings.configVersion = 23;
+    }
+
     var validKeys = SpecModule.getValidKeys();
     var filtered = {};
     for (var key in settings) {

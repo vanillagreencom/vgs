@@ -64,6 +64,7 @@ Singleton {
         { id: "interface", tabIndex: 46, source: "InterfaceTab.qml", needsModal: true },
         { id: "icons", tabIndex: 47, source: "IconsTab.qml", needsModal: true },
         { id: "screensaver", tabIndex: 48, source: "ScreensaverTab.qml", needsModal: true },
+        { id: "scratchpads", tabIndex: 49, source: "ScratchpadsTab.qml", needsModal: true },
     ]
 
     function tabIndexFor(id) {
