@@ -23,6 +23,11 @@ Item {
     property var parentModal: null
     property string expandedId: ""
     property string capturingId: ""
+    // Pad currently being released, and why the last removal was refused. A
+    // removal that cannot release its window keeps the pad rather than
+    // stranding the window.
+    property string removing: ""
+    property string removeError: ""
 
     readonly property var pads: SettingsData.scratchpads || []
     readonly property bool supported: ScratchpadService.supported
@@ -53,7 +58,14 @@ Item {
         return values;
     }
 
-    Component.onCompleted: ScratchpadService.refreshStatus()
+    Component.onCompleted: {
+        ScratchpadService.refreshStatus();
+        // KeybindsService does not load on its own — every consumer asks. Without
+        // this `displayList` stays empty, so the conflict check below compared
+        // against nothing and reported "no conflict" for every key on the
+        // system: a warning that could not fire, which is worse than none.
+        KeybindsService.loadBinds(false);
+    }
 
     function labelFor(options, values, value, fallbackIndex) {
         const index = values.indexOf(value);
@@ -85,9 +97,34 @@ Item {
         // removing a pad cannot relocate a same-class window the user
         // deliberately excluded from it.
         const pad = root.pads.find(entry => entry.id === padId);
-        if (pad && ScratchpadService.supported)
-            ScratchpadService.release(padId, pad.classRegex || "", pad.titleExclude || "");
+        if (!pad) {
+            root.removeError = "";
+            return;
+        }
+        if (!ScratchpadService.supported) {
+            // Nothing to strand: no compositor means no mapped window.
+            root._deletePad(padId);
+            return;
+        }
+        // Wait for the release. Deleting first would throw the result away and
+        // remove the record whether or not the window ever moved — leaving it on
+        // a special workspace that no longer has any rule or keybind pointing at
+        // it, which is exactly what releasing exists to prevent. A pad that will
+        // not release is a better state than an unreachable window.
+        root.removing = padId;
+        root.removeError = "";
+        ScratchpadService.release(padId, pad.classRegex || "", pad.titleExclude || "", (ok, error) => {
+            root.removing = "";
+            if (!ok) {
+                root.removeError = I18n.tr("Could not release \"%1\": %2. The scratchpad was kept so you can retry.").arg(pad.name || pad.id).arg(error || I18n.tr("unknown error"));
+                return;
+            }
+            root._deletePad(padId);
+        });
+    }
 
+    function _deletePad(padId) {
+        root.removeError = "";
         writePads(root.pads.filter(entry => entry.id !== padId));
         if (root.expandedId === padId)
             root.expandedId = "";
@@ -201,16 +238,23 @@ Item {
         const twin = root.pads.find(pad => pad.id !== padId && root.normalizeCombo(pad.keybind) === combo);
         if (twin)
             return I18n.tr("Already used by \"%1\"").arg(twin.name || twin.id);
-        // Then the compositor's own binds. The pad's own generated bind will
-        // appear here once applied, so it is excluded by description.
+        // Then the compositor's own binds. Once this pad has been applied its
+        // OWN generated bind is in that list, so it has to be skipped or every
+        // saved keybind would report a conflict with itself.
+        //
+        // Matched on the description, not the action: displayList entries carry
+        // only {id, type, key, desc} — there is no `action` field on them, so
+        // the previous action-based exclusion could never match anything.
+        const self = root.pads.find(pad => pad.id === padId);
+        const ownDescription = "Scratchpad: " + ((self && (self.name || self.id)) || padId);
         const list = KeybindsService.displayList || [];
         for (let i = 0; i < list.length; i++) {
             const bind = list[i];
-            if (root.normalizeCombo(bind.key) !== combo)
+            if (bind.type !== "bind" || root.normalizeCombo(bind.key) !== combo)
                 continue;
-            if (String(bind.action || "").indexOf("scratchpad toggle " + padId) >= 0)
+            if (String(bind.desc || "") === ownDescription)
                 continue;
-            return I18n.tr("Already bound to %1").arg(bind.desc || bind.action || I18n.tr("another action"));
+            return I18n.tr("Already bound to %1").arg(bind.desc || I18n.tr("another action"));
         }
         return "";
     }
@@ -285,6 +329,46 @@ Item {
                     color: Theme.error
                     font.pixelSize: Theme.fontSizeSmall
                     text: ScratchpadService.lastError
+                }
+            }
+
+            // A removal that could not release its window keeps the pad, so the
+            // user can retry rather than losing track of a running window.
+            SettingsCard {
+                width: parent.width
+                visible: root.removeError.length > 0
+                title: I18n.tr("Scratchpad not removed")
+                iconName: "error"
+
+                StyledText {
+                    width: parent.width
+                    wrapMode: Text.WordWrap
+                    color: Theme.error
+                    font.pixelSize: Theme.fontSizeSmall
+                    text: root.removeError
+                }
+            }
+
+            // Pads the helper refused. A rejected pad generates no rules at all,
+            // so without this the scratchpad would simply stop working while the
+            // list below still showed it as configured.
+            SettingsCard {
+                width: parent.width
+                visible: root.supported && (ScratchpadService.problems || []).length > 0
+                title: I18n.tr("Some scratchpads could not be used")
+                iconName: "warning"
+
+                Repeater {
+                    model: ScratchpadService.problems || []
+
+                    StyledText {
+                        required property var modelData
+                        width: parent.width
+                        wrapMode: Text.WordWrap
+                        color: Theme.error
+                        font.pixelSize: Theme.fontSizeSmall
+                        text: (modelData.id || "?") + " — " + (modelData.reason || "")
+                    }
                 }
             }
 

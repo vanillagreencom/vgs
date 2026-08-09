@@ -20,6 +20,8 @@ Column {
     property string conflict: ""
     // Set when automatic class matching was asked for but could not be honoured.
     property string autoNote: ""
+    // Set when a manually typed class pattern was refused.
+    property string regexNote: ""
     // The tab owns the option/value tables and the keybind normalization; this
     // component reads them rather than keeping a second copy that could drift.
     property var tabRoot: null
@@ -380,13 +382,40 @@ Column {
             }
 
             VgsTextField {
+                id: classField
                 width: parent.width
                 visible: row.pad.classRegexAuto === false
                 text: row.pad.classRegex || ""
                 placeholderText: "^(com\\.example\\.app)$"
-                onEditingFinished: row.changePad({
+                // Refuse the edit rather than persisting a pattern that cannot
+                // compile. A rejected pad generates NO rules, so saving this
+                // would silently stop the scratchpad working while the page
+                // still showed it as configured.
+                onEditingFinished: {
+                    if (!text) {
+                        row.regexNote = I18n.tr("A window class pattern is required.");
+                        return;
+                    }
+                    try {
+                        new RegExp(text);
+                    } catch (e) {
+                        row.regexNote = I18n.tr("Not a valid pattern: %1").arg(e.message || "");
+                        return;
+                    }
+                    row.regexNote = "";
+                    row.changePad({
                         "classRegex": text
-                    })
+                    });
+                }
+            }
+
+            StyledText {
+                width: parent.width
+                visible: row.regexNote.length > 0
+                text: row.regexNote
+                wrapMode: Text.WordWrap
+                font.pixelSize: Theme.fontSizeSmall
+                color: Theme.error
             }
 
             VgsTextField {

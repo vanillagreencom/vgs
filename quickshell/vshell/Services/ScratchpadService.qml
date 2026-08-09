@@ -42,6 +42,12 @@ Singleton {
     // reporting rules that were never written.
     property string lastError: ""
 
+    // Pads the helper could not use, each with the reason. A rejected pad
+    // generates no rules at all, so without surfacing these a scratchpad broken
+    // by a hand-edited settings.json would simply stop working while the page
+    // went on showing it as configured.
+    property var problems: []
+
     // Set when a run produces a payload with ok:true. A run that ends without
     // one — non-zero exit, unparseable output, or a binary that never started —
     // must not leave the previous success standing.
@@ -49,6 +55,9 @@ Singleton {
     property int _applyExitCode: 0
     property string _applyError: ""
     property bool _statusAnswered: false
+    property var _releaseCallback: null
+    property bool _releaseAnswered: false
+    property string _releaseError: ""
 
     function generateConfig() {
         if (!supported)
@@ -122,24 +131,50 @@ Singleton {
         Quickshell.execDetached([Paths.vshellCli, "scratchpad", "toggle", String(padId)]);
     }
 
-    // Move a pad's window back to the active workspace. Called just before a pad
-    // is deleted, so its window is never stranded on a special workspace that
-    // no longer has a keybind or a rule pointing at it. The class regex is
-    // passed in because the caller is about to rewrite the settings the helper
-    // would otherwise read it from.
-    // Both criteria travel together: releasing on the class alone would drag a
-    // same-class window the user explicitly excluded from the pad onto their
-    // active workspace, so release must own exactly the windows the placement
-    // rule owned.
-    function release(padId, classRegex, titleExclude) {
-        if (!supported || !padId)
+    // Move a pad's window back to the active workspace, and report whether it
+    // worked. Called just before a pad is deleted, so its window is never
+    // stranded on a special workspace that no longer has a keybind or a rule
+    // pointing at it.
+    //
+    // Both match criteria are passed in rather than looked up: the caller is
+    // about to rewrite the settings the helper would read them from, and they
+    // travel together because releasing on the class alone would drag a
+    // same-class window the user excluded from the pad onto their active
+    // workspace. Release must own exactly the windows the placement rule owned.
+    //
+    // NOT execDetached: the caller deletes the record only if this succeeds, so
+    // the result has to come back. A discarded result meant the record was
+    // deleted whether or not the window ever moved.
+    function release(padId, classRegex, titleExclude, onDone) {
+        if (!supported || !padId) {
+            if (onDone)
+                onDone(false, "scratchpads are not supported on this compositor");
             return;
-        const argv = [Paths.vshellCli, "scratchpad", "release", String(padId)];
+        }
+        if (releaseProc.running) {
+            if (onDone)
+                onDone(false, "another release is still running");
+            return;
+        }
+        root._releaseCallback = onDone || null;
+        root._releaseAnswered = false;
+        root._releaseError = "";
+        const argv = [Paths.vshellCli, "scratchpad", "release", String(padId), "--json"];
         if (classRegex)
             argv.push("--class-regex", String(classRegex));
         if (titleExclude)
             argv.push("--title-exclude", String(titleExclude));
-        Quickshell.execDetached(argv);
+        releaseProc.command = argv;
+        releaseProc.running = true;
+        if (!releaseProc.running)
+            root._finishRelease(false, "scratchpad helper could not be started");
+    }
+
+    function _finishRelease(ok, error) {
+        const callback = root._releaseCallback;
+        root._releaseCallback = null;
+        if (callback)
+            callback(ok, error || "");
     }
 
     Component.onCompleted: refreshStatus()
@@ -163,6 +198,7 @@ Singleton {
                     }
                     root._applyAnswered = true;
                     root._applyError = "";
+                    root.problems = payload.problems || [];
                     root.status = Object.assign({}, payload.include || {}, {
                         "path": payload.path || "",
                         "monitorsResolved": payload.scratchpads?.monitorsResolved !== false
@@ -193,6 +229,40 @@ Singleton {
     }
 
     Process {
+        id: releaseProc
+        running: false
+        command: []
+
+        stdout: StdioCollector {
+            onStreamFinished: {
+                if ((text || "").trim().length === 0)
+                    return;
+                try {
+                    const payload = JSON.parse(text);
+                    root._releaseAnswered = payload.ok === true;
+                    if (payload.ok !== true)
+                        root._releaseError = payload.error || "release reported failure";
+                } catch (e) {
+                    root._releaseError = "helper returned invalid JSON";
+                    log.warn("scratchpad release returned invalid JSON:", e);
+                }
+            }
+        }
+
+        // Same completion shape as the apply process, and for the same reason:
+        // a helper that never starts emits no `exited`, and the caller is
+        // waiting on this answer before it deletes anything.
+        onRunningChanged: {
+            if (running)
+                return;
+            if (root._releaseAnswered)
+                root._finishRelease(true, "");
+            else
+                root._finishRelease(false, root._releaseError || "release produced no result");
+        }
+    }
+
+    Process {
         id: statusProc
         running: false
         command: []
@@ -204,6 +274,7 @@ Singleton {
                 try {
                     const payload = JSON.parse(text);
                     root._statusAnswered = true;
+                    root.problems = payload.problems || [];
                     root.status = Object.assign({}, payload.include || {}, {
                         "path": payload.path || "",
                         "monitorsResolved": payload.monitorsResolved !== false
