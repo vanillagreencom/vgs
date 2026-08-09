@@ -398,6 +398,16 @@ that returned zero did anything.
 A disabled pad still refuses to reveal and is still allowed to hide, so
 disabling a visible pad cannot strand it.
 
+`vshell scratchpad hide [--keep-focus]` reaches both backends with the same
+flags, and **where focus lands after a hide is one shared decision**
+(`_scratchpad_restore_target`): a keybind hide returns to whatever the pad was
+revealed from, a focus-loss dismissal keeps the window the user just moved to,
+and an unknown focus — or focus still on the pad itself — falls back to the
+origin. Each backend gathers those two values through its own IPC, because it
+has no choice, but the rule is not duplicated. That matters here specifically:
+this path accumulated three variations of one defect by letting each side decide
+separately.
+
 `release` moves only the window that is actually **on the pad's workspace**.
 Matching on the class alone would pick up a same-class window that was never in
 the pad — a second terminal — and yank it onto the active workspace. The

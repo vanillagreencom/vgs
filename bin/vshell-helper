@@ -9843,6 +9843,28 @@ def _scratchpad_dispatch(*args: str) -> bool:
     return run(["hyprctl", "dispatch", *args]).returncode == 0
 
 
+def _scratchpad_restore_target(keep_focus: bool, origin: str, current: str) -> str:
+    """Which window a hide must focus afterwards.
+
+    A KEYBIND hide returns to whatever the pad was revealed from: the user is
+    dismissing the pad to get back to what they were doing. A FOCUS-LOSS
+    dismissal must not — there the user has already chosen where to be, and that
+    choice is what triggered the hide, so restoring the reveal origin would yank
+    focus out of the window they just moved to.
+
+    `current` is passed as "" when focus is unknown or still sits on the pad's
+    own window. Both fall back to the origin: restoring to a window about to be
+    hidden leaves focus on nothing, and a failed query is not a reason to strand
+    it.
+
+    Each backend gathers `origin` and `current` through its own IPC — they have
+    no choice about that — but the DECISION lives here, so it cannot be right on
+    one compositor and wrong on the other."""
+    if keep_focus and current:
+        return current
+    return origin
+
+
 def _scratchpad_select_owned(candidates: List[Dict[str, Any]],
                              owns: Callable[[Dict[str, Any]], bool]) -> Dict[str, Any] | None:
     """The window a pad owns, chosen from ALL of its class/title matches.
@@ -10139,12 +10161,7 @@ def scratchpad_toggle(pad_id: str, reveal_only: bool = False, launch_only: bool 
             origin = ""
             if state_file.exists():
                 origin = state_file.read_text().strip()
-            restore_to = keep_target if keep_focus else origin
-            # A keep-focus hide that could not read the active window falls back
-            # to the origin rather than leaving focus wherever `focusmonitor`
-            # drops it: a failed query is not a reason to strand focus.
-            if keep_focus and not restore_to:
-                restore_to = origin
+            restore_to = _scratchpad_restore_target(keep_focus, origin, keep_target)
 
             # Hide, then hand focus to the target — including when the pad lives
             # on a different monitor, which is the case a naive "focus the last
@@ -11031,6 +11048,33 @@ def _scratchpad_niri_focused_window_id() -> int:
     return 0
 
 
+def _scratchpad_niri_window_on_pad(pad_id: str, window_id: int) -> bool:
+    """Whether a window is on the pad's workspace. Unknown answers False: this
+    only guards "do not restore focus to the pad we are hiding", and a failed
+    query there costs a fallback to the reveal origin, not a wrong move."""
+    workspace = _scratchpad_niri_workspace(pad_id)
+    if not workspace:
+        return False
+    try:
+        pad_workspace_id = int(workspace.get("id") or 0)
+    except (TypeError, ValueError):
+        return False
+    if not pad_workspace_id:
+        return False
+    windows = _niri_msg_json("windows")
+    if not isinstance(windows, list):
+        return False
+    for entry in windows:
+        if not isinstance(entry, dict) or entry.get("id") != window_id:
+            continue
+        held = entry.get("workspace_id")
+        try:
+            return held is not None and int(held) == pad_workspace_id
+        except (TypeError, ValueError):
+            return False
+    return False
+
+
 def _scratchpad_niri_ensure_membership(pad_id: str, window: Dict[str, Any]) -> Dict[str, Any]:
     """Move a window onto the pad's workspace if it is not already there.
 
@@ -11061,6 +11105,7 @@ def _scratchpad_niri_ensure_membership(pad_id: str, window: Dict[str, Any]) -> D
 
 
 def scratchpad_toggle_niri(pad_id: str, reveal_only: bool = False, launch_only: bool = False,
+                           hide_only: bool = False, keep_focus: bool = False,
                            timeout: float = 20.0) -> Dict[str, Any]:
     """Reveal/hide a pad on Niri by focusing its named workspace and back."""
     pads = {pad["id"]: pad for pad in load_scratchpads()}
@@ -11074,6 +11119,14 @@ def scratchpad_toggle_niri(pad_id: str, reveal_only: bool = False, launch_only: 
     with _scratchpad_lock(pad_id):
         visible_on = _scratchpad_niri_visible_output(pad_id)
 
+        # `hide` asks for one direction only, and asking to hide something
+        # already hidden is a no-op, not a failure — the focus watcher fires on
+        # an event and may reach the lock after the user dismissed the pad
+        # themselves. Answered before the enabled check, because a disabled pad
+        # that is already hidden is equally nothing to do.
+        if hide_only and not visible_on:
+            return {"ok": True, "action": "already-hidden", "id": pad_id}
+
         # Identical rule to the Hyprland backend: a disabled pad generates no
         # rules and no keybind, so revealing one claims a mechanism the enable
         # toggle does not have — but hiding one that is already on screen stays
@@ -11085,10 +11138,20 @@ def scratchpad_toggle_niri(pad_id: str, reveal_only: bool = False, launch_only: 
                         "error": f"{pad['name']} is disabled"}
 
         if visible_on and not reveal_only and not launch_only:
+            # Where focus must land, read BEFORE anything moves it — the same
+            # decision the Hyprland backend makes, through the same rule.
+            keep_target = ""
+            if keep_focus:
+                focused_id = _scratchpad_niri_focused_window_id()
+                if focused_id and not _scratchpad_niri_window_on_pad(pad_id, focused_id):
+                    keep_target = str(focused_id)
+
             previous = ""
             if state_file.exists():
                 previous = state_file.read_text().strip()
                 state_file.unlink(missing_ok=True)
+            previous = _scratchpad_restore_target(keep_focus, previous, keep_target)
+
             restored = False
             if previous.isdigit():
                 windows = _niri_msg_json("windows")
@@ -11116,7 +11179,7 @@ def scratchpad_toggle_niri(pad_id: str, reveal_only: bool = False, launch_only: 
             if still_on:
                 return {"ok": False, "id": pad_id, "action": "hide-failed",
                         "error": f"{pad['name']}: the pad is still displayed on {still_on}"}
-            return {"ok": True, "action": "hidden", "id": pad_id}
+            return {"ok": True, "action": "hidden", "id": pad_id, "focusedBack": previous}
 
         window = _scratchpad_niri_find_window(pad)
         launched = False

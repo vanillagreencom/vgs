@@ -4331,8 +4331,85 @@ def test_scratchpad_niri_hide_confirms_the_pad_is_off_screen():
         state["hides"] = True
         with _scratchpad_state_sandbox():
             ok = helper.scratchpad_toggle_niri("term")
-        assert_equal(ok, {"ok": True, "action": "hidden", "id": "term"},
+        assert_equal((ok["ok"], ok["action"], ok["id"]), (True, "hidden", "term"),
                      "a pad that is genuinely off screen reports hidden")
+    finally:
+        (helper._niri_session_ready, helper._niri_msg_json,
+         helper._niri_scratchpad_action, helper.load_scratchpads) = originals
+
+
+def test_scratchpad_hide_focus_rule_is_shared_by_both_backends():
+    """One rule, two backends. Each gathers the origin and the current focus
+    through its own IPC — they have no choice — but the DECISION is shared, so
+    it cannot be right on one compositor and wrong on the other. That is what
+    let three variations of one defect accumulate on this path."""
+    rule = helper._scratchpad_restore_target
+    assert_equal(rule(False, "B", "C"), "B", "a keybind hide returns to the reveal origin")
+    assert_equal(rule(True, "B", "C"), "C", "a focus-loss dismissal keeps where the user went")
+    assert_equal(rule(True, "B", ""), "B",
+                 "unknown focus, or focus still on the pad, falls back to the origin")
+    assert_equal(rule(False, "", "C"), "", "no origin and no keep-focus restores nothing")
+
+
+def test_scratchpad_niri_hide_honours_the_same_flags():
+    """`vshell scratchpad hide` reaches BOTH backends, so the Niri toggle has to
+    take the same flags. Without them the CLI raised TypeError on Niri the
+    moment VGS-82's hide path landed — the semantic half of that rebase."""
+    import inspect
+    hypr = set(inspect.signature(helper.scratchpad_toggle).parameters)
+    niri = set(inspect.signature(helper.scratchpad_toggle_niri).parameters)
+    assert_equal(hypr, niri, "both toggles accept the same arguments")
+
+    originals = (helper._niri_session_ready, helper._niri_msg_json,
+                 helper._niri_scratchpad_action, helper.load_scratchpads)
+    actions = []
+    helper._niri_session_ready = lambda: True
+    helper._niri_scratchpad_action = lambda *a: (actions.append(a), True)[1]
+    helper.load_scratchpads = lambda *a, **k: [_pad(id="term")]
+
+    state = {"visible": True}
+
+    def fake_json(*args):
+        if args and args[0] == "workspaces":
+            return [{"id": 9, "name": "vgs-term", "idx": 3,
+                     "is_active": state["visible"], "is_focused": False, "output": "DP-2"}]
+        if args and args[0] == "windows":
+            # 7 is the pad's own window; 5 is where the user has since moved.
+            return [{"id": 7, "app_id": "x", "workspace_id": 9, "is_focused": False},
+                    {"id": 5, "app_id": "y", "workspace_id": 4, "is_focused": True}]
+        return None
+
+    helper._niri_msg_json = fake_json
+    try:
+        # Hiding something already hidden is a no-op, not a failure — the same
+        # race the Hyprland backend answers this way.
+        state["visible"] = False
+        with _scratchpad_state_sandbox():
+            quiet = helper.scratchpad_toggle_niri("term", hide_only=True)
+        assert_equal(quiet["action"], "already-hidden", "an already-hidden pad is nothing to do")
+        assert_equal(actions, [], "and dispatches nothing")
+
+        # Focus-loss dismissal keeps the window the user moved to (5), not the
+        # reveal origin (7) recorded in the state file.
+        state["visible"] = True
+        actions.clear()
+        with _scratchpad_state_sandbox() as sandbox:
+            (sandbox / "term.niri-focus").write_text("7")
+            state["visible"] = True
+
+            def hides(*a):
+                actions.append(a)
+                if a and a[0] in ("focus-window", "focus-workspace-previous"):
+                    state["visible"] = False
+                return True
+
+            helper._niri_scratchpad_action = hides
+            result = helper.scratchpad_toggle_niri("term", hide_only=True, keep_focus=True)
+        assert_equal(result["ok"], True, "the hide succeeds")
+        assert_equal(result["focusedBack"], "5",
+                     "focus stays on the window the user chose, not the reveal origin")
+        assert ("focus-window", "--id", "7") not in actions, \
+            "and is never yanked back to the pad's reveal origin"
     finally:
         (helper._niri_session_ready, helper._niri_msg_json,
          helper._niri_scratchpad_action, helper.load_scratchpads) = originals
@@ -5439,6 +5516,8 @@ def main():
     test_scratchpad_launch_refusal_reaches_the_toggle()
     test_scratchpad_niri_pad_name_cannot_break_the_generated_kdl()
     test_scratchpad_niri_hide_confirms_the_pad_is_off_screen()
+    test_scratchpad_hide_focus_rule_is_shared_by_both_backends()
+    test_scratchpad_niri_hide_honours_the_same_flags()
     test_scratchpad_niri_generated_kdl_parses()
     test_scratchpad_compositor_detection_reads_the_session_not_the_binary()
     test_scratchpad_target_monitor_resolves_against_connected_outputs()
