@@ -737,11 +737,103 @@ assert.ok(
     /if \(root\._lifecycleReported && authoritative !== true\)/.test(lifecycleBody),
     "the helper's own verdict may replace a generic message that arrived first"
 );
-assert.ok(
-    /if \(!root\._lifecycleReported\)\s*\n\s*root\._reportLifecycleFailure\(I18n\.tr\("`vshell remote-desktop/.test(serviceSource),
-    "a command that cannot be spawned emits no `exited`, so the report must hang off `running`"
+// --- Z3: a command that SUCCEEDED must never report a failure --------------
+//
+// `running` going false is not evidence of failure. This repo's own precedent
+// (NotificationService.qml, both probes) says the process usually stops a
+// MOMENT BEFORE its output is collected, so reporting on the spot announced
+// "start failed" for commands that had in fact succeeded and whose JSON had
+// simply not arrived. A user who sees that on a host that started will retry
+// and stop it — strictly worse than the silence it replaced.
+const lifecycleRunningBody = serviceSource.slice(
+    serviceSource.indexOf("id: lifecycleProc")
 );
+const lifecycleRunningSlice = lifecycleRunningBody.slice(
+    lifecycleRunningBody.indexOf("onRunningChanged"),
+    lifecycleRunningBody.indexOf("onExited")
+);
+assert.ok(
+    !/_reportLifecycleFailure/.test(lifecycleRunningSlice),
+    "the running=false handler must not report: it cannot yet know the command failed"
+);
+assert.ok(
+    lifecycleRunningSlice.includes("lifecycleUnansweredTimer.restart()"),
+    "it must hand the verdict to the grace timer instead"
+);
+
+// The grace timer is where the outcome is decided, and a zero exit is a
+// SUCCESS -- it must take the early return, not the report path.
+const graceSlice = serviceSource.slice(serviceSource.indexOf("id: lifecycleUnansweredTimer"));
+const graceBody = graceSlice.slice(0, graceSlice.indexOf("id: settleTimer"));
+const zeroAt = graceBody.indexOf("root._lifecycleExitCode === 0");
+const reportAt = graceBody.indexOf("_reportLifecycleFailure");
+assert.ok(zeroAt >= 0, "the grace timer must special-case a successful exit");
+assert.ok(reportAt >= 0, "and must still be able to report a real failure");
+assert.ok(zeroAt < reportAt, "the success check must come before any report");
+assert.ok(
+    /root\._lifecycleExitCode === 0\)\s*\{[\s\S]{0,900}?return;/.test(graceBody),
+    "a successful command must return without reporting anything"
+);
+assert.ok(
+    /root\._lifecycleExitCode < 0/.test(graceBody),
+    "a command that never exited at all is the spawn failure, and must still be reported"
+);
+
+// onExited records the code and reports nothing, so the JSON verdict -- which
+// carries a far better message -- is never pre-empted by an exit code.
+const exitedSlice = lifecycleRunningBody.slice(lifecycleRunningBody.indexOf("onExited: exitCode =>"));
+const exitedBody = exitedSlice.slice(0, exitedSlice.indexOf("\n        }"));
+assert.ok(
+    exitedBody.includes("root._lifecycleExitCode = exitCode"),
+    "onExited must record the exit code"
+);
+assert.ok(
+    !/_reportLifecycleFailure/.test(exitedBody),
+    "and must not report from there, or an exit code beats the reason to the user"
+);
+
+// A command that cannot be spawned emits no `exited` at all, so the report has
+// to be reachable from the `running` transition. Since Z3 that is via the grace
+// timer rather than directly -- the invariant is the reachability, not the
+// call site, so this asserts the chain rather than one line of it.
+assert.ok(
+    /lifecycleUnansweredTimer\.restart\(\)/.test(lifecycleRunningSlice),
+    "the running transition must arm the timer that owns the verdict"
+);
+assert.ok(
+    /root\._lifecycleExitCode < 0[\s\S]{0,400}?_reportLifecycleFailure\(I18n\.tr\("`vshell remote-desktop/.test(graceBody),
+    "and a command that never exited must be reported as unrunnable from there"
+);
+
+// Each action resets the recorded code, or the previous action's exit would
+// decide this one's outcome.
 const runLifecycleBody = qmlFunctionBody("_runLifecycle");
+assert.ok(
+    runLifecycleBody.includes("root._lifecycleExitCode = -1"),
+    "each action must start with no recorded exit code"
+);
+
+// --- Z4: a correction must not be eaten by the error throttle ---------------
+const toastSource = fs.readFileSync(
+    path.join(repoRoot, "quickshell", "vshell", "Services", "ToastService.qml"), "utf8"
+);
+assert.ok(
+    /const correctsVisibleToast = /.test(toastSource),
+    "ToastService must recognise an update to the toast already on screen"
+);
+assert.ok(
+    /if \(level === levelError && !correctsVisibleToast\)/.test(toastSource),
+    "and must exempt it from the error throttle: a correction is not a repeat"
+);
+const correctionAt = toastSource.indexOf("const correctsVisibleToast");
+const throttleGuardAt = toastSource.indexOf("if (level === levelError && !correctsVisibleToast)");
+assert.ok(correctionAt >= 0, "the correction flag must exist");
+assert.ok(throttleGuardAt >= 0, "the throttle must consult it");
+assert.ok(
+    correctionAt < throttleGuardAt,
+    "the exemption must be computed before the throttle consults it"
+);
+
 assert.ok(
     runLifecycleBody.includes("root._lifecycleReported = false"),
     "each action starts unreported, or the second failure in a session would be silent"

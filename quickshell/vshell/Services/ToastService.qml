@@ -110,7 +110,15 @@ Singleton {
         const messageKey = message + level
         const normalizedAction = ToastAction.normalizeAction(action)
 
-        if (level === levelError) {
+        // Updating the toast ALREADY ON SCREEN in this category is a
+        // correction, not a repeat, so the error throttle must not eat it.
+        // Without this exemption a caller that reports a generic failure and
+        // then replaces it with the specific reason -- which is exactly what a
+        // command whose stdout arrives after its exit code does -- left the
+        // user holding the vague message and never showed the better one.
+        const correctsVisibleToast = !!category && currentCategory === category && toastVisible && currentLevel === level
+
+        if (level === levelError && !correctsVisibleToast) {
             const lastTime = lastErrorTime[messageKey] || 0
             if (now - lastTime < errorThrottleMs) {
                 return
@@ -119,7 +127,7 @@ Singleton {
         }
 
         if (category) {
-            if (currentCategory === category && toastVisible && currentLevel === level) {
+            if (correctsVisibleToast) {
                 currentMessage = message
                 currentDetails = details || ""
                 currentCommand = command || ""

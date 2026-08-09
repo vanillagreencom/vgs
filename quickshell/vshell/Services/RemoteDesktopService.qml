@@ -198,12 +198,18 @@ Singleton {
     // sees the switch spring back with no state change and no reason. Every
     // other failure path in this service reports; this one has to as well.
     property bool _lifecycleReported: false
+    // The exit code the finished lifecycle command reported, or -1 when it
+    // never exited at all — which is what a command that could not be spawned
+    // looks like. Recorded rather than acted on immediately; see
+    // lifecycleUnansweredTimer.
+    property int _lifecycleExitCode: -1
 
     function _runLifecycle(action) {
         if (lifecycleProc.running)
             return;
         root._pendingAction = action;
         root._lifecycleReported = false;
+        root._lifecycleExitCode = -1;
         root.busy = true;
         lifecycleProc.running = true;
     }
@@ -489,24 +495,28 @@ Singleton {
             if (running)
                 return;
             root.busy = false;
-            // Keyed on `running`, like the busy flag above and for the same
-            // reason: a command that cannot be spawned never exits, so an
-            // `exited`-only report would stay silent on exactly the failure
-            // the user is least able to diagnose.
-            if (!root._lifecycleReported)
-                root._reportLifecycleFailure(I18n.tr("`vshell remote-desktop %1` could not be run.").arg(root._pendingAction));
+            // Deliberately does NOT report here. `running` going false is not
+            // evidence the command failed: this repo's own precedent says the
+            // process usually stops A MOMENT BEFORE its output is collected
+            // (NotificationService.qml, both probes), so reporting on the spot
+            // announced "start failed" for commands that had in fact succeeded
+            // and whose JSON simply had not arrived yet. A user who sees that
+            // on a host that started will retry and stop it.
+            //
+            // So: give the collector the same grace period the ownership probe
+            // gives its own, and decide once it has expired.
+            lifecycleUnansweredTimer.restart();
             // Creating the output, starting the unit and Sunshine settling are
             // separate steps, so confirm rather than assume.
             settleTimer.restart();
         }
         onExited: exitCode => {
+            // Recorded, not acted on: the JSON verdict may still be in flight,
+            // and it carries a far better message than an exit code.
+            root._lifecycleExitCode = exitCode;
             if (exitCode === 0)
                 return;
             const detail = (lifecycleErr.text || "").trim();
-            // A non-zero exit whose stdout carried no usable JSON has reported
-            // nothing yet; stderr is the only thing left to show.
-            if (!root._lifecycleReported)
-                root._reportLifecycleFailure(detail || I18n.tr("It exited with code %1.").arg(exitCode));
             if (detail)
                 root.log.warn("remote-desktop " + root._pendingAction + " exited " + exitCode + ": " + detail);
         }
@@ -591,6 +601,36 @@ Singleton {
         interval: 400
         repeat: false
         onTriggered: root.refresh()
+    }
+
+    Timer {
+        id: lifecycleUnansweredTimer
+        // Same 500ms as the status probe's grace, for the same reason: the
+        // ordinary case is output collected a moment after the process stops.
+        interval: 500
+        repeat: false
+        onTriggered: {
+            if (root._lifecycleReported)
+                return;
+            if (root._lifecycleExitCode === 0) {
+                // It SUCCEEDED. The JSON either never arrived or did not parse,
+                // which costs us the detail, not the outcome -- and reporting a
+                // failure here is precisely the bug this timer exists to
+                // prevent. The settle refresh shows the new state.
+                root._lifecycleReported = true;
+                root.log.warn("remote-desktop " + root._pendingAction + " succeeded but returned no readable JSON");
+                return;
+            }
+            if (root._lifecycleExitCode < 0) {
+                // Never exited at all: the command could not be spawned. This is
+                // the failure the user is least able to diagnose, and the one an
+                // `exited`-only report would stay silent on.
+                root._reportLifecycleFailure(I18n.tr("`vshell remote-desktop %1` could not be run.").arg(root._pendingAction));
+                return;
+            }
+            const detail = (lifecycleErr.text || "").trim();
+            root._reportLifecycleFailure(detail || I18n.tr("It exited with code %1.").arg(root._lifecycleExitCode));
+        }
     }
 
     Timer {
