@@ -6,6 +6,7 @@ import QtQuick
 import Quickshell
 import qs.Services
 import "ToastAction.js" as ToastAction
+import "ToastQueue.js" as ToastQueue
 
 Singleton {
     id: root
@@ -130,7 +131,7 @@ Singleton {
                 return
             }
 
-            toastQueue = toastQueue.filter(t => t.category !== category)
+            toastQueue = ToastQueue.dropCategory(toastQueue, category)
         }
 
         const isDuplicate = toastQueue.some(toast =>
@@ -142,7 +143,15 @@ Singleton {
 
         if (toastQueue.length >= maxQueueSize && !isUndroppableCategory(category)) {
             if (level === levelError) {
-                toastQueue = toastQueue.filter(t => t.level !== levelError).slice(0, maxQueueSize - 1)
+                // An error makes room by evicting queued errors -- but never an
+                // undroppable entry, of any level. The exemption above only
+                // covers ADMISSION; if it did not hold here too, an error
+                // arriving later could still discard the one message the user
+                // needs, and "undroppable" would be a claim the code does not
+                // keep.
+                toastQueue = ToastQueue.trimToLimit(
+                    ToastQueue.dropLevel(toastQueue, levelError, isUndroppableCategory),
+                    maxQueueSize - 1, isUndroppableCategory)
             } else {
                 return
             }
@@ -183,7 +192,7 @@ Singleton {
             return
         }
 
-        toastQueue = toastQueue.filter(t => t.category !== category)
+        toastQueue = ToastQueue.dropCategory(toastQueue, category)
     }
 
     function hideToast() {

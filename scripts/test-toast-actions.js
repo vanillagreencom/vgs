@@ -30,6 +30,7 @@ const path = require("node:path");
 
 const repoRoot = path.resolve(__dirname, "..");
 const Action = require(path.join(repoRoot, "quickshell/vshell/Services/ToastAction.js"));
+const Queue = require(path.join(repoRoot, "quickshell/vshell/Services/ToastQueue.js"));
 const servicePath = path.join(repoRoot, "quickshell/vshell/Services/ToastService.qml");
 const serviceSource = fs.readFileSync(servicePath, "utf8");
 
@@ -93,110 +94,6 @@ assert.throws(
     "the reject-path assertions must be capable of failing"
 );
 
-// --- lifetime ---------------------------------------------------------------
-
-function qmlFunctionBody(name) {
-    const start = serviceSource.indexOf(`function ${name}(`);
-    assert.ok(start >= 0, `ToastService.qml should define ${name}`);
-    const end = serviceSource.indexOf("\n    }", start);
-    assert.ok(end > start, `${name} should be a closed function body`);
-    return serviceSource.slice(start, end);
-}
-
-// One writer for the live reference. If a second assignment to
-// currentActionCallback appears, one of them will eventually forget to clear.
-const callbackAssignments = serviceSource.match(/currentActionCallback\s*=/g) || [];
-assert.equal(
-    callbackAssignments.length,
-    1,
-    "currentActionCallback must be written in exactly one place (_setCurrentAction), " +
-        "or a new path can leave a closure held by the singleton"
-);
-assert.ok(
-    qmlFunctionBody("_setCurrentAction").includes("currentActionCallback = normalized ? normalized.callback : null"),
-    "_setCurrentAction must null the callback when given no action"
-);
-
-// The displayed toast's copy is released on dismissal.
-assert.ok(
-    qmlFunctionBody("hideToast").includes("_setCurrentAction(null)"),
-    "hideToast must release the displayed toast's action, or the closure outlives the toast"
-);
-
-// A queued entry's copy is released when the entry is dropped, and there are
-// TWO independent drop paths: showToast() drops a superseded category before
-// enqueueing its replacement, and dismissCategory() drops one on request.
-//
-// Both contain the same line, so asserting it exists somewhere in the file
-// proved only that at least one of them survived: deleting either load-bearing
-// drop entirely still passed. Each body is therefore checked on its own.
-//
-// The property being checked is reference RELEASE, not the absence of any
-// particular method. Banning `splice` did not express that -- `shift` and
-// `push` mutate the queue too and are correct where they are used, and a
-// `splice` removes the array's reference to the entry just as a filter does.
-// What actually releases is REPLACING the queue with a new array that never
-// contained the entry, which is what this predicate requires and what the
-// counterexamples below confirm it can tell apart.
-function dropsCategoryByReassignment(source) {
-    return /(?:^|[^\w.])toastQueue\s*=\s*toastQueue\s*\.filter\(\s*t\s*=>\s*t\.category\s*!==\s*category\s*\)/.test(source);
-}
-
-// Prove the instrument before trusting it: it must reject every in-place
-// alternative, each of which leaves the dropped entry reachable from the same
-// array object, and accept only the reassignment.
-assert.equal(
-    dropsCategoryByReassignment("toastQueue = toastQueue.filter(t => t.category !== category)"),
-    true,
-    "the drop predicate must accept the reassigning form"
-);
-for (const [label, counterexample] of [
-    ["a bare filter whose result is thrown away", "toastQueue.filter(t => t.category !== category)"],
-    ["an in-place splice", "for (var i = 0; i < toastQueue.length; i++) toastQueue.splice(i, 1)"],
-    ["marking entries instead of dropping them", "toastQueue.forEach(t => { if (t.category === category) t.dropped = true })"],
-    ["truncating the same array", "toastQueue.length = 0"],
-    ["assigning some other array", "other = toastQueue.filter(t => t.category !== category)"]
-]) {
-    assert.equal(
-        dropsCategoryByReassignment(counterexample),
-        false,
-        `the drop predicate must reject ${label}, which does not release the entry`
-    );
-}
-
-for (const fn of ["showToast", "dismissCategory"]) {
-    assert.ok(
-        dropsCategoryByReassignment(qmlFunctionBody(fn)),
-        `${fn} must drop its category by reassigning toastQueue, or the dropped entries' actions outlive them`
-    );
-}
-assert.ok(
-    qmlFunctionBody("processQueue").includes("_setCurrentAction(toast.action || null)"),
-    "processQueue must install the dequeued entry's action, overwriting the previous one"
-);
-
-// invokeAction reads the action out before hideToast() releases it, and the
-// declarative route is taken without ever calling a handler.
-const invokeBody = qmlFunctionBody("invokeAction");
-const readIndex = invokeBody.indexOf("const callback = currentActionCallback");
-const hideIndex = invokeBody.indexOf("hideToast()");
-assert.ok(readIndex >= 0, "invokeAction must capture the callback");
-assert.ok(hideIndex > readIndex, "invokeAction must capture the action before hideToast() releases it");
-assert.ok(
-    invokeBody.indexOf("PopoutService.openSettingsWithTab(settingsTab)") > hideIndex,
-    "the settings route should run after the toast is dismissed"
-);
-
-// Every public entry point must forward the action, or a caller would set one
-// and silently get a plain toast.
-for (const fn of ["showInfo", "showWarning", "showError"]) {
-    const body = qmlFunctionBody(fn);
-    assert.ok(
-        /showToast\([^)]*category,\s*action\)/.test(body),
-        `${fn} must forward its action argument to showToast`
-    );
-}
-
 // --- reading QML literals ---------------------------------------------------
 //
 // Both checks below read arrays straight out of their .qml files rather than
@@ -252,6 +149,205 @@ function evalArrayLiteral(text) {
     return new Function("__qml", `with (__qml) { return (${text}); }`)(qmlStub);
 }
 
+// Both lists are plain string arrays; parsed rather than transcribed so a
+// rename in ToastService.qml cannot leave this check asserting about a list
+// that no longer exists. (extractArrayLiteral/evalArrayLiteral are defined
+// below for the settings-tab check and hoist as function declarations.)
+const stickyCategories = evalArrayLiteral(
+    extractArrayLiteral(serviceSource, "readonly property var stickyCategories:")
+);
+const undroppableCategories = evalArrayLiteral(
+    extractArrayLiteral(serviceSource, "readonly property var undroppableCategories:")
+);
+
+// --- lifetime ---------------------------------------------------------------
+
+function qmlFunctionBody(name) {
+    const start = serviceSource.indexOf(`function ${name}(`);
+    assert.ok(start >= 0, `ToastService.qml should define ${name}`);
+    const end = serviceSource.indexOf("\n    }", start);
+    assert.ok(end > start, `${name} should be a closed function body`);
+    return serviceSource.slice(start, end);
+}
+
+// One writer for the live reference. If a second assignment to
+// currentActionCallback appears, one of them will eventually forget to clear.
+const callbackAssignments = serviceSource.match(/currentActionCallback\s*=/g) || [];
+assert.equal(
+    callbackAssignments.length,
+    1,
+    "currentActionCallback must be written in exactly one place (_setCurrentAction), " +
+        "or a new path can leave a closure held by the singleton"
+);
+assert.ok(
+    qmlFunctionBody("_setCurrentAction").includes("currentActionCallback = normalized ? normalized.callback : null"),
+    "_setCurrentAction must null the callback when given no action"
+);
+
+// The displayed toast's copy is released on dismissal.
+assert.ok(
+    qmlFunctionBody("hideToast").includes("_setCurrentAction(null)"),
+    "hideToast must release the displayed toast's action, or the closure outlives the toast"
+);
+
+// A queued entry's copy is released when the entry is dropped, and there are
+// TWO independent drop paths: showToast() drops a superseded category before
+// enqueueing its replacement, and dismissCategory() drops one on request.
+// Asserting the drop existed somewhere in the file proved only that at least
+// one of them survived, so each is checked on its own below.
+//
+// The property is REACHABILITY -- after the drop, the entry must not be
+// reachable from the queue the service goes on to hold -- and that is a
+// behavioural property, so it is tested behaviourally rather than by pattern.
+// The earlier version demanded the literal `toastQueue = toastQueue.filter(...)`
+// and listed a splice loop among the forms it must reject, which was wrong:
+// Array.prototype.splice() removes the array's reference to the entry exactly
+// as a filter does. Requiring one syntax rejected a correct implementation,
+// and a check that fails correct code gets weakened later by someone who
+// cannot tell it from a real finding.
+//
+// So the drop itself lives in ToastQueue.js and is exercised for real. The
+// property check is proved on THREE implementations: this one, a splice-based
+// one that must also pass, and a marking one that must fail.
+
+function releasesDroppedEntry(dropImplementation) {
+    const dropped = { category: "doomed", message: "drop me" };
+    const kept = { category: "other", message: "keep me" };
+    const result = dropImplementation([dropped, kept], "doomed");
+    // `result` is what every call site assigns back to toastQueue, so this is
+    // the queue the singleton will hold. However the implementation got there,
+    // the dropped entry must not be reachable from it.
+    return result.indexOf(dropped) === -1 && result.indexOf(kept) >= 0;
+}
+
+assert.equal(
+    releasesDroppedEntry(Queue.dropCategory),
+    true,
+    "ToastQueue.dropCategory must release the dropped entry"
+);
+assert.equal(
+    releasesDroppedEntry((entries, category) => {
+        // The implementation the old check wrongly forbade. splice() removes
+        // the array's reference, so this releases the entry too and must pass.
+        const copy = entries.slice();
+        for (let i = copy.length - 1; i >= 0; i--) {
+            if (copy[i].category === category)
+                copy.splice(i, 1);
+        }
+        return copy;
+    }),
+    true,
+    "a splice-based drop releases the entry just as a filter does, and must not be rejected"
+);
+assert.equal(
+    releasesDroppedEntry((entries, category) => {
+        // Marking instead of removing: the entry is still reachable.
+        entries.forEach(entry => {
+            if (entry.category === category)
+                entry.dropped = true;
+        });
+        return entries;
+    }),
+    false,
+    "the reachability check must reject a drop that only marks entries"
+);
+
+// Both drop sites route through that one audited implementation. This is a
+// one-owner claim, not a ban on any syntax: a second inline drop would be a
+// second thing to keep correct, and it is the drop that was silently deleted
+// in the first place.
+for (const fn of ["showToast", "dismissCategory"]) {
+    assert.ok(
+        /toastQueue\s*=\s*ToastQueue\.dropCategory\(toastQueue,\s*category\)/.test(qmlFunctionBody(fn)),
+        `${fn} must drop its category through ToastQueue.dropCategory, or the dropped entries' actions outlive them`
+    );
+}
+
+// --- undroppable entries survive every trim, not just admission -------------
+//
+// The admission exemption alone was not enough: an error arriving later takes
+// the eviction path, which drops queued errors and then shortens the queue, and
+// that could discard the takeover announcement anyway. "Undroppable" has to
+// hold everywhere the queue is trimmed or it is a claim the code does not keep.
+
+const protectedCategory = "notification-server-takeover";
+const isProtected = category => undroppableCategories.includes(category);
+const droppable = (n, level = 0) => ({ category: `plain-${n}`, level, message: `m${n}` });
+
+const announcement = { category: protectedCategory, level: 0, message: "VGS is now handling notifications" };
+const failureNotice = { category: "notification-server-takeover-failed", level: 2, message: "could not record it" };
+
+// dropLevel: an undroppable ERROR is still undroppable.
+assert.deepEqual(
+    Queue.dropLevel([droppable(1, 2), failureNotice, droppable(2, 0)], 2, isProtected),
+    [failureNotice, droppable(2, 0)],
+    "dropping a level must keep protected entries whatever their level"
+);
+
+// trimToLimit: protected entries are never removed, droppables go from the end.
+assert.deepEqual(
+    Queue.trimToLimit([droppable(1), announcement, droppable(2), droppable(3)], 2, isProtected),
+    [droppable(1), announcement],
+    "trimming must remove droppable entries from the end"
+);
+assert.deepEqual(
+    Queue.trimToLimit([droppable(1), droppable(2), announcement, failureNotice], 1, isProtected),
+    [announcement, failureNotice],
+    "a trim below the protected count must keep every protected entry rather than honour the limit"
+);
+assert.deepEqual(
+    Queue.trimToLimit([announcement], 0, isProtected),
+    [announcement],
+    "a protected entry survives a trim to nothing"
+);
+
+// The instrument must be able to fail: an unprotected entry in the same place
+// is removed.
+assert.deepEqual(
+    Queue.trimToLimit([droppable(1), droppable(9)], 1, isProtected),
+    [droppable(1)],
+    "trimming must actually remove something, or the assertions above prove nothing"
+);
+
+// The input is left alone, so a caller that has not yet reassigned still holds
+// a consistent queue.
+const original = [droppable(1), announcement, droppable(2)];
+Queue.trimToLimit(original, 1, isProtected);
+assert.equal(original.length, 3, "trimToLimit must not mutate the queue it was given");
+
+// And the eviction path in showToast must route through both.
+assert.ok(
+    /ToastQueue\.trimToLimit\(\s*ToastQueue\.dropLevel\(toastQueue,\s*levelError,\s*isUndroppableCategory\)/.test(qmlFunctionBody("showToast")),
+    "the error eviction path must protect undroppable entries, not just the admission check"
+);
+
+assert.ok(
+    qmlFunctionBody("processQueue").includes("_setCurrentAction(toast.action || null)"),
+    "processQueue must install the dequeued entry's action, overwriting the previous one"
+);
+
+// invokeAction reads the action out before hideToast() releases it, and the
+// declarative route is taken without ever calling a handler.
+const invokeBody = qmlFunctionBody("invokeAction");
+const readIndex = invokeBody.indexOf("const callback = currentActionCallback");
+const hideIndex = invokeBody.indexOf("hideToast()");
+assert.ok(readIndex >= 0, "invokeAction must capture the callback");
+assert.ok(hideIndex > readIndex, "invokeAction must capture the action before hideToast() releases it");
+assert.ok(
+    invokeBody.indexOf("PopoutService.openSettingsWithTab(settingsTab)") > hideIndex,
+    "the settings route should run after the toast is dismissed"
+);
+
+// Every public entry point must forward the action, or a caller would set one
+// and silently get a plain toast.
+for (const fn of ["showInfo", "showWarning", "showError"]) {
+    const body = qmlFunctionBody(fn);
+    assert.ok(
+        /showToast\([^)]*category,\s*action\)/.test(body),
+        `${fn} must forward its action argument to showToast`
+    );
+}
+
 // --- guaranteed delivery ----------------------------------------------------
 //
 // The queue cap silently drops a non-error toast once three are waiting:
@@ -267,17 +363,6 @@ function evalArrayLiteral(text) {
 // message that may arrive while the user is away from the machine).
 
 const takeoverCategory = "notification-server-takeover";
-
-// Both lists are plain string arrays; parsed rather than transcribed so a
-// rename in ToastService.qml cannot leave this check asserting about a list
-// that no longer exists. (extractArrayLiteral/evalArrayLiteral are defined
-// below for the settings-tab check and hoist as function declarations.)
-const stickyCategories = evalArrayLiteral(
-    extractArrayLiteral(serviceSource, "readonly property var stickyCategories:")
-);
-const undroppableCategories = evalArrayLiteral(
-    extractArrayLiteral(serviceSource, "readonly property var undroppableCategories:")
-);
 
 assert.ok(
     undroppableCategories.includes(takeoverCategory),
@@ -313,14 +398,47 @@ const notificationSource = fs.readFileSync(
 );
 // Checked on the announcing CALL, not on the file: the same string also appears
 // in dismissCategory() nearby, so a file-wide search passed with the show call
-// renamed -- which is exactly the mistake that returns the toast to droppable.
-const announceStart = notificationSource.indexOf("ToastService.showInfo(");
-assert.ok(announceStart >= 0, "NotificationService.qml should announce the first-run takeover");
-const announceEnd = notificationSource.indexOf("}));", announceStart);
-assert.ok(announceEnd > announceStart, "the announcement call should be closed");
-assert.ok(
-    notificationSource.slice(announceStart, announceEnd).includes(`"${takeoverCategory}"`),
-    `the first-run announcement must be raised under the category ToastService guarantees (${takeoverCategory})`
+// renamed -- exactly the mistake that returns the toast to droppable.
+//
+// The call is located by the CATEGORY, never by ordinal position. Taking the
+// first `ToastService.showInfo(` in the file meant any earlier showInfo added
+// later would silently repoint this assertion at an unrelated call and it would
+// go on passing -- an instrument quietly measuring the wrong thing, which is
+// the pattern this whole file exists to catch.
+
+// Every ToastService.show* call in `src`, each bounded by the next one.
+function toastCalls(src) {
+    const re = /ToastService\.show(Info|Warning|Error)\(/g;
+    const starts = [];
+    let match;
+    while ((match = re.exec(src)) !== null)
+        starts.push({ index: match.index, level: match[1] });
+    return starts.map((call, i) => ({
+        level: call.level,
+        text: src.slice(call.index, i + 1 < starts.length ? starts[i + 1].index : src.length)
+    }));
+}
+
+// The quotes are part of the needle: "notification-server-takeover-failed" is a
+// different category that shares the prefix, and an unquoted search would match
+// both.
+const announcements = toastCalls(notificationSource).filter(call => call.text.includes(`"${takeoverCategory}"`));
+assert.equal(
+    announcements.length,
+    1,
+    `exactly one ToastService.show* call should raise the ${takeoverCategory} category`
+);
+assert.equal(
+    announcements[0].level,
+    "Info",
+    "the first-run announcement is informational; VGS did something deliberate rather than something going wrong"
+);
+
+// Prove the locator can fail: a category nothing raises must find nothing.
+assert.equal(
+    toastCalls(notificationSource).filter(c => c.text.includes('"no-such-category"')).length,
+    0,
+    "the call locator must find nothing for a category that is never raised"
 );
 
 // --- settingsTab literals resolve to real tabs ------------------------------

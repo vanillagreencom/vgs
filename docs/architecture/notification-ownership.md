@@ -195,6 +195,18 @@ away from the machine). Reaching the queue and staying on screen are one
 guarantee: `scripts/test-toast-actions.js` requires every undroppable category
 to be sticky too.
 
+The exemption holds at **every** trim, not only at admission. An error arriving
+later takes the eviction path — drop queued errors, then shorten the queue — and
+that could have discarded the announcement after it had been admitted, leaving
+"undroppable" a claim the code did not keep. The three ways an entry can leave
+the queue unshown live in `Services/ToastQueue.js` (`dropCategory`, `dropLevel`,
+`trimToLimit`), which never removes a protected entry and is tested for the
+property that actually matters: after a drop, the removed entry is not reachable
+from the queue the service goes on to hold. That property is checked against a
+filter-based implementation, a **splice**-based one — which must also pass, since
+`splice()` releases the reference exactly as a filter does — and a marking one,
+which must fail.
+
 Six properties of the one-shot, each load-bearing:
 
 - **It fires only from a config that actually loaded.** A `settings.json` that
