@@ -30,12 +30,14 @@ PluginComponent {
             cur.push(id);
         else
             cur.splice(at, 1);
-        root.hiddenAccounts = cur;
+        // Persist only. Assigning the property here would destroy its binding to
+        // pluginData for this instance, and aiUsage is instantiated once per bar
+        // — the other bar would keep following pluginDataChanged while this one
+        // stopped, so one persisted setting would show two different states.
         if (root.pluginService)
             root.pluginService.savePluginData("aiUsage", "hiddenAccounts", cur);
     }
     function setHeadlineMode(m) {
-        root.headlineMode = m;
         if (root.pluginService)
             root.pluginService.savePluginData("aiUsage", "headlineMode", m);
     }
@@ -356,20 +358,54 @@ PluginComponent {
         return [{ pct: root.headlinePct }];
     }
 
+    // The provider each fetch was LAUNCHED for, empty when nothing is in
+    // flight. A Process command is a binding on root.provider, but a fetch
+    // already running when the provider changes keeps its old argument — and
+    // without this tag its payload would be attributed to whichever provider
+    // happens to be selected when the output arrives. Every result is checked
+    // against the tag and dropped when it no longer matches.
+    property string usageInFlight: ""
+    property string otherInFlight: ""
+
+    // A tag is only honoured while its process is actually running, so a fetch
+    // that somehow never reports an exit cannot wedge polling forever. And a
+    // tag is only KEPT when the launch actually took: assigning `running = true`
+    // to a Process that has not finished stopping is a no-op, and a tag left
+    // behind by a launch that never happened would block every later refresh
+    // while nothing was fetching.
     function refresh() {
-        if (!otherProc.running)
+        if (root.otherInFlight === "" || !otherProc.running) {
+            root.otherInFlight = root.otherProvider;
             otherProc.running = true;
-        if (usageProc.running)
+            if (!otherProc.running)
+                root.otherInFlight = "";
+        }
+        if (root.usageInFlight !== "" && usageProc.running)
             return;
+        root.usageInFlight = root.provider;
         usageProc.running = true;
+        if (!usageProc.running)
+            root.usageInFlight = "";
     }
 
     function setProvider(p) {
         if (root.provider === p)
             return;
-        root.provider = p;
+        // Persist only. The refresh is driven by onProviderChanged below, which
+        // runs in EVERY live instance rather than only in the one whose setter
+        // was clicked — and which is also correct on desktop widgets, where the
+        // instance-scoped pluginService emits pluginDataChanged via
+        // Qt.callLater, so root.provider has NOT moved yet when this returns.
         if (root.pluginService)
             root.pluginService.savePluginData("aiUsage", "provider", p);
+    }
+
+    // aiUsage is instantiated once per configured bar and the provider is one
+    // shared setting, so the change — not the click — is what has to drive the
+    // refetch. Refreshing inside setProvider left every other bar showing the
+    // PREVIOUS provider's accounts and plan under the new provider's label
+    // until its own poll timer fired, up to refreshSeconds later.
+    onProviderChanged: {
         root.loading = true;
         root.refresh();
     }
@@ -382,7 +418,34 @@ PluginComponent {
         running: false
         stdout: StdioCollector {
             id: usageOut
-            onStreamFinished: root.parseOutput(usageOut.text)
+            onStreamFinished: {
+                if (root.usageInFlight !== root.provider)
+                    return;  // stale: launched for a provider no longer selected
+                root.parseOutput(usageOut.text);
+            }
+        }
+        // Clearing the tag belongs here rather than in onStreamFinished: the
+        // stream closes before the process is reaped (the same ordering
+        // Common/settings/Processes.qml relies on), so by the time this runs
+        // the stale/fresh decision above has already been made, and a fetch
+        // that produced no output at all still releases the slot.
+        onExited: {
+            const launchedFor = root.usageInFlight;
+            root.usageInFlight = "";
+            // The selection moved while this was running, so its output was
+            // discarded above and nothing has fetched the current provider yet
+            // — refresh() was a no-op for as long as the tag was set.
+            //
+            // DEFERRED, because refresh() restarts by assigning `running = true`
+            // and that is a no-op while `running` still reads true. Quickshell
+            // 0.3.0 documents `running = false` as "send SIGTERM" and gives the
+            // restart idiom as `onRunningChanged: if (!running) running = true`
+            // — against runningChanged, not exited — and nowhere states that
+            // `running` has already flipped when `exited` fires. Assuming it has
+            // would silently drop the replacement fetch and leave the widget on
+            // loading = true until the poll timer. Next turn, both have settled.
+            if (launchedFor !== "" && launchedFor !== root.provider)
+                Qt.callLater(root.refresh);
         }
     }
 
@@ -397,12 +460,21 @@ PluginComponent {
         stdout: StdioCollector {
             id: otherOut
             onStreamFinished: {
+                if (root.otherInFlight !== root.otherProvider)
+                    return;  // stale: the providers swapped mid-flight
                 try {
                     root.noteHeadline(root.otherProvider, JSON.parse((otherOut.text || "").trim()));
                 } catch (e) {
                     root.noteHeadline(root.otherProvider, null);
                 }
             }
+        }
+        onExited: {
+            const launchedFor = root.otherInFlight;
+            root.otherInFlight = "";
+            // Deferred for the same reason as usageProc's relaunch above.
+            if (launchedFor !== "" && launchedFor !== root.otherProvider)
+                Qt.callLater(root.refresh);
         }
     }
 

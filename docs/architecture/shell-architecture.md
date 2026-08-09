@@ -211,6 +211,44 @@ Local/private commands belong in overlays or plugin settings.
 Keep legacy metadata only where the loader still needs it for third-party compatibility.
 Do not add legacy runtime calls.
 
+### Persisting a plugin setting: save, never assign
+A widget property backed by plugin data is a **binding**:
+
+```qml
+property string headlineMode: pluginData.headlineMode || "pool"
+```
+
+A setter must call `pluginService.savePluginData(...)` and nothing else.
+Assigning the property as well — the idiom that reads as "apply it now, then
+persist it" — destroys that binding for that instance, and the assignment is
+redundant anyway: the save emits `pluginDataChanged`,
+`PluginComponent.loadPluginData()` reassigns `pluginData` to a fresh object, and
+every live binding re-evaluates.
+
+**Persist-never-assign holds everywhere. The *timing* does not.** There are two
+`pluginService` implementations and they differ in exactly one respect:
+
+| Host | `savePluginData` emits `pluginDataChanged` | So after the setter returns |
+|------|-------------------------------------------|------------------------------|
+| Bar widgets — the global `Services/PluginService.qml` reached by `PluginComponent` | synchronously (`SettingsData.setPluginSetting(...)` then the signal, in the same call) | every bound property already reads the new value |
+| Desktop widgets — the instance-scoped service inside `Modules/Plugins/DesktopPluginWrapper.qml` | on the next event-loop turn (`Qt.callLater`), because the write goes through `SettingsData.updateDesktopWidgetInstanceConfig` for one instance | bound properties still read the **old** value |
+
+So a desktop widget author must never read a `pluginData`-bound property back
+in the same function that saved it, and must not sequence follow-up work — a
+refresh, a fetch, a mode-dependent branch — off the assumption that the value
+already changed. Do the follow-up work where the *change* is observed rather
+than where the save is issued: an `onXChanged` handler on the bound property,
+or a `Connections { target: pluginService; function onPluginDataChanged(id) }`.
+That form is correct under both hosts, and it is also what keeps sibling
+instances in step, since each one runs its own handler (see
+`config/vshell/plugins/aiUsage/AiUsageWidget.qml::onProviderChanged`).
+
+The reason it looks correct in testing is that a widget is instantiated **once
+per configured bar**. On a single display the assignment and the binding agree.
+On a second display the assigning instance has gone unbound while the other
+still follows `pluginDataChanged`, so one persisted setting renders as two
+different states (VGS-74).
+
 ### Core and the vgsMenu plugin
 The app launcher is a bundled plugin that core cannot do without, so the edge
 between them is one-way and named at both ends. See
