@@ -13755,6 +13755,51 @@ def _rd_session_state() -> Dict[str, Any]:
     return state
 
 
+# Candidate markers for the decode below. Private-use characters, so a real
+# state file will not contain one -- and the loop picks one that provably does
+# not, rather than assuming.
+_RD_DECODE_MARKERS = ("\ue000", "\ue001", "\uf8ff")
+
+# U+FFFD written literally, and the JSON escape a writer may use instead. Both
+# are what a device GENUINELY named with a replacement character looks like on
+# disk; neither can be produced by decoding an invalid byte.
+_RD_FFFD_ESCAPE_RE = re.compile(rb"\\u fffd".replace(b" ", b""), re.IGNORECASE)
+
+
+def _rd_decode_marking_real_fffd(raw_bytes: bytes) -> Any:
+    """Decode leniently, with genuine U+FFFD swapped for a marker first.
+
+    The point is to make the leftover U+FFFD UNAMBIGUOUS. Decoding with
+    `errors="replace"` and then asking "is this U+FFFD real?" cannot be
+    answered from the decoded text -- an earlier attempt searched the whole file
+    for the name's bytes, which answers "does this sequence appear ANYWHERE",
+    not "did THIS field decode cleanly", and mis-attributes whenever it appears
+    somewhere else.
+
+    So the question is removed rather than approximated: every rendering of a
+    real U+FFFD is swapped for a marker BEFORE decoding, and both renderings are
+    handled because a JSON writer may or may not escape non-ASCII (Sunshine's
+    own state file escapes solidus, so assuming either would be a guess). After
+    that, any U+FFFD in the decoded text can only be our own substitution, and
+    any marker can only be a real one.
+
+    Returns ``(text, marker)``, or ``(None, "")`` when no marker can be used --
+    which is not a failure to paper over, so the caller withholds every
+    suspicious name rather than guessing.
+    """
+    for marker in _RD_DECODE_MARKERS:
+        encoded = marker.encode("utf-8")
+        escaped_marker = marker.encode("unicode_escape")
+        if encoded in raw_bytes or escaped_marker in raw_bytes:
+            continue
+        marked = raw_bytes.replace("\ufffd".encode("utf-8"), encoded)
+        # A function, not a literal: re.sub processes backslash escapes in a
+        # replacement string, and the marker's escaped form starts with one.
+        marked = _RD_FFFD_ESCAPE_RE.sub(lambda _match: escaped_marker, marked)
+        return marked.decode("utf-8", errors="replace"), marker
+    return None, ""
+
+
 def _rd_paired_clients() -> Dict[str, Any]:
     """Names of PAIRED devices, from Sunshine's own state file.
 
@@ -13780,36 +13825,59 @@ def _rd_paired_clients() -> Dict[str, Any]:
     config_home = os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config")
     path = Path(config_home) / "sunshine" / "sunshine_state.json"
     try:
-        raw = path.read_text(errors="replace")
+        raw_bytes = path.read_bytes()
     except FileNotFoundError:
-        return {"names": [], "known": True, "error": ""}
+        return {"names": [], "known": True, "error": "", "undecodable": 0}
     except OSError as exc:
-        return {"names": [], "known": False, "error": f"the Sunshine state file could not be read: {exc}"}
+        return {"names": [], "known": False, "error": f"the Sunshine state file could not be read: {exc}", "undecodable": 0}
+
+    # Decoding with `errors="replace"` and moving on turned bad bytes into
+    # U+FFFD INSIDE device names, so a client appeared under a mangled name that
+    # is indistinguishable from the device genuinely being called that. The file
+    # is still decoded leniently -- one bad name must not cost the whole list --
+    # but genuine U+FFFD is marked first, so what remains is unambiguous.
+    raw, marker = _rd_decode_marking_real_fffd(raw_bytes)
+    if raw is None:
+        # No usable marker. Nothing here can tell a real replacement character
+        # from a substituted one, so the safe direction is to say so.
+        raw = raw_bytes.decode("utf-8", errors="replace")
+        marker = ""
     try:
         data = json.loads(raw)
     except ValueError as exc:
-        return {"names": [], "known": False, "error": f"the Sunshine state file is not valid JSON: {exc}"}
+        return {"names": [], "known": False, "error": f"the Sunshine state file is not valid JSON: {exc}", "undecodable": 0}
 
     if not isinstance(data, dict):
-        return {"names": [], "known": False, "error": "the Sunshine state file is not an object"}
+        return {"names": [], "known": False, "error": "the Sunshine state file is not an object", "undecodable": 0}
     root = data.get("root")
     if root is None:
         # A state file with no paired devices yet legitimately has no `root`.
-        return {"names": [], "known": True, "error": ""}
+        return {"names": [], "known": True, "error": "", "undecodable": 0}
     if not isinstance(root, dict):
-        return {"names": [], "known": False, "error": "the Sunshine state file's `root` is not an object"}
+        return {"names": [], "known": False, "error": "the Sunshine state file's `root` is not an object", "undecodable": 0}
     devices = root.get("named_devices")
     if devices is None:
-        return {"names": [], "known": True, "error": ""}
+        return {"names": [], "known": True, "error": "", "undecodable": 0}
     if not isinstance(devices, list):
-        return {"names": [], "known": False, "error": "the Sunshine state file's device list is not a list"}
+        return {"names": [], "known": False, "error": "the Sunshine state file's device list is not a list", "undecodable": 0}
 
     names: List[str] = []
+    undecodable = 0
     for device in devices:
         name = device.get("name") if isinstance(device, dict) else None
-        if isinstance(name, str) and name.strip():
-            names.append(name.strip())
-    return {"names": names, "known": True, "error": ""}
+        if not isinstance(name, str) or not name.strip():
+            continue
+        # Exact, per name. A U+FFFD surviving the marking above can only be a
+        # byte this process could not decode, so the name is withheld rather
+        # than shown mangled; a marker can only be a replacement character the
+        # file really contained, so it is restored and the name kept.
+        if "\ufffd" in name:
+            undecodable += 1
+            continue
+        if marker:
+            name = name.replace(marker, "\ufffd")
+        names.append(name.strip())
+    return {"names": names, "known": True, "error": "", "undecodable": undecodable}
 
 
 # --- Who created HEADLESS-1 --------------------------------------------------
@@ -14009,6 +14077,10 @@ def remote_desktop_status() -> Dict[str, Any]:
         # session state down with it.
         "pairedClientsKnown": paired["known"],
         "pairedClientsError": paired["error"],
+        # Names dropped because the file held bytes that are not valid UTF-8.
+        # Reported rather than silently substituted: a mangled name is
+        # indistinguishable from a real one.
+        "pairedClientsUndecodable": paired.get("undecodable", 0),
     }
 
 
@@ -14221,7 +14293,9 @@ def _print_remote_desktop_status(status: Dict[str, Any]) -> None:
         print(f"paired:  unknown ({status.get('pairedClientsError', '')})")
     else:
         paired = status["pairedClients"]
-        print(f"paired:  {', '.join(paired) if paired else 'none'}")
+        undecodable = status.get("pairedClientsUndecodable", 0)
+        suffix = f" (+{undecodable} name(s) not valid UTF-8)" if undecodable else ""
+        print(f"paired:  {(', '.join(paired) if paired else 'none')}{suffix}")
 
 
 def _rd_watch_token(line: str) -> str:

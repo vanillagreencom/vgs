@@ -3279,7 +3279,7 @@ def test_remote_desktop_unit_query_failure_is_not_a_missing_unit():
     # The status payload routes it to unknown, never to unavailable.
     originals = {n: getattr(helper, n) for n in ("_rd_unit_state", "detect_compositor", "_rd_paired_clients", "_rd_web_host")}
     helper.detect_compositor = lambda: {"compositor": "niri", "source": "test"}
-    helper._rd_paired_clients = lambda: {"names": [], "known": True, "error": ""}
+    helper._rd_paired_clients = lambda: {"names": [], "known": True, "error": "", "undecodable": 0}
     helper._rd_web_host = lambda: "localhost"
     try:
         helper._rd_unit_state = lambda: {"known": False, "error": "bus is gone", "exists": False, "running": False}
@@ -3426,7 +3426,7 @@ def test_remote_desktop_malformed_state_degrades_rather_than_raising():
     helper._rd_unit_state = lambda: {"known": True, "error": "", "exists": True, "running": False}
     helper._rd_manages_output = lambda: {"manages": False, "compositor": "niri", "blocked": False, "reason": ""}
     helper._rd_web_host = lambda: "localhost"
-    helper._rd_paired_clients = lambda: {"names": [], "known": False, "error": "the Sunshine state file is not an object"}
+    helper._rd_paired_clients = lambda: {"names": [], "known": False, "error": "the Sunshine state file is not an object", "undecodable": 0}
     try:
         status = helper.remote_desktop_status()
     finally:
@@ -3502,6 +3502,158 @@ def test_remote_desktop_unknown_compositor_is_probed_not_assumed():
     assert_equal(calls, [], "and must create nothing and start nothing")
     if not any("capture a real monitor" in failure for failure in result["failures"]):
         raise AssertionError(f"the refusal must name the risk: {result['failures']!r}")
+
+
+def test_remote_desktop_decode_marks_real_replacement_characters():
+    # The mechanism AI2 asked for: every rendering of a genuine U+FFFD is
+    # swapped for a marker BEFORE the lenient decode, so what is left is
+    # unambiguous -- a U+FFFD can only be a byte we could not decode, and a
+    # marker can only be one the file really contained.
+    literal = '{"a": "real\ufffdname"}'.encode("utf-8")
+    text, marker = helper._rd_decode_marking_real_fffd(literal)
+    assert_equal(marker in text, True, "a literal U+FFFD is marked")
+    assert_equal("\ufffd" in text, False, "and no bare U+FFFD is left to misread")
+
+    # The escaped rendering counts too: a JSON writer may or may not escape
+    # non-ASCII, and Sunshine's own state file escapes solidus, so assuming
+    # either one would be a guess.
+    escaped = b'{"a": "real\\ufffdname"}'
+    text, marker = helper._rd_decode_marking_real_fffd(escaped)
+    assert_equal(json.loads(text)["a"], "real" + marker + "name", "an escaped U+FFFD is marked too")
+
+    # Case is not significant in a JSON hex escape.
+    text, marker = helper._rd_decode_marking_real_fffd(b'{"a": "real\\uFFFDname"}')
+    assert_equal(json.loads(text)["a"], "real" + marker + "name", "an uppercase escape is the same character")
+
+    # A byte that cannot be decoded still becomes U+FFFD, which is now the only
+    # thing U+FFFD can mean.
+    text, marker = helper._rd_decode_marking_real_fffd(b'{"a": "bad-\x80-x"}')
+    assert_equal(json.loads(text)["a"], "bad-\ufffd-x", "an undecodable byte is the only source of U+FFFD left")
+
+    # A clean file is returned untouched apart from the marking, and the JSON
+    # still parses -- one bad name must never cost the list.
+    text, marker = helper._rd_decode_marking_real_fffd(b'{"a": "plain"}')
+    assert_equal(json.loads(text)["a"], "plain", "a clean file decodes normally")
+
+    # No usable marker is a refusal, not a guess: the caller withholds every
+    # suspicious name instead.
+    crowded = ("".join(helper._RD_DECODE_MARKERS)).encode("utf-8")
+    text, marker = helper._rd_decode_marking_real_fffd(crowded)
+    assert_equal(text, None, "a file containing every candidate marker yields no safe marking")
+    assert_equal(marker, "", "and no marker to restore with")
+
+
+def test_remote_desktop_undecodable_device_names_are_reported_not_mangled():
+    # VGS-87 item 5. Decoding with errors="replace" put U+FFFD INSIDE device
+    # names, so a client appeared under a mangled name indistinguishable from
+    # the device genuinely being called that. The substitution is now reported
+    # and the touched name is withheld rather than presented as fact.
+    def check(home: Path):
+        config = home / ".config" / "sunshine"
+        config.mkdir(parents=True)
+        state = config / "sunshine_state.json"
+        old_xdg = os.environ.pop("XDG_CONFIG_HOME", None)
+        try:
+            # A clean file is never second-guessed, including one whose names
+            # carry perfectly ordinary non-ASCII.
+            state.write_bytes(json.dumps({"root": {"named_devices": [
+                {"name": "mbp-1"}, {"name": "Bj\u00f6rn's iPad"},
+            ]}}).encode("utf-8"))
+            result = helper._rd_paired_clients()
+            assert_equal(result["names"], ["mbp-1", "Bj\u00f6rn's iPad"], "valid UTF-8 names pass through")
+            assert_equal(result["undecodable"], 0, "and nothing is reported as lost")
+            assert_equal(result["known"], True, "a clean file is an answer")
+
+            # A name carrying a lone 0x80 continuation byte. The JSON structure
+            # is still readable, so the OTHER device must survive -- one bad
+            # name is not a reason to lose the list.
+            payload = json.dumps({"root": {"named_devices": [
+                {"name": "good-client"}, {"name": "BADNAME"},
+            ]}}).encode("utf-8").replace(b"BADNAME", b"bad-\x80-client")
+            state.write_bytes(payload)
+            result = helper._rd_paired_clients()
+            assert_equal(result["known"], True, "the list itself is still readable")
+            assert_equal(result["names"], ["good-client"], "a name with invalid bytes is withheld, not mangled")
+            assert_equal(result["undecodable"], 1, "and the loss is counted rather than hidden")
+            for name in result["names"]:
+                if "\ufffd" in name:
+                    raise AssertionError(f"a substituted name reached the payload: {name!r}")
+
+            # Z5: the suspicion is scoped PER NAME. A device legitimately
+            # named with U+FFFD must keep its name even when an unrelated
+            # neighbour in the same file failed to decode -- a file-wide flag
+            # punished it for somebody else's bad bytes.
+            payload = json.dumps({"root": {"named_devices": [
+                {"name": "real\ufffdname"}, {"name": "BADNAME"},
+            ]}}, ensure_ascii=False).encode("utf-8").replace(b"BADNAME", b"bad-\x80-client")
+            state.write_bytes(payload)
+            result = helper._rd_paired_clients()
+            assert_equal(
+                result["names"], ["real\ufffdname"],
+                "a name the file really contains survives a broken neighbour",
+            )
+            assert_equal(result["undecodable"], 1, "and only the broken one is counted")
+
+            # The same, with the JSON writer escaping non-ASCII rather than
+            # emitting it literally -- Sunshine's own state file escapes, so
+            # assuming either rendering would be a guess.
+            payload = json.dumps({"root": {"named_devices": [
+                {"name": "real\ufffdname"}, {"name": "BADNAME"},
+            ]}, }, ensure_ascii=True).encode("utf-8").replace(b"BADNAME", b"bad-\x80-client")
+            state.write_bytes(payload)
+            result = helper._rd_paired_clients()
+            assert_equal(
+                result["names"], ["real\ufffdname"],
+                "an escaped U+FFFD is just as real as a literal one",
+            )
+            assert_equal(result["undecodable"], 1, "and the broken neighbour is still the only loss")
+
+            # AI2, and the reason the substring mechanism had to go: asking
+            # "does this name's byte sequence appear ANYWHERE in the file"
+            # answers a different question from "did THIS field decode
+            # cleanly". Here the mangled name's decoded form also appears in an
+            # unrelated field, so the old check found it and kept the name
+            # mangled. Marking real U+FFFD before decoding removes the question
+            # rather than approximating it.
+            payload = json.dumps({
+                "note": "bad-\ufffd-x",
+                "root": {"named_devices": [{"name": "BADNAME"}]},
+            }, ensure_ascii=False).encode("utf-8").replace(b'"BADNAME"', b'"bad-\x80-x"')
+            state.write_bytes(payload)
+            result = helper._rd_paired_clients()
+            assert_equal(
+                result["names"], [],
+                "a mangled name must not be rescued by an identical string elsewhere in the file",
+            )
+            assert_equal(result["undecodable"], 1, "and it is still counted as lost")
+
+            # Invalid bytes OUTSIDE any name must not withhold anything.
+            payload = json.dumps({"root": {"named_devices": [{"name": "mbp-1"}], "junk": "PAD"}}).encode("utf-8")
+            payload = payload.replace(b'"PAD"', b'"\x80pad"')
+            state.write_bytes(payload)
+            result = helper._rd_paired_clients()
+            assert_equal(result["names"], ["mbp-1"], "a clean name survives dirt elsewhere in the file")
+            assert_equal(result["undecodable"], 0, "and nothing is claimed lost that was not")
+        finally:
+            if old_xdg is not None:
+                os.environ["XDG_CONFIG_HOME"] = old_xdg
+
+    with_temp_home(check)
+
+    # The count reaches the status payload, which is what the widget renders.
+    originals = {n: getattr(helper, n) for n in
+                 ("_rd_unit_state", "_rd_manages_output", "_rd_paired_clients", "_rd_web_host")}
+    helper._rd_unit_state = lambda: {"known": True, "error": "", "exists": True, "running": False}
+    helper._rd_manages_output = lambda: {"manages": False, "compositor": "niri", "blocked": False, "reason": ""}
+    helper._rd_web_host = lambda: "localhost"
+    helper._rd_paired_clients = lambda: {"names": ["ok"], "known": True, "error": "", "undecodable": 2}
+    try:
+        status = helper.remote_desktop_status()
+    finally:
+        for name, value in originals.items():
+            setattr(helper, name, value)
+    assert_equal(status["pairedClientsUndecodable"], 2, "the withheld count must reach the widget")
+    assert_equal(status["pairedClients"], ["ok"], "alongside the names that were readable")
 
 
 def test_remote_desktop_watch_tokens_cover_every_event():
@@ -4397,6 +4549,8 @@ def main():
     test_remote_desktop_start_refuses_when_the_unit_query_fails()
     test_remote_desktop_malformed_state_degrades_rather_than_raising()
     test_remote_desktop_unknown_compositor_is_probed_not_assumed()
+    test_remote_desktop_decode_marks_real_replacement_characters()
+    test_remote_desktop_undecodable_device_names_are_reported_not_mangled()
     # Fail here, with the reason, rather than in the Niri suite with none.
     if os.environ.get("HOME") != _HOME_AT_IMPORT:
         raise AssertionError(

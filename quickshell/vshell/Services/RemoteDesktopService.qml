@@ -64,6 +64,10 @@ Singleton {
     // field must not be rendered as "no paired devices".
     property bool pairedClientsKnown: false
     property string pairedClientsError: ""
+    // Names the helper dropped because the state file held bytes that are not
+    // valid UTF-8. Surfaced rather than silently substituted -- a mangled name
+    // is indistinguishable from a device genuinely called that.
+    property int pairedClientsUndecodable: 0
 
     // The virtual output VGS manages on Hyprland.
     property string outputName: "HEADLESS-1"
@@ -78,6 +82,12 @@ Singleton {
     // --- Session state -------------------------------------------------------
     property bool streaming: false
     property int sessionCount: 0
+    // The COUNT is its own sub-axis of the session. A `connected` event proves
+    // a capture is live but says nothing about how many clients there are, so
+    // optimistic LIVE must not drag a count along with it: rendering the stale
+    // 0 beside "streaming now" showed a live capture with no clients listed,
+    // which reads as a fact rather than as the gap it is.
+    property bool sessionCountKnown: false
     property string sessionSince: ""
     property string sessionCodec: ""
     property int sessionBitrateBps: 0
@@ -106,6 +116,12 @@ Singleton {
     // requests during one probe collapse into a single follow-up.
     property bool _refreshPending: false
     property bool _statusAnswered: false
+    // Which probe the unanswered-grace timer belongs to. The timer is shared,
+    // so without this a tick armed by probe A could fire 500ms later while
+    // probe B is in flight, find `_statusAnswered` false because B has only
+    // just started, and mark a perfectly healthy B unanswered -- turning a
+    // fresh reading into "unknown" for no reason.
+    property int _statusProbeGeneration: 0
 
     function refresh() {
         if (statusProc.running) {
@@ -124,6 +140,14 @@ Singleton {
         root.statusKnown = false;
         root.outputKnown = false;
         root.pairedClientsKnown = false;
+        // captureFallback is an ASSERTION -- "the host is capturing a real
+        // monitor right now" -- and it is derived from output presence, which
+        // has just gone unknown. Keeping it would let the popout go on warning
+        // about a DP-1 fallback nothing can still confirm, which is the same
+        // defect as a stale LIVE. `streaming` is the deliberate exception
+        // below; this is not one, because a warning nobody can substantiate
+        // costs the user trust in every other warning.
+        root.captureFallback = false;
         root.statusError = reason;
         root._markSessionUnknown(reason);
     }
@@ -140,6 +164,7 @@ Singleton {
     // the widget renders that as its own state — never as LIVE, never as idle.
     function _markSessionUnknown(reason) {
         root.sessionKnown = false;
+        root.sessionCountKnown = false;
         root.sessionError = reason;
         root.sessionCount = 0;
         root.sessionCodec = "";
@@ -167,11 +192,37 @@ Singleton {
     }
 
     property string _pendingAction: ""
+    // Whether the finished lifecycle command has already told the user how it
+    // went. A start/stop/toggle that cannot be spawned produces no stdout, so
+    // the JSON branch below never runs -- and the user, who pressed a toggle,
+    // sees the switch spring back with no state change and no reason. Every
+    // other failure path in this service reports; this one has to as well.
+    property bool _lifecycleReported: false
+    // The exit code the finished lifecycle command reported, or -1 when it
+    // never exited at all — which is what a command that could not be spawned
+    // looks like. Recorded rather than acted on immediately; see
+    // lifecycleUnansweredTimer.
+    property int _lifecycleExitCode: -1
+    // Which action the pending verdict belongs to. `_lifecycleExitCode` and
+    // `_lifecycleReported` are shared, so without this a verdict armed by
+    // action A could fire after action B reset them and report B's name over
+    // A's outcome — the deferred verdict that stopped successes being reported
+    // as failures would instead have attributed one action's failure to
+    // another. Same tag-the-work shape as `_statusProbeGeneration` above.
+    property int _lifecycleGeneration: 0
 
     function _runLifecycle(action) {
         if (lifecycleProc.running)
             return;
         root._pendingAction = action;
+        root._lifecycleReported = false;
+        root._lifecycleExitCode = -1;
+        root._lifecycleGeneration++;
+        // The tag already stops a stale tick misattributing its verdict, but an
+        // armed timer nobody wants is still a needless wakeup and one more
+        // thing that can fire in an unexpected order. Same stop-on-start the
+        // status probe does.
+        lifecycleUnansweredTimer.stop();
         root.busy = true;
         lifecycleProc.running = true;
     }
@@ -201,6 +252,21 @@ Singleton {
         };
     }
     // END SESSION DECISION
+
+    // One surface for every lifecycle failure, so the reason reaches the user
+    // exactly once however the command failed.
+    //
+    // `authoritative` is the helper's own JSON verdict, which may arrive after
+    // `exited` has already shown a generic message. It is allowed to replace
+    // that with the real reason: the shared toast category means a second call
+    // updates the toast in place rather than stacking a duplicate.
+    function _reportLifecycleFailure(detail, authoritative) {
+        if (root._lifecycleReported && authoritative !== true)
+            return;
+        root._lifecycleReported = true;
+        root.log.warn("remote-desktop " + root._pendingAction + " failed: " + detail);
+        ToastService.showError(I18n.tr("Remote desktop %1 failed").arg(root._pendingAction), detail, "", "remote-desktop-lifecycle");
+    }
 
     function _applyStatus(text) {
         let status = null;
@@ -237,6 +303,7 @@ Singleton {
         root.pairedClients = status.pairedClients || [];
         root.pairedClientsKnown = status.pairedClientsKnown !== false;
         root.pairedClientsError = status.pairedClientsError || "";
+        root.pairedClientsUndecodable = status.pairedClientsUndecodable || 0;
         root.captureFallback = status.captureFallback === true;
 
         const output = status.output || {};
@@ -255,6 +322,7 @@ Singleton {
             return;
         }
         root.sessionKnown = true;
+        root.sessionCountKnown = true;
         root.sessionError = "";
         root.streaming = session.active === true;
         root.sessionCount = session.count || 0;
@@ -263,6 +331,33 @@ Singleton {
         root.sessionBitrateBps = session.bitrateBps || 0;
         root.sessionColorDepth = session.colorDepth || "";
     }
+
+    // Which watch events invalidate the displayed session COUNT.
+    //
+    // Pure decision function. `scripts/test-remote-desktop-state.js` extracts
+    // THIS source text between the markers and exercises every token.
+    //
+    // Every event means "re-read the status", but only some of them imply the
+    // number of clients may have changed — and marking the count unknown has a
+    // visible cost, since the popout reads "confirming…" until the resync
+    // lands. So this is not simply "all of them":
+    //
+    // * `connected` / `disconnected` — a client arrived or left, so the number
+    //   on screen is stale by construction. Symmetric: it was asymmetric once,
+    //   and the disconnect side rendered a superseded count as authoritative.
+    // * `lifecycle` — the host is starting or stopping, which ends every
+    //   session it had. A count from before that transition describes a host
+    //   that no longer exists.
+    // * `session` — an encoder or bitrate change WITHIN the current set of
+    //   clients. Nothing about it says a client arrived or left, and a client
+    //   change would carry its own connect/disconnect event, so the last
+    //   confirmed count is still the best answer available. Blanking it here
+    //   would be flicker with no information behind it.
+    // BEGIN EVENT DECISION
+    function countInvalidatingEvent(event) {
+        return event === "connected" || event === "disconnected" || event === "lifecycle";
+    }
+    // END EVENT DECISION
 
     // The watch emits normalised tokens, never Sunshine's own wording: the log
     // format is parsed once, in the helper. Every token means "re-read the
@@ -278,6 +373,11 @@ Singleton {
             // unambiguous: somebody is watching, right now.
             root.streaming = true;
             root.sessionKnown = true;
+            // ...but "how many" is not part of what a connect proves, so the
+            // count is invalidated below rather than asserted here. At least
+            // one client exists, which is all a connect establishes.
+            if (root.sessionCount < 1)
+                root.sessionCount = 1;
         }
         // A `disconnected` token deliberately does NOT clear `streaming`. With
         // more than one client connected it ends ONE session, not the capture,
@@ -285,6 +385,13 @@ Singleton {
         // the next resync — the exact failure this widget exists to prevent.
         // Only the authoritative session count, via _applyStatus, may turn LIVE
         // off. The resync below is what does it.
+        //
+        // The COUNT is a different question, and it is symmetric: a disconnect
+        // proves the displayed number is no longer current just as surely as a
+        // connect does, and so does a host lifecycle transition. Whichever
+        // direction the change ran, only the authoritative read may restore it.
+        if (root.countInvalidatingEvent(event))
+            root.sessionCountKnown = false;
         resyncDebounce.restart();
     }
 
@@ -328,8 +435,13 @@ Singleton {
         onRunningChanged: {
             if (running) {
                 root._statusAnswered = false;
+                root._statusProbeGeneration++;
+                // A probe that is RUNNING cannot be unanswered yet, and any
+                // tick still armed belongs to the probe before it.
+                statusUnansweredTimer.stop();
                 return;
             }
+            statusUnansweredTimer.armedFor = root._statusProbeGeneration;
             statusUnansweredTimer.restart();
         }
     }
@@ -338,9 +450,16 @@ Singleton {
         id: statusUnansweredTimer
         // The grace period is for the ordinary case where the process stops a
         // moment before its output is collected.
+        property int armedFor: 0
         interval: 500
         repeat: false
         onTriggered: {
+            if (armedFor !== root._statusProbeGeneration) {
+                // Superseded: a newer probe started after this tick was armed,
+                // and it owns the verdict now. Stopping on start already covers
+                // the ordinary case; this covers a tick that was already queued.
+                return;
+            }
             if (!root._statusAnswered) {
                 root.log.warn("remote-desktop status probe did not run");
                 root._markStatusUnknown(I18n.tr("the host status check could not be run"));
@@ -373,8 +492,9 @@ Singleton {
                     root._applyStatus(JSON.stringify(result.status));
                 if (result && result.ok === false) {
                     const detail = (result.failures || []).join("\n");
-                    ToastService.showError(I18n.tr("Remote desktop %1 failed").arg(root._pendingAction), detail || I18n.tr("The host did not change state."));
+                    root._reportLifecycleFailure(detail || I18n.tr("The host did not change state."), true);
                 } else if (result) {
+                    root._lifecycleReported = true;
                     for (const note of (result.manual || []))
                         root.log.warn("remote-desktop " + root._pendingAction + ": " + note);
                 }
@@ -387,12 +507,32 @@ Singleton {
         onRunningChanged: {
             if (running)
                 return;
-            root.busy = false;
+            // `busy` is deliberately NOT cleared here. It is what the toggle
+            // keys `enabled` on, and re-enabling the control while this
+            // action's outcome is still unknown is its own small lie — as well
+            // as being what let the user launch a second action inside the
+            // verdict window. It is cleared by the timer, with the verdict.
+            //
+            // Deliberately does NOT report here either. `running` going false is not
+            // evidence the command failed: this repo's own precedent says the
+            // process usually stops A MOMENT BEFORE its output is collected
+            // (NotificationService.qml, both probes), so reporting on the spot
+            // announced "start failed" for commands that had in fact succeeded
+            // and whose JSON simply had not arrived yet. A user who sees that
+            // on a host that started will retry and stop it.
+            //
+            // So: give the collector the same grace period the ownership probe
+            // gives its own, and decide once it has expired.
+            lifecycleUnansweredTimer.armedFor = root._lifecycleGeneration;
+            lifecycleUnansweredTimer.restart();
             // Creating the output, starting the unit and Sunshine settling are
             // separate steps, so confirm rather than assume.
             settleTimer.restart();
         }
         onExited: exitCode => {
+            // Recorded, not acted on: the JSON verdict may still be in flight,
+            // and it carries a far better message than an exit code.
+            root._lifecycleExitCode = exitCode;
             if (exitCode === 0)
                 return;
             const detail = (lifecycleErr.text || "").trim();
@@ -480,6 +620,47 @@ Singleton {
         interval: 400
         repeat: false
         onTriggered: root.refresh()
+    }
+
+    Timer {
+        id: lifecycleUnansweredTimer
+        // Same 500ms as the status probe's grace, for the same reason: the
+        // ordinary case is output collected a moment after the process stops.
+        property int armedFor: 0
+        interval: 500
+        repeat: false
+        onTriggered: {
+            if (armedFor !== root._lifecycleGeneration) {
+                // Superseded: a newer action reset the shared exit code and
+                // owns `busy` now. Its own tick will report on it. Dropping
+                // this verdict is right — the action it belonged to was
+                // overtaken, and the settle refresh shows whatever state the
+                // pair of them actually left behind.
+                root.log.warn("remote-desktop verdict superseded by a newer action");
+                return;
+            }
+            root.busy = false;
+            if (root._lifecycleReported)
+                return;
+            if (root._lifecycleExitCode === 0) {
+                // It SUCCEEDED. The JSON either never arrived or did not parse,
+                // which costs us the detail, not the outcome -- and reporting a
+                // failure here is precisely the bug this timer exists to
+                // prevent. The settle refresh shows the new state.
+                root._lifecycleReported = true;
+                root.log.warn("remote-desktop " + root._pendingAction + " succeeded but returned no readable JSON");
+                return;
+            }
+            if (root._lifecycleExitCode < 0) {
+                // Never exited at all: the command could not be spawned. This is
+                // the failure the user is least able to diagnose, and the one an
+                // `exited`-only report would stay silent on.
+                root._reportLifecycleFailure(I18n.tr("`vshell remote-desktop %1` could not be run.").arg(root._pendingAction));
+                return;
+            }
+            const detail = (lifecycleErr.text || "").trim();
+            root._reportLifecycleFailure(detail || I18n.tr("It exited with code %1.").arg(root._lifecycleExitCode));
+        }
     }
 
     Timer {

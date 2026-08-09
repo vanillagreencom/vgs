@@ -54,6 +54,12 @@ Three details that follow from that:
   | hyprctl present, no instance in the runtime dir | no Hyprland running — same |
   | an instance resolves and hyprctl answers | **this is Hyprland over ssh** — create the output |
   | an instance resolves but hyprctl will not answer | **refuse** — a Hyprland session is here and unreachable, so a real monitor cannot be ruled out |
+- **`captureFallback` is an assertion, so it needs a known status.** It is
+  cleared by `_markStatusUnknown()` along with the other axes: it claims "the
+  host is capturing a real monitor right now", derived from output presence,
+  and once that is unknown the claim is unsubstantiated. `streaming` is the
+  deliberate exception to unknown-clears-it; this is not one, because a warning
+  nobody can substantiate costs the user trust in every other warning.
 - **`captureFallback`** in the status payload is the running form of the same
   problem: host up, Hyprland, no `HEADLESS-1`. The widget renders it as a
   warning, because nothing else in the system would ever mention it.
@@ -151,22 +157,36 @@ last probe could not run) and `stale` (the event watch is down, so what is on
 screen may be out of date). Both say so rather than presenting a guess as
 current.
 
-### Three knowledge axes, reset together
+### Knowledge axes, reset together
 
 *Nobody is watching* and *nobody knows* must never render alike, and that
-applies to every axis of the answer, not just the session:
+applies to every axis of the answer, not just the session. The table below is
+the list; deliberately not a count, because it has grown twice already and a
+numeral in the prose is one more thing to forget:
 
 | Axis | Value | Known? |
 |------|-------|--------|
 | host | `installed`, `running` | `statusKnown` |
-| session | `streaming`, `sessionCount` | `sessionKnown` |
+| session | `streaming` | `sessionKnown` |
+| session count | `sessionCount` | `sessionCountKnown` |
 | virtual output | `outputPresent` | `outputKnown` |
+| paired devices | `pairedClients` | `pairedClientsKnown` |
 
-`RemoteDesktopService._markStatusUnknown()` drops all three at once. Leaving one
-standing renders half an answer as a whole one — and `installed` in particular
+`RemoteDesktopService._markStatusUnknown()` drops every one of them together.
+Leaving one standing renders half an answer as a whole one — and `installed` in particular
 **defaults to false**, so a widget that tested it before `statusKnown` displayed
 "Sunshine is not installed" for every instant before the first reply and again
 after any failed probe. A default is not an answer.
+
+The **session count** is finer-grained than the session it belongs to, because
+watch events move it without settling it. Any event that can change how many
+clients there are — a connect, a disconnect, or a host lifecycle transition —
+marks it unknown until the authoritative read supplies a number; an encoder or
+bitrate change within the current set of clients does not, since a client
+arriving or leaving would carry its own event. `countInvalidatingEvent()` is
+that rule, and it is deliberately symmetric: it was not, once, and the
+disconnect side rendered a superseded count as authoritative for the length of
+the resync window.
 
 ### What can turn LIVE off
 
@@ -175,7 +195,12 @@ Exactly one thing: an authoritative `status --json` reply whose
 
 - a `connected` event sets the indicator **immediately** — a connect is
   unambiguous, and this is the one fact worth showing a beat before the
-  authoritative read confirms it;
+  authoritative read confirms it. It does **not** carry a count with it: a
+  connect proves somebody is watching, not how many, so `sessionCountKnown`
+  goes false and the popout reads "confirming…" until the authoritative read
+  supplies a number. Rendering the stale `0` beside a live capture showed a
+  streaming session with no clients listed, which reads as a fact rather than
+  as the gap it is;
 - a `disconnected` event **does not clear it**. With more than one client
   connected it ends *one* session, not the capture, so clearing on the first
   disconnect would hide a live capture until the next resync. It only schedules
@@ -196,7 +221,23 @@ screen". The journal already carries the events, at no such cost.
 What that costs, stated rather than papered over: **the journal does not name the
 connected client, and does not carry the requested resolution** — neither is
 logged at Sunshine's `info` level. The popout therefore lists *paired* devices
-(from `named_devices` in that same state file — only `name` is read out of it,
+(from `named_devices` in that same state file — a name containing bytes that
+are not valid UTF-8 is **withheld and counted** rather than shown with U+FFFD
+substituted into it, because a mangled name is indistinguishable from a device
+genuinely called that.
+
+The detection does not *infer* which it is. Every rendering of a real U+FFFD —
+the literal UTF-8 encoding and the JSON escape, in either case — is swapped for
+a private-use marker **before** the lenient decode, so afterwards a U+FFFD can
+only be a byte this process could not decode and a marker can only be one the
+file really contained. Two earlier attempts approximated instead: a file-wide
+"did anything fail" flag punished every name for an unrelated neighbour's bad
+bytes, and a per-name substring search over the whole file answered "does this
+sequence appear anywhere", not "did this field decode cleanly" — so a mangled
+name was rescued by an identical string in some other field. The marker is
+chosen from a candidate list and only after checking the file does not already
+contain it; if none is safe, no name is guessed at. Only `name` is read out of
+the file,
 never the credential material beside it) under a heading that says paired, and
 says outright that which one is connected is not something the host reports.
 
@@ -309,6 +350,44 @@ Two smaller rules, both of the same family:
   outright — and there is deliberately no polling fallback to recover it. Any
   number of requests during one probe collapse into a single follow-up, launched
   once the probe has settled.
+- **A lifecycle verdict waits for the collector.** `running` going false is not
+  evidence of failure: the process usually stops a moment *before* its output is
+  collected, so deciding there announced "start failed" for commands that had in
+  fact succeeded — worse than the silence it replaced, because a user who sees
+  it on a host that started will retry and stop it. `onExited` records the code
+  and reports nothing; a 500 ms grace timer then decides, and a zero exit
+  returns without reporting anything at all.
+- **The verdict belongs to the action that launched it.** That grace window put
+  500 ms between a command finishing and its outcome being decided, and
+  `_lifecycleExitCode` is shared — so a second action started inside it reset
+  the shared state while the first action's tick was still armed, and that tick
+  would report, under the *second* action's name, a failure belonging to
+  neither. Two mechanisms, closing different holes: `busy` is now held until the
+  verdict resolves, so the toggle never offers the window to the user; and each
+  action takes a `_lifecycleGeneration` the timer records, so a caller that is
+  not the toggle — IPC, another service, since `_runLifecycle` gates on
+  `lifecycleProc.running` rather than on `busy` — cannot reach it either. A
+  superseded verdict is dropped and leaves `busy` to the action that now owns
+  it.
+- **Every lifecycle failure reaches the user.** `start`/`stop`/`toggle` report
+  through one surface, `_reportLifecycleFailure()`, keyed on `running` rather
+  than `exited` for the same reason the busy flag is: a command that cannot be
+  spawned never exits, and an `exited`-only report would stay silent on exactly
+  the failure the user is least able to diagnose — a toggle that springs back
+  with no state change and no reason. The helper's own JSON verdict may arrive
+  after `exited` and is allowed to replace a generic message with the real one;
+  the shared toast category means that updates in place rather than stacking.
+  `ToastService` exempts that update from its error throttle — but only when
+  the content actually changes. A correction is new information the user has
+  not seen; the same message arriving again is a repeat, which is what the
+  throttle is for, and exempting the whole category let a genuinely repeating
+  failure spam at whatever rate it recurred.
+- **The unanswered-grace timer belongs to one probe.** It is shared, so a tick
+  armed by probe A could fire while probe B was in flight, find
+  `_statusAnswered` false because B had only just started, and mark a healthy B
+  unanswered. Each probe start takes a new `_statusProbeGeneration` and stops
+  any armed tick; the timer records `armedFor` and ignores a tick a newer probe
+  has superseded.
 - **A status command that cannot be spawned marks the state unknown.** Per
   `.github/instructions/quickshell-qml.instructions.md`, a `Process` that fails
   to start emits no `exited` at all, so the probe is keyed on `running` plus a

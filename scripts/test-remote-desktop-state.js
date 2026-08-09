@@ -159,6 +159,12 @@ const sessionMarked = serviceSource.match(/\/\/ BEGIN SESSION DECISION\n([\s\S]*
 assert.ok(sessionMarked, "RemoteDesktopService.qml must carry the SESSION DECISION markers");
 const { sessionApplyDecision } = new Function(`${sessionMarked[1]}\nreturn { sessionApplyDecision };`)();
 
+const eventMarked = serviceSource.match(/\/\/ BEGIN EVENT DECISION\n([\s\S]*?)\/\/ END EVENT DECISION/);
+assert.ok(eventMarked, "RemoteDesktopService.qml must carry the EVENT DECISION markers");
+const { countInvalidatingEvent } = new Function(
+    `${eventMarked[1]}\nreturn { countInvalidatingEvent };`
+)();
+
 function host(overrides) {
     return Object.assign({
         streaming: false,
@@ -607,6 +613,310 @@ const installedAt = applyBody.indexOf("root.installed = status.installed === tru
 assert.ok(unitGuardAt >= 0, "the unit-unknown guard must exist");
 assert.ok(installedAt >= 0, "_applyStatus must still be the site that applies `installed`");
 assert.ok(unitGuardAt < installedAt, "the guard must come before the assignment it guards");
+
+// --- VGS-87 item 1: the session COUNT is its own knowledge axis -------------
+//
+// Optimistic LIVE-on-connect is deliberate (it is what stops a multi-client
+// disconnect briefly hiding a real capture), but a connect proves only that
+// SOMEBODY is watching — not how many. Carrying the stale 0 alongside it
+// rendered "streaming now" with no clients listed, which reads as a fact
+// rather than as the gap it is.
+const connectBody = qmlFunctionBody("_handleWatchToken");
+assert.ok(
+    connectBody.includes("root.sessionCountKnown = false"),
+    "a connect must mark the count unknown; it proves a session, not a number"
+);
+assert.ok(
+    (connectBody.match(/root\.sessionCountKnown = false/g) || []).length === 1,
+    "one write, reached by every invalidating event — a per-branch copy is how the disconnect side got missed"
+);
+assert.ok(
+    !/root\.sessionCount = 0/.test(connectBody),
+    "a connect must never leave the count at 0 while setting `streaming`"
+);
+assert.ok(
+    connectBody.includes("root.streaming = true"),
+    "and it must still set the indicator optimistically — that half is deliberate"
+);
+
+// Which events invalidate it, and — the VGS-87 Z1 asymmetry — that BOTH
+// directions of a client change do. A disconnect proves the displayed number
+// is no longer current just as surely as a connect does; leaving only the
+// connect side marked let the live session card render a superseded count as
+// authoritative for the length of the resync window.
+assert.equal(countInvalidatingEvent("connected"), true, "a client arrived: the number is stale");
+assert.equal(countInvalidatingEvent("disconnected"), true, "a client left: equally stale, and this was the gap");
+assert.equal(
+    countInvalidatingEvent("lifecycle"), true,
+    "the host starting or stopping ends every session it had, so a count from before it describes a host that is gone"
+);
+// Not everything, though: marking it unknown costs a visible "confirming…",
+// and an encoder or bitrate change within the current set of clients says
+// nothing about how many there are. A client change would carry its own
+// connect/disconnect event.
+assert.equal(
+    countInvalidatingEvent("session"), false,
+    "an encoder/bitrate change must not blank a count it did not affect"
+);
+assert.equal(countInvalidatingEvent(""), false, "an empty token decides nothing");
+assert.equal(countInvalidatingEvent("nonsense"), false, "an unknown token decides nothing");
+
+// The handler has to actually consult it, and on every event rather than
+// inside the connect branch — which is where the asymmetry lived.
+assert.ok(
+    connectBody.includes("if (root.countInvalidatingEvent(event))"),
+    "the handler must gate the count on the shared decision, not on the connect branch"
+);
+assert.ok(
+    connectBody.indexOf("if (root.countInvalidatingEvent(event))") > connectBody.indexOf('if (event === "connected")'),
+    "and must reach it for every token, not only a connect"
+);
+
+const sessionUnknownBody2 = qmlFunctionBody("_markSessionUnknown");
+assert.ok(
+    sessionUnknownBody2.includes("root.sessionCountKnown = false"),
+    "losing the session loses the count with it"
+);
+assert.ok(
+    qmlFunctionBody("_applyStatus").includes("root.sessionCountKnown = true"),
+    "only the authoritative read may declare the count known"
+);
+assert.ok(
+    widgetSource.includes("RemoteDesktopService.sessionCountKnown ? String(RemoteDesktopService.sessionCount)"),
+    "the Clients row must render the count only when it is known"
+);
+
+// --- VGS-87 item 4: an unknown status cannot keep asserting a fallback ------
+//
+// captureFallback is an assertion — "the host is capturing a real monitor right
+// now" — derived from output presence. When that goes unknown the warning is no
+// longer substantiated, and a warning nobody can substantiate costs the user
+// trust in every other warning.
+assert.ok(
+    /root\.captureFallback = false/.test(qmlFunctionBody("_markStatusUnknown")),
+    "an unknown status must clear captureFallback, not preserve the last answer"
+);
+assert.ok(
+    qmlFunctionBody("_applyStatus").includes("root.captureFallback = status.captureFallback === true"),
+    "and only an authoritative status may set it"
+);
+
+// --- VGS-87 item 3: the grace timer belongs to one probe --------------------
+//
+// The timer is shared, so a tick armed by probe A could fire while probe B is
+// in flight, find `_statusAnswered` false because B had only just started, and
+// mark a healthy B unanswered — turning a fresh reading into "unknown".
+assert.ok(
+    /statusUnansweredTimer\.armedFor = root\._statusProbeGeneration/.test(serviceSource),
+    "the grace timer must record which probe armed it"
+);
+assert.ok(
+    /if \(armedFor !== root\._statusProbeGeneration\)/.test(serviceSource),
+    "and must ignore a tick belonging to a superseded probe"
+);
+assert.ok(
+    /root\._statusProbeGeneration\+\+/.test(serviceSource),
+    "each probe start must take a new generation"
+);
+assert.ok(
+    /root\._statusAnswered = false;\s*\n\s*root\._statusProbeGeneration\+\+;\s*\n[\s\S]{0,240}?statusUnansweredTimer\.stop\(\)/.test(serviceSource),
+    "a starting probe should also stop any tick still armed for the previous one"
+);
+
+// --- VGS-87 item 2: a lifecycle failure always reaches the user -------------
+const lifecycleBody = qmlFunctionBody("_reportLifecycleFailure");
+assert.ok(
+    lifecycleBody.includes("ToastService.showError"),
+    "lifecycle failures use the same surface as every other failure here"
+);
+assert.ok(
+    lifecycleBody.includes("root._lifecycleReported = true"),
+    "and are reported once"
+);
+assert.ok(
+    /if \(root\._lifecycleReported && authoritative !== true\)/.test(lifecycleBody),
+    "the helper's own verdict may replace a generic message that arrived first"
+);
+// --- Z3: a command that SUCCEEDED must never report a failure --------------
+//
+// `running` going false is not evidence of failure. This repo's own precedent
+// (NotificationService.qml, both probes) says the process usually stops a
+// MOMENT BEFORE its output is collected, so reporting on the spot announced
+// "start failed" for commands that had in fact succeeded and whose JSON had
+// simply not arrived. A user who sees that on a host that started will retry
+// and stop it — strictly worse than the silence it replaced.
+const lifecycleRunningBody = serviceSource.slice(
+    serviceSource.indexOf("id: lifecycleProc")
+);
+const lifecycleRunningSlice = lifecycleRunningBody.slice(
+    lifecycleRunningBody.indexOf("onRunningChanged"),
+    lifecycleRunningBody.indexOf("onExited")
+);
+assert.ok(
+    !/_reportLifecycleFailure/.test(lifecycleRunningSlice),
+    "the running=false handler must not report: it cannot yet know the command failed"
+);
+assert.ok(
+    lifecycleRunningSlice.includes("lifecycleUnansweredTimer.restart()"),
+    "it must hand the verdict to the grace timer instead"
+);
+
+// The grace timer is where the outcome is decided, and a zero exit is a
+// SUCCESS -- it must take the early return, not the report path.
+const graceSlice = serviceSource.slice(serviceSource.indexOf("id: lifecycleUnansweredTimer"));
+const graceBody = graceSlice.slice(0, graceSlice.indexOf("id: settleTimer"));
+const zeroAt = graceBody.indexOf("root._lifecycleExitCode === 0");
+const reportAt = graceBody.indexOf("_reportLifecycleFailure");
+assert.ok(zeroAt >= 0, "the grace timer must special-case a successful exit");
+assert.ok(reportAt >= 0, "and must still be able to report a real failure");
+assert.ok(zeroAt < reportAt, "the success check must come before any report");
+assert.ok(
+    /root\._lifecycleExitCode === 0\)\s*\{[\s\S]{0,900}?return;/.test(graceBody),
+    "a successful command must return without reporting anything"
+);
+assert.ok(
+    /root\._lifecycleExitCode < 0/.test(graceBody),
+    "a command that never exited at all is the spawn failure, and must still be reported"
+);
+
+// onExited records the code and reports nothing, so the JSON verdict -- which
+// carries a far better message -- is never pre-empted by an exit code.
+const exitedSlice = lifecycleRunningBody.slice(lifecycleRunningBody.indexOf("onExited: exitCode =>"));
+const exitedBody = exitedSlice.slice(0, exitedSlice.indexOf("\n        }"));
+assert.ok(
+    exitedBody.includes("root._lifecycleExitCode = exitCode"),
+    "onExited must record the exit code"
+);
+assert.ok(
+    !/_reportLifecycleFailure/.test(exitedBody),
+    "and must not report from there, or an exit code beats the reason to the user"
+);
+
+// A command that cannot be spawned emits no `exited` at all, so the report has
+// to be reachable from the `running` transition. Since Z3 that is via the grace
+// timer rather than directly -- the invariant is the reachability, not the
+// call site, so this asserts the chain rather than one line of it.
+assert.ok(
+    /lifecycleUnansweredTimer\.restart\(\)/.test(lifecycleRunningSlice),
+    "the running transition must arm the timer that owns the verdict"
+);
+assert.ok(
+    /root\._lifecycleExitCode < 0[\s\S]{0,400}?_reportLifecycleFailure\(I18n\.tr\("`vshell remote-desktop/.test(graceBody),
+    "and a command that never exited must be reported as unrunnable from there"
+);
+
+// Each action resets the recorded code, or the previous action's exit would
+// decide this one's outcome.
+const runLifecycleBody = qmlFunctionBody("_runLifecycle");
+assert.ok(
+    runLifecycleBody.includes("root._lifecycleExitCode = -1"),
+    "each action must start with no recorded exit code"
+);
+
+// --- AC1: one action's verdict must never be attributed to another ---------
+//
+// Deferring the verdict (Z3) put a 500ms window between a command finishing and
+// its outcome being decided. `_lifecycleExitCode` and `_lifecycleReported` are
+// shared, so a second action launched inside that window reset them while the
+// first action's tick was still armed — and that tick would then report, under
+// the SECOND action's name, a failure belonging to neither.
+//
+// Two mechanisms, and both are asserted because they close different holes:
+// holding `busy` stops the toggle offering the window to the user at all, and
+// tagging stops a programmatic caller (IPC, another service) from hitting it
+// anyway — `_runLifecycle` gates on `lifecycleProc.running`, not on `busy`, so
+// the UI gate alone is not a state guarantee.
+assert.ok(
+    runLifecycleBody.includes("root._lifecycleGeneration++"),
+    "each action must take its own generation"
+);
+assert.ok(
+    runLifecycleBody.includes("lifecycleUnansweredTimer.stop()"),
+    "and must stop the previous action's timer: the tag stops misattribution, "
+        + "but an armed tick nobody wants is a needless wakeup and one more ordering surprise"
+);
+assert.ok(
+    /lifecycleUnansweredTimer\.armedFor = root\._lifecycleGeneration/.test(serviceSource),
+    "the verdict timer must record which action armed it"
+);
+const supersededAt = graceBody.indexOf("armedFor !== root._lifecycleGeneration");
+assert.ok(supersededAt >= 0, "and must recognise a superseded verdict");
+assert.ok(
+    supersededAt < graceBody.indexOf("root._lifecycleExitCode"),
+    "the supersession check must come before anything reads the shared exit code"
+);
+assert.ok(
+    /armedFor !== root\._lifecycleGeneration\)\s*\{[\s\S]{0,600}?return;/.test(graceBody),
+    "a superseded verdict must return without reporting"
+);
+// It must also not clear `busy`: the newer action owns it now, and clearing
+// here would re-enable the toggle mid-flight.
+// Bounded by the block's OWN terminator, not by the string being searched for:
+// slicing to `indexOf("root.busy = false")` made this vacuous under the exact
+// mutation it exists to catch, because inserting that line moved the boundary
+// in front of itself.
+const supersededEnd = graceBody.indexOf("return;", supersededAt);
+assert.ok(supersededEnd > supersededAt, "the superseded branch must return");
+const supersededBlock = graceBody.slice(supersededAt, supersededEnd);
+assert.ok(
+    !/root\.busy/.test(supersededBlock),
+    "a superseded verdict must leave `busy` to the action that now owns it"
+);
+
+// `busy` is cleared with the verdict, not when the process ends — the toggle
+// claiming ready while the outcome is unknown is what offered the window.
+assert.ok(
+    !/root\.busy = false/.test(lifecycleRunningSlice),
+    "the running=false handler must not re-enable the control before the verdict"
+);
+assert.ok(
+    graceBody.includes("root.busy = false"),
+    "the verdict timer is what clears busy"
+);
+assert.ok(
+    graceBody.indexOf("root.busy = false") < graceBody.indexOf("root._lifecycleReported)"),
+    "and it clears busy whether or not there was anything to report"
+);
+
+// --- Z4: a correction must not be eaten by the error throttle ---------------
+const toastSource = fs.readFileSync(
+    path.join(repoRoot, "quickshell", "vshell", "Services", "ToastService.qml"), "utf8"
+);
+assert.ok(
+    /const updatesVisibleToast = /.test(toastSource),
+    "ToastService must recognise an update to the toast already on screen"
+);
+assert.ok(
+    /if \(level === levelError && !correctsVisibleToast\)/.test(toastSource),
+    "and must exempt a correction from the error throttle"
+);
+// ...but ONLY a correction. Exempting every same-category update let a
+// genuinely repeating failure spam at whatever rate it recurred, which is
+// exactly what the throttle exists to stop. The distinction is whether the
+// content changes, not whether the caller called it authoritative.
+assert.ok(
+    /const correctsVisibleToast = updatesVisibleToast && \(currentMessage !== message \|\| currentDetails !== \(details \|\| ""\)\)/.test(toastSource),
+    "a correction must be an update whose CONTENT differs; the same message again is a repeat"
+);
+// The in-place update itself still applies to any same-category toast, so a
+// repeat that survives the throttle refreshes rather than queueing a duplicate.
+assert.ok(
+    /if \(category\) \{\s*\n\s*if \(updatesVisibleToast\) \{/.test(toastSource),
+    "the in-place update branch keys on the update, not on it being a correction"
+);
+const correctionAt = toastSource.indexOf("const correctsVisibleToast");
+const throttleGuardAt = toastSource.indexOf("if (level === levelError && !correctsVisibleToast)");
+assert.ok(correctionAt >= 0, "the correction flag must exist");
+assert.ok(throttleGuardAt >= 0, "the throttle must consult it");
+assert.ok(
+    correctionAt < throttleGuardAt,
+    "the exemption must be computed before the throttle consults it"
+);
+
+assert.ok(
+    runLifecycleBody.includes("root._lifecycleReported = false"),
+    "each action starts unreported, or the second failure in a session would be silent"
+);
 
 // A refresh arriving during a probe is coalesced, never dropped: the journal
 // read can take seconds while the event debounce is 400ms, and there is no
