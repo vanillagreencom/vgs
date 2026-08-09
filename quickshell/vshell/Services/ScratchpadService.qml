@@ -131,6 +131,81 @@ Singleton {
         Quickshell.execDetached([Paths.vshellCli, "scratchpad", "toggle", String(padId)]);
     }
 
+    // ---- dismissOnFocusLoss ------------------------------------------------
+    //
+    // Hide a pad when focus leaves it. The subscription is NOT ours: compositor
+    // focus has exactly one owner in this shell, CompositorService, which
+    // attaches to Quickshell's process-wide `ToplevelManager` / `Hyprland`
+    // singletons. This service reads two facts it publishes — which special
+    // workspaces are on screen, and where the focused window lives — and never
+    // opens an event subscription of its own. See docs/architecture/scratchpads.md.
+    //
+    // `hide`, not `toggle`: a toggle evaluated against state that has moved on
+    // would REVEAL the pad the user just dismissed. The direction is never
+    // inferred here.
+    // The trigger is the focus TRANSITION off a pad's workspace, not "the pad
+    // is visible and unfocused". Visibility would have to come from a monitor's
+    // special-workspace field, which Quickshell only refreshes on request and
+    // asynchronously — so it is stale at precisely the moment a pad is being
+    // revealed or hidden. Where the focused window lives is maintained live
+    // from the event socket instead, and a window's workspace does not change
+    // when focus moves, so the two values being compared are both settled.
+    readonly property var dismissOnFocusLossPads: (SettingsData.scratchpads || []).filter(pad => pad && pad.enabled && pad.dismissOnFocusLoss)
+
+    property string _lastFocusedWorkspace: ""
+    property string _pendingDismissId: ""
+
+    Connections {
+        target: CompositorService
+        function onActiveWorkspaceNameChanged() { root._onFocusMoved(); }
+    }
+
+    function _onFocusMoved() {
+        if (!supported)
+            return;
+        const now = CompositorService.activeWorkspaceName;
+        // "" is "the compositor did not tell us", which is not the same as
+        // "focus is elsewhere". Dismissing on unknown would make a pad vanish
+        // on any hiccup, and remembering unknown would erase where focus
+        // actually was, so an unknown is skipped entirely.
+        if (!now)
+            return;
+        const previous = root._lastFocusedWorkspace;
+        root._lastFocusedWorkspace = now;
+        if (!previous || previous === now)
+            return;
+        const pad = root.dismissOnFocusLossPads.find(p => "special:" + p.id === previous);
+        if (!pad)
+            return;
+        root._pendingDismissId = String(pad.id);
+        dismissTimer.restart();
+    }
+
+    // Revealing a pad moves focus twice — `focusmonitor`, then `focuswindow` —
+    // so for an instant focus has left the pad's workspace while the reveal is
+    // still in progress. Acting then would dismiss the pad the keybind is in
+    // the middle of showing. The condition is re-read when the delay expires
+    // rather than trusted from when it started.
+    Timer {
+        id: dismissTimer
+        interval: 250
+        repeat: false
+        onTriggered: {
+            const padId = root._pendingDismissId;
+            root._pendingDismissId = "";
+            if (!padId)
+                return;
+            if (CompositorService.activeWorkspaceName === "special:" + padId)
+                return;  // focus came back; the reveal was still settling
+            root.log.debug("Dismissing", padId, "on focus loss");
+            // `hide`, never `toggle`: a toggle decides direction from state read
+            // a moment ago, so evaluated late it reveals the pad the user just
+            // put away. The helper re-checks under the pad's lock and treats an
+            // already-hidden pad as a no-op.
+            Quickshell.execDetached([Paths.vshellCli, "scratchpad", "hide", padId]);
+        }
+    }
+
     // Move a pad's window back to the active workspace, and report whether it
     // worked. Called just before a pad is deleted, so its window is never
     // stranded on a special workspace that no longer has a keybind or a rule
