@@ -157,12 +157,23 @@ run_smoke "no VGS shell" \
 expect_rc 0
 expect_stdout "surface smoke skipped: no live VGS shell on this session"
 
-# Some other Quickshell app on the seat is none of this script's business.
+# Some other Quickshell app on the seat is none of this script's business. This
+# case is the counterweight to the malformed-entry failures below: a WELL-FORMED
+# entry that simply is not a VGS tree must keep taking the skip, or the smoke
+# becomes unusable on any machine running another Quickshell app.
 run_smoke "unrelated quickshell shell" \
   VSHELL_PROC_ROOT="$proc" \
   FAKE_QS_JSON="[$(entry 101 "$tmp/somebody-else/quickshell/caelestia")]"
 expect_rc 0
 expect_stdout "surface smoke skipped: no live VGS shell on this session"
+
+# ...and it must still skip when it sits beside our own live shell, rather than
+# being mistaken for something the registry got wrong.
+run_smoke "unrelated quickshell shell beside our own" \
+  VSHELL_PROC_ROOT="$proc" \
+  FAKE_QS_JSON="[$(entry 101 "$tmp/somebody-else/quickshell/caelestia"), $(entry 101 "$own_config")]"
+expect_rc 0
+expect_stdout "surface smoke passed"
 
 # A live shell owned by another checkout: loud failure naming that checkout,
 # because the requested assertions did not run.
@@ -212,6 +223,55 @@ run_smoke "unparsable registry" \
 expect_rc 1
 expect_stderr "surface smoke FAILED: could not classify the instance registry"
 expect_stderr "unparsable qs list output"
+
+# A syntactically valid listing whose ENTRIES are not the shape this script
+# reads must fail too. Skipping them was the same false green as the original
+# bug, one layer in: a registry schema change or a corrupt entry would come back
+# as "no live VGS shell" and the smoke would exit 0 having checked nothing.
+run_smoke "entry missing config_path" \
+  VSHELL_PROC_ROOT="$proc" \
+  FAKE_QS_JSON='[{"pid":101}]'
+expect_rc 1
+expect_stderr "surface smoke FAILED: could not classify the instance registry"
+expect_stderr "entry 0: no usable config_path"
+
+run_smoke "entry is not an object" \
+  VSHELL_PROC_ROOT="$proc" \
+  FAKE_QS_JSON='["quickshell"]'
+expect_rc 1
+expect_stderr "entry 0: expected an object, got str"
+
+run_smoke "entry missing pid" \
+  VSHELL_PROC_ROOT="$proc" \
+  FAKE_QS_JSON="[{\"config_path\":\"$own_config\"}]"
+expect_rc 1
+expect_stderr "entry 0: pid is not an integer"
+
+run_smoke "entry pid is not a number" \
+  VSHELL_PROC_ROOT="$proc" \
+  FAKE_QS_JSON="[{\"config_path\":\"$own_config\",\"pid\":\"soon\"}]"
+expect_rc 1
+expect_stderr "entry 0: pid is not an integer"
+
+run_smoke "entry pid is zero" \
+  VSHELL_PROC_ROOT="$proc" \
+  FAKE_QS_JSON="[$(entry 0 "$own_config")]"
+expect_rc 1
+expect_stderr "entry 0: pid is not a positive integer"
+
+run_smoke "entry pid is negative" \
+  VSHELL_PROC_ROOT="$proc" \
+  FAKE_QS_JSON="[$(entry -1 "$own_config")]"
+expect_rc 1
+expect_stderr "entry 0: pid is not a positive integer"
+
+# A malformed entry is not excused by a healthy one beside it: the entry that
+# could not be read might BE the foreign shell the precondition looks for.
+run_smoke "malformed entry beside our own live shell" \
+  VSHELL_PROC_ROOT="$proc" \
+  FAKE_QS_JSON="[$(entry 101 "$own_config"), {\"pid\":202}]"
+expect_rc 1
+expect_stderr "entry 1: no usable config_path"
 
 # Well-formed JSON of the wrong shape is equally unclassifiable.
 run_smoke "registry is not a list" \

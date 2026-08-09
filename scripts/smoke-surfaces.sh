@@ -189,12 +189,44 @@ if not isinstance(data, list):
     print("unexpected qs list output", file=sys.stderr)
     raise SystemExit(2)
 
+# Three outcomes, and they must stay distinct. An entry the registry schema
+# says nothing sensible about is MALFORMED and fails: silently skipping it
+# recreates the false green this precondition exists to prevent, one layer in.
+# An entry that is well formed but is not a VGS tree is SKIPPED — other
+# Quickshell apps share the seat and are none of this script's business. An
+# entry that is well formed and is VGS but whose process is gone is skipped
+# too — the registry simply outlived it.
+malformed = []
 foreign = []
-for entry in data:
+mine = False
+
+
+def read_pid(value):
+    """The entry's pid as a positive int, or a reason it is not one."""
+    if isinstance(value, bool) or value is None:
+        return None, f"pid is not an integer ({value!r})"
+    if isinstance(value, int):
+        pid = value
+    elif isinstance(value, str) and value.strip().lstrip("+-").isdigit():
+        pid = int(value)
+    else:
+        return None, f"pid is not an integer ({value!r})"
+    if pid <= 0:
+        return None, f"pid is not a positive integer ({value!r})"
+    return pid, None
+
+
+for index, entry in enumerate(data):
     if not isinstance(entry, dict):
+        malformed.append(f"entry {index}: expected an object, got {type(entry).__name__}")
         continue
-    raw = str(entry.get("config_path") or "")
-    if not raw:
+    raw = entry.get("config_path")
+    if not isinstance(raw, str) or not raw.strip():
+        malformed.append(f"entry {index}: no usable config_path ({raw!r})")
+        continue
+    pid, why = read_pid(entry.get("pid"))
+    if pid is None:
+        malformed.append(f"entry {index}: {why}")
         continue
     path = resolve(raw)
     if path.name == "shell.qml":
@@ -203,17 +235,24 @@ for entry in data:
     # Quickshell shells on the same seat are none of this script's business.
     if path.parts[-2:] != ("quickshell", "vshell"):
         continue
-    try:
-        pid = int(entry.get("pid") or 0)
-    except (TypeError, ValueError):
-        continue
     # A registry entry outliving its process must not fail the run.
     if not peer_alive(pid):
         continue
     if path == want:
-        raise SystemExit(0)
+        mine = True
+        continue
     foreign.append((pid, str(path.parent.parent)))
 
+# Malformed wins over everything, including a confirmed own shell: an entry
+# this script cannot read might be the foreign shell it was looking for, so
+# "some of the registry was understood" is not an answer worth acting on.
+if malformed:
+    print("registry entries this script does not understand:", file=sys.stderr)
+    for line in malformed:
+        print(f"  {line}", file=sys.stderr)
+    raise SystemExit(2)
+if mine:
+    raise SystemExit(0)
 if not foreign:
     raise SystemExit(10)
 for pid, root in sorted(foreign):
