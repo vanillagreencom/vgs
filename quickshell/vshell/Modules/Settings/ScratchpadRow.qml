@@ -18,6 +18,10 @@ Column {
     property bool expanded: false
     property bool capturing: false
     property string conflict: ""
+    // Live windows this pad's pattern claims; -1 when unknown (no session, or
+    // not queried yet). A class match applies to every instance of the app, so
+    // more than one is the normal-but-invisible case this surfaces.
+    property int matchCount: -1
     // Set when automatic class matching was asked for but could not be honoured.
     property string autoNote: ""
     // Set when a manually typed class pattern was refused.
@@ -95,6 +99,30 @@ Column {
                     wrapMode: Text.WordWrap
                     font.pixelSize: Theme.fontSizeSmall
                     color: Theme.error
+                }
+
+                // The pattern claims more than the pad's own window. This is
+                // what an exact class match does by construction, and until now
+                // nothing said so.
+                StyledText {
+                    width: parent.width
+                    visible: row.matchCount > 1
+                    text: I18n.tr("%1 open windows match this pattern — the scratchpad will claim all of them.").arg(row.matchCount)
+                    wrapMode: Text.WordWrap
+                    font.pixelSize: Theme.fontSizeSmall
+                    color: Theme.warning
+                }
+
+                // Zero is different from "more than one": the pattern matches
+                // nothing open, which is normal for a pad that is not running
+                // but is also exactly what a wrong pattern looks like.
+                StyledText {
+                    width: parent.width
+                    visible: row.matchCount === 0 && (row.pad.classRegex || "").length > 0
+                    text: I18n.tr("No open window matches this pattern.")
+                    wrapMode: Text.WordWrap
+                    font.pixelSize: Theme.fontSizeSmall
+                    color: Theme.surfaceVariantText
                 }
             }
 

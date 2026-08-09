@@ -70,6 +70,21 @@ Item {
         // against nothing and reported "no conflict" for every key on the
         // system: a warning that could not fire, which is worse than none.
         KeybindsService.loadBinds(false);
+        root.refreshAllMatches();
+    }
+
+    onPadsChanged: root.refreshAllMatches()
+
+    // A class match claims every instance of the application, so the page has
+    // to say how wide each pad's pattern actually is right now.
+    function refreshAllMatches() {
+        if (!root.supported)
+            return;
+        for (let i = 0; i < root.pads.length; i++) {
+            const pad = root.pads[i];
+            if (pad.classRegex)
+                ScratchpadService.refreshMatches(pad.id, pad.classRegex, pad.titleExclude || "");
+        }
     }
 
     function labelFor(options, values, value, fallbackIndex) {
@@ -204,7 +219,23 @@ Item {
         // with the window class by convention.
         const declared = String(app?.startupWMClass || "").trim();
         const fallback = String(app?.id || "").replace(/\.desktop$/, "");
-        return "^(" + root.escapeRegex(declared || fallback) + ")$";
+        const source = declared || fallback;
+
+        // Match the declared spelling AND its lower-case form. Apps do not
+        // reliably map with the case they declare: 1Password ships
+        // `StartupWMClass=1Password` and maps as `1password`, so the derived
+        // `^(1Password)$` matched NOTHING — a scratchpad that silently never
+        // worked. Measured on a live session: `^(1Password)$` -> 0 windows,
+        // `^(1Password|1password)$` -> 1.
+        //
+        // Plain alternation rather than an inline `(?i)` flag, because the
+        // pattern is handed to Hyprland's own matcher and alternation is the
+        // form already proven to work in hand-written configs here. It widens
+        // the match only across case variants of one identity, never to a
+        // different application.
+        const folded = source.toLowerCase();
+        const forms = folded === source ? [source] : [source, folded];
+        return "^(" + forms.map(root.escapeRegex).join("|") + ")$";
     }
 
     // Re-derive the class regex from a pad's stored appId. Turning "match
@@ -611,6 +642,7 @@ Item {
                         // Held while this row has an async operation in flight,
                         // so a second click cannot start a second one.
                         busy: root.disabling === modelData.id || root.removing === modelData.id
+                        matchCount: ScratchpadService.matchCounts[modelData.id] !== undefined ? ScratchpadService.matchCounts[modelData.id] : -1
                         tabRoot: root
 
                         onToggleExpand: root.expandedId = (root.expandedId === modelData.id ? "" : modelData.id)

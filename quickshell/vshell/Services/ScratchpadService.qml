@@ -58,6 +58,8 @@ Singleton {
     property var _hideCallback: null
     property bool _hideAnswered: false
     property string _hideError: ""
+    property string _matchPadId: ""
+    property var _matchQueue: []
     property var _releaseCallback: null
     property bool _releaseAnswered: false
     property string _releaseError: ""
@@ -113,6 +115,27 @@ Singleton {
             root._applyPending = false;
             root.generateConfig();
         }
+    }
+
+    // How many live windows a pad's pattern currently claims, keyed by pad id.
+    // A class match applies to every instance of the application, and nothing
+    // showed that — so a pad configured for a terminal quietly claimed every
+    // window of that terminal. Populated on demand by the Settings page.
+    property var matchCounts: ({})
+
+    function refreshMatches(padId, classRegex, titleExclude) {
+        if (!supported || !padId || !classRegex)
+            return;
+        if (matchProc.running) {
+            root._matchQueue = (root._matchQueue || []).concat([[padId, classRegex, titleExclude]]);
+            return;
+        }
+        root._matchPadId = String(padId);
+        const argv = [Paths.vshellCli, "scratchpad", "match", "--json", "--class-regex", String(classRegex)];
+        if (titleExclude)
+            argv.push("--title-exclude", String(titleExclude));
+        matchProc.command = argv;
+        matchProc.running = true;
     }
 
     function refreshStatus() {
@@ -453,6 +476,40 @@ Singleton {
                 root._finishRelease(true, "");
             else
                 root._finishRelease(false, root._releaseError || "release produced no result");
+        }
+    }
+
+    Process {
+        id: matchProc
+        running: false
+        command: []
+
+        stdout: StdioCollector {
+            onStreamFinished: {
+                if ((text || "").trim().length === 0)
+                    return;
+                try {
+                    const payload = JSON.parse(text);
+                    const next = Object.assign({}, root.matchCounts);
+                    // `known: false` means there was no session to ask. Recorded
+                    // as -1 so the page can stay silent rather than claim "0
+                    // windows match" on a query that never ran.
+                    next[root._matchPadId] = payload.known === false ? -1 : (payload.count || 0);
+                    root.matchCounts = next;
+                } catch (e) {
+                    log.warn("scratchpad match returned invalid JSON:", e);
+                }
+            }
+        }
+
+        onRunningChanged: {
+            if (running)
+                return;
+            const queued = root._matchQueue || [];
+            if (queued.length === 0)
+                return;
+            root._matchQueue = queued.slice(1);
+            root.refreshMatches(queued[0][0], queued[0][1], queued[0][2]);
         }
     }
 
