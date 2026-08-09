@@ -47,7 +47,44 @@ Singleton {
     property var healthWarnings: []
 
     property bool available: false
+
+    // True once the backend has answered at least once. It is NOT a latch that
+    // stops further reads: before VGS-63 the single fetch it guarded was the
+    // only status the shell ever took, so a shell that started while tailscaled
+    // was still warming up displayed "Off" for the rest of the process's life.
     property bool stateInitialized: false
+
+    // The backend pushes on every tailscaled transition when it is watching the
+    // ipn bus. Absent on an older backend, which only answers on demand and
+    // re-broadcasts after its own write actions — so the shell has to ask.
+    readonly property bool backendWatches: VGSBackendService.capabilities.includes("tailscale.watch")
+
+    // "NoState" and "Starting" are tailscaled still coming up, and an empty
+    // string is "nobody has told us anything". None of the three is a settled
+    // answer, so none of them may be presented as "off" or kept indefinitely.
+    readonly property bool backendStateKnown: backendState !== "" && backendState !== "NoState" && backendState !== "Starting"
+    readonly property bool starting: stateInitialized && !backendStateKnown
+
+    // Re-fetch cadence. This is a backstop, not a second owner of the state:
+    // the backend remains the only thing that reads tailscaled and the only
+    // thing that decides what the state is, and the poll is the same
+    // tailscale.getStatus request the shell already makes — it cannot produce
+    // an answer that disagrees with the owner. What it covers is the shell
+    // having no other way to notice that a push never came.
+    readonly property int pollIntervalMs: {
+        if (!backendStateKnown)
+            return 10000;      // warming up: the transition is imminent
+        if (backendWatches)
+            return 300000;     // pushes are expected; this only catches a dead watcher
+        return 45000;          // no watcher at all: the shell is the only thing asking
+    }
+
+    Timer {
+        running: root.available && root.refCount > 0
+        interval: root.pollIntervalMs
+        repeat: true
+        onTriggered: root.refreshStatus()
+    }
 
     readonly property var allPeersList: {
         const result = [];
@@ -102,6 +139,9 @@ Singleton {
             if (VGSBackendService.isConnected) {
                 checkVGSCapabilities();
                 ensureSubscription();
+                // A backend restart means anything held from before the drop is
+                // a guess about a daemon nobody was watching.
+                refreshStatus();
             }
         }
     }
@@ -130,12 +170,10 @@ Singleton {
 
         if (!available)
             return;
-        if (!stateInitialized) {
-            stateInitialized = true;
+        if (!wasAvailable) {
             getStatus();
-        }
-        if (!wasAvailable)
             ensureSubscription();
+        }
     }
 
     function getStatus() {
@@ -148,9 +186,17 @@ Singleton {
         });
     }
 
+    // Re-read the current status. Call this whenever a Tailscale surface comes
+    // into view: it is the moment the user is looking, and it costs one local
+    // request.
+    function refreshStatus() {
+        getStatus();
+    }
+
     function updateState(data) {
         if (!data)
             return;
+        stateInitialized = true;
         connected = data.connected || false;
         version = data.version || "";
         backendState = data.backendState || "";
