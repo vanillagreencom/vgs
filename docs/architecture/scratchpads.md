@@ -47,10 +47,20 @@ Any app whose class or title settles after mapping — Electron apps, 1Password,
 anything with a splash — loses that race permanently, and no rule expression
 fixes it. The generated file says so in its own header.
 
-`vshell scratchpad toggle <id>` therefore **re-asserts presentation on every
-reveal**, against the monitor the pad is actually on. That is also the only place
-"follow focus" and multi-monitor can be correct, because neither is knowable at
-generation time.
+`vshell scratchpad toggle <id>` therefore re-asserts on every reveal, against the
+monitor the pad is actually on. That is also the only place "follow focus" and
+multi-monitor can be correct, because neither is knowable at generation time.
+
+**Workspace membership is re-asserted first, and it is the half that matters.** A
+window whose class settled after mapping never matched the `workspace` rule and
+is sitting on whatever workspace was active at the time. Re-asserting only
+float/size/move would style that window perfectly while leaving it exactly where
+it should not be, and the reveal would show an empty special workspace — which is
+the original bug, not a fix for it. The toggle moves the window onto the pad's
+special workspace (`movetoworkspacesilent`, since the reveal happens a moment
+later) before placing that workspace on a monitor or revealing it. The move comes
+first because the special workspace may not exist at all until something is on
+it.
 
 The toggle also owns the sequencing:
 
@@ -66,6 +76,21 @@ The toggle also owns the sequencing:
 - **One transition at a time** — keybind execs are asynchronous, so a double
   press could otherwise start two toggles that both see the pad as hidden. Each
   pad's transition is serialized under a lock.
+
+## Title exclusion is all-or-nothing
+
+`titleExclude` carves a same-class window out of a pad — 1Password's browser
+extension prompt shares its class with the main window and must not be captured.
+It is applied to **every** rule the pad emits, placement and event suppression
+alike. Excluding a window from placement but still suppressing its activation
+leaves it half-owned: not in the pad, but stripped of its focus requests anyway,
+which is worse than either owning it or leaving it alone. Both rules are built
+from one shared match so they cannot drift apart.
+
+An exclusion that does not compile **rejects the whole pad**, exactly as an
+uncompilable `classRegex` does. A malformed exclusion is not "no exclusion" — it
+is an exclusion the user asked for that silently stops applying, so the pad would
+go on to select, focus and move the very windows it existed to keep out.
 
 ## Removing a pad releases its window
 

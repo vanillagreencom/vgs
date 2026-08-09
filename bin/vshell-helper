@@ -9169,6 +9169,18 @@ def normalize_scratchpad(raw: Any) -> Dict[str, Any] | None:
     except re.error:
         return None
 
+    # Same treatment as classRegex, and for the same reason: an exclusion that
+    # does not compile is not "no exclusion", it is an exclusion the user asked
+    # for that silently stops applying. The runtime finder would fall back to
+    # matching everything with the class, so the pad would select, focus and
+    # move the very windows the exclusion existed to keep out.
+    title_exclude = str(raw.get("titleExclude") or "").strip()
+    if title_exclude:
+        try:
+            re.compile(title_exclude)
+        except re.error:
+            return None
+
     size_mode = str(raw.get("sizeMode") or "percent").strip().lower()
     if size_mode not in {"percent", "pixels"}:
         size_mode = "percent"
@@ -9192,7 +9204,7 @@ def normalize_scratchpad(raw: Any) -> Dict[str, Any] | None:
         "command": command,
         "appId": str(raw.get("appId") or ""),
         "classRegex": class_regex,
-        "titleExclude": str(raw.get("titleExclude") or "").strip(),
+        "titleExclude": title_exclude,
         "keybind": str(raw.get("keybind") or "").strip(),
         "sizeMode": size_mode,
         "widthPercent": _coerce_int(raw.get("widthPercent", 60), 60, 5, 100),
@@ -9391,15 +9403,23 @@ def render_scratchpads_lua(pads: List[Dict[str, Any]], monitors: List[Dict[str, 
         lines.extend(workspace_rule)
         lines.append("})")
 
+        # One match, used by EVERY rule this pad emits. A window the user
+        # excluded by title must be excluded from all of them: excluding it from
+        # placement but not from event suppression leaves it half-owned — not in
+        # the pad, but still stripped of its activation and focus requests,
+        # which is worse than either owning it or leaving it alone.
+        #
+        # Dynamic `title`, not `initial_title`: an app that maps with a
+        # placeholder title and renames itself later would be frozen on the
+        # placeholder by an initial_title snapshot and never reclassified.
+        match_lines = [f"    class = {_lua_string(pad['classRegex'])},"]
+        if pad["titleExclude"]:
+            match_lines.append(f"    title = {_lua_string('negative:' + pad['titleExclude'])},")
+
         # Window rule.
         lines.append("hl.window_rule({")
         lines.append("  match = {")
-        lines.append(f"    class = {_lua_string(pad['classRegex'])},")
-        if pad["titleExclude"]:
-            # Dynamic `title`, not `initial_title`: an app that maps with a
-            # placeholder title and renames itself later would be frozen on the
-            # placeholder by an initial_title snapshot and never reclassified.
-            lines.append(f"    title = {_lua_string('negative:' + pad['titleExclude'])},")
+        lines.extend(match_lines)
         lines.append("  },")
         if monitor_name and pad["monitor"]:
             lines.append(f"  monitor = {_lua_string(monitor_name)},")
@@ -9422,7 +9442,9 @@ def render_scratchpads_lua(pads: List[Dict[str, Any]], monitors: List[Dict[str, 
         # client is the reference case) would otherwise reveal its own hidden
         # special workspace. The toggle focuses it deliberately instead.
         lines.append("hl.window_rule({")
-        lines.append(f"  match = {{ class = {_lua_string(pad['classRegex'])} }},")
+        lines.append("  match = {")
+        lines.extend(match_lines)
+        lines.append("  },")
         lines.append('  suppress_event = "activate activatefocus",')
         lines.append("})")
 
@@ -9615,6 +9637,31 @@ def _scratchpad_place_workspace(pad_id: str, monitor_name: str, attempts: int = 
     return _scratchpad_workspace_monitor(pad_id) == monitor_name
 
 
+def _scratchpad_ensure_membership(pad_id: str, client: Dict[str, Any]) -> Dict[str, Any]:
+    """Put the window on the pad's special workspace if it is not already there.
+
+    This is the other half of the map-time race, and the half that decides
+    whether a pad works at all. Hyprland applies the `workspace` rule once, when
+    the window maps; an app whose class settles afterwards — Electron apps,
+    1Password, anything with a splash — never matched the rule and so mapped
+    onto whatever workspace was active at the time.
+
+    Re-asserting only float/size/move would style that window beautifully while
+    leaving it exactly where it should not be, and the reveal would show an
+    empty special workspace. Membership has to be re-asserted too.
+
+    `movetoworkspacesilent` is deliberate: the caller reveals the workspace
+    itself a moment later, and the non-silent variant would switch to it here,
+    fighting the placement and focus sequence that follows."""
+    special = "special:" + pad_id
+    current = str(((client or {}).get("workspace") or {}).get("name") or "")
+    address = str((client or {}).get("address") or "")
+    if not address or current == special:
+        return {"moved": False, "workspace": current}
+    moved = _scratchpad_dispatch("movetoworkspacesilent", f"{special},address:{address}")
+    return {"moved": moved, "from": current, "workspace": special if moved else current}
+
+
 def _scratchpad_reassert(pad: Dict[str, Any], address: str) -> Dict[str, Any]:
     """Re-apply the intended presentation to a window that already exists.
 
@@ -9725,12 +9772,22 @@ def scratchpad_toggle(pad_id: str, reveal_only: bool = False, launch_only: bool 
         address = str(client.get("address") or "")
         target_monitor = _scratchpad_target_monitor(pad)
 
+        # Before anything else: a window whose class settled after mapping never
+        # matched the workspace rule and is sitting on whatever workspace was
+        # active then. Moving it must come first, because the special workspace
+        # may not exist at all until something is on it -- and everything below
+        # (placing that workspace on a monitor, revealing it) assumes it does.
+        membership = _scratchpad_ensure_membership(pad_id, client)
+
         if launch_only:
-            # Preload: park it, place it, never reveal.
+            # Preload: park it, place it, never reveal. Membership matters even
+            # more here -- a preloaded app that mapped late would otherwise sit
+            # VISIBLY on the active workspace instead of being parked.
             _scratchpad_place_workspace(pad_id, target_monitor)
             reassert = _scratchpad_reassert(pad, address)
             return {"ok": True, "action": "preloaded", "id": pad_id,
-                    "launched": launched, "reassert": reassert}
+                    "launched": launched, "membership": membership,
+                    "reassert": reassert}
 
         active = _hyprctl_json("activewindow")
         if isinstance(active, dict) and active.get("address"):
@@ -9745,7 +9802,8 @@ def scratchpad_toggle(pad_id: str, reveal_only: bool = False, launch_only: bool 
         reassert = _scratchpad_reassert(pad, address)
 
         return {"ok": True, "action": "revealed", "id": pad_id,
-                "launched": launched, "reassert": reassert}
+                "launched": launched, "membership": membership,
+                "reassert": reassert}
 
 
 def scratchpad_release(pad_id: str, class_regex: str = "") -> Dict[str, Any]:

@@ -3780,6 +3780,88 @@ def test_scratchpad_release_hands_the_window_back():
                  "release is a no-op without a session, not an error")
 
 
+def test_scratchpad_membership_is_reasserted_for_a_late_class():
+    """The map-time race, in full. Hyprland applies the `workspace` rule once,
+    when the window maps. An app whose class settles afterwards never matched
+    it and mapped onto whatever workspace was active — so re-asserting only
+    float/size/move would style that window perfectly while leaving it where it
+    should not be, and the reveal would show an empty special workspace."""
+    original = helper._scratchpad_dispatch
+    dispatched = []
+    helper._scratchpad_dispatch = lambda *args: (dispatched.append(args), True)[1]
+    try:
+        # Late-settling class: the window is on a normal workspace.
+        stray = {"address": "0xdead", "workspace": {"name": "3"}}
+        result = helper._scratchpad_ensure_membership("term", stray)
+        assert_equal(result["moved"], True, "a stray window is moved onto the pad's workspace")
+        assert_equal(result["from"], "3", "and reports where it came from")
+        assert_equal(dispatched, [("movetoworkspacesilent", "special:term,address:0xdead")],
+                     "moved SILENTLY: the caller reveals the workspace itself a moment later, "
+                     "and the non-silent variant would switch to it here")
+
+        # Already correct: no dispatch at all, so an ordinary reveal does not
+        # churn the window every single press.
+        dispatched.clear()
+        settled = {"address": "0xbeef", "workspace": {"name": "special:term"}}
+        assert_equal(helper._scratchpad_ensure_membership("term", settled)["moved"], False,
+                     "a window already on the pad's workspace is left alone")
+        assert_equal(dispatched, [], "and costs no dispatch")
+
+        # A client with no address cannot be moved; do not emit a malformed
+        # selector for it.
+        dispatched.clear()
+        assert_equal(helper._scratchpad_ensure_membership("term", {"workspace": {"name": "3"}})["moved"],
+                     False, "a client with no address is not moved")
+        assert_equal(dispatched, [], "and produces no dispatch")
+    finally:
+        helper._scratchpad_dispatch = original
+
+
+def test_scratchpad_title_exclusion_applies_to_every_rule():
+    """A window excluded by title must be excluded from ALL of a pad's rules.
+    Excluding it from placement but not from event suppression leaves it
+    half-owned: not in the pad, but still stripped of its activation and focus
+    requests, which is worse than either owning it or leaving it alone."""
+    pad = _pad(titleExclude=r"^(1Password)$", classRegex=r"^(1password)$", keybind="SUPER, P")
+    text, _ = helper.render_scratchpads_lua([pad], [_monitor("DP-1", focused=True)], True)
+
+    # [1:] drops the text before the first rule; each remaining chunk starts
+    # inside one window rule.
+    rules = text.split("hl.window_rule({")[1:]
+    assert_equal(len(rules), 2, "a pad emits a placement rule and a suppression rule")
+    for index, rule in enumerate(rules):
+        assert 'title = "negative:^(1Password)$"' in rule, \
+            f"window rule {index} must carry the title exclusion"
+
+    # The suppression rule is the one that regressed; name it explicitly.
+    suppression = [rule for rule in rules if "suppress_event" in rule]
+    assert_equal(len(suppression), 1, "exactly one suppression rule")
+    assert 'title = "negative:^(1Password)$"' in suppression[0], \
+        "the suppress_event rule must not match every window with the class"
+
+    # A pad without an exclusion must not grow a stray title match.
+    plain, _ = helper.render_scratchpads_lua([_pad()], [_monitor("DP-1", focused=True)], True)
+    assert "negative:" not in plain, "no exclusion configured means no title clause"
+
+
+def test_scratchpad_rejects_an_uncompilable_title_exclusion():
+    """An exclusion that does not compile is not "no exclusion" — it is an
+    exclusion the user asked for that silently stops applying, so the pad would
+    select, focus and move the very windows it existed to keep out. Same rule
+    as classRegex: reject rather than half-emit."""
+    assert_equal(helper.normalize_scratchpad({
+        "id": "pad", "command": "x", "classRegex": "^x$", "titleExclude": "^(unclosed",
+    }), None, "a pad whose titleExclude does not compile is rejected")
+
+    # A valid one survives, and an absent one is simply empty.
+    assert_equal(helper.normalize_scratchpad({
+        "id": "pad", "command": "x", "classRegex": "^x$", "titleExclude": "^(1Password)$",
+    })["titleExclude"], "^(1Password)$", "a valid exclusion is kept verbatim")
+    assert_equal(helper.normalize_scratchpad({
+        "id": "pad", "command": "x", "classRegex": "^x$",
+    })["titleExclude"], "", "no exclusion is the empty string, not a broken pattern")
+
+
 def main():
     # A catalog download is minutes to hours of network transfer. Holding the
     # exclusive theme lock for that long would block applies, the light/dark
@@ -3881,6 +3963,9 @@ def main():
     test_scratchpad_compositor_detection_reads_the_session_not_the_binary()
     test_scratchpad_target_monitor_resolves_against_connected_outputs()
     test_scratchpad_release_hands_the_window_back()
+    test_scratchpad_membership_is_reasserted_for_a_late_class()
+    test_scratchpad_title_exclusion_applies_to_every_rule()
+    test_scratchpad_rejects_an_uncompilable_title_exclusion()
     subprocess.run(
         [sys.executable, str(REPO_ROOT / "scripts" / "check-vshell-niri.py")],
         check=True,
