@@ -218,6 +218,11 @@ Singleton {
         root._lifecycleReported = false;
         root._lifecycleExitCode = -1;
         root._lifecycleGeneration++;
+        // The tag already stops a stale tick misattributing its verdict, but an
+        // armed timer nobody wants is still a needless wakeup and one more
+        // thing that can fire in an unexpected order. Same stop-on-start the
+        // status probe does.
+        lifecycleUnansweredTimer.stop();
         root.busy = true;
         lifecycleProc.running = true;
     }

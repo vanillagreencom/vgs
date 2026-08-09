@@ -831,6 +831,11 @@ assert.ok(
     "each action must take its own generation"
 );
 assert.ok(
+    runLifecycleBody.includes("lifecycleUnansweredTimer.stop()"),
+    "and must stop the previous action's timer: the tag stops misattribution, "
+        + "but an armed tick nobody wants is a needless wakeup and one more ordering surprise"
+);
+assert.ok(
     /lifecycleUnansweredTimer\.armedFor = root\._lifecycleGeneration/.test(serviceSource),
     "the verdict timer must record which action armed it"
 );
@@ -878,12 +883,26 @@ const toastSource = fs.readFileSync(
     path.join(repoRoot, "quickshell", "vshell", "Services", "ToastService.qml"), "utf8"
 );
 assert.ok(
-    /const correctsVisibleToast = /.test(toastSource),
+    /const updatesVisibleToast = /.test(toastSource),
     "ToastService must recognise an update to the toast already on screen"
 );
 assert.ok(
     /if \(level === levelError && !correctsVisibleToast\)/.test(toastSource),
-    "and must exempt it from the error throttle: a correction is not a repeat"
+    "and must exempt a correction from the error throttle"
+);
+// ...but ONLY a correction. Exempting every same-category update let a
+// genuinely repeating failure spam at whatever rate it recurred, which is
+// exactly what the throttle exists to stop. The distinction is whether the
+// content changes, not whether the caller called it authoritative.
+assert.ok(
+    /const correctsVisibleToast = updatesVisibleToast && \(currentMessage !== message \|\| currentDetails !== \(details \|\| ""\)\)/.test(toastSource),
+    "a correction must be an update whose CONTENT differs; the same message again is a repeat"
+);
+// The in-place update itself still applies to any same-category toast, so a
+// repeat that survives the throttle refreshes rather than queueing a duplicate.
+assert.ok(
+    /if \(category\) \{\s*\n\s*if \(updatesVisibleToast\) \{/.test(toastSource),
+    "the in-place update branch keys on the update, not on it being a correction"
 );
 const correctionAt = toastSource.indexOf("const correctsVisibleToast");
 const throttleGuardAt = toastSource.indexOf("if (level === levelError && !correctsVisibleToast)");

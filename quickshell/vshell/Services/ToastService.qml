@@ -110,13 +110,19 @@ Singleton {
         const messageKey = message + level
         const normalizedAction = ToastAction.normalizeAction(action)
 
-        // Updating the toast ALREADY ON SCREEN in this category is a
-        // correction, not a repeat, so the error throttle must not eat it.
-        // Without this exemption a caller that reports a generic failure and
-        // then replaces it with the specific reason -- which is exactly what a
-        // command whose stdout arrives after its exit code does -- left the
-        // user holding the vague message and never showed the better one.
-        const correctsVisibleToast = !!category && currentCategory === category && toastVisible && currentLevel === level
+        // Whether this call updates the toast already on screen, rather than
+        // queueing a new one.
+        const updatesVisibleToast = !!category && currentCategory === category && toastVisible && currentLevel === level
+
+        // ...and whether that update is a CORRECTION rather than a repeat.
+        // Only a correction may skip the error throttle. The distinction is
+        // whether the content actually changes: replacing a generic failure
+        // with the specific reason is new information the user has not seen,
+        // and throttling it left them holding the vague message forever. The
+        // same message arriving again is a repeat, which is precisely what the
+        // throttle exists for — exempting the whole category let a genuinely
+        // repeating failure spam at whatever rate it recurred.
+        const correctsVisibleToast = updatesVisibleToast && (currentMessage !== message || currentDetails !== (details || ""))
 
         if (level === levelError && !correctsVisibleToast) {
             const lastTime = lastErrorTime[messageKey] || 0
@@ -127,7 +133,7 @@ Singleton {
         }
 
         if (category) {
-            if (correctsVisibleToast) {
+            if (updatesVisibleToast) {
                 currentMessage = message
                 currentDetails = details || ""
                 currentCommand = command || ""
