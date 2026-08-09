@@ -8,6 +8,8 @@ import (
 	"os/exec"
 	"sort"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"vshell/backend/internal/server"
@@ -17,7 +19,18 @@ const timeout = 12 * time.Second
 
 type Manager struct {
 	srv       *server.Server
+	log       *slog.Logger
 	tailscale string
+
+	// ipn bus watcher (watch.go)
+	watchCtx   context.Context
+	watchStop  context.CancelFunc
+	watchAlive atomic.Bool
+	watchMu    sync.Mutex
+	pushTimer  *time.Timer
+	pushing    bool
+	pushMissed bool
+	lastPush   time.Time
 }
 
 type State struct {
@@ -29,7 +42,13 @@ type State struct {
 	ExitNodeAllowLanAccess bool     `json:"exitNodeAllowLanAccess"`
 	AcceptRoutes           bool     `json:"acceptRoutes"`
 	AuthURL                string   `json:"authUrl"`
-	Health                 []string `json:"health"`
+	// WatcherActive is this backend's own health, not tailscaled's: true while
+	// an ipn bus watcher is running and pushes can be expected. The shell reads
+	// it to choose how often to re-ask. Absent on a backend without the watcher,
+	// where it decodes as false — which is exactly right, since that backend
+	// never pushes either.
+	WatcherActive bool     `json:"watcherActive"`
+	Health        []string `json:"health"`
 	Self                   *Peer    `json:"self"`
 	Peers                  []Peer   `json:"peers"`
 }
@@ -113,7 +132,8 @@ func Register(srv *server.Server, log *slog.Logger) (*Manager, error) {
 	if err != nil {
 		return nil, fmt.Errorf("tailscale not found")
 	}
-	m := &Manager{srv: srv, tailscale: path}
+	m := &Manager{srv: srv, log: log, tailscale: path}
+	m.watchCtx, m.watchStop = context.WithCancel(context.Background())
 	srv.Register("tailscale", "tailscale.getStatus", m.handleGetStatus)
 	srv.Register("tailscale", "tailscale.refresh", m.handleRefresh)
 	srv.Register("tailscale", "tailscale.connect", m.handleConnect)
@@ -128,10 +148,16 @@ func Register(srv *server.Server, log *slog.Logger) (*Manager, error) {
 		}
 		return state
 	})
+	// Event-only capability: it carries no method of its own, it tells the
+	// shell that this backend pushes tailscale updates instead of only
+	// answering them, so the shell can drop its re-fetch cadence to a bare
+	// liveness backstop. See docs/architecture/backend-methods.json.
+	srv.AddCapability("tailscale.watch")
+	m.startWatch()
 	return m, nil
 }
 
-func (m *Manager) Close() {}
+func (m *Manager) Close() { m.stopWatch() }
 
 func (m *Manager) handleGetStatus(json.RawMessage) (any, error) {
 	return m.status()
@@ -218,6 +244,7 @@ func (m *Manager) status() (State, error) {
 	}
 	state := State{
 		Connected:      strings.EqualFold(raw.BackendState, "Running"),
+		WatcherActive:  m.watcherActive(),
 		Version:        raw.Version,
 		BackendState:   raw.BackendState,
 		MagicDNSSuffix: firstNonEmpty(raw.MagicDNSSuffix, raw.CurrentTailnet.MagicDNSSuffix),

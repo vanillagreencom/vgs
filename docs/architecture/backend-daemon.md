@@ -11,8 +11,10 @@ integration layer QML is a poor fit for: NetworkManager, logind, DBus, BlueZ,
 CUPS, MIME/default-app routing, gamma, WLR output, caps-lock, clipboard
 (native: the backend owns the single `wl-paste --watch` process, the history
 state file, and the image store — QML must not run its own watcher),
-brightness (helper-bridged), wallpaper rotation scheduling, Tailscale, system
-updates, freedesktop settings, and location.
+brightness (helper-bridged), wallpaper rotation scheduling, Tailscale (status,
+actions, and the single watcher on tailscaled's ipn bus — QML never watches or
+polls tailscaled itself, it only re-asks the backend), system updates,
+freedesktop settings, and location.
 
 What the backend does **not** own:
 
