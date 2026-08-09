@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"vshell/backend/internal/server"
@@ -17,7 +18,15 @@ const timeout = 12 * time.Second
 
 type Manager struct {
 	srv       *server.Server
+	log       *slog.Logger
 	tailscale string
+
+	// ipn bus watcher (watch.go)
+	watchCtx  context.Context
+	watchStop context.CancelFunc
+	watchMu   sync.Mutex
+	pushTimer *time.Timer
+	lastPush  time.Time
 }
 
 type State struct {
@@ -113,7 +122,8 @@ func Register(srv *server.Server, log *slog.Logger) (*Manager, error) {
 	if err != nil {
 		return nil, fmt.Errorf("tailscale not found")
 	}
-	m := &Manager{srv: srv, tailscale: path}
+	m := &Manager{srv: srv, log: log, tailscale: path}
+	m.watchCtx, m.watchStop = context.WithCancel(context.Background())
 	srv.Register("tailscale", "tailscale.getStatus", m.handleGetStatus)
 	srv.Register("tailscale", "tailscale.refresh", m.handleRefresh)
 	srv.Register("tailscale", "tailscale.connect", m.handleConnect)
@@ -128,10 +138,16 @@ func Register(srv *server.Server, log *slog.Logger) (*Manager, error) {
 		}
 		return state
 	})
+	// Event-only capability: it carries no method of its own, it tells the
+	// shell that this backend pushes tailscale updates instead of only
+	// answering them, so the shell can drop its re-fetch cadence to a bare
+	// liveness backstop. See docs/architecture/backend-methods.json.
+	srv.AddCapability("tailscale.watch")
+	m.startWatch()
 	return m, nil
 }
 
-func (m *Manager) Close() {}
+func (m *Manager) Close() { m.stopWatch() }
 
 func (m *Manager) handleGetStatus(json.RawMessage) (any, error) {
 	return m.status()
