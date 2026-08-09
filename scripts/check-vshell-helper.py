@@ -4050,6 +4050,85 @@ def test_scratchpad_hide_only_never_reveals():
          helper._scratchpad_session_ready, helper._hyprctl_json) = originals
 
 
+def test_scratchpad_hide_focus_target_depends_on_who_asked():
+    """Two hides, two right answers, one store.
+
+    A KEYBIND hide returns focus to whatever the pad was revealed from: the user
+    is dismissing the pad to get back to what they were doing.
+
+    A FOCUS-LOSS dismissal must not. There the user has already chosen where to
+    be — that choice is what triggered the hide — so restoring the reveal origin
+    yanks focus out of the window they just moved to. The reveal origin is still
+    consumed either way; neither path keeps bookkeeping of its own."""
+    originals = (helper.load_scratchpads, helper._scratchpad_visible_monitor,
+                 helper._scratchpad_dispatch, helper._scratchpad_session_ready,
+                 helper._hyprctl_json)
+    dispatched = []
+
+    helper.load_scratchpads = lambda *a, **k: [_pad(id="term")]
+    helper._scratchpad_visible_monitor = lambda pad_id: "DP-1"
+    helper._scratchpad_dispatch = lambda *args: (dispatched.append(args), True)[1]
+    helper._scratchpad_session_ready = lambda: True
+
+    # B is where the pad was revealed from; C is where the user has since moved.
+    def fake_json(*args):
+        if args and args[0] == "activewindow":
+            return {"address": "0xCCC", "workspace": {"name": "3"}}
+        if args and args[0] == "clients":
+            return [{"address": "0xBBB"}, {"address": "0xCCC"}]
+        return None
+
+    helper._hyprctl_json = fake_json
+    try:
+        # Keybind hide: back to B, the window the pad was revealed from.
+        with _scratchpad_state_sandbox() as state:
+            (state / "term.focus").write_text("0xBBB")
+            result = helper.scratchpad_toggle("term")
+            assert_equal(result["focusedBack"], "0xBBB",
+                         "a keybind hide returns to the reveal origin")
+            assert ("focuswindow", "address:0xBBB") in dispatched, "and actually focuses it"
+            assert not (state / "term.focus").exists(), \
+                "the reveal origin is consumed: leaving it would restore a stale window next time"
+
+        # Focus-loss dismissal: stay on C, the window the user just chose.
+        dispatched.clear()
+        with _scratchpad_state_sandbox() as state:
+            (state / "term.focus").write_text("0xBBB")
+            result = helper.scratchpad_toggle("term", hide_only=True, keep_focus=True)
+            assert_equal(result["focusedBack"], "0xCCC",
+                         "a focus-loss dismissal keeps the window the user moved to")
+            assert ("focuswindow", "address:0xBBB") not in dispatched, \
+                "and never yanks focus back to the reveal origin"
+            assert ("focuswindow", "address:0xCCC") in dispatched, \
+                "focus is restored explicitly, because hiding moves it via focusmonitor"
+            assert not (state / "term.focus").exists(), "the origin is consumed here too"
+
+        # Focus still on the pad's own window: restoring to it would leave focus
+        # on something about to be hidden, so fall back to the origin.
+        dispatched.clear()
+        helper._hyprctl_json = lambda *a: (
+            {"address": "0xPAD", "workspace": {"name": "special:term"}} if a and a[0] == "activewindow"
+            else [{"address": "0xBBB"}, {"address": "0xPAD"}] if a and a[0] == "clients" else None)
+        with _scratchpad_state_sandbox() as state:
+            (state / "term.focus").write_text("0xBBB")
+            result = helper.scratchpad_toggle("term", hide_only=True, keep_focus=True)
+            assert_equal(result["focusedBack"], "0xBBB",
+                         "focus sitting on the pad itself falls back to the reveal origin")
+
+        # A failed activewindow query is not a reason to strand focus.
+        dispatched.clear()
+        helper._hyprctl_json = lambda *a: ([{"address": "0xBBB"}] if a and a[0] == "clients" else None)
+        with _scratchpad_state_sandbox() as state:
+            (state / "term.focus").write_text("0xBBB")
+            result = helper.scratchpad_toggle("term", hide_only=True, keep_focus=True)
+            assert_equal(result["focusedBack"], "0xBBB",
+                         "an unreadable active window falls back to the origin, not to nothing")
+    finally:
+        (helper.load_scratchpads, helper._scratchpad_visible_monitor,
+         helper._scratchpad_dispatch, helper._scratchpad_session_ready,
+         helper._hyprctl_json) = originals
+
+
 def test_scratchpad_rejections_are_named_not_silent():
     """Rejecting an unusable pad is right; doing it silently is not. A pad with
     an uncompilable regex generated no rules at all, so the user's scratchpad
@@ -4258,6 +4337,7 @@ def main():
     test_scratchpad_release_honours_the_title_exclusion()
     test_scratchpad_toggle_honours_enabled()
     test_scratchpad_hide_only_never_reveals()
+    test_scratchpad_hide_focus_target_depends_on_who_asked()
     test_scratchpad_rejections_are_named_not_silent()
     test_scratchpad_reveal_reports_failed_dispatches()
     subprocess.run(

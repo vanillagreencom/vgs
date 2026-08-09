@@ -450,7 +450,7 @@ Usage:
   vshell scratchpad apply [--no-reload] [--dry-run PATH] [--json]
   vshell scratchpad status
   vshell scratchpad resolve <id> [monitor]
-  vshell scratchpad toggle|show|hide|preload <id>
+  vshell scratchpad toggle|show|hide|preload <id> [--keep-focus]
   vshell scratchpad release <id> [--class-regex RE] [--title-exclude RE]
   vshell auth sync [--terminal]
   vshell greeter sync|run|launch-session

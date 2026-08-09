@@ -223,7 +223,11 @@ Singleton {
                 // read a moment ago, so evaluated late it reveals the pad the
                 // user just put away. The helper re-checks under the pad's lock
                 // and treats an already-hidden pad as a no-op.
-                Quickshell.execDetached([Paths.vshellCli, "scratchpad", "hide", padId]);
+                // --keep-focus: the user picked where they wanted to be, and
+                // that choice is what triggered this dismissal. A plain hide
+                // restores whatever the pad was revealed FROM, which would yank
+                // focus straight back out of the window they just moved to.
+                Quickshell.execDetached([Paths.vshellCli, "scratchpad", "hide", padId, "--keep-focus"]);
             }
         }
     }
