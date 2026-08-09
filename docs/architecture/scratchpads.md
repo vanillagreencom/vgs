@@ -1,16 +1,22 @@
 # Scratchpads
 
-A scratchpad is an app parked on a hidden special workspace that one keybind
-slides in and out. Before VGS-62 configuring one meant hand-writing two
-compositor rules plus a toggle script, entirely outside VGS.
+A scratchpad is an app parked out of sight that one keybind brings in and puts
+away again. Before VGS-62 configuring one meant hand-writing two compositor
+rules plus a toggle script, entirely outside VGS.
+
+One schema, two backends: Hyprland parks it on a hidden **special workspace**;
+Niri, which has none, gives it a **named workspace** of its own (§ Niri).
 
 | Piece | Path |
 |-------|------|
 | Persisted list | `scratchpads` in `~/.config/vshell/settings.json` (schema v23) |
 | Schema, geometry, generation, runtime toggle | `bin/vshell-helper` § Scratchpads |
-| Generated compositor config | `~/.config/hypr/vgs/scratchpads.lua` |
+| Generated config (Hyprland) | `~/.config/hypr/vgs/scratchpads.lua` |
+| Generated config (Niri) | `~/.config/niri/vgs/scratchpads.kdl` |
 | Shell seam | `quickshell/vshell/Services/ScratchpadService.qml` |
 | Settings page | `Modules/Settings/ScratchpadsTab.qml`, `ScratchpadRow.qml` |
+
+Everything from here to § Niri describes the Hyprland backend.
 
 ## Why VGS owns this
 
@@ -287,11 +293,71 @@ Import stays a user action.
 
 ## Niri
 
-**Not implemented — a deliberate split, not an oversight.** Hyprland is the
-reference implementation. Niri has no special workspaces at all: the equivalent
-is a named workspace plus window rules and a `focus-or-toggle` bind, which is a
-different data model and a different generator, not a translation of this one.
+**A second backend, not a port** (VGS-83). Hyprland remains the reference
+implementation; Niri support is additive, with its own generator and its own
+toggle.
 
-`vshell scratchpad apply|toggle|preload` refuses on Niri with that reason rather
-than writing Hyprland config into a session that will never read it, and the
-Settings page shows the same statement instead of a page of dead controls.
+| | Hyprland | Niri |
+|---|---|---|
+| Where a pad lives | hidden special workspace | persistent **named** workspace `vgs-<id>` |
+| Reveal | `togglespecialworkspace` — overlays the current view | `focus-workspace` — *switches to* it |
+| Generated file | `~/.config/hypr/vgs/scratchpads.lua` | `~/.config/niri/vgs/scratchpads.kdl` |
+| Include | reported, never written (config is read-only to VGS) | written, with a backup — the existing Niri stance |
+| Geometry | VGS resolves anchor + percentage to pixels | niri resolves `proportion` and `relative-to` itself |
+
+**The one difference a user will notice: a pad takes a real slot in the
+workspace list and replaces the current view rather than floating over it.**
+Niri has nothing that overlays and hides again, so this is the model, not a
+shortcut. The Settings page says so on Niri rather than letting it be
+discovered as a bug.
+
+**The persisted record is unchanged**, which is what storing an anchor and a
+percentage instead of pixels bought. Niri turns out to express both directly:
+`default-column-width { proportion 0.6; }` for size and
+`default-floating-position x= y= relative-to="top"` for the anchor, whose
+coordinates already run *inward* from the named edge exactly as `offsetX`/
+`offsetY` mean them on Hyprland. So the percentage stays a percentage all the
+way into the compositor here, and this backend needs no monitor query to render
+at all — the "generated against a nominal display" caveat the Lua file carries
+does not arise.
+
+### What Niri cannot express, and how that is said
+
+Reported through an `unsupported` list in the payload, shown on the Settings
+page, and — where a control exists — the control is **hidden** rather than left
+live and inert:
+
+| Setting | Why |
+|---------|-----|
+| `animation` | niri's window-open animation is global config, not a window-rule property. Emitting one per pad would mean the last pad wins *and* the user's global animation is overwritten — the same trap as Hyprland's `specialWorkspace` leaf. The control is hidden on Niri. |
+| `dismissOnFocusLoss` | not wired up; the focus owner VGS uses reads the Hyprland event socket. |
+| `anchor: center` **with an offset** | niri has no centre `relative-to`. An unoffset centre pad is emitted by *omitting* the position rule, since niri centres new floating windows itself; with an offset the pad is still generated and still centred, and the dropped offset is named. |
+
+`unsupported` is deliberately separate from `problems`. A pad in `problems` was
+**rejected** and generates nothing; a pad in `unsupported` **works**, with one
+property dropped. Reporting the second as the first would be as misleading as
+not reporting it at all.
+
+### What is rejected outright
+
+Same rule as everywhere else here — reject rather than half-emit — and on Niri
+the stakes are higher, because a rule niri refuses to parse takes the **whole
+config file** down with it, not just the pad:
+
+- a pattern using **lookaround**, which Python's `re` accepts and niri's Rust
+  regex engine does not;
+- a pattern containing `"#`, which would terminate the KDL raw string early and
+  leave a rule that parses as something narrower and quietly stops matching.
+
+### The toggle
+
+Same sequencing as Hyprland, for the same reasons: launch and **wait for the
+window** before focusing anything (focusing first shows an empty workspace and
+reads as a dead keybind), re-assert workspace membership first for an app whose
+app-id settled after mapping, serialize each pad's transition under the same
+per-pad lock, restore focus to the window that had it before the reveal, and
+confirm the outcome by reading it back rather than trusting that a dispatch
+that returned zero did anything.
+
+A disabled pad still refuses to reveal and is still allowed to hide, so
+disabling a visible pad cannot strand it.
