@@ -14,9 +14,21 @@ import qs.Common
 // 1. **Listening and streaming are different states.** A host that is up is not
 //    the same as a host somebody is watching, and collapsing them into one "on"
 //    would hide a live capture of the user's screen behind an indicator that
-//    looks identical to an idle one. `running` and `streaming` are separate,
-//    and `sessionKnown` is a third state for "the journal could not be read" so
-//    a failed probe is never rendered as "nobody is watching".
+//    looks identical to an idle one. `running` and `streaming` are separate.
+//
+//    Every axis of that answer carries its own "do we know?" flag, and they are
+//    named and reset together — `_markStatusUnknown()` drops all three at once,
+//    because leaving one standing renders half an answer as a whole one:
+//
+//    | Axis | Value | Known? |
+//    |------|-------|--------|
+//    | host | `installed`, `running` | `statusKnown` |
+//    | session | `streaming`, `sessionCount` | `sessionKnown` |
+//    | virtual output | `outputPresent` | `outputKnown` |
+//
+//    `streaming` is the one exception to "unknown clears it": a capture that may
+//    still be live is never downgraded to a question mark. It stays set, and the
+//    UI marks the reading uncertain instead.
 //
 // 2. **It is event-driven, and says so when it stops being.** VGS-63 was a
 //    widget that fetched once and sat on the answer for the whole session. Here
@@ -69,6 +81,9 @@ Singleton {
     property bool sessionKnown: false
     property string sessionError: ""
 
+    // Why the host state is unknown, when statusKnown is false. Empty otherwise.
+    property string statusError: ""
+
     // --- Liveness ------------------------------------------------------------
     // True only while the event watch is actually running. Anything reading this
     // service's state must treat false as "these values may be stale".
@@ -78,10 +93,33 @@ Singleton {
 
     readonly property bool available: installed
 
+    // A probe is in flight -> COALESCE, never drop. The journal read behind
+    // this can take seconds while the event debounce is 400ms, so an event
+    // arriving mid-probe would otherwise be lost outright — and there is
+    // deliberately no polling fallback to recover it later. Any number of
+    // requests during one probe collapse into a single follow-up.
+    property bool _refreshPending: false
+    property bool _statusAnswered: false
+
     function refresh() {
-        if (statusProc.running)
+        if (statusProc.running) {
+            root._refreshPending = true;
             return;
+        }
+        root._refreshPending = false;
         statusProc.running = true;
+    }
+
+    // Every "known" flag drops together. Leaving one standing is how half an
+    // answer gets rendered as a whole one. `streaming` is deliberately NOT
+    // cleared here: a capture that may still be live must not be downgraded to
+    // a question mark, so it stays set and the UI marks the reading uncertain.
+    function _markStatusUnknown(reason) {
+        root.statusKnown = false;
+        root.sessionKnown = false;
+        root.outputKnown = false;
+        root.statusError = reason;
+        root.sessionError = reason;
     }
 
     function start() {
@@ -123,13 +161,12 @@ Singleton {
             // Leaving the previous answer standing is how a widget ends up
             // claiming a host is down while it is streaming.
             root.log.warn("remote-desktop status returned nothing readable");
-            root.statusKnown = false;
-            root.sessionKnown = false;
-            root.sessionError = I18n.tr("the host status check returned nothing readable");
+            root._markStatusUnknown(I18n.tr("the host status check returned nothing readable"));
             return;
         }
 
         root.statusKnown = true;
+        root.statusError = "";
         root.installed = status.installed === true;
         root.running = status.running === true;
         root.state = status.state || "";
@@ -166,11 +203,17 @@ Singleton {
         if (!event)
             return;
         if (event === "connected") {
+            // Optimistic ON only, and only in this direction. A connect is
+            // unambiguous: somebody is watching, right now.
             root.streaming = true;
             root.sessionKnown = true;
-        } else if (event === "disconnected") {
-            root.streaming = false;
         }
+        // A `disconnected` token deliberately does NOT clear `streaming`. With
+        // more than one client connected it ends ONE session, not the capture,
+        // and turning the indicator off here would hide a live capture until
+        // the next resync — the exact failure this widget exists to prevent.
+        // Only the authoritative session count, via _applyStatus, may turn LIVE
+        // off. The resync below is what does it.
         resyncDebounce.restart();
     }
 
@@ -180,6 +223,7 @@ Singleton {
             _startWatch();
         } else if (refCount === 0) {
             watchRestart.stop();
+            watchStable.stop();
             watchProc.running = false;
             root.watchLive = false;
         }
@@ -199,7 +243,42 @@ Singleton {
         running: false
         stdout: StdioCollector {
             id: statusOut
-            onStreamFinished: root._applyStatus(statusOut.text)
+            onStreamFinished: {
+                root._statusAnswered = true;
+                root._applyStatus(statusOut.text);
+            }
+        }
+        // Process emits `exited` before `running` goes false, and a command
+        // that fails to start emits no `exited` at all — so this is keyed on
+        // `running`. A probe that could not be spawned produces no output, and
+        // keeping the previous (or default) answer is how the widget ends up
+        // claiming "not installed" forever. Same shape as
+        // NotificationService.qml's ownership probe.
+        onRunningChanged: {
+            if (running) {
+                root._statusAnswered = false;
+                return;
+            }
+            statusUnansweredTimer.restart();
+        }
+    }
+
+    Timer {
+        id: statusUnansweredTimer
+        // The grace period is for the ordinary case where the process stops a
+        // moment before its output is collected.
+        interval: 500
+        repeat: false
+        onTriggered: {
+            if (!root._statusAnswered) {
+                root.log.warn("remote-desktop status probe did not run");
+                root._markStatusUnknown(I18n.tr("the host status check could not be run"));
+            }
+            // A refresh requested while the probe was in flight was coalesced,
+            // not dropped. Running it from here rather than from the process
+            // handler guarantees the previous probe has fully settled first.
+            if (root._refreshPending)
+                root.refresh();
         }
     }
 
@@ -267,13 +346,19 @@ Singleton {
             if (running) {
                 root.watchLive = true;
                 root.watchError = "";
-                watchRestart.backoffMs = 2000;
+                // Do NOT reset the backoff here. A watch that fails immediately
+                // would enter `running` for a few milliseconds, reset to 2s,
+                // exit, and schedule another 2s retry — the cap would never be
+                // reached and the backoff would be decorative. The reset is
+                // earned by staying up; see watchStable.
+                watchStable.restart();
                 // A watch that has just (re)started missed everything before
                 // it, so the authoritative read is what fills the gap.
                 root.refresh();
                 return;
             }
             root.watchLive = false;
+            watchStable.stop();
             if (root.refCount <= 0)
                 return;
             // The watch is the only thing keeping this state current. Losing it
@@ -294,6 +379,16 @@ Singleton {
         interval: 2000
         repeat: false
         onTriggered: root._startWatch()
+    }
+
+    Timer {
+        id: watchStable
+        // The backoff is reset only by a watch that SURVIVED this long, which
+        // is what makes 2s -> 60s actually reachable for a persistently failing
+        // one. Same shape as the VGS-63 supervisor.
+        interval: 60000
+        repeat: false
+        onTriggered: watchRestart.backoffMs = 2000
     }
 
     // Several events arrive together at session start; one resync covers all

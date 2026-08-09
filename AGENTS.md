@@ -160,6 +160,7 @@ scripts/test-latest-transaction-queue.js
 scripts/test-bundled-override.js
 scripts/test-toast-actions.js
 scripts/check-notification-takeover.js
+scripts/test-remote-desktop-state.js
 scripts/test-idle-reload-snapshot.js
 scripts/test-idle-lock-request.js
 scripts/check-vshell-helper.py

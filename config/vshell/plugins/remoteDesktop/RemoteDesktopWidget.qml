@@ -24,6 +24,7 @@ PluginComponent {
 
     property string pillMode: pluginData.pillMode || "status" // icon | status
 
+    readonly property bool statusKnown: RemoteDesktopService.statusKnown
     readonly property bool installed: RemoteDesktopService.installed
     readonly property bool hostUp: RemoteDesktopService.running
     readonly property bool streaming: RemoteDesktopService.streaming
@@ -31,32 +32,62 @@ PluginComponent {
     readonly property bool watchLive: RemoteDesktopService.watchLive
     readonly property bool busy: RemoteDesktopService.busy
     readonly property bool captureFallback: RemoteDesktopService.captureFallback
+    // The third knowledge axis: hyprctl could not be asked whether the virtual
+    // output exists. Only meaningful where VGS manages one at all.
+    readonly property bool outputUnknown: RemoteDesktopService.outputSupported && !RemoteDesktopService.outputKnown
 
+    // "streaming"   -> a client is connected right now.
+    // "unknown"     -> no usable answer yet, or the last probe could not run.
     // "unavailable" -> Sunshine is not installed here.
     // "stale"       -> the event watch is down, so nothing below is trustworthy.
-    // "streaming"   -> a client is connected right now.
     // "listening"   -> the host is up and nobody is connected.
     // "off"         -> the host is down.
-    readonly property string visualState: {
-        if (!installed)
-            return "unavailable";
-        if (!watchLive && RemoteDesktopService.statusKnown)
-            return "stale";
-        if (streaming)
+    //
+    // ORDER MATTERS, twice over.
+    //
+    // `streaming` is tested FIRST, ahead of every uncertainty state. A capture
+    // that may still be live must fail loud: downgrading it to a question mark
+    // because a probe failed would hide the one thing this widget exists to
+    // show. Uncertainty is reported alongside it in the popout instead.
+    //
+    // `statusKnown` is tested before `installed`, because `installed` defaults
+    // to false — testing it first rendered "Sunshine is not installed" for
+    // every instant before the first reply, and again after any failed probe.
+    // A default is not an answer.
+    // Pure decision function. `scripts/test-remote-desktop-state.js` extracts
+    // THIS source text and exercises it directly, so the shipped ordering is
+    // what is tested — bundled plugins get no runtime coverage from
+    // `qml-smoke.sh --nested` (VGS-19), and both bugs this closes were ordering
+    // bugs. Keep it free of QML API calls.
+    // BEGIN STATE DECISION
+    function visualStateFor(host) {
+        if (host.streaming)
             return "streaming";
-        return hostUp ? "listening" : "off";
+        if (!host.statusKnown)
+            return "unknown";
+        if (!host.installed)
+            return "unavailable";
+        if (!host.watchLive)
+            return "stale";
+        return host.running ? "listening" : "off";
     }
+    // END STATE DECISION
+
+    readonly property string visualState: root.visualStateFor({
+        "streaming": root.streaming,
+        "statusKnown": root.statusKnown,
+        "installed": root.installed,
+        "watchLive": root.watchLive,
+        "running": root.hostUp
+    })
 
     readonly property string stateIcon: {
         switch (root.visualState) {
-        case "unavailable":
-            return "cast";
-        case "stale":
-            return "sync_problem";
         case "streaming":
             return "cast_connected";
-        case "listening":
-            return "cast";
+        case "unknown":
+        case "stale":
+            return "sync_problem";
         default:
             return "cast";
         }
@@ -66,6 +97,7 @@ PluginComponent {
         switch (root.visualState) {
         case "streaming":
             return Theme.error;
+        case "unknown":
         case "stale":
             return Theme.warning;
         case "listening":
@@ -79,6 +111,7 @@ PluginComponent {
         switch (root.visualState) {
         case "unavailable":
             return "";
+        case "unknown":
         case "stale":
             return "?";
         case "streaming":
@@ -91,16 +124,25 @@ PluginComponent {
     }
 
     function tooltipText() {
+        // Mirrors visualState's ordering, for the same two reasons.
+        if (root.streaming) {
+            const detail = root.sessionDetail();
+            const uncertain = root.statusKnown ? "" : " (state uncertain)";
+            return "Someone is streaming this machine" + uncertain + (detail ? " — " + detail : "");
+        }
+        if (!root.statusKnown)
+            return "Remote desktop state is unknown — " + (RemoteDesktopService.statusError || "the host status check has not answered yet");
         if (!root.installed)
             return "Remote desktop unavailable — " + (RemoteDesktopService.unavailableReason || "Sunshine is not installed");
         if (root.visualState === "stale")
             return "Remote desktop state may be out of date — " + (RemoteDesktopService.watchError || "the host event watch is not running");
-        if (root.streaming) {
-            const detail = root.sessionDetail();
-            return "Someone is streaming this machine" + (detail ? " — " + detail : "");
+        if (root.hostUp) {
+            if (root.captureFallback)
+                return "Remote desktop is up, but capturing a real monitor — " + RemoteDesktopService.outputName + " is missing";
+            if (root.outputUnknown)
+                return "Remote desktop is up — whether it is capturing " + RemoteDesktopService.outputName + " could not be checked";
+            return "Remote desktop is up, nobody connected";
         }
-        if (root.hostUp)
-            return root.captureFallback ? "Remote desktop is up, but capturing a real monitor — " + RemoteDesktopService.outputName + " is missing" : "Remote desktop is up, nobody connected";
         return "Remote desktop is off — click to open, toggle inside to start";
     }
 
@@ -244,7 +286,15 @@ PluginComponent {
             id: popout
 
             headerText: "Remote Desktop"
-            detailsText: root.streaming ? "Streaming now" : (root.hostUp ? "Listening" : (root.installed ? "Off" : "Not installed"))
+            detailsText: {
+                if (root.streaming)
+                    return "Streaming now";
+                if (!root.statusKnown)
+                    return "State unknown";
+                if (!root.installed)
+                    return "Not installed";
+                return root.hostUp ? "Listening" : "Off";
+            }
             showCloseButton: true
 
             Column {
@@ -279,12 +329,14 @@ PluginComponent {
 
                             StyledText {
                                 text: {
-                                    if (!root.installed)
-                                        return "Sunshine is not installed";
-                                    if (root.busy)
-                                        return root.hostUp ? "Stopping…" : "Starting…";
                                     if (root.streaming)
                                         return "Somebody is streaming this machine";
+                                    if (root.busy)
+                                        return root.hostUp ? "Stopping…" : "Starting…";
+                                    if (!root.statusKnown)
+                                        return "Host state is unknown";
+                                    if (!root.installed)
+                                        return "Sunshine is not installed";
                                     return root.hostUp ? "Host is up, nobody connected" : "Host is off";
                                 }
                                 font.pixelSize: Theme.fontSizeMedium
@@ -296,12 +348,17 @@ PluginComponent {
                                 visible: text.length > 0
                                 width: parent.width
                                 text: {
-                                    if (!root.installed)
-                                        return RemoteDesktopService.unavailableReason;
                                     if (root.streaming)
                                         return root.sessionDetail();
-                                    if (root.hostUp)
-                                        return RemoteDesktopService.outputSupported && RemoteDesktopService.outputPresent ? ("capturing " + RemoteDesktopService.outputName) : "";
+                                    if (!root.statusKnown)
+                                        return RemoteDesktopService.statusError || "waiting for the first answer";
+                                    if (!root.installed)
+                                        return RemoteDesktopService.unavailableReason;
+                                    if (root.hostUp) {
+                                        if (root.outputUnknown)
+                                            return "capture target could not be checked";
+                                        return RemoteDesktopService.outputPresent ? ("capturing " + RemoteDesktopService.outputName) : "";
+                                    }
                                     return "starts on demand — nothing listens until you turn it on";
                                 }
                                 font.pixelSize: Theme.fontSizeSmall
@@ -314,7 +371,10 @@ PluginComponent {
                             Layout.alignment: Qt.AlignVCenter
                             hideText: true
                             checked: root.hostUp
-                            enabled: root.installed && !root.busy
+                            // An unknown host state has no true position to
+                            // show, so the control is inert rather than
+                            // offering to "start" something that may be up.
+                            enabled: root.statusKnown && root.installed && !root.busy
                             onToggled: want => {
                                 if (want)
                                     RemoteDesktopService.start();
@@ -363,7 +423,7 @@ PluginComponent {
                 // ---- The state on screen may be out of date ----
                 StyledRect {
                     width: parent.width
-                    visible: root.visualState === "stale" || (root.hostUp && !root.sessionKnown)
+                    visible: !root.statusKnown || root.visualState === "stale" || (root.hostUp && !root.sessionKnown) || root.outputUnknown
                     height: staleRow.implicitHeight + Theme.spacingM * 2
                     radius: Theme.cornerRadius
                     color: Theme.surfaceContainerHigh
@@ -387,7 +447,7 @@ PluginComponent {
 
                             StyledText {
                                 width: parent.width
-                                text: "Live updates are not running"
+                                text: root.statusKnown ? "Live updates are not running" : "This state has not been confirmed"
                                 font.pixelSize: Theme.fontSizeSmall
                                 font.weight: Font.Medium
                                 color: Theme.surfaceText
@@ -395,7 +455,14 @@ PluginComponent {
 
                             StyledText {
                                 width: parent.width
-                                text: (RemoteDesktopService.watchError || RemoteDesktopService.sessionError || "the host event watch is not running") + ". Whether anyone is connected cannot be confirmed right now."
+                                text: {
+                                    const reason = RemoteDesktopService.statusError || RemoteDesktopService.watchError || RemoteDesktopService.sessionError || "the host event watch is not running";
+                                    if (!root.statusKnown || !root.sessionKnown)
+                                        return reason + ". Whether anyone is connected cannot be confirmed right now.";
+                                    if (root.outputUnknown)
+                                        return "Whether the host is capturing " + RemoteDesktopService.outputName + " or a real monitor could not be checked.";
+                                    return reason + ". What is shown here may be out of date.";
+                                }
                                 wrapMode: Text.WordWrap
                                 font.pixelSize: Theme.fontSizeSmall
                                 color: Theme.surfaceVariantText

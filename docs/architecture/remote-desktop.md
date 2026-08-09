@@ -64,10 +64,44 @@ the capture language `config/vshell/plugins/screenRecord/` already established
 (`Theme.error`, filled glyph, a word not just an icon), so "something is being
 recorded off this machine" looks the same wherever it appears.
 
-A fourth state, `stale`, covers "the event watch is not running": the values on
-screen may be out of date and the widget says so rather than presenting them as
-current. `sessionKnown` carries the same distinction in the data — *nobody is
-watching* and *nobody knows* must never render alike.
+Two further states cover not knowing: `unknown` (no usable answer yet, or the
+last probe could not run) and `stale` (the event watch is down, so what is on
+screen may be out of date). Both say so rather than presenting a guess as
+current.
+
+### Three knowledge axes, reset together
+
+*Nobody is watching* and *nobody knows* must never render alike, and that
+applies to every axis of the answer, not just the session:
+
+| Axis | Value | Known? |
+|------|-------|--------|
+| host | `installed`, `running` | `statusKnown` |
+| session | `streaming`, `sessionCount` | `sessionKnown` |
+| virtual output | `outputPresent` | `outputKnown` |
+
+`RemoteDesktopService._markStatusUnknown()` drops all three at once. Leaving one
+standing renders half an answer as a whole one — and `installed` in particular
+**defaults to false**, so a widget that tested it before `statusKnown` displayed
+"Sunshine is not installed" for every instant before the first reply and again
+after any failed probe. A default is not an answer.
+
+### What can turn LIVE off
+
+Exactly one thing: an authoritative `status --json` reply whose
+`session.active` is false. Specifically:
+
+- a `connected` event sets the indicator **immediately** — a connect is
+  unambiguous, and this is the one fact worth showing a beat before the
+  authoritative read confirms it;
+- a `disconnected` event **does not clear it**. With more than one client
+  connected it ends *one* session, not the capture, so clearing on the first
+  disconnect would hide a live capture until the next resync. It only schedules
+  the resync, and the session count decides;
+- losing the answer entirely does not clear it either. `_markStatusUnknown()`
+  leaves `streaming` set, and the widget tests `streaming` **before** every
+  uncertainty state, so a capture that may still be live fails loud instead of
+  being downgraded to a question mark. The uncertainty is reported beside it.
 
 ## Why the journal, not the Web API
 
@@ -116,6 +150,35 @@ successful start does a full resync to cover what it missed while down. There is
 no polling fallback that would quietly paper over a dead watch: the widget
 renders the `stale` state instead, which is the difference between this and
 VGS-63.
+
+The backoff is reset by a watch that **survived** 60s (`watchStable`), never by
+one that merely started. Resetting on entry defeats the backoff for a watcher
+that fails immediately — it would run for milliseconds, reset to 2s, exit, and
+schedule another 2s retry, so the cap would never be reached and the backoff
+would be decorative.
+
+### Nothing is dropped, and nothing hangs
+
+Two smaller rules, both of the same family:
+
+- **A refresh requested while a probe is in flight is coalesced, not dropped.**
+  The journal read behind `status --json` can take seconds while the event
+  debounce is 400 ms, so an event arriving mid-probe would otherwise be lost
+  outright — and there is deliberately no polling fallback to recover it. Any
+  number of requests during one probe collapse into a single follow-up, launched
+  once the probe has settled.
+- **A status command that cannot be spawned marks the state unknown.** Per
+  `.github/instructions/quickshell-qml.instructions.md`, a `Process` that fails
+  to start emits no `exited` at all, so the probe is keyed on `running` plus a
+  500 ms unanswered grace, exactly as `NotificationService.qml`'s ownership probe
+  is. Without it a missing binary leaves the default state — "not installed" —
+  standing forever.
+
+`scripts/test-remote-desktop-state.js` pins the widget's state ordering
+(extracted verbatim from its BEGIN/END STATE DECISION markers) and all of the
+service invariants above. Bundled plugins get no runtime coverage from
+`qml-smoke.sh --nested`: the sandbox loads them but never places one in a bar,
+so no binding is ever evaluated (VGS-19).
 
 ## Command surface
 
