@@ -18,6 +18,13 @@ Column {
     property bool expanded: false
     property bool capturing: false
     property string conflict: ""
+    // What this pad's pattern claims: {state, count, error}, or null when it has
+    // not been asked. `state` is "known" | "unknown" | "error" — an unevaluable
+    // pattern is NOT a count of zero, because that reads as a working pattern
+    // that happens to match nothing, which is the failure this surfaces.
+    property var matchState: null
+    readonly property string matchKind: (matchState && matchState.state) || "unknown"
+    readonly property int matchCount: (matchState && matchState.count) || 0
     // Set when automatic class matching was asked for but could not be honoured.
     property string autoNote: ""
     // Set when a manually typed class pattern was refused.
@@ -95,6 +102,43 @@ Column {
                     wrapMode: Text.WordWrap
                     font.pixelSize: Theme.fontSizeSmall
                     color: Theme.error
+                }
+
+                // The pattern itself could not be evaluated. Said plainly, and
+                // never as a count — "0 windows match" would describe a broken
+                // pattern as a working one.
+                StyledText {
+                    width: parent.width
+                    visible: row.matchKind === "error"
+                    text: I18n.tr("Could not check this pattern: %1").arg((row.matchState && row.matchState.error) || I18n.tr("unknown error"))
+                    wrapMode: Text.WordWrap
+                    font.pixelSize: Theme.fontSizeSmall
+                    color: Theme.error
+                }
+
+                // The pattern claims more than the pad's own window. This is
+                // what an exact class match does by construction, and until now
+                // nothing said so.
+                StyledText {
+                    width: parent.width
+                    visible: row.matchKind === "known" && row.matchCount > 1
+                    text: I18n.tr("%1 open windows match this pattern — the scratchpad will claim all of them.").arg(row.matchCount)
+                    wrapMode: Text.WordWrap
+                    font.pixelSize: Theme.fontSizeSmall
+                    color: Theme.warning
+                }
+
+                // Zero is different from "more than one": the pattern matches
+                // nothing open, which is normal for a pad that is not running
+                // but is also exactly what a wrong pattern looks like. Only
+                // shown for a KNOWN answer — "unknown" stays silent.
+                StyledText {
+                    width: parent.width
+                    visible: row.matchKind === "known" && row.matchCount === 0 && (row.pad.classRegex || "").length > 0
+                    text: I18n.tr("No open window matches this pattern.")
+                    wrapMode: Text.WordWrap
+                    font.pixelSize: Theme.fontSizeSmall
+                    color: Theme.surfaceVariantText
                 }
             }
 

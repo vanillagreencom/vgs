@@ -4719,6 +4719,69 @@ def test_scratchpad_visibility_distinguishes_hidden_from_unknown():
         helper._hyprctl_json = original
 
 
+def test_scratchpad_matching_windows_reports_pattern_breadth():
+    """VGS-86: a derived StartupWMClass is an exact class match, so it claims
+    every current and future instance of the application. Nothing surfaced that,
+    so a user running one terminal as a scratchpad and another tiled had both
+    captured with no indication why. This query is what makes the breadth
+    visible before the pattern is saved."""
+    original = helper._hyprctl_json
+    clients = [
+        {"address": "0x1", "class": "com.mitchellh.ghostty", "title": "vgs"},
+        {"address": "0x2", "class": "com.mitchellh.ghostty", "title": "drovr"},
+        {"address": "0x3", "class": "com.ghostty.scratchpad", "title": "Ghostty"},
+        {"address": "0x4", "class": "1password", "title": "Lock Screen"},
+        {"address": "0x5", "class": "1password", "title": "1Password"},
+    ]
+    helper._hyprctl_json = lambda *args: clients if args and args[0] == "clients" else None
+    try:
+        # The over-matching case, quantified: the derived pattern claims both.
+        wide = helper.scratchpad_matching_windows(r"^(com\.mitchellh\.ghostty)$")
+        assert_equal(wide["count"], 2, "a plain class match claims every instance")
+
+        # A launch-time class override narrows to the pad's own window.
+        narrow = helper.scratchpad_matching_windows(r"^(com\.ghostty\.scratchpad)$")
+        assert_equal(narrow["count"], 1, "an overridden class claims exactly one")
+
+        # The title exclusion is honoured here too, so the count matches what
+        # the runtime toggle would actually select rather than a wider guess.
+        excluded = helper.scratchpad_matching_windows(r"^(1password)$", r"^(1Password)$")
+        assert_equal(excluded["count"], 1, "the exclusion narrows the count")
+        assert_equal(excluded["windows"][0]["title"], "Lock Screen",
+                     "and excludes the right window")
+
+        # A pattern that cannot compile is an error, not "nothing matched". The
+        # three states have to stay distinguishable all the way to the caller:
+        # rendering an unevaluable pattern as "0 windows match" describes a
+        # broken pattern as a working one, which is the failure this surfaces.
+        broken = helper.scratchpad_matching_windows("^(unclosed")
+        assert_equal(broken["ok"], False, "an uncompilable pattern is an error")
+        assert_equal(broken["count"], 0, "and claims nothing")
+        assert "does not compile" in broken["error"], "with a reason to show"
+        assert_equal(broken.get("known"), None,
+                     "an error is not a knowledge claim either way")
+
+        # A bad title exclusion is an error for the same reason.
+        bad_exclude = helper.scratchpad_matching_windows(r"^(x)$", "[")
+        assert_equal(bad_exclude["ok"], False, "an uncompilable exclusion is an error")
+        assert "title exclusion" in bad_exclude["error"], "and names which pattern"
+
+        # The three states are mutually exclusive, so a caller can switch on
+        # them without ambiguity.
+        good = helper.scratchpad_matching_windows(r"^(1password)$")
+        assert_equal((good["ok"], good["known"]), (True, True), "a real answer is ok+known")
+        assert_equal(broken["ok"], False, "an error is not ok")
+
+        # No session is NOT zero matches. The page must be able to stay silent
+        # rather than claim "0 windows match" on a query that never ran.
+        helper._hyprctl_json = lambda *args: None
+        unknown = helper.scratchpad_matching_windows(r"^(anything)$")
+        assert_equal(unknown["ok"], True, "no session is not a failure")
+        assert_equal(unknown["known"], False, "but it is explicitly not knowledge")
+    finally:
+        helper._hyprctl_json = original
+
+
 def test_scratchpad_hide_refuses_when_visibility_is_unknown():
     """Only "hidden" counts as a successful hide. On "could not determine" the
     helper must refuse, so Settings never proceeds to drop the keybind."""
@@ -4901,6 +4964,7 @@ def main():
     test_scratchpad_hide_confirms_the_pad_came_down()
     test_scratchpad_visibility_distinguishes_hidden_from_unknown()
     test_scratchpad_hide_refuses_when_visibility_is_unknown()
+    test_scratchpad_matching_windows_reports_pattern_breadth()
     subprocess.run(
         [sys.executable, str(REPO_ROOT / "scripts" / "check-vshell-niri.py")],
         check=True,
