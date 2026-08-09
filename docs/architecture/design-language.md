@@ -301,13 +301,32 @@ The form:
   a popout on a settings page hides the thing it was opened for. Never persist
   it.
 
-Escape still closes the whole surface from a pushed page rather than popping
-back to page 0 — the key handler lives in the popout container above the plugin
-content. If a second pager wants that, it belongs in the shared component, not
-copied into another plugin.
+- **Escape pops one level; every other dismissal closes outright.** Keyboard
+  focus belongs to `PluginPopout`'s container, above the plugin content, so a
+  plugin cannot intercept Escape itself. It declares a pushed page instead and
+  the container routes to it:
+
+  | Member | Meaning |
+  |--------|---------|
+  | `canPopBack` | there is a pushed page to return from |
+  | `popBack()` | return **one** level |
+
+  Two members on the content root, no key handler (VGS-88). Content that
+  declares neither behaves exactly as it did before. Escape falls through to
+  closing the surface when nothing is pushed.
+
+  The close button, a click outside, and the bar pill toggling all close the
+  surface outright from any depth. Those gestures aim at the whole popout, and
+  popping instead would trap the user — a second gesture to leave what one
+  gesture asked to dismiss. Escape is the only gesture whose conventional
+  meaning is "back one step", which is why it is the only one routed inward.
+
+  `PluginPopout` also pops the content to page 0 on dismissal, whichever route
+  closed it. That is what makes "a pushed page is view state" true in general
+  rather than per plugin, so a pager must not implement its own reset.
 
 Worked example: `config/vshell/plugins/aiUsage/AiUsageWidget.qml` (`pager`,
-`pages`, `usagePage`, `settingsPage`).
+`pages`, `usagePage`, `settingsPage`, and `canPopBack`/`popBack` beside them).
 
 ## Where to look
 

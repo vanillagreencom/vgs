@@ -596,10 +596,18 @@ PluginComponent {
 
             // Which page of the pager is showing: 0 usage, 1 display settings.
             // Transient view state, deliberately not persisted — reopening a
-            // popout on a settings page you left open days ago is disorienting,
-            // and the reset below matches how a popover behaves everywhere else.
+            // popout on a settings page you left open days ago is disorienting.
             property int page: 0
             readonly property bool onSettings: popout.page === 1
+
+            // The pushed-page contract PluginPopout looks for: it owns keyboard
+            // focus, so Escape can only reach a pushed page through this, and it
+            // is also what resets the pager when the popout is dismissed. Two
+            // members, no key handler. (VGS-88)
+            readonly property bool canPopBack: popout.page > 0
+            function popBack() {
+                popout.page = Math.max(0, popout.page - 1);
+            }
 
             headerText: popout.onSettings ? "Display settings" : (root.providerName() + " Usage")
             detailsText: {
@@ -621,17 +629,6 @@ PluginComponent {
                 return live + " accounts · " + root.aggregatePct + "% used" + suffix;
             }
             showCloseButton: true
-
-            // A pushed page is view state, not a preference: a popout that
-            // reopens on the settings page hides the thing it was opened for.
-            Connections {
-                target: popout.parentPopout
-                ignoreUnknownSignals: true
-                function onShouldBeVisibleChanged() {
-                    if (popout.parentPopout && !popout.parentPopout.shouldBeVisible)
-                        popout.page = 0;
-                }
-            }
 
             // Sits left of the close button; same 32x32 hit target so the two
             // read as a pair. It is the disclosure control and the back control
