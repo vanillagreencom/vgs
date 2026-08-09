@@ -98,6 +98,7 @@ PY
 # because the requested assertions did not run.
 require_own_shell() {
   local listing verdict diag err_file qs_bin="" candidate rc=0
+  local class_err class_diag=""
 
   # Both names, in the order `bin/vshell-helper`'s QS_BINARIES lists them. A
   # system providing only `quickshell` reads the same registry, and probing for
@@ -133,7 +134,8 @@ require_own_shell() {
   fi
 
   rc=0
-  verdict="$(QS_LISTING="$listing" python3 - "$repo_root/quickshell/vshell" <<'PY'
+  class_err="$(mktemp)"
+  verdict="$(QS_LISTING="$listing" python3 - "$repo_root/quickshell/vshell" 2>"$class_err" <<'PY'
 import json
 import os
 import sys
@@ -280,6 +282,8 @@ if mine:
 raise SystemExit(10)
 PY
   )" || rc=$?
+  class_diag="$(cat "$class_err")"
+  rm -f "$class_err"
 
   case "$rc" in
     0) return 0 ;;
@@ -305,6 +309,12 @@ PY
     *)
       {
         echo "surface smoke FAILED: could not classify the instance registry (classifier exit $rc)"
+        # The classifier's own stderr belongs INSIDE this report, indented with
+        # everything else. Letting it escape from the command substitution put
+        # multi-line errors above the header, where they read as unrelated.
+        if [[ -n "$class_diag" ]]; then
+          while IFS= read -r line; do echo "  $line"; done <<<"$class_diag"
+        fi
         if [[ -n "$diag" ]]; then
           # Indent every line, not just the first: the CLI's stderr is routinely
           # multi-line, and a single echo leaves continuation lines flush against
