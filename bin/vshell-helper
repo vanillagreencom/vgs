@@ -5223,6 +5223,81 @@ def detect_compositor() -> Dict[str, str]:
     return {"compositor": "unknown", "source": "none"}
 
 
+# Commands VGS needs a CAPABILITY from, not merely presence.
+#
+# Each entry runs the command and asks it to do the thing VGS actually depends
+# on. That is deliberately not a version comparison: a version string is a
+# proxy, and a fragile one — the manifest declares 67 commands, each with its
+# own `--version` shape, several writing to stderr, and a mis-parse would report
+# a working system as broken, which is worse than the gap it closes.
+#
+# The bar for a new entry is a documented minimum that a REACHABLE system can
+# actually violate. Presence-only stays the default.
+# See docs/decisions/D005-dependency-version-constraints.md.
+CAPABILITY_PROBES: Dict[str, Dict[str, Any]] = {
+    "jq": {
+        # Regex builtins arrived in jq 1.5 (2015-08-16) — `test`, `match`,
+        # `sub`, `gsub`, and `gsub/3` with them; jq 1.4 has none of them. Every
+        # jq-using helper in bin/ needs them.
+        "argv": ["jq", "-ne", '("a" | test("a")) and (("ab" | gsub("b"; "c"; "i")) == "ac")'],
+        "requirement": "needs regex builtins (jq >= 1.5)",
+    },
+}
+
+# Probing shells out, and a command can appear in several feature groups, so the
+# verdict is computed once per process.
+_CAPABILITY_PROBE_CACHE: Dict[str, bool] = {}
+
+
+def capability_probe_ok(command: str) -> bool:
+    """True when ``command`` can do what VGS needs of it.
+
+    Fail-SAFE in one direction only: a probe that cannot be run at all (the
+    binary vanished between the presence check and here, a timeout) is reported
+    as satisfied. Reporting a working system as broken on the strength of a
+    probe that never executed is the false negative this whole mechanism exists
+    to avoid; a genuinely unusable command still fails the probe by returning
+    non-zero.
+    """
+    probe = CAPABILITY_PROBES.get(command)
+    if not probe:
+        return True
+    if command in _CAPABILITY_PROBE_CACHE:
+        return _CAPABILITY_PROBE_CACHE[command]
+    try:
+        completed = subprocess.run(
+            probe["argv"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=10,
+            check=False,
+        )
+        ok = completed.returncode == 0
+    except (OSError, subprocess.SubprocessError):
+        ok = True
+    _CAPABILITY_PROBE_CACHE[command] = ok
+    return ok
+
+
+def _unusable_commands(commands: Iterable[str]) -> List[str]:
+    """Present-but-unusable entries, phrased for the same list as `missing`.
+
+    `missing` is joined into user-facing text, and "installed but unusable" is
+    not the same problem as "not installed" — installing the package again does
+    not fix it. The entry says which, so the message cannot be acted on wrongly.
+    """
+    unusable = []
+    for command in commands:
+        if command not in CAPABILITY_PROBES:
+            continue
+        if not command_exists(command):
+            continue  # already reported as missing; do not say it twice
+        if capability_probe_ok(command):
+            continue
+        unusable.append(f"{command} (installed but unusable: {CAPABILITY_PROBES[command]['requirement']})")
+    return unusable
+
+
 def feature_status() -> Dict[str, Any]:
     data = load_deps()
     compositor = detect_compositor()["compositor"]
@@ -5237,6 +5312,12 @@ def feature_status() -> Dict[str, Any]:
         if selected_compositor:
             commands.extend(compositor_commands[selected_compositor])
         missing = [cmd for cmd in commands if not command_exists(cmd)]
+        # A declared minimum that nothing checks is a comment pretending to be a
+        # constraint (VGS-89). Present-but-unusable lands in the same list, so
+        # every existing consumer — `deps status`, the capture modal's toast —
+        # reports it without knowing the mechanism exists.
+        unusable = _unusable_commands(commands)
+        missing.extend(unusable)
         alternatives = [list(group) for group in (spec.get("anyCommands") or [])]
         missing_alternatives = [
             group for group in alternatives
@@ -5260,6 +5341,9 @@ def feature_status() -> Dict[str, Any]:
             "compositorCommands": compositor_commands,
             "compositor": selected_compositor or compositor,
             "missing": missing,
+            # Also broken out, so a machine consumer can tell "reinstall this"
+            # from "upgrade this" without parsing the sentence.
+            "unusable": unusable,
             "requiresFeatures": list(spec.get("requiresFeatures") or []),
         }
     # Feature-to-feature requirements, resolved once every group is known. This

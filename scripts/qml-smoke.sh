@@ -918,7 +918,8 @@ EOF
       # The `plugins` IPC target, NOT `plugin-scan`. Both expose a `list`, and
       # they format differently: this one emits "<id> [loaded|disabled]"
       # (VGSIPC.qml), while PluginService's own `plugin-scan list` emits
-      # tab-separated "<id>\tloaded\t<type>\t<name>". Matching the wrong
+      # tab-separated "<id>\tloaded\t<type>\t<name>\t<withheld-reason>".
+      # Matching the wrong
       # emitter's shape would make every row miss, which reads as "no plugin
       # ever loaded" — so the target and the pattern have to be quoted together.
       # This one is used because it is the view that distinguishes "not scanned

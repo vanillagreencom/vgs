@@ -36,11 +36,23 @@ StyledRect {
     property bool isSystemPlugin: pluginData ? (pluginData.source === "system") : false
     property string requiresShell: pluginData ? (pluginData.requires_shell || pluginData.requires_vgs || "") : ""
     property bool meetsRequirements: requiresShell ? PluginService.checkPluginCompatibility(requiresShell) : true
+    // Non-empty only when a package claiming this id was REFUSED on its shell
+    // requirement. A bundled module's unmet declaration is inert, and so is an
+    // unmet declaration on a package that still owns its id: the requirement is
+    // only enforced on the override/displacement path, so anything else would
+    // report an enforcement that never happened. (VGS-89)
+    property string withheldReason: {
+        PluginService.availablePlugins;
+        PluginService.knownManifests;
+        ShellVersionService.semverVersion;
+        return root.pluginId ? PluginService.requirementBlockReason(root.pluginId) : "";
+    }
 
     Connections {
         target: ShellVersionService
         function onSemverVersionChanged() {
             root.meetsRequirementsChanged();
+            root.withheldReasonChanged();
         }
     }
     // A package that VGS guarantees: a bundled module, or a user package whose
@@ -143,7 +155,7 @@ StyledRect {
                             hoverEnabled: true
                             onEntered: {
                                 if (root.sharedTooltip)
-                                    root.sharedTooltip.show(I18n.tr("Requires VGS %1").arg(root.requiresShell), parent, 0, 0, "top");
+                                    root.sharedTooltip.show(I18n.tr("Requires VGS %1; this shell is VGS %2").arg(root.requiresShell).arg(ShellVersionService.semverVersion || I18n.tr("unknown")), parent, 0, 0, "top");
                             }
                             onExited: {
                                 if (root.sharedTooltip)
@@ -184,6 +196,23 @@ StyledRect {
                     color: Theme.surfaceVariantText
                     width: parent.width
                     horizontalAlignment: Text.AlignLeft
+                }
+
+                // Only when an override of this id was actually refused. The
+                // card belongs to whatever owns the id — after a refusal that
+                // is the shipped package, which IS loaded and working — so this
+                // says what was refused rather than calling the plugin
+                // unavailable. A hover tooltip is not where someone looks to
+                // find out why the plugin they installed is not the one
+                // running. (VGS-89)
+                StyledText {
+                    text: root.withheldReason
+                    font.pixelSize: Theme.fontSizeSmall
+                    color: Theme.error
+                    width: parent.width
+                    wrapMode: Text.WordWrap
+                    horizontalAlignment: Text.AlignLeft
+                    visible: root.withheldReason !== ""
                 }
             }
 
