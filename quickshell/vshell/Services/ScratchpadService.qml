@@ -58,6 +58,9 @@ Singleton {
     property var _hideCallback: null
     property bool _hideAnswered: false
     property string _hideError: ""
+    property string _matchPadId: ""
+    property bool _matchAnswered: false
+    property var _matchQueue: []
     property var _releaseCallback: null
     property bool _releaseAnswered: false
     property string _releaseError: ""
@@ -113,6 +116,64 @@ Singleton {
             root._applyPending = false;
             root.generateConfig();
         }
+    }
+
+    // What each pad's pattern currently claims, keyed by pad id. A class match
+    // applies to every instance of the application, and nothing showed that —
+    // so a pad configured for a terminal quietly claimed every window of it.
+    //
+    // Each entry is {state, count, error} with state one of:
+    //   "known"   - count is meaningful
+    //   "unknown" - nothing to ask (no session, or the query never answered)
+    //   "error"   - the pattern itself is broken; `error` says how
+    // Three states, not a number with sentinels: an unevaluable pattern
+    // rendered as "0 windows match" reads as a working pattern that happens to
+    // match nothing, which is precisely the failure this feature exists to
+    // surface.
+    property var matchStates: ({})
+
+    function _setMatchState(padId, state, count, error) {
+        const next = Object.assign({}, root.matchStates);
+        next[padId] = {
+            "state": state,
+            "count": count || 0,
+            "error": error || ""
+        };
+        root.matchStates = next;
+    }
+
+    function refreshMatches(padId, classRegex, titleExclude) {
+        if (!supported || !padId || !classRegex)
+            return;
+        if (matchProc.running) {
+            root._matchQueue = (root._matchQueue || []).concat([[padId, classRegex, titleExclude]]);
+            return;
+        }
+        root._matchPadId = String(padId);
+        root._matchAnswered = false;
+        const argv = [Paths.vshellCli, "scratchpad", "match", "--json", "--class-regex", String(classRegex)];
+        if (titleExclude)
+            argv.push("--title-exclude", String(titleExclude));
+        matchProc.command = argv;
+        matchProc.running = true;
+
+        // A command that cannot start leaves `running` false and emits neither
+        // `exited` nor a stream finish, so the running->false handler never
+        // fires: this request would never complete and every queued one behind
+        // it would be stranded. Record the failure and keep the queue moving.
+        if (!matchProc.running) {
+            root._setMatchState(root._matchPadId, "unknown", 0, "");
+            log.warn("scratchpad match helper could not be started");
+            root._drainMatchQueue();
+        }
+    }
+
+    function _drainMatchQueue() {
+        const queued = root._matchQueue || [];
+        if (queued.length === 0)
+            return;
+        root._matchQueue = queued.slice(1);
+        root.refreshMatches(queued[0][0], queued[0][1], queued[0][2]);
     }
 
     function refreshStatus() {
@@ -453,6 +514,48 @@ Singleton {
                 root._finishRelease(true, "");
             else
                 root._finishRelease(false, root._releaseError || "release produced no result");
+        }
+    }
+
+    Process {
+        id: matchProc
+        running: false
+        command: []
+
+        stdout: StdioCollector {
+            onStreamFinished: {
+                if ((text || "").trim().length === 0)
+                    return;
+                try {
+                    const payload = JSON.parse(text);
+                    root._matchAnswered = true;
+                    if (payload.ok !== true) {
+                        // A pattern that does not compile is an ERROR, not a
+                        // count of zero. Carry the reason so the page can say
+                        // the pattern is broken rather than that it works and
+                        // matches nothing.
+                        root._setMatchState(root._matchPadId, "error", 0,
+                            payload.error || "the pattern could not be evaluated");
+                    } else if (payload.known === false) {
+                        root._setMatchState(root._matchPadId, "unknown", 0, "");
+                    } else {
+                        root._setMatchState(root._matchPadId, "known", payload.count || 0, "");
+                    }
+                } catch (e) {
+                    root._setMatchState(root._matchPadId, "unknown", 0, "");
+                    log.warn("scratchpad match returned invalid JSON:", e);
+                }
+            }
+        }
+
+        onRunningChanged: {
+            if (running)
+                return;
+            // A run that ended without a parsed answer must not leave whatever
+            // was there before standing as though it were fresh.
+            if (!root._matchAnswered)
+                root._setMatchState(root._matchPadId, "unknown", 0, "");
+            root._drainMatchQueue();
         }
     }
 
