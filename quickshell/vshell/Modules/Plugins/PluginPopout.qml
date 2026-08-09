@@ -40,9 +40,47 @@ VgsPopout {
                 }
             }
 
+            // --- pushed-page contract ---------------------------------------
+            // Keyboard focus lives on this container, not on the plugin's
+            // content, so a plugin cannot intercept Escape for a page it
+            // pushed — which is why a pager's Escape used to close the whole
+            // surface instead of going back one level (VGS-88). Content opts in
+            // declaratively instead: expose `canPopBack` and `popBack()` on the
+            // content root and Escape is routed there first. No key handler in
+            // the plugin, and a plugin that knows nothing about this behaves
+            // exactly as before.
+            function contentCanPopBack() {
+                const item = popoutContentLoader.item;
+                return !!(item && ("canPopBack" in item) && item.canPopBack === true && typeof item.popBack === "function");
+            }
+
+            // One level. Returns whether there was one to pop, which is what
+            // decides whether Escape still closes.
+            function popContentBack() {
+                if (!popoutContainer.contentCanPopBack())
+                    return false;
+                popoutContentLoader.item.popBack();
+                return true;
+            }
+
+            // All the way back to page 0. `popBack()` is defined as one level,
+            // so this loops — bounded, because an implementation whose
+            // canPopBack never goes false would otherwise hang the shell here.
+            function popContentToRoot() {
+                for (let guard = 0; guard < 16; guard++) {
+                    if (!popoutContainer.popContentBack())
+                        return;
+                }
+                root.log.warn("plugin popout content did not settle at its root page after 16 pops:", root.layerNamespace);
+            }
+
             Keys.onPressed: event => {
                 if (event.key === Qt.Key_Escape) {
-                    root.close();
+                    // Back one level before dismissing. Every pager the user
+                    // has met pops on Escape; losing the whole surface from a
+                    // pushed page is the opposite of what the pattern teaches.
+                    if (!popoutContainer.popContentBack())
+                        root.close();
                     event.accepted = true;
                 }
             }
@@ -54,7 +92,19 @@ VgsPopout {
                         Qt.callLater(() => {
                             popoutContainer.forceActiveFocus();
                         });
+                        return;
                     }
+                    // Dismissal — the close button, a click outside, the bar
+                    // pill toggling, or anything else that reaches close() —
+                    // discards pushed pages rather than popping them. Those
+                    // gestures aim at the whole surface, and popping instead
+                    // would trap the user, needing a second gesture to leave.
+                    // Escape above is the one gesture that conventionally means
+                    // "back", so it is the only one routed to the content.
+                    // Resetting here is also what keeps "a pushed page is view
+                    // state" true no matter which route closed the popout, and
+                    // it is owned here so no plugin has to repeat it.
+                    popoutContainer.popContentToRoot();
                 }
             }
 
