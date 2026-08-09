@@ -3445,6 +3445,26 @@ def test_remote_desktop_watch_tokens_cover_every_event():
     ]
     for line, expected in cases:
         assert_equal(helper._rd_watch_token(line), expected, f"watch token for {line!r}")
+
+
+@contextlib.contextmanager
+def _scratchpad_state_sandbox():
+    """Point the pad lock and focus-state files at a temp dir.
+
+    `scratchpad_toggle` takes a per-pad flock under `_scratchpad_state_dir()`,
+    which is $XDG_RUNTIME_DIR/vshell-scratchpad — the LIVE session's directory.
+    Without this the tests created and locked `term.lock` next to the running
+    shell's own state, so a test run reached into the session it is supposed to
+    be independent of."""
+    original = helper._scratchpad_state_dir
+    with tempfile.TemporaryDirectory(prefix="vgs-scratchpad-state-") as tmp:
+        helper._scratchpad_state_dir = lambda: Path(tmp)
+        try:
+            yield Path(tmp)
+        finally:
+            helper._scratchpad_state_dir = original
+
+
 def _pad(**overrides):
     base = {"id": "term", "name": "Terminal", "command": "ghostty",
             "classRegex": r"^(com\.ghostty\.scratchpad)$"}
@@ -3940,6 +3960,7 @@ def test_scratchpad_toggle_honours_enabled():
     # that passes without checking.
     helper._scratchpad_session_ready = lambda: True
     try:
+      with _scratchpad_state_sandbox():
         # Hidden: revealing is refused, and nothing is dispatched.
         helper._scratchpad_visible_monitor = lambda pad_id: ""
         result = helper.scratchpad_toggle("off")
@@ -3990,6 +4011,7 @@ def test_scratchpad_hide_only_never_reveals():
     # check that passes without checking.
     helper._scratchpad_session_ready = lambda: True
     try:
+      with _scratchpad_state_sandbox():
         # Already hidden: nothing to do, and above all nothing revealed.
         helper._scratchpad_visible_monitor = lambda pad_id: ""
         result = helper.scratchpad_toggle("term", hide_only=True)
@@ -4088,6 +4110,7 @@ def test_scratchpad_reveal_reports_failed_dispatches():
     # that passes without checking.
     helper._scratchpad_session_ready = lambda: True
     try:
+      with _scratchpad_state_sandbox():
         # Everything works and the workspace really is visible afterwards.
         helper._scratchpad_dispatch = lambda *args: True
         visible = {"n": 0}
