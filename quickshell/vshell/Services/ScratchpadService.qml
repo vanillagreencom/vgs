@@ -55,6 +55,9 @@ Singleton {
     property int _applyExitCode: 0
     property string _applyError: ""
     property bool _statusAnswered: false
+    property var _hideCallback: null
+    property bool _hideAnswered: false
+    property string _hideError: ""
     property var _releaseCallback: null
     property bool _releaseAnswered: false
     property string _releaseError: ""
@@ -118,8 +121,23 @@ Singleton {
         root._statusAnswered = false;
         statusProc.command = [Paths.vshellCli, "scratchpad", "status"];
         statusProc.running = true;
+        // A command that cannot start emits no `exited` AND no running->false
+        // transition, so the handler below never fires and the include state
+        // would keep its previous value — the same stale-authority bug finding 1
+        // fixed, reached through a different door. Route it to the same place.
         if (!statusProc.running)
-            log.warn("scratchpad status helper could not be started");
+            root._markStatusUnknown("scratchpad status helper could not be started");
+    }
+
+    // `included: null` is the third state, distinct from false: the page says it
+    // does not know, rather than picking one of the two answers it has no
+    // evidence for. A stale `true` silences the include banner entirely.
+    function _markStatusUnknown(reason) {
+        log.warn(reason);
+        root.status = Object.assign({}, root.status, {
+            "included": null,
+            "statusMessage": ""
+        });
     }
 
     // Reveal/hide a pad from the shell (a bar widget, an IPC caller). The same
@@ -271,6 +289,40 @@ Singleton {
             root._finishRelease(false, "scratchpad helper could not be started");
     }
 
+    // Hide a pad if it is on screen, and report whether that worked. Idempotent:
+    // a pad that is already hidden succeeds without dispatching, so this can
+    // never accidentally REVEAL one — which plain toggle semantics would.
+    //
+    // Settings calls this while disabling a pad, before the write that
+    // regenerates config and removes the keybind. Hiding afterwards would be too
+    // late: the keybind that was the user's way to dismiss it is already gone.
+    function hide(padId, onDone) {
+        if (!supported || !padId) {
+            if (onDone)
+                onDone(false, "scratchpads are not supported on this compositor");
+            return;
+        }
+        if (hideProc.running) {
+            if (onDone)
+                onDone(false, "another hide is still running");
+            return;
+        }
+        root._hideCallback = onDone || null;
+        root._hideAnswered = false;
+        root._hideError = "";
+        hideProc.command = [Paths.vshellCli, "scratchpad", "hide", String(padId), "--json"];
+        hideProc.running = true;
+        if (!hideProc.running)
+            root._finishHide(false, "scratchpad helper could not be started");
+    }
+
+    function _finishHide(ok, error) {
+        const callback = root._hideCallback;
+        root._hideCallback = null;
+        if (callback)
+            callback(ok, error || "");
+    }
+
     function _finishRelease(ok, error) {
         const callback = root._releaseCallback;
         root._releaseCallback = null;
@@ -337,6 +389,40 @@ Singleton {
     }
 
     Process {
+        id: hideProc
+        running: false
+        command: []
+
+        stdout: StdioCollector {
+            onStreamFinished: {
+                if ((text || "").trim().length === 0)
+                    return;
+                try {
+                    const payload = JSON.parse(text);
+                    root._hideAnswered = payload.ok === true;
+                    if (payload.ok !== true)
+                        root._hideError = payload.error || "hide reported failure";
+                } catch (e) {
+                    root._hideError = "helper returned invalid JSON";
+                    log.warn("scratchpad hide returned invalid JSON:", e);
+                }
+            }
+        }
+
+        // Same completion shape as apply and release: a helper that never
+        // starts emits no `exited`, and the caller is blocked on this answer
+        // before it disables anything.
+        onRunningChanged: {
+            if (running)
+                return;
+            if (root._hideAnswered)
+                root._finishHide(true, "");
+            else
+                root._finishHide(false, root._hideError || "hide produced no result");
+        }
+    }
+
+    Process {
         id: releaseProc
         running: false
         command: []
@@ -393,13 +479,19 @@ Singleton {
             }
         }
 
-        // Same reasoning as the apply process: a status query that produced no
-        // answer must not leave the previous one standing as though it were
-        // fresh, because the include banner is drawn from it.
+        // A status query that produced no answer must not leave the previous one
+        // standing as though it were fresh. Logging alone was not enough: the
+        // stale value stayed in `status.included`, and a stale `true` silences
+        // the include banner — the one whose entire job is to say "your rules
+        // are not wired up" — on the strength of an answer that never arrived.
+        //
+        // `included: null` is the third state, distinct from false. The page
+        // says it does not know, rather than picking one of the two answers it
+        // has no evidence for.
         onRunningChanged: {
             if (running || root._statusAnswered)
                 return;
-            log.warn("scratchpad status produced no result; include state is unknown");
+            root._markStatusUnknown("scratchpad status produced no result; include state is unknown");
         }
     }
 }

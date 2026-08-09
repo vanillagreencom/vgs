@@ -108,6 +108,54 @@ Hiding is still allowed, deliberately: a pad disabled while it was on screen
 would otherwise be stranded visible with no keybind left to dismiss it, which is
 worse than the problem being solved.
 
+**Disabling through Settings hides the pad first, then writes.** That escape
+hatch is not enough on its own, because disabling *through the page* removes the
+keybind in the same operation — so the hatch is gone before the user can reach
+it. The order matters and both failure modes stay recoverable:
+
+| Step that fails | Outcome |
+|---|---|
+| the hide | the write is skipped, the pad stays enabled, its keybind still works, and the page says why |
+| the write or regeneration | the window is already down, and the pad can be re-enabled from the page |
+
+The reverse order has no safe failure: once the bind is gone, a failed hide
+leaves a visible window with no way to reach it. `vshell scratchpad hide` is
+idempotent for this reason — a pad that is already hidden succeeds without
+dispatching, so the call can never accidentally *reveal* one.
+
+**The hide confirms its own outcome**, reading the workspace state back rather
+than inferring success from its dispatches. Without that the ordering buys
+nothing: Settings would take a reported success as licence to drop the keybind
+while the window was still up, which is the failure the ordering exists to
+prevent.
+
+That read-back distinguishes three states, not two. `hyprctl -j monitors` can
+fail, and "the query did not answer" is not "the pad is down" — treating them
+alike would report success on a query that never ran. Only an explicit `hidden`
+counts; `unknown` refuses and says so, and Settings leaves the pad enabled with
+its keybind intact.
+
+## Presentation is re-asserted as a whole, not additively
+
+The reveal clears fullscreen before applying float or tile. Hyprland keeps the
+fullscreen state independently of the window rule, so switching a *mapped* pad
+away from fullscreen otherwise left it covering its workspace — and every
+size/move dispatch was applied to a window whose geometry fullscreen overrides,
+so the setting changed and nothing visible did.
+
+## An unanswered status query is not a negative answer
+
+`status.included` has three states: `true`, `false`, and `null` for unknown. A
+status query that produced no answer sets `null` rather than leaving the previous
+value standing, because a stale `true` silences the include banner — the one
+whose entire job is to say "your rules are not wired up" — on the strength of an
+answer that never arrived. The page says it does not know instead of picking one
+of the two answers it has no evidence for.
+
+The same rule covers monitor geometry: a monitor reporting a NaN, infinite,
+negative or non-numeric scale degrades to scale 1 with a named warning, rather
+than carrying NaN into `int()` and taking the whole geometry path down.
+
 ## Removing a pad releases its window
 
 Deleting a pad removes its keybind and every rule pointing at its special
