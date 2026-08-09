@@ -216,8 +216,11 @@ Six properties of the one-shot, each load-bearing:
   daemon again on **every start**. So nothing is masked or stopped until
   `status --json`'s `vgsFirstRunTakeoverDone`, read from the file by the helper,
   comes back true. The confirmation is polled by the 1.2s settle probe under a
-  15s deadline; past it, or with the store already read-only, VGS declines the
-  takeover entirely and says why. Failing closed is the only safe direction: a
+  15s deadline **driven by its own timer** — a `Process` that fails to start
+  emits no `exited` and produces no output, so nothing would re-enter
+  `_resolveFirstRunSpend()` and a deadline checked only on re-entry would never
+  be checked at all. Past it, or with the store already read-only, VGS declines
+  the takeover entirely and says why. Failing closed is the only safe direction: a
   takeover VGS cannot record is one it could never honour the opt-out for.
 - **It is keyed on its own state, never on "is there a conflict right now".**
   Keying it on the conflict would re-fire on every update for anyone whose

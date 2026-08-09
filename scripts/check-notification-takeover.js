@@ -108,6 +108,44 @@ assert.ok(
     "the spend confirmation must be bounded by a deadline it both sets and checks"
 );
 
+// ...and that deadline needs a driver that does not depend on re-entry. A
+// Process that fails to start emits no `exited` and produces no output (see
+// .github/instructions/quickshell-qml.instructions.md), so nothing calls
+// _applyServerOwnership(), nothing reaches _resolveFirstRunSpend(), and a
+// deadline only checked on re-entry is never checked at all.
+assert.ok(
+    source.includes("id: firstRunSpendTimer"),
+    "the spend confirmation must have its own timer; a deadline checked only on re-entry never fires when nothing re-enters"
+);
+assert.ok(
+    maybeTakeOver.includes("firstRunSpendTimer.restart()"),
+    "the spend timer must be armed where the pending state is set, or the two can disagree"
+);
+
+const spendTimerStart = source.indexOf("id: firstRunSpendTimer");
+const spendTimerBody = source.slice(spendTimerStart, source.indexOf("\n    }", spendTimerStart));
+assert.ok(
+    spendTimerBody.includes("_firstRunSpendPending = false"),
+    "the spend timer must resolve the pending state rather than only logging"
+);
+assert.ok(
+    !spendTimerBody.includes("takeOverNotificationServer"),
+    "the spend timer must fail CLOSED: an unconfirmed spend is a reason not to take over, never a reason to proceed"
+);
+
+// One owner for clearing the confirmation, so no path can drop the flag and
+// leave the timer armed, or stop the timer and leave the flag set.
+const endSpend = functionBody("_endFirstRunSpend");
+assert.ok(
+    endSpend.includes("_firstRunSpendPending = false") && endSpend.includes("firstRunSpendTimer.stop()"),
+    "_endFirstRunSpend() must clear both halves of the confirmation state"
+);
+assert.equal(
+    (resolveSpend.match(/_firstRunSpendPending\s*=/g) || []).length,
+    0,
+    "_resolveFirstRunSpend() must clear the confirmation through _endFirstRunSpend(), not by hand"
+);
+
 // --- P5: ownership reaching "vgs" is not evidence the takeover succeeded -----
 //
 // The helper masks and stops the foreign daemon FIRST and writes the undo record

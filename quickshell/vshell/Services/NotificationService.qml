@@ -928,6 +928,14 @@ Singleton {
             "vshell notifications restore", "notification-server-restore");
     }
 
+    // One place that clears the confirmation, so no path can drop the pending
+    // flag and leave its timer armed, or vice versa.
+    function _endFirstRunSpend() {
+        root._firstRunSpendPending = false;
+        root._firstRunSpendDeadline = 0;
+        firstRunSpendTimer.stop();
+    }
+
     function _endFirstRunTakeover() {
         root._firstRunTakeoverRunning = false;
         root._firstRunTakeoverDeadline = 0;
@@ -1011,6 +1019,12 @@ Singleton {
         root._firstRunSpendPending = true;
         root._firstRunSpendDeadline = Date.now() + 15000;
         root.log.info("first run: confirming the one-shot persisted before taking org.freedesktop.Notifications");
+        // The deadline needs a driver of its own. Checking it on re-entry only
+        // works if something re-enters, and an ownership probe that cannot be
+        // spawned produces no output and no `exited` signal at all -- so
+        // _applyServerOwnership() is never called, _resolveFirstRunSpend() is
+        // never reached, and the pending state would sit set forever.
+        firstRunSpendTimer.restart();
         ownershipSettleTimer.restart();
         return true;
     }
@@ -1020,7 +1034,7 @@ Singleton {
         // The user turned the server off while we were confirming; that is not
         // a first run to act on any more.
         if (!root.serverEnabled) {
-            root._firstRunSpendPending = false;
+            root._endFirstRunSpend();
             return false;
         }
         if (!root.serverPersistedOneShotDone) {
@@ -1030,13 +1044,13 @@ Singleton {
                 ownershipSettleTimer.restart();
                 return true;
             }
-            root._firstRunSpendPending = false;
+            root._endFirstRunSpend();
             root.log.warn("first run: the one-shot never appeared in settings.json on disk; not taking the notification bus name");
             root._reportUnrecordableFirstRun();
             return false;
         }
 
-        root._firstRunSpendPending = false;
+        root._endFirstRunSpend();
         if (root.serverOwnership !== "foreign" || !root.serverConflictFixable)
             return false;
 
@@ -1269,6 +1283,27 @@ Singleton {
     }
 
     Timer {
+        id: firstRunSpendTimer
+        // Matches _firstRunSpendDeadline. Independent of re-entry on purpose:
+        // this is the only thing that runs when the confirmation probe never
+        // answers, which is the case that would otherwise hang the first-run
+        // path with its pending state set for the life of the session.
+        interval: 15000
+        repeat: false
+        onTriggered: {
+            if (!root._firstRunSpendPending)
+                return;
+            root._firstRunSpendPending = false;
+            root._firstRunSpendDeadline = 0;
+            // Fails CLOSED, exactly as the re-entry path does: without a
+            // confirmed spend the takeover could repeat on every start, so an
+            // unanswered confirmation is a reason not to take over at all.
+            root.log.warn("first run: no answer confirming the one-shot reached settings.json; not taking the notification bus name");
+            root._reportUnrecordableFirstRun();
+        }
+    }
+
+    Timer {
         id: reverseDeadlineTimer
         // The opt-out reversal waits for an ownership answer to tell it whether
         // the takeover was VGS's own. Once the server is off the 30s recheck
@@ -1391,7 +1426,7 @@ Singleton {
                     root._endFirstRunTakeover();
                 // A confirmation still in flight is abandoned: nothing was
                 // masked or stopped, and the server is off now.
-                root._firstRunSpendPending = false;
+                root._endFirstRunSpend();
                 // Provenance may not be known yet -- on a shell that has just
                 // restarted, the first ownership probe lands at 4s. Arm the
                 // deferred path first, and clear it inside the reversal if it
