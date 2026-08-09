@@ -305,7 +305,13 @@ PY
     *)
       {
         echo "surface smoke FAILED: could not classify the instance registry (classifier exit $rc)"
-        if [[ -n "$diag" ]]; then echo "  $qs_bin list also wrote to stderr: $diag"; fi
+        if [[ -n "$diag" ]]; then
+          # Indent every line, not just the first: the CLI's stderr is routinely
+          # multi-line, and a single echo leaves continuation lines flush against
+          # the margin where they read as separate findings.
+          echo "  $qs_bin list also wrote to stderr:"
+          while IFS= read -r line; do echo "    $line"; done <<<"$diag"
+        fi
       } >&2
       exit 1
       ;;
