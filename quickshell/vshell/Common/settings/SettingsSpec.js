@@ -610,6 +610,13 @@ var SPEC = {
     // every field's meaning live in bin/vshell-helper (SCRATCHPAD_* /
     // normalize_scratchpad), which is the only thing that renders them into
     // compositor config. Writing this list regenerates that config.
+    //
+    // One field is carried but has NO Settings control on purpose:
+    // `dismissOnFocusLoss`. Nothing watches focus yet, so a toggle for it would
+    // set a value that does nothing. The field is kept so implementing it later
+    // needs no second migration, but the control stays out of
+    // Modules/Settings/ScratchpadRow.qml until a focus owner exists — adding a
+    // second watcher for focus events is a one-owner-per-resource decision.
     scratchpads: { def: [], onChange: "updateScratchpads" },
 
     desktopClockEnabled: { def: false },

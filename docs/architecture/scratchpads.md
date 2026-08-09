@@ -88,6 +88,18 @@ pcall(require, "vgs.scratchpads")
 The status check matches any `require` of the module, not the exact `pcall`
 spelling, so a user who wrote it plainly is not told to add a duplicate.
 
+## `dismissOnFocusLoss` is carried but not offered
+
+The field is in the schema and survives normalization, but there is **no Settings
+control for it and nothing implements it**. Nothing watches focus yet, so a
+toggle would set a value that does nothing — a surface that looks maintained and
+is silently inert.
+
+It is kept in the schema so implementing it later needs no second migration. Do
+not add the control back until a focus owner exists: a second watcher for focus
+events is a one-owner-per-resource decision, not a detail to settle inside the
+Settings page.
+
 ## Migration
 
 The `scratchpads` list is seeded **empty**, never imported from the compositor. A

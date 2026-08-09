@@ -376,13 +376,12 @@ Column {
                 })
         }
 
-        SettingsToggleRow {
-            text: I18n.tr("Dismiss on focus loss")
-            description: I18n.tr("Hide the pad as soon as focus moves to another window")
-            checked: row.pad.dismissOnFocusLoss === true
-            onToggled: checked => row.changePad({
-                    "dismissOnFocusLoss": checked
-                })
-        }
+        // There is deliberately NO "dismiss on focus loss" control here. The
+        // field exists in the schema (see SettingsSpec.js) but nothing watches
+        // focus yet, so the toggle would set a value that does nothing — the
+        // same defect as a maintained-looking surface that is silently inert.
+        // Do not add it back until a focus owner exists; adding a second
+        // watcher for focus events is a one-owner-per-resource decision, not a
+        // detail to settle inside this page.
     }
 }
