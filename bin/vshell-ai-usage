@@ -136,17 +136,40 @@ for dir in "${dirs[@]}"; do
         --arg id "$id" \
         --arg label "$label" \
         --arg dir "$dir" \
-        '$acc + [{
+        '
+        # Engine messages are written for Pango tooltip markup. The widget
+        # renders every string through StyledText, which is Text.PlainText by
+        # design (RichText would make provider-supplied strings an injection
+        # surface), so the markup has to be resolved here — one owner, same
+        # reason the "\n" flattening below lives here rather than in QML.
+        #
+        # Only the Pango tag names are stripped, so a message containing "<3"
+        # or "a < b" survives intact. Tags come out before the entities are
+        # unescaped, so text the engine deliberately escaped ("&lt;b&gt;")
+        # stays literal instead of being stripped on a second pass; "&amp;"
+        # is unescaped last for the same reason.
+        def pango:
+          if . == null then null
+          else gsub("</?(b|i|u|s|tt|big|small|sub|sup|span|markup)([ \t\r\n][^>]*)?>"; ""; "i")
+               | gsub("&lt;"; "<") | gsub("&gt;"; ">")
+               | gsub("&quot;"; "\"")
+               # An apostrophe cannot appear literally in this jq program —
+               # the whole program is a single-quoted bash string — so the
+               # replacement is built from its code point.
+               | gsub("&(apos|#0*39);"; ([39] | implode); "i")
+               | gsub("&amp;"; "&")
+          end;
+        $acc + [{
             id: $id,
             label: $label,
             configDir: $dir,
             ok: ($entry.ok == true),
-            # Engine messages are written for Pango tooltips and carry literal
-            # "\n" sequences; flatten them so the widget never prints them raw.
+            # Also carries literal "\n" sequences; flatten them so the widget
+            # never prints them raw.
             error: (($entry.error // null) | if . == null then null
-                    else gsub("\\\\n"; " ") | gsub("\\\\t"; " ")
+                    else gsub("\\\\n"; " ") | gsub("\\\\t"; " ") | pango
                          | gsub("[[:space:]]+"; " ") | sub("^ +"; "") | sub(" +$"; "") end),
-            plan: ($entry.plan // ""),
+            plan: (($entry.plan // "") | pango),
             # Credit-billed Claude seats identify as Enterprise and expose a
             # spend pool instead of rate-limit windows. Keep the explicit flag
             # in the shared payload so every UI can group account types without
@@ -156,8 +179,15 @@ for dir in "${dirs[@]}"; do
             class: ($entry.class // "low"),
             session: ($entry.session // null),
             weekly: ($entry.weekly // null),
-            models: ($entry.models // []),
-            spend: ($entry.spend // null)
+            # Every remaining engine-populated string the widget renders as
+            # text goes through the same normalization — a lane label and a
+            # spend detail reach StyledText exactly as an error message does.
+            models: (($entry.models // [])
+                     | map(if type == "object" and (.label | type) == "string"
+                           then .label = (.label | pango) else . end)),
+            spend: (($entry.spend // null)
+                    | if type == "object" and (.detail | type) == "string"
+                      then .detail = (.detail | pango) else . end)
         }]' <<<'null')"
 done
 
