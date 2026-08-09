@@ -53,6 +53,7 @@ pkgbase = vgs-shell
 	optdepends = rclone: cloud file sync
 	optdepends = ripgrep: launcher text search
 	optdepends = satty: screenshot annotation
+	optdepends = sunshine: Sunshine remote-desktop host for the remoteDesktop widget
 	optdepends = tailscale: Tailscale widget
 	optdepends = tesseract: region OCR
 	optdepends = tesseract-data-eng: region OCR

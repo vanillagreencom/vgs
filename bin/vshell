@@ -349,7 +349,7 @@ case "${1:-run}" in
   status)
     exec systemctl --user status vshell.service --no-pager
     ;;
-  theme|fonts|deps|notifications|update|ai-usage|ai|capture|screenshot|screenrecording|recording|ocr|cl|clipboard|dl|download|trash|color|keybinds|config|compositor|battery|blur|brightness|auth|greeter|sudo-toggle|launcher-search|terminal|instances)
+  theme|fonts|deps|notifications|remote-desktop|update|ai-usage|ai|capture|screenshot|screenrecording|recording|ocr|cl|clipboard|dl|download|trash|color|keybinds|config|compositor|battery|blur|brightness|auth|greeter|sudo-toggle|launcher-search|terminal|instances)
     exec "$helper" "$@"
     ;;
   screensaver)
@@ -431,6 +431,7 @@ Usage:
   vshell fonts status|apply|reset
   vshell deps status|check <feature>
   vshell notifications status|takeover|restore [--json]   (org.freedesktop.Notifications ownership)
+  vshell remote-desktop status|start|stop|toggle|ui [--json]   (Sunshine host + its virtual output)
   vshell update count|run <system|aur|all>
   vshell ai-usage <claude|codex>
   vshell capture screenshot|screenrecording|text [...]

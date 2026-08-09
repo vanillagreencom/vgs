@@ -32,6 +32,13 @@ def load_helper():
 
 helper = load_helper()
 
+# Several tests swap HOME to a TemporaryDirectory, and check-vshell-niri.py --
+# which main() runs as a subprocess at the end -- reads os.environ["HOME"] and
+# passes it to children. A test that leaked a deleted temp HOME would surface
+# as an unexplained failure in the NIRI suite, pointing at the wrong file
+# entirely. Recorded here so main() can name the real cause instead.
+_HOME_AT_IMPORT = os.environ.get("HOME")
+
 
 def assert_equal(actual, expected, message):
     if actual != expected:
@@ -2723,6 +2730,723 @@ def test_theme_catalog_generator_rejects_uninstallable_packages():
                      "stray files are skipped without failing generation")
 
 
+# --- remote desktop (Sunshine host) -----------------------------------------
+#
+# The whole point of routing the host through the helper is that starting the
+# unit and creating the virtual output are one operation. Sunshine picks its
+# capture target at startup, so getting the order or the guard wrong streams a
+# REAL monitor with no error anywhere -- there is no observable symptom to
+# catch it later, which is why it is pinned here.
+
+_RD_SESSION_LINES = [
+    "2026-08-06T11:10:42+0200 host sunshine[1]: Info: Creating encoder [hevc_nvenc]",
+    "2026-08-06T11:10:42+0200 host sunshine[1]: Info: Color depth: 10-bit",
+    "2026-08-06T11:10:42+0200 host sunshine[1]: Info: Streaming bitrate is 27788000",
+    "2026-08-06T11:10:43+0200 host sunshine[1]: Info: New streaming session started [active sessions: 1]",
+    "2026-08-06T11:10:43+0200 host sunshine[1]: Info: CLIENT CONNECTED",
+]
+
+
+@contextlib.contextmanager
+def _rd_journal(lines=None, returncode=0, stderr=""):
+    original_run = helper.run
+    original_window = helper._rd_journal_window
+    helper._rd_journal_window = lambda: ["--boot"]
+    helper.run = lambda argv, **kwargs: subprocess.CompletedProcess(
+        argv, returncode, "\n".join(lines or []), stderr
+    )
+    try:
+        yield
+    finally:
+        helper.run = original_run
+        helper._rd_journal_window = original_window
+
+
+def test_remote_desktop_reports_streaming_separately_from_listening():
+    with _rd_journal(_RD_SESSION_LINES):
+        streaming = helper._rd_session_state()
+    assert_equal(streaming["active"], True, "a client connected with no later disconnect is streaming")
+    assert_equal(streaming["count"], 1, "the session count comes from Sunshine's own tally")
+    assert_equal(streaming["codec"], "hevc_nvenc", "the live session's encoder is reported")
+    assert_equal(streaming["bitrateBps"], 27788000, "the live session's bitrate is reported")
+    assert_equal(streaming["readable"], True, "a journal that was read is readable")
+
+    with _rd_journal(_RD_SESSION_LINES + [
+        "2026-08-06T11:45:30+0200 host sunshine[1]: Info: CLIENT DISCONNECTED",
+    ]):
+        listening = helper._rd_session_state()
+    assert_equal(listening["active"], False, "a disconnect ends the session")
+    assert_equal(listening["count"], 0, "the tally returns to zero")
+    # Reporting the ended session's encoder next to "listening" would read as a
+    # live stream's settings.
+    assert_equal(listening["codec"], "", "an ended session reports no encoder")
+    assert_equal(listening["bitrateBps"], 0, "an ended session reports no bitrate")
+
+    with _rd_journal([]):
+        idle = helper._rd_session_state()
+    assert_equal(idle["active"], False, "a host nobody has connected to is not streaming")
+    assert_equal(idle["readable"], True, "an empty journal is still an answer")
+
+    # "nobody is watching" and "nobody could say" must not be the same state:
+    # only one of them is safe to render as an idle indicator.
+    with _rd_journal(returncode=1, stderr="No journal files were found."):
+        unknown = helper._rd_session_state()
+    assert_equal(unknown["active"], False, "an unreadable journal never claims a session")
+    assert_equal(unknown["readable"], False, "an unreadable journal is reported as unreadable")
+    assert_equal(
+        unknown["error"], "No journal files were found.",
+        "the reason the session state is unknown must survive to the caller",
+    )
+
+
+@contextlib.contextmanager
+def _rd_lifecycle(output_present, hyprctl_ok=True, unit_running=False, systemctl_ok=True,
+                  instance="hypr-instance-A", create_takes_effect=True):
+    """Record the order of hyprctl/systemctl calls a lifecycle command makes.
+
+    HOME is real (a temp dir), so the ownership record under
+    ~/.local/state/vshell is genuinely written and read rather than stubbed --
+    that record is what decides whether a user's own virtual output gets
+    deleted, so a stub would test the wrong thing.
+    """
+    calls = []
+    originals = {name: getattr(helper, name) for name in (
+        "run", "_systemctl_user", "_rd_output_present", "_rd_unit_state",
+        "detect_compositor", "remote_desktop_status", "_rd_hypr_instance",
+        "_rd_manages_output",
+    )}
+    state = {"present": output_present}
+
+    def fake_run(argv, **kwargs):
+        calls.append(argv)
+        if argv[:2] == ["hyprctl", "output"]:
+            if not hyprctl_ok:
+                return subprocess.CompletedProcess(argv, 1, "", "no such output")
+            if argv[2] == "create":
+                # create_takes_effect=False models hyprctl exiting 0 without
+                # the output appearing, and None models a presence check that
+                # cannot answer afterwards.
+                state["present"] = True if create_takes_effect is True else create_takes_effect
+            else:
+                state["present"] = False
+            return subprocess.CompletedProcess(argv, 0, "ok", "")
+        return subprocess.CompletedProcess(argv, 0, "", "")
+
+    def fake_systemctl(argv, **kwargs):
+        calls.append(["systemctl", "--user", *argv])
+        if argv and argv[0] in {"start", "stop"} and not systemctl_ok:
+            return subprocess.CompletedProcess(argv, 1, "", "Job failed")
+        return subprocess.CompletedProcess(argv, 0, "", "")
+
+    helper.run = fake_run
+    helper._systemctl_user = fake_systemctl
+    helper._rd_output_present = lambda: state["present"]
+    helper._rd_unit_state = lambda: {
+        "known": True, "error": "", "exists": True, "running": unit_running,
+    }
+    helper.detect_compositor = lambda: {"compositor": "hyprland", "source": "test"}
+    helper._rd_manages_output = lambda: {
+        "manages": True, "compositor": "hyprland", "blocked": False, "reason": "",
+    }
+    helper.remote_desktop_status = lambda: {"stubbed": True}
+    helper._rd_hypr_instance = lambda: instance
+
+    old_home = os.environ.get("HOME")
+    with tempfile.TemporaryDirectory() as tmp:
+        os.environ["HOME"] = tmp
+        try:
+            yield calls, state
+        finally:
+            if old_home is None:
+                os.environ.pop("HOME", None)
+            else:
+                os.environ["HOME"] = old_home
+            for name, value in originals.items():
+                setattr(helper, name, value)
+
+
+def _rd_hyprctl_calls(calls):
+    return [call for call in calls if call and call[0] == "hyprctl"]
+
+
+def test_remote_desktop_start_creates_the_output_before_starting_the_unit():
+    with _rd_lifecycle(output_present=False) as (calls, _state):
+        result = helper.remote_desktop_start()
+    assert_equal(result["ok"], True, "a clean start succeeds")
+    kinds = [call[0] for call in calls]
+    assert_equal(kinds, ["hyprctl", "systemctl"], "the output must exist before the unit starts")
+    assert_equal(
+        calls[0], ["hyprctl", "output", "create", "headless"],
+        "the virtual output is created by this command, not by the caller",
+    )
+
+
+def test_remote_desktop_start_refuses_when_the_output_cannot_be_checked():
+    # hyprctl unavailable or unanswering. Starting anyway would capture a real
+    # monitor and report success -- the exact silent failure this guards.
+    with _rd_lifecycle(output_present=None) as (calls, _state):
+        result = helper.remote_desktop_start()
+    assert_equal(result["ok"], False, "an unverifiable output must not start the host")
+    assert_equal(calls, [], "nothing is started and nothing is created when the output is unknown")
+    if not result["failures"] or helper.RD_OUTPUT not in result["failures"][0]:
+        raise AssertionError(f"the refusal must name {helper.RD_OUTPUT}: {result['failures']!r}")
+
+
+def test_remote_desktop_start_does_not_recreate_an_existing_output():
+    with _rd_lifecycle(output_present=True) as (calls, _state):
+        result = helper.remote_desktop_start()
+    assert_equal(result["ok"], True, "an existing output is fine")
+    assert_equal([call[0] for call in calls], ["systemctl"], "an existing output is left alone")
+
+
+def test_remote_desktop_failed_start_removes_the_output_it_created():
+    # N1. A failed start that leaves HEADLESS-1 behind hands the user a phantom
+    # monitor AND no host -- precisely the state the disabled-by-default design
+    # exists to avoid, and the user has no affordance to undo it.
+    with _rd_lifecycle(output_present=False, systemctl_ok=False) as (calls, state):
+        result = helper.remote_desktop_start()
+        record_exists = helper._rd_output_record_file().exists()
+    assert_equal(result["ok"], False, "a failed systemctl start is a failure")
+    assert_equal(state["present"], False, "the output created for this start must be rolled back")
+    assert_equal(
+        _rd_hyprctl_calls(calls),
+        [["hyprctl", "output", "create", "headless"], ["hyprctl", "output", "remove", "HEADLESS-1"]],
+        "the rollback removes exactly what this call created",
+    )
+    assert_equal(record_exists, False, "the ownership record goes with the output it described")
+
+
+def test_remote_desktop_failed_start_keeps_an_output_it_did_not_create():
+    # The other half of N1: roll back only what THIS call created. An output
+    # that was already there belongs to somebody else even when the start fails.
+    with _rd_lifecycle(output_present=True, systemctl_ok=False) as (calls, state):
+        result = helper.remote_desktop_start()
+    assert_equal(result["ok"], False, "a failed systemctl start is still a failure")
+    assert_equal(state["present"], True, "an output this call found must survive the rollback")
+    assert_equal(_rd_hyprctl_calls(calls), [], "nothing is created and nothing is removed")
+
+
+def test_remote_desktop_stop_removes_only_an_output_vgs_created():
+    # N2. Stop used to remove any present HEADLESS-1, so stopping Sunshine
+    # could delete a virtual output the user made for something else. That is
+    # the worst outcome available here: destroying display configuration as a
+    # side effect of stopping a service.
+    with _rd_lifecycle(output_present=False) as (calls, state):
+        assert_equal(helper.remote_desktop_start()["ok"], True, "the start succeeds")
+        assert_equal(state["present"], True, "the start created the output")
+        calls.clear()
+        helper.remote_desktop_stop()
+        assert_equal(state["present"], False, "an output VGS created is removed on stop")
+        assert_equal(
+            helper._rd_output_record_file().exists(), False,
+            "the record is cleared once the output it described is gone",
+        )
+
+    # Same shape, but the output was already there when start ran.
+    with _rd_lifecycle(output_present=True) as (calls, state):
+        assert_equal(helper.remote_desktop_start()["ok"], True, "the start succeeds")
+        calls.clear()
+        result = helper.remote_desktop_stop()
+        assert_equal(state["present"], True, "an output VGS did not create must survive stop")
+        assert_equal(_rd_hyprctl_calls(calls), [], "stop issues no output command it does not own")
+        if not any("not created by VGS" in note for note in result["manual"]):
+            raise AssertionError(f"stop must say why it left the output: {result['manual']!r}")
+
+
+def test_remote_desktop_stop_ignores_a_record_from_another_compositor_instance():
+    # Headless outputs die with the compositor and Hyprland's signature changes
+    # on every start, so a record from a previous instance cannot describe the
+    # output present now. Trusting it would delete an output created since.
+    with _rd_lifecycle(output_present=False, instance="hypr-instance-A") as (calls, state):
+        helper.remote_desktop_start()
+        record = json.loads(helper._rd_output_record_file().read_text())
+        assert_equal(record["instance"], "hypr-instance-A", "the record carries the instance")
+        assert_equal(helper._rd_output_is_ours(), True, "same instance, same output: ours")
+
+        helper._rd_hypr_instance = lambda: "hypr-instance-B"
+        assert_equal(
+            helper._rd_output_is_ours(), False,
+            "a record from a previous compositor instance is not ownership",
+        )
+        calls.clear()
+        helper.remote_desktop_stop()
+        assert_equal(state["present"], True, "an output from another instance is left alone")
+        assert_equal(_rd_hyprctl_calls(calls), [], "and no hyprctl output command is issued")
+
+    # No signature at all cannot match either -- an unplaceable record must not
+    # authorise removing anything.
+    with _rd_lifecycle(output_present=False, instance="") as (calls, state):
+        helper.remote_desktop_start()
+        assert_equal(
+            helper._rd_output_is_ours(), False,
+            "a record with no compositor instance to place it is not ownership",
+        )
+
+
+def test_remote_desktop_stop_drops_the_record_when_the_output_vanished():
+    # Removed by hand between start and stop. Nothing to remove, no error --
+    # but the record must go, or it would authorise removing a LATER output
+    # that happens to carry the same name.
+    with _rd_lifecycle(output_present=False) as (calls, state):
+        helper.remote_desktop_start()
+        state["present"] = False  # the user removed it themselves
+        calls.clear()
+        result = helper.remote_desktop_stop()
+        assert_equal(result["ok"], True, "a vanished output is not an error")
+        assert_equal(_rd_hyprctl_calls(calls), [], "there is nothing to remove")
+        assert_equal(
+            helper._rd_output_record_file().exists(), False,
+            "a record whose output is gone must not survive to authorise a later removal",
+        )
+
+
+def test_remote_desktop_start_is_idempotent_when_the_host_is_already_running():
+    # N4. `toggle` decides from a state read; the unit can change before the
+    # action runs. The losing path must touch no output -- a running host has
+    # already picked its capture target, so a second virtual output would be a
+    # phantom monitor and nothing else.
+    with _rd_lifecycle(output_present=False, unit_running=True) as (calls, state):
+        result = helper.remote_desktop_start()
+    assert_equal(result["ok"], True, "starting an already-running host is not a failure")
+    assert_equal(_rd_hyprctl_calls(calls), [], "no output is created for a host already running")
+    assert_equal([c for c in calls if c[0] == "systemctl"], [], "and the unit is not restarted")
+    if not any("already running" in note for note in result["manual"]):
+        raise AssertionError(f"the no-op must be reported: {result['manual']!r}")
+
+
+def test_remote_desktop_start_reports_an_unrecordable_ownership_claim():
+    # If the record cannot be written, stop will not recognise the output as
+    # VGS's and will leave it. That is the safe direction -- a leaked monitor is
+    # one click to remove, a deleted one cannot be undone -- but it must be said
+    # rather than silently traded away.
+    with _rd_lifecycle(output_present=False) as (calls, state):
+        original = helper._rd_record_output_created
+        helper._rd_record_output_created = lambda: "Read-only file system"
+        try:
+            result = helper.remote_desktop_start()
+        finally:
+            helper._rd_record_output_created = original
+    assert_equal(result["ok"], True, "an unrecordable claim does not fail the start")
+    if not any("could not record" in note and "leave it in place" in note for note in result["manual"]):
+        raise AssertionError(f"the unrecorded claim must be reported: {result['manual']!r}")
+
+
+def test_remote_desktop_start_verifies_the_output_it_created():
+    # N6. `hyprctl` exiting 0 is not the output existing. If it is absent,
+    # Sunshine picks a real monitor at startup and streams the user's own
+    # screen with nothing anywhere to say so -- the same silent fallback the
+    # unverifiable-presence refusal guards, reached from the other side.
+    with _rd_lifecycle(output_present=False, create_takes_effect=False) as (calls, state):
+        result = helper.remote_desktop_start()
+        record_exists = helper._rd_output_record_file().exists()
+    assert_equal(result["ok"], False, "an unverified output must not start the host")
+    assert_equal(
+        [c for c in calls if c[0] == "systemctl"], [],
+        "the unit is never started against a display that does not exist",
+    )
+    assert_equal(
+        record_exists, False,
+        "ownership is recorded only after verification, so nothing was created to own",
+    )
+    if not any("not present" in failure for failure in result["failures"]):
+        raise AssertionError(f"the refusal must say the output is absent: {result['failures']!r}")
+
+    # The presence check answering "cannot tell" is its own case, and it must
+    # not be collapsed into "absent" -- nothing is removed on this path,
+    # because removing what we cannot see is the guess the record exists to
+    # avoid.
+    with _rd_lifecycle(output_present=False, create_takes_effect=None) as (calls, state):
+        result = helper.remote_desktop_start()
+    assert_equal(result["ok"], False, "an unverifiable output must not start the host either")
+    assert_equal(
+        [c for c in calls if c[0] == "systemctl"], [], "and still no unit start",
+    )
+    assert_equal(
+        _rd_hyprctl_calls(calls), [["hyprctl", "output", "create", "headless"]],
+        "nothing is removed when the presence check cannot answer",
+    )
+    if not any("could not be verified" in failure for failure in result["failures"]):
+        raise AssertionError(f"'cannot tell' must not be reported as 'absent': {result['failures']!r}")
+
+
+@contextlib.contextmanager
+def _rd_systemctl(replies):
+    """Drive _systemctl_user from a {property-query-kind: CompletedProcess} map."""
+    original = helper._systemctl_user
+
+    def fake(argv, **kwargs):
+        joined = " ".join(argv)
+        for key, reply in replies.items():
+            if key in joined:
+                return reply
+        return subprocess.CompletedProcess(argv, 0, "", "")
+
+    helper._systemctl_user = fake
+    try:
+        yield
+    finally:
+        helper._systemctl_user = original
+
+
+def test_remote_desktop_journal_window_never_falls_back_to_unbounded_history():
+    # S1, and it is the worse direction of the readable/active split. An
+    # unbounded read replays a CLIENT CONNECTED from a previous run, so the
+    # widget shows LIVE with nobody connected -- which trains the user to
+    # ignore the one indicator that says somebody is watching their screen.
+    good = subprocess.CompletedProcess([], 0, "Thu 2026-08-06 16:44:12 CEST\n", "")
+    with _rd_systemctl({"ActiveEnterTimestamp": good}):
+        assert_equal(
+            helper._rd_journal_window(), ["--since", "2026-08-06 16:44:12"],
+            "a parseable start time anchors the read to the current run",
+        )
+
+    for label, reply in {
+        "the query failed": subprocess.CompletedProcess([], 1, "", "Failed to connect to bus"),
+        "the value is empty": subprocess.CompletedProcess([], 0, "\n", ""),
+        "the value is unparseable": subprocess.CompletedProcess([], 0, "n/a\n", ""),
+        "the shape is unexpected": subprocess.CompletedProcess([], 0, "Thu 06/08/2026 16:44:12 CEST\n", ""),
+    }.items():
+        with _rd_systemctl({"ActiveEnterTimestamp": reply}):
+            assert_equal(
+                helper._rd_journal_window(), None,
+                f"no anchor when {label} -- and specifically not a boot-wide replay",
+            )
+
+    # And the session read must REFUSE rather than read unbounded, reporting
+    # unknown. Not idle either: `active` stays false but `readable` is false
+    # too, which is what the shell renders as "could not tell".
+    calls = []
+    original_run = helper.run
+
+    def fake_run(argv, **kwargs):
+        calls.append(argv)
+        return subprocess.CompletedProcess(argv, 0, "Info: CLIENT CONNECTED\n", "")
+
+    helper.run = fake_run
+    try:
+        with _rd_systemctl({"ActiveEnterTimestamp": subprocess.CompletedProcess([], 1, "", "boom")}):
+            session = helper._rd_session_state()
+    finally:
+        helper.run = original_run
+
+    assert_equal(calls, [], "no journal is read at all without an anchor to bound it")
+    assert_equal(session["readable"], False, "an unanchored session is unknown")
+    assert_equal(session["active"], False, "and it never claims a session it did not read")
+    if "start time" not in session["error"]:
+        raise AssertionError(f"the reason must name the missing anchor: {session['error']!r}")
+
+
+def test_remote_desktop_unit_query_failure_is_not_a_missing_unit():
+    # S2. `systemctl show` failing and the unit genuinely being absent came
+    # back identically, so a transient failure made the widget announce that
+    # Sunshine is not installed.
+    loaded = subprocess.CompletedProcess([], 0, "LoadState=loaded\nActiveState=inactive\n", "")
+    absent = subprocess.CompletedProcess([], 0, "LoadState=not-found\nActiveState=inactive\n", "")
+    broken = subprocess.CompletedProcess([], 1, "", "Failed to connect to bus: No such file")
+    silent = subprocess.CompletedProcess([], 0, "", "")
+
+    with _rd_systemctl({"LoadState": loaded}):
+        state = helper._rd_unit_state()
+    assert_equal(state, {"known": True, "error": "", "exists": True, "running": False},
+                 "a loaded, inactive unit reads exactly that")
+
+    with _rd_systemctl({"LoadState": absent}):
+        state = helper._rd_unit_state()
+    assert_equal(state["known"], True, "'not-found' IS an answer")
+    assert_equal(state["exists"], False, "and the answer is that the unit is absent")
+
+    # X1: a PARTIAL reply is not an answer either. Both fields carry a verdict,
+    # and each is read with a default that looks definite -- an absent
+    # ActiveState silently makes `running` false, so a truncated reply that
+    # happened to contain LoadState reported the host as STOPPED when its state
+    # was unknown. This is the fourth instance of the shape on this plugin, so
+    # it gets the same treatment as its three siblings: pinned, with the case
+    # that would otherwise silently regress.
+    partial = {
+        "ActiveState missing": subprocess.CompletedProcess([], 0, "LoadState=loaded\n", ""),
+        "LoadState missing": subprocess.CompletedProcess([], 0, "ActiveState=active\n", ""),
+        # A field with no value is a field, not an answer.
+        "ActiveState empty": subprocess.CompletedProcess([], 0, "LoadState=loaded\nActiveState=\n", ""),
+        "LoadState empty": subprocess.CompletedProcess([], 0, "LoadState=\nActiveState=active\n", ""),
+        "reply truncated mid-line": subprocess.CompletedProcess([], 0, "LoadState=loaded\nActiveSta", ""),
+    }
+    for label, reply in partial.items():
+        with _rd_systemctl({"LoadState": reply}):
+            state = helper._rd_unit_state()
+        assert_equal(state["known"], False, f"{label}: a partial reply is not an answer")
+        assert_equal(state["running"], False, f"{label}: and it must not report a running state")
+        assert_equal(state["exists"], False, f"{label}: nor an existence verdict")
+        if "incomplete" not in state["error"]:
+            raise AssertionError(f"{label}: the reason must say the reply was incomplete: {state['error']!r}")
+
+    # The specific regression: LoadState=loaded alone previously read as a
+    # definite "installed and stopped".
+    with _rd_systemctl({"LoadState": partial["ActiveState missing"]}):
+        state = helper._rd_unit_state()
+    if state["known"] and not state["running"]:
+        raise AssertionError(
+            "a reply carrying only LoadState must not read as 'installed and stopped'"
+        )
+
+    for label, reply in {"the query failed": broken, "the query said nothing": silent}.items():
+        with _rd_systemctl({"LoadState": reply}):
+            state = helper._rd_unit_state()
+        assert_equal(state["known"], False, f"{label}: that is not an answer")
+        assert_equal(state["exists"], False, f"{label}: and it must not read as installed either")
+        if not state["error"]:
+            raise AssertionError(f"{label}: the reason must survive to the caller")
+
+    # The status payload routes it to unknown, never to unavailable.
+    originals = {n: getattr(helper, n) for n in ("_rd_unit_state", "detect_compositor", "_rd_paired_clients", "_rd_web_host")}
+    helper.detect_compositor = lambda: {"compositor": "niri", "source": "test"}
+    helper._rd_paired_clients = lambda: {"names": [], "known": True, "error": ""}
+    helper._rd_web_host = lambda: "localhost"
+    try:
+        helper._rd_unit_state = lambda: {"known": False, "error": "bus is gone", "exists": False, "running": False}
+        status = helper.remote_desktop_status()
+        assert_equal(status["state"], "unknown", "a failed query is not 'unavailable'")
+        assert_equal(status["unitKnown"], False, "and the payload says so explicitly")
+        assert_equal(status["reason"], "bus is gone", "with the reason attached")
+        assert_equal(
+            status["session"]["readable"], False,
+            "a unit whose state is unknown has an unknown session too",
+        )
+
+        helper._rd_unit_state = lambda: {"known": True, "error": "", "exists": False, "running": False}
+        status = helper.remote_desktop_status()
+        assert_equal(status["state"], "unavailable", "a real absence still reads as unavailable")
+        assert_equal(status["unitKnown"], True, "because the question was answered")
+    finally:
+        for name, value in originals.items():
+            setattr(helper, name, value)
+
+
+def test_remote_desktop_start_refuses_when_the_unit_query_fails():
+    # The lifecycle half of S2: acting on a failed query would start a host
+    # that may already be running, and create an output for it.
+    original = helper._rd_unit_state
+    helper._rd_unit_state = lambda: {"known": False, "error": "bus is gone", "exists": False, "running": False}
+    try:
+        result = helper.remote_desktop_start()
+    finally:
+        helper._rd_unit_state = original
+    assert_equal(result["ok"], False, "an unanswerable unit query must not start anything")
+    if not any("could not determine" in failure for failure in result["failures"]):
+        raise AssertionError(f"the refusal must say the query failed: {result['failures']!r}")
+
+
+def test_remote_desktop_paired_clients_reads_only_names():
+    def check(home: Path):
+        config = home / ".config" / "sunshine"
+        config.mkdir(parents=True)
+        (config / "sunshine_state.json").write_text(json.dumps({
+            "username": "method",
+            "salt": "SALTVALUE",
+            "password": "HASHVALUE",
+            "root": {
+                "uniqueid": "UNIQUE",
+                "named_devices": [
+                    {"name": "mbp-1", "cert": "-----BEGIN CERTIFICATE-----"},
+                    {"name": "  ", "cert": "x"},
+                    {"cert": "no name here"},
+                ],
+            },
+        }))
+        old_xdg = os.environ.pop("XDG_CONFIG_HOME", None)
+        try:
+            result = helper._rd_paired_clients()
+        finally:
+            if old_xdg is not None:
+                os.environ["XDG_CONFIG_HOME"] = old_xdg
+        # Only names, and only usable ones. The same file holds the Web UI
+        # credential hash and salt; nothing but `name` may leave this function.
+        assert_equal(result["names"], ["mbp-1"], "only non-blank device names are returned")
+        assert_equal(result["known"], True, "a well-formed file is an answer")
+        for name in result["names"]:
+            if "SALT" in name or "HASH" in name:
+                raise AssertionError("credential material must never reach the payload")
+
+    with_temp_home(check)
+
+    # A machine with no Sunshine config is not an error, just an empty list --
+    # and it is an ANSWER, not an unknown.
+    def check_absent(home):
+        result = helper._rd_paired_clients()
+        assert_equal(result["names"], [], "no state file means no paired clients")
+        assert_equal(result["known"], True, "and an absent file is still an answer")
+
+    with_temp_home(check_absent)
+
+
+def test_remote_desktop_malformed_state_degrades_rather_than_raising():
+    # U2. `remote_desktop_status()` used to raise straight out of here on a
+    # state file that decoded as JSON but had another shape, so ONE malformed
+    # field took the host and session state down with it and the widget lost
+    # everything. Unparseable state is unknown by this subsystem's own model,
+    # not fatal.
+    malformed = {
+        "a JSON array": "[]",
+        "a JSON scalar": "5",
+        "a JSON string": '"nope"',
+        "null": "null",
+        "root is a string": '{"root": "nope"}',
+        "root is a list": '{"root": []}',
+        "named_devices is a string": '{"root": {"named_devices": "mbp-1"}}',
+        "named_devices is an object": '{"root": {"named_devices": {"a": 1}}}',
+        "not JSON at all": "{ this is not json",
+    }
+
+    def check(home: Path):
+        config = home / ".config" / "sunshine"
+        config.mkdir(parents=True)
+        state = config / "sunshine_state.json"
+        old_xdg = os.environ.pop("XDG_CONFIG_HOME", None)
+        try:
+            for label, body in malformed.items():
+                state.write_text(body)
+                try:
+                    result = helper._rd_paired_clients()
+                except Exception as exc:  # noqa: BLE001 - the whole point
+                    raise AssertionError(f"{label} must not raise: {exc!r}") from exc
+                assert_equal(result["names"], [], f"{label}: no names can be read")
+                assert_equal(result["known"], False, f"{label}: and the answer is unknown, not empty")
+                if not result["error"]:
+                    raise AssertionError(f"{label}: the reason must survive to the caller")
+
+            # Shapes that are legitimately empty are ANSWERS, not unknowns: a
+            # state file with no paired devices yet is well-formed.
+            for label, body in {
+                "no root yet": '{"username": "method"}',
+                "no named_devices yet": '{"root": {"uniqueid": "X"}}',
+                "an empty device list": '{"root": {"named_devices": []}}',
+            }.items():
+                state.write_text(body)
+                result = helper._rd_paired_clients()
+                assert_equal(result["names"], [], f"{label}: no devices")
+                assert_equal(result["known"], True, f"{label}: but that IS the answer")
+
+            # A malformed entry inside a well-formed list is skipped without
+            # discarding its neighbours.
+            state.write_text(json.dumps({"root": {"named_devices": [
+                "not-an-object", {"name": "mbp-1"}, {"cert": "no name"}, None, {"name": 7},
+            ]}}))
+            result = helper._rd_paired_clients()
+            assert_equal(result["names"], ["mbp-1"], "usable entries survive unusable neighbours")
+            assert_equal(result["known"], True, "a readable list with junk entries is still readable")
+        finally:
+            if old_xdg is not None:
+                os.environ["XDG_CONFIG_HOME"] = old_xdg
+
+    with_temp_home(check)
+
+    # And the whole status payload survives it: the other fields are still
+    # there, which is the actual regression.
+    originals = {n: getattr(helper, n) for n in
+                 ("_rd_unit_state", "_rd_manages_output", "_rd_paired_clients", "_rd_web_host")}
+    helper._rd_unit_state = lambda: {"known": True, "error": "", "exists": True, "running": False}
+    helper._rd_manages_output = lambda: {"manages": False, "compositor": "niri", "blocked": False, "reason": ""}
+    helper._rd_web_host = lambda: "localhost"
+    helper._rd_paired_clients = lambda: {"names": [], "known": False, "error": "the Sunshine state file is not an object"}
+    try:
+        status = helper.remote_desktop_status()
+    finally:
+        for name, value in originals.items():
+            setattr(helper, name, value)
+    assert_equal(status["state"], "stopped", "the host state survives a malformed paired list")
+    assert_equal(status["pairedClientsKnown"], False, "only the paired axis goes unknown")
+    assert_equal(status["pairedClients"], [], "and it carries no invented names")
+    if "not an object" not in status["pairedClientsError"]:
+        raise AssertionError(f"the reason must reach the payload: {status['pairedClientsError']!r}")
+
+
+def test_remote_desktop_unknown_compositor_is_probed_not_assumed():
+    # U1. detect_compositor() answers from THIS process's environment, and an
+    # ssh session has none of it -- so it says "unknown". Treating that as "not
+    # Hyprland" skipped the virtual output on exactly the path a remote-desktop
+    # host is most likely to be started from, and the capture fell back to a
+    # real monitor with nothing to say so.
+    originals = {n: getattr(helper, n) for n in
+                 ("detect_compositor", "command_exists", "_rd_hypr_env", "run")}
+    try:
+        # A detected compositor is taken at its word, both ways.
+        helper.detect_compositor = lambda: {"compositor": "hyprland", "source": "test"}
+        assert_equal(helper._rd_manages_output()["manages"], True, "detected Hyprland manages the output")
+
+        helper.detect_compositor = lambda: {"compositor": "niri", "source": "test"}
+        managed = helper._rd_manages_output()
+        assert_equal(managed["manages"], False, "niri manages no virtual output")
+        assert_equal(managed["blocked"], False, "and that is a definite answer, not a refusal")
+
+        helper.detect_compositor = lambda: {"compositor": "unknown", "source": "none"}
+
+        # Unknown + no hyprctl at all -> definitely not Hyprland. Proceed.
+        helper.command_exists = lambda name: False
+        managed = helper._rd_manages_output()
+        assert_equal(managed["manages"], False, "no hyprctl means no Hyprland")
+        assert_equal(managed["blocked"], False, "and the host may still start")
+
+        # Unknown + hyprctl but no running instance -> same.
+        helper.command_exists = lambda name: True
+        helper._rd_hypr_env = lambda: {}
+        managed = helper._rd_manages_output()
+        assert_equal(managed["manages"], False, "no instance means no running Hyprland")
+        assert_equal(managed["blocked"], False, "and the host may still start")
+
+        # Unknown + an instance resolvable from the runtime dir + hyprctl
+        # answers -> this IS Hyprland, reached over ssh. THE FIX.
+        helper._rd_hypr_env = lambda: {"HYPRLAND_INSTANCE_SIGNATURE": "sig"}
+        helper.run = lambda argv, **kwargs: subprocess.CompletedProcess(argv, 0, "{}", "")
+        managed = helper._rd_manages_output()
+        assert_equal(managed["manages"], True, "an ssh start must still create the virtual output")
+        assert_equal(managed["compositor"], "hyprland", "and it is reported as Hyprland")
+
+        # Unknown + an instance present but hyprctl unreachable -> refuse.
+        # There is a Hyprland session here and we cannot talk to it, so a real
+        # monitor cannot be ruled out.
+        helper.run = lambda argv, **kwargs: subprocess.CompletedProcess(argv, 1, "", "Couldn't connect")
+        managed = helper._rd_manages_output()
+        assert_equal(managed["manages"], False, "an unreachable instance manages nothing")
+        assert_equal(managed["blocked"], True, "and it must block the start rather than guess")
+    finally:
+        for name, value in originals.items():
+            setattr(helper, name, value)
+
+    # start honours the refusal without touching the compositor.
+    with _rd_lifecycle(output_present=False) as (calls, state):
+        helper._rd_manages_output = lambda: {
+            "manages": False, "compositor": "unknown", "blocked": True,
+            "reason": "a Hyprland instance is running but hyprctl could not be reached",
+        }
+        result = helper.remote_desktop_start()
+    assert_equal(result["ok"], False, "a blocked compositor probe must not start the host")
+    assert_equal(calls, [], "and must create nothing and start nothing")
+    if not any("capture a real monitor" in failure for failure in result["failures"]):
+        raise AssertionError(f"the refusal must name the risk: {result['failures']!r}")
+
+
+def test_remote_desktop_watch_tokens_cover_every_event():
+    # Real lines, copied from this host's journal. The widget never sees
+    # Sunshine's wording -- it sees these tokens -- so this is where the log
+    # format is pinned.
+    cases = [
+        ("2026-08-06 11:10:43 Info: CLIENT CONNECTED", "connected"),
+        ("2026-08-06 11:45:30 Info: CLIENT DISCONNECTED", "disconnected"),
+        ("Started Self-hosted game stream host for Moonlight.", "lifecycle"),
+        ("Stopping Self-hosted game stream host for Moonlight...", "lifecycle"),
+        ("Stopped Self-hosted game stream host for Moonlight.", "lifecycle"),
+        ("Info: Creating encoder [hevc_nvenc]", "session"),
+        ("Info: Streaming bitrate is 27788000", "session"),
+        # Noise the follow must NOT wake the shell for: Sunshine logs hundreds
+        # of these per start, and a resync on each would be a poll with extra
+        # steps.
+        ("Info: [wayland] Found interface: wl_output(71) version 4", ""),
+        ("Info: Color range: JPEG", ""),
+        ("", ""),
+    ]
+    for line, expected in cases:
+        assert_equal(helper._rd_watch_token(line), expected, f"watch token for {line!r}")
+
+
 def main():
     # A catalog download is minutes to hours of network transfer. Holding the
     # exclusive theme lock for that long would block applies, the light/dark
@@ -2790,6 +3514,32 @@ def main():
     test_theme_catalog_download_verifies_every_file()
     test_theme_catalog_manifest_matches_the_repo()
     test_theme_catalog_generator_rejects_uninstallable_packages()
+    test_remote_desktop_reports_streaming_separately_from_listening()
+    test_remote_desktop_start_creates_the_output_before_starting_the_unit()
+    test_remote_desktop_start_refuses_when_the_output_cannot_be_checked()
+    test_remote_desktop_start_does_not_recreate_an_existing_output()
+    test_remote_desktop_paired_clients_reads_only_names()
+    test_remote_desktop_watch_tokens_cover_every_event()
+    test_remote_desktop_failed_start_removes_the_output_it_created()
+    test_remote_desktop_failed_start_keeps_an_output_it_did_not_create()
+    test_remote_desktop_stop_removes_only_an_output_vgs_created()
+    test_remote_desktop_stop_ignores_a_record_from_another_compositor_instance()
+    test_remote_desktop_stop_drops_the_record_when_the_output_vanished()
+    test_remote_desktop_start_is_idempotent_when_the_host_is_already_running()
+    test_remote_desktop_start_reports_an_unrecordable_ownership_claim()
+    test_remote_desktop_start_verifies_the_output_it_created()
+    test_remote_desktop_journal_window_never_falls_back_to_unbounded_history()
+    test_remote_desktop_unit_query_failure_is_not_a_missing_unit()
+    test_remote_desktop_start_refuses_when_the_unit_query_fails()
+    test_remote_desktop_malformed_state_degrades_rather_than_raising()
+    test_remote_desktop_unknown_compositor_is_probed_not_assumed()
+    # Fail here, with the reason, rather than in the Niri suite with none.
+    if os.environ.get("HOME") != _HOME_AT_IMPORT:
+        raise AssertionError(
+            "a test leaked its temporary HOME: expected "
+            f"{_HOME_AT_IMPORT!r}, found {os.environ.get('HOME')!r}. "
+            "check-vshell-niri.py reads HOME, so this would have failed there instead."
+        )
     subprocess.run(
         [sys.executable, str(REPO_ROOT / "scripts" / "check-vshell-niri.py")],
         check=True,

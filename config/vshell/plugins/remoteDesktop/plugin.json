@@ -1,0 +1,16 @@
+{
+    "id": "remoteDesktop",
+    "name": "Remote Desktop",
+    "description": "Sunshine remote-desktop host: start/stop on demand, and a distinct indicator while a client is actually streaming.",
+    "version": "1.0.0",
+    "license": "MIT",
+    "author": "VanillaGreen",
+    "icon": "cast",
+    "component": "./RemoteDesktopWidget.qml",
+    "settings": "./RemoteDesktopSettings.qml",
+    "requires_shell": ">=0.1.0",
+    "permissions": [
+        "settings_read",
+        "settings_write"
+    ]
+}

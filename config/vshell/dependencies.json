@@ -209,6 +209,20 @@
         "tailscale"
       ]
     },
+    "remote-desktop": {
+      "$comment": [
+        "The Sunshine host behind the remoteDesktop widget. The widget gates on",
+        "`vshell remote-desktop status`, which reads the systemd unit rather",
+        "than the binary, so it is correct even where the unit is installed",
+        "under a name this probe cannot see; the group exists so `deps status`",
+        "names the package a user has to install to get the widget at all.",
+        "hyprctl is declared under `hyprland` already: the virtual output half",
+        "is Hyprland-only and the host still runs without it."
+      ],
+      "commands": [
+        "sunshine"
+      ]
+    },
     "brightness": {
       "commands": [
         "udevadm"
