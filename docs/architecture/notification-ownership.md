@@ -173,8 +173,18 @@ silently is the worse default: it hands a new user a shell that looks broken
 plus a chore, when the packaging layer already declares two daemons on one
 session unsupported.
 
-Four properties of the one-shot, each load-bearing:
+Five properties of the one-shot, each load-bearing:
 
+- **It fires only from a config that actually loaded.** A `settings.json` that
+  failed to parse — or has not been read yet — leaves every property at its
+  default: `notificationServerEnabled` true and the one-shot false, which is
+  indistinguishable from a fresh install. Acting on that would mask and stop
+  the daemon of a months-old session, and `saveSettings()` is disabled after a
+  parse error, so the one-shot could not even be recorded as spent and the same
+  takeover would fire again next start. `_maybeTakeOverOnFirstRun()` therefore
+  requires `SettingsData._hasLoaded && !SettingsData._parseError` before
+  anything else. "The properties look like defaults" is not evidence of a first
+  run; "the config loaded and said so" is.
 - **It is keyed on its own state, never on "is there a conflict right now".**
   Keying it on the conflict would re-fire on every update for anyone whose
   preferred daemon is a different one.
@@ -195,8 +205,66 @@ With the server disabled the one-shot is left untouched rather than spent: that
 is not a first run to act on, and turning the server back on later should still
 get the takeover that re-enabling it implies.
 
+#### The settle window
+
+Masking the other daemon and Quickshell re-acquiring the name are separate
+asynchronous steps, so the takeover is followed by a settle window
+(`firstRunTakeoverTimer`) during which the ordinary conflict warning is
+suppressed — warning there would report the state the takeover exists to change.
+
+The window opens **after** the helper has actually started, not before
+`takeOverNotificationServer()` is called, and while the helper is still running
+the window re-arms instead of expiring. The helper's systemd operations are
+synchronous and can outlast one 6s window; ending the takeover underneath a
+still-running helper produced a false conflict warning on a *slow but
+successful* takeover and then discarded the state the success toast needed, so
+the success was never announced either. Re-arming is bounded by a wall-clock
+deadline (`_firstRunTakeoverDeadline`, 60s from the helper's start), so a helper
+that never exits still ends the window rather than extending it forever.
+
+`takeOverNotificationServer()` returns whether the helper started, and clears
+`serverTakeoverBusy` itself when it did not. Quickshell may never make `running`
+true for a command that cannot be spawned at all, in which case
+`onRunningChanged` never fires — and the busy flag disables both takeover
+buttons, so one failed launch would have wedged them for the rest of the
+session.
+
+#### Opting out reverses what VGS did on its own
+
 The `notificationServerEnabled` setting is the deliberate opt-out: it drives the
 `LazyLoader` around `NotificationServer`, so turning it off destroys the server
 and releases the bus name for whichever daemon the user prefers, and suppresses
 the warning that would otherwise be wrong. It also gates the first-run takeover,
 so an opt-out made before the update survives it.
+
+The invariant the opt-out has to hold is **after opting out, some notification
+daemon is running** — and clearing VGS's own bookkeeping does not hold it. The
+first-run takeover masked and stopped the user's daemon without being asked; if
+the opt-out only tore down the settle window, VGS would go inert *and* the
+user's daemon would stay dead, which is precisely the outcome the opt-out
+exists to prevent.
+
+So `onNotificationServerEnabledChanged` calls `_reverseFirstRunTakeover()`,
+which runs `vshell notifications restore` — unmasking every unit the takeover
+masked, starting every unit it stopped, dropping every activation shadow it
+wrote and putting back any user file those shadows displaced. It holds the
+invariant in three cases:
+
+| Case | Why a daemon is running afterwards |
+|------|------------------------------------|
+| VGS never took anything (`_firstRunTakeoverFired` false) | Nothing was changed, so whatever was handling notifications before still is. This covers the ordinary opt-out and every manual takeover the user made themselves. |
+| The takeover finished | `restore` runs immediately and puts the daemon back. |
+| The takeover is still in flight | The reversal is **deferred** to the helper's exit (`_restorePending`) rather than racing it — a restore that overlapped the helper could have its unmask overwritten by a mask the helper had not applied yet. |
+
+Two details that keep the deferral honest: re-enabling the server before the
+helper exits cancels the pending reversal (it would undo the state the user just
+asked for again), and `_reverseFirstRunTakeover()` re-reads the setting at
+execution time rather than trusting the flag it was deferred with. The success
+toast is likewise re-gated on `serverEnabled`, since the non-conflict branch is
+also reached with the server off — announcing a takeover to someone who just
+opted out of it would describe a change already on its way to being undone.
+
+If the restore helper itself cannot be spawned, VGS says so with an error toast
+naming the exact command (`vshell notifications restore`). That is the one case
+the invariant cannot be held automatically, and it is reported rather than left
+silent.

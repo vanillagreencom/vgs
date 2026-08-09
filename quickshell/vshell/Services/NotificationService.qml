@@ -691,6 +691,17 @@ Singleton {
     // won the name or run out of settling time. Runtime-only: the persisted
     // half of the one-shot is SettingsData.notificationFirstRunTakeoverDone.
     property bool _firstRunTakeoverRunning: false
+    // Wall-clock outer bound for the whole first-run takeover, including a
+    // helper that has not exited yet. The settle window is re-armed while the
+    // helper is still working (its systemd calls can outlast one window), so a
+    // tick count would let a stuck helper extend it forever; this cannot.
+    property double _firstRunTakeoverDeadline: 0
+    // True once VGS has masked/stopped another daemon on its own initiative in
+    // this session. The user never asked for that, so an explicit opt-out has
+    // to undo it -- see _reverseFirstRunTakeover().
+    property bool _firstRunTakeoverFired: false
+    // A reversal that is waiting for the takeover helper to exit first.
+    property bool _restorePending: false
 
     function checkServerOwnership() {
         if (!ownershipProcess.running)
@@ -699,11 +710,60 @@ Singleton {
 
     // Hands the bus name to VGS by masking and stopping the daemon holding it;
     // Quickshell's pending registration then wins it without a shell restart.
+    // Returns whether the helper actually started.
     function takeOverNotificationServer() {
         if (takeoverProcess.running)
-            return;
+            return false;
         root.serverTakeoverBusy = true;
         takeoverProcess.running = true;
+        // A command that cannot be spawned at all may never make `running`
+        // true, in which case onRunningChanged never fires and the busy flag
+        // would disable both takeover buttons for the rest of the session.
+        // Clearing it here covers that path; the running->false transition
+        // covers the one where Quickshell does report the failure.
+        if (!takeoverProcess.running) {
+            root.log.warn("notification takeover helper could not be started");
+            root.serverTakeoverBusy = false;
+            return false;
+        }
+        return true;
+    }
+
+    // Undoes an automatic first-run takeover after the user turns the server
+    // off. VGS masked and stopped the user's daemon without being asked, so
+    // the opt-out has to put it back -- otherwise the opt-out itself is what
+    // leaves the session with no notification daemon at all, which is the one
+    // outcome it exists to prevent.
+    function _reverseFirstRunTakeover() {
+        if (!root._firstRunTakeoverFired)
+            return;
+        // Restoring while the takeover helper is still masking and stopping
+        // units would race it, and the masks could be reapplied after the undo.
+        if (takeoverProcess.running || restoreProcess.running) {
+            root._restorePending = true;
+            return;
+        }
+        root._restorePending = false;
+        // Re-read the setting rather than trusting the deferral: turning the
+        // server back on while the helper was still running cancels this.
+        if (SettingsData.notificationServerEnabled)
+            return;
+
+        root._firstRunTakeoverFired = false;
+        root.log.info("notification server turned off after a first-run takeover: restoring the previous daemon");
+        restoreProcess.running = true;
+        if (!restoreProcess.running) {
+            root.log.warn("notification restore helper could not be started");
+            ToastService.showError(I18n.tr("Could not restore the previous notification daemon"),
+                I18n.tr("VGS had taken over org.freedesktop.Notifications on this first run and could not undo it. Run `vshell notifications restore` to put the previous daemon back."),
+                "vshell notifications restore", "notification-server-restore");
+        }
+    }
+
+    function _endFirstRunTakeover() {
+        root._firstRunTakeoverRunning = false;
+        root._firstRunTakeoverDeadline = 0;
+        firstRunTakeoverTimer.stop();
     }
 
     // VGS-64: on the very first run VGS claims the bus name rather than losing
@@ -717,6 +777,17 @@ Singleton {
     // update for anyone whose preferred daemon is another one, which is exactly
     // the opt-out this must not overturn. Returns true when it fired.
     function _maybeTakeOverOnFirstRun() {
+        // A settings.json that failed to parse -- or has not been read yet --
+        // leaves every property standing at its default: notificationServerEnabled
+        // true and the one-shot false, which is byte-for-byte what a fresh
+        // install looks like. Acting on that would mask and stop the daemon of
+        // a session that has been running for months, and saveSettings() is
+        // disabled after a parse error, so the one-shot could not even be
+        // recorded as spent -- the same takeover would fire again on the next
+        // start. "The properties look like defaults" is not evidence of a
+        // first run; "the config loaded and said so" is.
+        if (!SettingsData._hasLoaded || SettingsData._parseError)
+            return false;
         if (SettingsData.notificationFirstRunTakeoverDone)
             return false;
         // An explicit opt-out is not a first run to act on, and must never be
@@ -739,9 +810,19 @@ Singleton {
             return false;
 
         root.log.info("first run: taking org.freedesktop.Notifications from", root.serverConflictDaemon || "another daemon");
+        // The settle window opens only once the helper is actually running.
+        // Starting it first meant a helper that could not be spawned still got
+        // a 6s window, and -- worse -- that the window was already burning
+        // while the helper's synchronous systemd calls ran.
+        if (!root.takeOverNotificationServer()) {
+            // Nothing is settling and nothing was changed: fall through to the
+            // ordinary conflict report rather than suppressing it.
+            return false;
+        }
+        root._firstRunTakeoverFired = true;
         root._firstRunTakeoverRunning = true;
+        root._firstRunTakeoverDeadline = Date.now() + 60000;
         firstRunTakeoverTimer.restart();
-        root.takeOverNotificationServer();
         return true;
     }
 
@@ -805,9 +886,12 @@ Singleton {
                 ToastService.dismissCategory("notification-server-conflict");
             root._serverConflictAnnounced = false;
 
-            if (root._firstRunTakeoverRunning && root.serverOwnership === "vgs") {
-                root._firstRunTakeoverRunning = false;
-                firstRunTakeoverTimer.stop();
+            // serverEnabled is re-checked because the else branch is also
+            // reached with the server turned off: announcing a successful
+            // takeover to a user who just opted out of it would be a lie about
+            // a change that is on its way to being undone.
+            if (root._firstRunTakeoverRunning && root.serverEnabled && !root._restorePending && root.serverOwnership === "vgs") {
+                root._endFirstRunTakeover();
                 ToastService.showInfo(I18n.tr("VGS is now handling notifications"),
                     I18n.tr("VGS took over org.freedesktop.Notifications on this first run, so its popups and notification center work. Undo it any time from Settings › Notifications."),
                     "", "notification-server-takeover",
@@ -868,8 +952,27 @@ Singleton {
             if (running)
                 return;
             root.serverTakeoverBusy = false;
+            // An opt-out that arrived mid-takeover waited for this exit before
+            // undoing anything, so that restore could not be overwritten by
+            // masks the helper had not finished applying.
+            if (root._restorePending) {
+                root._endFirstRunTakeover();
+                root._reverseFirstRunTakeover();
+                return;
+            }
             // Releasing the name and Quickshell re-acquiring it are two
             // asynchronous steps, so confirm rather than assume.
+            ownershipSettleTimer.restart();
+        }
+    }
+
+    Process {
+        id: restoreProcess
+        command: [Paths.vshellCli, "notifications", "restore", "--json"]
+        running: false
+        onRunningChanged: {
+            if (running)
+                return;
             ownershipSettleTimer.restart();
         }
     }
@@ -902,8 +1005,19 @@ Singleton {
         onTriggered: {
             if (!root._firstRunTakeoverRunning)
                 return;
+            // The helper's systemd operations are synchronous and can outlast
+            // one window. Tearing the takeover down while it is still working
+            // would report the conflict it is in the middle of resolving and
+            // throw away the state the success toast needs, so a slow but
+            // successful takeover would announce a false failure and never
+            // announce itself. Wait -- but only to a hard wall-clock deadline,
+            // so a helper that never exits still ends the window.
+            if (takeoverProcess.running && Date.now() < root._firstRunTakeoverDeadline) {
+                firstRunTakeoverTimer.restart();
+                return;
+            }
             root.log.warn("first-run notification takeover did not win the bus name");
-            root._firstRunTakeoverRunning = false;
+            root._endFirstRunTakeover();
             root.checkServerOwnership();
         }
     }
@@ -928,12 +1042,26 @@ Singleton {
         target: SettingsData
         function onNotificationServerEnabledChanged() {
             root._serverConflictAnnounced = false;
-            // Turning the server off mid-takeover is the user overruling it;
-            // the settle window has nothing left to announce.
-            root._firstRunTakeoverRunning = false;
-            firstRunTakeoverTimer.stop();
             ToastService.dismissCategory("notification-server-conflict");
             ToastService.dismissCategory("notification-server-takeover");
+
+            if (!SettingsData.notificationServerEnabled) {
+                // Turning the server off is the user overruling the takeover,
+                // and clearing VGS's own bookkeeping is not enough: the helper
+                // has masked and stopped their daemon, so dropping the settle
+                // window alone leaves VGS inert AND their daemon dead. Put it
+                // back. _reverseFirstRunTakeover() defers itself if the helper
+                // is still running, and is a no-op when VGS never took
+                // anything -- in which case whatever was running still is.
+                if (!takeoverProcess.running)
+                    root._endFirstRunTakeover();
+                root._reverseFirstRunTakeover();
+            } else {
+                // Re-enabling cancels a reversal that was still waiting on the
+                // takeover helper; the takeover it would have undone is the
+                // state the user just asked for again.
+                root._restorePending = false;
+            }
             ownershipSettleTimer.restart();
         }
     }
