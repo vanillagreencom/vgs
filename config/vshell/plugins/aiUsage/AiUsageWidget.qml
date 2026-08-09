@@ -594,8 +594,17 @@ PluginComponent {
         PopoutComponent {
             id: popout
 
-            headerText: root.providerName() + " Usage"
+            // Which page of the pager is showing: 0 usage, 1 display settings.
+            // Transient view state, deliberately not persisted — reopening a
+            // popout on a settings page you left open days ago is disorienting,
+            // and the reset below matches how a popover behaves everywhere else.
+            property int page: 0
+            readonly property bool onSettings: popout.page === 1
+
+            headerText: popout.onSettings ? "Display settings" : (root.providerName() + " Usage")
             detailsText: {
+                if (popout.onSettings)
+                    return "How the bar number is chosen, and which accounts count.";
                 if (!root.ok)
                     return root.errorText || "Unavailable";
                 if (!root.multiAccount)
@@ -613,10 +622,23 @@ PluginComponent {
             }
             showCloseButton: true
 
-            property bool settingsOpen: false
+            // A pushed page is view state, not a preference: a popout that
+            // reopens on the settings page hides the thing it was opened for.
+            Connections {
+                target: popout.parentPopout
+                ignoreUnknownSignals: true
+                function onShouldBeVisibleChanged() {
+                    if (popout.parentPopout && !popout.parentPopout.shouldBeVisible)
+                        popout.page = 0;
+                }
+            }
 
             // Sits left of the close button; same 32x32 hit target so the two
-            // read as a pair.
+            // read as a pair. It is the disclosure control and the back control
+            // both — the header has no left-hand slot to put a back chevron in,
+            // and adding one would mean changing PopoutComponent for every
+            // plugin that uses it. Swapping the icon in place keeps the
+            // affordance where the user's pointer already is.
             headerActions: Component {
                 Rectangle {
                     width: 32
@@ -627,9 +649,9 @@ PluginComponent {
 
                     VgsIcon {
                         anchors.centerIn: parent
-                        name: "tune"
+                        name: popout.onSettings ? "arrow_back" : "tune"
                         size: Theme.iconSize - 4
-                        color: popout.settingsOpen ? Theme.primary : Theme.surfaceText
+                        color: popout.onSettings ? Theme.primary : Theme.surfaceText
                     }
 
                     MouseArea {
@@ -637,299 +659,340 @@ PluginComponent {
                         anchors.fill: parent
                         hoverEnabled: true
                         cursorShape: Qt.PointingHandCursor
-                        onClicked: popout.settingsOpen = !popout.settingsOpen
+                        onClicked: popout.page = popout.onSettings ? 0 : 1
                     }
                 }
             }
 
-            Column {
-                width: parent.width
-                spacing: Theme.spacingM
+            // --- pager -------------------------------------------------------
+            // The settings used to expand inline, pushing the account cards
+            // down inside a popout that is already dense. They are a page now:
+            // the two sit side by side in a clipped viewport that slides, and
+            // the viewport takes the height of whichever page is showing, so
+            // the popout grows TO the settings page rather than growing BY it.
+            // (VGS-73)
+            Item {
+                id: pager
 
-                // --- display settings, folded away by default ---------------
-                StyledRect {
-                    width: parent.width
-                    height: settingsCol.implicitHeight + Theme.spacingM * 2
-                    radius: Theme.cornerRadius
-                    color: Theme.surfaceContainerHigh
-                    visible: popout.settingsOpen
+                width: parent.width
+                clip: true
+                height: popout.onSettings ? settingsPage.implicitHeight : usagePage.implicitHeight
+
+                Behavior on height {
+                    NumberAnimation {
+                        duration: Theme.shortDuration
+                        easing.type: Easing.OutCubic
+                    }
+                }
+
+                Row {
+                    id: pages
+                    spacing: 0
+                    // One viewport width per page; page 0 is the resting state.
+                    x: -popout.page * pager.width
+
+                    Behavior on x {
+                        NumberAnimation {
+                            duration: Theme.mediumDuration
+                            easing.type: Easing.OutCubic
+                        }
+                    }
 
                     Column {
-                        id: settingsCol
-                        anchors.fill: parent
-                        anchors.margins: Theme.spacingM
-                        spacing: Theme.spacingS
+                        id: usagePage
+                        width: pager.width
+                        spacing: Theme.spacingM
 
-                        StyledText {
-                            text: "Bar number"
-                            font.pixelSize: Theme.fontSizeSmall
-                            font.weight: Font.Medium
-                            color: Theme.surfaceText
+                        // The tabs sat flush against the header and the first card.
+                        // Wrapping rather than adding Column spacers keeps the gap to
+                        // the neighbouring cards unchanged.
+                        Item {
+                            width: parent.width
+                            height: providerRow.implicitHeight + 10
+
+                            Row {
+                                id: providerRow
+                                width: parent.width
+                                anchors.verticalCenter: parent.verticalCenter
+                                spacing: Theme.spacingS
+
+                            VgsButton {
+                                text: "Claude"
+                                iconName: "smart_toy"
+                                width: (providerRow.width - Theme.spacingS) / 2
+                                backgroundColor: root.provider === "claude" ? Theme.primary : Theme.surfaceContainerHigh
+                                textColor: root.provider === "claude" ? Theme.primaryText : Theme.surfaceText
+                                onClicked: root.setProvider("claude")
+                            }
+
+                            VgsButton {
+                                text: "Codex"
+                                iconName: "terminal"
+                                width: (providerRow.width - Theme.spacingS) / 2
+                                backgroundColor: root.provider === "codex" ? Theme.primary : Theme.surfaceContainerHigh
+                                textColor: root.provider === "codex" ? Theme.primaryText : Theme.surfaceText
+                                onClicked: root.setProvider("codex")
+                            }
+                            }
                         }
 
-                        StyledText {
-                            width: parent.width
-                            text: root.headlineMode === "best"
-                                ? "The account with the most headroom left."
-                                : (root.headlineMode === "worst"
-                                   ? "The most exhausted account."
-                                   : "Average across accounts, each counted at its tightest limit.")
-                            font.pixelSize: Theme.fontSizeSmall
-                            color: Theme.surfaceVariantText
-                            wrapMode: Text.WordWrap
-                        }
+                        // Single account: unchanged full-detail cards.
+                        Repeater {
+                            model: (root.ok && !root.multiAccount) ? root.primaryMeters : []
 
-                        Row {
-                            id: modeRow
-                            width: parent.width
-                            spacing: Theme.spacingXS
+                            StyledRect {
+                                width: parent.width
+                                height: rowCol.implicitHeight + Theme.spacingM * 2
+                                radius: Theme.cornerRadius
+                                color: Theme.surfaceContainerHigh
 
-                            Repeater {
-                                model: [
-                                    { key: "pool", label: "Average" },
-                                    { key: "best", label: "Most left" },
-                                    { key: "worst", label: "Most used" }
-                                ]
+                                MeterCard {
+                                    id: rowCol
+                                    anchors.fill: parent
+                                    anchors.margins: Theme.spacingM
+                                    spacing: Theme.spacingXS
 
-                                VgsButton {
-                                    required property var modelData
-                                    text: modelData.label
-                                    width: (modeRow.width - Theme.spacingXS * 2) / 3
-                                    backgroundColor: root.headlineMode === modelData.key
-                                        ? Theme.primary : Theme.surfaceContainerHighest
-                                    textColor: root.headlineMode === modelData.key
-                                        ? Theme.primaryText : Theme.surfaceText
-                                    onClicked: root.setHeadlineMode(modelData.key)
+                                    host: root
+                                    meter: modelData
+                                    labelWeight: Font.Medium
+                                    // A credit pool reports an amount, not a countdown.
+                                    detailText: root.formatSpendExact(modelData) || root.resetLabel(modelData)
                                 }
                             }
                         }
 
-                        StyledText {
-                            text: "Accounts"
-                            font.pixelSize: Theme.fontSizeSmall
-                            font.weight: Font.Medium
-                            color: Theme.surfaceText
-                            visible: (root.accounts || []).length > 1
-                            topPadding: Theme.spacingXS
-                        }
-
+                        // Several accounts: one compact row each, expanding in place to
+                        // the same full-detail cards a single account gets.
                         Repeater {
-                            model: (root.accounts || []).length > 1
-                                ? root.orderedAccounts(root.accounts) : []
+                            model: root.multiAccount ? root.shownAccounts(root.accounts) : []
 
-                            Item {
+                            StyledRect {
+                                id: accountCard
+
                                 required property var modelData
-                                width: settingsCol.width
-                                height: 26
 
-                                StyledText {
-                                    anchors.left: parent.left
-                                    anchors.right: eyeIcon.left
-                                    anchors.rightMargin: Theme.spacingS
-                                    anchors.verticalCenter: parent.verticalCenter
-                                    text: modelData.label || modelData.id
-                                    elide: Text.ElideMiddle
-                                    font.pixelSize: Theme.fontSizeSmall
-                                    color: root.isHidden(modelData.id) ? Theme.surfaceVariantText
-                                                                       : Theme.surfaceText
-                                }
+                                readonly property bool expanded: root.expandedAccountId === modelData.id
+                                readonly property var meters: root.metersFor(modelData)
+                                width: parent.width
+                                height: accountCol.implicitHeight + Theme.spacingM * 2
+                                radius: Theme.cornerRadius
+                                color: Theme.surfaceContainerHigh
 
-                                VgsIcon {
-                                    id: eyeIcon
-                                    anchors.right: parent.right
-                                    anchors.verticalCenter: parent.verticalCenter
-                                    name: root.isHidden(modelData.id) ? "visibility_off" : "visibility"
-                                    size: Theme.iconSizeSmall
-                                    color: root.isHidden(modelData.id) ? Theme.surfaceVariantText
-                                                                       : Theme.primary
+                                Behavior on height {
+                                    NumberAnimation {
+                                        duration: Theme.shortDuration
+                                        easing.type: Easing.OutCubic
+                                    }
                                 }
 
                                 MouseArea {
                                     anchors.fill: parent
-                                    hoverEnabled: true
                                     cursorShape: Qt.PointingHandCursor
-                                    onClicked: root.toggleHidden(modelData.id)
+                                    onClicked: root.expandedAccountId = accountCard.expanded ? "" : accountCard.modelData.id
+                                }
+
+                                Column {
+                                    id: accountCol
+                                    anchors.fill: parent
+                                    anchors.margins: Theme.spacingM
+                                    spacing: Theme.spacingXS
+
+                                    Item {
+                                        width: parent.width
+                                        // +5 with the text pinned to the top, so the extra
+                                        // height reads as space under the account line
+                                        // rather than padding on both sides of it.
+                                        height: Math.max(emailText.implicitHeight, planText.implicitHeight) + 5
+
+                                        StyledText {
+                                            id: emailText
+                                            anchors.left: parent.left
+                                            anchors.right: planText.left
+                                            anchors.rightMargin: Theme.spacingS
+                                            anchors.top: parent.top
+                                            text: accountCard.modelData.label || accountCard.modelData.id
+                                            elide: Text.ElideMiddle
+                                            font.pixelSize: Theme.fontSizeMedium
+                                            font.weight: Font.Medium
+                                            color: Theme.surfaceText
+                                        }
+
+                                        StyledText {
+                                            id: planText
+                                            anchors.right: parent.right
+                                            anchors.verticalCenter: emailText.verticalCenter
+                                            text: accountCard.modelData.ok ? (accountCard.modelData.plan || "") : "unavailable"
+                                            font.pixelSize: Theme.fontSizeSmall
+                                            color: Theme.surfaceVariantText
+                                        }
+                                    }
+
+                                    // Collapsed: slim one-line-per-window summary.
+                                    Repeater {
+                                        model: accountCard.expanded ? [] : accountCard.meters
+
+                                        MeterRow {
+                                            required property var modelData
+
+                                            width: accountCol.width
+                                            host: root
+                                            meter: modelData
+                                            ok: accountCard.modelData.ok
+                                        }
+                                    }
+
+                                    // Expanded: the full card treatment, one per window.
+                                    Repeater {
+                                        model: accountCard.expanded ? accountCard.meters : []
+
+                                        MeterCard {
+                                            required property var modelData
+
+                                            width: accountCol.width
+                                            spacing: 2
+                                            topPadding: Theme.spacingXS
+
+                                            host: root
+                                            meter: modelData
+                                            ok: accountCard.modelData.ok
+                                            detailText: modelData.detail ? modelData.detail : root.resetLabel(modelData)
+                                        }
+                                    }
+
+                                    StyledText {
+                                        visible: !accountCard.modelData.ok
+                                        width: parent.width
+                                        text: accountCard.modelData.error || "Usage unavailable"
+                                        wrapMode: Text.WordWrap
+                                        font.pixelSize: Theme.fontSizeSmall
+                                        color: Theme.surfaceVariantText
+                                    }
                                 }
                             }
                         }
-                    }
-                }
 
-                // The tabs sat flush against the header and the first card.
-                // Wrapping rather than adding Column spacers keeps the gap to
-                // the neighbouring cards unchanged.
-                Item {
-                    width: parent.width
-                    height: providerRow.implicitHeight + 10
-
-                    Row {
-                        id: providerRow
-                        width: parent.width
-                        anchors.verticalCenter: parent.verticalCenter
-                        spacing: Theme.spacingS
-
-                    VgsButton {
-                        text: "Claude"
-                        iconName: "smart_toy"
-                        width: (providerRow.width - Theme.spacingS) / 2
-                        backgroundColor: root.provider === "claude" ? Theme.primary : Theme.surfaceContainerHigh
-                        textColor: root.provider === "claude" ? Theme.primaryText : Theme.surfaceText
-                        onClicked: root.setProvider("claude")
-                    }
-
-                    VgsButton {
-                        text: "Codex"
-                        iconName: "terminal"
-                        width: (providerRow.width - Theme.spacingS) / 2
-                        backgroundColor: root.provider === "codex" ? Theme.primary : Theme.surfaceContainerHigh
-                        textColor: root.provider === "codex" ? Theme.primaryText : Theme.surfaceText
-                        onClicked: root.setProvider("codex")
-                    }
-                    }
-                }
-
-                // Single account: unchanged full-detail cards.
-                Repeater {
-                    model: (root.ok && !root.multiAccount) ? root.primaryMeters : []
-
-                    StyledRect {
-                        width: parent.width
-                        height: rowCol.implicitHeight + Theme.spacingM * 2
-                        radius: Theme.cornerRadius
-                        color: Theme.surfaceContainerHigh
-
-                        MeterCard {
-                            id: rowCol
-                            anchors.fill: parent
-                            anchors.margins: Theme.spacingM
-                            spacing: Theme.spacingXS
-
-                            host: root
-                            meter: modelData
-                            labelWeight: Font.Medium
-                            // A credit pool reports an amount, not a countdown.
-                            detailText: root.formatSpendExact(modelData) || root.resetLabel(modelData)
+                        StyledText {
+                            visible: !root.ok
+                            width: parent.width
+                            text: root.errorText || "No data"
+                            wrapMode: Text.WordWrap
+                            font.pixelSize: Theme.fontSizeMedium
+                            color: Theme.surfaceVariantText
                         }
                     }
-                }
 
-                // Several accounts: one compact row each, expanding in place to
-                // the same full-detail cards a single account gets.
-                Repeater {
-                    model: root.multiAccount ? root.shownAccounts(root.accounts) : []
+                    Column {
+                        id: settingsPage
+                        width: pager.width
+                        spacing: Theme.spacingM
 
-                    StyledRect {
-                        id: accountCard
+                        StyledRect {
+                            width: parent.width
+                            height: settingsCol.implicitHeight + Theme.spacingM * 2
+                            radius: Theme.cornerRadius
+                            color: Theme.surfaceContainerHigh
 
-                        required property var modelData
-
-                        readonly property bool expanded: root.expandedAccountId === modelData.id
-                        readonly property var meters: root.metersFor(modelData)
-                        width: parent.width
-                        height: accountCol.implicitHeight + Theme.spacingM * 2
-                        radius: Theme.cornerRadius
-                        color: Theme.surfaceContainerHigh
-
-                        Behavior on height {
-                            NumberAnimation {
-                                duration: Theme.shortDuration
-                                easing.type: Easing.OutCubic
-                            }
-                        }
-
-                        MouseArea {
-                            anchors.fill: parent
-                            cursorShape: Qt.PointingHandCursor
-                            onClicked: root.expandedAccountId = accountCard.expanded ? "" : accountCard.modelData.id
-                        }
-
-                        Column {
-                            id: accountCol
-                            anchors.fill: parent
-                            anchors.margins: Theme.spacingM
-                            spacing: Theme.spacingXS
-
-                            Item {
-                                width: parent.width
-                                // +5 with the text pinned to the top, so the extra
-                                // height reads as space under the account line
-                                // rather than padding on both sides of it.
-                                height: Math.max(emailText.implicitHeight, planText.implicitHeight) + 5
+                            Column {
+                                id: settingsCol
+                                anchors.fill: parent
+                                anchors.margins: Theme.spacingM
+                                spacing: Theme.spacingS
 
                                 StyledText {
-                                    id: emailText
-                                    anchors.left: parent.left
-                                    anchors.right: planText.left
-                                    anchors.rightMargin: Theme.spacingS
-                                    anchors.top: parent.top
-                                    text: accountCard.modelData.label || accountCard.modelData.id
-                                    elide: Text.ElideMiddle
-                                    font.pixelSize: Theme.fontSizeMedium
+                                    text: "Bar number"
+                                    font.pixelSize: Theme.fontSizeSmall
                                     font.weight: Font.Medium
                                     color: Theme.surfaceText
                                 }
 
                                 StyledText {
-                                    id: planText
-                                    anchors.right: parent.right
-                                    anchors.verticalCenter: emailText.verticalCenter
-                                    text: accountCard.modelData.ok ? (accountCard.modelData.plan || "") : "unavailable"
+                                    width: parent.width
+                                    text: root.headlineMode === "best"
+                                        ? "The account with the most headroom left."
+                                        : (root.headlineMode === "worst"
+                                           ? "The most exhausted account."
+                                           : "Average across accounts, each counted at its tightest limit.")
                                     font.pixelSize: Theme.fontSizeSmall
                                     color: Theme.surfaceVariantText
+                                    wrapMode: Text.WordWrap
                                 }
-                            }
 
-                            // Collapsed: slim one-line-per-window summary.
-                            Repeater {
-                                model: accountCard.expanded ? [] : accountCard.meters
+                                Row {
+                                    id: modeRow
+                                    width: parent.width
+                                    spacing: Theme.spacingXS
 
-                                MeterRow {
-                                    required property var modelData
+                                    Repeater {
+                                        model: [
+                                            { key: "pool", label: "Average" },
+                                            { key: "best", label: "Most left" },
+                                            { key: "worst", label: "Most used" }
+                                        ]
 
-                                    width: accountCol.width
-                                    host: root
-                                    meter: modelData
-                                    ok: accountCard.modelData.ok
+                                        VgsButton {
+                                            required property var modelData
+                                            text: modelData.label
+                                            width: (modeRow.width - Theme.spacingXS * 2) / 3
+                                            backgroundColor: root.headlineMode === modelData.key
+                                                ? Theme.primary : Theme.surfaceContainerHighest
+                                            textColor: root.headlineMode === modelData.key
+                                                ? Theme.primaryText : Theme.surfaceText
+                                            onClicked: root.setHeadlineMode(modelData.key)
+                                        }
+                                    }
                                 }
-                            }
 
-                            // Expanded: the full card treatment, one per window.
-                            Repeater {
-                                model: accountCard.expanded ? accountCard.meters : []
-
-                                MeterCard {
-                                    required property var modelData
-
-                                    width: accountCol.width
-                                    spacing: 2
+                                StyledText {
+                                    text: "Accounts"
+                                    font.pixelSize: Theme.fontSizeSmall
+                                    font.weight: Font.Medium
+                                    color: Theme.surfaceText
+                                    visible: (root.accounts || []).length > 1
                                     topPadding: Theme.spacingXS
-
-                                    host: root
-                                    meter: modelData
-                                    ok: accountCard.modelData.ok
-                                    detailText: modelData.detail ? modelData.detail : root.resetLabel(modelData)
                                 }
-                            }
 
-                            StyledText {
-                                visible: !accountCard.modelData.ok
-                                width: parent.width
-                                text: accountCard.modelData.error || "Usage unavailable"
-                                wrapMode: Text.WordWrap
-                                font.pixelSize: Theme.fontSizeSmall
-                                color: Theme.surfaceVariantText
+                                Repeater {
+                                    model: (root.accounts || []).length > 1
+                                        ? root.orderedAccounts(root.accounts) : []
+
+                                    Item {
+                                        required property var modelData
+                                        width: settingsCol.width
+                                        height: 26
+
+                                        StyledText {
+                                            anchors.left: parent.left
+                                            anchors.right: eyeIcon.left
+                                            anchors.rightMargin: Theme.spacingS
+                                            anchors.verticalCenter: parent.verticalCenter
+                                            text: modelData.label || modelData.id
+                                            elide: Text.ElideMiddle
+                                            font.pixelSize: Theme.fontSizeSmall
+                                            color: root.isHidden(modelData.id) ? Theme.surfaceVariantText
+                                                                               : Theme.surfaceText
+                                        }
+
+                                        VgsIcon {
+                                            id: eyeIcon
+                                            anchors.right: parent.right
+                                            anchors.verticalCenter: parent.verticalCenter
+                                            name: root.isHidden(modelData.id) ? "visibility_off" : "visibility"
+                                            size: Theme.iconSizeSmall
+                                            color: root.isHidden(modelData.id) ? Theme.surfaceVariantText
+                                                                               : Theme.primary
+                                        }
+
+                                        MouseArea {
+                                            anchors.fill: parent
+                                            hoverEnabled: true
+                                            cursorShape: Qt.PointingHandCursor
+                                            onClicked: root.toggleHidden(modelData.id)
+                                        }
+                                    }
+                                }
                             }
                         }
                     }
-                }
-
-                StyledText {
-                    visible: !root.ok
-                    width: parent.width
-                    text: root.errorText || "No data"
-                    wrapMode: Text.WordWrap
-                    font.pixelSize: Theme.fontSizeMedium
-                    color: Theme.surfaceVariantText
                 }
             }
         }
