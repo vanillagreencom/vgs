@@ -18,11 +18,29 @@ Singleton {
     id: root
     readonly property var log: Log.scoped("ScratchpadService")
 
-    // Hyprland is the reference implementation and the only one wired up; Niri
-    // has no special workspaces and needs its own generator. The helper refuses
-    // there too — this flag only keeps the UI honest about it rather than being
-    // the thing that enforces it.
-    readonly property bool supported: CompositorService.isHyprland
+    // Two backends, one schema. Hyprland is the reference implementation; Niri
+    // has its own generator and its own toggle (VGS-83) because it has no
+    // special workspaces — a pad there is a named workspace, not an overlay.
+    // The helper decides for itself which one answers; this flag only keeps the
+    // UI honest rather than being the thing that enforces it.
+    readonly property bool supported: CompositorService.isHyprland || CompositorService.isNiri
+    readonly property bool onNiri: CompositorService.isNiri
+
+    // Settings that are stored and shown but cannot be honoured by the backend
+    // that is actually running. Reported, never silently dropped — a control
+    // that claims a mechanism the compositor does not have is worse than no
+    // control. Populated from the helper, which is the only thing that knows.
+    property var unsupported: []
+
+    // Whether a given pad field does anything on this compositor. Settings uses
+    // it to disable the control rather than let it set a value that is ignored.
+    function fieldSupported(field) {
+        for (const item of (unsupported || [])) {
+            if (item && item.field === field && !item.id)
+                return false;
+        }
+        return true;
+    }
 
     // Last known generation result, so the Settings page can show whether the
     // generated file is actually included by hyprland.lua without shelling out
@@ -420,6 +438,7 @@ Singleton {
                     root._applyAnswered = true;
                     root._applyError = "";
                     root.problems = payload.problems || [];
+                    root.unsupported = payload.scratchpads?.unsupported || [];
                     root.status = Object.assign({}, payload.include || {}, {
                         "path": payload.path || "",
                         "monitorsResolved": payload.scratchpads?.monitorsResolved !== false
@@ -572,6 +591,7 @@ Singleton {
                     const payload = JSON.parse(text);
                     root._statusAnswered = true;
                     root.problems = payload.problems || [];
+                    root.unsupported = payload.unsupported || [];
                     root.status = Object.assign({}, payload.include || {}, {
                         "path": payload.path || "",
                         "monitorsResolved": payload.monitorsResolved !== false

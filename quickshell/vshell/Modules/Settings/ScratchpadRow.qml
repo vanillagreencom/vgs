@@ -328,7 +328,13 @@ Column {
             }
         }
 
+        // Hidden on a compositor that cannot honour it rather than left live
+        // and inert. Niri's window-open animation is global config, so there is
+        // no per-pad entry animation for this control to set — and a control
+        // that claims a mechanism it does not have is worse than no control.
+        // The page's "Not supported on this compositor" card says why.
         SettingsDropdownRow {
+            visible: ScratchpadService.fieldSupported("animation")
             text: I18n.tr("Entry animation")
             options: row.tabRoot ? row.tabRoot.animationOptions : []
             currentValue: row.tabRoot ? row.tabRoot.labelFor(row.tabRoot.animationOptions, row.tabRoot.animationValues, row.pad.animation || "slide-top", 0) : ""
