@@ -110,7 +110,21 @@ Singleton {
         const messageKey = message + level
         const normalizedAction = ToastAction.normalizeAction(action)
 
-        if (level === levelError) {
+        // Whether this call updates the toast already on screen, rather than
+        // queueing a new one.
+        const updatesVisibleToast = !!category && currentCategory === category && toastVisible && currentLevel === level
+
+        // ...and whether that update is a CORRECTION rather than a repeat.
+        // Only a correction may skip the error throttle. The distinction is
+        // whether the content actually changes: replacing a generic failure
+        // with the specific reason is new information the user has not seen,
+        // and throttling it left them holding the vague message forever. The
+        // same message arriving again is a repeat, which is precisely what the
+        // throttle exists for — exempting the whole category let a genuinely
+        // repeating failure spam at whatever rate it recurred.
+        const correctsVisibleToast = updatesVisibleToast && (currentMessage !== message || currentDetails !== (details || ""))
+
+        if (level === levelError && !correctsVisibleToast) {
             const lastTime = lastErrorTime[messageKey] || 0
             if (now - lastTime < errorThrottleMs) {
                 return
@@ -119,7 +133,7 @@ Singleton {
         }
 
         if (category) {
-            if (currentCategory === category && toastVisible && currentLevel === level) {
+            if (updatesVisibleToast) {
                 currentMessage = message
                 currentDetails = details || ""
                 currentCommand = command || ""
