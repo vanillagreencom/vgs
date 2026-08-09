@@ -405,6 +405,21 @@ that returned zero did anything.
 A disabled pad still refuses to reveal and is still allowed to hide, so
 disabling a visible pad cannot strand it.
 
+**On Niri a hide is confirmed against outputs, not just focus.** A pad whose
+workspace is still the active one on the output the user is looking at has not
+been hidden. But when focus has moved to a *different* output, the pad's own
+output goes on showing its active workspace — there is no overlay to pull away,
+so that is the whole of what a hide can do, and it reports success while naming
+the output the pad is still on. Treating that as failure told every
+multi-monitor user that every hide had failed, which matters now that Settings
+gates on the result. A workspace list that cannot be read confirms nothing and
+is reported as such, never as success.
+
+The reveal origin is **read before the hide and consumed only once it is
+confirmed** — the same rule as release. A hide that fails leaves the pad on
+screen and the retry still needs somewhere to hand focus back to, so spending
+the origin up front destroys the information on the one path that needs it.
+
 `vshell scratchpad hide [--keep-focus]` reaches both backends with the same
 flags, and **where focus lands after a hide is one shared decision**
 (`_scratchpad_restore_target`): a keybind hide returns to whatever the pad was

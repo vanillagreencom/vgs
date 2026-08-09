@@ -11184,11 +11184,16 @@ def scratchpad_toggle_niri(pad_id: str, reveal_only: bool = False, launch_only: 
                 if focused_id and not _scratchpad_niri_window_on_pad(pad_id, focused_id):
                     keep_target = str(focused_id)
 
-            previous = ""
+            # READ here, CONSUMED only once the hide is confirmed, below. A hide
+            # that fails leaves the pad on screen and the next attempt still
+            # needs somewhere to hand focus back to; spending the origin up
+            # front destroys that on the one path that needs it. Same rule the
+            # Hyprland backend follows, and the same shape as release: act on
+            # the record only after the thing it describes has succeeded.
+            origin = ""
             if state_file.exists():
-                previous = state_file.read_text().strip()
-                state_file.unlink(missing_ok=True)
-            previous = _scratchpad_restore_target(keep_focus, previous, keep_target)
+                origin = state_file.read_text().strip()
+            previous = _scratchpad_restore_target(keep_focus, origin, keep_target)
 
             restored = False
             if previous.isdigit():
@@ -11207,16 +11212,44 @@ def scratchpad_toggle_niri(pad_id: str, reveal_only: bool = False, launch_only: 
                         "error": f"{pad['name']}: could not focus away from the pad's workspace"}
             # Confirmed by reading the state back, not inferred from the call:
             # an action can return zero and leave the pad exactly where it was.
-            #
-            # The test is VISIBILITY, not focus. A workspace that is still the
-            # active one on its output is still on screen even when focus has
-            # moved elsewhere — which is precisely what happens when the window
-            # focus was restored to lands on a DIFFERENT output. Checking focus
-            # alone reported "hidden" with the pad still displayed.
-            still_on = _scratchpad_niri_visible_output(pad_id)
+            # One snapshot answers both questions below, so they cannot disagree.
+            after = _niri_msg_json("workspaces")
+            if not isinstance(after, list):
+                # The hide cannot be confirmed. Not claimed as success — and the
+                # origin is not consumed, because a retry will need it.
+                return {"ok": False, "id": pad_id, "action": "hide-unconfirmed",
+                        "error": f"{pad['name']}: could not read the workspace list to "
+                                 f"confirm the pad was hidden"}
+            name = scratchpad_niri_workspace(pad_id)
+            pad_workspace = next((w for w in after if isinstance(w, dict)
+                                  and str(w.get("name") or "") == name), None)
+            still_on = ""
+            if pad_workspace and pad_workspace.get("is_active"):
+                still_on = str(pad_workspace.get("output") or "")
+            focused_output = next((str(w.get("output") or "") for w in after
+                                   if isinstance(w, dict) and w.get("is_focused")), "")
+
             if still_on:
-                return {"ok": False, "id": pad_id, "action": "hide-failed",
-                        "error": f"{pad['name']}: the pad is still displayed on {still_on}"}
+                # The pad's workspace is STILL the active one on `still_on`.
+                #
+                # On one output that means the hide did not happen and the user
+                # is looking straight at the pad they asked to dismiss.
+                #
+                # Across outputs it is simply what Niri does. There is no
+                # overlay to pull away: focus moved to another output and the
+                # pad's own output goes on showing its active workspace. Focus
+                # having genuinely landed elsewhere is the whole of what a hide
+                # can do here, so reporting failure told a multi-monitor user
+                # every hide had failed — and now that Settings gates on this
+                # result, a false failure is no longer harmless.
+                if not focused_output or focused_output == still_on:
+                    return {"ok": False, "id": pad_id, "action": "hide-failed",
+                            "error": f"{pad['name']}: the pad is still displayed on {still_on}"}
+                state_file.unlink(missing_ok=True)
+                return {"ok": True, "action": "hidden", "id": pad_id,
+                        "focusedBack": previous, "stillDisplayedOn": still_on}
+
+            state_file.unlink(missing_ok=True)
             return {"ok": True, "action": "hidden", "id": pad_id, "focusedBack": previous}
 
         window = _scratchpad_niri_find_window(pad)

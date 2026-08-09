@@ -4554,6 +4554,129 @@ def test_scratchpad_preload_reports_a_failed_placement():
          helper._scratchpad_place_workspace, helper._scratchpad_reassert) = hypr
 
 
+def _niri_hide_harness(still_active_after, focused_output_after, pad_output="DP-2"):
+    """Stub a Niri session for the hide path.
+
+    The pad starts VISIBLE on `pad_output` — otherwise the hide branch is never
+    entered — and the workspace state flips to the given post-state when the
+    focus action runs, which is what the confirmation reads back."""
+    state = {"done": False}
+    actions = []
+
+    def action(*a):
+        actions.append(a)
+        if a and a[0] in ("focus-window", "focus-workspace-previous"):
+            state["done"] = True
+        return True
+
+    def fake_json(*args):
+        if args and args[0] == "windows":
+            return [{"id": 7, "app_id": "com.ghostty.scratchpad", "workspace_id": 9}]
+        if args and args[0] != "workspaces":
+            return None
+        if not state["done"]:
+            # Before: the pad is up and focused on its own output.
+            return [{"id": 9, "name": "vgs-term", "idx": 3, "output": pad_output,
+                     "is_active": True, "is_focused": True}]
+        rows = [{"id": 9, "name": "vgs-term", "idx": 3, "output": pad_output,
+                 "is_active": still_active_after,
+                 "is_focused": focused_output_after == pad_output}]
+        if focused_output_after and focused_output_after != pad_output:
+            rows.append({"id": 1, "name": "", "idx": 1, "output": focused_output_after,
+                         "is_active": True, "is_focused": True})
+        return rows
+
+    helper._niri_session_ready = lambda: True
+    helper._niri_scratchpad_action = action
+    helper.load_scratchpads = lambda *a, **k: [_pad(id="term")]
+    helper._niri_msg_json = fake_json
+    return actions
+
+
+def test_scratchpad_niri_hide_succeeds_when_focus_left_for_another_output():
+    """A pad whose workspace stays active on ITS output while focus moves to a
+    different one has been hidden as far as Niri allows: there is no overlay to
+    pull away, so the pad's own output goes on showing its active workspace.
+
+    Reporting failure there told every multi-monitor user that every hide had
+    failed — and Settings now gates on this result, so a false failure is no
+    longer harmless. The single-output case must still fail, because there the
+    user is looking straight at the pad they asked to dismiss."""
+    originals = (helper._niri_session_ready, helper._niri_msg_json,
+                 helper._niri_scratchpad_action, helper.load_scratchpads)
+    try:
+        # Cross-output: pad still on DP-2, focus now on DP-1.
+        _niri_hide_harness(still_active_after=True, focused_output_after="DP-1")
+        with _scratchpad_state_sandbox() as sandbox:
+            (sandbox / "term.niri-focus").write_text("7")
+            result = helper.scratchpad_toggle_niri("term")
+            assert_equal(result["ok"], True, "focus moved to another output is a successful hide")
+            assert_equal(result["stillDisplayedOn"], "DP-2",
+                         "and says the pad is still on its own output rather than hiding that")
+            assert not (sandbox / "term.niri-focus").exists(), \
+                "a confirmed hide consumes the origin"
+
+        # Same output: the pad is still in front of the user. Still a failure.
+        _niri_hide_harness(still_active_after=True, focused_output_after="DP-2")
+        with _scratchpad_state_sandbox() as sandbox:
+            (sandbox / "term.niri-focus").write_text("7")
+            same = helper.scratchpad_toggle_niri("term")
+            assert_equal(same["ok"], False, "a pad still displayed on the focused output is not hidden")
+            assert_equal(same["action"], "hide-failed", "and says so")
+
+        # Gone from every output: the ordinary success.
+        _niri_hide_harness(still_active_after=False, focused_output_after="DP-1")
+        with _scratchpad_state_sandbox() as sandbox:
+            (sandbox / "term.niri-focus").write_text("7")
+            gone = helper.scratchpad_toggle_niri("term")
+            assert_equal(gone["ok"], True, "a pad off every output is hidden")
+            assert "stillDisplayedOn" not in gone, "with nothing left displayed to report"
+    finally:
+        (helper._niri_session_ready, helper._niri_msg_json,
+         helper._niri_scratchpad_action, helper.load_scratchpads) = originals
+
+
+def test_scratchpad_niri_failed_hide_keeps_the_reveal_origin():
+    """The origin is what a retry needs. Deleting it before the hide is
+    confirmed means each failed attempt permanently loses where the pad came
+    from — and the two defects compounded: cross-output hides always reported
+    failure, so every one of them destroyed the origin.
+
+    Same rule as release: act on the record only after the thing it describes
+    has succeeded."""
+    originals = (helper._niri_session_ready, helper._niri_msg_json,
+                 helper._niri_scratchpad_action, helper.load_scratchpads)
+    try:
+        # A hide that fails: the pad is still on the focused output.
+        _niri_hide_harness(still_active_after=True, focused_output_after="DP-2")
+        with _scratchpad_state_sandbox() as sandbox:
+            origin = sandbox / "term.niri-focus"
+            origin.write_text("7")
+            failed = helper.scratchpad_toggle_niri("term")
+            assert_equal(failed["ok"], False, "the hide failed")
+            assert origin.exists(), "and the origin survives, so a retry still knows where to go"
+            assert_equal(origin.read_text(), "7", "unchanged")
+
+        # A hide that cannot be CONFIRMED keeps it too: unknown is not success,
+        # and is not a reason to spend the origin either.
+        helper._niri_msg_json = lambda *a: ([{"id": 7, "app_id": "x", "workspace_id": 9}]
+                                            if a and a[0] == "windows" else None)
+        helper._scratchpad_niri_visible_output = lambda pad_id: "DP-2"
+        try:
+            with _scratchpad_state_sandbox() as sandbox:
+                origin = sandbox / "term.niri-focus"
+                origin.write_text("7")
+                blind = helper.scratchpad_toggle_niri("term")
+                assert_equal(blind["ok"], False, "an unconfirmable hide is not a success")
+                assert_equal(blind["action"], "hide-unconfirmed", "and says which")
+                assert origin.exists(), "the origin is kept for the retry"
+        finally:
+            del helper._scratchpad_niri_visible_output
+    finally:
+        (helper._niri_session_ready, helper._niri_msg_json,
+         helper._niri_scratchpad_action, helper.load_scratchpads) = originals
+
+
 def test_scratchpad_niri_generated_kdl_parses():
     """Parse what we wrote. A structural error here is a config niri refuses at
     startup, which on this compositor breaks far more than the scratchpad."""
@@ -5659,6 +5782,8 @@ def main():
     test_scratchpad_niri_hide_honours_the_same_flags()
     test_scratchpad_release_refuses_when_it_could_not_look()
     test_scratchpad_preload_reports_a_failed_placement()
+    test_scratchpad_niri_hide_succeeds_when_focus_left_for_another_output()
+    test_scratchpad_niri_failed_hide_keeps_the_reveal_origin()
     test_scratchpad_niri_generated_kdl_parses()
     test_scratchpad_compositor_detection_reads_the_session_not_the_binary()
     test_scratchpad_target_monitor_resolves_against_connected_outputs()
