@@ -4230,6 +4230,133 @@ def test_scratchpad_reveal_reports_failed_dispatches():
         helper._scratchpad_session_ready = original_ready
 
 
+def test_scratchpad_reassert_clears_fullscreen_for_other_modes():
+    """VGS-90: switching a mapped pad from fullscreen to float or tile left the
+    fullscreen state set, so the pad went on covering its workspace and every
+    size/move dispatch was applied to a window whose geometry fullscreen
+    overrides — the setting changed and nothing visible did."""
+    originals = (helper._scratchpad_dispatch, helper._scratchpad_visible_monitor,
+                 helper._scratchpad_workspace_monitor, helper.scratchpad_monitors,
+                 helper._scratchpad_find_window)
+    dispatched = []
+    helper._scratchpad_dispatch = lambda *args: (dispatched.append(args), True)[1]
+    helper._scratchpad_visible_monitor = lambda pad_id: "DP-1"
+    helper._scratchpad_workspace_monitor = lambda pad_id: "DP-1"
+    helper.scratchpad_monitors = lambda: ([_monitor("DP-1", focused=True)], True)
+    try:
+        # Float: fullscreen must be cleared, and before the geometry dispatches.
+        helper._scratchpad_find_window = lambda pad: {"address": "0xaaa", "size": [1, 1], "at": [1, 1]}
+        dispatched.clear()
+        helper._scratchpad_reassert(_pad(presentation="float"), "0xaaa")
+        verbs = [d[0] for d in dispatched]
+        assert "fullscreenstate" in verbs, f"float must clear fullscreen, got {verbs}"
+        assert_equal(dispatched[0], ("fullscreenstate", "0 -1,address:0xaaa"),
+                     "cleared FIRST, or the size/move below act on a fullscreen window")
+        assert verbs.index("fullscreenstate") < verbs.index("setfloating"), \
+            f"cleared before setfloating, got {verbs}"
+
+        # Tile: same requirement.
+        dispatched.clear()
+        helper._scratchpad_reassert(_pad(presentation="tile"), "0xaaa")
+        verbs = [d[0] for d in dispatched]
+        assert_equal(dispatched[0], ("fullscreenstate", "0 -1,address:0xaaa"),
+                     "tile must clear fullscreen first too")
+        assert "settiled" in verbs, f"and still tile, got {verbs}"
+
+        # Fullscreen: sets it, and must not clear it.
+        dispatched.clear()
+        helper._scratchpad_reassert(_pad(presentation="fullscreen"), "0xaaa")
+        assert_equal(dispatched, [("fullscreenstate", "2 -1,address:0xaaa")],
+                     "a fullscreen pad sets fullscreen and nothing else")
+    finally:
+        (helper._scratchpad_dispatch, helper._scratchpad_visible_monitor,
+         helper._scratchpad_workspace_monitor, helper.scratchpad_monitors,
+         helper._scratchpad_find_window) = originals
+
+
+def test_scratchpad_show_does_not_disturb_focus_restore():
+    """VGS-90: `show` on an ALREADY-VISIBLE pad reached the reveal path and
+    overwrote the stored focus-restore target — very often with the pad's own
+    window, since it is visible and focused. The next hide then "restored" focus
+    to the window it had just hidden."""
+    originals = (helper.load_scratchpads, helper._scratchpad_visible_monitor,
+                 helper._scratchpad_find_window, helper._scratchpad_dispatch,
+                 helper._hyprctl_json, helper._scratchpad_session_ready,
+                 helper._scratchpad_place_workspace, helper._scratchpad_reassert)
+
+    pad = _pad(id="term")
+    helper.load_scratchpads = lambda *a, **k: [pad]
+    helper._scratchpad_find_window = lambda p: {"address": "0xpad", "workspace": {"name": "special:term"}}
+    helper._scratchpad_dispatch = lambda *args: True
+    helper._scratchpad_place_workspace = lambda *a, **k: True
+    helper._scratchpad_reassert = lambda *a, **k: {"applied": True}
+    helper._scratchpad_session_ready = lambda: True
+    # The pad's own window is what is focused while the pad is on screen.
+    helper._hyprctl_json = lambda *args: {"address": "0xpad"} if args and args[0] == "activewindow" else None
+    try:
+        state_file = helper._scratchpad_state_dir() / "term.focus"
+        state_file.write_text("0xorigin")
+
+        # show on a visible pad: the remembered origin must survive untouched.
+        helper._scratchpad_visible_monitor = lambda pad_id: "DP-1"
+        result = helper.scratchpad_toggle("term", reveal_only=True)
+        assert_equal(result["ok"], True, "show on a visible pad still succeeds")
+        assert_equal(state_file.read_text(), "0xorigin",
+                     "the focus origin from the reveal that opened it must survive")
+
+        # A genuine reveal (pad hidden) does record the origin — otherwise the
+        # fix would have removed focus restore altogether.
+        visible = {"n": 0}
+
+        def visible_after_toggle(pad_id):
+            visible["n"] += 1
+            return "" if visible["n"] == 1 else "DP-1"
+
+        helper._scratchpad_visible_monitor = visible_after_toggle
+        state_file.write_text("0xstale")
+        helper.scratchpad_toggle("term")
+        assert_equal(state_file.read_text(), "0xpad",
+                     "a real reveal still records what to hand focus back to")
+        state_file.unlink(missing_ok=True)
+    finally:
+        (helper.load_scratchpads, helper._scratchpad_visible_monitor,
+         helper._scratchpad_find_window, helper._scratchpad_dispatch,
+         helper._hyprctl_json, helper._scratchpad_session_ready,
+         helper._scratchpad_place_workspace, helper._scratchpad_reassert) = originals
+
+
+def test_monitor_logical_size_degrades_on_unusable_scale():
+    """VGS-90: NaN and infinity survive float() — `float("nan")` raises nothing
+    and `nan <= 0` is False — so a monitor reporting a non-numeric scale carried
+    NaN into `int(round(width / nan))`, which raises and took the geometry path
+    down with it. A failed query is not a negative answer."""
+    for label, scale in [("NaN", float("nan")), ("'nan'", "nan"), ("infinity", float("inf")),
+                         ("negative", -2.0), ("garbage", "big"), ("zero", 0), ("empty", "")]:
+        size = helper.monitor_logical_size(
+            {"name": "DP-1", "width": 1920, "height": 1080, "scale": scale})
+        assert_equal(size, (1920, 1080), f"a {label} scale degrades to 1 rather than raising")
+
+    # An absent scale is the ordinary case and must behave identically.
+    assert_equal(helper.monitor_logical_size({"name": "DP-1", "width": 1920, "height": 1080}),
+                 (1920, 1080), "a missing scale is 1")
+
+    # Usable scales are still honoured — the guard must not flatten everything.
+    assert_equal(helper.monitor_logical_size(
+        {"name": "DP-1", "width": 3840, "height": 2160, "scale": 2.0}), (1920, 1080),
+        "a real scale still divides")
+    assert_equal(helper.monitor_logical_size(
+        {"name": "DP-1", "width": 2880, "height": 1800, "scale": 1.5}), (1920, 1200),
+        "a fractional scale still divides")
+
+    # A geometry resolution over such a monitor must complete, not raise: that
+    # is the path the crash actually took out.
+    geometry = helper.resolve_scratchpad_geometry(
+        _pad(widthPercent=60, heightPercent=70),
+        {"name": "DP-1", "width": 1920, "height": 1080, "scale": float("nan")})
+    assert_equal((geometry["width"], geometry["height"]), (1152, 756),
+                 "geometry resolves over a NaN-scale monitor")
+
+
 def main():
     # A catalog download is minutes to hours of network transfer. Holding the
     # exclusive theme lock for that long would block applies, the light/dark
@@ -4340,6 +4467,9 @@ def main():
     test_scratchpad_hide_focus_target_depends_on_who_asked()
     test_scratchpad_rejections_are_named_not_silent()
     test_scratchpad_reveal_reports_failed_dispatches()
+    test_scratchpad_reassert_clears_fullscreen_for_other_modes()
+    test_scratchpad_show_does_not_disturb_focus_restore()
+    test_monitor_logical_size_degrades_on_unusable_scale()
     subprocess.run(
         [sys.executable, str(REPO_ROOT / "scripts" / "check-vshell-niri.py")],
         check=True,

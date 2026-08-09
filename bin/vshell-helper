@@ -9267,16 +9267,28 @@ def monitor_logical_size(monitor: Dict[str, Any]) -> Tuple[int, int]:
     `scale`; every coordinate a window rule or a dispatch uses is logical. A pad
     sized as a percentage of a 3840x2160 monitor at scale 2 must be a percentage
     of 1920x1080, not of the mode."""
-    try:
-        scale = float(monitor.get("scale") or 1.0)
-    except (TypeError, ValueError):
-        scale = 1.0
-    if scale <= 0:
-        scale = 1.0
+    # NaN and infinity survive float() — `float("nan")` raises nothing, and
+    # `nan <= 0` is False — so a monitor reporting a non-numeric scale used to
+    # carry NaN all the way to `int(round(width / nan))`, which raises and takes
+    # the whole geometry path down with it. This subsystem's rule elsewhere is
+    # that a failed query is not a negative answer: degrade to a sane default
+    # and say so, rather than crashing on data the compositor handed us.
+    scale = 1.0
+    raw_scale = monitor.get("scale")
+    if raw_scale is not None:
+        try:
+            candidate = float(raw_scale)
+        except (TypeError, ValueError):
+            candidate = 0.0
+        if math.isfinite(candidate) and candidate > 0:
+            scale = candidate
+        elif raw_scale not in (0, 0.0, "", None):
+            eprint(f"monitor {monitor.get('name') or '?'}: unusable scale {raw_scale!r}; assuming 1")
+
     try:
         width = int(monitor.get("width") or 0)
         height = int(monitor.get("height") or 0)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return (0, 0)
     # Hyprland rotates the logical box with the transform; odd transforms
     # (90/270 and their flipped forms) swap width and height.
@@ -9727,6 +9739,19 @@ def _scratchpad_reassert(pad: Dict[str, Any], address: str) -> Dict[str, Any]:
     if pad["presentation"] == "fullscreen":
         _scratchpad_dispatch("fullscreenstate", f"2 -1,{selector}")
         return {"applied": True, "mode": "fullscreen", "monitor": monitor_name}
+
+    # Everything below wants a NON-fullscreen window. Changing a mapped pad from
+    # fullscreen to float or tile left the fullscreen state set, so the pad went
+    # on covering its workspace and every size/move dispatch below was applied
+    # to a window whose geometry fullscreen overrides — the setting changed and
+    # nothing visible did. `scratchpad_release` drops it before moving a window
+    # for exactly this reason.
+    #
+    # Unconditional rather than conditional on the window's current state: the
+    # dispatch is idempotent, and reading the state back first would cost a
+    # query on every reveal to save nothing.
+    _scratchpad_dispatch("fullscreenstate", f"0 -1,{selector}")
+
     if pad["presentation"] == "tile":
         _scratchpad_dispatch("settiled", selector)
         return {"applied": True, "mode": "tile", "monitor": monitor_name}
@@ -9791,11 +9816,9 @@ def scratchpad_toggle(pad_id: str, reveal_only: bool = False, launch_only: bool 
         # Hiding is still allowed, and deliberately so: a pad disabled while it
         # was on screen would otherwise be stranded visible with no keybind left
         # to dismiss it, which is a worse outcome than the one being fixed.
-        if not pad["enabled"]:
-            hiding = bool(visible_on) and not reveal_only and not launch_only
-            if not hiding:
-                return {"ok": False, "id": pad_id, "action": "disabled",
-                        "error": f"{pad['name']} is disabled"}
+        if not pad["enabled"] and not hiding:
+            return {"ok": False, "id": pad_id, "action": "disabled",
+                    "error": f"{pad['name']} is disabled"}
 
         if visible_on and not reveal_only and not launch_only:
             # Where focus has to end up, decided BEFORE anything moves it.
@@ -9888,9 +9911,17 @@ def scratchpad_toggle(pad_id: str, reveal_only: bool = False, launch_only: bool 
                     "launched": launched, "membership": membership,
                     "reassert": reassert}
 
-        active = _hyprctl_json("activewindow")
-        if isinstance(active, dict) and active.get("address"):
-            state_file.write_text(str(active["address"]))
+        # Remember what to hand focus back to on hide — but ONLY when this call
+        # actually changes visibility. `show` on a pad that is already on screen
+        # reaches here too, and at that point the focused window is very often
+        # the pad's own: recording it would make the next hide "restore" focus to
+        # the window it just hid. An already-visible pad is a no-op for focus
+        # bookkeeping, so the origin captured by the reveal that opened it
+        # survives.
+        if not visible_on:
+            active = _hyprctl_json("activewindow")
+            if isinstance(active, dict) and active.get("address"):
+                state_file.write_text(str(active["address"]))
 
         # Every step below is checked. Reporting success after a dispatch that
         # failed means a toggle that revealed nothing is indistinguishable from
