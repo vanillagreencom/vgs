@@ -32,6 +32,13 @@ def load_helper():
 
 helper = load_helper()
 
+# Several tests swap HOME to a TemporaryDirectory, and check-vshell-niri.py --
+# which main() runs as a subprocess at the end -- reads os.environ["HOME"] and
+# passes it to children. A test that leaked a deleted temp HOME would surface
+# as an unexplained failure in the NIRI suite, pointing at the wrong file
+# entirely. Recorded here so main() can name the real cause instead.
+_HOME_AT_IMPORT = os.environ.get("HOME")
+
 
 def assert_equal(actual, expected, message):
     if actual != expected:
@@ -2806,6 +2813,7 @@ def _rd_lifecycle(output_present, hyprctl_ok=True, unit_running=False, systemctl
     originals = {name: getattr(helper, name) for name in (
         "run", "_systemctl_user", "_rd_output_present", "_rd_unit_state",
         "detect_compositor", "remote_desktop_status", "_rd_hypr_instance",
+        "_rd_manages_output",
     )}
     state = {"present": output_present}
 
@@ -2837,6 +2845,9 @@ def _rd_lifecycle(output_present, hyprctl_ok=True, unit_running=False, systemctl
         "known": True, "error": "", "exists": True, "running": unit_running,
     }
     helper.detect_compositor = lambda: {"compositor": "hyprland", "source": "test"}
+    helper._rd_manages_output = lambda: {
+        "manages": True, "compositor": "hyprland", "blocked": False, "reason": "",
+    }
     helper.remote_desktop_status = lambda: {"stubbed": True}
     helper._rd_hypr_instance = lambda: instance
 
@@ -3155,7 +3166,7 @@ def test_remote_desktop_unit_query_failure_is_not_a_missing_unit():
     # The status payload routes it to unknown, never to unavailable.
     originals = {n: getattr(helper, n) for n in ("_rd_unit_state", "detect_compositor", "_rd_paired_clients", "_rd_web_host")}
     helper.detect_compositor = lambda: {"compositor": "niri", "source": "test"}
-    helper._rd_paired_clients = lambda: []
+    helper._rd_paired_clients = lambda: {"names": [], "known": True, "error": ""}
     helper._rd_web_host = lambda: "localhost"
     try:
         helper._rd_unit_state = lambda: {"known": False, "error": "bus is gone", "exists": False, "running": False}
@@ -3210,21 +3221,174 @@ def test_remote_desktop_paired_clients_reads_only_names():
         }))
         old_xdg = os.environ.pop("XDG_CONFIG_HOME", None)
         try:
-            names = helper._rd_paired_clients()
+            result = helper._rd_paired_clients()
         finally:
             if old_xdg is not None:
                 os.environ["XDG_CONFIG_HOME"] = old_xdg
         # Only names, and only usable ones. The same file holds the Web UI
         # credential hash and salt; nothing but `name` may leave this function.
-        assert_equal(names, ["mbp-1"], "only non-blank device names are returned")
-        for name in names:
+        assert_equal(result["names"], ["mbp-1"], "only non-blank device names are returned")
+        assert_equal(result["known"], True, "a well-formed file is an answer")
+        for name in result["names"]:
             if "SALT" in name or "HASH" in name:
                 raise AssertionError("credential material must never reach the payload")
 
     with_temp_home(check)
 
-    # A machine with no Sunshine config is not an error, just an empty list.
-    with_temp_home(lambda home: assert_equal(helper._rd_paired_clients(), [], "no state file means no paired clients"))
+    # A machine with no Sunshine config is not an error, just an empty list --
+    # and it is an ANSWER, not an unknown.
+    def check_absent(home):
+        result = helper._rd_paired_clients()
+        assert_equal(result["names"], [], "no state file means no paired clients")
+        assert_equal(result["known"], True, "and an absent file is still an answer")
+
+    with_temp_home(check_absent)
+
+
+def test_remote_desktop_malformed_state_degrades_rather_than_raising():
+    # U2. `remote_desktop_status()` used to raise straight out of here on a
+    # state file that decoded as JSON but had another shape, so ONE malformed
+    # field took the host and session state down with it and the widget lost
+    # everything. Unparseable state is unknown by this subsystem's own model,
+    # not fatal.
+    malformed = {
+        "a JSON array": "[]",
+        "a JSON scalar": "5",
+        "a JSON string": '"nope"',
+        "null": "null",
+        "root is a string": '{"root": "nope"}',
+        "root is a list": '{"root": []}',
+        "named_devices is a string": '{"root": {"named_devices": "mbp-1"}}',
+        "named_devices is an object": '{"root": {"named_devices": {"a": 1}}}',
+        "not JSON at all": "{ this is not json",
+    }
+
+    def check(home: Path):
+        config = home / ".config" / "sunshine"
+        config.mkdir(parents=True)
+        state = config / "sunshine_state.json"
+        old_xdg = os.environ.pop("XDG_CONFIG_HOME", None)
+        try:
+            for label, body in malformed.items():
+                state.write_text(body)
+                try:
+                    result = helper._rd_paired_clients()
+                except Exception as exc:  # noqa: BLE001 - the whole point
+                    raise AssertionError(f"{label} must not raise: {exc!r}") from exc
+                assert_equal(result["names"], [], f"{label}: no names can be read")
+                assert_equal(result["known"], False, f"{label}: and the answer is unknown, not empty")
+                if not result["error"]:
+                    raise AssertionError(f"{label}: the reason must survive to the caller")
+
+            # Shapes that are legitimately empty are ANSWERS, not unknowns: a
+            # state file with no paired devices yet is well-formed.
+            for label, body in {
+                "no root yet": '{"username": "method"}',
+                "no named_devices yet": '{"root": {"uniqueid": "X"}}',
+                "an empty device list": '{"root": {"named_devices": []}}',
+            }.items():
+                state.write_text(body)
+                result = helper._rd_paired_clients()
+                assert_equal(result["names"], [], f"{label}: no devices")
+                assert_equal(result["known"], True, f"{label}: but that IS the answer")
+
+            # A malformed entry inside a well-formed list is skipped without
+            # discarding its neighbours.
+            state.write_text(json.dumps({"root": {"named_devices": [
+                "not-an-object", {"name": "mbp-1"}, {"cert": "no name"}, None, {"name": 7},
+            ]}}))
+            result = helper._rd_paired_clients()
+            assert_equal(result["names"], ["mbp-1"], "usable entries survive unusable neighbours")
+            assert_equal(result["known"], True, "a readable list with junk entries is still readable")
+        finally:
+            if old_xdg is not None:
+                os.environ["XDG_CONFIG_HOME"] = old_xdg
+
+    with_temp_home(check)
+
+    # And the whole status payload survives it: the other fields are still
+    # there, which is the actual regression.
+    originals = {n: getattr(helper, n) for n in
+                 ("_rd_unit_state", "_rd_manages_output", "_rd_paired_clients", "_rd_web_host")}
+    helper._rd_unit_state = lambda: {"known": True, "error": "", "exists": True, "running": False}
+    helper._rd_manages_output = lambda: {"manages": False, "compositor": "niri", "blocked": False, "reason": ""}
+    helper._rd_web_host = lambda: "localhost"
+    helper._rd_paired_clients = lambda: {"names": [], "known": False, "error": "the Sunshine state file is not an object"}
+    try:
+        status = helper.remote_desktop_status()
+    finally:
+        for name, value in originals.items():
+            setattr(helper, name, value)
+    assert_equal(status["state"], "stopped", "the host state survives a malformed paired list")
+    assert_equal(status["pairedClientsKnown"], False, "only the paired axis goes unknown")
+    assert_equal(status["pairedClients"], [], "and it carries no invented names")
+    if "not an object" not in status["pairedClientsError"]:
+        raise AssertionError(f"the reason must reach the payload: {status['pairedClientsError']!r}")
+
+
+def test_remote_desktop_unknown_compositor_is_probed_not_assumed():
+    # U1. detect_compositor() answers from THIS process's environment, and an
+    # ssh session has none of it -- so it says "unknown". Treating that as "not
+    # Hyprland" skipped the virtual output on exactly the path a remote-desktop
+    # host is most likely to be started from, and the capture fell back to a
+    # real monitor with nothing to say so.
+    originals = {n: getattr(helper, n) for n in
+                 ("detect_compositor", "command_exists", "_rd_hypr_env", "run")}
+    try:
+        # A detected compositor is taken at its word, both ways.
+        helper.detect_compositor = lambda: {"compositor": "hyprland", "source": "test"}
+        assert_equal(helper._rd_manages_output()["manages"], True, "detected Hyprland manages the output")
+
+        helper.detect_compositor = lambda: {"compositor": "niri", "source": "test"}
+        managed = helper._rd_manages_output()
+        assert_equal(managed["manages"], False, "niri manages no virtual output")
+        assert_equal(managed["blocked"], False, "and that is a definite answer, not a refusal")
+
+        helper.detect_compositor = lambda: {"compositor": "unknown", "source": "none"}
+
+        # Unknown + no hyprctl at all -> definitely not Hyprland. Proceed.
+        helper.command_exists = lambda name: False
+        managed = helper._rd_manages_output()
+        assert_equal(managed["manages"], False, "no hyprctl means no Hyprland")
+        assert_equal(managed["blocked"], False, "and the host may still start")
+
+        # Unknown + hyprctl but no running instance -> same.
+        helper.command_exists = lambda name: True
+        helper._rd_hypr_env = lambda: {}
+        managed = helper._rd_manages_output()
+        assert_equal(managed["manages"], False, "no instance means no running Hyprland")
+        assert_equal(managed["blocked"], False, "and the host may still start")
+
+        # Unknown + an instance resolvable from the runtime dir + hyprctl
+        # answers -> this IS Hyprland, reached over ssh. THE FIX.
+        helper._rd_hypr_env = lambda: {"HYPRLAND_INSTANCE_SIGNATURE": "sig"}
+        helper.run = lambda argv, **kwargs: subprocess.CompletedProcess(argv, 0, "{}", "")
+        managed = helper._rd_manages_output()
+        assert_equal(managed["manages"], True, "an ssh start must still create the virtual output")
+        assert_equal(managed["compositor"], "hyprland", "and it is reported as Hyprland")
+
+        # Unknown + an instance present but hyprctl unreachable -> refuse.
+        # There is a Hyprland session here and we cannot talk to it, so a real
+        # monitor cannot be ruled out.
+        helper.run = lambda argv, **kwargs: subprocess.CompletedProcess(argv, 1, "", "Couldn't connect")
+        managed = helper._rd_manages_output()
+        assert_equal(managed["manages"], False, "an unreachable instance manages nothing")
+        assert_equal(managed["blocked"], True, "and it must block the start rather than guess")
+    finally:
+        for name, value in originals.items():
+            setattr(helper, name, value)
+
+    # start honours the refusal without touching the compositor.
+    with _rd_lifecycle(output_present=False) as (calls, state):
+        helper._rd_manages_output = lambda: {
+            "manages": False, "compositor": "unknown", "blocked": True,
+            "reason": "a Hyprland instance is running but hyprctl could not be reached",
+        }
+        result = helper.remote_desktop_start()
+    assert_equal(result["ok"], False, "a blocked compositor probe must not start the host")
+    assert_equal(calls, [], "and must create nothing and start nothing")
+    if not any("capture a real monitor" in failure for failure in result["failures"]):
+        raise AssertionError(f"the refusal must name the risk: {result['failures']!r}")
 
 
 def test_remote_desktop_watch_tokens_cover_every_event():
@@ -3334,6 +3498,15 @@ def main():
     test_remote_desktop_journal_window_never_falls_back_to_unbounded_history()
     test_remote_desktop_unit_query_failure_is_not_a_missing_unit()
     test_remote_desktop_start_refuses_when_the_unit_query_fails()
+    test_remote_desktop_malformed_state_degrades_rather_than_raising()
+    test_remote_desktop_unknown_compositor_is_probed_not_assumed()
+    # Fail here, with the reason, rather than in the Niri suite with none.
+    if os.environ.get("HOME") != _HOME_AT_IMPORT:
+        raise AssertionError(
+            "a test leaked its temporary HOME: expected "
+            f"{_HOME_AT_IMPORT!r}, found {os.environ.get('HOME')!r}. "
+            "check-vshell-niri.py reads HOME, so this would have failed there instead."
+        )
     subprocess.run(
         [sys.executable, str(REPO_ROOT / "scripts" / "check-vshell-niri.py")],
         check=True,

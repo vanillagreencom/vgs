@@ -12396,6 +12396,55 @@ def _rd_output_present() -> Any:
     return any(isinstance(m, dict) and m.get("name") == RD_OUTPUT for m in monitors)
 
 
+def _rd_manages_output() -> Dict[str, Any]:
+    """Whether VGS can manage the virtual output here, and why not if it cannot.
+
+    `detect_compositor()` answers from THIS process's environment, and an ssh
+    session has none of it -- no Wayland socket owner, no instance signature --
+    so it reports "unknown". Treating unknown as "not Hyprland" is how starting
+    the host over ssh skipped the output entirely and let the capture fall back
+    to a real monitor. Starting over ssh is a PRIMARY way a remote-desktop host
+    gets used, so that is not an edge case.
+
+    Unknown therefore means ASK, using the same ssh-aware environment
+    `_rd_output_present()` already uses. Three sub-cases, graded by how much
+    they leave in doubt:
+
+    * hyprctl not installed -> this is definitely not Hyprland. Proceed without
+      an output and say so.
+    * hyprctl installed but no instance in the runtime dir -> no Hyprland is
+      running. Same.
+    * an instance IS there but hyprctl will not answer -> refuse. There is a
+      Hyprland session here and we cannot talk to it, so we cannot rule out
+      capturing a real monitor -- the same reasoning as the `present is None`
+      refusal, and the opposite of guessing.
+    """
+    compositor = detect_compositor()["compositor"]
+    if compositor == "hyprland":
+        return {"manages": True, "compositor": "hyprland", "blocked": False, "reason": ""}
+    if compositor != "unknown":
+        return {"manages": False, "compositor": compositor, "blocked": False, "reason": ""}
+
+    if not command_exists("hyprctl"):
+        return {"manages": False, "compositor": "unknown", "blocked": False,
+                "reason": "no compositor was detected and hyprctl is not installed"}
+    env = _rd_hypr_env()
+    if not env.get("HYPRLAND_INSTANCE_SIGNATURE"):
+        return {"manages": False, "compositor": "unknown", "blocked": False,
+                "reason": "no compositor was detected and no Hyprland instance is running"}
+    try:
+        proc = run(["hyprctl", "-j", "version"], timeout=3, env=env)
+    except (OSError, subprocess.SubprocessError) as exc:
+        return {"manages": False, "compositor": "unknown", "blocked": True,
+                "reason": f"a Hyprland instance is running but hyprctl could not be reached: {exc}"}
+    if proc.returncode != 0:
+        detail = (proc.stderr or "").strip() or f"hyprctl exited {proc.returncode}"
+        return {"manages": False, "compositor": "unknown", "blocked": True,
+                "reason": f"a Hyprland instance is running but hyprctl could not be reached: {detail}"}
+    # Resolved from the runtime dir: this IS Hyprland, reached over ssh.
+    return {"manages": True, "compositor": "hyprland", "blocked": False, "reason": ""}
+
+
 def _rd_web_host() -> str:
     """Prefer the tailnet address: that is the only route a client has."""
     if command_exists("tailscale"):
@@ -12531,7 +12580,7 @@ def _rd_session_state() -> Dict[str, Any]:
     return state
 
 
-def _rd_paired_clients() -> List[str]:
+def _rd_paired_clients() -> Dict[str, Any]:
     """Names of PAIRED devices, from Sunshine's own state file.
 
     These are the devices allowed to connect, NOT the ones connected now: the
@@ -12541,19 +12590,51 @@ def _rd_paired_clients() -> List[str]:
     That file also holds Sunshine's Web UI credential hash and salt. Only
     `name` is read out of it; nothing else from the file is returned, printed
     or logged.
+
+    Every shape is checked rather than assumed. Decoding as JSON says nothing
+    about the structure -- a list, a scalar, or a `root` that is a string all
+    used to raise straight out of `remote_desktop_status()`, so one malformed
+    field took out every OTHER field with it and the widget lost the host and
+    session state too. By this subsystem's own model unparseable state is
+    UNKNOWN, not fatal, so it degrades to that with the reason attached, the
+    way the unreadable-journal path already does.
+
+    A missing file is not malformed: no Sunshine config means no paired
+    devices, which is an answer.
     """
     config_home = os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config")
+    path = Path(config_home) / "sunshine" / "sunshine_state.json"
     try:
-        data = json.loads((Path(config_home) / "sunshine" / "sunshine_state.json").read_text(errors="replace"))
-    except (OSError, ValueError):
-        return []
-    devices = ((data or {}).get("root") or {}).get("named_devices") or []
+        raw = path.read_text(errors="replace")
+    except FileNotFoundError:
+        return {"names": [], "known": True, "error": ""}
+    except OSError as exc:
+        return {"names": [], "known": False, "error": f"the Sunshine state file could not be read: {exc}"}
+    try:
+        data = json.loads(raw)
+    except ValueError as exc:
+        return {"names": [], "known": False, "error": f"the Sunshine state file is not valid JSON: {exc}"}
+
+    if not isinstance(data, dict):
+        return {"names": [], "known": False, "error": "the Sunshine state file is not an object"}
+    root = data.get("root")
+    if root is None:
+        # A state file with no paired devices yet legitimately has no `root`.
+        return {"names": [], "known": True, "error": ""}
+    if not isinstance(root, dict):
+        return {"names": [], "known": False, "error": "the Sunshine state file's `root` is not an object"}
+    devices = root.get("named_devices")
+    if devices is None:
+        return {"names": [], "known": True, "error": ""}
+    if not isinstance(devices, list):
+        return {"names": [], "known": False, "error": "the Sunshine state file's device list is not a list"}
+
     names: List[str] = []
     for device in devices:
-        name = (device or {}).get("name") if isinstance(device, dict) else None
+        name = device.get("name") if isinstance(device, dict) else None
         if isinstance(name, str) and name.strip():
             names.append(name.strip())
-    return names
+    return {"names": names, "known": True, "error": ""}
 
 
 # --- Who created HEADLESS-1 --------------------------------------------------
@@ -12682,8 +12763,9 @@ def _rd_unit_state() -> Dict[str, Any]:
 def remote_desktop_status() -> Dict[str, Any]:
     unit = _rd_unit_state()
     running = unit["running"]
-    compositor = detect_compositor()["compositor"]
-    output_present = _rd_output_present() if compositor == "hyprland" else None
+    managed = _rd_manages_output()
+    compositor = managed["compositor"]
+    output_present = _rd_output_present() if managed["manages"] else None
     session = _rd_session_state() if (unit["known"] and running) else {
         "active": False, "count": 0, "since": "", "codec": "",
         "bitrateBps": 0, "colorDepth": "",
@@ -12704,6 +12786,8 @@ def remote_desktop_status() -> Dict[str, Any]:
         state = "unavailable"
         reason = f"{RD_UNIT} is not installed"
 
+    paired = _rd_paired_clients()
+
     return {
         "unit": RD_UNIT,
         "unitKnown": unit["known"],
@@ -12717,17 +12801,21 @@ def remote_desktop_status() -> Dict[str, Any]:
             # Only Hyprland can create a virtual output from here. On anything
             # else the host still runs; it just captures a real monitor, and
             # saying so is better than implying VGS manages an output it cannot.
-            "supported": compositor == "hyprland",
+            "supported": managed["manages"],
             "known": output_present is not None,
             "present": output_present is True,
         },
         # The silent failure, made loud: the host is up on Hyprland with no
         # HEADLESS-1, which means it is capturing a REAL monitor -- the user's
         # own screen -- and nothing else would ever say so.
-        "captureFallback": bool(running and compositor == "hyprland" and output_present is False),
+        "captureFallback": bool(running and managed["manages"] and output_present is False),
         "webUi": f"https://{_rd_web_host()}:{RD_WEB_PORT}",
         "session": session,
-        "pairedClients": _rd_paired_clients(),
+        "pairedClients": paired["names"],
+        # One malformed field degrades to unknown; it never takes the host and
+        # session state down with it.
+        "pairedClientsKnown": paired["known"],
+        "pairedClientsError": paired["error"],
     }
 
 
@@ -12764,9 +12852,18 @@ def remote_desktop_start() -> Dict[str, Any]:
         manual.append(f"{RD_UNIT} was already running; nothing to do")
         return _rd_result(actions, failures, manual)
 
-    compositor = detect_compositor()["compositor"]
+    managed = _rd_manages_output()
+    if managed["blocked"]:
+        # A Hyprland session is present and unreachable. Proceeding would create
+        # no output and let the capture fall back to a real monitor -- the same
+        # silent failure the unverifiable-presence refusal guards.
+        return _rd_result(actions, [
+            f"{managed['reason']}; not starting, because {RD_UNIT} would capture "
+            f"a real monitor instead"
+        ], manual)
+
     created = False
-    if compositor == "hyprland":
+    if managed["manages"]:
         present = _rd_output_present()
         if present is None:
             # Refusing is the point. Starting anyway would capture a real
@@ -12828,8 +12925,8 @@ def remote_desktop_start() -> Dict[str, Any]:
                 )
     else:
         manual.append(
-            f"{compositor}: no virtual output was created, so the host will capture an "
-            f"existing monitor"
+            (managed["reason"] or f"{managed['compositor']}: no virtual output is managed here")
+            + ", so the host will capture an existing monitor"
         )
 
     proc = _systemctl_user(["start", RD_UNIT])
@@ -12871,7 +12968,7 @@ def remote_desktop_stop() -> Dict[str, Any]:
     # Only tear down the output this subsystem created, and only once the host
     # is actually down -- removing it from under a live capture is worse than
     # leaving it.
-    if detect_compositor()["compositor"] != "hyprland" or failures:
+    if not _rd_manages_output()["manages"] or failures:
         return _rd_result(actions, failures, manual)
 
     present = _rd_output_present()
@@ -12927,8 +13024,11 @@ def _print_remote_desktop_status(status: Dict[str, Any]) -> None:
     else:
         print("session: none")
     print(f"web ui:  {status['webUi']}")
-    paired = status["pairedClients"]
-    print(f"paired:  {', '.join(paired) if paired else 'none'}")
+    if not status.get("pairedClientsKnown", True):
+        print(f"paired:  unknown ({status.get('pairedClientsError', '')})")
+    else:
+        paired = status["pairedClients"]
+        print(f"paired:  {', '.join(paired) if paired else 'none'}")
 
 
 def _rd_watch_token(line: str) -> str:
