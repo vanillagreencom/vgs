@@ -498,6 +498,7 @@
   "notificationShowTimeoutBar": false,
   "notificationDedupeEnabled": true,
   "notificationServerEnabled": true,
+  "notificationFirstRunTakeoverDone": false,
   "notificationPopupPosition": 0,
   "notificationAnimationSpeed": 1,
   "notificationCustomAnimationDuration": 400,
@@ -750,6 +751,6 @@
   "launcherPluginOrder": [],
   "barInsetPaddingShared": -1,
   "barInsetPaddingSyncAll": false,
-  "configVersion": 21,
+  "configVersion": 22,
   "themeApps": {}
 }

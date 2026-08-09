@@ -1688,7 +1688,10 @@ Singleton {
             return;
         }
         log.error("app launcher unavailable:", appLauncherPluginId, "is not loaded");
-        ToastService.showError(I18n.tr("App launcher unavailable"), I18n.tr("The %1 plugin did not load. Check Settings > Plugins.").arg(appLauncherPluginId), "", "app-launcher-unavailable");
+        ToastService.showError(I18n.tr("App launcher unavailable"), I18n.tr("The %1 plugin did not load.").arg(appLauncherPluginId), "", "app-launcher-unavailable", ({
+            label: I18n.tr("Open Plugins settings"),
+            settingsTab: "plugins"
+        }));
     }
 
     onDaemonInstancesChanged: {

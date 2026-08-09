@@ -39,7 +39,7 @@ const settingsDataSource = fs.readFileSync(settingsDataPath, "utf8");
 
 const barWidgets = loadModule(path.join(settingsDir, "BarWidgets.js"), {});
 
-const TARGET_VERSION = 21;
+const TARGET_VERSION = 22;
 
 // Three places declare the schema version, and the runtime authority is
 // SettingsData.qml's settingsConfigVersion — that is what drives migration on
@@ -171,6 +171,7 @@ assertDefaultParity([
   "systemFontMonoSubpixel",
   "systemFontMonoLcdFilter",
   "systemFontMonoAutohint",
+  "notificationFirstRunTakeoverDone",
 ]);
 
 const singleBarFixture = {
@@ -664,6 +665,37 @@ assert.strictEqual(
   ),
   false,
   "an unset old key must not materialise the new key"
+);
+
+// v22 (VGS-64): first-run notification takeover. The seed default is false so
+// a genuinely fresh install takes the bus name once; every config that already
+// existed must arrive at true, or the takeover would re-fire as a "first run"
+// on the update that introduced it -- including for a user who deliberately
+// turned VGS notifications off.
+const firstRunTakeoverMigrated = migrate({ configVersion: 21 });
+assert.strictEqual(
+  firstRunTakeoverMigrated.notificationFirstRunTakeoverDone,
+  true,
+  "an existing config is not a first run; the takeover one-shot must arrive spent"
+);
+assert.strictEqual(
+  spec.SPEC.notificationFirstRunTakeoverDone.def,
+  false,
+  "the seed default must stay false, or a fresh install would never take the name"
+);
+// The same holds however old the config is -- a v1 config walks every step and
+// must still land spent.
+assert.strictEqual(
+  migrate({ configVersion: 1 }).notificationFirstRunTakeoverDone,
+  true,
+  "an ancient config is still not a first run"
+);
+// An explicit opt-out must survive the migration untouched: this is the key
+// that decides whether the takeover is even considered.
+assert.strictEqual(
+  migrate({ configVersion: 21, notificationServerEnabled: false }).notificationServerEnabled,
+  false,
+  "the notification opt-out must survive the update that adds the takeover"
 );
 
 assert.strictEqual(

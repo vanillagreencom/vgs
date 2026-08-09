@@ -11517,6 +11517,10 @@ def cmd_launcher_search(argv: List[str]) -> int:
 
 NOTIFICATION_BUS_NAME = "org.freedesktop.Notifications"
 NOTIFICATION_SHADOW_MARKER = "# vshell notifications takeover"
+# Who asked for a takeover. Recorded in the undo state, not in settings: the
+# provenance belongs with the changes it describes, so it cannot outlive them
+# or be contradicted by a restore run from the CLI.
+NOTIFICATION_INITIATORS = ("first-run", "manual")
 
 # Process name -> label, for readable output only. Detection never consults
 # this list: it works from who owns the bus name and from which activation
@@ -11857,6 +11861,28 @@ def vgs_notification_server_enabled() -> bool:
     return bool(value) if isinstance(value, bool) else True
 
 
+def vgs_first_run_takeover_done() -> bool:
+    """Whether settings.json ON DISK records the first-run one-shot as spent.
+
+    The shell cannot answer this about itself. `SettingsData.set()` updates the
+    in-memory property and asks FileView to save; an unwritable settings.json
+    (read-only home, full disk) fails that save without changing the property,
+    so the shell believes the one-shot is spent while the next process reads it
+    as unspent -- and the automatic takeover masks and stops the user's daemon
+    again on every start.
+
+    This is read here, in a separate process, because that is exactly the claim
+    that has to be true: the NEXT process must see it. False on any error --
+    unreadable is not evidence of a durable write, and the shell refuses to
+    take over without one.
+    """
+    try:
+        value = load_settings().get("notificationFirstRunTakeoverDone", False)
+    except Exception:
+        return False
+    return value is True
+
+
 def notification_status() -> Dict[str, Any]:
     """Bus ownership, every foreign claimant found, and what can be done."""
     owner = notification_owner()
@@ -11964,6 +11990,9 @@ def notification_status() -> Dict[str, Any]:
         "state": state,
         "error": owner["error"],
         "vgsServerEnabled": vgs_notification_server_enabled(),
+        # Read from settings.json on disk, so the shell can confirm its own
+        # one-shot spend actually persisted before acting on it.
+        "vgsFirstRunTakeoverDone": vgs_first_run_takeover_done(),
         # VGS holds the name now, but something else would still be activated
         # into it on a session where VGS starts a moment later.
         "atRisk": state == "vgs" and bool(conflicts),
@@ -11973,6 +12002,11 @@ def notification_status() -> Dict[str, Any]:
         "restore": {
             "available": bool(record_state["shadows"] or record_state["masked"]
                               or record_state["stopped"] or record_state["backups"]),
+            # Whether the changes waiting to be undone are ones VGS made on its
+            # own initiative. The shell reads this instead of a runtime flag,
+            # so an opt-out after a restart still reverses a first-run takeover.
+            "initiator": record_state["initiator"],
+            "automatic": record_state["initiator"] == "first-run",
             "shadows": record_state["shadows"],
             "masked": record_state["masked"],
             "stopped": record_state["stopped"],
@@ -11982,8 +12016,17 @@ def notification_status() -> Dict[str, Any]:
 
 
 def _load_takeover_record() -> Dict[str, Any]:
-    """What a previous takeover changed: shadows written, units masked, and the
-    user files those shadows displaced (shadow path -> saved original)."""
+    """What a previous takeover changed: shadows written, units masked, the
+    user files those shadows displaced (shadow path -> saved original), and who
+    asked for it.
+
+    `initiator` is "first-run" when the shell took the name on its own
+    initiative and "manual" when a person did. The shell reverses only what it
+    did unasked, and it cannot remember across a restart -- but the record can,
+    because it lives beside the very changes it describes. An unrecognised or
+    absent value reads as "manual": a record VGS did not label is not one VGS
+    can claim to have made.
+    """
     try:
         data = json.loads(notification_state_file().read_text())
     except (OSError, ValueError):
@@ -11997,7 +12040,22 @@ def _load_takeover_record() -> Dict[str, Any]:
         for key, value in (raw_backups.items() if isinstance(raw_backups, dict) else [])
         if isinstance(key, str) and isinstance(value, str)
     }
-    return {"shadows": shadows, "masked": masked, "stopped": stopped, "backups": backups}
+    initiator = data.get("initiator")
+    if initiator not in NOTIFICATION_INITIATORS:
+        initiator = "manual"
+    return {"shadows": shadows, "masked": masked, "stopped": stopped,
+            "backups": backups, "initiator": initiator}
+
+
+def _takeover_record_has_changes(record: Dict[str, Any]) -> bool:
+    """Whether the record describes anything a restore would have to undo.
+
+    An empty record is not a takeover; it is the absence of one, which is why
+    _save_takeover_record() deletes the file rather than writing it, and why an
+    automatic takeover may stamp its initiator only when this is False.
+    """
+    return bool(record["shadows"] or record["masked"]
+                or record.get("stopped") or record.get("backups"))
 
 
 def _save_takeover_record(record: Dict[str, Any]) -> str:
@@ -12013,8 +12071,7 @@ def _save_takeover_record(record: Dict[str, Any]) -> str:
         # Saved originals outlive their shadows: a backup whose restore failed
         # is still owed to the user, so the record only goes away when there is
         # genuinely nothing left to undo.
-        if (not record["shadows"] and not record["masked"]
-                and not record.get("stopped") and not record.get("backups")):
+        if not _takeover_record_has_changes(record):
             path.unlink(missing_ok=True)
             return ""
         tmp = path.with_suffix(".tmp")
@@ -12080,16 +12137,28 @@ def _write_activation_shadow(source: Path) -> Dict[str, Any]:
     return {"path": target, "backup": backup, "error": ""}
 
 
-def notification_takeover() -> Dict[str, Any]:
+def notification_takeover(automatic: bool = False) -> Dict[str, Any]:
     """Make VGS the session's notification daemon, reversibly.
 
     Nothing is killed: the conflicting unit is masked and stopped, so it
     releases the bus name and Quickshell's pending registration wins it back on
     its own. A daemon that is not a user unit cannot be stopped safely from
     here and is reported for the user to quit.
+
+    `automatic` marks the undo record as VGS's own doing, so a later opt-out
+    can reverse it even from a shell that has restarted since. Once set it
+    stays set for as long as the record does: a record that mixes an automatic
+    takeover with a later manual one cannot be unpicked, and reversing all of
+    it is what keeps a notification daemon running.
     """
     status = notification_status()
     record = _load_takeover_record()
+    # Only a record being CREATED may be stamped. An existing record's
+    # provenance is history: relabelling a takeover the user ran themselves as
+    # "first-run" would let the shell reverse a change they made deliberately,
+    # which is the one thing the initiator exists to prevent.
+    if automatic and not _takeover_record_has_changes(record):
+        record["initiator"] = "first-run"
     actions: List[str] = []
     manual: List[str] = []
     failures: List[str] = []
@@ -12207,9 +12276,13 @@ def notification_restore() -> Dict[str, Any]:
             kept_stops.append(unit)
             failures.append(f"could not start {unit}: {(proc.stderr or '').strip()}")
 
+    # Provenance is carried through: whatever could not be undone was still
+    # VGS's doing if it was VGS's doing, and a later opt-out has to be able to
+    # try again.
     save_error = _save_takeover_record({
         "shadows": kept_shadows, "masked": kept_masks,
         "stopped": kept_stops, "backups": kept_backups,
+        "initiator": record["initiator"],
     })
     if save_error:
         failures.append(save_error)
@@ -12256,7 +12329,14 @@ def cmd_notifications(argv: List[str]) -> int:
     parser = argparse.ArgumentParser(prog="vshell notifications")
     sub = parser.add_subparsers(dest="cmd", required=True)
     for name in ("status", "takeover", "restore"):
-        sub.add_parser(name).add_argument("--json", action="store_true")
+        cmd = sub.add_parser(name)
+        cmd.add_argument("--json", action="store_true")
+        if name == "takeover":
+            # Only the shell's own first-run takeover passes this. It records
+            # the change as VGS's doing so a later opt-out can reverse it --
+            # including from a shell that has restarted since.
+            cmd.add_argument("--automatic", action="store_true",
+                             help="record this takeover as VGS's own first-run action")
     args = parser.parse_args(argv)
 
     if args.cmd == "status":
@@ -12269,7 +12349,8 @@ def cmd_notifications(argv: List[str]) -> int:
             return 0  # a foreign owner is the configured outcome, not a fault
         return 0 if status["state"] == "vgs" else 1
 
-    result = notification_takeover() if args.cmd == "takeover" else notification_restore()
+    result = (notification_takeover(automatic=args.automatic)
+              if args.cmd == "takeover" else notification_restore())
     if args.json:
         print(json.dumps(result, indent=2))
         return 0 if result["ok"] else 1
