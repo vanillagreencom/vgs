@@ -32,6 +32,119 @@ const SERVICE = path.join(
 const widgetSource = fs.readFileSync(WIDGET, "utf8");
 const serviceSource = fs.readFileSync(SERVICE, "utf8");
 
+// --- read the CODE, never the commentary ------------------------------------
+//
+// Every assertion below asks whether some text is present. Read against the raw
+// file a COMMENT answers that just as well as the code does, and both files are
+// heavily commented precisely because the orderings they encode are subtle. Two
+// concrete hazards here: `visualStateFor`'s own comments contain quoted words
+// ("On", "LIVE"), which would land in the derived state list; and a comment
+// naming a function would satisfy the body extractor.
+//
+// Comments are blanked once, up front, with characters replaced by spaces so
+// offsets and line structure survive. The BEGIN/END markers are themselves
+// comments, so marker extraction deliberately keeps using the raw text.
+function stripComments(src) {
+    let out = "";
+    let i = 0;
+    while (i < src.length) {
+        const ch = src[i];
+        const next = src[i + 1];
+
+        if (ch === '"' || ch === "'" || ch === "`") {
+            const quote = ch;
+            out += ch;
+            i += 1;
+            while (i < src.length) {
+                if (src[i] === "\\") {
+                    out += src.slice(i, i + 2);
+                    i += 2;
+                    continue;
+                }
+                out += src[i];
+                i += 1;
+                if (src[i - 1] === quote)
+                    break;
+            }
+            continue;
+        }
+        if (ch === "/" && next === "/") {
+            while (i < src.length && src[i] !== "\n") {
+                out += " ";
+                i += 1;
+            }
+            continue;
+        }
+        if (ch === "/" && next === "*") {
+            while (i < src.length && !(src[i] === "*" && src[i + 1] === "/")) {
+                out += src[i] === "\n" ? "\n" : " ";
+                i += 1;
+            }
+            out += "  ";
+            i += 2;
+            continue;
+        }
+        out += ch;
+        i += 1;
+    }
+    return out;
+}
+
+// Prove the stripper before a single assertion leans on it.
+{
+    const sample = 'a(); // function ghost() "On"\nb("// not a comment"); /* gone */ c();';
+    const stripped = stripComments(sample);
+    assert.ok(!stripped.includes("ghost"), "a line comment must not survive stripping");
+    assert.ok(!stripped.includes('"On"'), "quoted words inside comments must not survive");
+    assert.ok(!stripped.includes("gone"), "a block comment must not survive stripping");
+    assert.ok(stripped.includes('"// not a comment"'), "a // inside a string literal is not a comment");
+    assert.equal(stripped.length, sample.length, "stripping must preserve offsets");
+    assert.equal(
+        (stripped.match(/\n/g) || []).length,
+        (sample.match(/\n/g) || []).length,
+        "stripping must preserve line structure"
+    );
+}
+
+// Every double-quoted literal in `text`, scanned rather than regex-matched.
+// The obvious /"([^"]+)"/g cannot match an empty literal, so one `""` shifts
+// every pair after it and swallows the values between them -- an under-count,
+// which is the quietest way for a check to stop checking.
+function quotedLiterals(text) {
+    const out = [];
+    for (let i = 0; i < text.length; i++) {
+        if (text[i] !== '"')
+            continue;
+        let value = "";
+        let j = i + 1;
+        while (j < text.length && text[j] !== '"') {
+            if (text[j] === "\\") {
+                value += text[j + 1] || "";
+                j += 2;
+                continue;
+            }
+            value += text[j];
+            j += 1;
+        }
+        out.push(value);
+        i = j;
+    }
+    return out;
+}
+
+assert.deepEqual(
+    quotedLiterals('f(tr("msg"), "", "category")'),
+    ["msg", "", "category"],
+    "an empty literal must not shift the pairing of the ones after it"
+);
+
+const widgetCode = stripComments(widgetSource);
+const serviceCode = stripComments(serviceSource);
+assert.ok(
+    widgetSource.length > widgetCode.replace(/ +$/gm, "").length,
+    "the widget should carry comments; stripping is what keeps them out of these assertions"
+);
+
 const marked = widgetSource.match(/\/\/ BEGIN STATE DECISION\n([\s\S]*?)\/\/ END STATE DECISION/);
 assert.ok(marked, "RemoteDesktopWidget.qml must carry the STATE DECISION markers");
 const {
@@ -263,15 +376,15 @@ assert.equal(pillIconUsesStateColor("unavailable"), false);
 // The bindings have to actually consume the tokens; a table nothing reads is
 // not a fix.
 assert.ok(
-    /readonly property color stateColor: \{\s*switch \(root\.stateColorTokenFor\(root\.visualState\)\)/.test(widgetSource),
+    /readonly property color stateColor: \{\s*switch \(root\.stateColorTokenFor\(root\.visualState\)\)/.test(widgetCode),
     "stateColor must be derived from the token table rather than a second switch"
 );
 assert.ok(
-    widgetSource.includes("readonly property color pillIconColor: root.pillIconUsesStateColor(root.visualState) ? root.stateColor : Theme.widgetIconColor"),
+    widgetCode.includes("readonly property color pillIconColor: root.pillIconUsesStateColor(root.visualState) ? root.stateColor : Theme.widgetIconColor"),
     "the pill glyph colour must be derived from the token table"
 );
 assert.equal(
-    (widgetSource.match(/color: root\.pillIconColor/g) || []).length,
+    (widgetCode.match(/color: root\.pillIconColor/g) || []).length,
     2,
     "both the horizontal and vertical pill glyphs must take it — a bar on the left edge is still a bar"
 );
@@ -288,25 +401,79 @@ assert.throws(
 // --- service invariants -----------------------------------------------------
 
 function qmlFunctionBody(name) {
-    return functionBodyIn(serviceSource, name, "RemoteDesktopService.qml");
+    return functionBodyIn(serviceCode, name, "RemoteDesktopService.qml");
 }
 
 function widgetFunctionBody(name) {
-    return functionBodyIn(widgetSource, name, "RemoteDesktopWidget.qml");
+    return functionBodyIn(widgetCode, name, "RemoteDesktopWidget.qml");
 }
 
-function functionBodyIn(src, name, where) {
-    const start = src.indexOf(`function ${name}(`);
-    assert.ok(start >= 0, `${where} should define ${name}`);
-    const end = src.indexOf("\n    }", start);
-    assert.ok(end > start, `${name} should be a closed function body`);
-    return src.slice(start, end);
+// A QML function body, located by a UNIQUE declaration and closed by matching
+// braces.
+//
+// The previous form took the first `function <name>(` in the raw file and ran
+// to the first line matching "\n    }". Three ways that measured the wrong
+// thing while still passing: a comment mentioning the name matched (comments are
+// now stripped); a second, similarly-named function silently repointed it; and
+// the closing heuristic depended on the indentation the body happens to sit at,
+// so it stopped early on anything nested differently. Same class as the
+// first-match `showInfo` lookup on PR #82.
+function functionBodyIn(code, name, where) {
+    const declaration = new RegExp(`(^|[^\\w$.])function\\s+${name}\\s*\\(`, "g");
+    const found = [...code.matchAll(declaration)];
+    assert.equal(
+        found.length, 1,
+        `${where} should declare exactly one ${name}() -- ${found.length} found, and an ambiguous name means this reads whichever came first`
+    );
+
+    const start = found[0].index + found[0][1].length;
+    const open = code.indexOf("{", start);
+    assert.ok(open > start, `${name}() should have a body`);
+
+    let depth = 0;
+    let inString = "";
+    for (let i = open; i < code.length; i++) {
+        const ch = code[i];
+        if (inString) {
+            if (ch === "\\")
+                i += 1;
+            else if (ch === inString)
+                inString = "";
+            continue;
+        }
+        if (ch === '"' || ch === "'" || ch === "`") {
+            inString = ch;
+            continue;
+        }
+        if (ch === "{")
+            depth += 1;
+        else if (ch === "}") {
+            depth -= 1;
+            if (depth === 0)
+                return code.slice(start, i + 1);
+        }
+    }
+    assert.fail(`${name}() is not closed in ${where}`);
 }
 
-// Prove the reader can fail before anything it returns is used as evidence.
+// Prove the reader before anything it returns is used as evidence: it must fail
+// on an absent name, and on an ambiguous one.
 assert.throws(
     () => widgetFunctionBody("thisFunctionDoesNotExist"),
     "the function-body reader must fail on a name that is absent"
+);
+assert.throws(
+    () => functionBodyIn("function twice() { }\nfunction twice() { }", "twice", "a sample"),
+    "the function-body reader must refuse an ambiguous name rather than take the first"
+);
+assert.equal(
+    functionBodyIn('function only() {\n    const s = "}";\n    return 1;\n}', "only", "a sample"),
+    'function only() {\n    const s = "}";\n    return 1;\n}',
+    "a brace inside a string literal must not close the body early"
+);
+assert.ok(
+    !functionBodyIn("function real() { return 1; }", "real", "a sample").includes("ghost"),
+    "the reader returns only the body it located"
 );
 
 // A single disconnect must never clear the indicator. With more than one client
@@ -327,7 +494,7 @@ assert.ok(
 );
 
 // _applyStatus is the ONLY writer that turns streaming off.
-const clearingWriters = serviceSource
+const clearingWriters = serviceCode
     .split("\n")
     .map((line, index) => ({ line: line.trim(), index }))
     .filter(entry => /^root\.streaming = (false|session\.active === true)/.test(entry.line));
@@ -362,8 +529,8 @@ for (const field of ["sessionCount", "sessionCodec", "sessionBitrateBps", "sessi
 
 // The watch-stop path has to actually call it, and then ask the status read —
 // which is a separate process and does not depend on the watch.
-const watchStopSlice = serviceSource.slice(
-    serviceSource.indexOf("root.watchLive = false;\n            watchStable.stop();")
+const watchStopSlice = serviceCode.slice(
+    serviceCode.indexOf("root.watchLive = false;\n            watchStable.stop();")
 );
 assert.ok(
     watchStopSlice.slice(0, 1200).includes("root._markSessionUnknown("),
@@ -395,22 +562,22 @@ assert.ok(
     "a refresh during an in-flight probe must be recorded, not discarded"
 );
 assert.ok(
-    serviceSource.includes("if (root._refreshPending)\n                root.refresh();"),
+    serviceCode.includes("if (root._refreshPending)\n                root.refresh();"),
     "the coalesced refresh must actually be launched once the probe completes"
 );
 
 // A command that fails to start emits no `exited` at all, so the probe has to
 // be keyed on `running` plus an unanswered grace period.
 assert.ok(
-    /id: statusProc[\s\S]*?onRunningChanged/.test(serviceSource),
+    /id: statusProc[\s\S]*?onRunningChanged/.test(serviceCode),
     "the status probe must handle onRunningChanged, or a missing binary leaves it stale forever"
 );
 assert.ok(
-    serviceSource.includes("root._statusAnswered = false"),
+    serviceCode.includes("root._statusAnswered = false"),
     "the probe must arm its unanswered flag when it starts"
 );
 assert.ok(
-    /id: statusUnansweredTimer[\s\S]*?_markStatusUnknown/.test(serviceSource),
+    /id: statusUnansweredTimer[\s\S]*?_markStatusUnknown/.test(serviceCode),
     "an unanswered probe must mark the state unknown rather than keep the previous answer"
 );
 
@@ -436,7 +603,7 @@ assert.ok(
 
 // The backoff is earned by surviving, not by starting. Resetting on `running`
 // makes the cap unreachable for a watcher that fails immediately.
-const watchBlock = serviceSource.slice(serviceSource.indexOf("id: watchProc"));
+const watchBlock = serviceCode.slice(serviceCode.indexOf("id: watchProc"));
 const runningBranch = watchBlock.slice(0, watchBlock.indexOf("root.watchLive = false;"));
 assert.ok(
     !/backoffMs = 2000/.test(runningBranch),
@@ -447,7 +614,7 @@ assert.ok(
     "entering `running` should start the stability window, not reset the backoff"
 );
 assert.ok(
-    /id: watchStable[\s\S]*?onTriggered: watchRestart\.backoffMs = 2000/.test(serviceSource),
+    /id: watchStable[\s\S]*?onTriggered: watchRestart\.backoffMs = 2000/.test(serviceCode),
     "only the stability timer may reset the backoff"
 );
 
@@ -476,10 +643,36 @@ function tipFacts(overrides) {
 // EVERY state the decision function can return must get a message. A state
 // added to visualStateFor() without one would silently fall to the default and
 // tell the user the host is off.
-const ALL_STATES = [
-    "streaming", "streaming-unconfirmed", "unknown", "unavailable",
-    "stale", "listening", "listening-unconfirmed", "off"
-];
+//
+// DERIVED, not transcribed. A hand-maintained list is the same defect this
+// block exists to prevent, one level up: add a state, forget the list, and the
+// new state goes untested while the suite still reports success. The block
+// itself is extracted verbatim from the shipped QML, so the states it can
+// return are read out of it the same way.
+const decisionCode = stripComments(marked[1]);
+const ALL_STATES = [...new Set(
+    quotedLiterals(functionBodyIn(decisionCode, "visualStateFor", "the STATE DECISION block"))
+)];
+
+// Anchors, so a broken extraction cannot make every loop below vacuous. An
+// empty or truncated list would otherwise pass everything by iterating nothing.
+assert.ok(ALL_STATES.length >= 6, `expected visualStateFor() to return at least 6 states, derived ${ALL_STATES.length}`);
+for (const anchor of ["streaming", "listening", "off"]) {
+    assert.ok(
+        ALL_STATES.includes(anchor),
+        `the derived state list must contain ${anchor}; if it does not, the extraction is reading the wrong thing`
+    );
+}
+// The comments inside visualStateFor() quote words like "On" and "LIVE". If
+// those reached the list the loops below would assert about text that is not a
+// state at all, so the stripping above is load-bearing here specifically.
+for (const notAState of ["On", "LIVE"]) {
+    assert.ok(
+        !ALL_STATES.includes(notAState),
+        `${notAState} is prose from a comment, not a state -- the derivation is reading comments`
+    );
+}
+
 const keysSeen = new Set();
 for (const state of ALL_STATES) {
     const tip = tooltipFor(state, tipFacts());
