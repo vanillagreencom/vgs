@@ -270,6 +270,45 @@ Reveal delays are owned by the caller and are **not** currently uniform —
 the convergence and is left alone deliberately: changing it is a behaviour
 change, not a design-language one.
 
+## In-surface pager (settings behind a page, not below the content)
+
+A popout that grows a settings section downward pushes the thing you opened it
+for off the bottom. Flatline's answer is a **pager**: the secondary view is a
+page beside the current one, and the surface slides to it. Defined here because
+the aiUsage popout is the first to need one (VGS-73) — follow this shape rather
+than inventing a second one.
+
+The form:
+
+- **Two pages side by side in a clipped viewport.** A `Row` of full-width
+  `Column`s inside an `Item` with `clip: true`; `x: -page * viewport.width` is
+  the whole navigation model. Page 0 is the content the surface is *for*.
+- **The viewport takes the height of the page that is showing**, animated. The
+  surface grows *to* the settings page, not *by* it, so leaving the pager never
+  costs the height it took.
+- **Motion**: `mediumDuration` / `Easing.OutCubic` for the slide, `shortDuration`
+  for the height. Slower than a hover, quick enough not to be a transition you
+  wait through.
+- **The disclosure control is also the back control.** `PopoutComponent`'s
+  header has a title on the left and actions on the right, and no left-hand
+  slot; a back chevron on the left would mean changing that shared component
+  for every plugin. So the action that pushed the page becomes the one that
+  pops it — icon `tune` → `arrow_back`, in place. The pointer is already there.
+- **The header follows the page.** `headerText` and `detailsText` describe the
+  page you are on, which is what makes the slide read as navigation rather than
+  as content moving.
+- **A pushed page is view state, and resets when the surface hides.** Reopening
+  a popout on a settings page hides the thing it was opened for. Never persist
+  it.
+
+Escape still closes the whole surface from a pushed page rather than popping
+back to page 0 — the key handler lives in the popout container above the plugin
+content. If a second pager wants that, it belongs in the shared component, not
+copied into another plugin.
+
+Worked example: `config/vshell/plugins/aiUsage/AiUsageWidget.qml` (`pager`,
+`pages`, `usagePage`, `settingsPage`).
+
 ## Where to look
 
 | Concern | File |
