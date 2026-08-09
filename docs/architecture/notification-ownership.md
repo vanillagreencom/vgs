@@ -290,6 +290,7 @@ invariant in four cases:
 | The takeover finished, same shell | `restore` runs immediately and puts the daemon back. |
 | The takeover finished, **shell restarted since** | Provenance comes from the helper's undo record (`restore.automatic`), not from the runtime flag, so the restart changes nothing. |
 | The takeover is still in flight | The reversal is **deferred** to the helper's exit (`_restorePending`) rather than racing it — a restore that overlapped the helper could have its unmask overwritten by a mask the helper had not applied yet. |
+| The takeover changed the system but its **undo record was never saved** | The invariant **cannot** be held automatically, and VGS says so instead of pretending. See below. |
 
 The restart case is why provenance is not a runtime flag and not a settings key.
 `_firstRunTakeoverFired` dies with the shell process while the masks, the
@@ -330,6 +331,38 @@ risk — undoing a takeover the user ran themselves — is not contrary to what 
 just asked for, since turning VGS's server off *is* asking for another daemon to
 handle notifications, which is what `restore` makes possible. Whatever it does
 is reported through the restore-result path below.
+
+#### Winning the bus name is not the same claim as succeeding
+
+The helper masks and stops the foreign daemon **first** and writes the undo
+record **last**. So a record that cannot be saved leaves the daemon masked, the
+bus name won, `state: "vgs"` in the reply — and nothing to reverse it with. That
+is the worst state this feature can reach, and reading only the ownership half
+of the reply would announce it as success.
+
+`_applyTakeoverResult()` therefore reads `ok` and `failures` as well, on the
+takeover path exactly as the restore path does, and both agree that "the
+takeover succeeded" means the change **and** its record landed. It distinguishes
+two failures using `restore.available` from the same reply:
+
+| Reply | What VGS says |
+|-------|---------------|
+| `ok: false`, record intact | "The notification takeover did not fully succeed" — names the failures, offers `vshell notifications restore` to undo what did land. |
+| Actions taken, `restore.available` false | "VGS took over notifications but could not record it" — says plainly that VGS cannot restore that daemon later, and to unmask and start it by hand if `restore` reports nothing to do. |
+
+The second is deliberately **not** offered as something VGS can fix. `restore`
+reads the record and the record is what is missing, so promising an automatic
+undo would be a promise VGS cannot keep. For the same reason
+`_reverseFirstRunTakeover()` checks `_takeoverRecordLost` **before** spawning the
+helper: `restore` on an empty record reports "nothing to do" and exits 0, so
+running it and trusting the exit code would log a successful reversal while the
+user's daemon is still masked. Both messages ride the guaranteed-delivery
+categories, since a state only the user can get out of must not be dropped by a
+queue cap.
+
+This is the same shape as the one-shot's own gate — acting on an operation whose
+durable half was never confirmed — approached from the other side of the
+operation.
 
 #### A restore that half worked is reported
 

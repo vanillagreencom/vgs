@@ -25,7 +25,7 @@ Singleton {
     property var lastErrorTime: ({})
     property int errorThrottleMs: 1000
     property string currentCategory: ""
-    readonly property var stickyCategories: ["greeter-autologin-sync", "notification-server-conflict", "notification-server-takeover"]
+    readonly property var stickyCategories: ["greeter-autologin-sync", "notification-server-conflict", "notification-server-takeover", "notification-server-takeover-failed"]
 
     // Categories whose message explains a change VGS made to the user's system
     // WITHOUT being asked. The queue cap may drop an ordinary toast on the
@@ -34,12 +34,15 @@ Singleton {
     // fine here: the first-run takeover changes which daemon owns
     // org.freedesktop.Notifications, and this toast is the only place that is
     // explained and the only in-UI pointer at the undo. Dropped, the user sees
-    // their notifications change appearance for no stated reason.
+    // their notifications change appearance for no stated reason. Its failure
+    // twin qualifies for the same reason and more strongly: it is the only
+    // notice that VGS masked the user's daemon and cannot undo it, which is a
+    // state only the user can now get out of.
     //
     // Bounded, not unbounded: showToast() already replaces any queued entry
     // sharing a category before it enqueues, so each category here can hold at
     // most one slot over the cap.
-    readonly property var undroppableCategories: ["notification-server-takeover"]
+    readonly property var undroppableCategories: ["notification-server-takeover", "notification-server-takeover-failed"]
 
     // --- toast action (VGS-65) --------------------------------------------
     //

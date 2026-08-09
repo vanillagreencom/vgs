@@ -723,6 +723,12 @@ Singleton {
     property bool _firstRunSpendPending: false
     property double _firstRunSpendDeadline: 0
     property bool _unrecordableFirstRunAnnounced: false
+    // Whether the last takeover reply said `ok`. The bus name moving is not the
+    // same claim: the helper masks and stops first and records last.
+    property bool _takeoverReportedOk: false
+    // A takeover that changed the system but whose undo record did not persist.
+    // Nothing can reverse it automatically, and saying otherwise would be false.
+    property bool _takeoverRecordLost: false
     // A reversal that is waiting for the takeover helper to exit first.
     property bool _restorePending: false
     // An opt-out that arrived before provenance was known. Resolved by the
@@ -800,6 +806,21 @@ Singleton {
         if (SettingsData.notificationServerEnabled)
             return;
 
+        // The undo record never persisted, so `restore` has nothing to act on:
+        // it would report "nothing to do", exit 0, and VGS would take that as a
+        // successful reversal while the user's daemon is still masked and
+        // stopped. Say what is actually true rather than run a command whose
+        // success would be meaningless.
+        if (root._takeoverRecordLost && !root.serverRestoreAvailable) {
+            root._firstRunTakeoverFired = false;
+            root._reverseAfterProbe = false;
+            root.log.warn("opted out after a takeover whose undo record was lost; cannot restore automatically");
+            ToastService.showError(I18n.tr("VGS cannot restore your previous notification daemon"),
+                I18n.tr("VGS turned its notification server off, but the record of the takeover it made on first run was never saved, so there is nothing to undo it with. Your previous notification daemon is still masked and stopped: unmask and start it by hand, or run `vshell notifications restore` to confirm nothing is recorded."),
+                "vshell notifications restore", "notification-server-takeover-failed");
+            return;
+        }
+
         root._firstRunTakeoverFired = false;
         root._reverseAfterProbe = false;
         root.log.info("notification server turned off after a first-run takeover: restoring the previous daemon");
@@ -809,6 +830,64 @@ Singleton {
             root.log.warn("notification restore helper could not be started");
             root._reportRestoreFailure([], I18n.tr("the restore command could not be run"));
         }
+    }
+
+    // The takeover reply carries ok/failures alongside the ownership status, and
+    // the two can disagree in the one direction that matters: the helper masks
+    // and stops the foreign daemon FIRST and writes the undo record last, so a
+    // record that cannot be saved leaves the daemon masked, the bus name won,
+    // and nothing to reverse it with. Ownership reaching "vgs" is therefore not
+    // sufficient evidence -- reading only the status would announce success over
+    // the worst state this feature can reach, and the opt-out built in
+    // _reverseFirstRunTakeover() would later find nothing to undo.
+    //
+    // This is P1's shape on the other side of the same operation: acting on
+    // something whose durable half was never confirmed. Both now agree that "the
+    // takeover succeeded" means the change AND its record landed.
+    function _applyTakeoverResult(text) {
+        let result = null;
+        try {
+            result = JSON.parse(text);
+        } catch (e) {
+            result = null;
+        }
+
+        const failures = (result && Array.isArray(result.failures)) ? result.failures : [];
+        const acted = !!(result && Array.isArray(result.actions) && result.actions.length > 0);
+        // The same reply says whether a record now exists, which is how VGS can
+        // tell "something else failed but the undo is intact" from "the undo is
+        // gone" -- two very different things to tell the user.
+        const recorded = !!(result && result.restore && result.restore.available);
+
+        root._takeoverReportedOk = !!(result && result.ok === true);
+        root._takeoverRecordLost = acted && !recorded;
+
+        // Set before applying the status, because applying it can reach the
+        // success announcement, which must not fire over a failed takeover.
+        root._applyServerOwnership(text);
+
+        if (!root._takeoverReportedOk || root._takeoverRecordLost) {
+            root._endFirstRunTakeover();
+            root._reportTakeoverFailure(failures, root._takeoverRecordLost);
+        }
+    }
+
+    function _reportTakeoverFailure(failures, recordLost) {
+        const detail = failures.length > 0 ? failures.join("; ") : I18n.tr("no reason given");
+        root.log.warn("notification takeover did not fully succeed:", detail,
+            recordLost ? "(the undo record was not saved)" : "");
+        if (recordLost) {
+            // Deliberately not offered as something VGS can fix. `restore`
+            // reads the record, and the record is what is missing, so promising
+            // an automatic undo here would be a promise VGS cannot keep.
+            ToastService.showError(I18n.tr("VGS took over notifications but could not record it"),
+                I18n.tr("VGS masked and stopped the previous notification daemon, but could not save the record that undoes that, so it cannot restore that daemon for you later: %1. Run `vshell notifications restore` -- if it reports nothing to do, unmask and start your previous notification daemon by hand.").arg(detail),
+                "vshell notifications restore", "notification-server-takeover-failed");
+            return;
+        }
+        ToastService.showError(I18n.tr("The notification takeover did not fully succeed"),
+            I18n.tr("Part of taking over org.freedesktop.Notifications failed: %1. Run `vshell notifications restore` to undo the parts that did land.").arg(detail),
+            "vshell notifications restore", "notification-server-takeover-failed");
     }
 
     // A restore that half worked is worse than one that did not run: the masks
@@ -1083,7 +1162,12 @@ Singleton {
             // reached with the server turned off: announcing a successful
             // takeover to a user who just opted out of it would be a lie about
             // a change that is on its way to being undone.
-            if (root._firstRunTakeoverRunning && root.serverEnabled && !root._restorePending && root.serverOwnership === "vgs") {
+            // _takeoverReportedOk, not just ownership: the helper masks and
+            // stops before it records, so VGS can hold the bus name over a
+            // takeover whose undo record was never saved. Announcing success
+            // there would be announcing the worst state this feature reaches.
+            if (root._firstRunTakeoverRunning && root._takeoverReportedOk && !root._takeoverRecordLost
+                    && root.serverEnabled && !root._restorePending && root.serverOwnership === "vgs") {
                 root._endFirstRunTakeover();
                 ToastService.showInfo(I18n.tr("VGS is now handling notifications"),
                     I18n.tr("VGS took over org.freedesktop.Notifications on this first run, so its popups and notification center work. Undo it any time from Settings › Notifications."),
@@ -1135,7 +1219,10 @@ Singleton {
         command: [Paths.vshellCli, "notifications", "takeover", "--json"]
         running: false
         stdout: StdioCollector {
-            onStreamFinished: root._applyServerOwnership(text)
+            // NOT _applyServerOwnership directly: the takeover reply is an
+            // ownership status *plus* ok/failures, and the bus name moving is
+            // not evidence the takeover succeeded. See _applyTakeoverResult.
+            onStreamFinished: root._applyTakeoverResult(text)
         }
         // Keyed on running rather than exited: a command that cannot be spawned
         // at all drops running back to false without ever exiting, and clearing
