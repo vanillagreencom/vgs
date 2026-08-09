@@ -37,6 +37,17 @@
   },
   "features": {
     "base": {
+      "$comment": [
+        "Minimum versions VGS assumes. Nothing enforces these at runtime — every",
+        "distribution VGS packages for has shipped past them for years — so this is",
+        "the written-down form of an assumption that was previously implicit.",
+        "",
+        "jq >= 1.5 (2015-08-16): the release that introduced regex builtins at all.",
+        "Helpers use `gsub`, `sub`, `test` and `match`, including three-argument",
+        "`gsub($re; s; flags)`, which jq 1.5's builtin.c defines on the line above",
+        "two-argument `gsub` — the flag form is not newer than the plain one. jq 1.4",
+        "has no regex builtins whatsoever, so it cannot run these helpers regardless."
+      ],
       "required": true,
       "commands": [
         "qs",
