@@ -150,10 +150,19 @@ Singleton {
     // revealed or hidden. Where the focused window lives is maintained live
     // from the event socket instead, and a window's workspace does not change
     // when focus moves, so the two values being compared are both settled.
-    readonly property var dismissOnFocusLossPads: (SettingsData.scratchpads || []).filter(pad => pad && pad.enabled && pad.dismissOnFocusLoss)
+    // NOT filtered on `enabled`. Dismissal only ever HIDES, and hiding a
+    // disabled pad is exactly what must keep working: disabling a pad while it
+    // is on screen would otherwise strand it visible with no keybind left to
+    // dismiss it. The helper allows the same thing for the same reason, and
+    // skipping disabled pads here would put the two halves in disagreement.
+    readonly property var dismissOnFocusLossPads: (SettingsData.scratchpads || []).filter(pad => pad && pad.dismissOnFocusLoss)
 
     property string _lastFocusedWorkspace: ""
-    property string _pendingDismissId: ""
+    // Every pad awaiting dismissal, not just the most recent. On multiple
+    // monitors two pads can be on screen at once, and focus can leave both
+    // before the settle delay expires; keeping one id silently dropped the
+    // other dismissal.
+    property var _pendingDismissIds: []
 
     Connections {
         target: CompositorService
@@ -177,7 +186,9 @@ Singleton {
         const pad = root.dismissOnFocusLossPads.find(p => "special:" + p.id === previous);
         if (!pad)
             return;
-        root._pendingDismissId = String(pad.id);
+        const padId = String(pad.id);
+        if (!root._pendingDismissIds.includes(padId))
+            root._pendingDismissIds = root._pendingDismissIds.concat([padId]);
         dismissTimer.restart();
     }
 
@@ -191,18 +202,29 @@ Singleton {
         interval: 250
         repeat: false
         onTriggered: {
-            const padId = root._pendingDismissId;
-            root._pendingDismissId = "";
-            if (!padId)
+            const pending = root._pendingDismissIds;
+            root._pendingDismissIds = [];
+            if (pending.length === 0)
                 return;
-            if (CompositorService.activeWorkspaceName === "special:" + padId)
-                return;  // focus came back; the reveal was still settling
-            root.log.debug("Dismissing", padId, "on focus loss");
-            // `hide`, never `toggle`: a toggle decides direction from state read
-            // a moment ago, so evaluated late it reveals the pad the user just
-            // put away. The helper re-checks under the pad's lock and treats an
-            // already-hidden pad as a no-op.
-            Quickshell.execDetached([Paths.vshellCli, "scratchpad", "hide", padId]);
+            const focused = CompositorService.activeWorkspaceName;
+            // Same rule as on the way in, and it has to hold here too: an
+            // unknown focus is not "focus is elsewhere". Treating it as such
+            // dismissed every pending pad on any hiccup — which is the exact
+            // thing the entry path refuses to do.
+            if (!focused) {
+                root.log.debug("Focus is unknown at expiry; dismissing nothing");
+                return;
+            }
+            for (const padId of pending) {
+                if (focused === "special:" + padId)
+                    continue;  // focus came back; the reveal was still settling
+                root.log.debug("Dismissing", padId, "on focus loss");
+                // `hide`, never `toggle`: a toggle decides direction from state
+                // read a moment ago, so evaluated late it reveals the pad the
+                // user just put away. The helper re-checks under the pad's lock
+                // and treats an already-hidden pad as a no-op.
+                Quickshell.execDetached([Paths.vshellCli, "scratchpad", "hide", padId]);
+            }
         }
     }
 
@@ -252,7 +274,14 @@ Singleton {
             callback(ok, error || "");
     }
 
-    Component.onCompleted: refreshStatus()
+    Component.onCompleted: {
+        // Seed the remembered workspace, so a service constructed while focus
+        // is already on a pad does not miss that pad's first transition:
+        // without it the first `_onFocusMoved` had no `previous` to compare
+        // against and threw the transition away.
+        root._lastFocusedWorkspace = CompositorService.activeWorkspaceName;
+        refreshStatus();
+    }
 
     Process {
         id: applyProc
