@@ -17,7 +17,7 @@ Singleton {
     id: root
     readonly property var log: Log.scoped("SettingsData")
 
-    readonly property int settingsConfigVersion: 21
+    readonly property int settingsConfigVersion: 22
 
     readonly property bool isGreeterMode: Quickshell.env("VSHELL_RUN_GREETER") === "1" || Quickshell.env("VSHELL_RUN_GREETER") === "true"
 
@@ -892,6 +892,11 @@ Singleton {
     // session's notifications back to another daemon, and silences the
     // warning VGS shows when it loses the name.
     property bool notificationServerEnabled: true
+    // VGS-64: the first-run takeover one-shot. False only on a genuinely fresh
+    // install; the v22 migration sets it true for every config that already
+    // existed, so an update never looks like a first run. Persisted in
+    // settings.json, which no package upgrade rewrites.
+    property bool notificationFirstRunTakeoverDone: false
     property int notificationPopupPosition: SettingsData.Position.Top
     property int notificationAnimationSpeed: SettingsData.AnimationSpeed.Short
     property int notificationCustomAnimationDuration: 400

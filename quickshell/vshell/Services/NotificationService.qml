@@ -687,6 +687,10 @@ Singleton {
     // True only when VGS is meant to be the daemon and is not.
     readonly property bool serverConflict: serverEnabled && serverOwnership === "foreign"
     property bool _serverConflictAnnounced: false
+    // True from the moment a first-run takeover is fired until it has either
+    // won the name or run out of settling time. Runtime-only: the persisted
+    // half of the one-shot is SettingsData.notificationFirstRunTakeoverDone.
+    property bool _firstRunTakeoverRunning: false
 
     function checkServerOwnership() {
         if (!ownershipProcess.running)
@@ -700,6 +704,45 @@ Singleton {
             return;
         root.serverTakeoverBusy = true;
         takeoverProcess.running = true;
+    }
+
+    // VGS-64: on the very first run VGS claims the bus name rather than losing
+    // it to whichever daemon the session happened to activate first, and then
+    // says so with an undo. Losing silently leaves a fresh install looking
+    // broken -- a notification centre that never fills -- plus a chore.
+    //
+    // The one-shot is keyed on its OWN persisted state
+    // (SettingsData.notificationFirstRunTakeoverDone), never on "is there a
+    // conflict right now". Keying it on the conflict would re-fire on every
+    // update for anyone whose preferred daemon is another one, which is exactly
+    // the opt-out this must not overturn. Returns true when it fired.
+    function _maybeTakeOverOnFirstRun() {
+        if (SettingsData.notificationFirstRunTakeoverDone)
+            return false;
+        // An explicit opt-out is not a first run to act on, and must never be
+        // spent behind the user's back either -- leave the one-shot alone so
+        // turning the server back on still gets the takeover it implies.
+        if (!root.serverEnabled)
+            return false;
+        // No usable answer yet. Spending the one-shot on a failed probe would
+        // consume the only chance this ever gets.
+        if (root.serverOwnership !== "vgs" && root.serverOwnership !== "foreign" && root.serverOwnership !== "unowned")
+            return false;
+
+        // Spent on the first usable answer, whatever it says -- including
+        // "another daemon owns it and cannot be stopped from here". Leaving it
+        // unspent in that case would arm a takeover that fires weeks later, on
+        // whichever session the other daemon happens to become stoppable.
+        SettingsData.set("notificationFirstRunTakeoverDone", true);
+
+        if (root.serverOwnership !== "foreign" || !root.serverConflictFixable)
+            return false;
+
+        root.log.info("first run: taking org.freedesktop.Notifications from", root.serverConflictDaemon || "another daemon");
+        root._firstRunTakeoverRunning = true;
+        firstRunTakeoverTimer.restart();
+        root.takeOverNotificationServer();
+        return true;
     }
 
     function _applyServerOwnership(text) {
@@ -728,16 +771,51 @@ Singleton {
         root.serverConflictFixable = !!(status.takeover && status.takeover.available);
         root.serverConflictReason = (status.takeover && status.takeover.reason) || "";
 
+        if (root._maybeTakeOverOnFirstRun())
+            return;
+
         if (root.serverConflict) {
-            if (!root._serverConflictAnnounced) {
+            // While a first-run takeover is still settling the conflict is
+            // expected and about to be resolved; warning about it here would
+            // report the state the takeover exists to change.
+            if (!root._serverConflictAnnounced && !root._firstRunTakeoverRunning) {
                 root._serverConflictAnnounced = true;
                 const daemon = root.serverConflictDaemon || I18n.tr("another app");
-                ToastService.showWarning(I18n.tr("%1 is handling notifications, not VGS").arg(daemon), I18n.tr("VGS could not register org.freedesktop.Notifications, so its notification center stays empty. Settings > Notifications can take it over."), "", "notification-server-conflict");
+                ToastService.showWarning(I18n.tr("%1 is handling notifications, not VGS").arg(daemon),
+                    root.serverConflictFixable
+                        ? I18n.tr("VGS could not register org.freedesktop.Notifications, so its notification center stays empty.")
+                        : I18n.tr("VGS could not register org.freedesktop.Notifications, so its notification center stays empty: %1. Use the gear on the notifications dropdown in the bar to change how VGS handles this.").arg(root.serverConflictReason || I18n.tr("no supported way to stop it from here")),
+                    "", "notification-server-conflict",
+                    root.serverConflictFixable
+                        // A live handler, not a route: the fix runs a helper,
+                        // it does not open a tab. ToastService drops this the
+                        // moment the toast leaves the screen or its queue entry
+                        // is dropped -- see Services/ToastAction.js.
+                        ? ({
+                            label: I18n.tr("Use VGS for Notifications"),
+                            callback: () => root.takeOverNotificationServer()
+                        })
+                        : ({
+                            label: I18n.tr("Open settings"),
+                            settingsTab: "notifications"
+                        }));
             }
         } else {
             if (root._serverConflictAnnounced)
                 ToastService.dismissCategory("notification-server-conflict");
             root._serverConflictAnnounced = false;
+
+            if (root._firstRunTakeoverRunning && root.serverOwnership === "vgs") {
+                root._firstRunTakeoverRunning = false;
+                firstRunTakeoverTimer.stop();
+                ToastService.showInfo(I18n.tr("VGS is now handling notifications"),
+                    I18n.tr("VGS took over org.freedesktop.Notifications on this first run, so its popups and notification center work. Undo it any time from Settings › Notifications."),
+                    "", "notification-server-takeover",
+                    ({
+                        label: I18n.tr("Open settings"),
+                        settingsTab: "notifications"
+                    }));
+            }
         }
     }
 
@@ -814,6 +892,23 @@ Singleton {
     }
 
     Timer {
+        id: firstRunTakeoverTimer
+        // Masking the other daemon and Quickshell re-acquiring the name are
+        // separate asynchronous steps, and ownershipSettleTimer's re-probe lands
+        // at ~1.2s after the helper exits. This is the outer bound: past it the
+        // takeover did not work, and the ordinary conflict report applies again.
+        interval: 6000
+        repeat: false
+        onTriggered: {
+            if (!root._firstRunTakeoverRunning)
+                return;
+            root.log.warn("first-run notification takeover did not win the bus name");
+            root._firstRunTakeoverRunning = false;
+            root.checkServerOwnership();
+        }
+    }
+
+    Timer {
         id: ownershipRecheckTimer
         // Quickshell re-registers on its own the moment the current owner drops
         // the name, so keep looking while VGS is not the owner -- that is how
@@ -833,7 +928,12 @@ Singleton {
         target: SettingsData
         function onNotificationServerEnabledChanged() {
             root._serverConflictAnnounced = false;
+            // Turning the server off mid-takeover is the user overruling it;
+            // the settle window has nothing left to announce.
+            root._firstRunTakeoverRunning = false;
+            firstRunTakeoverTimer.stop();
             ToastService.dismissCategory("notification-server-conflict");
+            ToastService.dismissCategory("notification-server-takeover");
             ownershipSettleTimer.restart();
         }
     }

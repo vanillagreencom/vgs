@@ -26,10 +26,14 @@ the **first notification any app sends after login** makes the bus start it, and
 it then holds the name for the rest of the session. The unit can read
 `disabled` in `systemctl --user status` and still be `active (running)`.
 
-VGS starts a moment later than that, so on a first install it loses, and the
-only symptom from the user's seat is that the shell they installed for its
-notification center draws nothing while notifications keep appearing in another
-daemon's style.
+VGS starts a moment later than that, so on a first install it loses the race,
+and the only symptom from the user's seat is that the shell they installed for
+its notification center draws nothing while notifications keep appearing in
+another daemon's style.
+
+That is why the **first run takes the name rather than reporting the loss** —
+see § First run below. Every later session reports and offers; only the first
+one acts on its own.
 
 ## The three layers
 
@@ -37,7 +41,7 @@ daemon's style.
 |-------|-------|--------------|
 | Packaging | `packaging/` | Declares that two notification daemons on one session is not a supported configuration |
 | Helper | `bin/vshell-helper` (`vshell notifications`) | Detects the owner, and takes the name back reversibly |
-| Shell | `NotificationService.qml`, Settings, notification center | Surfaces the loss where the user is, and offers the fix |
+| Shell | `NotificationService.qml`, Settings, notification center | Takes the name once on first run, then surfaces the loss where the user is and offers the fix |
 
 ### Packaging
 
@@ -146,7 +150,53 @@ wins the name), replaces the notification center's "Nothing to see here" empty
 state with the real reason and a *Use VGS for Notifications* button, and shows
 the same status and button in Settings → Notifications.
 
+That toast carries the fix as a **button**, not as directions. When the takeover
+is possible the button is *Use VGS for Notifications* and runs
+`takeOverNotificationServer()` directly; when it is not, the button is *Open
+settings* and routes to the Notifications tab. Prose no longer names a menu
+path: there is no visible breadcrumb called "Settings > Notifications", and the
+shortest real route is the gear on the notifications dropdown in the bar, which
+is what the remaining copy points at. The mechanism is
+`ToastService.showToast(..., action)`; see `Services/ToastAction.js`.
+
+### First run
+
+`notificationServerEnabled` decides whether VGS wants the name at all.
+`notificationFirstRunTakeoverDone` decides whether it has already had its one
+chance to take it.
+
+On the first ownership answer of a fresh install, with the server enabled and
+the one-shot unspent, VGS masks the conflicting daemon and claims the name, then
+says so with an **informational** toast — "VGS is now handling notifications" —
+carrying an *Open settings* button back to Notifications to undo it. Losing
+silently is the worse default: it hands a new user a shell that looks broken
+plus a chore, when the packaging layer already declares two daemons on one
+session unsupported.
+
+Four properties of the one-shot, each load-bearing:
+
+- **It is keyed on its own state, never on "is there a conflict right now".**
+  Keying it on the conflict would re-fire on every update for anyone whose
+  preferred daemon is a different one.
+- **It persists in `settings.json`**, the user's own config. No package upgrade
+  rewrites that file, so a `-git` bump cannot reset it.
+- **Every config that already existed arrives with it spent.** The v22 migration
+  in `SettingsStore.js` sets it `true` unconditionally: an existing config is by
+  definition not a first run, and without that line the key would land on its
+  `false` default at every upgrade and re-arm the takeover — including for a
+  user who had deliberately turned VGS notifications off.
+  `scripts/check-settings-migration.js` asserts both halves.
+- **It is spent on the first usable answer, whatever it says** — including
+  "another daemon owns it and cannot be stopped from here". Leaving it unspent
+  in that case would arm a takeover to fire weeks later, on whichever session
+  the other daemon happened to become stoppable.
+
+With the server disabled the one-shot is left untouched rather than spent: that
+is not a first run to act on, and turning the server back on later should still
+get the takeover that re-enabling it implies.
+
 The `notificationServerEnabled` setting is the deliberate opt-out: it drives the
 `LazyLoader` around `NotificationServer`, so turning it off destroys the server
 and releases the bus name for whichever daemon the user prefers, and suppresses
-the warning that would otherwise be wrong.
+the warning that would otherwise be wrong. It also gates the first-run takeover,
+so an opt-out made before the update survives it.
