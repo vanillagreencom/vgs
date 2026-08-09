@@ -9654,15 +9654,36 @@ def _scratchpad_find_window(pad: Dict[str, Any]) -> Dict[str, Any] | None:
     return None
 
 
-def _scratchpad_visible_monitor(pad_id: str) -> str:
+def _scratchpad_visibility(pad_id: str) -> Tuple[str, str]:
+    """Whether a pad's special workspace is on screen: (state, monitor).
+
+    state is "visible" (monitor names it), "hidden", or "unknown" — the last
+    when the compositor could not be asked at all.
+
+    Hidden and unknown are DIFFERENT ANSWERS and the distinction is
+    load-bearing. Settings hides a pad before writing `enabled: false`, and that
+    write removes the keybind; if a failed `hyprctl -j monitors` reads as
+    "hidden", the hide reports success on a query that never ran and the bind is
+    dropped out from under a window that may still be up. A failed query is not
+    a negative answer."""
     monitors = _hyprctl_json("monitors")
     if not isinstance(monitors, list):
-        return ""
+        return ("unknown", "")
     special = "special:" + pad_id
     for monitor in monitors:
         if isinstance(monitor, dict) and str((monitor.get("specialWorkspace") or {}).get("name") or "") == special:
-            return str(monitor.get("name") or "")
-    return ""
+            return ("visible", str(monitor.get("name") or ""))
+    return ("hidden", "")
+
+
+def _scratchpad_visible_monitor(pad_id: str) -> str:
+    """The monitor a pad is visible on, or "" for both hidden and unknown.
+
+    Kept for the callers whose behaviour on an unanswerable query is already the
+    safe one — the reveal path treats "" as "not visible yet", so an unknown
+    makes it report failure rather than false success. Anything that must not
+    conflate the two calls _scratchpad_visibility directly."""
+    return _scratchpad_visibility(pad_id)[1]
 
 
 def _scratchpad_workspace_monitor(pad_id: str) -> str:
@@ -9796,7 +9817,7 @@ def scratchpad_toggle(pad_id: str, reveal_only: bool = False, launch_only: bool 
 
     state_file = _scratchpad_state_dir() / (pad_id + ".focus")
     with _scratchpad_lock(pad_id):
-        visible_on = _scratchpad_visible_monitor(pad_id)
+        visible_state, visible_on = _scratchpad_visibility(pad_id)
 
         # `hide` asks for one direction only, and asking to hide something
         # already hidden is a no-op, not a failure. The focus watcher fires on
@@ -9805,8 +9826,20 @@ def scratchpad_toggle(pad_id: str, reveal_only: bool = False, launch_only: bool 
         # race into a log line and a non-zero exit. Answered before the enabled
         # check because a *disabled* pad that is already hidden is equally
         # nothing to do.
-        if hide_only and not visible_on:
+        #
+        # But "already hidden" has to be an ANSWER, not the absence of one. A
+        # compositor that could not be asked is a different case from a pad that
+        # is down, and it is NOT the ordinary race above — reporting success
+        # there would tell Settings to drop the keybind for a pad that may well
+        # still be on screen, which is the outcome hiding first exists to
+        # prevent.
+        if hide_only and visible_state == "unknown":
+            return {"ok": False, "id": pad_id, "action": "hide-unknown",
+                    "error": f"{pad['name']}: could not determine whether the pad is visible"}
+        if hide_only and visible_state == "hidden":
             return {"ok": True, "action": "already-hidden", "id": pad_id}
+
+        hiding = bool(visible_on) and not reveal_only and not launch_only
 
         # A disabled pad generates no rules and no keybind, so revealing one is
         # never what the user asked for — the enable toggle in Settings would
@@ -9881,10 +9914,13 @@ def scratchpad_toggle(pad_id: str, reveal_only: bool = False, launch_only: bool 
                 hide_failures.append("could not toggle the special workspace")
 
             # The dispatches can each report success and leave the pad on
-            # screen, so the outcome is read back.
-            still_visible = _scratchpad_visible_monitor(pad_id)
-            if still_visible:
-                hide_failures.append(f"special:{pad_id} is still visible on {still_visible}")
+            # screen, so the outcome is read back — and an unanswerable read-back
+            # is not a confirmation. Only "hidden" counts as success.
+            still_state, still_monitor = _scratchpad_visibility(pad_id)
+            if still_state == "visible":
+                hide_failures.append(f"special:{pad_id} is still visible on {still_monitor}")
+            elif still_state == "unknown":
+                hide_failures.append("could not confirm the pad came down; the compositor did not answer")
 
             if hide_failures:
                 # The origin is deliberately NOT consumed and focus is NOT moved:

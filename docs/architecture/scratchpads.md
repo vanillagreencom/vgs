@@ -129,6 +129,12 @@ nothing: Settings would take a reported success as licence to drop the keybind
 while the window was still up, which is the failure the ordering exists to
 prevent.
 
+That read-back distinguishes three states, not two. `hyprctl -j monitors` can
+fail, and "the query did not answer" is not "the pad is down" — treating them
+alike would report success on a query that never ran. Only an explicit `hidden`
+counts; `unknown` refuses and says so, and Settings leaves the pad enabled with
+its keybind intact.
+
 ## Presentation is re-asserted as a whole, not additively
 
 The reveal clears fullscreen before applying float or tile. Hyprland keeps the
