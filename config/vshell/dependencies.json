@@ -38,15 +38,16 @@
   "features": {
     "base": {
       "$comment": [
-        "Minimum versions VGS assumes. Nothing enforces these at runtime — every",
-        "distribution VGS packages for has shipped past them for years — so this is",
-        "the written-down form of an assumption that was previously implicit.",
+        "This manifest declares PRESENCE, not versions, and deliberately has no",
+        "version-constraint syntax — see docs/decisions/D005-dependency-version-constraints.md.",
+        "Where VGS needs more than presence, the check is a capability probe in",
+        "bin/vshell-helper's CAPABILITY_PROBES: it asks the installed command to do",
+        "the thing VGS depends on, and `vshell deps status` reports the failure as",
+        "\"installed but unusable\". That is the real check; this note is context.",
         "",
-        "jq >= 1.5 (2015-08-16): the release that introduced regex builtins at all.",
-        "Helpers use `gsub`, `sub`, `test` and `match`, including three-argument",
-        "`gsub($re; s; flags)`, which jq 1.5's builtin.c defines on the line above",
-        "two-argument `gsub` — the flag form is not newer than the plain one. jq 1.4",
-        "has no regex builtins whatsoever, so it cannot run these helpers regardless."
+        "jq: needs regex builtins (`test`, `match`, `sub`, `gsub`, including",
+        "three-argument `gsub($re; s; flags)`), which arrived together in jq 1.5",
+        "(2015-08-16) — jq 1.4 has none of them. Probed, not version-compared."
       ],
       "required": true,
       "commands": [
