@@ -674,7 +674,10 @@ PluginComponent {
 
                     Repeater {
                         model: [
-                            { label: "Clients", value: String(RemoteDesktopService.sessionCount) },
+                            // Between a `connected` event and the authoritative
+                            // read, the count is not known -- and a 0 beside a
+                            // live capture reads as a fact rather than a gap.
+                            { label: "Clients", value: RemoteDesktopService.sessionCountKnown ? String(RemoteDesktopService.sessionCount) : "confirming…" },
                             { label: "Codec", value: RemoteDesktopService.sessionCodec },
                             { label: "Bitrate", value: RemoteDesktopService.sessionBitrateBps > 0 ? (Math.round(RemoteDesktopService.sessionBitrateBps / 1000) + " kbps") : "" },
                             { label: "Colour depth", value: RemoteDesktopService.sessionColorDepth },
@@ -734,7 +737,7 @@ PluginComponent {
                 Column {
                     width: parent.width
                     spacing: Theme.spacingXS
-                    visible: RemoteDesktopService.pairedClients.length > 0 || !RemoteDesktopService.pairedClientsKnown
+                    visible: RemoteDesktopService.pairedClients.length > 0 || !RemoteDesktopService.pairedClientsKnown || RemoteDesktopService.pairedClientsUndecodable > 0
 
                     StyledText {
                         text: "Paired devices"
@@ -774,6 +777,15 @@ PluginComponent {
                                 elide: Text.ElideRight
                             }
                         }
+                    }
+
+                    StyledText {
+                        width: parent.width
+                        visible: RemoteDesktopService.pairedClientsKnown && RemoteDesktopService.pairedClientsUndecodable > 0
+                        text: RemoteDesktopService.pairedClientsUndecodable + " device name(s) are not valid UTF-8 and are not shown."
+                        wrapMode: Text.WordWrap
+                        font.pixelSize: Theme.fontSizeSmall
+                        color: Theme.warning
                     }
 
                     StyledText {

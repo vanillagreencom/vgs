@@ -54,6 +54,12 @@ Three details that follow from that:
   | hyprctl present, no instance in the runtime dir | no Hyprland running — same |
   | an instance resolves and hyprctl answers | **this is Hyprland over ssh** — create the output |
   | an instance resolves but hyprctl will not answer | **refuse** — a Hyprland session is here and unreachable, so a real monitor cannot be ruled out |
+- **`captureFallback` is an assertion, so it needs a known status.** It is
+  cleared by `_markStatusUnknown()` along with the other axes: it claims "the
+  host is capturing a real monitor right now", derived from output presence,
+  and once that is unknown the claim is unsubstantiated. `streaming` is the
+  deliberate exception to unknown-clears-it; this is not one, because a warning
+  nobody can substantiate costs the user trust in every other warning.
 - **`captureFallback`** in the status payload is the running form of the same
   problem: host up, Hyprland, no `HEADLESS-1`. The widget renders it as a
   warning, because nothing else in the system would ever mention it.
@@ -161,6 +167,7 @@ applies to every axis of the answer, not just the session:
 | host | `installed`, `running` | `statusKnown` |
 | session | `streaming`, `sessionCount` | `sessionKnown` |
 | virtual output | `outputPresent` | `outputKnown` |
+| session count | `sessionCount` | `sessionCountKnown` |
 
 `RemoteDesktopService._markStatusUnknown()` drops all three at once. Leaving one
 standing renders half an answer as a whole one — and `installed` in particular
@@ -175,7 +182,12 @@ Exactly one thing: an authoritative `status --json` reply whose
 
 - a `connected` event sets the indicator **immediately** — a connect is
   unambiguous, and this is the one fact worth showing a beat before the
-  authoritative read confirms it;
+  authoritative read confirms it. It does **not** carry a count with it: a
+  connect proves somebody is watching, not how many, so `sessionCountKnown`
+  goes false and the popout reads "confirming…" until the authoritative read
+  supplies a number. Rendering the stale `0` beside a live capture showed a
+  streaming session with no clients listed, which reads as a fact rather than
+  as the gap it is;
 - a `disconnected` event **does not clear it**. With more than one client
   connected it ends *one* session, not the capture, so clearing on the first
   disconnect would hide a live capture until the next resync. It only schedules
@@ -196,7 +208,10 @@ screen". The journal already carries the events, at no such cost.
 What that costs, stated rather than papered over: **the journal does not name the
 connected client, and does not carry the requested resolution** — neither is
 logged at Sunshine's `info` level. The popout therefore lists *paired* devices
-(from `named_devices` in that same state file — only `name` is read out of it,
+(from `named_devices` in that same state file — a name containing bytes that
+are not valid UTF-8 is **withheld and counted** rather than shown with U+FFFD
+substituted into it, because a mangled name is indistinguishable from a device
+genuinely called that; only `name` is read out of it,
 never the credential material beside it) under a heading that says paired, and
 says outright that which one is connected is not something the host reports.
 
@@ -309,6 +324,20 @@ Two smaller rules, both of the same family:
   outright — and there is deliberately no polling fallback to recover it. Any
   number of requests during one probe collapse into a single follow-up, launched
   once the probe has settled.
+- **Every lifecycle failure reaches the user.** `start`/`stop`/`toggle` report
+  through one surface, `_reportLifecycleFailure()`, keyed on `running` rather
+  than `exited` for the same reason the busy flag is: a command that cannot be
+  spawned never exits, and an `exited`-only report would stay silent on exactly
+  the failure the user is least able to diagnose — a toggle that springs back
+  with no state change and no reason. The helper's own JSON verdict may arrive
+  after `exited` and is allowed to replace a generic message with the real one;
+  the shared toast category means that updates in place rather than stacking.
+- **The unanswered-grace timer belongs to one probe.** It is shared, so a tick
+  armed by probe A could fire while probe B was in flight, find
+  `_statusAnswered` false because B had only just started, and mark a healthy B
+  unanswered. Each probe start takes a new `_statusProbeGeneration` and stops
+  any armed tick; the timer records `armedFor` and ignores a tick a newer probe
+  has superseded.
 - **A status command that cannot be spawned marks the state unknown.** Per
   `.github/instructions/quickshell-qml.instructions.md`, a `Process` that fails
   to start emits no `exited` at all, so the probe is keyed on `running` plus a

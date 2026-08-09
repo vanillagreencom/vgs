@@ -608,6 +608,102 @@ assert.ok(unitGuardAt >= 0, "the unit-unknown guard must exist");
 assert.ok(installedAt >= 0, "_applyStatus must still be the site that applies `installed`");
 assert.ok(unitGuardAt < installedAt, "the guard must come before the assignment it guards");
 
+// --- VGS-87 item 1: the session COUNT is its own knowledge axis -------------
+//
+// Optimistic LIVE-on-connect is deliberate (it is what stops a multi-client
+// disconnect briefly hiding a real capture), but a connect proves only that
+// SOMEBODY is watching — not how many. Carrying the stale 0 alongside it
+// rendered "streaming now" with no clients listed, which reads as a fact
+// rather than as the gap it is.
+const connectBody = qmlFunctionBody("_handleWatchToken");
+assert.ok(
+    connectBody.includes("root.sessionCountKnown = false"),
+    "a connect must mark the count unknown; it proves a session, not a number"
+);
+assert.ok(
+    !/root\.sessionCount = 0/.test(connectBody),
+    "a connect must never leave the count at 0 while setting `streaming`"
+);
+assert.ok(
+    connectBody.includes("root.streaming = true"),
+    "and it must still set the indicator optimistically — that half is deliberate"
+);
+
+const sessionUnknownBody2 = qmlFunctionBody("_markSessionUnknown");
+assert.ok(
+    sessionUnknownBody2.includes("root.sessionCountKnown = false"),
+    "losing the session loses the count with it"
+);
+assert.ok(
+    qmlFunctionBody("_applyStatus").includes("root.sessionCountKnown = true"),
+    "only the authoritative read may declare the count known"
+);
+assert.ok(
+    widgetSource.includes("RemoteDesktopService.sessionCountKnown ? String(RemoteDesktopService.sessionCount)"),
+    "the Clients row must render the count only when it is known"
+);
+
+// --- VGS-87 item 4: an unknown status cannot keep asserting a fallback ------
+//
+// captureFallback is an assertion — "the host is capturing a real monitor right
+// now" — derived from output presence. When that goes unknown the warning is no
+// longer substantiated, and a warning nobody can substantiate costs the user
+// trust in every other warning.
+assert.ok(
+    /root\.captureFallback = false/.test(qmlFunctionBody("_markStatusUnknown")),
+    "an unknown status must clear captureFallback, not preserve the last answer"
+);
+assert.ok(
+    qmlFunctionBody("_applyStatus").includes("root.captureFallback = status.captureFallback === true"),
+    "and only an authoritative status may set it"
+);
+
+// --- VGS-87 item 3: the grace timer belongs to one probe --------------------
+//
+// The timer is shared, so a tick armed by probe A could fire while probe B is
+// in flight, find `_statusAnswered` false because B had only just started, and
+// mark a healthy B unanswered — turning a fresh reading into "unknown".
+assert.ok(
+    /statusUnansweredTimer\.armedFor = root\._statusProbeGeneration/.test(serviceSource),
+    "the grace timer must record which probe armed it"
+);
+assert.ok(
+    /if \(armedFor !== root\._statusProbeGeneration\)/.test(serviceSource),
+    "and must ignore a tick belonging to a superseded probe"
+);
+assert.ok(
+    /root\._statusProbeGeneration\+\+/.test(serviceSource),
+    "each probe start must take a new generation"
+);
+assert.ok(
+    /root\._statusAnswered = false;\s*\n\s*root\._statusProbeGeneration\+\+;\s*\n[\s\S]{0,240}?statusUnansweredTimer\.stop\(\)/.test(serviceSource),
+    "a starting probe should also stop any tick still armed for the previous one"
+);
+
+// --- VGS-87 item 2: a lifecycle failure always reaches the user -------------
+const lifecycleBody = qmlFunctionBody("_reportLifecycleFailure");
+assert.ok(
+    lifecycleBody.includes("ToastService.showError"),
+    "lifecycle failures use the same surface as every other failure here"
+);
+assert.ok(
+    lifecycleBody.includes("root._lifecycleReported = true"),
+    "and are reported once"
+);
+assert.ok(
+    /if \(root\._lifecycleReported && authoritative !== true\)/.test(lifecycleBody),
+    "the helper's own verdict may replace a generic message that arrived first"
+);
+assert.ok(
+    /if \(!root\._lifecycleReported\)\s*\n\s*root\._reportLifecycleFailure\(I18n\.tr\("`vshell remote-desktop/.test(serviceSource),
+    "a command that cannot be spawned emits no `exited`, so the report must hang off `running`"
+);
+const runLifecycleBody = qmlFunctionBody("_runLifecycle");
+assert.ok(
+    runLifecycleBody.includes("root._lifecycleReported = false"),
+    "each action starts unreported, or the second failure in a session would be silent"
+);
+
 // A refresh arriving during a probe is coalesced, never dropped: the journal
 // read can take seconds while the event debounce is 400ms, and there is no
 // polling fallback to recover a lost event.
