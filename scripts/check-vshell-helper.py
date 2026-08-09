@@ -3967,6 +3967,67 @@ def test_scratchpad_toggle_honours_enabled():
         helper._scratchpad_session_ready = original_ready
 
 
+def test_scratchpad_hide_only_never_reveals():
+    """`hide` states a direction; `toggle` infers one. Focus-loss dismissal
+    (VGS-82) fires on an event and reaches the per-pad lock a moment later, by
+    which time the user may already have dismissed the pad — a toggle evaluated
+    then would REVEAL what they just put away. Hiding something already hidden
+    is also an ordinary race, so it is a success, not an error."""
+    originals = (helper.load_scratchpads, helper._scratchpad_visible_monitor,
+                 helper._scratchpad_find_window, helper._scratchpad_dispatch,
+                 helper._scratchpad_session_ready, helper._hyprctl_json)
+    dispatched = []
+
+    pad = _pad(id="term")
+    helper.load_scratchpads = lambda *a, **k: [pad]
+    # Deliberately available: if hide_only ever fell through to the reveal path
+    # this would be found, launched and shown, and the test would see it.
+    helper._scratchpad_find_window = lambda p: {"address": "0xaaa", "workspace": {"name": "3"}}
+    helper._scratchpad_dispatch = lambda *args: (dispatched.append(args), True)[1]
+    helper._hyprctl_json = lambda *args: None
+    # Stubbed for the same reason as the tests above: these assertions matter
+    # most on a runner with no compositor, and returning early there would be a
+    # check that passes without checking.
+    helper._scratchpad_session_ready = lambda: True
+    try:
+        # Already hidden: nothing to do, and above all nothing revealed.
+        helper._scratchpad_visible_monitor = lambda pad_id: ""
+        result = helper.scratchpad_toggle("term", hide_only=True)
+        assert_equal(result["ok"], True, "hiding an already-hidden pad is not a failure")
+        assert_equal(result["action"], "already-hidden", "and says so rather than acting")
+        assert_equal(dispatched, [], "a no-op hide dispatches nothing at all")
+
+        # Visible: it hides, exactly as the keybind's toggle would.
+        dispatched.clear()
+        helper._scratchpad_visible_monitor = lambda pad_id: "DP-1"
+        hidden = helper.scratchpad_toggle("term", hide_only=True)
+        assert_equal(hidden["ok"], True, "a visible pad is hidden")
+        assert_equal(hidden["action"], "hidden", "and reports the hide")
+        assert ("togglespecialworkspace", "term") in dispatched, "the hide actually dispatches"
+
+        # A disabled pad on screen can still be hidden this way — same reason
+        # the keybind may hide one: the alternative is a pad stranded visible.
+        dispatched.clear()
+        off = _pad(id="term", enabled=False)
+        helper.load_scratchpads = lambda *a, **k: [off]
+        stranded = helper.scratchpad_toggle("term", hide_only=True)
+        assert_equal(stranded["ok"], True, "a disabled pad on screen is still hidable")
+        assert_equal(stranded["action"], "hidden", "and reports the hide")
+
+        # ...and a disabled pad that is already hidden is a no-op, not the
+        # "disabled" refusal. The watcher must not turn a race into an error.
+        dispatched.clear()
+        helper._scratchpad_visible_monitor = lambda pad_id: ""
+        quiet = helper.scratchpad_toggle("term", hide_only=True)
+        assert_equal(quiet["action"], "already-hidden",
+                     "an already-hidden disabled pad is nothing to do, not a refusal")
+        assert_equal(dispatched, [], "and dispatches nothing")
+    finally:
+        (helper.load_scratchpads, helper._scratchpad_visible_monitor,
+         helper._scratchpad_find_window, helper._scratchpad_dispatch,
+         helper._scratchpad_session_ready, helper._hyprctl_json) = originals
+
+
 def test_scratchpad_rejections_are_named_not_silent():
     """Rejecting an unusable pad is right; doing it silently is not. A pad with
     an uncompilable regex generated no rules at all, so the user's scratchpad
@@ -4173,6 +4234,7 @@ def main():
     test_scratchpad_rejects_an_uncompilable_title_exclusion()
     test_scratchpad_release_honours_the_title_exclusion()
     test_scratchpad_toggle_honours_enabled()
+    test_scratchpad_hide_only_never_reveals()
     test_scratchpad_rejections_are_named_not_silent()
     test_scratchpad_reveal_reports_failed_dispatches()
     subprocess.run(

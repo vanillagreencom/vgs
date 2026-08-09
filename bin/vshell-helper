@@ -8725,12 +8725,12 @@ def scratchpad_compositor_supported() -> Tuple[bool, str]:
 
 def cmd_scratchpad(argv: List[str]) -> int:
     if not argv:
-        eprint("Usage: vshell scratchpad <apply|status|toggle|preload|release|resolve> ...")
+        eprint("Usage: vshell scratchpad <apply|status|toggle|show|hide|preload|release|resolve> ...")
         return 2
     action, rest = argv[0], argv[1:]
 
     supported, compositor = scratchpad_compositor_supported()
-    if not supported and action in {"apply", "toggle", "show", "preload"}:
+    if not supported and action in {"apply", "toggle", "show", "hide", "preload"}:
         # A clean, stated no-op — not a silent success, and not a Hyprland
         # config written into a session that will never read it.
         message = ("VGS scratchpads are Hyprland-only for now; Niri has no special "
@@ -8813,10 +8813,11 @@ def cmd_scratchpad(argv: List[str]) -> int:
             eprint(result.get("error") or "scratchpad release failed")
         return 0 if result.get("ok") else 1
 
-    if action in {"toggle", "show", "preload"} and rest:
+    if action in {"toggle", "show", "hide", "preload"} and rest:
         result = scratchpad_toggle(rest[0],
                                    reveal_only=(action == "show"),
-                                   launch_only=(action == "preload"))
+                                   launch_only=(action == "preload"),
+                                   hide_only=(action == "hide"))
         if not result.get("ok"):
             eprint(result.get("error") or "scratchpad toggle failed")
             return 1
@@ -9758,7 +9759,7 @@ def _scratchpad_wait_for_window(pad: Dict[str, Any], timeout: float) -> Dict[str
 
 
 def scratchpad_toggle(pad_id: str, reveal_only: bool = False, launch_only: bool = False,
-                      timeout: float = 20.0) -> Dict[str, Any]:
+                      hide_only: bool = False, timeout: float = 20.0) -> Dict[str, Any]:
     pads = {pad["id"]: pad for pad in load_scratchpads()}
     pad = pads.get(pad_id)
     if pad is None:
@@ -9769,6 +9770,16 @@ def scratchpad_toggle(pad_id: str, reveal_only: bool = False, launch_only: bool 
     state_file = _scratchpad_state_dir() / (pad_id + ".focus")
     with _scratchpad_lock(pad_id):
         visible_on = _scratchpad_visible_monitor(pad_id)
+
+        # `hide` asks for one direction only, and asking to hide something
+        # already hidden is a no-op, not a failure. The focus watcher fires on
+        # an event, so by the time it gets the lock the user may have dismissed
+        # the pad themselves; reporting that as an error would turn an ordinary
+        # race into a log line and a non-zero exit. Answered before the enabled
+        # check because a *disabled* pad that is already hidden is equally
+        # nothing to do.
+        if hide_only and not visible_on:
+            return {"ok": True, "action": "already-hidden", "id": pad_id}
 
         # A disabled pad generates no rules and no keybind, so revealing one is
         # never what the user asked for — the enable toggle in Settings would
