@@ -869,10 +869,24 @@ Singleton {
         if (!root._takeoverReportedOk || root._takeoverRecordLost) {
             root._endFirstRunTakeover();
             root._reportTakeoverFailure(failures, root._takeoverRecordLost);
+            return;
         }
+        // A sticky message about a transient state needs an owner that clears
+        // it when the state changes. This takeover worked and recorded itself,
+        // so an earlier "could not record it" now describes something that is
+        // no longer true -- and being sticky, it would otherwise sit there
+        // saying so indefinitely.
+        ToastService.dismissCategory("notification-server-takeover-failed");
     }
 
     function _reportTakeoverFailure(failures, recordLost) {
+        // The mirror of the dismissal above, and a real case rather than
+        // symmetry for its own sake: the success toast is sticky, so one raised
+        // by the first-run takeover is still on screen when a later takeover --
+        // the Settings button, or the conflict toast's action -- fails. Leaving
+        // it up would tell the user notifications are handled while this
+        // message says they are not.
+        ToastService.dismissCategory("notification-server-takeover");
         const detail = failures.length > 0 ? failures.join("; ") : I18n.tr("no reason given");
         root.log.warn("notification takeover did not fully succeed:", detail,
             recordLost ? "(the undo record was not saved)" : "");
@@ -913,6 +927,9 @@ Singleton {
             return;
         }
         root.log.info("restored the notification daemon VGS displaced on first run");
+        // Same rule for the restore pair: a failed restore that later succeeds
+        // must not leave its warning standing.
+        ToastService.dismissCategory("notification-server-restore");
     }
 
     function _reportRestoreFailure(failures, reason) {
