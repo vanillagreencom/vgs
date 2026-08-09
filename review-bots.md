@@ -27,37 +27,30 @@ tokens. Calibrate accordingly:
 
 ## Accepted residual classes (decided — do not re-raise)
 
-These are known, deliberate trade-offs with rationale recorded where the
-decision lives. Raising them again is noise:
+These behaviors are deliberate. Flagging them costs a re-review round and
+changes nothing:
 
-- **Per-surface supersession.** Evidence surfaces (review objects, check
-  runs, commit statuses, trusted comments) each resolve
-  newest-decides *within* the surface; there is no cross-surface
-  supersession ordering. Documented in the vendored predicate header
-  (`third_party/review-gate/`).
-- **Single-poll races.** The review-gate writer converges on its next
-  pass (cron floor ≤15 min); a state change landing between two reads is
-  healed by convergence, not by adding locks. Transient windows that
-  self-heal via converge-all are accepted (includes the writer
-  ordering-guard clock-skew window: runner clocks are NTP-synced and the
-  guard defers on same-second equality).
-- **Evidence carry-forward.** Docs-only deltas carry ancestor review
-  evidence by owner decision (`REVIEW_GATE_CARRY_FORWARD = "docs"`).
-  Policy-bearing markdown is excluded via
-  `REVIEW_GATE_CARRY_FORWARD_EXCLUDE`; the `comments` class is
-  deliberately off. The remaining residual is documented in
-  `vstack.settings.toml` comments.
-- **TOCTOU on gate success posts.** The gate's verdict is recomputed by
-  the single writer on every trigger; a success posted just before a new
-  push is superseded by the next convergence, and the merge queue
-  re-checks at admission. Not a fail-open.
-- **Post-enqueue threads.** A review round arriving after merge-queue
-  admission can land threads on a queued PR; the documented dequeue →
-  fix → re-arm procedure covers it. Not a gate defect.
-- **Vendored engine content.** The review-gate engine at `third_party/review-gate/` is
-  vendored from vanillagreencom/vstack. Real defects in it are fixed
-  upstream first and re-vendored — flag them, but cross-repo sync impacts
-  are coordination notes, not merge blockers.
+- **No cross-surface evidence ordering.** Review objects, check runs, and
+  commit statuses resolve newest-decides within their own surface; trusted
+  comments bind to an exact head SHA and are counted existentially (a
+  comment about an old head can never vouch for a new one, so there is
+  nothing to supersede). Nothing orders evidence ACROSS surfaces — don't
+  propose that.
+- **Transient windows heal by convergence.** A state change landing between
+  two reads is corrected on the next writer pass (≤15 min). Don't propose
+  locks or synchronization for windows that self-heal.
+- **A final docs-only push may keep its earlier review evidence.** Deliberate,
+  so a typo fix doesn't cost a full re-review round. Policy and instruction
+  files are excluded from this and always get fresh review. Don't flag an
+  un-re-reviewed docs-only final push as a gate hole.
+- **Gate success just before a push is not a fail-open.** The next
+  convergence supersedes it and the merge queue re-checks at admission.
+- **Threads landing after queue admission are procedural, not defects.**
+  The documented dequeue → fix → re-arm flow covers them.
+- **The vendored review-gate engine is upstream code.** Real defects in it
+  get fixed in vanillagreencom/vstack first and re-vendored — flag them, but
+  local restructuring (splitting files, style changes) would fork the pinned
+  bytes; cross-repo sync timing is a coordination note, not a merge blocker.
 
 ## Trust model (context, not a finding surface)
 
