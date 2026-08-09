@@ -2804,7 +2804,7 @@ def _rd_lifecycle(output_present, hyprctl_ok=True, unit_running=False, systemctl
     """
     calls = []
     originals = {name: getattr(helper, name) for name in (
-        "run", "_systemctl_user", "_rd_output_present", "_user_unit_state",
+        "run", "_systemctl_user", "_rd_output_present", "_rd_unit_state",
         "detect_compositor", "remote_desktop_status", "_rd_hypr_instance",
     )}
     state = {"present": output_present}
@@ -2833,9 +2833,8 @@ def _rd_lifecycle(output_present, hyprctl_ok=True, unit_running=False, systemctl
     helper.run = fake_run
     helper._systemctl_user = fake_systemctl
     helper._rd_output_present = lambda: state["present"]
-    helper._user_unit_state = lambda unit: {
-        "exists": True, "running": unit_running, "masked": False,
-        "transient": False, "mainPid": 0, "execStart": "",
+    helper._rd_unit_state = lambda: {
+        "known": True, "error": "", "exists": True, "running": unit_running,
     }
     helper.detect_compositor = lambda: {"compositor": "hyprland", "source": "test"}
     helper.remote_desktop_status = lambda: {"stubbed": True}
@@ -3059,6 +3058,139 @@ def test_remote_desktop_start_verifies_the_output_it_created():
         raise AssertionError(f"'cannot tell' must not be reported as 'absent': {result['failures']!r}")
 
 
+@contextlib.contextmanager
+def _rd_systemctl(replies):
+    """Drive _systemctl_user from a {property-query-kind: CompletedProcess} map."""
+    original = helper._systemctl_user
+
+    def fake(argv, **kwargs):
+        joined = " ".join(argv)
+        for key, reply in replies.items():
+            if key in joined:
+                return reply
+        return subprocess.CompletedProcess(argv, 0, "", "")
+
+    helper._systemctl_user = fake
+    try:
+        yield
+    finally:
+        helper._systemctl_user = original
+
+
+def test_remote_desktop_journal_window_never_falls_back_to_unbounded_history():
+    # S1, and it is the worse direction of the readable/active split. An
+    # unbounded read replays a CLIENT CONNECTED from a previous run, so the
+    # widget shows LIVE with nobody connected -- which trains the user to
+    # ignore the one indicator that says somebody is watching their screen.
+    good = subprocess.CompletedProcess([], 0, "Thu 2026-08-06 16:44:12 CEST\n", "")
+    with _rd_systemctl({"ActiveEnterTimestamp": good}):
+        assert_equal(
+            helper._rd_journal_window(), ["--since", "2026-08-06 16:44:12"],
+            "a parseable start time anchors the read to the current run",
+        )
+
+    for label, reply in {
+        "the query failed": subprocess.CompletedProcess([], 1, "", "Failed to connect to bus"),
+        "the value is empty": subprocess.CompletedProcess([], 0, "\n", ""),
+        "the value is unparseable": subprocess.CompletedProcess([], 0, "n/a\n", ""),
+        "the shape is unexpected": subprocess.CompletedProcess([], 0, "Thu 06/08/2026 16:44:12 CEST\n", ""),
+    }.items():
+        with _rd_systemctl({"ActiveEnterTimestamp": reply}):
+            assert_equal(
+                helper._rd_journal_window(), None,
+                f"no anchor when {label} -- and specifically not a boot-wide replay",
+            )
+
+    # And the session read must REFUSE rather than read unbounded, reporting
+    # unknown. Not idle either: `active` stays false but `readable` is false
+    # too, which is what the shell renders as "could not tell".
+    calls = []
+    original_run = helper.run
+
+    def fake_run(argv, **kwargs):
+        calls.append(argv)
+        return subprocess.CompletedProcess(argv, 0, "Info: CLIENT CONNECTED\n", "")
+
+    helper.run = fake_run
+    try:
+        with _rd_systemctl({"ActiveEnterTimestamp": subprocess.CompletedProcess([], 1, "", "boom")}):
+            session = helper._rd_session_state()
+    finally:
+        helper.run = original_run
+
+    assert_equal(calls, [], "no journal is read at all without an anchor to bound it")
+    assert_equal(session["readable"], False, "an unanchored session is unknown")
+    assert_equal(session["active"], False, "and it never claims a session it did not read")
+    if "start time" not in session["error"]:
+        raise AssertionError(f"the reason must name the missing anchor: {session['error']!r}")
+
+
+def test_remote_desktop_unit_query_failure_is_not_a_missing_unit():
+    # S2. `systemctl show` failing and the unit genuinely being absent came
+    # back identically, so a transient failure made the widget announce that
+    # Sunshine is not installed.
+    loaded = subprocess.CompletedProcess([], 0, "LoadState=loaded\nActiveState=inactive\n", "")
+    absent = subprocess.CompletedProcess([], 0, "LoadState=not-found\nActiveState=inactive\n", "")
+    broken = subprocess.CompletedProcess([], 1, "", "Failed to connect to bus: No such file")
+    silent = subprocess.CompletedProcess([], 0, "", "")
+
+    with _rd_systemctl({"LoadState": loaded}):
+        state = helper._rd_unit_state()
+    assert_equal(state, {"known": True, "error": "", "exists": True, "running": False},
+                 "a loaded, inactive unit reads exactly that")
+
+    with _rd_systemctl({"LoadState": absent}):
+        state = helper._rd_unit_state()
+    assert_equal(state["known"], True, "'not-found' IS an answer")
+    assert_equal(state["exists"], False, "and the answer is that the unit is absent")
+
+    for label, reply in {"the query failed": broken, "the query said nothing": silent}.items():
+        with _rd_systemctl({"LoadState": reply}):
+            state = helper._rd_unit_state()
+        assert_equal(state["known"], False, f"{label}: that is not an answer")
+        assert_equal(state["exists"], False, f"{label}: and it must not read as installed either")
+        if not state["error"]:
+            raise AssertionError(f"{label}: the reason must survive to the caller")
+
+    # The status payload routes it to unknown, never to unavailable.
+    originals = {n: getattr(helper, n) for n in ("_rd_unit_state", "detect_compositor", "_rd_paired_clients", "_rd_web_host")}
+    helper.detect_compositor = lambda: {"compositor": "niri", "source": "test"}
+    helper._rd_paired_clients = lambda: []
+    helper._rd_web_host = lambda: "localhost"
+    try:
+        helper._rd_unit_state = lambda: {"known": False, "error": "bus is gone", "exists": False, "running": False}
+        status = helper.remote_desktop_status()
+        assert_equal(status["state"], "unknown", "a failed query is not 'unavailable'")
+        assert_equal(status["unitKnown"], False, "and the payload says so explicitly")
+        assert_equal(status["reason"], "bus is gone", "with the reason attached")
+        assert_equal(
+            status["session"]["readable"], False,
+            "a unit whose state is unknown has an unknown session too",
+        )
+
+        helper._rd_unit_state = lambda: {"known": True, "error": "", "exists": False, "running": False}
+        status = helper.remote_desktop_status()
+        assert_equal(status["state"], "unavailable", "a real absence still reads as unavailable")
+        assert_equal(status["unitKnown"], True, "because the question was answered")
+    finally:
+        for name, value in originals.items():
+            setattr(helper, name, value)
+
+
+def test_remote_desktop_start_refuses_when_the_unit_query_fails():
+    # The lifecycle half of S2: acting on a failed query would start a host
+    # that may already be running, and create an output for it.
+    original = helper._rd_unit_state
+    helper._rd_unit_state = lambda: {"known": False, "error": "bus is gone", "exists": False, "running": False}
+    try:
+        result = helper.remote_desktop_start()
+    finally:
+        helper._rd_unit_state = original
+    assert_equal(result["ok"], False, "an unanswerable unit query must not start anything")
+    if not any("could not determine" in failure for failure in result["failures"]):
+        raise AssertionError(f"the refusal must say the query failed: {result['failures']!r}")
+
+
 def test_remote_desktop_paired_clients_reads_only_names():
     def check(home: Path):
         config = home / ".config" / "sunshine"
@@ -3199,6 +3331,9 @@ def main():
     test_remote_desktop_start_is_idempotent_when_the_host_is_already_running()
     test_remote_desktop_start_reports_an_unrecordable_ownership_claim()
     test_remote_desktop_start_verifies_the_output_it_created()
+    test_remote_desktop_journal_window_never_falls_back_to_unbounded_history()
+    test_remote_desktop_unit_query_failure_is_not_a_missing_unit()
+    test_remote_desktop_start_refuses_when_the_unit_query_fails()
     subprocess.run(
         [sys.executable, str(REPO_ROOT / "scripts" / "check-vshell-niri.py")],
         check=True,

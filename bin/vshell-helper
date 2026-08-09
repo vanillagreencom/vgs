@@ -12410,21 +12410,34 @@ def _rd_web_host() -> str:
     return "localhost"
 
 
-def _rd_journal_window() -> List[str]:
-    """Bound the journal read to the CURRENT run of the unit.
+def _rd_journal_window() -> Any:
+    """Bound the journal read to the CURRENT run of the unit, or None.
 
-    Without this a `CLIENT CONNECTED` from a previous run -- with no matching
-    disconnect, because the daemon was killed -- reads as a live session
-    forever. The window is what makes the last-event scan below sound.
+    Without this bound a `CLIENT CONNECTED` from a previous run -- with no
+    matching disconnect, because the daemon was killed -- reads as a live
+    session forever. The window is what makes the last-event scan sound.
+
+    **There is no fallback window, deliberately.** An earlier version fell back
+    to `--boot` when the timestamp could not be established, reasoning that a
+    running unit always has an ActiveEnterTimestamp. That reasoning does not
+    survive the query itself failing, or systemd phrasing the value differently:
+    the read then replays unbounded history, and a stale CLIENT CONNECTED is
+    reported as a live session. The widget would show LIVE with nobody
+    connected.
+
+    That is the WORSE direction of the same error the readable/active split
+    guards. Hiding a real capture is bad; inventing one trains the user to
+    ignore the only indicator that says somebody is watching their screen, which
+    destroys the thing this plugin exists for. So: no anchor, no read -- the
+    session is reported unknown, which is neither a replay nor an idle claim.
     """
     proc = _systemctl_user(["show", RD_UNIT, "--property=ActiveEnterTimestamp", "--value"])
+    if proc.returncode != 0:
+        return None
     parts = (proc.stdout or "").strip().split()
     if len(parts) >= 3 and _RD_SYSTEMD_DATE_RE.match(parts[1]):
         return ["--since", f"{parts[1]} {parts[2]}"]
-    # No start time to anchor to. The current boot is the widest window worth
-    # reading, and it cannot mislead here: this is only consulted while the
-    # unit is running, and a running unit has an ActiveEnterTimestamp.
-    return ["--boot"]
+    return None
 
 
 def _rd_session_state() -> Dict[str, Any]:
@@ -12450,7 +12463,17 @@ def _rd_session_state() -> Dict[str, Any]:
         "readable": False,
         "error": "",
     }
-    argv = ["journalctl", "--user", "-u", RD_UNIT, "--no-pager", "-o", "short-iso", *_rd_journal_window()]
+    window = _rd_journal_window()
+    if window is None:
+        # Unknown, and specifically NOT idle: `readable` stays false, so the
+        # shell renders "could not tell" rather than "nobody is watching".
+        state["error"] = (
+            "the host's start time could not be established, so the journal "
+            "could not be bounded to the current run"
+        )
+        return state
+
+    argv = ["journalctl", "--user", "-u", RD_UNIT, "--no-pager", "-o", "short-iso", *window]
     try:
         proc = run(argv, timeout=8)
     except (OSError, subprocess.SubprocessError) as exc:
@@ -12622,17 +12645,59 @@ def _rd_remove_output() -> str:
     return ""
 
 
+def _rd_unit_state() -> Dict[str, Any]:
+    """Unit state PLUS whether the query itself worked.
+
+    `_user_unit_state()` reports a failed `systemctl show` and a genuinely
+    absent unit identically -- both come back `exists: False` -- and the whole
+    discipline of this subsystem is that a failed question is not a negative
+    answer. A transient systemctl failure must not make the widget announce
+    that Sunshine is not installed.
+
+    Parsed here rather than by adding a flag to the shared helper: this needs
+    two properties, and the notification subsystem's use of _user_unit_state is
+    not worth the blast radius.
+    """
+    proc = _systemctl_user(["show", RD_UNIT, "--property=LoadState", "--property=ActiveState"])
+    values: Dict[str, str] = {}
+    for line in (proc.stdout or "").splitlines():
+        key, sep, value = line.partition("=")
+        if sep and key.strip() not in values:
+            values[key.strip()] = value.strip()
+    if proc.returncode != 0 or "LoadState" not in values:
+        return {
+            "known": False,
+            "error": (proc.stderr or "").strip() or "systemctl did not answer",
+            "exists": False,
+            "running": False,
+        }
+    return {
+        "known": True,
+        "error": "",
+        "exists": values.get("LoadState", "") in {"loaded", "masked"},
+        "running": values.get("ActiveState", "") in {"active", "activating", "reloading"},
+    }
+
+
 def remote_desktop_status() -> Dict[str, Any]:
-    unit = _user_unit_state(RD_UNIT)
+    unit = _rd_unit_state()
     running = unit["running"]
     compositor = detect_compositor()["compositor"]
     output_present = _rd_output_present() if compositor == "hyprland" else None
-    session = _rd_session_state() if running else {
+    session = _rd_session_state() if (unit["known"] and running) else {
         "active": False, "count": 0, "since": "", "codec": "",
-        "bitrateBps": 0, "colorDepth": "", "readable": True, "error": "",
+        "bitrateBps": 0, "colorDepth": "",
+        # A unit whose state is unknown has an unknown session too; a stopped
+        # one genuinely has none.
+        "readable": unit["known"], "error": "" if unit["known"] else unit["error"],
     }
 
-    if unit["exists"]:
+    if not unit["known"]:
+        # The question failed. Neither "installed" nor "not installed" is an
+        # answer this can give, so it gives neither.
+        state = "unknown"
+        reason = unit["error"]
+    elif unit["exists"]:
         state = "running" if running else "stopped"
         reason = ""
     else:
@@ -12641,6 +12706,7 @@ def remote_desktop_status() -> Dict[str, Any]:
 
     return {
         "unit": RD_UNIT,
+        "unitKnown": unit["known"],
         "installed": unit["exists"],
         "running": running,
         "state": state,
@@ -12680,7 +12746,11 @@ def remote_desktop_start() -> Dict[str, Any]:
     failures: List[str] = []
     manual: List[str] = []
 
-    unit = _user_unit_state(RD_UNIT)
+    unit = _rd_unit_state()
+    if not unit["known"]:
+        return _rd_result(actions, [
+            f"could not determine whether {RD_UNIT} is installed: {unit['error']}"
+        ], manual)
     if not unit["exists"]:
         return _rd_result(actions, [f"{RD_UNIT} is not installed"], manual)
 
@@ -12944,6 +13014,12 @@ def cmd_remote_desktop(argv: List[str]) -> int:
 
     if args.cmd == "status":
         status = remote_desktop_status()
+        if status["state"] == "unknown":
+            if args.json:
+                print(json.dumps(status, indent=2))
+            else:
+                _print_remote_desktop_status(status)
+            return 3
         if args.json:
             print(json.dumps(status, indent=2))
         else:
@@ -12960,7 +13036,17 @@ def cmd_remote_desktop(argv: List[str]) -> int:
     # path of each creates and destroys nothing.
     with _rd_lifecycle_lock():
         if args.cmd == "toggle":
-            result = remote_desktop_stop() if _user_unit_state(RD_UNIT)["running"] else remote_desktop_start()
+            # A failed query must not be read as "stopped" -- that would start a
+            # host that may already be running, and create an output for it.
+            toggle_unit = _rd_unit_state()
+            if not toggle_unit["known"]:
+                result = _rd_result([], [
+                    f"could not determine whether {RD_UNIT} is running: {toggle_unit['error']}"
+                ], [])
+            elif toggle_unit["running"]:
+                result = remote_desktop_stop()
+            else:
+                result = remote_desktop_start()
         elif args.cmd == "start":
             result = remote_desktop_start()
         else:
