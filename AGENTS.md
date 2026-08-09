@@ -167,6 +167,7 @@ scripts/check-lock-reload-order.py
 scripts/check-display-config-fixtures.js
 scripts/check-vgs-menu-capabilities.js
 scripts/check-vshell-ipc.sh
+scripts/test-smoke-surfaces.sh
 scripts/test-pill-hover-safety.js
 python3 -m py_compile bin/vshell-helper
 bash -n bin/vshell

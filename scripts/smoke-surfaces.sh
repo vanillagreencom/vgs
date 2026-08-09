@@ -97,20 +97,30 @@ PY
 # classified here instead. No shell is a skip; a foreign shell is a failure,
 # because the requested assertions did not run.
 require_own_shell() {
-  local listing verdict rc=0
+  local listing verdict diag err_file rc=0
 
   if ! command -v qs >/dev/null 2>&1; then
     echo "surface smoke skipped: quickshell CLI (qs) not found, no instance registry to consult"
     exit 0
   fi
-  listing="$(qs list --all --json 2>&1)" || {
-    rc=$?
+
+  # stdout and stderr are captured SEPARATELY on purpose. Folding them together
+  # ("2>&1") feeds any warning `qs` writes to stderr — a deprecation notice, a
+  # protocol grumble — into the JSON parser and turns a perfectly good listing
+  # into a hard failure. stdout is the document; stderr is only ever the
+  # diagnostic printed when something actually went wrong.
+  err_file="$(mktemp)"
+  listing="$(qs list --all --json 2>"$err_file")" || rc=$?
+  diag="$(cat "$err_file")"
+  rm -f "$err_file"
+
+  if [[ "$rc" -ne 0 ]]; then
     {
       echo "surface smoke FAILED: could not read the Quickshell instance registry (qs list exited $rc)"
-      printf '%s\n' "$listing"
+      if [[ -n "$diag" ]]; then printf '%s\n' "$diag"; fi
     } >&2
     exit 1
-  }
+  fi
 
   rc=0
   verdict="$(QS_LISTING="$listing" python3 - "$repo_root/quickshell/vshell" <<'PY'
@@ -119,12 +129,54 @@ import os
 import sys
 from pathlib import Path
 
+PROC = Path(os.environ.get("VSHELL_PROC_ROOT", "/proc"))
+QS_BINARIES = ("qs", "quickshell")
+
 
 def resolve(value):
     try:
         return Path(value).resolve()
     except OSError:
         return Path(value)
+
+
+def peer_alive(pid):
+    """True when `pid` is a live Quickshell process *right now*.
+
+    Faithful mirror of `bin/vshell-helper::_vgs_peer_alive` — keep the two in
+    step. `/proc/<pid>` merely existing is not liveness: a zombie keeps a
+    readable entry while owning no surfaces, and after PID reuse the number
+    belongs to something unrelated. Either would let a stale foreign entry fail
+    this smoke instead of taking the documented no-shell skip, which is the
+    false failure the precondition exists to prevent, inverted.
+    """
+    if pid <= 0:
+        return False
+    proc = PROC / str(pid)
+    try:
+        stat_text = (proc / "stat").read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return False
+    # comm (field 2) is parenthesised and may contain spaces, so everything
+    # after the final ')' is parsed positionally: index 0 is field 3 (state).
+    fields = stat_text.rpartition(")")[2].split()
+    if not fields:
+        return False
+    if fields[0] == "Z":  # exited, not yet reaped: owns no surfaces
+        return False
+    try:
+        executable = os.path.basename(os.path.realpath(proc / "exe"))
+    except OSError:
+        executable = ""
+    if executable in QS_BINARIES:
+        return True
+    # /proc/<pid>/exe is readable only for our own processes; comm is not, and
+    # is enough to reject a process that merely inherited the number.
+    try:
+        comm = (proc / "comm").read_text(encoding="utf-8", errors="replace").strip()
+    except OSError:
+        return False
+    return comm in QS_BINARIES
 
 
 want = resolve(sys.argv[1])
@@ -156,7 +208,7 @@ for entry in data:
     except (TypeError, ValueError):
         continue
     # A registry entry outliving its process must not fail the run.
-    if pid <= 0 or not Path(f"/proc/{pid}").exists():
+    if not peer_alive(pid):
         continue
     if path == want:
         raise SystemExit(0)
@@ -189,7 +241,10 @@ PY
       exit 1
       ;;
     *)
-      echo "surface smoke FAILED: could not classify the instance registry (classifier exit $rc)" >&2
+      {
+        echo "surface smoke FAILED: could not classify the instance registry (classifier exit $rc)"
+        if [[ -n "$diag" ]]; then echo "  qs list also wrote to stderr: $diag"; fi
+      } >&2
       exit 1
       ;;
   esac

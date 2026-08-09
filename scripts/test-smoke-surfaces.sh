@@ -1,0 +1,257 @@
+#!/usr/bin/env bash
+# Branch coverage for `scripts/smoke-surfaces.sh`'s `require_own_shell`
+# precondition (VGS-69).
+#
+# That precondition is the thing standing between "the smoke could not run" and
+# "the smoke passed", on the one step AGENTS.md tells everyone to run before
+# finishing QML work. Every branch of it — skip, own shell, foreign checkout,
+# unreadable registry, unparsable registry — was proven by hand and by nothing
+# committed, so it could regress into passing without checking.
+#
+# The script under test is exercised from a THROWAWAY COPY of the repo layout:
+# a temp dir holding `scripts/smoke-surfaces.sh`, a stub `bin/vshell` and an
+# empty `quickshell/vshell/`. `repo_root` is derived from the script's own
+# location, so the copy makes this checkout's identity, the `qs` registry, the
+# process table and `hyprctl` all fixtures. Nothing here can reach the live
+# session: `qs`, `hyprctl` and `vshell` are all stubs, and `VSHELL_PROC_ROOT`
+# points at a fabricated procfs.
+set -euo pipefail
+
+repo_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+tmp="$(mktemp -d)"
+trap 'rm -rf "$tmp"' EXIT
+
+fake_repo="$tmp/repo"
+bin_dir="$tmp/bin"
+mkdir -p "$fake_repo/scripts" "$fake_repo/bin" "$fake_repo/quickshell/vshell" "$bin_dir" "$tmp/empty-proc"
+cp "$repo_root/scripts/smoke-surfaces.sh" "$fake_repo/scripts/smoke-surfaces.sh"
+chmod +x "$fake_repo/scripts/smoke-surfaces.sh"
+
+own_config="$fake_repo/quickshell/vshell"
+foreign_root="$tmp/other-checkout"
+foreign_config="$foreign_root/quickshell/vshell"
+mkdir -p "$foreign_config"
+
+# Stub `vshell`: every ipc call succeeds and touches nothing.
+cat >"$fake_repo/bin/vshell" <<'EOF'
+#!/usr/bin/env bash
+exit 0
+EOF
+chmod +x "$fake_repo/bin/vshell"
+
+# Stub `qs`: FAKE_QS_JSON on stdout, FAKE_QS_STDERR on stderr, FAKE_QS_EXIT as
+# the status. Keeping the two streams independent is what lets the "warning on
+# a successful listing" case exist at all.
+cat >"$bin_dir/qs" <<'EOF'
+#!/usr/bin/env bash
+if [[ -n "${FAKE_QS_STDERR:-}" ]]; then printf '%s\n' "$FAKE_QS_STDERR" >&2; fi
+if [[ "${FAKE_QS_EXIT:-0}" != 0 ]]; then exit "${FAKE_QS_EXIT}"; fi
+printf '%s\n' "${FAKE_QS_JSON:-[]}"
+EOF
+chmod +x "$bin_dir/qs"
+
+# Stub `hyprctl`: one monitor whose largest layer sets the screen size, with
+# every namespace the smoke asserts on present and content-sized.
+cat >"$bin_dir/hyprctl" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$FAKE_LAYERS_JSON"
+EOF
+chmod +x "$bin_dir/hyprctl"
+
+layers_json='{"DP-1":{"levels":{"2":[
+  {"namespace":"vshell:wallpaper","w":1920,"h":1080},
+  {"namespace":"vshell:capture","w":400,"h":300},
+  {"namespace":"vshell:capture:clickcatcher","w":1920,"h":1080},
+  {"namespace":"vshell:power-menu","w":400,"h":300},
+  {"namespace":"vshell:power-menu:clickcatcher","w":1920,"h":1080},
+  {"namespace":"vshell:vgs-menu","w":400,"h":300},
+  {"namespace":"vshell:vgs-menu:clickcatcher","w":1920,"h":1080}
+]}}}'
+
+# --- fabricated procfs -------------------------------------------------------
+# make_proc <root> <pid> <state> <comm> [exe-target]
+# `exe` is omitted where the case needs the comm fallback: /proc/<pid>/exe is
+# readable only for our own processes, so a foreign shell is normally
+# confirmed through comm alone.
+make_proc() {
+  local root="$1" pid="$2" state="$3" comm="$4" exe="${5:-}"
+  mkdir -p "$root/$pid"
+  printf '%s (%s) %s 1 1 0 -1 0 0 0 0 0 0 0\n' "$pid" "$comm" "$state" >"$root/$pid/stat"
+  printf '%s\n' "$comm" >"$root/$pid/comm"
+  if [[ -n "$exe" ]]; then ln -sf "$exe" "$root/$pid/exe"; fi
+}
+
+proc="$tmp/proc"
+make_proc "$proc" 101 S quickshell /usr/bin/quickshell   # own shell, live
+make_proc "$proc" 202 S quickshell ""                    # foreign shell, live (comm only)
+make_proc "$proc" 303 Z quickshell /usr/bin/quickshell   # foreign shell, zombie
+make_proc "$proc" 404 S bash ""                          # foreign pid, reused by something else
+
+entry() { printf '{"pid":%s,"config_path":"%s"}' "$1" "$2"; }
+
+# --- harness -----------------------------------------------------------------
+out=""
+err=""
+rc=0
+case_name=""
+
+run_smoke() {
+  case_name="$1"
+  shift
+  rc=0
+  out="$(env "$@" \
+    PATH="$bin_dir:$PATH" \
+    HYPRLAND_INSTANCE_SIGNATURE=test \
+    FAKE_LAYERS_JSON="$layers_json" \
+    "$fake_repo/scripts/smoke-surfaces.sh" 2>"$tmp/stderr")" || rc=$?
+  err="$(cat "$tmp/stderr")"
+}
+
+fail() {
+  {
+    echo "FAIL [$case_name]: $*"
+    echo "  exit: $rc"
+    echo "  --- stdout ---"
+    printf '%s\n' "$out"
+    echo "  --- stderr ---"
+    printf '%s\n' "$err"
+  } >&2
+  exit 1
+}
+
+expect_rc() {
+  [[ "$rc" == "$1" ]] || fail "expected exit $1, got $rc"
+}
+
+expect_stdout() {
+  grep -qF -- "$1" <<<"$out" || fail "stdout does not mention: $1"
+}
+
+expect_stderr() {
+  grep -qF -- "$1" <<<"$err" || fail "stderr does not mention: $1"
+}
+
+# --- cases -------------------------------------------------------------------
+
+# The precondition is satisfied: the live shell is this checkout's, so the smoke
+# proceeds and the assertions run to completion.
+run_smoke "own shell" \
+  VSHELL_PROC_ROOT="$proc" \
+  FAKE_QS_JSON="[$(entry 101 "$own_config")]"
+expect_rc 0
+expect_stdout "surface smoke passed"
+
+# A warning on stderr must not corrupt a perfectly good listing. Folding the
+# streams together made this case a hard failure on a successful `qs list`.
+run_smoke "own shell, qs warns on stderr" \
+  VSHELL_PROC_ROOT="$proc" \
+  FAKE_QS_STDERR="warning: some deprecated thing" \
+  FAKE_QS_JSON="[$(entry 101 "$own_config")]"
+expect_rc 0
+expect_stdout "surface smoke passed"
+
+# Nothing running: a named skip, never a silent abort.
+run_smoke "no VGS shell" \
+  VSHELL_PROC_ROOT="$proc" \
+  FAKE_QS_JSON="[]"
+expect_rc 0
+expect_stdout "surface smoke skipped: no live VGS shell on this session"
+
+# Some other Quickshell app on the seat is none of this script's business.
+run_smoke "unrelated quickshell shell" \
+  VSHELL_PROC_ROOT="$proc" \
+  FAKE_QS_JSON="[$(entry 101 "$tmp/somebody-else/quickshell/caelestia")]"
+expect_rc 0
+expect_stdout "surface smoke skipped: no live VGS shell on this session"
+
+# A live shell owned by another checkout: loud failure naming that checkout,
+# because the requested assertions did not run.
+run_smoke "foreign checkout" \
+  VSHELL_PROC_ROOT="$proc" \
+  FAKE_QS_JSON="[$(entry 202 "$foreign_config")]"
+expect_rc 1
+expect_stderr "surface smoke FAILED: the live VGS shell belongs to a different checkout"
+expect_stderr "$foreign_root (pid 202)"
+expect_stderr "this run:      $fake_repo"
+
+# `shell.qml` in config_path resolves to the same runtime tree.
+run_smoke "foreign checkout, shell.qml config path" \
+  VSHELL_PROC_ROOT="$proc" \
+  FAKE_QS_JSON="[$(entry 202 "$foreign_config/shell.qml")]"
+expect_rc 1
+expect_stderr "$foreign_root (pid 202)"
+
+# A zombie keeps a readable /proc entry while owning no surfaces. Treating
+# /proc/<pid> existence as liveness turned this into the foreign-checkout
+# failure above — the exact false failure the precondition exists to prevent.
+run_smoke "foreign entry whose process is a zombie" \
+  VSHELL_PROC_ROOT="$proc" \
+  FAKE_QS_JSON="[$(entry 303 "$foreign_config")]"
+expect_rc 0
+expect_stdout "surface smoke skipped: no live VGS shell on this session"
+
+# After PID reuse the number belongs to something unrelated.
+run_smoke "foreign entry whose pid was reused" \
+  VSHELL_PROC_ROOT="$proc" \
+  FAKE_QS_JSON="[$(entry 404 "$foreign_config")]"
+expect_rc 0
+expect_stdout "surface smoke skipped: no live VGS shell on this session"
+
+# The pid is gone from the process table entirely.
+run_smoke "foreign entry whose process is gone" \
+  VSHELL_PROC_ROOT="$tmp/empty-proc" \
+  FAKE_QS_JSON="[$(entry 202 "$foreign_config")]"
+expect_rc 0
+expect_stdout "surface smoke skipped: no live VGS shell on this session"
+
+# Garbage in the registry must FAIL. Falling back to the skip here would be a
+# check that passes without checking.
+run_smoke "unparsable registry" \
+  VSHELL_PROC_ROOT="$proc" \
+  FAKE_QS_JSON="not json at all"
+expect_rc 1
+expect_stderr "surface smoke FAILED: could not classify the instance registry"
+expect_stderr "unparsable qs list output"
+
+# Well-formed JSON of the wrong shape is equally unclassifiable.
+run_smoke "registry is not a list" \
+  VSHELL_PROC_ROOT="$proc" \
+  FAKE_QS_JSON='{"pid":1}'
+expect_rc 1
+expect_stderr "surface smoke FAILED: could not classify the instance registry"
+
+# `qs list` itself failing is a failure, and its stderr is what says why.
+run_smoke "qs list exits non-zero" \
+  VSHELL_PROC_ROOT="$proc" \
+  FAKE_QS_EXIT=3 \
+  FAKE_QS_STDERR="qs: could not open the instance directory"
+expect_rc 1
+expect_stderr "surface smoke FAILED: could not read the Quickshell instance registry (qs list exited 3)"
+expect_stderr "qs: could not open the instance directory"
+
+# No `qs` at all: there is no registry to consult, so there is nothing to
+# classify and nothing to claim. This branch is the one case that cannot be
+# driven by a stub — it needs `qs` ABSENT from PATH, and PATH still has to carry
+# the coreutils the script shells out to. Where a real quickshell CLI is
+# installed it would answer from the live registry, so the case is announced as
+# skipped rather than run against the session.
+if command -v qs >/dev/null 2>&1; then
+  echo "note: a real quickshell CLI is installed, so the 'qs not installed' branch"
+  echo "      cannot be isolated from the live registry here; NOT checked."
+else
+  case_name="qs not installed"
+  mkdir -p "$tmp/bin-noqs"
+  cp "$bin_dir/hyprctl" "$tmp/bin-noqs/hyprctl"
+  rc=0
+  out="$(env \
+    PATH="$tmp/bin-noqs:$PATH" \
+    HYPRLAND_INSTANCE_SIGNATURE=test \
+    FAKE_LAYERS_JSON="$layers_json" \
+    VSHELL_PROC_ROOT="$proc" \
+    "$fake_repo/scripts/smoke-surfaces.sh" 2>"$tmp/stderr")" || rc=$?
+  err="$(cat "$tmp/stderr")"
+  expect_rc 0
+  expect_stdout "quickshell CLI (qs) not found"
+fi
+
+echo "smoke-surfaces precondition checks passed"
