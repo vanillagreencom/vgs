@@ -642,7 +642,7 @@ Item {
                         // Held while this row has an async operation in flight,
                         // so a second click cannot start a second one.
                         busy: root.disabling === modelData.id || root.removing === modelData.id
-                        matchCount: ScratchpadService.matchCounts[modelData.id] !== undefined ? ScratchpadService.matchCounts[modelData.id] : -1
+                        matchState: ScratchpadService.matchStates[modelData.id] || null
                         tabRoot: root
 
                         onToggleExpand: root.expandedId = (root.expandedId === modelData.id ? "" : modelData.id)
