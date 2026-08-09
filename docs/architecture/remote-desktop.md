@@ -192,6 +192,27 @@ The scan is bounded to the unit's current run via `ActiveEnterTimestamp`.
 Without that bound a `CLIENT CONNECTED` from a previous run — with no matching
 disconnect, because the daemon was killed — reads as a live session forever.
 
+**There is no fallback window, deliberately** — the same rule as the whitespace
+base in AGENTS.md. An earlier version fell back to `--boot` when the timestamp
+could not be established, reasoning that a running unit always has one; that
+reasoning does not survive the query itself failing or systemd phrasing the
+value differently. The read then replays unbounded history and the widget shows
+**LIVE with nobody connected**.
+
+That is the worse direction of the same error the readable/active split guards.
+Hiding a real capture is bad; inventing one trains the user to ignore the only
+indicator that says somebody is watching their screen. So no anchor means no
+read: the session is reported unknown, which is neither a replay nor an idle
+claim.
+
+Likewise `_rd_unit_state()` separates "the unit is not installed" from
+"`systemctl show` did not answer". The shared `_user_unit_state()` reports both
+as `exists: False`, and a transient systemctl failure must not make the widget
+announce that Sunshine is not installed. An unanswered query produces
+`state: "unknown"` with `unitKnown: false`, which the shell routes to the same
+unknown rendering as everything else here, and the lifecycle commands refuse to
+act on rather than treating as "stopped".
+
 ## Event-driven, and honest when it stops being
 
 VGS-63 was a widget that fetched status once and sat on the answer for a whole
@@ -230,7 +251,21 @@ too: a host that is up with an unreadable journal renders `listening-unconfirmed
 (`On?`, warning) rather than a plain `On`, which would claim nobody is watching.
 
 `streaming` is **not** cleared: that would claim "idle" on a dead watcher's
-say-so, and only the authoritative session count may say a capture ended. So the
+say-so, and only the authoritative session count may say a capture ended.
+
+### The split has to reach the pixels
+
+`stateColorTokenFor()` returns a colour token *name* per state, so the state
+table is assertable without a Theme instance, and `stateColor` is derived from
+it rather than from a second switch that could drift.
+
+The bar pill's glyph takes that colour for the states that mean something is
+happening or unknown, and keeps the bar's uniform `Theme.widgetIconColor` for
+`off` and `listening`, where nothing is wrong and a bar of differently coloured
+glyphs is just noise. That exception matters: in `icon` pill mode there is no
+text at all, so `cast_connected` vs `cast` — a glyph shape, at bar size, in the
+same colour — was the *only* difference between "someone is watching my screen"
+and "idle". Both the horizontal and the vertical pill take it. So the
 widget gets a fourth session rendering, `streaming-unconfirmed` — still red,
 still reading `LIVE?`, with the uncertainty explicit. A plain `LIVE` would claim
 certainty nothing has; an idle pill would hide a capture that may be running.
@@ -275,7 +310,7 @@ so no binding is ever evaluated (VGS-19).
 
 | Command | Effect |
 |---------|--------|
-| `status [--json]` | Host state, virtual output, live session, web UI URL, paired devices. Exit `0` running, `1` stopped, `2` not installed |
+| `status [--json]` | Host state, virtual output, live session, web UI URL, paired devices. Exit `0` running, `1` stopped, `2` not installed, `3` the unit state could not be read |
 | `start` / `stop` / `toggle [--json]` | The paired lifecycle above |
 | `ui [--json]` | Opens the web UI at the tailnet address — the only route a client has; `localhost` would be the wrong thing to hand over |
 | `watch` | Streams normalised event tokens until killed |

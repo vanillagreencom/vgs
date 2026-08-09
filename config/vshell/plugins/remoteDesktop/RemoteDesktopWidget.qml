@@ -83,6 +83,39 @@ PluginComponent {
         // which is the worse one to get wrong.
         return host.sessionKnown ? "listening" : "listening-unconfirmed";
     }
+    // Which colour token a state carries. Returned as a NAME, not a Theme
+    // value, so the state table can be asserted without a Theme instance —
+    // "streaming must not look like listening" is a claim about these tokens.
+    function stateColorTokenFor(state) {
+        switch (state) {
+        case "streaming":
+        case "streaming-unconfirmed":
+            return "error";
+        case "unknown":
+        case "stale":
+        case "listening-unconfirmed":
+            return "warning";
+        case "listening":
+            return "primary";
+        default:
+            return "surfaceVariantText";
+        }
+    }
+
+    // Whether the BAR PILL's glyph takes the state colour instead of the bar's
+    // uniform widget icon colour.
+    //
+    // Bars keep one icon colour by convention, and for "off" and "listening"
+    // that convention is right — nothing is wrong, and a bar of differently
+    // coloured glyphs is noise. It is wrong for the states that mean something
+    // is happening or unknown: in `icon` pill mode there is no text at all, so
+    // `cast_connected` vs `cast` was the ONLY difference between "someone is
+    // watching my screen" and "idle". A glyph shape is not enough signal for
+    // that, which is the whole point of the streaming/listening split.
+    function pillIconUsesStateColor(state) {
+        const token = stateColorTokenFor(state);
+        return token === "error" || token === "warning";
+    }
     // END STATE DECISION
 
     readonly property string visualState: root.visualStateFor({
@@ -107,23 +140,22 @@ PluginComponent {
         }
     }
 
+    // Unconfirmed keeps the alarm colour: softening it would trade a possible
+    // live capture for a tidier bar.
     readonly property color stateColor: {
-        switch (root.visualState) {
-        case "streaming":
-        case "streaming-unconfirmed":
-            // Unconfirmed keeps the alarm colour. Softening it would trade a
-            // possible live capture for a tidier bar.
+        switch (root.stateColorTokenFor(root.visualState)) {
+        case "error":
             return Theme.error;
-        case "unknown":
-        case "stale":
-        case "listening-unconfirmed":
+        case "warning":
             return Theme.warning;
-        case "listening":
+        case "primary":
             return Theme.primary;
         default:
             return Theme.surfaceVariantText;
         }
     }
+
+    readonly property color pillIconColor: root.pillIconUsesStateColor(root.visualState) ? root.stateColor : Theme.widgetIconColor
 
     readonly property string stateText: {
         switch (root.visualState) {
@@ -246,7 +278,7 @@ PluginComponent {
                 id: pillIcon
                 name: root.stateIcon
                 size: root.iconSize
-                color: Theme.widgetIconColor
+                color: root.pillIconColor
                 filled: root.visualState === "streaming"
                 // Dimmed reads as "present but not operable"; the popout still
                 // explains why rather than doing nothing.
@@ -281,7 +313,7 @@ PluginComponent {
                 id: pillIconV
                 name: root.stateIcon
                 size: root.iconSize
-                color: Theme.widgetIconColor
+                color: root.pillIconColor
                 filled: root.visualState === "streaming"
                 opacity: root.installed ? 1 : 0.4
                 anchors.horizontalCenter: parent.horizontalCenter

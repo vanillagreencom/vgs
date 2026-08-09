@@ -34,7 +34,9 @@ const serviceSource = fs.readFileSync(SERVICE, "utf8");
 
 const marked = widgetSource.match(/\/\/ BEGIN STATE DECISION\n([\s\S]*?)\/\/ END STATE DECISION/);
 assert.ok(marked, "RemoteDesktopWidget.qml must carry the STATE DECISION markers");
-const { visualStateFor } = new Function(`${marked[1]}\nreturn { visualStateFor };`)();
+const { visualStateFor, stateColorTokenFor, pillIconUsesStateColor } = new Function(
+    `${marked[1]}\nreturn { visualStateFor, stateColorTokenFor, pillIconUsesStateColor };`
+)();
 
 const sessionMarked = serviceSource.match(/\/\/ BEGIN SESSION DECISION\n([\s\S]*?)\/\/ END SESSION DECISION/);
 assert.ok(sessionMarked, "RemoteDesktopService.qml must carry the SESSION DECISION markers");
@@ -213,6 +215,63 @@ assert.equal(
     "a host that is down has no sessions to be unsure about"
 );
 
+// --- streaming must not LOOK like listening ---------------------------------
+//
+// The state split is only worth having if it reaches the pixels. The colour
+// tokens are returned as names precisely so this can be asserted without a
+// Theme instance.
+
+assert.equal(stateColorTokenFor("streaming"), "error", "a live capture is an alarm colour");
+assert.equal(
+    stateColorTokenFor("streaming-unconfirmed"), "error",
+    "an unconfirmed capture keeps the alarm colour; softening it trades a possible live capture for a tidier bar"
+);
+assert.equal(stateColorTokenFor("listening"), "primary");
+assert.equal(stateColorTokenFor("listening-unconfirmed"), "warning");
+assert.equal(stateColorTokenFor("unknown"), "warning");
+assert.equal(stateColorTokenFor("stale"), "warning");
+assert.equal(stateColorTokenFor("off"), "surfaceVariantText");
+assert.equal(stateColorTokenFor("unavailable"), "surfaceVariantText");
+
+assert.notEqual(
+    stateColorTokenFor("streaming"), stateColorTokenFor("listening"),
+    "the two states this widget exists to distinguish must not share a colour"
+);
+
+// The BAR PILL glyph, not just the popout. In `icon` pill mode there is no
+// text at all, so before this the only difference between "someone is watching
+// my screen" and "idle" was `cast_connected` vs `cast` — a glyph shape, at bar
+// size, in the same colour.
+assert.equal(
+    pillIconUsesStateColor("streaming"), true,
+    "the pill glyph must carry the alarm colour, or LIVE is a shape difference only"
+);
+assert.equal(pillIconUsesStateColor("streaming-unconfirmed"), true);
+assert.equal(pillIconUsesStateColor("unknown"), true);
+assert.equal(pillIconUsesStateColor("stale"), true);
+assert.equal(pillIconUsesStateColor("listening-unconfirmed"), true);
+// Bars keep one icon colour by convention, and for the states where nothing is
+// wrong that convention is right.
+assert.equal(pillIconUsesStateColor("listening"), false, "an idle host does not shout");
+assert.equal(pillIconUsesStateColor("off"), false);
+assert.equal(pillIconUsesStateColor("unavailable"), false);
+
+// The bindings have to actually consume the tokens; a table nothing reads is
+// not a fix.
+assert.ok(
+    /readonly property color stateColor: \{\s*switch \(root\.stateColorTokenFor\(root\.visualState\)\)/.test(widgetSource),
+    "stateColor must be derived from the token table rather than a second switch"
+);
+assert.ok(
+    widgetSource.includes("readonly property color pillIconColor: root.pillIconUsesStateColor(root.visualState) ? root.stateColor : Theme.widgetIconColor"),
+    "the pill glyph colour must be derived from the token table"
+);
+assert.equal(
+    (widgetSource.match(/color: root\.pillIconColor/g) || []).length,
+    2,
+    "both the horizontal and vertical pill glyphs must take it — a bar on the left edge is still a bar"
+);
+
 // --- the decision function can fail ----------------------------------------
 //
 // Everything above passes; that proves nothing about the harness. Confirm the
@@ -296,6 +355,18 @@ assert.ok(
     watchStopSlice.slice(0, 1600).includes("root.refresh();"),
     "losing the watch should immediately ask the independent status read"
 );
+
+// A status reply that says the unit query failed must not be applied as
+// "not installed" — the same defect as reading an unreadable journal as idle.
+assert.ok(
+    /if \(status\.unitKnown === false \|\| status\.state === "unknown"\)/.test(applyBody),
+    "_applyStatus must route an unanswerable unit query to unknown"
+);
+const unitGuardAt = applyBody.indexOf("status.unitKnown === false");
+const installedAt = applyBody.indexOf("root.installed = status.installed === true");
+assert.ok(unitGuardAt >= 0, "the unit-unknown guard must exist");
+assert.ok(installedAt >= 0, "_applyStatus must still be the site that applies `installed`");
+assert.ok(unitGuardAt < installedAt, "the guard must come before the assignment it guards");
 
 // A refresh arriving during a probe is coalesced, never dropped: the journal
 // read can take seconds while the event debounce is 400ms, and there is no

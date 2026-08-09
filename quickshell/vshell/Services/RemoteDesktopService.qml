@@ -210,6 +210,15 @@ Singleton {
             return;
         }
 
+        if (status.unitKnown === false || status.state === "unknown") {
+            // The helper could not ask systemd, so it reported neither
+            // "installed" nor "not installed". Applying `installed: false`
+            // here would turn a failed query into a confident negative — the
+            // same defect as reading an unreadable journal as idle.
+            root._markStatusUnknown(status.reason || I18n.tr("the host unit state could not be read"));
+            return;
+        }
+
         root.statusKnown = true;
         root.statusError = "";
         root.installed = status.installed === true;
