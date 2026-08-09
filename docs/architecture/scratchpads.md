@@ -1,16 +1,22 @@
 # Scratchpads
 
-A scratchpad is an app parked on a hidden special workspace that one keybind
-slides in and out. Before VGS-62 configuring one meant hand-writing two
-compositor rules plus a toggle script, entirely outside VGS.
+A scratchpad is an app parked out of sight that one keybind brings in and puts
+away again. Before VGS-62 configuring one meant hand-writing two compositor
+rules plus a toggle script, entirely outside VGS.
+
+One schema, two backends: Hyprland parks it on a hidden **special workspace**;
+Niri, which has none, gives it a **named workspace** of its own (§ Niri).
 
 | Piece | Path |
 |-------|------|
 | Persisted list | `scratchpads` in `~/.config/vshell/settings.json` (schema v23) |
 | Schema, geometry, generation, runtime toggle | `bin/vshell-helper` § Scratchpads |
-| Generated compositor config | `~/.config/hypr/vgs/scratchpads.lua` |
+| Generated config (Hyprland) | `~/.config/hypr/vgs/scratchpads.lua` |
+| Generated config (Niri) | `~/.config/niri/vgs/scratchpads.kdl` |
 | Shell seam | `quickshell/vshell/Services/ScratchpadService.qml` |
 | Settings page | `Modules/Settings/ScratchpadsTab.qml`, `ScratchpadRow.qml` |
+
+Everything from here to § Niri describes the Hyprland backend.
 
 ## Why VGS owns this
 
@@ -182,6 +188,13 @@ Deleting a pad removes its keybind and every rule pointing at its special
 workspace, so a window already mapped there would be left unreachable without
 `hyprctl` by hand — invisible, but still running.
 
+**A release that could not look has not succeeded.** Settings deletes the pad
+record only when release reports success, so "the compositor did not answer"
+must never be reported as "nothing to release" — that would cost the user their
+scratchpad configuration because an IPC call failed. The window finders return
+`None` for an unreadable list and `[]` for a readable empty one, and only the
+second authorises deletion.
+
 Settings therefore calls `vshell scratchpad release <id> --class-regex <re>`
 **before** deleting the record, which drops fullscreen and moves the window to
 the active workspace. Moving is chosen over closing (removing a configuration
@@ -278,6 +291,31 @@ On **Niri** the whole subsystem is absent, so this setting is absent with it:
 with the same reason as `toggle`, and the Settings page shows the Niri statement
 instead of the controls. See § Niri and VGS-83.
 
+## The launch command is argv, not a shell line
+
+A pad's command is exec'd as an **argv array** (`shlex`-parsed, so quoting still
+works), never handed to `sh -c`. AGENTS.md § Backend rules requires it, and on
+Niri a preloaded pad runs its command at login rather than only when the keybind
+is pressed.
+
+A command using shell **syntax** — a pipe, a redirect, `&&`, `;`, a subshell or
+a `$…` expansion — is **refused with the reason**, not run either way. Passing
+`&&` to `execvp` as a literal argument would silently do the wrong thing, and
+keeping `sh -c` for exactly the commands where interpretation matters would keep
+the rule broken where it counts. The refusal names the deliberate opt-in:
+
+```
+sh -c 'foo && bar'
+```
+
+which works, because the classification runs on the **parsed tokens** rather
+than the raw string — there the `&&` is inside an argument, not an operator.
+The lexer is told to treat punctuation the way a shell does, so `foo; bar` is
+caught too rather than hiding the `;` inside `foo;`.
+
+**This is a behaviour change for anyone whose pad command already relied on
+shell syntax**: it now refuses with an explanation instead of quietly working.
+
 ## Migration
 
 The `scratchpads` list is seeded **empty**, never imported from the compositor. A
@@ -287,11 +325,114 @@ Import stays a user action.
 
 ## Niri
 
-**Not implemented — a deliberate split, not an oversight.** Hyprland is the
-reference implementation. Niri has no special workspaces at all: the equivalent
-is a named workspace plus window rules and a `focus-or-toggle` bind, which is a
-different data model and a different generator, not a translation of this one.
+**A second backend, not a port** (VGS-83). Hyprland remains the reference
+implementation; Niri support is additive, with its own generator and its own
+toggle.
 
-`vshell scratchpad apply|toggle|preload` refuses on Niri with that reason rather
-than writing Hyprland config into a session that will never read it, and the
-Settings page shows the same statement instead of a page of dead controls.
+| | Hyprland | Niri |
+|---|---|---|
+| Where a pad lives | hidden special workspace | persistent **named** workspace `vgs-<id>` |
+| Reveal | `togglespecialworkspace` — overlays the current view | `focus-workspace` — *switches to* it |
+| Generated file | `~/.config/hypr/vgs/scratchpads.lua` | `~/.config/niri/vgs/scratchpads.kdl` |
+| Include | reported, never written (config is read-only to VGS) | written, with a backup — the existing Niri stance |
+| Geometry | VGS resolves anchor + percentage to pixels | niri resolves `proportion` and `relative-to` itself |
+
+**The one difference a user will notice: a pad takes a real slot in the
+workspace list and replaces the current view rather than floating over it.**
+Niri has nothing that overlays and hides again, so this is the model, not a
+shortcut. The Settings page says so on Niri rather than letting it be
+discovered as a bug.
+
+**The persisted record is unchanged**, which is what storing an anchor and a
+percentage instead of pixels bought. Niri turns out to express both directly:
+`default-column-width { proportion 0.6; }` for size and
+`default-floating-position x= y= relative-to="top"` for the anchor, whose
+coordinates already run *inward* from the named edge exactly as `offsetX`/
+`offsetY` mean them on Hyprland. So the percentage stays a percentage all the
+way into the compositor here, and this backend needs no monitor query to render
+at all — the "generated against a nominal display" caveat the Lua file carries
+does not arise.
+
+### What Niri cannot express, and how that is said
+
+Reported through an `unsupported` list in the payload, shown on the Settings
+page, and — where a control exists — the control is **hidden** rather than left
+live and inert:
+
+| Setting | Why |
+|---------|-----|
+| `animation` | niri's window-open animation is global config, not a window-rule property. Emitting one per pad would mean the last pad wins *and* the user's global animation is overwritten — the same trap as Hyprland's `specialWorkspace` leaf. The control is hidden on Niri. |
+| `dismissOnFocusLoss` | not wired up; the focus owner VGS uses reads the Hyprland event socket. |
+| `anchor: center` **with an offset** | niri has no centre `relative-to`. An unoffset centre pad is emitted by *omitting* the position rule, since niri centres new floating windows itself; with an offset the pad is still generated and still centred, and the dropped offset is named. |
+| a keybind that cannot be spelled | Keybinds are stored Hyprland-shaped (`SUPER + SHIFT, T`) because that is what the Settings capture writes; they are converted to niri's `Mod+Shift+T`. A key with no keysym name is reported and **no bind is written** — the pad still works through `vshell scratchpad toggle`, and inventing a spelling could shadow a bind the user already has. |
+
+`unsupported` is deliberately separate from `problems`. A pad in `problems` was
+**rejected** and generates nothing; a pad in `unsupported` **works**, with one
+property dropped. Reporting the second as the first would be as misleading as
+not reporting it at all.
+
+### What is rejected outright
+
+Same rule as everywhere else here — reject rather than half-emit — and on Niri
+the stakes are higher, because a rule niri refuses to parse takes the **whole
+config file** down with it, not just the pad:
+
+- a pattern using anything Rust's regex crate does not implement. It guarantees
+  linear time, so it has no backtracking and therefore no lookaround,
+  backreferences, conditional or atomic groups, possessive quantifiers, inline
+  comment groups, or `\Z` (it spells end-of-text `\z`) — all of which Python's
+  `re` accepts. This is a **deny list**: it can prove a pattern bad, never
+  prove one good, which is the honest position when there is no Niri here to
+  validate against;
+- a pattern containing `"#`, which would terminate the KDL raw string early and
+  leave a rule that parses as something narrower and quietly stops matching.
+
+A rejected pad is rejected **everywhere**, not only in the half that emits
+rules: it is also dropped from `spawn-at-startup`, or a pad refused for being
+unusable would still launch its app at every login into a session with nowhere
+to put it.
+
+### The toggle
+
+Same sequencing as Hyprland, for the same reasons: launch and **wait for the
+window** before focusing anything (focusing first shows an empty workspace and
+reads as a dead keybind), re-assert workspace membership first for an app whose
+app-id settled after mapping, serialize each pad's transition under the same
+per-pad lock, restore focus to the window that had it before the reveal, and
+confirm the outcome by reading it back rather than trusting that a dispatch
+that returned zero did anything.
+
+A disabled pad still refuses to reveal and is still allowed to hide, so
+disabling a visible pad cannot strand it.
+
+**On Niri a hide is confirmed against outputs, not just focus.** A pad whose
+workspace is still the active one on the output the user is looking at has not
+been hidden. But when focus has moved to a *different* output, the pad's own
+output goes on showing its active workspace — there is no overlay to pull away,
+so that is the whole of what a hide can do, and it reports success while naming
+the output the pad is still on. Treating that as failure told every
+multi-monitor user that every hide had failed, which matters now that Settings
+gates on the result. A workspace list that cannot be read confirms nothing and
+is reported as such, never as success.
+
+The reveal origin is **read before the hide and consumed only once it is
+confirmed** — the same rule as release. A hide that fails leaves the pad on
+screen and the retry still needs somewhere to hand focus back to, so spending
+the origin up front destroys the information on the one path that needs it.
+
+`vshell scratchpad hide [--keep-focus]` reaches both backends with the same
+flags, and **where focus lands after a hide is one shared decision**
+(`_scratchpad_restore_target`): a keybind hide returns to whatever the pad was
+revealed from, a focus-loss dismissal keeps the window the user just moved to,
+and an unknown focus — or focus still on the pad itself — falls back to the
+origin. Each backend gathers those two values through its own IPC, because it
+has no choice, but the rule is not duplicated. That matters here specifically:
+this path accumulated three variations of one defect by letting each side decide
+separately.
+
+`release` moves only the window that is actually **on the pad's workspace**.
+Matching on the class alone would pick up a same-class window that was never in
+the pad — a second terminal — and yank it onto the active workspace. The
+destination is the focused workspace's `idx`, never its `id`: niri reads a
+numeric workspace reference as an *index*, so passing the global id would name a
+different workspace.

@@ -3920,6 +3920,793 @@ def test_scratchpad_generated_lua_parses():
     assert parses(text), "generated scratchpad config must be valid Lua"
 
 
+def test_scratchpad_niri_generation():
+    """The Niri backend (VGS-83). Not a translation of the Lua one: Niri has no
+    special workspaces, so a pad is a persistent named workspace plus window
+    rules. The same pad RECORD drives both backends — that is what storing an
+    anchor and a percentage instead of pixels bought."""
+    pads = [
+        _pad(keybind="Mod+T", monitor="DP-1", preload=True, anchor="top-center", offsetY=36),
+        _pad(id="notes", classRegex="^(obsidian)$", command="obsidian",
+             titleExclude="^(Quick Switcher)$", anchor="bottom-right", offsetX=24, offsetY=24,
+             sizeMode="pixels", widthPixels=1200, heightPixels=800),
+        _pad(id="vm", classRegex="^(vm-viewer)$", command="virt-viewer", presentation="fullscreen"),
+        _pad(id="tiled", classRegex="^(tiled)$", command="tiled", presentation="tile"),
+    ]
+    text, meta = helper.render_scratchpads_kdl(pads)
+
+    # The workspace is the model. Prefixed so a pad can never collide with a
+    # workspace the user named themselves.
+    assert 'workspace "vgs-term" {' in text, "a pad with a monitor pins its workspace to that output"
+    assert '    open-on-output "DP-1"' in text, "the configured monitor becomes open-on-output"
+    assert 'workspace "vgs-notes"\n' in text, "a pad with no monitor declares a bare workspace"
+    assert 'open-on-workspace "vgs-term"' in text, "the window rule routes the app to it"
+
+    # Percentages stay percentages: niri resolves `proportion` against the real
+    # output, so unlike the Hyprland backend nothing is frozen into pixels at
+    # generation time and no monitor query is needed to render at all.
+    assert "default-column-width { proportion 0.6; }" in text, "percent sizing becomes a proportion"
+    assert "default-window-height { proportion 0.7; }" in text
+    assert "default-column-width { fixed 1200; }" in text, "pixel sizing becomes fixed"
+
+    # Anchors map onto niri's `relative-to`, and the offsets carry over
+    # unchanged because niri already measures inward from the named edge.
+    assert 'default-floating-position x=0 y=36 relative-to="top"' in text, \
+        "top-center is niri's single-side 'top', which centres on that edge"
+    assert 'default-floating-position x=24 y=24 relative-to="bottom-right"' in text, \
+        "and bottom-right offsets count inward, exactly as the Hyprland resolver means them"
+
+    # Both patterns go into the same rule, so a window excluded by title is
+    # excluded from every property rather than half-owned.
+    assert 'match app-id=r#"^(obsidian)$"#' in text
+    assert 'exclude title=r#"^(Quick Switcher)$"#' in text
+
+    assert "open-fullscreen true" in text, "fullscreen presentation"
+    assert "open-floating false" in text, "tile presentation"
+    assert "open-focused false" in text, \
+        "the pad must not steal focus when it maps; the toggle focuses it deliberately"
+
+    # The keybind and preload both run the same CLI paths the Hyprland backend
+    # does, so there is one toggle implementation per compositor and not two.
+    assert '{ spawn ' in text and '"scratchpad" "toggle" "term"' in text, "keybind spawns the toggle"
+    assert '"scratchpad" "preload" "term"' in text, "preload spawns the preload path"
+    assert "spawn-at-startup" in text, "preload uses niri's own startup hook"
+    assert_equal(meta["count"], 4, "every enabled pad is rendered")
+    assert_equal(meta["preload"], ["term"], "and the preload list is reported")
+
+
+def test_scratchpad_niri_reports_what_it_cannot_express():
+    """Anything Niri cannot do is REPORTED, never silently dropped. A setting
+    that is stored, shown in Settings and ignored by the compositor is the
+    defect this whole subsystem has refused."""
+    text, meta = helper.render_scratchpads_kdl([_pad()])
+    fields = {item["field"] for item in meta["unsupported"]}
+    assert "animation" in fields, \
+        "per-pad entry animation cannot be expressed: niri's window-open animation is global"
+    assert "dismissOnFocusLoss" in fields, "and focus-loss dismissal is not wired up on niri"
+    assert "animations" not in text, \
+        "VGS must not overwrite the user's global animation to fake a per-pad one"
+
+    # Centre + offset: niri has no centre `relative-to`. The pad is still
+    # generated and still works, centred — but the dropped offset is named.
+    _, centred = helper.render_scratchpads_kdl([_pad(id="mid", anchor="center", offsetX=40)])
+    offsets = [item for item in centred["unsupported"] if item.get("field") == "anchor offset"]
+    assert offsets, "a centre anchor with an offset must be reported as unexpressible"
+    assert "mid" in offsets[0]["reason"] or "Terminal" in offsets[0]["reason"] or offsets[0].get("id")
+
+    # ...and a centre pad with no offset is not reported at all, because
+    # nothing was lost: niri centres new floating windows by itself.
+    _, plain = helper.render_scratchpads_kdl([_pad(id="mid", anchor="center")])
+    assert not [i for i in plain["unsupported"] if i.get("field") == "anchor offset"], \
+        "an unoffset centre pad loses nothing and must not be reported"
+
+
+def test_scratchpad_niri_rejects_rules_it_cannot_write_correctly():
+    """Reject rather than half-emit. A pad that cannot be expressed correctly
+    generates NO rule and says why — and on Niri the stakes are higher than one
+    pad, because a rule niri refuses to parse takes the whole config with it."""
+    # Python's re accepts lookaround; niri's Rust regex engine does not.
+    problems = []
+    text, meta = helper.render_scratchpads_kdl([_pad(classRegex=r"^(?!excluded)(term)$")], problems)
+    assert_equal(meta["count"], 0, "a pad with a lookaround pattern is not rendered")
+    assert problems and "lookahead" in problems[0]["reason"], \
+        "and the rejection names the reason rather than the pad just vanishing"
+    assert "window-rule" not in text, "no partial rule is emitted"
+
+    # A pattern that would terminate the KDL raw string early is rejected for
+    # the same reason: the alternative is a rule that parses as something
+    # narrower and quietly stops matching.
+    problems = []
+    _, meta = helper.render_scratchpads_kdl([_pad(classRegex='^(a"#b)$')], problems)
+    assert_equal(meta["count"], 0, 'a pattern containing \'"#\' is not rendered')
+    assert problems and "raw string" in problems[0]["reason"], "and says so"
+
+    # The exclusion gets the same treatment as the class pattern, exactly as on
+    # Hyprland: a malformed exclusion is not "no exclusion".
+    problems = []
+    _, meta = helper.render_scratchpads_kdl([_pad(titleExclude=r"(?<=x)y")], problems)
+    assert_equal(meta["count"], 0, "an unexpressible exclusion rejects the whole pad")
+    assert problems and "title exclusion" in problems[0]["reason"]
+
+
+def test_scratchpad_niri_keybinds_are_converted():
+    """A keybind is stored Hyprland-shaped (`SUPER + SHIFT, T`) because that is
+    what the Settings capture writes. Emitting it verbatim into the KDL left a
+    bind niri either rejects or silently never fires, so the pad's one keybind
+    did nothing on the compositor the config was generated for."""
+    convert = helper.scratchpad_niri_keybind
+    assert_equal(convert("SUPER, T"), "Mod+T", "SUPER becomes Mod and the comma separator goes")
+    assert_equal(convert("SUPER + SHIFT, E"), "Mod+Shift+E", "every modifier is translated")
+    assert_equal(convert("CTRL + ALT, Delete"), "Ctrl+Alt+Delete", "and a named key is kept")
+    assert_equal(convert("T"), "T", "a bind with no modifiers still converts")
+
+    # The capture records a single printable character, so punctuation is what
+    # it actually produces; niri wants the xkb keysym name for those.
+    assert_equal(convert("SUPER, /"), "Mod+slash", "punctuation becomes its keysym")
+    assert_equal(convert("SUPER, ,"), "Mod+comma",
+                 "the comma is a bindable KEY, not only the separator — splitting on every "
+                 "comma left nothing to bind")
+    assert_equal(convert("SUPER, F5"), "Mod+F5", "function keys pass through")
+    assert_equal(convert("SUPER, XF86AudioPlay"), "Mod+XF86AudioPlay", "media keys are keysyms already")
+    assert_equal(convert("Mod+T"), "Mod+T", "a bind already written niri's way is not mangled")
+
+    # Anything that cannot be spelled confidently returns "" so the caller can
+    # report it, rather than a guess that might shadow a bind the user has.
+    assert_equal(convert("SUPER"), "", "modifiers with no key are an unfinished chord")
+    assert_equal(convert("SUPER, T, Y"), "", "two keys are not one niri bind")
+    assert_equal(convert("SUPER, \u00a3"), "", "a key with no keysym name is refused, not invented")
+    assert_equal(convert(""), "", "an empty keybind converts to nothing")
+
+
+def test_scratchpad_niri_unconvertible_keybind_is_reported_not_emitted():
+    """A bind that cannot be converted must not be written verbatim, and must
+    not take the pad down with it: the pad still works through `vshell
+    scratchpad toggle`, so it is generated and the bind alone is reported."""
+    text, meta = helper.render_scratchpads_kdl([_pad(keybind="SUPER, \u00a3")])
+    assert_equal(meta["count"], 1, "the pad is still generated")
+    assert "binds {" not in text, "but no bind block is written for it"
+    assert "\u00a3" not in text, "and the unconvertible key never reaches the config"
+    keybinds = [item for item in meta["unsupported"] if item.get("field") == "keybind"]
+    assert keybinds, "the dropped bind is reported"
+    assert_equal(meta["scratchpads"][0]["keybind"], "",
+                 "and the payload reports no keybind rather than the Hyprland spelling")
+
+    # ...while a convertible one really does reach the file, in niri's syntax.
+    text, meta = helper.render_scratchpads_kdl([_pad(keybind="SUPER + SHIFT, T")])
+    assert '"Mod+Shift+T"' in text, "a convertible bind is emitted the way niri spells it"
+    assert "SUPER" not in text, "and the Hyprland spelling does not survive into the KDL"
+    assert not [i for i in meta["unsupported"] if i.get("field") == "keybind"], \
+        "a bind that converted cleanly is not reported as a problem"
+
+
+def test_scratchpad_niri_rejects_every_construct_it_can_prove_unsupported():
+    """Rust's regex crate guarantees linear time, so it implements nothing that
+    needs backtracking. Each of these compiles in Python and would make niri
+    reject the WHOLE config file — not just the pad."""
+    for pattern, label in [
+        (r"^(?!skip)(term)$", "lookahead"),
+        (r"^(?<=x)y$", "lookbehind"),
+        (r"^(a)\1$", "a backreference"),
+        (r"^(?P<n>a)(?P=n)$", "a named backreference"),
+        (r"^(?>ab)c$", "an atomic group"),
+        (r"^a*+b$", "a possessive quantifier"),
+        (r"^(?#note)a$", "an inline comment group"),
+        (r"^a\Z", r"\Z"),
+    ]:
+        problems = []
+        _, meta = helper.render_scratchpads_kdl([_pad(classRegex=pattern)], problems)
+        assert_equal(meta["count"], 0, f"a pattern using {label} is not rendered")
+        assert problems, f"and {label} is named rather than the pad vanishing"
+
+    # The patterns VGS itself generates must survive all of that.
+    for good in [r"^(com\.ghostty\.scratchpad)$", r"^(a|b)+$", r"^(1password)$"]:
+        problems = []
+        _, meta = helper.render_scratchpads_kdl([_pad(classRegex=good)], problems)
+        assert_equal(meta["count"], 1, f"{good!r} is a pattern niri accepts")
+        assert_equal(problems, [], "so it is not reported")
+
+
+def test_scratchpad_niri_rejected_pads_do_not_preload():
+    """A rejected pad generates no workspace, no rule and no bind — so
+    preloading it would launch its app at every login into a session with
+    nowhere to put it. A pad refused for being unusable is refused everywhere,
+    not only in the half that emits rules."""
+    problems = []
+    text, meta = helper.render_scratchpads_kdl(
+        [_pad(id="bad", classRegex=r"^(?!x)y$", preload=True),
+         _pad(id="good", classRegex="^(good)$", preload=True)], problems)
+    assert_equal(meta["count"], 1, "only the usable pad is rendered")
+    assert problems, "and the rejection is reported"
+    assert_equal(meta["preload"], ["good"], "the rejected pad is not preloaded")
+    assert '"preload" "bad"' not in text, "and nothing launches it at startup"
+    assert '"preload" "good"' in text, "while the usable pad still preloads"
+
+
+def test_scratchpad_niri_release_owns_only_the_pad_s_own_window():
+    """Release must own exactly the window the pad owned. Matching on the class
+    alone picks up a same-class window that was never in the pad — a second
+    terminal — and yanks it onto the user's active workspace."""
+    originals = (helper._niri_session_ready, helper._niri_msg_json,
+                 helper._niri_scratchpad_action)
+    actions = []
+    helper._niri_session_ready = lambda: True
+    helper._niri_scratchpad_action = lambda *a: (actions.append(a), True)[1]
+
+    state = {"windows": [], "workspaces": []}
+    helper._niri_msg_json = lambda *args: state.get(args[0] if args else "", None)
+    try:
+        state["workspaces"] = [{"id": 9, "name": "vgs-term", "idx": 3, "is_active": False},
+                               {"id": 4, "name": "", "idx": 2, "is_focused": True}]
+
+        # A same-class window that is NOT on the pad's workspace must be left
+        # exactly where it is.
+        state["windows"] = [{"id": 1, "app_id": "com.ghostty.scratchpad",
+                             "title": "other", "workspace_id": 4}]
+        stray = helper.scratchpad_release_niri("term", r"^(com\.ghostty\.scratchpad)$")
+        assert_equal(stray["released"], False, "a window that was never in the pad is not released")
+        assert_equal(actions, [], "and nothing is moved")
+
+        # ...and a stray listed BEFORE the pad's own window must not win the
+        # selection. Checking ownership after picking the first match let the
+        # stray fail the check and hide the real window behind it, so release
+        # did nothing at all.
+        actions.clear()
+        state["windows"] = [{"id": 1, "app_id": "com.ghostty.scratchpad",
+                             "title": "other", "workspace_id": 4},
+                            {"id": 7, "app_id": "com.ghostty.scratchpad",
+                             "title": "pad", "workspace_id": 9}]
+        ordered = helper.scratchpad_release_niri("term", r"^(com\.ghostty\.scratchpad)$")
+        assert_equal(ordered["released"], True,
+                     "the pad's own window is found past an earlier stray")
+        assert_equal(actions, [("move-window-to-workspace", "--window-id", "7",
+                                "--focus", "false", "2")],
+                     "and it is the one moved")
+
+        # The pad's own window is released, to the FOCUSED workspace's index.
+        actions.clear()
+        state["windows"] = [{"id": 7, "app_id": "com.ghostty.scratchpad",
+                             "title": "pad", "workspace_id": 9}]
+        released = helper.scratchpad_release_niri("term", r"^(com\.ghostty\.scratchpad)$")
+        assert_equal(released["released"], True, "the pad's own window is released")
+        assert_equal(actions, [("move-window-to-workspace", "--window-id", "7",
+                                "--focus", "false", "2")],
+                     "moved by the focused workspace's INDEX: niri reads a numeric reference as "
+                     "an index, so passing the global id would name a different workspace")
+
+        # A workspace list that cannot be read is unknown, not empty: refuse
+        # rather than move a window chosen only by class.
+        actions.clear()
+        helper._niri_msg_json = lambda *args: [] if (args and args[0] == "windows") else None
+        state["windows"] = []
+        blind = helper.scratchpad_release_niri("term", r"^(x)$")
+        assert_equal(blind["released"], False, "nothing is released when the session cannot answer")
+        assert_equal(actions, [], "and nothing is moved")
+    finally:
+        (helper._niri_session_ready, helper._niri_msg_json,
+         helper._niri_scratchpad_action) = originals
+
+
+def test_scratchpad_launch_command_is_argv_not_a_shell():
+    """AGENTS.md: exec external tools with argv arrays. A pad's command is
+    user-supplied configuration, and it was reaching `sh -c` — so shell
+    metacharacters in it were INTERPRETED. On Niri a preloaded pad runs its
+    command at login, not only when the keybind is pressed."""
+    argv, error = helper.scratchpad_launch_argv("ghostty --class=com.ghostty.scratchpad")
+    assert_equal(error, "", "an ordinary command parses cleanly")
+    assert_equal(argv, ["ghostty", "--class=com.ghostty.scratchpad"], "into an argv array")
+
+    # Quoting still works, because shlex does it — what is gone is the shell.
+    argv, error = helper.scratchpad_launch_argv('ghostty --title="My Pad"')
+    assert_equal(error, "", "quoted arguments are still supported")
+    assert_equal(argv, ["ghostty", "--title=My Pad"], "and are parsed, not word-split")
+
+    # A command that WANTS a shell is refused, not quietly mangled. Passing
+    # `&&` to execvp as a literal argument would do the wrong thing silently,
+    # and keeping `sh -c` for these would keep the rule broken exactly where it
+    # matters.
+    for command in ["foo && bar", "foo; bar", "foo|bar", "foo > /tmp/x",
+                    "foo $(id)", "foo `id`", "foo ${HOME}", "foo $HOME",
+                    "app --flag=a&b"]:
+        argv, error = helper.scratchpad_launch_argv(command)
+        assert_equal(argv, [], f"{command!r} is not executed as argv")
+        assert "shell" in error, f"{command!r} is refused with the reason: {error!r}"
+        assert "sh -c" in error, "and the refusal says how to opt in deliberately"
+
+    # `foo; bar` only tokenises as a bare `;` because the lexer is told to treat
+    # punctuation the way a shell does; plain shlex hides it inside `foo;` and
+    # the operator would sail straight through as an argument.
+    argv, error = helper.scratchpad_launch_argv("foo; bar")
+    assert_equal(argv, [], "an operator with no surrounding spaces is still caught")
+
+    # The opt-in the refusal recommends has to actually work. Classifying the
+    # RAW string instead of the parsed tokens refused this too — the one
+    # command shape that is meant to be allowed.
+    argv, error = helper.scratchpad_launch_argv("sh -c 'foo && bar'")
+    assert_equal(error, "", "an explicit shell is allowed")
+    assert_equal(argv, ["sh", "-c", "foo && bar"],
+                 "with the shell line intact as a single argument")
+
+    # Ordinary commands that merely look punctuated must keep working.
+    for command, expected in [("env FOO=1 app", ["env", "FOO=1", "app"]),
+                              ("1password --silent", ["1password", "--silent"])]:
+        argv, error = helper.scratchpad_launch_argv(command)
+        assert_equal(error, "", f"{command!r} is an ordinary command")
+        assert_equal(argv, expected, "parsed as argv")
+
+    argv, error = helper.scratchpad_launch_argv('ghostty --title="unbalanced')
+    assert_equal(argv, [], "an unparseable command is refused")
+    assert error, "with a reason"
+    assert_equal(helper.scratchpad_launch_argv("")[1] != "", True, "so is an empty one")
+
+
+def test_scratchpad_launch_refusal_reaches_the_toggle():
+    """The refusal has to surface where the user sees it: a pad whose command
+    cannot be run must fail loudly rather than reporting a reveal that never
+    launched anything."""
+    originals = (helper.load_scratchpads, helper._scratchpad_visible_monitor,
+                 helper._scratchpad_find_window, helper._scratchpad_dispatch,
+                 helper._scratchpad_session_ready, helper._hyprctl_json)
+    helper.load_scratchpads = lambda *a, **k: [_pad(command="foo && bar")]
+    helper._scratchpad_visible_monitor = lambda pad_id: ""
+    helper._scratchpad_find_window = lambda pad: None       # nothing running: it must launch
+    helper._scratchpad_dispatch = lambda *args: True
+    helper._hyprctl_json = lambda *args: None
+    helper._scratchpad_session_ready = lambda: True
+    try:
+        with _scratchpad_state_sandbox():
+            result = helper.scratchpad_toggle("term")
+        assert_equal(result["ok"], False, "a pad with a shell command does not silently reveal")
+        assert_equal(result["action"], "launch-refused", "and says the launch was refused")
+        assert "shell" in result["error"], f"naming the reason: {result['error']!r}"
+    finally:
+        (helper.load_scratchpads, helper._scratchpad_visible_monitor,
+         helper._scratchpad_find_window, helper._scratchpad_dispatch,
+         helper._scratchpad_session_ready, helper._hyprctl_json) = originals
+
+
+def test_scratchpad_niri_pad_name_cannot_break_the_generated_kdl():
+    """`normalize_scratchpad` restricts the ID so it can be written unescaped;
+    the NAME is unrestricted user text. A newline in it did not corrupt the
+    `//` comment, it ENDED it — and the rest of the name became config KDL
+    would try to parse."""
+    text, _ = helper.render_scratchpads_kdl(
+        [_pad(name="Bad\nwindow-rule { open-fullscreen true }")])
+    comment = [line for line in text.splitlines() if line.startswith("// Bad")]
+    assert comment, "the pad still gets its comment"
+    assert_equal(len(comment), 1, "on exactly one line")
+    assert "window-rule { open-fullscreen true }" in comment[0], \
+        "with the injected text flattened INTO the comment, where it is inert"
+
+    # Prove it did not simply escape into the config: the only window-rule
+    # blocks are the ones the generator wrote.
+    sys.path.insert(0, str(REPO_ROOT / "bin"))
+    import vshell_niri_kdl as kdl
+    headers = [header for header, _, _ in kdl.kdl_nodes_in_block(text)]
+    assert_equal(headers.count("window-rule"), 1,
+                 "a name carrying a window-rule does not become a second rule")
+
+
+def test_scratchpad_niri_hide_confirms_the_pad_is_off_screen():
+    """The hide path reported success without confirming. On Niri a workspace
+    that is still ACTIVE on its output is still displayed even when focus has
+    moved away — which is what happens when focus is restored to a window on a
+    different output — so checking focus alone called it hidden with the pad
+    still on screen."""
+    originals = (helper._niri_session_ready, helper._niri_msg_json,
+                 helper._niri_scratchpad_action, helper.load_scratchpads)
+    helper._niri_session_ready = lambda: True
+    helper._niri_scratchpad_action = lambda *a: True
+    helper.load_scratchpads = lambda *a, **k: [_pad(id="term")]
+
+    # `hides` models whether focusing away actually takes the pad off screen.
+    # It does not when the window focus is restored to lives on another output:
+    # the pad's workspace stays the ACTIVE one on its own output.
+    state = {"visible": True, "hides": False}
+
+    def fake_json(*args):
+        if args and args[0] == "workspaces":
+            return [{"id": 9, "name": "vgs-term", "idx": 3,
+                     "is_active": state["visible"], "is_focused": False,
+                     "output": "DP-2"}]
+        return []
+
+    def fake_action(*args):
+        if args and args[0] in ("focus-window", "focus-workspace-previous") and state["hides"]:
+            state["visible"] = False
+        return True
+
+    helper._niri_msg_json = fake_json
+    helper._niri_scratchpad_action = fake_action
+    try:
+        with _scratchpad_state_sandbox():
+            # Focus moved away, but the workspace is still the active one on
+            # DP-2 — so the pad is still on screen and this is not a hide.
+            result = helper.scratchpad_toggle_niri("term")
+        assert_equal(result["ok"], False, "a pad still displayed is not a successful hide")
+        assert_equal(result["action"], "hide-failed", "and says so")
+        assert "DP-2" in result["error"], f"naming where it still is: {result['error']!r}"
+
+        # Same call, but focusing away really does take it off screen.
+        state["visible"] = True
+        state["hides"] = True
+        with _scratchpad_state_sandbox():
+            ok = helper.scratchpad_toggle_niri("term")
+        assert_equal((ok["ok"], ok["action"], ok["id"]), (True, "hidden", "term"),
+                     "a pad that is genuinely off screen reports hidden")
+    finally:
+        (helper._niri_session_ready, helper._niri_msg_json,
+         helper._niri_scratchpad_action, helper.load_scratchpads) = originals
+
+
+def test_scratchpad_hide_focus_rule_is_shared_by_both_backends():
+    """One rule, two backends. Each gathers the origin and the current focus
+    through its own IPC — they have no choice — but the DECISION is shared, so
+    it cannot be right on one compositor and wrong on the other. That is what
+    let three variations of one defect accumulate on this path."""
+    rule = helper._scratchpad_restore_target
+    assert_equal(rule(False, "B", "C"), "B", "a keybind hide returns to the reveal origin")
+    assert_equal(rule(True, "B", "C"), "C", "a focus-loss dismissal keeps where the user went")
+    assert_equal(rule(True, "B", ""), "B",
+                 "unknown focus, or focus still on the pad, falls back to the origin")
+    assert_equal(rule(False, "", "C"), "", "no origin and no keep-focus restores nothing")
+
+
+def test_scratchpad_niri_hide_honours_the_same_flags():
+    """`vshell scratchpad hide` reaches BOTH backends, so the Niri toggle has to
+    take the same flags. Without them the CLI raised TypeError on Niri the
+    moment VGS-82's hide path landed — the semantic half of that rebase."""
+    import inspect
+    hypr = set(inspect.signature(helper.scratchpad_toggle).parameters)
+    niri = set(inspect.signature(helper.scratchpad_toggle_niri).parameters)
+    assert_equal(hypr, niri, "both toggles accept the same arguments")
+
+    originals = (helper._niri_session_ready, helper._niri_msg_json,
+                 helper._niri_scratchpad_action, helper.load_scratchpads)
+    actions = []
+    helper._niri_session_ready = lambda: True
+    helper._niri_scratchpad_action = lambda *a: (actions.append(a), True)[1]
+    helper.load_scratchpads = lambda *a, **k: [_pad(id="term")]
+
+    state = {"visible": True}
+
+    def fake_json(*args):
+        if args and args[0] == "workspaces":
+            return [{"id": 9, "name": "vgs-term", "idx": 3,
+                     "is_active": state["visible"], "is_focused": False, "output": "DP-2"}]
+        if args and args[0] == "windows":
+            # 7 is the pad's own window; 5 is where the user has since moved.
+            return [{"id": 7, "app_id": "x", "workspace_id": 9, "is_focused": False},
+                    {"id": 5, "app_id": "y", "workspace_id": 4, "is_focused": True}]
+        return None
+
+    helper._niri_msg_json = fake_json
+    try:
+        # Hiding something already hidden is a no-op, not a failure — the same
+        # race the Hyprland backend answers this way.
+        state["visible"] = False
+        with _scratchpad_state_sandbox():
+            quiet = helper.scratchpad_toggle_niri("term", hide_only=True)
+        assert_equal(quiet["action"], "already-hidden", "an already-hidden pad is nothing to do")
+        assert_equal(actions, [], "and dispatches nothing")
+
+        # Focus-loss dismissal keeps the window the user moved to (5), not the
+        # reveal origin (7) recorded in the state file.
+        state["visible"] = True
+        actions.clear()
+        with _scratchpad_state_sandbox() as sandbox:
+            (sandbox / "term.niri-focus").write_text("7")
+            state["visible"] = True
+
+            def hides(*a):
+                actions.append(a)
+                if a and a[0] in ("focus-window", "focus-workspace-previous"):
+                    state["visible"] = False
+                return True
+
+            helper._niri_scratchpad_action = hides
+            result = helper.scratchpad_toggle_niri("term", hide_only=True, keep_focus=True)
+        assert_equal(result["ok"], True, "the hide succeeds")
+        assert_equal(result["focusedBack"], "5",
+                     "focus stays on the window the user chose, not the reveal origin")
+        assert ("focus-window", "--id", "7") not in actions, \
+            "and is never yanked back to the pad's reveal origin"
+    finally:
+        (helper._niri_session_ready, helper._niri_msg_json,
+         helper._niri_scratchpad_action, helper.load_scratchpads) = originals
+
+
+def test_scratchpad_release_refuses_when_it_could_not_look():
+    """A failed window query must never authorise deleting the pad.
+
+    Settings deletes the scratchpad record only when release reports success,
+    so collapsing "the compositor did not answer" into "nothing to release"
+    costs the user their configuration because an IPC call failed. That is the
+    session's most repeated defect — a failed query becoming a confident
+    negative — with the worst consequence any instance of it has had."""
+    # Hyprland.
+    originals = (helper._hyprctl_json, helper._scratchpad_session_ready,
+                 helper._scratchpad_dispatch)
+    dispatched = []
+    helper._scratchpad_session_ready = lambda: True
+    helper._scratchpad_dispatch = lambda *a: (dispatched.append(a), True)[1]
+    try:
+        # `clients` unreadable: unknown, not empty.
+        helper._hyprctl_json = lambda *a: None
+        blind = helper.scratchpad_release("pad", r"^(com\.example\.pad)$")
+        assert_equal(blind["ok"], False, "a release that could not look has not succeeded")
+        assert_equal(blind["released"], False, "and released nothing")
+        assert "could not read the window list" in blind["error"], \
+            f"naming why the pad was kept: {blind.get('error')!r}"
+        assert_equal(dispatched, [], "nothing is moved on the strength of a failed query")
+
+        # An answer that really is empty still authorises removal: there is
+        # genuinely nothing parked, so the pad can go.
+        helper._hyprctl_json = lambda *a: ([] if a and a[0] == "clients"
+                                           else {"id": 3} if a and a[0] == "activeworkspace" else None)
+        empty = helper.scratchpad_release("pad", r"^(com\.example\.pad)$")
+        assert_equal(empty["ok"], True, "an empty window list is a real answer")
+        assert_equal(empty["released"], False, "with nothing to release")
+    finally:
+        (helper._hyprctl_json, helper._scratchpad_session_ready,
+         helper._scratchpad_dispatch) = originals
+
+    # Niri, same rule.
+    niri_originals = (helper._niri_session_ready, helper._niri_msg_json,
+                      helper._niri_scratchpad_action)
+    actions = []
+    helper._niri_session_ready = lambda: True
+    helper._niri_scratchpad_action = lambda *a: (actions.append(a), True)[1]
+    try:
+        helper._niri_msg_json = lambda *a: ([{"id": 9, "name": "vgs-term", "idx": 3}]
+                                            if a and a[0] == "workspaces" else None)
+        blind = helper.scratchpad_release_niri("term", r"^(com\.ghostty\.scratchpad)$")
+        assert_equal(blind["ok"], False, "a Niri release that could not look has not succeeded")
+        assert "could not read the window list" in blind["error"], "and names why"
+        assert_equal(actions, [], "nothing is moved")
+    finally:
+        (helper._niri_session_ready, helper._niri_msg_json,
+         helper._niri_scratchpad_action) = niri_originals
+
+    # The distinction has to exist in the finder itself, or no caller can make
+    # it. None is "could not look"; [] is "looked, found nothing".
+    saved = helper._hyprctl_json
+    try:
+        helper._hyprctl_json = lambda *a: None
+        assert helper._scratchpad_find_windows(_pad()) is None, \
+            "an unreadable client list is None, not an empty list"
+        helper._hyprctl_json = lambda *a: []
+        assert_equal(helper._scratchpad_find_windows(_pad()), [],
+                     "a readable but empty list is []")
+    finally:
+        helper._hyprctl_json = saved
+
+
+def test_scratchpad_preload_reports_a_failed_placement():
+    """Preload that could not park the window reports success while the app
+    sits VISIBLY on the user's current workspace — the map-time race this whole
+    subsystem exists to handle, reported as handled."""
+    # Niri.
+    originals = (helper._niri_session_ready, helper._niri_msg_json,
+                 helper._niri_scratchpad_action, helper.load_scratchpads)
+    helper._niri_session_ready = lambda: True
+    helper.load_scratchpads = lambda *a, **k: [_pad(id="term")]
+
+    def fake_json(*args):
+        if args and args[0] == "workspaces":
+            return [{"id": 9, "name": "vgs-term", "idx": 3, "is_active": False}]
+        if args and args[0] == "windows":
+            # On workspace 4, not the pad's 9: it needs moving.
+            return [{"id": 7, "app_id": "com.ghostty.scratchpad", "workspace_id": 4}]
+        return None
+
+    helper._niri_msg_json = fake_json
+    try:
+        helper._niri_scratchpad_action = lambda *a: False   # the move fails
+        with _scratchpad_state_sandbox():
+            bad = helper.scratchpad_toggle_niri("term", launch_only=True)
+        assert_equal(bad["ok"], False, "a preload that could not park the window is not ok")
+        assert_equal(bad["action"], "preload-failed", "and says so")
+        assert "could not move" in bad["error"], f"naming the reason: {bad.get('error')!r}"
+
+        helper._niri_scratchpad_action = lambda *a: True    # the move works
+        with _scratchpad_state_sandbox():
+            good = helper.scratchpad_toggle_niri("term", launch_only=True)
+        assert_equal(good["ok"], True, "a preload that parked the window is ok")
+        assert_equal(good["action"], "preloaded", "and reports the preload")
+    finally:
+        (helper._niri_session_ready, helper._niri_msg_json,
+         helper._niri_scratchpad_action, helper.load_scratchpads) = originals
+
+    # Hyprland, same rule.
+    hypr = (helper.load_scratchpads, helper._scratchpad_visible_monitor,
+            helper._scratchpad_find_window, helper._scratchpad_dispatch,
+            helper._scratchpad_session_ready, helper._hyprctl_json,
+            helper._scratchpad_place_workspace, helper._scratchpad_reassert)
+    helper.load_scratchpads = lambda *a, **k: [_pad(id="term")]
+    helper._scratchpad_visible_monitor = lambda pad_id: ""
+    helper._scratchpad_find_window = lambda pad: {"address": "0xaaa", "workspace": {"name": "3"}}
+    helper._scratchpad_session_ready = lambda: True
+    helper._hyprctl_json = lambda *a: None
+    helper._scratchpad_reassert = lambda *a, **k: {"applied": True}
+    try:
+        helper._scratchpad_dispatch = lambda *a: False       # the move fails
+        helper._scratchpad_place_workspace = lambda *a, **k: True
+        with _scratchpad_state_sandbox():
+            bad = helper.scratchpad_toggle("term", launch_only=True)
+        assert_equal(bad["ok"], False, "a Hyprland preload that could not park is not ok")
+        assert_equal(bad["action"], "preload-failed", "and says so")
+
+        # The workspace placement is checked too, not just the membership move.
+        helper._scratchpad_dispatch = lambda *a: True
+        helper._scratchpad_place_workspace = lambda *a, **k: False
+        with _scratchpad_state_sandbox():
+            unplaced = helper.scratchpad_toggle("term", launch_only=True)
+        assert_equal(unplaced["ok"], False, "a workspace that would not move is a failure too")
+
+        helper._scratchpad_place_workspace = lambda *a, **k: True
+        with _scratchpad_state_sandbox():
+            good = helper.scratchpad_toggle("term", launch_only=True)
+        assert_equal(good["ok"], True, "a preload that worked is ok")
+    finally:
+        (helper.load_scratchpads, helper._scratchpad_visible_monitor,
+         helper._scratchpad_find_window, helper._scratchpad_dispatch,
+         helper._scratchpad_session_ready, helper._hyprctl_json,
+         helper._scratchpad_place_workspace, helper._scratchpad_reassert) = hypr
+
+
+def _niri_hide_harness(still_active_after, focused_output_after, pad_output="DP-2"):
+    """Stub a Niri session for the hide path.
+
+    The pad starts VISIBLE on `pad_output` — otherwise the hide branch is never
+    entered — and the workspace state flips to the given post-state when the
+    focus action runs, which is what the confirmation reads back."""
+    state = {"done": False}
+    actions = []
+
+    def action(*a):
+        actions.append(a)
+        if a and a[0] in ("focus-window", "focus-workspace-previous"):
+            state["done"] = True
+        return True
+
+    def fake_json(*args):
+        if args and args[0] == "windows":
+            return [{"id": 7, "app_id": "com.ghostty.scratchpad", "workspace_id": 9}]
+        if args and args[0] != "workspaces":
+            return None
+        if not state["done"]:
+            # Before: the pad is up and focused on its own output.
+            return [{"id": 9, "name": "vgs-term", "idx": 3, "output": pad_output,
+                     "is_active": True, "is_focused": True}]
+        rows = [{"id": 9, "name": "vgs-term", "idx": 3, "output": pad_output,
+                 "is_active": still_active_after,
+                 "is_focused": focused_output_after == pad_output}]
+        if focused_output_after and focused_output_after != pad_output:
+            rows.append({"id": 1, "name": "", "idx": 1, "output": focused_output_after,
+                         "is_active": True, "is_focused": True})
+        return rows
+
+    helper._niri_session_ready = lambda: True
+    helper._niri_scratchpad_action = action
+    helper.load_scratchpads = lambda *a, **k: [_pad(id="term")]
+    helper._niri_msg_json = fake_json
+    return actions
+
+
+def test_scratchpad_niri_hide_succeeds_when_focus_left_for_another_output():
+    """A pad whose workspace stays active on ITS output while focus moves to a
+    different one has been hidden as far as Niri allows: there is no overlay to
+    pull away, so the pad's own output goes on showing its active workspace.
+
+    Reporting failure there told every multi-monitor user that every hide had
+    failed — and Settings now gates on this result, so a false failure is no
+    longer harmless. The single-output case must still fail, because there the
+    user is looking straight at the pad they asked to dismiss."""
+    originals = (helper._niri_session_ready, helper._niri_msg_json,
+                 helper._niri_scratchpad_action, helper.load_scratchpads)
+    try:
+        # Cross-output: pad still on DP-2, focus now on DP-1.
+        _niri_hide_harness(still_active_after=True, focused_output_after="DP-1")
+        with _scratchpad_state_sandbox() as sandbox:
+            (sandbox / "term.niri-focus").write_text("7")
+            result = helper.scratchpad_toggle_niri("term")
+            assert_equal(result["ok"], True, "focus moved to another output is a successful hide")
+            assert_equal(result["stillDisplayedOn"], "DP-2",
+                         "and says the pad is still on its own output rather than hiding that")
+            assert not (sandbox / "term.niri-focus").exists(), \
+                "a confirmed hide consumes the origin"
+
+        # Same output: the pad is still in front of the user. Still a failure.
+        _niri_hide_harness(still_active_after=True, focused_output_after="DP-2")
+        with _scratchpad_state_sandbox() as sandbox:
+            (sandbox / "term.niri-focus").write_text("7")
+            same = helper.scratchpad_toggle_niri("term")
+            assert_equal(same["ok"], False, "a pad still displayed on the focused output is not hidden")
+            assert_equal(same["action"], "hide-failed", "and says so")
+
+        # Gone from every output: the ordinary success.
+        _niri_hide_harness(still_active_after=False, focused_output_after="DP-1")
+        with _scratchpad_state_sandbox() as sandbox:
+            (sandbox / "term.niri-focus").write_text("7")
+            gone = helper.scratchpad_toggle_niri("term")
+            assert_equal(gone["ok"], True, "a pad off every output is hidden")
+            assert "stillDisplayedOn" not in gone, "with nothing left displayed to report"
+    finally:
+        (helper._niri_session_ready, helper._niri_msg_json,
+         helper._niri_scratchpad_action, helper.load_scratchpads) = originals
+
+
+def test_scratchpad_niri_failed_hide_keeps_the_reveal_origin():
+    """The origin is what a retry needs. Deleting it before the hide is
+    confirmed means each failed attempt permanently loses where the pad came
+    from — and the two defects compounded: cross-output hides always reported
+    failure, so every one of them destroyed the origin.
+
+    Same rule as release: act on the record only after the thing it describes
+    has succeeded."""
+    originals = (helper._niri_session_ready, helper._niri_msg_json,
+                 helper._niri_scratchpad_action, helper.load_scratchpads)
+    try:
+        # A hide that fails: the pad is still on the focused output.
+        _niri_hide_harness(still_active_after=True, focused_output_after="DP-2")
+        with _scratchpad_state_sandbox() as sandbox:
+            origin = sandbox / "term.niri-focus"
+            origin.write_text("7")
+            failed = helper.scratchpad_toggle_niri("term")
+            assert_equal(failed["ok"], False, "the hide failed")
+            assert origin.exists(), "and the origin survives, so a retry still knows where to go"
+            assert_equal(origin.read_text(), "7", "unchanged")
+
+        # A hide that cannot be CONFIRMED keeps it too: unknown is not success,
+        # and is not a reason to spend the origin either.
+        helper._niri_msg_json = lambda *a: ([{"id": 7, "app_id": "x", "workspace_id": 9}]
+                                            if a and a[0] == "windows" else None)
+        helper._scratchpad_niri_visible_output = lambda pad_id: "DP-2"
+        try:
+            with _scratchpad_state_sandbox() as sandbox:
+                origin = sandbox / "term.niri-focus"
+                origin.write_text("7")
+                blind = helper.scratchpad_toggle_niri("term")
+                assert_equal(blind["ok"], False, "an unconfirmable hide is not a success")
+                assert_equal(blind["action"], "hide-unconfirmed", "and says which")
+                assert origin.exists(), "the origin is kept for the retry"
+        finally:
+            del helper._scratchpad_niri_visible_output
+    finally:
+        (helper._niri_session_ready, helper._niri_msg_json,
+         helper._niri_scratchpad_action, helper.load_scratchpads) = originals
+
+
+def test_scratchpad_niri_generated_kdl_parses():
+    """Parse what we wrote. A structural error here is a config niri refuses at
+    startup, which on this compositor breaks far more than the scratchpad."""
+    sys.path.insert(0, str(REPO_ROOT / "bin"))
+    import vshell_niri_kdl as kdl
+
+    pads = [
+        _pad(keybind="Mod+T", monitor="DP-1", preload=True),
+        _pad(id="notes", classRegex="^(obsidian)$", command="obsidian",
+             titleExclude=r'^(Quick\.Switcher)$', keybind="Mod+N"),
+        _pad(id="vm", classRegex="^(vm-viewer)$", command="virt-viewer", presentation="fullscreen"),
+    ]
+    text, _ = helper.render_scratchpads_kdl(pads)
+
+    # Prove the instrument can fail before trusting that it passes: an
+    # unterminated block must not come back as a clean parse.
+    assert_equal(kdl.kdl_matching_brace("window-rule {\n  match", 12), -1,
+                 "the brace matcher must report an unterminated block")
+
+    nodes = kdl.kdl_nodes_in_block(text)
+    headers = [header for header, _, _ in nodes]
+    assert 'workspace "vgs-term"' in headers, "the workspace block is a well-formed node"
+    assert headers.count("window-rule") == 3, "one window rule per pad, all parsed"
+    assert "binds" in headers, "and the binds block closes properly"
+    for header, body, _ in nodes:
+        if header == "binds":
+            assert kdl.kdl_matching_brace("{" + body + "}", 0) == len(body) + 1, \
+                "every bind inside the block is balanced"
+
+
 def _with_session_env(env):
     """Run with exactly the given compositor session variables set."""
     keys = ("HYPRLAND_INSTANCE_SIGNATURE", "NIRI_SOCKET", "XDG_CURRENT_DESKTOP")
@@ -3936,13 +4723,16 @@ def _with_session_env(env):
 
 def test_scratchpad_compositor_detection_reads_the_session_not_the_binary():
     """`hyprctl` and `niri` coexist in most distro repos, so an INSTALLED
-    hyprctl says nothing about which compositor owns the session. Treating it
-    as proof sent a Niri session down the Hyprland path and generated rules for
-    a compositor that was not running — which defeats the deliberate refusal."""
+    hyprctl says nothing about which compositor owns the session.
+
+    This mattered when Niri refused, and it matters MORE now that it has its own
+    backend (VGS-83): the returned name is what selects the generator, so
+    mistaking a Niri session for Hyprland no longer merely refuses wrongly, it
+    writes Lua rules into a session that reads KDL."""
     # The reported case: a Niri session on a machine that also has hyprctl.
-    assert_equal(_with_session_env({"NIRI_SOCKET": "/run/niri.sock"}), (False, "niri"),
-                 "a Niri session must refuse even when hyprctl is installed")
-    assert_equal(_with_session_env({"XDG_CURRENT_DESKTOP": "niri"}), (False, "niri"),
+    assert_equal(_with_session_env({"NIRI_SOCKET": "/run/niri.sock"}), (True, "niri"),
+                 "a Niri session is supported, and identified as niri even with hyprctl installed")
+    assert_equal(_with_session_env({"XDG_CURRENT_DESKTOP": "niri"}), (True, "niri"),
                  "XDG_CURRENT_DESKTOP is enough to identify the session")
 
     assert_equal(_with_session_env({"HYPRLAND_INSTANCE_SIGNATURE": "sig"}), (True, "hyprland"),
@@ -3950,12 +4740,18 @@ def test_scratchpad_compositor_detection_reads_the_session_not_the_binary():
     assert_equal(_with_session_env({"XDG_CURRENT_DESKTOP": "Hyprland:wlroots"}), (True, "hyprland"),
                  "a compound desktop string still identifies Hyprland")
 
-    # Any other running session is also not Hyprland, and must not be mistaken
-    # for "nothing is running" — that would let generation proceed under a
+    # Neither session may be mistaken for the other; the name is the router.
+    assert _with_session_env({"NIRI_SOCKET": "/run/niri.sock"})[1] != "hyprland", \
+        "a Niri session must never select the Hyprland generator"
+    assert _with_session_env({"HYPRLAND_INSTANCE_SIGNATURE": "sig"})[1] != "niri", \
+        "and a Hyprland session must never select the Niri one"
+
+    # A third compositor is still unsupported, and must not be mistaken for
+    # "nothing is running" — that would let generation proceed under a
     # compositor that will never read the result.
     for desktop in ("GNOME", "KDE", "sway"):
         supported, name = _with_session_env({"XDG_CURRENT_DESKTOP": desktop})
-        assert_equal(supported, False, f"{desktop} is not Hyprland")
+        assert_equal(supported, False, f"{desktop} is neither Hyprland nor Niri")
         assert_equal(name, desktop.split(":")[0].lower(), f"{desktop} is named in the refusal")
 
     # With nothing running, generation is still meaningful (writing config from
@@ -4028,10 +4824,22 @@ def test_scratchpad_release_hands_the_window_back():
     # that passes without checking.
     helper._scratchpad_session_ready = lambda: True
     try:
-        fake_json.clients = [{"address": "0xabc", "class": "com.example.pad", "title": "Pad"}]
+        # A stray same-class window listed FIRST, then the pad's own. Release
+        # must skip the stray rather than let it win the selection: filtering by
+        # ownership after picking the first match is what let it hide the real
+        # window behind it.
+        fake_json.clients = [
+            {"address": "0xstray", "class": "com.example.pad", "title": "Elsewhere",
+             "workspace": {"name": "3"}},
+            {"address": "0xabc", "class": "com.example.pad", "title": "Pad",
+             "workspace": {"name": "special:pad"}},
+        ]
         result = helper.scratchpad_release("pad", r"^(com\.example\.pad)$")
         assert_equal(result["ok"], True, "release succeeds")
         assert_equal(result["released"], True, "a mapped window is released")
+        assert_equal(result["address"], "0xabc",
+                     "the window ON the pad's workspace is the one released, not the "
+                     "same-class stray that happened to be listed first")
         assert_equal(dispatched, [
             ("fullscreenstate", "0 -1,address:0xabc"),
             ("movetoworkspace", "3,address:0xabc"),
@@ -4045,6 +4853,16 @@ def test_scratchpad_release_hands_the_window_back():
         assert_equal(quiet["ok"], True, "nothing to release is not a failure")
         assert_equal(quiet["released"], False, "and says nothing was released")
         assert_equal(dispatched, [], "no dispatch when there is no window")
+
+        # A same-class window that the pad never owned is left alone entirely.
+        # It is already on a normal workspace, so it needs no rescue, and
+        # moving it would be a surprise rather than a fix.
+        dispatched.clear()
+        fake_json.clients = [{"address": "0xstray", "class": "com.example.pad",
+                              "title": "Elsewhere", "workspace": {"name": "3"}}]
+        stray = helper.scratchpad_release("pad", r"^(com\.example\.pad)$")
+        assert_equal(stray["released"], False, "a window the pad never owned is not released")
+        assert_equal(dispatched, [], "and nothing is moved")
     finally:
         helper._hyprctl_json = original_json
         helper._scratchpad_dispatch = original_dispatch
@@ -4151,8 +4969,10 @@ def test_scratchpad_release_honours_the_title_exclusion():
     # The 1Password case the exclusion exists for: the browser-extension auth
     # prompt shares the main window's class and keeps a generic title.
     clients = [
-        {"address": "0xprompt", "class": "1password", "title": "1Password"},
-        {"address": "0xmain", "class": "1password", "title": "Lock Screen — 1Password"},
+        {"address": "0xprompt", "class": "1password", "title": "1Password",
+         "workspace": {"name": "special:1pw"}},
+        {"address": "0xmain", "class": "1password", "title": "Lock Screen — 1Password",
+         "workspace": {"name": "special:1pw"}},
     ]
 
     def fake_json(*args):
@@ -4946,6 +5766,25 @@ def main():
     test_scratchpad_records_that_cannot_work_are_rejected()
     test_scratchpad_lua_generation()
     test_scratchpad_generated_lua_parses()
+    test_scratchpad_niri_generation()
+    test_scratchpad_niri_reports_what_it_cannot_express()
+    test_scratchpad_niri_rejects_rules_it_cannot_write_correctly()
+    test_scratchpad_niri_keybinds_are_converted()
+    test_scratchpad_niri_unconvertible_keybind_is_reported_not_emitted()
+    test_scratchpad_niri_rejects_every_construct_it_can_prove_unsupported()
+    test_scratchpad_niri_rejected_pads_do_not_preload()
+    test_scratchpad_niri_release_owns_only_the_pad_s_own_window()
+    test_scratchpad_launch_command_is_argv_not_a_shell()
+    test_scratchpad_launch_refusal_reaches_the_toggle()
+    test_scratchpad_niri_pad_name_cannot_break_the_generated_kdl()
+    test_scratchpad_niri_hide_confirms_the_pad_is_off_screen()
+    test_scratchpad_hide_focus_rule_is_shared_by_both_backends()
+    test_scratchpad_niri_hide_honours_the_same_flags()
+    test_scratchpad_release_refuses_when_it_could_not_look()
+    test_scratchpad_preload_reports_a_failed_placement()
+    test_scratchpad_niri_hide_succeeds_when_focus_left_for_another_output()
+    test_scratchpad_niri_failed_hide_keeps_the_reveal_origin()
+    test_scratchpad_niri_generated_kdl_parses()
     test_scratchpad_compositor_detection_reads_the_session_not_the_binary()
     test_scratchpad_target_monitor_resolves_against_connected_outputs()
     test_scratchpad_release_hands_the_window_back()

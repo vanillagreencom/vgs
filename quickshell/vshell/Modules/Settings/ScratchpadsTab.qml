@@ -457,7 +457,7 @@ Item {
             topPadding: Theme.spacingS
             spacing: Theme.spacingXL
 
-            // Niri is a stated no-op, not a silent one.
+            // A compositor with no backend is a stated no-op, not a silent one.
             SettingsCard {
                 width: parent.width
                 visible: !root.supported
@@ -469,7 +469,47 @@ Item {
                     wrapMode: Text.WordWrap
                     color: Theme.surfaceVariantText
                     font.pixelSize: Theme.fontSizeSmall
-                    text: I18n.tr("Scratchpads are Hyprland-only for now. Niri has no special workspaces; the equivalent needs its own generator rather than a translation of this one.")
+                    text: I18n.tr("Scratchpads need Hyprland or Niri. This session is running neither.")
+                }
+            }
+
+            // Niri works, but not identically, and saying so beats letting the
+            // difference be discovered as a bug.
+            SettingsCard {
+                width: parent.width
+                visible: ScratchpadService.onNiri
+                title: I18n.tr("On Niri, a pad is a workspace")
+                iconName: "info"
+
+                StyledText {
+                    width: parent.width
+                    wrapMode: Text.WordWrap
+                    color: Theme.surfaceVariantText
+                    font.pixelSize: Theme.fontSizeSmall
+                    text: I18n.tr("Niri has no special workspaces, so each pad gets a named workspace of its own and the keybind focuses it and focuses back. Each pad therefore appears in your workspace list instead of overlaying the current view.")
+                }
+            }
+
+            // Settings that are stored and shown but cannot be honoured here.
+            // Reported rather than silently ignored: a value the compositor
+            // drops is exactly the surface that looks maintained and is not.
+            SettingsCard {
+                width: parent.width
+                visible: root.supported && (ScratchpadService.unsupported || []).length > 0
+                title: I18n.tr("Not supported on this compositor")
+                iconName: "info"
+
+                Repeater {
+                    model: ScratchpadService.unsupported || []
+
+                    StyledText {
+                        required property var modelData
+                        width: parent.width
+                        wrapMode: Text.WordWrap
+                        color: Theme.surfaceVariantText
+                        font.pixelSize: Theme.fontSizeSmall
+                        text: (modelData.id ? modelData.id + " — " : "") + (modelData.reason || "")
+                    }
                 }
             }
 
@@ -586,7 +626,7 @@ Item {
                     wrapMode: Text.WordWrap
                     color: Theme.surfaceVariantText
                     font.pixelSize: Theme.fontSizeSmall
-                    text: I18n.tr("VGS never edits your Hyprland config. Add this to hyprland.lua for scratchpads to take effect:")
+                    text: ScratchpadService.onNiri ? I18n.tr("Add this include to your Niri config for scratchpads to take effect:") : I18n.tr("VGS never edits your Hyprland config. Add this to hyprland.lua for scratchpads to take effect:")
                 }
 
                 StyledText {
