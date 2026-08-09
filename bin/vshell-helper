@@ -8788,22 +8788,21 @@ def scratchpad_session_compositor() -> str:
 
 
 def scratchpad_compositor_supported() -> Tuple[bool, str]:
-    """Hyprland is the reference implementation and the only one wired up.
+    """Which backend this session gets, if any.
 
-    Niri has no special workspaces: the equivalent is a named workspace plus
-    window rules and a `focus-or-toggle` bind, which is a different data model
-    and a different generator, not a translation of this one. Rather than
-    half-wire it, the Niri path refuses with the reason. See
-    docs/architecture/scratchpads.md § Niri.
+    Hyprland is the reference implementation; Niri is a separate backend
+    (VGS-83) with its own generator and its own toggle, not a translation of the
+    Hyprland one — Niri has no special workspaces. Anything else still refuses
+    with the reason.
 
-    With NO session running, generation is still meaningful — writing the
-    config from a TTY before starting the compositor, or regenerating it after
-    an edit — so it is allowed and the geometry falls back to a nominal display
-    that the payload and the file header both flag. The live-session paths
-    (`toggle`/`preload`) check for a real Hyprland session of their own."""
+    With NO session running, generation is still meaningful — writing the config
+    from a TTY before starting the compositor, or regenerating it after an edit.
+    It is allowed, and defaults to the Hyprland backend because that is what the
+    generated-without-a-session caveat is written for; the live-session paths
+    (`toggle`/`preload`) check for a real session of their own."""
     session = scratchpad_session_compositor()
     if session:
-        return (session == "hyprland", session)
+        return (session in ("hyprland", "niri"), session)
     return (True, "none")
 
 
@@ -8815,18 +8814,21 @@ def cmd_scratchpad(argv: List[str]) -> int:
 
     supported, compositor = scratchpad_compositor_supported()
     if not supported and action in {"apply", "toggle", "show", "hide", "preload"}:
-        # A clean, stated no-op — not a silent success, and not a Hyprland
-        # config written into a session that will never read it.
-        message = ("VGS scratchpads are Hyprland-only for now; Niri has no special "
-                   "workspaces and needs its own generator (VGS-62 split)."
-                   if compositor == "niri" else
-                   f"VGS scratchpads require Hyprland; this session is running {compositor}.")
+        # A clean, stated no-op — not a silent success, and not config written
+        # into a session that will never read it. `hide` is in the set because
+        # it is a live-session action like the rest; Niri is no longer in the
+        # refusal because it now has a backend of its own.
+        message = f"VGS scratchpads require Hyprland or Niri; this session is running {compositor}."
         if "--json" in rest:
             print(json.dumps({"ok": False, "unsupported": True,
                               "compositor": compositor, "error": message}, indent=2))
         else:
             eprint(message)
         return 1
+
+    # Which backend answers. Two generators and two toggles, one schema — see
+    # docs/architecture/scratchpads.md § Niri for why this is not a translation.
+    on_niri = compositor == "niri"
 
     if action == "apply":
         parser = argparse.ArgumentParser(prog="vshell scratchpad apply")
@@ -8838,13 +8840,19 @@ def cmd_scratchpad(argv: List[str]) -> int:
         parser.add_argument("--json", action="store_true")
         args = parser.parse_args(rest)
         if args.dry_run:
-            pads = load_scratchpads()
-            monitors, resolved = scratchpad_monitors()
-            content, meta = render_scratchpads_lua(pads, monitors, resolved)
+            problems: List[Dict[str, str]] = []
+            pads = load_scratchpads(problems)
+            if on_niri:
+                content, meta = render_scratchpads_kdl(pads, problems)
+            else:
+                monitors, resolved = scratchpad_monitors()
+                content, meta = render_scratchpads_lua(pads, monitors, resolved)
             write_file(Path(args.dry_run), content)
-            result = {"ok": True, "path": args.dry_run, "scratchpads": meta, "dryRun": True}
+            result = {"ok": True, "path": args.dry_run, "compositor": compositor,
+                      "scratchpads": meta, "problems": problems, "dryRun": True}
         else:
-            result = apply_scratchpads(reload=not args.no_reload)
+            result = (apply_scratchpads_niri(reload=not args.no_reload) if on_niri
+                      else apply_scratchpads(reload=not args.no_reload))
         print(json.dumps(result, indent=2) if args.json else
               ("ok" if result.get("ok") else (result.get("error") or "failed")))
         return 0 if result.get("ok") else 1
@@ -8852,14 +8860,35 @@ def cmd_scratchpad(argv: List[str]) -> int:
     if action == "status":
         problems: List[Dict[str, str]] = []
         pads = load_scratchpads(problems)
+        if on_niri:
+            path = scratchpad_niri_config_path()
+            # No monitor query: Niri resolves the percentage and the anchor
+            # itself, so nothing here is generated against a guessed display and
+            # `monitorsResolved` is truthfully not an open question.
+            _, meta = render_scratchpads_kdl(pads, problems)
+            print(json.dumps({
+                "ok": True,
+                "compositor": "niri",
+                "problems": problems,
+                "path": str(path),
+                "generated": path.exists(),
+                "monitorsResolved": True,
+                "monitors": [],
+                "unsupported": meta["unsupported"],
+                "include": scratchpad_niri_include_status(),
+                "scratchpads": pads,
+            }, indent=2))
+            return 0
         monitors, resolved = scratchpad_monitors()
         print(json.dumps({
             "ok": True,
+            "compositor": compositor,
             "problems": problems,
             "path": str(scratchpad_config_path()),
             "generated": scratchpad_config_path().exists(),
             "monitorsResolved": resolved,
             "monitors": [{"name": m.get("name"), "logical": monitor_logical_size(m)} for m in monitors],
+            "unsupported": [],
             "include": scratchpad_include_status(),
             "scratchpads": pads,
         }, indent=2))
@@ -8909,10 +8938,33 @@ def cmd_scratchpad(argv: List[str]) -> int:
         if pad is None:
             eprint(f"unknown scratchpad: {rest[0]}")
             return 2
+        if on_niri:
+            # There is no pixel answer to print here, and inventing one would be
+            # the least honest thing this command could do. Niri resolves the
+            # proportion and the anchor against the real output at map time, so
+            # what is inspectable is the rule, not a resolved rectangle.
+            relative_to = SCRATCHPAD_NIRI_ANCHORS[pad["anchor"]]
+            print(json.dumps({
+                "id": pad["id"],
+                "compositor": "niri",
+                "workspace": scratchpad_niri_workspace(pad["id"]),
+                "monitor": pad["monitor"],
+                "resolvedBy": "niri",
+                "rule": {
+                    "width": _niri_scratchpad_size_line("default-column-width", pad, "width").strip(),
+                    "height": _niri_scratchpad_size_line("default-window-height", pad, "height").strip(),
+                    "relativeTo": relative_to,
+                    "offsetX": pad["offsetX"],
+                    "offsetY": pad["offsetY"],
+                    "centred": not relative_to,
+                },
+            }, indent=2))
+            return 0
         monitors, resolved = scratchpad_monitors()
         monitor = pick_scratchpad_monitor(monitors, rest[1] if len(rest) > 1 else pad["monitor"])
         print(json.dumps({
             "id": pad["id"],
+            "compositor": compositor,
             "monitor": monitor.get("name") or "",
             "monitorsResolved": resolved,
             "geometry": resolve_scratchpad_geometry(pad, monitor),
@@ -8926,7 +8978,8 @@ def cmd_scratchpad(argv: List[str]) -> int:
         parser.add_argument("--title-exclude", default="")
         parser.add_argument("--json", action="store_true")
         args = parser.parse_args(rest)
-        result = scratchpad_release(args.id, args.class_regex, args.title_exclude)
+        result = (scratchpad_release_niri(args.id, args.class_regex, args.title_exclude) if on_niri
+                  else scratchpad_release(args.id, args.class_regex, args.title_exclude))
         if args.json:
             print(json.dumps(result, indent=2))
         elif not result.get("ok"):
@@ -8934,11 +8987,14 @@ def cmd_scratchpad(argv: List[str]) -> int:
         return 0 if result.get("ok") else 1
 
     if action in {"toggle", "show", "hide", "preload"} and rest:
-        result = scratchpad_toggle(rest[0],
-                                   reveal_only=(action == "show"),
-                                   launch_only=(action == "preload"),
-                                   hide_only=(action == "hide"),
-                                   keep_focus=("--keep-focus" in rest))
+        # Both backends take the same four flags, so the CLI never has to know
+        # which compositor it is talking to beyond picking the function.
+        toggle_fn = scratchpad_toggle_niri if on_niri else scratchpad_toggle
+        result = toggle_fn(rest[0],
+                           reveal_only=(action == "show"),
+                           launch_only=(action == "preload"),
+                           hide_only=(action == "hide"),
+                           keep_focus=("--keep-focus" in rest))
         if not result.get("ok"):
             eprint(result.get("error") or "scratchpad toggle failed")
             return 1
@@ -10280,6 +10336,611 @@ def _scratchpad_focused_monitor() -> str:
         if isinstance(monitor, dict) and monitor.get("focused") is True:
             return str(monitor.get("name") or "")
     return ""
+
+
+# --- Scratchpads on Niri (VGS-83) --------------------------------------------
+#
+# Not a port of the Hyprland generator. Niri has no special workspaces — nothing
+# that overlays the current view and hides again — so the model is a PERSISTENT
+# NAMED WORKSPACE per pad plus window rules, and the toggle focuses that
+# workspace and focuses back. See docs/architecture/scratchpads.md § Niri.
+#
+# The persisted pad record is unchanged, which was VGS-62's point: anchor +
+# percentage geometry is compositor-agnostic. Niri resolves both itself
+# (`proportion` for size, `relative-to` for the anchor), so this backend does
+# not compute pixels at all and never needs a monitor query to render — the
+# whole "generated against a nominal display" caveat the Hyprland file carries
+# simply does not arise here.
+
+# VGS anchor -> niri `relative-to`. Niri's coordinates already run INWARD from
+# the named corner or edge (its own docs: with `bottom-left`, y counts upward),
+# which is exactly what offsetX/offsetY mean in the Hyprland resolver, so the
+# offsets carry over unchanged.
+#
+# "center" maps to nothing: niri has no centre `relative-to`. It does centre new
+# floating windows by default, so an unoffset centre pad is emitted by OMITTING
+# the position rule; a centre pad with an offset cannot be expressed and is
+# reported rather than approximated.
+SCRATCHPAD_NIRI_ANCHORS = {
+    "top-left": "top-left",
+    "top-center": "top",
+    "top-right": "top-right",
+    "center-left": "left",
+    "center": "",
+    "center-right": "right",
+    "bottom-left": "bottom-left",
+    "bottom-center": "bottom",
+    "bottom-right": "bottom-right",
+}
+
+
+def scratchpad_niri_workspace(pad_id: str) -> str:
+    """The named workspace a pad lives on. Prefixed so a VGS pad can never
+    collide with a workspace the user named themselves."""
+    return "vgs-" + pad_id
+
+
+def scratchpad_niri_config_path() -> Path:
+    return _niri().niri_config_dir() / "scratchpads.kdl"
+
+
+def _kdl_raw_string(value: str) -> str:
+    """A KDL raw string, so a regex full of backslashes needs no escaping.
+
+    Returns "" for a value that would terminate the literal early — the caller
+    must reject that pad rather than emit a rule that silently means something
+    else."""
+    return "" if '"#' in value else 'r#"' + value + '"#'
+
+
+# Python's `re` accepts lookaround; the Rust regex crate niri uses does not.
+# A pattern carrying one compiles fine here and then makes niri reject the
+# WHOLE config file, so the pad would not merely fail — it would take the
+# user's entire Niri configuration down with it.
+_RUST_REGEX_UNSUPPORTED = re.compile(r"\(\?(?:=|!|<=|<!)")
+
+
+def _niri_regex_problem(pattern: str, what: str) -> str:
+    """Why `pattern` cannot be handed to niri, or "" when it can.
+
+    Only differences that are decidable offline are checked. This is not a Rust
+    regex parser and does not pretend to be one; it catches the one construct
+    that is both common in hand-written patterns and certain to be rejected."""
+    if _RUST_REGEX_UNSUPPORTED.search(pattern):
+        return (f"{what} uses lookaround, which Niri's regex engine does not support; "
+                "a rule containing it would make Niri reject the whole config file")
+    return ""
+
+
+def scratchpad_niri_unsupported() -> List[Dict[str, str]]:
+    """Pad features this backend cannot express, as a standing list.
+
+    Reported, never silently dropped: a setting that is stored, shown and
+    ignored is the defect this subsystem has refused throughout. These are
+    properties of the compositor, not of any one pad, so they are stated once
+    for the backend rather than repeated per pad."""
+    return [
+        {
+            "field": "animation",
+            "reason": "Niri's window-open animation is global config (`animations { window-open ... }`), "
+                      "not a per-window-rule property, so a per-pad entry animation cannot be expressed. "
+                      "VGS does not overwrite your global animation to fake one.",
+        },
+        {
+            "field": "dismissOnFocusLoss",
+            "reason": "Not implemented on Niri. The focus owner VGS uses reads the Hyprland event "
+                      "socket; Niri's equivalent is a different mechanism and is not wired up yet.",
+        },
+    ]
+
+
+def render_scratchpads_kdl(pads: List[Dict[str, Any]],
+                           problems: List[Dict[str, str]] | None = None) -> Tuple[str, Dict[str, Any]]:
+    """Pure renderer: pads in, Niri KDL text + metadata out. No IPC, so the
+    generated config can be diffed in a test without a compositor — which is the
+    only way this backend can be checked at all from a Hyprland machine."""
+    cli = shutil.which("vshell") or "vshell"
+    lines = [
+        "// Generated by VGS (Settings -> Scratchpads). Do not edit.",
+        "//",
+        "// Niri has no special workspaces, so each pad is a persistent NAMED",
+        "// workspace plus window rules; the keybind focuses that workspace and",
+        "// focuses back. A pad therefore takes a real slot in your workspace",
+        "// list rather than overlaying the current view, which is the one",
+        "// visible difference from the Hyprland backend.",
+        "",
+    ]
+
+    rendered: List[Dict[str, Any]] = []
+    unsupported: List[Dict[str, str]] = []
+    enabled = [pad for pad in pads if pad["enabled"]]
+    binds: List[Tuple[str, str, str]] = []
+
+    if not enabled:
+        lines.append("// No scratchpads are defined.")
+        lines.append("")
+
+    for pad in enabled:
+        regex_problem = (_niri_regex_problem(pad["classRegex"], "window class pattern")
+                         or _niri_regex_problem(pad["titleExclude"], "title exclusion"))
+        if regex_problem:
+            if problems is not None:
+                problems.append({"id": pad["name"], "reason": regex_problem})
+            continue
+        match_value = _kdl_raw_string(pad["classRegex"])
+        if not match_value:
+            # Reject rather than half-emit: a rule whose match string cannot be
+            # written correctly would either fail to parse or, worse, parse as
+            # something narrower and quietly stop capturing the window.
+            if problems is not None:
+                problems.append({"id": pad["name"],
+                                 "reason": 'window class pattern contains \'"#\' and cannot be '
+                                           "written as a Niri raw string"})
+            continue
+        exclude_value = ""
+        if pad["titleExclude"]:
+            exclude_value = _kdl_raw_string(pad["titleExclude"])
+            if not exclude_value:
+                if problems is not None:
+                    problems.append({"id": pad["name"],
+                                     "reason": 'title exclusion contains \'"#\' and cannot be '
+                                               "written as a Niri raw string"})
+                continue
+
+        workspace = scratchpad_niri_workspace(pad["id"])
+        lines.append(f"// {pad['name']} ({pad['id']})")
+
+        # The workspace. Declared, so it exists before any window is moved onto
+        # it and survives the pad being empty.
+        if pad["monitor"]:
+            # An output that is not connected is left to niri to resolve: it
+            # places the workspace somewhere real, which beats VGS guessing on
+            # the strength of a monitor list it cannot read at generation time.
+            lines.append(f'workspace {json.dumps(workspace)} {{')
+            lines.append(f'    open-on-output {json.dumps(pad["monitor"])}')
+            lines.append("}")
+        else:
+            lines.append(f"workspace {json.dumps(workspace)}")
+
+        # The window rule. `match` and `exclude` are both emitted from the same
+        # pair of patterns, so a window the user excluded by title is excluded
+        # from every property below rather than half-owned.
+        lines.append("window-rule {")
+        lines.append(f"    match app-id={match_value}")
+        if exclude_value:
+            lines.append(f"    exclude title={exclude_value}")
+        lines.append(f"    open-on-workspace {json.dumps(workspace)}")
+        # The pad must not steal focus when it maps: preload opens it without
+        # revealing, and the toggle focuses it deliberately a moment later.
+        lines.append("    open-focused false")
+
+        if pad["presentation"] == "fullscreen":
+            lines.append("    open-fullscreen true")
+        elif pad["presentation"] == "tile":
+            lines.append("    open-floating false")
+            lines.append(_niri_scratchpad_size_line("default-column-width", pad, "width"))
+            lines.append(_niri_scratchpad_size_line("default-window-height", pad, "height"))
+        else:
+            lines.append("    open-floating true")
+            lines.append(_niri_scratchpad_size_line("default-column-width", pad, "width"))
+            lines.append(_niri_scratchpad_size_line("default-window-height", pad, "height"))
+            relative_to = SCRATCHPAD_NIRI_ANCHORS[pad["anchor"]]
+            if relative_to:
+                lines.append(f'    default-floating-position x={pad["offsetX"]} y={pad["offsetY"]} '
+                             f'relative-to={json.dumps(relative_to)}')
+            elif pad["offsetX"] or pad["offsetY"]:
+                # Centre + offset. Niri centres by default when no position rule
+                # is given, so the pad still lands centred — but the offset the
+                # user asked for is dropped, and that is said out loud.
+                unsupported.append({
+                    "id": pad["name"],
+                    "field": "anchor offset",
+                    "reason": f"anchor 'center' with an offset cannot be expressed on Niri "
+                              f"(it has no centre `relative-to`); {pad['name']} is centred and the "
+                              f"{pad['offsetX']},{pad['offsetY']} offset is not applied",
+                })
+        lines.append("}")
+
+        if pad["keybind"]:
+            binds.append((pad["keybind"], pad["id"], pad["name"]))
+        lines.append("")
+
+        rendered.append({
+            "id": pad["id"], "workspace": workspace, "monitor": pad["monitor"],
+            "keybind": pad["keybind"], "presentation": pad["presentation"],
+        })
+
+    if binds:
+        lines.append("binds {")
+        for keybind, pad_id, name in binds:
+            action = " ".join(json.dumps(part) for part in (cli, "scratchpad", "toggle", pad_id))
+            lines.append(f'    {json.dumps(keybind)} hotkey-overlay-title='
+                         f'{json.dumps("Scratchpad: " + name)} {{ spawn {action}; }}')
+        lines.append("}")
+        lines.append("")
+
+    preload = [pad["id"] for pad in enabled if pad["preload"]]
+    if preload:
+        # Same path as a cold toggle, in a mode that launches and parks without
+        # focusing, so a preloaded pad and a cold one converge on one placement.
+        lines.append("// Preload at login: launch onto the pad's workspace, never focus it.")
+        for pad_id in preload:
+            action = " ".join(json.dumps(part) for part in (cli, "scratchpad", "preload", pad_id))
+            lines.append(f"spawn-at-startup {action}")
+        lines.append("")
+
+    meta = {
+        "count": len(rendered),
+        "defined": len(pads),
+        "preload": preload,
+        "scratchpads": rendered,
+        # Per-pad settings that could not be expressed, plus the standing
+        # backend-level ones. Distinct from `problems`: a pad listed here WAS
+        # generated and does work, with one property dropped — reporting that as
+        # a rejection would be as misleading as not reporting it at all.
+        "unsupported": unsupported + scratchpad_niri_unsupported(),
+    }
+    return ("\n".join(lines), meta)
+
+
+def _niri_scratchpad_size_line(rule: str, pad: Dict[str, Any], axis: str) -> str:
+    """`proportion` for a percentage pad, `fixed` for a pixel one.
+
+    Niri resolves the proportion against the real output, so the percentage
+    stays a percentage all the way into the compositor instead of being frozen
+    into pixels at generation time the way the Hyprland backend must."""
+    if pad["sizeMode"] == "pixels":
+        value = pad["widthPixels"] if axis == "width" else pad["heightPixels"]
+        return f"    {rule} {{ fixed {int(value)}; }}"
+    percent = pad["widthPercent"] if axis == "width" else pad["heightPercent"]
+    return f"    {rule} {{ proportion {round(percent / 100.0, 4)}; }}"
+
+
+def scratchpad_niri_include_status() -> Dict[str, Any]:
+    """Whether config.kdl pulls the generated fragment in.
+
+    Unlike the Hyprland side, VGS already manages Niri includes (with a backup)
+    — that is this repo's existing stance for this compositor, not a new one
+    taken here."""
+    status = _niri().niri_include_status("scratchpads.kdl")
+    if not status.get("ok"):
+        return {
+            "path": str(runtime_niri_config()),
+            "exists": False,
+            "included": False,
+            "includeLine": 'include "vgs/scratchpads.kdl"',
+            "readOnly": False,
+            "statusMessage": str(status.get("error") or "Niri include state is unknown"),
+        }
+    return {
+        "path": status.get("path", ""),
+        "exists": bool(status.get("exists")),
+        "included": bool(status.get("included")),
+        "includeLine": 'include "vgs/scratchpads.kdl"',
+        "readOnly": False,
+        "statusMessage": ("VGS scratchpad rules are active."
+                          if status.get("included") else
+                          str(status.get("statusMessage") or "")),
+    }
+
+
+def runtime_niri_config() -> Path:
+    return home() / ".config" / "niri" / "config.kdl"
+
+
+def apply_scratchpads_niri(reload: bool = True) -> Dict[str, Any]:
+    problems: List[Dict[str, str]] = []
+    pads = load_scratchpads(problems)
+    content, meta = render_scratchpads_kdl(pads, problems)
+    path = scratchpad_niri_config_path()
+    write_file(path, content)
+    include = _niri().ensure_niri_include("scratchpads.kdl")
+
+    reload_result: Dict[str, Any] = {"attempted": False}
+    if reload and _niri_session_ready():
+        result = _niri().niri_reload_config()
+        reload_result = {
+            "attempted": True,
+            "ok": bool(result.get("ok")),
+            "stderr": str(result.get("error") or ""),
+        }
+    return {
+        "ok": (not reload_result.get("attempted") or bool(reload_result.get("ok")))
+              and bool(include.get("ok", True)),
+        "path": str(path),
+        "compositor": "niri",
+        "scratchpads": meta,
+        "problems": problems,
+        "include": scratchpad_niri_include_status(),
+        "reload": reload_result,
+    }
+
+
+# --- Niri scratchpad runtime -------------------------------------------------
+
+def _niri_session_ready() -> bool:
+    """Whether there is a live Niri session to talk to. Same seam, and same
+    reason, as `_scratchpad_session_ready` on the Hyprland side: it is what lets
+    the tests drive these paths on a machine with no Niri at all."""
+    return bool(shutil.which("niri") and os.environ.get("NIRI_SOCKET"))
+
+
+def _niri_msg_json(*args: str) -> Any:
+    """Read-only Niri IPC. Returns None when there is nothing to ask, so every
+    caller has to decide what "unknown" means instead of being handed a
+    plausible-looking empty answer."""
+    if not _niri_session_ready():
+        return None
+    proc = run(["niri", "msg", "-j", *args])
+    if proc.returncode != 0:
+        return None
+    try:
+        return json.loads(proc.stdout or "")
+    except json.JSONDecodeError:
+        return None
+
+
+def _niri_scratchpad_action(*args: str) -> bool:
+    if not _niri_session_ready():
+        return False
+    return run(["niri", "msg", "action", *args]).returncode == 0
+
+
+def _scratchpad_niri_find_window(pad: Dict[str, Any]) -> Dict[str, Any] | None:
+    windows = _niri_msg_json("windows")
+    if not isinstance(windows, list):
+        return None
+    try:
+        pattern = re.compile(pad["classRegex"])
+    except re.error:
+        return None
+    exclude = None
+    if pad["titleExclude"]:
+        try:
+            exclude = re.compile(pad["titleExclude"])
+        except re.error:
+            exclude = None
+    for window in windows:
+        if not isinstance(window, dict):
+            continue
+        if not pattern.search(str(window.get("app_id") or "")):
+            continue
+        if exclude is not None and exclude.search(str(window.get("title") or "")):
+            continue
+        return window
+    return None
+
+
+def _scratchpad_niri_wait_for_window(pad: Dict[str, Any], timeout: float) -> Dict[str, Any] | None:
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        window = _scratchpad_niri_find_window(pad)
+        if window is not None:
+            return window
+        time.sleep(0.15)
+    return None
+
+
+def _scratchpad_niri_workspace(pad_id: str) -> Dict[str, Any] | None:
+    """The pad's workspace record, or None when it cannot be read.
+
+    None means "unknown", never "not there": the callers below refuse to act on
+    it rather than treating a failed query as a negative answer."""
+    workspaces = _niri_msg_json("workspaces")
+    if not isinstance(workspaces, list):
+        return None
+    name = scratchpad_niri_workspace(pad_id)
+    for workspace in workspaces:
+        if isinstance(workspace, dict) and str(workspace.get("name") or "") == name:
+            return workspace
+    return {}
+
+
+def _scratchpad_niri_visible_output(pad_id: str) -> str:
+    """The output showing the pad's workspace, or "" when it is not shown.
+
+    Mirrors what `_scratchpad_visible_monitor` means on Hyprland: a workspace
+    that is active on its output is on screen, whether or not it holds focus."""
+    workspace = _scratchpad_niri_workspace(pad_id)
+    if not workspace:
+        return ""
+    return str(workspace.get("output") or "") if workspace.get("is_active") else ""
+
+
+def _scratchpad_niri_focused_window_id() -> int:
+    windows = _niri_msg_json("windows")
+    if not isinstance(windows, list):
+        return 0
+    for window in windows:
+        if isinstance(window, dict) and window.get("is_focused"):
+            try:
+                return int(window.get("id") or 0)
+            except (TypeError, ValueError):
+                return 0
+    return 0
+
+
+def _scratchpad_niri_ensure_membership(pad_id: str, window: Dict[str, Any]) -> Dict[str, Any]:
+    """Move a window onto the pad's workspace if it is not already there.
+
+    Same map-time race as Hyprland: `open-on-workspace` is applied once, when
+    the window opens, so an app whose app-id settles afterwards never matched it
+    and is sitting on whatever workspace was focused then. Re-asserting the
+    membership is the half that matters — styling a window perfectly while
+    leaving it on the wrong workspace makes the reveal show an empty pad."""
+    try:
+        window_id = int(window.get("id") or 0)
+    except (TypeError, ValueError):
+        window_id = 0
+    workspace = _scratchpad_niri_workspace(pad_id)
+    if workspace is None or not workspace:
+        return {"moved": False, "from": None}
+    try:
+        target_id = int(workspace.get("id") or 0)
+    except (TypeError, ValueError):
+        target_id = 0
+    current = window.get("workspace_id")
+    if not window_id or (current is not None and target_id and int(current) == target_id):
+        return {"moved": False, "from": None}
+    # --focus false: the reveal focuses deliberately a moment later, and preload
+    # must not steal focus at all.
+    moved = _niri_scratchpad_action("move-window-to-workspace", "--window-id", str(window_id),
+                                    "--focus", "false", scratchpad_niri_workspace(pad_id))
+    return {"moved": moved, "from": current}
+
+
+def scratchpad_toggle_niri(pad_id: str, reveal_only: bool = False, launch_only: bool = False,
+                           timeout: float = 20.0) -> Dict[str, Any]:
+    """Reveal/hide a pad on Niri by focusing its named workspace and back."""
+    pads = {pad["id"]: pad for pad in load_scratchpads()}
+    pad = pads.get(pad_id)
+    if pad is None:
+        return {"ok": False, "error": f"unknown scratchpad: {pad_id}"}
+    if not _niri_session_ready():
+        return {"ok": False, "error": "no Niri session"}
+
+    state_file = _scratchpad_state_dir() / (pad_id + ".niri-focus")
+    with _scratchpad_lock(pad_id):
+        visible_on = _scratchpad_niri_visible_output(pad_id)
+
+        # Identical rule to the Hyprland backend: a disabled pad generates no
+        # rules and no keybind, so revealing one claims a mechanism the enable
+        # toggle does not have — but hiding one that is already on screen stays
+        # allowed, or disabling a visible pad would strand it.
+        if not pad["enabled"]:
+            hiding = bool(visible_on) and not reveal_only and not launch_only
+            if not hiding:
+                return {"ok": False, "id": pad_id, "action": "disabled",
+                        "error": f"{pad['name']} is disabled"}
+
+        if visible_on and not reveal_only and not launch_only:
+            previous = ""
+            if state_file.exists():
+                previous = state_file.read_text().strip()
+                state_file.unlink(missing_ok=True)
+            restored = False
+            if previous.isdigit():
+                windows = _niri_msg_json("windows")
+                alive = isinstance(windows, list) and any(
+                    isinstance(w, dict) and str(w.get("id")) == previous for w in windows)
+                if alive:
+                    restored = _niri_scratchpad_action("focus-window", "--id", previous)
+            if not restored:
+                # Nothing to go back to, or it is gone. Niri's own "previous
+                # workspace" is the honest fallback; there is no window to
+                # restore focus to.
+                restored = _niri_scratchpad_action("focus-workspace-previous")
+            if not restored:
+                return {"ok": False, "id": pad_id, "action": "hide-failed",
+                        "error": f"{pad['name']}: could not focus away from the pad's workspace"}
+            # Confirmed by reading the state back, not inferred from the call:
+            # an action can report success and leave the workspace focused.
+            if _scratchpad_niri_visible_output(pad_id) and _scratchpad_niri_workspace_focused(pad_id):
+                return {"ok": False, "id": pad_id, "action": "hide-failed",
+                        "error": f"{pad['name']}: the pad's workspace is still focused"}
+            return {"ok": True, "action": "hidden", "id": pad_id}
+
+        window = _scratchpad_niri_find_window(pad)
+        launched = False
+        if window is None:
+            launched = True
+            # Detached, and in its own session: the pad outlives this toggle and
+            # must not inherit the flock fd and hold the lock for its lifetime.
+            subprocess.Popen(["sh", "-c", pad["command"]],
+                             start_new_session=True,
+                             stdin=subprocess.DEVNULL,
+                             stdout=subprocess.DEVNULL,
+                             stderr=subprocess.DEVNULL,
+                             close_fds=True)
+            # Wait for the window BEFORE focusing the workspace. Focusing first
+            # shows an empty workspace and reads as a dead keybind, which is the
+            # single-press-from-cold requirement.
+            window = _scratchpad_niri_wait_for_window(pad, timeout)
+            if window is None:
+                return {"ok": False, "id": pad_id, "action": "launch-timeout",
+                        "error": f"{pad['name']}: no window matched {pad['classRegex']} "
+                                 f"within {timeout:g}s"}
+
+        membership = _scratchpad_niri_ensure_membership(pad_id, window)
+
+        if launch_only:
+            return {"ok": True, "action": "preloaded", "id": pad_id,
+                    "launched": launched, "membership": membership}
+
+        focused_before = _scratchpad_niri_focused_window_id()
+        if focused_before:
+            state_file.write_text(str(focused_before))
+
+        failures: List[str] = []
+        if membership.get("from") is not None and not membership.get("moved"):
+            failures.append(f"could not move the window onto {scratchpad_niri_workspace(pad_id)}")
+        if not _niri_scratchpad_action("focus-workspace", scratchpad_niri_workspace(pad_id)):
+            failures.append(f"could not focus {scratchpad_niri_workspace(pad_id)}")
+        try:
+            window_id = int(window.get("id") or 0)
+        except (TypeError, ValueError):
+            window_id = 0
+        if window_id and not _niri_scratchpad_action("focus-window", "--id", str(window_id)):
+            failures.append("could not focus the window")
+
+        # Read the outcome back rather than trusting the calls: each can report
+        # success and still leave the pad unfocused.
+        if not _scratchpad_niri_workspace_focused(pad_id):
+            failures.append("the pad's workspace is still not focused")
+
+        if failures:
+            return {"ok": False, "action": "reveal-failed", "id": pad_id,
+                    "launched": launched, "membership": membership,
+                    "error": f"{pad['name']}: " + "; ".join(failures)}
+        return {"ok": True, "action": "revealed", "id": pad_id,
+                "launched": launched, "membership": membership}
+
+
+def _scratchpad_niri_workspace_focused(pad_id: str) -> bool:
+    workspace = _scratchpad_niri_workspace(pad_id)
+    if not workspace:
+        return False
+    return bool(workspace.get("is_focused"))
+
+
+def scratchpad_release_niri(pad_id: str, class_regex: str = "", title_exclude: str = "") -> Dict[str, Any]:
+    """Hand a pad's window back to the focused workspace before the pad is
+    deleted, so it is not left on a named workspace whose declaration and
+    keybind are about to disappear."""
+    if not _niri_session_ready():
+        return {"ok": True, "released": False, "reason": "no Niri session"}
+    pad = {"classRegex": class_regex or "", "titleExclude": title_exclude or ""}
+    if not pad["classRegex"]:
+        pads = {item["id"]: item for item in load_scratchpads()}
+        record = pads.get(pad_id)
+        if record is None:
+            return {"ok": False, "error": f"unknown scratchpad: {pad_id}"}
+        pad = record
+    window = _scratchpad_niri_find_window(pad)
+    if window is None:
+        return {"ok": True, "released": False}
+    workspaces = _niri_msg_json("workspaces")
+    target = ""
+    if isinstance(workspaces, list):
+        for workspace in workspaces:
+            if isinstance(workspace, dict) and workspace.get("is_focused"):
+                target = str(workspace.get("idx") or workspace.get("id") or "")
+                break
+    if not target:
+        # Without a destination the move would be a guess. Say so rather than
+        # reporting a release that did not happen.
+        return {"ok": False, "released": False,
+                "error": "could not determine the focused workspace to release onto"}
+    try:
+        window_id = int(window.get("id") or 0)
+    except (TypeError, ValueError):
+        window_id = 0
+    if not window_id:
+        return {"ok": False, "released": False, "error": "the pad's window has no id"}
+    moved = _niri_scratchpad_action("move-window-to-workspace", "--window-id", str(window_id),
+                                    "--focus", "false", target)
+    return {"ok": moved, "released": moved,
+            "error": "" if moved else "could not move the window off the pad's workspace"}
 
 
 

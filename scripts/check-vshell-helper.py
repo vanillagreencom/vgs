@@ -3920,6 +3920,145 @@ def test_scratchpad_generated_lua_parses():
     assert parses(text), "generated scratchpad config must be valid Lua"
 
 
+def test_scratchpad_niri_generation():
+    """The Niri backend (VGS-83). Not a translation of the Lua one: Niri has no
+    special workspaces, so a pad is a persistent named workspace plus window
+    rules. The same pad RECORD drives both backends — that is what storing an
+    anchor and a percentage instead of pixels bought."""
+    pads = [
+        _pad(keybind="Mod+T", monitor="DP-1", preload=True, anchor="top-center", offsetY=36),
+        _pad(id="notes", classRegex="^(obsidian)$", command="obsidian",
+             titleExclude="^(Quick Switcher)$", anchor="bottom-right", offsetX=24, offsetY=24,
+             sizeMode="pixels", widthPixels=1200, heightPixels=800),
+        _pad(id="vm", classRegex="^(vm-viewer)$", command="virt-viewer", presentation="fullscreen"),
+        _pad(id="tiled", classRegex="^(tiled)$", command="tiled", presentation="tile"),
+    ]
+    text, meta = helper.render_scratchpads_kdl(pads)
+
+    # The workspace is the model. Prefixed so a pad can never collide with a
+    # workspace the user named themselves.
+    assert 'workspace "vgs-term" {' in text, "a pad with a monitor pins its workspace to that output"
+    assert '    open-on-output "DP-1"' in text, "the configured monitor becomes open-on-output"
+    assert 'workspace "vgs-notes"\n' in text, "a pad with no monitor declares a bare workspace"
+    assert 'open-on-workspace "vgs-term"' in text, "the window rule routes the app to it"
+
+    # Percentages stay percentages: niri resolves `proportion` against the real
+    # output, so unlike the Hyprland backend nothing is frozen into pixels at
+    # generation time and no monitor query is needed to render at all.
+    assert "default-column-width { proportion 0.6; }" in text, "percent sizing becomes a proportion"
+    assert "default-window-height { proportion 0.7; }" in text
+    assert "default-column-width { fixed 1200; }" in text, "pixel sizing becomes fixed"
+
+    # Anchors map onto niri's `relative-to`, and the offsets carry over
+    # unchanged because niri already measures inward from the named edge.
+    assert 'default-floating-position x=0 y=36 relative-to="top"' in text, \
+        "top-center is niri's single-side 'top', which centres on that edge"
+    assert 'default-floating-position x=24 y=24 relative-to="bottom-right"' in text, \
+        "and bottom-right offsets count inward, exactly as the Hyprland resolver means them"
+
+    # Both patterns go into the same rule, so a window excluded by title is
+    # excluded from every property rather than half-owned.
+    assert 'match app-id=r#"^(obsidian)$"#' in text
+    assert 'exclude title=r#"^(Quick Switcher)$"#' in text
+
+    assert "open-fullscreen true" in text, "fullscreen presentation"
+    assert "open-floating false" in text, "tile presentation"
+    assert "open-focused false" in text, \
+        "the pad must not steal focus when it maps; the toggle focuses it deliberately"
+
+    # The keybind and preload both run the same CLI paths the Hyprland backend
+    # does, so there is one toggle implementation per compositor and not two.
+    assert '{ spawn ' in text and '"scratchpad" "toggle" "term"' in text, "keybind spawns the toggle"
+    assert '"scratchpad" "preload" "term"' in text, "preload spawns the preload path"
+    assert "spawn-at-startup" in text, "preload uses niri's own startup hook"
+    assert_equal(meta["count"], 4, "every enabled pad is rendered")
+    assert_equal(meta["preload"], ["term"], "and the preload list is reported")
+
+
+def test_scratchpad_niri_reports_what_it_cannot_express():
+    """Anything Niri cannot do is REPORTED, never silently dropped. A setting
+    that is stored, shown in Settings and ignored by the compositor is the
+    defect this whole subsystem has refused."""
+    text, meta = helper.render_scratchpads_kdl([_pad()])
+    fields = {item["field"] for item in meta["unsupported"]}
+    assert "animation" in fields, \
+        "per-pad entry animation cannot be expressed: niri's window-open animation is global"
+    assert "dismissOnFocusLoss" in fields, "and focus-loss dismissal is not wired up on niri"
+    assert "animations" not in text, \
+        "VGS must not overwrite the user's global animation to fake a per-pad one"
+
+    # Centre + offset: niri has no centre `relative-to`. The pad is still
+    # generated and still works, centred — but the dropped offset is named.
+    _, centred = helper.render_scratchpads_kdl([_pad(id="mid", anchor="center", offsetX=40)])
+    offsets = [item for item in centred["unsupported"] if item.get("field") == "anchor offset"]
+    assert offsets, "a centre anchor with an offset must be reported as unexpressible"
+    assert "mid" in offsets[0]["reason"] or "Terminal" in offsets[0]["reason"] or offsets[0].get("id")
+
+    # ...and a centre pad with no offset is not reported at all, because
+    # nothing was lost: niri centres new floating windows by itself.
+    _, plain = helper.render_scratchpads_kdl([_pad(id="mid", anchor="center")])
+    assert not [i for i in plain["unsupported"] if i.get("field") == "anchor offset"], \
+        "an unoffset centre pad loses nothing and must not be reported"
+
+
+def test_scratchpad_niri_rejects_rules_it_cannot_write_correctly():
+    """Reject rather than half-emit. A pad that cannot be expressed correctly
+    generates NO rule and says why — and on Niri the stakes are higher than one
+    pad, because a rule niri refuses to parse takes the whole config with it."""
+    # Python's re accepts lookaround; niri's Rust regex engine does not.
+    problems = []
+    text, meta = helper.render_scratchpads_kdl([_pad(classRegex=r"^(?!excluded)(term)$")], problems)
+    assert_equal(meta["count"], 0, "a pad with a lookaround pattern is not rendered")
+    assert problems and "lookaround" in problems[0]["reason"], \
+        "and the rejection names the reason rather than the pad just vanishing"
+    assert "window-rule" not in text, "no partial rule is emitted"
+
+    # A pattern that would terminate the KDL raw string early is rejected for
+    # the same reason: the alternative is a rule that parses as something
+    # narrower and quietly stops matching.
+    problems = []
+    _, meta = helper.render_scratchpads_kdl([_pad(classRegex='^(a"#b)$')], problems)
+    assert_equal(meta["count"], 0, 'a pattern containing \'"#\' is not rendered')
+    assert problems and "raw string" in problems[0]["reason"], "and says so"
+
+    # The exclusion gets the same treatment as the class pattern, exactly as on
+    # Hyprland: a malformed exclusion is not "no exclusion".
+    problems = []
+    _, meta = helper.render_scratchpads_kdl([_pad(titleExclude=r"(?<=x)y")], problems)
+    assert_equal(meta["count"], 0, "an unexpressible exclusion rejects the whole pad")
+    assert problems and "title exclusion" in problems[0]["reason"]
+
+
+def test_scratchpad_niri_generated_kdl_parses():
+    """Parse what we wrote. A structural error here is a config niri refuses at
+    startup, which on this compositor breaks far more than the scratchpad."""
+    sys.path.insert(0, str(REPO_ROOT / "bin"))
+    import vshell_niri_kdl as kdl
+
+    pads = [
+        _pad(keybind="Mod+T", monitor="DP-1", preload=True),
+        _pad(id="notes", classRegex="^(obsidian)$", command="obsidian",
+             titleExclude=r'^(Quick\.Switcher)$', keybind="Mod+N"),
+        _pad(id="vm", classRegex="^(vm-viewer)$", command="virt-viewer", presentation="fullscreen"),
+    ]
+    text, _ = helper.render_scratchpads_kdl(pads)
+
+    # Prove the instrument can fail before trusting that it passes: an
+    # unterminated block must not come back as a clean parse.
+    assert_equal(kdl.kdl_matching_brace("window-rule {\n  match", 12), -1,
+                 "the brace matcher must report an unterminated block")
+
+    nodes = kdl.kdl_nodes_in_block(text)
+    headers = [header for header, _, _ in nodes]
+    assert 'workspace "vgs-term"' in headers, "the workspace block is a well-formed node"
+    assert headers.count("window-rule") == 3, "one window rule per pad, all parsed"
+    assert "binds" in headers, "and the binds block closes properly"
+    for header, body, _ in nodes:
+        if header == "binds":
+            assert kdl.kdl_matching_brace("{" + body + "}", 0) == len(body) + 1, \
+                "every bind inside the block is balanced"
+
+
 def _with_session_env(env):
     """Run with exactly the given compositor session variables set."""
     keys = ("HYPRLAND_INSTANCE_SIGNATURE", "NIRI_SOCKET", "XDG_CURRENT_DESKTOP")
@@ -3936,13 +4075,16 @@ def _with_session_env(env):
 
 def test_scratchpad_compositor_detection_reads_the_session_not_the_binary():
     """`hyprctl` and `niri` coexist in most distro repos, so an INSTALLED
-    hyprctl says nothing about which compositor owns the session. Treating it
-    as proof sent a Niri session down the Hyprland path and generated rules for
-    a compositor that was not running — which defeats the deliberate refusal."""
+    hyprctl says nothing about which compositor owns the session.
+
+    This mattered when Niri refused, and it matters MORE now that it has its own
+    backend (VGS-83): the returned name is what selects the generator, so
+    mistaking a Niri session for Hyprland no longer merely refuses wrongly, it
+    writes Lua rules into a session that reads KDL."""
     # The reported case: a Niri session on a machine that also has hyprctl.
-    assert_equal(_with_session_env({"NIRI_SOCKET": "/run/niri.sock"}), (False, "niri"),
-                 "a Niri session must refuse even when hyprctl is installed")
-    assert_equal(_with_session_env({"XDG_CURRENT_DESKTOP": "niri"}), (False, "niri"),
+    assert_equal(_with_session_env({"NIRI_SOCKET": "/run/niri.sock"}), (True, "niri"),
+                 "a Niri session is supported, and identified as niri even with hyprctl installed")
+    assert_equal(_with_session_env({"XDG_CURRENT_DESKTOP": "niri"}), (True, "niri"),
                  "XDG_CURRENT_DESKTOP is enough to identify the session")
 
     assert_equal(_with_session_env({"HYPRLAND_INSTANCE_SIGNATURE": "sig"}), (True, "hyprland"),
@@ -3950,12 +4092,18 @@ def test_scratchpad_compositor_detection_reads_the_session_not_the_binary():
     assert_equal(_with_session_env({"XDG_CURRENT_DESKTOP": "Hyprland:wlroots"}), (True, "hyprland"),
                  "a compound desktop string still identifies Hyprland")
 
-    # Any other running session is also not Hyprland, and must not be mistaken
-    # for "nothing is running" — that would let generation proceed under a
+    # Neither session may be mistaken for the other; the name is the router.
+    assert _with_session_env({"NIRI_SOCKET": "/run/niri.sock"})[1] != "hyprland", \
+        "a Niri session must never select the Hyprland generator"
+    assert _with_session_env({"HYPRLAND_INSTANCE_SIGNATURE": "sig"})[1] != "niri", \
+        "and a Hyprland session must never select the Niri one"
+
+    # A third compositor is still unsupported, and must not be mistaken for
+    # "nothing is running" — that would let generation proceed under a
     # compositor that will never read the result.
     for desktop in ("GNOME", "KDE", "sway"):
         supported, name = _with_session_env({"XDG_CURRENT_DESKTOP": desktop})
-        assert_equal(supported, False, f"{desktop} is not Hyprland")
+        assert_equal(supported, False, f"{desktop} is neither Hyprland nor Niri")
         assert_equal(name, desktop.split(":")[0].lower(), f"{desktop} is named in the refusal")
 
     # With nothing running, generation is still meaningful (writing config from
@@ -4946,6 +5094,10 @@ def main():
     test_scratchpad_records_that_cannot_work_are_rejected()
     test_scratchpad_lua_generation()
     test_scratchpad_generated_lua_parses()
+    test_scratchpad_niri_generation()
+    test_scratchpad_niri_reports_what_it_cannot_express()
+    test_scratchpad_niri_rejects_rules_it_cannot_write_correctly()
+    test_scratchpad_niri_generated_kdl_parses()
     test_scratchpad_compositor_detection_reads_the_session_not_the_binary()
     test_scratchpad_target_monitor_resolves_against_connected_outputs()
     test_scratchpad_release_hands_the_window_back()
