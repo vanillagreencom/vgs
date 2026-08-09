@@ -30,12 +30,14 @@ PluginComponent {
             cur.push(id);
         else
             cur.splice(at, 1);
-        root.hiddenAccounts = cur;
+        // Persist only. Assigning the property here would destroy its binding to
+        // pluginData for this instance, and aiUsage is instantiated once per bar
+        // — the other bar would keep following pluginDataChanged while this one
+        // stopped, so one persisted setting would show two different states.
         if (root.pluginService)
             root.pluginService.savePluginData("aiUsage", "hiddenAccounts", cur);
     }
     function setHeadlineMode(m) {
-        root.headlineMode = m;
         if (root.pluginService)
             root.pluginService.savePluginData("aiUsage", "headlineMode", m);
     }
@@ -367,7 +369,9 @@ PluginComponent {
     function setProvider(p) {
         if (root.provider === p)
             return;
-        root.provider = p;
+        // Save first, then refresh: savePluginData re-emits pluginDataChanged
+        // synchronously, so root.provider has already followed its binding by
+        // the time the Process command below is read.
         if (root.pluginService)
             root.pluginService.savePluginData("aiUsage", "provider", p);
         root.loading = true;

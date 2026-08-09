@@ -211,6 +211,26 @@ Local/private commands belong in overlays or plugin settings.
 Keep legacy metadata only where the loader still needs it for third-party compatibility.
 Do not add legacy runtime calls.
 
+### Persisting a plugin setting: save, never assign
+A widget property backed by plugin data is a **binding**:
+
+```qml
+property string headlineMode: pluginData.headlineMode || "pool"
+```
+
+A setter must call `pluginService.savePluginData(...)` and nothing else.
+Assigning the property as well — the idiom that reads as "apply it now, then
+persist it" — destroys that binding for that instance, and the assignment is
+redundant anyway: `savePluginData` emits `pluginDataChanged` synchronously,
+`PluginComponent.loadPluginData()` reassigns `pluginData` to a fresh object, and
+every live binding re-evaluates before the setter returns.
+
+The reason it looks correct in testing is that a widget is instantiated **once
+per configured bar**. On a single display the assignment and the binding agree.
+On a second display the assigning instance has gone unbound while the other
+still follows `pluginDataChanged`, so one persisted setting renders as two
+different states (VGS-74).
+
 ### Core and the vgsMenu plugin
 The app launcher is a bundled plugin that core cannot do without, so the edge
 between them is one-way and named at both ends. See
