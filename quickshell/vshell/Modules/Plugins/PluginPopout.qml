@@ -71,18 +71,36 @@ VgsPopout {
                     if (!popoutContainer.popContentBack())
                         return;
                 }
+                // Content exactly at the bound is rooted by the final
+                // iteration, so ask before reporting: a warning on a success
+                // sends someone hunting a runaway that never happened, and the
+                // bound exists to make a real one recognisable.
+                if (!popoutContainer.contentCanPopBack())
+                    return;
                 root.log.warn("plugin popout content did not settle at its root page after 16 pops:", root.layerNamespace);
             }
 
             Keys.onPressed: event => {
-                if (event.key === Qt.Key_Escape) {
-                    // Back one level before dismissing. Every pager the user
-                    // has met pops on Escape; losing the whole surface from a
-                    // pushed page is the opposite of what the pattern teaches.
-                    if (!popoutContainer.popContentBack())
-                        root.close();
-                    event.accepted = true;
-                }
+                if (event.key !== Qt.Key_Escape)
+                    return;
+                event.accepted = true;
+                // Auto-repeat is not a second decision. Holding Escape delivers
+                // repeats, and letting them through meant one physical press
+                // popped the page and then closed the surface — going back AND
+                // dismissing, which is exactly the trap that routing only
+                // Escape inward was meant to avoid. It also made the outcome
+                // depend on how long a key was held, which reads as a glitch
+                // rather than a rule. Swallowed, not ignored: the event stays
+                // accepted so a repeat cannot escape to another handler.
+                // A deliberate second press is a fresh press, not a repeat, and
+                // still closes — that is the pager convention. (VGS-88)
+                if (event.isAutoRepeat)
+                    return;
+                // Back one level before dismissing. Every pager the user has
+                // met pops on Escape; losing the whole surface from a pushed
+                // page is the opposite of what the pattern teaches.
+                if (!popoutContainer.popContentBack())
+                    root.close();
             }
 
             Connections {
