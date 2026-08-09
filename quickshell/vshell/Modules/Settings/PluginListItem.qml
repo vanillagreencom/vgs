@@ -36,13 +36,14 @@ StyledRect {
     property bool isSystemPlugin: pluginData ? (pluginData.source === "system") : false
     property string requiresShell: pluginData ? (pluginData.requires_shell || pluginData.requires_vgs || "") : ""
     property bool meetsRequirements: requiresShell ? PluginService.checkPluginCompatibility(requiresShell) : true
-    // Non-empty only when the package is actually being WITHHELD — a bundled
-    // module's unmet declaration is inert and must not read as unavailability.
-    // Settings > Plugins is the first place a user looks for a package that is
-    // not there, so the reason belongs here as text, not only under a hover.
-    // (VGS-89)
+    // Non-empty only when a package claiming this id was REFUSED on its shell
+    // requirement. A bundled module's unmet declaration is inert, and so is an
+    // unmet declaration on a package that still owns its id: the requirement is
+    // only enforced on the override/displacement path, so anything else would
+    // report an enforcement that never happened. (VGS-89)
     property string withheldReason: {
         PluginService.availablePlugins;
+        PluginService.knownManifests;
         ShellVersionService.semverVersion;
         return root.pluginId ? PluginService.requirementBlockReason(root.pluginId) : "";
     }
@@ -197,12 +198,15 @@ StyledRect {
                     horizontalAlignment: Text.AlignLeft
                 }
 
-                // Only when the package is genuinely withheld. A hover tooltip
-                // is not where someone looks to find out why a plugin they
-                // installed does nothing, and the icon alone said only that
-                // something was wrong. (VGS-89)
+                // Only when an override of this id was actually refused. The
+                // card belongs to whatever owns the id — after a refusal that
+                // is the shipped package, which IS loaded and working — so this
+                // says what was refused rather than calling the plugin
+                // unavailable. A hover tooltip is not where someone looks to
+                // find out why the plugin they installed is not the one
+                // running. (VGS-89)
                 StyledText {
-                    text: I18n.tr("Unavailable: %1").arg(root.withheldReason)
+                    text: root.withheldReason
                     font.pixelSize: Theme.fontSizeSmall
                     color: Theme.error
                     width: parent.width

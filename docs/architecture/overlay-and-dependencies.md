@@ -82,31 +82,36 @@ known manifest, not only the ones that won their id: a shipped manifest shadowed
 no record in `availablePlugins`, and that is precisely the configuration the audit is meant to
 explain.
 
-The override path itself is exercised by `scripts/qml-smoke.sh --nested`, which plants a user
-override of a bundled id inside its sandbox HOME and drives it through scan, rescan, reload and
-removal (VGS-81). The assertions are deliberately not "a load succeeded" — that is exactly what
-VGS-75 reported while the bundled copy stayed installed. The fixture's own component emits a
-load/teardown marker, and the invariant checked at every step is *one live instance of the
-override, and the id owned by something*; after the manifest is deleted the invariant becomes
-*zero live instances, and the id still owned*, which is what proves the shipped package took it
-back rather than a package that no longer exists on disk keeping it. Reverting `_relinkLoadedRecord`
-leaves one live instance behind and turns the run red.
+`requires_shell` is enforced in **exactly one place**: `_gateThenSwap`, reached only for a package
+that declares itself the override of a bundled id, or one displacing a package already loaded under
+that id. `runStartupGate()`, `loadPlugin()` and `reloadPlugin()` never look at it. **A unique-id user
+or system package with an impossible `requires_shell` therefore loads.** Verified in the nested
+sandbox: a fixture declaring `>=99.0.0` against a 0.1.0 shell answered `plugin-scan status` with
+`loaded`, identically to a control with a satisfiable requirement and one with none.
 
-For every **other** source the constraint is enforced, so what is needed there is not an audit but a
-**report**: an enforced constraint that says nothing is indistinguishable from the package not
-existing, which is the condition that made VGS-76 hard to diagnose in the first place.
-`PluginService.requirementBlockReason(pluginId)` owns the sentence — `requires VGS <x>; this shell is
-<y>`, empty for a bundled id and empty until shell-version detection lands — and it is reported in
-all three places a user looks (VGS-89):
+Whether that *should* be enforced is an open question and a behaviour change — see the note at the
+end of this section. What is documented here is what happens.
+
+So the reporting is about **refusals, not declarations**.
+`PluginService.requirementBlockReason(pluginId)` owns the sentence — `an installed override requires
+VGS <x> and was refused; this shell is VGS <y>` — and it walks every manifest claiming the id rather
+than only the one that won it, because a refused override no longer owns the id and looking at the
+winner alone never sees the configuration this exists to explain. It is empty for a bundled id, empty
+for a package that still owns its id (nothing refused it), and empty until shell-version detection
+lands. Reported in the three places a user looks (VGS-89):
 
 | Where | What it shows |
 |-------|---------------|
-| Settings › Plugins | a red `Unavailable: …` line on the card, plus the warning badge whose tooltip now names the shell's own version too |
-| `plugin-scan list` | a fifth tab-separated field, empty when nothing is withheld |
-| `plugin-scan status` | the recorded startup error if the gate ran, otherwise the standing requirement block — a package that was never enabled has no error to record and can still never load |
+| Settings › Plugins | a red line on the card naming what was refused — not "unavailable", because the card belongs to whatever owns the id, which after a refusal is the shipped package, loaded and working |
+| `plugin-scan list` | a fifth tab-separated field, empty when nothing was refused |
+| `plugin-scan status` | the recorded startup error **with its details** if the gate ran, otherwise the standing refusal. Emitting only the error's title dropped the shell's own version, which is half of what makes the message actionable |
 
-The startup gate also *records* the refusal now rather than only toasting it, so the reason survives
-the few seconds a toast lasts.
+The gate also *records* its refusal now rather than only toasting it, so the reason survives the few
+seconds a toast lasts.
+
+**Open: the requirement is not enforced for unique-id packages.** Making it so would start
+withholding packages that load today, which is a behaviour change and not something to introduce as
+a side effect of improving a report. It is left as it is, documented, rather than changed quietly.
 
 ### Rescanning
 

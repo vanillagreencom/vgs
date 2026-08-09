@@ -2062,32 +2062,41 @@ Singleton {
         return ShellVersionService.checkVersionRequirement(requiresVgs, ShellVersionService.getParsedShellVersion());
     }
 
-    // Why this package is being WITHHELD on its declared shell requirement, or
-    // "" when nothing is being withheld. One owner for the sentence, because it
+    // Why a package claiming this id was REFUSED on its declared shell
+    // requirement, or "" when none was. One owner for the sentence, because it
     // has to read identically in Settings > Plugins and in `plugin-scan`.
     //
-    // For a bundled id the constraint is inert — always-available by
-    // construction, audited at its source and never enforced
-    // (_auditBundledRequirement) — so reporting one here would tell a user a
-    // package is unavailable while it is loaded and working. For every other
-    // source the constraint IS enforced, and a package that is enforced against
-    // while reporting nothing is indistinguishable from a package that does not
-    // exist. That is the condition that made VGS-76 hard to diagnose, and it is
-    // what this reports. (VGS-89)
+    // The requirement is enforced in EXACTLY ONE PLACE: `_gateThenSwap`, which
+    // is reached only for a package that declares itself the override of a
+    // bundled id, or one displacing a package already loaded under that id.
+    // `runStartupGate()`, `loadPlugin()` and `reloadPlugin()` do not look at
+    // `requires_shell` at all, so a unique-id user or system package with an
+    // impossible requirement LOADS. Verified in the nested sandbox: a fixture
+    // declaring `>=99.0.0` against a 0.1.0 shell answered `plugin-scan status`
+    // with `loaded`, alongside a control with a satisfiable requirement and one
+    // with none, all three behaving identically.
+    //
+    // So this reports refusals, not declarations. An earlier version of this
+    // function reported any non-bundled package with an unmet requirement,
+    // which labelled loaded, working plugins "Unavailable" — the same false
+    // report the bundled exemption exists to prevent, one source over.
     function requirementBlockReason(pluginId) {
-        const plugin = availablePlugins[pluginId];
-        if (!plugin)
-            return "";
-        const withheld = _withheldOnRequirement(
-            plugin,
-            ShellVersionService.semverVersion,
-            plugin.requires_shell ? checkPluginCompatibility(plugin.requires_shell) : true
-        );
-        if (!withheld)
-            return "";
-        return I18n.tr("requires VGS %1; this shell is %2")
-            .arg(plugin.requires_shell)
-            .arg(ShellVersionService.semverVersion);
+        const shellSemver = ShellVersionService.semverVersion;
+        for (const manifestPath in knownManifests) {
+            if (pathToPluginId[manifestPath] !== pluginId)
+                continue;
+            const meta = knownManifests[manifestPath];
+            if (!meta || meta.bad)
+                continue;
+            const requires = meta.requiresShell;
+            const compatible = requires ? checkPluginCompatibility(requires) : true;
+            if (!_withheldOnRequirement(meta, shellSemver, compatible))
+                continue;
+            return I18n.tr("an installed override requires VGS %1 and was refused; this shell is VGS %2")
+                .arg(requires)
+                .arg(shellSemver);
+        }
+        return "";
     }
 
     // BEGIN REQUIREMENT REPORT POLICY
@@ -2097,19 +2106,32 @@ Singleton {
     // the rule is judged by the runtime's code rather than a re-implementation.
     // Keep it free of anything node cannot evaluate.
     //
-    // True only when the package is genuinely being withheld:
-    //   * no declaration, nothing to withhold on;
+    // `meta` is a knownManifests entry: {source, requiresShell, demoted}. Every
+    // manifest claiming an id is examined, not just the one that won it —
+    // a refused override no longer owns the id, so looking only at the winner
+    // never sees the very configuration this reports (VGS-76's motivating case).
+    //
+    // True only when a package was genuinely refused on the requirement:
+    //   * no declaration, nothing to refuse on;
     //   * a bundled id is always-available by construction, so its declaration
     //     is inert — audited at its source, never enforced. Reporting one would
     //     tell a user a package is unavailable while it is loaded and working;
+    //   * NOT DEMOTED means it was never refused. The requirement is only
+    //     enforced on the override/displacement path, so an unmet declaration
+    //     on a package that still owns its id is a declaration nothing acted
+    //     on — reporting it would describe an enforcement that did not happen;
     //   * shell version detection is asynchronous, and an unresolved version
-    //     parses as 0.0.0 and fails every `>=`. Nothing is withheld until it
+    //     parses as 0.0.0 and fails every `>=`. Nothing is refused until it
     //     lands, so reporting then would be a lie that clears itself;
-    //   * a satisfied constraint withholds nothing.
-    function _withheldOnRequirement(plugin, shellSemver, compatible) {
-        if (!plugin || !plugin.requires_shell)
+    //   * a satisfied constraint refuses nothing. (The version check runs first
+    //     in `_gateThenSwap`, so a demotion for any other reason cannot also
+    //     carry an unmet requirement.)
+    function _withheldOnRequirement(meta, shellSemver, compatible) {
+        if (!meta || !meta.requiresShell)
             return false;
-        if (plugin.source === "bundled")
+        if (meta.source === "bundled")
+            return false;
+        if (meta.demoted !== true)
             return false;
         if (!shellSemver)
             return false;
@@ -2199,12 +2221,19 @@ Singleton {
             if (!plugin)
                 return `ERROR: unknown pluginId '${pluginId}'`;
             const errObj = root.pluginLoadErrors[pluginId];
-            // A recorded startup failure first, then the standing requirement
-            // block. The second is what a package that was never enabled has:
-            // no gate has run for it, so there is no error to record, and yet
-            // it can never load. Reporting nothing there is the false silence
-            // this exists to remove. (VGS-89)
-            const err = errObj ? (errObj.title || "") : root.requirementBlockReason(pluginId);
+            // A recorded startup failure first, then a standing refusal.
+            //
+            // The recorded error is emitted WITH its details. Emitting only the
+            // title dropped the shell's own version — the requirement refusal
+            // records "It requires VGS x." as the title and "This shell is VGS
+            // y." as the details, and a reader given only the first cannot tell
+            // whether their shell is too old or the plugin is mislabelled,
+            // which is the whole point of reporting it.
+            let err = "";
+            if (errObj)
+                err = errObj.details ? (errObj.title + " " + errObj.details) : (errObj.title || "");
+            else
+                err = root.requirementBlockReason(pluginId);
             const safeErr = String(err).replace(/[\t\n\r]/g, " ");
             return `${plugin.loaded ? "loaded" : "unloaded"}\t${plugin.type || ""}\t${safeErr}`;
         }
