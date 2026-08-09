@@ -264,6 +264,11 @@ jobs:
           scripts/check-display-config-fixtures.js
           scripts/check-vgs-menu-capabilities.js
           scripts/check-vshell-ipc.sh
+          # `smoke-surfaces.sh` itself is local-only (it needs a live Hyprland
+          # VGS session), but its precondition classifier runs entirely off
+          # stubs — a fake `qs` registry, a fabricated procfs, a stub `hyprctl`
+          # — so the branch that decides skip-vs-fail IS checkable here.
+          scripts/test-smoke-surfaces.sh
 
       - name: Helper and CLI checks
         run: |

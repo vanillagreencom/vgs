@@ -167,6 +167,7 @@ scripts/check-lock-reload-order.py
 scripts/check-display-config-fixtures.js
 scripts/check-vgs-menu-capabilities.js
 scripts/check-vshell-ipc.sh
+scripts/test-smoke-surfaces.sh
 scripts/test-pill-hover-safety.js
 python3 -m py_compile bin/vshell-helper
 bash -n bin/vshell
@@ -274,6 +275,19 @@ So a green PR proves the static suite and the Go block. It does **not** prove
 the shell starts or that its surfaces are sane. Run
 `scripts/qml-smoke.sh --nested --require-static` and
 `scripts/smoke-surfaces.sh` locally before finishing QML work.
+
+`scripts/smoke-surfaces.sh` drives the shell that is *actually* running, and
+`vshell ipc` resolves instances by the config path of the checkout it is invoked
+from — so the smoke only works from the checkout owning the live session. It now
+reports which case it is in: a named skip when no VGS shell is live, and a
+failure naming the owning checkout when one is live but foreign. Run it from
+that checkout; do not read its refusal as a pass (VGS-69).
+
+A foreign shell fails the run **even when this checkout's own shell is also
+live**, because `hyprctl layers` aggregates every Quickshell instance on the
+seat: the assertions cannot tell whose surfaces they are reading, so a pass
+would prove nothing. The classifier's order is therefore malformed registry →
+foreign shell → own shell → skip.
 
 ### Review gate
 

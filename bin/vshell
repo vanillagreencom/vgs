@@ -313,15 +313,20 @@ case "${1:-run}" in
         getMode) exec "$helper" theme get-mode ;;
       esac
     fi
+    # Diagnostics go to stderr, successful output to stdout. Callers routinely
+    # discard stdout (`vshell ipc call capture close >/dev/null`), and printing
+    # the reason there left them with a bare exit status and no explanation —
+    # a `set -e` caller then died with no output at all (VGS-69).
     out="$(_qs_ipc "$@" 2>&1)" || {
       code=$?
-      printf '%s\n' "$out"
+      printf '%s\n' "$out" >&2
       exit "$code"
     }
-    printf '%s\n' "$out"
     if grep -qiE 'function not found|target not found|unknown target|error:|failed' <<<"$out"; then
+      printf '%s\n' "$out" >&2
       exit 1
     fi
+    printf '%s\n' "$out"
     ;;
   lock)
     shift || true
