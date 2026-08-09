@@ -4415,6 +4415,145 @@ def test_scratchpad_niri_hide_honours_the_same_flags():
          helper._niri_scratchpad_action, helper.load_scratchpads) = originals
 
 
+def test_scratchpad_release_refuses_when_it_could_not_look():
+    """A failed window query must never authorise deleting the pad.
+
+    Settings deletes the scratchpad record only when release reports success,
+    so collapsing "the compositor did not answer" into "nothing to release"
+    costs the user their configuration because an IPC call failed. That is the
+    session's most repeated defect — a failed query becoming a confident
+    negative — with the worst consequence any instance of it has had."""
+    # Hyprland.
+    originals = (helper._hyprctl_json, helper._scratchpad_session_ready,
+                 helper._scratchpad_dispatch)
+    dispatched = []
+    helper._scratchpad_session_ready = lambda: True
+    helper._scratchpad_dispatch = lambda *a: (dispatched.append(a), True)[1]
+    try:
+        # `clients` unreadable: unknown, not empty.
+        helper._hyprctl_json = lambda *a: None
+        blind = helper.scratchpad_release("pad", r"^(com\.example\.pad)$")
+        assert_equal(blind["ok"], False, "a release that could not look has not succeeded")
+        assert_equal(blind["released"], False, "and released nothing")
+        assert "could not read the window list" in blind["error"], \
+            f"naming why the pad was kept: {blind.get('error')!r}"
+        assert_equal(dispatched, [], "nothing is moved on the strength of a failed query")
+
+        # An answer that really is empty still authorises removal: there is
+        # genuinely nothing parked, so the pad can go.
+        helper._hyprctl_json = lambda *a: ([] if a and a[0] == "clients"
+                                           else {"id": 3} if a and a[0] == "activeworkspace" else None)
+        empty = helper.scratchpad_release("pad", r"^(com\.example\.pad)$")
+        assert_equal(empty["ok"], True, "an empty window list is a real answer")
+        assert_equal(empty["released"], False, "with nothing to release")
+    finally:
+        (helper._hyprctl_json, helper._scratchpad_session_ready,
+         helper._scratchpad_dispatch) = originals
+
+    # Niri, same rule.
+    niri_originals = (helper._niri_session_ready, helper._niri_msg_json,
+                      helper._niri_scratchpad_action)
+    actions = []
+    helper._niri_session_ready = lambda: True
+    helper._niri_scratchpad_action = lambda *a: (actions.append(a), True)[1]
+    try:
+        helper._niri_msg_json = lambda *a: ([{"id": 9, "name": "vgs-term", "idx": 3}]
+                                            if a and a[0] == "workspaces" else None)
+        blind = helper.scratchpad_release_niri("term", r"^(com\.ghostty\.scratchpad)$")
+        assert_equal(blind["ok"], False, "a Niri release that could not look has not succeeded")
+        assert "could not read the window list" in blind["error"], "and names why"
+        assert_equal(actions, [], "nothing is moved")
+    finally:
+        (helper._niri_session_ready, helper._niri_msg_json,
+         helper._niri_scratchpad_action) = niri_originals
+
+    # The distinction has to exist in the finder itself, or no caller can make
+    # it. None is "could not look"; [] is "looked, found nothing".
+    saved = helper._hyprctl_json
+    try:
+        helper._hyprctl_json = lambda *a: None
+        assert helper._scratchpad_find_windows(_pad()) is None, \
+            "an unreadable client list is None, not an empty list"
+        helper._hyprctl_json = lambda *a: []
+        assert_equal(helper._scratchpad_find_windows(_pad()), [],
+                     "a readable but empty list is []")
+    finally:
+        helper._hyprctl_json = saved
+
+
+def test_scratchpad_preload_reports_a_failed_placement():
+    """Preload that could not park the window reports success while the app
+    sits VISIBLY on the user's current workspace — the map-time race this whole
+    subsystem exists to handle, reported as handled."""
+    # Niri.
+    originals = (helper._niri_session_ready, helper._niri_msg_json,
+                 helper._niri_scratchpad_action, helper.load_scratchpads)
+    helper._niri_session_ready = lambda: True
+    helper.load_scratchpads = lambda *a, **k: [_pad(id="term")]
+
+    def fake_json(*args):
+        if args and args[0] == "workspaces":
+            return [{"id": 9, "name": "vgs-term", "idx": 3, "is_active": False}]
+        if args and args[0] == "windows":
+            # On workspace 4, not the pad's 9: it needs moving.
+            return [{"id": 7, "app_id": "com.ghostty.scratchpad", "workspace_id": 4}]
+        return None
+
+    helper._niri_msg_json = fake_json
+    try:
+        helper._niri_scratchpad_action = lambda *a: False   # the move fails
+        with _scratchpad_state_sandbox():
+            bad = helper.scratchpad_toggle_niri("term", launch_only=True)
+        assert_equal(bad["ok"], False, "a preload that could not park the window is not ok")
+        assert_equal(bad["action"], "preload-failed", "and says so")
+        assert "could not move" in bad["error"], f"naming the reason: {bad.get('error')!r}"
+
+        helper._niri_scratchpad_action = lambda *a: True    # the move works
+        with _scratchpad_state_sandbox():
+            good = helper.scratchpad_toggle_niri("term", launch_only=True)
+        assert_equal(good["ok"], True, "a preload that parked the window is ok")
+        assert_equal(good["action"], "preloaded", "and reports the preload")
+    finally:
+        (helper._niri_session_ready, helper._niri_msg_json,
+         helper._niri_scratchpad_action, helper.load_scratchpads) = originals
+
+    # Hyprland, same rule.
+    hypr = (helper.load_scratchpads, helper._scratchpad_visible_monitor,
+            helper._scratchpad_find_window, helper._scratchpad_dispatch,
+            helper._scratchpad_session_ready, helper._hyprctl_json,
+            helper._scratchpad_place_workspace, helper._scratchpad_reassert)
+    helper.load_scratchpads = lambda *a, **k: [_pad(id="term")]
+    helper._scratchpad_visible_monitor = lambda pad_id: ""
+    helper._scratchpad_find_window = lambda pad: {"address": "0xaaa", "workspace": {"name": "3"}}
+    helper._scratchpad_session_ready = lambda: True
+    helper._hyprctl_json = lambda *a: None
+    helper._scratchpad_reassert = lambda *a, **k: {"applied": True}
+    try:
+        helper._scratchpad_dispatch = lambda *a: False       # the move fails
+        helper._scratchpad_place_workspace = lambda *a, **k: True
+        with _scratchpad_state_sandbox():
+            bad = helper.scratchpad_toggle("term", launch_only=True)
+        assert_equal(bad["ok"], False, "a Hyprland preload that could not park is not ok")
+        assert_equal(bad["action"], "preload-failed", "and says so")
+
+        # The workspace placement is checked too, not just the membership move.
+        helper._scratchpad_dispatch = lambda *a: True
+        helper._scratchpad_place_workspace = lambda *a, **k: False
+        with _scratchpad_state_sandbox():
+            unplaced = helper.scratchpad_toggle("term", launch_only=True)
+        assert_equal(unplaced["ok"], False, "a workspace that would not move is a failure too")
+
+        helper._scratchpad_place_workspace = lambda *a, **k: True
+        with _scratchpad_state_sandbox():
+            good = helper.scratchpad_toggle("term", launch_only=True)
+        assert_equal(good["ok"], True, "a preload that worked is ok")
+    finally:
+        (helper.load_scratchpads, helper._scratchpad_visible_monitor,
+         helper._scratchpad_find_window, helper._scratchpad_dispatch,
+         helper._scratchpad_session_ready, helper._hyprctl_json,
+         helper._scratchpad_place_workspace, helper._scratchpad_reassert) = hypr
+
+
 def test_scratchpad_niri_generated_kdl_parses():
     """Parse what we wrote. A structural error here is a config niri refuses at
     startup, which on this compositor breaks far more than the scratchpad."""
@@ -5518,6 +5657,8 @@ def main():
     test_scratchpad_niri_hide_confirms_the_pad_is_off_screen()
     test_scratchpad_hide_focus_rule_is_shared_by_both_backends()
     test_scratchpad_niri_hide_honours_the_same_flags()
+    test_scratchpad_release_refuses_when_it_could_not_look()
+    test_scratchpad_preload_reports_a_failed_placement()
     test_scratchpad_niri_generated_kdl_parses()
     test_scratchpad_compositor_detection_reads_the_session_not_the_binary()
     test_scratchpad_target_monitor_resolves_against_connected_outputs()

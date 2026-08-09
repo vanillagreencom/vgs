@@ -188,6 +188,13 @@ Deleting a pad removes its keybind and every rule pointing at its special
 workspace, so a window already mapped there would be left unreachable without
 `hyprctl` by hand — invisible, but still running.
 
+**A release that could not look has not succeeded.** Settings deletes the pad
+record only when release reports success, so "the compositor did not answer"
+must never be reported as "nothing to release" — that would cost the user their
+scratchpad configuration because an IPC call failed. The window finders return
+`None` for an unreadable list and `[]` for a readable empty one, and only the
+second authorises deletion.
+
 Settings therefore calls `vshell scratchpad release <id> --class-regex <re>`
 **before** deleting the record, which drops fullscreen and moves the window to
 the active workspace. Moving is chosen over closing (removing a configuration

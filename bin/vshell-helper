@@ -9885,19 +9885,27 @@ def _scratchpad_select_owned(candidates: List[Dict[str, Any]],
     return None
 
 
-def _scratchpad_find_windows(pad: Dict[str, Any]) -> List[Dict[str, Any]]:
+def _scratchpad_find_windows(pad: Dict[str, Any]) -> List[Dict[str, Any]] | None:
     """Every window matching a pad's class/title, in the compositor's order.
 
     A list rather than the first hit, so a caller that also has an OWNERSHIP
     test can apply it across all of them instead of only to whichever happened
-    to be listed first. See `_scratchpad_select_owned`."""
+    to be listed first. See `_scratchpad_select_owned`.
+
+    **None means "could not look", and is not the same as [].** Collapsing a
+    failed query into an empty list makes "nothing matched" indistinguishable
+    from "the compositor did not answer" — and `release` treats the first as a
+    successful no-op that authorises DELETING the pad record. A caller that can
+    act destructively has to be able to tell them apart."""
     clients = _hyprctl_json("clients")
     if not isinstance(clients, list):
-        return []
+        return None
     try:
         pattern = re.compile(pad["classRegex"])
     except re.error:
-        return []
+        # The matcher cannot be evaluated, so nothing can be said about what is
+        # or is not the pad's — also an unknown, not an empty answer.
+        return None
     exclude = None
     if pad["titleExclude"]:
         try:
@@ -9922,7 +9930,11 @@ def _scratchpad_find_windows(pad: Dict[str, Any]) -> List[Dict[str, Any]]:
 def _scratchpad_find_window(pad: Dict[str, Any]) -> Dict[str, Any] | None:
     """The first class/title match. Right for the toggle, which is looking for
     "the pad's app" before it has been placed anywhere; release wants the
-    ownership-filtered selection instead."""
+    ownership-filtered selection instead.
+
+    Unknown and empty both come back as None here, which is what the toggle
+    wants — it launches the app either way, and launching one that is already
+    running is recoverable. Release must not use this."""
     matches = _scratchpad_find_windows(pad)
     return matches[0] if matches else None
 
@@ -10236,8 +10248,23 @@ def scratchpad_toggle(pad_id: str, reveal_only: bool = False, launch_only: bool 
             # Preload: park it, place it, never reveal. Membership matters even
             # more here -- a preloaded app that mapped late would otherwise sit
             # VISIBLY on the active workspace instead of being parked.
-            _scratchpad_place_workspace(pad_id, target_monitor)
+            #
+            # And it is CHECKED, not assumed. Reporting success while the window
+            # is still sitting on the active workspace reports the map-time race
+            # this whole subsystem exists to handle as though it had been
+            # handled — the one failure the user would actually see, called fine.
+            placed = _scratchpad_place_workspace(pad_id, target_monitor)
             reassert = _scratchpad_reassert(pad, address)
+            preload_failures: List[str] = []
+            if membership.get("from") is not None and not membership.get("moved"):
+                preload_failures.append(f"could not move the window onto special:{pad_id}")
+            if not placed:
+                preload_failures.append(f"could not place special:{pad_id} on {target_monitor}")
+            if preload_failures:
+                return {"ok": False, "action": "preload-failed", "id": pad_id,
+                        "launched": launched, "membership": membership,
+                        "reassert": reassert,
+                        "error": f"{pad['name']}: " + "; ".join(preload_failures)}
             return {"ok": True, "action": "preloaded", "id": pad_id,
                     "launched": launched, "membership": membership,
                     "reassert": reassert}
@@ -10338,8 +10365,16 @@ def scratchpad_release(pad_id: str, class_regex: str = "", title_exclude: str = 
     def owns(candidate: Dict[str, Any]) -> bool:
         return str((candidate.get("workspace") or {}).get("name") or "") == special
 
-    client = _scratchpad_select_owned(
-        _scratchpad_find_windows({"classRegex": pattern, "titleExclude": exclude}), owns)
+    candidates = _scratchpad_find_windows({"classRegex": pattern, "titleExclude": exclude})
+    if candidates is None:
+        # The window list could not be read. Reporting a successful no-op here
+        # tells Settings the release is done, and Settings then DELETES the pad
+        # record — so a failed IPC call would cost the user their scratchpad
+        # configuration. A release that could not look has not succeeded.
+        return {"ok": False, "released": False,
+                "error": "could not read the window list, so nothing can be said about "
+                         "this pad's window; the scratchpad was kept"}
+    client = _scratchpad_select_owned(candidates, owns)
     if client is None:
         return {"ok": True, "released": False, "reason": "no window mapped"}
 
@@ -10967,15 +11002,16 @@ def _niri_scratchpad_action(*args: str) -> bool:
     return run(["niri", "msg", "action", *args]).returncode == 0
 
 
-def _scratchpad_niri_find_windows(pad: Dict[str, Any]) -> List[Dict[str, Any]]:
-    """Every window matching a pad's class/title. See the Hyprland twin."""
+def _scratchpad_niri_find_windows(pad: Dict[str, Any]) -> List[Dict[str, Any]] | None:
+    """Every window matching a pad's class/title, or None when the session could
+    not be asked. See the Hyprland twin for why the distinction matters."""
     windows = _niri_msg_json("windows")
     if not isinstance(windows, list):
-        return []
+        return None
     try:
         pattern = re.compile(pad["classRegex"])
     except re.error:
-        return []
+        return None
     exclude = None
     if pad["titleExclude"]:
         try:
@@ -10995,6 +11031,8 @@ def _scratchpad_niri_find_windows(pad: Dict[str, Any]) -> List[Dict[str, Any]]:
 
 
 def _scratchpad_niri_find_window(pad: Dict[str, Any]) -> Dict[str, Any] | None:
+    """The first match; unknown and empty both read as None. See the Hyprland
+    twin — release must not use this."""
     matches = _scratchpad_niri_find_windows(pad)
     return matches[0] if matches else None
 
@@ -11201,6 +11239,15 @@ def scratchpad_toggle_niri(pad_id: str, reveal_only: bool = False, launch_only: 
         membership = _scratchpad_niri_ensure_membership(pad_id, window)
 
         if launch_only:
+            # Checked, like the reveal path and like the Hyprland preload: a
+            # window that never made it onto the pad's workspace is sitting
+            # VISIBLY on the user's current one, which is the map-time race
+            # reported as success.
+            if membership.get("from") is not None and not membership.get("moved"):
+                return {"ok": False, "action": "preload-failed", "id": pad_id,
+                        "launched": launched, "membership": membership,
+                        "error": f"{pad['name']}: could not move the window onto "
+                                 f"{scratchpad_niri_workspace(pad_id)}"}
             return {"ok": True, "action": "preloaded", "id": pad_id,
                     "launched": launched, "membership": membership}
 
@@ -11284,7 +11331,15 @@ def scratchpad_release_niri(pad_id: str, class_regex: str = "", title_exclude: s
     # Ownership filters ALL the matches, before one is picked. Selecting first
     # and checking afterwards let a stray same-class window listed earlier win
     # the selection, fail the check, and hide the pad's real window behind it.
-    window = _scratchpad_select_owned(_scratchpad_niri_find_windows(pad), owns)
+    candidates = _scratchpad_niri_find_windows(pad)
+    if candidates is None:
+        # Same rule as the Hyprland backend, and for the same reason: Settings
+        # deletes the pad record on a successful release, so a query that never
+        # ran must not report success.
+        return {"ok": False, "released": False,
+                "error": "could not read the window list, so nothing can be said about "
+                         "this pad's window; the scratchpad was kept"}
+    window = _scratchpad_select_owned(candidates, owns)
     if window is None:
         return {"ok": True, "released": False,
                 "reason": "no window of this pad is on its workspace"}
