@@ -456,25 +456,75 @@ function functionBodyIn(code, name, where) {
     assert.fail(`${name}() is not closed in ${where}`);
 }
 
-// Prove the reader before anything it returns is used as evidence: it must fail
-// on an absent name, and on an ambiguous one.
+// --- prove the reader, on sources it must reject or handle exactly ----------
+//
+// ALL_STATES is derived through this reader, so a reader that quietly located
+// the wrong span would produce a wrong state list and every loop over it would
+// assert about the wrong thing while reporting success. Its self-test therefore
+// has to be capable of failing.
+//
+// What stood here was `!functionBodyIn(...).includes("ghost")`. "ghost" was in
+// neither the sample nor any output the reader could produce, so that assertion
+// could not fail for any implementation -- it read like a check and measured
+// nothing. Each case below is paired with the reason it can fail.
+
+// Absent: no declaration at all.
 assert.throws(
     () => widgetFunctionBody("thisFunctionDoesNotExist"),
-    "the function-body reader must fail on a name that is absent"
+    "the reader must fail on a name that is absent, not return an empty body"
 );
+
+// Ambiguous: two declarations, so "the first one" is a guess.
 assert.throws(
     () => functionBodyIn("function twice() { }\nfunction twice() { }", "twice", "a sample"),
-    "the function-body reader must refuse an ambiguous name rather than take the first"
+    "the reader must refuse an ambiguous name rather than take whichever came first"
 );
+
+// Unclosed: running to the end of the file is not an answer.
+assert.throws(
+    () => functionBodyIn("function open() {\n    return 1;", "open", "a sample"),
+    "an unclosed body must fail rather than swallow the rest of the file"
+);
+
+// A brace inside a string literal must not close the body early.
 assert.equal(
     functionBodyIn('function only() {\n    const s = "}";\n    return 1;\n}', "only", "a sample"),
     'function only() {\n    const s = "}";\n    return 1;\n}',
     "a brace inside a string literal must not close the body early"
 );
+
+// A shorter name must not match a longer one that starts with it.
 assert.ok(
-    !functionBodyIn("function real() { return 1; }", "real", "a sample").includes("ghost"),
-    "the reader returns only the body it located"
+    functionBodyIn(
+        "function targetLonger() { return 1; }\nfunction target() { return 2; }",
+        "target", "a sample"
+    ).includes("return 2"),
+    "`target` must not resolve to `targetLonger`"
 );
+
+// THE CENTRAL CLAIM: a comment naming the function must not be located instead
+// of the function. This is what the raw-source reader got wrong, and it was the
+// one behaviour with no assertion behind it.
+{
+    const shadowed = [
+        "// call function target( from here",
+        "function target() {",
+        '    return "real body";',
+        "}"
+    ].join("\n");
+
+    // The fixture must actually be adversarial, or the assertion below passes
+    // for the wrong reason. A naive first-match reader has to be fooled by it.
+    const naive = shadowed.slice(shadowed.indexOf("function target("));
+    assert.ok(
+        naive.startsWith("function target( from here"),
+        "the shadowing sample must fool a first-match reader, or it proves nothing about the fix"
+    );
+
+    const body = functionBodyIn(stripComments(shadowed), "target", "a sample");
+    assert.ok(body.includes("real body"), "the reader must locate the function, not a comment naming it");
+    assert.ok(!body.includes("from here"), "and must not begin inside that comment");
+}
 
 // A single disconnect must never clear the indicator. With more than one client
 // connected it ends ONE session, not the capture, so only the authoritative
@@ -670,6 +720,17 @@ for (const notAState of ["On", "LIVE"]) {
     assert.ok(
         !ALL_STATES.includes(notAState),
         `${notAState} is prose from a comment, not a state -- the derivation is reading comments`
+    );
+}
+// And it must be scoped to visualStateFor(), not to the whole marked block.
+// These are tooltip and subtitle KEYS from the sibling functions: they are
+// string literals in the same block, so a reader that took the block instead of
+// the one function would sweep them in and the completeness loop would then
+// demand tooltips for things that are not states.
+for (const notAState of ["streaming-host-uncertain", "listening-capture-fallback", "output-unmanaged"]) {
+    assert.ok(
+        !ALL_STATES.includes(notAState),
+        `${notAState} is a message key from a sibling function -- the derivation is reading past visualStateFor()`
     );
 }
 
