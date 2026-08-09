@@ -2793,20 +2793,21 @@ def test_remote_desktop_reports_streaming_separately_from_listening():
 
 
 @contextlib.contextmanager
-def _rd_lifecycle(output_present, hyprctl_ok=True):
-    """Record the order of hyprctl/systemctl calls a lifecycle command makes."""
+def _rd_lifecycle(output_present, hyprctl_ok=True, unit_running=False, systemctl_ok=True,
+                  instance="hypr-instance-A"):
+    """Record the order of hyprctl/systemctl calls a lifecycle command makes.
+
+    HOME is real (a temp dir), so the ownership record under
+    ~/.local/state/vshell is genuinely written and read rather than stubbed --
+    that record is what decides whether a user's own virtual output gets
+    deleted, so a stub would test the wrong thing.
+    """
     calls = []
-    original_run = helper.run
-    original_systemctl = helper._systemctl_user
-    original_present = helper._rd_output_present
-    original_unit = helper._user_unit_state
-    original_compositor = helper.detect_compositor
-    original_status = helper.remote_desktop_status
-
+    originals = {name: getattr(helper, name) for name in (
+        "run", "_systemctl_user", "_rd_output_present", "_user_unit_state",
+        "detect_compositor", "remote_desktop_status", "_rd_hypr_instance",
+    )}
     state = {"present": output_present}
-
-    def fake_present():
-        return state["present"]
 
     def fake_run(argv, **kwargs):
         calls.append(argv)
@@ -2819,30 +2820,41 @@ def _rd_lifecycle(output_present, hyprctl_ok=True):
 
     def fake_systemctl(argv, **kwargs):
         calls.append(["systemctl", "--user", *argv])
+        if argv and argv[0] in {"start", "stop"} and not systemctl_ok:
+            return subprocess.CompletedProcess(argv, 1, "", "Job failed")
         return subprocess.CompletedProcess(argv, 0, "", "")
 
     helper.run = fake_run
     helper._systemctl_user = fake_systemctl
-    helper._rd_output_present = fake_present
+    helper._rd_output_present = lambda: state["present"]
     helper._user_unit_state = lambda unit: {
-        "exists": True, "running": False, "masked": False,
+        "exists": True, "running": unit_running, "masked": False,
         "transient": False, "mainPid": 0, "execStart": "",
     }
     helper.detect_compositor = lambda: {"compositor": "hyprland", "source": "test"}
     helper.remote_desktop_status = lambda: {"stubbed": True}
-    try:
-        yield calls
-    finally:
-        helper.run = original_run
-        helper._systemctl_user = original_systemctl
-        helper._rd_output_present = original_present
-        helper._user_unit_state = original_unit
-        helper.detect_compositor = original_compositor
-        helper.remote_desktop_status = original_status
+    helper._rd_hypr_instance = lambda: instance
+
+    old_home = os.environ.get("HOME")
+    with tempfile.TemporaryDirectory() as tmp:
+        os.environ["HOME"] = tmp
+        try:
+            yield calls, state
+        finally:
+            if old_home is None:
+                os.environ.pop("HOME", None)
+            else:
+                os.environ["HOME"] = old_home
+            for name, value in originals.items():
+                setattr(helper, name, value)
+
+
+def _rd_hyprctl_calls(calls):
+    return [call for call in calls if call and call[0] == "hyprctl"]
 
 
 def test_remote_desktop_start_creates_the_output_before_starting_the_unit():
-    with _rd_lifecycle(output_present=False) as calls:
+    with _rd_lifecycle(output_present=False) as (calls, _state):
         result = helper.remote_desktop_start()
     assert_equal(result["ok"], True, "a clean start succeeds")
     kinds = [call[0] for call in calls]
@@ -2856,7 +2868,7 @@ def test_remote_desktop_start_creates_the_output_before_starting_the_unit():
 def test_remote_desktop_start_refuses_when_the_output_cannot_be_checked():
     # hyprctl unavailable or unanswering. Starting anyway would capture a real
     # monitor and report success -- the exact silent failure this guards.
-    with _rd_lifecycle(output_present=None) as calls:
+    with _rd_lifecycle(output_present=None) as (calls, _state):
         result = helper.remote_desktop_start()
     assert_equal(result["ok"], False, "an unverifiable output must not start the host")
     assert_equal(calls, [], "nothing is started and nothing is created when the output is unknown")
@@ -2865,10 +2877,142 @@ def test_remote_desktop_start_refuses_when_the_output_cannot_be_checked():
 
 
 def test_remote_desktop_start_does_not_recreate_an_existing_output():
-    with _rd_lifecycle(output_present=True) as calls:
+    with _rd_lifecycle(output_present=True) as (calls, _state):
         result = helper.remote_desktop_start()
     assert_equal(result["ok"], True, "an existing output is fine")
     assert_equal([call[0] for call in calls], ["systemctl"], "an existing output is left alone")
+
+
+def test_remote_desktop_failed_start_removes_the_output_it_created():
+    # N1. A failed start that leaves HEADLESS-1 behind hands the user a phantom
+    # monitor AND no host -- precisely the state the disabled-by-default design
+    # exists to avoid, and the user has no affordance to undo it.
+    with _rd_lifecycle(output_present=False, systemctl_ok=False) as (calls, state):
+        result = helper.remote_desktop_start()
+        record_exists = helper._rd_output_record_file().exists()
+    assert_equal(result["ok"], False, "a failed systemctl start is a failure")
+    assert_equal(state["present"], False, "the output created for this start must be rolled back")
+    assert_equal(
+        _rd_hyprctl_calls(calls),
+        [["hyprctl", "output", "create", "headless"], ["hyprctl", "output", "remove", "HEADLESS-1"]],
+        "the rollback removes exactly what this call created",
+    )
+    assert_equal(record_exists, False, "the ownership record goes with the output it described")
+
+
+def test_remote_desktop_failed_start_keeps_an_output_it_did_not_create():
+    # The other half of N1: roll back only what THIS call created. An output
+    # that was already there belongs to somebody else even when the start fails.
+    with _rd_lifecycle(output_present=True, systemctl_ok=False) as (calls, state):
+        result = helper.remote_desktop_start()
+    assert_equal(result["ok"], False, "a failed systemctl start is still a failure")
+    assert_equal(state["present"], True, "an output this call found must survive the rollback")
+    assert_equal(_rd_hyprctl_calls(calls), [], "nothing is created and nothing is removed")
+
+
+def test_remote_desktop_stop_removes_only_an_output_vgs_created():
+    # N2. Stop used to remove any present HEADLESS-1, so stopping Sunshine
+    # could delete a virtual output the user made for something else. That is
+    # the worst outcome available here: destroying display configuration as a
+    # side effect of stopping a service.
+    with _rd_lifecycle(output_present=False) as (calls, state):
+        assert_equal(helper.remote_desktop_start()["ok"], True, "the start succeeds")
+        assert_equal(state["present"], True, "the start created the output")
+        calls.clear()
+        helper.remote_desktop_stop()
+        assert_equal(state["present"], False, "an output VGS created is removed on stop")
+        assert_equal(
+            helper._rd_output_record_file().exists(), False,
+            "the record is cleared once the output it described is gone",
+        )
+
+    # Same shape, but the output was already there when start ran.
+    with _rd_lifecycle(output_present=True) as (calls, state):
+        assert_equal(helper.remote_desktop_start()["ok"], True, "the start succeeds")
+        calls.clear()
+        result = helper.remote_desktop_stop()
+        assert_equal(state["present"], True, "an output VGS did not create must survive stop")
+        assert_equal(_rd_hyprctl_calls(calls), [], "stop issues no output command it does not own")
+        if not any("not created by VGS" in note for note in result["manual"]):
+            raise AssertionError(f"stop must say why it left the output: {result['manual']!r}")
+
+
+def test_remote_desktop_stop_ignores_a_record_from_another_compositor_instance():
+    # Headless outputs die with the compositor and Hyprland's signature changes
+    # on every start, so a record from a previous instance cannot describe the
+    # output present now. Trusting it would delete an output created since.
+    with _rd_lifecycle(output_present=False, instance="hypr-instance-A") as (calls, state):
+        helper.remote_desktop_start()
+        record = json.loads(helper._rd_output_record_file().read_text())
+        assert_equal(record["instance"], "hypr-instance-A", "the record carries the instance")
+        assert_equal(helper._rd_output_is_ours(), True, "same instance, same output: ours")
+
+        helper._rd_hypr_instance = lambda: "hypr-instance-B"
+        assert_equal(
+            helper._rd_output_is_ours(), False,
+            "a record from a previous compositor instance is not ownership",
+        )
+        calls.clear()
+        helper.remote_desktop_stop()
+        assert_equal(state["present"], True, "an output from another instance is left alone")
+        assert_equal(_rd_hyprctl_calls(calls), [], "and no hyprctl output command is issued")
+
+    # No signature at all cannot match either -- an unplaceable record must not
+    # authorise removing anything.
+    with _rd_lifecycle(output_present=False, instance="") as (calls, state):
+        helper.remote_desktop_start()
+        assert_equal(
+            helper._rd_output_is_ours(), False,
+            "a record with no compositor instance to place it is not ownership",
+        )
+
+
+def test_remote_desktop_stop_drops_the_record_when_the_output_vanished():
+    # Removed by hand between start and stop. Nothing to remove, no error --
+    # but the record must go, or it would authorise removing a LATER output
+    # that happens to carry the same name.
+    with _rd_lifecycle(output_present=False) as (calls, state):
+        helper.remote_desktop_start()
+        state["present"] = False  # the user removed it themselves
+        calls.clear()
+        result = helper.remote_desktop_stop()
+        assert_equal(result["ok"], True, "a vanished output is not an error")
+        assert_equal(_rd_hyprctl_calls(calls), [], "there is nothing to remove")
+        assert_equal(
+            helper._rd_output_record_file().exists(), False,
+            "a record whose output is gone must not survive to authorise a later removal",
+        )
+
+
+def test_remote_desktop_start_is_idempotent_when_the_host_is_already_running():
+    # N4. `toggle` decides from a state read; the unit can change before the
+    # action runs. The losing path must touch no output -- a running host has
+    # already picked its capture target, so a second virtual output would be a
+    # phantom monitor and nothing else.
+    with _rd_lifecycle(output_present=False, unit_running=True) as (calls, state):
+        result = helper.remote_desktop_start()
+    assert_equal(result["ok"], True, "starting an already-running host is not a failure")
+    assert_equal(_rd_hyprctl_calls(calls), [], "no output is created for a host already running")
+    assert_equal([c for c in calls if c[0] == "systemctl"], [], "and the unit is not restarted")
+    if not any("already running" in note for note in result["manual"]):
+        raise AssertionError(f"the no-op must be reported: {result['manual']!r}")
+
+
+def test_remote_desktop_start_reports_an_unrecordable_ownership_claim():
+    # If the record cannot be written, stop will not recognise the output as
+    # VGS's and will leave it. That is the safe direction -- a leaked monitor is
+    # one click to remove, a deleted one cannot be undone -- but it must be said
+    # rather than silently traded away.
+    with _rd_lifecycle(output_present=False) as (calls, state):
+        original = helper._rd_record_output_created
+        helper._rd_record_output_created = lambda: "Read-only file system"
+        try:
+            result = helper.remote_desktop_start()
+        finally:
+            helper._rd_record_output_created = original
+    assert_equal(result["ok"], True, "an unrecordable claim does not fail the start")
+    if not any("could not record" in note and "leave it in place" in note for note in result["manual"]):
+        raise AssertionError(f"the unrecorded claim must be reported: {result['manual']!r}")
 
 
 def test_remote_desktop_paired_clients_reads_only_names():
@@ -3003,6 +3147,13 @@ def main():
     test_remote_desktop_start_does_not_recreate_an_existing_output()
     test_remote_desktop_paired_clients_reads_only_names()
     test_remote_desktop_watch_tokens_cover_every_event()
+    test_remote_desktop_failed_start_removes_the_output_it_created()
+    test_remote_desktop_failed_start_keeps_an_output_it_did_not_create()
+    test_remote_desktop_stop_removes_only_an_output_vgs_created()
+    test_remote_desktop_stop_ignores_a_record_from_another_compositor_instance()
+    test_remote_desktop_stop_drops_the_record_when_the_output_vanished()
+    test_remote_desktop_start_is_idempotent_when_the_host_is_already_running()
+    test_remote_desktop_start_reports_an_unrecordable_ownership_claim()
     subprocess.run(
         [sys.executable, str(REPO_ROOT / "scripts" / "check-vshell-niri.py")],
         check=True,
