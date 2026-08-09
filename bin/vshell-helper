@@ -12720,6 +12720,30 @@ def remote_desktop_start() -> Dict[str, Any]:
             if proc.returncode != 0:
                 detail = (proc.stderr or proc.stdout or "").strip()
                 return _rd_result(actions, [f"could not create {RD_OUTPUT}: {detail or f'hyprctl exited {proc.returncode}'}"], manual)
+            # hyprctl reporting success is NOT the same as the output
+            # existing. If it is absent, Sunshine picks a real monitor at
+            # startup and streams the user's own screen with nothing anywhere
+            # to say so -- the same silent fallback the `present is None`
+            # refusal above guards, reached from the other side. Verify, and
+            # refuse rather than start blind.
+            #
+            # Nothing is rolled back on either failure path: `False` means there
+            # is no output to remove, and `None` means we cannot tell what is
+            # there, so removing would be the guess this whole record exists to
+            # avoid. Ownership is recorded only AFTER this check, so what was
+            # verified as created is exactly what is owned and what stop may
+            # remove.
+            verified = _rd_output_present()
+            if verified is not True:
+                detail = (
+                    "hyprctl reported success but the output is not present"
+                    if verified is False
+                    else "hyprctl reported success but the output could not be verified"
+                )
+                return _rd_result(actions, [
+                    f"could not create {RD_OUTPUT}: {detail}; not starting, because "
+                    f"{RD_UNIT} would capture a real monitor instead"
+                ], manual)
             created = True
             actions.append(f"created {RD_OUTPUT}")
             record_error = _rd_record_output_created()

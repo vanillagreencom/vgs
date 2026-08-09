@@ -2794,7 +2794,7 @@ def test_remote_desktop_reports_streaming_separately_from_listening():
 
 @contextlib.contextmanager
 def _rd_lifecycle(output_present, hyprctl_ok=True, unit_running=False, systemctl_ok=True,
-                  instance="hypr-instance-A"):
+                  instance="hypr-instance-A", create_takes_effect=True):
     """Record the order of hyprctl/systemctl calls a lifecycle command makes.
 
     HOME is real (a temp dir), so the ownership record under
@@ -2814,7 +2814,13 @@ def _rd_lifecycle(output_present, hyprctl_ok=True, unit_running=False, systemctl
         if argv[:2] == ["hyprctl", "output"]:
             if not hyprctl_ok:
                 return subprocess.CompletedProcess(argv, 1, "", "no such output")
-            state["present"] = argv[2] == "create"
+            if argv[2] == "create":
+                # create_takes_effect=False models hyprctl exiting 0 without
+                # the output appearing, and None models a presence check that
+                # cannot answer afterwards.
+                state["present"] = True if create_takes_effect is True else create_takes_effect
+            else:
+                state["present"] = False
             return subprocess.CompletedProcess(argv, 0, "ok", "")
         return subprocess.CompletedProcess(argv, 0, "", "")
 
@@ -3015,6 +3021,44 @@ def test_remote_desktop_start_reports_an_unrecordable_ownership_claim():
         raise AssertionError(f"the unrecorded claim must be reported: {result['manual']!r}")
 
 
+def test_remote_desktop_start_verifies_the_output_it_created():
+    # N6. `hyprctl` exiting 0 is not the output existing. If it is absent,
+    # Sunshine picks a real monitor at startup and streams the user's own
+    # screen with nothing anywhere to say so -- the same silent fallback the
+    # unverifiable-presence refusal guards, reached from the other side.
+    with _rd_lifecycle(output_present=False, create_takes_effect=False) as (calls, state):
+        result = helper.remote_desktop_start()
+        record_exists = helper._rd_output_record_file().exists()
+    assert_equal(result["ok"], False, "an unverified output must not start the host")
+    assert_equal(
+        [c for c in calls if c[0] == "systemctl"], [],
+        "the unit is never started against a display that does not exist",
+    )
+    assert_equal(
+        record_exists, False,
+        "ownership is recorded only after verification, so nothing was created to own",
+    )
+    if not any("not present" in failure for failure in result["failures"]):
+        raise AssertionError(f"the refusal must say the output is absent: {result['failures']!r}")
+
+    # The presence check answering "cannot tell" is its own case, and it must
+    # not be collapsed into "absent" -- nothing is removed on this path,
+    # because removing what we cannot see is the guess the record exists to
+    # avoid.
+    with _rd_lifecycle(output_present=False, create_takes_effect=None) as (calls, state):
+        result = helper.remote_desktop_start()
+    assert_equal(result["ok"], False, "an unverifiable output must not start the host either")
+    assert_equal(
+        [c for c in calls if c[0] == "systemctl"], [], "and still no unit start",
+    )
+    assert_equal(
+        _rd_hyprctl_calls(calls), [["hyprctl", "output", "create", "headless"]],
+        "nothing is removed when the presence check cannot answer",
+    )
+    if not any("could not be verified" in failure for failure in result["failures"]):
+        raise AssertionError(f"'cannot tell' must not be reported as 'absent': {result['failures']!r}")
+
+
 def test_remote_desktop_paired_clients_reads_only_names():
     def check(home: Path):
         config = home / ".config" / "sunshine"
@@ -3154,6 +3198,7 @@ def main():
     test_remote_desktop_stop_drops_the_record_when_the_output_vanished()
     test_remote_desktop_start_is_idempotent_when_the_host_is_already_running()
     test_remote_desktop_start_reports_an_unrecordable_ownership_claim()
+    test_remote_desktop_start_verifies_the_output_it_created()
     subprocess.run(
         [sys.executable, str(REPO_ROOT / "scripts" / "check-vshell-niri.py")],
         check=True,
