@@ -218,12 +218,16 @@ Singleton {
                 // stays auto-enabled and undisableable for the process
                 // lifetime, and stays blocked from being promoted at all.
                 _refreshBundledId(pid);
-                const owned = !!availablePlugins[pid] || promoteShadowedPlugin(pid);
-                // A product id with no owner and no promotable candidate is a
-                // collision that ended in nothing loaded. It must never be
-                // silent. (VGS-75)
-                if (wasBundled && !owned)
-                    _reportIdLeftEmpty(pid);
+                if (availablePlugins[pid])
+                    continue;
+                // A product id that ends up with no owner is a collision that
+                // ended in nothing loaded. It must never be silent — and the
+                // promotion decides that asynchronously, so the report waits
+                // for it rather than for the read to start. (VGS-75)
+                promoteShadowedPlugin(pid, function (ok) {
+                    if (wasBundled && !ok)
+                        root._reportIdLeftEmpty(pid);
+                });
             }
             _updateAvailablePluginsList();
             pluginListUpdated();
@@ -235,7 +239,14 @@ Singleton {
     // loadPluginManifestFile parses through a FileView, so the id is still
     // unowned when this returns. "No candidate at all" is the only synchronous,
     // reliable signal that the id is about to be left empty. (VGS-75)
-    function promoteShadowedPlugin(pluginId) {
+    //
+    // The return value is therefore NOT an outcome, and no caller may report
+    // one from it: the candidate can still fail to parse, be invalid, lose the
+    // id to another package, or fail its startup gate, and a caller that told
+    // the user "the bundled version is still in use" on the strength of a
+    // started read would be describing a plugin that never loaded. Pass
+    // `onSettled(ok)` and say nothing until it fires — see _beginPromotion.
+    function promoteShadowedPlugin(pluginId, onSettled) {
         let bestPath = "";
         let bestSource = "";
         let bestPriority = -1;
@@ -256,11 +267,96 @@ Singleton {
                 bestPriority = priority;
             }
         }
-        if (!bestPath)
+        if (!bestPath) {
+            // The one synchronous verdict this function can give, and it is a
+            // final one: with no candidate there is nothing left to settle.
+            if (onSettled)
+                onSettled(false);
             return false;
+        }
         delete knownManifests[bestPath];
+        _beginPromotion(pluginId, bestPath, onSettled);
         loadPluginManifestFile(bestPath, bestSource, Date.now());
         return true;
+    }
+
+    // Promotions whose manifest read has started and whose outcome is not known
+    // yet, by plugin id. Entry: { path, onSettled, deadline }.
+    property var _pendingPromotions: ({})
+
+    // How long a promotion may stay unsettled before it is judged. A promotion
+    // is a manifest read followed, usually, by a startup gate that can spawn a
+    // process, so it is not instant — but it has to be bounded, because the
+    // whole point of tracking it is that a promotion ending with nothing loaded
+    // must reach the user. Same shape as appLauncherRegistrationTimeout, with a
+    // budget that accommodates a startupCheck.
+    readonly property int _promotionTimeoutMs: 8000
+
+    function _beginPromotion(pluginId, manifestPath, onSettled) {
+        const prev = _pendingPromotions[pluginId];
+        const next = Object.assign({}, _pendingPromotions);
+        next[pluginId] = {
+            path: manifestPath,
+            // Promotions chain: a promoted candidate that fails its gate is
+            // demoted, which promotes the next candidate. What the user needs
+            // is the outcome for the id, not one line per hop, so the first
+            // reporter is carried through the chain and fires once.
+            onSettled: (prev && prev.onSettled) ? prev.onSettled : (onSettled || null),
+            deadline: Date.now() + _promotionTimeoutMs
+        };
+        _pendingPromotions = next;
+        promotionSweep.start();
+    }
+
+    function _settlePromotion(pluginId, ok) {
+        const entry = _pendingPromotions[pluginId];
+        if (!entry)
+            return;
+        const next = Object.assign({}, _pendingPromotions);
+        delete next[pluginId];
+        _pendingPromotions = next;
+        if (!Object.keys(_pendingPromotions).length)
+            promotionSweep.stop();
+        if (entry.onSettled)
+            entry.onSettled(ok === true);
+    }
+
+    // A load that succeeds is the success signal for whatever promotion was
+    // waiting on this id — including a promotion whose candidate reached the
+    // load path some hops later.
+    onPluginLoaded: pluginId => root._settlePromotion(pluginId, true)
+
+    // Every other outcome is judged here, on a deadline. Deliberately no
+    // per-branch failure verdicts: a bad parse, a lost arbitration or a failed
+    // gate for one manifest does not prove the id ends up empty, because
+    // another read for the same id can still be in flight. The deadline asks
+    // the only question that cannot be wrong — "is something loaded for this id
+    // now?" — at a bounded time, so a promotion can never end in silence.
+    Timer {
+        id: promotionSweep
+        interval: 1000
+        repeat: true
+        running: false
+        onTriggered: root._sweepPromotions()
+    }
+
+    function _sweepPromotions() {
+        const now = Date.now();
+        const expired = [];
+        for (const pluginId in _pendingPromotions) {
+            if (_pendingPromotions[pluginId].deadline <= now)
+                expired.push(pluginId);
+        }
+        for (let i = 0; i < expired.length; i++) {
+            const pluginId = expired[i];
+            const entry = _pendingPromotions[pluginId];
+            const ok = isPluginLoaded(pluginId);
+            if (!ok)
+                log.error("promoted plugin manifest did not finish loading:", pluginId, entry.path);
+            _settlePromotion(pluginId, ok);
+        }
+        if (!Object.keys(_pendingPromotions).length)
+            promotionSweep.stop();
     }
 
     function loadPluginManifestFile(manifestPathNoScheme, sourceTag, mtimeEpochMs) {
@@ -425,7 +521,9 @@ Singleton {
             isPureDesktop: surfaces.length === 1 && surfaces[0] === "desktop",
             userEnabled: SettingsData.getPluginSetting(manifest.id, "enabled", false) === true,
             incomingPriority: _sourcePriority(sourceTag),
-            existingPriority: existing ? _sourcePriority(existing.source) : -1
+            existingPriority: existing ? _sourcePriority(existing.source) : -1,
+            incomingPath: absPath,
+            existingPath: existing ? existing.manifestPath : ""
         });
         info.overridesBundled = decision.overridesBundled;
         info.alwaysAvailable = decision.alwaysAvailable;
@@ -438,6 +536,7 @@ Singleton {
             knownManifests[absPath] = {
                 mtime: mtimeEpochMs,
                 source: sourceTag,
+                requiresShell: info.requires_shell,
                 blocked: "bundled"
             };
             pathToPluginId[absPath] = manifest.id;
@@ -458,6 +557,7 @@ Singleton {
                 knownManifests[existing.manifestPath] = {
                     mtime: displacedMeta ? displacedMeta.mtime : mtimeEpochMs,
                     source: existing.source,
+                    requiresShell: existing.requires_shell,
                     blocked: "bundled"
                 };
                 _reportBundledCollision(manifest.id, existing.source);
@@ -474,7 +574,8 @@ Singleton {
             pathToPluginId[absPath] = manifest.id;
             knownManifests[absPath] = {
                 mtime: mtimeEpochMs,
-                source: sourceTag
+                source: sourceTag,
+                requiresShell: info.requires_shell
             };
             if (displaced)
                 info.loaded = false;
@@ -493,10 +594,18 @@ Singleton {
             } else if (displaced) {
                 unloadPlugin(manifest.id);
             }
+            // A record that inherited the loaded registration for its own path
+            // has nothing to load, so it never emits pluginLoaded — but the id
+            // *is* loaded, which is exactly what a promotion is waiting to
+            // hear. (The shipped package that was never unloaded when an
+            // override failed its gate takes this path.)
+            if (info.loaded)
+                _settlePromotion(manifest.id, true);
         } else {
             knownManifests[absPath] = {
                 mtime: mtimeEpochMs,
                 source: sourceTag,
+                requiresShell: info.requires_shell,
                 shadowedBy: existing.source
             };
             pathToPluginId[absPath] = manifest.id;
@@ -630,10 +739,21 @@ Singleton {
         // (the bundled directory can be scanned second), so it takes its id
         // back rather than staying shadowed by an accident.
         const reclaims = sourceTag === "bundled" && !!existing && existing.source !== "bundled" && existing.overridesBundled !== true;
+        // Equal priority — two user packages claiming one id — used to resolve
+        // on `>=`, i.e. whichever manifest read finished last became the owner.
+        // FileView completion order is not something the loader controls, so
+        // that made ownership genuinely nondeterministic: the same two packages
+        // could swap owner across rescans of the same disk state. The tie-break
+        // is the manifest path, which every read knows before it starts, so the
+        // winner is the same whatever order the reads settle in. `<=` rather
+        // than `<` because re-parsing the current owner's own path (a rescan,
+        // or a manifest edited in place) must still replace its own record.
+        const samePath = String(input.incomingPath) === String(input.existingPath);
+        const winsTie = input.incomingPriority === input.existingPriority && (samePath || String(input.incomingPath) < String(input.existingPath));
         let action = "shadow";
         if (reclaims)
             action = "reclaim";
-        else if (!existing || input.incomingPriority >= input.existingPriority)
+        else if (!existing || input.incomingPriority > input.existingPriority || winsTie)
             action = "replace";
         return {
             "action": action,
@@ -786,17 +906,28 @@ Singleton {
         function onSemverVersionChanged() {
             if (!ShellVersionService.semverVersion)
                 return;
+            // Bundled manifests are parsed before the version lands too, so
+            // this is where an impossible shipped requirement first becomes
+            // judgeable. Audited, never enforced — see
+            // _auditBundledRequirement. (VGS-76)
+            //
+            // Over knownManifests rather than availablePlugins: a shipped
+            // manifest that is shadowed by an override owns no record in
+            // availablePlugins, so auditing only the winners silently skipped
+            // exactly the bundled/override pairing this audit exists to
+            // diagnose — the one where the impossible requirement was copied
+            // into the override and demoted it.
+            for (const manifestPath in root.knownManifests) {
+                const meta = root.knownManifests[manifestPath];
+                if (!meta || meta.bad || meta.source !== "bundled")
+                    continue;
+                root._auditBundledRequirement(root.pathToPluginId[manifestPath] || manifestPath, meta.requiresShell);
+            }
             for (const pluginId in root.availablePlugins) {
                 const plugin = root.availablePlugins[pluginId];
-                // Bundled manifests are parsed before the version lands too, so
-                // this is also where an impossible shipped requirement first
-                // becomes judgeable. Audited, never enforced — see
-                // _auditBundledRequirement. (VGS-76)
-                if (plugin && plugin.source === "bundled") {
-                    root._auditBundledRequirement(pluginId, plugin.requires_shell);
+                if (!plugin || plugin.source === "bundled")
                     continue;
-                }
-                if (!plugin || plugin.overridesBundled !== true || !plugin.requires_shell)
+                if (plugin.overridesBundled !== true || !plugin.requires_shell)
                     continue;
                 if (root.checkPluginCompatibility(plugin.requires_shell))
                     continue;
@@ -824,21 +955,27 @@ Singleton {
             delete newMap[pluginId];
             availablePlugins = newMap;
         }
-        const promoted = promoteShadowedPlugin(pluginId);
         _updateAvailablePluginsList();
         pluginListUpdated();
         const name = incoming ? (incoming.name || pluginId) : pluginId;
-        if (!promoted) {
-            // Nothing took the id back. "The bundled version is still in use"
-            // would be a false statement, and the demotion is the moment a
-            // collision can end with no plugin loaded at all — so it is reported
-            // as the failure it is, naming both candidates. (VGS-75)
-            log.error("override demotion left the id with nothing loaded:", pluginId, "override:", overridePath || "(unknown)", "candidates:", _knownPathsFor(pluginId).join(", ") || "(none)", reason);
-            ToastService.showError(I18n.tr("Plugin unavailable: %1").arg(name), I18n.tr("%1 No bundled version could be restored, so nothing is loaded for \"%2\".").arg(reason).arg(pluginId), "", "plugin-demoted-" + pluginId);
-            return;
-        }
-        log.warn("override failed to take over bundled id, demoting:", pluginId, reason);
-        ToastService.showError(I18n.tr("Plugin override failed: %1").arg(name), I18n.tr("%1 could not start, so the version bundled with VGS is still in use.").arg(reason), "", "plugin-demoted-" + pluginId);
+        // Reported only once the promotion has settled. Starting a manifest
+        // read is not a restored plugin: the promoted candidate can fail to
+        // parse, be invalid, be blocked, or fail its own gate, and saying "the
+        // version bundled with VGS is still in use" at that point tells the
+        // user everything is fine while nothing owns or loads the id — the same
+        // silent failure this path exists to remove. (VGS-75)
+        promoteShadowedPlugin(pluginId, function (ok) {
+            if (!ok) {
+                // Nothing took the id back. The demotion is the moment a
+                // collision can end with no plugin loaded at all, so it is
+                // reported as the failure it is, naming both candidates.
+                root.log.error("override demotion left the id with nothing loaded:", pluginId, "override:", overridePath || "(unknown)", "candidates:", root._knownPathsFor(pluginId).join(", ") || "(none)", reason);
+                ToastService.showError(I18n.tr("Plugin unavailable: %1").arg(name), I18n.tr("%1 No bundled version could be restored, so nothing is loaded for \"%2\".").arg(reason).arg(pluginId), "", "plugin-demoted-" + pluginId);
+                return;
+            }
+            root.log.warn("override failed to take over bundled id, demoting:", pluginId, reason);
+            ToastService.showError(I18n.tr("Plugin override failed: %1").arg(name), I18n.tr("%1 could not start, so the version bundled with VGS is still in use.").arg(reason), "", "plugin-demoted-" + pluginId);
+        });
     }
 
     // A bundled id must not outlive the bundled directory: a shipped package
@@ -1696,9 +1833,12 @@ Singleton {
     // flags, so a rescan is a genuinely fresh verdict rather than a replay of
     // the old one. (VGS-75)
     //
-    // The manifest loads are asynchronous and may settle in any order; the
-    // policy is order-independent by design (see the reclaim/shadow/block
-    // cases), so the priority ordering below is best-effort, not load-bearing.
+    // The manifest loads are asynchronous and may settle in any order, and the
+    // policy arbitrates to the same owner whatever that order is: source
+    // priority decides across sources, and manifest path breaks a tie within
+    // one source (see _bundledOverrideDecision). The priority ordering below
+    // is therefore not load-bearing — it only keeps the transient states during
+    // a rescan closer to the final one.
     function forceRescanPlugin(pluginId) {
         const owner = availablePlugins[pluginId];
         const paths = _knownPathsFor(pluginId);
@@ -1869,7 +2009,14 @@ Singleton {
                 return "ERROR: rescan requires a pluginId";
             if (!new RegExp(root._ipcIdPattern).test(pluginId))
                 return `ERROR: invalid pluginId '${pluginId}' (allowed: [a-zA-Z0-9_\\-:]{1,64})`;
-            if (!(pluginId in root.availablePlugins))
+            // Not gated on availablePlugins alone. An id whose packages all
+            // lost it — a demotion or a bare collision that ended with no
+            // owner — is exactly the state this command exists to repair, and
+            // it is the state in which the id has no record. Refusing it here
+            // meant the recovery path could never run: rescanning is what drops
+            // the blocked/demoted flags and re-reads the manifests. Known
+            // manifest paths are the real precondition. (VGS-75)
+            if (!(pluginId in root.availablePlugins) && !root._knownPathsFor(pluginId).length)
                 return `ERROR: unknown pluginId '${pluginId}' (try 'list' first)`;
             if (!root.forceRescanPlugin(pluginId))
                 return `ERROR: no manifest on disk for '${pluginId}'`;

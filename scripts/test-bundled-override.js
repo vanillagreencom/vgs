@@ -73,7 +73,9 @@ function verdict(opts) {
         isPureDesktop: opts.isPureDesktop === true,
         userEnabled: opts.userEnabled === true,
         incomingPriority: PRIORITY[sourceTag],
-        existingPriority: existing ? PRIORITY[existing.source] : -1
+        existingPriority: existing ? PRIORITY[existing.source] : -1,
+        incomingPath: opts.incomingPath,
+        existingPath: existing ? existing.manifestPath : ""
     });
 }
 
@@ -158,6 +160,37 @@ assert.equal(v.enabled, true, "an enabled ordinary plugin loads");
 
 v = verdict({ sourceTag: "user", pluginId: "someWidget", bundledId: false, isPureDesktop: true });
 assert.equal(v.enabled, true, "desktop-only packages are enabled by their instances, as before");
+
+// --- VGS-75: equal priority must not be decided by completion order --------
+
+// Two user packages claiming one id have equal priority, and the manifest reads
+// that produce them are FileViews that settle in whatever order the filesystem
+// hands back. Under `>=` the last read to finish won, so the same two packages
+// on disk could own the id differently across rescans. The tie-break is the
+// manifest path, so both arrival orders have to name the same winner.
+const A = "/home/u/.config/vshell/plugins/aPkg/plugin.json";
+const B = "/home/u/.config/vshell/plugins/zPkg/plugin.json";
+
+let first = verdict({ sourceTag: "user", pluginId: "somePlugin", bundledId: false, incomingPath: B });
+assert.equal(first.action, "replace", "the first read of an unowned id owns it whichever path it is");
+let second = verdict({ sourceTag: "user", pluginId: "somePlugin", bundledId: false, incomingPath: A, existing: owner("user", { manifestPath: B }) });
+assert.equal(second.action, "replace", "the lower path takes the id from the higher one");
+
+first = verdict({ sourceTag: "user", pluginId: "somePlugin", bundledId: false, incomingPath: A });
+assert.equal(first.action, "replace");
+second = verdict({ sourceTag: "user", pluginId: "somePlugin", bundledId: false, incomingPath: B, existing: owner("user", { manifestPath: A }) });
+assert.equal(second.action, "shadow", "and the higher path does not take it back — the winner is the same in both orders");
+
+// Re-parsing the owner's own manifest (a rescan, or an edit in place) is an
+// equal-priority collision with itself and must still replace its own record,
+// or `plugin-scan rescan` would leave the stale record owning the id.
+const reparse = verdict({ sourceTag: "user", pluginId: "somePlugin", bundledId: false, incomingPath: A, existing: owner("user", { manifestPath: A }) });
+assert.equal(reparse.action, "replace", "a manifest always replaces its own previous record");
+
+// Priority still outranks the path: a lower path in a lower-priority directory
+// does not beat a higher-priority one.
+const acrossSources = verdict({ sourceTag: "system", pluginId: "somePlugin", bundledId: false, incomingPath: A, existing: owner("user", { manifestPath: B }) });
+assert.equal(acrossSources.action, "shadow", "the path only breaks ties within one priority");
 
 // --- the invariant, stated directly --------------------------------------
 
