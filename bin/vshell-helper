@@ -11861,6 +11861,28 @@ def vgs_notification_server_enabled() -> bool:
     return bool(value) if isinstance(value, bool) else True
 
 
+def vgs_first_run_takeover_done() -> bool:
+    """Whether settings.json ON DISK records the first-run one-shot as spent.
+
+    The shell cannot answer this about itself. `SettingsData.set()` updates the
+    in-memory property and asks FileView to save; an unwritable settings.json
+    (read-only home, full disk) fails that save without changing the property,
+    so the shell believes the one-shot is spent while the next process reads it
+    as unspent -- and the automatic takeover masks and stops the user's daemon
+    again on every start.
+
+    This is read here, in a separate process, because that is exactly the claim
+    that has to be true: the NEXT process must see it. False on any error --
+    unreadable is not evidence of a durable write, and the shell refuses to
+    take over without one.
+    """
+    try:
+        value = load_settings().get("notificationFirstRunTakeoverDone", False)
+    except Exception:
+        return False
+    return value is True
+
+
 def notification_status() -> Dict[str, Any]:
     """Bus ownership, every foreign claimant found, and what can be done."""
     owner = notification_owner()
@@ -11968,6 +11990,9 @@ def notification_status() -> Dict[str, Any]:
         "state": state,
         "error": owner["error"],
         "vgsServerEnabled": vgs_notification_server_enabled(),
+        # Read from settings.json on disk, so the shell can confirm its own
+        # one-shot spend actually persisted before acting on it.
+        "vgsFirstRunTakeoverDone": vgs_first_run_takeover_done(),
         # VGS holds the name now, but something else would still be activated
         # into it on a session where VGS starts a moment later.
         "atRisk": state == "vgs" and bool(conflicts),
@@ -12022,6 +12047,17 @@ def _load_takeover_record() -> Dict[str, Any]:
             "backups": backups, "initiator": initiator}
 
 
+def _takeover_record_has_changes(record: Dict[str, Any]) -> bool:
+    """Whether the record describes anything a restore would have to undo.
+
+    An empty record is not a takeover; it is the absence of one, which is why
+    _save_takeover_record() deletes the file rather than writing it, and why an
+    automatic takeover may stamp its initiator only when this is False.
+    """
+    return bool(record["shadows"] or record["masked"]
+                or record.get("stopped") or record.get("backups"))
+
+
 def _save_takeover_record(record: Dict[str, Any]) -> str:
     """Persist the undo record; returns "" on success or the failure message.
 
@@ -12035,8 +12071,7 @@ def _save_takeover_record(record: Dict[str, Any]) -> str:
         # Saved originals outlive their shadows: a backup whose restore failed
         # is still owed to the user, so the record only goes away when there is
         # genuinely nothing left to undo.
-        if (not record["shadows"] and not record["masked"]
-                and not record.get("stopped") and not record.get("backups")):
+        if not _takeover_record_has_changes(record):
             path.unlink(missing_ok=True)
             return ""
         tmp = path.with_suffix(".tmp")
@@ -12118,7 +12153,11 @@ def notification_takeover(automatic: bool = False) -> Dict[str, Any]:
     """
     status = notification_status()
     record = _load_takeover_record()
-    if automatic:
+    # Only a record being CREATED may be stamped. An existing record's
+    # provenance is history: relabelling a takeover the user ran themselves as
+    # "first-run" would let the shell reverse a change they made deliberately,
+    # which is the one thing the initiator exists to prevent.
+    if automatic and not _takeover_record_has_changes(record):
         record["initiator"] = "first-run"
     actions: List[str] = []
     manual: List[str] = []
