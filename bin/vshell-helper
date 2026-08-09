@@ -9341,11 +9341,22 @@ def resolve_scratchpad_geometry(pad: Dict[str, Any], monitor: Dict[str, Any]) ->
     }
 
 
+def _scratchpad_session_ready() -> bool:
+    """Whether there is a live Hyprland session to talk to.
+
+    One seam for a condition the scratchpad paths each used to spell out. Having
+    it in one place is also what lets the tests exercise those paths on a machine
+    with no compositor and no `hyprctl` at all — which is every CI runner, and
+    exactly where the regression coverage is wanted. A test that returns early
+    because a binary is missing is a check that passes without checking."""
+    return bool(shutil.which("hyprctl") and os.environ.get("HYPRLAND_INSTANCE_SIGNATURE"))
+
+
 def _hyprctl_json(*args: str) -> Any:
     """Read-only Hyprland IPC. Returns None when there is no session to ask, so
     every caller has to decide what "unknown" means rather than being handed a
     plausible-looking empty answer."""
-    if not shutil.which("hyprctl") or not os.environ.get("HYPRLAND_INSTANCE_SIGNATURE"):
+    if not _scratchpad_session_ready():
         return None
     proc = run(["hyprctl", "-j", *args])
     if proc.returncode != 0:
@@ -9549,7 +9560,7 @@ def apply_scratchpads(reload: bool = True) -> Dict[str, Any]:
     write_file(path, content)
 
     reload_result: Dict[str, Any] = {"attempted": False}
-    if reload and shutil.which("hyprctl") and os.environ.get("HYPRLAND_INSTANCE_SIGNATURE"):
+    if reload and _scratchpad_session_ready():
         proc = run(["hyprctl", "reload"])
         reload_result = {
             "attempted": True,
@@ -9596,7 +9607,7 @@ def _scratchpad_lock(pad_id: str) -> Iterable[None]:
 
 
 def _scratchpad_dispatch(*args: str) -> bool:
-    if not shutil.which("hyprctl") or not os.environ.get("HYPRLAND_INSTANCE_SIGNATURE"):
+    if not _scratchpad_session_ready():
         return False
     return run(["hyprctl", "dispatch", *args]).returncode == 0
 
@@ -9752,7 +9763,7 @@ def scratchpad_toggle(pad_id: str, reveal_only: bool = False, launch_only: bool 
     pad = pads.get(pad_id)
     if pad is None:
         return {"ok": False, "error": f"unknown scratchpad: {pad_id}"}
-    if not shutil.which("hyprctl") or not os.environ.get("HYPRLAND_INSTANCE_SIGNATURE"):
+    if not _scratchpad_session_ready():
         return {"ok": False, "error": "no Hyprland session"}
 
     state_file = _scratchpad_state_dir() / (pad_id + ".focus")
@@ -9893,7 +9904,7 @@ def scratchpad_release(pad_id: str, class_regex: str = "", title_exclude: str = 
     pad, so deleting a scratchpad would yank an unrelated window onto their
     active workspace. `release` must own exactly the windows the placement rule
     owned, and no others."""
-    if not shutil.which("hyprctl") or not os.environ.get("HYPRLAND_INSTANCE_SIGNATURE"):
+    if not _scratchpad_session_ready():
         return {"ok": True, "released": False, "reason": "no Hyprland session"}
 
     pattern = class_regex

@@ -3730,13 +3730,9 @@ def test_scratchpad_release_hands_the_window_back():
     """Deleting a pad removes its keybind and every rule pointing at its special
     workspace. A window already mapped there would be left unreachable without
     hyprctl by hand, so removal releases it to the active workspace first."""
-    if not shutil.which("hyprctl"):
-        print("  (skipped: hyprctl not installed; release path was not exercised)")
-        return
-
     original_json = helper._hyprctl_json
     original_dispatch = helper._scratchpad_dispatch
-    saved_sig = os.environ.get("HYPRLAND_INSTANCE_SIGNATURE")
+    original_ready = helper._scratchpad_session_ready
     dispatched = []
 
     def fake_json(*args):
@@ -3748,7 +3744,11 @@ def test_scratchpad_release_hands_the_window_back():
 
     helper._hyprctl_json = fake_json
     helper._scratchpad_dispatch = lambda *args: (dispatched.append(args), True)[1]
-    os.environ["HYPRLAND_INSTANCE_SIGNATURE"] = "test"
+    # The session gate is stubbed rather than satisfied with a real hyprctl:
+    # these assertions are wanted most on a CI runner, which has neither the
+    # binary nor a session, and a test that returns early there is a check
+    # that passes without checking.
+    helper._scratchpad_session_ready = lambda: True
     try:
         fake_json.clients = [{"address": "0xabc", "class": "com.example.pad", "title": "Pad"}]
         result = helper.scratchpad_release("pad", r"^(com\.example\.pad)$")
@@ -3770,9 +3770,7 @@ def test_scratchpad_release_hands_the_window_back():
     finally:
         helper._hyprctl_json = original_json
         helper._scratchpad_dispatch = original_dispatch
-        os.environ.pop("HYPRLAND_INSTANCE_SIGNATURE", None)
-        if saved_sig is not None:
-            os.environ["HYPRLAND_INSTANCE_SIGNATURE"] = saved_sig
+        helper._scratchpad_session_ready = original_ready
 
     # Outside a Hyprland session there is nothing to release, and removal must
     # still be allowed to proceed.
@@ -3867,13 +3865,9 @@ def test_scratchpad_release_honours_the_title_exclusion():
     on the class alone would relocate a same-class window the user explicitly
     excluded from the pad, so deleting a scratchpad would yank an unrelated
     window onto their active workspace."""
-    if not shutil.which("hyprctl"):
-        print("  (skipped: hyprctl not installed; release path was not exercised)")
-        return
-
     original_json = helper._hyprctl_json
     original_dispatch = helper._scratchpad_dispatch
-    saved_sig = os.environ.get("HYPRLAND_INSTANCE_SIGNATURE")
+    original_ready = helper._scratchpad_session_ready
     dispatched = []
 
     # The 1Password case the exclusion exists for: the browser-extension auth
@@ -3892,7 +3886,11 @@ def test_scratchpad_release_honours_the_title_exclusion():
 
     helper._hyprctl_json = fake_json
     helper._scratchpad_dispatch = lambda *args: (dispatched.append(args), True)[1]
-    os.environ["HYPRLAND_INSTANCE_SIGNATURE"] = "test"
+    # The session gate is stubbed rather than satisfied with a real hyprctl:
+    # these assertions are wanted most on a CI runner, which has neither the
+    # binary nor a session, and a test that returns early there is a check
+    # that passes without checking.
+    helper._scratchpad_session_ready = lambda: True
     try:
         result = helper.scratchpad_release("1pw", r"^(1password)$", r"^(1Password)$")
         assert_equal(result["released"], True, "the pad's own window is released")
@@ -3913,31 +3911,34 @@ def test_scratchpad_release_honours_the_title_exclusion():
     finally:
         helper._hyprctl_json = original_json
         helper._scratchpad_dispatch = original_dispatch
-        os.environ.pop("HYPRLAND_INSTANCE_SIGNATURE", None)
-        if saved_sig is not None:
-            os.environ["HYPRLAND_INSTANCE_SIGNATURE"] = saved_sig
+        helper._scratchpad_session_ready = original_ready
 
 
 def test_scratchpad_toggle_honours_enabled():
     """A disabled pad generates no rules and no keybind, so revealing one is
     never what the user asked for. Without this the per-pad enable toggle claims
     a mechanism it does not have."""
-    if not shutil.which("hyprctl"):
-        print("  (skipped: hyprctl not installed; toggle path was not exercised)")
-        return
-
     original_load = helper.load_scratchpads
     original_visible = helper._scratchpad_visible_monitor
     original_find = helper._scratchpad_find_window
     original_dispatch = helper._scratchpad_dispatch
-    saved_sig = os.environ.get("HYPRLAND_INSTANCE_SIGNATURE")
+    original_ready = helper._scratchpad_session_ready
+    original_json = helper._hyprctl_json
     dispatched = []
 
     disabled = _pad(id="off", enabled=False)
     helper.load_scratchpads = lambda: [disabled]
     helper._scratchpad_find_window = lambda pad: {"address": "0xaaa", "workspace": {"name": "3"}}
     helper._scratchpad_dispatch = lambda *args: (dispatched.append(args), True)[1]
-    os.environ["HYPRLAND_INSTANCE_SIGNATURE"] = "test"
+    # Stubbed alongside the session gate: with the gate forced true and no real
+    # hyprctl on PATH, an unstubbed query would escape into a subprocess that
+    # does not exist. Every compositor call this test can reach is mocked.
+    helper._hyprctl_json = lambda *args: None
+    # The session gate is stubbed rather than satisfied with a real hyprctl:
+    # these assertions are wanted most on a CI runner, which has neither the
+    # binary nor a session, and a test that returns early there is a check
+    # that passes without checking.
+    helper._scratchpad_session_ready = lambda: True
     try:
         # Hidden: revealing is refused, and nothing is dispatched.
         helper._scratchpad_visible_monitor = lambda pad_id: ""
@@ -3962,9 +3963,8 @@ def test_scratchpad_toggle_honours_enabled():
         helper._scratchpad_visible_monitor = original_visible
         helper._scratchpad_find_window = original_find
         helper._scratchpad_dispatch = original_dispatch
-        os.environ.pop("HYPRLAND_INSTANCE_SIGNATURE", None)
-        if saved_sig is not None:
-            os.environ["HYPRLAND_INSTANCE_SIGNATURE"] = saved_sig
+        helper._hyprctl_json = original_json
+        helper._scratchpad_session_ready = original_ready
 
 
 def test_scratchpad_rejections_are_named_not_silent():
@@ -4009,15 +4009,11 @@ def test_scratchpad_reveal_reports_failed_dispatches():
     """A toggle that did not reveal anything must not report success. Otherwise
     a failed reveal is indistinguishable from a working one, both to the caller
     and to anyone reading --json."""
-    if not shutil.which("hyprctl"):
-        print("  (skipped: hyprctl not installed; reveal path was not exercised)")
-        return
-
     originals = (helper.load_scratchpads, helper._scratchpad_visible_monitor,
                  helper._scratchpad_find_window, helper._scratchpad_dispatch,
                  helper._hyprctl_json, helper._scratchpad_place_workspace,
                  helper._scratchpad_reassert)
-    saved_sig = os.environ.get("HYPRLAND_INSTANCE_SIGNATURE")
+    original_ready = helper._scratchpad_session_ready
 
     pad = _pad(id="term")
     helper.load_scratchpads = lambda *a, **k: [pad]
@@ -4025,7 +4021,11 @@ def test_scratchpad_reveal_reports_failed_dispatches():
     helper._hyprctl_json = lambda *args: None
     helper._scratchpad_place_workspace = lambda *a, **k: True
     helper._scratchpad_reassert = lambda *a, **k: {"applied": True}
-    os.environ["HYPRLAND_INSTANCE_SIGNATURE"] = "test"
+    # The session gate is stubbed rather than satisfied with a real hyprctl:
+    # these assertions are wanted most on a CI runner, which has neither the
+    # binary nor a session, and a test that returns early there is a check
+    # that passes without checking.
+    helper._scratchpad_session_ready = lambda: True
     try:
         # Everything works and the workspace really is visible afterwards.
         helper._scratchpad_dispatch = lambda *args: True
@@ -4064,9 +4064,7 @@ def test_scratchpad_reveal_reports_failed_dispatches():
          helper._scratchpad_find_window, helper._scratchpad_dispatch,
          helper._hyprctl_json, helper._scratchpad_place_workspace,
          helper._scratchpad_reassert) = originals
-        os.environ.pop("HYPRLAND_INSTANCE_SIGNATURE", None)
-        if saved_sig is not None:
-            os.environ["HYPRLAND_INSTANCE_SIGNATURE"] = saved_sig
+        helper._scratchpad_session_ready = original_ready
 
 
 def main():
