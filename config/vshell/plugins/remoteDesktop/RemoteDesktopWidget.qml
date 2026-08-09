@@ -35,6 +35,9 @@ PluginComponent {
     // The third knowledge axis: hyprctl could not be asked whether the virtual
     // output exists. Only meaningful where VGS manages one at all.
     readonly property bool outputUnknown: RemoteDesktopService.outputSupported && !RemoteDesktopService.outputKnown
+    // Whether VGS creates and owns the virtual output on this compositor at all.
+    // False on anything but Hyprland, where the host captures a real monitor.
+    readonly property bool outputManaged: RemoteDesktopService.outputSupported
 
     // "streaming"   -> a client is connected right now.
     // "unknown"     -> no usable answer yet, or the last probe could not run.
@@ -116,6 +119,96 @@ PluginComponent {
         const token = stateColorTokenFor(state);
         return token === "error" || token === "warning";
     }
+
+    // Which tooltip a state gets, as a KEY plus the values that fill it -- never
+    // as a finished sentence.
+    //
+    // tooltipText() used to re-derive the whole ordering: streaming first, then
+    // statusKnown, then installed, then stale. That is visualStateFor()'s table,
+    // written a second time, and the two were free to drift -- in a widget whose
+    // every reported defect so far has been an ordering bug. Selecting on the
+    // state that has already been decided leaves one owner for the order, and
+    // puts this decision inside the markers so the same test that pins the state
+    // table pins the message chosen for each entry.
+    //
+    // Structured, not rendered, for two reasons. The sentences stay in QML,
+    // where I18n can reach them -- sibling plugins already use I18n.tr, and text
+    // formatted anywhere else would be permanently out of its reach. And this
+    // block is executed as plain JS by scripts/test-remote-desktop-state.js, so
+    // it must call no QML API, which a translated string necessarily would.
+    //
+    // `reason` is the service's own explanation for the uncertainty and may be
+    // empty; the caller supplies the fallback wording. `detail` is the session
+    // summary, which is composition rather than selection and is built by
+    // sessionDetailFrom() below.
+    function tooltipFor(state, facts) {
+        switch (state) {
+        case "streaming":
+            // The host axis can be uncertain while the session is confirmed --
+            // a live capture with a failed status probe -- and that is worth
+            // saying beside "someone is streaming", not instead of it.
+            return {
+                "key": facts.statusKnown ? "streaming" : "streaming-host-uncertain",
+                "reason": "",
+                "detail": facts.sessionDetail || ""
+            };
+        case "streaming-unconfirmed":
+            return { "key": "streaming-unconfirmed", "reason": facts.sessionError || "", "detail": "" };
+        case "unknown":
+            return { "key": "unknown", "reason": facts.statusError || "", "detail": "" };
+        case "unavailable":
+            return { "key": "unavailable", "reason": facts.unavailableReason || "", "detail": "" };
+        case "stale":
+            return { "key": "stale", "reason": facts.watchError || "", "detail": "" };
+        case "listening-unconfirmed":
+            return { "key": "listening-unconfirmed", "reason": facts.sessionError || "", "detail": "" };
+        case "listening":
+            // Capture fallback outranks an unchecked output: one is a known bad
+            // state, the other is not knowing, and the known one is worse.
+            if (facts.captureFallback)
+                return { "key": "listening-capture-fallback", "reason": "", "detail": "" };
+            if (facts.outputUnknown)
+                return { "key": "listening-output-unknown", "reason": "", "detail": "" };
+            return { "key": "listening", "reason": "", "detail": "" };
+        default:
+            return { "key": "off", "reason": "", "detail": "" };
+        }
+    }
+
+    // The session summary: codec · bitrate · depth, from whatever is present.
+    // The one piece of genuine COMPOSITION here, so it is the one piece worth
+    // having under test -- the rounding and the omit-when-absent rule are easy
+    // to get wrong and invisible to qmllint.
+    function sessionDetailFrom(facts) {
+        const parts = [];
+        if (facts.codec)
+            parts.push(facts.codec);
+        if (facts.bitrateBps > 0)
+            parts.push(Math.round(facts.bitrateBps / 1000) + " kbps");
+        if (facts.colorDepth)
+            parts.push(facts.colorDepth);
+        return parts.join(" · ");
+    }
+
+    // Which subtitle the popout's host row carries while the host is up.
+    //
+    // Every branch answers; none falls through to "". A blank line where the
+    // neighbouring states all have one reads as a rendering fault rather than
+    // as "not applicable here", and the case that produced it -- a compositor
+    // VGS cannot create a virtual output on -- is precisely the one where the
+    // user most needs telling that a REAL monitor is being captured.
+    function upSubtitleFor(facts) {
+        if (facts.outputUnknown)
+            return { "key": "output-unknown", "output": facts.outputName };
+        if (facts.outputPresent)
+            return { "key": "output-present", "output": facts.outputName };
+        if (facts.outputManaged)
+            // Hyprland, asked and answered, and the output is gone: the host is
+            // on a real monitor. The warning card below says it at length; the
+            // subtitle must not be the one line that says nothing.
+            return { "key": "output-missing", "output": facts.outputName };
+        return { "key": "output-unmanaged", "compositor": facts.compositor || "" };
+    }
     // END STATE DECISION
 
     readonly property string visualState: root.visualStateFor({
@@ -177,42 +270,75 @@ PluginComponent {
         }
     }
 
+    // Renders the descriptor tooltipFor() chose. Text selection only: no state
+    // is decided here, so the ordering cannot drift from visualStateFor().
     function tooltipText() {
-        // Mirrors visualState's ordering, for the same two reasons.
-        if (root.streaming) {
-            if (!root.sessionKnown)
-                return "Someone may still be streaming this machine — " + (RemoteDesktopService.sessionError || "nothing is confirming the session right now");
-            const detail = root.sessionDetail();
-            const uncertain = root.statusKnown ? "" : " (host state uncertain)";
-            return "Someone is streaming this machine" + uncertain + (detail ? " — " + detail : "");
-        }
-        if (!root.statusKnown)
-            return "Remote desktop state is unknown — " + (RemoteDesktopService.statusError || "the host status check has not answered yet");
-        if (!root.installed)
-            return "Remote desktop unavailable — " + (RemoteDesktopService.unavailableReason || "Sunshine is not installed");
-        if (root.visualState === "stale")
-            return "Remote desktop state may be out of date — " + (RemoteDesktopService.watchError || "the host event watch is not running");
-        if (root.hostUp) {
-            if (!root.sessionKnown)
-                return "Remote desktop is up — whether anyone is connected could not be checked: " + (RemoteDesktopService.sessionError || "the host journal could not be read");
-            if (root.captureFallback)
-                return "Remote desktop is up, but capturing a real monitor — " + RemoteDesktopService.outputName + " is missing";
-            if (root.outputUnknown)
-                return "Remote desktop is up — whether it is capturing " + RemoteDesktopService.outputName + " could not be checked";
+        const t = root.tooltipFor(root.visualState, {
+            "statusKnown": root.statusKnown,
+            "sessionDetail": root.sessionDetail(),
+            "sessionError": RemoteDesktopService.sessionError,
+            "statusError": RemoteDesktopService.statusError,
+            "unavailableReason": RemoteDesktopService.unavailableReason,
+            "watchError": RemoteDesktopService.watchError,
+            "captureFallback": root.captureFallback,
+            "outputUnknown": root.outputUnknown
+        });
+        const output = RemoteDesktopService.outputName;
+        switch (t.key) {
+        case "streaming":
+            return "Someone is streaming this machine" + (t.detail ? " — " + t.detail : "");
+        case "streaming-host-uncertain":
+            return "Someone is streaming this machine (host state uncertain)" + (t.detail ? " — " + t.detail : "");
+        case "streaming-unconfirmed":
+            return "Someone may still be streaming this machine — " + (t.reason || "nothing is confirming the session right now");
+        case "unknown":
+            return "Remote desktop state is unknown — " + (t.reason || "the host status check has not answered yet");
+        case "unavailable":
+            return "Remote desktop unavailable — " + (t.reason || "Sunshine is not installed");
+        case "stale":
+            return "Remote desktop state may be out of date — " + (t.reason || "the host event watch is not running");
+        case "listening-unconfirmed":
+            return "Remote desktop is up — whether anyone is connected could not be checked: " + (t.reason || "the host journal could not be read");
+        case "listening-capture-fallback":
+            return "Remote desktop is up, but capturing a real monitor — " + output + " is missing";
+        case "listening-output-unknown":
+            return "Remote desktop is up — whether it is capturing " + output + " could not be checked";
+        case "listening":
             return "Remote desktop is up, nobody connected";
+        default:
+            return "Remote desktop is off — click to open, toggle inside to start";
         }
-        return "Remote desktop is off — click to open, toggle inside to start";
     }
 
     function sessionDetail() {
-        const parts = [];
-        if (RemoteDesktopService.sessionCodec)
-            parts.push(RemoteDesktopService.sessionCodec);
-        if (RemoteDesktopService.sessionBitrateBps > 0)
-            parts.push(Math.round(RemoteDesktopService.sessionBitrateBps / 1000) + " kbps");
-        if (RemoteDesktopService.sessionColorDepth)
-            parts.push(RemoteDesktopService.sessionColorDepth);
-        return parts.join(" · ");
+        return root.sessionDetailFrom({
+            "codec": RemoteDesktopService.sessionCodec,
+            "bitrateBps": RemoteDesktopService.sessionBitrateBps,
+            "colorDepth": RemoteDesktopService.sessionColorDepth
+        });
+    }
+
+    // Renders the descriptor upSubtitleFor() chose, same division of labour.
+    function upSubtitleText() {
+        const s = root.upSubtitleFor({
+            "outputUnknown": root.outputUnknown,
+            "outputPresent": RemoteDesktopService.outputPresent,
+            "outputManaged": root.outputManaged,
+            "outputName": RemoteDesktopService.outputName,
+            "compositor": RemoteDesktopService.compositor
+        });
+        switch (s.key) {
+        case "output-unknown":
+            return "capture target could not be checked";
+        case "output-present":
+            return "capturing " + s.output;
+        case "output-missing":
+            return "capturing a real monitor — " + s.output + " is missing";
+        default:
+            return s.compositor && s.compositor !== "unknown"
+                ? "capturing an existing monitor — no virtual output is managed on " + s.compositor
+                : "capturing an existing monitor — no virtual output is managed here";
+        }
     }
 
     Ref {
@@ -416,11 +542,8 @@ PluginComponent {
                                         return RemoteDesktopService.statusError || "waiting for the first answer";
                                     if (!root.installed)
                                         return RemoteDesktopService.unavailableReason;
-                                    if (root.hostUp) {
-                                        if (root.outputUnknown)
-                                            return "capture target could not be checked";
-                                        return RemoteDesktopService.outputPresent ? ("capturing " + RemoteDesktopService.outputName) : "";
-                                    }
+                                    if (root.hostUp)
+                                        return root.upSubtitleText();
                                     return "starts on demand — nothing listens until you turn it on";
                                 }
                                 font.pixelSize: Theme.fontSizeSmall
