@@ -401,7 +401,19 @@ either: other Quickshell applications on the seat are legitimate.
     runtime dir, own HOME, private bus, no live backend socket, no live
     compositor IPC), with process-group-scoped cleanup, and fails on runtime QML
     errors. **This is the mode that replaces what `qs -c vshell` used to cover**,
-    so use it for QML work.
+    so use it for QML work. It also opens a plugin popout and drives a planted
+    user override of a bundled id through scan/rescan/reload/removal, because
+    neither is reachable by loading the shell alone (VGS-81) — popout content is
+    only instantiated when the popout opens, and the override path needs a
+    second manifest claiming a shipped id.
+  - Most agent environments have no `WAYLAND_DISPLAY`, and `--nested` refuses to
+    build a sandbox without a host socket to nest inside. Point it at the
+    session's own socket and it runs — the sandbox still has its own runtime
+    dir, HOME and bus, so the live session is untouched:
+    ```bash
+    WAYLAND_DISPLAY=wayland-1 XDG_RUNTIME_DIR=/run/user/1000 \
+      scripts/qml-smoke.sh --nested --require-static --require-nested
+    ```
   - `--require-static` / `--require-nested` — fail instead of skipping when a
     check's tooling is unavailable. Use them in any automated run; a plain skip
     is otherwise indistinguishable from a pass.
