@@ -40,21 +40,116 @@ VgsPopout {
                 }
             }
 
-            Keys.onPressed: event => {
-                if (event.key === Qt.Key_Escape) {
-                    root.close();
-                    event.accepted = true;
-                }
+            // --- pushed-page contract ---------------------------------------
+            // Keyboard focus lives on this container, not on the plugin's
+            // content, so a plugin cannot intercept Escape for a page it
+            // pushed — which is why a pager's Escape used to close the whole
+            // surface instead of going back one level (VGS-88). Content opts in
+            // declaratively instead: expose `canPopBack` and `popBack()` on the
+            // content root and Escape is routed there first. No key handler in
+            // the plugin, and a plugin that knows nothing about this behaves
+            // exactly as before.
+            function contentCanPopBack() {
+                const item = popoutContentLoader.item;
+                return !!(item && ("canPopBack" in item) && item.canPopBack === true && typeof item.popBack === "function");
             }
+
+            // One level. Returns whether there was one to pop, which is what
+            // decides whether Escape still closes.
+            function popContentBack() {
+                if (!popoutContainer.contentCanPopBack())
+                    return false;
+                popoutContentLoader.item.popBack();
+                return true;
+            }
+
+            // All the way back to page 0. `popBack()` is defined as one level,
+            // so this loops — bounded, because an implementation whose
+            // canPopBack never goes false would otherwise hang the shell here.
+            function popContentToRoot() {
+                for (let guard = 0; guard < 16; guard++) {
+                    if (!popoutContainer.popContentBack())
+                        return;
+                }
+                // Content exactly at the bound is rooted by the final
+                // iteration, so ask before reporting: a warning on a success
+                // sends someone hunting a runaway that never happened, and the
+                // bound exists to make a real one recognisable.
+                if (!popoutContainer.contentCanPopBack())
+                    return;
+                root.log.warn("plugin popout content did not settle at its root page after 16 pops:", root.layerNamespace);
+            }
+
+            Keys.onPressed: event => {
+                if (event.key !== Qt.Key_Escape)
+                    return;
+                event.accepted = true;
+                // Auto-repeat is not a second decision. Holding Escape delivers
+                // repeats, and letting them through meant one physical press
+                // popped the page and then closed the surface — going back AND
+                // dismissing, which is exactly the trap that routing only
+                // Escape inward was meant to avoid. It also made the outcome
+                // depend on how long a key was held, which reads as a glitch
+                // rather than a rule. Swallowed, not ignored: the event stays
+                // accepted so a repeat cannot escape to another handler.
+                // A deliberate second press is a fresh press, not a repeat, and
+                // still closes — that is the pager convention. (VGS-88)
+                if (event.isAutoRepeat)
+                    return;
+                // Back one level before dismissing. Every pager the user has
+                // met pops on Escape; losing the whole surface from a pushed
+                // page is the opposite of what the pattern teaches.
+                if (!popoutContainer.popContentBack())
+                    root.close();
+            }
+
+            // The dismissal reset is state, not choreography. Running it when
+            // shouldBeVisible flips would play it in front of the user: the
+            // surface stays on screen for the whole close animation
+            // (VgsPopoutStandalone's closeTimer), so the pages visibly slid
+            // back to 0 on the way out. Deferred to popoutClosed, which the
+            // close timer emits AFTER contentWindow.visible = false — there is
+            // nothing on screen to animate by then. (VGS-88)
+            property bool resetPending: false
 
             Connections {
                 target: root
+
                 function onShouldBeVisibleChanged() {
                     if (root.shouldBeVisible) {
                         Qt.callLater(() => {
                             popoutContainer.forceActiveFocus();
                         });
+                        // Reopening interrupts a close: the timer sees
+                        // shouldBeVisible true again and never emits
+                        // popoutClosed, so a pending reset would be stranded
+                        // and the popout would come back on the page the user
+                        // left. Take it now instead. This is the one case the
+                        // reset can be seen, and being on the right page beats
+                        // hiding a transition nobody asked to watch.
+                        if (popoutContainer.resetPending) {
+                            popoutContainer.resetPending = false;
+                            popoutContainer.popContentToRoot();
+                        }
+                        return;
                     }
+                    // Dismissal — the close button, a click outside, the bar
+                    // pill toggling, or anything else that reaches close() —
+                    // discards pushed pages rather than popping them. Those
+                    // gestures aim at the whole surface, and popping instead
+                    // would trap the user, needing a second gesture to leave.
+                    // Escape is the one gesture that conventionally means
+                    // "back", so it is the only one routed to the content.
+                    // Owned here so no plugin has to repeat it, which is what
+                    // keeps "a pushed page is view state" true in general.
+                    popoutContainer.resetPending = true;
+                }
+
+                function onPopoutClosed() {
+                    if (!popoutContainer.resetPending)
+                        return;
+                    popoutContainer.resetPending = false;
+                    popoutContainer.popContentToRoot();
                 }
             }
 
