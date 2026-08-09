@@ -73,7 +73,20 @@ Item {
     }
 
     function removePad(padId) {
-        writePads(root.pads.filter(pad => pad.id !== padId));
+        // Hand any already-mapped window back to the active workspace BEFORE
+        // the record goes away. Removing a pad deletes its keybind and every
+        // rule pointing at its special workspace, so a window left there would
+        // be unreachable without hyprctl by hand — still running, still holding
+        // whatever was open in it, and invisible.
+        //
+        // The class regex is passed explicitly rather than looked up, because
+        // the helper would otherwise read settings that this function is about
+        // to rewrite.
+        const pad = root.pads.find(entry => entry.id === padId);
+        if (pad && ScratchpadService.supported)
+            ScratchpadService.release(padId, pad.classRegex || "");
+
+        writePads(root.pads.filter(entry => entry.id !== padId));
         if (root.expandedId === padId)
             root.expandedId = "";
     }
@@ -103,6 +116,23 @@ Item {
         const declared = String(app?.startupWMClass || "").trim();
         const fallback = String(app?.id || "").replace(/\.desktop$/, "");
         return "^(" + root.escapeRegex(declared || fallback) + ")$";
+    }
+
+    // Re-derive the class regex from a pad's stored appId. Turning "match
+    // automatically" back on used to only hide the editor and persist the flag,
+    // so the row read "automatic" while the stale MANUAL regex stayed in use —
+    // the setting described something that was not happening.
+    //
+    // Returns "" when there is nothing to derive from (the pad was hand-made,
+    // or the app is no longer installed). The caller must not silently claim
+    // automatic matching in that case.
+    function autoClassRegexFor(padAppId) {
+        const id = String(padAppId || "");
+        if (!id)
+            return "";
+        const apps = DesktopEntries.applications?.values ?? [];
+        const app = apps.find(entry => String(entry.id || "") === id);
+        return app ? root.deriveClassRegex(app) : "";
     }
 
     function uniqueId(base) {
@@ -236,6 +266,23 @@ Item {
                     color: Theme.surfaceVariantText
                     font.pixelSize: Theme.fontSizeSmall
                     text: I18n.tr("Scratchpads are Hyprland-only for now. Niri has no special workspaces; the equivalent needs its own generator rather than a translation of this one.")
+                }
+            }
+
+            // A failed apply used to leave the previous status on screen and say
+            // nothing, so the page kept reporting rules that were never written.
+            SettingsCard {
+                width: parent.width
+                visible: root.supported && ScratchpadService.lastError.length > 0
+                title: I18n.tr("Could not write scratchpad rules")
+                iconName: "error"
+
+                StyledText {
+                    width: parent.width
+                    wrapMode: Text.WordWrap
+                    color: Theme.error
+                    font.pixelSize: Theme.fontSizeSmall
+                    text: ScratchpadService.lastError
                 }
             }
 

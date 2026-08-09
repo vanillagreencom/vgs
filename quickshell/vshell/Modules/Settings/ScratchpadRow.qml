@@ -18,6 +18,8 @@ Column {
     property bool expanded: false
     property bool capturing: false
     property string conflict: ""
+    // Set when automatic class matching was asked for but could not be honoured.
+    property string autoNote: ""
     // The tab owns the option/value tables and the keybind normalization; this
     // component reads them rather than keeping a second copy that could drift.
     property var tabRoot: null
@@ -332,9 +334,40 @@ Column {
                 text: I18n.tr("Match class automatically")
                 description: I18n.tr("Derived from the app. Turn this off only when the app maps with a class it does not declare.")
                 checked: row.pad.classRegexAuto !== false
-                onToggled: checked => row.changePad({
-                        "classRegexAuto": checked
-                    })
+                onToggled: checked => {
+                    if (!checked) {
+                        row.autoNote = "";
+                        row.changePad({
+                            "classRegexAuto": false
+                        });
+                        return;
+                    }
+                    // Turning this on must actually re-derive. Persisting the
+                    // flag alone would leave the manual pattern in force while
+                    // the control claimed the opposite.
+                    const derived = row.tabRoot ? row.tabRoot.autoClassRegexFor(row.pad.appId) : "";
+                    if (derived) {
+                        row.autoNote = "";
+                        row.changePad({
+                            "classRegexAuto": true,
+                            "classRegex": derived
+                        });
+                        return;
+                    }
+                    // Nothing to derive from, so "automatic" would be a label
+                    // with no mechanism behind it. Refuse and say why, rather
+                    // than switching it on and quietly keeping the old pattern.
+                    row.autoNote = I18n.tr("Nothing to derive from: this scratchpad has no linked app, or the app is no longer installed. The pattern is unchanged.");
+                }
+            }
+
+            StyledText {
+                width: parent.width
+                visible: row.autoNote.length > 0
+                text: row.autoNote
+                wrapMode: Text.WordWrap
+                font.pixelSize: Theme.fontSizeSmall
+                color: Theme.error
             }
 
             StyledText {
