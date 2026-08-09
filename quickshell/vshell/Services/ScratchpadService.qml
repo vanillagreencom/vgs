@@ -121,8 +121,23 @@ Singleton {
         root._statusAnswered = false;
         statusProc.command = [Paths.vshellCli, "scratchpad", "status"];
         statusProc.running = true;
+        // A command that cannot start emits no `exited` AND no running->false
+        // transition, so the handler below never fires and the include state
+        // would keep its previous value — the same stale-authority bug finding 1
+        // fixed, reached through a different door. Route it to the same place.
         if (!statusProc.running)
-            log.warn("scratchpad status helper could not be started");
+            root._markStatusUnknown("scratchpad status helper could not be started");
+    }
+
+    // `included: null` is the third state, distinct from false: the page says it
+    // does not know, rather than picking one of the two answers it has no
+    // evidence for. A stale `true` silences the include banner entirely.
+    function _markStatusUnknown(reason) {
+        log.warn(reason);
+        root.status = Object.assign({}, root.status, {
+            "included": null,
+            "statusMessage": ""
+        });
     }
 
     // Reveal/hide a pad from the shell (a bar widget, an IPC caller). The same
@@ -476,11 +491,7 @@ Singleton {
         onRunningChanged: {
             if (running || root._statusAnswered)
                 return;
-            log.warn("scratchpad status produced no result; include state is unknown");
-            root.status = Object.assign({}, root.status, {
-                "included": null,
-                "statusMessage": ""
-            });
+            root._markStatusUnknown("scratchpad status produced no result; include state is unknown");
         }
     }
 }

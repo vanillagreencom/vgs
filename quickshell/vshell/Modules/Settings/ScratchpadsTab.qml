@@ -106,6 +106,8 @@ Item {
             root.removeError = "";
             return;
         }
+        if (root.removing === padId || root.disabling === padId)
+            return;
         if (!ScratchpadService.supported) {
             // Nothing to strand: no compositor means no mapped window.
             root._deletePad(padId);
@@ -144,6 +146,11 @@ Item {
     function setPadEnabled(padId, enabled) {
         const pad = root.pads.find(entry => entry.id === padId);
         if (!pad)
+            return;
+        // The control is gated too, but that gate is presentational; this is the
+        // one that holds if anything else ever calls in. The model reads
+        // `enabled` for the whole hide, because the write is deliberately last.
+        if (root.disabling === padId || root.removing === padId)
             return;
         if (enabled || !ScratchpadService.supported) {
             root.enableError = "";
@@ -601,6 +608,9 @@ Item {
                         expanded: root.expandedId === modelData.id
                         capturing: root.capturingId === modelData.id
                         conflict: root.conflictFor(modelData.id, modelData.keybind)
+                        // Held while this row has an async operation in flight,
+                        // so a second click cannot start a second one.
+                        busy: root.disabling === modelData.id || root.removing === modelData.id
                         tabRoot: root
 
                         onToggleExpand: root.expandedId = (root.expandedId === modelData.id ? "" : modelData.id)
