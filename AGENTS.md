@@ -275,6 +275,13 @@ the shell starts or that its surfaces are sane. Run
 `scripts/qml-smoke.sh --nested --require-static` and
 `scripts/smoke-surfaces.sh` locally before finishing QML work.
 
+`scripts/smoke-surfaces.sh` drives the shell that is *actually* running, and
+`vshell ipc` resolves instances by the config path of the checkout it is invoked
+from — so the smoke only works from the checkout owning the live session. It now
+reports which case it is in: a named skip when no VGS shell is live, and a
+failure naming the owning checkout when one is live but foreign. Run it from
+that checkout; do not read its refusal as a pass (VGS-69).
+
 ### Review gate
 
 Merges gate on AI-review evidence via the vstack `review-gate` engine, vendored
