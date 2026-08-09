@@ -43,8 +43,12 @@ assert.ok(match, "PluginService.qml must carry the OVERRIDE POLICY markers");
 
 // The extracted text is plain JavaScript with no QML API use, so it evaluates
 // as ordinary functions.
-const { _bundledOverrideDecision: decide, _declaresBundledOverride: declares } = new Function(
-    `${match[1]}\nreturn { _bundledOverrideDecision, _declaresBundledOverride };`
+const {
+    _bundledOverrideDecision: decide,
+    _declaresBundledOverride: declares,
+    _displacesLoadedPackage: displaces
+} = new Function(
+    `${match[1]}\nreturn { _bundledOverrideDecision, _declaresBundledOverride, _displacesLoadedPackage };`
 )();
 
 const PRIORITY = {
@@ -191,6 +195,32 @@ assert.equal(reparse.action, "replace", "a manifest always replaces its own prev
 // does not beat a higher-priority one.
 const acrossSources = verdict({ sourceTag: "system", pluginId: "somePlugin", bundledId: false, incomingPath: A, existing: owner("user", { manifestPath: B }) });
 assert.equal(acrossSources.action, "shadow", "the path only breaks ties within one priority");
+
+// --- VGS-75: a takeover is a takeover whatever directory it comes from -----
+
+// Displacement decides whether the swap tears the running package down before
+// installing the new one. Judging it by source was survivable only while equal
+// priority could not displace — the path tie-break above made two user packages
+// a real takeover, and a takeover the loader cannot see is one it never
+// unloads, leaving the old package in loadedPlugins with its components
+// installed while availablePlugins points at the new record.
+assert.equal(
+    displaces({ source: "user", loaded: true, manifestPath: A }, B), true,
+    "a different path is a takeover even when both packages are user-source"
+);
+assert.equal(
+    displaces({ source: "bundled", loaded: true, manifestPath: "/usr/share/vgs/plugins/x/plugin.json" }, A), true,
+    "and across sources, as before"
+);
+assert.equal(
+    displaces({ source: "user", loaded: true, manifestPath: A }, A), false,
+    "re-parsing a package's own manifest displaces nothing — it keeps its registration"
+);
+assert.equal(
+    displaces({ source: "user", loaded: false, manifestPath: A }, B), false,
+    "a package that is not loaded has nothing to tear down"
+);
+assert.equal(displaces(null, A), false, "and an unowned id has no incumbent at all");
 
 // --- the invariant, stated directly --------------------------------------
 

@@ -246,7 +246,11 @@ Singleton {
     // the user "the bundled version is still in use" on the strength of a
     // started read would be describing a plugin that never loaded. Pass
     // `onSettled(ok)` and say nothing until it fires — see _beginPromotion.
-    function promoteShadowedPlugin(pluginId, onSettled) {
+    //
+    // `continuesPath` is the manifest path of the record this promotion is
+    // superseding, when there is one. It is what lets _beginPromotion tell a
+    // chained retry from an unrelated second promotion of the same id.
+    function promoteShadowedPlugin(pluginId, onSettled, continuesPath) {
         let bestPath = "";
         let bestSource = "";
         let bestPriority = -1;
@@ -275,7 +279,7 @@ Singleton {
             return false;
         }
         delete knownManifests[bestPath];
-        _beginPromotion(pluginId, bestPath, onSettled);
+        _beginPromotion(pluginId, bestPath, onSettled, continuesPath);
         loadPluginManifestFile(bestPath, bestSource, Date.now());
         return true;
     }
@@ -292,16 +296,46 @@ Singleton {
     // budget that accommodates a startupCheck.
     readonly property int _promotionTimeoutMs: 8000
 
-    function _beginPromotion(pluginId, manifestPath, onSettled) {
+    // Two different situations can start a promotion for an id that already has
+    // one pending, and collapsing them is what silently dropped a reporter:
+    //
+    //   * a CONTINUATION — the pending promotion's own candidate reached the
+    //     load path and failed, so _demoteToShipped promotes the next one. Both
+    //     reporters describe one event stream, and the user wants its outcome
+    //     once, not one line per hop.
+    //   * an INDEPENDENT second promotion — resyncAll promoting a removed
+    //     bundled id while a demotion for the same id is in flight, say. Two
+    //     callers are asking two different questions ("was the shipped module
+    //     restored?" and "is this product id empty?") and each is entitled to
+    //     its answer.
+    //
+    // The two are told apart by fact, not by heuristic: a continuation names
+    // the record it is superseding, and it is a continuation only if that is
+    // exactly what the pending promotion produced. `chain` therefore holds at
+    // most one reporter however long the chain runs, while `others` grows only
+    // for genuinely independent callers — so the chained case still yields one
+    // user-visible message, and a race yields one per caller instead of losing
+    // one. (VGS-75)
+    function _beginPromotion(pluginId, manifestPath, onSettled, continuesPath) {
         const prev = _pendingPromotions[pluginId];
+        let chain = prev ? prev.chain : null;
+        let others = prev ? prev.others : [];
+        if (!prev) {
+            chain = onSettled || null;
+            others = [];
+        } else if (continuesPath && prev.path === continuesPath) {
+            // Supersedes the pending reporter rather than joining it: the newer
+            // one knows the most recent failure and the package that ended up
+            // running, which is what the settled message has to describe.
+            chain = onSettled || prev.chain;
+        } else if (onSettled && onSettled !== chain && others.indexOf(onSettled) === -1) {
+            others = others.concat([onSettled]);
+        }
         const next = Object.assign({}, _pendingPromotions);
         next[pluginId] = {
             path: manifestPath,
-            // Promotions chain: a promoted candidate that fails its gate is
-            // demoted, which promotes the next candidate. What the user needs
-            // is the outcome for the id, not one line per hop, so the first
-            // reporter is carried through the chain and fires once.
-            onSettled: (prev && prev.onSettled) ? prev.onSettled : (onSettled || null),
+            chain: chain,
+            others: others,
             deadline: Date.now() + _promotionTimeoutMs
         };
         _pendingPromotions = next;
@@ -317,8 +351,14 @@ Singleton {
         _pendingPromotions = next;
         if (!Object.keys(_pendingPromotions).length)
             promotionSweep.stop();
-        if (entry.onSettled)
-            entry.onSettled(ok === true);
+        const settled = ok === true;
+        // After the entry is gone, so a reporter that starts another promotion
+        // for the same id builds a fresh one instead of mutating the one being
+        // settled.
+        if (entry.chain)
+            entry.chain(settled);
+        for (let i = 0; i < entry.others.length; i++)
+            entry.others[i](settled);
     }
 
     // A load that succeeds is the success signal for whatever promotion was
@@ -567,7 +607,7 @@ Singleton {
             // own startup gate — unloading first is what left a product surface
             // with nothing loaded when an override turned out to be
             // non-viable. (VGS-24)
-            const displaced = (existing && existing.loaded && existing.source !== sourceTag) ? existing : null;
+            const displaced = _displacesLoadedPackage(existing, absPath) ? existing : null;
             const newMap = Object.assign({}, availablePlugins);
             newMap[manifest.id] = info;
             availablePlugins = newMap;
@@ -705,6 +745,24 @@ Singleton {
         if (Array.isArray(claim))
             return claim.indexOf(pluginId) !== -1;
         return false;
+    }
+
+    // Does the incoming record take an id over from a package that is running
+    // under it right now — i.e. must the swap tear the old one down before
+    // installing the new one?
+    //
+    // Identity is by manifest path, never by source. Judging it by source was
+    // survivable only while equal-priority packages could not displace each
+    // other; the path tie-break made two user packages a real takeover, and a
+    // takeover the loader does not see is one it does not unload. The old
+    // package then stays in loadedPlugins with its components installed while
+    // availablePlugins points at the new record — the exact identity desync
+    // VGS-75 exists to remove, re-entered through the door the tie-break
+    // opened. Two packages in one directory are still two packages. (VGS-75)
+    function _displacesLoadedPackage(existing, incomingPath) {
+        if (!existing || existing.loaded !== true)
+            return false;
+        return existing.manifestPath !== incomingPath;
     }
 
     // action:
@@ -973,9 +1031,19 @@ Singleton {
                 ToastService.showError(I18n.tr("Plugin unavailable: %1").arg(name), I18n.tr("%1 No bundled version could be restored, so nothing is loaded for \"%2\".").arg(reason).arg(pluginId), "", "plugin-demoted-" + pluginId);
                 return;
             }
-            root.log.warn("override failed to take over bundled id, demoting:", pluginId, reason);
-            ToastService.showError(I18n.tr("Plugin override failed: %1").arg(name), I18n.tr("%1 could not start, so the version bundled with VGS is still in use.").arg(reason), "", "plugin-demoted-" + pluginId);
-        });
+            // Which package took the id is a fact to be read, not assumed:
+            // promoteShadowedPlugin picks the highest-priority eligible
+            // candidate, and with several overrides claiming one id that can
+            // be another user package rather than the shipped one. Naming the
+            // bundled version regardless would hand the user, and anyone
+            // reading the log, the wrong identity for what is running.
+            const restored = root.loadedPlugins[pluginId] || root.availablePlugins[pluginId] || null;
+            const restoredName = restored ? (restored.name || pluginId) : pluginId;
+            const restoredPath = restored ? (restored.manifestPath || "(unknown)") : "(unknown)";
+            root.log.warn("override failed to take over bundled id, demoting:", pluginId, reason, "restored:", restoredName, "source:", restored ? restored.source : "(unknown)", restoredPath);
+            const body = (restored && restored.source === "bundled") ? I18n.tr("%1 could not start, so the version bundled with VGS is still in use.").arg(reason) : I18n.tr("%1 could not start, so \"%2\" is in use for this plugin instead.").arg(reason).arg(restoredName);
+            ToastService.showError(I18n.tr("Plugin override failed: %1").arg(name), body, "", "plugin-demoted-" + pluginId);
+        }, overridePath);
     }
 
     // A bundled id must not outlive the bundled directory: a shipped package

@@ -54,9 +54,11 @@ is incompatible, or a component fails to compile, the override is demoted — th
 emitted only once the shipped package has actually loaded: restoring it means re-reading its
 manifest, which is asynchronous, so "the version bundled with VGS is still in use" said at the moment
 the read *started* would be a claim about a plugin that may never load. `PluginService` tracks the
-promotion and reports the real outcome — the success message, or "No bundled version could be
-restored" — bounded by a deadline so a promotion that settles neither way still reaches the user
-(VGS-75). Demotion is
+promotion and reports the real outcome — bounded by a deadline so a promotion that settles neither
+way still reaches the user (VGS-75). It also names the package that actually took the id: with
+several overrides claiming one id the promoted candidate can be another user package, not the shipped
+one, so the message reads "the version bundled with VGS is still in use" only when that is what
+loaded. Demotion is
 available whenever a shipped manifest for the id is still on disk, so it does not depend on which
 directory was scanned first. `requires_shell` is judged once shell version detection (asynchronous)
 has produced a version; an override that took the id before then is rechecked and demoted when the
@@ -95,7 +97,12 @@ Ownership is settled by id; identity is by path. Precedence is source priority (
 system), and **within one source the manifest path breaks the tie** — two user packages claiming one
 id resolve to the same owner whichever of the two asynchronous manifest reads finishes first. Sorting
 the reads cannot provide that, because `FileView` completion order is not the order they were
-started in. `loaded` is a flag on the info record, and
+started in.
+
+Whether a swap has to **tear the running package down** is judged by manifest path too
+(`PluginService._displacesLoadedPackage`), never by source. Two packages in one directory are still
+two packages, and a takeover the loader does not recognise is one it never unloads — the old
+package's components stay installed while `availablePlugins` points at the new record. `loaded` is a flag on the info record, and
 re-parsing a manifest builds a new record, so `PluginService._relinkLoadedRecord` hands the loaded
 registration to the new record for the same path. Without it `availablePlugins` and `loadedPlugins`
 held two records that disagreed, and the plugin could never load again — silently. A collision that
