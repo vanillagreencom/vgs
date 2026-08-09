@@ -3973,8 +3973,18 @@ def test_scratchpad_toggle_honours_enabled():
 
         # Visible: hiding is still allowed. A pad disabled while on screen would
         # otherwise be stranded visible with no keybind left to dismiss it.
+        #
+        # The stub reports visible once and gone afterwards, because the hide now
+        # reads its own outcome back. A stub that stayed visible forever would
+        # only assert that a hide was ATTEMPTED, which is what this used to do.
         dispatched.clear()
-        helper._scratchpad_visible_monitor = lambda pad_id: "DP-1"
+        seen = {"n": 0}
+
+        def visible_then_gone(pad_id):
+            seen["n"] += 1
+            return "DP-1" if seen["n"] == 1 else ""
+
+        helper._scratchpad_visible_monitor = visible_then_gone
         hidden = helper.scratchpad_toggle("off")
         assert_equal(hidden["ok"], True, "a disabled pad that is on screen can still be hidden")
         assert_equal(hidden["action"], "hidden", "and reports the hide")
@@ -4357,6 +4367,64 @@ def test_monitor_logical_size_degrades_on_unusable_scale():
                  "geometry resolves over a NaN-scale monitor")
 
 
+def test_scratchpad_hide_confirms_the_pad_came_down():
+    """Settings hides a pad BEFORE writing `enabled: false`, because that write
+    regenerates config and removes the keybind. The ordering only buys anything
+    if the hide is confirmed: reporting success without checking would let the
+    bind go while the window was still on screen — the exact outcome hiding
+    first exists to prevent, and the same defect `release()` had when its result
+    was discarded before the record was deleted."""
+    originals = (helper.load_scratchpads, helper._scratchpad_visible_monitor,
+                 helper._scratchpad_find_window, helper._scratchpad_dispatch,
+                 helper._hyprctl_json, helper._scratchpad_session_ready)
+
+    pad = _pad(id="term")
+    helper.load_scratchpads = lambda *a, **k: [pad]
+    helper._scratchpad_find_window = lambda p: {"address": "0xpad", "workspace": {"name": "special:term"}}
+    helper._hyprctl_json = lambda *args: None
+    helper._scratchpad_session_ready = lambda: True
+    seen = {"n": 0}
+
+    def visible_then_gone(pad_id):
+        seen["n"] += 1
+        return "DP-1" if seen["n"] == 1 else ""
+
+    try:
+        helper._scratchpad_dispatch = lambda *args: True
+        helper._scratchpad_visible_monitor = visible_then_gone
+        good = helper.scratchpad_toggle("term", hide_only=True)
+        assert_equal(good["ok"], True, "a hide that worked reports success")
+        assert_equal(good["action"], "hidden", "and says so")
+
+        # Every dispatch claims success and the pad is STILL up. Success here
+        # would tell Settings to drop the keybind out from under a live window.
+        helper._scratchpad_visible_monitor = lambda pad_id: "DP-1"
+        lying = helper.scratchpad_toggle("term", hide_only=True)
+        assert_equal(lying["ok"], False, "a pad still on screen is not a successful hide")
+        assert_equal(lying["action"], "hide-failed", "and is named")
+        assert "still visible" in lying["error"], f"with the reason, got {lying['error']!r}"
+
+        # A failed dispatch is reported too, not only the end state.
+        seen["n"] = 0
+        helper._scratchpad_visible_monitor = visible_then_gone
+        helper._scratchpad_dispatch = lambda *args: args[0] != "togglespecialworkspace"
+        refused = helper.scratchpad_toggle("term", hide_only=True)
+        assert_equal(refused["ok"], False, "a failed dispatch is not success")
+        assert "could not toggle" in refused["error"], f"named, got {refused['error']!r}"
+
+        # Already hidden stays a cheap idempotent success with no dispatch.
+        dispatched = []
+        helper._scratchpad_dispatch = lambda *args: (dispatched.append(args), True)[1]
+        helper._scratchpad_visible_monitor = lambda pad_id: ""
+        idle = helper.scratchpad_toggle("term", hide_only=True)
+        assert_equal(idle["action"], "already-hidden", "an already-hidden pad is a no-op")
+        assert_equal(dispatched, [], "and dispatches nothing")
+    finally:
+        (helper.load_scratchpads, helper._scratchpad_visible_monitor,
+         helper._scratchpad_find_window, helper._scratchpad_dispatch,
+         helper._hyprctl_json, helper._scratchpad_session_ready) = originals
+
+
 def main():
     # A catalog download is minutes to hours of network transfer. Holding the
     # exclusive theme lock for that long would block applies, the light/dark
@@ -4470,6 +4538,7 @@ def main():
     test_scratchpad_reassert_clears_fullscreen_for_other_modes()
     test_scratchpad_show_does_not_disturb_focus_restore()
     test_monitor_logical_size_degrades_on_unusable_scale()
+    test_scratchpad_hide_confirms_the_pad_came_down()
     subprocess.run(
         [sys.executable, str(REPO_ROOT / "scripts" / "check-vshell-niri.py")],
         check=True,

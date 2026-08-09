@@ -9843,14 +9843,18 @@ def scratchpad_toggle(pad_id: str, reveal_only: bool = False, launch_only: bool 
                     if not on_pad:
                         keep_target = str(active.get("address") or "")
 
-            # The reveal origin is consumed either way: the reveal it belonged
-            # to is over, and leaving it behind would restore a stale window the
-            # next time this pad is hidden. One store, read by both paths —
-            # neither keeps bookkeeping of its own.
+            # The reveal origin belongs to the reveal that is now ending, and
+            # leaving it behind would restore a stale window the next time this
+            # pad is hidden. One store, read by both paths — neither keeps
+            # bookkeeping of its own.
+            #
+            # READ here but CONSUMED only once the hide is confirmed, below. A
+            # hide that fails leaves the pad on screen, and the next attempt
+            # still needs somewhere to hand focus back to; discarding the origin
+            # up front would spend it on an attempt that did not happen.
             origin = ""
             if state_file.exists():
                 origin = state_file.read_text().strip()
-                state_file.unlink(missing_ok=True)
             restore_to = keep_target if keep_focus else origin
             # A keep-focus hide that could not read the active window falls back
             # to the origin rather than leaving focus wherever `focusmonitor`
@@ -9861,8 +9865,35 @@ def scratchpad_toggle(pad_id: str, reveal_only: bool = False, launch_only: bool 
             # Hide, then hand focus to the target — including when the pad lives
             # on a different monitor, which is the case a naive "focus the last
             # workspace" restore gets wrong.
-            _scratchpad_dispatch("focusmonitor", visible_on)
-            _scratchpad_dispatch("togglespecialworkspace", pad_id)
+            #
+            # The result is CHECKED, not assumed. Settings hides a pad before
+            # disabling it, and only writes `enabled: false` — which regenerates
+            # config and removes the keybind — once this reports success. A hide
+            # that returned ok without confirming would make that ordering
+            # hollow: the bind would go while the window was still on screen,
+            # which is the exact outcome hiding first exists to prevent. Same
+            # reasoning as the reveal path, which reads its own state back
+            # rather than inferring success from the dispatches.
+            hide_failures: List[str] = []
+            if not _scratchpad_dispatch("focusmonitor", visible_on):
+                hide_failures.append(f"could not focus monitor {visible_on}")
+            if not _scratchpad_dispatch("togglespecialworkspace", pad_id):
+                hide_failures.append("could not toggle the special workspace")
+
+            # The dispatches can each report success and leave the pad on
+            # screen, so the outcome is read back.
+            still_visible = _scratchpad_visible_monitor(pad_id)
+            if still_visible:
+                hide_failures.append(f"special:{pad_id} is still visible on {still_visible}")
+
+            if hide_failures:
+                # The origin is deliberately NOT consumed and focus is NOT moved:
+                # the pad is still up, so moving focus away now would strand the
+                # user beside a window they asked to dismiss.
+                return {"ok": False, "id": pad_id, "action": "hide-failed",
+                        "error": f"{pad['name']}: " + "; ".join(hide_failures)}
+
+            state_file.unlink(missing_ok=True)
             if restore_to:
                 clients = _hyprctl_json("clients")
                 live = isinstance(clients, list) and any(

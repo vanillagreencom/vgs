@@ -123,6 +123,12 @@ leaves a visible window with no way to reach it. `vshell scratchpad hide` is
 idempotent for this reason — a pad that is already hidden succeeds without
 dispatching, so the call can never accidentally *reveal* one.
 
+**The hide confirms its own outcome**, reading the workspace state back rather
+than inferring success from its dispatches. Without that the ordering buys
+nothing: Settings would take a reported success as licence to drop the keybind
+while the window was still up, which is the failure the ordering exists to
+prevent.
+
 ## Presentation is re-asserted as a whole, not additively
 
 The reveal clears fullscreen before applying float or tile. Hyprland keeps the
