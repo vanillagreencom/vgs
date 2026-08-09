@@ -12325,6 +12325,481 @@ def _print_notification_status(status: Dict[str, Any]) -> None:
             print(f"  note: {status['takeover']['reason']}")
 
 
+# --- Remote desktop host (Sunshine) -----------------------------------------
+#
+# Sunshine is deliberately NOT autostarted: its user unit ships `disabled`, and
+# the virtual output it captures is created on start and removed on stop, so a
+# local-only session carries no phantom monitor and nothing listening.
+#
+# Those two halves are ONE operation and must never be split. Sunshine picks
+# its capture target at startup, so starting the unit without the headless
+# output first makes it fall back to the first real monitor -- the user's own
+# screen is streamed instead of the virtual one, with no error logged anywhere
+# and nothing on screen to notice. That silence is why the lifecycle lives here
+# rather than in QML: `vshell remote-desktop start` is the only supported way
+# to bring the host up, and no VGS surface may call `systemctl start` on this
+# unit directly.
+
+RD_UNIT = "app-dev.lizardbyte.app.Sunshine.service"
+RD_OUTPUT = "HEADLESS-1"
+RD_WEB_PORT = 47990
+
+_RD_ENCODER_RE = re.compile(r"Creating encoder \[([A-Za-z0-9_.+-]+)\]")
+_RD_BITRATE_RE = re.compile(r"Streaming bitrate is (\d+)")
+_RD_DEPTH_RE = re.compile(r"Color depth: (\S+)")
+_RD_SESSIONS_RE = re.compile(r"active sessions: (\d+)")
+_RD_ISO_RE = re.compile(r"^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})")
+_RD_SYSTEMD_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
+
+def _rd_hypr_env() -> Dict[str, str]:
+    """hyprctl needs an instance signature, and an ssh shell inherits none."""
+    env = dict(os.environ)
+    env.setdefault("XDG_RUNTIME_DIR", f"/run/user/{os.getuid()}")
+    if env.get("HYPRLAND_INSTANCE_SIGNATURE"):
+        return env
+    try:
+        instances = sorted(
+            (p for p in (Path(env["XDG_RUNTIME_DIR"]) / "hypr").iterdir() if p.is_dir()),
+            key=lambda p: p.stat().st_mtime,
+            reverse=True,
+        )
+    except OSError:
+        return env
+    if instances:
+        env["HYPRLAND_INSTANCE_SIGNATURE"] = instances[0].name
+    return env
+
+
+def _rd_output_present() -> Any:
+    """True/False when hyprctl answers, None when it cannot be asked.
+
+    None is a first-class answer, not a variant of False. "The output is
+    missing" and "nobody could say" lead to opposite decisions in
+    remote_desktop_start(), and collapsing them is what would start the host
+    onto a real monitor.
+    """
+    if not command_exists("hyprctl"):
+        return None
+    try:
+        proc = run(["hyprctl", "monitors", "-j"], timeout=3, env=_rd_hypr_env())
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if proc.returncode != 0:
+        return None
+    try:
+        monitors = json.loads(proc.stdout or "[]")
+    except (ValueError, TypeError):
+        return None
+    if not isinstance(monitors, list):
+        return None
+    return any(isinstance(m, dict) and m.get("name") == RD_OUTPUT for m in monitors)
+
+
+def _rd_web_host() -> str:
+    """Prefer the tailnet address: that is the only route a client has."""
+    if command_exists("tailscale"):
+        try:
+            proc = run(["tailscale", "ip", "-4"], timeout=3)
+            if proc.returncode == 0:
+                for line in (proc.stdout or "").splitlines():
+                    if line.strip():
+                        return line.strip()
+        except (OSError, subprocess.SubprocessError):
+            pass
+    return "localhost"
+
+
+def _rd_journal_window() -> List[str]:
+    """Bound the journal read to the CURRENT run of the unit.
+
+    Without this a `CLIENT CONNECTED` from a previous run -- with no matching
+    disconnect, because the daemon was killed -- reads as a live session
+    forever. The window is what makes the last-event scan below sound.
+    """
+    proc = _systemctl_user(["show", RD_UNIT, "--property=ActiveEnterTimestamp", "--value"])
+    parts = (proc.stdout or "").strip().split()
+    if len(parts) >= 3 and _RD_SYSTEMD_DATE_RE.match(parts[1]):
+        return ["--since", f"{parts[1]} {parts[2]}"]
+    # No start time to anchor to. The current boot is the widest window worth
+    # reading, and it cannot mislead here: this is only consulted while the
+    # unit is running, and a running unit has an ActiveEnterTimestamp.
+    return ["--boot"]
+
+
+def _rd_session_state() -> Dict[str, Any]:
+    """Live session facts, read from the unit's own journal.
+
+    Deliberately NOT the Sunshine Web API. That API is HTTP-Basic-gated behind
+    the credentials in Sunshine's own state file, so using it would mean
+    reading and holding a second credential inside the shell just to answer
+    "is somebody watching my screen". The journal already carries the events.
+
+    What the API would add and this cannot: the connected client's NAME and its
+    requested resolution. Neither is logged at Sunshine's `info` level -- see
+    `pairedClients` in the status payload, which is the paired list rather than
+    a pretend answer.
+    """
+    state: Dict[str, Any] = {
+        "active": False,
+        "count": 0,
+        "since": "",
+        "codec": "",
+        "bitrateBps": 0,
+        "colorDepth": "",
+        "readable": False,
+        "error": "",
+    }
+    argv = ["journalctl", "--user", "-u", RD_UNIT, "--no-pager", "-o", "short-iso", *_rd_journal_window()]
+    try:
+        proc = run(argv, timeout=8)
+    except (OSError, subprocess.SubprocessError) as exc:
+        state["error"] = f"the journal could not be read: {exc}"
+        return state
+    if proc.returncode != 0:
+        state["error"] = (proc.stderr or "").strip() or f"journalctl exited {proc.returncode}"
+        return state
+
+    state["readable"] = True
+    announced = 0
+    for line in (proc.stdout or "").splitlines():
+        sessions = _RD_SESSIONS_RE.search(line)
+        if sessions:
+            try:
+                announced = int(sessions.group(1))
+            except ValueError:
+                announced = 0
+            continue
+        encoder = _RD_ENCODER_RE.search(line)
+        if encoder:
+            state["codec"] = encoder.group(1)
+            continue
+        bitrate = _RD_BITRATE_RE.search(line)
+        if bitrate:
+            try:
+                state["bitrateBps"] = int(bitrate.group(1))
+            except ValueError:
+                state["bitrateBps"] = 0
+            continue
+        depth = _RD_DEPTH_RE.search(line)
+        if depth:
+            state["colorDepth"] = depth.group(1)
+            continue
+        if "CLIENT CONNECTED" in line:
+            state["count"] = announced or (state["count"] + 1)
+            state["active"] = True
+            stamp = _RD_ISO_RE.match(line)
+            state["since"] = stamp.group(1) if stamp else ""
+            announced = 0
+            continue
+        if "CLIENT DISCONNECTED" in line:
+            state["count"] = max(0, state["count"] - 1)
+            state["active"] = state["count"] > 0
+            if not state["active"]:
+                state["since"] = ""
+            continue
+
+    if not state["active"]:
+        # Encoder and bitrate belong to the session that ended. Reporting them
+        # beside "listening" would read as a live stream's settings.
+        state["codec"] = ""
+        state["bitrateBps"] = 0
+        state["colorDepth"] = ""
+    return state
+
+
+def _rd_paired_clients() -> List[str]:
+    """Names of PAIRED devices, from Sunshine's own state file.
+
+    These are the devices allowed to connect, NOT the ones connected now: the
+    journal does not say which client a session belongs to, so nothing here may
+    be presented as the current viewer.
+
+    That file also holds Sunshine's Web UI credential hash and salt. Only
+    `name` is read out of it; nothing else from the file is returned, printed
+    or logged.
+    """
+    config_home = os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config")
+    try:
+        data = json.loads((Path(config_home) / "sunshine" / "sunshine_state.json").read_text(errors="replace"))
+    except (OSError, ValueError):
+        return []
+    devices = ((data or {}).get("root") or {}).get("named_devices") or []
+    names: List[str] = []
+    for device in devices:
+        name = (device or {}).get("name") if isinstance(device, dict) else None
+        if isinstance(name, str) and name.strip():
+            names.append(name.strip())
+    return names
+
+
+def remote_desktop_status() -> Dict[str, Any]:
+    unit = _user_unit_state(RD_UNIT)
+    running = unit["running"]
+    compositor = detect_compositor()["compositor"]
+    output_present = _rd_output_present() if compositor == "hyprland" else None
+    session = _rd_session_state() if running else {
+        "active": False, "count": 0, "since": "", "codec": "",
+        "bitrateBps": 0, "colorDepth": "", "readable": True, "error": "",
+    }
+
+    if unit["exists"]:
+        state = "running" if running else "stopped"
+        reason = ""
+    else:
+        state = "unavailable"
+        reason = f"{RD_UNIT} is not installed"
+
+    return {
+        "unit": RD_UNIT,
+        "installed": unit["exists"],
+        "running": running,
+        "state": state,
+        "reason": reason,
+        "compositor": compositor,
+        "output": {
+            "name": RD_OUTPUT,
+            # Only Hyprland can create a virtual output from here. On anything
+            # else the host still runs; it just captures a real monitor, and
+            # saying so is better than implying VGS manages an output it cannot.
+            "supported": compositor == "hyprland",
+            "known": output_present is not None,
+            "present": output_present is True,
+        },
+        # The silent failure, made loud: the host is up on Hyprland with no
+        # HEADLESS-1, which means it is capturing a REAL monitor -- the user's
+        # own screen -- and nothing else would ever say so.
+        "captureFallback": bool(running and compositor == "hyprland" and output_present is False),
+        "webUi": f"https://{_rd_web_host()}:{RD_WEB_PORT}",
+        "session": session,
+        "pairedClients": _rd_paired_clients(),
+    }
+
+
+def _rd_result(actions: List[str], failures: List[str], manual: List[str]) -> Dict[str, Any]:
+    return {
+        "ok": not failures,
+        "actions": actions,
+        "failures": failures,
+        "manual": manual,
+        "status": remote_desktop_status(),
+    }
+
+
+def remote_desktop_start() -> Dict[str, Any]:
+    actions: List[str] = []
+    failures: List[str] = []
+    manual: List[str] = []
+
+    if not _user_unit_state(RD_UNIT)["exists"]:
+        return _rd_result(actions, [f"{RD_UNIT} is not installed"], manual)
+
+    compositor = detect_compositor()["compositor"]
+    if compositor == "hyprland":
+        present = _rd_output_present()
+        if present is None:
+            # Refusing is the point. Starting anyway would capture a real
+            # monitor and report success, which is the failure this command
+            # exists to prevent.
+            return _rd_result(actions, [
+                f"hyprctl could not say whether {RD_OUTPUT} exists; not starting, "
+                f"because {RD_UNIT} would capture a real monitor instead"
+            ], manual)
+        if not present:
+            try:
+                proc = run(["hyprctl", "output", "create", "headless"], timeout=5, env=_rd_hypr_env())
+            except (OSError, subprocess.SubprocessError) as exc:
+                return _rd_result(actions, [f"could not create {RD_OUTPUT}: {exc}"], manual)
+            if proc.returncode != 0:
+                detail = (proc.stderr or proc.stdout or "").strip()
+                return _rd_result(actions, [f"could not create {RD_OUTPUT}: {detail or f'hyprctl exited {proc.returncode}'}"], manual)
+            actions.append(f"created {RD_OUTPUT}")
+    else:
+        manual.append(
+            f"{compositor}: no virtual output was created, so the host will capture an "
+            f"existing monitor"
+        )
+
+    proc = _systemctl_user(["start", RD_UNIT])
+    if proc.returncode != 0:
+        detail = (proc.stderr or "").strip()
+        failures.append(f"could not start {RD_UNIT}: {detail or f'systemctl exited {proc.returncode}'}")
+    else:
+        actions.append(f"started {RD_UNIT}")
+    return _rd_result(actions, failures, manual)
+
+
+def remote_desktop_stop() -> Dict[str, Any]:
+    actions: List[str] = []
+    failures: List[str] = []
+    manual: List[str] = []
+
+    proc = _systemctl_user(["stop", RD_UNIT])
+    if proc.returncode != 0:
+        detail = (proc.stderr or "").strip()
+        failures.append(f"could not stop {RD_UNIT}: {detail or f'systemctl exited {proc.returncode}'}")
+    else:
+        actions.append(f"stopped {RD_UNIT}")
+
+    # Only tear down the output this command created, and only once the host is
+    # actually down -- removing it from under a live capture is worse than
+    # leaving it.
+    if detect_compositor()["compositor"] == "hyprland" and not failures:
+        if _rd_output_present() is True:
+            try:
+                proc = run(["hyprctl", "output", "remove", RD_OUTPUT], timeout=5, env=_rd_hypr_env())
+            except (OSError, subprocess.SubprocessError) as exc:
+                manual.append(f"{RD_OUTPUT} is still present: {exc}")
+            else:
+                if proc.returncode == 0:
+                    actions.append(f"removed {RD_OUTPUT}")
+                else:
+                    detail = (proc.stderr or proc.stdout or "").strip()
+                    manual.append(f"{RD_OUTPUT} is still present: {detail or f'hyprctl exited {proc.returncode}'}")
+    return _rd_result(actions, failures, manual)
+
+
+def _print_remote_desktop_status(status: Dict[str, Any]) -> None:
+    print(f"host:    {status['state']}" + (f" ({status['reason']})" if status["reason"] else ""))
+    output = status["output"]
+    if not output["supported"]:
+        print(f"output:  not managed on {status['compositor']}")
+    elif not output["known"]:
+        print(f"output:  unknown ({output['name']} could not be checked)")
+    elif output["present"]:
+        print(f"output:  {output['name']} present")
+    else:
+        print(f"output:  {output['name']} MISSING" + (" — capture is falling back to a real monitor" if status["captureFallback"] else ""))
+    session = status["session"]
+    if session["error"]:
+        print(f"session: unknown ({session['error']})")
+    elif session["active"]:
+        detail = ", ".join(part for part in (
+            session["codec"],
+            f"{session['bitrateBps'] // 1000} kbps" if session["bitrateBps"] else "",
+            session["colorDepth"],
+        ) if part)
+        print(f"session: STREAMING — {session['count']} client(s)" + (f" [{detail}]" if detail else ""))
+    elif status["running"]:
+        print("session: listening, nobody connected")
+    else:
+        print("session: none")
+    print(f"web ui:  {status['webUi']}")
+    paired = status["pairedClients"]
+    print(f"paired:  {', '.join(paired) if paired else 'none'}")
+
+
+def _rd_watch_token(line: str) -> str:
+    """Classify one journal line into a watch token, or "" to ignore it.
+
+    Pure, so scripts/check-vshell-helper.py can exercise every branch without a
+    running host -- which is the only way this gets tested at all, since
+    starting Sunshine means capturing somebody's screen.
+    """
+    if "CLIENT CONNECTED" in line:
+        return "connected"
+    if "CLIENT DISCONNECTED" in line:
+        return "disconnected"
+    if any(marker in line for marker in ("Started ", "Stopped ", "Starting ", "Stopping ")):
+        return "lifecycle"
+    if "Creating encoder [" in line or "Streaming bitrate is" in line:
+        return "session"
+    return ""
+
+
+def remote_desktop_watch() -> int:
+    """Stream normalised host events, one token per line, until killed.
+
+    This exists so Sunshine's log format is parsed in exactly ONE place. The
+    shell needs to know *that* something happened, not what Sunshine phrased it
+    as, and a widget string-matching `CLIENT CONNECTED` would be a second copy
+    of that knowledge drifting against this one.
+
+    Tokens: `connected`, `disconnected`, `lifecycle`, `session`. Every one of
+    them means "re-read `remote-desktop status`"; they are distinguished only so
+    the caller can flip the streaming indicator without waiting for the read.
+    """
+    argv = [
+        "journalctl", "--user", "-u", RD_UNIT,
+        "--follow", "-n", "0", "-o", "cat",
+    ]
+    try:
+        proc = subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, bufsize=1)
+    except (OSError, subprocess.SubprocessError) as exc:
+        eprint(f"vshell remote-desktop: could not follow the journal: {exc}")
+        return 1
+    try:
+        assert proc.stdout is not None
+        for line in proc.stdout:
+            token = _rd_watch_token(line)
+            if token:
+                print(token, flush=True)
+    except KeyboardInterrupt:
+        return 130
+    except BrokenPipeError:
+        # The reader went away; that is the normal way this ends.
+        return 0
+    finally:
+        with contextlib.suppress(Exception):
+            proc.terminate()
+            proc.wait(timeout=3)
+    return proc.returncode or 0
+
+
+def cmd_remote_desktop(argv: List[str]) -> int:
+    parser = argparse.ArgumentParser(prog="vshell remote-desktop")
+    sub = parser.add_subparsers(dest="cmd", required=True)
+    for name in ("status", "start", "stop", "toggle", "ui"):
+        sub.add_parser(name).add_argument("--json", action="store_true")
+    sub.add_parser("watch", help="stream normalised host events until killed")
+    args = parser.parse_args(argv)
+
+    if args.cmd == "watch":
+        return remote_desktop_watch()
+
+    if args.cmd == "ui":
+        url = remote_desktop_status()["webUi"]
+        try:
+            subprocess.Popen(["xdg-open", url], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+        except (OSError, subprocess.SubprocessError) as exc:
+            eprint(f"vshell remote-desktop: could not open {url}: {exc}")
+            return 1
+        if args.json:
+            print(json.dumps({"ok": True, "url": url}, indent=2))
+        else:
+            print(url)
+        return 0
+
+    if args.cmd == "status":
+        status = remote_desktop_status()
+        if args.json:
+            print(json.dumps(status, indent=2))
+        else:
+            _print_remote_desktop_status(status)
+        if not status["installed"]:
+            return 2
+        return 0 if status["running"] else 1
+
+    if args.cmd == "toggle":
+        result = remote_desktop_stop() if _user_unit_state(RD_UNIT)["running"] else remote_desktop_start()
+    elif args.cmd == "start":
+        result = remote_desktop_start()
+    else:
+        result = remote_desktop_stop()
+
+    if args.json:
+        print(json.dumps(result, indent=2))
+        return 0 if result["ok"] else 1
+    for action in result["actions"]:
+        print(action)
+    for note in result["manual"]:
+        print(f"manual: {note}")
+    for failure in result["failures"]:
+        eprint(f"vshell remote-desktop: {failure}")
+    _print_remote_desktop_status(result["status"])
+    return 0 if result["ok"] else 1
+
+
 def cmd_notifications(argv: List[str]) -> int:
     parser = argparse.ArgumentParser(prog="vshell notifications")
     sub = parser.add_subparsers(dest="cmd", required=True)
@@ -12494,6 +12969,7 @@ def main() -> int:
         if cmd == "greeter": return cmd_greeter(argv)
         if cmd == "sudo-toggle": return cmd_sudo_toggle(argv)
         if cmd == "notifications": return cmd_notifications(argv)
+        if cmd == "remote-desktop": return cmd_remote_desktop(argv)
         if cmd == "launcher-search": return cmd_launcher_search(argv)
         if cmd == "terminal": return cmd_terminal(argv)
         eprint(f"Unknown VGS helper command: {cmd}")

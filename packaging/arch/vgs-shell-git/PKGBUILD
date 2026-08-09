@@ -65,6 +65,7 @@ optdepends=(
   'rclone: cloud file sync'
   'ripgrep: launcher text search'
   'satty: screenshot annotation'
+  'sunshine: Sunshine remote-desktop host for the remoteDesktop widget'
   'tailscale: Tailscale widget'
   'tesseract: region OCR'
   'tesseract-data-eng: region OCR'

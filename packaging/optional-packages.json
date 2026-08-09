@@ -156,6 +156,7 @@
     "updates-aur": "AUR update checks",
     "ai-usage": "AI usage widget",
     "tailscale": "Tailscale widget",
+    "remote-desktop": "Remote desktop widget (Sunshine host)",
     "brightness": "display brightness",
     "sudo-toggle": "passwordless sudo toggle widget",
     "sudo-toggle-grant": "granting passwordless sudo, which needs a terminal",
@@ -368,6 +369,10 @@
       "debian": "curl",
       "fedora": "curl",
       "gentoo": "net-misc/curl"
+    },
+    "sunshine": {
+      "description": "Sunshine remote-desktop host for the remoteDesktop widget",
+      "arch": "sunshine"
     },
     "tailscale": {
       "arch": "tailscale",

@@ -2723,6 +2723,213 @@ def test_theme_catalog_generator_rejects_uninstallable_packages():
                      "stray files are skipped without failing generation")
 
 
+# --- remote desktop (Sunshine host) -----------------------------------------
+#
+# The whole point of routing the host through the helper is that starting the
+# unit and creating the virtual output are one operation. Sunshine picks its
+# capture target at startup, so getting the order or the guard wrong streams a
+# REAL monitor with no error anywhere -- there is no observable symptom to
+# catch it later, which is why it is pinned here.
+
+_RD_SESSION_LINES = [
+    "2026-08-06T11:10:42+0200 host sunshine[1]: Info: Creating encoder [hevc_nvenc]",
+    "2026-08-06T11:10:42+0200 host sunshine[1]: Info: Color depth: 10-bit",
+    "2026-08-06T11:10:42+0200 host sunshine[1]: Info: Streaming bitrate is 27788000",
+    "2026-08-06T11:10:43+0200 host sunshine[1]: Info: New streaming session started [active sessions: 1]",
+    "2026-08-06T11:10:43+0200 host sunshine[1]: Info: CLIENT CONNECTED",
+]
+
+
+@contextlib.contextmanager
+def _rd_journal(lines=None, returncode=0, stderr=""):
+    original_run = helper.run
+    original_window = helper._rd_journal_window
+    helper._rd_journal_window = lambda: ["--boot"]
+    helper.run = lambda argv, **kwargs: subprocess.CompletedProcess(
+        argv, returncode, "\n".join(lines or []), stderr
+    )
+    try:
+        yield
+    finally:
+        helper.run = original_run
+        helper._rd_journal_window = original_window
+
+
+def test_remote_desktop_reports_streaming_separately_from_listening():
+    with _rd_journal(_RD_SESSION_LINES):
+        streaming = helper._rd_session_state()
+    assert_equal(streaming["active"], True, "a client connected with no later disconnect is streaming")
+    assert_equal(streaming["count"], 1, "the session count comes from Sunshine's own tally")
+    assert_equal(streaming["codec"], "hevc_nvenc", "the live session's encoder is reported")
+    assert_equal(streaming["bitrateBps"], 27788000, "the live session's bitrate is reported")
+    assert_equal(streaming["readable"], True, "a journal that was read is readable")
+
+    with _rd_journal(_RD_SESSION_LINES + [
+        "2026-08-06T11:45:30+0200 host sunshine[1]: Info: CLIENT DISCONNECTED",
+    ]):
+        listening = helper._rd_session_state()
+    assert_equal(listening["active"], False, "a disconnect ends the session")
+    assert_equal(listening["count"], 0, "the tally returns to zero")
+    # Reporting the ended session's encoder next to "listening" would read as a
+    # live stream's settings.
+    assert_equal(listening["codec"], "", "an ended session reports no encoder")
+    assert_equal(listening["bitrateBps"], 0, "an ended session reports no bitrate")
+
+    with _rd_journal([]):
+        idle = helper._rd_session_state()
+    assert_equal(idle["active"], False, "a host nobody has connected to is not streaming")
+    assert_equal(idle["readable"], True, "an empty journal is still an answer")
+
+    # "nobody is watching" and "nobody could say" must not be the same state:
+    # only one of them is safe to render as an idle indicator.
+    with _rd_journal(returncode=1, stderr="No journal files were found."):
+        unknown = helper._rd_session_state()
+    assert_equal(unknown["active"], False, "an unreadable journal never claims a session")
+    assert_equal(unknown["readable"], False, "an unreadable journal is reported as unreadable")
+    assert_equal(
+        unknown["error"], "No journal files were found.",
+        "the reason the session state is unknown must survive to the caller",
+    )
+
+
+@contextlib.contextmanager
+def _rd_lifecycle(output_present, hyprctl_ok=True):
+    """Record the order of hyprctl/systemctl calls a lifecycle command makes."""
+    calls = []
+    original_run = helper.run
+    original_systemctl = helper._systemctl_user
+    original_present = helper._rd_output_present
+    original_unit = helper._user_unit_state
+    original_compositor = helper.detect_compositor
+    original_status = helper.remote_desktop_status
+
+    state = {"present": output_present}
+
+    def fake_present():
+        return state["present"]
+
+    def fake_run(argv, **kwargs):
+        calls.append(argv)
+        if argv[:2] == ["hyprctl", "output"]:
+            if not hyprctl_ok:
+                return subprocess.CompletedProcess(argv, 1, "", "no such output")
+            state["present"] = argv[2] == "create"
+            return subprocess.CompletedProcess(argv, 0, "ok", "")
+        return subprocess.CompletedProcess(argv, 0, "", "")
+
+    def fake_systemctl(argv, **kwargs):
+        calls.append(["systemctl", "--user", *argv])
+        return subprocess.CompletedProcess(argv, 0, "", "")
+
+    helper.run = fake_run
+    helper._systemctl_user = fake_systemctl
+    helper._rd_output_present = fake_present
+    helper._user_unit_state = lambda unit: {
+        "exists": True, "running": False, "masked": False,
+        "transient": False, "mainPid": 0, "execStart": "",
+    }
+    helper.detect_compositor = lambda: {"compositor": "hyprland", "source": "test"}
+    helper.remote_desktop_status = lambda: {"stubbed": True}
+    try:
+        yield calls
+    finally:
+        helper.run = original_run
+        helper._systemctl_user = original_systemctl
+        helper._rd_output_present = original_present
+        helper._user_unit_state = original_unit
+        helper.detect_compositor = original_compositor
+        helper.remote_desktop_status = original_status
+
+
+def test_remote_desktop_start_creates_the_output_before_starting_the_unit():
+    with _rd_lifecycle(output_present=False) as calls:
+        result = helper.remote_desktop_start()
+    assert_equal(result["ok"], True, "a clean start succeeds")
+    kinds = [call[0] for call in calls]
+    assert_equal(kinds, ["hyprctl", "systemctl"], "the output must exist before the unit starts")
+    assert_equal(
+        calls[0], ["hyprctl", "output", "create", "headless"],
+        "the virtual output is created by this command, not by the caller",
+    )
+
+
+def test_remote_desktop_start_refuses_when_the_output_cannot_be_checked():
+    # hyprctl unavailable or unanswering. Starting anyway would capture a real
+    # monitor and report success -- the exact silent failure this guards.
+    with _rd_lifecycle(output_present=None) as calls:
+        result = helper.remote_desktop_start()
+    assert_equal(result["ok"], False, "an unverifiable output must not start the host")
+    assert_equal(calls, [], "nothing is started and nothing is created when the output is unknown")
+    if not result["failures"] or helper.RD_OUTPUT not in result["failures"][0]:
+        raise AssertionError(f"the refusal must name {helper.RD_OUTPUT}: {result['failures']!r}")
+
+
+def test_remote_desktop_start_does_not_recreate_an_existing_output():
+    with _rd_lifecycle(output_present=True) as calls:
+        result = helper.remote_desktop_start()
+    assert_equal(result["ok"], True, "an existing output is fine")
+    assert_equal([call[0] for call in calls], ["systemctl"], "an existing output is left alone")
+
+
+def test_remote_desktop_paired_clients_reads_only_names():
+    def check(home: Path):
+        config = home / ".config" / "sunshine"
+        config.mkdir(parents=True)
+        (config / "sunshine_state.json").write_text(json.dumps({
+            "username": "method",
+            "salt": "SALTVALUE",
+            "password": "HASHVALUE",
+            "root": {
+                "uniqueid": "UNIQUE",
+                "named_devices": [
+                    {"name": "mbp-1", "cert": "-----BEGIN CERTIFICATE-----"},
+                    {"name": "  ", "cert": "x"},
+                    {"cert": "no name here"},
+                ],
+            },
+        }))
+        old_xdg = os.environ.pop("XDG_CONFIG_HOME", None)
+        try:
+            names = helper._rd_paired_clients()
+        finally:
+            if old_xdg is not None:
+                os.environ["XDG_CONFIG_HOME"] = old_xdg
+        # Only names, and only usable ones. The same file holds the Web UI
+        # credential hash and salt; nothing but `name` may leave this function.
+        assert_equal(names, ["mbp-1"], "only non-blank device names are returned")
+        for name in names:
+            if "SALT" in name or "HASH" in name:
+                raise AssertionError("credential material must never reach the payload")
+
+    with_temp_home(check)
+
+    # A machine with no Sunshine config is not an error, just an empty list.
+    with_temp_home(lambda home: assert_equal(helper._rd_paired_clients(), [], "no state file means no paired clients"))
+
+
+def test_remote_desktop_watch_tokens_cover_every_event():
+    # Real lines, copied from this host's journal. The widget never sees
+    # Sunshine's wording -- it sees these tokens -- so this is where the log
+    # format is pinned.
+    cases = [
+        ("2026-08-06 11:10:43 Info: CLIENT CONNECTED", "connected"),
+        ("2026-08-06 11:45:30 Info: CLIENT DISCONNECTED", "disconnected"),
+        ("Started Self-hosted game stream host for Moonlight.", "lifecycle"),
+        ("Stopping Self-hosted game stream host for Moonlight...", "lifecycle"),
+        ("Stopped Self-hosted game stream host for Moonlight.", "lifecycle"),
+        ("Info: Creating encoder [hevc_nvenc]", "session"),
+        ("Info: Streaming bitrate is 27788000", "session"),
+        # Noise the follow must NOT wake the shell for: Sunshine logs hundreds
+        # of these per start, and a resync on each would be a poll with extra
+        # steps.
+        ("Info: [wayland] Found interface: wl_output(71) version 4", ""),
+        ("Info: Color range: JPEG", ""),
+        ("", ""),
+    ]
+    for line, expected in cases:
+        assert_equal(helper._rd_watch_token(line), expected, f"watch token for {line!r}")
+
+
 def main():
     # A catalog download is minutes to hours of network transfer. Holding the
     # exclusive theme lock for that long would block applies, the light/dark
@@ -2790,6 +2997,12 @@ def main():
     test_theme_catalog_download_verifies_every_file()
     test_theme_catalog_manifest_matches_the_repo()
     test_theme_catalog_generator_rejects_uninstallable_packages()
+    test_remote_desktop_reports_streaming_separately_from_listening()
+    test_remote_desktop_start_creates_the_output_before_starting_the_unit()
+    test_remote_desktop_start_refuses_when_the_output_cannot_be_checked()
+    test_remote_desktop_start_does_not_recreate_an_existing_output()
+    test_remote_desktop_paired_clients_reads_only_names()
+    test_remote_desktop_watch_tokens_cover_every_event()
     subprocess.run(
         [sys.executable, str(REPO_ROOT / "scripts" / "check-vshell-niri.py")],
         check=True,
