@@ -53,3 +53,7 @@ report values in the committed files as leaked secrets.
 
 **One owner per resource.** Reject a second watcher, poller, or daemon for
 something the helper or QML already owns.
+
+- Fleet reviewer guidance — review economics, accepted residual classes,
+  do-not-re-raise rules — lives in the root `review-bots.md`. Read it
+  before reviewing and follow it.

@@ -1,5 +1,7 @@
 # AGENTS.md
 
+Reviewing a PR as a review bot? Follow `review-bots.md` (repo root) — reviewer context stays there, not here.
+
 VGS = VanillaGreen Shell. Runtime name stays `vshell` because `vgs` conflicts with LVM `vgs`.
 
 ## Mission
@@ -173,6 +175,7 @@ scripts/check-workflows.sh
 scripts/check-coderabbit-config.py
 scripts/check-review-gate-vendor.sh
 third_party/review-gate/scripts/review-predicate-selftest.sh
+third_party/review-gate/tests/pr-watch.test.sh
 scripts/qml-smoke.sh --nested --require-static
 scripts/check-validation-safety.sh
 scripts/check-label-taxonomy.py

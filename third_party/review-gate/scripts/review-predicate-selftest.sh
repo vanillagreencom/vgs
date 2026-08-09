@@ -61,6 +61,7 @@ ACTIVE_THREADS="$(rg_setting REVIEW_GATE_THREADS "enforce")" || exit 1
 ACTIVE_API_ATTEMPTS="$(rg_setting REVIEW_GATE_API_ATTEMPTS "1")" || exit 1
 ACTIVE_API_DELAY="$(rg_setting REVIEW_GATE_API_RETRY_DELAY_SECONDS "2")" || exit 1
 ACTIVE_CARRY="$(rg_setting REVIEW_GATE_CARRY_FORWARD "")" || exit 1
+ACTIVE_CARRY_EXCLUDE="$(rg_setting REVIEW_GATE_CARRY_FORWARD_EXCLUDE "")" || exit 1
 
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
@@ -168,8 +169,10 @@ checkrun() { # name, conclusion, summary, [app slug] -> checkruns.json
   # Real check runs always carry a publishing app; the default models a
   # trusted reviewer's own app. Pass "github-actions" for the near-miss:
   # a PR workflow can publish under ANY NAME through that shared app.
+  # Every real row also carries a run id — the predicate validates it, so
+  # the fixture models the real shape.
   jq -n --arg name "$1" --arg conclusion "$2" --arg summary "${3:-}" --arg app "${4:-trusted-reviewer-app}" \
-    '{check_runs:[{name:$name,conclusion:$conclusion,app:{slug:$app},output:{title:null,summary:$summary}}]}' \
+    '{check_runs:[{id:1,name:$name,conclusion:$conclusion,app:{slug:$app},output:{title:null,summary:$summary}}]}' \
     >"$fixtures/checkruns.json"
 }
 compare_fix() { # status, [files JSON array] -> compare.json (the N...head delta)
@@ -213,6 +216,7 @@ run() { # case-name, expected-verdict, expected-exit
     REVIEW_GATE_API_RETRY_DELAY_SECONDS="$CFG_API_DELAY" \
     REVIEW_GATE_STATUS_SNAPSHOT_FILE="$CFG_SNAPSHOT" \
     REVIEW_GATE_CARRY_FORWARD="$CFG_CARRY" \
+    REVIEW_GATE_CARRY_FORWARD_EXCLUDE="$CFG_CARRY_EXCLUDE" \
     GH_REPO="owner/repo" PR_NUMBER=1 HEAD_SHA="$HEAD" PR_AUTHOR="$CFG_PR_AUTHOR" \
     "$predicate" 2>/dev/null)"
   rc=$?
@@ -242,6 +246,7 @@ reset() {
   CFG_API_ATTEMPTS="$ACTIVE_API_ATTEMPTS"
   CFG_API_DELAY="$ACTIVE_API_DELAY"
   CFG_CARRY="$ACTIVE_CARRY"
+  CFG_CARRY_EXCLUDE="$ACTIVE_CARRY_EXCLUDE"
   CFG_SNAPSHOT=""
   rm -f "$fixtures/compare.json"
   CFG_PR_AUTHOR="$AUTHOR"
@@ -475,7 +480,7 @@ run "github-actions-published check-run under a trusted name is not evidence" aw
 # unprovable provenance and is not evidence either.
 reset
 CFG_CONTEXTS="mech-ctx"
-jq -n '{check_runs:[{name:"mech-ctx",conclusion:"success",output:{title:null,summary:"analysis complete"}}]}' >"$fixtures/checkruns.json"
+jq -n '{check_runs:[{id:1,name:"mech-ctx",conclusion:"success",output:{title:null,summary:"analysis complete"}}]}' >"$fixtures/checkruns.json"
 run "check-run with no app slug (unprovable provenance) is not evidence" awaiting
 
 # NEWEST RUN DECIDES per name (vstack#1110), ordered by run id — the
@@ -531,6 +536,34 @@ jq -n '{check_runs:[
   {id:1,name:"mech-ctx",conclusion:"success",app:{slug:"trusted-reviewer-app"},output:{title:null,summary:"analysis complete"}}
 ]}' >"$fixtures/checkruns.json"
 run "github-actions-published newer run cannot mask the reviewer's clean success" approved
+
+# The ordering key is validated, never defaulted: a retained row without a
+# positive numeric id is a broken read (exit 2) — sorting it as 0 would let
+# a malformed NEWEST row revive the older success it should mask. Rows
+# dropped for the github-actions slug are excluded before validation.
+reset
+CFG_CONTEXTS="mech-ctx"
+jq -n '{check_runs:[
+  {name:"mech-ctx",conclusion:null,status:"in_progress",app:{slug:"trusted-reviewer-app"},output:{title:null,summary:null}},
+  {id:1,name:"mech-ctx",conclusion:"success",app:{slug:"trusted-reviewer-app"},output:{title:null,summary:"analysis complete"}}
+]}' >"$fixtures/checkruns.json"
+run "a retained check-run row with NO id is exit 2, never sorted oldest" "" 2
+
+reset
+CFG_CONTEXTS="mech-ctx"
+jq -n '{check_runs:[
+  {id:"2",name:"mech-ctx",conclusion:null,status:"in_progress",app:{slug:"trusted-reviewer-app"},output:{title:null,summary:null}},
+  {id:1,name:"mech-ctx",conclusion:"success",app:{slug:"trusted-reviewer-app"},output:{title:null,summary:"analysis complete"}}
+]}' >"$fixtures/checkruns.json"
+run "a string-typed run id is exit 2 (validated, not coerced)" "" 2
+
+reset
+CFG_CONTEXTS="mech-ctx"
+jq -n '{check_runs:[
+  {name:"mech-ctx",conclusion:null,status:"queued",app:{slug:"github-actions"},output:{title:null,summary:null}},
+  {id:1,name:"mech-ctx",conclusion:"success",app:{slug:"trusted-reviewer-app"},output:{title:null,summary:"analysis complete"}}
+]}' >"$fixtures/checkruns.json"
+run "an id-less github-actions row is dropped before validation (cannot fail the read)" approved
 
 # Slugless ANOMALY rows are the opposite of the minting lever: kept in the
 # sequence, so an anomalous NEWEST row masks toward closed rather than
@@ -749,7 +782,7 @@ run "trusted approval + untrusted changes-requested fails closed" changes-reques
 # and this case would stop exercising the skip-pattern text at all.
 reset
 CFG_CONTEXTS="mech-ctx"; CFG_SKIPS="rate limited"
-printf '{"check_runs":[{"name":"mech-ctx","conclusion":"success","app":{"slug":"trusted-reviewer-app"},"output":{"title":"mech-ctx","summary":"Review rate limited. 0 files reviewed."}}]}\n' \
+printf '{"check_runs":[{"id":1,"name":"mech-ctx","conclusion":"success","app":{"slug":"trusted-reviewer-app"},"output":{"title":"mech-ctx","summary":"Review rate limited. 0 files reviewed."}}]}\n' \
   >"$fixtures/checkruns.json"
 run "rate-limited 'pass' check-run is NOT evidence (live fixture)" awaiting
 
@@ -1015,7 +1048,7 @@ run "pagination: trusted status on statuses page 2 counts" approved
 
 reset
 CFG_CONTEXTS="mech-ctx"
-jq -n '{check_runs:[{name:"mech-ctx",conclusion:"success",app:{slug:"trusted-reviewer-app"},output:{title:null,summary:"analysis complete"}}]}' >"$fixtures/checkruns.page2.json"
+jq -n '{check_runs:[{id:1,name:"mech-ctx",conclusion:"success",app:{slug:"trusted-reviewer-app"},output:{title:null,summary:"analysis complete"}}]}' >"$fixtures/checkruns.page2.json"
 run "pagination: trusted check-run on page 2 counts" approved
 
 # PR_AUTHOR resolution (VST-35): every other case passes PR_AUTHOR
@@ -1386,6 +1419,86 @@ CFG_CARRY="docs"
 compare_fix diverged "[$DOCS_DELTA]"
 run "carry: a non-ancestor candidate (diverged) never carries" awaiting
 
+# Path exclusions (vstack#1115): policy-bearing markdown classifies "docs"
+# by extension, so REVIEW_GATE_CARRY_FORWARD_EXCLUDE globs disqualify any
+# carry whose delta touches an excluded path — surgical (non-matching deltas
+# still carry), '*' crosses '/', and inert for identical trees (no delta).
+AGENTS_DELTA="$(delta_file "AGENTS.md" modified '@@ -1 +1 @@
+-old instruction
++new instruction')"
+NESTED_AGENTS_DELTA="$(delta_file "skills/foo/AGENTS.md" modified '@@ -1 +1 @@
+-old instruction
++new instruction')"
+
+reset
+carry_candidate
+CFG_CARRY="docs"; CFG_CARRY_EXCLUDE=""
+compare_fix ahead "[$AGENTS_DELTA]"
+run "carry-exclude unset (default): policy markdown still carries as docs" approved
+
+reset
+carry_candidate
+CFG_CARRY="docs"; CFG_CARRY_EXCLUDE="*AGENTS.md"
+compare_fix ahead "[$AGENTS_DELTA]"
+run "carry-exclude: an excluded path in the delta refuses the carry" awaiting
+
+reset
+carry_candidate
+CFG_CARRY="docs"; CFG_CARRY_EXCLUDE="*AGENTS.md"
+compare_fix ahead "[$NESTED_AGENTS_DELTA]"
+run "carry-exclude: '*' crosses '/' — a nested AGENTS.md is excluded too" awaiting
+
+reset
+carry_candidate
+CFG_CARRY="docs"; CFG_CARRY_EXCLUDE="*AGENTS.md"
+compare_fix ahead "[$DOCS_DELTA]"
+run "carry-exclude: a non-matching docs delta still carries (surgical)" approved
+
+reset
+carry_candidate
+CFG_CARRY="docs"; CFG_CARRY_EXCLUDE=".github/*; *AGENTS.md"
+compare_fix ahead "[$DOCS_DELTA,$AGENTS_DELTA]"
+run "carry-exclude: one excluded file refuses the WHOLE delta (2nd glob, spaces trimmed)" awaiting
+
+reset
+carry_candidate
+CFG_CARRY="docs"; CFG_CARRY_EXCLUDE=".github/*"
+compare_fix ahead "[$(delta_file ".github/copilot-instructions.md" modified '@@ -1 +1 @@
+-a
++b')]"
+run "carry-exclude: a directory glob catches instruction files under .github/" awaiting
+
+reset
+carry_candidate
+CFG_CARRY="docs"; CFG_CARRY_EXCLUDE="*AGENTS.md"
+compare_fix identical
+run "carry-exclude: identical tree still carries (no delta to exclude)" approved
+
+reset
+carry_candidate
+CFG_CARRY="comments"; CFG_CARRY_EXCLUDE="src/thing.sh"
+compare_fix ahead "[$COMMENT_DELTA]"
+run "carry-exclude: applies to the comments class too (literal path)" awaiting
+
+# A git filename may embed a newline; split across lines it could dodge a
+# compound glob (skills/*.md misses 'skills/foo\nbar.md' tested as two
+# records) while the intact name still classifies docs. Exclusion matching
+# demands provable record boundaries: control characters refuse the carry.
+NEWLINE_NAME_DELTA="$(delta_file "$(printf 'skills/foo\nbar.md')" modified '@@ -1 +1 @@
+-a
++b')"
+reset
+carry_candidate
+CFG_CARRY="docs"; CFG_CARRY_EXCLUDE="skills/*.md"
+compare_fix ahead "[$NEWLINE_NAME_DELTA]"
+run "carry-exclude: a newline-embedding filename refuses (record boundaries unprovable)" awaiting
+
+reset
+carry_candidate
+CFG_CARRY="docs"; CFG_CARRY_EXCLUDE=""
+compare_fix ahead "[$NEWLINE_NAME_DELTA]"
+run "carry-exclude: the control-character refusal is scoped to configured exclusions" approved
+
 reset
 carry_candidate
 CFG_CARRY="docs"
@@ -1558,6 +1671,7 @@ if [ -n "$ACTIVE_OUTAGE" ]; then
     REVIEW_GATE_REVIEW_OBJECT_TRUSTED_LOGINS="$CFG_TRUSTED_LOGINS" \
     REVIEW_GATE_CONTEXT="$CFG_GATE_CONTEXT" REVIEW_GATE_THREADS="$CFG_THREADS" \
     REVIEW_GATE_CARRY_FORWARD="$CFG_CARRY" \
+    REVIEW_GATE_CARRY_FORWARD_EXCLUDE="$CFG_CARRY_EXCLUDE" \
     GH_REPO="owner/repo" PR_NUMBER=1 HEAD_SHA="$HEAD" PR_AUTHOR="$CFG_PR_AUTHOR" \
     "$predicate" 2>/dev/null)" || detail_rc=$?
   detail_line="$(head -n 1 <<<"$detail_line")"
