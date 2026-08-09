@@ -36,6 +36,10 @@ const marked = widgetSource.match(/\/\/ BEGIN STATE DECISION\n([\s\S]*?)\/\/ END
 assert.ok(marked, "RemoteDesktopWidget.qml must carry the STATE DECISION markers");
 const { visualStateFor } = new Function(`${marked[1]}\nreturn { visualStateFor };`)();
 
+const sessionMarked = serviceSource.match(/\/\/ BEGIN SESSION DECISION\n([\s\S]*?)\/\/ END SESSION DECISION/);
+assert.ok(sessionMarked, "RemoteDesktopService.qml must carry the SESSION DECISION markers");
+const { sessionApplyDecision } = new Function(`${sessionMarked[1]}\nreturn { sessionApplyDecision };`)();
+
 function host(overrides) {
     return Object.assign({
         streaming: false,
@@ -136,6 +140,78 @@ for (const state of ["unknown", "stale", "listening", "off", "unavailable"]) {
         `an unconfirmed capture must never fall through to ${state}`
     );
 }
+
+// --- an unreadable journal is not "nobody is watching" ----------------------
+//
+// The helper reports `readable: false` with `active` left at its default
+// false. Taking that default at face value cleared a live capture on the
+// strength of a failed read — the same defect as the dead-watcher case, moved
+// to the assignment site.
+
+const unreadable = sessionApplyDecision({ readable: false, active: false, error: "No journal files were found." });
+assert.equal(unreadable.known, false, "an unreadable journal leaves the session unknown");
+assert.equal(
+    unreadable.applyActive, false,
+    "`active` must not be applied from a block that says it could not be read"
+);
+assert.equal(unreadable.reason, "No journal files were found.", "the reason survives to the caller");
+
+assert.equal(sessionApplyDecision({}).applyActive, false, "a missing session block decides nothing");
+assert.equal(sessionApplyDecision(null).applyActive, false, "no session block decides nothing");
+assert.equal(
+    sessionApplyDecision({ readable: "yes", active: true }).applyActive,
+    false,
+    "only a literal true is readable; a truthy value is not an answer"
+);
+
+const readable = sessionApplyDecision({ readable: true, active: true, error: "" });
+assert.equal(readable.known, true, "a readable journal is an answer");
+assert.equal(readable.applyActive, true, "and its `active` is the authority that may clear LIVE");
+assert.equal(
+    sessionApplyDecision({ readable: true, active: false }).applyActive,
+    true,
+    "a readable journal saying nobody is connected DOES clear it — that is the one authority"
+);
+
+// _applyStatus must route through the decision, and must not assign the
+// session fields on the path that decided nothing.
+const applyBody = qmlFunctionBody("_applyStatus");
+assert.ok(
+    applyBody.includes("root.sessionApplyDecision(session)"),
+    "_applyStatus must route the session block through the decision"
+);
+// The guard's PRESENCE is asserted before its position. `indexOf` returns -1
+// for an absent needle, and -1 is trivially less than any real index, so an
+// ordering assertion alone passes vacuously once the guard is deleted — which
+// is precisely the mutation it exists to catch.
+const guardAt = applyBody.indexOf("if (!decision.applyActive)");
+const assignAt = applyBody.indexOf("root.streaming = session.active === true");
+assert.ok(guardAt >= 0, "_applyStatus must guard the session assignment on the decision");
+assert.ok(assignAt >= 0, "_applyStatus must still be the site that applies the session");
+assert.ok(guardAt < assignAt, "the guard must come before the assignment it guards");
+assert.ok(
+    applyBody.includes("root._markSessionUnknown(decision.reason"),
+    "an unreadable block moves the session to unknown, not to idle"
+);
+
+// And "up, but we cannot say whether anyone is connected" must not render as a
+// plain On, which claims nobody is — the reassuring direction is the worse one
+// to get wrong.
+assert.equal(
+    visualStateFor(host({ running: true, sessionKnown: false })),
+    "listening-unconfirmed",
+    "a host whose sessions cannot be read must not claim nobody is watching"
+);
+assert.equal(
+    visualStateFor(host({ running: true, sessionKnown: true })),
+    "listening",
+    "a confirmed idle host still reads plainly On"
+);
+assert.equal(
+    visualStateFor(host({ running: false, sessionKnown: false })),
+    "off",
+    "a host that is down has no sessions to be unsure about"
+);
 
 // --- the decision function can fail ----------------------------------------
 //

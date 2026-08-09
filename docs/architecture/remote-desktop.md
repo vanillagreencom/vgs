@@ -47,6 +47,14 @@ Three details that follow from that:
 
 The two halves are paired in both directions:
 
+- **A created output is verified before the unit starts.** `hyprctl` exiting 0
+  is not the output existing; if it is absent, Sunshine picks a real monitor at
+  startup and streams the user's own screen with nothing to say so — the same
+  silent fallback as the unanswerable-probe case, reached from the other side.
+  `start` re-reads presence and refuses rather than starting blind, keeping
+  "cannot tell" distinct from "absent". Nothing is rolled back on either
+  refusal: there is no output to remove in one case, and removing what cannot be
+  seen is the guess this record exists to avoid in the other.
 - **A failed start removes the output it created.** Otherwise the user is left
   with a phantom monitor *and* no host — the exact state the disabled-by-default
   design exists to avoid, with no affordance to undo it. Only what that call
@@ -55,6 +63,10 @@ The two halves are paired in both directions:
   `HEADLESS-1` would delete a virtual output the user set up for something else,
   as a side effect of stopping a service. That is not recoverable from the
   shell, so it needs provenance rather than a name match.
+
+Ownership is recorded only **after** that verification, so what was verified as
+created is exactly what is owned and exactly what `stop` may remove — one record
+answers all three.
 
 Provenance lives in `~/.local/state/vshell/remote-desktop-output.json`, beside
 the notification-takeover undo record and for the same reason: `start` and
@@ -204,6 +216,18 @@ detail — those values were only current because something was refreshing them 
 and the service immediately calls `refresh()`, because the status read is a
 separate process that does not depend on the watch and may still answer
 authoritatively.
+
+The same rule applies at the *assignment* site. A status reply can be valid
+while its session block is not: the helper returns `readable: false` with
+`active` left at its default `false`, and taking that default at face value
+cleared a live capture on the strength of a failed journal read.
+`sessionApplyDecision()` is the guard — `active` is applied only from a block
+that says it could be read, and an unreadable one moves the session to unknown
+instead.
+
+The reassuring direction is the one worse to get wrong, so it has its own state
+too: a host that is up with an unreadable journal renders `listening-unconfirmed`
+(`On?`, warning) rather than a plain `On`, which would claim nobody is watching.
 
 `streaming` is **not** cleared: that would claim "idle" on a dead watcher's
 say-so, and only the authoritative session count may say a capture ended. So the

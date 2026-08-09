@@ -75,7 +75,13 @@ PluginComponent {
             return "unavailable";
         if (!host.watchLive)
             return "stale";
-        return host.running ? "listening" : "off";
+        if (!host.running)
+            return "off";
+        // Host up, watch alive, but the journal could not be read: "On" would
+        // claim nobody is watching, which is the same overstatement as a plain
+        // LIVE on an unconfirmed session — just in the reassuring direction,
+        // which is the worse one to get wrong.
+        return host.sessionKnown ? "listening" : "listening-unconfirmed";
     }
     // END STATE DECISION
 
@@ -110,6 +116,7 @@ PluginComponent {
             return Theme.error;
         case "unknown":
         case "stale":
+        case "listening-unconfirmed":
             return Theme.warning;
         case "listening":
             return Theme.primary;
@@ -131,6 +138,8 @@ PluginComponent {
             return "LIVE?";
         case "listening":
             return "On";
+        case "listening-unconfirmed":
+            return "On?";
         default:
             return "Off";
         }
@@ -152,6 +161,8 @@ PluginComponent {
         if (root.visualState === "stale")
             return "Remote desktop state may be out of date — " + (RemoteDesktopService.watchError || "the host event watch is not running");
         if (root.hostUp) {
+            if (!root.sessionKnown)
+                return "Remote desktop is up — whether anyone is connected could not be checked: " + (RemoteDesktopService.sessionError || "the host journal could not be read");
             if (root.captureFallback)
                 return "Remote desktop is up, but capturing a real monitor — " + RemoteDesktopService.outputName + " is missing";
             if (root.outputUnknown)
@@ -308,7 +319,9 @@ PluginComponent {
                     return "State unknown";
                 if (!root.installed)
                     return "Not installed";
-                return root.hostUp ? "Listening" : "Off";
+                if (!root.hostUp)
+                    return "Off";
+                return root.sessionKnown ? "Listening" : "Listening — sessions unconfirmed";
             }
             showCloseButton: true
 
@@ -352,7 +365,9 @@ PluginComponent {
                                         return "Host state is unknown";
                                     if (!root.installed)
                                         return "Sunshine is not installed";
-                                    return root.hostUp ? "Host is up, nobody connected" : "Host is off";
+                                    if (!root.hostUp)
+                                        return "Host is off";
+                                    return root.sessionKnown ? "Host is up, nobody connected" : "Host is up, sessions unconfirmed";
                                 }
                                 font.pixelSize: Theme.fontSizeMedium
                                 font.weight: Font.Medium

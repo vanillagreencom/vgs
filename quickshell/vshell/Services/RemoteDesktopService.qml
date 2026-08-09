@@ -169,6 +169,32 @@ Singleton {
         lifecycleProc.running = true;
     }
 
+    // Pure decision function. `scripts/test-remote-desktop-state.js` extracts
+    // THIS source text between the markers and exercises it directly.
+    // BEGIN SESSION DECISION
+    function sessionApplyDecision(session) {
+        const block = session || {};
+        // `active: false` beside `readable: false` is NOT "nobody is watching".
+        // It is "I could not tell": the helper cannot report on a journal it
+        // could not read, so it reports the axis as unreadable and leaves
+        // `active` at its default. Taking that default at face value would
+        // clear a live capture on the strength of a failed read — the same
+        // defect as rendering a dead watch's last message as idle, at the
+        // assignment site instead of the watch handler.
+        if (block.readable !== true)
+            return {
+                "known": false,
+                "applyActive": false,
+                "reason": block.error || ""
+            };
+        return {
+            "known": true,
+            "applyActive": true,
+            "reason": ""
+        };
+    }
+    // END SESSION DECISION
+
     function _applyStatus(text) {
         let status = null;
         try {
@@ -202,8 +228,16 @@ Singleton {
         root.outputPresent = output.present === true;
 
         const session = status.session || {};
-        root.sessionKnown = session.readable === true;
-        root.sessionError = session.error || "";
+        const decision = root.sessionApplyDecision(session);
+        if (!decision.applyActive) {
+            // Unknown, never idle: `streaming` is left exactly as it was, so a
+            // live capture survives an unreadable journal and renders as
+            // unconfirmed rather than silently dropping to "listening".
+            root._markSessionUnknown(decision.reason || I18n.tr("the host journal could not be read"));
+            return;
+        }
+        root.sessionKnown = true;
+        root.sessionError = "";
         root.streaming = session.active === true;
         root.sessionCount = session.count || 0;
         root.sessionSince = session.since || "";
