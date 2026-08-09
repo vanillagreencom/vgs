@@ -16,6 +16,15 @@
 // The policy is extracted verbatim from the shipped QML between its
 // BEGIN/END OVERRIDE POLICY markers, so this tests the real source rather than
 // a re-implementation of it.
+//
+// It then checks the shipped plugin manifests against VERSION, using the
+// runtime's own comparator (extracted the same way from ShellVersionService).
+// A bundled manifest's requires_shell is never enforced, so an impossible one
+// is inert where it is written and fires only where it is copied: an override
+// is normally a copy of the shipped manifest, so it inherits the constraint and
+// is demoted by the version gate. Every bundled manifest shipped `>=1.0.0`
+// against a 0.1.0 shell, which made overriding any bundled plugin impossible
+// and had nothing to catch it. (VGS-76)
 
 "use strict";
 
@@ -23,8 +32,9 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
 
+const REPO = path.join(__dirname, "..");
 const SERVICE = path.join(
-    __dirname, "..", "quickshell", "vshell", "Services", "PluginService.qml"
+    REPO, "quickshell", "vshell", "Services", "PluginService.qml"
 );
 
 const source = fs.readFileSync(SERVICE, "utf8");
@@ -165,4 +175,50 @@ for (const existing of [null, owner("bundled"), owner("user"), owner("user", { o
     assert.equal(decided.alwaysAvailable, true, "and is always available whatever it competes with");
 }
 
-console.log("bundled-override policy checks passed");
+// --- VGS-76: shipped manifests must satisfy the shell they ship with --------
+
+const VERSION_SERVICE = path.join(
+    REPO, "quickshell", "vshell", "Services", "ShellVersionService.qml"
+);
+const versionSource = fs.readFileSync(VERSION_SERVICE, "utf8");
+const versionMatch = versionSource.match(/\/\/ BEGIN VERSION POLICY\n([\s\S]*?)\/\/ END VERSION POLICY/);
+assert.ok(versionMatch, "ShellVersionService.qml must carry the VERSION POLICY markers");
+
+// Same extraction trick, and for the same reason: the requirement has to be
+// judged by the comparator that judges it at runtime, not by a stand-in that
+// could be more permissive than the shell.
+const { checkVersionRequirement, parseVersion } = new Function(
+    `${versionMatch[1]}\nreturn { checkVersionRequirement, parseVersion };`
+)();
+
+const shellVersion = fs.readFileSync(path.join(REPO, "VERSION"), "utf8").trim();
+assert.ok(/^\d+\.\d+\.\d+/.test(shellVersion), `VERSION must be semver, got "${shellVersion}"`);
+const parsedShell = parseVersion(shellVersion);
+
+// The instrument before the measurement: a comparator that answered `true` to
+// everything would pass every manifest below while checking nothing.
+assert.equal(checkVersionRequirement(">=999.0.0", parsedShell), false, "the extracted comparator must be able to refuse a requirement");
+assert.equal(checkVersionRequirement(">=0.0.0", parsedShell), true, "and to accept one");
+
+const PLUGIN_DIR = path.join(REPO, "config", "vshell", "plugins");
+const manifestFiles = fs.readdirSync(PLUGIN_DIR, { withFileTypes: true })
+    .filter(entry => entry.isDirectory())
+    .map(entry => path.join(PLUGIN_DIR, entry.name, "plugin.json"))
+    .filter(file => fs.existsSync(file));
+assert.ok(manifestFiles.length > 0, `no bundled plugin manifests found under ${PLUGIN_DIR}`);
+
+for (const file of manifestFiles) {
+    const manifest = JSON.parse(fs.readFileSync(file, "utf8"));
+    const requires = manifest.requires_shell || manifest.requires_vgs || null;
+    if (!requires)
+        continue;
+    assert.equal(
+        checkVersionRequirement(requires, parsedShell),
+        true,
+        `${path.relative(REPO, file)}: requires_shell "${requires}" is not satisfied by VERSION ${shellVersion}. ` +
+        "A bundled manifest is never judged by this constraint, but an override copied from it is, " +
+        "so an unsatisfiable value here makes the plugin impossible to override (VGS-76)."
+    );
+}
+
+console.log(`bundled-override policy checks passed (${manifestFiles.length} shipped manifests judged against VERSION ${shellVersion})`);

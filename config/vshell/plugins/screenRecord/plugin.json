@@ -7,6 +7,6 @@
     "author": "VanillaGreen",
     "icon": "photo_camera",
     "component": "./ScreenRecordWidget.qml",
-    "requires_shell": ">=1.0.0",
+    "requires_shell": ">=0.1.0",
     "permissions": []
 }
