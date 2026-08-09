@@ -3445,6 +3445,626 @@ def test_remote_desktop_watch_tokens_cover_every_event():
     ]
     for line, expected in cases:
         assert_equal(helper._rd_watch_token(line), expected, f"watch token for {line!r}")
+def _pad(**overrides):
+    base = {"id": "term", "name": "Terminal", "command": "ghostty",
+            "classRegex": r"^(com\.ghostty\.scratchpad)$"}
+    base.update(overrides)
+    return helper.normalize_scratchpad(base)
+
+
+def _monitor(name="DP-1", width=1920, height=1080, scale=1.0, x=0, y=0, **extra):
+    mon = {"name": name, "width": width, "height": height, "scale": scale, "x": x, "y": y}
+    mon.update(extra)
+    return mon
+
+
+def test_scratchpad_size_is_a_percentage_of_the_monitor():
+    """The reason a pad stores a percentage instead of pixels: one record has to
+    be right on every display it can land on. Pixels are correct on exactly one."""
+    pad = _pad(widthPercent=60, heightPercent=70, anchor="top-center", offsetY=36)
+
+    on_1080p = helper.resolve_scratchpad_geometry(pad, _monitor(height=1080))
+    assert_equal((on_1080p["width"], on_1080p["height"]), (1152, 756), "60%x70% of 1920x1080")
+
+    on_4k = helper.resolve_scratchpad_geometry(pad, _monitor(width=3840, height=2160))
+    assert_equal((on_4k["width"], on_4k["height"]), (2304, 1512), "60%x70% of 3840x2160")
+
+    # Scale is not cosmetic here. Window rules and dispatches both speak logical
+    # coordinates, so a 4K panel at scale 2 must size like a 1080p one — sizing
+    # against the mode would produce a pad twice the intended size.
+    hidpi = helper.resolve_scratchpad_geometry(pad, _monitor(width=3840, height=2160, scale=2.0))
+    assert_equal((hidpi["width"], hidpi["height"]), (1152, 756),
+                 "a 4K monitor at scale 2 is logically 1080p")
+
+    # An odd transform rotates the logical box; a portrait monitor is taller
+    # than it is wide and the percentages have to follow.
+    portrait = helper.resolve_scratchpad_geometry(pad, _monitor(width=2560, height=1440, transform=1))
+    assert_equal((portrait["monitorWidth"], portrait["monitorHeight"]), (1440, 2560),
+                 "transform 1 swaps the logical axes")
+
+    # Pixels remain available for apps with a hard minimum size.
+    exact = helper.resolve_scratchpad_geometry(
+        _pad(sizeMode="pixels", widthPixels=900, heightPixels=600), _monitor())
+    assert_equal((exact["width"], exact["height"]), (900, 600), "pixel override is honoured verbatim")
+
+
+def test_scratchpad_anchor_resolves_to_coordinates():
+    """A named anchor plus an offset is what users mean ("top-centre, 36px down
+    to clear the bar"); raw coordinates are what they are forced to compute."""
+    mon = _monitor(width=1000, height=800)
+    size = {"sizeMode": "pixels", "widthPixels": 400, "heightPixels": 200}
+
+    cases = {
+        "top-left": (0, 0),
+        "top-center": (300, 0),
+        "top-right": (600, 0),
+        "center": (300, 300),
+        "bottom-right": (600, 600),
+        "center-left": (0, 300),
+    }
+    for anchor, expected in cases.items():
+        geometry = helper.resolve_scratchpad_geometry(_pad(anchor=anchor, **size), mon)
+        assert_equal((geometry["x"], geometry["y"]), expected, f"anchor {anchor}")
+
+    offset = helper.resolve_scratchpad_geometry(
+        _pad(anchor="top-center", offsetY=36, **size), mon)
+    assert_equal((offset["x"], offset["y"]), (300, 36), "top-centre, 36px down")
+
+    # A right/bottom anchor measures its offset inward from that edge, so the
+    # same positive number moves the pad the direction the user expects.
+    inward = helper.resolve_scratchpad_geometry(
+        _pad(anchor="bottom-right", offsetX=20, offsetY=10, **size), mon)
+    assert_equal((inward["x"], inward["y"]), (580, 590), "offsets measure inward from the anchor")
+
+    # An offset that would push the pad off the monitor is clamped: a scratchpad
+    # you cannot see is indistinguishable from a keybind that does nothing.
+    off_screen = helper.resolve_scratchpad_geometry(
+        _pad(anchor="top-left", offsetX=5000, offsetY=5000, **size), mon)
+    assert_equal((off_screen["x"], off_screen["y"]), (600, 600), "clamped onto the monitor")
+
+    # Global coordinates carry the monitor origin, which is what movewindowpixel
+    # takes; monitor-local ones are what a window rule `move` takes.
+    second = helper.resolve_scratchpad_geometry(
+        _pad(anchor="top-left", **size), _monitor(x=1920, y=-200, width=1000, height=800))
+    assert_equal((second["x"], second["y"]), (0, 0), "local coordinates stay monitor-relative")
+    assert_equal((second["globalX"], second["globalY"]), (1920, -200), "global coordinates carry the origin")
+
+
+def test_scratchpad_records_that_cannot_work_are_rejected():
+    """A partial rule is worse than none: a pad with no class regex would match
+    nothing at all, or with a bad one, capture windows it should never touch."""
+    assert_equal(helper.normalize_scratchpad({"id": "term", "command": "x"}), None,
+                 "a pad with no class regex is rejected")
+    assert_equal(helper.normalize_scratchpad({"id": "term", "classRegex": "^x$"}), None,
+                 "a pad with no command is rejected")
+    assert_equal(helper.normalize_scratchpad(
+        {"id": "term", "command": "x", "classRegex": "^(unclosed"}), None,
+        "a pad whose class regex does not compile is rejected")
+    # The id becomes a special-workspace name and reaches `hyprctl dispatch`;
+    # restrict it rather than trying to escape it.
+    for bad in ("", "Has Space", "../escape", "a/b", "a" * 40, "-lead"):
+        assert_equal(helper.normalize_scratchpad(
+            {"id": bad, "command": "x", "classRegex": "^x$"}), None,
+            f"id {bad!r} is rejected")
+    assert helper.normalize_scratchpad({"id": "term-2_a", "command": "x", "classRegex": "^x$"})
+
+    # Case is normalized rather than rejected — Hyprland special-workspace names
+    # are matched literally, so accepting "Term" and "term" as two distinct pads
+    # would produce two rule sets that fight over one workspace.
+    assert_equal(helper.normalize_scratchpad(
+        {"id": "Term", "command": "x", "classRegex": "^x$"})["id"], "term",
+        "an id is lowercased, not rejected")
+
+    # Unknown enum values fall back rather than reaching the generator, where
+    # they would render an anchor or animation Hyprland does not know.
+    pad = _pad(anchor="nowhere", animation="explode", presentation="hologram", sizeMode="cubits")
+    assert_equal(pad["anchor"], "top-center", "unknown anchor falls back")
+    assert_equal(pad["animation"], "slide-top", "unknown animation falls back")
+    assert_equal(pad["presentation"], "float", "unknown presentation falls back")
+    assert_equal(pad["sizeMode"], "percent", "unknown size mode falls back")
+
+
+def test_scratchpad_lua_generation():
+    pads = [
+        _pad(keybind="SUPER, T", monitor="DP-1", anchor="top-center", offsetY=36,
+             widthPercent=60, heightPercent=70, preload=True),
+        _pad(id="vm", name="Work VM", classRegex="^(vm-viewer)$", command="virt-viewer",
+             presentation="fullscreen", keybind="SUPER, 8"),
+        _pad(id="off", classRegex="^(off)$", command="off", enabled=False),
+    ]
+    monitors = [_monitor("DP-1", focused=True), _monitor("eDP-1", x=1920)]
+    text, meta = helper.render_scratchpads_lua(pads, monitors, True)
+
+    assert_equal(meta["count"], 2, "a disabled pad generates no rules")
+    assert_equal(meta["defined"], 3, "but is still counted as defined")
+    assert_equal(meta["preload"], ["term"], "only pads that ask for it preload")
+    assert '"special:term"' in text, "workspace rule names the special workspace"
+    assert '"special:term silent"' in text, "window rule assigns it silently"
+    assert '"1152 756"' in text, "size is resolved from the percentage, not left as one"
+    assert '"384 36"' in text, "move is resolved from the anchor"
+    assert "no_initial_focus = true" in text
+    assert '"^(off)$"' not in text, "a disabled pad must not appear at all"
+
+    # on_created_empty is what makes a cold press show an empty workspace before
+    # the app has spawned; the toggle launches and waits instead.
+    assert "on_created_empty" not in text, "generation must not use on_created_empty"
+
+    # The specialWorkspace animation leaf is global. Writing it per pad would let
+    # the last pad silently win and overwrite the user's own global animation.
+    assert "hl.animation" not in text, "per-pad animation must be a window rule, not the global leaf"
+    assert 'animation = "slide top"' in text
+
+    # An app that requests activation after mapping would otherwise reveal its
+    # own hidden workspace.
+    assert "suppress_event" in text
+
+    empty_text, empty_meta = helper.render_scratchpads_lua([], monitors, True)
+    assert_equal(empty_meta["count"], 0, "no pads generates no rules")
+    assert "hl.window_rule" not in empty_text, "an empty list writes an inert file, not junk"
+
+    # Generated without a compositor, the geometry came from a guessed display.
+    # That has to be visible in the file, not only in the return payload.
+    unresolved, unresolved_meta = helper.render_scratchpads_lua(pads, monitors, False)
+    assert_equal(unresolved_meta["monitorsResolved"], False, "the payload records it")
+    assert "WARNING" in unresolved, "and so does the file itself"
+
+
+def test_scratchpad_generated_lua_parses():
+    """The generator emits Lua that Hyprland will `require`. A syntax error here
+    is a config that fails to load at compositor start, so parse what we wrote."""
+    luac = shutil.which("luac")
+    if not luac:
+        print("  (skipped: luac not installed; generated Lua was not parse-checked)")
+        return
+
+    def parses(source: str) -> bool:
+        with tempfile.NamedTemporaryFile("w", suffix=".lua", delete=False) as handle:
+            handle.write(source)
+            path = handle.name
+        try:
+            return subprocess.run([luac, "-p", path], capture_output=True).returncode == 0
+        finally:
+            os.unlink(path)
+
+    # Prove the instrument can fail before trusting that it passes.
+    assert not parses("hl.window_rule({ this is not lua"), "luac -p must reject broken Lua"
+
+    pads = [
+        _pad(keybind="SUPER, T", monitor="DP-1", preload=True),
+        _pad(id="vm", classRegex="^(vm-viewer)$", command="virt-viewer", presentation="fullscreen"),
+        _pad(id="tiled", classRegex="^(tiled)$", command="tiled", presentation="tile"),
+        # Regexes and commands are full of backslashes and quotes; they are the
+        # most likely thing to break the generated file.
+        _pad(id="quoted", classRegex=r'^(a\.b"c)$', command='sh -c "echo hi"',
+             titleExclude=r"^(1Password)$", keybind="SUPER, Q"),
+    ]
+    text, _ = helper.render_scratchpads_lua(pads, [_monitor("DP-1", focused=True)], True)
+    assert parses(text), "generated scratchpad config must be valid Lua"
+
+
+def _with_session_env(env):
+    """Run with exactly the given compositor session variables set."""
+    keys = ("HYPRLAND_INSTANCE_SIGNATURE", "NIRI_SOCKET", "XDG_CURRENT_DESKTOP")
+    saved = {key: os.environ.pop(key, None) for key in keys}
+    os.environ.update(env)
+    try:
+        return helper.scratchpad_compositor_supported()
+    finally:
+        for key in keys:
+            os.environ.pop(key, None)
+            if saved.get(key) is not None:
+                os.environ[key] = saved[key]
+
+
+def test_scratchpad_compositor_detection_reads_the_session_not_the_binary():
+    """`hyprctl` and `niri` coexist in most distro repos, so an INSTALLED
+    hyprctl says nothing about which compositor owns the session. Treating it
+    as proof sent a Niri session down the Hyprland path and generated rules for
+    a compositor that was not running — which defeats the deliberate refusal."""
+    # The reported case: a Niri session on a machine that also has hyprctl.
+    assert_equal(_with_session_env({"NIRI_SOCKET": "/run/niri.sock"}), (False, "niri"),
+                 "a Niri session must refuse even when hyprctl is installed")
+    assert_equal(_with_session_env({"XDG_CURRENT_DESKTOP": "niri"}), (False, "niri"),
+                 "XDG_CURRENT_DESKTOP is enough to identify the session")
+
+    assert_equal(_with_session_env({"HYPRLAND_INSTANCE_SIGNATURE": "sig"}), (True, "hyprland"),
+                 "a real Hyprland session is supported")
+    assert_equal(_with_session_env({"XDG_CURRENT_DESKTOP": "Hyprland:wlroots"}), (True, "hyprland"),
+                 "a compound desktop string still identifies Hyprland")
+
+    # Any other running session is also not Hyprland, and must not be mistaken
+    # for "nothing is running" — that would let generation proceed under a
+    # compositor that will never read the result.
+    for desktop in ("GNOME", "KDE", "sway"):
+        supported, name = _with_session_env({"XDG_CURRENT_DESKTOP": desktop})
+        assert_equal(supported, False, f"{desktop} is not Hyprland")
+        assert_equal(name, desktop.split(":")[0].lower(), f"{desktop} is named in the refusal")
+
+    # With nothing running, generation is still meaningful (writing config from
+    # a TTY before starting the compositor); the live paths check separately.
+    assert_equal(_with_session_env({}), (True, "none"),
+                 "no session still allows offline generation")
+
+
+def test_scratchpad_target_monitor_resolves_against_connected_outputs():
+    """A configured monitor name is an intent, not a guarantee. A laptop out of
+    its dock still carries DP-1 in the record, and dispatching at a name no
+    output answers to silently does nothing."""
+    original = helper._hyprctl_json
+    calls = []
+
+    def fake(*args):
+        calls.append(args)
+        if args and args[0] == "monitors":
+            return fake.monitors
+        return None
+
+    helper._hyprctl_json = fake
+    try:
+        connected = [{"name": "eDP-1", "focused": True}, {"name": "HDMI-1", "focused": False}]
+
+        # Configured output present -> used verbatim.
+        fake.monitors = connected
+        assert_equal(helper._scratchpad_target_monitor({"id": "p", "monitor": "HDMI-1"}), "HDMI-1",
+                     "a connected configured output is honoured")
+
+        # Configured output gone -> falls back to the focused one, which is what
+        # "follow focus" already means, rather than to a dead dispatch.
+        assert_equal(helper._scratchpad_target_monitor({"id": "p", "monitor": "DP-1"}), "eDP-1",
+                     "an unplugged output falls back to the focused one")
+
+        # No configured output -> follow focus.
+        assert_equal(helper._scratchpad_target_monitor({"id": "p", "monitor": ""}), "eDP-1",
+                     "follow-focus resolves to the focused output")
+
+        # Monitor list unreadable -> keep the record rather than relocating the
+        # pad on the strength of a failed query.
+        fake.monitors = None
+        assert_equal(helper._scratchpad_target_monitor({"id": "p", "monitor": "DP-1"}), "DP-1",
+                     "a failed query must not silently relocate the pad")
+    finally:
+        helper._hyprctl_json = original
+
+
+def test_scratchpad_release_hands_the_window_back():
+    """Deleting a pad removes its keybind and every rule pointing at its special
+    workspace. A window already mapped there would be left unreachable without
+    hyprctl by hand, so removal releases it to the active workspace first."""
+    original_json = helper._hyprctl_json
+    original_dispatch = helper._scratchpad_dispatch
+    original_ready = helper._scratchpad_session_ready
+    dispatched = []
+
+    def fake_json(*args):
+        if args and args[0] == "clients":
+            return fake_json.clients
+        if args and args[0] == "activeworkspace":
+            return {"id": 3}
+        return None
+
+    helper._hyprctl_json = fake_json
+    helper._scratchpad_dispatch = lambda *args: (dispatched.append(args), True)[1]
+    # The session gate is stubbed rather than satisfied with a real hyprctl:
+    # these assertions are wanted most on a CI runner, which has neither the
+    # binary nor a session, and a test that returns early there is a check
+    # that passes without checking.
+    helper._scratchpad_session_ready = lambda: True
+    try:
+        fake_json.clients = [{"address": "0xabc", "class": "com.example.pad", "title": "Pad"}]
+        result = helper.scratchpad_release("pad", r"^(com\.example\.pad)$")
+        assert_equal(result["ok"], True, "release succeeds")
+        assert_equal(result["released"], True, "a mapped window is released")
+        assert_equal(dispatched, [
+            ("fullscreenstate", "0 -1,address:0xabc"),
+            ("movetoworkspace", "3,address:0xabc"),
+        ], "fullscreen is dropped before the move, or the window would cover its new workspace")
+
+        # No matching window is the ordinary case (the pad was never opened) and
+        # must not be reported as a failure.
+        dispatched.clear()
+        fake_json.clients = []
+        quiet = helper.scratchpad_release("pad", r"^(com\.example\.pad)$")
+        assert_equal(quiet["ok"], True, "nothing to release is not a failure")
+        assert_equal(quiet["released"], False, "and says nothing was released")
+        assert_equal(dispatched, [], "no dispatch when there is no window")
+    finally:
+        helper._hyprctl_json = original_json
+        helper._scratchpad_dispatch = original_dispatch
+        helper._scratchpad_session_ready = original_ready
+
+    # Outside a Hyprland session there is nothing to release, and removal must
+    # still be allowed to proceed.
+    assert_equal(helper.scratchpad_release("pad", "^x$")["ok"], True,
+                 "release is a no-op without a session, not an error")
+
+
+def test_scratchpad_membership_is_reasserted_for_a_late_class():
+    """The map-time race, in full. Hyprland applies the `workspace` rule once,
+    when the window maps. An app whose class settles afterwards never matched
+    it and mapped onto whatever workspace was active — so re-asserting only
+    float/size/move would style that window perfectly while leaving it where it
+    should not be, and the reveal would show an empty special workspace."""
+    original = helper._scratchpad_dispatch
+    dispatched = []
+    helper._scratchpad_dispatch = lambda *args: (dispatched.append(args), True)[1]
+    try:
+        # Late-settling class: the window is on a normal workspace.
+        stray = {"address": "0xdead", "workspace": {"name": "3"}}
+        result = helper._scratchpad_ensure_membership("term", stray)
+        assert_equal(result["moved"], True, "a stray window is moved onto the pad's workspace")
+        assert_equal(result["from"], "3", "and reports where it came from")
+        assert_equal(dispatched, [("movetoworkspacesilent", "special:term,address:0xdead")],
+                     "moved SILENTLY: the caller reveals the workspace itself a moment later, "
+                     "and the non-silent variant would switch to it here")
+
+        # Already correct: no dispatch at all, so an ordinary reveal does not
+        # churn the window every single press.
+        dispatched.clear()
+        settled = {"address": "0xbeef", "workspace": {"name": "special:term"}}
+        assert_equal(helper._scratchpad_ensure_membership("term", settled)["moved"], False,
+                     "a window already on the pad's workspace is left alone")
+        assert_equal(dispatched, [], "and costs no dispatch")
+
+        # A client with no address cannot be moved; do not emit a malformed
+        # selector for it.
+        dispatched.clear()
+        assert_equal(helper._scratchpad_ensure_membership("term", {"workspace": {"name": "3"}})["moved"],
+                     False, "a client with no address is not moved")
+        assert_equal(dispatched, [], "and produces no dispatch")
+    finally:
+        helper._scratchpad_dispatch = original
+
+
+def test_scratchpad_title_exclusion_applies_to_every_rule():
+    """A window excluded by title must be excluded from ALL of a pad's rules.
+    Excluding it from placement but not from event suppression leaves it
+    half-owned: not in the pad, but still stripped of its activation and focus
+    requests, which is worse than either owning it or leaving it alone."""
+    pad = _pad(titleExclude=r"^(1Password)$", classRegex=r"^(1password)$", keybind="SUPER, P")
+    text, _ = helper.render_scratchpads_lua([pad], [_monitor("DP-1", focused=True)], True)
+
+    # [1:] drops the text before the first rule; each remaining chunk starts
+    # inside one window rule.
+    rules = text.split("hl.window_rule({")[1:]
+    assert_equal(len(rules), 2, "a pad emits a placement rule and a suppression rule")
+    for index, rule in enumerate(rules):
+        assert 'title = "negative:^(1Password)$"' in rule, \
+            f"window rule {index} must carry the title exclusion"
+
+    # The suppression rule is the one that regressed; name it explicitly.
+    suppression = [rule for rule in rules if "suppress_event" in rule]
+    assert_equal(len(suppression), 1, "exactly one suppression rule")
+    assert 'title = "negative:^(1Password)$"' in suppression[0], \
+        "the suppress_event rule must not match every window with the class"
+
+    # A pad without an exclusion must not grow a stray title match.
+    plain, _ = helper.render_scratchpads_lua([_pad()], [_monitor("DP-1", focused=True)], True)
+    assert "negative:" not in plain, "no exclusion configured means no title clause"
+
+
+def test_scratchpad_rejects_an_uncompilable_title_exclusion():
+    """An exclusion that does not compile is not "no exclusion" — it is an
+    exclusion the user asked for that silently stops applying, so the pad would
+    select, focus and move the very windows it existed to keep out. Same rule
+    as classRegex: reject rather than half-emit."""
+    assert_equal(helper.normalize_scratchpad({
+        "id": "pad", "command": "x", "classRegex": "^x$", "titleExclude": "^(unclosed",
+    }), None, "a pad whose titleExclude does not compile is rejected")
+
+    # A valid one survives, and an absent one is simply empty.
+    assert_equal(helper.normalize_scratchpad({
+        "id": "pad", "command": "x", "classRegex": "^x$", "titleExclude": "^(1Password)$",
+    })["titleExclude"], "^(1Password)$", "a valid exclusion is kept verbatim")
+    assert_equal(helper.normalize_scratchpad({
+        "id": "pad", "command": "x", "classRegex": "^x$",
+    })["titleExclude"], "", "no exclusion is the empty string, not a broken pattern")
+
+
+def test_scratchpad_release_honours_the_title_exclusion():
+    """Release must own exactly the windows the placement rule owned. Selecting
+    on the class alone would relocate a same-class window the user explicitly
+    excluded from the pad, so deleting a scratchpad would yank an unrelated
+    window onto their active workspace."""
+    original_json = helper._hyprctl_json
+    original_dispatch = helper._scratchpad_dispatch
+    original_ready = helper._scratchpad_session_ready
+    dispatched = []
+
+    # The 1Password case the exclusion exists for: the browser-extension auth
+    # prompt shares the main window's class and keeps a generic title.
+    clients = [
+        {"address": "0xprompt", "class": "1password", "title": "1Password"},
+        {"address": "0xmain", "class": "1password", "title": "Lock Screen — 1Password"},
+    ]
+
+    def fake_json(*args):
+        if args and args[0] == "clients":
+            return clients
+        if args and args[0] == "activeworkspace":
+            return {"id": 5}
+        return None
+
+    helper._hyprctl_json = fake_json
+    helper._scratchpad_dispatch = lambda *args: (dispatched.append(args), True)[1]
+    # The session gate is stubbed rather than satisfied with a real hyprctl:
+    # these assertions are wanted most on a CI runner, which has neither the
+    # binary nor a session, and a test that returns early there is a check
+    # that passes without checking.
+    helper._scratchpad_session_ready = lambda: True
+    try:
+        result = helper.scratchpad_release("1pw", r"^(1password)$", r"^(1Password)$")
+        assert_equal(result["released"], True, "the pad's own window is released")
+        assert_equal(result["address"], "0xmain",
+                     "the excluded auth prompt must not be the one moved")
+        assert_equal(dispatched, [
+            ("fullscreenstate", "0 -1,address:0xmain"),
+            ("movetoworkspace", "5,address:0xmain"),
+        ], "only the pad's window is dispatched at")
+
+        # Without the exclusion the first class match wins — which is the bug.
+        # Pinned so a future refactor cannot quietly drop the argument.
+        dispatched.clear()
+        loose = helper.scratchpad_release("1pw", r"^(1password)$")
+        assert_equal(loose["address"], "0xprompt",
+                     "no exclusion passed means the first class match, so the "
+                     "exclusion must be threaded through by every caller")
+    finally:
+        helper._hyprctl_json = original_json
+        helper._scratchpad_dispatch = original_dispatch
+        helper._scratchpad_session_ready = original_ready
+
+
+def test_scratchpad_toggle_honours_enabled():
+    """A disabled pad generates no rules and no keybind, so revealing one is
+    never what the user asked for. Without this the per-pad enable toggle claims
+    a mechanism it does not have."""
+    original_load = helper.load_scratchpads
+    original_visible = helper._scratchpad_visible_monitor
+    original_find = helper._scratchpad_find_window
+    original_dispatch = helper._scratchpad_dispatch
+    original_ready = helper._scratchpad_session_ready
+    original_json = helper._hyprctl_json
+    dispatched = []
+
+    disabled = _pad(id="off", enabled=False)
+    helper.load_scratchpads = lambda: [disabled]
+    helper._scratchpad_find_window = lambda pad: {"address": "0xaaa", "workspace": {"name": "3"}}
+    helper._scratchpad_dispatch = lambda *args: (dispatched.append(args), True)[1]
+    # Stubbed alongside the session gate: with the gate forced true and no real
+    # hyprctl on PATH, an unstubbed query would escape into a subprocess that
+    # does not exist. Every compositor call this test can reach is mocked.
+    helper._hyprctl_json = lambda *args: None
+    # The session gate is stubbed rather than satisfied with a real hyprctl:
+    # these assertions are wanted most on a CI runner, which has neither the
+    # binary nor a session, and a test that returns early there is a check
+    # that passes without checking.
+    helper._scratchpad_session_ready = lambda: True
+    try:
+        # Hidden: revealing is refused, and nothing is dispatched.
+        helper._scratchpad_visible_monitor = lambda pad_id: ""
+        result = helper.scratchpad_toggle("off")
+        assert_equal(result["ok"], False, "a disabled pad does not reveal")
+        assert_equal(result["action"], "disabled", "and says why")
+        assert_equal(dispatched, [], "a refused toggle touches nothing")
+
+        assert_equal(helper.scratchpad_toggle("off", launch_only=True)["ok"], False,
+                     "a disabled pad does not preload either")
+
+        # Visible: hiding is still allowed. A pad disabled while on screen would
+        # otherwise be stranded visible with no keybind left to dismiss it.
+        dispatched.clear()
+        helper._scratchpad_visible_monitor = lambda pad_id: "DP-1"
+        hidden = helper.scratchpad_toggle("off")
+        assert_equal(hidden["ok"], True, "a disabled pad that is on screen can still be hidden")
+        assert_equal(hidden["action"], "hidden", "and reports the hide")
+        assert ("togglespecialworkspace", "off") in dispatched, "the hide actually dispatches"
+    finally:
+        helper.load_scratchpads = original_load
+        helper._scratchpad_visible_monitor = original_visible
+        helper._scratchpad_find_window = original_find
+        helper._scratchpad_dispatch = original_dispatch
+        helper._hyprctl_json = original_json
+        helper._scratchpad_session_ready = original_ready
+
+
+def test_scratchpad_rejections_are_named_not_silent():
+    """Rejecting an unusable pad is right; doing it silently is not. A pad with
+    an uncompilable regex generated no rules at all, so the user's scratchpad
+    stopped working while Settings went on showing it as configured."""
+    problems = []
+    assert_equal(helper.normalize_scratchpad(
+        {"id": "bad", "name": "Broken", "command": "x", "classRegex": "^(unclosed"},
+        problems), None, "an uncompilable class pattern is still rejected")
+    assert_equal(len(problems), 1, "and the rejection is recorded")
+    assert_equal(problems[0]["id"], "Broken", "named by the pad's own label")
+    assert "does not compile" in problems[0]["reason"], "with the reason"
+
+    # Every rejection path reports, not just the regex one — a pad that vanishes
+    # for any reason is equally invisible to the user.
+    cases = [
+        ({"id": "x", "name": "No Class", "command": "x"}, "no window class pattern"),
+        ({"id": "x", "name": "No Command", "classRegex": "^x$"}, "no launch command"),
+        ({"id": "BAD ID", "name": "Bad Id", "command": "x", "classRegex": "^x$"}, "id must be"),
+        ({"id": "x", "name": "Bad Title", "command": "x", "classRegex": "^x$",
+          "titleExclude": "["}, "title exclusion does not compile"),
+    ]
+    for raw, expected in cases:
+        found = []
+        assert_equal(helper.normalize_scratchpad(raw, found), None, f"{raw.get('name')} is rejected")
+        assert_equal(len(found), 1, f"{raw.get('name')} records a reason")
+        assert expected in found[0]["reason"], \
+            f"{raw.get('name')}: expected {expected!r} in {found[0]['reason']!r}"
+
+    # A usable pad records nothing.
+    clean = []
+    assert helper.normalize_scratchpad({"id": "ok", "command": "x", "classRegex": "^x$"}, clean)
+    assert_equal(clean, [], "a usable pad produces no problem entry")
+
+    # The collector is optional, so existing callers keep working.
+    assert_equal(helper.normalize_scratchpad({"id": "bad", "command": "x", "classRegex": "^("}),
+                 None, "rejection still works with no collector")
+
+
+def test_scratchpad_reveal_reports_failed_dispatches():
+    """A toggle that did not reveal anything must not report success. Otherwise
+    a failed reveal is indistinguishable from a working one, both to the caller
+    and to anyone reading --json."""
+    originals = (helper.load_scratchpads, helper._scratchpad_visible_monitor,
+                 helper._scratchpad_find_window, helper._scratchpad_dispatch,
+                 helper._hyprctl_json, helper._scratchpad_place_workspace,
+                 helper._scratchpad_reassert)
+    original_ready = helper._scratchpad_session_ready
+
+    pad = _pad(id="term")
+    helper.load_scratchpads = lambda *a, **k: [pad]
+    helper._scratchpad_find_window = lambda p: {"address": "0xaaa", "workspace": {"name": "special:term"}}
+    helper._hyprctl_json = lambda *args: None
+    helper._scratchpad_place_workspace = lambda *a, **k: True
+    helper._scratchpad_reassert = lambda *a, **k: {"applied": True}
+    # The session gate is stubbed rather than satisfied with a real hyprctl:
+    # these assertions are wanted most on a CI runner, which has neither the
+    # binary nor a session, and a test that returns early there is a check
+    # that passes without checking.
+    helper._scratchpad_session_ready = lambda: True
+    try:
+        # Everything works and the workspace really is visible afterwards.
+        helper._scratchpad_dispatch = lambda *args: True
+        visible = {"n": 0}
+
+        def visible_after_toggle(pad_id):
+            # Hidden on the first read (so the toggle fires), visible after.
+            visible["n"] += 1
+            return "" if visible["n"] == 1 else "DP-1"
+
+        helper._scratchpad_visible_monitor = visible_after_toggle
+        good = helper.scratchpad_toggle("term")
+        assert_equal(good["ok"], True, "a reveal that works reports success")
+        assert_equal(good["action"], "revealed", "and says so")
+
+        # A dispatch fails: the toggle must NOT report success.
+        helper._scratchpad_dispatch = lambda *args: args[0] != "focuswindow"
+        visible["n"] = 0
+        helper._scratchpad_visible_monitor = visible_after_toggle
+        bad = helper.scratchpad_toggle("term")
+        assert_equal(bad["ok"], False, "a failed dispatch is not success")
+        assert_equal(bad["action"], "reveal-failed", "and is named")
+        assert "could not focus the window" in bad["error"], \
+            f"the reason is reported, got {bad['error']!r}"
+
+        # Every dispatch claims success but the workspace is still not visible:
+        # the outcome is read back, not inferred from the calls.
+        helper._scratchpad_dispatch = lambda *args: True
+        helper._scratchpad_visible_monitor = lambda pad_id: ""
+        lying = helper.scratchpad_toggle("term")
+        assert_equal(lying["ok"], False, "success is confirmed by reading state back")
+        assert "still not visible" in lying["error"], \
+            f"and says what was wrong, got {lying['error']!r}"
+    finally:
+        (helper.load_scratchpads, helper._scratchpad_visible_monitor,
+         helper._scratchpad_find_window, helper._scratchpad_dispatch,
+         helper._hyprctl_json, helper._scratchpad_place_workspace,
+         helper._scratchpad_reassert) = originals
+        helper._scratchpad_session_ready = original_ready
 
 
 def main():
@@ -3540,6 +4160,21 @@ def main():
             f"{_HOME_AT_IMPORT!r}, found {os.environ.get('HOME')!r}. "
             "check-vshell-niri.py reads HOME, so this would have failed there instead."
         )
+    test_scratchpad_size_is_a_percentage_of_the_monitor()
+    test_scratchpad_anchor_resolves_to_coordinates()
+    test_scratchpad_records_that_cannot_work_are_rejected()
+    test_scratchpad_lua_generation()
+    test_scratchpad_generated_lua_parses()
+    test_scratchpad_compositor_detection_reads_the_session_not_the_binary()
+    test_scratchpad_target_monitor_resolves_against_connected_outputs()
+    test_scratchpad_release_hands_the_window_back()
+    test_scratchpad_membership_is_reasserted_for_a_late_class()
+    test_scratchpad_title_exclusion_applies_to_every_rule()
+    test_scratchpad_rejects_an_uncompilable_title_exclusion()
+    test_scratchpad_release_honours_the_title_exclusion()
+    test_scratchpad_toggle_honours_enabled()
+    test_scratchpad_rejections_are_named_not_silent()
+    test_scratchpad_reveal_reports_failed_dispatches()
     subprocess.run(
         [sys.executable, str(REPO_ROOT / "scripts" / "check-vshell-niri.py")],
         check=True,

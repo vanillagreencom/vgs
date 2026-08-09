@@ -659,6 +659,7 @@
     }
   ],
   "removedBarWidgets": [],
+  "scratchpads": [],
   "desktopClockEnabled": false,
   "desktopClockStyle": "analog",
   "desktopClockTransparency": 0.8,
@@ -751,6 +752,6 @@
   "launcherPluginOrder": [],
   "barInsetPaddingShared": -1,
   "barInsetPaddingSyncAll": false,
-  "configVersion": 22,
+  "configVersion": 23,
   "themeApps": {}
 }

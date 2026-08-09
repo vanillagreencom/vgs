@@ -8677,6 +8677,157 @@ def cmd_keybinds(argv: List[str]) -> int:
     return 2
 
 
+def scratchpad_session_compositor() -> str:
+    """What is actually RUNNING, or "" when nothing is.
+
+    Deliberately does not consider installed binaries. `hyprctl` and `niri`
+    coexist in most distro repos, so the presence of `hyprctl` says nothing
+    about which compositor owns the session — treating it as proof sent a Niri
+    session down the Hyprland path and generated rules for a compositor that
+    was not running, which is exactly what the deliberate Niri refusal exists
+    to prevent."""
+    if os.environ.get("HYPRLAND_INSTANCE_SIGNATURE"):
+        return "hyprland"
+    if os.environ.get("NIRI_SOCKET"):
+        return "niri"
+    desktop = os.environ.get("XDG_CURRENT_DESKTOP", "").strip()
+    if desktop:
+        folded = desktop.lower()
+        for name in ("hyprland", "niri"):
+            if name in folded:
+                return name
+        # A desktop that is set and is neither of those is still a session, and
+        # reporting it as "nothing is running" would let generation proceed
+        # under a compositor that will never read the result.
+        return desktop.split(":")[0].lower()
+    return ""
+
+
+def scratchpad_compositor_supported() -> Tuple[bool, str]:
+    """Hyprland is the reference implementation and the only one wired up.
+
+    Niri has no special workspaces: the equivalent is a named workspace plus
+    window rules and a `focus-or-toggle` bind, which is a different data model
+    and a different generator, not a translation of this one. Rather than
+    half-wire it, the Niri path refuses with the reason. See
+    docs/architecture/scratchpads.md § Niri.
+
+    With NO session running, generation is still meaningful — writing the
+    config from a TTY before starting the compositor, or regenerating it after
+    an edit — so it is allowed and the geometry falls back to a nominal display
+    that the payload and the file header both flag. The live-session paths
+    (`toggle`/`preload`) check for a real Hyprland session of their own."""
+    session = scratchpad_session_compositor()
+    if session:
+        return (session == "hyprland", session)
+    return (True, "none")
+
+
+def cmd_scratchpad(argv: List[str]) -> int:
+    if not argv:
+        eprint("Usage: vshell scratchpad <apply|status|toggle|preload|release|resolve> ...")
+        return 2
+    action, rest = argv[0], argv[1:]
+
+    supported, compositor = scratchpad_compositor_supported()
+    if not supported and action in {"apply", "toggle", "show", "preload"}:
+        # A clean, stated no-op — not a silent success, and not a Hyprland
+        # config written into a session that will never read it.
+        message = ("VGS scratchpads are Hyprland-only for now; Niri has no special "
+                   "workspaces and needs its own generator (VGS-62 split)."
+                   if compositor == "niri" else
+                   f"VGS scratchpads require Hyprland; this session is running {compositor}.")
+        if "--json" in rest:
+            print(json.dumps({"ok": False, "unsupported": True,
+                              "compositor": compositor, "error": message}, indent=2))
+        else:
+            eprint(message)
+        return 1
+
+    if action == "apply":
+        parser = argparse.ArgumentParser(prog="vshell scratchpad apply")
+        parser.add_argument("--no-reload", action="store_true")
+        # Renders to a scratch path and prints it instead of touching the live
+        # compositor config, so generation can be reviewed and diffed without a
+        # session being reconfigured underneath the user.
+        parser.add_argument("--dry-run", metavar="PATH", default="")
+        parser.add_argument("--json", action="store_true")
+        args = parser.parse_args(rest)
+        if args.dry_run:
+            pads = load_scratchpads()
+            monitors, resolved = scratchpad_monitors()
+            content, meta = render_scratchpads_lua(pads, monitors, resolved)
+            write_file(Path(args.dry_run), content)
+            result = {"ok": True, "path": args.dry_run, "scratchpads": meta, "dryRun": True}
+        else:
+            result = apply_scratchpads(reload=not args.no_reload)
+        print(json.dumps(result, indent=2) if args.json else
+              ("ok" if result.get("ok") else (result.get("error") or "failed")))
+        return 0 if result.get("ok") else 1
+
+    if action == "status":
+        problems: List[Dict[str, str]] = []
+        pads = load_scratchpads(problems)
+        monitors, resolved = scratchpad_monitors()
+        print(json.dumps({
+            "ok": True,
+            "problems": problems,
+            "path": str(scratchpad_config_path()),
+            "generated": scratchpad_config_path().exists(),
+            "monitorsResolved": resolved,
+            "monitors": [{"name": m.get("name"), "logical": monitor_logical_size(m)} for m in monitors],
+            "include": scratchpad_include_status(),
+            "scratchpads": pads,
+        }, indent=2))
+        return 0
+
+    # What geometry a pad resolves to on a given monitor, without applying
+    # anything. This is the percentage-sizing answer made inspectable.
+    if action == "resolve" and rest:
+        pads = {pad["id"]: pad for pad in load_scratchpads()}
+        pad = pads.get(rest[0])
+        if pad is None:
+            eprint(f"unknown scratchpad: {rest[0]}")
+            return 2
+        monitors, resolved = scratchpad_monitors()
+        monitor = pick_scratchpad_monitor(monitors, rest[1] if len(rest) > 1 else pad["monitor"])
+        print(json.dumps({
+            "id": pad["id"],
+            "monitor": monitor.get("name") or "",
+            "monitorsResolved": resolved,
+            "geometry": resolve_scratchpad_geometry(pad, monitor),
+        }, indent=2))
+        return 0
+
+    if action == "release" and rest:
+        parser = argparse.ArgumentParser(prog="vshell scratchpad release")
+        parser.add_argument("id")
+        parser.add_argument("--class-regex", default="")
+        parser.add_argument("--title-exclude", default="")
+        parser.add_argument("--json", action="store_true")
+        args = parser.parse_args(rest)
+        result = scratchpad_release(args.id, args.class_regex, args.title_exclude)
+        if args.json:
+            print(json.dumps(result, indent=2))
+        elif not result.get("ok"):
+            eprint(result.get("error") or "scratchpad release failed")
+        return 0 if result.get("ok") else 1
+
+    if action in {"toggle", "show", "preload"} and rest:
+        result = scratchpad_toggle(rest[0],
+                                   reveal_only=(action == "show"),
+                                   launch_only=(action == "preload"))
+        if not result.get("ok"):
+            eprint(result.get("error") or "scratchpad toggle failed")
+            return 1
+        if "--json" in rest:
+            print(json.dumps(result, indent=2))
+        return 0
+
+    eprint(f"Unknown scratchpad action: {action}")
+    return 2
+
+
 def cmd_config(argv: List[str]) -> int:
     if len(argv) >= 3 and argv[0] == "repair-include":
         compositor, filename = argv[1], argv[2]
@@ -8930,6 +9081,900 @@ def apply_hyprland_layout() -> Dict[str, Any]:
         "layout": meta,
         "reload": reload_result,
     }
+
+
+# --- Scratchpads (VGS-62) ----------------------------------------------------
+# A scratchpad is an app parked on a hidden special workspace that one keybind
+# slides in and out. Presentation is split across two rules that have to agree
+# (a workspace rule and a window rule), and Hyprland applies workspace/float/
+# size/move exactly ONCE, at map time — so any app whose class or title settles
+# after mapping loses that race permanently. The generated rules below are
+# therefore best-effort initial placement; `scratchpad_toggle` re-asserts the
+# intended presentation on every reveal, which is what makes this robust rather
+# than mostly-working. See docs/architecture/scratchpads.md.
+
+SCRATCHPAD_ANCHORS = {
+    "top-left": ("left", "top"),
+    "top-center": ("center", "top"),
+    "top-right": ("right", "top"),
+    "center-left": ("left", "center"),
+    "center": ("center", "center"),
+    "center-right": ("right", "center"),
+    "bottom-left": ("left", "bottom"),
+    "bottom-center": ("center", "bottom"),
+    "bottom-right": ("right", "bottom"),
+}
+
+SCRATCHPAD_PRESENTATIONS = ("float", "tile", "fullscreen")
+
+# Entry animation, as a per-window-rule `animation` style.
+#
+# This is deliberately NOT the `specialWorkspace` animation leaf. That leaf is
+# global — one value for every special workspace on the system — so emitting it
+# once per pad would mean the last pad silently wins and the user's own global
+# animation gets overwritten by whichever scratchpad happened to be generated
+# last. A window rule is the only per-pad animation Hyprland actually has, so
+# that is what a per-pad setting can honestly control; the workspace slide
+# itself stays global and VGS does not touch it.
+SCRATCHPAD_ANIMATIONS = {
+    "slide-top": "slide top",
+    "slide-bottom": "slide bottom",
+    "slide-left": "slide left",
+    "slide-right": "slide right",
+    "fade": "fade",
+    "scale": "popin 80%",
+}
+
+# A pad id becomes a Hyprland special-workspace name and a Lua identifier in the
+# generated config, so it is restricted rather than escaped. Rejecting is safer
+# than quoting here: an id that needs escaping to be safe is also an id nobody
+# can type into `hyprctl dispatch togglespecialworkspace`.
+SCRATCHPAD_ID_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,31}$")
+
+# Floor on a resolved pad so a mistyped 1% cannot produce a window nobody can
+# see or grab. Not a ceiling — a pad legitimately fills a monitor.
+SCRATCHPAD_MIN_WIDTH = 160
+SCRATCHPAD_MIN_HEIGHT = 120
+
+# Used only when the compositor cannot be asked for real monitors (no session,
+# CI, `--dry-run` from a worktree). Recorded in the payload and written into the
+# generated file's header so a config produced this way is never mistaken for
+# one resolved against the real display.
+SCRATCHPAD_FALLBACK_MONITOR = {"name": "", "x": 0, "y": 0, "width": 1920, "height": 1080, "scale": 1.0}
+
+
+def scratchpad_config_path() -> Path:
+    """VGS-named, alongside vgs/layout.lua, and included the same way:
+    `pcall(require, "vgs.scratchpads")` in hyprland.lua."""
+    return home() / ".config" / "hypr" / "vgs" / "scratchpads.lua"
+
+
+def scratchpad_include_line() -> str:
+    return 'pcall(require, "vgs.scratchpads")'
+
+
+def normalize_scratchpad(raw: Any, problems: List[Dict[str, str]] | None = None) -> Dict[str, Any] | None:
+    """One pad record, coerced to the shape the renderer and the toggle both
+    assume. Returns None for anything unusable rather than emitting a partial
+    rule — a scratchpad whose class regex is missing would silently capture
+    nothing, or worse, everything.
+
+    `problems` collects a reason for every rejection. Rejecting is right, but
+    doing it silently is not: a pad with an uncompilable regex simply vanished
+    from the generated config, so the user's scratchpad stopped working while
+    Settings still showed it as configured. Every `return None` below records
+    why, so the caller can name the pad instead of losing it."""
+    def reject(reason: str, pad_name: str = "") -> None:
+        if problems is not None:
+            problems.append({"id": pad_name, "reason": reason})
+        return None
+
+    if not isinstance(raw, dict):
+        return reject("not a scratchpad record")
+    pad_id = str(raw.get("id") or "").strip().lower()
+    label = str(raw.get("name") or raw.get("id") or "?")
+    if not SCRATCHPAD_ID_RE.match(pad_id):
+        return reject("id must be 1-32 characters of a-z, 0-9, '-' or '_', starting alphanumeric", label)
+    class_regex = str(raw.get("classRegex") or "").strip()
+    command = str(raw.get("command") or "").strip()
+    if not class_regex:
+        return reject("no window class pattern", label)
+    if not command:
+        return reject("no launch command", label)
+    try:
+        re.compile(class_regex)
+    except re.error as exc:
+        return reject(f"window class pattern does not compile: {exc}", label)
+
+    # Same treatment as classRegex, and for the same reason: an exclusion that
+    # does not compile is not "no exclusion", it is an exclusion the user asked
+    # for that silently stops applying. The runtime finder would fall back to
+    # matching everything with the class, so the pad would select, focus and
+    # move the very windows the exclusion existed to keep out.
+    title_exclude = str(raw.get("titleExclude") or "").strip()
+    if title_exclude:
+        try:
+            re.compile(title_exclude)
+        except re.error as exc:
+            return reject(f"title exclusion does not compile: {exc}", label)
+
+    size_mode = str(raw.get("sizeMode") or "percent").strip().lower()
+    if size_mode not in {"percent", "pixels"}:
+        size_mode = "percent"
+    anchor = str(raw.get("anchor") or "top-center").strip().lower()
+    if anchor not in SCRATCHPAD_ANCHORS:
+        anchor = "top-center"
+    animation = str(raw.get("animation") or "slide-top").strip().lower()
+    if animation not in SCRATCHPAD_ANIMATIONS:
+        animation = "slide-top"
+    presentation = str(raw.get("presentation") or "float").strip().lower()
+    if presentation not in SCRATCHPAD_PRESENTATIONS:
+        presentation = "float"
+    monitor = str(raw.get("monitor") or "").strip()
+    if monitor and not re.fullmatch(r"[A-Za-z0-9._:-]+", monitor):
+        monitor = ""
+
+    return {
+        "id": pad_id,
+        "name": str(raw.get("name") or pad_id),
+        "enabled": raw.get("enabled") is not False,
+        "command": command,
+        "appId": str(raw.get("appId") or ""),
+        "classRegex": class_regex,
+        "titleExclude": title_exclude,
+        "keybind": str(raw.get("keybind") or "").strip(),
+        "sizeMode": size_mode,
+        "widthPercent": _coerce_int(raw.get("widthPercent", 60), 60, 5, 100),
+        "heightPercent": _coerce_int(raw.get("heightPercent", 70), 70, 5, 100),
+        "widthPixels": _coerce_int(raw.get("widthPixels", 1200), 1200, SCRATCHPAD_MIN_WIDTH, 16384),
+        "heightPixels": _coerce_int(raw.get("heightPixels", 800), 800, SCRATCHPAD_MIN_HEIGHT, 16384),
+        "anchor": anchor,
+        "offsetX": _coerce_int(raw.get("offsetX", 0), 0, -8192, 8192),
+        "offsetY": _coerce_int(raw.get("offsetY", 0), 0, -8192, 8192),
+        "animation": animation,
+        "presentation": presentation,
+        "monitor": monitor,
+        "preload": bool(raw.get("preload")),
+        "dismissOnFocusLoss": bool(raw.get("dismissOnFocusLoss")),
+    }
+
+
+def load_scratchpads(problems: List[Dict[str, str]] | None = None) -> List[Dict[str, Any]]:
+    pads: List[Dict[str, Any]] = []
+    seen: set[str] = set()
+    for raw in (load_settings().get("scratchpads") or []):
+        pad = normalize_scratchpad(raw, problems)
+        if pad is None:
+            continue
+        # Two pads with one id would generate two rule sets for one special
+        # workspace — the exact two-owners problem the settings migration
+        # refuses to create by import. First definition wins, and the loser is
+        # named rather than quietly discarded.
+        if pad["id"] in seen:
+            if problems is not None:
+                problems.append({"id": pad["name"],
+                                 "reason": f"duplicate id '{pad['id']}'; the first definition wins"})
+            continue
+        seen.add(pad["id"])
+        pads.append(pad)
+    return pads
+
+
+def monitor_logical_size(monitor: Dict[str, Any]) -> Tuple[int, int]:
+    """Hyprland reports `width`/`height` as the physical mode and a separate
+    `scale`; every coordinate a window rule or a dispatch uses is logical. A pad
+    sized as a percentage of a 3840x2160 monitor at scale 2 must be a percentage
+    of 1920x1080, not of the mode."""
+    try:
+        scale = float(monitor.get("scale") or 1.0)
+    except (TypeError, ValueError):
+        scale = 1.0
+    if scale <= 0:
+        scale = 1.0
+    try:
+        width = int(monitor.get("width") or 0)
+        height = int(monitor.get("height") or 0)
+    except (TypeError, ValueError):
+        return (0, 0)
+    # Hyprland rotates the logical box with the transform; odd transforms
+    # (90/270 and their flipped forms) swap width and height.
+    try:
+        transform = int(monitor.get("transform") or 0)
+    except (TypeError, ValueError):
+        transform = 0
+    if transform % 2 == 1:
+        width, height = height, width
+    return (int(round(width / scale)), int(round(height / scale)))
+
+
+def resolve_scratchpad_geometry(pad: Dict[str, Any], monitor: Dict[str, Any]) -> Dict[str, int]:
+    """Resolve a pad's size and position against one monitor.
+
+    This is the whole point of storing a percentage rather than pixels: the same
+    pad record produces correct geometry on a 1080p laptop panel and a 4K
+    desktop monitor. Returns both monitor-local coordinates (what a window rule
+    `move` wants) and global ones (what `movewindowpixel` wants)."""
+    mon_w, mon_h = monitor_logical_size(monitor)
+    if mon_w <= 0 or mon_h <= 0:
+        mon_w, mon_h = monitor_logical_size(SCRATCHPAD_FALLBACK_MONITOR)
+
+    if pad["sizeMode"] == "pixels":
+        width, height = pad["widthPixels"], pad["heightPixels"]
+    else:
+        width = int(round(mon_w * pad["widthPercent"] / 100.0))
+        height = int(round(mon_h * pad["heightPercent"] / 100.0))
+
+    # Clamp to the monitor before positioning, so the anchor arithmetic below is
+    # never handed a window larger than the space it is anchoring within.
+    width = max(SCRATCHPAD_MIN_WIDTH, min(width, mon_w))
+    height = max(SCRATCHPAD_MIN_HEIGHT, min(height, mon_h))
+
+    horizontal, vertical = SCRATCHPAD_ANCHORS[pad["anchor"]]
+    if horizontal == "left":
+        x = pad["offsetX"]
+    elif horizontal == "right":
+        x = mon_w - width - pad["offsetX"]
+    else:
+        x = (mon_w - width) // 2 + pad["offsetX"]
+    if vertical == "top":
+        y = pad["offsetY"]
+    elif vertical == "bottom":
+        y = mon_h - height - pad["offsetY"]
+    else:
+        y = (mon_h - height) // 2 + pad["offsetY"]
+
+    # An offset that would push the pad off the monitor is clamped rather than
+    # honoured: a scratchpad you cannot see reads as a broken keybind.
+    x = max(0, min(x, mon_w - width))
+    y = max(0, min(y, mon_h - height))
+
+    try:
+        mon_x, mon_y = int(monitor.get("x") or 0), int(monitor.get("y") or 0)
+    except (TypeError, ValueError):
+        mon_x, mon_y = 0, 0
+
+    return {
+        "width": width, "height": height,
+        "x": x, "y": y,
+        "globalX": mon_x + x, "globalY": mon_y + y,
+        "monitorWidth": mon_w, "monitorHeight": mon_h,
+    }
+
+
+def _scratchpad_session_ready() -> bool:
+    """Whether there is a live Hyprland session to talk to.
+
+    One seam for a condition the scratchpad paths each used to spell out. Having
+    it in one place is also what lets the tests exercise those paths on a machine
+    with no compositor and no `hyprctl` at all — which is every CI runner, and
+    exactly where the regression coverage is wanted. A test that returns early
+    because a binary is missing is a check that passes without checking."""
+    return bool(shutil.which("hyprctl") and os.environ.get("HYPRLAND_INSTANCE_SIGNATURE"))
+
+
+def _hyprctl_json(*args: str) -> Any:
+    """Read-only Hyprland IPC. Returns None when there is no session to ask, so
+    every caller has to decide what "unknown" means rather than being handed a
+    plausible-looking empty answer."""
+    if not _scratchpad_session_ready():
+        return None
+    proc = run(["hyprctl", "-j", *args])
+    if proc.returncode != 0:
+        return None
+    try:
+        return json.loads(proc.stdout or "")
+    except json.JSONDecodeError:
+        return None
+
+
+def scratchpad_monitors() -> Tuple[List[Dict[str, Any]], bool]:
+    """(monitors, resolved). `resolved` is False when the compositor could not
+    be asked — the caller then works against SCRATCHPAD_FALLBACK_MONITOR and
+    must say so, because pixel geometry derived from a guessed display is the
+    one output that looks authoritative and is not."""
+    monitors = _hyprctl_json("monitors")
+    if isinstance(monitors, list) and monitors:
+        return (monitors, True)
+    return ([dict(SCRATCHPAD_FALLBACK_MONITOR)], False)
+
+
+def pick_scratchpad_monitor(monitors: List[Dict[str, Any]], name: str) -> Dict[str, Any]:
+    """The monitor a pad is generated against. An explicitly configured output
+    that is not currently connected falls back to the focused one rather than
+    failing: unplugging a dock should not stop a scratchpad from opening."""
+    if name:
+        for monitor in monitors:
+            if str(monitor.get("name") or "") == name:
+                return monitor
+    for monitor in monitors:
+        if monitor.get("focused") is True:
+            return monitor
+    return monitors[0] if monitors else dict(SCRATCHPAD_FALLBACK_MONITOR)
+
+
+def render_scratchpads_lua(pads: List[Dict[str, Any]], monitors: List[Dict[str, Any]],
+                           monitors_resolved: bool = True) -> Tuple[str, Dict[str, Any]]:
+    """Pure renderer: pads + monitors in, Lua text + metadata out. Kept free of
+    IPC so the generated config can be diffed in a test without a compositor."""
+    lines = [
+        "-- Generated by VGS (Settings -> Scratchpads). Do not edit.",
+        "-- Rules here are best-effort INITIAL placement only. Hyprland applies",
+        "-- workspace/float/size/move once, at map time, so an app that renames",
+        "-- itself after mapping loses that race; `vshell scratchpad toggle`",
+        "-- re-asserts the intended presentation on every reveal.",
+    ]
+    if not monitors_resolved:
+        lines.append(
+            f"-- WARNING: generated without a live compositor, against a nominal "
+            f"{SCRATCHPAD_FALLBACK_MONITOR['width']}x{SCRATCHPAD_FALLBACK_MONITOR['height']} "
+            f"display. Re-run `vshell scratchpad apply` inside the session."
+        )
+    lines.append("")
+
+    cli = shutil.which("vshell") or "vshell"
+    rendered: List[Dict[str, Any]] = []
+    enabled = [pad for pad in pads if pad["enabled"]]
+    if not enabled:
+        lines.append("-- No scratchpads are defined.")
+        lines.append("")
+
+    for pad in enabled:
+        monitor = pick_scratchpad_monitor(monitors, pad["monitor"])
+        geometry = resolve_scratchpad_geometry(pad, monitor)
+        special = "special:" + pad["id"]
+        monitor_name = str(monitor.get("name") or "")
+
+        lines.append(f"-- {pad['name']} ({pad['id']})")
+
+        # Workspace rule. `on_created_empty` is deliberately NOT set: it spawns
+        # the app when the empty workspace is first shown, which is exactly the
+        # flash-then-populate behaviour that makes the keybind feel broken. The
+        # toggle launches and waits instead.
+        workspace_rule: List[str] = [f"  workspace = {_lua_string(special)},"]
+        if monitor_name and pad["monitor"]:
+            workspace_rule.append(f"  monitor = {_lua_string(monitor_name)},")
+        lines.append("hl.workspace_rule({")
+        lines.extend(workspace_rule)
+        lines.append("})")
+
+        # One match, used by EVERY rule this pad emits. A window the user
+        # excluded by title must be excluded from all of them: excluding it from
+        # placement but not from event suppression leaves it half-owned — not in
+        # the pad, but still stripped of its activation and focus requests,
+        # which is worse than either owning it or leaving it alone.
+        #
+        # Dynamic `title`, not `initial_title`: an app that maps with a
+        # placeholder title and renames itself later would be frozen on the
+        # placeholder by an initial_title snapshot and never reclassified.
+        match_lines = [f"    class = {_lua_string(pad['classRegex'])},"]
+        if pad["titleExclude"]:
+            match_lines.append(f"    title = {_lua_string('negative:' + pad['titleExclude'])},")
+
+        # Window rule.
+        lines.append("hl.window_rule({")
+        lines.append("  match = {")
+        lines.extend(match_lines)
+        lines.append("  },")
+        if monitor_name and pad["monitor"]:
+            lines.append(f"  monitor = {_lua_string(monitor_name)},")
+        lines.append(f"  workspace = {_lua_string(special + ' silent')},")
+        lines.append("  no_initial_focus = true,")
+        if pad["presentation"] == "fullscreen":
+            lines.append("  fullscreen = true,")
+        elif pad["presentation"] == "tile":
+            lines.append("  tile = true,")
+        else:
+            size = "{} {}".format(geometry["width"], geometry["height"])
+            move = "{} {}".format(geometry["x"], geometry["y"])
+            lines.append("  float = true,")
+            lines.append(f"  size = {_lua_string(size)},")
+            lines.append(f"  move = {_lua_string(move)},")
+        lines.append(f"  animation = {_lua_string(SCRATCHPAD_ANIMATIONS[pad['animation']])},")
+        lines.append("})")
+
+        # An app that requests activation after mapping (Spotify's XWayland
+        # client is the reference case) would otherwise reveal its own hidden
+        # special workspace. The toggle focuses it deliberately instead.
+        lines.append("hl.window_rule({")
+        lines.append("  match = {")
+        lines.extend(match_lines)
+        lines.append("  },")
+        lines.append('  suppress_event = "activate activatefocus",')
+        lines.append("})")
+
+        if pad["keybind"]:
+            toggle = f"{cli} scratchpad toggle {pad['id']}"
+            lines.append(
+                f"hl.bind({_lua_string(pad['keybind'])}, hl.dsp.exec_cmd({_lua_string(toggle)}), "
+                f"{{ description = {_lua_string('Scratchpad: ' + pad['name'])} }})"
+            )
+        lines.append("")
+
+        rendered.append({
+            "id": pad["id"], "monitor": monitor_name, "keybind": pad["keybind"],
+            "presentation": pad["presentation"], "geometry": geometry,
+        })
+
+    preload = [pad["id"] for pad in enabled if pad["preload"]]
+    if preload:
+        # Preload runs the same toggle path in a mode that launches and parks
+        # without revealing, so a preloaded pad and a cold one converge on
+        # identical placement instead of two code paths drifting apart.
+        lines.append("-- Preload at login: launch into the hidden workspace, never reveal.")
+        for pad_id in preload:
+            lines.append(f"hl.exec_cmd({_lua_string(f'{cli} scratchpad preload {pad_id}')})")
+        lines.append("")
+
+    meta = {
+        "count": len(rendered),
+        "defined": len(pads),
+        "monitorsResolved": monitors_resolved,
+        "preload": preload,
+        "scratchpads": rendered,
+    }
+    return ("\n".join(lines), meta)
+
+
+def scratchpad_include_status() -> Dict[str, Any]:
+    """Whether hyprland.lua actually pulls the generated file in.
+
+    VGS does not edit the user's Hyprland config — the existing stance for this
+    compositor is read-only ("edit it directly"), and silently appending a
+    require to a hand-maintained file would break that. So generation reports
+    the one line to add and the Settings page shows it; nothing is written."""
+    conf = home() / ".config" / "hypr" / "hyprland.lua"
+    line = scratchpad_include_line()
+    included = False
+    if conf.exists():
+        try:
+            text = conf.read_text(errors="replace")
+        except OSError:
+            text = ""
+        # Match any require of the module, not the exact pcall spelling: a user
+        # who wrote `require("vgs.scratchpads")` has included it just as well,
+        # and telling them otherwise would send them to add a duplicate.
+        included = re.search(r'require\s*\(\s*["\']vgs\.scratchpads["\']', text) is not None \
+            or re.search(r'pcall\s*\(\s*require\s*,\s*["\']vgs\.scratchpads["\']', text) is not None
+
+    return {
+        "path": str(conf),
+        "exists": conf.exists(),
+        "included": included,
+        "includeLine": line,
+        "readOnly": True,
+        "statusMessage": (
+            "VGS scratchpad rules are active."
+            if included else
+            f"Add {line} to {conf} for VGS scratchpads to take effect. "
+            "VGS never edits your Hyprland config."
+        ),
+    }
+
+
+def apply_scratchpads(reload: bool = True) -> Dict[str, Any]:
+    problems: List[Dict[str, str]] = []
+    pads = load_scratchpads(problems)
+    monitors, resolved = scratchpad_monitors()
+    content, meta = render_scratchpads_lua(pads, monitors, resolved)
+    path = scratchpad_config_path()
+    write_file(path, content)
+
+    reload_result: Dict[str, Any] = {"attempted": False}
+    if reload and _scratchpad_session_ready():
+        proc = run(["hyprctl", "reload"])
+        reload_result = {
+            "attempted": True,
+            "ok": proc.returncode == 0,
+            "stderr": proc.stderr.strip(),
+        }
+    return {
+        "ok": not reload_result.get("attempted") or bool(reload_result.get("ok")),
+        "path": str(path),
+        "scratchpads": meta,
+        # Pads that could not be used, each with the reason. A rejected pad
+        # generates no rules, so without this the user's scratchpad would stop
+        # working while Settings still showed it as configured.
+        "problems": problems,
+        "include": scratchpad_include_status(),
+        "reload": reload_result,
+    }
+
+
+# --- Scratchpad runtime toggle -----------------------------------------------
+
+def _scratchpad_state_dir() -> Path:
+    base = os.environ.get("XDG_RUNTIME_DIR") or tempfile.gettempdir()
+    path = Path(base) / "vshell-scratchpad"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+@contextlib.contextmanager
+def _scratchpad_lock(pad_id: str) -> Iterable[None]:
+    """Keybind execs are asynchronous, so a double-press can start two toggles
+    that both observe the pad as hidden, both save an origin, and race. One
+    complete show/hide transition per pad at a time."""
+    lock_path = _scratchpad_state_dir() / (pad_id + ".lock")
+    handle = open(lock_path, "w")
+    try:
+        fcntl.flock(handle, fcntl.LOCK_EX)
+        yield
+    finally:
+        try:
+            fcntl.flock(handle, fcntl.LOCK_UN)
+        finally:
+            handle.close()
+
+
+def _scratchpad_dispatch(*args: str) -> bool:
+    if not _scratchpad_session_ready():
+        return False
+    return run(["hyprctl", "dispatch", *args]).returncode == 0
+
+
+def _scratchpad_find_window(pad: Dict[str, Any]) -> Dict[str, Any] | None:
+    clients = _hyprctl_json("clients")
+    if not isinstance(clients, list):
+        return None
+    try:
+        pattern = re.compile(pad["classRegex"])
+    except re.error:
+        return None
+    exclude = None
+    if pad["titleExclude"]:
+        try:
+            exclude = re.compile(pad["titleExclude"])
+        except re.error:
+            exclude = None
+    for client in clients:
+        if not isinstance(client, dict):
+            continue
+        if not pattern.search(str(client.get("class") or "")):
+            continue
+        # The live title, never initialTitle: an app that maps with a
+        # placeholder and renames itself later would be excluded forever by a
+        # frozen snapshot instead of being picked up once its real title lands.
+        if exclude is not None and exclude.search(str(client.get("title") or "")):
+            continue
+        return client
+    return None
+
+
+def _scratchpad_visible_monitor(pad_id: str) -> str:
+    monitors = _hyprctl_json("monitors")
+    if not isinstance(monitors, list):
+        return ""
+    special = "special:" + pad_id
+    for monitor in monitors:
+        if isinstance(monitor, dict) and str((monitor.get("specialWorkspace") or {}).get("name") or "") == special:
+            return str(monitor.get("name") or "")
+    return ""
+
+
+def _scratchpad_workspace_monitor(pad_id: str) -> str:
+    workspaces = _hyprctl_json("workspaces")
+    if not isinstance(workspaces, list):
+        return ""
+    special = "special:" + pad_id
+    for workspace in workspaces:
+        if isinstance(workspace, dict) and str(workspace.get("name") or "") == special:
+            return str(workspace.get("monitor") or "")
+    return ""
+
+
+def _scratchpad_place_workspace(pad_id: str, monitor_name: str, attempts: int = 6) -> bool:
+    """A cold-mapped window can create its special workspace on whichever
+    monitor had focus when it mapped, even with a monitor rule set — the rule
+    describes intent, not an invariant. Check, do not assume."""
+    if not monitor_name:
+        return True
+    for _ in range(attempts):
+        if _scratchpad_workspace_monitor(pad_id) == monitor_name:
+            return True
+        _scratchpad_dispatch("moveworkspacetomonitor", f"special:{pad_id} {monitor_name}")
+        time.sleep(0.05)
+    return _scratchpad_workspace_monitor(pad_id) == monitor_name
+
+
+def _scratchpad_ensure_membership(pad_id: str, client: Dict[str, Any]) -> Dict[str, Any]:
+    """Put the window on the pad's special workspace if it is not already there.
+
+    This is the other half of the map-time race, and the half that decides
+    whether a pad works at all. Hyprland applies the `workspace` rule once, when
+    the window maps; an app whose class settles afterwards — Electron apps,
+    1Password, anything with a splash — never matched the rule and so mapped
+    onto whatever workspace was active at the time.
+
+    Re-asserting only float/size/move would style that window beautifully while
+    leaving it exactly where it should not be, and the reveal would show an
+    empty special workspace. Membership has to be re-asserted too.
+
+    `movetoworkspacesilent` is deliberate: the caller reveals the workspace
+    itself a moment later, and the non-silent variant would switch to it here,
+    fighting the placement and focus sequence that follows."""
+    special = "special:" + pad_id
+    current = str(((client or {}).get("workspace") or {}).get("name") or "")
+    address = str((client or {}).get("address") or "")
+    if not address or current == special:
+        return {"moved": False, "workspace": current}
+    moved = _scratchpad_dispatch("movetoworkspacesilent", f"{special},address:{address}")
+    return {"moved": moved, "from": current, "workspace": special if moved else current}
+
+
+def _scratchpad_reassert(pad: Dict[str, Any], address: str) -> Dict[str, Any]:
+    """Re-apply the intended presentation to a window that already exists.
+
+    This is the piece that makes scratchpads robust rather than mostly-working.
+    Hyprland resolves float/size/move once at map time; an Electron app, 1Password
+    or anything with a splash screen settles its class or title after that and
+    loses the rule permanently. Re-asserting on every reveal is cheap and fixes
+    every one of those cases without special-casing any of them.
+
+    It is also where percentage sizing becomes multi-monitor correct: the pad is
+    resolved against the monitor it is ACTUALLY on right now, not the one it was
+    generated against."""
+    if not address:
+        return {"applied": False, "reason": "no window"}
+
+    monitor_name = _scratchpad_visible_monitor(pad["id"]) or _scratchpad_workspace_monitor(pad["id"])
+    monitors, resolved = scratchpad_monitors()
+    monitor = pick_scratchpad_monitor(monitors, monitor_name or pad["monitor"])
+    geometry = resolve_scratchpad_geometry(pad, monitor)
+    selector = "address:" + address
+
+    if pad["presentation"] == "fullscreen":
+        _scratchpad_dispatch("fullscreenstate", f"2 -1,{selector}")
+        return {"applied": True, "mode": "fullscreen", "monitor": monitor_name}
+    if pad["presentation"] == "tile":
+        _scratchpad_dispatch("settiled", selector)
+        return {"applied": True, "mode": "tile", "monitor": monitor_name}
+
+    _scratchpad_dispatch("setfloating", selector)
+    # Skip the dispatch when the window is already where it belongs, so an
+    # ordinary reveal does not animate the window on every single press.
+    client = _scratchpad_find_window(pad) or {}
+    size = client.get("size") or [0, 0]
+    at = client.get("at") or [0, 0]
+    if list(size) != [geometry["width"], geometry["height"]]:
+        _scratchpad_dispatch("resizewindowpixel",
+                             f"exact {geometry['width']} {geometry['height']},{selector}")
+    if list(at) != [geometry["globalX"], geometry["globalY"]]:
+        _scratchpad_dispatch("movewindowpixel",
+                             f"exact {geometry['globalX']} {geometry['globalY']},{selector}")
+    return {"applied": True, "mode": "float", "monitor": monitor_name, "geometry": geometry}
+
+
+def _scratchpad_wait_for_window(pad: Dict[str, Any], timeout: float) -> Dict[str, Any] | None:
+    """Cold start: launch, then WAIT for the window, and only then let the
+    caller reveal. Revealing first shows an empty special workspace, which reads
+    as a dead keybind and is why users press it two or three times."""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        client = _scratchpad_find_window(pad)
+        if client:
+            return client
+        time.sleep(0.1)
+    return None
+
+
+def scratchpad_toggle(pad_id: str, reveal_only: bool = False, launch_only: bool = False,
+                      timeout: float = 20.0) -> Dict[str, Any]:
+    pads = {pad["id"]: pad for pad in load_scratchpads()}
+    pad = pads.get(pad_id)
+    if pad is None:
+        return {"ok": False, "error": f"unknown scratchpad: {pad_id}"}
+    if not _scratchpad_session_ready():
+        return {"ok": False, "error": "no Hyprland session"}
+
+    state_file = _scratchpad_state_dir() / (pad_id + ".focus")
+    with _scratchpad_lock(pad_id):
+        visible_on = _scratchpad_visible_monitor(pad_id)
+
+        # A disabled pad generates no rules and no keybind, so revealing one is
+        # never what the user asked for — the enable toggle in Settings would
+        # otherwise claim a mechanism it does not have, the same defect the
+        # dismiss-on-focus-loss control was removed for.
+        #
+        # Hiding is still allowed, and deliberately so: a pad disabled while it
+        # was on screen would otherwise be stranded visible with no keybind left
+        # to dismiss it, which is a worse outcome than the one being fixed.
+        if not pad["enabled"]:
+            hiding = bool(visible_on) and not reveal_only and not launch_only
+            if not hiding:
+                return {"ok": False, "id": pad_id, "action": "disabled",
+                        "error": f"{pad['name']} is disabled"}
+
+        if visible_on and not reveal_only and not launch_only:
+            # Hide, then hand focus back to whatever had it before the reveal —
+            # including when the pad lives on a different monitor, which is the
+            # case a naive "focus the last workspace" restore gets wrong.
+            _scratchpad_dispatch("focusmonitor", visible_on)
+            _scratchpad_dispatch("togglespecialworkspace", pad_id)
+            previous = ""
+            if state_file.exists():
+                previous = state_file.read_text().strip()
+                state_file.unlink(missing_ok=True)
+            if previous:
+                clients = _hyprctl_json("clients")
+                live = isinstance(clients, list) and any(
+                    isinstance(c, dict) and c.get("address") == previous for c in clients)
+                if live:
+                    _scratchpad_dispatch("focuswindow", "address:" + previous)
+            return {"ok": True, "action": "hidden", "id": pad_id}
+
+        client = _scratchpad_find_window(pad)
+        launched = False
+        if client is None:
+            launched = True
+            # Detached: the pad outlives this toggle process, and must not
+            # inherit the flock fd and hold its own lock for its whole lifetime.
+            subprocess.Popen(["sh", "-c", pad["command"]],
+                             start_new_session=True,
+                             stdin=subprocess.DEVNULL,
+                             stdout=subprocess.DEVNULL,
+                             stderr=subprocess.DEVNULL,
+                             close_fds=True)
+            client = _scratchpad_wait_for_window(pad, timeout)
+            if client is None:
+                # Nothing to show. Reveal anyway and the user gets an empty
+                # workspace and no idea why, so say what happened instead.
+                return {"ok": False, "id": pad_id, "action": "launch-timeout",
+                        "error": f"{pad['name']}: no window matched {pad['classRegex']} "
+                                 f"within {timeout:g}s"}
+
+        address = str(client.get("address") or "")
+        target_monitor = _scratchpad_target_monitor(pad)
+
+        # Before anything else: a window whose class settled after mapping never
+        # matched the workspace rule and is sitting on whatever workspace was
+        # active then. Moving it must come first, because the special workspace
+        # may not exist at all until something is on it -- and everything below
+        # (placing that workspace on a monitor, revealing it) assumes it does.
+        membership = _scratchpad_ensure_membership(pad_id, client)
+
+        if launch_only:
+            # Preload: park it, place it, never reveal. Membership matters even
+            # more here -- a preloaded app that mapped late would otherwise sit
+            # VISIBLY on the active workspace instead of being parked.
+            _scratchpad_place_workspace(pad_id, target_monitor)
+            reassert = _scratchpad_reassert(pad, address)
+            return {"ok": True, "action": "preloaded", "id": pad_id,
+                    "launched": launched, "membership": membership,
+                    "reassert": reassert}
+
+        active = _hyprctl_json("activewindow")
+        if isinstance(active, dict) and active.get("address"):
+            state_file.write_text(str(active["address"]))
+
+        # Every step below is checked. Reporting success after a dispatch that
+        # failed means a toggle that revealed nothing is indistinguishable from
+        # one that worked — the caller, and the user reading `--json`, are told
+        # the pad is on screen when it is not.
+        failures: List[str] = []
+        if membership.get("from") is not None and not membership.get("moved"):
+            failures.append(f"could not move the window onto special:{pad_id}")
+        if not _scratchpad_place_workspace(pad_id, target_monitor):
+            failures.append(f"could not place special:{pad_id} on {target_monitor}")
+        if target_monitor and not _scratchpad_dispatch("focusmonitor", target_monitor):
+            failures.append(f"could not focus monitor {target_monitor}")
+        if not _scratchpad_visible_monitor(pad_id):
+            if not _scratchpad_dispatch("togglespecialworkspace", pad_id):
+                failures.append("could not toggle the special workspace")
+        if not _scratchpad_dispatch("focuswindow", "address:" + address):
+            failures.append("could not focus the window")
+        reassert = _scratchpad_reassert(pad, address)
+
+        # The dispatches can each report success and still leave the pad hidden
+        # (a workspace that would not move, a compositor that ignored the
+        # toggle), so the outcome is confirmed by reading the state back rather
+        # than inferred from the calls.
+        if not _scratchpad_visible_monitor(pad_id):
+            failures.append("the special workspace is still not visible")
+
+        if failures:
+            return {"ok": False, "action": "reveal-failed", "id": pad_id,
+                    "launched": launched, "membership": membership,
+                    "reassert": reassert,
+                    "error": f"{pad['name']}: " + "; ".join(failures)}
+
+        return {"ok": True, "action": "revealed", "id": pad_id,
+                "launched": launched, "membership": membership,
+                "reassert": reassert}
+
+
+def scratchpad_release(pad_id: str, class_regex: str = "", title_exclude: str = "") -> Dict[str, Any]:
+    """Hand a scratchpad's window back to the user's normal workspace.
+
+    Deleting a pad removes its keybind and every rule that pointed at its
+    special workspace. A window already mapped there would be left with no way
+    to reach it short of `hyprctl` by hand — invisible, but still running and
+    still holding whatever was open in it.
+
+    Moving it to the active workspace is chosen over closing it because
+    removing a *configuration entry* must not destroy the user's running
+    program or unsaved work, and over refusing the removal because a pad the
+    user no longer wants should not become unremovable until they find and
+    close its window.
+
+    `class_regex` and `title_exclude` are both passed in so this does not depend
+    on reading the pad back out of settings — the caller is about to delete it,
+    and a lookup here would race that write. They travel TOGETHER for the same
+    reason the generated rules share one match: releasing on the class alone
+    would relocate a same-class window the user explicitly excluded from the
+    pad, so deleting a scratchpad would yank an unrelated window onto their
+    active workspace. `release` must own exactly the windows the placement rule
+    owned, and no others."""
+    if not _scratchpad_session_ready():
+        return {"ok": True, "released": False, "reason": "no Hyprland session"}
+
+    pattern = class_regex
+    exclude = title_exclude
+    if not pattern:
+        pad = {p["id"]: p for p in load_scratchpads()}.get(pad_id)
+        if pad is None:
+            return {"ok": False, "error": f"unknown scratchpad: {pad_id}"}
+        pattern = pad["classRegex"]
+        # Only fall back for the exclusion when the class came from the same
+        # lookup; mixing a passed-in class with a looked-up exclusion would pair
+        # two pads' criteria.
+        exclude = title_exclude or pad["titleExclude"]
+
+    client = _scratchpad_find_window({"classRegex": pattern, "titleExclude": exclude})
+    if client is None:
+        return {"ok": True, "released": False, "reason": "no window mapped"}
+
+    address = str(client.get("address") or "")
+    selector = "address:" + address
+
+    active = _hyprctl_json("activeworkspace")
+    workspace_id = (active or {}).get("id") if isinstance(active, dict) else None
+    if workspace_id is None:
+        return {"ok": False, "error": "could not read the active workspace"}
+
+    # Drop fullscreen first: a window moved out still fullscreen would cover the
+    # workspace it lands on, which is a worse surprise than the one being fixed.
+    _scratchpad_dispatch("fullscreenstate", f"0 -1,{selector}")
+    moved = _scratchpad_dispatch("movetoworkspace", f"{workspace_id},{selector}")
+    return {"ok": moved, "released": moved, "address": address, "workspace": workspace_id}
+
+
+def _scratchpad_target_monitor(pad: Dict[str, Any]) -> str:
+    """The output a pad should open on, resolved against what is CONNECTED.
+
+    A configured monitor name is an intent, not a guarantee: a laptop that has
+    left its dock still carries `DP-1` in the pad record, and dispatching at a
+    name no output answers to silently does nothing — the workspace stays
+    wherever it was and the pad appears in the wrong place, or not at all.
+    Falling back to the focused output is the same thing "follow focus" already
+    means, so an unplugged monitor degrades to the behaviour the user would
+    have picked anyway rather than to a broken keybind."""
+    configured = str(pad.get("monitor") or "")
+    if configured:
+        monitors = _hyprctl_json("monitors")
+        if isinstance(monitors, list):
+            for monitor in monitors:
+                if isinstance(monitor, dict) and str(monitor.get("name") or "") == configured:
+                    return configured
+            # Connected outputs were readable and the configured one is not
+            # among them.
+            eprint(f"scratchpad {pad.get('id')}: monitor {configured} is not connected; "
+                   f"falling back to the focused output")
+        else:
+            # The monitor list could not be read at all. The configured name is
+            # the best information available, so keep it rather than silently
+            # relocating the pad on the strength of a failed query.
+            return configured
+    return _scratchpad_focused_monitor()
+
+
+def _scratchpad_focused_monitor() -> str:
+    monitors = _hyprctl_json("monitors")
+    if not isinstance(monitors, list):
+        return ""
+    for monitor in monitors:
+        if isinstance(monitor, dict) and monitor.get("focused") is True:
+            return str(monitor.get("name") or "")
+    return ""
 
 
 
@@ -13324,7 +14369,7 @@ def cmd_terminal(argv: List[str]) -> int:
 
 def main() -> int:
     if len(sys.argv) < 2:
-        eprint("Usage: vshell-helper <theme|fonts|deps|notifications|update|ai-usage|capture|cl|dl|trash|color|keybinds|config|compositor|blur|brightness|auth|greeter> ...")
+        eprint("Usage: vshell-helper <theme|fonts|deps|notifications|update|ai-usage|capture|cl|dl|trash|color|keybinds|config|scratchpad|compositor|blur|brightness|auth|greeter> ...")
         return 2
     cmd, argv = sys.argv[1], sys.argv[2:]
     try:
@@ -13343,6 +14388,7 @@ def main() -> int:
         if cmd == "color": return cmd_color(argv)
         if cmd == "keybinds": return cmd_keybinds(argv)
         if cmd == "config": return cmd_config(argv)
+        if cmd == "scratchpad": return cmd_scratchpad(argv)
         if cmd == "compositor": return cmd_compositor(argv)
         if cmd == "instances": return cmd_instances(argv)
         if cmd == "battery": return cmd_battery(argv)
