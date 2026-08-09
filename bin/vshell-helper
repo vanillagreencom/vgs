@@ -8766,10 +8766,12 @@ def cmd_scratchpad(argv: List[str]) -> int:
         return 0 if result.get("ok") else 1
 
     if action == "status":
-        pads = load_scratchpads()
+        problems: List[Dict[str, str]] = []
+        pads = load_scratchpads(problems)
         monitors, resolved = scratchpad_monitors()
         print(json.dumps({
             "ok": True,
+            "problems": problems,
             "path": str(scratchpad_config_path()),
             "generated": scratchpad_config_path().exists(),
             "monitorsResolved": resolved,
@@ -9151,24 +9153,38 @@ def scratchpad_include_line() -> str:
     return 'pcall(require, "vgs.scratchpads")'
 
 
-def normalize_scratchpad(raw: Any) -> Dict[str, Any] | None:
+def normalize_scratchpad(raw: Any, problems: List[Dict[str, str]] | None = None) -> Dict[str, Any] | None:
     """One pad record, coerced to the shape the renderer and the toggle both
     assume. Returns None for anything unusable rather than emitting a partial
     rule — a scratchpad whose class regex is missing would silently capture
-    nothing, or worse, everything."""
+    nothing, or worse, everything.
+
+    `problems` collects a reason for every rejection. Rejecting is right, but
+    doing it silently is not: a pad with an uncompilable regex simply vanished
+    from the generated config, so the user's scratchpad stopped working while
+    Settings still showed it as configured. Every `return None` below records
+    why, so the caller can name the pad instead of losing it."""
+    def reject(reason: str, pad_name: str = "") -> None:
+        if problems is not None:
+            problems.append({"id": pad_name, "reason": reason})
+        return None
+
     if not isinstance(raw, dict):
-        return None
+        return reject("not a scratchpad record")
     pad_id = str(raw.get("id") or "").strip().lower()
+    label = str(raw.get("name") or raw.get("id") or "?")
     if not SCRATCHPAD_ID_RE.match(pad_id):
-        return None
+        return reject("id must be 1-32 characters of a-z, 0-9, '-' or '_', starting alphanumeric", label)
     class_regex = str(raw.get("classRegex") or "").strip()
     command = str(raw.get("command") or "").strip()
-    if not class_regex or not command:
-        return None
+    if not class_regex:
+        return reject("no window class pattern", label)
+    if not command:
+        return reject("no launch command", label)
     try:
         re.compile(class_regex)
-    except re.error:
-        return None
+    except re.error as exc:
+        return reject(f"window class pattern does not compile: {exc}", label)
 
     # Same treatment as classRegex, and for the same reason: an exclusion that
     # does not compile is not "no exclusion", it is an exclusion the user asked
@@ -9179,8 +9195,8 @@ def normalize_scratchpad(raw: Any) -> Dict[str, Any] | None:
     if title_exclude:
         try:
             re.compile(title_exclude)
-        except re.error:
-            return None
+        except re.error as exc:
+            return reject(f"title exclusion does not compile: {exc}", label)
 
     size_mode = str(raw.get("sizeMode") or "percent").strip().lower()
     if size_mode not in {"percent", "pixels"}:
@@ -9223,15 +9239,21 @@ def normalize_scratchpad(raw: Any) -> Dict[str, Any] | None:
     }
 
 
-def load_scratchpads() -> List[Dict[str, Any]]:
+def load_scratchpads(problems: List[Dict[str, str]] | None = None) -> List[Dict[str, Any]]:
     pads: List[Dict[str, Any]] = []
     seen: set[str] = set()
     for raw in (load_settings().get("scratchpads") or []):
-        pad = normalize_scratchpad(raw)
+        pad = normalize_scratchpad(raw, problems)
+        if pad is None:
+            continue
         # Two pads with one id would generate two rule sets for one special
         # workspace — the exact two-owners problem the settings migration
-        # refuses to create by import. First definition wins.
-        if pad is None or pad["id"] in seen:
+        # refuses to create by import. First definition wins, and the loser is
+        # named rather than quietly discarded.
+        if pad["id"] in seen:
+            if problems is not None:
+                problems.append({"id": pad["name"],
+                                 "reason": f"duplicate id '{pad['id']}'; the first definition wins"})
             continue
         seen.add(pad["id"])
         pads.append(pad)
@@ -9519,7 +9541,8 @@ def scratchpad_include_status() -> Dict[str, Any]:
 
 
 def apply_scratchpads(reload: bool = True) -> Dict[str, Any]:
-    pads = load_scratchpads()
+    problems: List[Dict[str, str]] = []
+    pads = load_scratchpads(problems)
     monitors, resolved = scratchpad_monitors()
     content, meta = render_scratchpads_lua(pads, monitors, resolved)
     path = scratchpad_config_path()
@@ -9537,6 +9560,10 @@ def apply_scratchpads(reload: bool = True) -> Dict[str, Any]:
         "ok": not reload_result.get("attempted") or bool(reload_result.get("ok")),
         "path": str(path),
         "scratchpads": meta,
+        # Pads that could not be used, each with the reason. A rejected pad
+        # generates no rules, so without this the user's scratchpad would stop
+        # working while Settings still showed it as configured.
+        "problems": problems,
         "include": scratchpad_include_status(),
         "reload": reload_result,
     }
@@ -9808,13 +9835,36 @@ def scratchpad_toggle(pad_id: str, reveal_only: bool = False, launch_only: bool 
         if isinstance(active, dict) and active.get("address"):
             state_file.write_text(str(active["address"]))
 
-        _scratchpad_place_workspace(pad_id, target_monitor)
-        if target_monitor:
-            _scratchpad_dispatch("focusmonitor", target_monitor)
+        # Every step below is checked. Reporting success after a dispatch that
+        # failed means a toggle that revealed nothing is indistinguishable from
+        # one that worked — the caller, and the user reading `--json`, are told
+        # the pad is on screen when it is not.
+        failures: List[str] = []
+        if membership.get("from") is not None and not membership.get("moved"):
+            failures.append(f"could not move the window onto special:{pad_id}")
+        if not _scratchpad_place_workspace(pad_id, target_monitor):
+            failures.append(f"could not place special:{pad_id} on {target_monitor}")
+        if target_monitor and not _scratchpad_dispatch("focusmonitor", target_monitor):
+            failures.append(f"could not focus monitor {target_monitor}")
         if not _scratchpad_visible_monitor(pad_id):
-            _scratchpad_dispatch("togglespecialworkspace", pad_id)
-        _scratchpad_dispatch("focuswindow", "address:" + address)
+            if not _scratchpad_dispatch("togglespecialworkspace", pad_id):
+                failures.append("could not toggle the special workspace")
+        if not _scratchpad_dispatch("focuswindow", "address:" + address):
+            failures.append("could not focus the window")
         reassert = _scratchpad_reassert(pad, address)
+
+        # The dispatches can each report success and still leave the pad hidden
+        # (a workspace that would not move, a compositor that ignored the
+        # toggle), so the outcome is confirmed by reading the state back rather
+        # than inferred from the calls.
+        if not _scratchpad_visible_monitor(pad_id):
+            failures.append("the special workspace is still not visible")
+
+        if failures:
+            return {"ok": False, "action": "reveal-failed", "id": pad_id,
+                    "launched": launched, "membership": membership,
+                    "reassert": reassert,
+                    "error": f"{pad['name']}: " + "; ".join(failures)}
 
         return {"ok": True, "action": "revealed", "id": pad_id,
                 "launched": launched, "membership": membership,

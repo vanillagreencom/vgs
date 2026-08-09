@@ -3967,6 +3967,108 @@ def test_scratchpad_toggle_honours_enabled():
             os.environ["HYPRLAND_INSTANCE_SIGNATURE"] = saved_sig
 
 
+def test_scratchpad_rejections_are_named_not_silent():
+    """Rejecting an unusable pad is right; doing it silently is not. A pad with
+    an uncompilable regex generated no rules at all, so the user's scratchpad
+    stopped working while Settings went on showing it as configured."""
+    problems = []
+    assert_equal(helper.normalize_scratchpad(
+        {"id": "bad", "name": "Broken", "command": "x", "classRegex": "^(unclosed"},
+        problems), None, "an uncompilable class pattern is still rejected")
+    assert_equal(len(problems), 1, "and the rejection is recorded")
+    assert_equal(problems[0]["id"], "Broken", "named by the pad's own label")
+    assert "does not compile" in problems[0]["reason"], "with the reason"
+
+    # Every rejection path reports, not just the regex one — a pad that vanishes
+    # for any reason is equally invisible to the user.
+    cases = [
+        ({"id": "x", "name": "No Class", "command": "x"}, "no window class pattern"),
+        ({"id": "x", "name": "No Command", "classRegex": "^x$"}, "no launch command"),
+        ({"id": "BAD ID", "name": "Bad Id", "command": "x", "classRegex": "^x$"}, "id must be"),
+        ({"id": "x", "name": "Bad Title", "command": "x", "classRegex": "^x$",
+          "titleExclude": "["}, "title exclusion does not compile"),
+    ]
+    for raw, expected in cases:
+        found = []
+        assert_equal(helper.normalize_scratchpad(raw, found), None, f"{raw.get('name')} is rejected")
+        assert_equal(len(found), 1, f"{raw.get('name')} records a reason")
+        assert expected in found[0]["reason"], \
+            f"{raw.get('name')}: expected {expected!r} in {found[0]['reason']!r}"
+
+    # A usable pad records nothing.
+    clean = []
+    assert helper.normalize_scratchpad({"id": "ok", "command": "x", "classRegex": "^x$"}, clean)
+    assert_equal(clean, [], "a usable pad produces no problem entry")
+
+    # The collector is optional, so existing callers keep working.
+    assert_equal(helper.normalize_scratchpad({"id": "bad", "command": "x", "classRegex": "^("}),
+                 None, "rejection still works with no collector")
+
+
+def test_scratchpad_reveal_reports_failed_dispatches():
+    """A toggle that did not reveal anything must not report success. Otherwise
+    a failed reveal is indistinguishable from a working one, both to the caller
+    and to anyone reading --json."""
+    if not shutil.which("hyprctl"):
+        print("  (skipped: hyprctl not installed; reveal path was not exercised)")
+        return
+
+    originals = (helper.load_scratchpads, helper._scratchpad_visible_monitor,
+                 helper._scratchpad_find_window, helper._scratchpad_dispatch,
+                 helper._hyprctl_json, helper._scratchpad_place_workspace,
+                 helper._scratchpad_reassert)
+    saved_sig = os.environ.get("HYPRLAND_INSTANCE_SIGNATURE")
+
+    pad = _pad(id="term")
+    helper.load_scratchpads = lambda *a, **k: [pad]
+    helper._scratchpad_find_window = lambda p: {"address": "0xaaa", "workspace": {"name": "special:term"}}
+    helper._hyprctl_json = lambda *args: None
+    helper._scratchpad_place_workspace = lambda *a, **k: True
+    helper._scratchpad_reassert = lambda *a, **k: {"applied": True}
+    os.environ["HYPRLAND_INSTANCE_SIGNATURE"] = "test"
+    try:
+        # Everything works and the workspace really is visible afterwards.
+        helper._scratchpad_dispatch = lambda *args: True
+        visible = {"n": 0}
+
+        def visible_after_toggle(pad_id):
+            # Hidden on the first read (so the toggle fires), visible after.
+            visible["n"] += 1
+            return "" if visible["n"] == 1 else "DP-1"
+
+        helper._scratchpad_visible_monitor = visible_after_toggle
+        good = helper.scratchpad_toggle("term")
+        assert_equal(good["ok"], True, "a reveal that works reports success")
+        assert_equal(good["action"], "revealed", "and says so")
+
+        # A dispatch fails: the toggle must NOT report success.
+        helper._scratchpad_dispatch = lambda *args: args[0] != "focuswindow"
+        visible["n"] = 0
+        helper._scratchpad_visible_monitor = visible_after_toggle
+        bad = helper.scratchpad_toggle("term")
+        assert_equal(bad["ok"], False, "a failed dispatch is not success")
+        assert_equal(bad["action"], "reveal-failed", "and is named")
+        assert "could not focus the window" in bad["error"], \
+            f"the reason is reported, got {bad['error']!r}"
+
+        # Every dispatch claims success but the workspace is still not visible:
+        # the outcome is read back, not inferred from the calls.
+        helper._scratchpad_dispatch = lambda *args: True
+        helper._scratchpad_visible_monitor = lambda pad_id: ""
+        lying = helper.scratchpad_toggle("term")
+        assert_equal(lying["ok"], False, "success is confirmed by reading state back")
+        assert "still not visible" in lying["error"], \
+            f"and says what was wrong, got {lying['error']!r}"
+    finally:
+        (helper.load_scratchpads, helper._scratchpad_visible_monitor,
+         helper._scratchpad_find_window, helper._scratchpad_dispatch,
+         helper._hyprctl_json, helper._scratchpad_place_workspace,
+         helper._scratchpad_reassert) = originals
+        os.environ.pop("HYPRLAND_INSTANCE_SIGNATURE", None)
+        if saved_sig is not None:
+            os.environ["HYPRLAND_INSTANCE_SIGNATURE"] = saved_sig
+
+
 def main():
     # A catalog download is minutes to hours of network transfer. Holding the
     # exclusive theme lock for that long would block applies, the light/dark
@@ -4073,6 +4175,8 @@ def main():
     test_scratchpad_rejects_an_uncompilable_title_exclusion()
     test_scratchpad_release_honours_the_title_exclusion()
     test_scratchpad_toggle_honours_enabled()
+    test_scratchpad_rejections_are_named_not_silent()
+    test_scratchpad_reveal_reports_failed_dispatches()
     subprocess.run(
         [sys.executable, str(REPO_ROOT / "scripts" / "check-vshell-niri.py")],
         check=True,
