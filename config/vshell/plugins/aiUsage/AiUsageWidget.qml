@@ -368,16 +368,24 @@ PluginComponent {
     property string otherInFlight: ""
 
     // A tag is only honoured while its process is actually running, so a fetch
-    // that somehow never reports an exit cannot wedge polling forever.
+    // that somehow never reports an exit cannot wedge polling forever. And a
+    // tag is only KEPT when the launch actually took: assigning `running = true`
+    // to a Process that has not finished stopping is a no-op, and a tag left
+    // behind by a launch that never happened would block every later refresh
+    // while nothing was fetching.
     function refresh() {
         if (root.otherInFlight === "" || !otherProc.running) {
             root.otherInFlight = root.otherProvider;
             otherProc.running = true;
+            if (!otherProc.running)
+                root.otherInFlight = "";
         }
         if (root.usageInFlight !== "" && usageProc.running)
             return;
         root.usageInFlight = root.provider;
         usageProc.running = true;
+        if (!usageProc.running)
+            root.usageInFlight = "";
     }
 
     function setProvider(p) {
@@ -427,8 +435,17 @@ PluginComponent {
             // The selection moved while this was running, so its output was
             // discarded above and nothing has fetched the current provider yet
             // — refresh() was a no-op for as long as the tag was set.
+            //
+            // DEFERRED, because refresh() restarts by assigning `running = true`
+            // and that is a no-op while `running` still reads true. Quickshell
+            // 0.3.0 documents `running = false` as "send SIGTERM" and gives the
+            // restart idiom as `onRunningChanged: if (!running) running = true`
+            // — against runningChanged, not exited — and nowhere states that
+            // `running` has already flipped when `exited` fires. Assuming it has
+            // would silently drop the replacement fetch and leave the widget on
+            // loading = true until the poll timer. Next turn, both have settled.
             if (launchedFor !== "" && launchedFor !== root.provider)
-                root.refresh();
+                Qt.callLater(root.refresh);
         }
     }
 
@@ -455,8 +472,9 @@ PluginComponent {
         onExited: {
             const launchedFor = root.otherInFlight;
             root.otherInFlight = "";
+            // Deferred for the same reason as usageProc's relaunch above.
             if (launchedFor !== "" && launchedFor !== root.otherProvider)
-                root.refresh();
+                Qt.callLater(root.refresh);
         }
     }
 
