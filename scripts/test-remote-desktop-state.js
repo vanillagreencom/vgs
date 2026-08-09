@@ -34,8 +34,12 @@ const serviceSource = fs.readFileSync(SERVICE, "utf8");
 
 const marked = widgetSource.match(/\/\/ BEGIN STATE DECISION\n([\s\S]*?)\/\/ END STATE DECISION/);
 assert.ok(marked, "RemoteDesktopWidget.qml must carry the STATE DECISION markers");
-const { visualStateFor, stateColorTokenFor, pillIconUsesStateColor } = new Function(
-    `${marked[1]}\nreturn { visualStateFor, stateColorTokenFor, pillIconUsesStateColor };`
+const {
+    visualStateFor, stateColorTokenFor, pillIconUsesStateColor,
+    tooltipFor, sessionDetailFrom, upSubtitleFor
+} = new Function(
+    `${marked[1]}\nreturn { visualStateFor, stateColorTokenFor, pillIconUsesStateColor,` +
+    ` tooltipFor, sessionDetailFrom, upSubtitleFor };`
 )();
 
 const sessionMarked = serviceSource.match(/\/\/ BEGIN SESSION DECISION\n([\s\S]*?)\/\/ END SESSION DECISION/);
@@ -284,12 +288,26 @@ assert.throws(
 // --- service invariants -----------------------------------------------------
 
 function qmlFunctionBody(name) {
-    const start = serviceSource.indexOf(`function ${name}(`);
-    assert.ok(start >= 0, `RemoteDesktopService.qml should define ${name}`);
-    const end = serviceSource.indexOf("\n    }", start);
-    assert.ok(end > start, `${name} should be a closed function body`);
-    return serviceSource.slice(start, end);
+    return functionBodyIn(serviceSource, name, "RemoteDesktopService.qml");
 }
+
+function widgetFunctionBody(name) {
+    return functionBodyIn(widgetSource, name, "RemoteDesktopWidget.qml");
+}
+
+function functionBodyIn(src, name, where) {
+    const start = src.indexOf(`function ${name}(`);
+    assert.ok(start >= 0, `${where} should define ${name}`);
+    const end = src.indexOf("\n    }", start);
+    assert.ok(end > start, `${name} should be a closed function body`);
+    return src.slice(start, end);
+}
+
+// Prove the reader can fail before anything it returns is used as evidence.
+assert.throws(
+    () => widgetFunctionBody("thisFunctionDoesNotExist"),
+    "the function-body reader must fail on a name that is absent"
+);
 
 // A single disconnect must never clear the indicator. With more than one client
 // connected it ends ONE session, not the capture, so only the authoritative
@@ -432,5 +450,225 @@ assert.ok(
     /id: watchStable[\s\S]*?onTriggered: watchRestart\.backoffMs = 2000/.test(serviceSource),
     "only the stability timer may reset the backoff"
 );
+
+// --- the tooltip selects on the decided state, and never re-derives it ------
+//
+// tooltipText() used to walk the same ordering a second time: streaming, then
+// statusKnown, then installed, then stale. Two copies of one table, free to
+// drift, in a widget whose every reported defect has been an ordering bug. The
+// ordering now has one owner and the message is chosen from its verdict, so the
+// table below is what pins that every state still says something, and says the
+// right thing.
+
+function tipFacts(overrides) {
+    return Object.assign({
+        statusKnown: true,
+        sessionDetail: "",
+        sessionError: "",
+        statusError: "",
+        unavailableReason: "",
+        watchError: "",
+        captureFallback: false,
+        outputUnknown: false
+    }, overrides || {});
+}
+
+// EVERY state the decision function can return must get a message. A state
+// added to visualStateFor() without one would silently fall to the default and
+// tell the user the host is off.
+const ALL_STATES = [
+    "streaming", "streaming-unconfirmed", "unknown", "unavailable",
+    "stale", "listening", "listening-unconfirmed", "off"
+];
+const keysSeen = new Set();
+for (const state of ALL_STATES) {
+    const tip = tooltipFor(state, tipFacts());
+    assert.ok(tip && typeof tip.key === "string" && tip.key.length > 0, `${state} must select a tooltip`);
+    keysSeen.add(tip.key);
+}
+assert.equal(
+    keysSeen.size, ALL_STATES.length,
+    "each state must select a DISTINCT message; sharing one would make two states read alike"
+);
+
+// The states this widget exists to distinguish must not share a tooltip either
+// -- the colour split above is worthless if the words collapse.
+assert.notEqual(
+    tooltipFor("streaming", tipFacts()).key,
+    tooltipFor("listening", tipFacts()).key,
+    "a live capture and an idle host must not read alike"
+);
+assert.notEqual(
+    tooltipFor("streaming", tipFacts()).key,
+    tooltipFor("streaming-unconfirmed", tipFacts()).key,
+    "a confirmed capture and an unconfirmed one are different claims"
+);
+assert.notEqual(
+    tooltipFor("listening", tipFacts()).key,
+    tooltipFor("listening-unconfirmed", tipFacts()).key,
+    "'nobody is connected' and 'we cannot say' must not read alike"
+);
+
+// An uncertain host axis is reported BESIDE a confirmed capture, not instead
+// of it: the capture is still the headline.
+assert.equal(
+    tooltipFor("streaming", tipFacts({ statusKnown: false })).key,
+    "streaming-host-uncertain",
+    "a confirmed capture with an unknown host state says both"
+);
+assert.ok(
+    tooltipFor("streaming", tipFacts({ statusKnown: false })).key.startsWith("streaming"),
+    "and it stays a streaming message; downgrading it would hide the capture"
+);
+assert.equal(
+    tooltipFor("streaming", tipFacts({ sessionDetail: "h264 · 20000 kbps" })).detail,
+    "h264 · 20000 kbps",
+    "the session summary rides along with the streaming message"
+);
+
+// The service's own reason reaches the message; the caller supplies a fallback
+// only when there is none, so a real explanation is never replaced by a
+// generic one.
+for (const [state, factKey] of [
+    ["streaming-unconfirmed", "sessionError"],
+    ["unknown", "statusError"],
+    ["unavailable", "unavailableReason"],
+    ["stale", "watchError"],
+    ["listening-unconfirmed", "sessionError"]
+]) {
+    assert.equal(
+        tooltipFor(state, tipFacts({ [factKey]: "the real reason" })).reason,
+        "the real reason",
+        `${state} must carry the service's own explanation, not a generic stand-in`
+    );
+    assert.equal(
+        tooltipFor(state, tipFacts()).reason, "",
+        `${state} with no reason must leave it empty for the caller to fill`
+    );
+}
+
+// A known-bad capture target outranks an unchecked one: one is a fact, the
+// other is not knowing, and the fact is the worse news.
+assert.equal(
+    tooltipFor("listening", tipFacts({ captureFallback: true, outputUnknown: true })).key,
+    "listening-capture-fallback",
+    "a confirmed fallback to a real monitor outranks an unchecked output"
+);
+assert.equal(
+    tooltipFor("listening", tipFacts({ outputUnknown: true })).key,
+    "listening-output-unknown",
+    "an unchecked output is its own message, not a plain idle host"
+);
+assert.equal(
+    tooltipFor("listening", tipFacts()).key, "listening",
+    "an ordinary idle host gets the plain message"
+);
+
+// The capture-fallback and unchecked-output messages belong to the LISTENING
+// state only. Reaching them from a streaming state would bury the capture.
+for (const state of ["streaming", "streaming-unconfirmed", "unknown", "unavailable", "stale", "off"]) {
+    const tip = tooltipFor(state, tipFacts({ captureFallback: true, outputUnknown: true }));
+    assert.ok(
+        !tip.key.startsWith("listening-"),
+        `${state} must not borrow a listening message just because the output looks wrong`
+    );
+}
+
+// --- the session summary --------------------------------------------------
+
+assert.equal(sessionDetailFrom({}), "", "nothing known is an empty summary, not a row of separators");
+assert.equal(
+    sessionDetailFrom({ codec: "h264", bitrateBps: 19999000, colorDepth: "8-bit" }),
+    "h264 · 19999 kbps · 8-bit",
+    "everything present renders in order"
+);
+assert.equal(
+    sessionDetailFrom({ bitrateBps: 20000000 }), "20000 kbps",
+    "a missing field is omitted rather than left as an empty segment"
+);
+assert.equal(
+    sessionDetailFrom({ codec: "h264", bitrateBps: 0 }), "h264",
+    "a zero bitrate is not a measurement, so it is omitted"
+);
+assert.equal(
+    sessionDetailFrom({ bitrateBps: 1500 }), "2 kbps",
+    "the bitrate is rounded, not truncated"
+);
+
+// --- the up-host subtitle always says something ----------------------------
+//
+// The non-Hyprland branch used to fall through to "". A blank line where every
+// neighbouring state has one reads as a rendering fault, and it is exactly the
+// case where the user most needs telling that a REAL monitor is being captured.
+
+function subtitleFacts(overrides) {
+    return Object.assign({
+        outputUnknown: false,
+        outputPresent: false,
+        outputManaged: true,
+        outputName: "HEADLESS-1",
+        compositor: "hyprland"
+    }, overrides || {});
+}
+
+for (const facts of [
+    subtitleFacts({ outputUnknown: true }),
+    subtitleFacts({ outputPresent: true }),
+    subtitleFacts({}),
+    subtitleFacts({ outputManaged: false, compositor: "niri" }),
+    subtitleFacts({ outputManaged: false, compositor: "unknown" }),
+    subtitleFacts({ outputManaged: false, compositor: "" })
+]) {
+    const sub = upSubtitleFor(facts);
+    assert.ok(
+        sub && typeof sub.key === "string" && sub.key.length > 0,
+        `every up-host subtitle must select a message: ${JSON.stringify(facts)}`
+    );
+}
+
+assert.equal(
+    upSubtitleFor(subtitleFacts({ outputManaged: false, compositor: "niri" })).key,
+    "output-unmanaged",
+    "a compositor VGS cannot create an output on gets its own line, never a blank one"
+);
+assert.equal(
+    upSubtitleFor(subtitleFacts({ outputManaged: false, compositor: "niri" })).compositor,
+    "niri",
+    "and it can name the compositor when one is known"
+);
+assert.equal(
+    upSubtitleFor(subtitleFacts({})).key,
+    "output-missing",
+    "Hyprland with the output gone is a real-monitor capture, not a blank subtitle"
+);
+assert.equal(
+    upSubtitleFor(subtitleFacts({ outputPresent: true })).key, "output-present",
+    "the ordinary case still names what is being captured"
+);
+assert.equal(
+    upSubtitleFor(subtitleFacts({ outputUnknown: true, outputPresent: true })).key,
+    "output-unknown",
+    "not knowing outranks a stale `present`, which is what the unknown flag exists to say"
+);
+
+// --- both renderers select on the descriptor, and decide nothing themselves -
+//
+// The point of the split is that the ordering has ONE owner. A renderer that
+// re-tested the service's state would put a second copy back.
+for (const fn of ["tooltipText", "upSubtitleText"]) {
+    const body = widgetFunctionBody(fn);
+    assert.ok(
+        /switch \(\w+\.key\)/.test(body),
+        `${fn} must select on the descriptor's key`
+    );
+    assert.ok(
+        !/RemoteDesktopService\.(statusKnown|sessionKnown|running|installed|streaming)\b/.test(body),
+        `${fn} must not re-read the state it was handed a verdict for`
+    );
+    assert.ok(
+        !/\broot\.(visualState\s*===|streaming\b|hostUp\b|statusKnown\s*[!=]==?)/.test(body.replace(/root\.tooltipFor\([^)]*/, "")),
+        `${fn} must not re-derive the state; that is visualStateFor()'s job`
+    );
+}
 
 console.log("Remote desktop state checks passed.");
