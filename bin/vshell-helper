@@ -10159,14 +10159,10 @@ def scratchpad_toggle(pad_id: str, reveal_only: bool = False, launch_only: bool 
         launched = False
         if client is None:
             launched = True
-            # Detached: the pad outlives this toggle process, and must not
-            # inherit the flock fd and hold its own lock for its whole lifetime.
-            subprocess.Popen(["sh", "-c", pad["command"]],
-                             start_new_session=True,
-                             stdin=subprocess.DEVNULL,
-                             stdout=subprocess.DEVNULL,
-                             stderr=subprocess.DEVNULL,
-                             close_fds=True)
+            spawn_error = _scratchpad_spawn(pad)
+            if spawn_error:
+                return {"ok": False, "id": pad_id, "action": "launch-refused",
+                        "error": spawn_error}
             client = _scratchpad_wait_for_window(pad, timeout)
             if client is None:
                 # Nothing to show. Reveal anyway and the user gets an empty
@@ -10374,6 +10370,81 @@ SCRATCHPAD_NIRI_ANCHORS = {
 }
 
 
+# Shell operators. A command carrying one was being INTERPRETED by `sh -c`
+# rather than executed, which is what AGENTS.md § Backend rules forbids ("exec
+# external tools with argv arrays") — and on Niri a preloaded pad runs its
+# command at login, not only when the user presses the keybind.
+_SCRATCHPAD_SHELL_OPERATORS = re.compile(r"(?:\|\||&&|>>|[;|&<>()$])")
+# Substitutions and expansions. Unlike an operator these survive shlex as part
+# of a token, and as argv they are passed through LITERALLY — safe, but not what
+# the user wrote.
+_SCRATCHPAD_SHELL_EXPANSION = re.compile(r"(?:\$\(|`|\$\{|\$[A-Za-z_])")
+
+
+def scratchpad_launch_argv(command: str) -> Tuple[List[str], str]:
+    """(argv, error) for a pad's launch command.
+
+    Parsed with `shlex` and executed directly, so quoting still works
+    (`ghostty --title="My Pad"`) but nothing is handed to a shell to interpret.
+
+    A command using shell OPERATORS is refused rather than run either way.
+    Passing `&&` to execvp as a literal argument would silently do the wrong
+    thing, and keeping `sh -c` for exactly the commands where interpretation
+    matters would keep the rule broken where it counts. Refusing names the
+    problem instead of picking a quiet failure."""
+    text = str(command or "").strip()
+    if not text:
+        return ([], "the launch command is empty")
+    try:
+        # punctuation_chars makes shlex tokenise `();<>|&` the way a shell does,
+        # so `foo; bar` yields a bare `;` token instead of hiding it inside
+        # `foo;` — while quoted text is still left alone. It is a lexer option,
+        # not a `split()` one, so the lexer is built directly.
+        lexer = shlex.shlex(text, posix=True, punctuation_chars=True)
+        lexer.whitespace_split = True
+        argv = list(lexer)
+    except ValueError as exc:
+        return ([], f"the launch command could not be parsed ({exc})")
+    if not argv:
+        return ([], "the launch command is empty")
+    # Classified AFTER splitting, never on the raw string. `sh -c 'foo && bar'`
+    # is the deliberate opt-in this very message recommends, and there the `&&`
+    # is INSIDE an argument — scanning the raw text refused the one command
+    # shape that is meant to work.
+    for token in argv:
+        if _SCRATCHPAD_SHELL_OPERATORS.fullmatch(token):
+            return ([], f"the launch command uses shell syntax ({token!r}). VGS runs pad "
+                        "commands directly rather than through a shell, so ask for one "
+                        f"explicitly: sh -c {shlex.quote(text)}")
+        if _SCRATCHPAD_SHELL_EXPANSION.search(token):
+            # As argv this would be passed through literally rather than
+            # expanded, which is silently not what was written.
+            return ([], f"the launch command uses a shell expansion ({token!r}). VGS runs pad "
+                        "commands directly, so it would be passed through literally; ask for "
+                        f"a shell explicitly: sh -c {shlex.quote(text)}")
+    return (argv, "")
+
+
+def _scratchpad_spawn(pad: Dict[str, Any]) -> str:
+    """Launch a pad's app detached, or return why it could not be launched.
+
+    Detached and in its own session: the pad outlives this toggle process and
+    must not inherit the flock fd and hold the pad's lock for its whole life."""
+    argv, error = scratchpad_launch_argv(pad.get("command", ""))
+    if error:
+        return f"{pad.get('name') or pad.get('id')}: {error}"
+    try:
+        subprocess.Popen(argv,
+                         start_new_session=True,
+                         stdin=subprocess.DEVNULL,
+                         stdout=subprocess.DEVNULL,
+                         stderr=subprocess.DEVNULL,
+                         close_fds=True)
+    except OSError as exc:
+        return f"{pad.get('name') or pad.get('id')}: could not launch {argv[0]!r} ({exc})"
+    return ""
+
+
 def scratchpad_niri_workspace(pad_id: str) -> str:
     """The named workspace a pad lives on. Prefixed so a VGS pad can never
     collide with a workspace the user named themselves."""
@@ -10382,6 +10453,15 @@ def scratchpad_niri_workspace(pad_id: str) -> str:
 
 def scratchpad_niri_config_path() -> Path:
     return _niri().niri_config_dir() / "scratchpads.kdl"
+
+
+def _kdl_comment_text(value: str) -> str:
+    """User text flattened onto one line, for a `//` comment.
+
+    Collapsing beats escaping here: a comment has no escape syntax, so a
+    newline does not corrupt the comment, it ENDS it — and the remainder of the
+    name becomes config the compositor tries to parse."""
+    return re.sub(r"\s+", " ", str(value or "")).strip()
 
 
 def _kdl_raw_string(value: str) -> str:
@@ -10600,7 +10680,11 @@ def render_scratchpads_kdl(pads: List[Dict[str, Any]],
                 continue
 
         workspace = scratchpad_niri_workspace(pad["id"])
-        lines.append(f"// {pad['name']} ({pad['id']})")
+        # The name is user text and the id is not: `normalize_scratchpad`
+        # restricts the id precisely so it can be written unescaped, while a
+        # name may contain anything. A newline in one ended the `//` comment and
+        # left the rest of the name as config KDL would try to parse.
+        lines.append(f"// {_kdl_comment_text(pad['name'])} ({pad['id']})")
 
         # The workspace. Declared, so it exists before any window is moved onto
         # it and survives the pad being empty.
@@ -10968,24 +11052,27 @@ def scratchpad_toggle_niri(pad_id: str, reveal_only: bool = False, launch_only: 
                 return {"ok": False, "id": pad_id, "action": "hide-failed",
                         "error": f"{pad['name']}: could not focus away from the pad's workspace"}
             # Confirmed by reading the state back, not inferred from the call:
-            # an action can report success and leave the workspace focused.
-            if _scratchpad_niri_visible_output(pad_id) and _scratchpad_niri_workspace_focused(pad_id):
+            # an action can return zero and leave the pad exactly where it was.
+            #
+            # The test is VISIBILITY, not focus. A workspace that is still the
+            # active one on its output is still on screen even when focus has
+            # moved elsewhere — which is precisely what happens when the window
+            # focus was restored to lands on a DIFFERENT output. Checking focus
+            # alone reported "hidden" with the pad still displayed.
+            still_on = _scratchpad_niri_visible_output(pad_id)
+            if still_on:
                 return {"ok": False, "id": pad_id, "action": "hide-failed",
-                        "error": f"{pad['name']}: the pad's workspace is still focused"}
+                        "error": f"{pad['name']}: the pad is still displayed on {still_on}"}
             return {"ok": True, "action": "hidden", "id": pad_id}
 
         window = _scratchpad_niri_find_window(pad)
         launched = False
         if window is None:
             launched = True
-            # Detached, and in its own session: the pad outlives this toggle and
-            # must not inherit the flock fd and hold the lock for its lifetime.
-            subprocess.Popen(["sh", "-c", pad["command"]],
-                             start_new_session=True,
-                             stdin=subprocess.DEVNULL,
-                             stdout=subprocess.DEVNULL,
-                             stderr=subprocess.DEVNULL,
-                             close_fds=True)
+            spawn_error = _scratchpad_spawn(pad)
+            if spawn_error:
+                return {"ok": False, "id": pad_id, "action": "launch-refused",
+                        "error": spawn_error}
             # Wait for the window BEFORE focusing the workspace. Focusing first
             # shows an empty workspace and reads as a dead keybind, which is the
             # single-press-from-cold requirement.

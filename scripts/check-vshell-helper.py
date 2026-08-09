@@ -4170,6 +4170,158 @@ def test_scratchpad_niri_release_owns_only_the_pad_s_own_window():
          helper._niri_scratchpad_action) = originals
 
 
+def test_scratchpad_launch_command_is_argv_not_a_shell():
+    """AGENTS.md: exec external tools with argv arrays. A pad's command is
+    user-supplied configuration, and it was reaching `sh -c` — so shell
+    metacharacters in it were INTERPRETED. On Niri a preloaded pad runs its
+    command at login, not only when the keybind is pressed."""
+    argv, error = helper.scratchpad_launch_argv("ghostty --class=com.ghostty.scratchpad")
+    assert_equal(error, "", "an ordinary command parses cleanly")
+    assert_equal(argv, ["ghostty", "--class=com.ghostty.scratchpad"], "into an argv array")
+
+    # Quoting still works, because shlex does it — what is gone is the shell.
+    argv, error = helper.scratchpad_launch_argv('ghostty --title="My Pad"')
+    assert_equal(error, "", "quoted arguments are still supported")
+    assert_equal(argv, ["ghostty", "--title=My Pad"], "and are parsed, not word-split")
+
+    # A command that WANTS a shell is refused, not quietly mangled. Passing
+    # `&&` to execvp as a literal argument would do the wrong thing silently,
+    # and keeping `sh -c` for these would keep the rule broken exactly where it
+    # matters.
+    for command in ["foo && bar", "foo; bar", "foo|bar", "foo > /tmp/x",
+                    "foo $(id)", "foo `id`", "foo ${HOME}", "foo $HOME",
+                    "app --flag=a&b"]:
+        argv, error = helper.scratchpad_launch_argv(command)
+        assert_equal(argv, [], f"{command!r} is not executed as argv")
+        assert "shell" in error, f"{command!r} is refused with the reason: {error!r}"
+        assert "sh -c" in error, "and the refusal says how to opt in deliberately"
+
+    # `foo; bar` only tokenises as a bare `;` because the lexer is told to treat
+    # punctuation the way a shell does; plain shlex hides it inside `foo;` and
+    # the operator would sail straight through as an argument.
+    argv, error = helper.scratchpad_launch_argv("foo; bar")
+    assert_equal(argv, [], "an operator with no surrounding spaces is still caught")
+
+    # The opt-in the refusal recommends has to actually work. Classifying the
+    # RAW string instead of the parsed tokens refused this too — the one
+    # command shape that is meant to be allowed.
+    argv, error = helper.scratchpad_launch_argv("sh -c 'foo && bar'")
+    assert_equal(error, "", "an explicit shell is allowed")
+    assert_equal(argv, ["sh", "-c", "foo && bar"],
+                 "with the shell line intact as a single argument")
+
+    # Ordinary commands that merely look punctuated must keep working.
+    for command, expected in [("env FOO=1 app", ["env", "FOO=1", "app"]),
+                              ("1password --silent", ["1password", "--silent"])]:
+        argv, error = helper.scratchpad_launch_argv(command)
+        assert_equal(error, "", f"{command!r} is an ordinary command")
+        assert_equal(argv, expected, "parsed as argv")
+
+    argv, error = helper.scratchpad_launch_argv('ghostty --title="unbalanced')
+    assert_equal(argv, [], "an unparseable command is refused")
+    assert error, "with a reason"
+    assert_equal(helper.scratchpad_launch_argv("")[1] != "", True, "so is an empty one")
+
+
+def test_scratchpad_launch_refusal_reaches_the_toggle():
+    """The refusal has to surface where the user sees it: a pad whose command
+    cannot be run must fail loudly rather than reporting a reveal that never
+    launched anything."""
+    originals = (helper.load_scratchpads, helper._scratchpad_visible_monitor,
+                 helper._scratchpad_find_window, helper._scratchpad_dispatch,
+                 helper._scratchpad_session_ready, helper._hyprctl_json)
+    helper.load_scratchpads = lambda *a, **k: [_pad(command="foo && bar")]
+    helper._scratchpad_visible_monitor = lambda pad_id: ""
+    helper._scratchpad_find_window = lambda pad: None       # nothing running: it must launch
+    helper._scratchpad_dispatch = lambda *args: True
+    helper._hyprctl_json = lambda *args: None
+    helper._scratchpad_session_ready = lambda: True
+    try:
+        with _scratchpad_state_sandbox():
+            result = helper.scratchpad_toggle("term")
+        assert_equal(result["ok"], False, "a pad with a shell command does not silently reveal")
+        assert_equal(result["action"], "launch-refused", "and says the launch was refused")
+        assert "shell" in result["error"], f"naming the reason: {result['error']!r}"
+    finally:
+        (helper.load_scratchpads, helper._scratchpad_visible_monitor,
+         helper._scratchpad_find_window, helper._scratchpad_dispatch,
+         helper._scratchpad_session_ready, helper._hyprctl_json) = originals
+
+
+def test_scratchpad_niri_pad_name_cannot_break_the_generated_kdl():
+    """`normalize_scratchpad` restricts the ID so it can be written unescaped;
+    the NAME is unrestricted user text. A newline in it did not corrupt the
+    `//` comment, it ENDED it — and the rest of the name became config KDL
+    would try to parse."""
+    text, _ = helper.render_scratchpads_kdl(
+        [_pad(name="Bad\nwindow-rule { open-fullscreen true }")])
+    comment = [line for line in text.splitlines() if line.startswith("// Bad")]
+    assert comment, "the pad still gets its comment"
+    assert_equal(len(comment), 1, "on exactly one line")
+    assert "window-rule { open-fullscreen true }" in comment[0], \
+        "with the injected text flattened INTO the comment, where it is inert"
+
+    # Prove it did not simply escape into the config: the only window-rule
+    # blocks are the ones the generator wrote.
+    sys.path.insert(0, str(REPO_ROOT / "bin"))
+    import vshell_niri_kdl as kdl
+    headers = [header for header, _, _ in kdl.kdl_nodes_in_block(text)]
+    assert_equal(headers.count("window-rule"), 1,
+                 "a name carrying a window-rule does not become a second rule")
+
+
+def test_scratchpad_niri_hide_confirms_the_pad_is_off_screen():
+    """The hide path reported success without confirming. On Niri a workspace
+    that is still ACTIVE on its output is still displayed even when focus has
+    moved away — which is what happens when focus is restored to a window on a
+    different output — so checking focus alone called it hidden with the pad
+    still on screen."""
+    originals = (helper._niri_session_ready, helper._niri_msg_json,
+                 helper._niri_scratchpad_action, helper.load_scratchpads)
+    helper._niri_session_ready = lambda: True
+    helper._niri_scratchpad_action = lambda *a: True
+    helper.load_scratchpads = lambda *a, **k: [_pad(id="term")]
+
+    # `hides` models whether focusing away actually takes the pad off screen.
+    # It does not when the window focus is restored to lives on another output:
+    # the pad's workspace stays the ACTIVE one on its own output.
+    state = {"visible": True, "hides": False}
+
+    def fake_json(*args):
+        if args and args[0] == "workspaces":
+            return [{"id": 9, "name": "vgs-term", "idx": 3,
+                     "is_active": state["visible"], "is_focused": False,
+                     "output": "DP-2"}]
+        return []
+
+    def fake_action(*args):
+        if args and args[0] in ("focus-window", "focus-workspace-previous") and state["hides"]:
+            state["visible"] = False
+        return True
+
+    helper._niri_msg_json = fake_json
+    helper._niri_scratchpad_action = fake_action
+    try:
+        with _scratchpad_state_sandbox():
+            # Focus moved away, but the workspace is still the active one on
+            # DP-2 — so the pad is still on screen and this is not a hide.
+            result = helper.scratchpad_toggle_niri("term")
+        assert_equal(result["ok"], False, "a pad still displayed is not a successful hide")
+        assert_equal(result["action"], "hide-failed", "and says so")
+        assert "DP-2" in result["error"], f"naming where it still is: {result['error']!r}"
+
+        # Same call, but focusing away really does take it off screen.
+        state["visible"] = True
+        state["hides"] = True
+        with _scratchpad_state_sandbox():
+            ok = helper.scratchpad_toggle_niri("term")
+        assert_equal(ok, {"ok": True, "action": "hidden", "id": "term"},
+                     "a pad that is genuinely off screen reports hidden")
+    finally:
+        (helper._niri_session_ready, helper._niri_msg_json,
+         helper._niri_scratchpad_action, helper.load_scratchpads) = originals
+
+
 def test_scratchpad_niri_generated_kdl_parses():
     """Parse what we wrote. A structural error here is a config niri refuses at
     startup, which on this compositor breaks far more than the scratchpad."""
@@ -5243,6 +5395,10 @@ def main():
     test_scratchpad_niri_rejects_every_construct_it_can_prove_unsupported()
     test_scratchpad_niri_rejected_pads_do_not_preload()
     test_scratchpad_niri_release_owns_only_the_pad_s_own_window()
+    test_scratchpad_launch_command_is_argv_not_a_shell()
+    test_scratchpad_launch_refusal_reaches_the_toggle()
+    test_scratchpad_niri_pad_name_cannot_break_the_generated_kdl()
+    test_scratchpad_niri_hide_confirms_the_pad_is_off_screen()
     test_scratchpad_niri_generated_kdl_parses()
     test_scratchpad_compositor_detection_reads_the_session_not_the_binary()
     test_scratchpad_target_monitor_resolves_against_connected_outputs()
