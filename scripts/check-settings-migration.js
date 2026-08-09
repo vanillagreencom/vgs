@@ -753,8 +753,13 @@ function regexCanStartHere(out) {
   // false-clean the regex handling was added to remove, one token narrower.
   if ((ch === "+" || ch === "-") && out[j - 1] === ch) return false;
 
+  // `}` sits in this set with `{` and `;` on purpose: it almost always closes a
+  // block, which leaves the scanner in statement position, where a `/` opens a
+  // regex. It can also close an object literal, where the next `/` is division
+  // — but an object literal only reaches an expression through parentheses, so
+  // the character visible here is then `)`, handled below.
   if ("(,=:[!&|?{};+-*%~^<>".includes(ch)) return true;
-  // A closing bracket ends a value: `f(x) / 2`, `a[i] / 2`, `{...} / 2`.
+  // A closing bracket ends a value: `f(x) / 2`, `a[i] / 2`.
   if (ch === ")" || ch === "]") return false;
   // A string literal ends a value too. Bodies are blanked but the quotes
   // remain, so the delimiter is what is visible here.
