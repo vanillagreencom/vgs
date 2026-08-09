@@ -153,17 +153,62 @@ pcall(require, "vgs.scratchpads")
 The status check matches any `require` of the module, not the exact `pcall`
 spelling, so a user who wrote it plainly is not told to add a duplicate.
 
-## `dismissOnFocusLoss` is carried but not offered
+## `dismissOnFocusLoss`, and who owns focus
 
-The field is in the schema and survives normalization, but there is **no Settings
-control for it and nothing implements it**. Nothing watches focus yet, so a
-toggle would set a value that does nothing — a surface that looks maintained and
-is silently inert.
+**`Services/CompositorService.qml` is the single owner of compositor focus for
+the whole shell.** Nothing else may subscribe to compositor events to learn
+about focus, scratchpads included.
 
-It is kept in the schema so implementing it later needs no second migration. Do
-not add the control back until a focus owner exists: a second watcher for focus
-events is a one-owner-per-resource decision, not a detail to settle inside the
-Settings page.
+That ownership predates this feature and is why it needed no new watcher.
+Quickshell's `ToplevelManager` and `Hyprland` are process-wide singletons, each
+holding exactly one connection — `Hyprland.rawEvent` is documented as "every
+event that comes in through the hyprland event socket (socket2)" — and
+`CompositorService` is where VGS attaches to them. It already handled
+`activewindow`/`activewindowv2`. So the choice was never "add a watcher or
+not"; it was "read the existing one, or open a second connection", and a second
+connection is what the rule forbids.
+
+It publishes one fact, and scratchpads read only that:
+`activeWorkspaceName` — the workspace the focused window is on, `""` when
+unknown. It comes from `Hyprland.activeToplevel`, which the singleton maintains
+from the event socket.
+
+**The trigger is the focus transition off a pad's workspace, not "the pad is
+visible and unfocused".** Visibility would have to come from a monitor's
+special-workspace field, and Quickshell documents `lastIpcObject` as not
+updating until the object is fetched again, with `refreshMonitors()`
+asynchronous — so that field is stale at exactly the instant a pad is being
+revealed or hidden, which is the only instant this feature cares about. A
+window's workspace, by contrast, does not change when focus moves, so both
+values in the comparison are settled. `ScratchpadService` remembers the last
+focused workspace and acts when focus leaves `special:<id>`.
+
+Three things that are load-bearing:
+
+- **`vshell scratchpad hide`, never `toggle`.** A toggle decides direction from
+  state read a moment ago; evaluated late it reveals the pad the user just
+  dismissed. Focus-loss dismissal states the direction it wants. Hiding a pad
+  that is already hidden is a success, not an error — the watcher fires on an
+  event and the user may have got there first, and that race is ordinary.
+- **Unknown focus is not "focus is elsewhere".** An empty `activeWorkspaceName`
+  means the compositor did not tell us, so nothing is dismissed *and* the
+  remembered workspace is left alone — recording the unknown would erase where
+  focus actually was and turn the next real change into a phantom transition.
+- **A settle delay before acting.** Revealing moves focus twice — `focusmonitor`
+  then `focuswindow` — and in between focus is on the target monitor but not yet
+  on the pad's window. Acting on that instant would dismiss the pad the keybind
+  is revealing. The condition is re-read when the delay expires, not captured
+  when it started.
+
+Dismissal cannot strand a window: it drives the same helper path as the keybind,
+under the same per-pad lock, and hiding restores focus to whatever held it
+before the reveal. A **disabled** pad may still be hidden this way, for the same
+reason the keybind may hide one — the alternative is a pad stranded on screen.
+
+On **Niri** the whole subsystem is absent, so this setting is absent with it:
+`supported` is false, the watcher never runs, `vshell scratchpad hide` refuses
+with the same reason as `toggle`, and the Settings page shows the Niri statement
+instead of the controls. See § Niri and VGS-83.
 
 ## Migration
 

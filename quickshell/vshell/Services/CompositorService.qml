@@ -32,6 +32,26 @@ Singleton {
     signal randrDataReady
     signal toplevelsChanged
 
+    // The workspace the focused window is on, or "" when it is not known.
+    //
+    // This service is the single seam onto compositor focus for the whole
+    // shell. Nothing else may open a compositor subscription to learn about
+    // focus: Quickshell's `Hyprland` and `ToplevelManager` are process-wide
+    // singletons owning exactly one connection each, and this file is where VGS
+    // attaches to them.
+    //
+    // Read from `Hyprland.activeToplevel`, which the singleton maintains from
+    // the event socket, rather than re-derived from a monitor's `lastIpcObject`
+    // — that one is documented as not updating until the object is fetched
+    // again, and `refreshMonitors()` is asynchronous, so it is stale at exactly
+    // the moment a focus change matters.
+    //
+    // Hyprland only, deliberately: Niri has no equivalent name here and the one
+    // consumer (scratchpads) does not exist there at all — VGS-83. "" means
+    // "unknown", and callers must treat it as such rather than as "somewhere
+    // else".
+    readonly property string activeWorkspaceName: isHyprland ? (Hyprland.activeToplevel?.workspace?.name ?? "") : ""
+
     Component.onCompleted: {
         detectCompositor();
         refreshToplevels();

@@ -8725,12 +8725,12 @@ def scratchpad_compositor_supported() -> Tuple[bool, str]:
 
 def cmd_scratchpad(argv: List[str]) -> int:
     if not argv:
-        eprint("Usage: vshell scratchpad <apply|status|toggle|preload|release|resolve> ...")
+        eprint("Usage: vshell scratchpad <apply|status|toggle|show|hide|preload|release|resolve> ...")
         return 2
     action, rest = argv[0], argv[1:]
 
     supported, compositor = scratchpad_compositor_supported()
-    if not supported and action in {"apply", "toggle", "show", "preload"}:
+    if not supported and action in {"apply", "toggle", "show", "hide", "preload"}:
         # A clean, stated no-op — not a silent success, and not a Hyprland
         # config written into a session that will never read it.
         message = ("VGS scratchpads are Hyprland-only for now; Niri has no special "
@@ -8813,10 +8813,12 @@ def cmd_scratchpad(argv: List[str]) -> int:
             eprint(result.get("error") or "scratchpad release failed")
         return 0 if result.get("ok") else 1
 
-    if action in {"toggle", "show", "preload"} and rest:
+    if action in {"toggle", "show", "hide", "preload"} and rest:
         result = scratchpad_toggle(rest[0],
                                    reveal_only=(action == "show"),
-                                   launch_only=(action == "preload"))
+                                   launch_only=(action == "preload"),
+                                   hide_only=(action == "hide"),
+                                   keep_focus=("--keep-focus" in rest))
         if not result.get("ok"):
             eprint(result.get("error") or "scratchpad toggle failed")
             return 1
@@ -9758,6 +9760,7 @@ def _scratchpad_wait_for_window(pad: Dict[str, Any], timeout: float) -> Dict[str
 
 
 def scratchpad_toggle(pad_id: str, reveal_only: bool = False, launch_only: bool = False,
+                      hide_only: bool = False, keep_focus: bool = False,
                       timeout: float = 20.0) -> Dict[str, Any]:
     pads = {pad["id"]: pad for pad in load_scratchpads()}
     pad = pads.get(pad_id)
@@ -9769,6 +9772,16 @@ def scratchpad_toggle(pad_id: str, reveal_only: bool = False, launch_only: bool 
     state_file = _scratchpad_state_dir() / (pad_id + ".focus")
     with _scratchpad_lock(pad_id):
         visible_on = _scratchpad_visible_monitor(pad_id)
+
+        # `hide` asks for one direction only, and asking to hide something
+        # already hidden is a no-op, not a failure. The focus watcher fires on
+        # an event, so by the time it gets the lock the user may have dismissed
+        # the pad themselves; reporting that as an error would turn an ordinary
+        # race into a log line and a non-zero exit. Answered before the enabled
+        # check because a *disabled* pad that is already hidden is equally
+        # nothing to do.
+        if hide_only and not visible_on:
+            return {"ok": True, "action": "already-hidden", "id": pad_id}
 
         # A disabled pad generates no rules and no keybind, so revealing one is
         # never what the user asked for — the enable toggle in Settings would
@@ -9785,22 +9798,55 @@ def scratchpad_toggle(pad_id: str, reveal_only: bool = False, launch_only: bool 
                         "error": f"{pad['name']} is disabled"}
 
         if visible_on and not reveal_only and not launch_only:
-            # Hide, then hand focus back to whatever had it before the reveal —
-            # including when the pad lives on a different monitor, which is the
-            # case a naive "focus the last workspace" restore gets wrong.
+            # Where focus has to end up, decided BEFORE anything moves it.
+            #
+            # A keybind hide returns to whatever the pad was revealed from: the
+            # user is dismissing the pad to get back to what they were doing.
+            #
+            # A focus-loss dismissal must not. There the user has already chosen
+            # where they want to be — that choice is what triggered the hide —
+            # so restoring the reveal origin would yank focus out of the window
+            # they just moved to, which is the opposite of what dismissal is
+            # for. `keep_focus` says "leave them where they are", and the target
+            # is read here because the `focusmonitor` below moves focus itself.
+            keep_target = ""
+            if keep_focus:
+                active = _hyprctl_json("activewindow")
+                if isinstance(active, dict):
+                    # ...unless focus is somehow still on the pad's own window.
+                    # Restoring to a window we are about to hide would leave
+                    # focus on nothing, or reveal the pad again.
+                    on_pad = str((active.get("workspace") or {}).get("name") or "") == "special:" + pad_id
+                    if not on_pad:
+                        keep_target = str(active.get("address") or "")
+
+            # The reveal origin is consumed either way: the reveal it belonged
+            # to is over, and leaving it behind would restore a stale window the
+            # next time this pad is hidden. One store, read by both paths —
+            # neither keeps bookkeeping of its own.
+            origin = ""
+            if state_file.exists():
+                origin = state_file.read_text().strip()
+                state_file.unlink(missing_ok=True)
+            restore_to = keep_target if keep_focus else origin
+            # A keep-focus hide that could not read the active window falls back
+            # to the origin rather than leaving focus wherever `focusmonitor`
+            # drops it: a failed query is not a reason to strand focus.
+            if keep_focus and not restore_to:
+                restore_to = origin
+
+            # Hide, then hand focus to the target — including when the pad lives
+            # on a different monitor, which is the case a naive "focus the last
+            # workspace" restore gets wrong.
             _scratchpad_dispatch("focusmonitor", visible_on)
             _scratchpad_dispatch("togglespecialworkspace", pad_id)
-            previous = ""
-            if state_file.exists():
-                previous = state_file.read_text().strip()
-                state_file.unlink(missing_ok=True)
-            if previous:
+            if restore_to:
                 clients = _hyprctl_json("clients")
                 live = isinstance(clients, list) and any(
-                    isinstance(c, dict) and c.get("address") == previous for c in clients)
+                    isinstance(c, dict) and c.get("address") == restore_to for c in clients)
                 if live:
-                    _scratchpad_dispatch("focuswindow", "address:" + previous)
-            return {"ok": True, "action": "hidden", "id": pad_id}
+                    _scratchpad_dispatch("focuswindow", "address:" + restore_to)
+            return {"ok": True, "action": "hidden", "id": pad_id, "focusedBack": restore_to}
 
         client = _scratchpad_find_window(pad)
         launched = False

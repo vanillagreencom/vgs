@@ -131,6 +131,107 @@ Singleton {
         Quickshell.execDetached([Paths.vshellCli, "scratchpad", "toggle", String(padId)]);
     }
 
+    // ---- dismissOnFocusLoss ------------------------------------------------
+    //
+    // Hide a pad when focus leaves it. The subscription is NOT ours: compositor
+    // focus has exactly one owner in this shell, CompositorService, which
+    // attaches to Quickshell's process-wide `ToplevelManager` / `Hyprland`
+    // singletons. This service reads two facts it publishes — which special
+    // workspaces are on screen, and where the focused window lives — and never
+    // opens an event subscription of its own. See docs/architecture/scratchpads.md.
+    //
+    // `hide`, not `toggle`: a toggle evaluated against state that has moved on
+    // would REVEAL the pad the user just dismissed. The direction is never
+    // inferred here.
+    // The trigger is the focus TRANSITION off a pad's workspace, not "the pad
+    // is visible and unfocused". Visibility would have to come from a monitor's
+    // special-workspace field, which Quickshell only refreshes on request and
+    // asynchronously — so it is stale at precisely the moment a pad is being
+    // revealed or hidden. Where the focused window lives is maintained live
+    // from the event socket instead, and a window's workspace does not change
+    // when focus moves, so the two values being compared are both settled.
+    // NOT filtered on `enabled`. Dismissal only ever HIDES, and hiding a
+    // disabled pad is exactly what must keep working: disabling a pad while it
+    // is on screen would otherwise strand it visible with no keybind left to
+    // dismiss it. The helper allows the same thing for the same reason, and
+    // skipping disabled pads here would put the two halves in disagreement.
+    readonly property var dismissOnFocusLossPads: (SettingsData.scratchpads || []).filter(pad => pad && pad.dismissOnFocusLoss)
+
+    property string _lastFocusedWorkspace: ""
+    // Every pad awaiting dismissal, not just the most recent. On multiple
+    // monitors two pads can be on screen at once, and focus can leave both
+    // before the settle delay expires; keeping one id silently dropped the
+    // other dismissal.
+    property var _pendingDismissIds: []
+
+    Connections {
+        target: CompositorService
+        function onActiveWorkspaceNameChanged() { root._onFocusMoved(); }
+    }
+
+    function _onFocusMoved() {
+        if (!supported)
+            return;
+        const now = CompositorService.activeWorkspaceName;
+        // "" is "the compositor did not tell us", which is not the same as
+        // "focus is elsewhere". Dismissing on unknown would make a pad vanish
+        // on any hiccup, and remembering unknown would erase where focus
+        // actually was, so an unknown is skipped entirely.
+        if (!now)
+            return;
+        const previous = root._lastFocusedWorkspace;
+        root._lastFocusedWorkspace = now;
+        if (!previous || previous === now)
+            return;
+        const pad = root.dismissOnFocusLossPads.find(p => "special:" + p.id === previous);
+        if (!pad)
+            return;
+        const padId = String(pad.id);
+        if (!root._pendingDismissIds.includes(padId))
+            root._pendingDismissIds = root._pendingDismissIds.concat([padId]);
+        dismissTimer.restart();
+    }
+
+    // Revealing a pad moves focus twice — `focusmonitor`, then `focuswindow` —
+    // so for an instant focus has left the pad's workspace while the reveal is
+    // still in progress. Acting then would dismiss the pad the keybind is in
+    // the middle of showing. The condition is re-read when the delay expires
+    // rather than trusted from when it started.
+    Timer {
+        id: dismissTimer
+        interval: 250
+        repeat: false
+        onTriggered: {
+            const pending = root._pendingDismissIds;
+            root._pendingDismissIds = [];
+            if (pending.length === 0)
+                return;
+            const focused = CompositorService.activeWorkspaceName;
+            // Same rule as on the way in, and it has to hold here too: an
+            // unknown focus is not "focus is elsewhere". Treating it as such
+            // dismissed every pending pad on any hiccup — which is the exact
+            // thing the entry path refuses to do.
+            if (!focused) {
+                root.log.debug("Focus is unknown at expiry; dismissing nothing");
+                return;
+            }
+            for (const padId of pending) {
+                if (focused === "special:" + padId)
+                    continue;  // focus came back; the reveal was still settling
+                root.log.debug("Dismissing", padId, "on focus loss");
+                // `hide`, never `toggle`: a toggle decides direction from state
+                // read a moment ago, so evaluated late it reveals the pad the
+                // user just put away. The helper re-checks under the pad's lock
+                // and treats an already-hidden pad as a no-op.
+                // --keep-focus: the user picked where they wanted to be, and
+                // that choice is what triggered this dismissal. A plain hide
+                // restores whatever the pad was revealed FROM, which would yank
+                // focus straight back out of the window they just moved to.
+                Quickshell.execDetached([Paths.vshellCli, "scratchpad", "hide", padId, "--keep-focus"]);
+            }
+        }
+    }
+
     // Move a pad's window back to the active workspace, and report whether it
     // worked. Called just before a pad is deleted, so its window is never
     // stranded on a special workspace that no longer has a keybind or a rule
@@ -177,7 +278,14 @@ Singleton {
             callback(ok, error || "");
     }
 
-    Component.onCompleted: refreshStatus()
+    Component.onCompleted: {
+        // Seed the remembered workspace, so a service constructed while focus
+        // is already on a pad does not miss that pad's first transition:
+        // without it the first `_onFocusMoved` had no `previous` to compare
+        // against and threw the transition away.
+        root._lastFocusedWorkspace = CompositorService.activeWorkspaceName;
+        refreshStatus();
+    }
 
     Process {
         id: applyProc
