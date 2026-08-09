@@ -54,16 +54,28 @@ Singleton {
     // was still warming up displayed "Off" for the rest of the process's life.
     property bool stateInitialized: false
 
-    // The backend pushes on every tailscaled transition when it is watching the
-    // ipn bus. Absent on an older backend, which only answers on demand and
-    // re-broadcasts after its own write actions — so the shell has to ask.
-    readonly property bool backendWatches: VGSBackendService.capabilities.includes("tailscale.watch")
+    // Whether a watcher is actually running behind the backend, reported in
+    // every State. The capability alone is not enough: it is advertised once at
+    // registration and cannot be withdrawn, so a backend whose watcher has
+    // given up keeps advertising it. An older backend sends no such field,
+    // which reads as false — correct, since it never pushes either.
+    property bool watcherActive: false
+    readonly property bool backendWatchCapable: VGSBackendService.capabilities.includes("tailscale.watch")
+    readonly property bool backendWatches: backendWatchCapable && watcherActive
 
     // "NoState" and "Starting" are tailscaled still coming up, and an empty
     // string is "nobody has told us anything". None of the three is a settled
     // answer, so none of them may be presented as "off" or kept indefinitely.
     readonly property bool backendStateKnown: backendState !== "" && backendState !== "NoState" && backendState !== "Starting"
-    readonly property bool starting: stateInitialized && !backendStateKnown
+
+    // The three below are what widgets branch on. Only `stateSettled` licenses
+    // rendering an "off"-shaped answer: deriving that from backendState alone
+    // meant the window before the first response — and forever, if reads kept
+    // failing — rendered as "Disconnected"/"Off", which is a smaller copy of
+    // the bug this whole change exists to fix.
+    readonly property bool awaitingFirstState: available && !stateInitialized
+    readonly property bool starting: available && stateInitialized && !backendStateKnown
+    readonly property bool stateSettled: available && stateInitialized && backendStateKnown
 
     // Re-fetch cadence. This is a backstop, not a second owner of the state:
     // the backend remains the only thing that reads tailscaled and the only
@@ -72,11 +84,11 @@ Singleton {
     // an answer that disagrees with the owner. What it covers is the shell
     // having no other way to notice that a push never came.
     readonly property int pollIntervalMs: {
-        if (!backendStateKnown)
-            return 10000;      // warming up: the transition is imminent
+        if (!stateSettled)
+            return 10000;      // warming up or no answer yet: a change is imminent
         if (backendWatches)
-            return 300000;     // pushes are expected; this only catches a dead watcher
-        return 45000;          // no watcher at all: the shell is the only thing asking
+            return 300000;     // a live watcher is pushing; this only catches it dying
+        return 45000;          // nothing is pushing: the shell is the only thing asking
     }
 
     Timer {
@@ -198,6 +210,7 @@ Singleton {
             return;
         stateInitialized = true;
         connected = data.connected || false;
+        watcherActive = data.watcherActive === true;
         version = data.version || "";
         backendState = data.backendState || "";
         magicDnsSuffix = data.magicDnsSuffix || "";

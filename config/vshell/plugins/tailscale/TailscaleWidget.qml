@@ -40,9 +40,13 @@ PluginComponent {
     // the two look identical to the daemon-is-disabled case but mean opposite
     // things, and on a cold boot this is the state the shell sees first.
     readonly property bool starting: TailscaleService.starting
+    // No answer from the backend yet. Also not "Off".
+    readonly property bool awaiting: TailscaleService.awaitingFirstState
 
     function stateShort() {
         if (root.connecting)
+            return "…";
+        if (root.awaiting)
             return "…";
         if (root.starting)
             return "Starting";
@@ -61,7 +65,7 @@ PluginComponent {
     function pillIcon() {
         if (root.hasHealthIssue)
             return "warning";
-        if (root.starting)
+        if (root.starting || root.awaiting)
             return "pending";
         switch (root.backendState) {
         case "Running":
@@ -221,7 +225,7 @@ PluginComponent {
             id: popout
 
             headerText: "Tailscale"
-            detailsText: root.connected ? (root.tailnetName || "Connected") : (root.starting ? "Starting…" : (root.backendState === "NeedsLogin" ? "Needs login" : "Disconnected"))
+            detailsText: root.connected ? (root.tailnetName || "Connected") : (root.awaiting ? "Checking…" : (root.starting ? "Starting…" : (root.backendState === "NeedsLogin" ? "Needs login" : "Disconnected")))
             showCloseButton: true
 
             // PluginPopout assigns itself here when it loads this content.
@@ -272,7 +276,7 @@ PluginComponent {
                             spacing: 1
 
                             StyledText {
-                                text: root.connecting ? "Connecting…" : (root.connected ? "Connected" : (root.starting ? "Starting…" : (root.backendState === "NeedsLogin" ? "Not logged in" : "Disconnected")))
+                                text: root.connecting ? "Connecting…" : (root.connected ? "Connected" : (root.awaiting ? "Checking…" : (root.starting ? "Starting…" : (root.backendState === "NeedsLogin" ? "Not logged in" : "Disconnected"))))
                                 font.pixelSize: Theme.fontSizeMedium
                                 font.weight: Font.Medium
                                 color: Theme.surfaceText
@@ -280,7 +284,7 @@ PluginComponent {
 
                             StyledText {
                                 visible: text.length > 0
-                                text: root.connected ? (root.tailnetName || "") : (root.starting ? "tailscaled is still coming up" : (root.backendState === "NeedsLogin" ? "Sign in to connect" : "tailscaled stopped"))
+                                text: root.connected ? (root.tailnetName || "") : (root.awaiting ? "Reading status…" : (root.starting ? "tailscaled is still coming up" : (root.backendState === "NeedsLogin" ? "Sign in to connect" : "tailscaled stopped")))
                                 font.pixelSize: Theme.fontSizeSmall
                                 color: Theme.surfaceVariantText
                                 width: parent.width
