@@ -103,13 +103,34 @@ VgsPopout {
                     root.close();
             }
 
+            // The dismissal reset is state, not choreography. Running it when
+            // shouldBeVisible flips would play it in front of the user: the
+            // surface stays on screen for the whole close animation
+            // (VgsPopoutStandalone's closeTimer), so the pages visibly slid
+            // back to 0 on the way out. Deferred to popoutClosed, which the
+            // close timer emits AFTER contentWindow.visible = false — there is
+            // nothing on screen to animate by then. (VGS-88)
+            property bool resetPending: false
+
             Connections {
                 target: root
+
                 function onShouldBeVisibleChanged() {
                     if (root.shouldBeVisible) {
                         Qt.callLater(() => {
                             popoutContainer.forceActiveFocus();
                         });
+                        // Reopening interrupts a close: the timer sees
+                        // shouldBeVisible true again and never emits
+                        // popoutClosed, so a pending reset would be stranded
+                        // and the popout would come back on the page the user
+                        // left. Take it now instead. This is the one case the
+                        // reset can be seen, and being on the right page beats
+                        // hiding a transition nobody asked to watch.
+                        if (popoutContainer.resetPending) {
+                            popoutContainer.resetPending = false;
+                            popoutContainer.popContentToRoot();
+                        }
                         return;
                     }
                     // Dismissal — the close button, a click outside, the bar
@@ -117,11 +138,17 @@ VgsPopout {
                     // discards pushed pages rather than popping them. Those
                     // gestures aim at the whole surface, and popping instead
                     // would trap the user, needing a second gesture to leave.
-                    // Escape above is the one gesture that conventionally means
+                    // Escape is the one gesture that conventionally means
                     // "back", so it is the only one routed to the content.
-                    // Resetting here is also what keeps "a pushed page is view
-                    // state" true no matter which route closed the popout, and
-                    // it is owned here so no plugin has to repeat it.
+                    // Owned here so no plugin has to repeat it, which is what
+                    // keeps "a pushed page is view state" true in general.
+                    popoutContainer.resetPending = true;
+                }
+
+                function onPopoutClosed() {
+                    if (!popoutContainer.resetPending)
+                        return;
+                    popoutContainer.resetPending = false;
                     popoutContainer.popContentToRoot();
                 }
             }
