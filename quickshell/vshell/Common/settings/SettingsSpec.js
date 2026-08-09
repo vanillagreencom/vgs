@@ -611,12 +611,12 @@ var SPEC = {
     // normalize_scratchpad), which is the only thing that renders them into
     // compositor config. Writing this list regenerates that config.
     //
-    // One field is carried but has NO Settings control on purpose:
-    // `dismissOnFocusLoss`. Nothing watches focus yet, so a toggle for it would
-    // set a value that does nothing. The field is kept so implementing it later
-    // needs no second migration, but the control stays out of
-    // Modules/Settings/ScratchpadRow.qml until a focus owner exists — adding a
-    // second watcher for focus events is a one-owner-per-resource decision.
+    // `dismissOnFocusLoss` was carried here with no Settings control until
+    // VGS-82, because nothing watched focus and the toggle would have set a
+    // value that did nothing. It is implemented now — ScratchpadService reads
+    // CompositorService, the shell's single owner of compositor focus — so the
+    // control is back in Modules/Settings/ScratchpadRow.qml. Keeping the field
+    // through that gap is why implementing it needed no second migration.
     scratchpads: { def: [], onChange: "updateScratchpads" },
 
     desktopClockEnabled: { def: false },

@@ -438,12 +438,18 @@ Column {
                 })
         }
 
-        // There is deliberately NO "dismiss on focus loss" control here. The
-        // field exists in the schema (see SettingsSpec.js) but nothing watches
-        // focus yet, so the toggle would set a value that does nothing — the
-        // same defect as a maintained-looking surface that is silently inert.
-        // Do not add it back until a focus owner exists; adding a second
-        // watcher for focus events is a one-owner-per-resource decision, not a
-        // detail to settle inside this page.
+        // Restored in VGS-82, once a focus owner existed. It was held back
+        // through VGS-62 because nothing watched focus, so the toggle would
+        // have set a value that did nothing. ScratchpadService now dismisses on
+        // focus loss, reading CompositorService — the shell's single owner of
+        // compositor focus — so the control has a mechanism behind it.
+        SettingsToggleRow {
+            text: I18n.tr("Hide when focus leaves")
+            description: I18n.tr("Dismiss the pad as soon as you focus another window")
+            checked: row.pad.dismissOnFocusLoss === true
+            onToggled: checked => row.changePad({
+                    "dismissOnFocusLoss": checked
+                })
+        }
     }
 }

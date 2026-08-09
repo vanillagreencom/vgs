@@ -34,6 +34,13 @@ Item {
     // Without an eager reference this singleton was only constructed after
     // opening theme-related UI, leaving MethodTheme on its fallback palette.
     readonly property var _themeServiceRef: VGSThemeService
+    // Same defect, same fix (VGS-82). ScratchpadService owns the focus-loss
+    // watcher, and every other reference to it is in Settings — so without this
+    // the watcher was only constructed once the user opened the Scratchpads
+    // page, and `dismissOnFocusLoss` did nothing in any session where they did
+    // not. A setting that works only after visiting Settings is the same
+    // silently-inert surface the control was withheld for in the first place.
+    readonly property var _scratchpadServiceRef: ScratchpadService
 
     property bool osdSurfacesLoaded: true
     property int pendingOsdResumeReloads: 0
