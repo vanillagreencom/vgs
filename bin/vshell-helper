@@ -8885,8 +8885,20 @@ def cmd_scratchpad(argv: List[str]) -> int:
                 return 2
             pattern, exclude = pad["classRegex"], pad["titleExclude"]
         result = scratchpad_matching_windows(pattern, exclude)
-        print(json.dumps(result, indent=2) if args.json
-              else f"{result['count']} live window(s) match {pattern}")
+        if args.json:
+            print(json.dumps(result, indent=2))
+        elif not result.get("ok"):
+            # An error is not a count. Printing "0 live window(s) match" for a
+            # pattern that never compiled says the pattern works and happens to
+            # match nothing — which is exactly the "silently matches nothing"
+            # failure this command exists to surface.
+            eprint(result.get("error") or "could not evaluate the pattern")
+        elif result.get("known") is False:
+            # Nor is "nobody asked". No session means no answer, which must not
+            # render as zero either.
+            print(f"unknown: no Hyprland session to ask about {pattern}")
+        else:
+            print(f"{result['count']} live window(s) match {pattern}")
         return 0 if result.get("ok") else 1
 
     # What geometry a pad resolves to on a given monitor, without applying

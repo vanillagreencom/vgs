@@ -4750,10 +4750,27 @@ def test_scratchpad_matching_windows_reports_pattern_breadth():
         assert_equal(excluded["windows"][0]["title"], "Lock Screen",
                      "and excludes the right window")
 
-        # A pattern that cannot compile is an error, not "nothing matched".
+        # A pattern that cannot compile is an error, not "nothing matched". The
+        # three states have to stay distinguishable all the way to the caller:
+        # rendering an unevaluable pattern as "0 windows match" describes a
+        # broken pattern as a working one, which is the failure this surfaces.
         broken = helper.scratchpad_matching_windows("^(unclosed")
         assert_equal(broken["ok"], False, "an uncompilable pattern is an error")
         assert_equal(broken["count"], 0, "and claims nothing")
+        assert "does not compile" in broken["error"], "with a reason to show"
+        assert_equal(broken.get("known"), None,
+                     "an error is not a knowledge claim either way")
+
+        # A bad title exclusion is an error for the same reason.
+        bad_exclude = helper.scratchpad_matching_windows(r"^(x)$", "[")
+        assert_equal(bad_exclude["ok"], False, "an uncompilable exclusion is an error")
+        assert "title exclusion" in bad_exclude["error"], "and names which pattern"
+
+        # The three states are mutually exclusive, so a caller can switch on
+        # them without ambiguity.
+        good = helper.scratchpad_matching_windows(r"^(1password)$")
+        assert_equal((good["ok"], good["known"]), (True, True), "a real answer is ok+known")
+        assert_equal(broken["ok"], False, "an error is not ok")
 
         # No session is NOT zero matches. The page must be able to stay silent
         # rather than claim "0 windows match" on a query that never ran.
