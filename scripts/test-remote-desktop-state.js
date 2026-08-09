@@ -401,11 +401,11 @@ assert.throws(
 // --- service invariants -----------------------------------------------------
 
 function qmlFunctionBody(name) {
-    return functionBodyIn(serviceCode, name, "RemoteDesktopService.qml");
+    return functionBodyIn(serviceSource, name, "RemoteDesktopService.qml");
 }
 
 function widgetFunctionBody(name) {
-    return functionBodyIn(widgetCode, name, "RemoteDesktopWidget.qml");
+    return functionBodyIn(widgetSource, name, "RemoteDesktopWidget.qml");
 }
 
 // A QML function body, located by a UNIQUE declaration and closed by matching
@@ -418,7 +418,12 @@ function widgetFunctionBody(name) {
 // the closing heuristic depended on the indentation the body happens to sit at,
 // so it stopped early on anything nested differently. Same class as the
 // first-match `showInfo` lookup on PR #82.
-function functionBodyIn(code, name, where) {
+function functionBodyIn(src, name, where) {
+    // Stripped HERE rather than by each caller. A caller that forgot would
+    // silently go back to matching comments, and no self-test below could see
+    // it -- the samples would still be stripped on the way in. One place means
+    // the shadowing case exercises the path production actually uses.
+    const code = stripComments(src);
     const declaration = new RegExp(`(^|[^\\w$.])function\\s+${name}\\s*\\(`, "g");
     const found = [...code.matchAll(declaration)];
     assert.equal(
@@ -521,7 +526,7 @@ assert.ok(
         "the shadowing sample must fool a first-match reader, or it proves nothing about the fix"
     );
 
-    const body = functionBodyIn(stripComments(shadowed), "target", "a sample");
+    const body = functionBodyIn(shadowed, "target", "a sample");
     assert.ok(body.includes("real body"), "the reader must locate the function, not a comment naming it");
     assert.ok(!body.includes("from here"), "and must not begin inside that comment");
 }
