@@ -224,7 +224,11 @@ logged at Sunshine's `info` level. The popout therefore lists *paired* devices
 (from `named_devices` in that same state file — a name containing bytes that
 are not valid UTF-8 is **withheld and counted** rather than shown with U+FFFD
 substituted into it, because a mangled name is indistinguishable from a device
-genuinely called that; only `name` is read out of it,
+genuinely called that. The suspicion is scoped **per name**, by checking
+whether the name as written appears in the original bytes: a real U+FFFD was
+serialised so the file holds it, a substituted one replaced something else
+entirely so it does not. A file-wide flag punished every name containing U+FFFD
+for an unrelated neighbour's bad bytes. Only `name` is read out of the file,
 never the credential material beside it) under a heading that says paired, and
 says outright that which one is connected is not something the host reports.
 
@@ -337,6 +341,13 @@ Two smaller rules, both of the same family:
   outright — and there is deliberately no polling fallback to recover it. Any
   number of requests during one probe collapse into a single follow-up, launched
   once the probe has settled.
+- **A lifecycle verdict waits for the collector.** `running` going false is not
+  evidence of failure: the process usually stops a moment *before* its output is
+  collected, so deciding there announced "start failed" for commands that had in
+  fact succeeded — worse than the silence it replaced, because a user who sees
+  it on a host that started will retry and stop it. `onExited` records the code
+  and reports nothing; a 500 ms grace timer then decides, and a zero exit
+  returns without reporting anything at all.
 - **Every lifecycle failure reaches the user.** `start`/`stop`/`toggle` report
   through one surface, `_reportLifecycleFailure()`, keyed on `running` rather
   than `exited` for the same reason the busy flag is: a command that cannot be
@@ -345,6 +356,9 @@ Two smaller rules, both of the same family:
   with no state change and no reason. The helper's own JSON verdict may arrive
   after `exited` and is allowed to replace a generic message with the real one;
   the shared toast category means that updates in place rather than stacking.
+  `ToastService` exempts that update from its error throttle — a correction is
+  not a repeat, and throttling it left the user holding the vague message and
+  never showing the specific one.
 - **The unanswered-grace timer belongs to one probe.** It is shared, so a tick
   armed by probe A could fire while probe B was in flight, find
   `_statusAnswered` false because B had only just started, and mark a healthy B
