@@ -36,11 +36,22 @@ StyledRect {
     property bool isSystemPlugin: pluginData ? (pluginData.source === "system") : false
     property string requiresShell: pluginData ? (pluginData.requires_shell || pluginData.requires_vgs || "") : ""
     property bool meetsRequirements: requiresShell ? PluginService.checkPluginCompatibility(requiresShell) : true
+    // Non-empty only when the package is actually being WITHHELD — a bundled
+    // module's unmet declaration is inert and must not read as unavailability.
+    // Settings > Plugins is the first place a user looks for a package that is
+    // not there, so the reason belongs here as text, not only under a hover.
+    // (VGS-89)
+    property string withheldReason: {
+        PluginService.availablePlugins;
+        ShellVersionService.semverVersion;
+        return root.pluginId ? PluginService.requirementBlockReason(root.pluginId) : "";
+    }
 
     Connections {
         target: ShellVersionService
         function onSemverVersionChanged() {
             root.meetsRequirementsChanged();
+            root.withheldReasonChanged();
         }
     }
     // A package that VGS guarantees: a bundled module, or a user package whose
@@ -143,7 +154,7 @@ StyledRect {
                             hoverEnabled: true
                             onEntered: {
                                 if (root.sharedTooltip)
-                                    root.sharedTooltip.show(I18n.tr("Requires VGS %1").arg(root.requiresShell), parent, 0, 0, "top");
+                                    root.sharedTooltip.show(I18n.tr("Requires VGS %1; this shell is VGS %2").arg(root.requiresShell).arg(ShellVersionService.semverVersion || I18n.tr("unknown")), parent, 0, 0, "top");
                             }
                             onExited: {
                                 if (root.sharedTooltip)
@@ -184,6 +195,20 @@ StyledRect {
                     color: Theme.surfaceVariantText
                     width: parent.width
                     horizontalAlignment: Text.AlignLeft
+                }
+
+                // Only when the package is genuinely withheld. A hover tooltip
+                // is not where someone looks to find out why a plugin they
+                // installed does nothing, and the icon alone said only that
+                // something was wrong. (VGS-89)
+                StyledText {
+                    text: I18n.tr("Unavailable: %1").arg(root.withheldReason)
+                    font.pixelSize: Theme.fontSizeSmall
+                    color: Theme.error
+                    width: parent.width
+                    wrapMode: Text.WordWrap
+                    horizontalAlignment: Text.AlignLeft
+                    visible: root.withheldReason !== ""
                 }
             }
 

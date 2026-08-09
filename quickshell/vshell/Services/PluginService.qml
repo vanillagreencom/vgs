@@ -885,7 +885,15 @@ Singleton {
         // slips through that window is judged by the ShellVersionService
         // Connections below, once the version lands.
         if (requires && ShellVersionService.semverVersion && !checkPluginCompatibility(requires)) {
-            giveUp(I18n.tr("It requires VGS %1.").arg(requires), null);
+            // Recorded, not just toasted. A toast is gone in seconds and
+            // `plugin-scan status` reported an empty reason for this refusal,
+            // so the one enforced constraint VGS has left no trace anywhere a
+            // user could look afterwards. (VGS-89)
+            const reason = I18n.tr("It requires VGS %1.").arg(requires);
+            giveUp(reason, {
+                title: reason,
+                details: I18n.tr("This shell is VGS %1.").arg(ShellVersionService.semverVersion)
+            });
             return;
         }
         _runStartupCheck(pluginId, err => {
@@ -2054,6 +2062,61 @@ Singleton {
         return ShellVersionService.checkVersionRequirement(requiresVgs, ShellVersionService.getParsedShellVersion());
     }
 
+    // Why this package is being WITHHELD on its declared shell requirement, or
+    // "" when nothing is being withheld. One owner for the sentence, because it
+    // has to read identically in Settings > Plugins and in `plugin-scan`.
+    //
+    // For a bundled id the constraint is inert — always-available by
+    // construction, audited at its source and never enforced
+    // (_auditBundledRequirement) — so reporting one here would tell a user a
+    // package is unavailable while it is loaded and working. For every other
+    // source the constraint IS enforced, and a package that is enforced against
+    // while reporting nothing is indistinguishable from a package that does not
+    // exist. That is the condition that made VGS-76 hard to diagnose, and it is
+    // what this reports. (VGS-89)
+    function requirementBlockReason(pluginId) {
+        const plugin = availablePlugins[pluginId];
+        if (!plugin)
+            return "";
+        const withheld = _withheldOnRequirement(
+            plugin,
+            ShellVersionService.semverVersion,
+            plugin.requires_shell ? checkPluginCompatibility(plugin.requires_shell) : true
+        );
+        if (!withheld)
+            return "";
+        return I18n.tr("requires VGS %1; this shell is %2")
+            .arg(plugin.requires_shell)
+            .arg(ShellVersionService.semverVersion);
+    }
+
+    // BEGIN REQUIREMENT REPORT POLICY
+    // Pure: no QML API, no service calls, no side effects.
+    // scripts/test-plugin-requirement-report.js extracts this block verbatim
+    // and pairs it with ShellVersionService's own VERSION POLICY comparator, so
+    // the rule is judged by the runtime's code rather than a re-implementation.
+    // Keep it free of anything node cannot evaluate.
+    //
+    // True only when the package is genuinely being withheld:
+    //   * no declaration, nothing to withhold on;
+    //   * a bundled id is always-available by construction, so its declaration
+    //     is inert — audited at its source, never enforced. Reporting one would
+    //     tell a user a package is unavailable while it is loaded and working;
+    //   * shell version detection is asynchronous, and an unresolved version
+    //     parses as 0.0.0 and fails every `>=`. Nothing is withheld until it
+    //     lands, so reporting then would be a lie that clears itself;
+    //   * a satisfied constraint withholds nothing.
+    function _withheldOnRequirement(plugin, shellSemver, compatible) {
+        if (!plugin || !plugin.requires_shell)
+            return false;
+        if (plugin.source === "bundled")
+            return false;
+        if (!shellSemver)
+            return false;
+        return !compatible;
+    }
+    // END REQUIREMENT REPORT POLICY
+
     function getIncompatiblePlugins() {
         const result = [];
         for (const pluginId in availablePlugins) {
@@ -2116,7 +2179,12 @@ Singleton {
                     continue;
                 const p = root.availablePlugins[id];
                 const safeName = String(p.name || "").replace(/[\t\n\r]/g, " ");
-                lines.push(`${id}\t${p.loaded ? "loaded" : "unloaded"}\t${p.type || "unknown"}\t${safeName}`);
+                // Fifth field: why an unloaded package is being withheld, empty
+                // when it is not. Without it a package enforced against by
+                // requires_shell was indistinguishable here from one the user
+                // simply had not enabled. (VGS-89)
+                const withheld = String(root.requirementBlockReason(id)).replace(/[\t\n\r]/g, " ");
+                lines.push(`${id}\t${p.loaded ? "loaded" : "unloaded"}\t${p.type || "unknown"}\t${safeName}\t${withheld}`);
             }
             const header = `# count=${ids.length} returned=${n}${ids.length > n ? " (truncated, see cap)" : ""}`;
             return header + "\n" + lines.join("\n");
@@ -2131,7 +2199,12 @@ Singleton {
             if (!plugin)
                 return `ERROR: unknown pluginId '${pluginId}'`;
             const errObj = root.pluginLoadErrors[pluginId];
-            const err = errObj ? (errObj.title || "") : "";
+            // A recorded startup failure first, then the standing requirement
+            // block. The second is what a package that was never enabled has:
+            // no gate has run for it, so there is no error to record, and yet
+            // it can never load. Reporting nothing there is the false silence
+            // this exists to remove. (VGS-89)
+            const err = errObj ? (errObj.title || "") : root.requirementBlockReason(pluginId);
             const safeErr = String(err).replace(/[\t\n\r]/g, " ");
             return `${plugin.loaded ? "loaded" : "unloaded"}\t${plugin.type || ""}\t${safeErr}`;
         }

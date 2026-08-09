@@ -486,6 +486,86 @@ def test_compositor_dependency_selection():
         helper.command_exists = original_exists
 
 
+def test_capability_probe_reporting():
+    """A declared minimum that nothing checks is a comment pretending to be a
+    constraint (VGS-89). The probe mechanism is what turns it into a check, so
+    the mechanism itself has to be checked — including the two ways it must NOT
+    fire: on a command that is absent, and on a probe that could not be run.
+    """
+    original_load = helper.load_deps
+    original_detect = helper.detect_compositor
+    original_exists = helper.command_exists
+    original_probes = helper.CAPABILITY_PROBES
+    original_cache = helper._CAPABILITY_PROBE_CACHE
+    helper.load_deps = lambda: {
+        "version": 1,
+        "features": {"base": {"commands": ["probed", "plain"]}},
+    }
+    helper.detect_compositor = lambda: {"compositor": "hyprland", "source": "test"}
+    try:
+        # Present but unusable: reported, and phrased so it cannot be mistaken
+        # for "not installed".
+        helper.command_exists = lambda command: True
+        helper.CAPABILITY_PROBES = {
+            "probed": {"argv": ["false"], "requirement": "needs the thing"},
+        }
+        helper._CAPABILITY_PROBE_CACHE = {}
+        base = helper.feature_status()["features"]["base"]
+        assert_equal(base["available"], False,
+                     "an installed-but-unusable command makes its feature unavailable")
+        assert_equal(base["unusable"],
+                     ["probed (installed but unusable: needs the thing)"],
+                     "unusable commands are broken out from missing ones")
+        assert_equal(base["unusable"][0] in base["missing"], True,
+                     "unusable commands also reach the existing `missing` consumers")
+        assert_equal("plain" in base["missing"], False,
+                     "a command with no probe is judged on presence alone")
+
+        # Usable: silent. The probe must not add noise on a healthy system.
+        helper.CAPABILITY_PROBES = {
+            "probed": {"argv": ["true"], "requirement": "needs the thing"},
+        }
+        helper._CAPABILITY_PROBE_CACHE = {}
+        assert_equal(helper.feature_status()["features"]["base"]["missing"], [],
+                     "a satisfied probe adds nothing")
+
+        # Absent: reported once, as missing, never twice. Telling someone to
+        # upgrade a command they have not installed is worse than saying nothing.
+        helper.command_exists = lambda command: command != "probed"
+        helper.CAPABILITY_PROBES = {
+            "probed": {"argv": ["false"], "requirement": "needs the thing"},
+        }
+        helper._CAPABILITY_PROBE_CACHE = {}
+        base = helper.feature_status()["features"]["base"]
+        assert_equal(base["missing"], ["probed"],
+                     "an absent command is reported as missing, not as unusable")
+        assert_equal(base["unusable"], [], "an absent command is not probed")
+
+        # Unrunnable probe: treated as satisfied. Reporting a working system as
+        # broken because the probe itself failed to execute is the false
+        # negative this mechanism exists to avoid.
+        helper.command_exists = lambda command: True
+        helper.CAPABILITY_PROBES = {
+            "probed": {"argv": ["/nonexistent/probe/binary"], "requirement": "needs the thing"},
+        }
+        helper._CAPABILITY_PROBE_CACHE = {}
+        assert_equal(helper.feature_status()["features"]["base"]["unusable"], [],
+                     "a probe that cannot run is not evidence of an unusable command")
+
+        # The shipped jq probe, against the jq actually installed here.
+        helper.CAPABILITY_PROBES = original_probes
+        helper._CAPABILITY_PROBE_CACHE = {}
+        if helper.command_exists("jq"):
+            assert_equal(helper.capability_probe_ok("jq"), True,
+                         "the installed jq satisfies the shipped capability probe")
+    finally:
+        helper.load_deps = original_load
+        helper.detect_compositor = original_detect
+        helper.command_exists = original_exists
+        helper.CAPABILITY_PROBES = original_probes
+        helper._CAPABILITY_PROBE_CACHE = original_cache
+
+
 def test_compositor_detection_fallback():
     original_owner = helper._wayland_socket_owner
     original_exists = helper.command_exists
@@ -4247,6 +4327,7 @@ def main():
     test_restyle_integer_sweeps()
     test_fastfetch_portable_seed_and_logo_fallback()
     test_compositor_dependency_selection()
+    test_capability_probe_reporting()
     test_compositor_detection_fallback()
     test_gtk_settings_merge_and_reset()
     test_apply_system_fonts_temp_home()

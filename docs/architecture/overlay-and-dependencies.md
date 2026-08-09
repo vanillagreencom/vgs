@@ -92,6 +92,22 @@ override, and the id owned by something*; after the manifest is deleted the inva
 back rather than a package that no longer exists on disk keeping it. Reverting `_relinkLoadedRecord`
 leaves one live instance behind and turns the run red.
 
+For every **other** source the constraint is enforced, so what is needed there is not an audit but a
+**report**: an enforced constraint that says nothing is indistinguishable from the package not
+existing, which is the condition that made VGS-76 hard to diagnose in the first place.
+`PluginService.requirementBlockReason(pluginId)` owns the sentence — `requires VGS <x>; this shell is
+<y>`, empty for a bundled id and empty until shell-version detection lands — and it is reported in
+all three places a user looks (VGS-89):
+
+| Where | What it shows |
+|-------|---------------|
+| Settings › Plugins | a red `Unavailable: …` line on the card, plus the warning badge whose tooltip now names the shell's own version too |
+| `plugin-scan list` | a fifth tab-separated field, empty when nothing is withheld |
+| `plugin-scan status` | the recorded startup error if the gate ran, otherwise the standing requirement block — a package that was never enabled has no error to record and can still never load |
+
+The startup gate also *records* the refusal now rather than only toasting it, so the reason survives
+the few seconds a toast lasts.
+
 ### Rescanning
 
 `vshell ipc call plugin-scan scan` only reads manifest paths it has never seen — a path already in
