@@ -410,6 +410,15 @@ either: other Quickshell applications on the seat are legitimate.
     dismissed, plus whatever the runtime-error scan catches inside the content;
     the surface's size is **not** evidence about the content, and the script
     says why.
+  - Keys reach a popout through **`wtype`**, not `hyprctl`. `hyprctl dispatch
+    sendshortcut` addresses a *window* and answers "window not found" for a
+    layer surface, so it cannot drive a popout at all; `wtype` goes through the
+    virtual-keyboard protocol to whatever holds keyboard focus, which is the
+    popout's own grab. It needs a settle first — `PluginPopout` defers
+    `forceActiveFocus` through `Qt.callLater`, so a key sent the instant the
+    surface appears lands before anything is listening. Without `wtype`
+    installed the Escape assertion prints `NOT CHECKED` rather than passing
+    quietly.
   - Most agent environments have no `WAYLAND_DISPLAY`, and `--nested` refuses to
     build a sandbox without a host socket to nest inside. Point it at the
     session's own socket and it runs — the sandbox still has its own runtime

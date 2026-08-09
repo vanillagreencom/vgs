@@ -370,15 +370,6 @@ raise SystemExit(0 if found else 1)
 PY
 }
 
-# Height of the popout surface, printed only when there is exactly one.
-sandbox_layer_height() {
-  local geometry rc=0
-  geometry="$(sandbox_layer_state "$1")" || rc=$?
-  [[ "$rc" -eq 0 ]] || return 1
-  [[ "$(printf '%s\n' "$geometry" | grep -c .)" -eq 1 ]] || return 1
-  printf '%s' "${geometry##*x}"
-}
-
 # Waits for a state, and fails LOUDLY on a query error rather than spinning to
 # the timeout and then reporting the wrong thing.
 wait_layer_state() {
@@ -434,10 +425,6 @@ popout_plugin="aiUsage"
 # other. It has to be one the shipped bar layout hosts - a plugin no bar hosts
 # never instantiates its component, and the marker below would never fire.
 override_plugin="tailscale"
-
-sandbox_ipc() {
-  "${sandbox_env[@]}" qs ipc -p "$repo_root/quickshell/vshell" --any-display call "$@" 2>&1 || true
-}
 
 # Plugin widgets are registered with BarWidgetService by the bar's WidgetHost,
 # which mounts them some time AFTER the plugin itself reports loaded. A single
@@ -738,31 +725,48 @@ nested_check() {
   mkdir -p "$sandbox/home/.config" "$sandbox/home/.local/share" "$sandbox/home/.local/state" "$sandbox/home/.cache"
   # Seed a realistic (but throwaway) copy of user state so the smoke exercises
   # the real theme/settings paths without any chance of writing to live state.
+  # Every step below either succeeds or SAYS SO. A prep failure that is
+  # swallowed leaves the run measuring a sandbox that is not the one it
+  # describes, which is the same defect as the `cp -a` symlink silently
+  # yielding default settings and a failed layer query reading as absence —
+  # this file has now had that bug three times, and twice it was here.
+  prep_fail() {
+    fail "sandbox preparation failed at: $1"
+    return 1
+  }
+
   # `cp -aL`, not `cp -a`. This machine's documented workstation wiring points
   # `~/.config/vshell/settings.json` at ~/dotfiles through a RELATIVE symlink,
   # which `cp -a` preserves and which then dangles inside the sandbox — so the
   # comment that used to sit here, claiming the copy "exercises the real
   # theme/settings paths", had never been true on a dotfiles-symlinked config.
   # `-L` dereferences, so what lands in the sandbox is real files.
+  #
+  # This one copy is the only OPTIONAL step: it enriches the sandbox with real
+  # theme and blueprint state, and everything the checks actually assert on is
+  # seeded below. A user config containing a genuinely broken symlink must not
+  # fail everyone's smoke — but it must not pass unmentioned either, because
+  # the run is then thinner than it looks.
   if [[ -d "$HOME/.config/vshell" ]]; then
-    cp -aL -- "$HOME/.config/vshell" "$sandbox/home/.config/vshell" 2>/dev/null || true
+    if ! cp -aL -- "$HOME/.config/vshell" "$sandbox/home/.config/vshell" 2>"$sandbox/cp.err"; then
+      note "DEGRADED: could not copy ~/.config/vshell into the sandbox; continuing with shipped defaults only"
+      sed -n '1,5p' "$sandbox/cp.err" >&2 || true
+    fi
   fi
-  mkdir -p "$sandbox/home/.config/vshell"
+
   # Everything the checks below depend on is SEEDED from the shipped defaults
   # rather than inherited. Dereferencing the copy fixes correctness, not
   # determinism: the operator's own bar layout, plugin settings and user plugin
   # packages would still decide what this run exercises, and a sandbox whose
-  # result depends on the machine it ran on is not a sandbox. The theme and
-  # blueprint state around them is still the copied real thing.
-  #
-  # `rm -rf ... || true` because a bare `rm` under `set -euo pipefail` aborts
-  # the whole script on a permission or busy error, which would read as "the
-  # smoke crashed" rather than "the sandbox could not be prepared".
-  rm -rf -- "$sandbox/home/.config/vshell/plugins" 2>/dev/null || true
+  # result depends on the machine it ran on is not a sandbox.
+  mkdir -p "$sandbox/home/.config/vshell" || { prep_fail "creating the sandbox config directory"; return; }
+  rm -rf -- "$sandbox/home/.config/vshell/plugins" || { prep_fail "removing the copied user plugin directory"; return; }
   rm -f -- "$sandbox/home/.config/vshell/settings.json" \
-           "$sandbox/home/.config/vshell/plugin_settings.json" 2>/dev/null || true
-  cp -- "$repo_root/config/vshell/settings.default.json" "$sandbox/home/.config/vshell/settings.json"
-  cp -- "$repo_root/config/vshell/plugin_settings.default.json" "$sandbox/home/.config/vshell/plugin_settings.json"
+           "$sandbox/home/.config/vshell/plugin_settings.json" || { prep_fail "removing the copied settings files"; return; }
+  cp -- "$repo_root/config/vshell/settings.default.json" \
+        "$sandbox/home/.config/vshell/settings.json" || { prep_fail "seeding settings.json from the shipped default"; return; }
+  cp -- "$repo_root/config/vshell/plugin_settings.default.json" \
+        "$sandbox/home/.config/vshell/plugin_settings.json" || { prep_fail "seeding plugin_settings.json from the shipped default"; return; }
 
   conf="$sandbox/hyprland.conf"
   cat >"$conf" <<'EOF'
