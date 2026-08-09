@@ -3460,6 +3460,35 @@ def test_remote_desktop_undecodable_device_names_are_reported_not_mangled():
                 if "\ufffd" in name:
                     raise AssertionError(f"a substituted name reached the payload: {name!r}")
 
+            # Z5: the suspicion is scoped PER NAME. A device legitimately
+            # named with U+FFFD must keep its name even when an unrelated
+            # neighbour in the same file failed to decode -- a file-wide flag
+            # punished it for somebody else's bad bytes.
+            payload = json.dumps({"root": {"named_devices": [
+                {"name": "real\ufffdname"}, {"name": "BADNAME"},
+            ]}}, ensure_ascii=False).encode("utf-8").replace(b"BADNAME", b"bad-\x80-client")
+            state.write_bytes(payload)
+            result = helper._rd_paired_clients()
+            assert_equal(
+                result["names"], ["real\ufffdname"],
+                "a name the file really contains survives a broken neighbour",
+            )
+            assert_equal(result["undecodable"], 1, "and only the broken one is counted")
+
+            # The same, with the JSON writer escaping non-ASCII rather than
+            # emitting it literally -- Sunshine's own state file escapes, so
+            # assuming either rendering would be a guess.
+            payload = json.dumps({"root": {"named_devices": [
+                {"name": "real\ufffdname"}, {"name": "BADNAME"},
+            ]}, }, ensure_ascii=True).encode("utf-8").replace(b"BADNAME", b"bad-\x80-client")
+            state.write_bytes(payload)
+            result = helper._rd_paired_clients()
+            assert_equal(
+                result["names"], ["real\ufffdname"],
+                "an escaped U+FFFD is just as real as a literal one",
+            )
+            assert_equal(result["undecodable"], 1, "and the broken neighbour is still the only loss")
+
             # Invalid bytes OUTSIDE any name must not withhold anything.
             payload = json.dumps({"root": {"named_devices": [{"name": "mbp-1"}], "junk": "PAD"}}).encode("utf-8")
             payload = payload.replace(b'"PAD"', b'"\x80pad"')

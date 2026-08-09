@@ -13671,6 +13671,32 @@ def _rd_session_state() -> Dict[str, Any]:
     return state
 
 
+def _rd_name_survived_decoding(name: str, raw_bytes: bytes) -> bool:
+    """Did this name's U+FFFD come from the FILE, or from our replacement?
+
+    Only ever asked about a name that contains U+FFFD, and only to tell a device
+    genuinely called that from one whose bytes could not be decoded. The test is
+    whether the name as written appears in the original bytes:
+
+    * a real U+FFFD was serialised, so the file holds either its UTF-8 encoding
+      or its JSON escape, and the name is found;
+    * a substituted one replaced some other byte sequence entirely, so neither
+      rendering is there and the name is not found.
+
+    Both renderings are checked because a JSON writer may or may not escape
+    non-ASCII -- Sunshine's own state file escapes solidus, so assuming either
+    one would be a guess.
+    """
+    try:
+        literal = name.encode("utf-8")
+    except UnicodeEncodeError:
+        return False
+    if literal in raw_bytes:
+        return True
+    escaped = json.dumps(name, ensure_ascii=True).encode("utf-8")[1:-1]
+    return escaped in raw_bytes
+
+
 def _rd_paired_clients() -> Dict[str, Any]:
     """Names of PAIRED devices, from Sunshine's own state file.
 
@@ -13705,11 +13731,9 @@ def _rd_paired_clients() -> Dict[str, Any]:
     # Decoding with `errors="replace"` and moving on turned bad bytes into
     # U+FFFD INSIDE device names, so a client appeared under a mangled name that
     # is indistinguishable from the device genuinely being called that. Decode
-    # leniently so the rest of the file still parses, but remember that
-    # substitution happened, and below drop any name it touched rather than
-    # presenting a corrupted string as the device's name.
+    # leniently so the rest of the file still parses, and check each NAME
+    # against the original bytes below.
     raw = raw_bytes.decode("utf-8", errors="replace")
-    lossy = raw_bytes.decode("utf-8", errors="ignore") != raw
     try:
         data = json.loads(raw)
     except ValueError as exc:
@@ -13735,11 +13759,11 @@ def _rd_paired_clients() -> Dict[str, Any]:
         name = device.get("name") if isinstance(device, dict) else None
         if not isinstance(name, str) or not name.strip():
             continue
-        # Only names the substitution actually touched are dropped, and only
-        # when the file really did contain invalid bytes -- a device legitimately
-        # named with U+FFFD is absurd, but the `lossy` gate means a clean file
-        # is never second-guessed.
-        if lossy and "\ufffd" in name:
+        # Scoped PER NAME. A file-wide "did anything fail to decode" flag
+        # punished every name containing U+FFFD for an unrelated neighbour's
+        # bad bytes, so a device legitimately named with a replacement
+        # character lost its name because some other entry was broken.
+        if "\ufffd" in name and not _rd_name_survived_decoding(name, raw_bytes):
             undecodable += 1
             continue
         names.append(name.strip())
