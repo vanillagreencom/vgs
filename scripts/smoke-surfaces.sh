@@ -97,26 +97,36 @@ PY
 # classified here instead. No shell is a skip; a foreign shell is a failure,
 # because the requested assertions did not run.
 require_own_shell() {
-  local listing verdict diag err_file rc=0
+  local listing verdict diag err_file qs_bin="" candidate rc=0
 
-  if ! command -v qs >/dev/null 2>&1; then
-    echo "surface smoke skipped: quickshell CLI (qs) not found, no instance registry to consult"
+  # Both names, in the order `bin/vshell-helper`'s QS_BINARIES lists them. A
+  # system providing only `quickshell` reads the same registry, and probing for
+  # `qs` alone turned that into a skip — a false green of exactly the kind this
+  # precondition exists to prevent.
+  for candidate in qs quickshell; do
+    if command -v "$candidate" >/dev/null 2>&1; then
+      qs_bin="$candidate"
+      break
+    fi
+  done
+  if [[ -z "$qs_bin" ]]; then
+    echo "surface smoke skipped: no Quickshell CLI (qs, quickshell) on PATH, no instance registry to consult"
     exit 0
   fi
 
   # stdout and stderr are captured SEPARATELY on purpose. Folding them together
-  # ("2>&1") feeds any warning `qs` writes to stderr — a deprecation notice, a
-  # protocol grumble — into the JSON parser and turns a perfectly good listing
+  # ("2>&1") feeds any warning the CLI writes to stderr — a deprecation notice,
+  # a protocol grumble — into the JSON parser and turns a perfectly good listing
   # into a hard failure. stdout is the document; stderr is only ever the
   # diagnostic printed when something actually went wrong.
   err_file="$(mktemp)"
-  listing="$(qs list --all --json 2>"$err_file")" || rc=$?
+  listing="$("$qs_bin" list --all --json 2>"$err_file")" || rc=$?
   diag="$(cat "$err_file")"
   rm -f "$err_file"
 
   if [[ "$rc" -ne 0 ]]; then
     {
-      echo "surface smoke FAILED: could not read the Quickshell instance registry (qs list exited $rc)"
+      echo "surface smoke FAILED: could not read the Quickshell instance registry ($qs_bin list exited $rc)"
       if [[ -n "$diag" ]]; then printf '%s\n' "$diag"; fi
     } >&2
     exit 1
@@ -243,21 +253,31 @@ for index, entry in enumerate(data):
         continue
     foreign.append((pid, str(path.parent.parent)))
 
-# Malformed wins over everything, including a confirmed own shell: an entry
-# this script cannot read might be the foreign shell it was looking for, so
-# "some of the registry was understood" is not an answer worth acting on.
+# Decision order: MALFORMED, then FOREIGN, then MINE, then skip. Both of the
+# first two beat a confirmed own shell, for the same underlying reason — the
+# assertions cannot tell whose surfaces they are reading.
+#
+# Malformed first: an entry this script cannot read might BE a foreign shell,
+# so "some of the registry was understood" is not an answer worth acting on.
+#
+# Foreign before mine, which is not a tie-break but the whole point: `hyprctl
+# layers` aggregates every Quickshell instance on the seat. With this checkout's
+# shell AND another's both live, a foreign shell's surfaces can satisfy every
+# assertion and the smoke reports success on evidence from somebody else's
+# shell. Returning success there is worse than the silent death this
+# precondition replaced, because a false pass is acted on.
 if malformed:
     print("registry entries this script does not understand:", file=sys.stderr)
     for line in malformed:
         print(f"  {line}", file=sys.stderr)
     raise SystemExit(2)
+if foreign:
+    for pid, root in sorted(foreign):
+        print(f"{root} (pid {pid})")
+    raise SystemExit(11)
 if mine:
     raise SystemExit(0)
-if not foreign:
-    raise SystemExit(10)
-for pid, root in sorted(foreign):
-    print(f"{root} (pid {pid})")
-raise SystemExit(11)
+raise SystemExit(10)
 PY
   )" || rc=$?
 
@@ -269,20 +289,23 @@ PY
       ;;
     11)
       {
-        echo "surface smoke FAILED: the live VGS shell belongs to a different checkout"
+        echo "surface smoke FAILED: a live VGS shell belongs to a different checkout"
         while IFS= read -r line; do
           [[ -n "$line" ]] && echo "  running shell: $line"
         done <<<"$verdict"
         echo "  this run:      $repo_root"
         echo "  vshell ipc resolves instances by this checkout's config path, so none of the"
         echo "  surface assertions can reach that shell. Run the smoke from the checkout above."
+        echo "  This fails even when this checkout's own shell is ALSO live: hyprctl layers"
+        echo "  aggregates every Quickshell instance on the seat, so the assertions cannot"
+        echo "  tell whose surfaces they are reading, and a pass would prove nothing."
       } >&2
       exit 1
       ;;
     *)
       {
         echo "surface smoke FAILED: could not classify the instance registry (classifier exit $rc)"
-        if [[ -n "$diag" ]]; then echo "  qs list also wrote to stderr: $diag"; fi
+        if [[ -n "$diag" ]]; then echo "  $qs_bin list also wrote to stderr: $diag"; fi
       } >&2
       exit 1
       ;;

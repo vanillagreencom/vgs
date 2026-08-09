@@ -58,6 +58,18 @@ printf '%s\n' "$FAKE_LAYERS_JSON"
 EOF
 chmod +x "$bin_dir/hyprctl"
 
+# A curated PATH holding nothing but the coreutils the script shells out to,
+# so a case can control exactly which Quickshell CLI is visible. Without this,
+# "no CLI installed" and "only `quickshell` installed" cannot be tested on a
+# machine that has a real `qs` on /usr/bin — it would answer from the live
+# registry. `bash` and `env` are here because the shebang is `/usr/bin/env
+# bash`, which resolves bash through PATH.
+min_path="$tmp/bin-min"
+mkdir -p "$min_path"
+for tool in bash env dirname python3 mktemp cat rm sleep grep; do
+  ln -sf "$(command -v "$tool")" "$min_path/$tool"
+done
+
 layers_json='{"DP-1":{"levels":{"2":[
   {"namespace":"vshell:wallpaper","w":1920,"h":1080},
   {"namespace":"vshell:capture","w":400,"h":300},
@@ -96,11 +108,18 @@ rc=0
 case_name=""
 
 run_smoke() {
-  case_name="$1"
-  shift
+  run_smoke_on "$bin_dir:$PATH" "$@"
+}
+
+# run_smoke_on <PATH> <case name> [VAR=VAL ...] — the PATH is spelled out for
+# the cases that turn on which Quickshell CLI is visible.
+run_smoke_on() {
+  local path="$1"
+  case_name="$2"
+  shift 2
   rc=0
   out="$(env "$@" \
-    PATH="$bin_dir:$PATH" \
+    PATH="$path" \
     HYPRLAND_INSTANCE_SIGNATURE=test \
     FAKE_LAYERS_JSON="$layers_json" \
     "$fake_repo/scripts/smoke-surfaces.sh" 2>"$tmp/stderr")" || rc=$?
@@ -181,9 +200,22 @@ run_smoke "foreign checkout" \
   VSHELL_PROC_ROOT="$proc" \
   FAKE_QS_JSON="[$(entry 202 "$foreign_config")]"
 expect_rc 1
-expect_stderr "surface smoke FAILED: the live VGS shell belongs to a different checkout"
+expect_stderr "surface smoke FAILED: a live VGS shell belongs to a different checkout"
 expect_stderr "$foreign_root (pid 202)"
 expect_stderr "this run:      $fake_repo"
+
+# THE ONE THAT MATTERS. With our own shell live AND another checkout's live,
+# `hyprctl layers` aggregates both, so a foreign shell's surfaces can satisfy
+# every assertion and the smoke would report success on somebody else's
+# evidence. A false pass is worse than the silent death this precondition
+# replaced, because it gets acted on. Foreign must beat mine.
+run_smoke "own shell AND a foreign shell both live" \
+  VSHELL_PROC_ROOT="$proc" \
+  FAKE_QS_JSON="[$(entry 101 "$own_config"), $(entry 202 "$foreign_config")]"
+expect_rc 1
+expect_stderr "surface smoke FAILED: a live VGS shell belongs to a different checkout"
+expect_stderr "$foreign_root (pid 202)"
+expect_stderr "hyprctl layers"
 
 # `shell.qml` in config_path resolves to the same runtime tree.
 run_smoke "foreign checkout, shell.qml config path" \
@@ -289,29 +321,41 @@ expect_rc 1
 expect_stderr "surface smoke FAILED: could not read the Quickshell instance registry (qs list exited 3)"
 expect_stderr "qs: could not open the instance directory"
 
-# No `qs` at all: there is no registry to consult, so there is nothing to
-# classify and nothing to claim. This branch is the one case that cannot be
-# driven by a stub — it needs `qs` ABSENT from PATH, and PATH still has to carry
-# the coreutils the script shells out to. Where a real quickshell CLI is
-# installed it would answer from the live registry, so the case is announced as
-# skipped rather than run against the session.
-if command -v qs >/dev/null 2>&1; then
-  echo "note: a real quickshell CLI is installed, so the 'qs not installed' branch"
-  echo "      cannot be isolated from the live registry here; NOT checked."
-else
-  case_name="qs not installed"
-  mkdir -p "$tmp/bin-noqs"
-  cp "$bin_dir/hyprctl" "$tmp/bin-noqs/hyprctl"
-  rc=0
-  out="$(env \
-    PATH="$tmp/bin-noqs:$PATH" \
-    HYPRLAND_INSTANCE_SIGNATURE=test \
-    FAKE_LAYERS_JSON="$layers_json" \
-    VSHELL_PROC_ROOT="$proc" \
-    "$fake_repo/scripts/smoke-surfaces.sh" 2>"$tmp/stderr")" || rc=$?
-  err="$(cat "$tmp/stderr")"
-  expect_rc 0
-  expect_stdout "quickshell CLI (qs) not found"
-fi
+# --- which Quickshell CLI is on PATH -----------------------------------------
+# `bin/vshell-helper`'s QS_BINARIES treats `qs` and `quickshell` as the same
+# CLI, and both read the same instance registry. Each case below runs on a
+# curated PATH holding only the coreutils, so what the script can see is decided
+# here and never by whatever this machine happens to have installed.
+
+# Only `quickshell`: the classifier must still run rather than skipping.
+onlyq="$tmp/bin-quickshell-only"
+mkdir -p "$onlyq"
+cp -a "$min_path/." "$onlyq/"
+cp "$bin_dir/qs" "$onlyq/quickshell"
+cp "$bin_dir/hyprctl" "$onlyq/hyprctl"
+
+run_smoke_on "$onlyq" "only quickshell on PATH, own shell" \
+  VSHELL_PROC_ROOT="$proc" \
+  FAKE_QS_JSON="[$(entry 101 "$own_config")]"
+expect_rc 0
+expect_stdout "surface smoke passed"
+
+run_smoke_on "$onlyq" "only quickshell on PATH, foreign shell" \
+  VSHELL_PROC_ROOT="$proc" \
+  FAKE_QS_JSON="[$(entry 202 "$foreign_config")]"
+expect_rc 1
+expect_stderr "$foreign_root (pid 202)"
+
+# Neither: a genuine skip. There is no registry to consult, so there is nothing
+# to classify and nothing to claim.
+nocli="$tmp/bin-no-cli"
+mkdir -p "$nocli"
+cp -a "$min_path/." "$nocli/"
+cp "$bin_dir/hyprctl" "$nocli/hyprctl"
+
+run_smoke_on "$nocli" "no Quickshell CLI on PATH" \
+  VSHELL_PROC_ROOT="$proc"
+expect_rc 0
+expect_stdout "no Quickshell CLI (qs, quickshell) on PATH"
 
 echo "smoke-surfaces precondition checks passed"

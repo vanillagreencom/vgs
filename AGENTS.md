@@ -283,6 +283,12 @@ reports which case it is in: a named skip when no VGS shell is live, and a
 failure naming the owning checkout when one is live but foreign. Run it from
 that checkout; do not read its refusal as a pass (VGS-69).
 
+A foreign shell fails the run **even when this checkout's own shell is also
+live**, because `hyprctl layers` aggregates every Quickshell instance on the
+seat: the assertions cannot tell whose surfaces they are reading, so a pass
+would prove nothing. The classifier's order is therefore malformed registry →
+foreign shell → own shell → skip.
+
 ### Review gate
 
 Merges gate on AI-review evidence via the vstack `review-gate` engine, vendored
