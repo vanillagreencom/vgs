@@ -35,10 +35,25 @@ Three details that follow from that:
   **refuses** on `None` rather than proceeding. Treating an unanswerable probe as
   "absent, create one" would be survivable; treating it as "present, go ahead" is
   the failure above, and collapsing the two into a boolean invites exactly that.
-- **The output half is Hyprland-only.** Niri has no equivalent of
-  `hyprctl output create headless`, so on anything else the host still starts and
-  the reply says, through `manual`, that it will capture an existing monitor.
-  Reporting is better than implying VGS manages an output it cannot.
+- **The output half is Hyprland-only, and "unknown" is a question, not a no.**
+  Niri has no equivalent of `hyprctl output create headless`, so there the host
+  still starts and the reply says, through `manual`, that it will capture an
+  existing monitor. Reporting is better than implying VGS manages an output it
+  cannot.
+
+  But `detect_compositor()` answers from the *calling process's* environment,
+  and an ssh session has none of it — no Wayland socket owner, no instance
+  signature — so it reports `unknown`. Treating that as "not Hyprland" skipped
+  the virtual output on exactly the path a remote-desktop host is most likely to
+  be started from. `_rd_manages_output()` therefore probes on `unknown`, using
+  the same ssh-aware environment `_rd_output_present()` uses, and grades it:
+
+  | Situation | Result |
+  |---|---|
+  | hyprctl not installed | definitely not Hyprland — start without an output, say so |
+  | hyprctl present, no instance in the runtime dir | no Hyprland running — same |
+  | an instance resolves and hyprctl answers | **this is Hyprland over ssh** — create the output |
+  | an instance resolves but hyprctl will not answer | **refuse** — a Hyprland session is here and unreachable, so a real monitor cannot be ruled out |
 - **`captureFallback`** in the status payload is the running form of the same
   problem: host up, Hyprland, no `HEADLESS-1`. The widget renders it as a
   warning, because nothing else in the system would ever mention it.
@@ -83,6 +98,7 @@ Three edge cases, all decided toward *not removing*:
 
 | Case | Behaviour |
 |------|-----------|
+| Sunshine's state file is malformed | Only the paired-device list goes unknown, with the reason. Every shape is checked rather than assumed: a list, a scalar, or a `root` that is a string used to raise straight out of `status`, so one bad field took the host and session state down with it |
 | The output was removed by hand between start and stop | Nothing to remove, no error — and the record is dropped, or it would authorise removing a *later* output of the same name |
 | The record could not be written at start | The output is created and used, but `stop` will not claim it. Reported through `manual`. A leaked monitor is one click to remove; a deleted one cannot be undone |
 | `hyprctl` cannot say whether the output is present at stop | Left alone, and said so |

@@ -25,6 +25,7 @@ import qs.Common
 //    | host | `installed`, `running` | `statusKnown` |
 //    | session | `streaming`, `sessionCount` | `sessionKnown` |
 //    | virtual output | `outputPresent` | `outputKnown` |
+//    | paired devices | `pairedClients` | `pairedClientsKnown` |
 //
 //    `streaming` is the one exception to "unknown clears it": a capture that may
 //    still be live is never downgraded to a question mark. It stays set, and the
@@ -58,6 +59,11 @@ Singleton {
     property string compositor: ""
     property string webUi: ""
     property var pairedClients: []
+    // A fourth knowledge axis, joining the table below. Sunshine's state file
+    // can be malformed independently of everything else, and one unreadable
+    // field must not be rendered as "no paired devices".
+    property bool pairedClientsKnown: false
+    property string pairedClientsError: ""
 
     // The virtual output VGS manages on Hyprland.
     property string outputName: "HEADLESS-1"
@@ -117,6 +123,7 @@ Singleton {
     function _markStatusUnknown(reason) {
         root.statusKnown = false;
         root.outputKnown = false;
+        root.pairedClientsKnown = false;
         root.statusError = reason;
         root._markSessionUnknown(reason);
     }
@@ -228,6 +235,8 @@ Singleton {
         root.compositor = status.compositor || "";
         root.webUi = status.webUi || "";
         root.pairedClients = status.pairedClients || [];
+        root.pairedClientsKnown = status.pairedClientsKnown !== false;
+        root.pairedClientsError = status.pairedClientsError || "";
         root.captureFallback = status.captureFallback === true;
 
         const output = status.output || {};

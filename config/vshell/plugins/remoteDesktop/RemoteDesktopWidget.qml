@@ -611,7 +611,7 @@ PluginComponent {
                 Column {
                     width: parent.width
                     spacing: Theme.spacingXS
-                    visible: RemoteDesktopService.pairedClients.length > 0
+                    visible: RemoteDesktopService.pairedClients.length > 0 || !RemoteDesktopService.pairedClientsKnown
 
                     StyledText {
                         text: "Paired devices"
@@ -620,8 +620,17 @@ PluginComponent {
                         color: Theme.surfaceVariantText
                     }
 
+                    StyledText {
+                        width: parent.width
+                        visible: !RemoteDesktopService.pairedClientsKnown
+                        text: RemoteDesktopService.pairedClientsError || "The paired device list could not be read."
+                        wrapMode: Text.WordWrap
+                        font.pixelSize: Theme.fontSizeSmall
+                        color: Theme.warning
+                    }
+
                     Repeater {
-                        model: RemoteDesktopService.pairedClients
+                        model: RemoteDesktopService.pairedClientsKnown ? RemoteDesktopService.pairedClients : []
 
                         delegate: RowLayout {
                             required property var modelData
@@ -646,6 +655,7 @@ PluginComponent {
 
                     StyledText {
                         width: parent.width
+                        visible: RemoteDesktopService.pairedClientsKnown
                         text: "Devices allowed to connect. Which one is connected is not something the host reports."
                         wrapMode: Text.WordWrap
                         font.pixelSize: Theme.fontSizeSmall
