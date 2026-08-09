@@ -401,11 +401,15 @@ either: other Quickshell applications on the seat are legitimate.
     runtime dir, own HOME, private bus, no live backend socket, no live
     compositor IPC), with process-group-scoped cleanup, and fails on runtime QML
     errors. **This is the mode that replaces what `qs -c vshell` used to cover**,
-    so use it for QML work. It also opens a plugin popout and drives a planted
-    user override of a bundled id through scan/rescan/reload/removal, because
-    neither is reachable by loading the shell alone (VGS-81) — popout content is
-    only instantiated when the popout opens, and the override path needs a
-    second manifest claiming a shipped id.
+    so use it for QML work. It also opens a plugin popout (dismissing it with
+    Escape via `wtype`) and drives a planted user override of a bundled id
+    through scan/rescan/reload/removal, because neither is reachable by loading
+    the shell alone (VGS-81) — popout content is only instantiated when the
+    popout opens, and the override path needs a second manifest claiming a
+    shipped id. What the popout check proves is that the surface was created and
+    dismissed, plus whatever the runtime-error scan catches inside the content;
+    the surface's size is **not** evidence about the content, and the script
+    says why.
   - Most agent environments have no `WAYLAND_DISPLAY`, and `--nested` refuses to
     build a sandbox without a host socket to nest inside. Point it at the
     session's own socket and it runs — the sandbox still has its own runtime

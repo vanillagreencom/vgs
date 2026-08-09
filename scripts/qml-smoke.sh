@@ -25,11 +25,12 @@
 #
 # It then drives two things that loading alone never reaches (VGS-81):
 #
-#   * a plugin POPOUT is opened through `widget toggle`, because everything
-#     inside popoutContent is only instantiated when the popout opens — the
-#     extracted meter delegates and the in-surface pager had never been executed
-#     by anything. A ReferenceError in that content passes a full nested run
-#     with the popout closed.
+#   * a plugin POPOUT is opened through `widget toggle` and dismissed with
+#     Escape, because everything inside popoutContent is only instantiated when
+#     the popout opens — the extracted meter delegates and the in-surface pager
+#     had never been executed by anything. A ReferenceError in that content
+#     passes a full nested run with the popout closed. The surface's SIZE is not
+#     treated as evidence about the content; see the note above popout_check.
 #   * a user OVERRIDE of a bundled id is planted in the sandbox's own HOME and
 #     put through scan, rescan, reload and removal, asserting on markers only
 #     the override's own component can emit. "The load succeeded" is not
@@ -308,32 +309,48 @@ sandbox_ipc() {
 # `hyprctl -i 0` resolves to the NESTED compositor: sandbox_env is built with
 # `env -i`, so no HYPRLAND_INSTANCE_SIGNATURE from the live session leaks in and
 # XDG_RUNTIME_DIR points at the sandbox's own runtime dir.
+# The exit status is PROPAGATED. Swallowing it with `|| true` fed an empty
+# string to the parser, which then reported "no such surface" — a failed query
+# becoming a negative answer, which is the defect this harness exists to refuse.
 sandbox_layers() {
-  "${sandbox_env[@]}" hyprctl -i 0 layers -j 2>/dev/null || true
+  "${sandbox_env[@]}" hyprctl -i 0 layers -j 2>/dev/null
 }
 
-# 0 = a content-sized surface with that namespace exists, 1 = absent,
-# 2 = present but degenerate (zero, or as large as the screen).
+# 0 = a content-sized surface with that namespace exists
+# 1 = absent
+# 2 = present but degenerate (zero-sized, or as large as the screen)
+# 3 = THE QUERY FAILED - hyprctl errored or produced something unparsable.
+#     Distinct from 1 deliberately: "I could not look" is not "it is not there".
+#
+# The geometry is printed too, so a caller can compare sizes across states.
 sandbox_layer_state() {
-  local namespace="$1" layers
-  layers="$(sandbox_layers)"
+  local namespace="$1" layers rc=0
+  layers="$(sandbox_layers)" || rc=$?
+  if [[ "$rc" -ne 0 ]]; then
+    return 3
+  fi
   LAYERS_JSON="$layers" python3 - "$namespace" <<'PY'
 import json
 import os
 import sys
 
 namespace = sys.argv[1]
+raw = os.environ["LAYERS_JSON"]
+if not raw.strip():
+    raise SystemExit(3)
 try:
-    data = json.loads(os.environ["LAYERS_JSON"] or "{}")
+    data = json.loads(raw)
 except json.JSONDecodeError:
-    raise SystemExit(1)
+    raise SystemExit(3)
+if not isinstance(data, dict):
+    raise SystemExit(3)
 
 found = False
-for monitor in (data.values() if isinstance(data, dict) else []):
+for monitor in data.values():
     layers = []
     for level in (monitor.get("levels") or {}).values():
         layers.extend(level)
-    # The screen, inferred from the largest surface on it — the same heuristic
+    # The screen, inferred from the largest surface on it - the same heuristic
     # scripts/smoke-surfaces.sh uses, and for the same reason: a popout that
     # covers the whole screen is a layout failure, not an open popout.
     screen_w = max((int(layer.get("w") or 0) for layer in layers), default=0)
@@ -344,6 +361,7 @@ for monitor in (data.values() if isinstance(data, dict) else []):
         found = True
         w = int(layer.get("w") or 0)
         h = int(layer.get("h") or 0)
+        print("%dx%d" % (w, h))
         if w <= 0 or h <= 0:
             raise SystemExit(2)
         if screen_w > 0 and screen_h > 0 and w >= screen_w and h >= screen_h:
@@ -352,11 +370,26 @@ raise SystemExit(0 if found else 1)
 PY
 }
 
+# Height of the popout surface, printed only when there is exactly one.
+sandbox_layer_height() {
+  local geometry rc=0
+  geometry="$(sandbox_layer_state "$1")" || rc=$?
+  [[ "$rc" -eq 0 ]] || return 1
+  [[ "$(printf '%s\n' "$geometry" | grep -c .)" -eq 1 ]] || return 1
+  printf '%s' "${geometry##*x}"
+}
+
+# Waits for a state, and fails LOUDLY on a query error rather than spinning to
+# the timeout and then reporting the wrong thing.
 wait_layer_state() {
   local namespace="$1" want="$2" waited state=1
   for waited in $(seq 1 30); do
     state=0
-    sandbox_layer_state "$namespace" || state=$?
+    sandbox_layer_state "$namespace" >/dev/null || state=$?
+    if [[ "$state" -eq 3 ]]; then
+      fail "could not read the sandbox compositor's layer list (hyprctl query failed) - that is not evidence '$namespace' is absent"
+      return 2
+    fi
     [[ "$state" == "$want" ]] && return 0
     kill -0 -- "-$qs_group" 2>/dev/null || break
     sleep 0.2
@@ -364,33 +397,73 @@ wait_layer_state() {
   return 1
 }
 
-# Opening a widget-surface plugin popout DOES have a reachable entry point:
-# `widget toggle` reaches BarWidgetService.triggerWidgetPopout, which calls
-# PluginComponent.triggerPopout on the instance the focused screen's bar hosts.
-# Everything inside popoutContent had never been executed by anything before
-# this (VGS-81).
-popout_check() {
-  local reply
+# WHAT THE POPOUT CHECK WITNESSES, AND WHAT IT DOES NOT.
+#
+# It opens a plugin popout and asserts a `vshell:plugins:plugin` layer surface
+# appears where there was none, is not degenerate, and goes away again on
+# Escape. That proves the popout was created, mapped and dismissed.
+#
+# It does NOT prove `popoutContent` rendered correctly, and the surface's SIZE
+# is not evidence that it did. That was measured rather than assumed: a fixture
+# plugin was planted with three different content shapes (a bare `Item`, a
+# `Column`, a `Rectangle`) at two declared heights (140px and 340px), and all
+# six combinations settled to an identical 573px surface. Reading the height
+# earlier gives a smaller number, but that is a transient during the resize, not
+# the content's size. Any assertion of the form "the surface is content-sized"
+# would therefore be measuring the popout chrome, not the content.
+#
+# Two things DO witness the content, and both are already load-bearing here:
+#
+#   * a plugin with no `popoutContent` produces NO surface at all, so the
+#     presence assertion below fails (proven by mutation);
+#   * a ReferenceError inside `popoutContent` reaches the log scan at the end of
+#     nested_check, and that error class is only reachable because the popout is
+#     opened — the same defect passes a full nested run with the popout closed
+#     (proven by mutation).
+#
+# Navigating the pager would be a third and better witness, but it needs a
+# pointer click on the gear affordance. `wtype` is keyboard-only and
+# `hyprctl dispatch` cannot address a layer surface, so there is no pointer
+# route from here; that is a real gap, not an oversight.
+popout_namespace="vshell:plugins:plugin"
+# aiUsage, because its popoutContent is the code with no coverage at all: the
+# extracted MeterRow/MeterCard delegates and the in-surface pager (VGS-72/73)
+# live entirely inside it, and it is only instantiated when the popout opens.
+popout_plugin="aiUsage"
+# A different bundled id for the override phase, so the two cannot mask each
+# other. It has to be one the shipped bar layout hosts - a plugin no bar hosts
+# never instantiates its component, and the marker below would never fire.
+override_plugin="tailscale"
 
-  # Polled, not sampled once. A plugin widget is registered with
-  # BarWidgetService by the bar's WidgetHost, which mounts it some time after
-  # the plugin itself reports loaded — a single read here failed about one run
-  # in eight, reporting a missing bar entry that simply had not been mounted
-  # yet.
-  local waited
-  reply=""
+sandbox_ipc() {
+  "${sandbox_env[@]}" qs ipc -p "$repo_root/quickshell/vshell" --any-display call "$@" 2>&1 || true
+}
+
+# Plugin widgets are registered with BarWidgetService by the bar's WidgetHost,
+# which mounts them some time AFTER the plugin itself reports loaded. A single
+# read here failed about one run in eight with WIDGET_NOT_FOUND.
+wait_widget_registered() {
+  local widget="$1" waited reply=""
   for waited in $(seq 1 60); do
     reply="$(sandbox_ipc widget list)"
-    printf '%s\n' "$reply" | grep -q "^${popout_plugin}\b" && break
+    printf '%s\n' "$reply" | grep -q "^${widget}\b" && return 0
     kill -0 -- "-$qs_group" 2>/dev/null || break
     sleep 0.25
   done
-  if ! printf '%s\n' "$reply" | grep -q "^${popout_plugin}\b"; then
-    printf 'qml-smoke: `widget list` reported:\n%s\n' "$reply" >&2
-    fail "the sandbox bar never registered '$popout_plugin', so its popout could not be opened — the seeded settings.default.json is supposed to host it"
-    return 1
-  fi
+  printf 'qml-smoke: `widget list` reported:\n%s\n' "$reply" >&2
+  return 1
+}
 
+popout_check() {
+  local reply state=0
+
+  wait_widget_registered "$popout_plugin" || {
+    fail "the sandbox bar never registered '$popout_plugin', so its popout could not be opened - the seeded settings.default.json is supposed to host it"
+    return 1
+  }
+
+  # Start from a known state: no popout surface open. Without this, a surface
+  # left over from something else would satisfy the assertion below.
   if ! wait_layer_state "$popout_namespace" 1; then
     fail "a plugin popout surface was already open before '$popout_plugin' was toggled"
     return 1
@@ -402,33 +475,50 @@ popout_check() {
     return 1
   fi
 
-  # NOT "the call returned success". The call returning success is what the
-  # old coverage would have been; this waits for the compositor to show a
-  # content-sized surface, which is the part that proves popoutContent built.
-  local state=0
+  # NOT "the call returned success" - that is what the old coverage would have
+  # been. This waits for the compositor to show the surface.
   wait_layer_state "$popout_namespace" 0 || state=$?
   if [[ "$state" -ne 0 ]]; then
-    sandbox_layer_state "$popout_namespace" || state=$?
+    sandbox_layer_state "$popout_namespace" >&2 || true
     if [[ "$state" -eq 2 ]]; then
-      sandbox_layers >&2
-      fail "'$popout_plugin' opened a degenerate popout surface (zero-sized or full-screen) — its content did not instantiate"
+      fail "'$popout_plugin' opened a degenerate popout surface (zero-sized or full-screen)"
     else
       fail "'$popout_plugin' popout never produced a '$popout_namespace' surface"
     fi
     return 1
   fi
 
-  reply="$(sandbox_ipc widget toggle "$popout_plugin")"
-  if [[ "$reply" != "WIDGET_TOGGLE_SUCCESS: $popout_plugin" ]]; then
-    fail "closing the $popout_plugin popout answered '$reply'"
-    return 1
+  # Escape, through the virtual-keyboard protocol. `hyprctl dispatch
+  # sendshortcut` targets a WINDOW and answers "window not found" for a layer
+  # surface, so it cannot reach a popout at all; wtype goes to whatever holds
+  # keyboard focus, which is the popout's own focus grab.
+  if command -v wtype >/dev/null 2>&1; then
+    # The popout grabs keyboard focus asynchronously (PluginPopout defers
+    # forceActiveFocus through Qt.callLater), so a key sent the instant the
+    # surface appears can land before anything is listening for it.
+    sleep 1.5
+    "${sandbox_env[@]}" WAYLAND_DISPLAY="$nested_socket" wtype -k Escape >/dev/null 2>&1 || true
+    if ! wait_layer_state "$popout_namespace" 1; then
+      sandbox_layer_state "$popout_namespace" >&2 || true
+      fail "Escape did not close the '$popout_plugin' popout"
+      return 1
+    fi
+    note "plugin popout check passed ($popout_plugin opened a $popout_namespace surface and Escape closed it)"
+  else
+    # Named, never silent: a skip that reads as a pass is what this file exists
+    # to prevent.
+    note "NOT CHECKED: Escape-to-close - wtype is not installed"
+    reply="$(sandbox_ipc widget toggle "$popout_plugin")"
+    if [[ "$reply" != "WIDGET_TOGGLE_SUCCESS: $popout_plugin" ]]; then
+      fail "closing the $popout_plugin popout answered '$reply'"
+      return 1
+    fi
+    if ! wait_layer_state "$popout_namespace" 1; then
+      fail "the '$popout_plugin' popout surface outlived its close"
+      return 1
+    fi
+    note "plugin popout check passed ($popout_plugin opened a $popout_namespace surface and closed cleanly)"
   fi
-  if ! wait_layer_state "$popout_namespace" 1; then
-    sandbox_layers >&2
-    fail "the '$popout_plugin' popout surface outlived its close"
-    return 1
-  fi
-  note "plugin popout check passed ($popout_plugin opened a content-sized $popout_namespace surface and closed cleanly)"
   return 0
 }
 
@@ -625,6 +715,9 @@ nested_check() {
 
   command -v Hyprland >/dev/null 2>&1 || { nested_unavailable "Hyprland not installed"; return; }
   command -v qs >/dev/null 2>&1 || { nested_unavailable "quickshell (qs) not installed"; return; }
+  # The layer-geometry assertions parse hyprctl's JSON with it. Without this the
+  # first parse would fail as a command-not-found and be read as "no surface".
+  command -v python3 >/dev/null 2>&1 || { nested_unavailable "python3 not installed (needed to read the compositor's layer list)"; return; }
   if ! host_socket="$(host_wayland_socket)" || [[ ! -S "$host_socket" ]]; then
     # Without a host Wayland socket a nested compositor would fall back to DRM
     # and fight the real session for the GPU/VT. Refuse rather than risk it.
@@ -645,23 +738,31 @@ nested_check() {
   mkdir -p "$sandbox/home/.config" "$sandbox/home/.local/share" "$sandbox/home/.local/state" "$sandbox/home/.cache"
   # Seed a realistic (but throwaway) copy of user state so the smoke exercises
   # the real theme/settings paths without any chance of writing to live state.
+  # `cp -aL`, not `cp -a`. This machine's documented workstation wiring points
+  # `~/.config/vshell/settings.json` at ~/dotfiles through a RELATIVE symlink,
+  # which `cp -a` preserves and which then dangles inside the sandbox — so the
+  # comment that used to sit here, claiming the copy "exercises the real
+  # theme/settings paths", had never been true on a dotfiles-symlinked config.
+  # `-L` dereferences, so what lands in the sandbox is real files.
   if [[ -d "$HOME/.config/vshell" ]]; then
-    cp -a -- "$HOME/.config/vshell" "$sandbox/home/.config/vshell"
+    cp -aL -- "$HOME/.config/vshell" "$sandbox/home/.config/vshell" 2>/dev/null || true
   fi
-  # ...but settings.json is seeded from the SHIPPED DEFAULT rather than
-  # inherited. The live file is commonly a symlink into a dotfiles repo, which
-  # `cp -a` preserves and which then dangles inside the sandbox — so what the
-  # sandbox actually ran with was "whatever the operator's bar happens to be",
-  # or nothing at all, decided by an accident of how their config is stored.
-  # The plugin phases below open a plugin popout and override a bundled id, and
-  # both need a bar layout this script controls: a widget is only registered
-  # with BarWidgetService, and its component only instantiated, when a bar
-  # actually hosts it. config/vshell/settings.default.json already places every
-  # bundled plugin widget, so the shipped seed is both the deterministic choice
-  # and the honest one.
   mkdir -p "$sandbox/home/.config/vshell"
-  rm -f "$sandbox/home/.config/vshell/settings.json"
+  # Everything the checks below depend on is SEEDED from the shipped defaults
+  # rather than inherited. Dereferencing the copy fixes correctness, not
+  # determinism: the operator's own bar layout, plugin settings and user plugin
+  # packages would still decide what this run exercises, and a sandbox whose
+  # result depends on the machine it ran on is not a sandbox. The theme and
+  # blueprint state around them is still the copied real thing.
+  #
+  # `rm -rf ... || true` because a bare `rm` under `set -euo pipefail` aborts
+  # the whole script on a permission or busy error, which would read as "the
+  # smoke crashed" rather than "the sandbox could not be prepared".
+  rm -rf -- "$sandbox/home/.config/vshell/plugins" 2>/dev/null || true
+  rm -f -- "$sandbox/home/.config/vshell/settings.json" \
+           "$sandbox/home/.config/vshell/plugin_settings.json" 2>/dev/null || true
   cp -- "$repo_root/config/vshell/settings.default.json" "$sandbox/home/.config/vshell/settings.json"
+  cp -- "$repo_root/config/vshell/plugin_settings.default.json" "$sandbox/home/.config/vshell/plugin_settings.json"
 
   conf="$sandbox/hyprland.conf"
   cat >"$conf" <<'EOF'
