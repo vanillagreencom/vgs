@@ -118,6 +118,8 @@ jobs:
       # from VGS's own REVIEW_GATE_* values, not the engine's defaults.
       - name: Pin the review-gate decision table
         run: third_party/review-gate/scripts/review-predicate-selftest.sh
+      - name: pr-watch behavioral suite (offline, stubbed gh)
+        run: bash third_party/review-gate/tests/pr-watch.test.sh
 
   validate:
     # The required-check context is `CI / ci-ok`; see the aggregator note above.
