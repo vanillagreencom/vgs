@@ -64,9 +64,10 @@ function compatible(requires, shellSemver) {
     return checkVersionRequirement(requires, parseVersion(shellSemver));
 }
 
-// `meta` is a knownManifests entry: {source, requiresShell, demoted}.
+// `meta` is a knownManifests entry:
+// {source, requiresShell, demoted, refusedOnRequirement}.
 function judge(meta, shellSemver) {
-    return withheld(meta, shellSemver, compatible(meta.requiresShell, shellSemver));
+    return withheld(meta, shellSemver, compatible(meta.refusedOnRequirement, shellSemver));
 }
 
 // A constraint this shell cannot satisfy, and one it trivially can, both
@@ -76,13 +77,22 @@ const IMPOSSIBLE = `>=${major + 1}.0.0`;
 const SATISFIED = ">=0.0.1";
 
 assert.equal(
-    judge({ source: "user", requiresShell: IMPOSSIBLE, demoted: true }, SHELL), true,
-    "an override that was refused on the requirement and demoted is what this reports"
+    judge({ source: "user", refusedOnRequirement: IMPOSSIBLE, demoted: true }, SHELL), true,
+    "a package refused on the requirement is what this reports"
 );
 
 assert.equal(
-    judge({ source: "system", requiresShell: IMPOSSIBLE, demoted: true }, SHELL), true,
-    "a system-source override is refused exactly as a user one is"
+    judge({ source: "system", refusedOnRequirement: IMPOSSIBLE }, SHELL), true,
+    "a refusal that could NOT demote is still a refusal: there was no shipped package to " +
+    "fall back to, so nothing outside pluginLoadErrors reported it before"
+);
+
+assert.equal(
+    judge({ source: "user", requiresShell: IMPOSSIBLE, demoted: true }, SHELL), false,
+    "demoted with an unmet constraint but no recorded refusal is a demotion with ANOTHER " +
+    "cause — a failed startupCheck during the async window before the shell version " +
+    "landed, when the version branch is skipped entirely. Blaming the version there " +
+    "misattributes the refusal"
 );
 
 assert.equal(
@@ -93,28 +103,24 @@ assert.equal(
 );
 
 assert.equal(
-    judge({ source: "system", requiresShell: IMPOSSIBLE, demoted: false }, SHELL), false,
-    "an explicit demoted:false is not a refusal either"
-);
-
-assert.equal(
-    judge({ source: "bundled", requiresShell: IMPOSSIBLE, demoted: true }, SHELL), false,
+    judge({ source: "bundled", refusedOnRequirement: IMPOSSIBLE, demoted: true }, SHELL), false,
     "a bundled id is always-available, so its unmet constraint is inert — reporting it " +
     "would call a loaded, working package unavailable"
 );
 
 assert.equal(
-    judge({ source: "user", requiresShell: SATISFIED, demoted: true }, SHELL), false,
-    "a demotion for some other reason must not be reported as a version refusal"
+    judge({ source: "user", refusedOnRequirement: SATISFIED, demoted: true }, SHELL), false,
+    "a recorded refusal whose constraint this shell now satisfies is stale — the shell " +
+    "was upgraded under it; reporting would send the reader after a solved problem"
 );
 
 assert.equal(
     judge({ source: "user", demoted: true }, SHELL), false,
-    "a package with no declaration has nothing to be refused on"
+    "a demotion with nothing recorded has nothing to report as a version refusal"
 );
 
 assert.equal(
-    judge({ source: "user", requiresShell: IMPOSSIBLE, demoted: true }, ""), false,
+    judge({ source: "user", refusedOnRequirement: IMPOSSIBLE, demoted: true }, ""), false,
     "shell version detection is asynchronous; before it lands an unresolved version parses " +
     "as 0.0.0 and fails every '>=', so reporting then would be a lie that clears itself"
 );
@@ -139,7 +145,7 @@ for (const manifestPath of shipped) {
     const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
     const requires = manifest.requires_shell || manifest.requires_vgs || null;
     assert.equal(
-        judge({ source: "bundled", requiresShell: requires, demoted: true }, SHELL), false,
+        judge({ source: "bundled", refusedOnRequirement: requires, demoted: true }, SHELL), false,
         `${manifest.id}: a shipped manifest must never report as refused`
     );
 }

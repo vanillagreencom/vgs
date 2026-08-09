@@ -890,6 +890,25 @@ Singleton {
             pluginLoadFailed(pluginId, err ? err.title : reason);
         };
 
+        // Records WHY this package is about to be refused, on the manifest it
+        // was refused for. Every consumer of that fact then reads a recorded
+        // cause instead of re-deriving one, which is what four separate review
+        // findings were circling: `demoted` alone says a package lost its id,
+        // not what took it away.
+        //
+        // Set BEFORE giveUp, so it covers the branch that demotes to a shipped
+        // package AND the branch that cannot (no shipped manifest to fall back
+        // to) — the second reported nothing outside `pluginLoadErrors` before.
+        //
+        // It lives on the knownManifests entry, which `loadPluginManifestFile`
+        // rebuilds from scratch on every read, so the mark clears itself the
+        // moment the manifest is re-read and judged again.
+        const markRequirementRefusal = () => {
+            const path = incoming.manifestPath;
+            if (path && knownManifests[path])
+                knownManifests[path].refusedOnRequirement = incoming.requires_shell;
+        };
+
         const requires = incoming.requires_shell;
         // Only once the shell version is actually known: it is detected by an
         // async Process, and an unresolved version parses as 0.0.0, which would
@@ -902,6 +921,7 @@ Singleton {
             // so the one enforced constraint VGS has left no trace anywhere a
             // user could look afterwards. (VGS-89)
             const reason = I18n.tr("It requires VGS %1.").arg(requires);
+            markRequirementRefusal();
             giveUp(reason, {
                 title: reason,
                 details: I18n.tr("This shell is VGS %1.").arg(ShellVersionService.semverVersion)
@@ -2094,21 +2114,33 @@ Singleton {
     // report the bundled exemption exists to prevent, one source over.
     function requirementBlockReason(pluginId) {
         const shellSemver = ShellVersionService.semverVersion;
+        const parts = [];
         for (const manifestPath in knownManifests) {
             if (pathToPluginId[manifestPath] !== pluginId)
                 continue;
             const meta = knownManifests[manifestPath];
             if (!meta || meta.bad)
                 continue;
-            const requires = meta.requiresShell;
+            const requires = meta.refusedOnRequirement;
             const compatible = requires ? checkPluginCompatibility(requires) : true;
             if (!_withheldOnRequirement(meta, shellSemver, compatible))
                 continue;
-            return I18n.tr("an installed override requires VGS %1 and was refused; this shell is VGS %2")
-                .arg(requires)
-                .arg(shellSemver);
+            // Phrased from the manifest's OWN source. Hardcoding "override"
+            // mislabels a system-installed package as something the user put
+            // there by hand, and the two are fixed in different places.
+            let descriptor = I18n.tr("an installed package");
+            if (meta.source === "user")
+                descriptor = I18n.tr("an installed user package");
+            else if (meta.source === "system")
+                descriptor = I18n.tr("a system-installed package");
+            parts.push(I18n.tr("%1 requires VGS %2 and was refused").arg(descriptor).arg(requires));
         }
-        return "";
+        // EVERY refusal, not the first one found. Several packages can claim one
+        // id, and reporting one of them sends the reader to fix a package that
+        // may not be the one they installed.
+        if (parts.length === 0)
+            return "";
+        return parts.join("; ") + " " + I18n.tr("(this shell is VGS %1)").arg(shellSemver);
     }
 
     // BEGIN REQUIREMENT REPORT POLICY
@@ -2118,32 +2150,36 @@ Singleton {
     // the rule is judged by the runtime's code rather than a re-implementation.
     // Keep it free of anything node cannot evaluate.
     //
-    // `meta` is a knownManifests entry: {source, requiresShell, demoted}. Every
-    // manifest claiming an id is examined, not just the one that won it —
-    // a refused override no longer owns the id, so looking only at the winner
-    // never sees the very configuration this reports (VGS-76's motivating case).
+    // `meta` is a knownManifests entry:
+    // {source, requiresShell, demoted, refusedOnRequirement}. Every manifest
+    // claiming an id is examined, not just the one that won it — a refused
+    // package no longer owns the id, so looking only at the winner never sees
+    // the very configuration this reports (VGS-76's motivating case).
+    //
+    // Keyed on `refusedOnRequirement`, which `_gateThenSwap` records at the
+    // moment it refuses, NOT on `demoted`. `demoted` says a package lost its id
+    // and says nothing about why: a package can fail its own startupCheck and
+    // be demoted while its shell requirement is unmet but was never judged —
+    // shell-version detection is asynchronous, so during the first scan the
+    // version branch is skipped entirely. Inferring the cause from `demoted`
+    // plus an unmet constraint therefore blamed the version for refusals that
+    // had another cause.
     //
     // True only when a package was genuinely refused on the requirement:
-    //   * no declaration, nothing to refuse on;
+    //   * nothing recorded, nothing was refused on this;
     //   * a bundled id is always-available by construction, so its declaration
-    //     is inert — audited at its source, never enforced. Reporting one would
-    //     tell a user a package is unavailable while it is loaded and working;
-    //   * NOT DEMOTED means it was never refused. The requirement is only
-    //     enforced on the override/displacement path, so an unmet declaration
-    //     on a package that still owns its id is a declaration nothing acted
-    //     on — reporting it would describe an enforcement that did not happen;
+    //     is inert — audited at its source, never enforced. It cannot reach the
+    //     refusal path, and the guard stays explicit rather than implied;
     //   * shell version detection is asynchronous, and an unresolved version
     //     parses as 0.0.0 and fails every `>=`. Nothing is refused until it
     //     lands, so reporting then would be a lie that clears itself;
-    //   * a satisfied constraint refuses nothing. (The version check runs first
-    //     in `_gateThenSwap`, so a demotion for any other reason cannot also
-    //     carry an unmet requirement.)
+    //   * a constraint that is satisfied NOW is a stale record — the shell was
+    //     upgraded under a refusal that has not been re-judged. Reporting it
+    //     would send the reader after a problem that no longer exists.
     function _withheldOnRequirement(meta, shellSemver, compatible) {
-        if (!meta || !meta.requiresShell)
+        if (!meta || !meta.refusedOnRequirement)
             return false;
         if (meta.source === "bundled")
-            return false;
-        if (meta.demoted !== true)
             return false;
         if (!shellSemver)
             return false;
