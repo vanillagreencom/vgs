@@ -22,6 +22,9 @@ Column {
     property string autoNote: ""
     // Set when a manually typed class pattern was refused.
     property string regexNote: ""
+    // True while an async operation the tab started is still in flight, so the
+    // controls that would start another one are held.
+    property bool busy: false
     // The tab owns the option/value tables and the keybind normalization; this
     // component reads them rather than keeping a second copy that could drift.
     property var tabRoot: null
@@ -30,6 +33,7 @@ Column {
     signal requestCapture
     signal captureFinished(string combo)
     signal changePad(var changes)
+    signal setEnabled(bool enabled)
     signal remove
     signal move(int delta)
 
@@ -114,14 +118,25 @@ Column {
 
                 VgsActionButton {
                     iconName: "delete"
+                    // Removing waits on a release before the record goes away;
+                    // until that answers, the row is mid-operation.
+                    enabled: !row.busy
                     onClicked: row.remove()
                 }
 
                 VgsToggle {
                     checked: row.pad.enabled !== false
-                    onToggled: checked => row.changePad({
-                            "enabled": checked
-                        })
+                    // Disabling is not a plain field write: it removes the pad's
+                    // keybind, so anything still on screen has to come down
+                    // first. The tab owns that ordering.
+                    //
+                    // Gated while that runs. The model still says `enabled` for
+                    // the whole of it — the write is what flips it, and the write
+                    // is deliberately last — so without this a second click
+                    // starts a second disable against a pad that still reads as
+                    // on, and they stack.
+                    enabled: !row.busy
+                    onToggled: checked => row.setEnabled(checked)
                 }
             }
         }
