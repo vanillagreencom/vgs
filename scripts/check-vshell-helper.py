@@ -3642,6 +3642,144 @@ def test_scratchpad_generated_lua_parses():
     assert parses(text), "generated scratchpad config must be valid Lua"
 
 
+def _with_session_env(env):
+    """Run with exactly the given compositor session variables set."""
+    keys = ("HYPRLAND_INSTANCE_SIGNATURE", "NIRI_SOCKET", "XDG_CURRENT_DESKTOP")
+    saved = {key: os.environ.pop(key, None) for key in keys}
+    os.environ.update(env)
+    try:
+        return helper.scratchpad_compositor_supported()
+    finally:
+        for key in keys:
+            os.environ.pop(key, None)
+            if saved.get(key) is not None:
+                os.environ[key] = saved[key]
+
+
+def test_scratchpad_compositor_detection_reads_the_session_not_the_binary():
+    """`hyprctl` and `niri` coexist in most distro repos, so an INSTALLED
+    hyprctl says nothing about which compositor owns the session. Treating it
+    as proof sent a Niri session down the Hyprland path and generated rules for
+    a compositor that was not running — which defeats the deliberate refusal."""
+    # The reported case: a Niri session on a machine that also has hyprctl.
+    assert_equal(_with_session_env({"NIRI_SOCKET": "/run/niri.sock"}), (False, "niri"),
+                 "a Niri session must refuse even when hyprctl is installed")
+    assert_equal(_with_session_env({"XDG_CURRENT_DESKTOP": "niri"}), (False, "niri"),
+                 "XDG_CURRENT_DESKTOP is enough to identify the session")
+
+    assert_equal(_with_session_env({"HYPRLAND_INSTANCE_SIGNATURE": "sig"}), (True, "hyprland"),
+                 "a real Hyprland session is supported")
+    assert_equal(_with_session_env({"XDG_CURRENT_DESKTOP": "Hyprland:wlroots"}), (True, "hyprland"),
+                 "a compound desktop string still identifies Hyprland")
+
+    # Any other running session is also not Hyprland, and must not be mistaken
+    # for "nothing is running" — that would let generation proceed under a
+    # compositor that will never read the result.
+    for desktop in ("GNOME", "KDE", "sway"):
+        supported, name = _with_session_env({"XDG_CURRENT_DESKTOP": desktop})
+        assert_equal(supported, False, f"{desktop} is not Hyprland")
+        assert_equal(name, desktop.split(":")[0].lower(), f"{desktop} is named in the refusal")
+
+    # With nothing running, generation is still meaningful (writing config from
+    # a TTY before starting the compositor); the live paths check separately.
+    assert_equal(_with_session_env({}), (True, "none"),
+                 "no session still allows offline generation")
+
+
+def test_scratchpad_target_monitor_resolves_against_connected_outputs():
+    """A configured monitor name is an intent, not a guarantee. A laptop out of
+    its dock still carries DP-1 in the record, and dispatching at a name no
+    output answers to silently does nothing."""
+    original = helper._hyprctl_json
+    calls = []
+
+    def fake(*args):
+        calls.append(args)
+        if args and args[0] == "monitors":
+            return fake.monitors
+        return None
+
+    helper._hyprctl_json = fake
+    try:
+        connected = [{"name": "eDP-1", "focused": True}, {"name": "HDMI-1", "focused": False}]
+
+        # Configured output present -> used verbatim.
+        fake.monitors = connected
+        assert_equal(helper._scratchpad_target_monitor({"id": "p", "monitor": "HDMI-1"}), "HDMI-1",
+                     "a connected configured output is honoured")
+
+        # Configured output gone -> falls back to the focused one, which is what
+        # "follow focus" already means, rather than to a dead dispatch.
+        assert_equal(helper._scratchpad_target_monitor({"id": "p", "monitor": "DP-1"}), "eDP-1",
+                     "an unplugged output falls back to the focused one")
+
+        # No configured output -> follow focus.
+        assert_equal(helper._scratchpad_target_monitor({"id": "p", "monitor": ""}), "eDP-1",
+                     "follow-focus resolves to the focused output")
+
+        # Monitor list unreadable -> keep the record rather than relocating the
+        # pad on the strength of a failed query.
+        fake.monitors = None
+        assert_equal(helper._scratchpad_target_monitor({"id": "p", "monitor": "DP-1"}), "DP-1",
+                     "a failed query must not silently relocate the pad")
+    finally:
+        helper._hyprctl_json = original
+
+
+def test_scratchpad_release_hands_the_window_back():
+    """Deleting a pad removes its keybind and every rule pointing at its special
+    workspace. A window already mapped there would be left unreachable without
+    hyprctl by hand, so removal releases it to the active workspace first."""
+    if not shutil.which("hyprctl"):
+        print("  (skipped: hyprctl not installed; release path was not exercised)")
+        return
+
+    original_json = helper._hyprctl_json
+    original_dispatch = helper._scratchpad_dispatch
+    saved_sig = os.environ.get("HYPRLAND_INSTANCE_SIGNATURE")
+    dispatched = []
+
+    def fake_json(*args):
+        if args and args[0] == "clients":
+            return fake_json.clients
+        if args and args[0] == "activeworkspace":
+            return {"id": 3}
+        return None
+
+    helper._hyprctl_json = fake_json
+    helper._scratchpad_dispatch = lambda *args: (dispatched.append(args), True)[1]
+    os.environ["HYPRLAND_INSTANCE_SIGNATURE"] = "test"
+    try:
+        fake_json.clients = [{"address": "0xabc", "class": "com.example.pad", "title": "Pad"}]
+        result = helper.scratchpad_release("pad", r"^(com\.example\.pad)$")
+        assert_equal(result["ok"], True, "release succeeds")
+        assert_equal(result["released"], True, "a mapped window is released")
+        assert_equal(dispatched, [
+            ("fullscreenstate", "0 -1,address:0xabc"),
+            ("movetoworkspace", "3,address:0xabc"),
+        ], "fullscreen is dropped before the move, or the window would cover its new workspace")
+
+        # No matching window is the ordinary case (the pad was never opened) and
+        # must not be reported as a failure.
+        dispatched.clear()
+        fake_json.clients = []
+        quiet = helper.scratchpad_release("pad", r"^(com\.example\.pad)$")
+        assert_equal(quiet["ok"], True, "nothing to release is not a failure")
+        assert_equal(quiet["released"], False, "and says nothing was released")
+        assert_equal(dispatched, [], "no dispatch when there is no window")
+    finally:
+        helper._hyprctl_json = original_json
+        helper._scratchpad_dispatch = original_dispatch
+        os.environ.pop("HYPRLAND_INSTANCE_SIGNATURE", None)
+        if saved_sig is not None:
+            os.environ["HYPRLAND_INSTANCE_SIGNATURE"] = saved_sig
+
+    # Outside a Hyprland session there is nothing to release, and removal must
+    # still be allowed to proceed.
+    assert_equal(helper.scratchpad_release("pad", "^x$")["ok"], True,
+                 "release is a no-op without a session, not an error")
+
+
 def main():
     # A catalog download is minutes to hours of network transfer. Holding the
     # exclusive theme lock for that long would block applies, the light/dark
@@ -3740,6 +3878,9 @@ def main():
     test_scratchpad_records_that_cannot_work_are_rejected()
     test_scratchpad_lua_generation()
     test_scratchpad_generated_lua_parses()
+    test_scratchpad_compositor_detection_reads_the_session_not_the_binary()
+    test_scratchpad_target_monitor_resolves_against_connected_outputs()
+    test_scratchpad_release_hands_the_window_back()
     subprocess.run(
         [sys.executable, str(REPO_ROOT / "scripts" / "check-vshell-niri.py")],
         check=True,

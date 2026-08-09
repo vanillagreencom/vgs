@@ -8677,6 +8677,32 @@ def cmd_keybinds(argv: List[str]) -> int:
     return 2
 
 
+def scratchpad_session_compositor() -> str:
+    """What is actually RUNNING, or "" when nothing is.
+
+    Deliberately does not consider installed binaries. `hyprctl` and `niri`
+    coexist in most distro repos, so the presence of `hyprctl` says nothing
+    about which compositor owns the session — treating it as proof sent a Niri
+    session down the Hyprland path and generated rules for a compositor that
+    was not running, which is exactly what the deliberate Niri refusal exists
+    to prevent."""
+    if os.environ.get("HYPRLAND_INSTANCE_SIGNATURE"):
+        return "hyprland"
+    if os.environ.get("NIRI_SOCKET"):
+        return "niri"
+    desktop = os.environ.get("XDG_CURRENT_DESKTOP", "").strip()
+    if desktop:
+        folded = desktop.lower()
+        for name in ("hyprland", "niri"):
+            if name in folded:
+                return name
+        # A desktop that is set and is neither of those is still a session, and
+        # reporting it as "nothing is running" would let generation proceed
+        # under a compositor that will never read the result.
+        return desktop.split(":")[0].lower()
+    return ""
+
+
 def scratchpad_compositor_supported() -> Tuple[bool, str]:
     """Hyprland is the reference implementation and the only one wired up.
 
@@ -8684,17 +8710,22 @@ def scratchpad_compositor_supported() -> Tuple[bool, str]:
     window rules and a `focus-or-toggle` bind, which is a different data model
     and a different generator, not a translation of this one. Rather than
     half-wire it, the Niri path refuses with the reason. See
-    docs/architecture/scratchpads.md § Niri."""
-    if os.environ.get("HYPRLAND_INSTANCE_SIGNATURE") or shutil.which("hyprctl"):
-        return (True, "hyprland")
-    if os.environ.get("NIRI_SOCKET") or shutil.which("niri"):
-        return (False, "niri")
-    return (False, "unknown")
+    docs/architecture/scratchpads.md § Niri.
+
+    With NO session running, generation is still meaningful — writing the
+    config from a TTY before starting the compositor, or regenerating it after
+    an edit — so it is allowed and the geometry falls back to a nominal display
+    that the payload and the file header both flag. The live-session paths
+    (`toggle`/`preload`) check for a real Hyprland session of their own."""
+    session = scratchpad_session_compositor()
+    if session:
+        return (session == "hyprland", session)
+    return (True, "none")
 
 
 def cmd_scratchpad(argv: List[str]) -> int:
     if not argv:
-        eprint("Usage: vshell scratchpad <apply|status|toggle|preload|resolve> ...")
+        eprint("Usage: vshell scratchpad <apply|status|toggle|preload|release|resolve> ...")
         return 2
     action, rest = argv[0], argv[1:]
 
@@ -8705,7 +8736,7 @@ def cmd_scratchpad(argv: List[str]) -> int:
         message = ("VGS scratchpads are Hyprland-only for now; Niri has no special "
                    "workspaces and needs its own generator (VGS-62 split)."
                    if compositor == "niri" else
-                   "VGS scratchpads require Hyprland; no supported compositor detected.")
+                   f"VGS scratchpads require Hyprland; this session is running {compositor}.")
         if "--json" in rest:
             print(json.dumps({"ok": False, "unsupported": True,
                               "compositor": compositor, "error": message}, indent=2))
@@ -8765,6 +8796,19 @@ def cmd_scratchpad(argv: List[str]) -> int:
             "geometry": resolve_scratchpad_geometry(pad, monitor),
         }, indent=2))
         return 0
+
+    if action == "release" and rest:
+        parser = argparse.ArgumentParser(prog="vshell scratchpad release")
+        parser.add_argument("id")
+        parser.add_argument("--class-regex", default="")
+        parser.add_argument("--json", action="store_true")
+        args = parser.parse_args(rest)
+        result = scratchpad_release(args.id, args.class_regex)
+        if args.json:
+            print(json.dumps(result, indent=2))
+        elif not result.get("ok"):
+            eprint(result.get("error") or "scratchpad release failed")
+        return 0 if result.get("ok") else 1
 
     if action in {"toggle", "show", "preload"} and rest:
         result = scratchpad_toggle(rest[0],
@@ -9679,7 +9723,7 @@ def scratchpad_toggle(pad_id: str, reveal_only: bool = False, launch_only: bool 
                                  f"within {timeout:g}s"}
 
         address = str(client.get("address") or "")
-        target_monitor = pad["monitor"] or _scratchpad_focused_monitor()
+        target_monitor = _scratchpad_target_monitor(pad)
 
         if launch_only:
             # Preload: park it, place it, never reveal.
@@ -9702,6 +9746,81 @@ def scratchpad_toggle(pad_id: str, reveal_only: bool = False, launch_only: bool 
 
         return {"ok": True, "action": "revealed", "id": pad_id,
                 "launched": launched, "reassert": reassert}
+
+
+def scratchpad_release(pad_id: str, class_regex: str = "") -> Dict[str, Any]:
+    """Hand a scratchpad's window back to the user's normal workspace.
+
+    Deleting a pad removes its keybind and every rule that pointed at its
+    special workspace. A window already mapped there would be left with no way
+    to reach it short of `hyprctl` by hand — invisible, but still running and
+    still holding whatever was open in it.
+
+    Moving it to the active workspace is chosen over closing it because
+    removing a *configuration entry* must not destroy the user's running
+    program or unsaved work, and over refusing the removal because a pad the
+    user no longer wants should not become unremovable until they find and
+    close its window.
+
+    `class_regex` may be passed so this does not depend on reading the pad back
+    out of settings — the caller is about to delete it, and a lookup here would
+    race that write."""
+    if not shutil.which("hyprctl") or not os.environ.get("HYPRLAND_INSTANCE_SIGNATURE"):
+        return {"ok": True, "released": False, "reason": "no Hyprland session"}
+
+    pattern = class_regex
+    if not pattern:
+        pad = {p["id"]: p for p in load_scratchpads()}.get(pad_id)
+        if pad is None:
+            return {"ok": False, "error": f"unknown scratchpad: {pad_id}"}
+        pattern = pad["classRegex"]
+
+    client = _scratchpad_find_window({"classRegex": pattern, "titleExclude": ""})
+    if client is None:
+        return {"ok": True, "released": False, "reason": "no window mapped"}
+
+    address = str(client.get("address") or "")
+    selector = "address:" + address
+
+    active = _hyprctl_json("activeworkspace")
+    workspace_id = (active or {}).get("id") if isinstance(active, dict) else None
+    if workspace_id is None:
+        return {"ok": False, "error": "could not read the active workspace"}
+
+    # Drop fullscreen first: a window moved out still fullscreen would cover the
+    # workspace it lands on, which is a worse surprise than the one being fixed.
+    _scratchpad_dispatch("fullscreenstate", f"0 -1,{selector}")
+    moved = _scratchpad_dispatch("movetoworkspace", f"{workspace_id},{selector}")
+    return {"ok": moved, "released": moved, "address": address, "workspace": workspace_id}
+
+
+def _scratchpad_target_monitor(pad: Dict[str, Any]) -> str:
+    """The output a pad should open on, resolved against what is CONNECTED.
+
+    A configured monitor name is an intent, not a guarantee: a laptop that has
+    left its dock still carries `DP-1` in the pad record, and dispatching at a
+    name no output answers to silently does nothing — the workspace stays
+    wherever it was and the pad appears in the wrong place, or not at all.
+    Falling back to the focused output is the same thing "follow focus" already
+    means, so an unplugged monitor degrades to the behaviour the user would
+    have picked anyway rather than to a broken keybind."""
+    configured = str(pad.get("monitor") or "")
+    if configured:
+        monitors = _hyprctl_json("monitors")
+        if isinstance(monitors, list):
+            for monitor in monitors:
+                if isinstance(monitor, dict) and str(monitor.get("name") or "") == configured:
+                    return configured
+            # Connected outputs were readable and the configured one is not
+            # among them.
+            eprint(f"scratchpad {pad.get('id')}: monitor {configured} is not connected; "
+                   f"falling back to the focused output")
+        else:
+            # The monitor list could not be read at all. The configured name is
+            # the best information available, so keep it rather than silently
+            # relocating the pad on the strength of a failed query.
+            return configured
+    return _scratchpad_focused_monitor()
 
 
 def _scratchpad_focused_monitor() -> str:
