@@ -61,7 +61,7 @@ the helper is for.
 | Command | Effect |
 |---------|--------|
 | `status [--json]` | Who owns the bus name (`vgs`, `foreign`, `unowned`, `unknown`), every conflicting daemon found, and whether a takeover is possible. Exits non-zero when VGS does not own it. |
-| `takeover [--json]` | Masks and stops the conflicting user unit, and shadows its D-Bus activation file. Reversible. |
+| `takeover [--json] [--automatic]` | Masks and stops the conflicting user unit, and shadows its D-Bus activation file. Reversible. `--automatic` stamps the undo record as VGS's own first-run action; only the shell passes it. |
 | `restore [--json]` | Undoes exactly what `takeover` did, using the record in `~/.local/state/vshell/notification-takeover.json`. |
 
 Detection reads the session bus, not a list of known daemons: the owner comes
@@ -115,6 +115,16 @@ Four details that are easy to get wrong:
 - **An unrecordable change is a failure.** If the undo record cannot be
   persisted, `takeover` reports `ok: false` and says so, because masks and
   shadows that `restore` cannot find are not reversible.
+- **The record says who asked.** `initiator` is `"first-run"` when the shell
+  took the name unasked and `"manual"` when a person did, and `status --json`
+  surfaces it as `restore.initiator` / `restore.automatic`. The shell reverses
+  only what it did on its own initiative, and it cannot remember that across a
+  restart — the record can, because it lives beside the very changes it
+  describes. An absent or unrecognised value reads as `"manual"`: a record VGS
+  did not label is not one VGS can claim to have made. Once `"first-run"` it
+  stays that way for the life of the record, including through a partial
+  `restore`; a record that mixes an automatic takeover with a later manual one
+  cannot be unpicked, and reversing all of it is what keeps a daemon running.
 
 `takeover` never kills a process. It masks and stops the unit, the daemon
 releases the name on its own, and Quickshell's pending registration completes —
@@ -248,23 +258,56 @@ So `onNotificationServerEnabledChanged` calls `_reverseFirstRunTakeover()`,
 which runs `vshell notifications restore` — unmasking every unit the takeover
 masked, starting every unit it stopped, dropping every activation shadow it
 wrote and putting back any user file those shadows displaced. It holds the
-invariant in three cases:
+invariant in four cases:
 
 | Case | Why a daemon is running afterwards |
 |------|------------------------------------|
-| VGS never took anything (`_firstRunTakeoverFired` false) | Nothing was changed, so whatever was handling notifications before still is. This covers the ordinary opt-out and every manual takeover the user made themselves. |
-| The takeover finished | `restore` runs immediately and puts the daemon back. |
+| VGS never took anything | `restore.available` is false and no runtime flag is set, so the reversal is a no-op. Nothing was changed, so whatever was handling notifications before still is. This also covers every takeover the user ran themselves: `restore.initiator` is `"manual"` and VGS leaves a deliberate choice alone. |
+| The takeover finished, same shell | `restore` runs immediately and puts the daemon back. |
+| The takeover finished, **shell restarted since** | Provenance comes from the helper's undo record (`restore.automatic`), not from the runtime flag, so the restart changes nothing. |
 | The takeover is still in flight | The reversal is **deferred** to the helper's exit (`_restorePending`) rather than racing it — a restore that overlapped the helper could have its unmask overwritten by a mask the helper had not applied yet. |
 
-Two details that keep the deferral honest: re-enabling the server before the
-helper exits cancels the pending reversal (it would undo the state the user just
-asked for again), and `_reverseFirstRunTakeover()` re-reads the setting at
-execution time rather than trusting the flag it was deferred with. The success
+The restart case is why provenance is not a runtime flag and not a settings key.
+`_firstRunTakeoverFired` dies with the shell process while the masks, the
+stopped units and the record all persist on disk, so keying on it alone meant a
+restart between takeover and opt-out skipped the reversal entirely — the
+invariant broken by nothing more than a restart, with case 2 silently becoming
+case 1. A persisted settings flag would survive the restart but would be a
+second source of truth about a filesystem state: it cannot see a record deleted
+by hand or a `vshell notifications restore` run from a terminal, and would go on
+claiming a takeover that no longer exists. The undo record cannot drift from
+what needs undoing, because it *is* what needs undoing.
+
+The runtime flag is kept as the fast path for the session that fired the
+takeover, where it is true before the confirming probe has landed. The two are
+OR'd; the record is what makes the answer durable.
+
+Three details keep the deferral honest. Re-enabling the server before the helper
+exits cancels the pending reversal (it would undo the state the user just asked
+for again), and `_reverseFirstRunTakeover()` re-reads the setting at execution
+time rather than trusting the flag it was deferred with. An opt-out that lands
+before provenance is known — a just-restarted shell whose first probe is still
+4s away — sets `_reverseAfterProbe` and is resolved by the next usable ownership
+answer rather than guessed at: guessing "not ours" skips a reversal that was
+owed, guessing "ours" undoes a takeover the user made deliberately. The success
 toast is likewise re-gated on `serverEnabled`, since the non-conflict branch is
 also reached with the server off — announcing a takeover to someone who just
 opted out of it would describe a change already on its way to being undone.
 
-If the restore helper itself cannot be spawned, VGS says so with an error toast
-naming the exact command (`vshell notifications restore`). That is the one case
-the invariant cannot be held automatically, and it is reported rather than left
-silent.
+#### A restore that half worked is reported
+
+A partial restore is worse than none, because it looks finished: the masks it
+could not lift are still in force, so the daemon the opt-out was meant to hand
+notifications back to may not be running. `restore --json` answers with `ok`
+plus a `failures` list and exits non-zero, and the shell checks it — a failed
+spawn, an unreadable answer, no answer at all, or `ok: false` all raise the same
+error toast, titled as the partial state it is ("The previous notification
+daemon was not fully restored"), naming the helper's own failure lines, saying
+that notifications may now have no daemon at all, and giving both ways out:
+`vshell notifications restore` to finish it, or turn VGS notifications back on.
+Treating post-start completion as success was the silent case; there is now no
+path from "the reversal was attempted" to "nothing on screen".
+
+Because provenance lives in the record, a failed restore is also retryable: the
+record survives with its `initiator` intact, so `restore.available` and
+`restore.automatic` stay true and the next opt-out tries again.

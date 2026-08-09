@@ -699,9 +699,24 @@ Singleton {
     // True once VGS has masked/stopped another daemon on its own initiative in
     // this session. The user never asked for that, so an explicit opt-out has
     // to undo it -- see _reverseFirstRunTakeover().
+    //
+    // Runtime-only, and therefore NOT the source of truth: it resets on every
+    // shell restart while the masks, stopped units and undo record it stands
+    // for all persist on disk. serverRestoreAutomatic is the durable answer;
+    // this is only the fast path for the session that fired the takeover.
     property bool _firstRunTakeoverFired: false
+    // Whether a takeover is waiting to be undone, and whether VGS made it on
+    // its own initiative. Both read from `vshell notifications status`, whose
+    // undo record lives beside the changes it describes -- so it cannot
+    // outlive them, and a `vshell notifications restore` run from a terminal
+    // updates it without VGS having to be told.
+    property bool serverRestoreAvailable: false
+    property bool serverRestoreAutomatic: false
     // A reversal that is waiting for the takeover helper to exit first.
     property bool _restorePending: false
+    // An opt-out that arrived before provenance was known. Resolved by the
+    // next usable ownership answer rather than guessed at.
+    property bool _reverseAfterProbe: false
 
     function checkServerOwnership() {
         if (!ownershipProcess.running)
@@ -711,10 +726,17 @@ Singleton {
     // Hands the bus name to VGS by masking and stopping the daemon holding it;
     // Quickshell's pending registration then wins it without a shell restart.
     // Returns whether the helper actually started.
-    function takeOverNotificationServer() {
+    //
+    // `automatic` is passed only by the first-run path. It makes the helper
+    // stamp its undo record as VGS's own doing, which is what lets a later
+    // opt-out reverse it from a shell that has restarted since.
+    function takeOverNotificationServer(automatic = false) {
         if (takeoverProcess.running)
             return false;
         root.serverTakeoverBusy = true;
+        takeoverProcess.command = automatic
+            ? [Paths.vshellCli, "notifications", "takeover", "--json", "--automatic"]
+            : [Paths.vshellCli, "notifications", "takeover", "--json"];
         takeoverProcess.running = true;
         // A command that cannot be spawned at all may never make `running`
         // true, in which case onRunningChanged never fires and the busy flag
@@ -734,12 +756,23 @@ Singleton {
     // the opt-out has to put it back -- otherwise the opt-out itself is what
     // leaves the session with no notification daemon at all, which is the one
     // outcome it exists to prevent.
+    //
+    // Provenance comes from the helper's undo record, not from the runtime
+    // flag. The flag dies with the shell process while the masks, the stopped
+    // units and the record itself all persist, so keying on it alone meant a
+    // restart between the takeover and the opt-out skipped the reversal
+    // entirely and left the user's daemon masked and stopped -- the invariant
+    // broken by nothing more than a restart.
     function _reverseFirstRunTakeover() {
-        if (!root._firstRunTakeoverFired)
+        if (!root._firstRunTakeoverFired && !(root.serverRestoreAvailable && root.serverRestoreAutomatic))
+            return;
+        // A restore already in flight is this same reversal; re-entering would
+        // run two helpers over one undo record.
+        if (restoreProcess.running)
             return;
         // Restoring while the takeover helper is still masking and stopping
         // units would race it, and the masks could be reapplied after the undo.
-        if (takeoverProcess.running || restoreProcess.running) {
+        if (takeoverProcess.running) {
             root._restorePending = true;
             return;
         }
@@ -750,14 +783,52 @@ Singleton {
             return;
 
         root._firstRunTakeoverFired = false;
+        root._reverseAfterProbe = false;
         root.log.info("notification server turned off after a first-run takeover: restoring the previous daemon");
+        restoreProcess._answered = false;
         restoreProcess.running = true;
         if (!restoreProcess.running) {
             root.log.warn("notification restore helper could not be started");
-            ToastService.showError(I18n.tr("Could not restore the previous notification daemon"),
-                I18n.tr("VGS had taken over org.freedesktop.Notifications on this first run and could not undo it. Run `vshell notifications restore` to put the previous daemon back."),
-                "vshell notifications restore", "notification-server-restore");
+            root._reportRestoreFailure([], I18n.tr("the restore command could not be run"));
         }
+    }
+
+    // A restore that half worked is worse than one that did not run: the masks
+    // it could not lift are still in force, so the daemon the opt-out was
+    // supposed to hand notifications back to may not be running -- and nothing
+    // on screen says so. The helper answers with `ok` plus a `failures` list
+    // and exits non-zero, and both are surfaced here.
+    function _applyRestoreResult(text) {
+        restoreProcess._answered = true;
+        let result = null;
+        try {
+            result = JSON.parse(text);
+        } catch (e) {
+            result = null;
+        }
+        if (!result || typeof result !== "object") {
+            root._reportRestoreFailure([], I18n.tr("the restore command returned nothing readable"));
+            return;
+        }
+        if (result.ok !== true) {
+            const failures = Array.isArray(result.failures) ? result.failures : [];
+            root._reportRestoreFailure(failures, "");
+            return;
+        }
+        root.log.info("restored the notification daemon VGS displaced on first run");
+    }
+
+    function _reportRestoreFailure(failures, reason) {
+        const detail = failures.length > 0 ? failures.join("; ") : reason;
+        root.log.warn("notification restore did not finish:", detail || "no reason given");
+        // Named as a partial state on purpose. "Could not restore" reads as
+        // "nothing happened"; what actually happened is that some of the undo
+        // landed and some did not, which is the case the user has to act on.
+        ToastService.showError(I18n.tr("The previous notification daemon was not fully restored"),
+            detail
+                ? I18n.tr("VGS turned its notification server off but could not finish undoing the takeover it made on first run, so notifications may now have no daemon at all: %1. Run `vshell notifications restore` to finish it, or turn VGS notifications back on.").arg(detail)
+                : I18n.tr("VGS turned its notification server off but could not confirm it undid the takeover it made on first run, so notifications may now have no daemon at all. Run `vshell notifications restore` to check."),
+            "vshell notifications restore", "notification-server-restore");
     }
 
     function _endFirstRunTakeover() {
@@ -814,7 +885,7 @@ Singleton {
         // Starting it first meant a helper that could not be spawned still got
         // a 6s window, and -- worse -- that the window was already burning
         // while the helper's synchronous systemd calls ran.
-        if (!root.takeOverNotificationServer()) {
+        if (!root.takeOverNotificationServer(true)) {
             // Nothing is settling and nothing was changed: fall through to the
             // ordinary conflict report rather than suppressing it.
             return false;
@@ -851,6 +922,18 @@ Singleton {
         root.serverConflictDaemon = (conflicts.length > 0 ? conflicts[0].daemon : "") || owner.process || "";
         root.serverConflictFixable = !!(status.takeover && status.takeover.available);
         root.serverConflictReason = (status.takeover && status.takeover.reason) || "";
+        root.serverRestoreAvailable = !!(status.restore && status.restore.available);
+        root.serverRestoreAutomatic = !!(status.restore && status.restore.automatic);
+
+        // An opt-out that arrived before provenance was known -- a restart's
+        // first probe had not landed yet -- waited for this answer instead of
+        // guessing. Guessing "not ours" would skip the reversal; guessing
+        // "ours" would undo a takeover the user made deliberately.
+        if (root._reverseAfterProbe) {
+            root._reverseAfterProbe = false;
+            if (!SettingsData.notificationServerEnabled)
+                root._reverseFirstRunTakeover();
+        }
 
         if (root._maybeTakeOverOnFirstRun())
             return;
@@ -970,10 +1053,32 @@ Singleton {
         id: restoreProcess
         command: [Paths.vshellCli, "notifications", "restore", "--json"]
         running: false
+        property bool _answered: false
+        stdout: StdioCollector {
+            onStreamFinished: root._applyRestoreResult(text)
+        }
         onRunningChanged: {
-            if (running)
+            if (running) {
+                restoreProcess._answered = false;
                 return;
+            }
+            // Same grace period as the ownership probe: the process usually
+            // stops a moment before its output is collected. A restore whose
+            // result never arrives is reported rather than assumed to have
+            // worked -- silence is what this whole path exists to remove.
+            restoreUnansweredTimer.restart();
             ownershipSettleTimer.restart();
+        }
+    }
+
+    Timer {
+        id: restoreUnansweredTimer
+        interval: 500
+        repeat: false
+        onTriggered: {
+            if (restoreProcess._answered)
+                return;
+            root._reportRestoreFailure([], I18n.tr("the restore command produced no result"));
         }
     }
 
@@ -1055,12 +1160,18 @@ Singleton {
                 // anything -- in which case whatever was running still is.
                 if (!takeoverProcess.running)
                     root._endFirstRunTakeover();
+                // Provenance may not be known yet -- on a shell that has just
+                // restarted, the first ownership probe lands at 4s. Arm the
+                // deferred path first, and clear it inside the reversal if it
+                // turns out we already knew enough to act now.
+                root._reverseAfterProbe = true;
                 root._reverseFirstRunTakeover();
             } else {
                 // Re-enabling cancels a reversal that was still waiting on the
-                // takeover helper; the takeover it would have undone is the
-                // state the user just asked for again.
+                // takeover helper or on a provenance answer; the takeover it
+                // would have undone is the state the user just asked for again.
                 root._restorePending = false;
+                root._reverseAfterProbe = false;
             }
             ownershipSettleTimer.restart();
         }
