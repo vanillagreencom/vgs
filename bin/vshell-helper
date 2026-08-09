@@ -12738,25 +12738,43 @@ def _rd_unit_state() -> Dict[str, Any]:
     Parsed here rather than by adding a flag to the shared helper: this needs
     two properties, and the notification subsystem's use of _user_unit_state is
     not worth the blast radius.
+
+    **A PARTIAL reply is not an answer either.** Both returned fields carry a
+    verdict, and each is read with a default that looks definite: an absent
+    `ActiveState` silently makes `running` false, so a truncated reply that
+    happened to contain `LoadState` reported the host as *stopped* when its
+    state was in fact unknown. Every property the verdict depends on must be
+    present AND non-empty before the query counts as known -- `LoadState=` is a
+    field, not a value.
     """
-    proc = _systemctl_user(["show", RD_UNIT, "--property=LoadState", "--property=ActiveState"])
+    required = ("LoadState", "ActiveState")
+    proc = _systemctl_user(["show", RD_UNIT, *(f"--property={name}" for name in required)])
     values: Dict[str, str] = {}
     for line in (proc.stdout or "").splitlines():
         key, sep, value = line.partition("=")
         if sep and key.strip() not in values:
             values[key.strip()] = value.strip()
-    if proc.returncode != 0 or "LoadState" not in values:
+
+    if proc.returncode != 0:
         return {
             "known": False,
-            "error": (proc.stderr or "").strip() or "systemctl did not answer",
+            "error": (proc.stderr or "").strip() or f"systemctl exited {proc.returncode}",
+            "exists": False,
+            "running": False,
+        }
+    missing = [name for name in required if not values.get(name)]
+    if missing:
+        return {
+            "known": False,
+            "error": "systemctl's reply was incomplete: " + ", ".join(missing) + " missing",
             "exists": False,
             "running": False,
         }
     return {
         "known": True,
         "error": "",
-        "exists": values.get("LoadState", "") in {"loaded", "masked"},
-        "running": values.get("ActiveState", "") in {"active", "activating", "reloading"},
+        "exists": values["LoadState"] in {"loaded", "masked"},
+        "running": values["ActiveState"] in {"active", "activating", "reloading"},
     }
 
 

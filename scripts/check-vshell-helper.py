@@ -3155,6 +3155,39 @@ def test_remote_desktop_unit_query_failure_is_not_a_missing_unit():
     assert_equal(state["known"], True, "'not-found' IS an answer")
     assert_equal(state["exists"], False, "and the answer is that the unit is absent")
 
+    # X1: a PARTIAL reply is not an answer either. Both fields carry a verdict,
+    # and each is read with a default that looks definite -- an absent
+    # ActiveState silently makes `running` false, so a truncated reply that
+    # happened to contain LoadState reported the host as STOPPED when its state
+    # was unknown. This is the fourth instance of the shape on this plugin, so
+    # it gets the same treatment as its three siblings: pinned, with the case
+    # that would otherwise silently regress.
+    partial = {
+        "ActiveState missing": subprocess.CompletedProcess([], 0, "LoadState=loaded\n", ""),
+        "LoadState missing": subprocess.CompletedProcess([], 0, "ActiveState=active\n", ""),
+        # A field with no value is a field, not an answer.
+        "ActiveState empty": subprocess.CompletedProcess([], 0, "LoadState=loaded\nActiveState=\n", ""),
+        "LoadState empty": subprocess.CompletedProcess([], 0, "LoadState=\nActiveState=active\n", ""),
+        "reply truncated mid-line": subprocess.CompletedProcess([], 0, "LoadState=loaded\nActiveSta", ""),
+    }
+    for label, reply in partial.items():
+        with _rd_systemctl({"LoadState": reply}):
+            state = helper._rd_unit_state()
+        assert_equal(state["known"], False, f"{label}: a partial reply is not an answer")
+        assert_equal(state["running"], False, f"{label}: and it must not report a running state")
+        assert_equal(state["exists"], False, f"{label}: nor an existence verdict")
+        if "incomplete" not in state["error"]:
+            raise AssertionError(f"{label}: the reason must say the reply was incomplete: {state['error']!r}")
+
+    # The specific regression: LoadState=loaded alone previously read as a
+    # definite "installed and stopped".
+    with _rd_systemctl({"LoadState": partial["ActiveState missing"]}):
+        state = helper._rd_unit_state()
+    if state["known"] and not state["running"]:
+        raise AssertionError(
+            "a reply carrying only LoadState must not read as 'installed and stopped'"
+        )
+
     for label, reply in {"the query failed": broken, "the query said nothing": silent}.items():
         with _rd_systemctl({"LoadState": reply}):
             state = helper._rd_unit_state()
