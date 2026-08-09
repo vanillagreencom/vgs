@@ -240,6 +240,126 @@ func TestWatcherBroadcastReachesSubscriber(t *testing.T) {
 	}
 }
 
+// TestWatcherActiveClearsDuringRestartBackoff reads WatcherActive *during* the
+// supervisor's backoff, not after give-up. Setting the flag when a child starts
+// and never clearing it when that child exits left every status read in the gap
+// claiming a watcher, so the shell held its five-minute watched cadence while
+// nothing could deliver a push.
+func TestWatcherActiveClearsDuringRestartBackoff(t *testing.T) {
+	dir := t.TempDir()
+	statusPath := filepath.Join(dir, "status.json")
+	writeFile(t, statusPath, statusFixture)
+
+	// A child that starts cleanly, emits one frame, stays up long enough to be
+	// observed running, then exits — so supervision restarts it after a backoff
+	// rather than giving up.
+	stub := filepath.Join(dir, "tailscale")
+	writeStub(t, stub, statusPath,
+		"  printf 'Connected.\\n'\n"+
+			"  printf '{\\n\\t\"State\": 6\\n}\\n'\n"+
+			"  sleep 0.6\n"+
+			"  exit 0\n")
+
+	m := newWatchManager(t, server.New(0, nil), stub)
+	m.startWatch()
+
+	waitFor(t, 5*time.Second, "first watcher child to start", func() bool {
+		return m.watchAlive.Load()
+	})
+
+	// The child exits at once. Everything from here until the replacement
+	// starts is backoff, and the first backoff is one second — plenty of room
+	// to catch a status read inside it.
+	waitFor(t, 5*time.Second, "watcher child to exit", func() bool {
+		return !m.watchAlive.Load()
+	})
+	state, err := m.status()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.WatcherActive {
+		t.Fatal("WatcherActive is true during the restart backoff, when no child exists to push")
+	}
+
+	// Proof this was a backoff gap and not the give-up path: a replacement
+	// starts, and the flag comes back with it.
+	waitFor(t, 10*time.Second, "replacement watcher child to start", func() bool {
+		return m.watchAlive.Load()
+	})
+	state, err = m.status()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !state.WatcherActive {
+		t.Fatal("WatcherActive stayed false after a replacement child started")
+	}
+}
+
+// TestStatusReadsDoNotOverlap: two `tailscale status` calls in the air at once
+// broadcast in completion order, so an older read can land after a newer one
+// and walk the shell's state backwards. The watcher must hold its slot until
+// the read it started has been broadcast.
+func TestStatusReadsDoNotOverlap(t *testing.T) {
+	dir := t.TempDir()
+	statusPath := filepath.Join(dir, "status.json")
+	writeFile(t, statusPath, statusFixture)
+	marks := filepath.Join(dir, "marks.log")
+
+	// `status` brackets itself in the marker log and takes 2.5s — deliberately
+	// LONGER than the 2s scheduling floor, which is the condition the finding
+	// names ("each command may take up to 12s while the floor is 2s"). With a
+	// read shorter than the floor the floor alone serialises them and the test
+	// proves nothing; only a read that outlives it can overlap.
+	stub := filepath.Join(dir, "tailscale")
+	writeFile(t, stub, "#!/bin/sh\n"+
+		"if [ \"$1\" = status ]; then\n"+
+		"  printf 'S\\n' >> "+shellQuote(marks)+"\n"+
+		"  sleep 2.5\n"+
+		"  cat "+shellQuote(statusPath)+"\n"+
+		"  printf 'E\\n' >> "+shellQuote(marks)+"\n"+
+		"  exit 0\n"+
+		"fi\n"+
+		"if [ \"$1\" = debug ] && [ \"$2\" = prefs ]; then printf '{}\\n'; exit 0; fi\n"+
+		"if [ \"$1\" = debug ] && [ \"$2\" = watch-ipn ]; then\n"+
+		"  printf 'Connected.\\n'\n"+
+		"  while :; do printf '{\\n\\t\"State\": 6\\n}\\n'; sleep 0.05; done\n"+
+		"fi\n"+
+		"exit 0\n")
+	if err := os.Chmod(stub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	m := newWatchManager(t, server.New(0, nil), stub)
+	m.startWatch()
+	time.Sleep(9 * time.Second) // several floor intervals of continuous frames
+	m.stopWatch()
+	time.Sleep(3 * time.Second) // let any read already running finish
+
+	raw, err := os.ReadFile(marks)
+	if err != nil {
+		t.Fatalf("no status read happened at all: %v", err)
+	}
+	depth, maxDepth, reads := 0, 0, 0
+	for _, line := range strings.Fields(string(raw)) {
+		switch line {
+		case "S":
+			depth++
+			reads++
+			if depth > maxDepth {
+				maxDepth = depth
+			}
+		case "E":
+			depth--
+		}
+	}
+	if reads < 2 {
+		t.Fatalf("only %d status reads in 9s of continuous frames; the test proved nothing", reads)
+	}
+	if maxDepth > 1 {
+		t.Fatalf("%d concurrent status reads (of %d); completion order can then reorder broadcasts", maxDepth, reads)
+	}
+}
+
 // TestWatcherGivingUpClearsWatcherActive: once supervision stops retrying, the
 // backend must stop claiming to be watching, or the shell keeps the
 // watcher-present cadence with no watcher behind it.
@@ -249,36 +369,53 @@ func TestWatcherGivingUpClearsWatcherActive(t *testing.T) {
 	writeFile(t, statusPath, statusFixture)
 
 	// A tailscale build with no `debug watch-ipn`: the subcommand exits at once,
-	// every time.
+	// every time. Each attempt records itself, so "gave up" is observed as
+	// attempts stopping rather than inferred from a flag that also happens to
+	// be false before the first child ever starts.
+	attempts := filepath.Join(dir, "attempts.log")
 	stub := filepath.Join(dir, "tailscale")
-	writeStub(t, stub, statusPath, "  printf 'unknown subcommand\\n' >&2\n  exit 1\n")
+	writeStub(t, stub, statusPath,
+		"  printf 'x\\n' >> "+shellQuote(attempts)+"\n"+
+			"  printf 'unknown subcommand\\n' >&2\n"+
+			"  exit 1\n")
 
 	m := newWatchManager(t, server.New(0, nil), stub)
 	m.startWatch()
 
-	// watchMaxFastFailures restarts with backoff 1,2,4,8s before giving up.
-	deadline := time.Now().Add(25 * time.Second)
-	for time.Now().Before(deadline) {
-		state, err := m.status()
+	countAttempts := func() int {
+		raw, err := os.ReadFile(attempts)
 		if err != nil {
-			t.Fatal(err)
+			return 0
 		}
-		if !state.WatcherActive && m.watchAlive.Load() == false {
-			// Give-up reached and reported. Confirm it is terminal, not a gap
-			// between restarts.
-			time.Sleep(300 * time.Millisecond)
-			again, err := m.status()
-			if err != nil {
-				t.Fatal(err)
-			}
-			if again.WatcherActive {
-				t.Fatal("watcherActive went back to true after giving up")
-			}
-			return
-		}
-		time.Sleep(200 * time.Millisecond)
+		return len(strings.Fields(string(raw)))
 	}
-	t.Fatal("supervision never gave up, so watcherActive never went false")
+
+	// watchMaxFastFailures attempts, with backoff 1,2,4,8s between them.
+	waitFor(t, 30*time.Second, "supervision to exhaust its retries", func() bool {
+		return countAttempts() >= watchMaxFastFailures
+	})
+
+	state, err := m.status()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.WatcherActive {
+		t.Fatal("watcherActive is true after supervision gave up")
+	}
+	// Terminal, not merely another backoff gap: no further attempts, and the
+	// flag does not come back.
+	settled := countAttempts()
+	time.Sleep(3 * time.Second)
+	if now := countAttempts(); now != settled {
+		t.Fatalf("supervision is still retrying (%d -> %d attempts); this was a backoff gap, not give-up", settled, now)
+	}
+	again, err := m.status()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if again.WatcherActive {
+		t.Fatal("watcherActive went back to true after giving up")
+	}
 }
 
 // readEvent reads until a subscription event for the given service arrives.
@@ -339,10 +476,35 @@ func newWatchManager(t *testing.T, srv *server.Server, stub string) *Manager {
 	return m
 }
 
-// startTestServer listens on a temp unix socket and serves srv.
+// sunPathMax is the size of sockaddr_un.sun_path on Linux, including the
+// terminating NUL — so a usable path is at most sunPathMax-1 bytes.
+const sunPathMax = 108
+
+// shortSocketPath returns a unix socket path guaranteed to fit in sun_path.
+// t.TempDir() embeds the test name, which for the longer names in this file
+// already runs to ~60 bytes before TMPDIR is taken into account; a long TMPDIR
+// pushes it over and the listen fails with "invalid argument". Truncating would
+// silently collide between tests, so an unusable path is a clear failure
+// instead.
+func shortSocketPath(t *testing.T) string {
+	t.Helper()
+	dir, err := os.MkdirTemp("", "vgs")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	sock := filepath.Join(dir, "t.sock")
+	if len(sock) >= sunPathMax {
+		t.Fatalf("socket path %q is %d bytes, at or over the %d-byte sun_path limit; "+
+			"point TMPDIR at a shorter directory", sock, len(sock), sunPathMax)
+	}
+	return sock
+}
+
+// startTestServer listens on a short unix socket path and serves srv.
 func startTestServer(t *testing.T) (*server.Server, string) {
 	t.Helper()
-	sock := filepath.Join(t.TempDir(), "t.sock")
+	sock := shortSocketPath(t)
 	ln, err := net.Listen("unix", sock)
 	if err != nil {
 		t.Fatal(err)
@@ -372,6 +534,19 @@ func subscribeTailscale(t *testing.T, sock string) (net.Conn, *bufio.Scanner) {
 		t.Fatal(err)
 	}
 	return c, sc
+}
+
+// waitFor polls until cond holds, failing with what it was waiting for.
+func waitFor(t *testing.T, limit time.Duration, what string, cond func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(limit)
+	for time.Now().Before(deadline) {
+		if cond() {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatalf("timed out after %v waiting for %s", limit, what)
 }
 
 func discardLogger() *slog.Logger {

@@ -70,14 +70,29 @@ func (m *Manager) startWatch() {
 	go m.superviseWatch()
 }
 
-// watcherActive reports whether a watcher is expected to deliver pushes: true
-// from the moment a watcher process starts, false before that and false
-// permanently once supervision gives up. It rides along in every State so the
-// shell can pick its re-fetch cadence from what is actually running rather than
-// from the capability alone — a capability is advertised once at registration
-// and cannot be withdrawn, so on its own it would keep claiming a watcher that
-// had died.
+// watcherActive answers one question: can a push arrive right now? True only
+// while a watcher child is actually running — not merely while a supervisor
+// exists. It is false before the first child starts, false during every restart
+// backoff, and false permanently once supervision gives up.
+//
+// Reporting it for the supervisor rather than the child was wrong: the shell
+// does not care whether something intends to watch, it uses this to decide how
+// long it can go without asking, and during a backoff gap nothing can push. It
+// rides along in every State so the shell can pick its cadence from what is
+// actually running rather than from the capability alone — a capability is
+// advertised once at registration and cannot be withdrawn.
 func (m *Manager) watcherActive() bool { return m.watchAlive.Load() }
+
+// setWatcherAlive records the child's liveness and, on a change, pushes a fresh
+// status so subscribers learn at the transition instead of at their next poll —
+// which for a watching backend is up to five minutes away, i.e. exactly the
+// staleness this flag exists to prevent.
+func (m *Manager) setWatcherAlive(alive bool) {
+	if m.watchAlive.Swap(alive) == alive {
+		return
+	}
+	m.pulse()
+}
 
 // superviseWatch keeps exactly one watcher process alive until Close.
 func (m *Manager) superviseWatch() {
@@ -98,15 +113,13 @@ func (m *Manager) superviseWatch() {
 		} else {
 			fastFailures++
 		}
+		// runWatch already cleared the flag when the child exited, so the shell
+		// is told it is on its own for the whole backoff, not just after the
+		// give-up below.
 		if fastFailures >= watchMaxFastFailures {
-			// Stop claiming to be watching. The next status the shell reads
-			// carries watcherActive=false, and it drops back to the cadence it
-			// uses against a backend that never pushes at all.
-			m.watchAlive.Store(false)
 			m.log.Error("tailscale ipn bus watcher keeps failing immediately; giving up "+
 				"(status will only update on demand — does this tailscale build have `debug watch-ipn`?)",
 				"err", err, "attempts", fastFailures)
-			m.pulse()
 			return
 		}
 		m.log.Warn("tailscale ipn bus watcher exited; restarting", "err", err, "in", backoff)
@@ -137,7 +150,11 @@ func (m *Manager) runWatch(ctx context.Context) error {
 	if err := cmd.Start(); err != nil {
 		return err
 	}
-	m.watchAlive.Store(true)
+	m.setWatcherAlive(true)
+	// From here every exit path must clear it again: until a replacement child
+	// is running, no push can arrive, and a status read during the restart
+	// backoff must say so.
+	defer m.setWatcherAlive(false)
 	readErr := m.readFrames(stdout, m.pulse)
 	if readErr != nil {
 		// The reader gave up on output it could not parse, but the child is
@@ -219,6 +236,16 @@ func (m *Manager) pulse() {
 		// A push is already scheduled; this frame is covered by it.
 		return
 	}
+	if m.pushing {
+		// A read is in flight. Starting a second one would put two `tailscale
+		// status` calls in the air at once — each may take up to the 12s
+		// command timeout while the scheduling floor is 2s — and they would
+		// broadcast in completion order, so an older answer could land after a
+		// newer one and make the shell's state go backwards. Remember the frame
+		// instead; the read in flight re-pulses when it lands.
+		m.pushMissed = true
+		return
+	}
 	// The larger of the two: the coalescing window is a minimum wait, and the
 	// min-interval remainder can only extend it.
 	delay := watchCoalesceWindow
@@ -229,13 +256,29 @@ func (m *Manager) pulse() {
 }
 
 // pushStatus re-reads the truthful status and broadcasts it to subscribers.
+//
+// Exactly one of these runs at a time. The slot is held until the read has been
+// broadcast, so watcher-driven broadcasts are emitted in the order their reads
+// started — a push can never hand the shell a state older than the one it just
+// gave it. Frames that arrive meanwhile are not lost: they set pushMissed and
+// are served by a fresh pulse as soon as this one finishes.
 func (m *Manager) pushStatus() {
 	m.watchMu.Lock()
 	m.lastPush = time.Now()
-	// Released so the next frame can open a fresh window immediately; the read
-	// below happens outside the lock.
 	m.pushTimer = nil
+	m.pushing = true
 	m.watchMu.Unlock()
+
+	defer func() {
+		m.watchMu.Lock()
+		m.pushing = false
+		missed := m.pushMissed
+		m.pushMissed = false
+		m.watchMu.Unlock()
+		if missed {
+			m.pulse()
+		}
+	}()
 
 	if m.watchDone() {
 		return
@@ -254,10 +297,12 @@ func (m *Manager) pushStatus() {
 
 // stopWatch cancels the watcher and any pending push.
 func (m *Manager) stopWatch() {
-	m.watchAlive.Store(false)
+	// Cancel first: setWatcherAlive would otherwise pulse a status read on the
+	// way out of a daemon that is shutting down.
 	if m.watchStop != nil {
 		m.watchStop()
 	}
+	m.watchAlive.Store(false)
 	m.watchMu.Lock()
 	if m.pushTimer != nil {
 		m.pushTimer.Stop()

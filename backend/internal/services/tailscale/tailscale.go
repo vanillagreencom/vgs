@@ -28,6 +28,8 @@ type Manager struct {
 	watchAlive atomic.Bool
 	watchMu    sync.Mutex
 	pushTimer  *time.Timer
+	pushing    bool
+	pushMissed bool
 	lastPush   time.Time
 }
 
