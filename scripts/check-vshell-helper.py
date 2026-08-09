@@ -4146,6 +4146,22 @@ def test_scratchpad_niri_release_owns_only_the_pad_s_own_window():
         assert_equal(stray["released"], False, "a window that was never in the pad is not released")
         assert_equal(actions, [], "and nothing is moved")
 
+        # ...and a stray listed BEFORE the pad's own window must not win the
+        # selection. Checking ownership after picking the first match let the
+        # stray fail the check and hide the real window behind it, so release
+        # did nothing at all.
+        actions.clear()
+        state["windows"] = [{"id": 1, "app_id": "com.ghostty.scratchpad",
+                             "title": "other", "workspace_id": 4},
+                            {"id": 7, "app_id": "com.ghostty.scratchpad",
+                             "title": "pad", "workspace_id": 9}]
+        ordered = helper.scratchpad_release_niri("term", r"^(com\.ghostty\.scratchpad)$")
+        assert_equal(ordered["released"], True,
+                     "the pad's own window is found past an earlier stray")
+        assert_equal(actions, [("move-window-to-workspace", "--window-id", "7",
+                                "--focus", "false", "2")],
+                     "and it is the one moved")
+
         # The pad's own window is released, to the FOCUSED workspace's index.
         actions.clear()
         state["windows"] = [{"id": 7, "app_id": "com.ghostty.scratchpad",
@@ -4469,10 +4485,22 @@ def test_scratchpad_release_hands_the_window_back():
     # that passes without checking.
     helper._scratchpad_session_ready = lambda: True
     try:
-        fake_json.clients = [{"address": "0xabc", "class": "com.example.pad", "title": "Pad"}]
+        # A stray same-class window listed FIRST, then the pad's own. Release
+        # must skip the stray rather than let it win the selection: filtering by
+        # ownership after picking the first match is what let it hide the real
+        # window behind it.
+        fake_json.clients = [
+            {"address": "0xstray", "class": "com.example.pad", "title": "Elsewhere",
+             "workspace": {"name": "3"}},
+            {"address": "0xabc", "class": "com.example.pad", "title": "Pad",
+             "workspace": {"name": "special:pad"}},
+        ]
         result = helper.scratchpad_release("pad", r"^(com\.example\.pad)$")
         assert_equal(result["ok"], True, "release succeeds")
         assert_equal(result["released"], True, "a mapped window is released")
+        assert_equal(result["address"], "0xabc",
+                     "the window ON the pad's workspace is the one released, not the "
+                     "same-class stray that happened to be listed first")
         assert_equal(dispatched, [
             ("fullscreenstate", "0 -1,address:0xabc"),
             ("movetoworkspace", "3,address:0xabc"),
@@ -4486,6 +4514,16 @@ def test_scratchpad_release_hands_the_window_back():
         assert_equal(quiet["ok"], True, "nothing to release is not a failure")
         assert_equal(quiet["released"], False, "and says nothing was released")
         assert_equal(dispatched, [], "no dispatch when there is no window")
+
+        # A same-class window that the pad never owned is left alone entirely.
+        # It is already on a normal workspace, so it needs no rescue, and
+        # moving it would be a surprise rather than a fix.
+        dispatched.clear()
+        fake_json.clients = [{"address": "0xstray", "class": "com.example.pad",
+                              "title": "Elsewhere", "workspace": {"name": "3"}}]
+        stray = helper.scratchpad_release("pad", r"^(com\.example\.pad)$")
+        assert_equal(stray["released"], False, "a window the pad never owned is not released")
+        assert_equal(dispatched, [], "and nothing is moved")
     finally:
         helper._hyprctl_json = original_json
         helper._scratchpad_dispatch = original_dispatch
@@ -4592,8 +4630,10 @@ def test_scratchpad_release_honours_the_title_exclusion():
     # The 1Password case the exclusion exists for: the browser-extension auth
     # prompt shares the main window's class and keeps a generic title.
     clients = [
-        {"address": "0xprompt", "class": "1password", "title": "1Password"},
-        {"address": "0xmain", "class": "1password", "title": "Lock Screen — 1Password"},
+        {"address": "0xprompt", "class": "1password", "title": "1Password",
+         "workspace": {"name": "special:1pw"}},
+        {"address": "0xmain", "class": "1password", "title": "Lock Screen — 1Password",
+         "workspace": {"name": "special:1pw"}},
     ]
 
     def fake_json(*args):

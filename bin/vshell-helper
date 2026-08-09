@@ -36,7 +36,7 @@ import tomllib
 import mimetypes
 from collections import Counter
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Tuple
+from typing import Any, Callable, Dict, Iterable, List, Tuple
 
 _HELPER_MODULE_DIR = str(Path(__file__).resolve().parent)
 if _HELPER_MODULE_DIR not in sys.path:
@@ -9843,20 +9843,46 @@ def _scratchpad_dispatch(*args: str) -> bool:
     return run(["hyprctl", "dispatch", *args]).returncode == 0
 
 
-def _scratchpad_find_window(pad: Dict[str, Any]) -> Dict[str, Any] | None:
+def _scratchpad_select_owned(candidates: List[Dict[str, Any]],
+                             owns: Callable[[Dict[str, Any]], bool]) -> Dict[str, Any] | None:
+    """The window a pad owns, chosen from ALL of its class/title matches.
+
+    Ownership filters the candidates BEFORE one is selected, and that order is
+    the whole point. Selecting the first match and ownership-checking it
+    afterwards lets a stray same-class window that happens to be listed earlier
+    win the selection, fail the check, and hide the pad's real window behind it
+    — release then does nothing, or moves the wrong thing.
+
+    Both backends select through here so the rule cannot be right on one
+    compositor and wrong on the other, which is how this path acquired three
+    variations of the same defect (VGS-90 on Hyprland, then the Niri workspace
+    target, then this ordering)."""
+    for window in candidates:
+        if owns(window):
+            return window
+    return None
+
+
+def _scratchpad_find_windows(pad: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """Every window matching a pad's class/title, in the compositor's order.
+
+    A list rather than the first hit, so a caller that also has an OWNERSHIP
+    test can apply it across all of them instead of only to whichever happened
+    to be listed first. See `_scratchpad_select_owned`."""
     clients = _hyprctl_json("clients")
     if not isinstance(clients, list):
-        return None
+        return []
     try:
         pattern = re.compile(pad["classRegex"])
     except re.error:
-        return None
+        return []
     exclude = None
     if pad["titleExclude"]:
         try:
             exclude = re.compile(pad["titleExclude"])
         except re.error:
             exclude = None
+    matches: List[Dict[str, Any]] = []
     for client in clients:
         if not isinstance(client, dict):
             continue
@@ -9867,8 +9893,16 @@ def _scratchpad_find_window(pad: Dict[str, Any]) -> Dict[str, Any] | None:
         # frozen snapshot instead of being picked up once its real title lands.
         if exclude is not None and exclude.search(str(client.get("title") or "")):
             continue
-        return client
-    return None
+        matches.append(client)
+    return matches
+
+
+def _scratchpad_find_window(pad: Dict[str, Any]) -> Dict[str, Any] | None:
+    """The first class/title match. Right for the toggle, which is looking for
+    "the pad's app" before it has been placed anywhere; release wants the
+    ownership-filtered selection instead."""
+    matches = _scratchpad_find_windows(pad)
+    return matches[0] if matches else None
 
 
 def _scratchpad_visibility(pad_id: str) -> Tuple[str, str]:
@@ -10276,7 +10310,19 @@ def scratchpad_release(pad_id: str, class_regex: str = "", title_exclude: str = 
         # two pads' criteria.
         exclude = title_exclude or pad["titleExclude"]
 
-    client = _scratchpad_find_window({"classRegex": pattern, "titleExclude": exclude})
+    # Ownership first, then selection — the same rule the Niri backend uses, via
+    # the same selector. A pad's window is the one parked on its special
+    # workspace; a same-class window elsewhere is one the pad never owned, and
+    # moving that to the active workspace is a surprise, not a rescue. A window
+    # that is already on a normal workspace needs no release either: it is
+    # reachable exactly where it is.
+    special = "special:" + pad_id
+
+    def owns(candidate: Dict[str, Any]) -> bool:
+        return str((candidate.get("workspace") or {}).get("name") or "") == special
+
+    client = _scratchpad_select_owned(
+        _scratchpad_find_windows({"classRegex": pattern, "titleExclude": exclude}), owns)
     if client is None:
         return {"ok": True, "released": False, "reason": "no window mapped"}
 
@@ -10904,20 +10950,22 @@ def _niri_scratchpad_action(*args: str) -> bool:
     return run(["niri", "msg", "action", *args]).returncode == 0
 
 
-def _scratchpad_niri_find_window(pad: Dict[str, Any]) -> Dict[str, Any] | None:
+def _scratchpad_niri_find_windows(pad: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """Every window matching a pad's class/title. See the Hyprland twin."""
     windows = _niri_msg_json("windows")
     if not isinstance(windows, list):
-        return None
+        return []
     try:
         pattern = re.compile(pad["classRegex"])
     except re.error:
-        return None
+        return []
     exclude = None
     if pad["titleExclude"]:
         try:
             exclude = re.compile(pad["titleExclude"])
         except re.error:
             exclude = None
+    matches: List[Dict[str, Any]] = []
     for window in windows:
         if not isinstance(window, dict):
             continue
@@ -10925,8 +10973,13 @@ def _scratchpad_niri_find_window(pad: Dict[str, Any]) -> Dict[str, Any] | None:
             continue
         if exclude is not None and exclude.search(str(window.get("title") or "")):
             continue
-        return window
-    return None
+        matches.append(window)
+    return matches
+
+
+def _scratchpad_niri_find_window(pad: Dict[str, Any]) -> Dict[str, Any] | None:
+    matches = _scratchpad_niri_find_windows(pad)
+    return matches[0] if matches else None
 
 
 def _scratchpad_niri_wait_for_window(pad: Dict[str, Any], timeout: float) -> Dict[str, Any] | None:
@@ -11137,15 +11190,10 @@ def scratchpad_release_niri(pad_id: str, class_regex: str = "", title_exclude: s
         if record is None:
             return {"ok": False, "error": f"unknown scratchpad: {pad_id}"}
         pad = record
-    window = _scratchpad_niri_find_window(pad)
-    if window is None:
-        return {"ok": True, "released": False, "reason": "no window mapped"}
-
     # Release must own exactly the window the pad owned — the one ON the pad's
     # workspace. Matching on the class alone would pick up a same-class window
     # that was never in the pad (a second terminal, say) and yank it onto the
-    # user's active workspace, which is the same defect the Hyprland release was
-    # fixed for and is worse here because nothing else scopes it.
+    # user's active workspace.
     pad_workspace = _scratchpad_niri_workspace(pad_id)
     if pad_workspace is None:
         # The workspace list could not be read. Refusing beats moving a window
@@ -11159,10 +11207,24 @@ def scratchpad_release_niri(pad_id: str, class_regex: str = "", title_exclude: s
         pad_workspace_id = int(pad_workspace.get("id") or 0)
     except (TypeError, ValueError):
         pad_workspace_id = 0
-    window_workspace = window.get("workspace_id")
-    if not pad_workspace_id or window_workspace is None or int(window_workspace) != pad_workspace_id:
+    if not pad_workspace_id:
+        return {"ok": False, "released": False,
+                "error": "the pad's workspace has no usable id"}
+
+    def owns(candidate: Dict[str, Any]) -> bool:
+        held = candidate.get("workspace_id")
+        try:
+            return held is not None and int(held) == pad_workspace_id
+        except (TypeError, ValueError):
+            return False
+
+    # Ownership filters ALL the matches, before one is picked. Selecting first
+    # and checking afterwards let a stray same-class window listed earlier win
+    # the selection, fail the check, and hide the pad's real window behind it.
+    window = _scratchpad_select_owned(_scratchpad_niri_find_windows(pad), owns)
+    if window is None:
         return {"ok": True, "released": False,
-                "reason": "the matching window is not on the pad's workspace"}
+                "reason": "no window of this pad is on its workspace"}
 
     workspaces = _niri_msg_json("workspaces")
     target = ""
