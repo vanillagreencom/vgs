@@ -130,7 +130,13 @@ for dir in "${dirs[@]}"; do
     [[ -z "$label" ]] && label="$(jq -r '.email // empty' <<<"$raw" 2>/dev/null || true)"
     [[ -z "$label" ]] && label="$id"
 
-    accounts_json="$(jq -c \
+    # Not fatal. Under `set -e` a jq failure here would abort the script with no
+    # output at all, so one unreadable account would cost the whole payload and
+    # the widget would show a blanket error instead of the accounts that are
+    # fine. One account degrades to an unavailable entry, and the reason is said
+    # out loud on stderr rather than swallowed.
+    normalized=""
+    if ! normalized="$(jq -c \
         --argjson acc "$accounts_json" \
         --argjson entry "$raw" \
         --arg id "$id" \
@@ -148,6 +154,17 @@ for dir in "${dirs[@]}"; do
         # unescaped, so text the engine deliberately escaped ("&lt;b&gt;")
         # stays literal instead of being stripped on a second pass; "&amp;"
         # is unescaped last for the same reason.
+        #
+        # The "i" flag needs three-argument gsub, which is NOT a newer builtin
+        # than the two-argument form: jq 1.5 (2015-08-16) defines them side by
+        # side in builtin.c —
+        #   def gsub($re; s; flags): sub($re; s; flags + "g");
+        #   def gsub($re; s): sub($re; s; "g");
+        # — and jq 1.4 has no regex builtins at all, so a jq that cannot run
+        # gsub/3 cannot run the gsub/2 calls this script has always used. The
+        # flag therefore adds no version exposure of its own; jq >= 1.5 is the
+        # floor for this script as a whole, and it is declared as such in
+        # config/vshell/dependencies.json.
         def pango:
           if . == null then null
           else gsub("</?(b|i|u|s|tt|big|small|sub|sup|span|markup)([ \t\r\n][^>]*)?>"; ""; "i")
@@ -188,7 +205,18 @@ for dir in "${dirs[@]}"; do
             spend: (($entry.spend // null)
                     | if type == "object" and (.detail | type) == "string"
                       then .detail = (.detail | pango) else . end)
-        }]' <<<'null')"
+        }]' <<<'null')"; then
+        printf 'vshell-ai-usage: jq failed normalizing account %s (%s); reporting it as unavailable\n' \
+            "$id" "$(jq --version 2>/dev/null || echo 'jq version unknown')" >&2
+        normalized="$(jq -c \
+            --argjson acc "$accounts_json" \
+            --arg id "$id" \
+            --arg label "$label" \
+            --arg dir "$dir" \
+            '$acc + [{id:$id, label:$label, configDir:$dir, ok:false,
+                      error:"account payload could not be normalized"}]' <<<'null')"
+    fi
+    accounts_json="$normalized"
 done
 
 # --- Aggregate + backward-compatible top level -------------------------------
