@@ -26,7 +26,95 @@ const path = require("node:path");
 
 const repoRoot = path.resolve(__dirname, "..");
 const servicePath = path.join(repoRoot, "quickshell/vshell/Services/NotificationService.qml");
-const source = fs.readFileSync(servicePath, "utf8");
+const rawSource = fs.readFileSync(servicePath, "utf8");
+
+// --- read the CODE, never the commentary --------------------------------
+//
+// Every assertion below asks whether a name or a statement is present. Read
+// against the raw file, a comment satisfies that question just as well as the
+// code does -- and this file is heavily commented, precisely because the
+// orderings it pins are subtle. The announcement guard was the live example:
+// both flag names appear in the comment explaining the guard, so deleting the
+// executable condition left the assertion passing.
+//
+// Comments are therefore blanked out first, everywhere, rather than worked
+// around at each site. Characters are replaced with spaces instead of being
+// deleted so offsets and line structure survive, which is what lets
+// functionBody() keep matching on "\n    }".
+function stripComments(src) {
+    let out = "";
+    let i = 0;
+    while (i < src.length) {
+        const ch = src[i];
+        const next = src[i + 1];
+
+        if (ch === '"' || ch === "'" || ch === "`") {
+            const quote = ch;
+            out += ch;
+            i += 1;
+            while (i < src.length) {
+                if (src[i] === "\\") {
+                    out += src.slice(i, i + 2);
+                    i += 2;
+                    continue;
+                }
+                out += src[i];
+                i += 1;
+                if (src[i - 1] === quote)
+                    break;
+            }
+            continue;
+        }
+
+        if (ch === "/" && next === "/") {
+            while (i < src.length && src[i] !== "\n") {
+                out += " ";
+                i += 1;
+            }
+            continue;
+        }
+
+        if (ch === "/" && next === "*") {
+            while (i < src.length && !(src[i] === "*" && src[i + 1] === "/")) {
+                out += src[i] === "\n" ? "\n" : " ";
+                i += 1;
+            }
+            out += "  ";
+            i += 2;
+            continue;
+        }
+
+        out += ch;
+        i += 1;
+    }
+    return out;
+}
+
+// Prove the stripper before a single assertion leans on it.
+{
+    const sample = 'a(); // takeOverNotificationServer(true)\nb("// not a comment"); /* gone */ c();';
+    const stripped = stripComments(sample);
+    assert.ok(!stripped.includes("takeOverNotificationServer"), "a line comment must not survive stripping");
+    assert.ok(!stripped.includes("gone"), "a block comment must not survive stripping");
+    assert.ok(stripped.includes('"// not a comment"'), "a // inside a string literal is not a comment");
+    assert.ok(stripped.includes("a();") && stripped.includes("c();"), "code either side of a comment must survive");
+    assert.equal(stripped.length, sample.length, "stripping must preserve offsets, or every slice below shifts");
+    assert.equal(
+        (stripped.match(/\n/g) || []).length,
+        (sample.match(/\n/g) || []).length,
+        "stripping must preserve line structure, or functionBody() stops matching"
+    );
+}
+
+const source = stripComments(rawSource);
+
+// The file must actually BE commented for the above to be load-bearing; if the
+// comments were ever stripped from the source itself, this check would quietly
+// become equivalent to reading it raw.
+assert.ok(
+    rawSource.length > source.replace(/ +$/gm, "").length,
+    "NotificationService.qml should carry comments; stripping is what keeps them out of these assertions"
+);
 
 // A QML function body, from its `function name(` to the closing brace at the
 // singleton's own indentation. Same reader as scripts/test-toast-actions.js.
@@ -175,14 +263,42 @@ assert.ok(
 );
 
 // The success announcement must require the takeover's own verdict.
+// The condition of the `if` that governs `index`, read as a balanced
+// parenthesis so it is the executable test and nothing else. Searching the
+// whole prefix for a name was the weaker form: it could not tell a condition
+// from any earlier mention of the same identifier.
+function governingCondition(body, index, what) {
+    const ifIndex = body.lastIndexOf("if (", index);
+    assert.ok(ifIndex >= 0, `${what} should be governed by an if statement`);
+    const open = body.indexOf("(", ifIndex);
+    let depth = 0;
+    for (let i = open; i < body.length; i++) {
+        if (body[i] === "(")
+            depth += 1;
+        else if (body[i] === ")") {
+            depth -= 1;
+            if (depth === 0)
+                return body.slice(open + 1, i);
+        }
+    }
+    assert.fail(`unbalanced condition governing ${what}`);
+}
+
+// Prove it reads the condition rather than its surroundings.
+{
+    const sample = 'if (alpha && beta) {\n    raise("thing");\n}';
+    const condition = governingCondition(sample, sample.indexOf('"thing"'), "the sample");
+    assert.equal(condition, "alpha && beta", "governingCondition() must return exactly the test");
+}
+
 const applyOwnership = functionBody("_applyServerOwnership");
 const announceIndex = applyOwnership.indexOf('"notification-server-takeover"');
 assert.ok(announceIndex > 0, "_applyServerOwnership() should raise the first-run announcement");
-const announceGuard = applyOwnership.slice(0, announceIndex);
+const announceCondition = governingCondition(applyOwnership, announceIndex, "the first-run announcement");
 for (const flag of ["_takeoverReportedOk", "_takeoverRecordLost"]) {
     assert.ok(
-        announceGuard.includes(flag),
-        `the success announcement must be gated on ${flag}; ownership alone would announce success over a takeover that failed`
+        announceCondition.includes(flag),
+        `the success announcement must be gated on ${flag} in the condition itself; ownership alone would announce success over a takeover that failed`
     );
 }
 
@@ -218,4 +334,121 @@ for (const [deadline, timer] of [
     );
 }
 
-console.log(`notification takeover checks passed (${automaticTakeoverCalls.length} automatic takeover call site).`);
+// --- every sticky message has an owner that clears it -----------------------
+//
+// Sticky was the right call for messages the user must not miss, but a sticky
+// message about a TRANSIENT state needs something that takes it down when the
+// state changes -- otherwise a retry that succeeds leaves "the takeover failed"
+// on screen indefinitely, saying the opposite of what is true.
+//
+// Asserted as a rule over every sticky category this service raises, rather
+// than for the two that prompted it, because the next one added would have the
+// same hole and nothing would notice.
+
+// Every double-quoted literal in `text`, scanned rather than matched.
+//
+// The obvious /"([^"]+)"/g is wrong here and fails SILENTLY: `+` cannot match
+// the empty `command` argument these calls pass (`"", "category"`), so that
+// quote goes unpaired, every later pair shifts by one, and the category is
+// swallowed into a "literal" that spans the code between two real strings. The
+// first version of this rule inspected one category instead of three and still
+// reported success -- an under-count, which is the quietest way for a check to
+// stop checking.
+function quotedLiterals(text) {
+    const out = [];
+    for (let i = 0; i < text.length; i++) {
+        if (text[i] !== '"')
+            continue;
+        let value = "";
+        let j = i + 1;
+        while (j < text.length && text[j] !== '"') {
+            if (text[j] === "\\") {
+                value += text[j + 1] || "";
+                j += 2;
+                continue;
+            }
+            value += text[j];
+            j += 1;
+        }
+        out.push(value);
+        i = j;
+    }
+    return out;
+}
+
+// Prove the scanner on the shapes that broke the regex.
+assert.deepEqual(
+    quotedLiterals('f(tr("msg"), "", "category", x)'),
+    ["msg", "", "category"],
+    "an empty literal must not shift the pairing of the ones after it"
+);
+assert.deepEqual(
+    quotedLiterals('a("say \\"hi\\" now", "next")'),
+    ['say "hi" now', "next"],
+    "an escaped quote must not end the literal"
+);
+
+const toastSource = stripComments(
+    fs.readFileSync(path.join(repoRoot, "quickshell/vshell/Services/ToastService.qml"), "utf8")
+);
+const stickyMatch = toastSource.match(/readonly property var stickyCategories:\s*\[([^\]]*)\]/);
+assert.ok(stickyMatch, "ToastService.qml should declare stickyCategories");
+const stickyCategories = quotedLiterals(stickyMatch[1]).filter(value => value.length > 0);
+assert.ok(stickyCategories.length > 0, "stickyCategories should not be empty");
+
+// Categories this service RAISES, read from the show calls themselves so a
+// category mentioned only in a dismissal is not mistaken for one that is shown.
+const raised = new Set();
+{
+    const re = /ToastService\.show(?:Info|Warning|Error)\(/g;
+    let match;
+    while ((match = re.exec(source)) !== null) {
+        const open = match.index + match[0].length - 1;
+        let depth = 0;
+        let end = -1;
+        for (let i = open; i < source.length; i++) {
+            if (source[i] === "(")
+                depth += 1;
+            else if (source[i] === ")") {
+                depth -= 1;
+                if (depth === 0) {
+                    end = i;
+                    break;
+                }
+            }
+        }
+        assert.ok(end > open, "unbalanced ToastService.show* call");
+        for (const literal of quotedLiterals(source.slice(open, end)))
+            raised.add(literal);
+    }
+}
+assert.ok(raised.size > 0, "NotificationService.qml should raise at least one toast");
+
+const stickyRaised = stickyCategories.filter(category => raised.has(category));
+assert.ok(
+    stickyRaised.length > 0,
+    "this service should raise at least one sticky category, or the rule below checks nothing"
+);
+for (const category of stickyRaised) {
+    assert.ok(
+        source.includes(`dismissCategory("${category}")`),
+        `${category} is sticky and raised here, so something must dismiss it when the state it describes ends -- otherwise it sits on screen contradicting reality`
+    );
+}
+
+// The two specific transitions that prompted the rule, pinned on the functions
+// that own them so a dismissal moving somewhere useless still fails.
+assert.ok(
+    functionBody("_applyTakeoverResult").includes('dismissCategory("notification-server-takeover-failed")'),
+    "a takeover that reports ok must clear an earlier failure notice"
+);
+assert.ok(
+    functionBody("_reportTakeoverFailure").includes('dismissCategory("notification-server-takeover")'),
+    "a takeover failure must clear an earlier success announcement -- the mirror of the same bug"
+);
+assert.ok(
+    functionBody("_applyRestoreResult").includes('dismissCategory("notification-server-restore")'),
+    "a restore that succeeds must clear an earlier restore failure notice"
+);
+
+console.log(`notification takeover checks passed (${automaticTakeoverCalls.length} automatic takeover call site, ${stickyRaised.length} sticky categories with owners).`);
