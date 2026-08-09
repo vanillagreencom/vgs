@@ -30,10 +30,12 @@ tokens. Calibrate accordingly:
 These behaviors are deliberate. Flagging them costs a re-review round and
 changes nothing:
 
-- **No cross-surface evidence ordering.** All four evidence surfaces —
-  review objects, check runs, commit statuses, and SHA-bound trusted
-  comments — resolve newest-first within their own surface; there is
-  deliberately no ordering ACROSS surfaces. Don't propose one.
+- **No cross-surface evidence ordering.** Review objects, check runs, and
+  commit statuses resolve newest-decides within their own surface; trusted
+  comments bind to an exact head SHA and are counted existentially (a
+  comment about an old head can never vouch for a new one, so there is
+  nothing to supersede). Nothing orders evidence ACROSS surfaces — don't
+  propose that.
 - **Transient windows heal by convergence.** A state change landing between
   two reads is corrected on the next writer pass (≤15 min). Don't propose
   locks or synchronization for windows that self-heal.
