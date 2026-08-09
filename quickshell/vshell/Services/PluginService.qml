@@ -863,6 +863,18 @@ Singleton {
         const canDemote = incoming.source !== "bundled" && _hasShippedManifest(pluginId);
         const giveUp = (reason, err) => {
             if (canDemote) {
+                // `err` is deliberately NOT recorded as a load error here, and
+                // this is not the reason going missing. `pluginLoadErrors` is
+                // keyed by plugin ID, and after a demotion the ID belongs to
+                // the SHIPPED package that took it back — recording the
+                // refusal against it would attribute the failure to the
+                // package that is now loaded and working.
+                //
+                // The durable record is on the manifest instead:
+                // `_demoteToShipped` marks `knownManifests[path].demoted`, and
+                // that entry already carries `requiresShell`, so
+                // `requirementBlockReason` reconstructs the refusal from state
+                // that outlives the toast and belongs to the right package.
                 _demoteToShipped(pluginId, incoming, reason);
                 return;
             }

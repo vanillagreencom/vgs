@@ -14,6 +14,7 @@ Scanned:
 
 * ``shutil.which("cmd")`` in shipped Python
 * ``command -v cmd`` in shipped shell
+* argv heads of ``bin/vshell-helper``'s ``CAPABILITY_PROBES`` table (D005)
 * argv-head literals in shipped QML/JS: ``command: ["cmd", ...]``,
   ``argv: ["cmd", ...]``, ``["cmd", ...]`` assigned to a ``*ommand``/``argv``
   property, plus ``Quickshell.execDetached(["cmd", ...])``
@@ -35,6 +36,7 @@ what this check can see, and that is why the boundary is written down.
 
 from __future__ import annotations
 
+import ast
 import json
 import re
 import sys
@@ -148,6 +150,61 @@ _BASE_SYSTEM = {
 NOT_A_DEPENDENCY = _SHELL_AND_INTERPRETERS | _BASE_SYSTEM
 
 WHICH_RE = re.compile(r"""shutil\.which\(\s*["']([^"']+)["']""")
+
+# A capability probe EXECUTES a command to decide whether it is usable rather
+# than merely present (D005). Its argv lives in a Python data structure, which
+# none of the line-based extractors above can see, so a probe could introduce an
+# undeclared command while this check reported a clean sweep — the invisible
+# probe this file exists to prevent, in a new shape.
+#
+# Read from the AST rather than matched by regex, and it FAILS when the table
+# cannot be found or is not the expected shape. An extractor that silently stops
+# matching is worse than no extractor: the totals still look healthy.
+CAPABILITY_PROBE_FILE = REPO_ROOT / "bin" / "vshell-helper"
+CAPABILITY_PROBE_TABLE = "CAPABILITY_PROBES"
+
+
+def capability_probe_commands() -> list[tuple[str, int]]:
+    """`(command, lineno)` for every argv head in the helper's probe table."""
+    def die(detail: str) -> None:
+        raise SystemExit(
+            f"check-command-declarations: {CAPABILITY_PROBE_TABLE} in "
+            f"{CAPABILITY_PROBE_FILE.relative_to(REPO_ROOT).as_posix()} {detail}.\n"
+            "Probes must stay a literal table of {'argv': ['cmd', ...]} entries, or this\n"
+            "audit cannot see the commands they run."
+        )
+
+    tree = ast.parse(CAPABILITY_PROBE_FILE.read_text(encoding="utf-8"))
+    for node in tree.body:
+        if isinstance(node, ast.AnnAssign):
+            targets = [node.target]
+        elif isinstance(node, ast.Assign):
+            targets = node.targets
+        else:
+            continue
+        if not any(isinstance(t, ast.Name) and t.id == CAPABILITY_PROBE_TABLE for t in targets):
+            continue
+        if not isinstance(node.value, ast.Dict):
+            die("is not a dict literal")
+        found: list[tuple[str, int]] = []
+        for entry in node.value.values:
+            if not isinstance(entry, ast.Dict):
+                die("has an entry that is not a dict literal")
+            argv = None
+            for key, value in zip(entry.keys, entry.values):
+                if isinstance(key, ast.Constant) and key.value == "argv":
+                    argv = value
+            if argv is None:
+                die("has an entry with no 'argv'")
+            if not isinstance(argv, ast.List) or not argv.elts:
+                die("has an 'argv' that is not a non-empty list literal")
+            head = argv.elts[0]
+            if not (isinstance(head, ast.Constant) and isinstance(head.value, str)):
+                die("has an 'argv' whose first element is not a string literal")
+            found.append((head.value, head.lineno))
+        return found
+    die("is missing")
+    return []
 COMMAND_V_RE = re.compile(r"""command\s+-v\s+["']?([A-Za-z0-9_.+@-]+)""")
 # The leading boundary matters: without it `queueCommand(["capture", ...])`
 # matches on its own name, and `capture` is a vshell subcommand — the real argv
@@ -262,6 +319,9 @@ def scan() -> tuple[dict[str, list[str]], list[str]]:
                             if head:
                                 record(head.group(1), path, lineno + offset)
                             break
+
+    for name, lineno in capability_probe_commands():
+        record(name, CAPABILITY_PROBE_FILE, lineno)
 
     return ({name: sorted(where) for name, where in sites.items()}, unreadable)
 

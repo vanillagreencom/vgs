@@ -83,6 +83,14 @@ Three rules make it a check rather than another comment:
 3. **The bar for a second entry is a documented minimum that a *reachable* system
    can violate.** Presence-only stays the default. Without that bar this becomes
    a version-constraint facility by accretion, which is what was rejected.
+4. **The table stays a literal, and the command-declaration audit reads it.** A
+   probe runs a command, so it is a probe site like any other, but its argv
+   lives in a Python data structure that `scripts/check-command-declarations.py`'s
+   line-based extractors cannot see — a probe could introduce an undeclared
+   command while the audit reported a clean sweep. The audit now parses
+   `CAPABILITY_PROBES` from the AST and **fails** if the table is missing or
+   stops being a literal `{"argv": ["cmd", ...]}` map, because an extractor that
+   silently stops matching leaves the totals looking healthy.
 
 ## Rationale
 
@@ -121,6 +129,9 @@ bin/vshell deps status | head -1
 
 # The mechanism's own coverage, including the two ways it must NOT fire:
 scripts/check-vshell-helper.py       # test_capability_probe_reporting
+
+# And that a probe cannot smuggle in an undeclared command:
+scripts/check-command-declarations.py
 ```
 
 `test_capability_probe_reporting` was mutation-proved: dropping the unusable
