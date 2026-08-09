@@ -75,13 +75,26 @@ assert.ok(
     !maybeTakeOver.includes("takeOverNotificationServer("),
     "_maybeTakeOverOnFirstRun() must not take over directly -- it writes the one-shot, and the write is what has to be confirmed first"
 );
+// Split at the write, because every gate's value is in which side of it they
+// sit on. Asserting only that a name appears somewhere in the body passed with
+// either of the two _isReadOnly checks deleted -- the same defect this file
+// exists to catch, one level up.
+const spendIndex = maybeTakeOver.indexOf('SettingsData.set("notificationFirstRunTakeoverDone", true)');
+assert.ok(spendIndex > 0, "_maybeTakeOverOnFirstRun() should write the one-shot");
+const beforeSpend = maybeTakeOver.slice(0, spendIndex);
+const afterSpend = maybeTakeOver.slice(spendIndex);
+
 assert.ok(
-    /_hasLoaded/.test(maybeTakeOver) && /_parseError/.test(maybeTakeOver),
-    "J1: a config that did not load is indistinguishable from a fresh install, so both gates must be present"
+    beforeSpend.includes("_hasLoaded") && beforeSpend.includes("_parseError"),
+    "J1: a config that did not load is indistinguishable from a fresh install, so both gates must precede the write"
 );
 assert.ok(
-    maybeTakeOver.includes("_isReadOnly"),
-    "a settings store already known unwritable must be refused before anything is written"
+    beforeSpend.includes("_isReadOnly"),
+    "a settings store already known unwritable must be refused BEFORE the one-shot is written"
+);
+assert.ok(
+    afterSpend.includes("_isReadOnly"),
+    "a save that failed synchronously must be caught right after the write, not assumed away"
 );
 assert.ok(
     maybeTakeOver.includes("_firstRunSpendPending"),
