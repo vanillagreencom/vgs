@@ -8809,7 +8809,7 @@ def scratchpad_compositor_supported() -> Tuple[bool, str]:
 
 def cmd_scratchpad(argv: List[str]) -> int:
     if not argv:
-        eprint("Usage: vshell scratchpad <apply|status|toggle|show|hide|preload|release|resolve> ...")
+        eprint("Usage: vshell scratchpad <apply|status|toggle|show|hide|preload|release|match|resolve> ...")
         return 2
     action, rest = argv[0], argv[1:]
 
@@ -8864,6 +8864,30 @@ def cmd_scratchpad(argv: List[str]) -> int:
             "scratchpads": pads,
         }, indent=2))
         return 0
+
+    # Which live windows a pad's pattern actually claims. A class match applies
+    # to every current and future instance of an application, and nothing in the
+    # UI showed that — so a user with one terminal as a scratchpad and another
+    # tiled had both captured with no indication why. This makes the breadth of
+    # a pattern inspectable before it is saved.
+    if action == "match":
+        parser = argparse.ArgumentParser(prog="vshell scratchpad match")
+        parser.add_argument("id", nargs="?", default="")
+        parser.add_argument("--class-regex", default="")
+        parser.add_argument("--title-exclude", default="")
+        parser.add_argument("--json", action="store_true")
+        args = parser.parse_args(rest)
+        pattern, exclude = args.class_regex, args.title_exclude
+        if not pattern:
+            pad = {p["id"]: p for p in load_scratchpads()}.get(args.id)
+            if pad is None:
+                eprint(f"unknown scratchpad: {args.id or '(none)'}")
+                return 2
+            pattern, exclude = pad["classRegex"], pad["titleExclude"]
+        result = scratchpad_matching_windows(pattern, exclude)
+        print(json.dumps(result, indent=2) if args.json
+              else f"{result['count']} live window(s) match {pattern}")
+        return 0 if result.get("ok") else 1
 
     # What geometry a pad resolves to on a given monitor, without applying
     # anything. This is the percentage-sizing answer made inspectable.
@@ -9611,6 +9635,47 @@ def render_scratchpads_lua(pads: List[Dict[str, Any]], monitors: List[Dict[str, 
         "scratchpads": rendered,
     }
     return ("\n".join(lines), meta)
+
+
+def scratchpad_matching_windows(class_regex: str, title_exclude: str = "") -> Dict[str, Any]:
+    """Every live window a pad's pattern claims, using the SAME selection rule
+    the runtime toggle uses (class match, minus the title exclusion).
+
+    A derived `StartupWMClass` is an exact class match, which applies to every
+    current and future instance of that application — so a pad configured for a
+    terminal claims every window of that terminal. Nothing surfaced that. This
+    is the query behind the Settings warning; it answers "how wide is this
+    pattern, right now" rather than guessing."""
+    try:
+        pattern = re.compile(class_regex)
+    except re.error as exc:
+        return {"ok": False, "error": f"pattern does not compile: {exc}", "count": 0, "windows": []}
+    exclude = None
+    if title_exclude:
+        try:
+            exclude = re.compile(title_exclude)
+        except re.error as exc:
+            return {"ok": False, "error": f"title exclusion does not compile: {exc}",
+                    "count": 0, "windows": []}
+
+    clients = _hyprctl_json("clients")
+    if not isinstance(clients, list):
+        # No session to ask. Distinct from "nothing matched": the caller must
+        # not render "0 windows match" on the strength of a query that never ran.
+        return {"ok": True, "known": False, "count": 0, "windows": []}
+
+    windows = []
+    for client in clients:
+        if not isinstance(client, dict):
+            continue
+        if not pattern.search(str(client.get("class") or "")):
+            continue
+        if exclude is not None and exclude.search(str(client.get("title") or "")):
+            continue
+        windows.append({"class": client.get("class") or "",
+                        "title": client.get("title") or "",
+                        "address": client.get("address") or ""})
+    return {"ok": True, "known": True, "count": len(windows), "windows": windows}
 
 
 def scratchpad_include_status() -> Dict[str, Any]:
