@@ -39,6 +39,7 @@ const { visualStateFor } = new Function(`${marked[1]}\nreturn { visualStateFor }
 function host(overrides) {
     return Object.assign({
         streaming: false,
+        sessionKnown: true,
         statusKnown: true,
         installed: true,
         watchLive: true,
@@ -107,6 +108,35 @@ for (const uncertain of [
     );
 }
 
+// --- a live capture is never rendered on a dead watcher's last message ------
+//
+// Losing the watch makes the session UNKNOWN, not idle. "Confirmed live" and
+// "last we heard, live" are different claims, so they get different states —
+// but neither of them is idle, and neither hides the capture.
+
+assert.equal(
+    visualStateFor(host({ streaming: true, sessionKnown: false, watchLive: false })),
+    "streaming-unconfirmed",
+    "a dead watch must not let a plain LIVE stand on its last message"
+);
+assert.equal(
+    visualStateFor(host({ streaming: true, sessionKnown: false, watchLive: false, statusKnown: false })),
+    "streaming-unconfirmed",
+    "losing the host status too does not make a possible capture idle"
+);
+assert.equal(
+    visualStateFor(host({ streaming: true, sessionKnown: true, watchLive: false })),
+    "streaming",
+    "a session the status read still confirms stays plainly LIVE"
+);
+for (const state of ["unknown", "stale", "listening", "off", "unavailable"]) {
+    assert.notEqual(
+        visualStateFor(host({ streaming: true, sessionKnown: false, watchLive: false, statusKnown: false, installed: false })),
+        state,
+        `an unconfirmed capture must never fall through to ${state}`
+    );
+}
+
 // --- the decision function can fail ----------------------------------------
 //
 // Everything above passes; that proves nothing about the harness. Confirm the
@@ -158,6 +188,39 @@ assert.ok(
     "the authoritative apply is what clears the indicator"
 );
 
+// Losing the watch clears the session DETAIL, because those values were only
+// current while something was refreshing them — but never `streaming`, which
+// would be claiming idle on a dead watcher's say-so.
+const sessionUnknownBody = qmlFunctionBody("_markSessionUnknown");
+assert.ok(
+    !/root\.streaming = /.test(sessionUnknownBody),
+    "losing the watch must not decide the session ended; only the authoritative count may"
+);
+assert.ok(
+    sessionUnknownBody.includes("root.sessionKnown = false"),
+    "losing the watch makes the session unknown"
+);
+for (const field of ["sessionCount", "sessionCodec", "sessionBitrateBps", "sessionColorDepth", "sessionSince"]) {
+    assert.ok(
+        new RegExp(`root\\.${field} = `).test(sessionUnknownBody),
+        `${field} describes a session nothing is confirming and must be cleared`
+    );
+}
+
+// The watch-stop path has to actually call it, and then ask the status read —
+// which is a separate process and does not depend on the watch.
+const watchStopSlice = serviceSource.slice(
+    serviceSource.indexOf("root.watchLive = false;\n            watchStable.stop();")
+);
+assert.ok(
+    watchStopSlice.slice(0, 1200).includes("root._markSessionUnknown("),
+    "the watch-stop handler must mark the session unknown, not leave the cached values standing"
+);
+assert.ok(
+    watchStopSlice.slice(0, 1600).includes("root.refresh();"),
+    "losing the watch should immediately ask the independent status read"
+);
+
 // A refresh arriving during a probe is coalesced, never dropped: the journal
 // read can take seconds while the event debounce is 400ms, and there is no
 // polling fallback to recover a lost event.
@@ -187,7 +250,14 @@ assert.ok(
 );
 
 // Every knowledge axis drops together — a half answer must not render whole.
-const unknownBody = qmlFunctionBody("_markStatusUnknown");
+// The session half may be reached by delegation to _markSessionUnknown (the
+// watch-loss path needs it on its own), so the effective body is what matters;
+// asserting only the literal body would go red on a refactor that still clears
+// everything, and — worse — could go green if the delegate stopped clearing.
+const statusUnknownBody = qmlFunctionBody("_markStatusUnknown");
+const unknownBody = statusUnknownBody.includes("_markSessionUnknown(")
+    ? statusUnknownBody + "\n" + qmlFunctionBody("_markSessionUnknown")
+    : statusUnknownBody;
 for (const flag of ["statusKnown", "sessionKnown", "outputKnown"]) {
     assert.ok(
         unknownBody.includes(`root.${flag} = false`),

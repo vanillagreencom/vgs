@@ -61,8 +61,14 @@ PluginComponent {
     // bugs. Keep it free of QML API calls.
     // BEGIN STATE DECISION
     function visualStateFor(host) {
+        // A possible capture outranks everything, but "confirmed live" and
+        // "last we heard, live" are not the same claim. Losing the event watch
+        // makes the session unknown, not idle, so it renders as its own state:
+        // still red, still says LIVE, with the uncertainty explicit. Showing a
+        // plain LIVE on a dead watcher's last message would claim certainty
+        // nothing has; showing idle would hide a capture that may be running.
         if (host.streaming)
-            return "streaming";
+            return host.sessionKnown ? "streaming" : "streaming-unconfirmed";
         if (!host.statusKnown)
             return "unknown";
         if (!host.installed)
@@ -75,6 +81,7 @@ PluginComponent {
 
     readonly property string visualState: root.visualStateFor({
         "streaming": root.streaming,
+        "sessionKnown": root.sessionKnown,
         "statusKnown": root.statusKnown,
         "installed": root.installed,
         "watchLive": root.watchLive,
@@ -84,6 +91,7 @@ PluginComponent {
     readonly property string stateIcon: {
         switch (root.visualState) {
         case "streaming":
+        case "streaming-unconfirmed":
             return "cast_connected";
         case "unknown":
         case "stale":
@@ -96,6 +104,9 @@ PluginComponent {
     readonly property color stateColor: {
         switch (root.visualState) {
         case "streaming":
+        case "streaming-unconfirmed":
+            // Unconfirmed keeps the alarm colour. Softening it would trade a
+            // possible live capture for a tidier bar.
             return Theme.error;
         case "unknown":
         case "stale":
@@ -116,6 +127,8 @@ PluginComponent {
             return "?";
         case "streaming":
             return "LIVE";
+        case "streaming-unconfirmed":
+            return "LIVE?";
         case "listening":
             return "On";
         default:
@@ -126,8 +139,10 @@ PluginComponent {
     function tooltipText() {
         // Mirrors visualState's ordering, for the same two reasons.
         if (root.streaming) {
+            if (!root.sessionKnown)
+                return "Someone may still be streaming this machine — " + (RemoteDesktopService.sessionError || "nothing is confirming the session right now");
             const detail = root.sessionDetail();
-            const uncertain = root.statusKnown ? "" : " (state uncertain)";
+            const uncertain = root.statusKnown ? "" : " (host state uncertain)";
             return "Someone is streaming this machine" + uncertain + (detail ? " — " + detail : "");
         }
         if (!root.statusKnown)
@@ -288,7 +303,7 @@ PluginComponent {
             headerText: "Remote Desktop"
             detailsText: {
                 if (root.streaming)
-                    return "Streaming now";
+                    return root.sessionKnown ? "Streaming now" : "Streaming — unconfirmed";
                 if (!root.statusKnown)
                     return "State unknown";
                 if (!root.installed)
@@ -330,7 +345,7 @@ PluginComponent {
                             StyledText {
                                 text: {
                                     if (root.streaming)
-                                        return "Somebody is streaming this machine";
+                                        return root.sessionKnown ? "Somebody is streaming this machine" : "Somebody may still be streaming this machine";
                                     if (root.busy)
                                         return root.hostUp ? "Stopping…" : "Starting…";
                                     if (!root.statusKnown)
@@ -349,7 +364,7 @@ PluginComponent {
                                 width: parent.width
                                 text: {
                                     if (root.streaming)
-                                        return root.sessionDetail();
+                                        return root.sessionKnown ? root.sessionDetail() : "nothing is confirming this session right now";
                                     if (!root.statusKnown)
                                         return RemoteDesktopService.statusError || "waiting for the first answer";
                                     if (!root.installed)
@@ -475,7 +490,10 @@ PluginComponent {
                 Column {
                     width: parent.width
                     spacing: Theme.spacingXS
-                    visible: root.streaming
+                    // Only while confirmed. The cached fields are cleared when
+                    // the watch dies, so this would render an empty card;
+                    // hiding it says "unknown" more honestly than blank rows.
+                    visible: root.streaming && root.sessionKnown
 
                     StyledText {
                         text: "Session"

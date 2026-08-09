@@ -43,6 +43,60 @@ Three details that follow from that:
   problem: host up, Hyprland, no `HEADLESS-1`. The widget renders it as a
   warning, because nothing else in the system would ever mention it.
 
+### Creating the output is transactional, and removing it needs provenance
+
+The two halves are paired in both directions:
+
+- **A failed start removes the output it created.** Otherwise the user is left
+  with a phantom monitor *and* no host — the exact state the disabled-by-default
+  design exists to avoid, with no affordance to undo it. Only what that call
+  created is rolled back; an output that was already there is left alone.
+- **Stop removes the output only if VGS created it.** Removing any present
+  `HEADLESS-1` would delete a virtual output the user set up for something else,
+  as a side effect of stopping a service. That is not recoverable from the
+  shell, so it needs provenance rather than a name match.
+
+Provenance lives in `~/.local/state/vshell/remote-desktop-output.json`, beside
+the notification-takeover undo record and for the same reason: `start` and
+`stop` are separate process invocations, so "did we create this?" cannot live in
+memory, and without it undoing means guessing.
+
+**It cannot go stale, because it is keyed on the Hyprland instance signature.**
+Headless outputs do not survive a compositor restart and the signature changes
+with every start, so a record from a previous instance cannot possibly describe
+the output present now — `_rd_output_is_ours()` discards it rather than trusting
+it. A record with no signature to place it is not ownership either.
+
+Three edge cases, all decided toward *not removing*:
+
+| Case | Behaviour |
+|------|-----------|
+| The output was removed by hand between start and stop | Nothing to remove, no error — and the record is dropped, or it would authorise removing a *later* output of the same name |
+| The record could not be written at start | The output is created and used, but `stop` will not claim it. Reported through `manual`. A leaked monitor is one click to remove; a deleted one cannot be undone |
+| `hyprctl` cannot say whether the output is present at stop | Left alone, and said so |
+
+The residual limitation, stated rather than papered over: if the user removes
+`HEADLESS-1` and creates their own output of the same name **within the same
+compositor instance**, the record still matches and stop would remove theirs.
+Hyprland exposes no creator for an output, so nothing here can tell them apart.
+
+### Races
+
+`start`, `stop` and `toggle` run under one `flock` on
+`~/.local/state/vshell/remote-desktop.lock`, and `toggle`'s state read is
+*inside* that lock — so no other helper invocation can decide from the same
+reading and act on it twice.
+
+The lock cannot close the window against the unit changing on its own (the
+daemon exiting, a client connecting), so both actions are also idempotent, and
+the losing path of each touches no output:
+
+- `start` on an already-running host returns immediately. It creates nothing: a
+  running host has already chosen its capture target, so a second virtual output
+  would be a phantom monitor and nothing else.
+- `stop` on an already-stopped unit is a `systemctl stop` that exits 0, and the
+  output half is gated on ownership regardless.
+
 There is a personal `remote-desktop` script in `~/dotfiles` that predates this
 and does the same two steps. It is not a dependency: dotfiles are a per-machine
 overlay and a bundled VGS plugin cannot rely on one. The behaviour is portable,
@@ -144,7 +198,20 @@ session. This one is built the other way round:
 - The watch is ref-counted (`Common/Ref`): it runs only while something is
   displaying the state.
 
-**If the watch dies**, `RemoteDesktopService.watchLive` goes false and stays
+**If the watch dies**, session state becomes *unknown*, not unchanged.
+`_markSessionUnknown()` drops `sessionKnown` and clears the cached session
+detail — those values were only current because something was refreshing them —
+and the service immediately calls `refresh()`, because the status read is a
+separate process that does not depend on the watch and may still answer
+authoritatively.
+
+`streaming` is **not** cleared: that would claim "idle" on a dead watcher's
+say-so, and only the authoritative session count may say a capture ended. So the
+widget gets a fourth session rendering, `streaming-unconfirmed` — still red,
+still reading `LIVE?`, with the uncertainty explicit. A plain `LIVE` would claim
+certainty nothing has; an idle pill would hide a capture that may be running.
+
+`RemoteDesktopService.watchLive` goes false and stays
 false until a restart actually succeeds. Restarts back off 2s → 60s, and each
 successful start does a full resync to cover what it missed while down. There is
 no polling fallback that would quietly paper over a dead watch: the widget

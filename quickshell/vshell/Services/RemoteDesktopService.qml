@@ -116,10 +116,29 @@ Singleton {
     // a question mark, so it stays set and the UI marks the reading uncertain.
     function _markStatusUnknown(reason) {
         root.statusKnown = false;
-        root.sessionKnown = false;
         root.outputKnown = false;
         root.statusError = reason;
+        root._markSessionUnknown(reason);
+    }
+
+    // The SESSION axis alone. Used when the event watch dies: the host status
+    // read is independent of the watch and may still answer, so only session
+    // knowledge is lost.
+    //
+    // The cached detail fields go, because they describe a session nothing is
+    // confirming any more. `streaming` does NOT: clearing it would claim "idle"
+    // on the strength of a dead watcher, and per the same rule that stops a
+    // single disconnect from clearing it, only the authoritative session count
+    // may say a capture ended. What is left is last-known-plus-unconfirmed, and
+    // the widget renders that as its own state — never as LIVE, never as idle.
+    function _markSessionUnknown(reason) {
+        root.sessionKnown = false;
         root.sessionError = reason;
+        root.sessionCount = 0;
+        root.sessionCodec = "";
+        root.sessionBitrateBps = 0;
+        root.sessionColorDepth = "";
+        root.sessionSince = "";
     }
 
     function start() {
@@ -359,6 +378,12 @@ Singleton {
             }
             root.watchLive = false;
             watchStable.stop();
+            // Losing the watch makes the session UNKNOWN, not unchanged. The
+            // cached values were only current because something was refreshing
+            // them; nothing is now, so continuing to render a client list and a
+            // LIVE indicator from a dead watcher's last message is the exact
+            // failure this plugin exists to prevent.
+            root._markSessionUnknown(I18n.tr("the host event watch stopped"));
             if (root.refCount <= 0)
                 return;
             // The watch is the only thing keeping this state current. Losing it
@@ -367,6 +392,11 @@ Singleton {
             if (!root.watchError)
                 root.watchError = I18n.tr("the host event watch stopped");
             root.log.warn("host event watch stopped; retrying in " + watchRestart.backoffMs + "ms");
+            // The status read is a separate process and does not depend on the
+            // watch, so ask it now rather than sitting in `unknown` until the
+            // backoff elapses. If it answers, session knowledge is restored
+            // authoritatively; if it does not, the state stays honestly unknown.
+            root.refresh();
             watchRestart.interval = watchRestart.backoffMs;
             watchRestart.backoffMs = Math.min(watchRestart.backoffMs * 2, 60000);
             watchRestart.restart();
