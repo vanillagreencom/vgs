@@ -284,6 +284,31 @@ On **Niri** the whole subsystem is absent, so this setting is absent with it:
 with the same reason as `toggle`, and the Settings page shows the Niri statement
 instead of the controls. See § Niri and VGS-83.
 
+## The launch command is argv, not a shell line
+
+A pad's command is exec'd as an **argv array** (`shlex`-parsed, so quoting still
+works), never handed to `sh -c`. AGENTS.md § Backend rules requires it, and on
+Niri a preloaded pad runs its command at login rather than only when the keybind
+is pressed.
+
+A command using shell **syntax** — a pipe, a redirect, `&&`, `;`, a subshell or
+a `$…` expansion — is **refused with the reason**, not run either way. Passing
+`&&` to `execvp` as a literal argument would silently do the wrong thing, and
+keeping `sh -c` for exactly the commands where interpretation matters would keep
+the rule broken where it counts. The refusal names the deliberate opt-in:
+
+```
+sh -c 'foo && bar'
+```
+
+which works, because the classification runs on the **parsed tokens** rather
+than the raw string — there the `&&` is inside an argument, not an operator.
+The lexer is told to treat punctuation the way a shell does, so `foo; bar` is
+caught too rather than hiding the `;` inside `foo;`.
+
+**This is a behaviour change for anyone whose pad command already relied on
+shell syntax**: it now refuses with an explanation instead of quietly working.
+
 ## Migration
 
 The `scratchpads` list is seeded **empty**, never imported from the compositor. A
