@@ -224,11 +224,20 @@ logged at Sunshine's `info` level. The popout therefore lists *paired* devices
 (from `named_devices` in that same state file — a name containing bytes that
 are not valid UTF-8 is **withheld and counted** rather than shown with U+FFFD
 substituted into it, because a mangled name is indistinguishable from a device
-genuinely called that. The suspicion is scoped **per name**, by checking
-whether the name as written appears in the original bytes: a real U+FFFD was
-serialised so the file holds it, a substituted one replaced something else
-entirely so it does not. A file-wide flag punished every name containing U+FFFD
-for an unrelated neighbour's bad bytes. Only `name` is read out of the file,
+genuinely called that.
+
+The detection does not *infer* which it is. Every rendering of a real U+FFFD —
+the literal UTF-8 encoding and the JSON escape, in either case — is swapped for
+a private-use marker **before** the lenient decode, so afterwards a U+FFFD can
+only be a byte this process could not decode and a marker can only be one the
+file really contained. Two earlier attempts approximated instead: a file-wide
+"did anything fail" flag punished every name for an unrelated neighbour's bad
+bytes, and a per-name substring search over the whole file answered "does this
+sequence appear anywhere", not "did this field decode cleanly" — so a mangled
+name was rescued by an identical string in some other field. The marker is
+chosen from a candidate list and only after checking the file does not already
+contain it; if none is safe, no name is guessed at. Only `name` is read out of
+the file,
 never the credential material beside it) under a heading that says paired, and
 says outright that which one is connected is not something the host reports.
 
@@ -368,9 +377,11 @@ Two smaller rules, both of the same family:
   with no state change and no reason. The helper's own JSON verdict may arrive
   after `exited` and is allowed to replace a generic message with the real one;
   the shared toast category means that updates in place rather than stacking.
-  `ToastService` exempts that update from its error throttle — a correction is
-  not a repeat, and throttling it left the user holding the vague message and
-  never showing the specific one.
+  `ToastService` exempts that update from its error throttle — but only when
+  the content actually changes. A correction is new information the user has
+  not seen; the same message arriving again is a repeat, which is what the
+  throttle is for, and exempting the whole category let a genuinely repeating
+  failure spam at whatever rate it recurred.
 - **The unanswered-grace timer belongs to one probe.** It is shared, so a tick
   armed by probe A could fire while probe B was in flight, find
   `_statusAnswered` false because B had only just started, and mark a healthy B

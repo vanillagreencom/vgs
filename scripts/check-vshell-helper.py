@@ -3424,6 +3424,45 @@ def test_remote_desktop_unknown_compositor_is_probed_not_assumed():
         raise AssertionError(f"the refusal must name the risk: {result['failures']!r}")
 
 
+def test_remote_desktop_decode_marks_real_replacement_characters():
+    # The mechanism AI2 asked for: every rendering of a genuine U+FFFD is
+    # swapped for a marker BEFORE the lenient decode, so what is left is
+    # unambiguous -- a U+FFFD can only be a byte we could not decode, and a
+    # marker can only be one the file really contained.
+    literal = '{"a": "real\ufffdname"}'.encode("utf-8")
+    text, marker = helper._rd_decode_marking_real_fffd(literal)
+    assert_equal(marker in text, True, "a literal U+FFFD is marked")
+    assert_equal("\ufffd" in text, False, "and no bare U+FFFD is left to misread")
+
+    # The escaped rendering counts too: a JSON writer may or may not escape
+    # non-ASCII, and Sunshine's own state file escapes solidus, so assuming
+    # either one would be a guess.
+    escaped = b'{"a": "real\\ufffdname"}'
+    text, marker = helper._rd_decode_marking_real_fffd(escaped)
+    assert_equal(json.loads(text)["a"], "real" + marker + "name", "an escaped U+FFFD is marked too")
+
+    # Case is not significant in a JSON hex escape.
+    text, marker = helper._rd_decode_marking_real_fffd(b'{"a": "real\\uFFFDname"}')
+    assert_equal(json.loads(text)["a"], "real" + marker + "name", "an uppercase escape is the same character")
+
+    # A byte that cannot be decoded still becomes U+FFFD, which is now the only
+    # thing U+FFFD can mean.
+    text, marker = helper._rd_decode_marking_real_fffd(b'{"a": "bad-\x80-x"}')
+    assert_equal(json.loads(text)["a"], "bad-\ufffd-x", "an undecodable byte is the only source of U+FFFD left")
+
+    # A clean file is returned untouched apart from the marking, and the JSON
+    # still parses -- one bad name must never cost the list.
+    text, marker = helper._rd_decode_marking_real_fffd(b'{"a": "plain"}')
+    assert_equal(json.loads(text)["a"], "plain", "a clean file decodes normally")
+
+    # No usable marker is a refusal, not a guess: the caller withholds every
+    # suspicious name instead.
+    crowded = ("".join(helper._RD_DECODE_MARKERS)).encode("utf-8")
+    text, marker = helper._rd_decode_marking_real_fffd(crowded)
+    assert_equal(text, None, "a file containing every candidate marker yields no safe marking")
+    assert_equal(marker, "", "and no marker to restore with")
+
+
 def test_remote_desktop_undecodable_device_names_are_reported_not_mangled():
     # VGS-87 item 5. Decoding with errors="replace" put U+FFFD INSIDE device
     # names, so a client appeared under a mangled name indistinguishable from
@@ -3488,6 +3527,25 @@ def test_remote_desktop_undecodable_device_names_are_reported_not_mangled():
                 "an escaped U+FFFD is just as real as a literal one",
             )
             assert_equal(result["undecodable"], 1, "and the broken neighbour is still the only loss")
+
+            # AI2, and the reason the substring mechanism had to go: asking
+            # "does this name's byte sequence appear ANYWHERE in the file"
+            # answers a different question from "did THIS field decode
+            # cleanly". Here the mangled name's decoded form also appears in an
+            # unrelated field, so the old check found it and kept the name
+            # mangled. Marking real U+FFFD before decoding removes the question
+            # rather than approximating it.
+            payload = json.dumps({
+                "note": "bad-\ufffd-x",
+                "root": {"named_devices": [{"name": "BADNAME"}]},
+            }, ensure_ascii=False).encode("utf-8").replace(b'"BADNAME"', b'"bad-\x80-x"')
+            state.write_bytes(payload)
+            result = helper._rd_paired_clients()
+            assert_equal(
+                result["names"], [],
+                "a mangled name must not be rescued by an identical string elsewhere in the file",
+            )
+            assert_equal(result["undecodable"], 1, "and it is still counted as lost")
 
             # Invalid bytes OUTSIDE any name must not withhold anything.
             payload = json.dumps({"root": {"named_devices": [{"name": "mbp-1"}], "junk": "PAD"}}).encode("utf-8")
@@ -4410,6 +4468,7 @@ def main():
     test_remote_desktop_start_refuses_when_the_unit_query_fails()
     test_remote_desktop_malformed_state_degrades_rather_than_raising()
     test_remote_desktop_unknown_compositor_is_probed_not_assumed()
+    test_remote_desktop_decode_marks_real_replacement_characters()
     test_remote_desktop_undecodable_device_names_are_reported_not_mangled()
     # Fail here, with the reason, rather than in the Niri suite with none.
     if os.environ.get("HOME") != _HOME_AT_IMPORT:
