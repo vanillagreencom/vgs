@@ -50,7 +50,15 @@ Enabled is not the same as loaded, and an override still has to provide the surf
 package did. **The swap is gated:** `_onManifestParsed` runs the override's `startupCheck` and
 compiles its components *before* the shipped package is unloaded. If the gate fails, `requires_shell`
 is incompatible, or a component fails to compile, the override is demoted — the shipped package keeps
-(or takes back) the id and stays loaded, and a toast names the override and the reason. Demotion is
+(or takes back) the id and stays loaded, and a toast names the override and the reason. That toast is
+emitted only once the shipped package has actually loaded: restoring it means re-reading its
+manifest, which is asynchronous, so "the version bundled with VGS is still in use" said at the moment
+the read *started* would be a claim about a plugin that may never load. `PluginService` tracks the
+promotion and reports the real outcome — bounded by a deadline so a promotion that settles neither
+way still reaches the user (VGS-75). It also names the package that actually took the id: with
+several overrides claiming one id the promoted candidate can be another user package, not the shipped
+one, so the message reads "the version bundled with VGS is still in use" only when that is what
+loaded. Demotion is
 available whenever a shipped manifest for the id is still on disk, so it does not depend on which
 directory was scanned first. `requires_shell` is judged once shell version detection (asynchronous)
 has produced a version; an override that took the id before then is rechecked and demoted when the
@@ -62,6 +70,44 @@ nothing.
 `_bundledPluginIds` tracks ids seen from the bundled directory and is cleared when the last bundled
 manifest for an id disappears, so a shipped package that is removed stops making a same-id user
 package auto-enabled and undisableable.
+
+A **bundled** manifest's `requires_shell` is audited, never enforced: refusing to load a shipped
+package would take its product surface offline, which is worse than an unmet declaration. An
+unsatisfiable one is still a bug, because an override is normally a copy of the shipped manifest and
+inherits the constraint — every bundled manifest declared `>=1.0.0` against a 0.1.0 shell, which made
+overriding any bundled plugin impossible while looking like nothing was wrong.
+`PluginService._auditBundledRequirement` logs it at runtime and
+`scripts/test-bundled-override.js` fails the build for it (VGS-76). The runtime audit walks every
+known manifest, not only the ones that won their id: a shipped manifest shadowed by an override holds
+no record in `availablePlugins`, and that is precisely the configuration the audit is meant to
+explain.
+
+### Rescanning
+
+`vshell ipc call plugin-scan scan` only reads manifest paths it has never seen — a path already in
+`knownManifests` is skipped, so **editing a manifest in place is not picked up by a scan**. Use
+`plugin-scan rescan <id>`, which re-reads *every* manifest claiming that id, drops the
+blocked/demoted flags, and lets the policy arbitrate again from scratch. Rescanning only the owner's
+path could never change an override's outcome, since the package that lost the id is exactly the one
+that is never re-read (VGS-75). `rescan <id>` accepts an id that currently has **no** owner, as long
+as a manifest claiming it is still known — an id left empty by a demotion or a collision is the state
+the command exists to repair, and it is the state in which the id has no record to look up.
+
+Ownership is settled by id; identity is by path. Precedence is source priority (user > bundled >
+system), and **within one source the manifest path breaks the tie** — two user packages claiming one
+id resolve to the same owner whichever of the two asynchronous manifest reads finishes first. Sorting
+the reads cannot provide that, because `FileView` completion order is not the order they were
+started in.
+
+Whether a swap has to **tear the running package down** is judged by manifest path too
+(`PluginService._displacesLoadedPackage`), never by source. Two packages in one directory are still
+two packages, and a takeover the loader does not recognise is one it never unloads — the old
+package's components stay installed while `availablePlugins` points at the new record. `loaded` is a flag on the info record, and
+re-parsing a manifest builds a new record, so `PluginService._relinkLoadedRecord` hands the loaded
+registration to the new record for the same path. Without it `availablePlugins` and `loadedPlugins`
+held two records that disagreed, and the plugin could never load again — silently. A collision that
+ends with no package owning a bundled id is reported as an error naming every candidate path, never
+as a quiet unload.
 
 ## Menu overlay schema
 ```json

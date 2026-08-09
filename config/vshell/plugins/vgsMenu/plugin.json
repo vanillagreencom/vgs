@@ -12,7 +12,7 @@
     "components": {
         "daemon": "./VGSMenu.qml"
     },
-    "requires_shell": ">=1.0.0",
+    "requires_shell": ">=0.1.0",
     "permissions": [
         "settings_read"
     ]

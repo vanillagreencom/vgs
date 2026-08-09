@@ -49,6 +49,14 @@ Composite daemon example:
 Some existing manifests may carry compatibility flags for loader decisions.
 Do not use those flags as permission to call shell commands at runtime.
 
+`requires_shell` is optional, and when a bundled manifest declares one it must be satisfiable by the
+shell in `VERSION` — `">=0.1.0"` is what the shipped manifests use. A bundled manifest's requirement
+is never enforced, so an impossible one changes nothing where it is written; it fires where it is
+copied, because an override is normally a copy of the shipped manifest and *is* judged by it. Every
+shipped manifest once declared `">=1.0.0"` against a 0.1.0 shell, which made overriding any bundled
+plugin impossible while looking like nothing was wrong. `scripts/test-bundled-override.js` fails the
+build for it now (VGS-76).
+
 Replacing a bundled module from `~/.config/vshell/plugins/<id>/` needs an explicit claim:
 
 ```json

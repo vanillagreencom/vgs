@@ -46,6 +46,12 @@ Singleton {
         }
     }
 
+    // BEGIN VERSION POLICY
+    // Semver parsing and requirement matching. Pure: no QML API, no service
+    // calls, no side effects. scripts/test-bundled-override.js extracts this
+    // block verbatim to judge every shipped plugin.json against VERSION with
+    // the same comparator the runtime uses, rather than a re-implementation of
+    // it. Keep it free of anything node cannot evaluate.
     function parseVersion(versionStr) {
         if (!versionStr || typeof versionStr !== "string") {
             return {
@@ -131,4 +137,5 @@ Singleton {
             return cmp >= 0;
         }
     }
+    // END VERSION POLICY
 }
