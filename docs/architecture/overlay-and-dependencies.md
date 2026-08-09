@@ -63,6 +63,30 @@ nothing.
 manifest for an id disappears, so a shipped package that is removed stops making a same-id user
 package auto-enabled and undisableable.
 
+A **bundled** manifest's `requires_shell` is audited, never enforced: refusing to load a shipped
+package would take its product surface offline, which is worse than an unmet declaration. An
+unsatisfiable one is still a bug, because an override is normally a copy of the shipped manifest and
+inherits the constraint — every bundled manifest declared `>=1.0.0` against a 0.1.0 shell, which made
+overriding any bundled plugin impossible while looking like nothing was wrong.
+`PluginService._auditBundledRequirement` logs it at runtime and
+`scripts/test-bundled-override.js` fails the build for it (VGS-76).
+
+### Rescanning
+
+`vshell ipc call plugin-scan scan` only reads manifest paths it has never seen — a path already in
+`knownManifests` is skipped, so **editing a manifest in place is not picked up by a scan**. Use
+`plugin-scan rescan <id>`, which re-reads *every* manifest claiming that id, drops the
+blocked/demoted flags, and lets the policy arbitrate again from scratch. Rescanning only the owner's
+path could never change an override's outcome, since the package that lost the id is exactly the one
+that is never re-read (VGS-75).
+
+Ownership is settled by id; identity is by path. `loaded` is a flag on the info record, and
+re-parsing a manifest builds a new record, so `PluginService._relinkLoadedRecord` hands the loaded
+registration to the new record for the same path. Without it `availablePlugins` and `loadedPlugins`
+held two records that disagreed, and the plugin could never load again — silently. A collision that
+ends with no package owning a bundled id is reported as an error naming every candidate path, never
+as a quiet unload.
+
 ## Menu overlay schema
 ```json
 {
