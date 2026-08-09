@@ -606,6 +606,12 @@ var SPEC = {
     // settings/BarWidgets.js.
     removedBarWidgets: { def: [] },
 
+    // Named special-workspace scratchpads. One record per pad; the schema and
+    // every field's meaning live in bin/vshell-helper (SCRATCHPAD_* /
+    // normalize_scratchpad), which is the only thing that renders them into
+    // compositor config. Writing this list regenerates that config.
+    scratchpads: { def: [], onChange: "updateScratchpads" },
+
     desktopClockEnabled: { def: false },
     desktopClockStyle: { def: "analog" },
     desktopClockTransparency: { def: 0.8, coerce: percentToUnit },

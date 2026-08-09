@@ -17,7 +17,7 @@ Singleton {
     id: root
     readonly property var log: Log.scoped("SettingsData")
 
-    readonly property int settingsConfigVersion: 22
+    readonly property int settingsConfigVersion: 23
 
     readonly property bool isGreeterMode: Quickshell.env("VSHELL_RUN_GREETER") === "1" || Quickshell.env("VSHELL_RUN_GREETER") === "true"
 
@@ -1013,6 +1013,11 @@ Singleton {
     // settings/BarWidgets.js.
     property var removedBarWidgets: []
 
+    // Named special-workspace scratchpads. Presentation is not stored in pixels:
+    // a pad is sized as a percentage of whichever monitor it lands on, and the
+    // helper resolves that at apply time. See docs/architecture/scratchpads.md.
+    property var scratchpads: []
+
     // Standalone bar xray is unsafe when windows can render beneath its surface
     function _standaloneBarXrayAvailable(configs) {
         const list = configs || [];
@@ -1485,6 +1490,15 @@ Singleton {
             MangoService.generateLayoutConfig();
     }
 
+    // Scratchpad presentation is compositor config, so writing the list has to
+    // regenerate it. Debounced in ScratchpadService for the same reason the
+    // layout apply is: a settings page edits several fields in a row.
+    function updateScratchpads() {
+        if (typeof ScratchpadService === "undefined")
+            return;
+        ScratchpadService.generateConfig();
+    }
+
     function resolveIconTheme() {
         if (iconThemePerMode && typeof SessionData !== "undefined" && SessionData.isLightMode)
             return iconThemeLight;
@@ -1712,6 +1726,7 @@ Singleton {
             "regenSystemThemes": regenSystemThemes,
             "applySystemFonts": applySystemFonts,
             "updateCompositorLayout": updateCompositorLayout,
+            "updateScratchpads": updateScratchpads,
             "applyStoredIconTheme": applyStoredIconTheme,
             "updateBarConfigs": updateBarConfigs,
             "updateCompositorCursor": updateCompositorCursor,
