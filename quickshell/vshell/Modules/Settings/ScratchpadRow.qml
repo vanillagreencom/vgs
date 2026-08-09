@@ -30,6 +30,7 @@ Column {
     signal requestCapture
     signal captureFinished(string combo)
     signal changePad(var changes)
+    signal setEnabled(bool enabled)
     signal remove
     signal move(int delta)
 
@@ -119,9 +120,10 @@ Column {
 
                 VgsToggle {
                     checked: row.pad.enabled !== false
-                    onToggled: checked => row.changePad({
-                            "enabled": checked
-                        })
+                    // Disabling is not a plain field write: it removes the pad's
+                    // keybind, so anything still on screen has to come down
+                    // first. The tab owns that ordering.
+                    onToggled: checked => row.setEnabled(checked)
                 }
             }
         }

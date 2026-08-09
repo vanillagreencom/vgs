@@ -28,6 +28,11 @@ Item {
     // stranding the window.
     property string removing: ""
     property string removeError: ""
+    // Pad currently being hidden as part of disabling, and why the last disable
+    // was refused. A disable that cannot hide its window keeps the pad enabled
+    // rather than stranding it visible with no keybind.
+    property string disabling: ""
+    property string enableError: ""
 
     readonly property var pads: SettingsData.scratchpads || []
     readonly property bool supported: ScratchpadService.supported
@@ -120,6 +125,44 @@ Item {
                 return;
             }
             root._deletePad(padId);
+        });
+    }
+
+    // Enabling is an ordinary field write. DISABLING is not: regeneration drops
+    // the pad's rules and its keybind, so a pad still on screen would be left
+    // visible with nothing left to dismiss it — the keybind that was the escape
+    // hatch disappears in the same operation the user just performed.
+    //
+    // Order: hide FIRST, write second. Both failure modes stay recoverable.
+    //   - hide fails      -> the write is skipped, the pad stays enabled, its
+    //                        keybind still works, and the reason is shown.
+    //   - hide succeeds,
+    //     write/regen fails -> the window is already down, and the pad can be
+    //                        re-enabled from this page.
+    // The reverse order has no safe failure: once the bind is gone, a failed
+    // hide leaves a visible window with no way to reach it.
+    function setPadEnabled(padId, enabled) {
+        const pad = root.pads.find(entry => entry.id === padId);
+        if (!pad)
+            return;
+        if (enabled || !ScratchpadService.supported) {
+            root.enableError = "";
+            root.updatePad(padId, {
+                "enabled": enabled
+            });
+            return;
+        }
+        root.disabling = padId;
+        root.enableError = "";
+        ScratchpadService.hide(padId, (ok, error) => {
+            root.disabling = "";
+            if (!ok) {
+                root.enableError = I18n.tr("Could not hide \"%1\": %2. It was left enabled so its keybind still works.").arg(pad.name || pad.id).arg(error || I18n.tr("unknown error"));
+                return;
+            }
+            root.updatePad(padId, {
+                "enabled": false
+            });
         });
     }
 
@@ -259,6 +302,76 @@ Item {
         return "";
     }
 
+    // Keys that carry no usable `event.text`, mapped to the names Hyprland's
+    // keybind parser expects. Without this the capture accepted only keys that
+    // produce a single printable character, so F1-F12, Print and the XF86 media
+    // keys could not be bound at all — and a scratchpad on F12 is one of the
+    // most common shapes there is.
+    //
+    // Returns "" for anything unmapped, including the modifier keys themselves,
+    // which is how a press that is only modifiers is ignored while the user is
+    // still assembling a chord.
+    function namedKeyFor(key) {
+        if (key >= Qt.Key_F1 && key <= Qt.Key_F12)
+            return "F" + (key - Qt.Key_F1 + 1);
+        switch (key) {
+        case Qt.Key_Print:
+            return "Print";
+        case Qt.Key_Return:
+        case Qt.Key_Enter:
+            return "Return";
+        case Qt.Key_Escape:
+            return "Escape";
+        case Qt.Key_Space:
+            return "space";
+        case Qt.Key_Tab:
+            return "Tab";
+        case Qt.Key_Backspace:
+            return "BackSpace";
+        case Qt.Key_Delete:
+            return "Delete";
+        case Qt.Key_Insert:
+            return "Insert";
+        case Qt.Key_Home:
+            return "Home";
+        case Qt.Key_End:
+            return "End";
+        case Qt.Key_PageUp:
+            return "Page_Up";
+        case Qt.Key_PageDown:
+            return "Page_Down";
+        case Qt.Key_Left:
+            return "Left";
+        case Qt.Key_Right:
+            return "Right";
+        case Qt.Key_Up:
+            return "Up";
+        case Qt.Key_Down:
+            return "Down";
+        case Qt.Key_MediaPlay:
+            return "XF86AudioPlay";
+        case Qt.Key_MediaPause:
+            return "XF86AudioPause";
+        case Qt.Key_MediaStop:
+            return "XF86AudioStop";
+        case Qt.Key_MediaNext:
+            return "XF86AudioNext";
+        case Qt.Key_MediaPrevious:
+            return "XF86AudioPrev";
+        case Qt.Key_VolumeUp:
+            return "XF86AudioRaiseVolume";
+        case Qt.Key_VolumeDown:
+            return "XF86AudioLowerVolume";
+        case Qt.Key_VolumeMute:
+            return "XF86AudioMute";
+        case Qt.Key_MonBrightnessUp:
+            return "XF86MonBrightnessUp";
+        case Qt.Key_MonBrightnessDown:
+            return "XF86MonBrightnessDown";
+        }
+        return "";
+    }
+
     function keyEventToCombo(event) {
         const mods = [];
         if (event.modifiers & Qt.MetaModifier)
@@ -269,11 +382,18 @@ Item {
             mods.push("ALT");
         if (event.modifiers & Qt.ShiftModifier)
             mods.push("SHIFT");
+
+        // The named lookup comes FIRST and its case is preserved. Several of
+        // these keys do carry a single character of `text` — Return is "\r",
+        // Escape "\x1b", Backspace "\b" — so a text-first rule would bind a raw
+        // control character, and upper-casing would break "Page_Up" and the
+        // XF86 names, which Hyprland matches as written.
+        const named = root.namedKeyFor(event.key);
         const text = String(event.text || "").trim().toUpperCase();
-        // Ignore a press that is only modifiers: the user has not finished yet.
-        if (!text || text.length !== 1)
+        const key = named || (text.length === 1 ? text : "");
+        if (!key)
             return "";
-        return mods.length > 0 ? mods.join(" + ") + ", " + text : text;
+        return mods.length > 0 ? mods.join(" + ") + ", " + key : key;
     }
 
     AppBrowserPopup {
@@ -336,6 +456,21 @@ Item {
             // user can retry rather than losing track of a running window.
             SettingsCard {
                 width: parent.width
+                visible: root.enableError.length > 0
+                title: I18n.tr("Scratchpad not disabled")
+                iconName: "error"
+
+                StyledText {
+                    width: parent.width
+                    wrapMode: Text.WordWrap
+                    color: Theme.error
+                    font.pixelSize: Theme.fontSizeSmall
+                    text: root.enableError
+                }
+            }
+
+            SettingsCard {
+                width: parent.width
                 visible: root.removeError.length > 0
                 title: I18n.tr("Scratchpad not removed")
                 iconName: "error"
@@ -369,6 +504,34 @@ Item {
                         font.pixelSize: Theme.fontSizeSmall
                         text: (modelData.id || "?") + " — " + (modelData.reason || "")
                     }
+                }
+            }
+
+            // The status query failed, so whether the generated file is wired up
+            // is genuinely unknown. Saying so beats showing either answer: a
+            // silent page would imply "included", and the warning below would
+            // assert a problem nothing established.
+            SettingsCard {
+                width: parent.width
+                visible: root.supported && root.pads.length > 0 && ScratchpadService.status.included === null
+                title: I18n.tr("Could not check your Hyprland config")
+                iconName: "help"
+
+                StyledText {
+                    width: parent.width
+                    wrapMode: Text.WordWrap
+                    color: Theme.surfaceVariantText
+                    font.pixelSize: Theme.fontSizeSmall
+                    text: I18n.tr("VGS could not tell whether hyprland.lua includes the generated scratchpad rules. If your scratchpads do not respond, check that this line is present:")
+                }
+
+                StyledText {
+                    width: parent.width
+                    wrapMode: Text.WrapAnywhere
+                    font.family: Theme.monoFontFamily
+                    font.pixelSize: Theme.fontSizeSmall
+                    color: Theme.surfaceText
+                    text: ScratchpadService.status.includeLine || "pcall(require, \"vgs.scratchpads\")"
                 }
             }
 
@@ -450,6 +613,7 @@ Item {
                                 });
                         }
                         onChangePad: changes => root.updatePad(modelData.id, changes)
+                        onSetEnabled: enabled => root.setPadEnabled(modelData.id, enabled)
                         onRemove: root.removePad(modelData.id)
                         onMove: delta => root.movePad(modelData.id, delta)
                     }
