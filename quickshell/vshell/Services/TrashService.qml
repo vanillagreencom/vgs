@@ -95,7 +95,10 @@ Singleton {
             return;
         }
         if (availableFileManagers.indexOf(choice) < 0) {
-            ToastService.showInfo(I18n.tr("Cannot open trash: '%1' is not installed").arg(choice), I18n.tr("Pick a different file manager in Settings → Dock → Trash."));
+            ToastService.showInfo(I18n.tr("Cannot open trash: '%1' is not installed").arg(choice), I18n.tr("Pick a different file manager under Dock › Trash."), "", "trash-open", ({
+                label: I18n.tr("Open Dock settings"),
+                settingsTab: "dock"
+            }));
             return;
         }
         Quickshell.execDetached([choice, "trash:///"]);
@@ -104,12 +107,18 @@ Singleton {
     function openCustom() {
         const cmd = (SettingsData.dockTrashCustomCommand || "").trim();
         if (!cmd) {
-            ToastService.showInfo(I18n.tr("Cannot open trash: no custom command set"), I18n.tr("Configure one in Settings → Dock → Trash."));
+            ToastService.showInfo(I18n.tr("Cannot open trash: no custom command set"), I18n.tr("Configure one under Dock › Trash."), "", "trash-open", ({
+                label: I18n.tr("Open Dock settings"),
+                settingsTab: "dock"
+            }));
             return;
         }
         Proc.runCommand(null, ["sh", "-c", cmd], (output, exitCode) => {
             if (exitCode !== 0) {
-                ToastService.showError(I18n.tr("Trash command failed (exit %1)").arg(exitCode), I18n.tr("Check your custom command in Settings → Dock → Trash."));
+                ToastService.showError(I18n.tr("Trash command failed (exit %1)").arg(exitCode), I18n.tr("Check your custom command under Dock › Trash."), "", "trash-open", ({
+                    label: I18n.tr("Open Dock settings"),
+                    settingsTab: "dock"
+                }));
             }
         }, 0, Proc.noTimeout);
     }

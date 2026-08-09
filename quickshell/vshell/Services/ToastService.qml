@@ -4,6 +4,8 @@ pragma ComponentBehavior: Bound
 
 import QtQuick
 import Quickshell
+import qs.Services
+import "ToastAction.js" as ToastAction
 
 Singleton {
     id: root
@@ -25,13 +27,66 @@ Singleton {
     property string currentCategory: ""
     readonly property var stickyCategories: ["greeter-autologin-sync", "notification-server-conflict"]
 
+    // --- toast action (VGS-65) --------------------------------------------
+    //
+    // The action belonging to the toast currently on screen, unpacked into
+    // plain properties so Toast.qml can bind to them.
+    //
+    // currentActionCallback is the ONE live reference this singleton can hold.
+    // It is written only by _setCurrentAction(), which every entry and exit
+    // path goes through, so the closure is released the moment the toast it
+    // belongs to stops being displayed. Queued entries hold their own copy and
+    // release it when the entry is dropped -- toastQueue is always reassigned,
+    // never mutated in place, so a filtered-out entry becomes unreachable.
+    property string currentActionLabel: ""
+    property string currentActionSettingsTab: ""
+    property var currentActionCallback: null
+    readonly property bool hasAction: currentActionLabel.length > 0 && (currentActionSettingsTab.length > 0 || currentActionCallback !== null)
+
     function isStickyCategory(category) {
         return category && stickyCategories.indexOf(category) >= 0
     }
 
-    function showToast(message, level = levelInfo, details = "", command = "", category = "") {
+    // A toast with an action has to stay up long enough to read it and reach
+    // the button; the ordinary 1.5s info timeout is not that.
+    function _toastInterval(level, withDetails, withAction) {
+        if (withAction) {
+            return 10000
+        }
+        if (level === levelError) {
+            return withDetails ? 8000 : 5000
+        }
+        return level === levelWarn ? 3000 : 1500
+    }
+
+    function _setCurrentAction(normalized) {
+        currentActionLabel = normalized ? normalized.label : ""
+        currentActionSettingsTab = normalized ? normalized.settingsTab : ""
+        currentActionCallback = normalized ? normalized.callback : null
+    }
+
+    // Runs the displayed toast's action and dismisses it. The action is read
+    // out before hideToast(), because hideToast() is what releases it.
+    function invokeAction() {
+        if (!hasAction) {
+            return
+        }
+
+        const settingsTab = currentActionSettingsTab
+        const callback = currentActionCallback
+        hideToast()
+
+        if (settingsTab) {
+            PopoutService.openSettingsWithTab(settingsTab)
+            return
+        }
+        callback()
+    }
+
+    function showToast(message, level = levelInfo, details = "", command = "", category = "", action = null) {
         const now = Date.now()
         const messageKey = message + level
+        const normalizedAction = ToastAction.normalizeAction(action)
 
         if (level === levelError) {
             const lastTime = lastErrorTime[messageKey] || 0
@@ -47,12 +102,9 @@ Singleton {
                 currentDetails = details || ""
                 currentCommand = command || ""
                 hasDetails = currentDetails.length > 0 || currentCommand.length > 0
+                _setCurrentAction(normalizedAction)
                 resetToastState()
-                if (level === levelError) {
-                    toastTimer.interval = hasDetails ? 8000 : 5000
-                } else {
-                    toastTimer.interval = level === levelWarn ? 3000 : 1500
-                }
+                toastTimer.interval = _toastInterval(level, hasDetails, ToastAction.hasAction(normalizedAction))
                 toastTimer.restart()
                 return
             }
@@ -80,23 +132,24 @@ Singleton {
                             "level": level,
                             "details": details,
                             "command": command,
-                            "category": category
+                            "category": category,
+                            "action": normalizedAction
                         })
         if (!toastVisible) {
             processQueue()
         }
     }
 
-    function showInfo(message, details = "", command = "", category = "") {
-        showToast(message, levelInfo, details, command, category)
+    function showInfo(message, details = "", command = "", category = "", action = null) {
+        showToast(message, levelInfo, details, command, category, action)
     }
 
-    function showWarning(message, details = "", command = "", category = "") {
-        showToast(message, levelWarn, details, command, category)
+    function showWarning(message, details = "", command = "", category = "", action = null) {
+        showToast(message, levelWarn, details, command, category, action)
     }
 
-    function showError(message, details = "", command = "", category = "") {
-        showToast(message, levelError, details, command, category)
+    function showError(message, details = "", command = "", category = "", action = null) {
+        showToast(message, levelError, details, command, category, action)
     }
 
     function dismissCategory(category) {
@@ -120,6 +173,7 @@ Singleton {
         currentCategory = ""
         hasDetails = false
         currentLevel = levelInfo
+        _setCurrentAction(null)
         toastTimer.stop()
         resetToastState()
         if (toastQueue.length > 0) {
@@ -139,16 +193,14 @@ Singleton {
         currentCommand = toast.command || ""
         currentCategory = toast.category || ""
         hasDetails = currentDetails.length > 0 || currentCommand.length > 0
+        _setCurrentAction(toast.action || null)
         toastVisible = true
         resetToastState()
 
         if (isStickyCategory(toast.category)) {
             toastTimer.stop()
-        } else if (toast.level === levelError && hasDetails) {
-            toastTimer.interval = 8000
-            toastTimer.start()
         } else {
-            toastTimer.interval = toast.level === levelError ? 5000 : toast.level === levelWarn ? 3000 : 1500
+            toastTimer.interval = _toastInterval(toast.level, hasDetails, ToastAction.hasAction(toast.action))
             toastTimer.start()
         }
     }
@@ -163,8 +215,8 @@ Singleton {
         if (isStickyCategory(currentCategory)) {
             return
         }
-        if (hasDetails && currentLevel === levelError) {
-            toastTimer.interval = 8000
+        if (hasAction || (hasDetails && currentLevel === levelError)) {
+            toastTimer.interval = _toastInterval(currentLevel, hasDetails, hasAction)
             toastTimer.restart()
         }
     }

@@ -157,6 +157,7 @@ scripts/test-theme-requests.js
 scripts/test-sudo-toggle-confirm.js
 scripts/test-latest-transaction-queue.js
 scripts/test-bundled-override.js
+scripts/test-toast-actions.js
 scripts/test-idle-reload-snapshot.js
 scripts/test-idle-lock-request.js
 scripts/check-vshell-helper.py
