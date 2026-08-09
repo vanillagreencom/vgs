@@ -448,6 +448,21 @@ function migrateToVersion(obj, targetVersion) {
         settings.configVersion = 21;
     }
 
+    if (currentVersion < 22) {
+        console.info("Migrating settings from version", currentVersion, "to version 22");
+        console.info("Marking the notification first-run takeover as already spent for an existing config");
+        // VGS-64: on a fresh install VGS now takes org.freedesktop.Notifications
+        // rather than losing it to whichever daemon claimed it first. That is a
+        // FIRST-RUN behaviour, and this config is by definition not a first run
+        // -- it already exists. Without this line the key would arrive at its
+        // `false` default on every upgrade, and a user who deliberately turned
+        // VGS notifications off would find their daemon masked after the next
+        // `-git` bump. Set unconditionally: an existing config cannot have a
+        // meaningful value for a key that did not exist until now.
+        settings.notificationFirstRunTakeoverDone = true;
+        settings.configVersion = 22;
+    }
+
     var validKeys = SpecModule.getValidKeys();
     var filtered = {};
     for (var key in settings) {

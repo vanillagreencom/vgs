@@ -2180,6 +2180,173 @@ def test_notification_restore_starts_what_takeover_stopped():
                 os.environ[key] = value
 
 
+def test_notification_takeover_records_who_asked():
+    """The undo record carries provenance, because the shell cannot.
+
+    `NotificationService._firstRunTakeoverFired` dies with the shell process,
+    while the masks, the stopped units and the record all persist. Keying the
+    opt-out reversal on the runtime flag alone meant a restart between the
+    takeover and the opt-out skipped the reversal and left the user's daemon
+    masked and stopped -- no notification daemon at all, from nothing worse
+    than a restart. Reading the record instead is what makes it durable, so
+    every claim that reading makes is pinned here.
+    """
+    original_bus, original_systemctl = helper._session_bus_call, helper._systemctl_user
+    original_env = {key: os.environ.get(key) for key in ("VSHELL_PROC_ROOT", "XDG_DATA_HOME", "XDG_DATA_DIRS")}
+
+    def owner_spec():
+        return {
+            "unique": ":1.7", "pid": 4242, "comm": "mako", "cmdline": ["/usr/bin/mako"],
+            "unit": "mako.service",
+            "unitShow": {"mako.service": {
+                "LoadState": "loaded", "ActiveState": "active", "UnitFileState": "disabled",
+                "MainPID": "4242",
+                "ExecStart": "{ path=/usr/bin/mako ; argv[]=/usr/bin/mako ; ignore_errors=no }",
+            }},
+        }
+
+    def manual(tmp: Path):
+        _notification_env(tmp, owner_spec())
+        helper.notification_takeover()
+        # A takeover nobody labelled is not one VGS may claim to have made, so
+        # the shell must leave it alone: reversing it would undo a deliberate
+        # choice the user made from the CLI or the Settings button.
+        assert_equal(helper.notification_status()["restore"]["initiator"], "manual",
+                     "a takeover the user asked for is recorded as manual")
+        assert_equal(helper.notification_status()["restore"]["automatic"], False,
+                     "a manual takeover must not read as VGS's own doing")
+
+    def automatic(tmp: Path):
+        _notification_env(tmp, owner_spec())
+        helper.notification_takeover(automatic=True)
+
+        # Re-reading the record from disk IS the restart: no in-process state
+        # survives a shell exit, and this is the only thing that does.
+        assert_equal(helper._load_takeover_record()["initiator"], "first-run",
+                     "the first-run takeover must be recorded on disk, not only in the shell")
+        status = helper.notification_status()
+        assert_equal(status["restore"]["available"], True, "there is something to undo")
+        assert_equal(status["restore"]["automatic"], True,
+                     "status must tell a restarted shell the takeover was its own")
+
+        # A later manual takeover cannot launder VGS's own action away: the two
+        # sets of changes share one record and cannot be unpicked, and
+        # reversing all of them is what keeps a daemon running.
+        helper.notification_takeover()
+        assert_equal(helper.notification_status()["restore"]["automatic"], True,
+                     "a manual takeover on top of an automatic one must not clear provenance")
+
+    def partial_restore_keeps_provenance(tmp: Path):
+        _notification_env(tmp, owner_spec())
+        helper.notification_takeover(automatic=True)
+
+        stock = helper._systemctl_user
+
+        def refuse_unmask(argv, timeout=10.0):
+            if argv[0] == "unmask":
+                return subprocess.CompletedProcess(argv, 1, "", "refused")
+            return stock(argv, timeout=timeout)
+
+        helper._systemctl_user = refuse_unmask
+        result = helper.notification_restore()
+        assert_equal(result["ok"], False, "a restore that could not unmask is not ok")
+        assert_equal(bool(result["failures"]), True, "the failure must be reported, not swallowed")
+        # The mask is still in force, so the daemon may still be down. The
+        # record has to survive with its provenance intact or the next opt-out
+        # would decline to try again.
+        assert_equal(helper._load_takeover_record()["initiator"], "first-run",
+                     "a partial restore must keep the record's provenance so the retry still fires")
+        assert_equal(helper.notification_status()["restore"]["automatic"], True,
+                     "a failed restore stays retryable")
+
+    def an_existing_record_is_never_relabelled(tmp: Path):
+        _notification_env(tmp, owner_spec())
+        # The user takes the name themselves first.
+        helper.notification_takeover()
+        assert_equal(helper._load_takeover_record()["initiator"], "manual",
+                     "precondition: the user's own takeover is recorded as manual")
+
+        # An automatic pass afterwards must NOT rewrite that. Relabelling it
+        # would let the shell reverse a change the user made on purpose --
+        # the one thing the initiator exists to prevent.
+        helper.notification_takeover(automatic=True)
+        assert_equal(helper._load_takeover_record()["initiator"], "manual",
+                     "an automatic takeover must not relabel a record the user created")
+        assert_equal(helper.notification_status()["restore"]["automatic"], False,
+                     "the shell must not be told a manual takeover was its own")
+
+    def a_record_is_stamped_only_when_created(tmp: Path):
+        _notification_env(tmp, owner_spec())
+        assert_equal(_takeover_record_is_empty(), True, "precondition: no record yet")
+        helper.notification_takeover(automatic=True)
+        assert_equal(helper._load_takeover_record()["initiator"], "first-run",
+                     "an automatic takeover that creates the record does stamp it")
+
+    def persisted_one_shot_is_read_from_disk(tmp: Path):
+        _notification_env(tmp, owner_spec())
+        settings = tmp / ".config" / "vshell" / "settings.json"
+        settings.parent.mkdir(parents=True, exist_ok=True)
+
+        # No settings file at all. load_settings() falls back to the shipped
+        # seed, so the seed's own value is load-bearing here: were it true, an
+        # absent config would answer "already spent" and the shell would refuse
+        # the takeover it is supposed to perform on exactly that config.
+        seed = json.loads((REPO_ROOT / "config" / "vshell" / "settings.default.json").read_text())
+        assert_equal(seed["notificationFirstRunTakeoverDone"], False,
+                     "the shipped seed must leave the one-shot unspent")
+        assert_equal(helper.vgs_first_run_takeover_done(), False,
+                     "an absent settings.json must not read as a spent one-shot")
+        assert_equal(helper.notification_status()["vgsFirstRunTakeoverDone"], False,
+                     "status must surface the on-disk answer")
+
+        # Unparseable: likewise not evidence.
+        settings.write_text("{ this is not json")
+        assert_equal(helper.vgs_first_run_takeover_done(), False,
+                     "an unreadable settings.json must not read as a spent one-shot")
+
+        # Present but false, and present but not a boolean.
+        settings.write_text(json.dumps({"notificationFirstRunTakeoverDone": False}))
+        assert_equal(helper.vgs_first_run_takeover_done(), False, "false is false")
+        settings.write_text(json.dumps({"notificationFirstRunTakeoverDone": "yes"}))
+        assert_equal(helper.vgs_first_run_takeover_done(), False,
+                     "a non-boolean must not be coerced into a spent one-shot")
+
+        # Only an actual persisted true counts.
+        settings.write_text(json.dumps({"notificationFirstRunTakeoverDone": True}))
+        assert_equal(helper.vgs_first_run_takeover_done(), True,
+                     "a persisted true is what the shell waits for")
+        assert_equal(helper.notification_status()["vgsFirstRunTakeoverDone"], True,
+                     "status must surface the on-disk answer")
+
+    def garbage_is_not_trusted(tmp: Path):
+        _notification_env(tmp, owner_spec())
+        helper.notification_takeover(automatic=True)
+        path = helper.notification_state_file()
+        record = json.loads(path.read_text())
+        record["initiator"] = "../../etc/passwd"
+        path.write_text(json.dumps(record))
+        assert_equal(helper._load_takeover_record()["initiator"], "manual",
+                     "an unrecognised initiator must fall back to manual, never be taken as given")
+
+    def _takeover_record_is_empty() -> bool:
+        return not helper._takeover_record_has_changes(helper._load_takeover_record())
+
+    try:
+        for case in (manual, automatic, partial_restore_keeps_provenance,
+                     an_existing_record_is_never_relabelled,
+                     a_record_is_stamped_only_when_created,
+                     persisted_one_shot_is_read_from_disk,
+                     garbage_is_not_trusted):
+            with_temp_home(case)
+    finally:
+        helper._session_bus_call, helper._systemctl_user = original_bus, original_systemctl
+        for key, value in original_env.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+
+
 def test_notification_status_respects_the_server_opt_out():
     """A user who turned VGS's server off is not told to fix anything."""
     original_enabled = helper.vgs_notification_server_enabled
@@ -2609,6 +2776,7 @@ def main():
     test_notification_daemon_label_handles_scope_units()
     test_notification_takeover_never_touches_an_inherited_unit()
     test_notification_restore_starts_what_takeover_stopped()
+    test_notification_takeover_records_who_asked()
     test_notification_status_respects_the_server_opt_out()
     test_requires_features_propagates_to_availability()
     test_sudo_toggle_status_stays_available_without_a_terminal()

@@ -362,7 +362,10 @@ Singleton {
         ToastService.dismissCategory("greeter-autologin-sync");
         if (settingsRoot)
             settingsRoot.set("greeterSyncPending", true);
-        ToastService.showWarning(I18n.tr("Auto-login change needs a sync"), I18n.tr("Administrator access is required. Use the Sync button in Settings → Greeter to apply.") + (details ? "\n\n" + details : ""), "vshell greeter sync --autologin", "greeter-autologin-sync");
+        ToastService.showWarning(I18n.tr("Auto-login change needs a sync"), I18n.tr("Administrator access is required; the change is not applied yet.") + (details ? "\n\n" + details : ""), "vshell greeter sync --autologin", "greeter-autologin-sync", ({
+                                     label: I18n.tr("Open Greeter settings"),
+                                     settingsTab: "greeter"
+                                 }));
         finishGreeterAutoLoginSync();
     }
 
@@ -570,7 +573,10 @@ Singleton {
         onExited: exitCode => {
             const enabling = root.settingsRoot && root.settingsRoot.greeterAutoLogin;
             if (exitCode === 0) {
-                ToastService.showWarning(enabling ? I18n.tr("Applying auto-login on startup...") : I18n.tr("Disabling auto-login on startup..."), "", "vshell greeter sync --autologin", "greeter-autologin-sync");
+                ToastService.showWarning(enabling ? I18n.tr("Applying auto-login on startup...") : I18n.tr("Disabling auto-login on startup..."), "", "vshell greeter sync --autologin", "greeter-autologin-sync", ({
+                                             label: I18n.tr("Open Greeter settings"),
+                                             settingsTab: "greeter"
+                                         }));
                 root.greeterAutoLoginSyncProcess.running = true;
                 return;
             }

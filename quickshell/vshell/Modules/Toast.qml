@@ -50,7 +50,13 @@ PanelWindow {
     WlrLayershell.keyboardFocus: WlrKeyboardFocus.None
     color: "transparent"
 
-    readonly property real toastWidth: shouldBeVisible ? Theme.px(Math.min(900, messageText.implicitWidth + statusIcon.width + Theme.spacingM + ((ToastService.hasDetails || ToastService.isStickyCategory(ToastService.currentCategory)) ? (expandButton.width + closeButton.width + 4) : (ToastService.currentLevel === ToastService.levelError ? closeButton.width + Theme.spacingS : 0)) + Theme.spacingL * 2 + Theme.spacingM * 2), dpr) : frozenWidth
+    // An action button keeps the toast on screen until it is answered, so the
+    // close button has to come with it -- otherwise the only way out is the
+    // whole-surface dismiss MouseArea, which would swallow the action's click.
+    readonly property bool closeButtonVisible: ToastService.hasDetails || ToastService.currentLevel === ToastService.levelError || ToastService.isStickyCategory(ToastService.currentCategory) || ToastService.hasAction
+    readonly property real trailingControlsWidth: (ToastService.hasDetails || ToastService.isStickyCategory(ToastService.currentCategory)) ? (expandButton.width + closeButton.width + 4) : (closeButtonVisible ? closeButton.width + Theme.spacingS : 0)
+    readonly property real actionControlWidth: ToastService.hasAction ? actionButton.width + Theme.spacingS : 0
+    readonly property real toastWidth: shouldBeVisible ? Theme.px(Math.min(900, messageText.implicitWidth + statusIcon.width + Theme.spacingM + trailingControlsWidth + actionControlWidth + Theme.spacingL * 2 + Theme.spacingM * 2), dpr) : frozenWidth
     readonly property real toastHeight: Theme.px(toastContent.height + Theme.spacingL * 2, dpr)
 
     anchors {
@@ -164,11 +170,38 @@ PanelWindow {
                     font.weight: Font.Medium
                     anchors.left: statusIcon.right
                     anchors.leftMargin: Theme.spacingM
-                    anchors.right: ToastService.hasDetails ? expandButton.left : parent.right
-                    anchors.rightMargin: ToastService.hasDetails ? Theme.spacingS : 0
+                    anchors.right: ToastService.hasAction ? actionButton.left : (ToastService.hasDetails ? expandButton.left : parent.right)
+                    anchors.rightMargin: (ToastService.hasAction || ToastService.hasDetails) ? Theme.spacingS : 0
                     anchors.verticalCenter: parent.verticalCenter
                     elide: Text.ElideRight
                     wrapMode: Text.NoWrap
+                }
+
+                // VGS-65: a toast that names the fix gets a button to it,
+                // instead of describing where the user should go looking.
+                VgsButton {
+                    id: actionButton
+
+                    text: ToastService.currentActionLabel
+                    variant: "secondary"
+                    buttonHeight: Theme.iconSize + 8
+                    horizontalPadding: Theme.spacingM
+                    textColor: {
+                        switch (ToastService.currentLevel) {
+                        case ToastService.levelError:
+                        case ToastService.levelWarn:
+                            return SessionData.isLightMode ? Theme.surfaceText : Theme.background;
+                        default:
+                            return Theme.surfaceText;
+                        }
+                    }
+                    outlineColor: Qt.rgba(textColor.r, textColor.g, textColor.b, 0.45)
+                    anchors.right: ToastService.hasDetails ? expandButton.left : (root.closeButtonVisible ? closeButton.left : parent.right)
+                    anchors.rightMargin: ToastService.hasDetails ? 2 : Theme.spacingS
+                    anchors.verticalCenter: parent.verticalCenter
+                    visible: ToastService.hasAction
+
+                    onClicked: ToastService.invokeAction()
                 }
 
                 VgsActionButton {
@@ -216,7 +249,7 @@ PanelWindow {
                     buttonSize: Theme.iconSize + 8
                     anchors.right: parent.right
                     anchors.verticalCenter: parent.verticalCenter
-                    visible: ToastService.hasDetails || ToastService.currentLevel === ToastService.levelError || ToastService.isStickyCategory(ToastService.currentCategory)
+                    visible: root.closeButtonVisible
 
                     onClicked: {
                         ToastService.hideToast();
@@ -426,7 +459,7 @@ PanelWindow {
 
         MouseArea {
             anchors.fill: parent
-            visible: !ToastService.hasDetails && !ToastService.isStickyCategory(ToastService.currentCategory)
+            visible: !ToastService.hasDetails && !ToastService.hasAction && !ToastService.isStickyCategory(ToastService.currentCategory)
             onClicked: ToastService.hideToast()
         }
 
