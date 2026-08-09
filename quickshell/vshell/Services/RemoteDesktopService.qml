@@ -313,6 +313,33 @@ Singleton {
         root.sessionColorDepth = session.colorDepth || "";
     }
 
+    // Which watch events invalidate the displayed session COUNT.
+    //
+    // Pure decision function. `scripts/test-remote-desktop-state.js` extracts
+    // THIS source text between the markers and exercises every token.
+    //
+    // Every event means "re-read the status", but only some of them imply the
+    // number of clients may have changed — and marking the count unknown has a
+    // visible cost, since the popout reads "confirming…" until the resync
+    // lands. So this is not simply "all of them":
+    //
+    // * `connected` / `disconnected` — a client arrived or left, so the number
+    //   on screen is stale by construction. Symmetric: it was asymmetric once,
+    //   and the disconnect side rendered a superseded count as authoritative.
+    // * `lifecycle` — the host is starting or stopping, which ends every
+    //   session it had. A count from before that transition describes a host
+    //   that no longer exists.
+    // * `session` — an encoder or bitrate change WITHIN the current set of
+    //   clients. Nothing about it says a client arrived or left, and a client
+    //   change would carry its own connect/disconnect event, so the last
+    //   confirmed count is still the best answer available. Blanking it here
+    //   would be flicker with no information behind it.
+    // BEGIN EVENT DECISION
+    function countInvalidatingEvent(event) {
+        return event === "connected" || event === "disconnected" || event === "lifecycle";
+    }
+    // END EVENT DECISION
+
     // The watch emits normalised tokens, never Sunshine's own wording: the log
     // format is parsed once, in the helper. Every token means "re-read the
     // status"; they are distinguished only so the streaming indicator can flip
@@ -327,12 +354,9 @@ Singleton {
             // unambiguous: somebody is watching, right now.
             root.streaming = true;
             root.sessionKnown = true;
-            // ...but "how many" is not part of what a connect proves. The count
-            // follows the authoritative read rather than contradicting the
-            // indicator: at least one client exists, and the exact number is
-            // marked unknown until _applyStatus supplies it. Leaving the stale
-            // value would render 0 clients beside a live capture.
-            root.sessionCountKnown = false;
+            // ...but "how many" is not part of what a connect proves, so the
+            // count is invalidated below rather than asserted here. At least
+            // one client exists, which is all a connect establishes.
             if (root.sessionCount < 1)
                 root.sessionCount = 1;
         }
@@ -342,6 +366,13 @@ Singleton {
         // the next resync — the exact failure this widget exists to prevent.
         // Only the authoritative session count, via _applyStatus, may turn LIVE
         // off. The resync below is what does it.
+        //
+        // The COUNT is a different question, and it is symmetric: a disconnect
+        // proves the displayed number is no longer current just as surely as a
+        // connect does, and so does a host lifecycle transition. Whichever
+        // direction the change ran, only the authoritative read may restore it.
+        if (root.countInvalidatingEvent(event))
+            root.sessionCountKnown = false;
         resyncDebounce.restart();
     }
 

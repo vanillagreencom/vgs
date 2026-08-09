@@ -159,6 +159,12 @@ const sessionMarked = serviceSource.match(/\/\/ BEGIN SESSION DECISION\n([\s\S]*
 assert.ok(sessionMarked, "RemoteDesktopService.qml must carry the SESSION DECISION markers");
 const { sessionApplyDecision } = new Function(`${sessionMarked[1]}\nreturn { sessionApplyDecision };`)();
 
+const eventMarked = serviceSource.match(/\/\/ BEGIN EVENT DECISION\n([\s\S]*?)\/\/ END EVENT DECISION/);
+assert.ok(eventMarked, "RemoteDesktopService.qml must carry the EVENT DECISION markers");
+const { countInvalidatingEvent } = new Function(
+    `${eventMarked[1]}\nreturn { countInvalidatingEvent };`
+)();
+
 function host(overrides) {
     return Object.assign({
         streaming: false,
@@ -621,12 +627,49 @@ assert.ok(
     "a connect must mark the count unknown; it proves a session, not a number"
 );
 assert.ok(
+    (connectBody.match(/root\.sessionCountKnown = false/g) || []).length === 1,
+    "one write, reached by every invalidating event — a per-branch copy is how the disconnect side got missed"
+);
+assert.ok(
     !/root\.sessionCount = 0/.test(connectBody),
     "a connect must never leave the count at 0 while setting `streaming`"
 );
 assert.ok(
     connectBody.includes("root.streaming = true"),
     "and it must still set the indicator optimistically — that half is deliberate"
+);
+
+// Which events invalidate it, and — the VGS-87 Z1 asymmetry — that BOTH
+// directions of a client change do. A disconnect proves the displayed number
+// is no longer current just as surely as a connect does; leaving only the
+// connect side marked let the live session card render a superseded count as
+// authoritative for the length of the resync window.
+assert.equal(countInvalidatingEvent("connected"), true, "a client arrived: the number is stale");
+assert.equal(countInvalidatingEvent("disconnected"), true, "a client left: equally stale, and this was the gap");
+assert.equal(
+    countInvalidatingEvent("lifecycle"), true,
+    "the host starting or stopping ends every session it had, so a count from before it describes a host that is gone"
+);
+// Not everything, though: marking it unknown costs a visible "confirming…",
+// and an encoder or bitrate change within the current set of clients says
+// nothing about how many there are. A client change would carry its own
+// connect/disconnect event.
+assert.equal(
+    countInvalidatingEvent("session"), false,
+    "an encoder/bitrate change must not blank a count it did not affect"
+);
+assert.equal(countInvalidatingEvent(""), false, "an empty token decides nothing");
+assert.equal(countInvalidatingEvent("nonsense"), false, "an unknown token decides nothing");
+
+// The handler has to actually consult it, and on every event rather than
+// inside the connect branch — which is where the asymmetry lived.
+assert.ok(
+    connectBody.includes("if (root.countInvalidatingEvent(event))"),
+    "the handler must gate the count on the shared decision, not on the connect branch"
+);
+assert.ok(
+    connectBody.indexOf("if (root.countInvalidatingEvent(event))") > connectBody.indexOf('if (event === "connected")'),
+    "and must reach it for every token, not only a connect"
 );
 
 const sessionUnknownBody2 = qmlFunctionBody("_markSessionUnknown");
