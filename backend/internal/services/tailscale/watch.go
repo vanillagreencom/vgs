@@ -34,11 +34,21 @@ import (
 // today.
 
 const (
-	// Frames arrive in bursts while a netmap settles. Coalesce them into one
-	// status read instead of shelling out to tailscale once per frame.
-	watchDebounce = 400 * time.Millisecond
+	// Frames arrive in bursts while a netmap settles. The first unserved frame
+	// opens a window; every frame landing inside it collapses into the same
+	// push, and the push happens when the window closes whether or not traffic
+	// has stopped.
+	//
+	// This is deliberately NOT a trailing-edge debounce. A debounce re-arms on
+	// each frame, so a stream arriving faster than the window postpones the push
+	// indefinitely — sustained bus traffic, which is exactly what a netmap burst
+	// is, would suppress every watcher-driven broadcast until it went quiet.
+	// Waiting for quiet buys nothing here anyway: pushStatus re-reads the
+	// current status, so a push mid-burst is as truthful as one after it.
+	watchCoalesceWindow = 400 * time.Millisecond
 	// Floor on time between status reads, so a pathological frame rate cannot
-	// turn into a `tailscale status` fork bomb.
+	// turn into a `tailscale status` fork bomb. It can only ever lengthen the
+	// wait, never shorten the coalescing window below its own value.
 	watchMinInterval = 2 * time.Second
 	// Restart backoff bounds for a watcher process that keeps exiting.
 	watchBackoffMin = 1 * time.Second
@@ -54,8 +64,20 @@ const (
 
 // startWatch launches the supervised ipn bus watcher.
 func (m *Manager) startWatch() {
+	if m.watchCtx == nil {
+		m.watchCtx, m.watchStop = context.WithCancel(context.Background())
+	}
 	go m.superviseWatch()
 }
+
+// watcherActive reports whether a watcher is expected to deliver pushes: true
+// from the moment a watcher process starts, false before that and false
+// permanently once supervision gives up. It rides along in every State so the
+// shell can pick its re-fetch cadence from what is actually running rather than
+// from the capability alone — a capability is advertised once at registration
+// and cannot be withdrawn, so on its own it would keep claiming a watcher that
+// had died.
+func (m *Manager) watcherActive() bool { return m.watchAlive.Load() }
 
 // superviseWatch keeps exactly one watcher process alive until Close.
 func (m *Manager) superviseWatch() {
@@ -77,9 +99,14 @@ func (m *Manager) superviseWatch() {
 			fastFailures++
 		}
 		if fastFailures >= watchMaxFastFailures {
+			// Stop claiming to be watching. The next status the shell reads
+			// carries watcherActive=false, and it drops back to the cadence it
+			// uses against a backend that never pushes at all.
+			m.watchAlive.Store(false)
 			m.log.Error("tailscale ipn bus watcher keeps failing immediately; giving up "+
 				"(status will only update on demand — does this tailscale build have `debug watch-ipn`?)",
 				"err", err, "attempts", fastFailures)
+			m.pulse()
 			return
 		}
 		m.log.Warn("tailscale ipn bus watcher exited; restarting", "err", err, "in", backoff)
@@ -110,9 +137,19 @@ func (m *Manager) runWatch(ctx context.Context) error {
 	if err := cmd.Start(); err != nil {
 		return err
 	}
+	m.watchAlive.Store(true)
 	readErr := m.readFrames(stdout, m.pulse)
-	// Draining is the reader's job and it has finished; closing the pipe here
-	// unblocks Wait if the process is still writing.
+	if readErr != nil {
+		// The reader gave up on output it could not parse, but the child is
+		// very likely still alive and simply idle — waiting for the next
+		// tailscaled event. Closing the read end does not disturb a process
+		// that is not writing, so Wait would block forever and supervision
+		// would never restart, never count a failure, and never reach its
+		// give-up limit. Terminate it explicitly.
+		if cmd.Process != nil {
+			_ = cmd.Process.Kill()
+		}
+	}
 	_ = stdout.Close()
 	waitErr := cmd.Wait()
 	if readErr != nil {
@@ -159,20 +196,34 @@ func skipEOF(err error) error {
 	return err
 }
 
-// pulse schedules a coalesced status read. Concurrent frames collapse into the
-// single pending timer.
+// watchDone reports whether the watcher has been shut down. Nil-safe: a Manager
+// built directly in a test has no watchCtx, and a nil context.Context interface
+// cannot have Err() called on it.
+func (m *Manager) watchDone() bool {
+	if m.watchCtx == nil {
+		return false
+	}
+	return m.watchCtx.Err() != nil
+}
+
+// pulse schedules a coalesced status read. Frames arriving while a push is
+// already pending collapse into it and — importantly — do NOT postpone it, so
+// the wait has a hard ceiling of the delay computed for the first frame.
 func (m *Manager) pulse() {
 	m.watchMu.Lock()
 	defer m.watchMu.Unlock()
-	if m.watchCtx.Err() != nil {
+	if m.watchDone() {
 		return
 	}
-	delay := watchDebounce
-	if since := time.Since(m.lastPush); since < watchMinInterval {
-		delay = watchMinInterval - since
-	}
 	if m.pushTimer != nil {
-		m.pushTimer.Stop()
+		// A push is already scheduled; this frame is covered by it.
+		return
+	}
+	// The larger of the two: the coalescing window is a minimum wait, and the
+	// min-interval remainder can only extend it.
+	delay := watchCoalesceWindow
+	if remainder := watchMinInterval - time.Since(m.lastPush); remainder > delay {
+		delay = remainder
 	}
 	m.pushTimer = time.AfterFunc(delay, m.pushStatus)
 }
@@ -181,9 +232,12 @@ func (m *Manager) pulse() {
 func (m *Manager) pushStatus() {
 	m.watchMu.Lock()
 	m.lastPush = time.Now()
+	// Released so the next frame can open a fresh window immediately; the read
+	// below happens outside the lock.
+	m.pushTimer = nil
 	m.watchMu.Unlock()
 
-	if m.watchCtx.Err() != nil {
+	if m.watchDone() {
 		return
 	}
 	state, err := m.status()
@@ -200,6 +254,7 @@ func (m *Manager) pushStatus() {
 
 // stopWatch cancels the watcher and any pending push.
 func (m *Manager) stopWatch() {
+	m.watchAlive.Store(false)
 	if m.watchStop != nil {
 		m.watchStop()
 	}

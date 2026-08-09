@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"vshell/backend/internal/server"
@@ -22,11 +23,12 @@ type Manager struct {
 	tailscale string
 
 	// ipn bus watcher (watch.go)
-	watchCtx  context.Context
-	watchStop context.CancelFunc
-	watchMu   sync.Mutex
-	pushTimer *time.Timer
-	lastPush  time.Time
+	watchCtx   context.Context
+	watchStop  context.CancelFunc
+	watchAlive atomic.Bool
+	watchMu    sync.Mutex
+	pushTimer  *time.Timer
+	lastPush   time.Time
 }
 
 type State struct {
@@ -38,7 +40,13 @@ type State struct {
 	ExitNodeAllowLanAccess bool     `json:"exitNodeAllowLanAccess"`
 	AcceptRoutes           bool     `json:"acceptRoutes"`
 	AuthURL                string   `json:"authUrl"`
-	Health                 []string `json:"health"`
+	// WatcherActive is this backend's own health, not tailscaled's: true while
+	// an ipn bus watcher is running and pushes can be expected. The shell reads
+	// it to choose how often to re-ask. Absent on a backend without the watcher,
+	// where it decodes as false — which is exactly right, since that backend
+	// never pushes either.
+	WatcherActive bool     `json:"watcherActive"`
+	Health        []string `json:"health"`
 	Self                   *Peer    `json:"self"`
 	Peers                  []Peer   `json:"peers"`
 }
@@ -234,6 +242,7 @@ func (m *Manager) status() (State, error) {
 	}
 	state := State{
 		Connected:      strings.EqualFold(raw.BackendState, "Running"),
+		WatcherActive:  m.watcherActive(),
 		Version:        raw.Version,
 		BackendState:   raw.BackendState,
 		MagicDNSSuffix: firstNonEmpty(raw.MagicDNSSuffix, raw.CurrentTailnet.MagicDNSSuffix),
