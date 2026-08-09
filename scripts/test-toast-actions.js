@@ -406,17 +406,60 @@ const notificationSource = fs.readFileSync(
 // go on passing -- an instrument quietly measuring the wrong thing, which is
 // the pattern this whole file exists to catch.
 
-// Every ToastService.show* call in `src`, each bounded by the next one.
+// Every ToastService.show* call in `src`, each bounded by its own closing
+// parenthesis.
+//
+// Bounding a call by the START OF THE NEXT ONE is not the same thing and is
+// wrong: the last call in the file then runs to EOF and swallows unrelated
+// code, which is how the first version of this still matched after the
+// announcement's category was renamed -- a `dismissCategory` for the old
+// category further down the file kept it matching. Depth counting, skipping
+// string contents so a parenthesis inside a translated message cannot close the
+// call early.
 function toastCalls(src) {
     const re = /ToastService\.show(Info|Warning|Error)\(/g;
-    const starts = [];
+    const calls = [];
     let match;
-    while ((match = re.exec(src)) !== null)
-        starts.push({ index: match.index, level: match[1] });
-    return starts.map((call, i) => ({
-        level: call.level,
-        text: src.slice(call.index, i + 1 < starts.length ? starts[i + 1].index : src.length)
-    }));
+    while ((match = re.exec(src)) !== null) {
+        const open = match.index + match[0].length - 1;
+        let depth = 0;
+        let inString = false;
+        let end = -1;
+        for (let i = open; i < src.length; i++) {
+            const ch = src[i];
+            if (inString) {
+                if (ch === "\\")
+                    i += 1;
+                else if (ch === '"')
+                    inString = false;
+                continue;
+            }
+            if (ch === '"')
+                inString = true;
+            else if (ch === "(")
+                depth += 1;
+            else if (ch === ")") {
+                depth -= 1;
+                if (depth === 0) {
+                    end = i + 1;
+                    break;
+                }
+            }
+        }
+        assert.ok(end > open, `unbalanced ToastService.show${match[1]}( call in the source`);
+        calls.push({ level: match[1], text: src.slice(match.index, end) });
+    }
+    return calls;
+}
+
+// Prove the bounding: no call may contain the start of another, which is what
+// an over-long slice would look like.
+for (const call of toastCalls(notificationSource)) {
+    assert.equal(
+        (call.text.match(/ToastService\.show(Info|Warning|Error)\(/g) || []).length,
+        1,
+        "each located call must stop at its own closing parenthesis, or it sweeps in unrelated code"
+    );
 }
 
 // The quotes are part of the needle: "notification-server-takeover-failed" is a
