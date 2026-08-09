@@ -13696,36 +13696,54 @@ def _rd_paired_clients() -> Dict[str, Any]:
     config_home = os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config")
     path = Path(config_home) / "sunshine" / "sunshine_state.json"
     try:
-        raw = path.read_text(errors="replace")
+        raw_bytes = path.read_bytes()
     except FileNotFoundError:
-        return {"names": [], "known": True, "error": ""}
+        return {"names": [], "known": True, "error": "", "undecodable": 0}
     except OSError as exc:
-        return {"names": [], "known": False, "error": f"the Sunshine state file could not be read: {exc}"}
+        return {"names": [], "known": False, "error": f"the Sunshine state file could not be read: {exc}", "undecodable": 0}
+
+    # Decoding with `errors="replace"` and moving on turned bad bytes into
+    # U+FFFD INSIDE device names, so a client appeared under a mangled name that
+    # is indistinguishable from the device genuinely being called that. Decode
+    # leniently so the rest of the file still parses, but remember that
+    # substitution happened, and below drop any name it touched rather than
+    # presenting a corrupted string as the device's name.
+    raw = raw_bytes.decode("utf-8", errors="replace")
+    lossy = raw_bytes.decode("utf-8", errors="ignore") != raw
     try:
         data = json.loads(raw)
     except ValueError as exc:
-        return {"names": [], "known": False, "error": f"the Sunshine state file is not valid JSON: {exc}"}
+        return {"names": [], "known": False, "error": f"the Sunshine state file is not valid JSON: {exc}", "undecodable": 0}
 
     if not isinstance(data, dict):
-        return {"names": [], "known": False, "error": "the Sunshine state file is not an object"}
+        return {"names": [], "known": False, "error": "the Sunshine state file is not an object", "undecodable": 0}
     root = data.get("root")
     if root is None:
         # A state file with no paired devices yet legitimately has no `root`.
-        return {"names": [], "known": True, "error": ""}
+        return {"names": [], "known": True, "error": "", "undecodable": 0}
     if not isinstance(root, dict):
-        return {"names": [], "known": False, "error": "the Sunshine state file's `root` is not an object"}
+        return {"names": [], "known": False, "error": "the Sunshine state file's `root` is not an object", "undecodable": 0}
     devices = root.get("named_devices")
     if devices is None:
-        return {"names": [], "known": True, "error": ""}
+        return {"names": [], "known": True, "error": "", "undecodable": 0}
     if not isinstance(devices, list):
-        return {"names": [], "known": False, "error": "the Sunshine state file's device list is not a list"}
+        return {"names": [], "known": False, "error": "the Sunshine state file's device list is not a list", "undecodable": 0}
 
     names: List[str] = []
+    undecodable = 0
     for device in devices:
         name = device.get("name") if isinstance(device, dict) else None
-        if isinstance(name, str) and name.strip():
-            names.append(name.strip())
-    return {"names": names, "known": True, "error": ""}
+        if not isinstance(name, str) or not name.strip():
+            continue
+        # Only names the substitution actually touched are dropped, and only
+        # when the file really did contain invalid bytes -- a device legitimately
+        # named with U+FFFD is absurd, but the `lossy` gate means a clean file
+        # is never second-guessed.
+        if lossy and "\ufffd" in name:
+            undecodable += 1
+            continue
+        names.append(name.strip())
+    return {"names": names, "known": True, "error": "", "undecodable": undecodable}
 
 
 # --- Who created HEADLESS-1 --------------------------------------------------
@@ -13925,6 +13943,10 @@ def remote_desktop_status() -> Dict[str, Any]:
         # session state down with it.
         "pairedClientsKnown": paired["known"],
         "pairedClientsError": paired["error"],
+        # Names dropped because the file held bytes that are not valid UTF-8.
+        # Reported rather than silently substituted: a mangled name is
+        # indistinguishable from a real one.
+        "pairedClientsUndecodable": paired.get("undecodable", 0),
     }
 
 
@@ -14137,7 +14159,9 @@ def _print_remote_desktop_status(status: Dict[str, Any]) -> None:
         print(f"paired:  unknown ({status.get('pairedClientsError', '')})")
     else:
         paired = status["pairedClients"]
-        print(f"paired:  {', '.join(paired) if paired else 'none'}")
+        undecodable = status.get("pairedClientsUndecodable", 0)
+        suffix = f" (+{undecodable} name(s) not valid UTF-8)" if undecodable else ""
+        print(f"paired:  {(', '.join(paired) if paired else 'none')}{suffix}")
 
 
 def _rd_watch_token(line: str) -> str:

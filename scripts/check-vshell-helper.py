@@ -3199,7 +3199,7 @@ def test_remote_desktop_unit_query_failure_is_not_a_missing_unit():
     # The status payload routes it to unknown, never to unavailable.
     originals = {n: getattr(helper, n) for n in ("_rd_unit_state", "detect_compositor", "_rd_paired_clients", "_rd_web_host")}
     helper.detect_compositor = lambda: {"compositor": "niri", "source": "test"}
-    helper._rd_paired_clients = lambda: {"names": [], "known": True, "error": ""}
+    helper._rd_paired_clients = lambda: {"names": [], "known": True, "error": "", "undecodable": 0}
     helper._rd_web_host = lambda: "localhost"
     try:
         helper._rd_unit_state = lambda: {"known": False, "error": "bus is gone", "exists": False, "running": False}
@@ -3346,7 +3346,7 @@ def test_remote_desktop_malformed_state_degrades_rather_than_raising():
     helper._rd_unit_state = lambda: {"known": True, "error": "", "exists": True, "running": False}
     helper._rd_manages_output = lambda: {"manages": False, "compositor": "niri", "blocked": False, "reason": ""}
     helper._rd_web_host = lambda: "localhost"
-    helper._rd_paired_clients = lambda: {"names": [], "known": False, "error": "the Sunshine state file is not an object"}
+    helper._rd_paired_clients = lambda: {"names": [], "known": False, "error": "the Sunshine state file is not an object", "undecodable": 0}
     try:
         status = helper.remote_desktop_status()
     finally:
@@ -3422,6 +3422,71 @@ def test_remote_desktop_unknown_compositor_is_probed_not_assumed():
     assert_equal(calls, [], "and must create nothing and start nothing")
     if not any("capture a real monitor" in failure for failure in result["failures"]):
         raise AssertionError(f"the refusal must name the risk: {result['failures']!r}")
+
+
+def test_remote_desktop_undecodable_device_names_are_reported_not_mangled():
+    # VGS-87 item 5. Decoding with errors="replace" put U+FFFD INSIDE device
+    # names, so a client appeared under a mangled name indistinguishable from
+    # the device genuinely being called that. The substitution is now reported
+    # and the touched name is withheld rather than presented as fact.
+    def check(home: Path):
+        config = home / ".config" / "sunshine"
+        config.mkdir(parents=True)
+        state = config / "sunshine_state.json"
+        old_xdg = os.environ.pop("XDG_CONFIG_HOME", None)
+        try:
+            # A clean file is never second-guessed, including one whose names
+            # carry perfectly ordinary non-ASCII.
+            state.write_bytes(json.dumps({"root": {"named_devices": [
+                {"name": "mbp-1"}, {"name": "Bj\u00f6rn's iPad"},
+            ]}}).encode("utf-8"))
+            result = helper._rd_paired_clients()
+            assert_equal(result["names"], ["mbp-1", "Bj\u00f6rn's iPad"], "valid UTF-8 names pass through")
+            assert_equal(result["undecodable"], 0, "and nothing is reported as lost")
+            assert_equal(result["known"], True, "a clean file is an answer")
+
+            # A name carrying a lone 0x80 continuation byte. The JSON structure
+            # is still readable, so the OTHER device must survive -- one bad
+            # name is not a reason to lose the list.
+            payload = json.dumps({"root": {"named_devices": [
+                {"name": "good-client"}, {"name": "BADNAME"},
+            ]}}).encode("utf-8").replace(b"BADNAME", b"bad-\x80-client")
+            state.write_bytes(payload)
+            result = helper._rd_paired_clients()
+            assert_equal(result["known"], True, "the list itself is still readable")
+            assert_equal(result["names"], ["good-client"], "a name with invalid bytes is withheld, not mangled")
+            assert_equal(result["undecodable"], 1, "and the loss is counted rather than hidden")
+            for name in result["names"]:
+                if "\ufffd" in name:
+                    raise AssertionError(f"a substituted name reached the payload: {name!r}")
+
+            # Invalid bytes OUTSIDE any name must not withhold anything.
+            payload = json.dumps({"root": {"named_devices": [{"name": "mbp-1"}], "junk": "PAD"}}).encode("utf-8")
+            payload = payload.replace(b'"PAD"', b'"\x80pad"')
+            state.write_bytes(payload)
+            result = helper._rd_paired_clients()
+            assert_equal(result["names"], ["mbp-1"], "a clean name survives dirt elsewhere in the file")
+            assert_equal(result["undecodable"], 0, "and nothing is claimed lost that was not")
+        finally:
+            if old_xdg is not None:
+                os.environ["XDG_CONFIG_HOME"] = old_xdg
+
+    with_temp_home(check)
+
+    # The count reaches the status payload, which is what the widget renders.
+    originals = {n: getattr(helper, n) for n in
+                 ("_rd_unit_state", "_rd_manages_output", "_rd_paired_clients", "_rd_web_host")}
+    helper._rd_unit_state = lambda: {"known": True, "error": "", "exists": True, "running": False}
+    helper._rd_manages_output = lambda: {"manages": False, "compositor": "niri", "blocked": False, "reason": ""}
+    helper._rd_web_host = lambda: "localhost"
+    helper._rd_paired_clients = lambda: {"names": ["ok"], "known": True, "error": "", "undecodable": 2}
+    try:
+        status = helper.remote_desktop_status()
+    finally:
+        for name, value in originals.items():
+            setattr(helper, name, value)
+    assert_equal(status["pairedClientsUndecodable"], 2, "the withheld count must reach the widget")
+    assert_equal(status["pairedClients"], ["ok"], "alongside the names that were readable")
 
 
 def test_remote_desktop_watch_tokens_cover_every_event():
@@ -4316,6 +4381,7 @@ def main():
     test_remote_desktop_start_refuses_when_the_unit_query_fails()
     test_remote_desktop_malformed_state_degrades_rather_than_raising()
     test_remote_desktop_unknown_compositor_is_probed_not_assumed()
+    test_remote_desktop_undecodable_device_names_are_reported_not_mangled()
     # Fail here, with the reason, rather than in the Niri suite with none.
     if os.environ.get("HOME") != _HOME_AT_IMPORT:
         raise AssertionError(
