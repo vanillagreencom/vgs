@@ -6,6 +6,9 @@
   "tailscale": {
     "pillMode": "count"
   },
+  "remoteDesktop": {
+    "pillMode": "status"
+  },
   "sysUpdate": {
     "systemUpdateCommand": "{vshell} update run system",
     "aurUpdateCommand": "{vshell} update run aur",
