@@ -3445,6 +3445,201 @@ def test_remote_desktop_watch_tokens_cover_every_event():
     ]
     for line, expected in cases:
         assert_equal(helper._rd_watch_token(line), expected, f"watch token for {line!r}")
+def _pad(**overrides):
+    base = {"id": "term", "name": "Terminal", "command": "ghostty",
+            "classRegex": r"^(com\.ghostty\.scratchpad)$"}
+    base.update(overrides)
+    return helper.normalize_scratchpad(base)
+
+
+def _monitor(name="DP-1", width=1920, height=1080, scale=1.0, x=0, y=0, **extra):
+    mon = {"name": name, "width": width, "height": height, "scale": scale, "x": x, "y": y}
+    mon.update(extra)
+    return mon
+
+
+def test_scratchpad_size_is_a_percentage_of_the_monitor():
+    """The reason a pad stores a percentage instead of pixels: one record has to
+    be right on every display it can land on. Pixels are correct on exactly one."""
+    pad = _pad(widthPercent=60, heightPercent=70, anchor="top-center", offsetY=36)
+
+    on_1080p = helper.resolve_scratchpad_geometry(pad, _monitor(height=1080))
+    assert_equal((on_1080p["width"], on_1080p["height"]), (1152, 756), "60%x70% of 1920x1080")
+
+    on_4k = helper.resolve_scratchpad_geometry(pad, _monitor(width=3840, height=2160))
+    assert_equal((on_4k["width"], on_4k["height"]), (2304, 1512), "60%x70% of 3840x2160")
+
+    # Scale is not cosmetic here. Window rules and dispatches both speak logical
+    # coordinates, so a 4K panel at scale 2 must size like a 1080p one — sizing
+    # against the mode would produce a pad twice the intended size.
+    hidpi = helper.resolve_scratchpad_geometry(pad, _monitor(width=3840, height=2160, scale=2.0))
+    assert_equal((hidpi["width"], hidpi["height"]), (1152, 756),
+                 "a 4K monitor at scale 2 is logically 1080p")
+
+    # An odd transform rotates the logical box; a portrait monitor is taller
+    # than it is wide and the percentages have to follow.
+    portrait = helper.resolve_scratchpad_geometry(pad, _monitor(width=2560, height=1440, transform=1))
+    assert_equal((portrait["monitorWidth"], portrait["monitorHeight"]), (1440, 2560),
+                 "transform 1 swaps the logical axes")
+
+    # Pixels remain available for apps with a hard minimum size.
+    exact = helper.resolve_scratchpad_geometry(
+        _pad(sizeMode="pixels", widthPixels=900, heightPixels=600), _monitor())
+    assert_equal((exact["width"], exact["height"]), (900, 600), "pixel override is honoured verbatim")
+
+
+def test_scratchpad_anchor_resolves_to_coordinates():
+    """A named anchor plus an offset is what users mean ("top-centre, 36px down
+    to clear the bar"); raw coordinates are what they are forced to compute."""
+    mon = _monitor(width=1000, height=800)
+    size = {"sizeMode": "pixels", "widthPixels": 400, "heightPixels": 200}
+
+    cases = {
+        "top-left": (0, 0),
+        "top-center": (300, 0),
+        "top-right": (600, 0),
+        "center": (300, 300),
+        "bottom-right": (600, 600),
+        "center-left": (0, 300),
+    }
+    for anchor, expected in cases.items():
+        geometry = helper.resolve_scratchpad_geometry(_pad(anchor=anchor, **size), mon)
+        assert_equal((geometry["x"], geometry["y"]), expected, f"anchor {anchor}")
+
+    offset = helper.resolve_scratchpad_geometry(
+        _pad(anchor="top-center", offsetY=36, **size), mon)
+    assert_equal((offset["x"], offset["y"]), (300, 36), "top-centre, 36px down")
+
+    # A right/bottom anchor measures its offset inward from that edge, so the
+    # same positive number moves the pad the direction the user expects.
+    inward = helper.resolve_scratchpad_geometry(
+        _pad(anchor="bottom-right", offsetX=20, offsetY=10, **size), mon)
+    assert_equal((inward["x"], inward["y"]), (580, 590), "offsets measure inward from the anchor")
+
+    # An offset that would push the pad off the monitor is clamped: a scratchpad
+    # you cannot see is indistinguishable from a keybind that does nothing.
+    off_screen = helper.resolve_scratchpad_geometry(
+        _pad(anchor="top-left", offsetX=5000, offsetY=5000, **size), mon)
+    assert_equal((off_screen["x"], off_screen["y"]), (600, 600), "clamped onto the monitor")
+
+    # Global coordinates carry the monitor origin, which is what movewindowpixel
+    # takes; monitor-local ones are what a window rule `move` takes.
+    second = helper.resolve_scratchpad_geometry(
+        _pad(anchor="top-left", **size), _monitor(x=1920, y=-200, width=1000, height=800))
+    assert_equal((second["x"], second["y"]), (0, 0), "local coordinates stay monitor-relative")
+    assert_equal((second["globalX"], second["globalY"]), (1920, -200), "global coordinates carry the origin")
+
+
+def test_scratchpad_records_that_cannot_work_are_rejected():
+    """A partial rule is worse than none: a pad with no class regex would match
+    nothing at all, or with a bad one, capture windows it should never touch."""
+    assert_equal(helper.normalize_scratchpad({"id": "term", "command": "x"}), None,
+                 "a pad with no class regex is rejected")
+    assert_equal(helper.normalize_scratchpad({"id": "term", "classRegex": "^x$"}), None,
+                 "a pad with no command is rejected")
+    assert_equal(helper.normalize_scratchpad(
+        {"id": "term", "command": "x", "classRegex": "^(unclosed"}), None,
+        "a pad whose class regex does not compile is rejected")
+    # The id becomes a special-workspace name and reaches `hyprctl dispatch`;
+    # restrict it rather than trying to escape it.
+    for bad in ("", "Has Space", "../escape", "a/b", "a" * 40, "-lead"):
+        assert_equal(helper.normalize_scratchpad(
+            {"id": bad, "command": "x", "classRegex": "^x$"}), None,
+            f"id {bad!r} is rejected")
+    assert helper.normalize_scratchpad({"id": "term-2_a", "command": "x", "classRegex": "^x$"})
+
+    # Case is normalized rather than rejected — Hyprland special-workspace names
+    # are matched literally, so accepting "Term" and "term" as two distinct pads
+    # would produce two rule sets that fight over one workspace.
+    assert_equal(helper.normalize_scratchpad(
+        {"id": "Term", "command": "x", "classRegex": "^x$"})["id"], "term",
+        "an id is lowercased, not rejected")
+
+    # Unknown enum values fall back rather than reaching the generator, where
+    # they would render an anchor or animation Hyprland does not know.
+    pad = _pad(anchor="nowhere", animation="explode", presentation="hologram", sizeMode="cubits")
+    assert_equal(pad["anchor"], "top-center", "unknown anchor falls back")
+    assert_equal(pad["animation"], "slide-top", "unknown animation falls back")
+    assert_equal(pad["presentation"], "float", "unknown presentation falls back")
+    assert_equal(pad["sizeMode"], "percent", "unknown size mode falls back")
+
+
+def test_scratchpad_lua_generation():
+    pads = [
+        _pad(keybind="SUPER, T", monitor="DP-1", anchor="top-center", offsetY=36,
+             widthPercent=60, heightPercent=70, preload=True),
+        _pad(id="vm", name="Work VM", classRegex="^(vm-viewer)$", command="virt-viewer",
+             presentation="fullscreen", keybind="SUPER, 8"),
+        _pad(id="off", classRegex="^(off)$", command="off", enabled=False),
+    ]
+    monitors = [_monitor("DP-1", focused=True), _monitor("eDP-1", x=1920)]
+    text, meta = helper.render_scratchpads_lua(pads, monitors, True)
+
+    assert_equal(meta["count"], 2, "a disabled pad generates no rules")
+    assert_equal(meta["defined"], 3, "but is still counted as defined")
+    assert_equal(meta["preload"], ["term"], "only pads that ask for it preload")
+    assert '"special:term"' in text, "workspace rule names the special workspace"
+    assert '"special:term silent"' in text, "window rule assigns it silently"
+    assert '"1152 756"' in text, "size is resolved from the percentage, not left as one"
+    assert '"384 36"' in text, "move is resolved from the anchor"
+    assert "no_initial_focus = true" in text
+    assert '"^(off)$"' not in text, "a disabled pad must not appear at all"
+
+    # on_created_empty is what makes a cold press show an empty workspace before
+    # the app has spawned; the toggle launches and waits instead.
+    assert "on_created_empty" not in text, "generation must not use on_created_empty"
+
+    # The specialWorkspace animation leaf is global. Writing it per pad would let
+    # the last pad silently win and overwrite the user's own global animation.
+    assert "hl.animation" not in text, "per-pad animation must be a window rule, not the global leaf"
+    assert 'animation = "slide top"' in text
+
+    # An app that requests activation after mapping would otherwise reveal its
+    # own hidden workspace.
+    assert "suppress_event" in text
+
+    empty_text, empty_meta = helper.render_scratchpads_lua([], monitors, True)
+    assert_equal(empty_meta["count"], 0, "no pads generates no rules")
+    assert "hl.window_rule" not in empty_text, "an empty list writes an inert file, not junk"
+
+    # Generated without a compositor, the geometry came from a guessed display.
+    # That has to be visible in the file, not only in the return payload.
+    unresolved, unresolved_meta = helper.render_scratchpads_lua(pads, monitors, False)
+    assert_equal(unresolved_meta["monitorsResolved"], False, "the payload records it")
+    assert "WARNING" in unresolved, "and so does the file itself"
+
+
+def test_scratchpad_generated_lua_parses():
+    """The generator emits Lua that Hyprland will `require`. A syntax error here
+    is a config that fails to load at compositor start, so parse what we wrote."""
+    luac = shutil.which("luac")
+    if not luac:
+        print("  (skipped: luac not installed; generated Lua was not parse-checked)")
+        return
+
+    def parses(source: str) -> bool:
+        with tempfile.NamedTemporaryFile("w", suffix=".lua", delete=False) as handle:
+            handle.write(source)
+            path = handle.name
+        try:
+            return subprocess.run([luac, "-p", path], capture_output=True).returncode == 0
+        finally:
+            os.unlink(path)
+
+    # Prove the instrument can fail before trusting that it passes.
+    assert not parses("hl.window_rule({ this is not lua"), "luac -p must reject broken Lua"
+
+    pads = [
+        _pad(keybind="SUPER, T", monitor="DP-1", preload=True),
+        _pad(id="vm", classRegex="^(vm-viewer)$", command="virt-viewer", presentation="fullscreen"),
+        _pad(id="tiled", classRegex="^(tiled)$", command="tiled", presentation="tile"),
+        # Regexes and commands are full of backslashes and quotes; they are the
+        # most likely thing to break the generated file.
+        _pad(id="quoted", classRegex=r'^(a\.b"c)$', command='sh -c "echo hi"',
+             titleExclude=r"^(1Password)$", keybind="SUPER, Q"),
+    ]
+    text, _ = helper.render_scratchpads_lua(pads, [_monitor("DP-1", focused=True)], True)
+    assert parses(text), "generated scratchpad config must be valid Lua"
 
 
 def main():
@@ -3540,6 +3735,11 @@ def main():
             f"{_HOME_AT_IMPORT!r}, found {os.environ.get('HOME')!r}. "
             "check-vshell-niri.py reads HOME, so this would have failed there instead."
         )
+    test_scratchpad_size_is_a_percentage_of_the_monitor()
+    test_scratchpad_anchor_resolves_to_coordinates()
+    test_scratchpad_records_that_cannot_work_are_rejected()
+    test_scratchpad_lua_generation()
+    test_scratchpad_generated_lua_parses()
     subprocess.run(
         [sys.executable, str(REPO_ROOT / "scripts" / "check-vshell-niri.py")],
         check=True,

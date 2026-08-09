@@ -349,7 +349,7 @@ case "${1:-run}" in
   status)
     exec systemctl --user status vshell.service --no-pager
     ;;
-  theme|fonts|deps|notifications|remote-desktop|update|ai-usage|ai|capture|screenshot|screenrecording|recording|ocr|cl|clipboard|dl|download|trash|color|keybinds|config|compositor|battery|blur|brightness|auth|greeter|sudo-toggle|launcher-search|terminal|instances)
+  theme|fonts|deps|notifications|remote-desktop|update|ai-usage|ai|capture|screenshot|screenrecording|recording|ocr|cl|clipboard|dl|download|trash|color|keybinds|config|scratchpad|compositor|battery|blur|brightness|auth|greeter|sudo-toggle|launcher-search|terminal|instances)
     exec "$helper" "$@"
     ;;
   screensaver)
@@ -447,6 +447,10 @@ Usage:
   vshell keybinds show hyprland|niri
   vshell config resolve-include <compositor> <file>
   vshell config apply-layout hyprland|niri [--json]
+  vshell scratchpad apply [--no-reload] [--dry-run PATH] [--json]
+  vshell scratchpad status
+  vshell scratchpad resolve <id> [monitor]
+  vshell scratchpad toggle|show|preload <id>
   vshell auth sync [--terminal]
   vshell greeter sync|run|launch-session
   vshell greeter keyring empty [--force]
