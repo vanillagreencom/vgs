@@ -348,6 +348,18 @@ Two smaller rules, both of the same family:
   it on a host that started will retry and stop it. `onExited` records the code
   and reports nothing; a 500 ms grace timer then decides, and a zero exit
   returns without reporting anything at all.
+- **The verdict belongs to the action that launched it.** That grace window put
+  500 ms between a command finishing and its outcome being decided, and
+  `_lifecycleExitCode` is shared — so a second action started inside it reset
+  the shared state while the first action's tick was still armed, and that tick
+  would report, under the *second* action's name, a failure belonging to
+  neither. Two mechanisms, closing different holes: `busy` is now held until the
+  verdict resolves, so the toggle never offers the window to the user; and each
+  action takes a `_lifecycleGeneration` the timer records, so a caller that is
+  not the toggle — IPC, another service, since `_runLifecycle` gates on
+  `lifecycleProc.running` rather than on `busy` — cannot reach it either. A
+  superseded verdict is dropped and leaves `busy` to the action that now owns
+  it.
 - **Every lifecycle failure reaches the user.** `start`/`stop`/`toggle` report
   through one surface, `_reportLifecycleFailure()`, keyed on `running` rather
   than `exited` for the same reason the busy flag is: a command that cannot be

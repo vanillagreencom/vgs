@@ -203,6 +203,13 @@ Singleton {
     // looks like. Recorded rather than acted on immediately; see
     // lifecycleUnansweredTimer.
     property int _lifecycleExitCode: -1
+    // Which action the pending verdict belongs to. `_lifecycleExitCode` and
+    // `_lifecycleReported` are shared, so without this a verdict armed by
+    // action A could fire after action B reset them and report B's name over
+    // A's outcome — the deferred verdict that stopped successes being reported
+    // as failures would instead have attributed one action's failure to
+    // another. Same tag-the-work shape as `_statusProbeGeneration` above.
+    property int _lifecycleGeneration: 0
 
     function _runLifecycle(action) {
         if (lifecycleProc.running)
@@ -210,6 +217,7 @@ Singleton {
         root._pendingAction = action;
         root._lifecycleReported = false;
         root._lifecycleExitCode = -1;
+        root._lifecycleGeneration++;
         root.busy = true;
         lifecycleProc.running = true;
     }
@@ -494,8 +502,13 @@ Singleton {
         onRunningChanged: {
             if (running)
                 return;
-            root.busy = false;
-            // Deliberately does NOT report here. `running` going false is not
+            // `busy` is deliberately NOT cleared here. It is what the toggle
+            // keys `enabled` on, and re-enabling the control while this
+            // action's outcome is still unknown is its own small lie — as well
+            // as being what let the user launch a second action inside the
+            // verdict window. It is cleared by the timer, with the verdict.
+            //
+            // Deliberately does NOT report here either. `running` going false is not
             // evidence the command failed: this repo's own precedent says the
             // process usually stops A MOMENT BEFORE its output is collected
             // (NotificationService.qml, both probes), so reporting on the spot
@@ -505,6 +518,7 @@ Singleton {
             //
             // So: give the collector the same grace period the ownership probe
             // gives its own, and decide once it has expired.
+            lifecycleUnansweredTimer.armedFor = root._lifecycleGeneration;
             lifecycleUnansweredTimer.restart();
             // Creating the output, starting the unit and Sunshine settling are
             // separate steps, so confirm rather than assume.
@@ -607,9 +621,20 @@ Singleton {
         id: lifecycleUnansweredTimer
         // Same 500ms as the status probe's grace, for the same reason: the
         // ordinary case is output collected a moment after the process stops.
+        property int armedFor: 0
         interval: 500
         repeat: false
         onTriggered: {
+            if (armedFor !== root._lifecycleGeneration) {
+                // Superseded: a newer action reset the shared exit code and
+                // owns `busy` now. Its own tick will report on it. Dropping
+                // this verdict is right — the action it belonged to was
+                // overtaken, and the settle refresh shows whatever state the
+                // pair of them actually left behind.
+                root.log.warn("remote-desktop verdict superseded by a newer action");
+                return;
+            }
+            root.busy = false;
             if (root._lifecycleReported)
                 return;
             if (root._lifecycleExitCode === 0) {

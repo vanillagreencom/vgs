@@ -813,6 +813,66 @@ assert.ok(
     "each action must start with no recorded exit code"
 );
 
+// --- AC1: one action's verdict must never be attributed to another ---------
+//
+// Deferring the verdict (Z3) put a 500ms window between a command finishing and
+// its outcome being decided. `_lifecycleExitCode` and `_lifecycleReported` are
+// shared, so a second action launched inside that window reset them while the
+// first action's tick was still armed — and that tick would then report, under
+// the SECOND action's name, a failure belonging to neither.
+//
+// Two mechanisms, and both are asserted because they close different holes:
+// holding `busy` stops the toggle offering the window to the user at all, and
+// tagging stops a programmatic caller (IPC, another service) from hitting it
+// anyway — `_runLifecycle` gates on `lifecycleProc.running`, not on `busy`, so
+// the UI gate alone is not a state guarantee.
+assert.ok(
+    runLifecycleBody.includes("root._lifecycleGeneration++"),
+    "each action must take its own generation"
+);
+assert.ok(
+    /lifecycleUnansweredTimer\.armedFor = root\._lifecycleGeneration/.test(serviceSource),
+    "the verdict timer must record which action armed it"
+);
+const supersededAt = graceBody.indexOf("armedFor !== root._lifecycleGeneration");
+assert.ok(supersededAt >= 0, "and must recognise a superseded verdict");
+assert.ok(
+    supersededAt < graceBody.indexOf("root._lifecycleExitCode"),
+    "the supersession check must come before anything reads the shared exit code"
+);
+assert.ok(
+    /armedFor !== root\._lifecycleGeneration\)\s*\{[\s\S]{0,600}?return;/.test(graceBody),
+    "a superseded verdict must return without reporting"
+);
+// It must also not clear `busy`: the newer action owns it now, and clearing
+// here would re-enable the toggle mid-flight.
+// Bounded by the block's OWN terminator, not by the string being searched for:
+// slicing to `indexOf("root.busy = false")` made this vacuous under the exact
+// mutation it exists to catch, because inserting that line moved the boundary
+// in front of itself.
+const supersededEnd = graceBody.indexOf("return;", supersededAt);
+assert.ok(supersededEnd > supersededAt, "the superseded branch must return");
+const supersededBlock = graceBody.slice(supersededAt, supersededEnd);
+assert.ok(
+    !/root\.busy/.test(supersededBlock),
+    "a superseded verdict must leave `busy` to the action that now owns it"
+);
+
+// `busy` is cleared with the verdict, not when the process ends — the toggle
+// claiming ready while the outcome is unknown is what offered the window.
+assert.ok(
+    !/root\.busy = false/.test(lifecycleRunningSlice),
+    "the running=false handler must not re-enable the control before the verdict"
+);
+assert.ok(
+    graceBody.includes("root.busy = false"),
+    "the verdict timer is what clears busy"
+);
+assert.ok(
+    graceBody.indexOf("root.busy = false") < graceBody.indexOf("root._lifecycleReported)"),
+    "and it clears busy whether or not there was anything to report"
+);
+
 // --- Z4: a correction must not be eaten by the error throttle ---------------
 const toastSource = fs.readFileSync(
     path.join(repoRoot, "quickshell", "vshell", "Services", "ToastService.qml"), "utf8"
