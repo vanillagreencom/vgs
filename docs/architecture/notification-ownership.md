@@ -183,7 +183,19 @@ silently is the worse default: it hands a new user a shell that looks broken
 plus a chore, when the packaging layer already declares two daemons on one
 session unsupported.
 
-Five properties of the one-shot, each load-bearing:
+The announcement is **guaranteed delivery**, not best-effort. `ToastService`'s
+queue cap silently drops a non-error toast once three are waiting, which is fine
+for a message the user can reconstruct from what they just did — and not fine
+for this one, which is the only place an unrequested change to which daemon owns
+the bus name is explained, and the only in-UI pointer at the undo. The category
+is listed in `undroppableCategories` (exempt from the cap; bounded, because
+`showToast()` already replaces any queued entry sharing a category) and in
+`stickyCategories` (no 10s auto-dismiss, since it may arrive while the user is
+away from the machine). Reaching the queue and staying on screen are one
+guarantee: `scripts/test-toast-actions.js` requires every undroppable category
+to be sticky too.
+
+Six properties of the one-shot, each load-bearing:
 
 - **It fires only from a config that actually loaded.** A `settings.json` that
   failed to parse — or has not been read yet — leaves every property at its
@@ -195,6 +207,18 @@ Five properties of the one-shot, each load-bearing:
   requires `SettingsData._hasLoaded && !SettingsData._parseError` before
   anything else. "The properties look like defaults" is not evidence of a first
   run; "the config loaded and said so" is.
+- **It fires only once the spend is on disk, read back by another process.**
+  `SettingsData.set()` updates the in-memory property and asks `FileView` to
+  save; it does not confirm the save landed, and `FileView.onSaveFailed` only
+  marks the store read-only. On an unwritable `settings.json` — read-only home,
+  full disk — the shell would believe the one-shot spent while the *next*
+  process reads it unspent, so the "one-shot" would mask and stop the user's
+  daemon again on **every start**. So nothing is masked or stopped until
+  `status --json`'s `vgsFirstRunTakeoverDone`, read from the file by the helper,
+  comes back true. The confirmation is polled by the 1.2s settle probe under a
+  15s deadline; past it, or with the store already read-only, VGS declines the
+  takeover entirely and says why. Failing closed is the only safe direction: a
+  takeover VGS cannot record is one it could never honour the opt-out for.
 - **It is keyed on its own state, never on "is there a conflict right now".**
   Keying it on the conflict would re-fire on every update for anyone whose
   preferred daemon is a different one.
@@ -293,6 +317,19 @@ owed, guessing "ours" undoes a takeover the user made deliberately. The success
 toast is likewise re-gated on `serverEnabled`, since the non-conflict branch is
 also reached with the server off — announcing a takeover to someone who just
 opted out of it would describe a change already on its way to being undone.
+
+That wait is **bounded**. Once the server is off the 30s recheck stops, so the
+1.2s settle probe is the only poll left — and a probe that cannot be spawned
+produces no next answer at all, leaving the reversal owed forever.
+`reverseDeadlineTimer` gives it 15s and then **acts**, restoring without having
+established provenance. Acting rather than giving up, because: the invariant is
+"after an opt-out, some daemon is running", and waiting forever breaks it
+precisely when it was owed; `restore` is a no-op on an empty record, so it costs
+nothing in the common case where VGS never took anything; and the one residual
+risk — undoing a takeover the user ran themselves — is not contrary to what they
+just asked for, since turning VGS's server off *is* asking for another daemon to
+handle notifications, which is what `restore` makes possible. Whatever it does
+is reported through the restore-result path below.
 
 #### A restore that half worked is reported
 

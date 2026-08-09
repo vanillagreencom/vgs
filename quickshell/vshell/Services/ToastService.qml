@@ -25,7 +25,21 @@ Singleton {
     property var lastErrorTime: ({})
     property int errorThrottleMs: 1000
     property string currentCategory: ""
-    readonly property var stickyCategories: ["greeter-autologin-sync", "notification-server-conflict"]
+    readonly property var stickyCategories: ["greeter-autologin-sync", "notification-server-conflict", "notification-server-takeover"]
+
+    // Categories whose message explains a change VGS made to the user's system
+    // WITHOUT being asked. The queue cap may drop an ordinary toast on the
+    // floor -- three at once and the fourth simply returns -- which is fine for
+    // a message the user can reconstruct from what they just did. It is not
+    // fine here: the first-run takeover changes which daemon owns
+    // org.freedesktop.Notifications, and this toast is the only place that is
+    // explained and the only in-UI pointer at the undo. Dropped, the user sees
+    // their notifications change appearance for no stated reason.
+    //
+    // Bounded, not unbounded: showToast() already replaces any queued entry
+    // sharing a category before it enqueues, so each category here can hold at
+    // most one slot over the cap.
+    readonly property var undroppableCategories: ["notification-server-takeover"]
 
     // --- toast action (VGS-65) --------------------------------------------
     //
@@ -45,6 +59,10 @@ Singleton {
 
     function isStickyCategory(category) {
         return category && stickyCategories.indexOf(category) >= 0
+    }
+
+    function isUndroppableCategory(category) {
+        return !!category && undroppableCategories.indexOf(category) >= 0
     }
 
     // A toast with an action has to stay up long enough to read it and reach
@@ -119,7 +137,7 @@ Singleton {
             return
         }
 
-        if (toastQueue.length >= maxQueueSize) {
+        if (toastQueue.length >= maxQueueSize && !isUndroppableCategory(category)) {
             if (level === levelError) {
                 toastQueue = toastQueue.filter(t => t.level !== levelError).slice(0, maxQueueSize - 1)
             } else {

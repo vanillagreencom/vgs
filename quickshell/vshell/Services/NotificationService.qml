@@ -712,11 +712,23 @@ Singleton {
     // updates it without VGS having to be told.
     property bool serverRestoreAvailable: false
     property bool serverRestoreAutomatic: false
+    // Whether settings.json ON DISK records the one-shot as spent, as read by
+    // the helper -- a separate process, which is the only reader whose answer
+    // proves the write survived. The in-memory
+    // SettingsData.notificationFirstRunTakeoverDone says only that the save was
+    // attempted.
+    property bool serverPersistedOneShotDone: false
+    // The one-shot has been written and is waiting to be seen from disk. No
+    // daemon is masked or stopped while this is true.
+    property bool _firstRunSpendPending: false
+    property double _firstRunSpendDeadline: 0
+    property bool _unrecordableFirstRunAnnounced: false
     // A reversal that is waiting for the takeover helper to exit first.
     property bool _restorePending: false
     // An opt-out that arrived before provenance was known. Resolved by the
-    // next usable ownership answer rather than guessed at.
+    // next usable ownership answer, or by its deadline -- never left open.
     property bool _reverseAfterProbe: false
+    property double _reverseAfterProbeDeadline: 0
 
     function checkServerOwnership() {
         if (!ownershipProcess.running)
@@ -763,8 +775,14 @@ Singleton {
     // restart between the takeover and the opt-out skipped the reversal
     // entirely and left the user's daemon masked and stopped -- the invariant
     // broken by nothing more than a restart.
-    function _reverseFirstRunTakeover() {
-        if (!root._firstRunTakeoverFired && !(root.serverRestoreAvailable && root.serverRestoreAutomatic))
+    //
+    // `unconditional` is the deadline path: no ownership answer ever arrived,
+    // so provenance cannot be established and the invariant is honoured rather
+    // than the scope boundary. See reverseDeadlineTimer for why that is the
+    // right way round.
+    function _reverseFirstRunTakeover(unconditional = false) {
+        if (!unconditional && !root._firstRunTakeoverFired
+                && !(root.serverRestoreAvailable && root.serverRestoreAutomatic))
             return;
         // A restore already in flight is this same reversal; re-entering would
         // run two helpers over one undo record.
@@ -848,6 +866,11 @@ Singleton {
     // update for anyone whose preferred daemon is another one, which is exactly
     // the opt-out this must not overturn. Returns true when it fired.
     function _maybeTakeOverOnFirstRun() {
+        // A spend is already out for confirmation. Nothing is masked or
+        // stopped until another process has read the one-shot back as spent.
+        if (root._firstRunSpendPending)
+            return root._resolveFirstRunSpend();
+
         // A settings.json that failed to parse -- or has not been read yet --
         // leaves every property standing at its default: notificationServerEnabled
         // true and the one-shot false, which is byte-for-byte what a fresh
@@ -871,12 +894,70 @@ Singleton {
         if (root.serverOwnership !== "vgs" && root.serverOwnership !== "foreign" && root.serverOwnership !== "unowned")
             return false;
 
+        // A config VGS already knows it cannot write is one it cannot record a
+        // takeover in, so there is nothing to think about: refuse before
+        // changing anything.
+        if (SettingsData._isReadOnly) {
+            root.log.warn("first run: settings.json is read-only, so the notification takeover is not offered automatically");
+            root._reportUnrecordableFirstRun();
+            return false;
+        }
+
         // Spent on the first usable answer, whatever it says -- including
         // "another daemon owns it and cannot be stopped from here". Leaving it
         // unspent in that case would arm a takeover that fires weeks later, on
         // whichever session the other daemon happens to become stoppable.
         SettingsData.set("notificationFirstRunTakeoverDone", true);
+        // A save that failed synchronously is already visible here.
+        if (SettingsData._isReadOnly) {
+            root.log.warn("first run: the one-shot could not be written to settings.json");
+            root._reportUnrecordableFirstRun();
+            return false;
+        }
 
+        if (root.serverOwnership !== "foreign" || !root.serverConflictFixable)
+            return false;
+
+        // NOTHING IS MASKED OR STOPPED YET. SettingsData.set() updates the
+        // property and asks FileView to save; it does not confirm the save
+        // landed, and FileView.onSaveFailed only marks the store read-only.
+        // On an unwritable settings.json the in-memory flag reads spent while
+        // the next process reads it unspent -- so the "one-shot" would mask
+        // and stop the user's daemon again on every single start. The takeover
+        // therefore waits until a SEPARATE process has read the flag back as
+        // true from disk (`status --json`'s vgsFirstRunTakeoverDone), which is
+        // precisely the claim that has to hold. Failing closed here is the
+        // same direction as the parse-error gate above: an unrecordable
+        // takeover is one VGS could never honour the opt-out for.
+        root._firstRunSpendPending = true;
+        root._firstRunSpendDeadline = Date.now() + 15000;
+        root.log.info("first run: confirming the one-shot persisted before taking org.freedesktop.Notifications");
+        ownershipSettleTimer.restart();
+        return true;
+    }
+
+    // Second half of the one-shot: act only on a spend another process can see.
+    function _resolveFirstRunSpend() {
+        // The user turned the server off while we were confirming; that is not
+        // a first run to act on any more.
+        if (!root.serverEnabled) {
+            root._firstRunSpendPending = false;
+            return false;
+        }
+        if (!root.serverPersistedOneShotDone) {
+            if (Date.now() < root._firstRunSpendDeadline) {
+                // Keep asking. The settle probe is the only poll left once the
+                // 30s recheck stops, so it drives this.
+                ownershipSettleTimer.restart();
+                return true;
+            }
+            root._firstRunSpendPending = false;
+            root.log.warn("first run: the one-shot never appeared in settings.json on disk; not taking the notification bus name");
+            root._reportUnrecordableFirstRun();
+            return false;
+        }
+
+        root._firstRunSpendPending = false;
         if (root.serverOwnership !== "foreign" || !root.serverConflictFixable)
             return false;
 
@@ -895,6 +976,30 @@ Singleton {
         root._firstRunTakeoverDeadline = Date.now() + 60000;
         firstRunTakeoverTimer.restart();
         return true;
+    }
+
+    // A first run VGS declined to act on because it could not record having
+    // acted. Silence would be defensible -- nothing was changed -- but the
+    // user installed a shell for its notification centre and it is inert, so
+    // the reason is worth one message. Reported once per session.
+    function _reportUnrecordableFirstRun() {
+        // Nothing to report when VGS is not losing the name anyway.
+        if (!root.serverConflict)
+            return;
+        if (root._unrecordableFirstRunAnnounced)
+            return;
+        root._unrecordableFirstRunAnnounced = true;
+        // This message says everything the generic conflict warning says and
+        // then why VGS did not fix it, so it stands in for it rather than
+        // arriving beside it.
+        root._serverConflictAnnounced = true;
+        ToastService.showWarning(I18n.tr("VGS is not handling notifications"),
+            I18n.tr("VGS would normally take over org.freedesktop.Notifications on its first run, but settings.json could not be written, so it could not record having done so -- and a takeover it cannot record is one it could not undo later. Nothing was changed. Fix the permissions on ~/.config/vshell/settings.json, or take it over yourself from Settings › Notifications."),
+            "", "notification-server-unrecordable",
+            ({
+                label: I18n.tr("Open settings"),
+                settingsTab: "notifications"
+            }));
     }
 
     function _applyServerOwnership(text) {
@@ -924,6 +1029,7 @@ Singleton {
         root.serverConflictReason = (status.takeover && status.takeover.reason) || "";
         root.serverRestoreAvailable = !!(status.restore && status.restore.available);
         root.serverRestoreAutomatic = !!(status.restore && status.restore.automatic);
+        root.serverPersistedOneShotDone = status.vgsFirstRunTakeoverDone === true;
 
         // An opt-out that arrived before provenance was known -- a restart's
         // first probe had not landed yet -- waited for this answer instead of
@@ -931,6 +1037,8 @@ Singleton {
         // "ours" would undo a takeover the user made deliberately.
         if (root._reverseAfterProbe) {
             root._reverseAfterProbe = false;
+            root._reverseAfterProbeDeadline = 0;
+            reverseDeadlineTimer.stop();
             if (!SettingsData.notificationServerEnabled)
                 root._reverseFirstRunTakeover();
         }
@@ -965,8 +1073,10 @@ Singleton {
                         }));
             }
         } else {
-            if (root._serverConflictAnnounced)
+            if (root._serverConflictAnnounced) {
                 ToastService.dismissCategory("notification-server-conflict");
+                ToastService.dismissCategory("notification-server-unrecordable");
+            }
             root._serverConflictAnnounced = false;
 
             // serverEnabled is re-checked because the else branch is also
@@ -1072,6 +1182,38 @@ Singleton {
     }
 
     Timer {
+        id: reverseDeadlineTimer
+        // The opt-out reversal waits for an ownership answer to tell it whether
+        // the takeover was VGS's own. Once the server is off the 30s recheck
+        // stops, so the 1.2s settle probe is the only poll left -- and if it
+        // cannot be spawned at all, there is no next answer and the wait is
+        // forever. 15s covers the settle probe with room for retries.
+        interval: 15000
+        repeat: false
+        onTriggered: {
+            if (!root._reverseAfterProbe)
+                return;
+            root._reverseAfterProbe = false;
+            root._reverseAfterProbeDeadline = 0;
+            if (SettingsData.notificationServerEnabled)
+                return;
+
+            // ACT rather than give up, for three reasons. The invariant is
+            // "after an opt-out, some notification daemon is running", and
+            // waiting forever breaks it exactly whenever it was owed. Restore
+            // is a no-op when the record is empty, so acting costs nothing in
+            // the common case where VGS never took anything. And the only
+            // residual risk -- undoing a takeover the user ran themselves -- is
+            // not contrary to what they just asked for: they have turned VGS's
+            // notification server off, so they want another daemon handling
+            // notifications, which is what restore makes possible. Whatever it
+            // does is reported through _applyRestoreResult().
+            root.log.warn("no ownership answer within the opt-out window; restoring the previous notification daemon anyway");
+            root._reverseFirstRunTakeover(true);
+        }
+    }
+
+    Timer {
         id: restoreUnansweredTimer
         interval: 500
         repeat: false
@@ -1160,11 +1302,17 @@ Singleton {
                 // anything -- in which case whatever was running still is.
                 if (!takeoverProcess.running)
                     root._endFirstRunTakeover();
+                // A confirmation still in flight is abandoned: nothing was
+                // masked or stopped, and the server is off now.
+                root._firstRunSpendPending = false;
                 // Provenance may not be known yet -- on a shell that has just
                 // restarted, the first ownership probe lands at 4s. Arm the
                 // deferred path first, and clear it inside the reversal if it
-                // turns out we already knew enough to act now.
+                // turns out we already knew enough to act now. The deadline is
+                // what keeps "wait for the probe" from becoming "wait forever".
                 root._reverseAfterProbe = true;
+                root._reverseAfterProbeDeadline = Date.now() + 15000;
+                reverseDeadlineTimer.restart();
                 root._reverseFirstRunTakeover();
             } else {
                 // Re-enabling cancels a reversal that was still waiting on the
@@ -1172,6 +1320,8 @@ Singleton {
                 // would have undone is the state the user just asked for again.
                 root._restorePending = false;
                 root._reverseAfterProbe = false;
+                root._reverseAfterProbeDeadline = 0;
+                reverseDeadlineTimer.stop();
             }
             ownershipSettleTimer.restart();
         }

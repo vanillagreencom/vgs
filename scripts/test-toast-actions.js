@@ -4,7 +4,7 @@
 
 // VGS-65: toast actions.
 //
-// Three things are worth proving mechanically, and none is visible to qmllint.
+// Four things are worth proving mechanically, and none is visible to qmllint.
 //
 // 1. The normaliser. A toast action is data whenever it can be; a label with
 //    nowhere to go must not become a button that does nothing.
@@ -17,7 +17,10 @@
 //    gone. There are two independent drop paths, so each is checked in its own
 //    function body -- asserting the shared line exists somewhere in the file
 //    passed with either one of them deleted.
-// 3. That every `settingsTab:` literal in the tree resolves to a real settings
+// 3. Guaranteed delivery. The queue cap silently drops a non-error toast once
+//    three are waiting, which is not acceptable for the one message that
+//    explains an unrequested change to the user's system.
+// 4. That every `settingsTab:` literal in the tree resolves to a real settings
 //    tab. The declarative form is a bare string resolved at click time; a typo
 //    or a renamed registry id turns the button into a silent no-op.
 
@@ -194,17 +197,11 @@ for (const fn of ["showInfo", "showWarning", "showError"]) {
     );
 }
 
-// --- settingsTab literals resolve to real tabs ------------------------------
+// --- reading QML literals ---------------------------------------------------
 //
-// The declarative action form is a bare string that is resolved at click time
-// by SettingsSidebar.resolveTabIndex(). Nothing binds that string to anything:
-// a typo, or a future sidebar restructure that renames an id, makes
-// setTabIndex(-1) a no-op and the button silently does nothing. Nobody sees a
-// stack trace, and qmllint cannot see a string.
-//
-// So every settingsTab literal in the tree is resolved here, against the real
-// SettingsSidebar category structure and the real SettingsRegistry, using the
-// same matching rule resolveTabIndex() implements.
+// Both checks below read arrays straight out of their .qml files rather than
+// transcribing them, so a rename or a restructure surfaces as a failure here
+// instead of leaving this script asserting about a list that no longer exists.
 
 // The smallest balanced-bracket reader that can lift a QML array-literal
 // property out of its file. Regexes cannot: the structures nest.
@@ -254,6 +251,82 @@ function evalArrayLiteral(text) {
     // eslint-disable-next-line no-new-func
     return new Function("__qml", `with (__qml) { return (${text}); }`)(qmlStub);
 }
+
+// --- guaranteed delivery ----------------------------------------------------
+//
+// The queue cap silently drops a non-error toast once three are waiting:
+// showToast() simply returns. That is acceptable for a message the user can
+// reconstruct from what they just did. It is not acceptable for the first-run
+// takeover announcement, which explains a change VGS made to the user's system
+// without being asked -- which daemon owns org.freedesktop.Notifications -- and
+// carries the only in-UI pointer at the undo. Dropped, the user's notifications
+// change appearance for no stated reason.
+//
+// Two properties, and the toast needs both: it must reach the queue (the cap
+// must not drop it) and it must stay on screen (no 10s auto-dismiss for a
+// message that may arrive while the user is away from the machine).
+
+const takeoverCategory = "notification-server-takeover";
+
+// Both lists are plain string arrays; parsed rather than transcribed so a
+// rename in ToastService.qml cannot leave this check asserting about a list
+// that no longer exists. (extractArrayLiteral/evalArrayLiteral are defined
+// below for the settings-tab check and hoist as function declarations.)
+const stickyCategories = evalArrayLiteral(
+    extractArrayLiteral(serviceSource, "readonly property var stickyCategories:")
+);
+const undroppableCategories = evalArrayLiteral(
+    extractArrayLiteral(serviceSource, "readonly property var undroppableCategories:")
+);
+
+assert.ok(
+    undroppableCategories.includes(takeoverCategory),
+    `${takeoverCategory} must be undroppable, or the queue cap can silently discard the only explanation of an unrequested change`
+);
+assert.ok(
+    stickyCategories.includes(takeoverCategory),
+    `${takeoverCategory} must be sticky; reaching the queue is not delivery if it auto-dismisses in 10s`
+);
+
+// Reaching the queue and staying on screen are one guarantee, not two: an
+// undroppable category that times out is only half delivered.
+for (const category of undroppableCategories) {
+    assert.ok(
+        stickyCategories.includes(category),
+        `${category} is undroppable but not sticky -- guaranteed into the queue and then auto-dismissed is not guaranteed delivery`
+    );
+}
+
+// The cap check itself must consult the exemption. Asserting only that the
+// list contains the category would pass with the list never read.
+const showToastBody = qmlFunctionBody("showToast");
+assert.ok(
+    /toastQueue\.length\s*>=\s*maxQueueSize\s*&&\s*!isUndroppableCategory\(category\)/.test(showToastBody),
+    "the queue cap must exempt undroppable categories, or the list is decorative"
+);
+
+// And the announcing side has to use that exact string. A rename on one side
+// only silently returns the toast to droppable.
+const notificationSource = fs.readFileSync(
+    path.join(repoRoot, "quickshell/vshell/Services/NotificationService.qml"),
+    "utf8"
+);
+assert.ok(
+    notificationSource.includes(`"${takeoverCategory}"`),
+    `NotificationService.qml must raise the first-run announcement under the category ToastService guarantees (${takeoverCategory})`
+);
+
+// --- settingsTab literals resolve to real tabs ------------------------------
+//
+// The declarative action form is a bare string that is resolved at click time
+// by SettingsSidebar.resolveTabIndex(). Nothing binds that string to anything:
+// a typo, or a future sidebar restructure that renames an id, makes
+// setTabIndex(-1) a no-op and the button silently does nothing. Nobody sees a
+// stack trace, and qmllint cannot see a string.
+//
+// So every settingsTab literal in the tree is resolved here, against the real
+// SettingsSidebar category structure and the real SettingsRegistry, using the
+// same matching rule resolveTabIndex() implements.
 
 const sidebarPath = path.join(repoRoot, "quickshell/vshell/Modals/Settings/SettingsSidebar.qml");
 const registryPath = path.join(repoRoot, "quickshell/vshell/Modals/Settings/SettingsRegistry.qml");
