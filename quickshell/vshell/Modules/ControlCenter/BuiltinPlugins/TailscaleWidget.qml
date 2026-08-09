@@ -20,6 +20,8 @@ PluginComponent {
             return I18n.tr("Not available", "Tailscale service not available");
         if (TailscaleService.awaitingFirstState)
             return I18n.tr("Checking…", "Tailscale status has not been read yet");
+        if (TailscaleService.reacquiring)
+            return I18n.tr("Reconnecting…", "Tailscale backend connection was lost and is being re-established");
         if (TailscaleService.starting)
             return I18n.tr("Starting…", "Tailscale daemon is still coming up");
         if (!TailscaleService.connected)
@@ -116,7 +118,7 @@ PluginComponent {
                                 spacing: 1
 
                                 StyledText {
-                                    text: TailscaleService.connected ? I18n.tr("Connected", "Tailscale connection status: connected") : (TailscaleService.awaitingFirstState ? I18n.tr("Checking…", "Tailscale status has not been read yet") : (TailscaleService.starting ? I18n.tr("Starting…", "Tailscale daemon is still coming up") : I18n.tr("Disconnected", "Tailscale connection status: disconnected")))
+                                    text: TailscaleService.awaitingFirstState ? I18n.tr("Checking…", "Tailscale status has not been read yet") : (TailscaleService.reacquiring ? I18n.tr("Reconnecting…", "Tailscale backend connection was lost and is being re-established") : (TailscaleService.connected ? I18n.tr("Connected", "Tailscale connection status: connected") : (TailscaleService.starting ? I18n.tr("Starting…", "Tailscale daemon is still coming up") : I18n.tr("Disconnected", "Tailscale connection status: disconnected"))))
                                     font.pixelSize: Theme.fontSizeMedium
                                     font.weight: Font.Medium
                                     color: Theme.surfaceText

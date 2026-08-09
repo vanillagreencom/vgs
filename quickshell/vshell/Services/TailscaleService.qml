@@ -68,14 +68,29 @@ Singleton {
     // answer, so none of them may be presented as "off" or kept indefinitely.
     readonly property bool backendStateKnown: backendState !== "" && backendState !== "NoState" && backendState !== "Starting"
 
-    // The three below are what widgets branch on. Only `stateSettled` licenses
-    // rendering an "off"-shaped answer: deriving that from backendState alone
-    // meant the window before the first response — and forever, if reads kept
-    // failing — rendered as "Disconnected"/"Off", which is a smaller copy of
-    // the bug this whole change exists to fix.
-    readonly property bool awaitingFirstState: available && !stateInitialized
-    readonly property bool starting: available && stateInitialized && !backendStateKnown
-    readonly property bool stateSettled: available && stateInitialized && backendStateKnown
+    // Knowledge belongs to the connection that produced it. `connectionGeneration`
+    // ticks on every connect; `stateGeneration` records which generation the
+    // values above came from. Without this, cached values from before an outage
+    // read as a settled answer about the *current* backend — the same defect as
+    // rendering an unread state as "off", one layer out: not unread, but stale.
+    // A response cannot satisfy a generation it was not asked in, so a reconnect
+    // is never closed by a pre-disconnect answer still in flight.
+    property int connectionGeneration: 0
+    property int stateGeneration: -1
+    readonly property bool haveCurrentState: VGSBackendService.isConnected && stateGeneration >= 0 && stateGeneration === connectionGeneration
+    readonly property bool everHadState: stateGeneration >= 0
+
+    // What widgets branch on. Only `stateSettled` licenses rendering an
+    // "off"-shaped answer: deriving that from backendState alone meant the
+    // window before the first response — and forever, if reads kept failing —
+    // rendered as "Disconnected"/"Off", which is a smaller copy of the bug this
+    // whole change exists to fix.
+    readonly property bool awaitingFirstState: available && !haveCurrentState && !everHadState
+    // Distinct from the above on purpose: "Reading status…" reads oddly in a
+    // session that has been up for hours and briefly lost its backend.
+    readonly property bool reacquiring: available && !haveCurrentState && everHadState
+    readonly property bool starting: available && haveCurrentState && !backendStateKnown
+    readonly property bool stateSettled: available && haveCurrentState && backendStateKnown
 
     // Re-fetch cadence. This is a backstop, not a second owner of the state:
     // the backend remains the only thing that reads tailscaled and the only
@@ -92,7 +107,7 @@ Singleton {
     }
 
     Timer {
-        running: root.available && root.refCount > 0
+        running: root.available && root.refCount > 0 && VGSBackendService.isConnected
         interval: root.pollIntervalMs
         repeat: true
         onTriggered: root.refreshStatus()
@@ -149,11 +164,20 @@ Singleton {
 
         function onConnectionStateChanged() {
             if (VGSBackendService.isConnected) {
+                // Bump first: everything held from before the drop is a guess
+                // about a daemon nobody was watching, and must not satisfy this
+                // connection. haveCurrentState goes false until a response
+                // stamped with this generation arrives.
+                connectionGeneration++;
                 checkVGSCapabilities();
                 ensureSubscription();
-                // A backend restart means anything held from before the drop is
-                // a guess about a daemon nobody was watching.
                 refreshStatus();
+            } else {
+                // Nothing to clear: haveCurrentState already reads false while
+                // disconnected. The values are deliberately kept so the widget
+                // can go on showing the last known answer greyed as
+                // "Reconnecting…" rather than flashing empty.
+                watcherActive = false;
             }
         }
     }
@@ -191,9 +215,17 @@ Singleton {
     function getStatus() {
         if (!available)
             return;
+        // Stamped with the generation it was asked in, so a reply that outlives
+        // its connection is discarded rather than closing out a reconnect that
+        // has not actually been answered yet.
+        const asked = connectionGeneration;
         VGSBackendService.sendRequest("tailscale.getStatus", null, response => {
+            if (asked !== connectionGeneration) {
+                root.log.debug("Discarding a status reply from a previous connection");
+                return;
+            }
             if (response.result) {
-                updateState(response.result);
+                updateState(response.result, asked);
             }
         });
     }
@@ -205,10 +237,14 @@ Singleton {
         getStatus();
     }
 
-    function updateState(data) {
+    // `generation` is the connection the data came from. Subscription pushes and
+    // action results omit it: those can only arrive on the live connection, so
+    // they are current by construction.
+    function updateState(data, generation) {
         if (!data)
             return;
         stateInitialized = true;
+        stateGeneration = (generation === undefined) ? connectionGeneration : generation;
         connected = data.connected || false;
         watcherActive = data.watcherActive === true;
         version = data.version || "";

@@ -42,11 +42,16 @@ PluginComponent {
     readonly property bool starting: TailscaleService.starting
     // No answer from the backend yet. Also not "Off".
     readonly property bool awaiting: TailscaleService.awaitingFirstState
+    // Had an answer, but it belongs to a connection that has since dropped, so
+    // it says nothing about the backend we have now. Also not "Off".
+    readonly property bool reacquiring: TailscaleService.reacquiring
+    // Neither the daemon's state nor the connection is currently known.
+    readonly property bool unknown: root.awaiting || root.reacquiring
 
     function stateShort() {
         if (root.connecting)
             return "…";
-        if (root.awaiting)
+        if (root.unknown)
             return "…";
         if (root.starting)
             return "Starting";
@@ -65,7 +70,7 @@ PluginComponent {
     function pillIcon() {
         if (root.hasHealthIssue)
             return "warning";
-        if (root.starting || root.awaiting)
+        if (root.starting || root.unknown)
             return "pending";
         switch (root.backendState) {
         case "Running":
@@ -225,7 +230,7 @@ PluginComponent {
             id: popout
 
             headerText: "Tailscale"
-            detailsText: root.connected ? (root.tailnetName || "Connected") : (root.awaiting ? "Checking…" : (root.starting ? "Starting…" : (root.backendState === "NeedsLogin" ? "Needs login" : "Disconnected")))
+            detailsText: root.awaiting ? "Checking…" : (root.reacquiring ? "Reconnecting…" : (root.connected ? (root.tailnetName || "Connected") : (root.starting ? "Starting…" : (root.backendState === "NeedsLogin" ? "Needs login" : "Disconnected"))))
             showCloseButton: true
 
             // PluginPopout assigns itself here when it loads this content.
@@ -276,7 +281,7 @@ PluginComponent {
                             spacing: 1
 
                             StyledText {
-                                text: root.connecting ? "Connecting…" : (root.connected ? "Connected" : (root.awaiting ? "Checking…" : (root.starting ? "Starting…" : (root.backendState === "NeedsLogin" ? "Not logged in" : "Disconnected"))))
+                                text: root.connecting ? "Connecting…" : (root.awaiting ? "Checking…" : (root.reacquiring ? "Reconnecting…" : (root.connected ? "Connected" : (root.starting ? "Starting…" : (root.backendState === "NeedsLogin" ? "Not logged in" : "Disconnected")))))
                                 font.pixelSize: Theme.fontSizeMedium
                                 font.weight: Font.Medium
                                 color: Theme.surfaceText
@@ -284,7 +289,7 @@ PluginComponent {
 
                             StyledText {
                                 visible: text.length > 0
-                                text: root.connected ? (root.tailnetName || "") : (root.awaiting ? "Reading status…" : (root.starting ? "tailscaled is still coming up" : (root.backendState === "NeedsLogin" ? "Sign in to connect" : "tailscaled stopped")))
+                                text: root.awaiting ? "Reading status…" : (root.reacquiring ? "Lost contact with the VGS backend; retrying" : (root.connected ? (root.tailnetName || "") : (root.starting ? "tailscaled is still coming up" : (root.backendState === "NeedsLogin" ? "Sign in to connect" : "tailscaled stopped"))))
                                 font.pixelSize: Theme.fontSizeSmall
                                 color: Theme.surfaceVariantText
                                 width: parent.width
@@ -312,11 +317,11 @@ PluginComponent {
                 Column {
                     width: parent.width
                     spacing: Theme.spacingS
-                    visible: root.backendState === "NeedsLogin" || root.backendState === "Stopped" || root.starting || (!root.loaded)
+                    visible: root.backendState === "NeedsLogin" || root.backendState === "Stopped" || root.starting || root.unknown
 
                     StyledText {
                         width: parent.width
-                        text: root.backendState === "NeedsLogin" ? "This device isn't signed in to a tailnet yet. Connect to open the Tailscale login page in your browser." : (root.backendState === "Stopped" ? "Tailscale is installed and the daemon is running, but networking is turned off." : (root.starting ? "tailscaled is still starting up. This resolves on its own once it reaches the tailnet." : "Reading Tailscale status…"))
+                        text: root.backendState === "NeedsLogin" ? "This device isn't signed in to a tailnet yet. Connect to open the Tailscale login page in your browser." : (root.backendState === "Stopped" ? "Tailscale is installed and the daemon is running, but networking is turned off." : (root.starting ? "tailscaled is still starting up. This resolves on its own once it reaches the tailnet." : (root.reacquiring ? "The VGS backend connection dropped. Reconnecting; the status below is from before the drop." : "Reading Tailscale status…")))
                         wrapMode: Text.WordWrap
                         font.pixelSize: Theme.fontSizeSmall
                         color: Theme.surfaceVariantText
