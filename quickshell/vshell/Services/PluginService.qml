@@ -890,25 +890,6 @@ Singleton {
             pluginLoadFailed(pluginId, err ? err.title : reason);
         };
 
-        // Records WHY this package is about to be refused, on the manifest it
-        // was refused for. Every consumer of that fact then reads a recorded
-        // cause instead of re-deriving one, which is what four separate review
-        // findings were circling: `demoted` alone says a package lost its id,
-        // not what took it away.
-        //
-        // Set BEFORE giveUp, so it covers the branch that demotes to a shipped
-        // package AND the branch that cannot (no shipped manifest to fall back
-        // to) — the second reported nothing outside `pluginLoadErrors` before.
-        //
-        // It lives on the knownManifests entry, which `loadPluginManifestFile`
-        // rebuilds from scratch on every read, so the mark clears itself the
-        // moment the manifest is re-read and judged again.
-        const markRequirementRefusal = () => {
-            const path = incoming.manifestPath;
-            if (path && knownManifests[path])
-                knownManifests[path].refusedOnRequirement = incoming.requires_shell;
-        };
-
         const requires = incoming.requires_shell;
         // Only once the shell version is actually known: it is detected by an
         // async Process, and an unresolved version parses as 0.0.0, which would
@@ -921,7 +902,7 @@ Singleton {
             // so the one enforced constraint VGS has left no trace anywhere a
             // user could look afterwards. (VGS-89)
             const reason = I18n.tr("It requires VGS %1.").arg(requires);
-            markRequirementRefusal();
+            _markRequirementRefusal(incoming);
             giveUp(reason, {
                 title: reason,
                 details: I18n.tr("This shell is VGS %1.").arg(ShellVersionService.semverVersion)
@@ -1031,6 +1012,8 @@ Singleton {
                     continue;
                 if (!root._hasShippedManifest(pluginId))
                     continue;
+                // Same fact, written from the second place it happens.
+                root._markRequirementRefusal(plugin);
                 root._demoteToShipped(pluginId, plugin, I18n.tr("It requires VGS %1.").arg(plugin.requires_shell));
             }
         }
@@ -1039,6 +1022,30 @@ Singleton {
     // Hand the id back to the package the override displaced. The shipped
     // manifest is still in knownManifests (shadowed), so re-parsing it makes it
     // the owner again; if it was never unloaded it simply keeps running.
+    // Records WHY a package is about to be refused, on the manifest it was
+    // refused for. Every consumer then reads a recorded cause instead of
+    // re-deriving one: `demoted` alone says a package lost its id, not what
+    // took it away.
+    //
+    // There are TWO places a version refusal happens, and they are far apart in
+    // time. `_gateThenSwap` refuses at parse time, when the shell version is
+    // already known. The ShellVersionService `Connections` below refuses
+    // asynchronously, when the version lands after the package was already
+    // judged and loaded — and that is the path VGS-76 actually arrived on, so a
+    // recording that covered only the first left the hole exactly where the
+    // motivating case lives. One function, called from both.
+    //
+    // The mark lives on the knownManifests entry, which `loadPluginManifestFile`
+    // rebuilds from scratch on every read, so it clears itself the moment the
+    // manifest is re-read and judged again.
+    function _markRequirementRefusal(record) {
+        if (!record)
+            return;
+        const path = record.manifestPath;
+        if (path && knownManifests[path])
+            knownManifests[path].refusedOnRequirement = record.requires_shell;
+    }
+
     function _demoteToShipped(pluginId, incoming, reason) {
         const overridePath = incoming ? incoming.manifestPath : "";
         if (overridePath && knownManifests[overridePath])
