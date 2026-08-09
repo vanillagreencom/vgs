@@ -77,6 +77,26 @@ The toggle also owns the sequencing:
   press could otherwise start two toggles that both see the pad as hidden. Each
   pad's transition is serialized under a lock.
 
+## Identity is the window class, and it claims every instance
+
+A pad's `classRegex` is derived from the app's `StartupWMClass`, which is an
+exact class match — so it claims every current and future window of that
+application, not just the pad's own. That is by construction, and
+[D006](../decisions/D006-scratchpad-window-identity.md) records why no
+per-instance mechanism was adopted instead: class is the only identity field
+measured to be stable (0 of 15 live windows had drifted; 12 of 15 titles had),
+but the launch-time override that would narrow it is not general enough to be a
+default.
+
+Settings therefore shows how wide a pattern actually is —
+`vshell scratchpad match` reports the live windows it claims — and warns when
+that is more than one. The derived pattern also carries the lower-case form
+(`^(1Password|1password)$`), because apps do not reliably map with the case they
+declare and the single-form pattern matched nothing for 1Password.
+
+To narrow a pad to one instance today: launch it with a class override
+(`ghostty --class=my.pad`) and set the pattern to match, or use `titleExclude`.
+
 ## Title exclusion is all-or-nothing
 
 `titleExclude` carves a same-class window out of a pad — 1Password's browser
