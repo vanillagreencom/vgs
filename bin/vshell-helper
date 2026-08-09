@@ -8801,9 +8801,10 @@ def cmd_scratchpad(argv: List[str]) -> int:
         parser = argparse.ArgumentParser(prog="vshell scratchpad release")
         parser.add_argument("id")
         parser.add_argument("--class-regex", default="")
+        parser.add_argument("--title-exclude", default="")
         parser.add_argument("--json", action="store_true")
         args = parser.parse_args(rest)
-        result = scratchpad_release(args.id, args.class_regex)
+        result = scratchpad_release(args.id, args.class_regex, args.title_exclude)
         if args.json:
             print(json.dumps(result, indent=2))
         elif not result.get("ok"):
@@ -9731,6 +9732,20 @@ def scratchpad_toggle(pad_id: str, reveal_only: bool = False, launch_only: bool 
     with _scratchpad_lock(pad_id):
         visible_on = _scratchpad_visible_monitor(pad_id)
 
+        # A disabled pad generates no rules and no keybind, so revealing one is
+        # never what the user asked for — the enable toggle in Settings would
+        # otherwise claim a mechanism it does not have, the same defect the
+        # dismiss-on-focus-loss control was removed for.
+        #
+        # Hiding is still allowed, and deliberately so: a pad disabled while it
+        # was on screen would otherwise be stranded visible with no keybind left
+        # to dismiss it, which is a worse outcome than the one being fixed.
+        if not pad["enabled"]:
+            hiding = bool(visible_on) and not reveal_only and not launch_only
+            if not hiding:
+                return {"ok": False, "id": pad_id, "action": "disabled",
+                        "error": f"{pad['name']} is disabled"}
+
         if visible_on and not reveal_only and not launch_only:
             # Hide, then hand focus back to whatever had it before the reveal —
             # including when the pad lives on a different monitor, which is the
@@ -9806,7 +9821,7 @@ def scratchpad_toggle(pad_id: str, reveal_only: bool = False, launch_only: bool 
                 "reassert": reassert}
 
 
-def scratchpad_release(pad_id: str, class_regex: str = "") -> Dict[str, Any]:
+def scratchpad_release(pad_id: str, class_regex: str = "", title_exclude: str = "") -> Dict[str, Any]:
     """Hand a scratchpad's window back to the user's normal workspace.
 
     Deleting a pad removes its keybind and every rule that pointed at its
@@ -9820,20 +9835,30 @@ def scratchpad_release(pad_id: str, class_regex: str = "") -> Dict[str, Any]:
     user no longer wants should not become unremovable until they find and
     close its window.
 
-    `class_regex` may be passed so this does not depend on reading the pad back
-    out of settings — the caller is about to delete it, and a lookup here would
-    race that write."""
+    `class_regex` and `title_exclude` are both passed in so this does not depend
+    on reading the pad back out of settings — the caller is about to delete it,
+    and a lookup here would race that write. They travel TOGETHER for the same
+    reason the generated rules share one match: releasing on the class alone
+    would relocate a same-class window the user explicitly excluded from the
+    pad, so deleting a scratchpad would yank an unrelated window onto their
+    active workspace. `release` must own exactly the windows the placement rule
+    owned, and no others."""
     if not shutil.which("hyprctl") or not os.environ.get("HYPRLAND_INSTANCE_SIGNATURE"):
         return {"ok": True, "released": False, "reason": "no Hyprland session"}
 
     pattern = class_regex
+    exclude = title_exclude
     if not pattern:
         pad = {p["id"]: p for p in load_scratchpads()}.get(pad_id)
         if pad is None:
             return {"ok": False, "error": f"unknown scratchpad: {pad_id}"}
         pattern = pad["classRegex"]
+        # Only fall back for the exclusion when the class came from the same
+        # lookup; mixing a passed-in class with a looked-up exclusion would pair
+        # two pads' criteria.
+        exclude = title_exclude or pad["titleExclude"]
 
-    client = _scratchpad_find_window({"classRegex": pattern, "titleExclude": ""})
+    client = _scratchpad_find_window({"classRegex": pattern, "titleExclude": exclude})
     if client is None:
         return {"ok": True, "released": False, "reason": "no window mapped"}
 

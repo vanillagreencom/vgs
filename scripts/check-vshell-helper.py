@@ -3862,6 +3862,111 @@ def test_scratchpad_rejects_an_uncompilable_title_exclusion():
     })["titleExclude"], "", "no exclusion is the empty string, not a broken pattern")
 
 
+def test_scratchpad_release_honours_the_title_exclusion():
+    """Release must own exactly the windows the placement rule owned. Selecting
+    on the class alone would relocate a same-class window the user explicitly
+    excluded from the pad, so deleting a scratchpad would yank an unrelated
+    window onto their active workspace."""
+    if not shutil.which("hyprctl"):
+        print("  (skipped: hyprctl not installed; release path was not exercised)")
+        return
+
+    original_json = helper._hyprctl_json
+    original_dispatch = helper._scratchpad_dispatch
+    saved_sig = os.environ.get("HYPRLAND_INSTANCE_SIGNATURE")
+    dispatched = []
+
+    # The 1Password case the exclusion exists for: the browser-extension auth
+    # prompt shares the main window's class and keeps a generic title.
+    clients = [
+        {"address": "0xprompt", "class": "1password", "title": "1Password"},
+        {"address": "0xmain", "class": "1password", "title": "Lock Screen — 1Password"},
+    ]
+
+    def fake_json(*args):
+        if args and args[0] == "clients":
+            return clients
+        if args and args[0] == "activeworkspace":
+            return {"id": 5}
+        return None
+
+    helper._hyprctl_json = fake_json
+    helper._scratchpad_dispatch = lambda *args: (dispatched.append(args), True)[1]
+    os.environ["HYPRLAND_INSTANCE_SIGNATURE"] = "test"
+    try:
+        result = helper.scratchpad_release("1pw", r"^(1password)$", r"^(1Password)$")
+        assert_equal(result["released"], True, "the pad's own window is released")
+        assert_equal(result["address"], "0xmain",
+                     "the excluded auth prompt must not be the one moved")
+        assert_equal(dispatched, [
+            ("fullscreenstate", "0 -1,address:0xmain"),
+            ("movetoworkspace", "5,address:0xmain"),
+        ], "only the pad's window is dispatched at")
+
+        # Without the exclusion the first class match wins — which is the bug.
+        # Pinned so a future refactor cannot quietly drop the argument.
+        dispatched.clear()
+        loose = helper.scratchpad_release("1pw", r"^(1password)$")
+        assert_equal(loose["address"], "0xprompt",
+                     "no exclusion passed means the first class match, so the "
+                     "exclusion must be threaded through by every caller")
+    finally:
+        helper._hyprctl_json = original_json
+        helper._scratchpad_dispatch = original_dispatch
+        os.environ.pop("HYPRLAND_INSTANCE_SIGNATURE", None)
+        if saved_sig is not None:
+            os.environ["HYPRLAND_INSTANCE_SIGNATURE"] = saved_sig
+
+
+def test_scratchpad_toggle_honours_enabled():
+    """A disabled pad generates no rules and no keybind, so revealing one is
+    never what the user asked for. Without this the per-pad enable toggle claims
+    a mechanism it does not have."""
+    if not shutil.which("hyprctl"):
+        print("  (skipped: hyprctl not installed; toggle path was not exercised)")
+        return
+
+    original_load = helper.load_scratchpads
+    original_visible = helper._scratchpad_visible_monitor
+    original_find = helper._scratchpad_find_window
+    original_dispatch = helper._scratchpad_dispatch
+    saved_sig = os.environ.get("HYPRLAND_INSTANCE_SIGNATURE")
+    dispatched = []
+
+    disabled = _pad(id="off", enabled=False)
+    helper.load_scratchpads = lambda: [disabled]
+    helper._scratchpad_find_window = lambda pad: {"address": "0xaaa", "workspace": {"name": "3"}}
+    helper._scratchpad_dispatch = lambda *args: (dispatched.append(args), True)[1]
+    os.environ["HYPRLAND_INSTANCE_SIGNATURE"] = "test"
+    try:
+        # Hidden: revealing is refused, and nothing is dispatched.
+        helper._scratchpad_visible_monitor = lambda pad_id: ""
+        result = helper.scratchpad_toggle("off")
+        assert_equal(result["ok"], False, "a disabled pad does not reveal")
+        assert_equal(result["action"], "disabled", "and says why")
+        assert_equal(dispatched, [], "a refused toggle touches nothing")
+
+        assert_equal(helper.scratchpad_toggle("off", launch_only=True)["ok"], False,
+                     "a disabled pad does not preload either")
+
+        # Visible: hiding is still allowed. A pad disabled while on screen would
+        # otherwise be stranded visible with no keybind left to dismiss it.
+        dispatched.clear()
+        helper._scratchpad_visible_monitor = lambda pad_id: "DP-1"
+        hidden = helper.scratchpad_toggle("off")
+        assert_equal(hidden["ok"], True, "a disabled pad that is on screen can still be hidden")
+        assert_equal(hidden["action"], "hidden", "and reports the hide")
+        assert ("togglespecialworkspace", "off") in dispatched, "the hide actually dispatches"
+    finally:
+        helper.load_scratchpads = original_load
+        helper._scratchpad_visible_monitor = original_visible
+        helper._scratchpad_find_window = original_find
+        helper._scratchpad_dispatch = original_dispatch
+        os.environ.pop("HYPRLAND_INSTANCE_SIGNATURE", None)
+        if saved_sig is not None:
+            os.environ["HYPRLAND_INSTANCE_SIGNATURE"] = saved_sig
+
+
 def main():
     # A catalog download is minutes to hours of network transfer. Holding the
     # exclusive theme lock for that long would block applies, the light/dark
@@ -3966,6 +4071,8 @@ def main():
     test_scratchpad_membership_is_reasserted_for_a_late_class()
     test_scratchpad_title_exclusion_applies_to_every_rule()
     test_scratchpad_rejects_an_uncompilable_title_exclusion()
+    test_scratchpad_release_honours_the_title_exclusion()
+    test_scratchpad_toggle_honours_enabled()
     subprocess.run(
         [sys.executable, str(REPO_ROOT / "scripts" / "check-vshell-niri.py")],
         check=True,

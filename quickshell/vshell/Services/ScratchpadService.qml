@@ -127,12 +127,18 @@ Singleton {
     // no longer has a keybind or a rule pointing at it. The class regex is
     // passed in because the caller is about to rewrite the settings the helper
     // would otherwise read it from.
-    function release(padId, classRegex) {
+    // Both criteria travel together: releasing on the class alone would drag a
+    // same-class window the user explicitly excluded from the pad onto their
+    // active workspace, so release must own exactly the windows the placement
+    // rule owned.
+    function release(padId, classRegex, titleExclude) {
         if (!supported || !padId)
             return;
         const argv = [Paths.vshellCli, "scratchpad", "release", String(padId)];
         if (classRegex)
             argv.push("--class-regex", String(classRegex));
+        if (titleExclude)
+            argv.push("--title-exclude", String(titleExclude));
         Quickshell.execDetached(argv);
     }
 

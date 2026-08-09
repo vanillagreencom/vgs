@@ -92,6 +92,22 @@ uncompilable `classRegex` does. A malformed exclusion is not "no exclusion" — 
 is an exclusion the user asked for that silently stops applying, so the pad would
 go on to select, focus and move the very windows it existed to keep out.
 
+The exclusion travels with the class everywhere the pad selects a window, not
+only into the generated rules: `vshell scratchpad release` takes both, so
+removing a pad cannot drag a same-class window the pad never owned onto the
+active workspace. Settings passes both explicitly rather than letting the helper
+look them up, because it is about to rewrite the settings that lookup would read.
+
+## A disabled pad does not open
+
+Disabling a pad removes its rules and its keybind, so `vshell scratchpad toggle`
+refuses to reveal or preload it — otherwise the enable toggle would claim a
+mechanism it does not have.
+
+Hiding is still allowed, deliberately: a pad disabled while it was on screen
+would otherwise be stranded visible with no keybind left to dismiss it, which is
+worse than the problem being solved.
+
 ## Removing a pad releases its window
 
 Deleting a pad removes its keybind and every rule pointing at its special

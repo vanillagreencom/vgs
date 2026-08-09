@@ -79,12 +79,14 @@ Item {
         // be unreachable without hyprctl by hand — still running, still holding
         // whatever was open in it, and invisible.
         //
-        // The class regex is passed explicitly rather than looked up, because
-        // the helper would otherwise read settings that this function is about
-        // to rewrite.
+        // Both match criteria are passed explicitly rather than looked up,
+        // because the helper would otherwise read settings that this function
+        // is about to rewrite. The exclusion travels with the class so that
+        // removing a pad cannot relocate a same-class window the user
+        // deliberately excluded from it.
         const pad = root.pads.find(entry => entry.id === padId);
         if (pad && ScratchpadService.supported)
-            ScratchpadService.release(padId, pad.classRegex || "");
+            ScratchpadService.release(padId, pad.classRegex || "", pad.titleExclude || "");
 
         writePads(root.pads.filter(entry => entry.id !== padId));
         if (root.expandedId === padId)
