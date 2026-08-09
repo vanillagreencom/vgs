@@ -6,7 +6,7 @@ compositor rules plus a toggle script, entirely outside VGS.
 
 | Piece | Path |
 |-------|------|
-| Persisted list | `scratchpads` in `~/.config/vshell/settings.json` (schema v22) |
+| Persisted list | `scratchpads` in `~/.config/vshell/settings.json` (schema v23) |
 | Schema, geometry, generation, runtime toggle | `bin/vshell-helper` § Scratchpads |
 | Generated compositor config | `~/.config/hypr/vgs/scratchpads.lua` |
 | Shell seam | `quickshell/vshell/Services/ScratchpadService.qml` |
@@ -66,6 +66,30 @@ The toggle also owns the sequencing:
 - **One transition at a time** — keybind execs are asynchronous, so a double
   press could otherwise start two toggles that both see the pad as hidden. Each
   pad's transition is serialized under a lock.
+
+## Removing a pad releases its window
+
+Deleting a pad removes its keybind and every rule pointing at its special
+workspace, so a window already mapped there would be left unreachable without
+`hyprctl` by hand — invisible, but still running.
+
+Settings therefore calls `vshell scratchpad release <id> --class-regex <re>`
+**before** deleting the record, which drops fullscreen and moves the window to
+the active workspace. Moving is chosen over closing (removing a configuration
+entry must not destroy a running program or unsaved work) and over refusing the
+removal (a pad the user no longer wants should not be unremovable until they
+find and close its window). The regex is passed explicitly so the helper does not
+read settings the caller is about to rewrite.
+
+## A configured monitor is an intent, not a guarantee
+
+The runtime toggle resolves the configured output against what is **connected**.
+A laptop that has left its dock still carries `DP-1` in the pad record, and
+dispatching at a name no output answers to silently does nothing. When the
+configured output is absent the pad falls back to the focused one — the same
+thing "follow focus" already means — rather than to a dead keybind. If the
+monitor list cannot be read at all the configured name is kept, since relocating
+a pad on the strength of a failed query would be worse than trusting the record.
 
 ## Two things that look right and are not
 
