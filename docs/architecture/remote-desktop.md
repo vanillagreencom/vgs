@@ -157,23 +157,36 @@ last probe could not run) and `stale` (the event watch is down, so what is on
 screen may be out of date). Both say so rather than presenting a guess as
 current.
 
-### Three knowledge axes, reset together
+### Knowledge axes, reset together
 
 *Nobody is watching* and *nobody knows* must never render alike, and that
-applies to every axis of the answer, not just the session:
+applies to every axis of the answer, not just the session. The table below is
+the list; deliberately not a count, because it has grown twice already and a
+numeral in the prose is one more thing to forget:
 
 | Axis | Value | Known? |
 |------|-------|--------|
 | host | `installed`, `running` | `statusKnown` |
-| session | `streaming`, `sessionCount` | `sessionKnown` |
-| virtual output | `outputPresent` | `outputKnown` |
+| session | `streaming` | `sessionKnown` |
 | session count | `sessionCount` | `sessionCountKnown` |
+| virtual output | `outputPresent` | `outputKnown` |
+| paired devices | `pairedClients` | `pairedClientsKnown` |
 
-`RemoteDesktopService._markStatusUnknown()` drops all three at once. Leaving one
-standing renders half an answer as a whole one — and `installed` in particular
+`RemoteDesktopService._markStatusUnknown()` drops every one of them together.
+Leaving one standing renders half an answer as a whole one — and `installed` in particular
 **defaults to false**, so a widget that tested it before `statusKnown` displayed
 "Sunshine is not installed" for every instant before the first reply and again
 after any failed probe. A default is not an answer.
+
+The **session count** is finer-grained than the session it belongs to, because
+watch events move it without settling it. Any event that can change how many
+clients there are — a connect, a disconnect, or a host lifecycle transition —
+marks it unknown until the authoritative read supplies a number; an encoder or
+bitrate change within the current set of clients does not, since a client
+arriving or leaving would carry its own event. `countInvalidatingEvent()` is
+that rule, and it is deliberately symmetric: it was not, once, and the
+disconnect side rendered a superseded count as authoritative for the length of
+the resync window.
 
 ### What can turn LIVE off
 
