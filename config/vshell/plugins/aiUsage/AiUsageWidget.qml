@@ -798,58 +798,17 @@ PluginComponent {
                         radius: Theme.cornerRadius
                         color: Theme.surfaceContainerHigh
 
-                        Column {
+                        MeterCard {
                             id: rowCol
                             anchors.fill: parent
                             anchors.margins: Theme.spacingM
                             spacing: Theme.spacingXS
 
-                            Item {
-                                width: parent.width
-                                height: Math.max(labelText.implicitHeight, pctText.implicitHeight)
-
-                                StyledText {
-                                    id: labelText
-                                    text: modelData.label
-                                    font.pixelSize: Theme.fontSizeMedium
-                                    font.weight: Font.Medium
-                                    color: Theme.surfaceText
-                                    anchors.left: parent.left
-                                    anchors.verticalCenter: parent.verticalCenter
-                                }
-
-                                StyledText {
-                                    id: pctText
-                                    text: modelData.pct + "%"
-                                    font.pixelSize: Theme.fontSizeMedium
-                                    font.weight: Font.Bold
-                                    color: root.percentageColor(modelData.pct)
-                                    anchors.right: parent.right
-                                    anchors.verticalCenter: parent.verticalCenter
-                                }
-                            }
-
-                            Rectangle {
-                                width: parent.width
-                                height: 6
-                                radius: 3
-                                color: Theme.surfaceContainerHighest
-
-                                Rectangle {
-                                    width: parent.width * Math.max(0, Math.min(modelData.pct, 100)) / 100
-                                    height: parent.height
-                                    radius: 3
-                                    color: root.percentageColor(modelData.pct)
-                                }
-                            }
-
-                            StyledText {
-                                // A credit pool reports an amount, not a countdown.
-                                text: root.formatSpendExact(modelData) || root.resetLabel(modelData)
-                                visible: text.length > 0
-                                font.pixelSize: Theme.fontSizeSmall
-                                color: Theme.surfaceVariantText
-                            }
+                            host: root
+                            meter: modelData
+                            labelWeight: Font.Medium
+                            // A credit pool reports an amount, not a countdown.
+                            detailText: root.formatSpendExact(modelData) || root.resetLabel(modelData)
                         }
                     }
                 }
@@ -924,68 +883,13 @@ PluginComponent {
                             Repeater {
                                 model: accountCard.expanded ? [] : accountCard.meters
 
-                                Item {
+                                MeterRow {
                                     required property var modelData
 
                                     width: accountCol.width
-                                    height: compactLabel.implicitHeight + 5
-
-                                    StyledText {
-                                        id: compactLabel
-                                        anchors.left: parent.left
-                                        anchors.top: parent.top
-                                        width: 74
-                                        text: modelData.label
-                                        elide: Text.ElideRight
-                                        font.pixelSize: Theme.fontSizeSmall
-                                        color: Theme.surfaceVariantText
-                                    }
-
-                                    Rectangle {
-                                        anchors.left: compactLabel.right
-                                        anchors.leftMargin: Theme.spacingXS
-                                        anchors.right: compactReset.left
-                                        anchors.rightMargin: Theme.spacingXS
-                                        anchors.verticalCenter: compactLabel.verticalCenter
-                                        height: 4
-                                        radius: 2
-                                        color: Theme.surfaceContainerHighest
-
-                                        Rectangle {
-                                            width: parent.width * Math.max(0, Math.min(modelData.pct, 100)) / 100
-                                            height: parent.height
-                                            radius: 2
-                                            color: accountCard.modelData.ok
-                                                ? root.percentageColor(modelData.pct) : Theme.error
-                                        }
-                                    }
-
-                                    StyledText {
-                                        id: compactPct
-                                        anchors.right: parent.right
-                                        anchors.top: parent.top
-                                        width: 32
-                                        horizontalAlignment: Text.AlignRight
-                                        text: modelData.pct + "%"
-                                        font.pixelSize: Theme.fontSizeSmall
-                                        font.weight: Font.Medium
-                                        color: accountCard.modelData.ok
-                                            ? root.percentageColor(modelData.pct) : Theme.error
-                                    }
-
-                                    // The reset clock time belongs on the collapsed row too —
-                                    // otherwise it is only readable one account at a time, and
-                                    // comparing windows across accounts is the point of this view.
-                                    StyledText {
-                                        id: compactReset
-                                        anchors.right: compactPct.left
-                                        anchors.rightMargin: Theme.spacingS
-                                        anchors.top: parent.top
-                                        text: root.formatSpend(modelData) || root.formatResetAt(modelData.resetAt || 0)
-                                        visible: text.length > 0
-                                        font.pixelSize: Theme.fontSizeSmall
-                                        color: Theme.surfaceVariantText
-                                    }
+                                    host: root
+                                    meter: modelData
+                                    ok: accountCard.modelData.ok
                                 }
                             }
 
@@ -993,59 +897,17 @@ PluginComponent {
                             Repeater {
                                 model: accountCard.expanded ? accountCard.meters : []
 
-                                Column {
+                                MeterCard {
                                     required property var modelData
 
                                     width: accountCol.width
                                     spacing: 2
                                     topPadding: Theme.spacingXS
 
-                                    Item {
-                                        width: parent.width
-                                        height: Math.max(fullLabel.implicitHeight, fullPct.implicitHeight)
-
-                                        StyledText {
-                                            id: fullLabel
-                                            anchors.left: parent.left
-                                            anchors.verticalCenter: parent.verticalCenter
-                                            text: modelData.label
-                                            font.pixelSize: Theme.fontSizeMedium
-                                            color: Theme.surfaceText
-                                        }
-
-                                        StyledText {
-                                            id: fullPct
-                                            anchors.right: parent.right
-                                            anchors.verticalCenter: parent.verticalCenter
-                                            text: modelData.pct + "%"
-                                            font.pixelSize: Theme.fontSizeMedium
-                                            font.weight: Font.Bold
-                                            color: accountCard.modelData.ok
-                                                ? root.percentageColor(modelData.pct) : Theme.error
-                                        }
-                                    }
-
-                                    Rectangle {
-                                        width: parent.width
-                                        height: 6
-                                        radius: 3
-                                        color: Theme.surfaceContainerHighest
-
-                                        Rectangle {
-                                            width: parent.width * Math.max(0, Math.min(modelData.pct, 100)) / 100
-                                            height: parent.height
-                                            radius: 3
-                                            color: accountCard.modelData.ok
-                                                ? root.percentageColor(modelData.pct) : Theme.error
-                                        }
-                                    }
-
-                                    StyledText {
-                                        text: modelData.detail ? modelData.detail : root.resetLabel(modelData)
-                                        visible: text.length > 0
-                                        font.pixelSize: Theme.fontSizeSmall
-                                        color: Theme.surfaceVariantText
-                                    }
+                                    host: root
+                                    meter: modelData
+                                    ok: accountCard.modelData.ok
+                                    detailText: modelData.detail ? modelData.detail : root.resetLabel(modelData)
                                 }
                             }
 
