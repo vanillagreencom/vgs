@@ -332,6 +332,7 @@ live and inert:
 | `animation` | niri's window-open animation is global config, not a window-rule property. Emitting one per pad would mean the last pad wins *and* the user's global animation is overwritten — the same trap as Hyprland's `specialWorkspace` leaf. The control is hidden on Niri. |
 | `dismissOnFocusLoss` | not wired up; the focus owner VGS uses reads the Hyprland event socket. |
 | `anchor: center` **with an offset** | niri has no centre `relative-to`. An unoffset centre pad is emitted by *omitting* the position rule, since niri centres new floating windows itself; with an offset the pad is still generated and still centred, and the dropped offset is named. |
+| a keybind that cannot be spelled | Keybinds are stored Hyprland-shaped (`SUPER + SHIFT, T`) because that is what the Settings capture writes; they are converted to niri's `Mod+Shift+T`. A key with no keysym name is reported and **no bind is written** — the pad still works through `vshell scratchpad toggle`, and inventing a spelling could shadow a bind the user already has. |
 
 `unsupported` is deliberately separate from `problems`. A pad in `problems` was
 **rejected** and generates nothing; a pad in `unsupported` **works**, with one
@@ -344,10 +345,20 @@ Same rule as everywhere else here — reject rather than half-emit — and on Ni
 the stakes are higher, because a rule niri refuses to parse takes the **whole
 config file** down with it, not just the pad:
 
-- a pattern using **lookaround**, which Python's `re` accepts and niri's Rust
-  regex engine does not;
+- a pattern using anything Rust's regex crate does not implement. It guarantees
+  linear time, so it has no backtracking and therefore no lookaround,
+  backreferences, conditional or atomic groups, possessive quantifiers, inline
+  comment groups, or `\Z` (it spells end-of-text `\z`) — all of which Python's
+  `re` accepts. This is a **deny list**: it can prove a pattern bad, never
+  prove one good, which is the honest position when there is no Niri here to
+  validate against;
 - a pattern containing `"#`, which would terminate the KDL raw string early and
   leave a rule that parses as something narrower and quietly stops matching.
+
+A rejected pad is rejected **everywhere**, not only in the half that emits
+rules: it is also dropped from `spawn-at-startup`, or a pad refused for being
+unusable would still launch its app at every login into a session with nowhere
+to put it.
 
 ### The toggle
 
@@ -361,3 +372,10 @@ that returned zero did anything.
 
 A disabled pad still refuses to reveal and is still allowed to hide, so
 disabling a visible pad cannot strand it.
+
+`release` moves only the window that is actually **on the pad's workspace**.
+Matching on the class alone would pick up a same-class window that was never in
+the pad — a second terminal — and yank it onto the active workspace. The
+destination is the focused workspace's `idx`, never its `id`: niri reads a
+numeric workspace reference as an *index*, so passing the global id would name a
+different workspace.
