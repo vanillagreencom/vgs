@@ -311,9 +311,16 @@ const notificationSource = fs.readFileSync(
     path.join(repoRoot, "quickshell/vshell/Services/NotificationService.qml"),
     "utf8"
 );
+// Checked on the announcing CALL, not on the file: the same string also appears
+// in dismissCategory() nearby, so a file-wide search passed with the show call
+// renamed -- which is exactly the mistake that returns the toast to droppable.
+const announceStart = notificationSource.indexOf("ToastService.showInfo(");
+assert.ok(announceStart >= 0, "NotificationService.qml should announce the first-run takeover");
+const announceEnd = notificationSource.indexOf("}));", announceStart);
+assert.ok(announceEnd > announceStart, "the announcement call should be closed");
 assert.ok(
-    notificationSource.includes(`"${takeoverCategory}"`),
-    `NotificationService.qml must raise the first-run announcement under the category ToastService guarantees (${takeoverCategory})`
+    notificationSource.slice(announceStart, announceEnd).includes(`"${takeoverCategory}"`),
+    `the first-run announcement must be raised under the category ToastService guarantees (${takeoverCategory})`
 );
 
 // --- settingsTab literals resolve to real tabs ------------------------------
