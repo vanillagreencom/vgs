@@ -759,10 +759,31 @@ nested_check() {
   # determinism: the operator's own bar layout, plugin settings and user plugin
   # packages would still decide what this run exercises, and a sandbox whose
   # result depends on the machine it ran on is not a sandbox.
+  # TWO different things are called "the rm failed", and they pull in opposite
+  # directions:
+  #
+  #   * "it was not there" is the normal case — nothing was copied in, because
+  #     the operator has no user plugins or no config at all. `-f`/`-rf` make
+  #     that a success, which is what stops a bare `rm` aborting the script
+  #     under `set -euo pipefail`.
+  #   * "it was there and could not be removed" is a prep failure. The seeded
+  #     state would then be sitting underneath whatever survived, and the run
+  #     would measure a sandbox nobody described. That fails, and names itself.
+  #
+  # `-f` distinguishes them exactly: it suppresses the missing-file error and
+  # nothing else, so a permission or busy error still returns non-zero. Their
+  # stderr is NOT discarded, so the reason reaches the reader.
   mkdir -p "$sandbox/home/.config/vshell" || { prep_fail "creating the sandbox config directory"; return; }
   rm -rf -- "$sandbox/home/.config/vshell/plugins" || { prep_fail "removing the copied user plugin directory"; return; }
   rm -f -- "$sandbox/home/.config/vshell/settings.json" \
            "$sandbox/home/.config/vshell/plugin_settings.json" || { prep_fail "removing the copied settings files"; return; }
+  # Belt and braces: `rm -rf` reports success for a directory it could not fully
+  # remove in some conditions, and a surviving user plugin would silently join
+  # the override phase's fixture under the same id.
+  if [[ -e "$sandbox/home/.config/vshell/plugins" ]]; then
+    prep_fail "the copied user plugin directory still exists after removal"
+    return
+  fi
   cp -- "$repo_root/config/vshell/settings.default.json" \
         "$sandbox/home/.config/vshell/settings.json" || { prep_fail "seeding settings.json from the shipped default"; return; }
   cp -- "$repo_root/config/vshell/plugin_settings.default.json" \
