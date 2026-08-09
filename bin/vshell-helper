@@ -10393,23 +10393,135 @@ def _kdl_raw_string(value: str) -> str:
     return "" if '"#' in value else 'r#"' + value + '"#'
 
 
-# Python's `re` accepts lookaround; the Rust regex crate niri uses does not.
-# A pattern carrying one compiles fine here and then makes niri reject the
-# WHOLE config file, so the pad would not merely fail — it would take the
-# user's entire Niri configuration down with it.
-_RUST_REGEX_UNSUPPORTED = re.compile(r"\(\?(?:=|!|<=|<!)")
+# Constructs Python's `re` accepts that the Rust regex crate niri uses does not.
+# A pattern carrying one compiles fine here and then makes niri reject the WHOLE
+# config file, so the pad would not merely fail — it would take the user's entire
+# Niri configuration down with it. Each entry is a construct Rust's regex crate
+# documents as unsupported (it guarantees linear time, which rules out anything
+# needing backtracking) paired with the name to report.
+_NIRI_REGEX_UNSUPPORTED = (
+    (re.compile(r"\(\?(?:=|!|<=|<!)"), "lookahead or lookbehind"),
+    # Backreferences, numeric and named. `\1`-`\9`, but not `\10`+ (which Python
+    # also reads as a backreference only when that many groups exist) and never
+    # an escaped backslash before a digit.
+    (re.compile(r"(?<!\\)\\[1-9]"), "a backreference"),
+    (re.compile(r"\(\?P=", ), "a named backreference"),
+    (re.compile(r"\(\?\("), "a conditional group"),
+    (re.compile(r"\(\?>"), "an atomic group"),
+    # Possessive quantifiers (Python 3.11+): `a*+`, `a++`, `a?+`, `a{2,3}+`.
+    (re.compile(r"(?<!\\)[*+?}]\+"), "a possessive quantifier"),
+    (re.compile(r"\(\?#"), "an inline comment group"),
+    # Rust spells end-of-text `\z`; `\Z` is not accepted at all.
+    (re.compile(r"(?<!\\)\\Z"), r"\Z (Rust spells end-of-text \z)"),
+)
 
 
 def _niri_regex_problem(pattern: str, what: str) -> str:
     """Why `pattern` cannot be handed to niri, or "" when it can.
 
-    Only differences that are decidable offline are checked. This is not a Rust
-    regex parser and does not pretend to be one; it catches the one construct
-    that is both common in hand-written patterns and certain to be rejected."""
-    if _RUST_REGEX_UNSUPPORTED.search(pattern):
-        return (f"{what} uses lookaround, which Niri's regex engine does not support; "
-                "a rule containing it would make Niri reject the whole config file")
+    A DENY list of constructs that are decidable offline and certain to be
+    rejected, not a Rust regex parser — it cannot prove a pattern good, only
+    catch the ones known to be bad. That asymmetry is the honest position: this
+    machine has no Niri to validate against, so the check refuses what it can
+    prove wrong and says nothing about the rest."""
+    if not pattern:
+        return ""
+    for probe, name in _NIRI_REGEX_UNSUPPORTED:
+        if probe.search(pattern):
+            return (f"{what} uses {name}, which Niri's regex engine does not support; "
+                    "a rule containing it would make Niri reject the whole config file")
     return ""
+
+
+# Hyprland-shaped modifier names (what the Settings capture records) to niri's.
+SCRATCHPAD_NIRI_MODIFIERS = {
+    "SUPER": "Mod", "MOD": "Mod", "META": "Mod", "WIN": "Mod", "LOGO": "Mod",
+    "CTRL": "Ctrl", "CONTROL": "Ctrl",
+    "ALT": "Alt", "SHIFT": "Shift",
+}
+
+# Key names to xkb keysyms. The Settings capture only ever records a single
+# printable character (ScratchpadsTab.keyEventToCombo refuses anything else), so
+# the punctuation rows are what it can actually produce; the named rows exist for
+# a hand-edited settings.json.
+SCRATCHPAD_NIRI_KEYSYMS = {
+    "RETURN": "Return", "ENTER": "Return", "KP_ENTER": "KP_Enter",
+    "SPACE": "space", "TAB": "Tab", "ESCAPE": "Escape", "ESC": "Escape",
+    "BACKSPACE": "BackSpace", "DELETE": "Delete", "DEL": "Delete",
+    "INSERT": "Insert", "HOME": "Home", "END": "End",
+    "PAGE_UP": "Page_Up", "PAGEUP": "Page_Up", "PRIOR": "Page_Up",
+    "PAGE_DOWN": "Page_Down", "PAGEDOWN": "Page_Down", "NEXT": "Page_Down",
+    "UP": "Up", "DOWN": "Down", "LEFT": "Left", "RIGHT": "Right",
+    "PRINT": "Print", "MENU": "Menu",
+    ",": "comma", ".": "period", "/": "slash", "\\": "backslash",
+    ";": "semicolon", "'": "apostrophe", "[": "bracketleft", "]": "bracketright",
+    "-": "minus", "=": "equal", "`": "grave",
+}
+
+
+def scratchpad_niri_keybind(keybind: str) -> str:
+    """A VGS keybind as niri spells it, or "" when it cannot be converted.
+
+    The stored form is Hyprland-shaped — `SUPER + SHIFT, T` — because that is
+    what the Settings capture writes and what the Lua backend emits verbatim.
+    Niri wants `Mod+Shift+T`, so emitting the stored string unchanged produced a
+    bind niri either rejects or silently never fires.
+
+    Returns "" rather than guessing. A bind that cannot be converted is reported
+    and omitted, which leaves a pad that still works through `vshell scratchpad
+    toggle`; inventing a spelling could instead shadow a bind the user already
+    has."""
+    raw = str(keybind or "").strip()
+    if not raw:
+        return ""
+    # The LAST separator splits modifiers from the key, not every comma: the
+    # comma itself is a bindable key, and splitting on all of them turned
+    # `SUPER, ,` into modifiers with nothing left to bind.
+    if ", " in raw:
+        head, key = raw.rsplit(", ", 1)
+    elif "," in raw:
+        head, key = raw.rsplit(",", 1)
+    elif "+" in raw:
+        # No comma: either a plain key, or a bind already written the way niri
+        # spells it (`Mod+T`) by someone editing settings.json. Accept both
+        # rather than reporting a bind that is already correct as unconvertible.
+        head, key = raw.rsplit("+", 1)
+    else:
+        head, key = "", raw
+    mods: List[str] = []
+    for part in (piece.strip() for piece in head.split("+")):
+        if not part:
+            continue
+        folded = part.upper()
+        if folded not in SCRATCHPAD_NIRI_MODIFIERS:
+            # Anything before the separator that is not a modifier means this is
+            # not a shape we understand — do not guess at what was intended.
+            return ""
+        mod = SCRATCHPAD_NIRI_MODIFIERS[folded]
+        if mod not in mods:
+            mods.append(mod)
+    key = key.strip()
+    # A chord that is only modifiers has no key to bind.
+    if not key or key.upper() in SCRATCHPAD_NIRI_MODIFIERS:
+        return ""
+    folded = key.upper()
+    if folded in SCRATCHPAD_NIRI_KEYSYMS:
+        resolved = SCRATCHPAD_NIRI_KEYSYMS[folded]
+    elif key in SCRATCHPAD_NIRI_KEYSYMS:
+        resolved = SCRATCHPAD_NIRI_KEYSYMS[key]
+    elif re.fullmatch(r"F([1-9]|1[0-9]|2[0-4])", folded):
+        resolved = folded
+    elif re.fullmatch(r"[A-Za-z0-9]", key):
+        resolved = key.upper()
+    elif re.fullmatch(r"XF86[A-Za-z0-9_]+", key):
+        # Media keys are already xkb keysyms; pass them through as written.
+        resolved = key
+    else:
+        return ""
+    # niri orders modifiers as written; keep the canonical order VGS shows.
+    order = ["Mod", "Ctrl", "Alt", "Shift"]
+    mods.sort(key=lambda name: order.index(name) if name in order else len(order))
+    return "+".join(mods + [resolved])
 
 
 def scratchpad_niri_unsupported() -> List[Dict[str, str]]:
@@ -10541,13 +10653,28 @@ def render_scratchpads_kdl(pads: List[Dict[str, Any]],
                 })
         lines.append("}")
 
+        niri_keybind = ""
         if pad["keybind"]:
-            binds.append((pad["keybind"], pad["id"], pad["name"]))
+            niri_keybind = scratchpad_niri_keybind(pad["keybind"])
+            if niri_keybind:
+                binds.append((niri_keybind, pad["id"], pad["name"]))
+            else:
+                # The pad is fine and still works through `vshell scratchpad
+                # toggle`; only the bind could not be spelled. Emitting the
+                # Hyprland form verbatim would leave a bind that never fires,
+                # and guessing a spelling could shadow one the user already has.
+                unsupported.append({
+                    "id": pad["name"],
+                    "field": "keybind",
+                    "reason": f"the keybind {pad['keybind']!r} could not be converted to Niri's "
+                              f"syntax, so no bind was written for {pad['name']}; set it by hand "
+                              f"in your Niri config, or re-record it",
+                })
         lines.append("")
 
         rendered.append({
             "id": pad["id"], "workspace": workspace, "monitor": pad["monitor"],
-            "keybind": pad["keybind"], "presentation": pad["presentation"],
+            "keybind": niri_keybind, "presentation": pad["presentation"],
         })
 
     if binds:
@@ -10559,7 +10686,14 @@ def render_scratchpads_kdl(pads: List[Dict[str, Any]],
         lines.append("}")
         lines.append("")
 
-    preload = [pad["id"] for pad in enabled if pad["preload"]]
+    # Preload is derived from the pads that were actually RENDERED, not merely
+    # from the enabled ones. A pad rejected above generates no workspace, no
+    # rule and no bind, so preloading it would launch its app at every login
+    # into a session that has nowhere to put it — a pad refused for being
+    # unusable has to be refused everywhere, not only in the half that emits
+    # rules.
+    rendered_ids = {entry["id"] for entry in rendered}
+    preload = [pad["id"] for pad in enabled if pad["preload"] and pad["id"] in rendered_ids]
     if preload:
         # Same path as a cold toggle, in a mode that launches and parks without
         # focusing, so a preloaded pad and a cold one converge on one placement.
@@ -10918,14 +11052,45 @@ def scratchpad_release_niri(pad_id: str, class_regex: str = "", title_exclude: s
         pad = record
     window = _scratchpad_niri_find_window(pad)
     if window is None:
-        return {"ok": True, "released": False}
+        return {"ok": True, "released": False, "reason": "no window mapped"}
+
+    # Release must own exactly the window the pad owned — the one ON the pad's
+    # workspace. Matching on the class alone would pick up a same-class window
+    # that was never in the pad (a second terminal, say) and yank it onto the
+    # user's active workspace, which is the same defect the Hyprland release was
+    # fixed for and is worse here because nothing else scopes it.
+    pad_workspace = _scratchpad_niri_workspace(pad_id)
+    if pad_workspace is None:
+        # The workspace list could not be read. Refusing beats moving a window
+        # chosen only by class: a failed query is not a negative answer.
+        return {"ok": False, "released": False,
+                "error": "could not read the workspace list to confirm which window belongs to the pad"}
+    if not pad_workspace:
+        # The pad's workspace does not exist, so nothing is parked on it.
+        return {"ok": True, "released": False, "reason": "the pad's workspace does not exist"}
+    try:
+        pad_workspace_id = int(pad_workspace.get("id") or 0)
+    except (TypeError, ValueError):
+        pad_workspace_id = 0
+    window_workspace = window.get("workspace_id")
+    if not pad_workspace_id or window_workspace is None or int(window_workspace) != pad_workspace_id:
+        return {"ok": True, "released": False,
+                "reason": "the matching window is not on the pad's workspace"}
+
     workspaces = _niri_msg_json("workspaces")
     target = ""
     if isinstance(workspaces, list):
         for workspace in workspaces:
-            if isinstance(workspace, dict) and workspace.get("is_focused"):
-                target = str(workspace.get("idx") or workspace.get("id") or "")
-                break
+            if not isinstance(workspace, dict) or not workspace.get("is_focused"):
+                continue
+            # `idx` ONLY. niri parses a numeric workspace reference as an
+            # INDEX, so falling back to the global `id` would name a different
+            # workspace entirely — a plausible-looking number that moves the
+            # window somewhere nobody asked for.
+            index = workspace.get("idx")
+            if isinstance(index, int) and index > 0:
+                target = str(index)
+            break
     if not target:
         # Without a destination the move would be a guess. Say so rather than
         # reporting a release that did not happen.

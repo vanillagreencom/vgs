@@ -4009,7 +4009,7 @@ def test_scratchpad_niri_rejects_rules_it_cannot_write_correctly():
     problems = []
     text, meta = helper.render_scratchpads_kdl([_pad(classRegex=r"^(?!excluded)(term)$")], problems)
     assert_equal(meta["count"], 0, "a pad with a lookaround pattern is not rendered")
-    assert problems and "lookaround" in problems[0]["reason"], \
+    assert problems and "lookahead" in problems[0]["reason"], \
         "and the rejection names the reason rather than the pad just vanishing"
     assert "window-rule" not in text, "no partial rule is emitted"
 
@@ -4027,6 +4027,147 @@ def test_scratchpad_niri_rejects_rules_it_cannot_write_correctly():
     _, meta = helper.render_scratchpads_kdl([_pad(titleExclude=r"(?<=x)y")], problems)
     assert_equal(meta["count"], 0, "an unexpressible exclusion rejects the whole pad")
     assert problems and "title exclusion" in problems[0]["reason"]
+
+
+def test_scratchpad_niri_keybinds_are_converted():
+    """A keybind is stored Hyprland-shaped (`SUPER + SHIFT, T`) because that is
+    what the Settings capture writes. Emitting it verbatim into the KDL left a
+    bind niri either rejects or silently never fires, so the pad's one keybind
+    did nothing on the compositor the config was generated for."""
+    convert = helper.scratchpad_niri_keybind
+    assert_equal(convert("SUPER, T"), "Mod+T", "SUPER becomes Mod and the comma separator goes")
+    assert_equal(convert("SUPER + SHIFT, E"), "Mod+Shift+E", "every modifier is translated")
+    assert_equal(convert("CTRL + ALT, Delete"), "Ctrl+Alt+Delete", "and a named key is kept")
+    assert_equal(convert("T"), "T", "a bind with no modifiers still converts")
+
+    # The capture records a single printable character, so punctuation is what
+    # it actually produces; niri wants the xkb keysym name for those.
+    assert_equal(convert("SUPER, /"), "Mod+slash", "punctuation becomes its keysym")
+    assert_equal(convert("SUPER, ,"), "Mod+comma",
+                 "the comma is a bindable KEY, not only the separator — splitting on every "
+                 "comma left nothing to bind")
+    assert_equal(convert("SUPER, F5"), "Mod+F5", "function keys pass through")
+    assert_equal(convert("SUPER, XF86AudioPlay"), "Mod+XF86AudioPlay", "media keys are keysyms already")
+    assert_equal(convert("Mod+T"), "Mod+T", "a bind already written niri's way is not mangled")
+
+    # Anything that cannot be spelled confidently returns "" so the caller can
+    # report it, rather than a guess that might shadow a bind the user has.
+    assert_equal(convert("SUPER"), "", "modifiers with no key are an unfinished chord")
+    assert_equal(convert("SUPER, T, Y"), "", "two keys are not one niri bind")
+    assert_equal(convert("SUPER, \u00a3"), "", "a key with no keysym name is refused, not invented")
+    assert_equal(convert(""), "", "an empty keybind converts to nothing")
+
+
+def test_scratchpad_niri_unconvertible_keybind_is_reported_not_emitted():
+    """A bind that cannot be converted must not be written verbatim, and must
+    not take the pad down with it: the pad still works through `vshell
+    scratchpad toggle`, so it is generated and the bind alone is reported."""
+    text, meta = helper.render_scratchpads_kdl([_pad(keybind="SUPER, \u00a3")])
+    assert_equal(meta["count"], 1, "the pad is still generated")
+    assert "binds {" not in text, "but no bind block is written for it"
+    assert "\u00a3" not in text, "and the unconvertible key never reaches the config"
+    keybinds = [item for item in meta["unsupported"] if item.get("field") == "keybind"]
+    assert keybinds, "the dropped bind is reported"
+    assert_equal(meta["scratchpads"][0]["keybind"], "",
+                 "and the payload reports no keybind rather than the Hyprland spelling")
+
+    # ...while a convertible one really does reach the file, in niri's syntax.
+    text, meta = helper.render_scratchpads_kdl([_pad(keybind="SUPER + SHIFT, T")])
+    assert '"Mod+Shift+T"' in text, "a convertible bind is emitted the way niri spells it"
+    assert "SUPER" not in text, "and the Hyprland spelling does not survive into the KDL"
+    assert not [i for i in meta["unsupported"] if i.get("field") == "keybind"], \
+        "a bind that converted cleanly is not reported as a problem"
+
+
+def test_scratchpad_niri_rejects_every_construct_it_can_prove_unsupported():
+    """Rust's regex crate guarantees linear time, so it implements nothing that
+    needs backtracking. Each of these compiles in Python and would make niri
+    reject the WHOLE config file — not just the pad."""
+    for pattern, label in [
+        (r"^(?!skip)(term)$", "lookahead"),
+        (r"^(?<=x)y$", "lookbehind"),
+        (r"^(a)\1$", "a backreference"),
+        (r"^(?P<n>a)(?P=n)$", "a named backreference"),
+        (r"^(?>ab)c$", "an atomic group"),
+        (r"^a*+b$", "a possessive quantifier"),
+        (r"^(?#note)a$", "an inline comment group"),
+        (r"^a\Z", r"\Z"),
+    ]:
+        problems = []
+        _, meta = helper.render_scratchpads_kdl([_pad(classRegex=pattern)], problems)
+        assert_equal(meta["count"], 0, f"a pattern using {label} is not rendered")
+        assert problems, f"and {label} is named rather than the pad vanishing"
+
+    # The patterns VGS itself generates must survive all of that.
+    for good in [r"^(com\.ghostty\.scratchpad)$", r"^(a|b)+$", r"^(1password)$"]:
+        problems = []
+        _, meta = helper.render_scratchpads_kdl([_pad(classRegex=good)], problems)
+        assert_equal(meta["count"], 1, f"{good!r} is a pattern niri accepts")
+        assert_equal(problems, [], "so it is not reported")
+
+
+def test_scratchpad_niri_rejected_pads_do_not_preload():
+    """A rejected pad generates no workspace, no rule and no bind — so
+    preloading it would launch its app at every login into a session with
+    nowhere to put it. A pad refused for being unusable is refused everywhere,
+    not only in the half that emits rules."""
+    problems = []
+    text, meta = helper.render_scratchpads_kdl(
+        [_pad(id="bad", classRegex=r"^(?!x)y$", preload=True),
+         _pad(id="good", classRegex="^(good)$", preload=True)], problems)
+    assert_equal(meta["count"], 1, "only the usable pad is rendered")
+    assert problems, "and the rejection is reported"
+    assert_equal(meta["preload"], ["good"], "the rejected pad is not preloaded")
+    assert '"preload" "bad"' not in text, "and nothing launches it at startup"
+    assert '"preload" "good"' in text, "while the usable pad still preloads"
+
+
+def test_scratchpad_niri_release_owns_only_the_pad_s_own_window():
+    """Release must own exactly the window the pad owned. Matching on the class
+    alone picks up a same-class window that was never in the pad — a second
+    terminal — and yanks it onto the user's active workspace."""
+    originals = (helper._niri_session_ready, helper._niri_msg_json,
+                 helper._niri_scratchpad_action)
+    actions = []
+    helper._niri_session_ready = lambda: True
+    helper._niri_scratchpad_action = lambda *a: (actions.append(a), True)[1]
+
+    state = {"windows": [], "workspaces": []}
+    helper._niri_msg_json = lambda *args: state.get(args[0] if args else "", None)
+    try:
+        state["workspaces"] = [{"id": 9, "name": "vgs-term", "idx": 3, "is_active": False},
+                               {"id": 4, "name": "", "idx": 2, "is_focused": True}]
+
+        # A same-class window that is NOT on the pad's workspace must be left
+        # exactly where it is.
+        state["windows"] = [{"id": 1, "app_id": "com.ghostty.scratchpad",
+                             "title": "other", "workspace_id": 4}]
+        stray = helper.scratchpad_release_niri("term", r"^(com\.ghostty\.scratchpad)$")
+        assert_equal(stray["released"], False, "a window that was never in the pad is not released")
+        assert_equal(actions, [], "and nothing is moved")
+
+        # The pad's own window is released, to the FOCUSED workspace's index.
+        actions.clear()
+        state["windows"] = [{"id": 7, "app_id": "com.ghostty.scratchpad",
+                             "title": "pad", "workspace_id": 9}]
+        released = helper.scratchpad_release_niri("term", r"^(com\.ghostty\.scratchpad)$")
+        assert_equal(released["released"], True, "the pad's own window is released")
+        assert_equal(actions, [("move-window-to-workspace", "--window-id", "7",
+                                "--focus", "false", "2")],
+                     "moved by the focused workspace's INDEX: niri reads a numeric reference as "
+                     "an index, so passing the global id would name a different workspace")
+
+        # A workspace list that cannot be read is unknown, not empty: refuse
+        # rather than move a window chosen only by class.
+        actions.clear()
+        helper._niri_msg_json = lambda *args: [] if (args and args[0] == "windows") else None
+        state["windows"] = []
+        blind = helper.scratchpad_release_niri("term", r"^(x)$")
+        assert_equal(blind["released"], False, "nothing is released when the session cannot answer")
+        assert_equal(actions, [], "and nothing is moved")
+    finally:
+        (helper._niri_session_ready, helper._niri_msg_json,
+         helper._niri_scratchpad_action) = originals
 
 
 def test_scratchpad_niri_generated_kdl_parses():
@@ -5097,6 +5238,11 @@ def main():
     test_scratchpad_niri_generation()
     test_scratchpad_niri_reports_what_it_cannot_express()
     test_scratchpad_niri_rejects_rules_it_cannot_write_correctly()
+    test_scratchpad_niri_keybinds_are_converted()
+    test_scratchpad_niri_unconvertible_keybind_is_reported_not_emitted()
+    test_scratchpad_niri_rejects_every_construct_it_can_prove_unsupported()
+    test_scratchpad_niri_rejected_pads_do_not_preload()
+    test_scratchpad_niri_release_owns_only_the_pad_s_own_window()
     test_scratchpad_niri_generated_kdl_parses()
     test_scratchpad_compositor_detection_reads_the_session_not_the_binary()
     test_scratchpad_target_monitor_resolves_against_connected_outputs()
