@@ -82,6 +82,16 @@ known manifest, not only the ones that won their id: a shipped manifest shadowed
 no record in `availablePlugins`, and that is precisely the configuration the audit is meant to
 explain.
 
+The override path itself is exercised by `scripts/qml-smoke.sh --nested`, which plants a user
+override of a bundled id inside its sandbox HOME and drives it through scan, rescan, reload and
+removal (VGS-81). The assertions are deliberately not "a load succeeded" — that is exactly what
+VGS-75 reported while the bundled copy stayed installed. The fixture's own component emits a
+load/teardown marker, and the invariant checked at every step is *one live instance of the
+override, and the id owned by something*; after the manifest is deleted the invariant becomes
+*zero live instances, and the id still owned*, which is what proves the shipped package took it
+back rather than a package that no longer exists on disk keeping it. Reverting `_relinkLoadedRecord`
+leaves one live instance behind and turns the run red.
+
 ### Rescanning
 
 `vshell ipc call plugin-scan scan` only reads manifest paths it has never seen — a path already in

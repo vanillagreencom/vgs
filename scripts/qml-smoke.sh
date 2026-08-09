@@ -23,6 +23,20 @@
 # one of them to report loaded before it stops observing, so plugin-owned QML is
 # inside the checked window. It fails if any of them never loads.
 #
+# It then drives two things that loading alone never reaches (VGS-81):
+#
+#   * a plugin POPOUT is opened through `widget toggle` and dismissed with
+#     Escape, because everything inside popoutContent is only instantiated when
+#     the popout opens — the extracted meter delegates and the in-surface pager
+#     had never been executed by anything. A ReferenceError in that content
+#     passes a full nested run with the popout closed. The surface's SIZE is not
+#     treated as evidence about the content; see the note above popout_check.
+#   * a user OVERRIDE of a bundled id is planted in the sandbox's own HOME and
+#     put through scan, rescan, reload and removal, asserting on markers only
+#     the override's own component can emit. "The load succeeded" is not
+#     evidence here: the VGS-75 defect reported PLUGIN_RELOAD_SUCCESS and logged
+#     a clean "Plugin loaded" for what was really the bundled copy.
+#
 # Both modes assert that they leave the live session byte-for-byte alone: same
 # VGS Quickshell instances, same VGS layer surfaces. Cleanup is process-group
 # scoped and runs on success, failure, timeout, and interrupt. This script never
@@ -270,14 +284,427 @@ host_wayland_socket() {
   printf '%s/%s\n' "${XDG_RUNTIME_DIR:?XDG_RUNTIME_DIR must be set}" "$display"
 }
 
+# --- plugin phases run inside the sandbox -----------------------------------
+# Both read `sandbox_env`, `repo_root`, `sandbox`, `log` and `qs_group` from
+# nested_check; bash scopes dynamically, so they are visible here.
+
+# The plugin popout is a real layer-shell window whose size comes from its
+# content, so the compositor is the honest witness for BOTH questions: that the
+# popout opened, and that its content instantiated. A popoutContent that failed
+# to build gives a degenerate surface, not a content-sized one.
+popout_namespace="vshell:plugins:plugin"
+# aiUsage, because its popoutContent is the code with no coverage at all: the
+# extracted MeterRow/MeterCard delegates and the in-surface pager (VGS-72/73)
+# live entirely inside it, and it is only instantiated when the popout opens.
+popout_plugin="aiUsage"
+# A different bundled id for the override phase, so the two cannot mask each
+# other. It has to be one the shipped bar layout hosts — a plugin no bar hosts
+# never instantiates its component, and the marker below would never fire.
+override_plugin="tailscale"
+
+sandbox_ipc() {
+  "${sandbox_env[@]}" qs ipc -p "$repo_root/quickshell/vshell" --any-display call "$@" 2>&1 || true
+}
+
+# `hyprctl -i 0` resolves to the NESTED compositor: sandbox_env is built with
+# `env -i`, so no HYPRLAND_INSTANCE_SIGNATURE from the live session leaks in and
+# XDG_RUNTIME_DIR points at the sandbox's own runtime dir.
+# The exit status is PROPAGATED. Swallowing it with `|| true` fed an empty
+# string to the parser, which then reported "no such surface" — a failed query
+# becoming a negative answer, which is the defect this harness exists to refuse.
+sandbox_layers() {
+  "${sandbox_env[@]}" hyprctl -i 0 layers -j 2>/dev/null
+}
+
+# 0 = a content-sized surface with that namespace exists
+# 1 = absent
+# 2 = present but degenerate (zero-sized, or as large as the screen)
+# 3 = THE QUERY FAILED - hyprctl errored or produced something unparsable.
+#     Distinct from 1 deliberately: "I could not look" is not "it is not there".
+#
+# The geometry is printed too, so a caller can compare sizes across states.
+sandbox_layer_state() {
+  local namespace="$1" layers rc=0
+  layers="$(sandbox_layers)" || rc=$?
+  if [[ "$rc" -ne 0 ]]; then
+    return 3
+  fi
+  LAYERS_JSON="$layers" python3 - "$namespace" <<'PY'
+import json
+import os
+import sys
+
+namespace = sys.argv[1]
+raw = os.environ["LAYERS_JSON"]
+if not raw.strip():
+    raise SystemExit(3)
+try:
+    data = json.loads(raw)
+except json.JSONDecodeError:
+    raise SystemExit(3)
+if not isinstance(data, dict):
+    raise SystemExit(3)
+
+found = False
+for monitor in data.values():
+    layers = []
+    for level in (monitor.get("levels") or {}).values():
+        layers.extend(level)
+    # The screen, inferred from the largest surface on it - the same heuristic
+    # scripts/smoke-surfaces.sh uses, and for the same reason: a popout that
+    # covers the whole screen is a layout failure, not an open popout.
+    screen_w = max((int(layer.get("w") or 0) for layer in layers), default=0)
+    screen_h = max((int(layer.get("h") or 0) for layer in layers), default=0)
+    for layer in layers:
+        if layer.get("namespace") != namespace:
+            continue
+        found = True
+        w = int(layer.get("w") or 0)
+        h = int(layer.get("h") or 0)
+        print("%dx%d" % (w, h))
+        if w <= 0 or h <= 0:
+            raise SystemExit(2)
+        if screen_w > 0 and screen_h > 0 and w >= screen_w and h >= screen_h:
+            raise SystemExit(2)
+raise SystemExit(0 if found else 1)
+PY
+}
+
+# Waits for a state, and fails LOUDLY on a query error rather than spinning to
+# the timeout and then reporting the wrong thing.
+wait_layer_state() {
+  local namespace="$1" want="$2" waited state=1
+  for waited in $(seq 1 30); do
+    state=0
+    sandbox_layer_state "$namespace" >/dev/null || state=$?
+    if [[ "$state" -eq 3 ]]; then
+      fail "could not read the sandbox compositor's layer list (hyprctl query failed) - that is not evidence '$namespace' is absent"
+      return 2
+    fi
+    [[ "$state" == "$want" ]] && return 0
+    kill -0 -- "-$qs_group" 2>/dev/null || break
+    sleep 0.2
+  done
+  return 1
+}
+
+# WHAT THE POPOUT CHECK WITNESSES, AND WHAT IT DOES NOT.
+#
+# It opens a plugin popout and asserts a `vshell:plugins:plugin` layer surface
+# appears where there was none, is not degenerate, and goes away again on
+# Escape. That proves the popout was created, mapped and dismissed.
+#
+# It does NOT prove `popoutContent` rendered correctly, and the surface's SIZE
+# is not evidence that it did. That was measured rather than assumed: a fixture
+# plugin was planted with three different content shapes (a bare `Item`, a
+# `Column`, a `Rectangle`) at two declared heights (140px and 340px), and all
+# six combinations settled to an identical 573px surface. Reading the height
+# earlier gives a smaller number, but that is a transient during the resize, not
+# the content's size. Any assertion of the form "the surface is content-sized"
+# would therefore be measuring the popout chrome, not the content.
+#
+# Two things DO witness the content, and both are already load-bearing here:
+#
+#   * a plugin with no `popoutContent` produces NO surface at all, so the
+#     presence assertion below fails (proven by mutation);
+#   * a ReferenceError inside `popoutContent` reaches the log scan at the end of
+#     nested_check, and that error class is only reachable because the popout is
+#     opened — the same defect passes a full nested run with the popout closed
+#     (proven by mutation).
+#
+# Navigating the pager would be a third and better witness, but it needs a
+# pointer click on the gear affordance. `wtype` is keyboard-only and
+# `hyprctl dispatch` cannot address a layer surface, so there is no pointer
+# route from here; that is a real gap, not an oversight.
+popout_namespace="vshell:plugins:plugin"
+# aiUsage, because its popoutContent is the code with no coverage at all: the
+# extracted MeterRow/MeterCard delegates and the in-surface pager (VGS-72/73)
+# live entirely inside it, and it is only instantiated when the popout opens.
+popout_plugin="aiUsage"
+# A different bundled id for the override phase, so the two cannot mask each
+# other. It has to be one the shipped bar layout hosts - a plugin no bar hosts
+# never instantiates its component, and the marker below would never fire.
+override_plugin="tailscale"
+
+# Plugin widgets are registered with BarWidgetService by the bar's WidgetHost,
+# which mounts them some time AFTER the plugin itself reports loaded. A single
+# read here failed about one run in eight with WIDGET_NOT_FOUND.
+wait_widget_registered() {
+  local widget="$1" waited reply=""
+  for waited in $(seq 1 60); do
+    reply="$(sandbox_ipc widget list)"
+    printf '%s\n' "$reply" | grep -q "^${widget}\b" && return 0
+    kill -0 -- "-$qs_group" 2>/dev/null || break
+    sleep 0.25
+  done
+  printf 'qml-smoke: `widget list` reported:\n%s\n' "$reply" >&2
+  return 1
+}
+
+popout_check() {
+  local reply state=0
+
+  wait_widget_registered "$popout_plugin" || {
+    fail "the sandbox bar never registered '$popout_plugin', so its popout could not be opened - the seeded settings.default.json is supposed to host it"
+    return 1
+  }
+
+  # Start from a known state: no popout surface open. Without this, a surface
+  # left over from something else would satisfy the assertion below.
+  if ! wait_layer_state "$popout_namespace" 1; then
+    fail "a plugin popout surface was already open before '$popout_plugin' was toggled"
+    return 1
+  fi
+
+  reply="$(sandbox_ipc widget toggle "$popout_plugin")"
+  if [[ "$reply" != "WIDGET_TOGGLE_SUCCESS: $popout_plugin" ]]; then
+    fail "widget toggle $popout_plugin answered '$reply'"
+    return 1
+  fi
+
+  # NOT "the call returned success" - that is what the old coverage would have
+  # been. This waits for the compositor to show the surface.
+  wait_layer_state "$popout_namespace" 0 || state=$?
+  if [[ "$state" -ne 0 ]]; then
+    sandbox_layer_state "$popout_namespace" >&2 || true
+    if [[ "$state" -eq 2 ]]; then
+      fail "'$popout_plugin' opened a degenerate popout surface (zero-sized or full-screen)"
+    else
+      fail "'$popout_plugin' popout never produced a '$popout_namespace' surface"
+    fi
+    return 1
+  fi
+
+  # Escape, through the virtual-keyboard protocol. `hyprctl dispatch
+  # sendshortcut` targets a WINDOW and answers "window not found" for a layer
+  # surface, so it cannot reach a popout at all; wtype goes to whatever holds
+  # keyboard focus, which is the popout's own focus grab.
+  if command -v wtype >/dev/null 2>&1; then
+    # The popout grabs keyboard focus asynchronously (PluginPopout defers
+    # forceActiveFocus through Qt.callLater), so a key sent the instant the
+    # surface appears can land before anything is listening for it.
+    sleep 1.5
+    "${sandbox_env[@]}" WAYLAND_DISPLAY="$nested_socket" wtype -k Escape >/dev/null 2>&1 || true
+    if ! wait_layer_state "$popout_namespace" 1; then
+      sandbox_layer_state "$popout_namespace" >&2 || true
+      fail "Escape did not close the '$popout_plugin' popout"
+      return 1
+    fi
+    note "plugin popout check passed ($popout_plugin opened a $popout_namespace surface and Escape closed it)"
+  else
+    # Named, never silent: a skip that reads as a pass is what this file exists
+    # to prevent.
+    note "NOT CHECKED: Escape-to-close - wtype is not installed"
+    reply="$(sandbox_ipc widget toggle "$popout_plugin")"
+    if [[ "$reply" != "WIDGET_TOGGLE_SUCCESS: $popout_plugin" ]]; then
+      fail "closing the $popout_plugin popout answered '$reply'"
+      return 1
+    fi
+    if ! wait_layer_state "$popout_namespace" 1; then
+      fail "the '$popout_plugin' popout surface outlived its close"
+      return 1
+    fi
+    note "plugin popout check passed ($popout_plugin opened a $popout_namespace surface and closed cleanly)"
+  fi
+  return 0
+}
+
+# How many times the override fixture's OWN component has been instantiated.
+# This is the assertion the original VGS-75 defect defeats: it reported
+# PLUGIN_RELOAD_SUCCESS and logged a clean "Plugin loaded" for what was really
+# the bundled copy, so anything checking that a load *succeeded* passed
+# throughout. Only the override's own QML can emit this.
+override_marker_count() {
+  grep -c "VGS81-OVERRIDE-LOADED-$override_nonce" "$log" 2>/dev/null || true
+}
+
+override_unloaded_count() {
+  grep -c "VGS81-OVERRIDE-UNLOADED-$override_nonce" "$log" 2>/dev/null || true
+}
+
+wait_marker() {
+  local counter="$1" want="$2" waited seen=0
+  for waited in $(seq 1 60); do
+    seen="$($counter)"
+    [[ "$seen" -ge "$want" ]] && return 0
+    kill -0 -- "-$qs_group" 2>/dev/null || break
+    sleep 0.25
+  done
+  return 1
+}
+
+plugin_is_loaded() {
+  sandbox_ipc plugins list | grep -q "^$1 \[loaded\]\$"
+}
+
+override_check() {
+  local dir reply live loads teardowns loads_before teardowns_before
+
+  dir="$sandbox/home/.config/vshell/plugins/$override_plugin"
+  mkdir -p "$dir"
+  # A fixture, not a copy of the bundled component: the marker has to come from
+  # QML that only the override has, and authoring it here keeps a test-only
+  # hook out of the shipped tree entirely. `overrides` is the opt-in that lets
+  # a user package take a bundled id (VGS-26); requires_shell is satisfied, so
+  # the version gate is not what is under test here.
+  cat >"$dir/plugin.json" <<EOF
+{
+    "id": "$override_plugin",
+    "name": "VGS-81 override fixture",
+    "description": "Throwaway override planted by scripts/qml-smoke.sh inside its sandbox.",
+    "version": "9.9.9",
+    "license": "MIT",
+    "author": "qml-smoke",
+    "icon": "science",
+    "component": "./Component.qml",
+    "overrides": "$override_plugin",
+    "requires_shell": ">=0.0.1"
+}
+EOF
+  cat >"$dir/Component.qml" <<EOF
+import QtQuick
+import qs.Modules.Plugins
+
+PluginComponent {
+    id: root
+
+    // Deliberately minimal, but with a pill of its own so a bar genuinely
+    // hosts and instantiates it rather than merely compiling it.
+    horizontalBarPill: Component {
+        Rectangle {
+            implicitWidth: 8
+            implicitHeight: 8
+            color: "transparent"
+        }
+    }
+    Component.onCompleted: console.info("VGS81-OVERRIDE-LOADED-$override_nonce")
+    Component.onDestruction: console.info("VGS81-OVERRIDE-UNLOADED-$override_nonce")
+}
+EOF
+
+  reply="$(sandbox_ipc plugin-scan scan)"
+  if [[ "$reply" != SCAN_TRIGGERED:* ]]; then
+    fail "plugin-scan scan answered '$reply'"
+    return 1
+  fi
+  if ! wait_marker override_marker_count 1; then
+    fail "the planted override of '$override_plugin' never loaded its own component — a scan that reports success while the bundled copy stays installed is exactly the VGS-75 defect"
+    return 1
+  fi
+  if ! override_state_settles 1; then
+    return 1
+  fi
+
+  # A rescan re-reads every manifest claiming the id. It deliberately does NOT
+  # assert a reload: when the record re-read for a path is the one already
+  # installed, _relinkLoadedRecord hands it the registration and reloading
+  # would be pointless work. Whether a reload happens depends on which manifest
+  # the rescan reaches first, so counting loads here asserts an artefact — it
+  # was observed failing about one run in five before this was corrected. What
+  # must hold is the invariant: exactly one live instance of the override, and
+  # the id owned.
+  reply="$(sandbox_ipc plugin-scan rescan "$override_plugin")"
+  if [[ "$reply" != RESCAN_TRIGGERED:* ]]; then
+    fail "plugin-scan rescan answered '$reply'"
+    return 1
+  fi
+  sleep 2
+  if ! override_state_settles 1; then
+    return 1
+  fi
+
+  # A reload IS a defined contract: unload, then load. This is the step VGS-75
+  # was reproduced on — after a rescan, `unloadPlugin` cleared the flag on the
+  # record in `loadedPlugins` while `loadPlugin` read the other record, which
+  # still claimed `loaded`, and early-returned true having installed nothing.
+  # Live, that produced two "Plugin unloaded" lines and no matching load while
+  # `plugin-scan status` still answered "loaded".
+  loads_before="$(override_marker_count)"
+  teardowns_before="$(override_unloaded_count)"
+  reply="$(sandbox_ipc plugins reload "$override_plugin")"
+  if [[ "$reply" != "PLUGIN_RELOAD_SUCCESS: $override_plugin" ]]; then
+    fail "plugins reload answered '$reply'"
+    return 1
+  fi
+  # PLUGIN_RELOAD_SUCCESS is exactly what the defect reported while installing
+  # nothing, so the reply is not evidence. Only the override's own component
+  # saying it was torn down and instantiated again is.
+  if ! wait_marker override_marker_count $((loads_before + 1)); then
+    loads="$(override_marker_count)"
+    fail "plugins reload reported success but the override's own component was never re-instantiated (own-component loads $loads, expected $((loads_before + 1)))"
+    return 1
+  fi
+  sleep 1
+  loads="$(override_marker_count)"
+  teardowns="$(override_unloaded_count)"
+  if [[ "$loads" -ne $((loads_before + 1)) || "$teardowns" -ne $((teardowns_before + 1)) ]]; then
+    fail "the reload was not exactly one unload followed by one load (loads $loads_before -> $loads, teardowns $teardowns_before -> $teardowns)"
+    return 1
+  fi
+  if ! override_state_settles 1; then
+    return 1
+  fi
+
+  # Removing the override must hand the id back to the shipped package rather
+  # than leaving a package that no longer exists on disk installed under it.
+  rm -rf -- "$dir"
+  reply="$(sandbox_ipc plugin-scan rescan "$override_plugin")"
+  if [[ "$reply" != RESCAN_TRIGGERED:* ]]; then
+    fail "plugin-scan rescan after removing the override answered '$reply'"
+    return 1
+  fi
+  if ! wait_marker override_unloaded_count $((teardowns + 1)); then
+    fail "the override's component was never torn down after its manifest was removed — it is still the package installed under '$override_plugin' while its files no longer exist"
+    return 1
+  fi
+  sleep 1
+  # `plugins list` saying "[loaded]" is NOT evidence that the shipped package
+  # took the id back: it is exactly what the id reported while the wrong
+  # package's components were installed. The evidence is that the id is loaded
+  # AND no instance of the override survives, which leaves only the shipped
+  # package. Reverting VGS-75 ends this run with one override instance still
+  # live after its manifest was deleted.
+  if ! override_state_settles 0; then
+    return 1
+  fi
+  loads="$(override_marker_count)"
+  teardowns="$(override_unloaded_count)"
+  note "plugin override check passed ($override_plugin: the override loaded its own component, kept exactly one live instance across a rescan and a reload, and left none behind when its manifest was removed — own-component loads $loads, teardowns $teardowns)"
+  return 0
+}
+
+# The two things that must hold after every step: the id is owned by something,
+# and the override has exactly `want` live instances (loads minus teardowns).
+override_state_settles() {
+  local want="$1" loads teardowns live
+  loads="$(override_marker_count)"
+  teardowns="$(override_unloaded_count)"
+  live=$((loads - teardowns))
+  if [[ "$live" -ne "$want" ]]; then
+    fail "'$override_plugin' has $live live override instance(s), expected $want (own-component loads $loads, teardowns $teardowns)"
+    return 1
+  fi
+  if ! plugin_is_loaded "$override_plugin"; then
+    fail "'$override_plugin' is owned by nobody — no package is installed under the id"
+    return 1
+  fi
+  return 0
+}
+
 nested_check() {
   local host_socket sandbox rt_dir conf log nested_socket candidate waited exit_code findings
   local compositor_pgid qs_launcher qs_group loaded targets plugins_loaded plugin_report candidate
   local -a expected_plugins=() missing_plugins=()
   local -a sandbox_env=() dbus_wrapper=()
+  # Per-run, so a stale log from an earlier invocation can never satisfy a
+  # marker assertion in this one.
+  override_nonce="$$-${RANDOM}"
 
   command -v Hyprland >/dev/null 2>&1 || { nested_unavailable "Hyprland not installed"; return; }
   command -v qs >/dev/null 2>&1 || { nested_unavailable "quickshell (qs) not installed"; return; }
+  # The layer-geometry assertions parse hyprctl's JSON with it. Without this the
+  # first parse would fail as a command-not-found and be read as "no surface".
+  command -v python3 >/dev/null 2>&1 || { nested_unavailable "python3 not installed (needed to read the compositor's layer list)"; return; }
   if ! host_socket="$(host_wayland_socket)" || [[ ! -S "$host_socket" ]]; then
     # Without a host Wayland socket a nested compositor would fall back to DRM
     # and fight the real session for the GPU/VT. Refuse rather than risk it.
@@ -298,9 +725,69 @@ nested_check() {
   mkdir -p "$sandbox/home/.config" "$sandbox/home/.local/share" "$sandbox/home/.local/state" "$sandbox/home/.cache"
   # Seed a realistic (but throwaway) copy of user state so the smoke exercises
   # the real theme/settings paths without any chance of writing to live state.
+  # Every step below either succeeds or SAYS SO. A prep failure that is
+  # swallowed leaves the run measuring a sandbox that is not the one it
+  # describes, which is the same defect as the `cp -a` symlink silently
+  # yielding default settings and a failed layer query reading as absence —
+  # this file has now had that bug three times, and twice it was here.
+  prep_fail() {
+    fail "sandbox preparation failed at: $1"
+    return 1
+  }
+
+  # `cp -aL`, not `cp -a`. This machine's documented workstation wiring points
+  # `~/.config/vshell/settings.json` at ~/dotfiles through a RELATIVE symlink,
+  # which `cp -a` preserves and which then dangles inside the sandbox — so the
+  # comment that used to sit here, claiming the copy "exercises the real
+  # theme/settings paths", had never been true on a dotfiles-symlinked config.
+  # `-L` dereferences, so what lands in the sandbox is real files.
+  #
+  # This one copy is the only OPTIONAL step: it enriches the sandbox with real
+  # theme and blueprint state, and everything the checks actually assert on is
+  # seeded below. A user config containing a genuinely broken symlink must not
+  # fail everyone's smoke — but it must not pass unmentioned either, because
+  # the run is then thinner than it looks.
   if [[ -d "$HOME/.config/vshell" ]]; then
-    cp -a -- "$HOME/.config/vshell" "$sandbox/home/.config/vshell"
+    if ! cp -aL -- "$HOME/.config/vshell" "$sandbox/home/.config/vshell" 2>"$sandbox/cp.err"; then
+      note "DEGRADED: could not copy ~/.config/vshell into the sandbox; continuing with shipped defaults only"
+      sed -n '1,5p' "$sandbox/cp.err" >&2 || true
+    fi
   fi
+
+  # Everything the checks below depend on is SEEDED from the shipped defaults
+  # rather than inherited. Dereferencing the copy fixes correctness, not
+  # determinism: the operator's own bar layout, plugin settings and user plugin
+  # packages would still decide what this run exercises, and a sandbox whose
+  # result depends on the machine it ran on is not a sandbox.
+  # TWO different things are called "the rm failed", and they pull in opposite
+  # directions:
+  #
+  #   * "it was not there" is the normal case — nothing was copied in, because
+  #     the operator has no user plugins or no config at all. `-f`/`-rf` make
+  #     that a success, which is what stops a bare `rm` aborting the script
+  #     under `set -euo pipefail`.
+  #   * "it was there and could not be removed" is a prep failure. The seeded
+  #     state would then be sitting underneath whatever survived, and the run
+  #     would measure a sandbox nobody described. That fails, and names itself.
+  #
+  # `-f` distinguishes them exactly: it suppresses the missing-file error and
+  # nothing else, so a permission or busy error still returns non-zero. Their
+  # stderr is NOT discarded, so the reason reaches the reader.
+  mkdir -p "$sandbox/home/.config/vshell" || { prep_fail "creating the sandbox config directory"; return; }
+  rm -rf -- "$sandbox/home/.config/vshell/plugins" || { prep_fail "removing the copied user plugin directory"; return; }
+  rm -f -- "$sandbox/home/.config/vshell/settings.json" \
+           "$sandbox/home/.config/vshell/plugin_settings.json" || { prep_fail "removing the copied settings files"; return; }
+  # Belt and braces: `rm -rf` reports success for a directory it could not fully
+  # remove in some conditions, and a surviving user plugin would silently join
+  # the override phase's fixture under the same id.
+  if [[ -e "$sandbox/home/.config/vshell/plugins" ]]; then
+    prep_fail "the copied user plugin directory still exists after removal"
+    return
+  fi
+  cp -- "$repo_root/config/vshell/settings.default.json" \
+        "$sandbox/home/.config/vshell/settings.json" || { prep_fail "seeding settings.json from the shipped default"; return; }
+  cp -- "$repo_root/config/vshell/plugin_settings.default.json" \
+        "$sandbox/home/.config/vshell/plugin_settings.json" || { prep_fail "seeding plugin_settings.json from the shipped default"; return; }
 
   conf="$sandbox/hyprland.conf"
   cat >"$conf" <<'EOF'
@@ -449,6 +936,16 @@ EOF
       kill -0 -- "-$qs_group" 2>/dev/null || break
       sleep 0.5
     done
+  fi
+
+  # Both phases drive the shell that is still running, so they come before the
+  # teardown. They stop at the first failure, and `fail` has already set the
+  # exit status by then; the log scan below still runs, because a phase that
+  # failed usually left its explanation there.
+  if [[ "$plugins_loaded" == true ]]; then
+    if popout_check; then
+      override_check || true
+    fi
   fi
 
   kill_pgid "$qs_group"
