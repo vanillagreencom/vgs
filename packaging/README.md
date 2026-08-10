@@ -233,7 +233,10 @@ sudo zypper --gpg-auto-import-keys refresh
 sudo zypper install vgs-shell
 ```
 
-The same OBS project also publishes a Slowroll build.
+The `zypper ar` URL above is Tumbleweed-specific. The same OBS project also
+publishes a Slowroll build; take its repository URL from the
+[OBS package page](https://build.opensuse.org/package/show/home:vanillagreen/vgs-shell)
+rather than editing the Tumbleweed one by hand.
 
 Debian 13:
 

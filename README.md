@@ -92,9 +92,9 @@ sudo dnf install vgs-shell
 
 ### openSUSE, Debian, Ubuntu, Gentoo
 
-Packages are also published for openSUSE Tumbleweed and Slowroll (OBS),
-Debian 13 (OBS), Ubuntu 26.04 (Launchpad PPA), and Gentoo (the VanillaGreen
-overlay). Repository setup and install commands for every channel live in
+Packages are also published for openSUSE Tumbleweed (plus a Slowroll build on
+OBS), Debian 13 (OBS), Ubuntu 26.04 (Launchpad PPA), and Gentoo (the
+VanillaGreen overlay). Repository setup and install commands live in
 [`packaging/README.md` § Channels](packaging/README.md#channels).
 
 ### Nix / Home Manager
