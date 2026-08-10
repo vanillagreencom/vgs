@@ -1,7 +1,7 @@
 # Reviewer guidance for GitHub review bots
 
-Instructions for automated PR reviewers (Copilot code review, Codex, and
-any successor). This file is reviewer context only — agent sessions must
+Instructions for automated PR reviewers (Copilot code review, qodo, Codex,
+and any successor). This file is reviewer context only — agent sessions must
 not load it as working instructions (that is why it is not in `AGENTS.md`).
 
 ## Review economics

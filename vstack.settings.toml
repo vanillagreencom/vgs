@@ -184,10 +184,10 @@ REVIEW_GATE_CHECKRUN_SKIP_PATTERNS = "rate limited;skipped;queued"
 # "chatgpt-codex-connector[bot]:Reviewed commit:"). SECURITY: trust keys on
 # the author LOGIN (only GitHub can set it); the body is read only to bind
 # the evidence to a commit. Empty disables the source.
-# VGS ASSIGNMENT: EMPTY. VGS has no comment-form reviewer — both reviewers
-# post review objects. Configuring one would also be inert: the predicate
-# rejects comment evidence from the PR author, and every VGS PR is authored by
-# the single house login.
+# VGS ASSIGNMENT: EMPTY. VGS has no comment-form reviewer — the active
+# reviewers (Copilot, qodo, Codex) all post review objects. Configuring one
+# would also be inert: the predicate rejects comment evidence from the PR
+# author, and every VGS PR is authored by the single house login.
 REVIEW_GATE_COMMENT_REVIEWERS = ""
 
 # Shortest sha prefix (4–40) a comment-form reviewer may bind evidence to;
@@ -246,10 +246,11 @@ REVIEW_GATE_REVIEW_OBJECT_TRUSTED_LOGINS = "coderabbitai[bot];copilot-pull-reque
 # supersedes an approval).
 #
 # VGS ASSIGNMENT: "any", deliberately, now that the trust list above is what
-# closes the drive-by hole. Of the three trusted reviewers only CodeRabbit ever
-# submits APPROVED; Copilot and qodo report clean runs as COMMENTED. Requiring
-# "approved" would therefore discard two of the three reviewers entirely and
-# make the gate depend on the one that has been rate-limited all day.
+# closes the drive-by hole. Of the four trusted logins only CodeRabbit ever
+# submitted APPROVED, and it has been disabled org-wide since 2026-08-08
+# (trusted again if it returns); the three active reviewers — Copilot, qodo
+# and Codex — report clean runs as COMMENTED. Requiring "approved" would
+# therefore discard every active reviewer and hang the gate on a disabled bot.
 REVIEW_GATE_REVIEW_OBJECT_MIN_STATE = "any"
 
 # PR-triggered workflows must not be able to mint trusted contexts or the
