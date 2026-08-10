@@ -110,12 +110,14 @@ def main() -> int:
             continue
         size = path.stat().st_size
         if size > ceiling:
+            suggested = math.ceil(size * 1.10 / 100) * 100
             problems.append(
                 f"{rel} is {size:,} bytes, over its {ceiling:,}-byte ceiling. "
                 f"Growth must be a conscious trade, not drift: cut the file back "
                 f"below the ceiling, or raise its ceiling in "
-                f"scripts/check-doc-growth.py in the SAME PR with a rationale "
-                f"comment saying what earned the bytes."
+                f"scripts/check-doc-growth.py in the SAME PR ({suggested:,} "
+                f"keeps ~10% headroom at today's size) with a rationale comment "
+                f"saying what earned the bytes."
             )
 
     for pattern in WATCHED_GLOBS:
