@@ -1,6 +1,6 @@
 """Comment- and string-aware scanning of shell-shaped packaging recipes.
 
-PKGBUILDs and Void templates are read by more than one check, and every one of
+PKGBUILDs and Void templates are shell-shaped text, and any check that reads
 them wants the same thing: find a variable assignment, or find where a function
 body starts and stops, without being fooled by text that only looks like shell
 syntax. Counting braces line by line is the naive version, and it is wrong in
