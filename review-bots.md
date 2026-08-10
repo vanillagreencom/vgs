@@ -68,8 +68,8 @@ not a suggestion):
   `.github/instructions/*.instructions.md`.
 - Lock/session/idle surfaces: `quickshell/vshell/shell.qml` (owns the
   `Lock` instance; child order is load-bearing —
-  `docs/architecture/idle-lock-screensaver.md` § The child order is
-  load-bearing), `quickshell/vshell/Modules/Lock/`,
+  `docs/architecture/idle-lock-screensaver.md`),
+  `quickshell/vshell/Modules/Lock/`,
   `quickshell/vshell/Modules/Greetd/` and the greeter wiring
   (`quickshell/vshell/VGSGreeter.qml`,
   `quickshell/vshell/Services/GreeterUsersService.qml`),
@@ -78,21 +78,23 @@ not a suggestion):
   lock handlers gate the whole idle→lock chain).
 - Packaging/publish: the maintained install channels — `packaging/`,
   root `install.sh` and `flake.nix`, `publish-aur.yml`, `release.yml`.
-- Privileged operations: privileged method handlers under `backend/`,
-  and any `bin/vshell-helper` path that elevates (`sudo`/`pkexec`) or
-  writes outside the user's home (`/etc`, `/var`, udev rules, sudoers,
-  greeter config/cache, sysfs). The class is that PROPERTY, not a list —
-  derive the current members with
-  `grep -n '"sudo"\|"pkexec"\|geteuid\|Path("/etc\|Path("/var' bin/vshell-helper`.
-  Known members today, non-exhaustive: `vshell greeter sync`,
-  `vshell auth sync`, `vshell greeter keyring`, `vshell sudo-toggle`,
-  `vshell brightness install-udev`, `vshell theme chromium-policy`,
-  `vshell battery set-charge-limit`
-  (`docs/architecture/shell-architecture.md` items 8-10).
+- Privileged operations: the property is elevation or a system write,
+  WHEREVER it lives — `backend/` privileged method handlers, anything
+  invoking `sudo`/`pkexec`/polkit, anything writing outside the user's
+  home (`/etc`, `/var`, udev, sudoers, greeter config/cache, sysfs).
+  Derive members:
+  `grep -n '"sudo"\|"pkexec"\|geteuid\|Path("/etc\|Path("/var' bin/vshell-helper`
+  plus `grep -rn '"sudo"\|"pkexec"' quickshell/ bin/vshell`.
+  Non-exhaustive today: helper `greeter sync` / `auth sync` /
+  `greeter keyring` / `sudo-toggle` / `brightness install-udev` /
+  `theme chromium-policy` / `battery set-charge-limit`
+  (`docs/architecture/shell-architecture.md` items 8-10);
+  `quickshell/vshell/Services/UsersService.qml` (pkexec account,
+  password and group mutations); the `bin/vshell` setcap grant.
 
-Review evidence never carries forward on these paths:
-`REVIEW_GATE_CARRY_FORWARD_EXCLUDE` disqualifies their markdown, and no
-carry class matches code files at all.
+Review evidence never carries forward here: the carry-forward exclude
+disqualifies these classes' markdown, and no carry class matches code
+files at all.
 
 **Low-risk — do not spend rounds on style here:**
 
