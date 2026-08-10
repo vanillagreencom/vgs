@@ -76,7 +76,7 @@ CEILINGS: dict[str, int] = {
     "docs/architecture/greeter-auto-login-keyring.md": 3_500,  # adopted at 3,151 B
     "docs/architecture/idle-lock-screensaver.md": 20_300,  # adopted at 18,453 B
     "docs/architecture/notification-ownership.md": 19_300,  # adopted at 17,530 B
-    "docs/architecture/overlay-and-dependencies.md": 22_900,  # adopted at 20,785 B
+    "docs/architecture/overlay-and-dependencies.md": 21_300,  # adopted at 19,354 B
     "docs/architecture/remote-desktop.md": 21_700,  # adopted at 19,653 B
     "docs/architecture/scratchpads.md": 24_500,  # adopted at 22,271 B
     "docs/architecture/shell-architecture.md": 22_300,  # adopted at 20,248 B
