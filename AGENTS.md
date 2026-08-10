@@ -236,11 +236,17 @@ would multiply billed minutes to save seconds, and a change-detection job to
 gate those lanes would cost more than the work it could skip. The sibling repos
 (hyprtrade, memsira, drovr) split because their lanes run for minutes; that
 economics does not transfer. Revisit if any step crosses ~5 minutes. There is no
-nightly split for the same reason.
+nightly split for the same reason. Re-measure by running each § Validation entry
+under `time` for the static figure, and in `backend/` `time go build ./...`,
+`time go vet ./...`, `time go test -race ./...` for the Go block — warm as-is,
+cold by pointing `GOCACHE` at a throwaway directory.
 
 Go caching is deliberately **off**. A cold Go run downloads 13 MB of modules but
-leaves a 296 MB `GOCACHE`; saving and restoring that to skip ~10s of compute is
-a net loss on a 2 vCPU runner. Re-measure before enabling it.
+leaves a ~284 MB `GOCACHE` (measured 2026-08-09); saving and restoring that to
+skip ~10s of compute is a net loss on a 2 vCPU runner. Re-measure before
+enabling it: `go mod download` into a fresh `GOMODCACHE` and `du -sh` it for
+the module figure; run the Go block once with a throwaway `GOCACHE` and
+`du -sh` that for the cache figure.
 
 The runner resolves through the shared `CI_RUNNER_2V` repository variable
 (Blacksmith when set, `ubuntu-latest` when unset — that fallback is supported
@@ -397,10 +403,13 @@ same defect as skipping the step. An unrecognised event fails the same way,
 so adding a trigger forces a conscious decision about what to compare against.
 A red run on a rewritten trunk is informative, not noise.
 
-A whole-tree whitespace check is deliberately not used: the vendored trees under
-`config/vshell/nvim/colorschemes/` and `config/vshell/icons/` carry ~2000
-pre-existing findings, so it would be red from day one and would need an
-exclusion list to maintain.
+A whole-tree whitespace check is deliberately not used: the tree carries ~1,000
+pre-existing findings, every one in content VGS ships verbatim — curated theme
+packages under `themes/` and the vendored `config/vshell/nvim/colorschemes/`
+and `config/vshell/icons/` trees — so it would be red from day one and would
+need an exclusion list covering all of that to maintain. Measure with
+`git diff --check $(git hash-object -t tree /dev/null) HEAD | wc -l` (~2,000
+lines, since trailing-whitespace findings also echo the offending line).
 
 ### Never launch a second shell into the live session
 Never run `qs -c vshell` or `qs -p quickshell/vshell`: each starts a **full second

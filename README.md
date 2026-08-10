@@ -20,7 +20,7 @@ follows is what VGS adds on top.
 
 | | |
 |---|---|
-| **A real theme engine** | The biggest difference. Themes restyle 29 apps alongside the shell, ship with wallpapers, and can be edited colour by colour. |
+| **A real theme engine** | The biggest difference. Themes restyle the shell and [the apps you already use](#themes), ship with wallpapers, and can be edited colour by colour. |
 | **Claude & Codex usage** | Plan limits in the bar, including every account you're signed into, with per-model quotas and reset countdowns. |
 | **System updates** | Repo and AUR counts in the bar; run updates in a terminal from the popout. |
 | **Display brightness** | Per-monitor control for laptop panels, external monitors over DDC/CI, and Apple Pro Display XDR and Studio Display over USB. |
@@ -187,9 +187,10 @@ Checksum-verified bundles and source archives are available from
 
 ## Themes
 
-**79 themes ship with VGS** — Catppuccin, Gruvbox, Nord, Dracula, Rosé Pine, Tokyo Night, Kanagawa,
-Everforest, Ayu, Monokai, Matte Black and more, plus a set of originals. Star the ones you use and
-they stay at the top of the list.
+**Dozens of themes ship with VGS** — Catppuccin, Gruvbox, Nord, Dracula, Rosé Pine, Tokyo Night, Kanagawa,
+Everforest, Ayu, Monokai, Matte Black and more, plus a set of originals — the committed catalog at
+`themes/catalog.json` keeps the exact count. Star the ones you use and they stay at the top of the
+list.
 
 Switching a theme doesn't just recolour the shell. VGS writes matching themes for the apps you
 already use:

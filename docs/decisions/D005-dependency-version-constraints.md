@@ -47,6 +47,23 @@ Facts established before choosing (2026-08-08):
   parser needs a third "could not determine" state, and a mis-parse reports a
   working system as broken — a worse failure than the gap being closed.
 
+> **Correction (2026-08-09, VGS-106):** the transcribed counts above — repeated
+> wherever "67" appears in this record — were wrong on the decision date, not
+> stale: the manifest already declared **43** feature groups (not ~20) probing
+> **71** unique commands (not 67) across 95 probe entries — plain `commands`,
+> flattened `anyCommands` alternatives, and per-compositor `compositorCommands`
+> values. This derivation is the definition, against
+> `config/vshell/dependencies.json`:
+>
+> ```bash
+> jq '[.features[] | (.commands // []) + (.compositorCommands // {} | add // []) + (.anyCommands // [] | flatten)] | add | unique | length'
+> ```
+>
+> Drop `| unique` for the 95 probe entries; `.features | length` gives the 43
+> groups. The decision is unaffected: `jq` remains the sole entry with a
+> documented minimum, and a version parser per probed command is *more*
+> expensive at the true count, not less.
+
 ## Decision
 
 **`dependencies.json` gains no version-constraint syntax.** It declares presence,

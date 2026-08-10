@@ -40,9 +40,11 @@ All of these live in `Common/Theme.qml` unless noted.
 | `Appearance.rounding.large` | 16 | 11 | |
 | `Appearance.rounding.extraLarge` | 24 | 14 | |
 
-Radius is the single highest-leverage change: it propagates through the ~393
+Radius is the single highest-leverage change: it propagates through the ~260
 files that consume `Theme.controlRadius` / `Theme.cornerRadius` /
-`Appearance.rounding.*`.
+`Appearance.rounding.*` — count them with
+`grep -rlE 'Theme\.(controlRadius|cornerRadius)|Appearance\.rounding\.' quickshell/vshell | wc -l`
+rather than trusting the number here.
 
 ## Borders (the shadcn signature)
 
@@ -219,7 +221,7 @@ was pushed bolder. These are the knobs:
 - **Border-forward cards** — `SettingsCard`/`SettingsToggleCard`/
   `SettingsSliderCard` carry a 1px `borderColor` hairline (the shadcn card
   signature) over a fill kept a step above the reading pane, so cards read in
-  both glass and no-glass modes. Propagates to all ~131 settings cards.
+  both glass and no-glass modes. Propagates to every settings card.
 - **Bolder titles** — `fontWeightSectionHeader` is `Font.Bold`.
 - **Card rhythm** — inter-card gap in settings tabs is `spacingXL` (24).
 
