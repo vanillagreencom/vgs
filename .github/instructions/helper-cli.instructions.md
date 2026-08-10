@@ -4,7 +4,8 @@ applyTo: "bin/**"
 
 # Helper CLI
 
-`bin/vshell-helper` is a deliberately single-file ~10k-line Python CLI. Do not
+`bin/vshell-helper` is a deliberately single-file, multi-thousand-line Python
+CLI (measure it with `wc -l bin/vshell-helper`). Do not
 propose splitting it into modules as a review finding — heavy logic living here
 rather than in QML is the design. Review it for behavior, not architecture.
 
