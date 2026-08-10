@@ -1,4 +1,4 @@
-# D007: One-job CI — lanes, caching, runner tier, and whitespace scope
+# D007: One-suite-job CI — lanes, caching, runner tier, and whitespace scope
 
 [← Decision Index](INDEX.md)
 
@@ -36,7 +36,7 @@ block once with a throwaway `GOCACHE` and `du -sh` that for the cache figure.
 
 ## Decision
 
-- **One job.** At ~30s of total compute, per-job overhead — runner
+- **One suite job.** At ~30s of total compute, per-job overhead — runner
   acquisition, checkout, toolchain setup — dominates, so splitting into lanes
   would multiply billed minutes to save seconds, and a change-detection job to
   gate those lanes would cost more than the work it could skip. The sibling
