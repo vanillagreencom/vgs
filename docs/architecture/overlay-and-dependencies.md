@@ -190,51 +190,30 @@ requirement is unavailable reports `@<feature>` in its own `missing` list. `vshe
 compositor branch; without an active session, any fully available branch is
 accepted.
 
-Feature groups:
-| Feature | Purpose |
-|---------|---------|
-| `base` | Shell runtime |
-| `theme` | Theme engine |
-| `theme-gtk` | GTK theme, icon theme and color-scheme application (gsettings) |
-| `theme-firefox` | Firefox theming (pywalfox) |
-| `fonts` | Font cache refresh after a font change (fc-cache) |
-| `greeter` | VGS greetd greeter, Hyprland or Niri launch, GNOME keyring policy, optional fprint/U2F PAM support |
-| `capture` | Screenshots |
-| `capture-edit` | Screenshot editor |
-| `ocr` | Region OCR |
-| `recording` | Screen recording |
-| `launcher-zoxide` | Optional recent-directory search mode in launcher/menu |
-| `launcher-search` | Launcher text search (ripgrep). Missing means text search fails outright |
-| `launcher-search-fast` | Faster launcher file search (fd). Missing only means the built-in directory walk is used |
-| `trash` | Trash instead of deleting, keeping restore (gio) |
-| `launcher-folder-open` | Launcher "Preferred app" folder opener, which runs `gio open` |
-| `network-usage` | Per-interface traffic statistics |
-| `gamma` | Night-light color temperature |
-| `updates-arch` | Repo updates |
-| `updates-aur` | AUR updates |
-| `ai-usage` | AI usage widget backend |
-| `tailscale` | Tailscale widget |
-| `clipboard` | Clipboard history (wl-clipboard) |
-| `thumbnails` | File/image thumbnails |
-| `brightness` | Display brightness backends |
-| `sudo-toggle` | Passwordless sudo toggle widget: status and **revoke**, which need no terminal |
-| `sudo-toggle-grant` | **Granting** passwordless sudo, which needs a terminal to prompt in |
-| `terminal` | The terminal VGS opens for TUI actions. Any one alternative is enough |
-| `default-apps` | XDG default-application layer (`xdg-mime`) |
-| `file-manager` | File manager the launcher opens folders with, when the XDG default resolves to none |
-| `launcher-folder-open-yazi` | Launcher Yazi folder opener (needs `yazi` *and* `terminal`) |
-| `app-scopes` | Launching apps into their own systemd scope (`uwsm`) |
-| `cloud-sync` | Cloud file sync (rclone) |
-| `cloud-sync-stream` | Cloud sync streaming FUSE mounts |
-| `desktop-integration` | Opening files and URLs in their default application (xdg-utils, desktop-file-utils) |
-| `system-monitor` | CPU, GPU, memory and process widgets (dgop) |
-| `audio-visualizer` | Audio visualizer widget (cava) |
-| `calendar` | Calendar events in the dash (khal) |
-| `bluetooth-codecs` | Bluetooth audio codec selection (pactl) |
-| `launcher-type-out` | Launcher type-out into the focused window (wtype) |
-| `fingerprint-auth` | Fingerprint unlock on the lock screen and greeter (fprintd) |
-| `theme-qt` | Qt application theming (qt6ct/qt5ct) |
-| `polkit` | Privileged actions run from the shell (pkexec) |
+The feature groups themselves are deliberately **not listed here**. A
+hand-written copy of the manifest is the defect
+`scripts/check-command-declarations.py` closes one layer down, reproduced one
+layer up: the table this paragraph replaced listed 42 of the 43 groups, and the
+one it was missing was `remote-desktop` — the feature with its own architecture
+doc (VGS-109). Derive the list instead:
+
+```bash
+jq -r '.features | to_entries[] | .key + ": " + ([
+    (.value.commands // [])[],
+    ((.value.anyCommands // [])[] | "any of " + join("/")),
+    ((.value.compositorCommands // {}) | to_entries[] | .key + ": " + (.value | join(" "))),
+    ((.value.requiresFeatures // [])[] | "@" + .)
+  ] | join(", "))' config/vshell/dependencies.json
+```
+
+Group names are self-describing on purpose. Where a group needs more than its
+name and commands — why a split exists, what missing actually breaks — the
+explanation lives in a `$comment` array on the group's own manifest entry, next
+to the data it annotates, where it cannot drift from the group the way a doc
+table can (`sudo-toggle`/`sudo-toggle-grant` and
+`launcher-search`/`launcher-search-fast` carry the pattern). For what is
+installed and usable right now, `vshell deps status --json` reports the same
+groups with live availability.
 
 ## Packaging metadata
 The manifest is also what the native packages advertise as optional
