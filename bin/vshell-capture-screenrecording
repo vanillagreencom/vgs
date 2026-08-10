@@ -2,6 +2,7 @@
 # VGS toggle screen recording for Hyprland and Niri using gpu-screen-recorder.
 set -euo pipefail
 
+# shellcheck source=/dev/null  # user config, exists only at runtime
 [[ -f ~/.config/user-dirs.dirs ]] && source ~/.config/user-dirs.dirs
 
 if [[ -n ${VSHELL_SCREENRECORD_DIR:-} ]]; then
@@ -40,6 +41,7 @@ if [[ -n ${NIRI_SOCKET:-} ]] && command -v niri >/dev/null 2>&1 && niri msg vers
 fi
 PORTAL="${VSHELL_SCREENRECORD_PORTAL:-$([[ $IS_NIRI == 1 ]] && printf true || printf false)}"
 
+# shellcheck disable=SC2016  # the $vars belong to the jq program, not the shell
 JQ_MONITOR_GEO='
   def monitor_rect:
     .x as $x | .y as $y |
@@ -437,7 +439,7 @@ pick_selection() {
       kill "$picker_pid" 2>/dev/null || true
 
       if [[ $selection =~ $SELECTION_RE ]]; then
-        if ((${BASH_REMATCH[3]} * ${BASH_REMATCH[4]} < 20)); then
+        if ((BASH_REMATCH[3] * BASH_REMATCH[4] < 20)); then
           click_x="${BASH_REMATCH[1]}"
           click_y="${BASH_REMATCH[2]}"
           selection=$(selection_for_click "$click_x" "$click_y")

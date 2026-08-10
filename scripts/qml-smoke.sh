@@ -101,14 +101,15 @@ track_dir() { scratch_dirs+=("$1"); }
 # cleanup can signal exactly what this script started. The inner shell reports
 # its own pid (== the new process group id) before exec'ing the real command.
 spawn_group() {
-  local pidfile="$1" launcher waited
+  local pidfile="$1" launcher
   shift
   rm -f -- "$pidfile"
+  # shellcheck disable=SC2016  # $$ and "$@" must expand in the inner sh, not here
   setsid --wait sh -c 'echo $$ >"$1"; shift; exec "$@"' _ "$pidfile" "$@" &
   launcher=$!
   spawn_launcher_pid="$launcher"
   spawn_pgid=""
-  for waited in $(seq 1 100); do
+  for _ in $(seq 1 100); do
     if [[ -s "$pidfile" ]]; then
       spawn_pgid="$(tr -d '[:space:]' <"$pidfile")"
       break
@@ -134,10 +135,10 @@ spawn_group() {
 # from a setsid launch in this script, so the group can never contain a
 # pre-existing shell or an unrelated Quickshell application.
 kill_pgid() {
-  local pgid="$1" waited
+  local pgid="$1"
   kill -0 -- "-$pgid" 2>/dev/null || return 0
   kill -TERM -- "-$pgid" 2>/dev/null || true
-  for waited in $(seq 1 40); do
+  for _ in $(seq 1 40); do
     kill -0 -- "-$pgid" 2>/dev/null || return 0
     sleep 0.1
   done
@@ -146,6 +147,7 @@ kill_pgid() {
 
 # A signal handler inherits $? from whatever finished last, which is usually 0,
 # so an interrupted run would otherwise report success to CI.
+# shellcheck disable=SC2329  # invoked via the trap registrations below
 cleanup() {
   local code=$? signal="${1:-}" pgid dir index
   trap - EXIT INT TERM HUP
@@ -169,6 +171,7 @@ cleanup() {
   exit "$code"
 }
 
+# shellcheck disable=SC2329  # called from cleanup(), which only the traps reach
 assert_live_session_untouched() {
   local ok=0 instances_after layers_after instances_after_status layers_after_status
   instances_after="$(vgs_snapshot_instances)" && instances_after_status=0 || instances_after_status=$?
@@ -373,8 +376,8 @@ PY
 # Waits for a state, and fails LOUDLY on a query error rather than spinning to
 # the timeout and then reporting the wrong thing.
 wait_layer_state() {
-  local namespace="$1" want="$2" waited state=1
-  for waited in $(seq 1 30); do
+  local namespace="$1" want="$2" state=1
+  for _ in $(seq 1 30); do
     state=0
     sandbox_layer_state "$namespace" >/dev/null || state=$?
     if [[ "$state" -eq 3 ]]; then
@@ -430,13 +433,14 @@ override_plugin="tailscale"
 # which mounts them some time AFTER the plugin itself reports loaded. A single
 # read here failed about one run in eight with WIDGET_NOT_FOUND.
 wait_widget_registered() {
-  local widget="$1" waited reply=""
-  for waited in $(seq 1 60); do
+  local widget="$1" reply=""
+  for _ in $(seq 1 60); do
     reply="$(sandbox_ipc widget list)"
     printf '%s\n' "$reply" | grep -q "^${widget}\b" && return 0
     kill -0 -- "-$qs_group" 2>/dev/null || break
     sleep 0.25
   done
+  # shellcheck disable=SC2016  # the backticks are literal quoting in the message
   printf 'qml-smoke: `widget list` reported:\n%s\n' "$reply" >&2
   return 1
 }
@@ -523,8 +527,8 @@ override_unloaded_count() {
 }
 
 wait_marker() {
-  local counter="$1" want="$2" waited seen=0
-  for waited in $(seq 1 60); do
+  local counter="$1" want="$2" seen=0
+  for _ in $(seq 1 60); do
     seen="$($counter)"
     [[ "$seen" -ge "$want" ]] && return 0
     kill -0 -- "-$qs_group" 2>/dev/null || break
@@ -692,7 +696,7 @@ override_state_settles() {
 }
 
 nested_check() {
-  local host_socket sandbox rt_dir conf log nested_socket candidate waited exit_code findings
+  local host_socket sandbox rt_dir conf log nested_socket candidate exit_code findings
   local compositor_pgid qs_launcher qs_group loaded targets plugins_loaded plugin_report candidate
   local -a expected_plugins=() missing_plugins=()
   local -a sandbox_env=() dbus_wrapper=()
@@ -841,7 +845,7 @@ EOF
   compositor_pgid="$spawn_pgid"
 
   nested_socket=""
-  for waited in $(seq 1 $((compositor_timeout * 10))); do
+  for _ in $(seq 1 $((compositor_timeout * 10))); do
     for candidate in "$rt_dir"/wayland-*; do
       [[ -S "$candidate" ]] || continue
       nested_socket="${candidate##*/}"
@@ -878,7 +882,7 @@ EOF
   # also "pass" for a shell that exited immediately.
   loaded=false
   targets=""
-  for waited in $(seq 1 $((nested_timeout * 2))); do
+  for _ in $(seq 1 $((nested_timeout * 2))); do
     targets="$("${sandbox_env[@]}" qs ipc -p "$repo_root/quickshell/vshell" --any-display show 2>/dev/null || true)"
     if printf '%s\n' "$targets" | grep -q '^target '; then
       loaded=true
@@ -914,7 +918,7 @@ EOF
   plugins_loaded=false
   plugin_report=""
   if [[ "$loaded" == true ]]; then
-    for waited in $(seq 1 $((plugin_timeout * 2))); do
+    for _ in $(seq 1 $((plugin_timeout * 2))); do
       # The `plugins` IPC target, NOT `plugin-scan`. Both expose a `list`, and
       # they format differently: this one emits "<id> [loaded|disabled]"
       # (VGSIPC.qml), while PluginService's own `plugin-scan list` emits
@@ -976,7 +980,8 @@ EOF
         never_seen+=("$candidate")
       fi
     done
-    printf 'qml-smoke: `plugins list` reported after ${plugin_timeout}s:\n%s\n' \
+    # shellcheck disable=SC2016  # the backticks are literal quoting in the message
+    printf 'qml-smoke: `plugins list` reported after %ss:\n%s\n' "$plugin_timeout" \
       "${plugin_report:-<no response from the plugins IPC target>}" >&2
     if [[ ${#not_loaded[@]} -gt 0 ]]; then
       # Every bundled plugin is force-enabled by PluginService (a bundled id

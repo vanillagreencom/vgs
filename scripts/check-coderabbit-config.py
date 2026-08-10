@@ -224,7 +224,7 @@ def main() -> int:
         )
         return 1
 
-    print(f"check-coderabbit-config: ok (.coderabbit.yaml validates against the vendored schema)")
+    print("check-coderabbit-config: ok (.coderabbit.yaml validates against the vendored schema)")
     return 0
 
 

@@ -1,3 +1,4 @@
+# shellcheck shell=bash  # pacman sources .install scriptlets with bash; no shebang by design
 post_install() {
   cat <<'EOF'
 VGS installs the user service but does not enable it automatically.
