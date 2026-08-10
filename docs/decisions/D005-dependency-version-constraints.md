@@ -47,6 +47,16 @@ Facts established before choosing (2026-08-08):
   parser needs a third "could not determine" state, and a mis-parse reports a
   working system as broken — a worse failure than the gap being closed.
 
+> **Correction (2026-08-09, VGS-106):** the transcribed counts above — repeated
+> wherever "67" appears in this record — were wrong on the decision date, not
+> stale: the manifest already declared **43** feature groups (not ~20) probing
+> **68** distinct commands, 87 probe entries across `commands`,
+> `compositorCommands` and `anyCommands` (not 67). Derive current values from
+> `config/vshell/dependencies.json` rather than trusting a transcribed figure.
+> The decision is unaffected: `jq` remains the sole entry with a documented
+> minimum, and a version parser per probed command is *more* expensive at the
+> true count, not less.
+
 ## Decision
 
 **`dependencies.json` gains no version-constraint syntax.** It declares presence,

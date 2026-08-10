@@ -48,7 +48,8 @@ or spacing; those live in VGS settings.
 Release bundles install the complete built-in wallpaper and icon assets. The
 installer supports `VGS_THEME_BUNDLE=all|core|extras` and defaults to `core`, so
 a packaging recipe that forgets the variable ships too little rather than the
-~1.1 GiB `all` bundle. The Arch, Debian, Fedora, and Void packages use `core` for
+full `all` bundle (sized in `packaging/README.md` § Theme bundles, which owns
+that figure). The Arch, Debian, Fedora, and Void packages use `core` for
 the base package (the `coppernight` default theme and targets) and `extras` for
 the optional `vgs-shell-assets` collection of remaining themes, wallpapers, and
 vendored Yaru icon assets; Gentoo folds `extras` into `USE=extra-themes` and the
@@ -298,7 +299,7 @@ path for the rest:
 ```bash
 vshell theme catalog list [--json]                 # every published theme + installed state
 vshell theme catalog install <name>... [--force]   # download into ~/.config/vshell/themes/<name>/
-vshell theme catalog install --all                 # everything not installed (~1.1 GiB)
+vshell theme catalog install --all                 # everything not installed (size: .totalSize in themes/catalog.json)
 vshell theme catalog remove <name>...              # only themes this catalog downloaded
 ```
 
@@ -335,7 +336,8 @@ vshell theme catalog remove <name>...              # only themes this catalog do
   likewise refused for a hand-made theme and for the currently applied theme,
   and the settings browser asks for confirmation first.
 - Downloads deliberately run *outside* the theme mutation lock — an
-  `install --all` is a ~1.1 GiB transfer, and holding the exclusive lock for
+  `install --all` is a gigabyte-scale transfer (the exact figure is
+  `.totalSize` in `themes/catalog.json`), and holding the exclusive lock for
   that long would block theme applies, the light/dark keybinding, wallpaper
   changes and restyles for hours. The lock is taken only around the directory
   swap that publishes a staged theme (and the rename in `catalog remove`), which
