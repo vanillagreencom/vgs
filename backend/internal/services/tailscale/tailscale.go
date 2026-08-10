@@ -34,14 +34,14 @@ type Manager struct {
 }
 
 type State struct {
-	Connected              bool     `json:"connected"`
-	Version                string   `json:"version"`
-	BackendState           string   `json:"backendState"`
-	MagicDNSSuffix         string   `json:"magicDnsSuffix"`
-	TailnetName            string   `json:"tailnetName"`
-	ExitNodeAllowLanAccess bool     `json:"exitNodeAllowLanAccess"`
-	AcceptRoutes           bool     `json:"acceptRoutes"`
-	AuthURL                string   `json:"authUrl"`
+	Connected              bool   `json:"connected"`
+	Version                string `json:"version"`
+	BackendState           string `json:"backendState"`
+	MagicDNSSuffix         string `json:"magicDnsSuffix"`
+	TailnetName            string `json:"tailnetName"`
+	ExitNodeAllowLanAccess bool   `json:"exitNodeAllowLanAccess"`
+	AcceptRoutes           bool   `json:"acceptRoutes"`
+	AuthURL                string `json:"authUrl"`
 	// WatcherActive is this backend's own health, not tailscaled's: true while
 	// an ipn bus watcher is running and pushes can be expected. The shell reads
 	// it to choose how often to re-ask. Absent on a backend without the watcher,
@@ -49,8 +49,8 @@ type State struct {
 	// never pushes either.
 	WatcherActive bool     `json:"watcherActive"`
 	Health        []string `json:"health"`
-	Self                   *Peer    `json:"self"`
-	Peers                  []Peer   `json:"peers"`
+	Self          *Peer    `json:"self"`
+	Peers         []Peer   `json:"peers"`
 }
 
 type Peer struct {

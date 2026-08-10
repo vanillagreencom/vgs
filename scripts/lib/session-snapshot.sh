@@ -11,6 +11,10 @@
 #
 # Requires: $repo_root
 
+# Fail at source time with a named cause when the sourcing script forgot to set
+# repo_root, instead of at first use with a bare command-not-found.
+repo_root="${repo_root:?scripts/lib/session-snapshot.sh: sourcing script must set repo_root first}"
+
 # One line per live VGS Quickshell instance: "<pid> <configPath>".
 vgs_snapshot_instances() {
   local report rc=0

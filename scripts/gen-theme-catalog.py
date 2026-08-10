@@ -186,8 +186,8 @@ def check_source_drift(catalog: Dict[str, Any]) -> int:
         print(f"theme catalog: {len(drifted)} theme file(s) differ from pinned ref {primary} and no "
               f"moving ref is declared, so those themes cannot be downloaded by anyone:\n  "
               + "\n  ".join(drifted[:10])
-              + f"\nRegenerate with a ref that serves this tree "
-                f"(scripts/gen-theme-catalog.py --ref <ref> --write).", file=sys.stderr)
+              + "\nRegenerate with a ref that serves this tree "
+                "(scripts/gen-theme-catalog.py --ref <ref> --write).", file=sys.stderr)
         return 1
     themes = sorted({p.split("/")[1] for p in drifted if p.count("/") >= 2})
     print(f"theme catalog: {len(drifted)} file(s) differ from pinned ref {primary} "

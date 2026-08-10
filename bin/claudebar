@@ -935,6 +935,7 @@ else
     B="<span foreground='${BLUE}'>"
     E="</span>"
 
+    # shellcheck disable=SC2001  # regex replace; bash ${var//} patterns are globs
     strip_tags() { sed 's/<[^>]*>//g' <<< "$1"; }
 
     # Right-align a plain value label to a fixed column (width 6 fits "100% ↑").
@@ -1028,7 +1029,8 @@ else
 
     pad() {
         local content="$1"
-        local plain=$(strip_tags "$content")
+        local plain
+        plain=$(strip_tags "$content")
         local len=${#plain}
         local need=$(( INNER_W - len ))
         (( need < 0 )) && need=0
@@ -1039,7 +1041,8 @@ else
 
     center_pad() {
         local content="$1"
-        local plain=$(strip_tags "$content")
+        local plain
+        plain=$(strip_tags "$content")
         local len=${#plain}
         local total=$(( INNER_W - len ))
         (( total < 0 )) && total=0

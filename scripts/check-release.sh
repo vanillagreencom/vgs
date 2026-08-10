@@ -9,8 +9,19 @@ grep -q "Version:        $version" "$root/packaging/fedora/vgs-shell.spec"
 grep -q "vgs-shell ($version-1)" "$root/packaging/debian/changelog"
 grep -q "version=$version" "$root/packaging/void/template"
 grep -qx "$version" "$root/quickshell/vshell/VERSION"
-! grep -q "sha256sums=('SKIP')" "$root/packaging/arch/PKGBUILD"
-! grep -q '^checksum=SKIP$' "$root/packaging/void/template"
+# errexit exempts a pipeline that begins with `!` (SC2251), so the previous
+# `! grep -q` form never failed the script — these two checks were inert. The
+# patterns match the shapes the files actually use: PKGBUILD carries per-arch
+# sha256sums_<arch>= arrays, and the void template's checksum= lines sit
+# tab-indented inside a case arm.
+if grep -qE "sha256sums(_[a-z0-9_]+)?=\('SKIP'\)" "$root/packaging/arch/PKGBUILD"; then
+  echo "check-release: packaging/arch/PKGBUILD still carries a sha256sums SKIP entry" >&2
+  exit 1
+fi
+if grep -qE '^[[:space:]]*checksum=SKIP$' "$root/packaging/void/template"; then
+  echo "check-release: packaging/void/template still carries checksum=SKIP" >&2
+  exit 1
+fi
 
 # A .install scriptlet that no PKGBUILD declares is dead weight: the post-install
 # activation message never reaches the user. Keep PKGBUILD, .SRCINFO, and the
@@ -48,6 +59,6 @@ bundle="$tmp/vgs-$version-linux-$(uname -m)"
 test "$("$bundle/bin/vshell" --version)" = "$version"
 runtime_dir="$tmp/runtime"
 mkdir -p "$runtime_dir"
-XDG_RUNTIME_DIR="$runtime_dir" VGS_BACKEND_SOCKET= "$bundle/bin/vshell-backend" methods --json \
+XDG_RUNTIME_DIR="$runtime_dir" VGS_BACKEND_SOCKET='' "$bundle/bin/vshell-backend" methods --json \
   | python3 -c 'import json,sys; expected=sys.argv[1]; actual=json.load(sys.stdin)["cliVersion"]; raise SystemExit(0 if actual == expected else f"backend cliVersion {actual!r} != {expected!r}")' "$version"
 echo "release checks passed for $version"

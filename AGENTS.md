@@ -144,6 +144,7 @@ Live-machine etiquette:
 Scope to the area touched (Go-only: inventory guard + go block; QML-only: naming, QML smoke, surfaces; helper: py_compile + helper checks; packaging: the three packaging checks; docs-only: check-doc-growth.py); run the full suite for cross-cutting work:
 ```bash
 scripts/check-naming.sh
+scripts/check-format-lint.sh
 python3 scripts/lib/shell_scan.py
 scripts/check-validation-inventory.py
 scripts/check-doc-growth.py
