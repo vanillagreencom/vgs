@@ -50,12 +50,19 @@ Facts established before choosing (2026-08-08):
 > **Correction (2026-08-09, VGS-106):** the transcribed counts above — repeated
 > wherever "67" appears in this record — were wrong on the decision date, not
 > stale: the manifest already declared **43** feature groups (not ~20) probing
-> **68** distinct commands, 87 probe entries across `commands`,
-> `compositorCommands` and `anyCommands` (not 67). Derive current values from
-> `config/vshell/dependencies.json` rather than trusting a transcribed figure.
-> The decision is unaffected: `jq` remains the sole entry with a documented
-> minimum, and a version parser per probed command is *more* expensive at the
-> true count, not less.
+> **71** unique commands (not 67) across 95 probe entries — plain `commands`,
+> flattened `anyCommands` alternatives, and per-compositor `compositorCommands`
+> values. This derivation is the definition, against
+> `config/vshell/dependencies.json`:
+>
+> ```bash
+> jq '[.features[] | (.commands // []) + (.compositorCommands // {} | add // []) + (.anyCommands // [] | flatten)] | add | unique | length'
+> ```
+>
+> Drop `| unique` for the 95 probe entries; `.features | length` gives the 43
+> groups. The decision is unaffected: `jq` remains the sole entry with a
+> documented minimum, and a version parser per probed command is *more*
+> expensive at the true count, not less.
 
 ## Decision
 

@@ -299,7 +299,7 @@ path for the rest:
 ```bash
 vshell theme catalog list [--json]                 # every published theme + installed state
 vshell theme catalog install <name>... [--force]   # download into ~/.config/vshell/themes/<name>/
-vshell theme catalog install --all                 # everything not installed (size: .totalSize in themes/catalog.json)
+vshell theme catalog install --all                 # everything not installed (at most .totalSize in themes/catalog.json)
 vshell theme catalog remove <name>...              # only themes this catalog downloaded
 ```
 
@@ -336,8 +336,9 @@ vshell theme catalog remove <name>...              # only themes this catalog do
   likewise refused for a hand-made theme and for the currently applied theme,
   and the settings browser asks for confirmation first.
 - Downloads deliberately run *outside* the theme mutation lock — an
-  `install --all` is a gigabyte-scale transfer (the exact figure is
-  `.totalSize` in `themes/catalog.json`), and holding the exclusive lock for
+  `install --all` on a fresh install is a gigabyte-scale transfer (bounded by
+  `.totalSize` in `themes/catalog.json`; it downloads only themes not already
+  installed), and holding the exclusive lock for
   that long would block theme applies, the light/dark keybinding, wallpaper
   changes and restyles for hours. The lock is taken only around the directory
   swap that publishes a staged theme (and the rename in `catalog remove`), which

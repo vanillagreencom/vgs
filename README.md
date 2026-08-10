@@ -187,7 +187,7 @@ Checksum-verified bundles and source archives are available from
 
 ## Themes
 
-**79 themes ship with VGS** — Catppuccin, Gruvbox, Nord, Dracula, Rosé Pine, Tokyo Night, Kanagawa,
+**Dozens of themes ship with VGS** — Catppuccin, Gruvbox, Nord, Dracula, Rosé Pine, Tokyo Night, Kanagawa,
 Everforest, Ayu, Monokai, Matte Black and more, plus a set of originals — the committed catalog at
 `themes/catalog.json` keeps the exact count. Star the ones you use and they stay at the top of the
 list.

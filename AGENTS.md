@@ -237,11 +237,11 @@ under `time` for the static figure, and in `backend/` `time go build ./...`,
 cold by pointing `GOCACHE` at a throwaway directory.
 
 Go caching is deliberately **off**. A cold Go run downloads 13 MB of modules but
-leaves a 296 MB `GOCACHE`; saving and restoring that to skip ~10s of compute is
-a net loss on a 2 vCPU runner. Re-measure before enabling it: `go mod download`
-into a fresh `GOMODCACHE` and `du -sh` it for the module figure; run the Go
-block once with a throwaway `GOCACHE` and `du -sh` that for the cache figure
-(measured 2026-08-09: 13 MB and 284 MB).
+leaves a ~284 MB `GOCACHE` (measured 2026-08-09); saving and restoring that to
+skip ~10s of compute is a net loss on a 2 vCPU runner. Re-measure before
+enabling it: `go mod download` into a fresh `GOMODCACHE` and `du -sh` it for
+the module figure; run the Go block once with a throwaway `GOCACHE` and
+`du -sh` that for the cache figure.
 
 The runner resolves through the shared `CI_RUNNER_2V` repository variable
 (Blacksmith when set, `ubuntu-latest` when unset — that fallback is supported
