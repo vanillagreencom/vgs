@@ -177,8 +177,10 @@
         "accelerator: bin/vshell-helper keeps an os.walk fallback, but the",
         "overview never reaches it -- DSearchService::rediscover sets",
         "dsearchAvailable from fd alone, and OverviewSearch's",
-        "performFileSearch returns without searching when unavailable.",
-        "Missing fd/fdfind means no overview file search at all."
+        "performFileSearch returns on that flag before selecting the search",
+        "kind, text included. Missing fd/fdfind therefore kills overview",
+        "file AND text search alike -- rg-backed text search dies with rg",
+        "installed, because the gate never asks about rg."
       ],
       "anyCommands": [
         [
