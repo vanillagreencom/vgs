@@ -75,7 +75,8 @@ not a suggestion):
   `quickshell/vshell/Services/GreeterUsersService.qml`),
   `quickshell/vshell/Services/IdleService.qml`, and
   `quickshell/vshell/Services/SessionService.qml` (its inhibitor and
-  lock handlers gate the whole idle→lock chain).
+  lock handlers gate the whole idle→lock chain), and the shipped
+  lock/idle defaults in `config/vshell/settings.default.json`.
 - Packaging/publish: the maintained install channels — `packaging/`,
   root `install.sh` and `flake.nix`, `publish-aur.yml`, `release.yml`.
 - Privileged operations: the property is elevation or a system write,
