@@ -36,36 +36,30 @@ the whole trust decision — the loader never infers an override from a name mat
 
 Always-available exists because an override that owns the id and never starts is a product surface
 that goes dark — `vgsMenu` is the app launcher and the shell ships no fallback. It is *not* extended
-to a bare collision, because auto-loading a package the user never enabled purely because its id
-matches something VGS happens to ship is a decision nobody made. Scan order does not matter: the
-bundled directory can be read after the user one, and a colliding package that got the id first is
+to a bare collision: auto-loading a package the user never enabled purely on a name match is a
+decision nobody made. Scan order does not matter — a colliding package that got the id first is
 reclaimed when the shipped manifest is parsed.
 
-Because always-available packages cannot be disabled, Settings → Plugins does not offer them a
-disable toggle at all — it shows an "Always on" badge instead of a control that can only refuse
-(`Modules/Settings/PluginListItem.qml`). `vshell ipc call plugins disable <id>` answers
-`PLUGIN_ALWAYS_AVAILABLE: <id>`, distinct from `PLUGIN_DISABLE_FAILED`.
+Because always-available packages cannot be disabled, Settings → Plugins shows an "Always on" badge
+instead of a disable toggle (`Modules/Settings/PluginListItem.qml`), and
+`vshell ipc call plugins disable <id>` answers `PLUGIN_ALWAYS_AVAILABLE: <id>`, distinct from
+`PLUGIN_DISABLE_FAILED`.
 
 Enabled is not the same as loaded, and an override still has to provide the surface the shipped
 package did. **The swap is gated:** `_onManifestParsed` runs the override's `startupCheck` and
-compiles its components *before* the shipped package is unloaded. If the gate fails, `requires_shell`
-is incompatible, or a component fails to compile, the override is demoted — the shipped package keeps
-(or takes back) the id and stays loaded, and a toast names the override and the reason. That toast is
-emitted only once the shipped package has actually loaded: restoring it means re-reading its
-manifest, which is asynchronous, so "the version bundled with VGS is still in use" said at the moment
-the read *started* would be a claim about a plugin that may never load. `PluginService` tracks the
-promotion and reports the real outcome — bounded by a deadline so a promotion that settles neither
-way still reaches the user (VGS-75). It also names the package that actually took the id: with
-several overrides claiming one id the promoted candidate can be another user package, not the shipped
-one, so the message reads "the version bundled with VGS is still in use" only when that is what
-loaded. Demotion is
-available whenever a shipped manifest for the id is still on disk, so it does not depend on which
-directory was scanned first. `requires_shell` is judged once shell version detection (asynchronous)
-has produced a version; an override that took the id before then is rechecked and demoted when the
-version lands. An override that loads but drops
-its daemon surface or its `toggle()` is still a way to disable the launcher: the dock and bar buttons
-then report "App launcher unavailable" via `PluginService.toggleAppLauncher()` instead of doing
-nothing.
+compiles its components *before* the shipped package is unloaded. If the gate fails,
+`requires_shell` is incompatible, or a component fails to compile, the override is demoted — the
+shipped package keeps (or takes back) the id and stays loaded, and a toast names the override and
+the reason. That toast is emitted only once the shipped package has actually loaded (restoring it
+re-reads its manifest asynchronously), it is bounded by a deadline so a promotion that settles
+neither way still reaches the user (VGS-75), and it names the package that actually took the id —
+with several overrides claiming one id the promoted candidate can be another user package, not the
+shipped one. Demotion is available whenever a shipped manifest for the id is still on disk, so it
+does not depend on scan order. `requires_shell` is judged once shell version detection
+(asynchronous) has produced a version; an override that took the id before then is rechecked and
+demoted when the version lands. An override that loads but drops its daemon surface or its
+`toggle()` is still a way to disable the launcher: the dock and bar buttons then report "App
+launcher unavailable" via `PluginService.toggleAppLauncher()` instead of doing nothing.
 
 `_bundledPluginIds` tracks ids seen from the bundled directory and is cleared when the last bundled
 manifest for an id disappears, so a shipped package that is removed stops making a same-id user
@@ -73,82 +67,72 @@ package auto-enabled and undisableable.
 
 A **bundled** manifest's `requires_shell` is audited, never enforced: refusing to load a shipped
 package would take its product surface offline, which is worse than an unmet declaration. An
-unsatisfiable one is still a bug, because an override is normally a copy of the shipped manifest and
-inherits the constraint — every bundled manifest declared `>=1.0.0` against a 0.1.0 shell, which made
-overriding any bundled plugin impossible while looking like nothing was wrong.
-`PluginService._auditBundledRequirement` logs it at runtime and
-`scripts/test-bundled-override.js` fails the build for it (VGS-76). The runtime audit walks every
-known manifest, not only the ones that won their id: a shipped manifest shadowed by an override holds
-no record in `availablePlugins`, and that is precisely the configuration the audit is meant to
-explain.
+unsatisfiable one is still a bug — an override is normally a copy of the shipped manifest and
+inherits the constraint, so an impossible bundled requirement makes overriding that plugin fail
+while looking like nothing is wrong (VGS-76). `PluginService._auditBundledRequirement` logs it at
+runtime and `scripts/test-bundled-override.js` fails the build for it; the audit walks every known
+manifest, not only the ones that won their id, because a shipped manifest shadowed by an override
+holds no record in `availablePlugins` and that is precisely the configuration the audit explains.
 
 `requires_shell` is enforced in **exactly one place**: `_gateThenSwap`, reached only for a package
 that declares itself the override of a bundled id, or one displacing a package already loaded under
-that id. `runStartupGate()`, `loadPlugin()` and `reloadPlugin()` never look at it. **A unique-id user
-or system package with an impossible `requires_shell` therefore loads.** Verified in the nested
-sandbox: a fixture declaring `>=99.0.0` against a 0.1.0 shell answered `plugin-scan status` with
-`loaded`, identically to a control with a satisfiable requirement and one with none.
+that id. `runStartupGate()`, `loadPlugin()` and `reloadPlugin()` never look at it. **A unique-id
+user or system package with an impossible `requires_shell` therefore loads.** Whether that *should*
+be enforced is an open question and a behaviour change — see the note at the end of this section.
+What is documented here is what happens.
 
-Whether that *should* be enforced is an open question and a behaviour change — see the note at the
-end of this section. What is documented here is what happens.
-
-The override path itself is exercised by `scripts/qml-smoke.sh --nested`, which plants a user
-override of a bundled id inside its sandbox HOME and drives it through scan, rescan, reload and
-removal (VGS-81). The assertions are deliberately not "a load succeeded" — that is exactly what
-VGS-75 reported while the bundled copy stayed installed. The fixture's own component emits a
-load/teardown marker, and the invariant checked at every step is *one live instance of the
-override, and the id owned by something*; after the manifest is deleted the invariant becomes
-*zero live instances, and the id still owned*, which is what proves the shipped package took it
-back rather than a package that no longer exists on disk keeping it. Reverting `_relinkLoadedRecord`
-leaves one live instance behind and turns the run red.
+The override path is exercised by `scripts/qml-smoke.sh --nested`, which plants a user override of
+a bundled id inside its sandbox HOME and drives it through scan, rescan, reload and removal
+(VGS-81). The fixture's own component emits a load/teardown marker, and the invariant checked at
+every step is *one live instance of the override, and the id owned by something* — after the
+manifest is deleted, *zero live instances, and the id still owned*, which is what proves the
+shipped package took the id back.
 
 So the reporting is about **refusals, not declarations**.
 `PluginService.requirementBlockReason(pluginId)` owns the sentence — `an installed override requires
 VGS <x> and was refused; this shell is VGS <y>` — and it walks every manifest claiming the id rather
-than only the one that won it, because a refused override no longer owns the id and looking at the
-winner alone never sees the configuration this exists to explain. It is empty for a bundled id, empty
-for a package that still owns its id (nothing refused it), and empty until shell-version detection
-lands. Reported in the three places a user looks (VGS-89):
+than only the one that won it, because a refused override no longer owns the id and the winner alone
+never shows the configuration this exists to explain. It is empty for a bundled id, empty for a
+package that still owns its id, and empty until shell-version detection lands. Reported in the
+three places a user looks (VGS-89):
 
 | Where | What it shows |
 |-------|---------------|
 | Settings › Plugins | a red line on the card naming what was refused — not "unavailable", because the card belongs to whatever owns the id, which after a refusal is the shipped package, loaded and working |
 | `plugin-scan list` | a fifth tab-separated field, empty when nothing was refused |
-| `plugin-scan status` | the recorded startup error **with its details** if the gate ran, otherwise the standing refusal. Emitting only the error's title dropped the shell's own version, which is half of what makes the message actionable |
+| `plugin-scan status` | the recorded startup error **with its details** if the gate ran, otherwise the standing refusal — the details carry the shell's own version, half of what makes the message actionable |
 
-The gate also *records* its refusal now rather than only toasting it, so the reason survives the few
-seconds a toast lasts.
+The gate records its refusal rather than only toasting it, so the reason survives the few seconds a
+toast lasts.
 
 **Open: the requirement is not enforced for unique-id packages.** Making it so would start
-withholding packages that load today, which is a behaviour change and not something to introduce as
-a side effect of improving a report. It is left as it is, documented, rather than changed quietly.
+withholding packages that load today — a behaviour change, not something to introduce as a side
+effect of improving a report. It is left as it is, documented, rather than changed quietly.
 
 ### Rescanning
 
 `vshell ipc call plugin-scan scan` only reads manifest paths it has never seen — a path already in
 `knownManifests` is skipped, so **editing a manifest in place is not picked up by a scan**. Use
 `plugin-scan rescan <id>`, which re-reads *every* manifest claiming that id, drops the
-blocked/demoted flags, and lets the policy arbitrate again from scratch. Rescanning only the owner's
-path could never change an override's outcome, since the package that lost the id is exactly the one
-that is never re-read (VGS-75). `rescan <id>` accepts an id that currently has **no** owner, as long
-as a manifest claiming it is still known — an id left empty by a demotion or a collision is the state
-the command exists to repair, and it is the state in which the id has no record to look up.
+blocked/demoted flags, and lets the policy arbitrate again from scratch — rescanning only the
+owner's path could never change an override's outcome, since the package that lost the id is
+exactly the one never re-read (VGS-75). `rescan <id>` accepts an id that currently has **no**
+owner, as long as a manifest claiming it is still known: an id left empty by a demotion or a
+collision is the state the command exists to repair.
 
 Ownership is settled by id; identity is by path. Precedence is source priority (user > bundled >
-system), and **within one source the manifest path breaks the tie** — two user packages claiming one
-id resolve to the same owner whichever of the two asynchronous manifest reads finishes first. Sorting
-the reads cannot provide that, because `FileView` completion order is not the order they were
-started in.
+system), and **within one source the manifest path breaks the tie** — two user packages claiming
+one id resolve to the same owner whichever asynchronous manifest read finishes first (`FileView`
+completion order is not start order).
 
 Whether a swap has to **tear the running package down** is judged by manifest path too
-(`PluginService._displacesLoadedPackage`), never by source. Two packages in one directory are still
-two packages, and a takeover the loader does not recognise is one it never unloads — the old
-package's components stay installed while `availablePlugins` points at the new record. `loaded` is a flag on the info record, and
-re-parsing a manifest builds a new record, so `PluginService._relinkLoadedRecord` hands the loaded
-registration to the new record for the same path. Without it `availablePlugins` and `loadedPlugins`
-held two records that disagreed, and the plugin could never load again — silently. A collision that
-ends with no package owning a bundled id is reported as an error naming every candidate path, never
-as a quiet unload.
+(`PluginService._displacesLoadedPackage`), never by source: two packages in one directory are still
+two packages, and a takeover the loader does not recognise is one it never unloads. `loaded` is a
+flag on the info record, and re-parsing a manifest builds a new record, so
+`PluginService._relinkLoadedRecord` hands the loaded registration to the new record for the same
+path — without it the two record maps disagree and the plugin can never load again. A collision
+that ends with no package owning a bundled id is reported as an error naming every candidate path,
+never as a quiet unload.
 
 ## Menu overlay schema
 ```json
@@ -331,22 +315,20 @@ The chain, most preferred first:
 | installed terminals | `TERMINAL_CANDIDATES` in the helper, mirrored by the `terminal` feature group |
 
 `xdg-terminal-exec` is **AUR-only**, so it is an alternative and never a
-requirement: a default install with any terminal at all works. It is
-deliberately *not* one of the `terminal` feature group's alternatives — it
-launches a terminal rather than being one, so counting it would report the
-group available on a machine with no terminal installed, which is the VGS-54
-defect in a new costume. It sits in the `undeclared` map with that reason. Each terminal's
-argv shape (`-e` vs `--`, `--class=` vs `--app-id=` vs `-class`) lives in
+requirement. It is deliberately *not* one of the `terminal` feature group's
+alternatives — it launches a terminal rather than being one, so counting it
+would report the group available on a machine with no terminal installed. It
+sits in the `undeclared` map with that reason. Each terminal's argv shape
+(`-e` vs `--`, `--class=` vs `--app-id=` vs `-class`) lives in
 `TERMINAL_SPECS`; a terminal with no app-id equivalent has the app-id dropped
-rather than passed as an option it would reject. `uwsm app --` is prepended only
-when uwsm is present and the session is systemd — it is an enhancement, and
-hardcoding it is what made every VGS terminal action fail with
-`command not found` on installs without it (VGS-54). Because presence does not
-prove the session can use it, usability is settled once per process with a
-`uwsm app -- true` probe rather than by watching the payload die — retrying the
-payload unscoped would run the user's command twice. `VSHELL_NO_APP_SCOPE=1`
-turns it off outright (the capture and screensaver scripts honour the same
-variable).
+rather than passed as an option it would reject. `uwsm app --` is prepended
+only when uwsm is present and the session is systemd — it is an enhancement,
+and hardcoding it made every VGS terminal action fail with `command not found`
+on installs without it (VGS-54). Because presence does not prove the session
+can use it, usability is settled once per process with a `uwsm app -- true`
+probe rather than by watching the payload die — retrying the payload unscoped
+would run the user's command twice. `VSHELL_NO_APP_SCOPE=1` turns it off
+outright (the capture and screensaver scripts honour the same variable).
 
 A terminal that exits within the settle window only means the *terminal* failed
 when the payload cannot itself exit fast, which is what `--hold`'s wrapper
@@ -357,9 +339,7 @@ command once per installed terminal.
 Failures reach the user, not just stderr. Every call site launches through
 `Quickshell.execDetached`, which discards output and exit status, so
 `vshell terminal` reports "no terminal found" through the shell's toast IPC,
-falling back to `notify-send`. A button that cannot work has to say so — a
-silent no-op is worse than the `command not found` toast VGS-54 was reported
-for.
+falling back to `notify-send`. A button that cannot work has to say so.
 
 By default `vshell terminal exec` returns as soon as the window is up. A caller
 that treats that exit as "the command finished" — the backend's upgrade
@@ -371,8 +351,8 @@ Granting passwordless sudo needs a terminal to prompt in; reading status and
 **revoking** a grant do not. The widget gates on `vshell sudo-toggle status`
 rather than on `deps`, so the safety valve works either way — but the two halves
 are separate feature groups (`sudo-toggle`, `sudo-toggle-grant`) so that
-`vshell deps status` says the same thing the runtime does. Collapsing them would
-have the reporting layer tell a terminal-less user they cannot take back a grant
+`vshell deps status` says the same thing the runtime does; collapsed, the
+reporting layer would tell a terminal-less user they cannot take back a grant
 they can always take back (VGS-11).
 
 The file manager follows the same rule: `xdg-mime query default inode/directory`
