@@ -86,15 +86,15 @@ Reference: `references/plugin-development.md`.
 2. Debug with `vshell backend doctor|methods|request <method> [json]`.
 
 ## Validation
-The canonical check list and its per-area scoping live in AGENTS.md
-§ Validation — run the subset for what you touched. For QML work that means
-`scripts/qml-smoke.sh --nested --require-static` plus
-`scripts/check-validation-safety.sh`; smoke-mode coverage, the sandbox recipe,
-and the second-shell rule (never `qs -c vshell` or `qs -p quickshell/vshell`
-against a live session, never `pkill quickshell`) are all under AGENTS.md
-§ Never launch a second shell into the live session.
+The canonical check list and its per-area scoping (Go-only, QML-only, helper,
+packaging) live in AGENTS.md § Validation — run the subset for what you
+touched. No command list is restated here: a partial copy reads as complete.
+Smoke-mode coverage, the sandbox recipe, and the second-shell rule
+(never `qs -c vshell` or `qs -p quickshell/vshell` against a live session,
+never `pkill quickshell`) are under AGENTS.md § Never launch a second shell
+into the live session.
 
-For theme changes:
+For theme changes (skill-unique; not part of the canonical list):
 
 ```bash
 vshell theme list --json
