@@ -54,7 +54,10 @@ CEILINGS: dict[str, int] = {
     # 25 KB is honest headroom while a tighter ceiling would force cutting
     # protected content (VGS-107 handoff arithmetic).
     "AGENTS.md": 25_000,
-    "review-bots.md": 3_700,  # adopted at 3,289 B
+    # Adopted at 3,289 B. 2026-08-10: owner-approved risk-class +
+    # regression-test policy sections (VGS-112, PR #120) earned the bytes;
+    # 6,500 keeps ~10% headroom at the 5,865 B post-policy size.
+    "review-bots.md": 6_500,
     ".github/copilot-instructions.md": 3_200,  # adopted at 2,909 B
     "project-skills/vshell-dev/SKILL.md": 5_000,  # adopted at 4,497 B
     ".github/instructions/agents-md.instructions.md": 500,  # adopted at 403 B
