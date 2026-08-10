@@ -281,9 +281,13 @@ REVIEW_GATE_MODE = "enforce"
 # High-risk path classes (VGS-112, review-bots.md § Risk classes) never
 # carry either. Code files already cannot carry mechanically — the "docs"
 # class matches only markdown — so each addition names what it closes:
-#   scripts/check-*      — gate/validation machinery. Inert under "docs"
-#                          (no markdown there today); holds if a
-#                          comment-carry class is ever enabled.
+#   scripts/*            — the validation/release machinery as a whole
+#                          (check-/test-/gen-/smoke/qml-smoke harnesses
+#                          plus scripts/lib; widened from check-* in
+#                          PR #120 review — anything ci-ok runs is gate
+#                          machinery). Inert under "docs" (no markdown
+#                          there today); holds if a comment-carry class
+#                          is ever enabled.
 #   vstack.settings.toml — this file: the gate's own trust config, whose
 #                          comments carry the policy rationale. Same
 #                          future-proofing.
@@ -296,7 +300,7 @@ REVIEW_GATE_MODE = "enforce"
 #   backend/*            — backend/ATTRIBUTION.md and vendored Go-module
 #                          markdown classify "docs" and would carry.
 # Lock/idle/greeter QML needs no glob: no carry class matches .qml.
-REVIEW_GATE_CARRY_FORWARD_EXCLUDE = "*AGENTS.md;*CLAUDE.md;.github/*;*review-bots.md;third_party/*;project-skills/*;scripts/check-*;vstack.settings.toml;vstack.toml;packaging/*;backend/*"
+REVIEW_GATE_CARRY_FORWARD_EXCLUDE = "*AGENTS.md;*CLAUDE.md;.github/*;*review-bots.md;third_party/*;project-skills/*;scripts/*;vstack.settings.toml;vstack.toml;packaging/*;backend/*"
 
 # Used by: linear (`issues create`). The project's declared agent-routing
 # label set, comma- or space-separated (e.g. "agent:generalist, agent:rust").

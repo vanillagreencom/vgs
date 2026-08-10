@@ -60,14 +60,20 @@ does NOT apply** (a hardening finding on these paths is a real finding,
 not a suggestion):
 
 - Gate/CI machinery: `.github/workflows/`, `third_party/review-gate/`,
-  `scripts/check-*`, `vstack.settings.toml` (`REVIEW_GATE_*` /
-  `PR_REVIEW_*` keys), and the policy inputs themselves — this file and
-  `vstack.toml` `[skill-instructions]`.
+  everything under `scripts/` (the check-/test-/gen-/smoke/qml-smoke
+  validation suite plus `scripts/lib/` and the release scripts —
+  weakening anything `ci-ok` runs weakens merge evidence identically),
+  `vstack.settings.toml` (`REVIEW_GATE_*` / `PR_REVIEW_*` keys), and
+  the policy inputs themselves — this file and `vstack.toml`
+  `[skill-instructions]`.
 - Lock/session/idle surfaces: `quickshell/vshell/shell.qml` (owns the
   `Lock` instance; child order is load-bearing —
   `docs/architecture/idle-lock-screensaver.md` § The child order is
-  load-bearing), `quickshell/vshell/Modules/Lock/`, `Modules/Greetd/`
-  and greeter wiring, `Services/IdleService.qml`.
+  load-bearing), `quickshell/vshell/Modules/Lock/`,
+  `quickshell/vshell/Modules/Greetd/` and the greeter wiring
+  (`quickshell/vshell/VGSGreeter.qml`,
+  `quickshell/vshell/Services/GreeterUsersService.qml`), and
+  `quickshell/vshell/Services/IdleService.qml`.
 - Packaging/publish: `packaging/`, `publish-aur.yml`, `release.yml`.
 - Backend privileged operations: privileged method handlers under
   `backend/`, and the root-executed helper surfaces in
