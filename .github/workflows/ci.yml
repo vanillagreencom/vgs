@@ -307,28 +307,27 @@ jobs:
       # actionlint lints `run:` blocks by shelling out to shellcheck, and with
       # shellcheck absent it skips every one of them and still exits 0 (VGS-38).
       # scripts/check-workflows.sh FAILS on a missing tool rather than
-      # degrading, so this pairing has to be installed, not assumed. The runner
-      # image ships shellcheck; actionlint and ruff are single static binaries,
-      # pinned and fetched from their releases. ruff (and shellcheck again)
-      # feed the format/lint floor two steps down, which fails on a missing
-      # tool the same way.
-      - name: Install actionlint, shellcheck and ruff
+      # degrading, so this trio has to be installed, not assumed. All three are
+      # single static binaries, pinned and fetched from their releases —
+      # shellcheck deliberately NOT taken from the runner image: shellcheck
+      # adds and retunes checks across releases, so an image-supplied version
+      # lets the format/lint floor's verdict drift from the documented local
+      # run. GITHUB_PATH prepends, so RUNNER_TEMP shadows any image copy for
+      # every later step; shellcheck and ruff feed the format/lint floor two
+      # steps down, which fails on a missing tool the same way.
+      - name: Install actionlint, shellcheck and ruff (pinned)
         env:
           ACTIONLINT_VERSION: 1.7.12
+          SHELLCHECK_VERSION: 0.11.0
           RUFF_VERSION: 0.16.2
         run: |
           set -euo pipefail
-          # The ubuntu runner image ships shellcheck, but the runner resolves
-          # through CI_RUNNER_2V and must not depend on that; install it if the
-          # image did not bring one. check-workflows.sh fails without it either
-          # way, so this can never degrade into a silent skip.
-          command -v shellcheck >/dev/null 2>&1 || {
-            sudo apt-get update
-            sudo apt-get install -y --no-install-recommends shellcheck
-          }
           curl -fsSL -o "$RUNNER_TEMP/actionlint.tar.gz" \
             "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz"
           tar -xzf "$RUNNER_TEMP/actionlint.tar.gz" -C "$RUNNER_TEMP" actionlint
+          curl -fsSL -o "$RUNNER_TEMP/shellcheck.tar.xz" \
+            "https://github.com/koalaman/shellcheck/releases/download/v${SHELLCHECK_VERSION}/shellcheck-v${SHELLCHECK_VERSION}.linux.x86_64.tar.xz"
+          tar -xJf "$RUNNER_TEMP/shellcheck.tar.xz" -C "$RUNNER_TEMP" --strip-components=1 "shellcheck-v${SHELLCHECK_VERSION}/shellcheck"
           curl -fsSL -o "$RUNNER_TEMP/ruff.tar.gz" \
             "https://github.com/astral-sh/ruff/releases/download/${RUFF_VERSION}/ruff-x86_64-unknown-linux-gnu.tar.gz"
           tar -xzf "$RUNNER_TEMP/ruff.tar.gz" -C "$RUNNER_TEMP" --strip-components=1 ruff-x86_64-unknown-linux-gnu/ruff

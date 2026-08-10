@@ -10,12 +10,15 @@ grep -q "vgs-shell ($version-1)" "$root/packaging/debian/changelog"
 grep -q "version=$version" "$root/packaging/void/template"
 grep -qx "$version" "$root/quickshell/vshell/VERSION"
 # errexit exempts a pipeline that begins with `!` (SC2251), so the previous
-# `! grep -q` form never failed the script — these two checks were inert.
-if grep -q "sha256sums=('SKIP')" "$root/packaging/arch/PKGBUILD"; then
-  echo "check-release: packaging/arch/PKGBUILD still carries sha256sums=('SKIP')" >&2
+# `! grep -q` form never failed the script — these two checks were inert. The
+# patterns match the shapes the files actually use: PKGBUILD carries per-arch
+# sha256sums_<arch>= arrays, and the void template's checksum= lines sit
+# tab-indented inside a case arm.
+if grep -qE "sha256sums(_[a-z0-9_]+)?=\('SKIP'\)" "$root/packaging/arch/PKGBUILD"; then
+  echo "check-release: packaging/arch/PKGBUILD still carries a sha256sums SKIP entry" >&2
   exit 1
 fi
-if grep -q '^checksum=SKIP$' "$root/packaging/void/template"; then
+if grep -qE '^[[:space:]]*checksum=SKIP$' "$root/packaging/void/template"; then
   echo "check-release: packaging/void/template still carries checksum=SKIP" >&2
   exit 1
 fi
