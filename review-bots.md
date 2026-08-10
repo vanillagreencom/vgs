@@ -75,11 +75,17 @@ not a suggestion):
   `quickshell/vshell/Services/GreeterUsersService.qml`), and
   `quickshell/vshell/Services/IdleService.qml`.
 - Packaging/publish: `packaging/`, `publish-aur.yml`, `release.yml`.
-- Backend privileged operations: privileged method handlers under
-  `backend/`, and the root-executed helper surfaces in
-  `bin/vshell-helper` — `vshell greeter sync`, `vshell auth sync`,
-  `vshell greeter keyring`, and `vshell sudo-toggle` (the sudoers
-  protocol; `docs/architecture/shell-architecture.md` items 8-10).
+- Privileged operations: privileged method handlers under `backend/`,
+  and any `bin/vshell-helper` path that elevates (`sudo`/`pkexec`) or
+  writes outside the user's home (`/etc`, udev rules, sudoers, greeter
+  config, sysfs). The class is that PROPERTY, not a list — derive the
+  current members with
+  `grep -n '"sudo"\|"pkexec"\|geteuid\|Path("/etc' bin/vshell-helper`.
+  Known members today, non-exhaustive: `vshell greeter sync`,
+  `vshell auth sync`, `vshell greeter keyring`, `vshell sudo-toggle`,
+  `vshell brightness install-udev`, `vshell theme chromium-policy`,
+  `vshell battery set-charge-limit`
+  (`docs/architecture/shell-architecture.md` items 8-10).
 
 Review evidence never carries forward on these paths:
 `REVIEW_GATE_CARRY_FORWARD_EXCLUDE` disqualifies their markdown, and no
