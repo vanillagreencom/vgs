@@ -239,6 +239,11 @@ sudo zypper --gpg-auto-import-keys refresh
 sudo zypper install vgs-shell
 ```
 
+The `zypper ar` URL above is Tumbleweed-specific. The same OBS project also
+publishes a Slowroll build; take its repository URL from the
+[OBS package page](https://build.opensuse.org/package/show/home:vanillagreen/vgs-shell)
+rather than editing the Tumbleweed one by hand.
+
 Debian 13:
 
 ```bash
@@ -249,7 +254,8 @@ sudo apt update
 sudo apt install vgs-shell
 ```
 
-Ubuntu 26.04:
+Ubuntu 26.04 — both PPAs are required, since Quickshell comes from
+`ppa:avengemedia/danklinux`:
 
 ```bash
 sudo add-apt-repository ppa:avengemedia/danklinux
@@ -258,7 +264,7 @@ sudo apt update
 sudo apt install vgs-shell
 ```
 
-Gentoo:
+Gentoo — Quickshell comes from GURU, so both repositories are enabled:
 
 ```bash
 sudo eselect repository enable guru

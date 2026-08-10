@@ -90,54 +90,12 @@ sudo dnf copr enable vanillagreen/vgs-shell
 sudo dnf install vgs-shell
 ```
 
-### openSUSE
+### openSUSE, Debian, Ubuntu, Gentoo
 
-For Tumbleweed:
-
-```bash
-sudo zypper ar -f https://download.opensuse.org/repositories/home:/vanillagreen/openSUSE_Tumbleweed/ vanillagreen-vgs
-sudo zypper --gpg-auto-import-keys refresh
-sudo zypper install vgs-shell
-```
-
-The [VGS OBS project](https://build.opensuse.org/package/show/home:vanillagreen/vgs-shell) also
-publishes a Slowroll build.
-
-### Debian
-
-For Debian 13, use the
-[VGS OBS repository](https://build.opensuse.org/package/show/home:vanillagreen/vgs-shell):
-
-```bash
-sudo install -d -m 0755 /etc/apt/keyrings
-curl -fsSL https://download.opensuse.org/repositories/home:/vanillagreen/Debian_13/Release.key | sudo tee /etc/apt/keyrings/vanillagreen-vgs.asc >/dev/null
-echo 'deb [signed-by=/etc/apt/keyrings/vanillagreen-vgs.asc] https://download.opensuse.org/repositories/home:/vanillagreen/Debian_13/ /' | sudo tee /etc/apt/sources.list.d/vanillagreen-vgs.list
-sudo apt update
-sudo apt install vgs-shell
-```
-
-### Ubuntu
-
-Ubuntu 26.04 needs both the Quickshell dependency PPA and the
-[VGS PPA](https://launchpad.net/~vanillagreen/+archive/ubuntu/vgs-shell):
-
-```bash
-sudo add-apt-repository ppa:avengemedia/danklinux
-sudo add-apt-repository ppa:vanillagreen/vgs-shell
-sudo apt update
-sudo apt install vgs-shell
-```
-
-### Gentoo
-
-VGS ships in the [VanillaGreen overlay](https://github.com/vanillagreencom/gentoo-overlay); Quickshell comes from GURU, so enable both:
-
-```bash
-sudo eselect repository enable guru
-sudo eselect repository add vanillagreen git https://github.com/vanillagreencom/gentoo-overlay.git
-sudo emaint sync -a
-sudo emerge --ask gui-apps/vgs-shell
-```
+Packages are also published for openSUSE Tumbleweed (plus a Slowroll build on
+OBS), Debian 13 (OBS), Ubuntu 26.04 (Launchpad PPA), and Gentoo (the
+VanillaGreen overlay). Repository setup and install commands live in
+[`packaging/README.md` § Channels](packaging/README.md#channels).
 
 ### Nix / Home Manager
 
