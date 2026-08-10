@@ -5,36 +5,19 @@ name: CI
 # nothing about VGS's own suite — which is how `check-validation-safety.sh` sat
 # red on clean `main` (VGS-18) with nothing surfacing it.
 #
-# ONE JOB, DELIBERATELY. Measured on this repo: the whole static suite is ~16s
-# of work and the whole Go block is ~6s warm (build+vet 1s, `go test -race` 5s;
-# only two module dependencies, so cold is not much worse). At that scale the
-# dominant cost is per-job overhead — runner acquisition, checkout, toolchain
-# setup — which every extra job pays again. Splitting into lanes would roughly
-# triple billed minutes to save a few seconds of wall clock, and a
-# change-detection job to gate those lanes would cost more than the work it
-# could skip. The sibling repos (hyprtrade, memsira, drovr) split because their
-# Rust/desktop lanes run for minutes; that economics does not transfer here.
-# Revisit if any step below crosses ~5 minutes.
-#
-# For the same reason there is no ci-nightly.yml: nothing here is slow enough
-# to be worth deferring to a schedule.
+# ONE JOB, DELIBERATELY, on the 2 vCPU runner (shared CI_RUNNER_2V repository
+# variable; Blacksmith when set, `ubuntu-latest` when unset — that fallback is
+# supported and must keep working). The suite is ~30s of total compute, so
+# per-job overhead dominates: no lanes, no change-detection gate, no
+# ci-nightly.yml, and the bigger runner tiers buy nothing. Measured figures and
+# re-measure commands: docs/decisions/D007-ci-single-job-economics.md.
 #
 # One job also means one stable required check. Point branch protection and the
-# merge queue at `CI / ci-ok` — there are no conditional lanes that could leave
-# a required context permanently skipped, so there is nothing for a separate
-# aggregator job to aggregate; a second job existing only to restate this one's
-# result would add a whole runner's overhead to a ~30s suite.
-#
-# The job is NAMED `ci-ok` rather than for what it does, deliberately: that is
-# the indirection an aggregator would have bought. If lanes are ever added, the
-# real work moves to new jobs and `ci-ok` becomes the aggregator over them —
-# branch protection keeps requiring the same context and never has to change.
-#
-# RUNNER: 2 vCPU via the shared CI_RUNNER_2V repository variable (Blacksmith
-# when set, `ubuntu-latest` when unset — that fallback is supported and must
-# keep working). Nothing in this suite is CPU-bound or disk-hungry, so the 4V/8V
-# tiers, and the free-disk-space dance memsira needs for its 8V lanes, buy VGS
-# nothing.
+# merge queue at `CI / ci-ok` — the job is NAMED for the required context
+# rather than for what it does, which is the indirection a separate aggregator
+# job would have bought: if lanes are ever added, the real work moves to new
+# jobs and `ci-ok` becomes the aggregator over them, and branch protection
+# keeps requiring the same context.
 
 on:
   # Deliberately NO pull_request_review / pull_request_review_comment triggers.
@@ -164,10 +147,10 @@ jobs:
       # exactly the two events that gate landing code. A usable range exists for
       # all three events, so there is no reason to skip any of them.
       #
-      # A whole-tree check is NOT the alternative: the vendored trees under
-      # config/vshell/nvim/colorschemes/ and config/vshell/icons/ carry ~2000
-      # pre-existing whitespace findings, so it would be red from day one and
-      # would need an exclusion list to maintain.
+      # A whole-tree check is NOT the alternative: the tree's pre-existing
+      # findings all sit in content VGS ships verbatim, so it would be red from
+      # day one. Figures and derivation:
+      # docs/decisions/D007-ci-single-job-economics.md.
       #
       # The step fails rather than checking a substitute range when its base
       # cannot be resolved; see the comment on the fallback inside the script.
@@ -301,12 +284,10 @@ jobs:
           # here on a toolchain the release never uses.
           go-version: 1.23.12
           # CACHING IS OFF ON PURPOSE, and this is the one place where measuring
-          # inverted the obvious answer. A cold run of the whole Go block takes
-          # ~16s locally (build 4.4s, vet 0.8s, `test -race` 11.0s) and the two
-          # module dependencies are a 13 MB download — but the GOCACHE it leaves
-          # behind is 296 MB. Saving and restoring that much to skip ~10s of
-          # compute is a net loss on a 2 vCPU runner, and it burns Actions cache
-          # storage the rest of the repo could use. Re-measure before enabling.
+          # inverted the obvious answer: the GOCACHE a cold run leaves behind is
+          # ~20x the module download it skips, a net loss to save and restore on
+          # a 2 vCPU runner. Figures and re-measure commands:
+          # docs/decisions/D007-ci-single-job-economics.md.
           cache: false
 
       - name: Go build, vet and race tests
@@ -370,7 +351,7 @@ jobs:
       # plus a Quickshell install inside the runner. The live-session half of
       # this guard degrades cleanly here (no compositor and no Quickshell CLI →
       # "nothing of that kind exists on this system"), which is correct: there is
-      # no live session in CI to disturb. AGENTS.md § What CI enforces records
-      # exactly what that leaves local-only.
+      # no live session in CI to disturb. AGENTS.md § "What CI covers, and what
+      # it cannot" records exactly what that leaves local-only.
       - name: Validation safety and QML static smoke
         run: scripts/check-validation-safety.sh --require-static

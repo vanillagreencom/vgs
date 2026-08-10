@@ -56,11 +56,9 @@ tracked file there is unwritable by git while `git status` looks clean.
 for discovery. See `project-skills/README.md`.
 
 The vstack `review-gate` engine needs a **tracked** copy, because CI runs its
-predicate from a plain checkout with no vstack and no mirror. The sibling repos
-track it at `.agents/skills/review-gate/`; VGS cannot, for the reason above —
-git cannot stat through the symlinked directory, so those files report as
-deleted in every worktree and the tree is permanently dirty. VGS therefore
-vendors it at `third_party/review-gate/`, and `vstack refresh` keeps updating
+predicate from a plain checkout with no vstack and no mirror — and for the
+reason above it cannot be tracked under `.agents/skills/`, so VGS vendors it
+at `third_party/review-gate/` while `vstack refresh` keeps updating
 `.agents/skills/review-gate` for agent discovery.
 `scripts/check-review-gate-vendor.sh` fails when the two drift, so a refresh
 that changes the engine cannot be forgotten.
@@ -190,37 +188,29 @@ scripts/smoke-surfaces.sh
 (cd backend && go build ./... && go vet ./... && go test -race ./...)
 ```
 
-Every command above runs exactly as written. The check scripts invoked bare
-all carry the executable bit — a `node`/`bash`/`python3` prefix the doc
-omitted is what made the suite fail for anyone following it literally
-(VGS-30). The prefixes that do appear are deliberate, not omissions: `node
---check`, `python3 -m py_compile` and `bash -n` are syntax checks over a file,
-and `python3 scripts/lib/shell_scan.py` runs a library's self-test —
-`scripts/lib/` holds non-executable libraries, never invoked bare: they are
-reached only by import, sourcing, or an explicit interpreter. `scripts/lib/session-snapshot.sh` is sourced, never run;
-`scripts/lib/shell_scan.py` is imported by `scripts/gen-package-metadata.py`
-and carries a `__main__` only for that self-test. `bin/vshell_niri.py`,
-`bin/vshell_niri_kdl.py` and `bin/vshell_theme_color.py` stay importable
-modules with no shebang and no `__main__`.
-
-`scripts/check-validation-inventory.py` is what keeps this list honest in both
-directions: every executable check under `scripts/` must appear here and in CI
-or carry a written exclusion, and every command here must run exactly as
-written. Four checks sat committed and never invoked by anything before it
-existed (VGS-50).
+Every command above runs exactly as written, and
+`scripts/check-validation-inventory.py` enforces it in both directions: every
+executable check under `scripts/` must appear here and in CI or carry a
+written exclusion (VGS-50), and every command here must be runnable as written
+— the scripts invoked bare all carry the executable bit (VGS-30). The
+interpreter prefixes that do appear are deliberate: `node --check`,
+`python3 -m py_compile` and `bash -n` are syntax checks over a file, and
+`scripts/lib/` holds non-executable libraries reached only by import, sourcing,
+or an explicit interpreter — `python3 scripts/lib/shell_scan.py` runs a
+library's self-test (`shell_scan.py` carries a `__main__` only for that;
+`session-snapshot.sh` is sourced, never run). `bin/vshell_niri.py`,
+`bin/vshell_niri_kdl.py` and `bin/vshell_theme_color.py` likewise stay
+importable modules with no shebang and no `__main__`.
 
 ### What CI covers, and what it cannot
 
 `.github/workflows/ci.yml` runs this suite on every pull request targeting
-`main`, on merge-queue entries, and on `main` pushes.
-
-**The merge queue requires `CI / ci-ok`.** That is the workflow's one *suite*
-job — named for the required context rather than for what it does, which is the
-indirection a separate aggregator job would have bought. There are no
-conditional lanes that could leave a required context permanently skipped, so
-there is nothing to aggregate; if lanes are ever added, the work moves to new
-jobs and `ci-ok` becomes the aggregator over them, and branch protection never
-has to change.
+`main`, on merge-queue entries, and on `main` pushes. The merge queue requires
+`CI / ci-ok`, the workflow's one *suite* job — one job is deliberate: at ~30s
+of total compute, per-job overhead dominates, so there are no lanes, no
+nightly, no Go caching, and the 2 vCPU runner tier. The measured economics
+behind that shape, and the commands to re-measure them, live in
+`docs/decisions/D007-ci-single-job-economics.md`.
 
 `Review gate` is intended as the second required context, but it is **not one
 yet**: it is added to the merge queue's required checks only after the gate has
@@ -228,37 +218,11 @@ been observed publishing on a real PR, because requiring a context nothing
 produces would block every merge. That step is a GitHub ruleset change, not
 code. See § Review gate.
 
-One job is also the cheap shape here. Measured on this repo: the static suite is
-~16s of work, and the Go block is ~6s warm / ~16s cold (build 4.4s, vet 0.8s,
-`test -race` 11.0s). At ~30s of total compute, per-job overhead — runner
-acquisition, checkout, toolchain setup — dominates, so splitting into lanes
-would multiply billed minutes to save seconds, and a change-detection job to
-gate those lanes would cost more than the work it could skip. The sibling repos
-(hyprtrade, memsira, drovr) split because their lanes run for minutes; that
-economics does not transfer. Revisit if any step crosses ~5 minutes. There is no
-nightly split for the same reason. Re-measure by running each § Validation entry
-under `time` for the static figure, and in `backend/` `time go build ./...`,
-`time go vet ./...`, `time go test -race ./...` for the Go block — warm as-is,
-cold by pointing `GOCACHE` at a throwaway directory.
-
-Go caching is deliberately **off**. A cold Go run downloads 13 MB of modules but
-leaves a ~284 MB `GOCACHE` (measured 2026-08-09); saving and restoring that to
-skip ~10s of compute is a net loss on a 2 vCPU runner. Re-measure before
-enabling it: `go mod download` into a fresh `GOMODCACHE` and `du -sh` it for
-the module figure; run the Go block once with a throwaway `GOCACHE` and
-`du -sh` that for the cache figure.
-
-The runner resolves through the shared `CI_RUNNER_2V` repository variable
-(Blacksmith when set, `ubuntu-latest` when unset — that fallback is supported
-and must keep working). Nothing here is CPU-bound or disk-hungry, so the 4V/8V
-tiers buy VGS nothing.
-
 Some checks in the list above **cannot run in CI**, and one runs there only
-through another entry. Both categories are deliberate, not oversights, and
+through another entry. Both categories are deliberate, and
 `scripts/check-validation-inventory.py` cross-compares the two tables below
-against its own `LOCAL_ONLY` and `INDIRECT_IN_CI` maps — it fails if the prose
-and the code disagree, which is the only thing that makes the claim they cannot
-diverge silently actually true.
+against its own `LOCAL_ONLY` and `INDIRECT_IN_CI` maps, so the prose and the
+code cannot disagree silently.
 
 **Local-only — CI cannot run these at all:**
 
@@ -272,39 +236,23 @@ diverge silently actually true.
 
 | Check | How CI reaches it |
 |-------|-------------------|
-| `scripts/qml-smoke.sh` | `scripts/check-validation-safety.sh --require-static` forwards the flag to the smoke, so the **static** half runs in CI. Only `--nested` is local-only: its sandbox needs both Hyprland and `quickshell` on PATH (`scripts/qml-smoke.sh::nested_check`), neither reasonably installable on a runner. Quickshell is not needed for the static half — it tolerates unresolved `qs.*` imports by design and fails only on `[syntax…]` findings. |
+| `scripts/qml-smoke.sh` | `scripts/check-validation-safety.sh --require-static` forwards the flag to the smoke, so the **static** half runs in CI. Only `--nested` is local-only: its sandbox needs both Hyprland and `quickshell` on PATH, neither reasonably installable on a runner. |
 
-The live-session half of `scripts/check-validation-safety.sh` is likewise
-inert in CI: with no compositor and no Quickshell CLI its snapshots report
-"nothing of that kind exists on this system" and pass. The repo-wide
-unsafe-launch instruction scan — the other half — runs in full.
-
-`scripts/check-aur-sync.py` runs on every PR, but only its offline half:
-PKGBUILD against `.SRCINFO` inside this repo. Comparing against what
-aur.archlinux.org actually publishes needs network and is owned by
-`.github/workflows/publish-aur.yml` — which pushes `packaging/arch/` to the AUR
-and re-checks afterwards, plus a weekly drift run. A PR is never made red by an
-AUR-side problem it cannot fix, and the offline run prints what it did **not**
-check rather than implying the published package was verified. Run
+`scripts/check-aur-sync.py` runs only its offline half on a PR (PKGBUILD
+against `.SRCINFO`); comparing against what the AUR actually publishes needs
+network and is owned by `.github/workflows/publish-aur.yml`. Run
 `scripts/check-aur-sync.py --remote` by hand when you want that answer now.
 
 So a green PR proves the static suite and the Go block. It does **not** prove
 the shell starts or that its surfaces are sane. Run
 `scripts/qml-smoke.sh --nested --require-static` and
 `scripts/smoke-surfaces.sh` locally before finishing QML work.
-
-`scripts/smoke-surfaces.sh` drives the shell that is *actually* running, and
-`vshell ipc` resolves instances by the config path of the checkout it is invoked
-from — so the smoke only works from the checkout owning the live session. It now
-reports which case it is in: a named skip when no VGS shell is live, and a
-failure naming the owning checkout when one is live but foreign. Run it from
-that checkout; do not read its refusal as a pass (VGS-69).
-
-A foreign shell fails the run **even when this checkout's own shell is also
-live**, because `hyprctl layers` aggregates every Quickshell instance on the
-seat: the assertions cannot tell whose surfaces they are reading, so a pass
-would prove nothing. The classifier's order is therefore malformed registry →
-foreign shell → own shell → skip.
+`scripts/smoke-surfaces.sh` only works from the checkout owning the live
+session, and reports which case it hit: a named skip when no VGS shell is
+live, a failure naming the owning checkout when one is live but foreign —
+even when this checkout's own shell is also live, since `hyprctl layers`
+aggregates every Quickshell instance on the seat. Run it from the owning
+checkout; do not read its refusal as a pass (VGS-69).
 
 ### Review gate
 
@@ -314,32 +262,17 @@ at `third_party/review-gate/`. The engine posts one commit status —
 that exact head or while threads are unresolved, `failure` on
 changes-requested, `success` only from an evidence-backed evaluation.
 
-Two moving parts (the v2 single-writer architecture, cutover 2026-08-08 —
-replacing the old `ci.yml` gate job + `approval-rerun.yml` +
-`approval-sweep.yml` mesh):
+Two moving parts (the v2 single-writer architecture, cutover 2026-08-08):
 
 | Piece | Role |
 |-------|------|
-| `.github/workflows/review-gate-writer.yml` | The ONLY writer of the gate status. Runs the **default-branch** engine (`third_party/review-gate/scripts/review-writer.sh`) on every leg — PR pushes, review events, status events, merge-group entries, a 15-minute cron floor for transitions with no webhook (thread resolution; fork review evidence) — and converges every open PR per run. A PR can never influence its own gate evaluation. |
-| `ci.yml` § `review-gate-selftest` | Ungated (nothing gates *it*), but **blocking**: `ci-ok` takes `needs:` on it. Pins the engine's decision table offline against VGS's own trust values. |
-
-`ci-ok` deliberately takes no gate condition and no fast/full split. The
-engine's recommended split holds heavy jobs to the merge queue, which pays off
-for lanes that run for minutes; VGS's whole suite is ~30s, so every job runs on
-every leg. The gate blocks the merge, not the compute.
-
-**Ungated is not the same as non-blocking**, and conflating them left a hole:
-the selftest ran on every event but was not a required context, and the writer
-evaluates the *default-branch* predicate, so the gate stays green on a PR that
-breaks the head's predicate. A change breaking `review-predicate.sh` could
-merge with its own selftest red. `ci-ok` therefore takes `needs:
-review-gate-selftest` — blocking without gating, and it hands out no token,
-since the selftest holds only `contents: read`.
+| `.github/workflows/review-gate-writer.yml` | The ONLY writer of the gate status. Runs the **default-branch** engine on every leg — PR pushes, review events, status events, merge-group entries, a 15-minute cron floor for transitions with no webhook — and converges every open PR per run, except the merge-group leg (single-head) and the fork read-only no-op, both covered by the cron floor. A PR can never influence its own gate evaluation. |
+| `ci.yml` § `review-gate-selftest` | Pins the engine's decision table offline against VGS's own trust values. Ungated but **blocking**: `ci-ok` takes `needs:` on it, so a PR that breaks the predicate cannot merge with its own selftest red (rationale in the workflow's comments). |
 
 Because the writer always runs the merged engine, a PR that repairs the gate
 machinery itself can never open its own gate — the ruleset's bypass actor is
 the sanctioned merge path for gate-repair-class PRs (state it in the merge
-commit; precedent drovr#444 / memsira#441 / hyprtrade#525).
+commit).
 
 Per-repo trust lives in `vstack.settings.toml` under `REVIEW_GATE_*`. Every
 key carries its VGS rationale in the comment above it, and that file is the
@@ -366,50 +299,22 @@ cutover:
   `review-bots.md`, vendored engine and skill trees), which always get fresh
   review (`REVIEW_GATE_CARRY_FORWARD` / `_EXCLUDE`).
 
-CodeRabbit's own config is checked too. `.coderabbit.yaml` shipped a
-376-character `tone_instructions` against a documented 250-character limit;
-CodeRabbit rejects an invalid config, reviews with **default** settings, and
-says so nowhere a PR can see — so the whole file was inert on every PR.
-`scripts/check-coderabbit-config.py` validates it against CodeRabbit's own
-schema, vendored at `third_party/coderabbit-schema/` so the check is offline and
-an endpoint outage cannot turn it into a skip. If a refreshed schema uses a
-JSON Schema keyword the validator does not implement, the check fails and names
-it rather than under-validating while reporting success.
-
-`--require-static` is passed in CI so a missing qmllint **fails** rather than
-skipping: a silent skip is indistinguishable from a pass.
+CodeRabbit's own config is checked too: an invalid `.coderabbit.yaml` makes
+CodeRabbit silently review with **default** settings, which once left the whole
+file inert on every PR, so `scripts/check-coderabbit-config.py` validates it
+against CodeRabbit's own schema, vendored at `third_party/coderabbit-schema/`
+so the check is offline.
 
 One other local/CI difference: the bare `git diff --check` above is a
 working-tree check, so on a clean CI checkout it would inspect nothing. CI
-diffs a range instead, which is why the job checks out with `fetch-depth: 0`.
-Each event has exactly one base:
-
-| Event | Whitespace base |
-|-------|-----------------|
-| `pull_request` | `github.event.pull_request.base.sha` |
-| `merge_group` | `HEAD^1` — the merge commit's first parent, so the range is everything the group adds, including a multi-PR combination no single PR range covered |
-| `push` | `github.event.before`, the previous tip of the branch |
-
-The step runs on **every** event rather than only on pull requests: skipping it
-on `merge_group` and `push` would leave it green without checking on precisely
-the two events that gate landing code.
-
-**There is no fallback base, deliberately.** If the base above cannot be
-resolved — a force-push can leave the previous tip unreachable, a
-branch-creation push sends the all-zero sha, a root commit has no first parent —
-the step prints `::error::` and **fails**. It does not substitute a narrower
-range: doing so passes while claiming coverage it does not have, which is the
-same defect as skipping the step. An unrecognised event fails the same way,
-so adding a trigger forces a conscious decision about what to compare against.
-A red run on a rewritten trunk is informative, not noise.
-
-A whole-tree whitespace check is deliberately not used: the tree carries ~1,000
-pre-existing findings, every one in content VGS ships verbatim — curated theme
-packages under `themes/` and the vendored `config/vshell/nvim/colorschemes/`
-and `config/vshell/icons/` trees — so it would be red from day one and would
-need an exclusion list covering all of that to maintain. Measure with
-`git diff --check $(git hash-object -t tree /dev/null) HEAD | wc -l` (~2,000
-lines, since trailing-whitespace findings also echo the offending line).
+diffs a range instead — on **every** event, with exactly one defined base per
+event, documented and enforced in the workflow's whitespace step. **There is
+no fallback base, deliberately**: if the base cannot be resolved the step
+fails rather than substituting a narrower range, which would pass while
+claiming coverage it does not have. A whole-tree check is deliberately not
+used — the tree's ~1,000 pre-existing findings all sit in content VGS ships
+verbatim; figures and derivation in
+`docs/decisions/D007-ci-single-job-economics.md`.
 
 ### Never launch a second shell into the live session
 Never run `qs -c vshell` or `qs -p quickshell/vshell`: each starts a **full second
@@ -419,42 +324,22 @@ full-screen layer surfaces behind — the session ends up as cursors over black,
 recoverable only with `vshell ipc call lock forceReset`. Never `pkill quickshell`
 either: other Quickshell applications on the seat are legitimate.
 
-- `scripts/qml-smoke.sh` is the canonical QML smoke. Know what each mode covers:
-  - bare — a **parse** check only (`qmllint`, syntax errors). It does not catch
-    unresolved `qs.*` imports, missing properties, or failed process starts.
-  - `--nested` — runs the real shell inside an isolated nested compositor (own
-    runtime dir, own HOME, private bus, no live backend socket, no live
-    compositor IPC), with process-group-scoped cleanup, and fails on runtime QML
-    errors. **This is the mode that replaces what `qs -c vshell` used to cover**,
-    so use it for QML work. It also opens a plugin popout (dismissing it with
-    Escape via `wtype`) and drives a planted user override of a bundled id
-    through scan/rescan/reload/removal, because neither is reachable by loading
-    the shell alone (VGS-81) — popout content is only instantiated when the
-    popout opens, and the override path needs a second manifest claiming a
-    shipped id. What the popout check proves is that the surface was created and
-    dismissed, plus whatever the runtime-error scan catches inside the content;
-    the surface's size is **not** evidence about the content, and the script
-    says why.
-  - Keys reach a popout through **`wtype`**, not `hyprctl`. `hyprctl dispatch
-    sendshortcut` addresses a *window* and answers "window not found" for a
-    layer surface, so it cannot drive a popout at all; `wtype` goes through the
-    virtual-keyboard protocol to whatever holds keyboard focus, which is the
-    popout's own grab. It needs a settle first — `PluginPopout` defers
-    `forceActiveFocus` through `Qt.callLater`, so a key sent the instant the
-    surface appears lands before anything is listening. Without `wtype`
-    installed the Escape assertion prints `NOT CHECKED` rather than passing
-    quietly.
-  - Most agent environments have no `WAYLAND_DISPLAY`, and `--nested` refuses to
-    build a sandbox without a host socket to nest inside. Point it at the
-    session's own socket and it runs — the sandbox still has its own runtime
-    dir, HOME and bus, so the live session is untouched:
-    ```bash
-    WAYLAND_DISPLAY=wayland-1 XDG_RUNTIME_DIR=/run/user/1000 \
-      scripts/qml-smoke.sh --nested --require-static --require-nested
-    ```
-  - `--require-static` / `--require-nested` — fail instead of skipping when a
-    check's tooling is unavailable. Use them in any automated run; a plain skip
-    is otherwise indistinguishable from a pass.
+- `scripts/qml-smoke.sh` is the canonical QML smoke; its own header documents
+  what each mode covers. Bare is a **parse** check only. `--nested` runs the
+  real shell inside an isolated nested compositor sandbox, fails on runtime QML
+  errors, and drives the popout and bundled-override paths loading alone never
+  reaches — it is the mode that replaces what `qs -c vshell` used to cover, so
+  use it for QML work. Pass `--require-static` / `--require-nested` in any
+  automated run so a missing tool fails instead of skipping — a plain skip is
+  otherwise indistinguishable from a pass.
+- Most agent environments have no `WAYLAND_DISPLAY`, and `--nested` refuses to
+  build a sandbox without a host socket to nest inside. Point it at the
+  session's own socket and it runs — the sandbox still has its own runtime
+  dir, HOME and bus, so the live session is untouched:
+  ```bash
+  WAYLAND_DISPLAY=wayland-1 XDG_RUNTIME_DIR=/run/user/1000 \
+    scripts/qml-smoke.sh --nested --require-static --require-nested
+  ```
 - `scripts/check-validation-safety.sh` proves validation left no extra VGS
   Quickshell instances or layer surfaces, and blocks unsafe launch instructions
   from returning to the docs.
