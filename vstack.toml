@@ -38,7 +38,10 @@ project-skills-dir = "project-skills"
 # Adds a "## Launch Instructions" section near the top
 # of each agent file. Use this for startup tasks, required
 # reading, or project-specific operating notes.
+# The reserved key `all` applies to every agent, rendered
+# before that agent's own entry.
 # Examples:
+# all = "Run `just setup` before anything else."
 # rust = "Read docs/architecture.md before coding."
 # iced = """
 # Read docs/ui.md.
@@ -254,7 +257,21 @@ oversight, and gets "fixed" by someone assigning it.
 | `feature` | Duplicate of `enhancement` ("New capability or product behavior" vs "New feature or request"). VGS uses `enhancement`; `feature` is on zero VGS issues. It is workspace-level and may serve another team, so do not delete it — just do not assign it here. |
 """
 
-reviewer = ""
+reviewer = """
+## VGS review policy
+
+Risk-classed review depth and the regression-test expectation live in
+`review-bots.md` (repo root, § Risk classes and § Regression-test
+expectation) — that file is the source; apply both. In short: every
+bug-fix PR carries a check or test that failed before the fix; a
+bug-fix PR without one gets that as a standing finding (docs-only fixes
+exempt). Findings on high-risk classes — gate/CI machinery,
+lock/session/idle surfaces, packaging/publish install channels, and
+privileged operations (elevation or system writes, WHEREVER they live —
+not only `backend/`) — are merge-blocking by default. The class
+definitions and derivation commands stay in review-bots.md; do not
+re-derive them from this summary.
+"""
 
 second-opinion = ""
 
