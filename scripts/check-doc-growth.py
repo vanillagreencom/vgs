@@ -11,7 +11,7 @@ itself is not the defect; UNEXAMINED growth is. So the ceiling is enforced,
 and raising it takes a one-line edit in the same PR as the growth, where a
 reviewer sees the trade stated explicitly.
 
-Two failure shapes:
+Three failure shapes:
 
 1. **A surface outgrew its ceiling.** Cut it back below the ceiling, or raise
    the ceiling here in the SAME PR with a rationale comment saying what earned
@@ -20,7 +20,13 @@ Two failure shapes:
 2. **A file appeared in a watched glob with no ceiling entry.** New files do
    not get to skip the ratchet by being new — silence would grandfather every
    future doc in at whatever size it first merges. Add an entry at current
-   size plus ~10% headroom.
+   size plus ~10% headroom. A glob that matches nothing at all fails the same
+   way: a renamed directory must update WATCHED_GLOBS in the same PR, or the
+   new-file ratchet is silently disabled for that surface class.
+
+3. **A ceilings entry names a file that does not exist.** A rename or removal
+   updates or drops the entry in the same PR — a stale entry is coverage that
+   does not exist.
 
 docs/decisions/*.md are deliberately NOT watched: decision records are where
 content dieted out of AGENTS.md goes to live (VGS-105, VGS-107), so a ceiling
@@ -30,6 +36,7 @@ demand, not loaded ambiently.
 
 from __future__ import annotations
 
+import math
 import sys
 from pathlib import Path
 
@@ -42,8 +49,8 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 # rationale is for the reviewer, so a raise without one is review feedback,
 # not something this script can enforce.
 CEILINGS: dict[str, int] = {
-    # 23,149 B after the VGS-107 diet (23,280 B with this check's own
-    # § Validation line). The do-not-cut sections alone sum to ~15.6 KB, so
+    # 23,149 B after the VGS-107 diet (23,312 B with this check's own
+    # § Validation wiring). The do-not-cut sections alone sum to ~15.6 KB, so
     # 25 KB is honest headroom while a tighter ceiling would force cutting
     # protected content (VGS-107 handoff arithmetic).
     "AGENTS.md": 25_000,
@@ -77,12 +84,15 @@ CEILINGS: dict[str, int] = {
     "docs/architecture/wallpaper-upscaling.md": 4_000,  # adopted at 3,625 B
 }
 
-# Every file matching these must carry a CEILINGS entry. Non-recursive on
-# purpose: neither directory has subdirectories today, and a new one appearing
-# should be a conscious decision about whether it is an instruction surface.
+# Every file matching these must carry a CEILINGS entry. Shallow on purpose:
+# the patterns match today's layout exactly, so a new nesting level appearing
+# is a conscious decision about whether it is an instruction surface — and a
+# glob that stops matching anything fails below rather than going quietly
+# inert.
 WATCHED_GLOBS = (
     ".github/instructions/*.md",
     "docs/architecture/*.md",
+    "project-skills/*/SKILL.md",
 )
 
 
@@ -109,17 +119,30 @@ def main() -> int:
             )
 
     for pattern in WATCHED_GLOBS:
+        matched = False
         for path in sorted(REPO_ROOT.glob(pattern)):
+            matched = True
             rel = path.relative_to(REPO_ROOT).as_posix()
             if rel not in CEILINGS:
+                size = path.stat().st_size
+                suggested = math.ceil(size * 1.10 / 100) * 100
                 problems.append(
-                    f"{rel} matches the watched glob `{pattern}` but has no ceiling "
-                    f"in scripts/check-doc-growth.py. A new instruction surface "
-                    f"needs a conscious ceiling, not a grandfathered size: add an "
-                    f"entry at its current size plus ~10% headroom (rounded up to "
-                    f"the next 100 bytes) with a comment recording the measured "
-                    f"size."
+                    f"{rel} ({size:,} bytes) matches the watched glob `{pattern}` "
+                    f"but has no ceiling in scripts/check-doc-growth.py. A new "
+                    f"instruction surface needs a conscious ceiling, not a "
+                    f"grandfathered size: add an entry at its current size plus "
+                    f"~10% headroom rounded up to the next 100 bytes "
+                    f"({suggested:,} for this file today), with a comment "
+                    f"recording the measured size."
                 )
+        if not matched:
+            problems.append(
+                f"the watched glob `{pattern}` matches no files at all, so the "
+                f"new-file ratchet is silently disabled for it — the glob is "
+                f"stale. Update WATCHED_GLOBS in scripts/check-doc-growth.py in "
+                f"the same PR as the rename or removal that emptied it, or drop "
+                f"the glob if that surface class is genuinely gone."
+            )
 
     if problems:
         print("check-doc-growth: FAIL", file=sys.stderr)
