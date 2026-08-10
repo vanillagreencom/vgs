@@ -60,27 +60,30 @@ does NOT apply** (a hardening finding on these paths is a real finding,
 not a suggestion):
 
 - Gate/CI machinery: `.github/workflows/`, `third_party/review-gate/`,
-  everything under `scripts/` (the check-/test-/gen-/smoke/qml-smoke
-  validation suite plus `scripts/lib/` and the release scripts —
-  weakening anything `ci-ok` runs weakens merge evidence identically),
-  `vstack.settings.toml` (`REVIEW_GATE_*` / `PR_REVIEW_*` keys), and
-  the policy inputs themselves — this file and `vstack.toml`
-  `[skill-instructions]`.
+  everything under `scripts/` (weakening anything `ci-ok` runs weakens
+  merge evidence identically), `vstack.settings.toml` (`REVIEW_GATE_*`
+  / `PR_REVIEW_*` keys), and the policy inputs themselves — this file,
+  `vstack.toml` `[skill-instructions]`, `AGENTS.md`,
+  `.github/copilot-instructions.md`, and
+  `.github/instructions/*.instructions.md`.
 - Lock/session/idle surfaces: `quickshell/vshell/shell.qml` (owns the
   `Lock` instance; child order is load-bearing —
   `docs/architecture/idle-lock-screensaver.md` § The child order is
   load-bearing), `quickshell/vshell/Modules/Lock/`,
   `quickshell/vshell/Modules/Greetd/` and the greeter wiring
   (`quickshell/vshell/VGSGreeter.qml`,
-  `quickshell/vshell/Services/GreeterUsersService.qml`), and
-  `quickshell/vshell/Services/IdleService.qml`.
-- Packaging/publish: `packaging/`, `publish-aur.yml`, `release.yml`.
+  `quickshell/vshell/Services/GreeterUsersService.qml`),
+  `quickshell/vshell/Services/IdleService.qml`, and
+  `quickshell/vshell/Services/SessionService.qml` (its inhibitor and
+  lock handlers gate the whole idle→lock chain).
+- Packaging/publish: the maintained install channels — `packaging/`,
+  root `install.sh` and `flake.nix`, `publish-aur.yml`, `release.yml`.
 - Privileged operations: privileged method handlers under `backend/`,
   and any `bin/vshell-helper` path that elevates (`sudo`/`pkexec`) or
-  writes outside the user's home (`/etc`, udev rules, sudoers, greeter
-  config, sysfs). The class is that PROPERTY, not a list — derive the
-  current members with
-  `grep -n '"sudo"\|"pkexec"\|geteuid\|Path("/etc' bin/vshell-helper`.
+  writes outside the user's home (`/etc`, `/var`, udev rules, sudoers,
+  greeter config/cache, sysfs). The class is that PROPERTY, not a list —
+  derive the current members with
+  `grep -n '"sudo"\|"pkexec"\|geteuid\|Path("/etc\|Path("/var' bin/vshell-helper`.
   Known members today, non-exhaustive: `vshell greeter sync`,
   `vshell auth sync`, `vshell greeter keyring`, `vshell sudo-toggle`,
   `vshell brightness install-udev`, `vshell theme chromium-policy`,
