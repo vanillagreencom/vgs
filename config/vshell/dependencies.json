@@ -163,11 +163,20 @@
       ]
     },
     "launcher-search": {
+      "$comment": [
+        "Launcher TEXT search. Missing means text search fails outright --",
+        "there is no fallback; contrast launcher-search-fast below."
+      ],
       "commands": [
         "rg"
       ]
     },
     "launcher-search-fast": {
+      "$comment": [
+        "Faster launcher FILE search only. Missing just means the built-in",
+        "directory walk is used -- degraded, never broken, unlike",
+        "launcher-search above."
+      ],
       "anyCommands": [
         [
           "fd",
