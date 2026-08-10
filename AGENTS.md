@@ -330,20 +330,29 @@ machinery itself can never open its own gate — the ruleset's bypass actor is
 the sanctioned merge path for gate-repair-class PRs (state it in the merge
 commit; precedent drovr#444 / memsira#441 / hyprtrade#525).
 
-Per-repo trust lives in `vstack.settings.toml` under `REVIEW_GATE_*`, each key
-carrying the reason for its VGS value. The one that is not optional:
-`REVIEW_GATE_REVIEW_OBJECT_TRUSTED_LOGINS` names the reviewer bots
-explicitly. `vanillagreencom/vgs` is **public**, so an empty list — "any
-non-author" — would let any GitHub account open the gate with a drive-by
-`COMMENTED` review, with no trusted bot having analysed the head. A gate a
-passer-by can open is worse than no gate, because it reads as protection.
+Per-repo trust lives in `vstack.settings.toml` under `REVIEW_GATE_*`. Every
+key carries its VGS rationale in the comment above it, and that file is the
+single source: when gate trust or behavior changes, edit the key and its
+comment there — do not restate rationale here. Working posture since the
+cutover:
 
-`REVIEW_GATE_REVIEW_OBJECT_MIN_STATE` stays `"any"` because that list is now
-what closes the hole: of the three trusted reviewers only CodeRabbit ever
-submits `APPROVED`, so requiring approval would discard the other two. Two more
-worth knowing: no check-run or commit status is trusted as evidence (CodeRabbit
-reported `success` with "Review rate limited" on PR #38 — a pass proving nothing
-ran), and no comment-form reviewer is configured.
+- Evidence is review objects at the exact head from the trusted logins
+  (`REVIEW_GATE_REVIEW_OBJECT_TRUSTED_LOGINS` — populated, non-optional on
+  this public repo), at any non-dismissed state, plus the trusted
+  check/status contexts (`REVIEW_GATE_TRUSTED_STATUS_CONTEXTS` — populated at
+  the cutover, superseding the earlier empty-list posture; skip patterns
+  route "rate limited"/"skipped"/"queued" passes to not-evidence). No
+  comment-form reviewer is configured.
+- The reviewers actually reviewing are Copilot, qodo, and Codex. CodeRabbit
+  has been disabled org-wide since 2026-08-08; its trust entries remain
+  (fleet-identical config, pruned fleet-wide only) but are inert until it
+  returns.
+- The operator override (`REVIEW_GATE_OVERRIDE_CONTEXT`) is manual-only: an
+  operator posts it on genuine total reviewer silence; orch never does.
+- Docs-only pushes carry review evidence forward, except policy-bearing paths
+  (`AGENTS.md`/`CLAUDE.md`, `.github/*`, `review-bots.md`, vendored engine
+  and skill trees), which always get fresh review
+  (`REVIEW_GATE_CARRY_FORWARD` / `_EXCLUDE`).
 
 CodeRabbit's own config is checked too. `.coderabbit.yaml` shipped a
 376-character `tone_instructions` against a documented 250-character limit;
