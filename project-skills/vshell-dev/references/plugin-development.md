@@ -109,6 +109,7 @@ For plugin QML changes:
 scripts/qml-smoke.sh
 ```
 
-Never `qs -c vshell` in a live session — it starts a second full VGS instance.
+Never `qs -c vshell` in a live session — rule and recovery: AGENTS.md § Never
+launch a second shell into the live session.
 
 For command-backed plugins, also test helper command directly.

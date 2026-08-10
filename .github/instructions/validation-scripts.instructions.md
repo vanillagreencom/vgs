@@ -17,5 +17,6 @@ was reporting "passed", and a failed baseline snapshot was discarding damage
 the after-snapshot plainly showed.
 
 Never suggest validating this repo with `qs -c vshell` or
-`qs -p quickshell/vshell` — see `.github/copilot-instructions.md`. Never
-suggest `pkill quickshell`; signal by pid or process group.
+`qs -p quickshell/vshell` — see `AGENTS.md` § Never launch a second shell into
+the live session. Never suggest `pkill quickshell`; signal by pid or process
+group.

@@ -233,6 +233,8 @@ sudo zypper --gpg-auto-import-keys refresh
 sudo zypper install vgs-shell
 ```
 
+The same OBS project also publishes a Slowroll build.
+
 Debian 13:
 
 ```bash
@@ -243,7 +245,8 @@ sudo apt update
 sudo apt install vgs-shell
 ```
 
-Ubuntu 26.04:
+Ubuntu 26.04 — both PPAs are required, since Quickshell comes from
+`ppa:avengemedia/danklinux`:
 
 ```bash
 sudo add-apt-repository ppa:avengemedia/danklinux
@@ -252,7 +255,7 @@ sudo apt update
 sudo apt install vgs-shell
 ```
 
-Gentoo:
+Gentoo — Quickshell comes from GURU, so both repositories are enabled:
 
 ```bash
 sudo eselect repository enable guru
