@@ -52,6 +52,69 @@ changes nothing:
   local restructuring (splitting files, style changes) would fork the pinned
   bytes; cross-repo sync timing is a coordination note, not a merge blocker.
 
+## Risk classes (route depth by path, not uniformly)
+
+**High-risk — full depth every round, findings merge-blocking by
+default, and the speculative-hardening allowance in § Review economics
+does NOT apply** (a hardening finding on these paths is a real finding,
+not a suggestion):
+
+- Gate/CI machinery: `.github/workflows/`, `third_party/review-gate/`,
+  everything under `scripts/` (weakening anything `ci-ok` runs weakens
+  merge evidence identically), `vstack.settings.toml` (`REVIEW_GATE_*`
+  / `PR_REVIEW_*` keys), and the policy inputs themselves — this file,
+  `vstack.toml` `[skill-instructions]`, `AGENTS.md`,
+  `.github/copilot-instructions.md`, and
+  `.github/instructions/*.instructions.md`.
+- Lock/session/idle surfaces: `quickshell/vshell/shell.qml` (owns the
+  `Lock` instance; child order is load-bearing —
+  `docs/architecture/idle-lock-screensaver.md`),
+  `quickshell/vshell/Modules/Lock/`,
+  `quickshell/vshell/Modules/Greetd/` and the greeter wiring
+  (`quickshell/vshell/VGSGreeter.qml`,
+  `quickshell/vshell/Services/GreeterUsersService.qml`),
+  `quickshell/vshell/Services/IdleService.qml`, and
+  `quickshell/vshell/Services/SessionService.qml` (its inhibitor and
+  lock handlers gate the whole idle→lock chain), and the shipped
+  lock/idle defaults in `config/vshell/settings.default.json`.
+- Packaging/publish: the maintained install channels — `packaging/`,
+  root `install.sh` and `flake.nix`, `publish-aur.yml`, `release.yml`.
+- Privileged operations: the property is elevation or a system write,
+  WHEREVER it lives — `backend/` privileged method handlers, anything
+  invoking `sudo`/`pkexec`/polkit, anything writing outside the user's
+  home (`/etc`, `/var`, udev, sudoers, greeter config/cache, sysfs).
+  Derive members:
+  `grep -n '"sudo"\|"pkexec"\|geteuid\|Path("/etc\|Path("/var' bin/vshell-helper`
+  plus `grep -rn '"sudo"\|"pkexec"' quickshell/ bin/vshell`.
+  Non-exhaustive today: helper `greeter sync` / `auth sync` /
+  `greeter keyring` / `sudo-toggle` / `brightness install-udev` /
+  `theme chromium-policy` / `battery set-charge-limit`
+  (`docs/architecture/shell-architecture.md` items 8-10);
+  `quickshell/vshell/Services/UsersService.qml` (pkexec account,
+  password and group mutations); the `bin/vshell` setcap grant.
+
+Review evidence never carries forward here: the carry-forward exclude
+disqualifies these classes' markdown, and no carry class matches code
+files at all.
+
+**Low-risk — do not spend rounds on style here:**
+
+- Docs-only diffs (the existing carry-forward class).
+- Vendored-tree re-syncs under `third_party/`, verified by
+  `scripts/check-review-gate-vendor.sh` — review the sync, not the
+  upstream bytes (see the residual class above).
+- Generated-file-only diffs whose generator is unchanged or itself in
+  the diff.
+
+## Regression-test expectation (standing finding)
+
+Every bug-fix PR carries a check or test that failed before the fix —
+existing practice, now stated: 11 of the 15 `scripts/` JS harnesses were
+born from incidents. A bug-fix PR without one gets this as a standing
+finding (merge-blocking only when the fix touches a high-risk path).
+Docs-only fixes are exempt. Once the author states where the regression
+is pinned — or why this fix class cannot be — do not re-raise it.
+
 ## Trust model (context, not a finding surface)
 
 Review evidence is formal review objects from trusted logins (or the other

@@ -278,4 +278,69 @@ REVIEW_GATE_MODE = "enforce"
 # extension but are obeyed mechanically by agents and reviewers — a push
 # editing them gets a fresh review instead of carrying ancestor evidence
 # (closes the residual accepted when the docs class was enabled).
-REVIEW_GATE_CARRY_FORWARD_EXCLUDE = "*AGENTS.md;*CLAUDE.md;.github/*;*review-bots.md;third_party/*;project-skills/*"
+# High-risk path classes (VGS-112, review-bots.md § Risk classes) never
+# carry either. Code files already cannot carry mechanically — the "docs"
+# class matches only markdown — so each addition names what it closes:
+#   scripts/*            — the validation/release machinery as a whole
+#                          (check-/test-/gen-/smoke/qml-smoke harnesses
+#                          plus scripts/lib; widened from check-* in
+#                          PR #120 review — anything ci-ok runs is gate
+#                          machinery). Inert under "docs" (no markdown
+#                          there today); holds if a comment-carry class
+#                          is ever enabled.
+#   vstack.settings.toml — this file: the gate's own trust config, whose
+#                          comments carry the policy rationale. Same
+#                          future-proofing.
+#   vstack.toml          — source of the rendered reviewer/skill
+#                          instructions ([skill-instructions]); a policy
+#                          input like this file, same future-proofing
+#                          (PR #120 review).
+#   packaging/*          — packaging READMEs classify "docs" and would
+#                          carry; they are install instructions.
+#   backend/*            — backend/ATTRIBUTION.md and vendored Go-module
+#                          markdown classify "docs" and would carry.
+# Lock/idle/greeter QML needs no glob: no carry class matches .qml.
+REVIEW_GATE_CARRY_FORWARD_EXCLUDE = "*AGENTS.md;*CLAUDE.md;.github/*;*review-bots.md;third_party/*;project-skills/*;scripts/*;vstack.settings.toml;vstack.toml;packaging/*;backend/*"
+
+# Used by: linear (`issues create`). The project's declared agent-routing
+# label set, comma- or space-separated (e.g. "agent:generalist, agent:rust").
+# When non-empty, `issues create` refuses a create that carries no agent
+# label from this set — an issue without one is invisible to agent routing,
+# while the create prints a URL that looks like success. `--no-agent-label`
+# permits a deliberate bare create (e.g. intake mirroring). Leave empty in
+# projects with no agent-label taxonomy; the guard then stays off.
+LINEAR_AGENT_LABELS = ""
+
+# Used by: orch (`approval-wait`). Total review-wait budget in seconds — the
+# per-repo quiet period before the on-timeout policy applies — used when the
+# caller passes no max_wait positional arg (an explicit arg always wins).
+PR_REVIEW_WAIT_SECS = "900"
+
+# Thread term: "enforce" (default) evaluates unresolved review threads
+# CI-side and fails closed on them; "off" skips the reviewThreads GraphQL
+# read entirely and never emits threads-open — for repos whose thread
+# hygiene is a server-side zero-bypass ruleset
+# (required_review_thread_resolution), where the CI-side term is a latency
+# optimization, not the enforcement point of record. Only the thread term is
+# disabled: evidence and changes-requested still fail closed.
+REVIEW_GATE_THREADS = "enforce"
+
+# Bounded retries for the predicate's evidence reads: total attempts per
+# read, and the pause between them. The default single attempt is exactly
+# today's behavior; a read failing through every attempt is still exit 2
+# (no verdict) — retries only let a transient 5xx survive in-process
+# instead of deferring to the next writer pass.
+REVIEW_GATE_API_ATTEMPTS = "1"
+
+REVIEW_GATE_API_RETRY_DELAY_SECONDS = "2"
+
+# Used by: second-opinion (review mode). Space- or comma-separated review lanes;
+# every AVAILABLE lane runs on the same diff and findings are unioned, deduped
+# by location. Adding a third local model CLI is one entry here plus its
+# SECOND_OPINION_<NAME>_CMD (name uppercased, hyphens as underscores).
+SECOND_OPINION_REVIEW_TARGETS = "codex claude"
+
+# Used by: second-opinion (review mode). Glob list of repo instruction files
+# appended to the review prompt (repo-rule adherence lens). Globs resolve
+# inside the reviewed repo (--cwd). Set empty to disable.
+SECOND_OPINION_REVIEW_INSTRUCTIONS = "AGENTS.md review-bots.md .github/instructions/*.instructions.md .github/copilot-instructions.md"
