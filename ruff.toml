@@ -1,0 +1,7 @@
+# Lint floor for first-party Python (VGS-110): real defects only — pyflakes (F)
+# and the pycodestyle runtime-error class (E9) — never style, and no formatter
+# rewrite. scripts/check-format-lint.sh passes the file list explicitly, which
+# is also what brings the extensionless bin/vshell-helper in; no include/exclude
+# machinery lives here.
+[lint]
+select = ["F", "E9"]

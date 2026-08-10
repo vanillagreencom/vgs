@@ -6376,7 +6376,6 @@ def _brightnessctl_devices() -> Tuple[List[Dict[str, Any]], List[str]]:
         if len(parts) < 5:
             continue
         name = parts[0]
-        klass = parts[1] if len(parts) > 1 else "backlight"
         try:
             current = int(re.sub(r"\D", "", parts[2]) or "0")
             max_value = int(re.sub(r"\D", "", parts[4]) or "100")
@@ -13124,7 +13123,6 @@ def _launcher_literal_match_ranges(value: str, query: str, limit: int = 400) -> 
 
 def _launcher_search_ignored(path: Path, ignores: List[str], roots: List[Path]) -> bool:
     expanded = path.expanduser()
-    path_text = str(expanded)
     for raw in ignores:
         value = os.path.expandvars(os.path.expanduser(raw.strip()))
         if not value:

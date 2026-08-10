@@ -25,6 +25,7 @@ for dep in "${deps[@]}"; do
   command -v "$dep" >/dev/null 2>&1 || fail "$dep not found"
 done
 
+# shellcheck source=/dev/null  # user config, exists only at runtime
 [[ -f ~/.config/user-dirs.dirs ]] && source ~/.config/user-dirs.dirs
 
 if [[ -n ${VSHELL_SCREENSHOT_DIR:-} ]]; then
@@ -211,6 +212,7 @@ if [[ $MODE == "cancel" ]]; then
   exit 0
 fi
 
+# shellcheck disable=SC2016  # the $vars belong to the jq program, not the shell
 JQ_MONITOR_GEO='
   def monitor_rect:
     .x as $x | .y as $y |
@@ -565,6 +567,7 @@ capture_niri() {
     mkdir -p "$CAPTURE_STATE_DIR"
     capture_event=$(mktemp "$CAPTURE_STATE_DIR/.niri-screenshot.XXXXXX")
     capture_done="${capture_event}.done"
+    # shellcheck disable=SC2016  # $1/$2 must expand in the watcher's own sh
     wl-paste --type image/png --watch sh -c 'cat >"$1" && : >"$2"' _ \
       "$capture_event" "$capture_done" \
       >/dev/null 2>&1 &
@@ -686,7 +689,7 @@ case "$MODE" in
     fi
 
     if [[ $SELECTION =~ $SELECTION_RE ]]; then
-      if ((${BASH_REMATCH[3]} * ${BASH_REMATCH[4]} < 20)); then
+      if ((BASH_REMATCH[3] * BASH_REMATCH[4] < 20)); then
         click_x="${BASH_REMATCH[1]}"
         click_y="${BASH_REMATCH[2]}"
         SELECTION=$(selection_for_click "$click_x" "$click_y")
