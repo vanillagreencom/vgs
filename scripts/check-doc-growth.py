@@ -55,9 +55,11 @@ CEILINGS: dict[str, int] = {
     # protected content (VGS-107 handoff arithmetic).
     "AGENTS.md": 25_000,
     # Adopted at 3,289 B. 2026-08-10: owner-approved risk-class +
-    # regression-test policy sections (VGS-112, PR #120) earned the bytes;
-    # 6,500 keeps ~10% headroom at the 5,865 B post-policy size.
-    "review-bots.md": 6_500,
+    # regression-test policy sections plus the PR #120 review rounds
+    # (coverage gaps, property-defined privileged class) earned the bytes;
+    # 7,200 keeps ~10% headroom at the final 6,490 B size, superseding the
+    # 6,500 figure measured mid-review at 5,865 B.
+    "review-bots.md": 7_200,
     ".github/copilot-instructions.md": 3_200,  # adopted at 2,909 B
     "project-skills/vshell-dev/SKILL.md": 5_000,  # adopted at 4,497 B
     ".github/instructions/agents-md.instructions.md": 500,  # adopted at 403 B
