@@ -141,11 +141,12 @@ Live-machine etiquette:
   source of truth for pending work. Read or write it only on request, or when resuming from one.
 
 ## Validation
-Scope to the area touched (Go-only: inventory guard + go block; QML-only: naming, QML smoke, surfaces; helper: py_compile + helper checks; packaging: the three packaging checks); run the full suite for cross-cutting work:
+Scope to the area touched (Go-only: inventory guard + go block; QML-only: naming, QML smoke, surfaces; helper: py_compile + helper checks; packaging: the three packaging checks; docs-only: check-doc-growth.py); run the full suite for cross-cutting work:
 ```bash
 scripts/check-naming.sh
 python3 scripts/lib/shell_scan.py
 scripts/check-validation-inventory.py
+scripts/check-doc-growth.py
 scripts/gen-package-metadata.py
 scripts/check-package-assets.sh
 scripts/check-aur-sync.py

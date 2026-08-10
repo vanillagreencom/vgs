@@ -137,6 +137,13 @@ jobs:
       - name: Validation inventory
         run: scripts/check-validation-inventory.py
 
+      # Byte ceilings on always-loaded instruction surfaces and
+      # docs/architecture/*.md. AGENTS.md grew 3.3x in 14 days before the
+      # VGS-107 diet; regrowth past a ceiling must be a same-PR ceiling edit
+      # with a rationale, not drift (VGS-108).
+      - name: Instruction-surface growth ratchet
+        run: scripts/check-doc-growth.py
+
       # AGENTS.md lists a bare `git diff --check`, which is a working-tree
       # check: on a clean CI checkout it inspects nothing at all. The form that
       # means something is a range of what the event actually introduces.
