@@ -125,3 +125,25 @@ and correct any line or symbol drift in the report document.
 - VGS-28 — VGS-side structural fix, separate work
 - [`docs/upstream/quickshell-0-3-0-session-lock-report.md`](../upstream/quickshell-0-3-0-session-lock-report.md) — ready-to-file report
 - `quickshell/vshell/Modules/Lock/Lock.qml` — the workaround
+
+## Addendum (2026-08-09): the structural fix landed, the workaround is gone
+
+The VGS-28 structural fix shipped: `Lock {}` is a direct `ShellRoot` child in
+`shell.qml`, so `WlSessionLock` is reload-matched and `WlSessionLock::onReload`
+adopts the previous `SessionLockManager` across hot reloads instead of the
+rebuild that triggers (b) then (a). The VGS-9 workaround — suspending
+`Quickshell.watchFiles` for the duration of a lock — has been **removed**; hot
+reload stays live while the session is locked.
+
+Decision point 2 above ("keep the workaround until upstream fixes (b)") is
+therefore spent, resolved by the structural fix rather than by an upstream
+release. Points 1 and 3 — report upstream, do not vendor or patch — stand: the
+defects are still present in Quickshell 0.3.0 and still worth reporting, and
+defect (a) still makes any failed lock acquisition a process death.
+
+Defect (c)'s practical consequence surfaced by the fix: because the
+`reloadableId` lookup is unreachable from a propagator, reload matching is
+purely positional, so the VGS tree must pin `Lock`/`PersistentProperties`/
+`WlSessionLock` child order (`scripts/check-lock-reload-order.py` enforces it).
+Current mechanics live in `docs/architecture/idle-lock-screensaver.md` § The
+lock survives a hot reload.
