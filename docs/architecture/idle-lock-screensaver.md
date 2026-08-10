@@ -350,9 +350,10 @@ longer driving the lock.
 - `vshell ipc call lock forceReset` clears the shell's lock state after the
   strays are gone; `vshell lock recover` rebuilds a secure lock surface after
   Hyprland's crashed-locker fallback.
-- The duplicate itself is prevented at the source: validation goes through
-  `scripts/qml-smoke.sh`, and `shell.qml` refuses to bring up a duplicate
-  instance (see `docs/architecture/shell-architecture.md`).
+- The duplicate itself is prevented at the source — the rule and its
+  enforcement are canonical in AGENTS.md § Never launch a second shell into the
+  live session; the runtime guard's mechanics are in
+  `docs/architecture/shell-architecture.md` § Single instance per session.
 
 ## Not yet built
 Rendering the ascii saver *over the lock* (only the lock surface can draw while locked)

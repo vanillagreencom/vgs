@@ -135,11 +135,11 @@ Runtime name: `vshell`.
 11. Optional widgets check helper/backends and degrade when unavailable.
 
 ## Single instance per session
-One session owns one VGS shell. A second full instance competes for
-session-global resources — `WlSessionLock`, the `vshell:fade-to-lock` overlay,
-the idle/DPMS tiers in `Services/IdleService.qml` — and leaves orphaned
-full-screen layer surfaces behind when it dies, which presents as a live session
-of movable cursors over black screens.
+One session owns one VGS shell: a second full instance competes for the
+session-global resources (`WlSessionLock`, the `vshell:fade-to-lock` overlay,
+the idle/DPMS tiers in `Services/IdleService.qml`) and strands orphaned
+full-screen layer surfaces. The rule, its consequences, and the recovery path
+are canonical in AGENTS.md § Never launch a second shell into the live session.
 
 `shell.qml` therefore runs a duplicate-instance guard before loading `VGS`:
 `vshell instances guard --pid <pid> --shell-id <id>` (helper-owned; reads the
@@ -163,13 +163,10 @@ Known limits, deliberate rather than accidental:
   `vshell.service` shell that yielded is not restarted. That is why yielding
   requires positive proof of an older live peer.
 
-Validation must never launch a shell into the live session. `scripts/qml-smoke.sh`
-is the canonical QML smoke: a static `qmllint` parse pass by default, and with
-`--nested` a real shell run inside an isolated nested compositor (own runtime
-dir, own `HOME`/XDG dirs, private D-Bus session, no `VGS_SOCKET`, no
-`HYPRLAND_INSTANCE_SIGNATURE`) with process-group-scoped cleanup.
-`scripts/check-validation-safety.sh` asserts a validation run left the live
-instance set and layer surfaces untouched.
+Validation must never launch a shell into the live session — the rule, the
+smoke modes (`scripts/qml-smoke.sh`), and the post-run assertion
+(`scripts/check-validation-safety.sh`) are canonical in AGENTS.md § Never
+launch a second shell into the live session.
 
 ## IPC
 Use:

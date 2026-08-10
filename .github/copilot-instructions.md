@@ -29,12 +29,11 @@ hedged one.
 
 **Never suggest launching a second shell to test a change.** `qs -c vshell` and
 `qs -p quickshell/vshell` each start a full second VGS instance in the live
-session, where it fights the session shell for `WlSessionLock` and the
-fade-to-lock overlay and strands orphaned full-screen layer surfaces — a
-blacked-out desktop recoverable only with `vshell ipc call lock forceReset`.
-The sandboxed `scripts/qml-smoke.sh --nested` is the only supported runtime
-smoke. Never suggest `pkill quickshell` either: other Quickshell applications on
-the seat are legitimate, so signal by pid or process group.
+session; the sandboxed `scripts/qml-smoke.sh --nested` is the only supported
+runtime smoke. Never suggest `pkill quickshell` either: other Quickshell
+applications on the seat are legitimate, so signal by pid or process group.
+Causal chain and recovery: `AGENTS.md` § Never launch a second shell into the
+live session.
 
 **Vendored trees are byte-exact.** `backend/vendor/**` and
 `config/vshell/nvim/colorschemes/**` are carried verbatim from upstream. Read

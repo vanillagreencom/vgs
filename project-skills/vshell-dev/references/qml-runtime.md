@@ -1,20 +1,11 @@
 # QML runtime reference
 
-## Entry path
-- Root config: `quickshell/vshell/shell.qml`
-- IPC: `quickshell/vshell/VGSIPC.qml`
-- Shared paths: `quickshell/vshell/Common/Paths.qml`
-- Theme tokens: `quickshell/vshell/Common/MethodTheme.qml`
-- Settings/session: `quickshell/vshell/Common/SettingsData.qml`, `SessionData.qml`
-
-## Service pattern
-Services live in `quickshell/vshell/Services/`.
-Use services for long-lived state, polling, IPC surfaces, and command bridges.
-Keep UI modules free of duplicated process/state logic.
-
-## Module pattern
-Modules live in `quickshell/vshell/Modules/`.
-Use modules for visible shell surfaces: settings, dash, launcher, control center, bar pieces, popouts.
+Structure truth — entrypoints, the runtime tree (`Common/`, `Services/`,
+`Modules/`, `Widgets/`), data flow, and external-command rules — lives in
+`docs/architecture/shell-architecture.md`; this file keeps the hands-on
+patterns. Services own long-lived state, polling, IPC surfaces, and command
+bridges; Modules are visible shell surfaces; keep UI modules free of duplicated
+process/state logic.
 
 ## Command execution
 Use `Process` for small external commands.
@@ -50,13 +41,9 @@ Avoid literal hex colors and raw pixel constants unless no token fits.
 scripts/qml-smoke.sh --nested --require-static
 ```
 
-Bare `scripts/qml-smoke.sh` is a parse check only; `--nested` is what actually
-runs the shell (in an isolated nested compositor) and catches runtime QML errors.
-
-Bad: QML `ReferenceError`, `TypeError`, process failed to start, missing binary, import errors.
-
-Never launch the shell directly (`qs -c vshell`, `qs -p quickshell/vshell`) while
-a session shell is running: a second full instance fights the first for
-WlSessionLock, the fade-to-lock overlay, and the idle/DPMS tiers, and strands
-orphaned full-screen layer surfaces. `quickshell/vshell/shell.qml` refuses such a
-duplicate at runtime, but the smoke script is the supported path.
+Bare `scripts/qml-smoke.sh` is a parse check only; `--nested` runs the real
+shell in an isolated nested compositor and catches runtime QML errors —
+`ReferenceError`, `TypeError`, failed process starts, missing binaries, import
+errors. Never launch the shell directly (`qs -c vshell`, `qs -p quickshell/vshell`);
+mode coverage, the sandbox recipe, and recovery live in AGENTS.md § Never
+launch a second shell into the live session.

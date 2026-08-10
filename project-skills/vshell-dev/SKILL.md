@@ -17,13 +17,9 @@ allowed-tools: Bash Read Write Edit
 # VGS development
 
 ## Always know
-- Runtime name is `vshell`; do not add a `vgs` CLI.
-- VGS targets Hyprland or Niri + Quickshell 0.3.0 only.
-- VGS owns themes, wallpapers, blueprints, generated app themes, and settings UI.
-- Dotfiles only wire the workstation.
-- No legacy upstream runtime dependency.
-- No external theme-engine runtime dependency.
-- Prefer helper code over heavy QML business logic.
+Mission, ownership boundaries, runtime naming (`vshell`, never a `vgs` CLI), and
+the hard "do not" list are canonical in `AGENTS.md` (§ Mission, § Do not) — this
+skill assumes them rather than restating them.
 
 ## Load first when needed
 - Shell overview: `docs/architecture/shell-architecture.md`
@@ -83,64 +79,22 @@ Reference: `references/theme-engine.md`.
 Reference: `references/plugin-development.md`.
 
 ### Backend (Go daemon) work
-1. Read `docs/architecture/backend-daemon.md`. The backend runs as a supervised
-   `vshell-backend serve` child of the runner; QML talks to it over `VGS_SOCKET`
-   via `Services/VGSBackendService.qml`.
-2. Every registered method must map to a capability documented in
-   `docs/architecture/backend-methods.json`; `scripts/check-backend-inventory.py`
-   enforces this on both the Go and QML sides.
-3. QML gates features on advertised `capabilities`/`methods`, never raw
-   `apiVersion` numbers, and keeps a fallback when the capability is absent.
-4. One owner per resource: do not add a second watcher/daemon for something the
-   helper or QML already owns (e.g. clipboard watching stays with
-   `vshell clipboard watch`; compositor output layout stays config-owned).
-5. Debug with `vshell backend doctor|methods|request <method> [json]`; a scratch
-   daemon runs with `VGS_BACKEND_SOCKET=/run/user/$UID/test.sock vshell backend serve`.
-6. Never log secrets or frame payloads; exec external tools with argv arrays.
+1. Read `docs/architecture/backend-daemon.md` (process model, protocol,
+   security, reliability) and follow AGENTS.md § Backend rules — capability
+   mapping and gating, one owner per resource, argv exec, no secrets in logs,
+   scratch-daemon verification.
+2. Debug with `vshell backend doctor|methods|request <method> [json]`.
 
 ## Validation
-Run relevant checks before final response:
+The canonical check list and its per-area scoping (Go-only, QML-only, helper,
+packaging) live in AGENTS.md § Validation — run the subset for what you
+touched. No command list is restated here: a partial copy reads as complete.
+Smoke-mode coverage, the sandbox recipe, and the second-shell rule
+(never `qs -c vshell` or `qs -p quickshell/vshell` against a live session,
+never `pkill quickshell`) are under AGENTS.md § Never launch a second shell
+into the live session.
 
-```bash
-scripts/check-naming.sh
-node --check scripts/check-settings-migration.js
-scripts/check-settings-migration.js
-scripts/check-vshell-helper.py
-scripts/check-backend-inventory.py
-python3 -m py_compile bin/vshell-helper
-bash -n bin/vshell
-git diff --check
-```
-
-For backend changes:
-
-```bash
-(cd backend && go build ./... && go vet ./... && go test -race ./...)
-```
-
-For runtime changes:
-
-```bash
-scripts/qml-smoke.sh --nested --require-static   # parse check + real shell in a sandbox
-scripts/check-validation-safety.sh
-```
-
-QML errors, missing binary warnings, and process start failures are not fine —
-but only `--nested` can see them. The bare command is a **parse** check
-(`qmllint`); it does not resolve `qs.*` imports and cannot detect a missing
-property or a failed process start. `--require-static`/`--require-nested` turn a
-skipped check into a failure, so an unavailable tool cannot read as a pass.
-
-**Never** run `qs -c vshell` or `qs -p quickshell/vshell` in a live session: that
-starts a second full VGS instance, which fights the session shell for
-WlSessionLock, the fade-to-lock overlay, and the idle/DPMS tiers, and leaves
-orphaned full-screen layer surfaces behind (cursors over black, recoverable only
-with `vshell ipc call lock forceReset`). Never `pkill quickshell` either — other
-Quickshell applications on the seat are legitimate. Use `vshell instances list`
-to see live VGS shells and `vshell logs -n 200` for the running shell's QML
-errors.
-
-For theme changes:
+For theme changes (skill-unique; not part of the canonical list):
 
 ```bash
 vshell theme list --json
