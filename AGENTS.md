@@ -190,13 +190,18 @@ scripts/smoke-surfaces.sh
 (cd backend && go build ./... && go vet ./... && go test -race ./...)
 ```
 
-Every script above is invoked bare, and every one of them carries the
-executable bit — a `node`/`bash`/`python3` prefix the doc omitted is what made
-the suite fail for anyone following it literally (VGS-30).
-`scripts/lib/session-snapshot.sh` stays non-executable on purpose: it is
-sourced, never run. `bin/vshell_niri.py`, `bin/vshell_niri_kdl.py` and
-`bin/vshell_theme_color.py` likewise — they are importable modules with no
-shebang and no `__main__`.
+Every command above runs exactly as written. The check scripts invoked bare
+all carry the executable bit — a `node`/`bash`/`python3` prefix the doc
+omitted is what made the suite fail for anyone following it literally
+(VGS-30). The prefixes that do appear are deliberate, not omissions: `node
+--check`, `python3 -m py_compile` and `bash -n` are syntax checks over a file,
+and `python3 scripts/lib/shell_scan.py` runs a library's self-test —
+`scripts/lib/` holds non-executable libraries, imported or sourced, never run
+as commands. `scripts/lib/session-snapshot.sh` is sourced, never run;
+`scripts/lib/shell_scan.py` is imported by `scripts/gen-package-metadata.py`
+and carries a `__main__` only for that self-test. `bin/vshell_niri.py`,
+`bin/vshell_niri_kdl.py` and `bin/vshell_theme_color.py` stay importable
+modules with no shebang and no `__main__`.
 
 `scripts/check-validation-inventory.py` is what keeps this list honest in both
 directions: every executable check under `scripts/` must appear here and in CI

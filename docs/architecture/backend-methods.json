@@ -1,5 +1,5 @@
 {
-  "$comment": "Source of truth for the VGS backend method/capability inventory. scripts/check-backend-inventory.py checks QML backend callsites and (when backend/ exists) Go handlers against this file. Every backend method referenced from QML must map to a capability prefix here or to an 'excluded' prefix with a removal action, otherwise CI fails. Capability names are the VGS-owned names; they mostly match the upstream names except where noted. Phases refer to docs/plans/vgs-backend-daemon.md.",
+  "$comment": "Source of truth for the VGS backend method/capability inventory. scripts/check-backend-inventory.py checks QML backend callsites and (when backend/ exists) Go handlers against this file. Every backend method referenced from QML must map to a capability prefix here or to an 'excluded' prefix with a removal action, otherwise CI fails. Capability names are the VGS-owned names; they mostly match the upstream names except where noted. Phases record the rollout order of the original backend plan.",
   "capabilities": [
     { "name": "core", "prefixes": ["ping", "getServerInfo", "subscribe"], "phase": 1, "status": "implemented" },
     { "name": "loginctl", "prefixes": ["loginctl."], "phase": 2, "status": "implemented", "note": "lockerReady is tied to confirmed WlSessionLock.secure, never the lock request." },

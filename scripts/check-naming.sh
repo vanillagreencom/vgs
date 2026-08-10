@@ -16,7 +16,6 @@ candidate_paths=(
   AGENTS.md
   project-skills
   docs/architecture
-  docs/lock-crash-incident-2026-07-04.md
 )
 
 # Some paths (e.g. backend/) only exist once their phase lands; skip absent ones

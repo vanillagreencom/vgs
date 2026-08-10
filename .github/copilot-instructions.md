@@ -5,8 +5,8 @@ Path-scoped rules live in `.github/instructions/*.instructions.md`; each has an
 `applyTo` glob, and a file without one is ignored by code review.
 
 `AGENTS.md` at the repository root is also read by Copilot. It is the source of
-truth for how this repo is built and validated — this file does not restate it,
-and where the two ever disagree, `AGENTS.md` wins.
+truth for how this repo is built and validated — where the two ever disagree,
+`AGENTS.md` wins.
 
 ## What this project is
 
