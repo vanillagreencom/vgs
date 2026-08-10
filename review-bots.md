@@ -52,6 +52,44 @@ changes nothing:
   local restructuring (splitting files, style changes) would fork the pinned
   bytes; cross-repo sync timing is a coordination note, not a merge blocker.
 
+## Risk classes (route depth by path, not uniformly)
+
+**High-risk — full depth every round, findings merge-blocking by
+default, and the speculative-hardening allowance in § Review economics
+does NOT apply** (a hardening finding on these paths is a real finding,
+not a suggestion):
+
+- Gate/CI machinery: `.github/workflows/`, `third_party/review-gate/`,
+  `scripts/check-*`, and `vstack.settings.toml` (`REVIEW_GATE_*` /
+  `PR_REVIEW_*` keys).
+- Lock/session/idle surfaces: `quickshell/vshell/Modules/Lock/`,
+  `Modules/Greetd/` and greeter wiring, `Services/IdleService.qml`.
+- Packaging/publish: `packaging/`, `publish-aur.yml`, `release.yml`.
+- Backend privileged operations: privileged method handlers under
+  `backend/`.
+
+Review evidence never carries forward on these paths:
+`REVIEW_GATE_CARRY_FORWARD_EXCLUDE` disqualifies their markdown, and no
+carry class matches code files at all.
+
+**Low-risk — do not spend rounds on style here:**
+
+- Docs-only diffs (the existing carry-forward class).
+- Vendored-tree re-syncs under `third_party/`, verified by
+  `scripts/check-review-gate-vendor.sh` — review the sync, not the
+  upstream bytes (see the residual class above).
+- Generated-file-only diffs whose generator is unchanged or itself in
+  the diff.
+
+## Regression-test expectation (standing finding)
+
+Every bug-fix PR carries a check or test that failed before the fix —
+existing practice, now stated: 11 of the 15 `scripts/` JS harnesses were
+born from incidents. A bug-fix PR without one gets this as a standing
+finding (merge-blocking only when the fix touches a high-risk path).
+Docs-only fixes are exempt. Once the author states where the regression
+is pinned — or why this fix class cannot be — do not re-raise it.
+
 ## Trust model (context, not a finding surface)
 
 Review evidence is formal review objects from trusted logins (or the other

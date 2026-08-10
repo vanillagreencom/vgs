@@ -300,6 +300,8 @@ cutover:
   `review-bots.md`, vendored engine and skill trees), which always get fresh
   review (`REVIEW_GATE_CARRY_FORWARD` / `_EXCLUDE`).
 
+Risk classes and the regression-test expectation: `review-bots.md`.
+
 CodeRabbit's own config is checked too: an invalid `.coderabbit.yaml` makes
 CodeRabbit silently review with **default** settings, which once left the whole
 file inert on every PR, so `scripts/check-coderabbit-config.py` validates it
