@@ -287,12 +287,16 @@ REVIEW_GATE_MODE = "enforce"
 #   vstack.settings.toml — this file: the gate's own trust config, whose
 #                          comments carry the policy rationale. Same
 #                          future-proofing.
+#   vstack.toml          — source of the rendered reviewer/skill
+#                          instructions ([skill-instructions]); a policy
+#                          input like this file, same future-proofing
+#                          (PR #120 review).
 #   packaging/*          — packaging READMEs classify "docs" and would
 #                          carry; they are install instructions.
 #   backend/*            — backend/ATTRIBUTION.md and vendored Go-module
 #                          markdown classify "docs" and would carry.
 # Lock/idle/greeter QML needs no glob: no carry class matches .qml.
-REVIEW_GATE_CARRY_FORWARD_EXCLUDE = "*AGENTS.md;*CLAUDE.md;.github/*;*review-bots.md;third_party/*;project-skills/*;scripts/check-*;vstack.settings.toml;packaging/*;backend/*"
+REVIEW_GATE_CARRY_FORWARD_EXCLUDE = "*AGENTS.md;*CLAUDE.md;.github/*;*review-bots.md;third_party/*;project-skills/*;scripts/check-*;vstack.settings.toml;vstack.toml;packaging/*;backend/*"
 
 # Used by: linear (`issues create`). The project's declared agent-routing
 # label set, comma- or space-separated (e.g. "agent:generalist, agent:rust").

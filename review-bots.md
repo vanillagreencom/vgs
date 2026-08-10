@@ -60,13 +60,20 @@ does NOT apply** (a hardening finding on these paths is a real finding,
 not a suggestion):
 
 - Gate/CI machinery: `.github/workflows/`, `third_party/review-gate/`,
-  `scripts/check-*`, and `vstack.settings.toml` (`REVIEW_GATE_*` /
-  `PR_REVIEW_*` keys).
-- Lock/session/idle surfaces: `quickshell/vshell/Modules/Lock/`,
-  `Modules/Greetd/` and greeter wiring, `Services/IdleService.qml`.
+  `scripts/check-*`, `vstack.settings.toml` (`REVIEW_GATE_*` /
+  `PR_REVIEW_*` keys), and the policy inputs themselves — this file and
+  `vstack.toml` `[skill-instructions]`.
+- Lock/session/idle surfaces: `quickshell/vshell/shell.qml` (owns the
+  `Lock` instance; child order is load-bearing —
+  `docs/architecture/idle-lock-screensaver.md` § The child order is
+  load-bearing), `quickshell/vshell/Modules/Lock/`, `Modules/Greetd/`
+  and greeter wiring, `Services/IdleService.qml`.
 - Packaging/publish: `packaging/`, `publish-aur.yml`, `release.yml`.
 - Backend privileged operations: privileged method handlers under
-  `backend/`.
+  `backend/`, and the root-executed helper surfaces in
+  `bin/vshell-helper` — `vshell greeter sync`, `vshell auth sync`,
+  `vshell greeter keyring`, and `vshell sudo-toggle` (the sudoers
+  protocol; `docs/architecture/shell-architecture.md` items 8-10).
 
 Review evidence never carries forward on these paths:
 `REVIEW_GATE_CARRY_FORWARD_EXCLUDE` disqualifies their markdown, and no
