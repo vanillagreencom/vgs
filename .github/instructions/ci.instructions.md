@@ -5,8 +5,8 @@ applyTo: ".github/workflows/**"
 # CI
 
 Four workflows live here. `ci.yml` runs the `AGENTS.md` § Validation suite on
-every pull request, merge-queue entry, and `main` push; its one suite job is
-deliberate — see the workflow's own header. `review-gate-writer.yml` is the
+every pull request targeting `main`, every merge-queue entry, and every `main`
+push; its one suite job is deliberate — see the workflow's own header. `review-gate-writer.yml` is the
 only writer of the `Review gate` commit status. `publish-aur.yml` pushes
 `packaging/arch/` to the AUR and re-checks the published result.
 `release.yml` builds releases on version tags. CodeQL runs from GitHub's

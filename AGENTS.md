@@ -196,8 +196,8 @@ omitted is what made the suite fail for anyone following it literally
 (VGS-30). The prefixes that do appear are deliberate, not omissions: `node
 --check`, `python3 -m py_compile` and `bash -n` are syntax checks over a file,
 and `python3 scripts/lib/shell_scan.py` runs a library's self-test —
-`scripts/lib/` holds non-executable libraries, imported or sourced, never run
-as commands. `scripts/lib/session-snapshot.sh` is sourced, never run;
+`scripts/lib/` holds non-executable libraries, never invoked bare: they are
+reached only by import, sourcing, or an explicit interpreter. `scripts/lib/session-snapshot.sh` is sourced, never run;
 `scripts/lib/shell_scan.py` is imported by `scripts/gen-package-metadata.py`
 and carries a `__main__` only for that self-test. `bin/vshell_niri.py`,
 `bin/vshell_niri_kdl.py` and `bin/vshell_theme_color.py` stay importable
@@ -211,8 +211,8 @@ existed (VGS-50).
 
 ### What CI covers, and what it cannot
 
-`.github/workflows/ci.yml` runs this suite on every pull request, on
-merge-queue entries, and on `main` pushes.
+`.github/workflows/ci.yml` runs this suite on every pull request targeting
+`main`, on merge-queue entries, and on `main` pushes.
 
 **The merge queue requires `CI / ci-ok`.** That is the workflow's one *suite*
 job — named for the required context rather than for what it does, which is the
