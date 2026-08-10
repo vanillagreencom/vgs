@@ -349,10 +349,11 @@ cutover:
   returns.
 - The operator override (`REVIEW_GATE_OVERRIDE_CONTEXT`) is manual-only: an
   operator posts it on genuine total reviewer silence; orch never does.
-- Docs-only pushes carry review evidence forward, except policy-bearing paths
-  (`AGENTS.md`/`CLAUDE.md`, `.github/*`, `review-bots.md`, vendored engine
-  and skill trees), which always get fresh review
-  (`REVIEW_GATE_CARRY_FORWARD` / `_EXCLUDE`).
+- Docs-only pushes carry an ancestor's trusted review object forward (review
+  objects only — trusted check/status evidence never carries), except
+  policy-bearing paths (`AGENTS.md`/`CLAUDE.md`, `.github/*`,
+  `review-bots.md`, vendored engine and skill trees), which always get fresh
+  review (`REVIEW_GATE_CARRY_FORWARD` / `_EXCLUDE`).
 
 CodeRabbit's own config is checked too. `.coderabbit.yaml` shipped a
 376-character `tone_instructions` against a documented 250-character limit;
