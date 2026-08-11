@@ -1,0 +1,13 @@
+# size-ratchet exclusion list — pattern<TAB>reason, glob against the full
+# repo-relative path, `*` crosses `/`. See third_party/size-ratchet/README.md.
+#
+# Divergence from the fleet's 400/800 split, stated per the 2026-08-10 audit:
+# the engine exposes ONE threshold, so the fleet's 800-line test allowance
+# cannot be expressed here. Oversized Go `_test.go` files and the
+# `scripts/test-*.js` harnesses simply enter the baseline instead — acceptable,
+# since a baselined test still cannot grow, and it needs no second gate.
+backend/vendor/*	vendored Go modules (go mod vendor for offline Nix builds), upstream-owned
+config/vshell/nvim/colorschemes/*	vendored upstream colorscheme plugins, upstream-owned
+third_party/*	byte-pinned vendored trees (review-gate, size-ratchet, coderabbit-schema, asdcontrol)
+quickshell/*/assets/*	shipped binary/data assets, not source
+themes/*	shipped theme packages (palettes, backgrounds, generated app targets), not source
