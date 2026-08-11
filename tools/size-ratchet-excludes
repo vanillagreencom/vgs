@@ -10,4 +10,9 @@ backend/vendor/*	vendored Go modules (go mod vendor for offline Nix builds), ups
 config/vshell/nvim/colorschemes/*	vendored upstream colorscheme plugins, upstream-owned
 third_party/*	byte-pinned vendored trees (review-gate, size-ratchet, coderabbit-schema, asdcontrol)
 quickshell/*/assets/*	shipped binary/data assets, not source
-themes/*	shipped theme packages (palettes, backgrounds, generated app targets), not source
+themes/*/apps/*	generated per-app theme outputs inside theme packages, not source
+themes/*/backgrounds/*	shipped background images inside theme packages, not source
+themes/*/theme.json	theme-package palette data, not source
+themes/*/colors.toml	theme-package palette data, not source
+themes/*/preview.png	theme-package preview image, not source
+themes/catalog.json	generated theme catalog index, regenerated from packages

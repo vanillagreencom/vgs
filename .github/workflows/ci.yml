@@ -153,6 +153,19 @@ jobs:
       - name: File-size ratchet
         run: third_party/size-ratchet/scripts/size-ratchet
 
+      # The engine's own behavioral suites, same rationale as the review-gate
+      # selftest: CI proving only "today's tree passes the gate" would let a
+      # future re-vendor weaken a failure direction (new-offender, growth,
+      # malformed-config, --update tighten-only, collection fail-closed)
+      # while byte-identity keeps looking clean. Every suite ships with the
+      # vendored engine and runs offline.
+      - name: size-ratchet behavioral suites (offline)
+        run: |
+          for t in third_party/size-ratchet/tests/*.test.sh; do
+            echo "== $t"
+            bash "$t"
+          done
+
       # AGENTS.md lists a bare `git diff --check`, which is a working-tree
       # check: on a clean CI checkout it inspects nothing at all. The form that
       # means something is a range of what the event actually introduces.
