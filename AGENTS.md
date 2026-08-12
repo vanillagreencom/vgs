@@ -185,7 +185,11 @@ third_party/review-gate/scripts/review-predicate-selftest.sh
 third_party/review-gate/tests/pr-watch.test.sh
 scripts/check-size-ratchet-vendor.sh
 third_party/size-ratchet/scripts/size-ratchet
-bash third_party/size-ratchet/tests/collection-fail-closed.test.sh  # plus the other four suites in that directory
+third_party/size-ratchet/tests/bash32-portability.test.sh
+third_party/size-ratchet/tests/collection-fail-closed.test.sh
+third_party/size-ratchet/tests/ratchet-directions.test.sh
+third_party/size-ratchet/tests/settings-and-config.test.sh
+third_party/size-ratchet/tests/update-tightens.test.sh
 scripts/qml-smoke.sh --nested --require-static
 scripts/check-validation-safety.sh
 scripts/check-label-taxonomy.py
