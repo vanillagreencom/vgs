@@ -68,6 +68,8 @@ project-skills-dir = "project-skills"
 [skill-instructions]
 review-gate = ""
 
+size-ratchet = ""
+
 decider = ""
 
 deep-research = ""
