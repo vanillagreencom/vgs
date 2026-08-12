@@ -183,6 +183,13 @@ scripts/check-coderabbit-config.py
 scripts/check-review-gate-vendor.sh
 third_party/review-gate/scripts/review-predicate-selftest.sh
 third_party/review-gate/tests/pr-watch.test.sh
+scripts/check-size-ratchet-vendor.sh
+third_party/size-ratchet/scripts/size-ratchet
+third_party/size-ratchet/tests/bash32-portability.test.sh
+third_party/size-ratchet/tests/collection-fail-closed.test.sh
+third_party/size-ratchet/tests/ratchet-directions.test.sh
+third_party/size-ratchet/tests/settings-and-config.test.sh
+third_party/size-ratchet/tests/update-tightens.test.sh
 scripts/qml-smoke.sh --nested --require-static
 scripts/check-validation-safety.sh
 scripts/check-label-taxonomy.py
@@ -232,6 +239,7 @@ code cannot disagree silently.
 |-------|----------------------|
 | `scripts/check-label-taxonomy.py` | Compares `vstack.toml`'s label taxonomy against live Linear; CI has no Linear credentials and no local cache. It FAILS rather than skipping when the inventory is unreachable — `--allow-missing-inventory` is the explicit "I accept the sweep did not happen". |
 | `scripts/check-review-gate-vendor.sh` | Compares the tracked engine at `third_party/review-gate/` against the `vstack refresh`-managed copy under `.agents/`, which a CI checkout does not have. |
+| `scripts/check-size-ratchet-vendor.sh` | Same two-copy situation for the size-ratchet engine at `third_party/size-ratchet/`; CI runs the vendored engine, this check keeps it matching the `.agents/` copy. |
 | `scripts/smoke-surfaces.sh` | Needs a **live** Hyprland VGS session and reads `hyprctl layers`. Anywhere else it prints a skip and exits 0, so running it in CI would manufacture a false green. |
 
 **Reached indirectly — CI runs these through another entry, not by name:**

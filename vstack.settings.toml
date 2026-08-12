@@ -23,6 +23,16 @@ GIT_HOST_CLI = ".agents/skills/github/scripts/github.sh"
 LINEAR_FORMAT = "safe"
 ORCH_CACHE_DIR = ".cache/orchestration"
 ORCH_STATE_DIR = "tmp"
+# File-size ratchet (VGS-111, fleet ruling 2026-08-10: adopt size-ratchet,
+# never hand-roll a size gate). Threshold is the fleet's 400 lines; CI runs
+# the vendored engine at third_party/size-ratchet/ (see
+# scripts/check-size-ratchet-vendor.sh for why two copies exist). The engine
+# has one threshold, so the fleet's 800-line test allowance is not
+# expressible — oversized tests enter the baseline instead (noted in the
+# excludes file).
+SIZE_RATCHET_THRESHOLD = "400"
+SIZE_RATCHET_BASELINE = "tools/size-ratchet-baseline.tsv"
+SIZE_RATCHET_EXCLUDES = "tools/size-ratchet-excludes"
 SECOND_OPINION_CLAUDE_CMD = "claude -p --no-session-persistence --model opus --effort max --allowedTools Bash(read-only:true),Read,Glob,Grep"
 SECOND_OPINION_CODEX_CMD = "codex exec -m gpt-5.5 -s read-only -c model_reasoning_effort=xhigh --ephemeral"
 SECOND_OPINION_TIMEOUT = "3600"
@@ -344,3 +354,17 @@ SECOND_OPINION_REVIEW_TARGETS = "codex claude"
 # appended to the review prompt (repo-rule adherence lens). Globs resolve
 # inside the reviewed repo (--cwd). Set empty to disable.
 SECOND_OPINION_REVIEW_INSTRUCTIONS = "AGENTS.md review-bots.md .github/instructions/*.instructions.md .github/copilot-instructions.md"
+
+# Used by: orch (`open-terminal`). Claude permission argument rendered into
+# claude handoff-lane launch commands. Handoff is launch-only autonomy — no
+# one is attached to answer a permission prompt — so the default bypasses
+# permission checks, the claude-path peer of the codex generalist's
+# danger-full-access sandbox. Overriding it with a prompting mode (e.g.
+# "--permission-mode manual") voids handoff autonomy; open-terminal warns
+# loudly at launch but still launches.
+ORCH_LANE_CLAUDE_PERMISSION_ARG = "--dangerously-skip-permissions"
+
+# Used by: orch (`open-terminal`). Bounded seconds per brief-delivery
+# verification pass on tmux claude handoff lanes (one initial pass plus one
+# after the single re-send). Positive integer; values over 120 are clamped.
+ORCH_TMUX_VERIFY_SECS = "15"
