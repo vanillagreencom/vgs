@@ -368,3 +368,10 @@ ORCH_LANE_CLAUDE_PERMISSION_ARG = "--dangerously-skip-permissions"
 # verification pass on tmux claude handoff lanes (one initial pass plus one
 # after the single re-send). Positive integer; values over 120 are clamped.
 ORCH_TMUX_VERIFY_SECS = "15"
+
+# Exclusion globs DECLARED to match no tracked path today (";"-separated,
+# exact glob text). The selftest fails an exclusion glob that matches
+# nothing — a typo'd anchor is dead config in the same way a leading-'/'
+# one is — unless it is declared here as deliberately guarding paths that
+# do not exist yet. Inert while REVIEW_GATE_CARRY_FORWARD_EXCLUDE is empty.
+REVIEW_GATE_CARRY_FORWARD_EXCLUDE_PROPHYLACTIC = ""
