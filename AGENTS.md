@@ -223,12 +223,17 @@ nightly, no Go caching, and the 2 vCPU runner tier. The measured economics
 behind that shape, and the commands to re-measure them, live in
 `docs/decisions/D007-ci-single-job-economics.md`.
 
-`Review gate` **is** the second required context — the `main merge queue`
-ruleset requires `ci-ok` and `Review gate`, both as STATUS CONTEXTS. Neither
-names a workflow JOB, and nothing here may start: the writer's PR-attached
-runs are the relay job, so requiring `Evaluate and write the review gate`
-would block every PR. Read the live list rather than this sentence when it
-matters:
+`Review gate` **is** the second required check — the `main merge queue`
+ruleset requires `ci-ok` and `Review gate`. The two are different kinds of
+thing, and the difference decides what you may require: `ci-ok` is the check
+run GitHub creates from `ci.yml`'s job of that name, while `Review gate` is a
+commit status the writer posts through the status API.
+
+Require the writer's STATUS, never its job name. The writer job that appears
+on PR heads is now the relay (`Request a gate convergence pass`); `Evaluate
+and write the review gate` runs on the converge legs against the default
+branch, so requiring that name would block every PR. Read the live list
+rather than this sentence when it matters:
 
 ```bash
 gh api repos/vanillagreencom/vgs/rulesets --jq '.[] | select(.name=="main merge queue") | .id' \
