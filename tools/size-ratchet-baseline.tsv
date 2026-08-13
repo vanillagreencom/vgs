@@ -1,4 +1,5 @@
-.github/workflows/ci.yml	408
+.github/workflows/ci.yml	415
+.github/workflows/review-gate-writer.yml	656
 backend/internal/services/bluez/bluez.go	744
 backend/internal/services/clipboard/clipboard.go	635
 backend/internal/services/cloudsync/cloudsync.go	1115
