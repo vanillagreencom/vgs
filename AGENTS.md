@@ -223,11 +223,19 @@ nightly, no Go caching, and the 2 vCPU runner tier. The measured economics
 behind that shape, and the commands to re-measure them, live in
 `docs/decisions/D007-ci-single-job-economics.md`.
 
-`Review gate` is intended as the second required context, but it is **not one
-yet**: it is added to the merge queue's required checks only after the gate has
-been observed publishing on a real PR, because requiring a context nothing
-produces would block every merge. That step is a GitHub ruleset change, not
-code. See § Review gate.
+`Review gate` **is** the second required check: `main merge queue` requires
+`ci-ok` and `Review gate`. They differ in kind — `ci-ok` is the check run
+from `ci.yml`'s job of that name; `Review gate` is a commit status the writer
+posts. Require the writer's STATUS, never its job name: the writer job on PR
+heads is the relay (`Request a gate convergence pass`), so a required
+`Evaluate and write the review gate` would block every PR. Live list:
+
+```bash
+gh api repos/vanillagreencom/vgs/rulesets/20260238 \
+  --jq '.rules[]|select(.type=="required_status_checks").parameters.required_status_checks[].context'
+```
+
+See § Review gate.
 
 Some checks in the list above **cannot run in CI**, and one runs there only
 through another entry. Both categories are deliberate, and
