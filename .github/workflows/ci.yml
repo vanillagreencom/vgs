@@ -103,6 +103,15 @@ jobs:
         run: third_party/review-gate/scripts/review-predicate-selftest.sh
       - name: pr-watch behavioral suite (offline, stubbed gh)
         run: bash third_party/review-gate/tests/pr-watch.test.sh
+      # Runs the writer template's step scripts AND this repo's adopted
+      # .github/workflows/review-gate-writer.yml. Unwired, the adopted copy
+      # could drift off the relay/converge topology (VST-210) while every
+      # green check kept saying otherwise — the gate's own workflow is the
+      # one file no other check reads.
+      - name: Writer template and adopted-workflow suite (offline, stubbed gh)
+        run: bash third_party/review-gate/tests/review-writer-template.test.sh
+      - name: review-writer behavioral suite (offline, stubbed gh)
+        run: bash third_party/review-gate/tests/review-writer.test.sh
 
   validate:
     # The required-check context is `CI / ci-ok`; see the aggregator note above.

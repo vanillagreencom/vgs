@@ -49,16 +49,12 @@ project-skills-dir = "project-skills"
 # """
 #
 [agent-launch-instructions]
-
-
 # ── Additional Instructions ──────────────────────────
 # Adds a "## Additional Instructions" section at the
 # bottom of each agent file. Project-specific rules,
 # conventions, or reminders for this agent.
 #
 [agent-additional-instructions]
-
-
 # ── Skill Instructions ────────────────────────────────
 # Adds a "## Project Instructions" section at the
 # top of each skill's SKILL.md. Project-specific
@@ -67,6 +63,10 @@ project-skills-dir = "project-skills"
 #
 [skill-instructions]
 review-gate = ""
+
+code-quality = ""
+
+preflight = ""
 
 size-ratchet = ""
 
@@ -291,13 +291,14 @@ worktree = ""
 # repo — local skill directories work too).
 #
 [agent-skills]
-
 generalist = [
     "decider",
     "dev",
     "github",
     "linear",
     "review-gate",
+    "code-quality",
+    "preflight",
 ]
 
 planner = [
@@ -344,10 +345,6 @@ reviewer-security = [
     "reviewer",
 ]
 
-reviewer-structure = [
-    "reviewer",
-]
-
 reviewer-test = [
     "reviewer",
 ]
@@ -391,8 +388,6 @@ reviewer-safety = { color = "red", model = "inherit", effort = "xhigh", deny-too
 
 reviewer-security = { color = "red", model = "inherit", effort = "xhigh", deny-tools = ["Agent", "AskUserQuestion"], background = true }
 
-reviewer-structure = { color = "cyan", model = "inherit", effort = "xhigh", deny-tools = ["Agent", "AskUserQuestion"], background = true }
-
 reviewer-test = { color = "blue", model = "inherit", effort = "xhigh", deny-tools = ["Agent", "AskUserQuestion"], background = true }
 
 scout = { color = "cyan", model = "sonnet", effort = "high", deny-tools = ["Agent", "AskUserQuestion"], background = true }
@@ -420,8 +415,6 @@ reviewer-quality = { color = "#a855f7", model = "openai/gpt-5.5", deny-tools = [
 reviewer-safety = { color = "#ef4444", model = "openai/gpt-5.5", deny-tools = ["task", "question"], mode = "subagent", model-reasoning-effort = "xhigh" }
 
 reviewer-security = { color = "#ef4444", model = "openai/gpt-5.5", deny-tools = ["task", "question"], mode = "subagent", model-reasoning-effort = "xhigh" }
-
-reviewer-structure = { color = "#06b6d4", model = "openai/gpt-5.5", deny-tools = ["task", "question"], mode = "subagent", model-reasoning-effort = "xhigh" }
 
 reviewer-test = { color = "#3b82f6", model = "openai/gpt-5.5", deny-tools = ["task", "question"], mode = "subagent", model-reasoning-effort = "xhigh" }
 
@@ -451,8 +444,6 @@ reviewer-safety = { model = "gpt-5.5", sandbox-mode = "workspace-write", model-r
 
 reviewer-security = { model = "gpt-5.5", sandbox-mode = "workspace-write", model-reasoning-effort = "xhigh", nickname-candidates = ["Reviewer-Security-Atlas", "Reviewer-Security-Delta", "Reviewer-Security-Echo", "Reviewer-Security-Nova", "Reviewer-Security-Orion", "Reviewer-Security-Vector"] }
 
-reviewer-structure = { model = "gpt-5.5", sandbox-mode = "workspace-write", model-reasoning-effort = "xhigh", nickname-candidates = ["Reviewer-Structure-Atlas", "Reviewer-Structure-Delta", "Reviewer-Structure-Echo", "Reviewer-Structure-Nova", "Reviewer-Structure-Orion", "Reviewer-Structure-Vector"] }
-
 reviewer-test = { model = "gpt-5.5", sandbox-mode = "workspace-write", model-reasoning-effort = "xhigh", nickname-candidates = ["Reviewer-Test-Atlas", "Reviewer-Test-Delta", "Reviewer-Test-Echo", "Reviewer-Test-Nova", "Reviewer-Test-Orion", "Reviewer-Test-Vector"] }
 
 scout = { model = "gpt-5.5", sandbox-mode = "workspace-write", model-reasoning-effort = "medium", nickname-candidates = ["Scout-Atlas", "Scout-Delta", "Scout-Echo", "Scout-Nova", "Scout-Orion", "Scout-Vector"] }
@@ -481,8 +472,6 @@ reviewer-quality = { color = "purple", model = "inherit", deny-tools = ["subagen
 reviewer-safety = { color = "red", model = "inherit", deny-tools = ["subagent", "get_subagent_result", "steer_subagent", "stop_subagent", "delegate_subagent", "question", "tasks_write"], allowed-subagents = [], pane = false }
 
 reviewer-security = { color = "red", model = "inherit", deny-tools = ["subagent", "get_subagent_result", "steer_subagent", "stop_subagent", "delegate_subagent", "question", "tasks_write"], allowed-subagents = [], pane = false }
-
-reviewer-structure = { color = "cyan", model = "inherit", deny-tools = ["subagent", "get_subagent_result", "steer_subagent", "stop_subagent", "delegate_subagent", "question", "tasks_write"], allowed-subagents = [], pane = false }
 
 reviewer-test = { color = "blue", model = "inherit", deny-tools = ["subagent", "get_subagent_result", "steer_subagent", "stop_subagent", "delegate_subagent", "question", "tasks_write"], allowed-subagents = [], pane = false }
 

@@ -141,6 +141,34 @@ case "$args" in
       exit 1
     fi
     if [[ "${STUB_THREADS_RAW:-}" == "emptybytes" ]]; then exit 0; fi
+    if [[ -n "${STUB_THREADS_PAGES:-}" ]]; then
+      # Deep-walk mode: serve STUB_THREADS_PAGES distinct ADVANCING pages
+      # (all resolved), cursor CURn requesting page n+1, terminal page
+      # final. The single-PAGE2 shape below cannot reach the page budget —
+      # its second read never advances — so the 20-page bound needs pages
+      # that genuinely differ per cursor.
+      page=1
+      if [[ "$args" == *"after=CUR"* ]]; then
+        page="${args##*after=CUR}"
+        page="${page%% *}"
+        page=$((page + 1))
+      fi
+      if (( page < STUB_THREADS_PAGES )); then
+        jq -n --arg c "CUR$page" \
+          '{data:{repository:{pullRequest:{reviewThreads:{pageInfo:{hasNextPage:true,endCursor:$c}, nodes:[{isResolved:true}]}}}}}'
+      else
+        jq -n '{data:{repository:{pullRequest:{reviewThreads:{pageInfo:{hasNextPage:false}, nodes:[{isResolved:true}]}}}}}'
+      fi
+      exit 0
+    fi
+    if [[ "$args" == *"after="* && -n "${STUB_THREADS_PAGE2:-}" ]]; then
+      # Cursor-dependent page: a call passing the after= CLI variable
+      # (`-f after=CURSOR` — the watcher sends the cursor as a GraphQL
+      # variable, never interpolated) gets page two, so tests prove the
+      # walk advances instead of refetching page one.
+      printf '%s\n' "$STUB_THREADS_PAGE2"
+      exit 0
+    fi
     if [[ -n "${STUB_THREADS_RAW:-}" ]]; then
       printf '%s\n' "$STUB_THREADS_RAW"
       exit 0
@@ -448,6 +476,72 @@ rc=$?
 set -e
 assert_eq "$rc" "1" "pw17: thread overflow exits 1"
 assert_contains "$out" "overflow" "pw17: named as overflow (fail closed)"
+
+# pw17b: a pageable response that never advances (same page, same cursor,
+# hasNextPage=true every time) must terminate at the pagination bound as
+# overflow — proves the paging loop is bounded and cannot hang the watcher.
+set +e
+out=$(run_watch STUB_OPEN_PRS="$(jq -cn --argjson r "$(pr_row 7)" '[$r]')" \
+  STUB_THREADS_RAW='{"data":{"repository":{"pullRequest":{"reviewThreads":{"pageInfo":{"hasNextPage":true,"endCursor":"CUR1"},"nodes":[{"isResolved":false}]}}}}}' \
+  STUB_VERDICT_LINE="verdict=approved detail=unused")
+rc=$?
+set -e
+assert_eq "$rc" "1" "pw17b: bounded pagination exits 1"
+assert_contains "$out" "overflow" "pw17b: bound reached reads as overflow (fail closed)"
+
+# pw17c: an unresolved thread on page TWO is counted — the walk advances by
+# cursor and sums across pages instead of trusting page one.
+set +e
+out=$(run_watch STUB_OPEN_PRS="$(jq -cn --argjson r "$(pr_row 7)" '[$r]')" \
+  STUB_THREADS_RAW='{"data":{"repository":{"pullRequest":{"reviewThreads":{"pageInfo":{"hasNextPage":true,"endCursor":"CUR1"},"nodes":[{"isResolved":true},{"isResolved":true}]}}}}}' \
+  STUB_THREADS_PAGE2='{"data":{"repository":{"pullRequest":{"reviewThreads":{"pageInfo":{"hasNextPage":false},"nodes":[{"isResolved":false}]}}}}}' \
+  STUB_VERDICT_LINE="verdict=approved detail=unused")
+rc=$?
+set -e
+assert_eq "$rc" "1" "pw17c: later-page unresolved thread exits 1"
+assert_contains "$out" "1 unresolved review thread(s)" "pw17c: page-two thread counted"
+
+# pw17d: resolved history spanning pages is HEALTHY — over-one-page totals
+# must not read as overflow when every thread is resolved.
+set +e
+out=$(run_watch STUB_OPEN_PRS="$(jq -cn --argjson r "$(pr_row 7)" '[$r]')" \
+  STUB_THREADS_RAW='{"data":{"repository":{"pullRequest":{"reviewThreads":{"pageInfo":{"hasNextPage":true,"endCursor":"CUR1"},"nodes":[{"isResolved":true},{"isResolved":true}]}}}}}' \
+  STUB_THREADS_PAGE2='{"data":{"repository":{"pullRequest":{"reviewThreads":{"pageInfo":{"hasNextPage":false},"nodes":[{"isResolved":true}]}}}}}' \
+  STUB_VERDICT_LINE="verdict=approved detail=review evidence at head" \
+  STUB_GATE_HISTORY='[{"context":"Review gate","state":"success"}]')
+rc=$?
+set -e
+assert_eq "$rc" "0" "pw17d: resolved multi-page history exits 0"
+assert_eq "$out" "" "pw17d: and prints nothing"
+
+# pw17e: the 20-page budget itself, red-first — 25 distinct ADVANCING pages
+# (every node resolved) must stop at the bound and fail closed as overflow.
+# Every page past the bound is deliberately resolved+terminal: were the
+# `t_pages > 20` guard removed, the walk would finish cleanly and report
+# healthy, so this case can actually fail. pw17b cannot prove this arm — its
+# non-advancing cursor trips the other overflow path on page two.
+set +e
+out=$(run_watch STUB_OPEN_PRS="$(jq -cn --argjson r "$(pr_row 7)" '[$r]')" \
+  STUB_THREADS_PAGES=25 \
+  STUB_VERDICT_LINE="verdict=approved detail=unused")
+rc=$?
+set -e
+assert_eq "$rc" "1" "pw17e: advancing walk past 20 pages exits 1"
+assert_contains "$out" "overflow" "pw17e: page-budget breach reads as overflow (fail closed)"
+
+# pw17f: the budget's inclusive edge — EXACTLY 20 advancing resolved pages
+# terminate healthy. Pins the bound as >20 so an off-by-one tightening
+# (rejecting a legal 20-page history) fails here while pw17e catches the
+# loosening direction.
+set +e
+out=$(run_watch STUB_OPEN_PRS="$(jq -cn --argjson r "$(pr_row 7)" '[$r]')" \
+  STUB_THREADS_PAGES=20 \
+  STUB_VERDICT_LINE="verdict=approved detail=review evidence at head" \
+  STUB_GATE_HISTORY='[{"context":"Review gate","state":"success"}]')
+rc=$?
+set -e
+assert_eq "$rc" "0" "pw17f: exactly 20 advancing resolved pages exit 0"
+assert_eq "$out" "" "pw17f: and print nothing"
 
 # pw18: a failed queue-membership read is a loud error, never "not queued".
 set +e
