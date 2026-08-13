@@ -183,6 +183,8 @@ scripts/check-coderabbit-config.py
 scripts/check-review-gate-vendor.sh
 third_party/review-gate/scripts/review-predicate-selftest.sh
 third_party/review-gate/tests/pr-watch.test.sh
+third_party/review-gate/tests/review-writer.test.sh
+third_party/review-gate/tests/review-writer-template.test.sh
 scripts/check-size-ratchet-vendor.sh
 third_party/size-ratchet/scripts/size-ratchet
 third_party/size-ratchet/tests/bash32-portability.test.sh
@@ -276,8 +278,8 @@ Two moving parts (the v2 single-writer architecture, cutover 2026-08-08):
 
 | Piece | Role |
 |-------|------|
-| `.github/workflows/review-gate-writer.yml` | The ONLY writer of the gate status. Runs the **default-branch** engine on every leg — PR pushes, review events, status events, merge-group entries, a 15-minute cron floor for transitions with no webhook — and converges every open PR per run, except the merge-group leg (single-head) and the fork read-only no-op, both covered by the cron floor. A PR can never influence its own gate evaluation. |
-| `ci.yml` § `review-gate-selftest` | Pins the engine's decision table offline against VGS's own trust values. Ungated but **blocking**: `ci-ok` takes `needs:` on it, so a PR that breaks the predicate cannot merge with its own selftest red (rationale in the workflow's comments). |
+| `.github/workflows/review-gate-writer.yml` | The ONLY writer of the gate status, in a relay/converge shape (VST-210). PR-attached legs — PR pushes, review events, status events — only *request* a converge pass and exit; they run no engine. The converge legs (`workflow_dispatch`, the 15-minute cron floor for transitions with no webhook) run the **default-branch** engine and converge every open PR per run. Merge-group entries post an unconditional success on their own job, and the fork read-only leg is a no-op the cron floor covers. Relaying is what keeps an evicted run off a PR's checks: converge runs attach to the default branch, so a burst's cancellation marks land on merged `main` commits instead of pinning open PRs at `UNSTABLE`. A PR can never influence its own gate evaluation. |
+| `ci.yml` § `review-gate-selftest` | Pins the engine's decision table offline against VGS's own trust values, and runs the writer and writer-template suites — the latter checks THIS repo's adopted `review-gate-writer.yml`, not only the catalog template, so topology drift cannot pass unseen. Ungated but **blocking**: `ci-ok` takes `needs:` on it, so a PR that breaks the predicate cannot merge with its own selftest red (rationale in the workflow's comments). |
 
 Because the writer always runs the merged engine, a PR that repairs the gate
 machinery itself can never open its own gate — the ruleset's bypass actor is
