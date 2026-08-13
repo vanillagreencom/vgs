@@ -110,6 +110,8 @@ jobs:
       # one file no other check reads.
       - name: Writer template and adopted-workflow suite (offline, stubbed gh)
         run: bash third_party/review-gate/tests/review-writer-template.test.sh
+      - name: review-writer behavioral suite (offline, stubbed gh)
+        run: bash third_party/review-gate/tests/review-writer.test.sh
 
   validate:
     # The required-check context is `CI / ci-ok`; see the aggregator note above.
