@@ -21,7 +21,6 @@ DECISIONS_DIR = "docs/decisions"
 GH_ISSUE_PATTERN = "vgs-[0-9]+"
 GIT_HOST_CLI = ".agents/skills/github/scripts/github.sh"
 LINEAR_FORMAT = "safe"
-ORCH_CACHE_DIR = ".cache/orchestration"
 ORCH_STATE_DIR = "tmp"
 # File-size ratchet (VGS-111, fleet ruling 2026-08-10: adopt size-ratchet,
 # never hand-roll a size gate). Threshold is the fleet's 400 lines; CI runs
@@ -101,13 +100,6 @@ REVIEWER_SLOT_BUDGET = "0"
 # past the wait deadline proceeds with the logged attestation instead of
 # stalling the fleet on a dead reviewer.
 PR_REVIEW_ON_TIMEOUT = "proceed"
-
-# Used by: orch (`review-pr`, via `refix-route`). Total changed lines
-# (insertions + deletions) a support-scope fix round may reach before it is
-# re-reviewed anyway. A round that cleared blockers is always re-reviewed
-# regardless of this value; this is the backstop for large rounds that no
-# blocker prompted.
-PR_REVIEW_REFIX_MAX_LINES = "200"
 
 # Used by: orch (`review-pr` § 4/§ 7, `dev-fix` § 1). How workflow decision
 # points behave. "ask" (default) presents every decision to the user.
@@ -354,15 +346,6 @@ SECOND_OPINION_REVIEW_TARGETS = "codex claude"
 # appended to the review prompt (repo-rule adherence lens). Globs resolve
 # inside the reviewed repo (--cwd). Set empty to disable.
 SECOND_OPINION_REVIEW_INSTRUCTIONS = "AGENTS.md review-bots.md .github/instructions/*.instructions.md .github/copilot-instructions.md"
-
-# Used by: orch (`open-terminal`). Claude permission argument rendered into
-# claude handoff-lane launch commands. Handoff is launch-only autonomy — no
-# one is attached to answer a permission prompt — so the default bypasses
-# permission checks, the claude-path peer of the codex generalist's
-# danger-full-access sandbox. Overriding it with a prompting mode (e.g.
-# "--permission-mode manual") voids handoff autonomy; open-terminal warns
-# loudly at launch but still launches.
-ORCH_LANE_CLAUDE_PERMISSION_ARG = "--dangerously-skip-permissions"
 
 # Used by: orch (`open-terminal`). Bounded seconds per brief-delivery
 # verification pass on tmux claude handoff lanes (one initial pass plus one
