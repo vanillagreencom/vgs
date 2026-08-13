@@ -1,6 +1,6 @@
 ---
 name: review-gate
-description: "Org-wide PR review gate: one predicate answers 'is this exact head reviewed?' (review objects, trusted clean-analysis checks, comment-form passes, operator override), one writer posts it as a merge-blocking commit status, plus an offline decision-table selftest and a live replay harness. Load when wiring, adopting, tuning, or debugging a repo's review gate or its REVIEW_GATE_* settings."
+description: "Org-wide PR review gate: one predicate answers 'is this exact head reviewed?' (review objects, trusted clean-analysis checks, comment-form passes, operator override) — unless REVIEW_GATE_MODE is 'off', when it evaluates nothing and a green PR-head gate attests only that the repo disabled it (merge-group statuses always post green by construction, mode unread) — one writer posts the answer as a merge-blocking commit status, plus an offline decision-table selftest and a live replay harness. Load when wiring, adopting, tuning, or debugging a repo's review gate or its REVIEW_GATE_* settings."
 license: MIT
 user-invocable: true
 metadata:
@@ -11,14 +11,22 @@ metadata:
   version: "2.0.0"
 ---
 
-> **Never edit this file directly.** To make additions or modifications, edit the appropriate section in `./vstack.toml`. Then run `vstack refresh`.
+> **Never edit this file directly.** To make additions or modifications, edit the appropriate section in the managing project's vstack config — `vstack.toml` at the vstack project root, or `vstack-local.toml` in a source-catalog checkout. Then run `vstack refresh`.
 
 # Review Gate
 
 > **Problem with this skill?** Run `vstack report` — it files to the owning repo automatically. Do not hand-file.
 
 The gate answers ONE question: **has this exact PR head been reviewed?** It
-posts that answer as a commit status the repo's branch rules require.
+posts that answer as a commit status the repo's branch rules require. The
+one exception is `REVIEW_GATE_MODE = "off"`: the predicate then evaluates
+NO evidence and answers `approved` with a disabled-by-settings attestation,
+so a green PR-head gate on such a repo means only "gate disabled" — never
+that a review happened. This contract covers evaluated PR-head statuses
+only: the writer's merge-group path never reads the mode and always posts
+green as "merge-queue entry: post-approval by construction". Caveats:
+[references/settings.md](references/settings.md)
+§ `REVIEW_GATE_MODE`.
 
 It does not check CI, re-run anything, or reason about jobs. Whether untested
 code can reach the default branch is branch protection's job — see the
@@ -45,10 +53,11 @@ stop it:
 
 The hazard: held-back jobs report as `skipped`, and GitHub counts skipped as
 satisfied. Hold jobs back with no queue and a reviewed PR merges untested.
-Proven live in the sandbox (`tests/e2e-sandbox.sh` scenario 11); that
-scenario is the safety claim and must pass on every adopting repo.
+Proven live in the sandbox (`.agents/skills/review-gate/tests/e2e-sandbox.sh`
+scenario 11); that scenario is the safety claim and must pass on every
+adopting repo.
 
-## Evidence sources (`scripts/review-predicate.sh`)
+## Evidence sources (`.agents/skills/review-gate/scripts/review-predicate.sh`)
 
 Evidence for the CURRENT head is any of:
 
@@ -86,7 +95,9 @@ Changes-requested and unresolved threads always fail closed. Every evidence
 read fails LOUD (exit 2, no verdict) — a transient API error must never flip
 a healthy PR's state; reads retry in-process up to `REVIEW_GATE_API_ATTEMPTS`
 (default 1), and a zero-byte producer is a failed read, not an empty page
-set. Over 100 review threads reports overflow and fails closed to
+set. Review threads are counted across pages (100 per page, bound 20
+pages / 2000 threads); past the bound — or when pagination metadata
+cannot advance — the count reports overflow and fails closed to
 `threads-open`.
 
 **Trust model.** Trust keys on names only GitHub controls: the author login
@@ -102,7 +113,7 @@ carries a creator login; while the reject list is configured, a status with
 no creator login is an anomaly and is not evidence (with the list empty, the
 default, the filter is off entirely).
 
-## The writer (`scripts/review-writer.sh`)
+## The writer (`.agents/skills/review-gate/scripts/review-writer.sh`)
 
 One workflow, defined on the default branch, is the only thing that writes
 the gate status. It evaluates the predicate and converges the status —
@@ -111,6 +122,60 @@ nothing else.
 - **Converge-all on every leg.** Every invocation converges EVERY open PR,
   so a run evicted from the concurrency group strands nothing (8 evictions
   observed in one sandbox replay, zero stranded).
+- **Relay / converge split.** PR-attached legs (`pull_request_target`,
+  `pull_request_review`, `status`, an opted-in `check_run`) do NOT run the
+  engine: they run a group-less relay job that dispatches a converge pass
+  and exits — in seconds on the success path, up to about 4.2 minutes when
+  it has to back off (see Cost). Only `workflow_dispatch` and `schedule` hold the
+  single-writer group. Convergence is unchanged — what changes is WHERE an
+  eviction's `CANCELLED` check lands. Attached to a PR head it pinned that
+  PR at `mergeStateStatus UNSTABLE` until a manual rerun; on the
+  default-branch runs the relay dispatches into, nothing gates on it.
+  **Cost**: one *non-evictable* run per PR-attached event — seconds and a
+  billed minimum on the success path, up to about 4.2 minutes of runner hold
+  in the worst modeled failure (a 60s-bounded attempt, a wait capped at 120s
+  plus up to 14s of jitter, a second 60s-bounded attempt), inside the job's
+  5-minute budget — the relay coalesces nothing, so unlike the writer group
+  there is one per event, including every `status` transition from every CI
+  provider. Each run also spends one content-creating API request against the
+  repo's shared secondary-limit budget; exhausting that budget degrades events
+  to the cron floor rather than breaking convergence. Event-fast latency grows
+  by a whole extra run lifecycle (two queue + runner-allocation waits instead
+  of one): typically seconds, well inside the cron floor's period, and when
+  runner allocation exceeds that period the scheduled pass converges the head
+  first and the dispatched run is a redundant no-op — an overrun costs a run,
+  not convergence. Size that before adopting on a capacity-limited runner
+  pool.
+  **Residual**: this removes *eviction-driven* cancelled checks, not every
+  cancelled check — a relay that hangs to its `timeout-minutes` would still
+  be a cancelled check on the PR head, which is why every wait in the step is
+  bounded. Its dispatch failures exit green and warn (below) rather than
+  redden.
+- **The relay never exits non-zero — a pinned invariant, not a per-branch
+  choice.** It holds no
+  `statuses` scope, so a failed dispatch cannot make the gate look
+  converged — only leave it stale, which the cron floor and `pr-watch
+  --heal` already own. Reddening would re-create the exact `UNSTABLE` pin
+  the split removes. Two dispatch attempts (the retry honors
+  a three-way rule. A **rate-limit** answer waits the window the server
+  named — `retry-after`, or `x-ratelimit-reset` *only when
+  `x-ratelimit-remaining` is 0* — floored at 60s; a secondary limit that
+  sends no header is recognized from its body or from an HTTP 429. Every wait
+  then carries bounded jitter, because the relay is group-less: without it, N
+  runs of one event burst read the same headers and re-POST in lockstep. A
+  plain **transient** waits
+  5s. A **permanent** answer is not retried at all: 400, 404 for a renamed
+  workflow file, 405, 422 for a bad ref, 401 for a revoked token, and 403
+  when it carries no rate-limit evidence — the `Resource not accessible by
+  integration` shape, which is the likeliest failure a hand-edited
+  permissions block produces. A named window beyond the 120s budget is not
+  waited out either; both defer to the cron floor. `x-ratelimit-reset` is on
+  *every* GitHub response, so treating it as a wait instruction on its own
+  silently disables the whole retry); on double failure it
+  warns and exits 0. It files no
+  rolling incident of its own — a sustained dispatch outage shows up as
+  **gate staleness**, which `pr-watch --heal` already reduces across
+  every open PR, rather than as N red PRs or a widened relay scope.
 - **Write ordering.** Before any `success` post it re-reads the status and
   defers when any gate entry was created at/after this run's evaluation
   instant — a newer run's state AND description (which carries the audit
@@ -120,8 +185,8 @@ nothing else.
   it no-ops, so idle cron ticks append nothing.
 - **Forks need no special case** — every leg holds a write-capable
   default-branch token. The one exception is `pull_request_review` on a fork
-  PR, whose token GitHub downgrades to read-only: that run exits green as a
-  no-op and the cron floor converges it.
+  PR, whose token GitHub downgrades to read-only: it cannot dispatch, so
+  that run exits green as a no-op and the cron floor converges it.
 - **`pull_request_target` safety**: the job never executes PR-controlled
   code. Every checkout pins the default branch with credentials dropped.
 
@@ -155,8 +220,9 @@ E2E_REPO=<owner>/<repo> .agents/skills/review-gate/tests/e2e-sandbox.sh
 **Watching one or many PRs without stalling.** Never key a hand-rolled
 monitor on gate-state transitions — a PR sitting steadily at "pending with
 open threads" transitions nothing and you sleep through it. Run
-`scripts/pr-watch.sh` (optionally `--heal`) on the harness's wake-up
-mechanism instead: silence + exit 0 means nothing needs you; attention
+`.agents/skills/review-gate/scripts/pr-watch.sh` (optionally `--heal`) on
+the harness's wake-up mechanism instead: silence + exit 0 means nothing
+needs you; attention
 lines name exactly what does. See adoption.md § Watching PRs as an agent.
 
 **Reviewers are down / nothing is reviewing.** Run the internal review loop:
@@ -180,8 +246,9 @@ default). Full table and the security reasoning:
 
 ## Selftest — the engine's portable proof
 
-`scripts/review-predicate-selftest.sh` pins the decision table offline: a
-`gh` shim answers from fixtures and applies `--jq` through real jq, so the
+`.agents/skills/review-gate/scripts/review-predicate-selftest.sh` pins the
+decision table offline: a `gh` shim answers from fixtures and applies
+`--jq` through real jq, so the
 real predicate runs unmodified. Every case ending `approved` is paired with a
 near-miss that must not. Two layers: a mechanism layer with forced
 configurations, and a configured layer that re-derives the battery from the
@@ -194,10 +261,18 @@ gate could never run when it matters.
 
 ## Adoption
 
-Copy `templates/review-gate-writer.yml` into `.github/workflows/` (repo-owned
-after copy; `vstack refresh` does not sync workflow YAML), set the repo's
+Copy `.agents/skills/review-gate/templates/review-gate-writer.yml` into
+`.github/workflows/` (repo-owned after copy; `vstack refresh` does not
+sync workflow YAML), set the repo's
 `REVIEW_GATE_*` values, add the ungated selftest job, and require the gate
 context in the ruleset alongside the test aggregate. Full wiring:
 [references/adoption.md](references/adoption.md). An adoption PR deletes the
 local machinery it supersedes in the same PR — a redesign removes what it
 replaces, never leaves it dormant.
+
+A consumer also merges re-vendor PRs whose entire delta is bytes already
+reviewed upstream. Suppress the duplicate findings with the remedy-locus
+reviewer instruction, never a reviewer path exclusion — excluding the vendored
+tree leaves a pure re-vendor PR with nothing to review, no review object, and a
+gate that starves:
+[references/vendored-paths.md](references/vendored-paths.md).

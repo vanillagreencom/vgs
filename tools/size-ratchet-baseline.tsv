@@ -1,4 +1,5 @@
-.github/workflows/ci.yml	408
+.github/workflows/ci.yml	417
+.github/workflows/review-gate-writer.yml	656
 backend/internal/services/bluez/bluez.go	744
 backend/internal/services/clipboard/clipboard.go	635
 backend/internal/services/cloudsync/cloudsync.go	1115
@@ -207,4 +208,4 @@ scripts/qml-smoke.sh	1058
 scripts/test-pill-hover-safety.js	420
 scripts/test-remote-desktop-state.js	1243
 scripts/test-toast-actions.js	607
-vstack.toml	488
+vstack.toml	478
