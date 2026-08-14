@@ -23,7 +23,6 @@ with it, to `.github/instructions/validation-scripts.instructions.md`.
 from __future__ import annotations
 
 import os
-import re
 import shlex
 import sys
 import tempfile
@@ -152,21 +151,14 @@ def main() -> int:
     # library and this file all read it. Checked first because everything below
     # is derived from it: a bad grammar makes correctly-written rows fail, and
     # the manifest arm would answer first, blaming the rows.
+    # The grammar's own rules — token names, class cardinality, everything —
+    # are enforced by Grammar itself, from the `min`/`max` in the definition, so
+    # this file no longer restates any of them. It used to hardcode "exactly one
+    # exclusive" and "at least one area" here, which meant the RUNNER did not
+    # know them and would execute against a grammar this check was about to
+    # reject.
     rules = grammar(GRAMMAR)
-    for token, cls in sorted(rules.token_class.items()):
-        if not re.fullmatch(r"[a-z][a-z0-9-]*|-", token):
-            problems.append(
-                f"the grammar declares token `{token}`, which is not a lowercase token"
-            )
-        del cls
-    if not rules.areas:
-        problems.append("the grammar declares no `area` tokens, so no scope exists")
-    if len(rules.exclusive) != 1:
-        problems.append(
-            f"the grammar declares {len(rules.exclusive)} exclusive tokens "
-            f"({', '.join(sorted(rules.exclusive)) or 'none'}); the tag pattern needs "
-            f"exactly one"
-        )
+
     # The runner must actually OFFER what the grammar declares. Asked by running
     # `scripts/validate -h`, not by matching an array that no longer exists:
     # the runner derives its arguments now, so the question is whether that

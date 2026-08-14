@@ -224,6 +224,7 @@ if [[ ! -r "$GRAMMAR_FILE" ]]; then
 fi
 
 declare -A CLASS_SELECTS=() CLASS_STANDALONE=() CLASS_ROWTAG=() CLASS_EXCLUSIVE=()
+declare -A CLASS_MIN=() CLASS_MAX=() CLASS_COUNT=()
 declare -A TOKEN_CLASS=() MSG=()
 grammar_tokens=()
 
@@ -243,6 +244,14 @@ grammar_fatal() {
 # reader's splitlines() keeps it — so a grammar whose last line is unterminated
 # declared a token for one reader and not the other. Same class of divergence as
 # reading class properties positionally.
+# MESSAGES FIRST, in their own pass. They are declared at the end of the file,
+# so a single pass left MSG empty while the class and token lines were being
+# checked — those failures fell back to their built-in wording and so read
+# differently from the library's, in the file that exists to stop exactly that.
+while read -r kind name rest || [[ -n "$kind" ]]; do
+  [[ "$kind" == message ]] && MSG[$name]="$rest"
+done < <(sed -e 's/#.*//' -e '/^[[:space:]]*$/d' "$GRAMMAR_FILE")
+
 while read -r kind name rest || [[ -n "$kind" ]]; do
   case "$kind" in
     class)
@@ -258,17 +267,27 @@ while read -r kind name rest || [[ -n "$kind" ]]; do
         prop="${field%%=*}"
         value="${field#*=}"
         case "$prop" in
-          selects | standalone | rowtag | exclusive) ;;
+          selects | standalone | rowtag | exclusive | min | max) ;;
           *) grammar_fatal "${MSG[grammar-class-unknown]:-class has an unknown property}" \
             "$name: $prop" ;;
         esac
         if [[ -n "${seen[$prop]:-}" ]]; then
           grammar_fatal "${MSG[grammar-class-repeated]:-class repeats a property}" "$name: $prop"
         fi
-        case "$value" in
-          yes | no) ;;
-          *) grammar_fatal "${MSG[grammar-class-value]:-class property must be yes or no}" \
-            "$name: $prop=$value" ;;
+        case "$prop" in
+          min | max)
+            if [[ ! "$value" =~ ^[0-9]+$ ]]; then
+              grammar_fatal "${MSG[grammar-class-value]:-class property must be yes or no}" \
+                "$name: $prop=$value"
+            fi
+            ;;
+          *)
+            case "$value" in
+              yes | no) ;;
+              *) grammar_fatal "${MSG[grammar-class-value]:-class property must be yes or no}" \
+                "$name: $prop=$value" ;;
+            esac
+            ;;
         esac
         seen[$prop]=1
         case "$prop" in
@@ -276,6 +295,8 @@ while read -r kind name rest || [[ -n "$kind" ]]; do
           standalone) CLASS_STANDALONE[$name]="$value" ;;
           rowtag) CLASS_ROWTAG[$name]="$value" ;;
           exclusive) CLASS_EXCLUSIVE[$name]="$value" ;;
+          min) CLASS_MIN[$name]="$value" ;;
+          max) CLASS_MAX[$name]="$value" ;;
         esac
       done
       for prop in selects standalone rowtag exclusive; do
@@ -297,14 +318,32 @@ while read -r kind name rest || [[ -n "$kind" ]]; do
         grammar_fatal "${MSG[grammar-bad-class]:-grammar token has an unknown class}" \
           "$name ($cls)"
       fi
+      if [[ ! "$name" =~ ^([a-z][a-z0-9-]*|-)$ ]]; then
+        grammar_fatal "${MSG[grammar-token-name]:-token name must be lowercase}" "$name"
+      fi
       TOKEN_CLASS[$name]="$cls"
+      CLASS_COUNT[$cls]=$(( ${CLASS_COUNT[$cls]:-0} + 1 ))
       grammar_tokens+=("$name")
       ;;
-    message) MSG[$name]="$rest" ;;
+    message) ;; # already read in the pass above
     "" | "#"*) ;;
     *) grammar_fatal "${MSG[grammar-bad-kind]:-grammar has an unknown line kind}" "$kind" ;;
   esac
 done < <(sed -e 's/#.*//' -e '/^[[:space:]]*$/d' "$GRAMMAR_FILE")
+
+# THE INVARIANTS, enforced here as well as in the guard and taken from the same
+# `min`/`max` in the definition. The runner goes first, so an invariant only the
+# guard knew was one the runner ran straight past — it would execute against a
+# grammar the suite was about to reject.
+for cls in "${!CLASS_ROWTAG[@]}"; do
+  count="${CLASS_COUNT[$cls]:-0}"
+  low="${CLASS_MIN[$cls]:-0}"
+  high="${CLASS_MAX[$cls]:-}"
+  if [[ "$count" -lt "$low" ]] || [[ -n "$high" && "$count" -gt "$high" ]]; then
+    grammar_fatal "${MSG[grammar-class-count]:-wrong number of tokens in a class}" \
+      "$cls: $count (min ${low}${high:+, max $high})"
+  fi
+done
 
 for required in row-no-separator row-empty-tags row-malformed-tags \
   row-not-standalone row-no-selector row-empty-command row-bad-syntax; do
@@ -315,6 +354,7 @@ done
 
 # Derived sets. Each is a QUERY over the grammar, not a second list.
 AREAS=()          # what `scripts/validate X` accepts
+default_area=""   # the lone `argument` token: "every row", and the default
 row_tag_vocabulary=()
 combinable_tags=()
 selector_tags=()
@@ -322,6 +362,7 @@ exclusive_tags=()
 for token in "${grammar_tokens[@]}"; do
   class="${TOKEN_CLASS[$token]}"
   [[ "$class" == area || "$class" == argument ]] && AREAS+=("$token")
+  [[ "$class" == argument ]] && default_area="$token"
   if [[ "${CLASS_ROWTAG[$class]}" == yes ]]; then
     row_tag_vocabulary+=("$token")
     if [[ "${CLASS_EXCLUSIVE[$class]}" == yes ]]; then
@@ -345,7 +386,10 @@ usage() {
 }
 
 list_only=0
-area=all
+# The DEFAULT is the argument class's single token, not a literal: `argument
+# min=1 max=1` is what makes "the lone one" well defined, and hardcoding `all`
+# here was another copy of something the definition already states.
+area="$default_area"
 area_given=0
 for arg in "$@"; do
   case "$arg" in
@@ -511,7 +555,7 @@ while IFS= read -r line; do
   if ! syntax_error="$(bash -n -c "$cmd" 2>&1)"; then
     row_fatal row-bad-syntax "$line" "" "${syntax_error//$'\n'/$'\n  '}"
   fi
-  if [[ "$area" != all ]]; then
+  if [[ "$area" != "$default_area" ]]; then
     # `always` rows join every named area; `all` already takes everything.
     if [[ ",$tags," != *",$area,"* && ",$tags," != *",always,"* ]]; then
       continue

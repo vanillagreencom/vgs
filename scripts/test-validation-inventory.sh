@@ -40,14 +40,63 @@ expect_absent() {
 # Every arm-specific message this file drives a fixture to produce. Used two
 # ways: as the noise list for the unmutated control, and to assert that a
 # fixture's OWN verdict is never replaced by a prerequisite message.
-ARM_MESSAGES=(
-  "has no MANIFEST_EOF heredoc" "manifest row has no" "empty command"
-  "malformed tag field" "carries no selector" "no manifest row is tagged with it"
-  "is not executable" "does not act on it outside that array"
-  "enumerates the validate areas but omits" "no longer states the validate area list"
-  "invalid shell syntax" "has no table introduced by"
-  "no longer declares" "is not a lowercase area token" "grammar A2"
+# The fragments the unmutated control asserts are ABSENT. Built from the shared
+# diagnostics definition plus the guard-only arms, never retyped: four of these
+# had drifted to text no code emits, so those arms could not fire and a real
+# leakage regression would have passed them. Third vacuous control in this PR.
+ARM_MESSAGES=()
+while IFS= read -r text; do
+  [[ -n "$text" ]] && ARM_MESSAGES+=("$text")
+done < <(sed -n 's/^message  *[a-z-]*  *//p' "$repo_root/scripts/lib/validation-grammar.conf")
+
+# Arms that belong to the guard alone, so they have no entry in the shared
+# definition. Each is proved live by the liveness check below.
+GUARD_ONLY_MESSAGES=(
+  "no manifest row is tagged with it"
+  "is not executable"
+  "enumerates the validate areas but omits"
+  "no longer states the validate area list"
+  "has no table introduced by"
+  "does not act on it"
+  "the runner's derivation and the definition have drifted"
+  "CI coverage was NOT checked"
 )
+ARM_MESSAGES+=("${GUARD_ONLY_MESSAGES[@]}")
+
+# LIVENESS, in two halves, because the two kinds go stale differently.
+#
+# A shared fragment is live if some reader looks its KEY up — a message declared
+# in the definition and used by neither is the message equivalent of a declared
+# but unwired token.
+while IFS= read -r key; do
+  [[ -n "$key" ]] || continue
+  if ! grep -qF -- "$key" "$repo_root/scripts/validate" \
+    && ! grep -qF -- "$key" "$repo_root/scripts/lib/validation_manifest.py"; then
+    fail "shared diagnostics" "the grammar declares message \`$key\` that neither reader uses"
+  fi
+done < <(sed -n 's/^message  *\([a-z-]*\) .*/\1/p' "$repo_root/scripts/lib/validation-grammar.conf")
+
+# A guard-only fragment is retyped here, so it is live only if a reader's source
+# still contains it. Compared against the source with ADJACENT STRING LITERALS
+# JOINED: these messages are built from split f-strings, so a raw grep for the
+# emitted sentence finds nothing and would call every one of them dead.
+if ! python3 - "$repo_root" "${GUARD_ONLY_MESSAGES[@]}" <<'LIVE'
+import pathlib, re, sys
+root = pathlib.Path(sys.argv[1])
+sources = ""
+for name in ("scripts/check-validation-inventory.py", "scripts/lib/validation_manifest.py"):
+    sources += (root / name).read_text(encoding="utf-8")
+# Join implicit string concatenation before searching.
+joined = re.sub(r'"\s*f?"', "", sources)
+dead = [f for f in sys.argv[2:] if f not in joined]
+for fragment in dead:
+    print(f"no reader emits {fragment!r}, so asserting its absence proves nothing")
+sys.exit(1 if dead else 0)
+LIVE
+then
+  fail "guard-only diagnostics" "the fragments above are not emitted by either reader"
+fi
+ok "every fragment the unmutated control asserts is one some arm can emit"
 
 # PyYAML is a PREREQUISITE of one arm, not of this file. Without it the guard
 # cannot compare against ci.yml and correctly fails — so a well-formed tree
@@ -65,6 +114,9 @@ printf 'raise ImportError("no yaml (test shim)")\n' >"$noyaml_path/yaml/__init__
 expect_clean_run() {
   local name="$1" msg
   for msg in "${ARM_MESSAGES[@]}"; do
+    # The CI prerequisite has its own assertion below, both directions: without
+    # PyYAML it MUST appear, so it is not noise here.
+    [[ "$msg" == "CI coverage was NOT checked" ]] && continue
     expect_absent "$guard_out" "$msg" "$name"
   done
   if [[ $have_yaml -eq 1 ]]; then
@@ -245,7 +297,7 @@ ok "the real always, may-skip and - tokens are all found to participate"
 grammar_case "a second exclusive token is reported" \
   "$real_grammar
 token none       exclusive" \
-  "exclusive tokens"
+  "wrong number of tokens in a class"
 
 # CLASS PROPERTIES ARE PARSED BY KEY IN BOTH READERS. The bash side read them
 # positionally while python read them by key, so REORDERING the same four pairs
@@ -382,11 +434,11 @@ MUT
 # row tag, so removing it from the grammar breaks a bare `scripts/validate`.
 grammar_case "removing the all argument is reported" \
   "$(printf '%s\n' "$real_grammar" | grep -v '^token all ')" \
-  "the runner's derivation and the definition have drifted"
+  "wrong number of tokens in a class"
 
 grammar_case "an uppercase token is reported" \
   "${real_grammar/token qml        area/token Qml        area}" \
-  "not a lowercase token"
+  "token name must be lowercase"
 
 grammar_case "a duplicated token is reported" \
   "$real_grammar

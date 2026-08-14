@@ -124,6 +124,10 @@ GRAMMAR_FILE = Path(__file__).resolve().parent / "validation-grammar.conf"
 # The four properties a class line must carry, each exactly once. Named here so
 # both the presence check and the unknown-property check read the same list.
 CLASS_PROPERTIES = ("selects", "standalone", "rowtag", "exclusive")
+# Optional per-class cardinality. These are THE GRAMMAR'S INVARIANTS, stated in
+# the definition so the runner and this reader enforce the same ones — an
+# invariant only one side knew is one the other runs past.
+CLASS_COUNTS = ("min", "max")
 
 
 class Grammar:
@@ -138,6 +142,7 @@ class Grammar:
     def __init__(self, path: Path = GRAMMAR_FILE) -> None:
         self.path = path
         self.classes: dict[str, dict[str, bool]] = {}
+        self.counts: dict[str, dict[str, int]] = {}
         self.token_class: dict[str, str] = {}
         # The SHARED diagnostics: text both readers emit, defined once here so
         # neither spells it by hand. It drifted twice and was hand-synchronised
@@ -158,6 +163,7 @@ class Grammar:
                 # the same four pairs changed what each reader believed. Both
                 # now require exactly these four, once each, yes or no.
                 parsed: dict[str, bool] = {}
+                parsed_counts: dict[str, int] = {}
                 for field in props:
                     if "=" not in field:
                         raise ManifestError(
@@ -165,6 +171,19 @@ class Grammar:
                             f": {name}: {field}"
                         )
                     key, value = field.split("=", 1)
+                    if key in CLASS_COUNTS:
+                        if not value.isdigit():
+                            raise ManifestError(
+                                f"{self.say('grammar-class-value', 'class property must be yes or no')}"
+                                f": {name}: {key}={value}"
+                            )
+                        if key in parsed_counts:
+                            raise ManifestError(
+                                f"{self.say('grammar-class-repeated', 'class repeats a property')}"
+                                f": {name}: {key}"
+                            )
+                        parsed_counts[key] = int(value)
+                        continue
                     if key not in CLASS_PROPERTIES:
                         raise ManifestError(
                             f"{self.say('grammar-class-unknown', 'class has an unknown property')}"
@@ -188,6 +207,7 @@ class Grammar:
                         f": {name}: {missing[0]}"
                     )
                 self.classes[name] = parsed
+                self.counts[name] = parsed_counts
             elif kind == "token":
                 if len(fields) != 2:
                     raise ManifestError(
@@ -213,6 +233,23 @@ class Grammar:
                 )
         if not self.token_class:
             raise ManifestError(f"{path.name} declares no tokens")
+        for name, cls in sorted(self.token_class.items()):
+            if not re.fullmatch(r"[a-z][a-z0-9-]*|-", name):
+                raise ManifestError(
+                    f"{self.say('grammar-token-name', 'token name must be lowercase')}: {name}"
+                )
+            del cls
+        for cls, limits in sorted(self.counts.items()):
+            count = sum(1 for c in self.token_class.values() if c == cls)
+            low = limits.get("min", 0)
+            high = limits.get("max")
+            if count < low or (high is not None and count > high):
+                raise ManifestError(
+                    f"{self.say('grammar-class-count', 'wrong number of tokens in a class')}"
+                    f": {cls}: {count} (min {low}"
+                    + (f", max {high}" if high is not None else "")
+                    + ")"
+                )
 
     def say(self, key: str, fallback: str) -> str:
         """A shared diagnostic by key. The fallback keeps a grammar that is
