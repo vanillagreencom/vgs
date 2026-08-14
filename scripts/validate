@@ -106,6 +106,31 @@ cd "$repo_root" || exit 1
 #       also eats Unicode whitespace; ASCII-only in both readers is what stops
 #       a non-breaking space normalising away for one and not the other.
 #
+# ─── and the AREA DECLARATION, one level up ────────────────────────────────
+#
+# `all` being silently droppable by a reader was the FIFTH hole in this file,
+# after the empty tag field, the trailing comma, the malformed command and the
+# modifier-only row. Same lesson: the rule was real but unwritten, so it was a
+# bug to discover rather than a rule to check. So it is written here too.
+#
+# TWO VOCABULARIES, and they are NOT the same set — overloading one word for
+# both is what let `all` fall through the gap between them:
+#
+#   AREAS      := scope { scope } "all"    # the declaration; order immaterial
+#   scope      := "go" | "qml" | "helper" | "packaging" | "docs"
+#   argument   := scope | "all"            # what `scripts/validate X` accepts
+#
+#   A1  AREAS declares `all`. It is the runner's DEFAULT, so with `all`
+#       deleted a bare `scripts/validate` fails as an unknown area.
+#   A2  every name in AREAS is a lowercase token and appears exactly once.
+#   A3  `all` is an ARGUMENT and never a row TAG (C3 above). Readers therefore
+#       expose the DECLARATION and the tag-usable SCOPES separately; a consumer
+#       that rebuilds one from the other cannot see a deletion in it, which is
+#       precisely how A1 went unchecked.
+#   A4  every scope is carried by at least one manifest row, or the argument
+#       selects nothing of its own.
+#   A5  the prose surfaces enumerate exactly the ARGUMENTS.
+#
 # NOT expressible here, and so not claimed: that a command names a program
 # that exists and does what the row says. scripts/check-validation-inventory.py
 # covers the `scripts/` part of that; the rest is only proven by running it.

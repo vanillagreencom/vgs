@@ -143,6 +143,18 @@ def _check_shell_syntax(command: str, line: str) -> None:
         )
 
 
+def runner_area_declaration(runner: Path) -> list[str]:
+    """The runner's AREAS array as declared, in order, duplicates intact.
+
+    A set would hide A2's duplicate case, and the ordered list is what lets the
+    guard quote the declaration back when it rejects one.
+    """
+    match = re.search(r"^AREAS=\(([^)]*)\)", runner.read_text(encoding="utf-8"), re.MULTILINE)
+    if not match:
+        raise ManifestError("scripts/validate has no AREAS=( ... ) list")
+    return match.group(1).split()
+
+
 def runner_declared_areas(runner: Path) -> set[str]:
     """Every name in the runner's AREAS array, exactly as declared.
 
@@ -152,10 +164,7 @@ def runner_declared_areas(runner: Path) -> set[str]:
     a bare `scripts/validate` would then fail as an unknown area with nothing
     saying why.
     """
-    match = re.search(r"^AREAS=\(([^)]*)\)", runner.read_text(encoding="utf-8"), re.MULTILINE)
-    if not match:
-        raise ManifestError("scripts/validate has no AREAS=( ... ) list")
-    return set(match.group(1).split())
+    return set(runner_area_declaration(runner))
 
 
 def runner_areas(runner: Path) -> set[str]:

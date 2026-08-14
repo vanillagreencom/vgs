@@ -209,6 +209,6 @@ scripts/test-pill-hover-safety.js	420
 scripts/test-remote-desktop-state.js	1243
 scripts/test-toast-actions.js	607
 scripts/test-validate.sh	441
-scripts/test-validation-inventory.sh	478
-scripts/validate	467
+scripts/test-validation-inventory.sh	486
+scripts/validate	492
 vstack.toml	479

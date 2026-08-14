@@ -298,11 +298,11 @@ nested_unavailable() {
   local nest_remedy=""
   if [[ "$cause" == no-host-socket && -z "${WAYLAND_DISPLAY:-}" ]]; then
     nest_remedy="qml-smoke:   4. point the sandbox at the session's own socket (it keeps its own runtime
-qml-smoke:      dir, HOME and bus, so the live session is untouched). Derive the
-qml-smoke:      socket name — it is session-dependent, not always wayland-1:
-qml-smoke:        export XDG_RUNTIME_DIR=\"/run/user/\$(id -u)\"
-qml-smoke:        export WAYLAND_DISPLAY=\"\$(basename \"\$(ls \"\$XDG_RUNTIME_DIR\"/wayland-[0-9] | head -1)\")\"
-qml-smoke:        scripts/validate qml"
+qml-smoke:      dir, HOME and bus, so the live session is untouched). Use the value
+qml-smoke:      a session shell reports for WAYLAND_DISPLAY — the basename is
+qml-smoke:      session-dependent, so this cannot name it for you (VGS-70 will make
+qml-smoke:      --nested discover it):
+qml-smoke:        WAYLAND_DISPLAY=<session value> XDG_RUNTIME_DIR=/run/user/\$(id -u) scripts/validate qml"
   fi
   cat >&2 <<EOF
 qml-smoke: a runtime check must run inside its own compositor. Safe options:

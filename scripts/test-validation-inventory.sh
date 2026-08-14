@@ -45,7 +45,7 @@ ARM_MESSAGES=(
   "is not executable" "never acts on it outside that array"
   "enumerates the validate areas but omits" "no longer states the validate area list"
   "invalid shell syntax" "has no table introduced by"
-  "no longer declares"
+  "no longer declares" "is not a lowercase area token" "grammar A2"
 )
 
 # PyYAML is a PREREQUISITE of one arm, not of this file. Without it the guard
@@ -313,12 +313,20 @@ MUT
 )" \
   "invalid shell syntax"
 
-# `all` is the runner's DEFAULT area and is forbidden as a row tag (C3), so it
-# is asserted on its own. The prose comparison used to re-add it, which made
-# deleting it from AREAS invisible while a bare `scripts/validate` broke.
-guard_case "deleting all from AREAS is reported" \
-  "${real_runner/AREAS=(go qml helper packaging docs all)/AREAS=(go qml helper packaging docs)}" \
-  "no longer declares \`all\`"
+# THE AREA DECLARATION GRAMMAR (A1, A2 in scripts/validate's header). One case
+# per thing that grammar forbids, derived from the rule rather than from the one
+# bug that exposed it — `all` being droppable was the fifth unwritten-rule hole
+# in this change, which is the argument for writing the rule down and deriving
+# from it. A4 (a scope with no rows) and A5 (the prose surfaces) are covered by
+# their own cases below.
+while IFS=';' read -r label declared expect; do
+  [[ -n "$label" ]] || continue
+  guard_case "$label" "${real_runner/AREAS=(go qml helper packaging docs all)/$declared}" "$expect"
+done <<'SHAPES'
+A1 deleting all from AREAS is reported;AREAS=(go qml helper packaging docs);no longer declares `all`
+A2 a non-token area name is reported;AREAS=(go Qml helper packaging docs all);is not a lowercase area token
+A2 a duplicated area name is reported;AREAS=(go go qml helper packaging docs all);times (grammar A2
+SHAPES
 
 guard_case "a missing AREAS list is reported" \
   "${real_runner/AREAS=(go qml helper packaging docs all)/AREA_NAMES=(go qml helper packaging docs all)}" \

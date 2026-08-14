@@ -23,6 +23,7 @@ with it, to `.github/instructions/validation-scripts.instructions.md`.
 from __future__ import annotations
 
 import os
+import re
 import shlex
 import sys
 from pathlib import Path
@@ -35,6 +36,7 @@ from validation_manifest import (  # noqa: E402
     manifest_rows,
     prose_areas,
     runner_areas,
+    runner_area_declaration,
     runner_declared_areas,
     runner_logic,
     runner_tag_attributes,
@@ -109,6 +111,20 @@ def executable_checks() -> list[str]:
     )
 
 
+def report(problems: list[str]) -> int:
+    """Print every problem found and return the exit status."""
+    if problems:
+        print("check-validation-inventory: FAIL", file=sys.stderr)
+        for problem in problems:
+            print(f"  - {problem}", file=sys.stderr)
+        return 1
+    print(
+        f"check-validation-inventory: ok ({len(executable_checks())} executable checks, "
+        f"{len(manifest_rows(RUNNER))} documented commands)"
+    )
+    return 0
+
+
 def main() -> int:
     problems: list[str] = []
 
@@ -123,39 +139,51 @@ def main() -> int:
             "(git update-index --chmod=+x scripts/validate)"
         )
 
-    rows = manifest_rows(RUNNER)
+    # CHECKED BEFORE THE MANIFEST IS PARSED, because the tag grammar is BUILT
+    # from this declaration: a bad name in AREAS makes every row carrying the
+    # correct spelling fail the grammar, so the manifest arm would answer first
+    # and blame the rows for a defect in the declaration.
+    declaration = runner_area_declaration(RUNNER)
+    declared_areas = runner_declared_areas(RUNNER)
+    areas = runner_areas(RUNNER)
+    # --- the AREA DECLARATION grammar (A1, A2) --------------------------------
+    # Derived from the rule in scripts/validate's header, not from the one bug
+    # that exposed it. A1 was the fifth unwritten-rule hole in this change:
+    # `all` is the runner's DEFAULT, so deleting it from AREAS makes a bare
+    # `scripts/validate` fail as an unknown area — and the prose comparison used
+    # to re-add it, which made exactly that deletion invisible here.
+    if "all" not in declaration:
+        problems.append(
+            "scripts/validate's AREAS no longer declares `all` (grammar A1), but the "
+            "runner defaults to it, so a bare `scripts/validate` would fail as an "
+            "unknown area"
+        )
+    for name in declaration:
+        if not re.fullmatch(r"[a-z][a-z0-9-]*", name):
+            problems.append(
+                f"scripts/validate's AREAS declares `{name}`, which is not a lowercase "
+                f"area token (grammar A2)"
+            )
+    for name in sorted(set(declaration)):
+        if declaration.count(name) > 1:
+            problems.append(
+                f"scripts/validate's AREAS declares `{name}` {declaration.count(name)} "
+                f"times (grammar A2: each name appears exactly once)"
+            )
+    # AN UNPARSEABLE MANIFEST IS A PROBLEM TOO, not an abort that discards what
+    # the declaration arms already found. A bad name in AREAS makes every row
+    # with the CORRECT spelling fail the tag grammar, so raising here reported
+    # the rows and swallowed the declaration finding that explains them — the
+    # same "answers something other than what it claims" shape as the PyYAML
+    # prerequisite, one level over.
+    try:
+        rows = manifest_rows(RUNNER)
+    except ManifestError as error:
+        problems.append(str(error))
+        return report(problems)
     commands = [command for _, command in rows]
     documented = "\n".join(commands)
-    # A PREREQUISITE IS A PROBLEM, NOT AN ABORT. This raised straight out of
-    # main, so on a python3 without PyYAML every OTHER arm — area, prose,
-    # tag-wiring, tables — was replaced by the prerequisite message, and the
-    # harness that drives fixtures through this function reported ten failures
-    # that were not its fixtures' verdicts, including a false claim that the
-    # real tree does not pass. Collected here instead: the CI comparison is
-    # genuinely impossible, so it FAILS loudly, and every arm that does not
-    # need ci_text still reports its own answer.
-    ci_text: str | None = None
-    try:
-        ci_text = ci_run_commands(CI)
-    except ManifestError as error:
-        problems.append(f"CI coverage was NOT checked: {error}")
 
-    # A per-tag vocabulary loop used to live here. It is gone, not relaxed:
-    # manifest_rows now validates the whole tag field against the same grammar
-    # scripts/validate applies, and raises before returning a row, so this loop
-    # could never have fired. An unreachable check is coverage that does not
-    # exist — the thing this file exists to report.
-    areas = runner_areas(RUNNER)
-    declared_areas = runner_declared_areas(RUNNER)
-    # `all` is asserted on its own rather than assumed. It is the runner's
-    # DEFAULT area, so deleting it from AREAS makes a bare `scripts/validate`
-    # fail as an unknown area — and the prose comparison used to re-add it,
-    # which made exactly that deletion invisible here.
-    if "all" not in declared_areas:
-        problems.append(
-            "scripts/validate's AREAS no longer declares `all`, but the runner "
-            "defaults to it, so a bare `scripts/validate` would fail as an unknown area"
-        )
     attributes = runner_tag_attributes(RUNNER)
     # An attribute the guard accepts but the runner never acts on is worse than
     # an unknown tag: rows carrying it pass here and then behave like `-`. The
@@ -180,6 +208,26 @@ def main() -> int:
                 f"with it, so `scripts/validate {area}` would run only the `always` rows"
             )
 
+    # A PREREQUISITE IS A PROBLEM, NOT AN ABORT. This raised straight out of
+    # main, so on a python3 without PyYAML every OTHER arm — area, prose,
+    # tag-wiring, tables — was replaced by the prerequisite message, and the
+    # harness that drives fixtures through this function reported ten failures
+    # that were not its fixtures' verdicts, including a false claim that the
+    # real tree does not pass. Collected here instead: the CI comparison is
+    # genuinely impossible, so it FAILS loudly, and every arm that does not
+    # need ci_text still reports its own answer.
+    ci_text: str | None = None
+    try:
+        ci_text = ci_run_commands(CI)
+    except ManifestError as error:
+        problems.append(f"CI coverage was NOT checked: {error}")
+
+    # A per-tag vocabulary loop used to live here. It is gone, not relaxed:
+    # manifest_rows now validates the whole tag field against the same grammar
+    # scripts/validate applies, and raises before returning a row, so this loop
+    # could never have fired. An unreachable check is coverage that does not
+    # exist — the thing this file exists to report.
+    areas = runner_areas(RUNNER)
     # --- the prose copies of the area list must match the runner ------------
     # Both docs enumerate the areas: a second copy of something the runner
     # defines, i.e. the drift axis this check exists to close. So: compared.
@@ -304,17 +352,7 @@ def main() -> int:
         if not (SCRIPTS / name).is_file():
             problems.append(f"scripts/{name} is excluded here but no longer exists; drop the entry")
 
-    if problems:
-        print("check-validation-inventory: FAIL", file=sys.stderr)
-        for problem in problems:
-            print(f"  - {problem}", file=sys.stderr)
-        return 1
-
-    print(
-        f"check-validation-inventory: ok ({len(executable_checks())} executable checks, "
-        f"{len(commands)} documented commands)"
-    )
-    return 0
+    return report(problems)
 
 
 if __name__ == "__main__":
