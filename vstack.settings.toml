@@ -363,3 +363,16 @@ REVIEW_GATE_CARRY_FORWARD_EXCLUDE_PROPHYLACTIC = ""
 # every merge gate is green; "ask" presents the merge decision.
 # MERGE_READY = false never auto-merges.
 ORCH_MERGE_AUTONOMY = "auto"
+
+# Used by: orch (`lanes`, `open-terminal --lane`). Optional alias overlay for
+# multi-account machines: comma-separated `<config-dir-name>=<alias>` pairs
+# giving discovered lanes meaningful names, usable as `--lane <alias>`. The
+# lane INVENTORY is always discovered (~/.claude plus any ~/.*claude* dir, and
+# ~/.codex), so adding an account needs no edit here — this only renames what
+# discovery already found. ORCH_LANE_DIRS (colon-separated) covers a layout
+# discovery cannot reach.
+# ORCH_LANE_ALIASES = "eclaude=work,mclaude=overflow"
+
+# Used by: orch (`oversee`). Max concurrent lanes the overseer keeps in
+# flight.
+ORCH_OVERSEER_LANES = "3"
