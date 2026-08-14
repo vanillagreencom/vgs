@@ -17,7 +17,10 @@ Pinned, over the QML and JS under `quickshell/vshell/` and `config/vshell/`
      resolver itself, `PasteTarget.js`, which is where the argv shapes live. The
      keystroke depends on the target, so a literal one is wrong everywhere else.
      `["sh", "-c", "command -v wtype"]` is a probe for the binary, not an
-     invocation, and does not match.
+     invocation, and does not match. Only an argv that is CODE counts: the same
+     characters inside a log message name an argv rather than building one, and
+     a rule that cried wolf over prose would be turned off, costing the real
+     coverage. Inside a template interpolation is code, and is caught.
   2. One injector. Only PasteService may call the resolver's command function:
      another caller is a second injector, which is how the original Ctrl+V bug
      came to exist in two places at once. Reading the resolver for anything else
@@ -37,11 +40,27 @@ Pinned, over the QML and JS under `quickshell/vshell/` and `config/vshell/`
      start. Same function means the function ITSELF: a read or a start inside a
      callback nested in it runs on the callback's terms and does not count. Quickshell ignores a command change on a live Process, so the reverse
      order runs the previous injection's argv.
-  4. The sticky fallback empties when its window closes — a liveness test in the
-     declaration — and is actually maintained: every assignment to the private
-     reference the declaration reads sits INSIDE the statement an activeToplevel
-     test controls (its braced body, or the single statement of a braceless
-     form), not merely after such a test in the text.
+  4. Both supported compositors resolve a target, and the sticky fallback
+     empties when its window closes. `focusedAppId` and `lastFocusedAppId` each
+     branch on `isNiri`, so neither compositor can inherit the other's
+     mechanism: Hyprland reads the seat's active toplevel and gates the fallback
+     on membership in `ToplevelManager.toplevels`, while Niri reads its own
+     IPC-maintained `NiriService.windows[].is_focused` and gates the fallback by
+     resolving the remembered id through that same live list. Niri does not
+     populate the active toplevel the way Hyprland does, so an unbranched
+     toplevel read leaves every Niri paste falling back to Ctrl+V — the original
+     bug, on a supported platform. Each fallback is also actually maintained:
+     every assignment to the private reference its branch reads sits INSIDE the
+     statement a focus test controls (its braced body, or the single statement
+     of a braceless form), not merely after such a test in the text — an
+     activeToplevel test for Hyprland, and for Niri a test that is exactly the
+     object the remembered value is read from, so recording cannot happen when
+     nothing is focused.
+
+     A declaration is read as its line plus the following more-indented lines,
+     QML's continuation style; a blank line or a dedent ends it. Its branches
+     are split at the first conditional at paren depth zero, so a nested
+     conditional inside either branch stays with that branch.
   5. The launcher does not paste after a failed copy: its exit handler returns
      from inside a branch whose whole test is the non-zero exit-code comparison,
      and that branch closes before the paste. Branch and paste must both belong
@@ -61,8 +80,8 @@ lives in `scripts/lib/qml_source.py`; the rules themselves are here.
 
 Deliberately NOT pinned:
 
-  - String literals are not neutralized for rule 1 (it needs their contents), so
-    a wtype argv assembled from string fragments would pass it.
+  - A wtype argv assembled from string fragments passes rule 1: the pattern
+    matches a literal array, and concatenation is not one.
   - Object identity between the assignment and the start in rule 3: the check
     proves an argv assignment precedes a `.running = true` in the same function,
     not that both name the same Process.
@@ -136,12 +155,22 @@ RUNNING_TRUE_RE = re.compile(r"\.running\s*=\s*true")
 
 FOCUS_PROPERTIES = ("focusedAppId", "lastFocusedAppId")
 LIVENESS_RE = re.compile(r"ToplevelManager\.toplevels")
+# Niri's live window list. Both Niri branches read it: the live one for the
+# window carrying focus, the fallback to resolve the remembered id — and that
+# resolution IS the liveness gate, since the list drops a window when it closes.
+NIRI_WINDOWS_RE = re.compile(r"NiriService\.windows\b")
+NIRI_FOCUS_FLAG_RE = re.compile(r"\bis_focused\b")
+COMPOSITOR_BRANCH_RE = re.compile(r"(?<![\w.])(?:\w+\s*\.\s*)*isNiri\b")
 PRIVATE_MEMBER_RE = re.compile(r"\b_[A-Za-z][A-Za-z0-9_]*\b")
 # Polarity matters, in both directions: a test on the ABSENCE of an active
 # toplevel guards the wrong way, and a guard that returns when the copy SUCCEEDED
 # pastes only after failures, which is the bug inverted rather than fixed.
 ACTIVE_TOPLEVEL_TEST_RE = re.compile(r"(?<![\w.])(?:\w+\s*\.\s*)*activeToplevel\b")
 NEGATED_ACTIVE_TOPLEVEL_RE = re.compile(r"!\s*(?:\w+\s*\.\s*)*activeToplevel\b")
+# The remembered value's source object, e.g. `focused` in `_id = focused.id`.
+# The Niri guard tests that object for existence, so the check has to know which
+# object the assignment read before it can ask whether it was tested.
+ASSIGNED_FROM_RE = re.compile(r"=(?!=)\s*([A-Za-z_$][A-Za-z0-9_$]*)")
 # The WHOLE test, anchored: `exitCode !== 0 && false` is a non-zero comparison
 # that never holds, and satisfied a substring match while pasting on failure.
 NONZERO_EXIT_TEST_RE = re.compile(r"^\s*\(*\s*(?:\w+\s*\.\s*)*exitCode\s*!==?\s*0\s*\)*\s*$")
@@ -179,10 +208,55 @@ def read_live_with_strings(rel_path: str) -> str | None:
     return live_code(path.read_text())
 
 
+def literal_argv_is_code(source: str, blanked: str, at: int) -> bool:
+    """Whether the argv literal matched at `at` is code rather than prose.
+
+    The pattern has to read the view where string contents survive: an argv
+    literal IS a pair of strings, so blanking them would hide the very thing
+    rule 1 looks for. That view alone cannot tell `["wtype", ...]` written as
+    code from the same characters inside a log message, which is a
+    merge-blocking false positive on a valid edit. The literal's own bracket
+    settles it — the two views keep the same offsets, so a bracket still
+    present in the blanked view opened a real array, and one blanked away sat
+    inside a string body. An interpolation is code in both views, so an argv
+    built inside `${...}` is caught rather than excused as text.
+    """
+    return blanked[at] == "["
+
+
+# Controls for that discriminator, checked on every run: an instrument that
+# stopped separating these would report the whole tree clean while a hard-coded
+# keystroke sat in it. The interpolation row is the one that regressed silently
+# before `live_code` read interpolations as code.
+DISCRIMINATOR_CONTROLS = [
+    ("an argv assignment", 'proc.command = ["wtype", "-", "--"];\n', True),
+    ("an argv inside a template interpolation", 'run(`${["wtype", "-"].join(" ")}`);\n', True),
+    ("prose naming an argv in a string", "log('argv is [\"wtype\", \"-\"] here');\n", False),
+    ("prose naming an argv in a template", 'log(`argv is ["wtype", "-"] here`);\n', False),
+]
+
+
+def check_argv_discriminator() -> bool:
+    for label, fixture, expected in DISCRIMINATOR_CONTROLS:
+        blanked = live_code(fixture, blank_strings=True)
+        found = any(
+            literal_argv_is_code(fixture, blanked, match.start())
+            for match in LITERAL_ARGV_RE.finditer(live_code(fixture))
+        )
+        if found != expected:
+            verdict = "as an argv" if found else "as prose"
+            return fail(f"rule 1's code-versus-prose test reads {label} {verdict}")
+    print("check-paste-injection: rule 1 separates an argv that is code from prose naming one")
+    return True
+
+
 def check_no_literal_argv(files: list[tuple[str, str, str]]) -> bool:
     offenders = [
-        rel_path for rel_path, source, _ in files
-        if rel_path != RESOLVER_LIB and LITERAL_ARGV_RE.search(source)
+        rel_path for rel_path, source, blanked in files
+        if rel_path != RESOLVER_LIB and any(
+            literal_argv_is_code(source, blanked, match.start())
+            for match in LITERAL_ARGV_RE.finditer(source)
+        )
     ]
     if offenders:
         return fail(
@@ -272,63 +346,209 @@ def check_argv_assignment(source: str, call: re.Match) -> bool:
     return True
 
 
+def declaration_binding(source: str, name: str) -> str | None:
+    """The binding expression of `name`, across QML's continuation lines.
+
+    A binding routinely spans lines, and reading only the declaration's own line
+    would let the whole Niri branch sit unexamined one line below every rule
+    here. Continuation is indentation: the lines that follow and are indented
+    further belong to the declaration, and a blank line or a dedent ends it.
+    """
+    declaration = re.search(
+        r"^([ \t]*)(?:readonly[ \t]+)?property[ \t]+string[ \t]+" + name + r"\b[ \t]*:(.*)$",
+        source,
+        re.MULTILINE,
+    )
+    if not declaration:
+        return None
+    indent = len(declaration.group(1).expandtabs())
+    parts = [declaration.group(2)]
+    for line in source[declaration.end():].split("\n")[1:]:
+        if not line.strip():
+            break
+        if len(line.expandtabs()) - len(line.expandtabs().lstrip()) <= indent:
+            break
+        parts.append(line)
+    return "\n".join(parts)
+
+
+def conditional_branches(expression: str) -> tuple[str, str] | None:
+    """(then, else) of the first conditional at paren depth zero, or None.
+
+    Depth zero is what makes the split mean "the compositor branch": a nested
+    conditional lives inside one of the two branches and must stay there rather
+    than becoming the split point. `??` and `?.` are not conditionals.
+    """
+    depth = 0
+    question = None
+    index = 0
+    while index < len(expression):
+        char = expression[index]
+        if char in "([{":
+            depth += 1
+        elif char in ")]}":
+            depth -= 1
+        elif char == "?" and depth == 0:
+            if expression[index + 1:index + 2] in ("?", "."):
+                index += 2
+                continue
+            question = index
+            break
+        index += 1
+    if question is None:
+        return None
+
+    depth = 0
+    nested = 0
+    index = question + 1
+    while index < len(expression):
+        char = expression[index]
+        if char in "([{":
+            depth += 1
+        elif char in ")]}":
+            depth -= 1
+        elif depth == 0 and char == "?":
+            if expression[index + 1:index + 2] in ("?", "."):
+                index += 2
+                continue
+            nested += 1
+        elif depth == 0 and char == ":":
+            if nested:
+                nested -= 1
+            else:
+                return expression[question + 1:index], expression[index + 1:]
+        index += 1
+    return None
+
+
+def focus_branches(source: str, name: str) -> tuple[str, str] | None:
+    """(Niri branch, Hyprland branch) of a focus property's binding."""
+    binding = declaration_binding(source, name)
+    if binding is None:
+        fail(f"{FOCUS_SOURCE} does not declare: {name}")
+        return None
+    if not COMPOSITOR_BRANCH_RE.search(binding):
+        fail(
+            f"{FOCUS_SOURCE} resolves {name} without branching on isNiri, so both compositors get the "
+            "Hyprland mechanism — Niri does not populate the active toplevel the same way, so its "
+            "windows resolve to no target and every Niri paste falls back to Ctrl+V"
+        )
+        return None
+    branches = conditional_branches(binding)
+    if branches is None:
+        fail(
+            f"{FOCUS_SOURCE} names isNiri in {name} but resolves it through no conditional, so the "
+            "branch cannot be read as a per-compositor path"
+        )
+        return None
+    return branches
+
+
+def check_remembered(source: str, branch: str, arm: str, guarded_regions: list[tuple[int, int]],
+                     complaint: str) -> bool:
+    """The private reference an arm of lastFocusedAppId reads, and its upkeep.
+
+    A declaration alone leaves the fallback permanently empty, which silently
+    collapses target resolution back to the live value and its restore race.
+    """
+    remembered = sorted(set(PRIVATE_MEMBER_RE.findall(branch)))
+    if not remembered:
+        return fail(
+            f"{FOCUS_SOURCE} derives the {arm} lastFocusedAppId from no private reference, so nothing "
+            "can maintain it"
+        )
+    assignments = {
+        name: list(re.finditer(r"\b(?:\w+\.)?" + name + r"\s*=(?!=)", source))
+        for name in remembered
+    }
+    if not any(assignments.values()):
+        return fail(
+            f"{FOCUS_SOURCE} never assigns {', '.join(remembered)}, so the {arm} lastFocusedAppId stays "
+            "empty and the sticky fallback does nothing there"
+        )
+    # Every assignment, and containment rather than order: a focus test that
+    # merely precedes the assignment guards nothing — moving the assignment below
+    # the branch, or leaving an unrelated test above it, overwrites the remembered
+    # window with nothing, and one such assignment is enough.
+    for name, matches in assignments.items():
+        for match in matches:
+            if not any(start <= match.start() < end for start, end in guarded_regions):
+                return fail(f"{FOCUS_SOURCE} assigns {name} {complaint}")
+    return True
+
+
+def niri_guarded_regions(source: str) -> list[tuple[int, int]]:
+    """Regions where a Niri remembered id may be assigned.
+
+    Niri has no activeToplevel to test, so the guard is the object the value is
+    read from: `if (focused) _id = focused.id`. Requiring the test to BE that
+    identifier is what rules out recording when nothing holds focus — the case
+    that would overwrite a live fallback with an id from an empty list.
+    """
+    regions = []
+    for test, start, end in if_regions(source):
+        subject = test.strip().strip("()").strip()
+        if not re.fullmatch(r"[A-Za-z_$][A-Za-z0-9_$]*", subject):
+            continue
+        for assigned in ASSIGNED_FROM_RE.finditer(source, start, end):
+            if assigned.group(1) == subject:
+                regions.append((start, end))
+                break
+    return regions
+
+
 def check_focus_source() -> bool:
     source = read_live(FOCUS_SOURCE)
     if source is None:
         return False
 
-    declarations = {
-        name: re.search(
-            r"^[ \t]*(?:readonly[ \t]+)?property[ \t]+string[ \t]+" + name + r"\b.*$", source, re.MULTILINE
-        )
-        for name in FOCUS_PROPERTIES
-    }
-    missing = [name for name, match in declarations.items() if not match]
-    if missing:
-        return fail(f"{FOCUS_SOURCE} does not declare: " + ", ".join(missing))
+    live = focus_branches(source, "focusedAppId")
+    sticky = focus_branches(source, "lastFocusedAppId")
+    if live is None or sticky is None:
+        return False
+    live_niri, live_hyprland = live
+    sticky_niri, sticky_hyprland = sticky
 
-    sticky = declarations["lastFocusedAppId"].group(0)
-    if not LIVENESS_RE.search(sticky):
+    if not ACTIVE_TOPLEVEL_TEST_RE.search(live_hyprland):
         return fail(
-            f"{FOCUS_SOURCE} declares lastFocusedAppId without testing the remembered window against "
-            "ToplevelManager.toplevels, so it would keep naming a window after it closed"
+            f"{FOCUS_SOURCE} resolves the Hyprland focusedAppId from something other than the seat's "
+            "active toplevel"
+        )
+    if not (NIRI_WINDOWS_RE.search(live_niri) and NIRI_FOCUS_FLAG_RE.search(live_niri)):
+        return fail(
+            f"{FOCUS_SOURCE} resolves the Niri focusedAppId from something other than the focused "
+            "window in NiriService.windows, which is where Niri's focus state actually lives"
         )
 
-    # A declaration alone leaves the fallback permanently empty, which silently
-    # collapses target resolution back to the live value and its restore race.
-    remembered = set(PRIVATE_MEMBER_RE.findall(sticky))
-    if not remembered:
+    if not LIVENESS_RE.search(sticky_hyprland):
         return fail(
-            f"{FOCUS_SOURCE} derives lastFocusedAppId from no private reference, so nothing can "
-            "maintain it"
+            f"{FOCUS_SOURCE} declares the Hyprland lastFocusedAppId without testing the remembered "
+            "window against ToplevelManager.toplevels, so it would keep naming a window after it closed"
         )
-    assignments = {
-        name: list(re.finditer(r"\b(?:\w+\.)?" + name + r"\s*=(?!=)", source))
-        for name in sorted(remembered)
-    }
-    if not any(assignments.values()):
+    if not NIRI_WINDOWS_RE.search(sticky_niri):
         return fail(
-            f"{FOCUS_SOURCE} never assigns {', '.join(sorted(remembered))}, so lastFocusedAppId stays "
-            "empty and the sticky fallback does nothing"
+            f"{FOCUS_SOURCE} declares the Niri lastFocusedAppId without resolving the remembered window "
+            "through NiriService.windows, so it would keep naming a window after it closed"
         )
-    # Every assignment, and containment rather than order: an activeToplevel test
-    # that merely precedes the assignment guards nothing — moving the assignment
-    # below the branch, or leaving an unrelated test above it, overwrites the
-    # remembered window with nothing, and one such assignment is enough.
-    guarded_regions = [
+
+    hyprland_regions = [
         (start, end) for test, start, end in if_regions(source)
         if ACTIVE_TOPLEVEL_TEST_RE.search(test) and not NEGATED_ACTIVE_TOPLEVEL_RE.search(test)
     ]
-    for name, matches in assignments.items():
-        for match in matches:
-            if not any(start <= match.start() < end for start, end in guarded_regions):
-                return fail(
-                    f"{FOCUS_SOURCE} assigns {name} outside the branch any activeToplevel test "
-                    "controls, so the remembered window would be overwritten with nothing every time "
-                    "focus leaves a toplevel"
-                )
+    if not check_remembered(
+        source, sticky_hyprland, "Hyprland", hyprland_regions,
+        "outside the branch any activeToplevel test controls, so the remembered window would be "
+        "overwritten with nothing every time focus leaves a toplevel",
+    ):
+        return False
+    if not check_remembered(
+        source, sticky_niri, "Niri", niri_guarded_regions(source),
+        "outside a branch testing the very object it is read from, so the remembered window would be "
+        "overwritten with nothing every time Niri reports no focused window",
+    ):
+        return False
 
-    print(f"check-paste-injection: {FOCUS_SOURCE} publishes a liveness-gated lastFocusedAppId and maintains it")
+    print(f"check-paste-injection: {FOCUS_SOURCE} resolves focus per compositor and gates both fallbacks on liveness")
     return True
 
 
@@ -405,6 +625,10 @@ def main() -> int:
             "the scan matched no files under " + ", ".join(SCAN_ROOTS)
             + " — a moved tree would make every rule below pass on nothing"
         ) or 1
+    # Before rule 1's verdict means anything, its instrument has to still
+    # discriminate — so this one short-circuits, like the empty-scan guard.
+    if not check_argv_discriminator():
+        return 1
 
     # Deliberately not short-circuiting: report every violation in one run.
     results = [
