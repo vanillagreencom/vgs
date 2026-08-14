@@ -23,7 +23,16 @@
 // A terminal whose name is too generic to segment-match therefore needs its
 // reverse-DNS id spelled out in full in the first list — org.gnome.Terminal and
 // page.codeberg.dnkl.foot end in "terminal" and "foot", which nobody else may
-// claim by suffix.
+// claim by suffix. Every <vendor>-terminal name in the second list is covered
+// that way: gnome, xfce, deepin and mate.
+//
+// Those vendor ids are inferred from packaging metadata — desktop files,
+// AppStream ids, Flathub — not confirmed against a running session, which is
+// also why they are exact whole-id entries: a wrong one matches nothing and
+// costs nothing, while a wrong segment would claim other vendors' apps. On the
+// same evidence and by the same rule, Hyper is deliberately absent: no id of
+// that shape could be found for it at all, and co.zeit.hyper is a package name
+// rather than an app id, so listing it would assert something unevidenced.
 var TERMINAL_APP_IDS = [
     "blackbox",
     "com.raggesilver.blackbox",
@@ -37,8 +46,10 @@ var TERMINAL_APP_IDS = [
     "io.elementary.terminal",
     "kgx",
     "org.contourterminal.contour",
+    "org.deepin.terminal",
     "org.gnome.console",
     "org.gnome.terminal",
+    "org.mate.terminal",
     "org.xfce.terminal",
     "page.codeberg.dnkl.foot",
     "rio",

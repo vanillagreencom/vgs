@@ -28,7 +28,10 @@ Pinned, over the QML and JS under `quickshell/vshell/` and `config/vshell/`
      resolver, and the resolved argv is assigned to the injector's `command`
      property — the call is matched as the right-hand side of that assignment,
      not as a free-standing occurrence, since a call whose result goes nowhere
-     leaves injection broken. Its argument is something other than a literal
+     leaves injection broken. That means the resolved argv has to reach the
+     property in ONE statement: routing it through a local first is behavior the
+     rule cannot tell apart from dropping it, so this arm rejects that too.
+     Its argument is something other than a literal
      string, both the live focused app id and the sticky fallback are read in the
      same function or handler as the assignment, and the assignment precedes the
      start. Quickshell ignores a command change on a live Process, so the reverse

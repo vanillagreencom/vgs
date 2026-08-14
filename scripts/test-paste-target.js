@@ -32,7 +32,7 @@ assert.notDeepEqual(CTRL_V, CTRL_SHIFT_V, "the two paste keystrokes must differ"
 // Terminals: plain app ids, Hyprland's capitalized class, process-name ids,
 // reverse-DNS ids whose terminal name is only in the last segment, and the
 // reverse-DNS ids of terminals whose name is too generic to segment-match.
-for (const appId of ["foot", "kitty", "Alacritty", "org.wezfurlong.wezterm", "com.mitchellh.ghostty", "org.gnome.Console", "org.gnome.Terminal", "org.xfce.Terminal", "page.codeberg.dnkl.foot", "com.rioterm.Rio", "org.contourterminal.Contour", "kitty.desktop", "gnome-terminal-server", "io.elementary.terminal", "com.raggesilver.BlackBox", "dev.warp.warp"]) {
+for (const appId of ["foot", "kitty", "Alacritty", "org.wezfurlong.wezterm", "com.mitchellh.ghostty", "org.gnome.Console", "org.gnome.Terminal", "org.xfce.Terminal", "org.deepin.terminal", "org.mate.Terminal", "page.codeberg.dnkl.foot", "com.rioterm.Rio", "org.contourterminal.Contour", "kitty.desktop", "gnome-terminal-server", "io.elementary.terminal", "com.raggesilver.BlackBox", "dev.warp.warp"]) {
     assert.equal(PasteTarget.isTerminalAppId(appId), true, `${appId} is a terminal`);
     assert.deepEqual(pasteCommand(appId), CTRL_SHIFT_V, `${appId} pastes with Ctrl+Shift+V`);
 }

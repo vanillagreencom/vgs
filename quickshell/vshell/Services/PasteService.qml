@@ -114,6 +114,8 @@ Singleton {
         finishInjection(false);
     }
 
+    // Drops the queued paste for the reason spelled out at the release's exit
+    // handler, and lets a later request through on the same reasoning.
     function reportReleaseFailedToStart() {
         _releaseAwaitingStart = false;
         releaseWatchdogTimer.stop();
@@ -124,15 +126,23 @@ Singleton {
         finishInjection(false);
     }
 
-    // The one completion path: for an injector that exited, for one the watchdog
-    // gave up on, and for a modifier release that finished with a paste recorded
-    // behind it. `replay` is false in the give-up case: the injector is still
-    // alive, so a paste waiting behind it has nothing to run on and is dropped
-    // rather than left pending forever.
-    function finishInjection(replay) {
+    // Takes down the injector's own timers without answering what happens to a
+    // queued paste. An injector that pressed a modifier and died before releasing
+    // it is finished with its watchdogs but not finished as an injection: the
+    // modifier release that follows owns the completion.
+    function stopInjectorWatchdogs() {
         watchdogTimer.stop();
         escalationTimer.stop();
         _terminationAttempts = 0;
+    }
+
+    // The one completion path: for an injector that exited cleanly, for one the
+    // watchdog gave up on, and for a modifier release that finished with a paste
+    // recorded behind it. `replay` is false in the give-up case: the injector is
+    // still alive, so a paste waiting behind it has nothing to run on and is
+    // dropped rather than left pending forever.
+    function finishInjection(replay) {
+        stopInjectorWatchdogs();
         const pending = _pendingPaste;
         _pendingPaste = false;
         if (pending && replay)
@@ -233,6 +243,13 @@ Singleton {
                 // would press the next chord on top of a modifier state VGS
                 // cannot account for, which is the wrong-keystroke outcome this
                 // service exists to prevent.
+                //
+                // A paste the user asks for AFTER this is let through onto that
+                // same seat, and the asymmetry is deliberate: the queued one
+                // would run unattended, while a fresh request is a choice made
+                // with the toast on screen. Refusing those too would disable
+                // paste for the session over a failure that is usually transient,
+                // and VGS has no way to observe the seat to know when to stop.
                 root.log.warn("Releasing the paste modifiers failed - exit", exitCode, "- dropping any queued paste");
                 ToastService.showError(I18n.tr("Paste is unavailable"), I18n.tr("The paste modifiers could not be released"));
                 root.cancelQueuedPaste();
@@ -298,16 +315,26 @@ Singleton {
                 return;
             root.reportInjectorFailedToStart();
         }
+        // Only a clean exit ran the argv to its end, and the argv ends in the
+        // releases that match its presses. Every other way out — terminated by
+        // the watchdog, or exited non-zero partway — may have pressed ctrl or
+        // shift and died before releasing it, so the release runs and the
+        // injection is completed from ITS exit instead: it replays a queued
+        // paste only if the seat came back clean.
         onExited: exitCode => {
             root._injectorAwaitingStart = false;
-            if (root._terminating) {
-                root.log.warn("Paste injector exited after the watchdog terminated it - exit", exitCode);
-                root._helperStuck = false;
-                root.startModifierRelease();
-            } else if (exitCode !== 0) {
-                root.log.warn("Paste keystroke failed for target", root.targetForLog(), "- argv", wtypeProcess.command.join(" "), "- exit", exitCode);
-            }
+            const terminated = root._terminating;
             root._terminating = false;
+            if (terminated || exitCode !== 0) {
+                if (terminated)
+                    root.log.warn("Paste injector exited after the watchdog terminated it - exit", exitCode);
+                else
+                    root.log.warn("Paste keystroke failed for target", root.targetForLog(), "- argv", wtypeProcess.command.join(" "), "- exit", exitCode);
+                root._helperStuck = false;
+                root.stopInjectorWatchdogs();
+                root.startModifierRelease();
+                return;
+            }
             root.finishInjection(true);
         }
     }

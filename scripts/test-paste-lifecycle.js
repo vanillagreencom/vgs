@@ -47,6 +47,17 @@ function extractStatement(text, opener, fromIndex = 0) {
     return statement;
 }
 
+// A Timer's own repeat flag, read from its declaration: the harness must model
+// the timer the shell ships, not one it assumes.
+function declaredRepeat(id) {
+    const at = source.indexOf(`id: ${id}`);
+    assert.notEqual(at, -1, `could not find the ${id} declaration`);
+    const declaration = source.slice(at, source.indexOf("onTriggered:", at));
+    const flag = declaration.match(/\brepeat:\s*(true|false)\b/);
+    assert.ok(flag, `${id} must declare repeat explicitly for the model to follow it`);
+    return flag[1] === "true";
+}
+
 function bodyAfter(text, marker, opener) {
     const at = text.indexOf(marker);
     assert.notEqual(at, -1, `could not find ${marker}`);
@@ -57,6 +68,7 @@ const bodies = {
     injectPaste: extractBlock(source, "function injectPaste()"),
     beginInjection: extractBlock(source, "function beginInjection()"),
     cancelQueuedPaste: extractBlock(source, "function cancelQueuedPaste()"),
+    stopInjectorWatchdogs: extractBlock(source, "function stopInjectorWatchdogs()"),
     finishInjection: extractBlock(source, "function finishInjection(replay)"),
     reportInjectorFailedToStart: extractBlock(source, "function reportInjectorFailedToStart()"),
     reportReleaseFailedToStart: extractBlock(source, "function reportReleaseFailedToStart()"),
@@ -104,9 +116,14 @@ function makeHarness() {
     const toasts = [];
     const warnings = [];
 
-    const makeTimer = () => ({
+    // repeat comes from the QML rather than from a restatement here: a one-shot
+    // clears running when it triggers, so a body that neither restarts nor stops
+    // itself leaves a one-shot DISARMED, and a harness that assumed otherwise
+    // would report every settle as armed and make the replay proofs unfalsifiable.
+    const makeTimer = id => ({
         interval: 0,
         running: false,
+        repeat: declaredRepeat(id),
         restart() { this.running = true; },
         stop() { this.running = false; },
     });
@@ -151,11 +168,11 @@ function makeHarness() {
         _injectorAwaitingStart: false,
         _releaseAwaitingStart: false,
 
-        settleTimer: makeTimer(),
-        watchdogTimer: makeTimer(),
-        escalationTimer: makeTimer(),
-        releaseWatchdogTimer: makeTimer(),
-        releaseEscalationTimer: makeTimer(),
+        settleTimer: makeTimer("settleTimer"),
+        watchdogTimer: makeTimer("watchdogTimer"),
+        escalationTimer: makeTimer("escalationTimer"),
+        releaseWatchdogTimer: makeTimer("releaseWatchdogTimer"),
+        releaseEscalationTimer: makeTimer("releaseEscalationTimer"),
         wtypeProcess: makeProcess(),
         releaseProcess: makeProcess(),
 
@@ -193,13 +210,13 @@ function makeHarness() {
         const timer = root[timerName];
         if (!timer.running)
             return false;
-        timer.running = false;
         const scope = Object.create(root);
         scope.interval = timer.interval;
         scope.stop = () => timer.stop();
-        // A repeating timer is still armed inside its own handler; a one-shot
-        // is not. Both fall out of re-arming and letting the body stop() it.
-        timer.running = true;
+        // What QML leaves behind when the handler runs: a repeating timer is
+        // still armed inside its own handler, a one-shot has already cleared.
+        // Only a restart() in the body re-arms a one-shot.
+        timer.running = timer.repeat;
         compile(bodies[bodyName]).call(scope, scope);
         return true;
     }
@@ -313,6 +330,77 @@ function queuePaste(h) {
     assert.equal(h.root.settleTimer.running, true, "the queued paste must be replayed");
 }
 
+// ---- 4b. a paste queued behind an injector that then fails to start -------
+
+{
+    const h = makeHarness();
+    queuePaste(h);
+    queuePaste(h); // recorded behind the injector, which has not started yet
+    h.root.injectPaste(); // and one more still counting down, not yet recorded
+    assert.equal(h.root._pendingPaste, true, "the second paste is queued");
+    assert.equal(h.root.settleTimer.running, true, "the third is still counting down");
+
+    h.failToStart("injector");
+
+    assert.equal(h.root._pendingPaste, false, "a helper that never started cannot run what queued behind it");
+    assert.equal(h.root.settleTimer.running, false, "and a settle counting down toward it must be stopped, not left to fire");
+}
+
+// ---- 4c. finishInjection(false) never replays -----------------------------
+
+{
+    // The give-up paths reach this with the record already cleared, so without
+    // a direct call the replay argument is indistinguishable from `if (pending)`
+    // and the parameter that exists to stop a minutes-late paste is unpinned.
+    const h = makeHarness();
+    h.root._pendingPaste = true;
+    h.root.finishInjection(false);
+
+    assert.equal(h.root._pendingPaste, false, "the record must be consumed either way");
+    assert.equal(h.root.settleTimer.running, false, "replay false must not arm a settle");
+}
+
+// ---- 4d. a non-zero injector exit goes through the release, not the queue --
+
+{
+    // wtype presses ctrl and shift before it types, so an exit partway through
+    // may leave them held. This is the third site of that family; the queue must
+    // wait for the release rather than run on top of an unaccounted seat.
+    const h = makeHarness();
+    queuePaste(h);
+    h.started("injector");
+    queuePaste(h);
+    assert.equal(h.root._pendingPaste, true, "the second paste is queued behind the injection");
+
+    h.exit("injector", 1); // not terminated: an ordinary failure partway through
+
+    assert.equal(h.root.releaseProcess.running, true, "a partial keystroke must be released");
+    assert.equal(h.root._pendingPaste, true, "the queued paste must survive, owned by the release now");
+    assert.equal(h.root.settleTimer.running, false, "and must not have been replayed already");
+    assert.equal(h.root.watchdogTimer.running, false, "the injector's own watchdog is done with");
+
+    h.exit("release", 0);
+    assert.equal(h.root.settleTimer.running, true, "a clean release then replays it");
+    assert.equal(h.root._pendingPaste, false, "and consumes the record");
+}
+
+// ---- 4e. a non-zero injector exit whose release then fails ----------------
+
+{
+    const h = makeHarness();
+    queuePaste(h);
+    h.started("injector");
+    queuePaste(h);
+    h.exit("injector", 1);
+    h.started("release");
+    h.root.injectPaste(); // a settle counting down as the release fails
+
+    h.exit("release", 1); // the release failed: the seat is unaccounted for
+    assert.equal(h.root._pendingPaste, false, "a failed release must drop the paste it owned");
+    assert.equal(h.root.settleTimer.running, false, "and must not arm a settle for it");
+    assert.match(h.toasts[h.toasts.length - 1], /modifiers could not be released/);
+}
+
 // ---- 5. release give-up: the queue must not outlive it --------------------
 
 {
@@ -339,6 +427,30 @@ function queuePaste(h) {
     // The unkillable release finally exits, minutes later.
     h.exit("release", 0);
     assert.equal(h.root.settleTimer.running, false, "a dropped paste must never be replayed by a late exit");
+}
+
+// ---- 5b. injector give-up: the queue must not outlive it either -----------
+
+{
+    const h = makeHarness();
+    queuePaste(h);
+    h.started("injector");
+    queuePaste(h); // recorded behind a wedged injector
+    h.fire("watchdogTimer", "watchdogTriggered");
+    h.fire("escalationTimer", "escalationTriggered"); // SIGKILL
+    h.root.injectPaste(); // and a settle counting down as it gives up
+    h.fire("escalationTimer", "escalationTriggered"); // survives it: gives up
+
+    assert.equal(h.root._helperStuck, true, "the helper VGS could not stop must be marked");
+    assert.equal(h.root._pendingPaste, false, "a give-up must drop what queued behind it");
+    assert.equal(h.root.settleTimer.running, false, "and stop a settle counting down toward a helper it could not kill");
+
+    // The zombie finally dies: it pressed a chord it never released, so the
+    // release runs — and finds nothing queued to replay.
+    h.exit("injector", 137);
+    assert.equal(h.root.releaseProcess.running, true, "a killed injector's modifiers must still be released");
+    h.exit("release", 0);
+    assert.equal(h.root.settleTimer.running, false, "a dropped paste must never come back");
 }
 
 // ---- 6. a failed modifier release never replays a paste -------------------
@@ -392,9 +504,11 @@ function queuePaste(h) {
     assert.equal(h.root._releaseAwaitingStart, true, "the release start latch must be armed");
 
     const before = h.toasts.length;
+    h.root.injectPaste(); // a settle counting down toward the unaccounted seat
     h.failToStart("release");
 
     assert.ok(h.toasts.length > before, "a release that never starts must reach the user");
+    assert.equal(h.root.settleTimer.running, false, "and must stop a settle counting down toward that seat");
     assert.match(h.toasts[h.toasts.length - 1], /modifiers could not be released/);
     assert.equal(h.root._releaseAwaitingStart, false, "the latch must clear");
     assert.equal(h.root.releaseWatchdogTimer.running, false, "no watchdog may be left armed for it");
