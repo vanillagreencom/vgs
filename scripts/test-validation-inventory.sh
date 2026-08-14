@@ -103,6 +103,7 @@ for var, attr in (
     ("RUNNER_PATH", "RUNNER"),
     ("AGENTS_PATH", "AGENTS"),
     ("TABLES_PATH", "TABLES_DOC"),
+    ("GRAMMAR_PATH", "GRAMMAR"),
 ):
     if os.environ.get(var):
         setattr(mod, attr, pathlib.Path(os.environ[var]))
@@ -132,6 +133,19 @@ GUARD_PY
 expect_refused() {
   expect_contains "$guard_out" "$2" "$1"
   [[ "$guard_rc" -ne 0 ]] || fail "$1" "guard printed the message but exited 0 — it diagnosed without refusing"
+}
+
+# grammar_case <name> <grammar content> <expected fragment> — the vocabulary
+# moved out of the runner's arrays into scripts/lib/validation-grammar.conf, so
+# the cases that used to mutate `AREAS=(...)` and `TAG_ATTRIBUTES=(...)` mutate
+# the definition instead. That is the point of the move: there is one place to
+# mutate, and one place a rule can be wrong.
+grammar_case() {
+  local name="$1" probe="$tmp/probe-grammar.conf"
+  printf '%s' "$2" >"$probe"
+  run_guard "GRAMMAR_PATH=$probe"
+  expect_refused "$name" "$3"
+  ok "$name"
 }
 
 guard_case() {
@@ -189,46 +203,34 @@ PY
 )" \
   "no manifest row is tagged with it"
 
-guard_case "a declared but unwired tag attribute is reported" \
-  "${real_runner/TAG_ATTRIBUTES=(- always may-skip)/TAG_ATTRIBUTES=(- always may-skip nightly)}" \
-  "never acts on it outside that array"
+real_grammar="$(cat "$repo_root/scripts/lib/validation-grammar.conf")"
 
-# Mutating AREAS rather than the docs keeps this inside guard_case's runner-only
-# fixture: adding an area the prose omits is the same drift as deleting one.
-guard_case "an area missing from the prose enumeration is reported" \
-  "${real_runner/AREAS=(go qml helper packaging docs all)/AREAS=(go qml helper packaging docs rust all)}" \
-  "enumerates the validate areas but omits \`rust\`"
+# A token declared in the grammar but never acted on by the runner. Matched as a
+# WHOLE TOKEN: `skip` occurs inside `may-skip`, and a substring test passed it.
+grammar_case "a declared but unwired token is reported" \
+  "$real_grammar
+token nightly    modifier" \
+  "never acts on it"
 
-# THE REALISTIC UNWIRING, and the one the arm used to miss entirely: a token
-# that is declared AND carried by a manifest row, whose branch is gone. Leaving
-# the heredoc in the searched body made the row itself satisfy the test, so
-# deleting the `may-skip` branch outright still looked wired.
-guard_case "a declared tag carried by a manifest row but unwired is reported" \
-  "$(python3 - "$runner" <<'MUT'
-import sys
-t = open(sys.argv[1], encoding="utf-8").read()
-t = t.replace("TAG_ATTRIBUTES=(- always may-skip)", "TAG_ATTRIBUTES=(- always may-skip nightly)")
-t = t.replace("docs      | scripts/check-doc-growth.py",
-              "docs,nightly | scripts/check-doc-growth.py")
-print(t, end="")
-MUT
-)" \
-  "never acts on it outside that array"
+grammar_case "an unwired token that is a SUBSTRING of a wired one is reported" \
+  "$real_grammar
+token skip       modifier" \
+  "never acts on it"
 
-# The COMMENT-STRIPPING half of the same parser. Without it, a token mentioned
-# once in the header prose reads as wired — the exact scenario the stripping
-# exists to catch, and the half that had no control at all.
-guard_case "a declared tag named only in a comment is reported" \
-  "$(python3 - "$runner" <<'MUT'
-import sys
-t = open(sys.argv[1], encoding="utf-8").read()
-t = t.replace("TAG_ATTRIBUTES=(- always may-skip)", "TAG_ATTRIBUTES=(- always may-skip nightly)")
-t = t.replace("# Exit status a `may-skip` row uses",
-              "# nightly rows would be for a nightly lane.\n# Exit status a `may-skip` row uses")
-print(t, end="")
-MUT
-)" \
-  "never acts on it outside that array"
+grammar_case "a second exclusive token is reported" \
+  "$real_grammar
+token none       exclusive" \
+  "exclusive tokens"
+
+grammar_case "a token with an unknown class is reported" \
+  "$real_grammar
+token weird      nosuchclass" \
+  "unknown class"
+
+grammar_case "an area the runner does not offer is reported" \
+  "$real_grammar
+token rust       area" \
+  "no manifest row is tagged with it"
 
 # The prose arm's OTHER direction: a document that stops stating the list at all
 # used to be skipped silently, so rewording a lead-in turned the comparison off.
@@ -297,7 +299,7 @@ a row with a trailing separator is reported;always,   ;malformed tag field
 a row with a leading separator is reported;,always   ;malformed tag field
 a row with a repeated separator is reported;a,,always ;malformed tag field
 a row combining the dash tag is reported;-,go      ;malformed tag field
-a row carrying only a modifier is reported;may-skip  ;carries no selector
+a row carrying only a modifier is reported;may-skip  ;cannot stand alone
 SHAPES
 
 # The command half, mirrored: the library shells out to the same parser the
@@ -313,28 +315,20 @@ MUT
 )" \
   "invalid shell syntax"
 
-# THE AREA DECLARATION GRAMMAR (A1, A2 in scripts/validate's header). One case
-# per thing that grammar forbids, derived from the rule rather than from the one
-# bug that exposed it — `all` being droppable was the fifth unwritten-rule hole
-# in this change, which is the argument for writing the rule down and deriving
-# from it. A4 (a scope with no rows) and A5 (the prose surfaces) are covered by
-# their own cases below.
-while IFS=';' read -r label declared expect; do
-  [[ -n "$label" ]] || continue
-  guard_case "$label" "${real_runner/AREAS=(go qml helper packaging docs all)/$declared}" "$expect"
-done <<'SHAPES'
-A1 deleting all from AREAS is reported;AREAS=(go qml helper packaging docs);no longer declares `all`
-A2 a non-token area name is reported;AREAS=(go Qml helper packaging docs all);is not a lowercase area token
-A2 a duplicated area name is reported;AREAS=(go go qml helper packaging docs all);times (grammar A2
-SHAPES
+# THE DECLARATION ITSELF. `all` is the runner's DEFAULT argument and is never a
+# row tag, so removing it from the grammar breaks a bare `scripts/validate`.
+grammar_case "removing the all argument is reported" \
+  "$(printf '%s\n' "$real_grammar" | grep -v '^token all ')" \
+  "the runner's derivation and the definition have drifted"
 
-guard_case "a missing AREAS list is reported" \
-  "${real_runner/AREAS=(go qml helper packaging docs all)/AREA_NAMES=(go qml helper packaging docs all)}" \
-  "has no AREAS=( ... ) list"
+grammar_case "an uppercase token is reported" \
+  "${real_grammar/token qml        area/token Qml        area}" \
+  "not a lowercase token"
 
-guard_case "a missing TAG_ATTRIBUTES list is reported" \
-  "${real_runner/TAG_ATTRIBUTES=(- always may-skip)/TAG_ATTRS=(- always may-skip)}" \
-  "has no TAG_ATTRIBUTES=( ... ) list"
+grammar_case "a duplicated token is reported" \
+  "$real_grammar
+token qml        area" \
+  "declared twice"
 
 # The table lead-in the local-only/reached-indirectly comparison keys on.
 no_table="$tmp/no-table.md"
@@ -442,25 +436,28 @@ ok "an unlaunchable bash raises ManifestError, not a traceback"
 # main reaches the CI parse, so it never exercised this at all; picking one of
 # those would have been a control that could not fail.
 noyaml_probe="$tmp/noyaml-probe"
-while IFS=';' read -r find replace expect; do
-  [[ -n "$find" ]] || continue
-  FIND="$find" REPL="$replace" python3 - "$runner" >"$noyaml_probe" <<'MUT'
-import os, sys
+noyaml_grammar="$tmp/noyaml-grammar.conf"
+
+# The runner fixture: an area that no row carries.
+python3 - "$runner" >"$noyaml_probe" <<'MUT'
+import sys
 t = open(sys.argv[1], encoding="utf-8").read()
-old = os.environ["FIND"]
-assert t.count(old) == 1, f"anchor moved: {old}"
-print(t.replace(old, os.environ["REPL"]), end="")
+old = "docs      | scripts/check-doc-growth.py"
+assert t.count(old) == 1, "the doc-growth manifest row moved"
+print(t.replace(old, "-         | scripts/check-doc-growth.py"), end="")
 MUT
-  chmod +x "$noyaml_probe"
-  run_guard "RUNNER_PATH=$noyaml_probe" "PYTHONPATH=$noyaml_path"
-  expect_refused "no-PyYAML fixture verdict" "$expect"
-  expect_contains "$guard_out" "CI coverage was NOT checked" "no-PyYAML fixture verdict"
-  expect_absent "$guard_out" "Traceback" "no-PyYAML fixture verdict"
-done <<SHAPES
-docs      | scripts/check-doc-growth.py;-         | scripts/check-doc-growth.py;no manifest row is tagged with it
-TAG_ATTRIBUTES=(- always may-skip);TAG_ATTRIBUTES=(- always may-skip nightly);never acts on it outside that array
-AREAS=(go qml helper packaging docs all);AREAS=(go qml helper packaging docs rust all);enumerates the validate areas but omits
-SHAPES
+chmod +x "$noyaml_probe"
+run_guard "RUNNER_PATH=$noyaml_probe" "PYTHONPATH=$noyaml_path"
+expect_refused "no-PyYAML fixture verdict" "no manifest row is tagged with it"
+expect_contains "$guard_out" "CI coverage was NOT checked" "no-PyYAML fixture verdict"
+expect_absent "$guard_out" "Traceback" "no-PyYAML fixture verdict"
+
+# The grammar fixture: a declared token nothing acts on.
+printf '%s\ntoken nightly    modifier\n' "$real_grammar" >"$noyaml_grammar"
+run_guard "GRAMMAR_PATH=$noyaml_grammar" "PYTHONPATH=$noyaml_path"
+expect_refused "no-PyYAML fixture verdict" "never acts on it"
+expect_contains "$guard_out" "CI coverage was NOT checked" "no-PyYAML fixture verdict"
+expect_absent "$guard_out" "Traceback" "no-PyYAML fixture verdict"
 ok "without PyYAML a fixture still reports its own verdict, and the prerequisite is named too"
 
 # The executable-bit arm (VGS-30 applied to the entry point itself).

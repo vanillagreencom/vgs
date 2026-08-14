@@ -35,30 +35,17 @@ class ManifestError(Exception):
 _ASCII_SPACE = re.compile(r"[ \t\n\r\f\v]")
 
 
-def tag_grammar(runner: Path) -> re.Pattern[str]:
-    """The accepted language for a manifest row's tag field.
-
-    The same rule scripts/validate applies, built from the same vocabulary: the
-    lone `-`, or a comma-separated list of one or more tags that are not `-`.
-    Stated as a WHITELIST on purpose. Both holes this closes came from rules
-    written against whatever a split produced — an empty field yields no
-    elements, a trailing comma is dropped — and shapes like that cannot be
-    enumerated to exhaustion. A whitelist has no complement to enumerate.
-    """
-    combinable = sorted((runner_areas(runner) | runner_tag_attributes(runner)) - {"-"})
-    alternation = "|".join(re.escape(tag) for tag in combinable)
-    return re.compile(rf"^(?:-|(?:{alternation})(?:,(?:{alternation}))*)$")
-
-
 def manifest_rows(runner: Path) -> list[tuple[str, str]]:
-    """`(area tags, command)` pairs from the scripts/validate manifest heredoc.
+    """`(tags, command)` pairs from the scripts/validate manifest heredoc.
 
     Parsed statically, not via `scripts/validate --list`: this check must report
     a manifest the runner cannot even parse.
 
-    Refuses exactly the rows the runner refuses, in the same order — tag field,
-    then tag grammar, then command — so one malformed line gets one diagnosis
-    rather than two readers naming different defects on it.
+    Every rule applied here comes from validation-grammar.conf, the same file
+    the runner reads — no vocabulary and no rule is restated. Rows are refused
+    in the same ORDER the runner refuses them (tag field, tag pattern, class
+    rules, command) so one malformed line gets one diagnosis, not two readers
+    naming different defects on it.
     """
     text = runner.read_text(encoding="utf-8")
     block = re.search(r"<<'MANIFEST_EOF'\n(.*?)\nMANIFEST_EOF\n", text, re.DOTALL)
@@ -67,8 +54,8 @@ def manifest_rows(runner: Path) -> list[tuple[str, str]]:
             "scripts/validate has no MANIFEST_EOF heredoc; "
             "this check parses that block, so moving it silently empties the inventory"
         )
-    grammar = tag_grammar(runner)
-    selectors = (runner_areas(runner) | {"always"}) - {"all"}
+    rules = grammar()
+    pattern = rules.tag_pattern()
     rows: list[tuple[str, str]] = []
     for line in block.group(1).splitlines():
         if not _ASCII_SPACE.sub("", line):
@@ -84,15 +71,21 @@ def manifest_rows(runner: Path) -> list[tuple[str, str]]:
             raise ManifestError(
                 f"scripts/validate manifest row has an empty tag field: {line!r}"
             )
-        if not grammar.match(tags):
+        if not pattern.match(tags):
             raise ManifestError(
                 f"scripts/validate manifest row has a malformed tag field "
                 f"{tags!r}: {line!r}"
             )
-        if tags != "-" and not (set(tags.split(",")) & selectors):
-            # C2 of the grammar in scripts/validate's header. Syntax alone
-            # accepts a row of modifiers, which selects nothing and so vanishes
-            # from every named area while still running under `all`.
+        row_tags = set(tags.split(","))
+        # The class properties ARE the rules; each is asked of the grammar
+        # rather than restated. `standalone` catches a lone modifier, and
+        # `selects` catches a row of several tokens none of which selects.
+        if len(row_tags) == 1 and not (row_tags & rules.standalone):
+            raise ManifestError(
+                f"scripts/validate manifest row's only tag cannot stand alone "
+                f"{tags!r}: {line!r}"
+            )
+        if not (row_tags & rules.exclusive) and not (row_tags & rules.selectors):
             raise ManifestError(
                 f"scripts/validate manifest row carries no selector "
                 f"{tags!r}: {line!r}"
@@ -143,47 +136,119 @@ def _check_shell_syntax(command: str, line: str) -> None:
         )
 
 
-def runner_area_declaration(runner: Path) -> list[str]:
-    """The runner's AREAS array as declared, in order, duplicates intact.
+GRAMMAR_FILE = Path(__file__).resolve().parent / "validation-grammar.conf"
 
-    A set would hide A2's duplicate case, and the ordered list is what lets the
-    guard quote the declaration back when it rejects one.
+
+class Grammar:
+    """The one definition, read from validation-grammar.conf.
+
+    Every consumer reads THIS rather than re-deriving the vocabulary from the
+    runner's arrays. Eight holes in VGS-123 came from consumers each carrying
+    their own copy: an unvalidated AREAS array, an unvalidated TAG_ATTRIBUTES
+    array, and a wiring check that matched tokens as substrings.
     """
-    match = re.search(r"^AREAS=\(([^)]*)\)", runner.read_text(encoding="utf-8"), re.MULTILINE)
+
+    def __init__(self, path: Path = GRAMMAR_FILE) -> None:
+        self.path = path
+        self.classes: dict[str, dict[str, bool]] = {}
+        self.token_class: dict[str, str] = {}
+        for raw in path.read_text(encoding="utf-8").splitlines():
+            line = raw.split("#", 1)[0].strip()
+            if not line:
+                continue
+            kind, *fields = line.split()
+            if kind == "class":
+                name, props = fields[0], fields[1:]
+                self.classes[name] = {
+                    key: value == "yes"
+                    for key, value in (field.split("=", 1) for field in props)
+                }
+            elif kind == "token":
+                name, cls = fields[0], fields[1]
+                if cls not in self.classes:
+                    raise ManifestError(
+                        f"{path.name}: token `{name}` has unknown class `{cls}`"
+                    )
+                if name in self.token_class:
+                    raise ManifestError(f"{path.name}: token `{name}` declared twice")
+                self.token_class[name] = cls
+            else:
+                raise ManifestError(f"{path.name}: unknown line kind `{kind}`")
+        if not self.token_class:
+            raise ManifestError(f"{path.name} declares no tokens")
+
+    def _with(self, prop: str) -> set[str]:
+        return {t for t, c in self.token_class.items() if self.classes[c].get(prop)}
+
+    @property
+    def tokens(self) -> set[str]:
+        return set(self.token_class)
+
+    @property
+    def arguments(self) -> set[str]:
+        """What `scripts/validate X` accepts: areas plus the argument tokens."""
+        return {t for t, c in self.token_class.items() if c in ("area", "argument")}
+
+    @property
+    def areas(self) -> set[str]:
+        return {t for t, c in self.token_class.items() if c == "area"}
+
+    @property
+    def row_tags(self) -> set[str]:
+        return self._with("rowtag")
+
+    @property
+    def selectors(self) -> set[str]:
+        return self._with("selects") & self.row_tags
+
+    @property
+    def standalone(self) -> set[str]:
+        return self._with("standalone") & self.row_tags
+
+    @property
+    def exclusive(self) -> set[str]:
+        return self._with("exclusive") & self.row_tags
+
+    def tag_pattern(self) -> re.Pattern[str]:
+        """The accepted language for a tag field, derived from the classes."""
+        excl = sorted(self.exclusive)
+        comb = sorted(self.row_tags - self.exclusive)
+        if not excl or not comb:
+            raise ManifestError(
+                f"{self.path.name}: the grammar needs both exclusive and combinable "
+                f"row tags to form a tag field pattern"
+            )
+        excl_alt = "|".join(re.escape(t) for t in excl)
+        comb_alt = "|".join(re.escape(t) for t in comb)
+        return re.compile(rf"^(?:(?:{excl_alt})|(?:{comb_alt})(?:,(?:{comb_alt}))*)$")
+
+
+def grammar(path: Path = GRAMMAR_FILE) -> Grammar:
+    """The parsed grammar. A thin function so callers need not import the class."""
+    return Grammar(path)
+
+
+def runner_usage_arguments(runner: Path) -> set[str]:
+    """The areas `scripts/validate -h` actually offers.
+
+    Read by RUNNING the runner rather than by matching its text: the runner
+    derives its argument list from the grammar, so the question is whether that
+    derivation still agrees with the definition — which a text match on an array
+    that no longer exists could not answer.
+    """
+    try:
+        shown = subprocess.run(
+            ["bash", str(runner), "-h"], capture_output=True, text=True, check=False
+        )
+    except OSError as exc:
+        raise ManifestError(f"could not run {runner.name} -h: {exc}") from exc
+    match = re.search(r"\[--list\] \[([^\]]*)\]", shown.stderr + shown.stdout)
     if not match:
-        raise ManifestError("scripts/validate has no AREAS=( ... ) list")
-    return match.group(1).split()
-
-
-def runner_declared_areas(runner: Path) -> set[str]:
-    """Every name in the runner's AREAS array, exactly as declared.
-
-    Separate from `runner_areas` because `all` is real to the ARGUMENT parser
-    and forbidden as a row TAG (grammar C3). Discarding it here and re-adding it
-    in the caller made its deletion invisible: the runner defaults to `all`, so
-    a bare `scripts/validate` would then fail as an unknown area with nothing
-    saying why.
-    """
-    return set(runner_area_declaration(runner))
-
-
-def runner_areas(runner: Path) -> set[str]:
-    """The area names usable as a row TAG — declared, minus `all` (C3)."""
-    return runner_declared_areas(runner) - {"all"}
-
-
-def runner_tag_attributes(runner: Path) -> set[str]:
-    """Manifest tag tokens that are attributes rather than area selectors.
-
-    Read from the runner, not hardcoded: adding one there needs no edit here,
-    and REMOVING one immediately reports every row still carrying it.
-    """
-    match = re.search(
-        r"^TAG_ATTRIBUTES=\(([^)]*)\)", runner.read_text(encoding="utf-8"), re.MULTILINE
-    )
-    if not match:
-        raise ManifestError("scripts/validate has no TAG_ATTRIBUTES=( ... ) list")
-    return set(match.group(1).split())
+        raise ManifestError(
+            f"{runner.name} -h printed no `usage: ... [--list] [a|b|c]` line, so the "
+            f"arguments it offers cannot be compared against the grammar"
+        )
+    return set(match.group(1).split("|"))
 
 
 def runner_logic(runner: Path) -> str:

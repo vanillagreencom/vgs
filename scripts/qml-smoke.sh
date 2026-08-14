@@ -301,8 +301,8 @@ nested_unavailable() {
 qml-smoke:      dir, HOME and bus, so the live session is untouched). Use the value
 qml-smoke:      a session shell reports for WAYLAND_DISPLAY — the basename is
 qml-smoke:      session-dependent, so this cannot name it for you (VGS-70 will make
-qml-smoke:      --nested discover it):
-qml-smoke:        WAYLAND_DISPLAY=<session value> XDG_RUNTIME_DIR=/run/user/\$(id -u) scripts/validate qml"
+qml-smoke:      --nested discover it). Export WAYLAND_DISPLAY to that value and
+qml-smoke:      XDG_RUNTIME_DIR to /run/user/\$(id -u), then re-run scripts/validate qml"
   fi
   cat >&2 <<EOF
 qml-smoke: a runtime check must run inside its own compositor. Safe options:

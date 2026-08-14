@@ -35,16 +35,16 @@ from validation_manifest import (  # noqa: E402
     documented_table,
     manifest_rows,
     prose_areas,
-    runner_areas,
-    runner_area_declaration,
-    runner_declared_areas,
+    GRAMMAR_FILE,
+    grammar,
     runner_logic,
-    runner_tag_attributes,
+    runner_usage_arguments,
 )
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 AGENTS = REPO_ROOT / "AGENTS.md"
 SKILL_DOC = REPO_ROOT / "project-skills" / "vshell-dev" / "SKILL.md"
+GRAMMAR = GRAMMAR_FILE
 RUNNER = REPO_ROOT / "scripts" / "validate"
 TABLES_DOC = REPO_ROOT / ".github" / "instructions" / "validation-scripts.instructions.md"
 CI = REPO_ROOT / ".github" / "workflows" / "ci.yml"
@@ -139,65 +139,77 @@ def main() -> int:
             "(git update-index --chmod=+x scripts/validate)"
         )
 
-    # CHECKED BEFORE THE MANIFEST IS PARSED, because the tag grammar is BUILT
-    # from this declaration: a bad name in AREAS makes every row carrying the
-    # correct spelling fail the grammar, so the manifest arm would answer first
-    # and blame the rows for a defect in the declaration.
-    declaration = runner_area_declaration(RUNNER)
-    declared_areas = runner_declared_areas(RUNNER)
-    areas = runner_areas(RUNNER)
-    # --- the AREA DECLARATION grammar (A1, A2) --------------------------------
-    # Derived from the rule in scripts/validate's header, not from the one bug
-    # that exposed it. A1 was the fifth unwritten-rule hole in this change:
-    # `all` is the runner's DEFAULT, so deleting it from AREAS makes a bare
-    # `scripts/validate` fail as an unknown area — and the prose comparison used
-    # to re-add it, which made exactly that deletion invisible here.
-    if "all" not in declaration:
+    # --- the GRAMMAR itself, before anything that is built from it ----------
+    # scripts/lib/validation-grammar.conf is the one definition; the runner, the
+    # library and this file all read it. Checked first because everything below
+    # is derived from it: a bad grammar makes correctly-written rows fail, and
+    # the manifest arm would answer first, blaming the rows.
+    rules = grammar(GRAMMAR)
+    for token, cls in sorted(rules.token_class.items()):
+        if not re.fullmatch(r"[a-z][a-z0-9-]*|-", token):
+            problems.append(
+                f"the grammar declares token `{token}`, which is not a lowercase token"
+            )
+        del cls
+    if not rules.areas:
+        problems.append("the grammar declares no `area` tokens, so no scope exists")
+    if len(rules.exclusive) != 1:
         problems.append(
-            "scripts/validate's AREAS no longer declares `all` (grammar A1), but the "
-            "runner defaults to it, so a bare `scripts/validate` would fail as an "
-            "unknown area"
+            f"the grammar declares {len(rules.exclusive)} exclusive tokens "
+            f"({', '.join(sorted(rules.exclusive)) or 'none'}); the tag pattern needs "
+            f"exactly one"
         )
-    for name in declaration:
-        if not re.fullmatch(r"[a-z][a-z0-9-]*", name):
-            problems.append(
-                f"scripts/validate's AREAS declares `{name}`, which is not a lowercase "
-                f"area token (grammar A2)"
-            )
-    for name in sorted(set(declaration)):
-        if declaration.count(name) > 1:
-            problems.append(
-                f"scripts/validate's AREAS declares `{name}` {declaration.count(name)} "
-                f"times (grammar A2: each name appears exactly once)"
-            )
+    # The runner must actually OFFER what the grammar declares. Asked by running
+    # `scripts/validate -h`, not by matching an array that no longer exists:
+    # the runner derives its arguments now, so the question is whether that
+    # derivation still agrees with the definition.
+    try:
+        offered = runner_usage_arguments(RUNNER)
+    except ManifestError as error:
+        offered = None
+        problems.append(str(error))
+    if offered is not None and offered != rules.arguments:
+        problems.append(
+            f"scripts/validate offers areas {sorted(offered)} but the grammar declares "
+            f"{sorted(rules.arguments)} — the runner's derivation and the definition "
+            f"have drifted"
+        )
+
     # AN UNPARSEABLE MANIFEST IS A PROBLEM TOO, not an abort that discards what
     # the declaration arms already found. A bad name in AREAS makes every row
     # with the CORRECT spelling fail the tag grammar, so raising here reported
     # the rows and swallowed the declaration finding that explains them — the
     # same "answers something other than what it claims" shape as the PyYAML
     # prerequisite, one level over.
+    rows: list[tuple[str, str]] | None = None
     try:
         rows = manifest_rows(RUNNER)
     except ManifestError as error:
         problems.append(str(error))
-        return report(problems)
-    commands = [command for _, command in rows]
+    commands = [command for _, command in rows] if rows is not None else []
     documented = "\n".join(commands)
 
-    attributes = runner_tag_attributes(RUNNER)
-    # An attribute the guard accepts but the runner never acts on is worse than
-    # an unknown tag: rows carrying it pass here and then behave like `-`. The
-    # REMOVAL direction was already fail-closed; this closes ADDITION.
+    # A declared token the runner never acts on is worse than an unknown one:
+    # rows carrying it pass every check here and then behave like `-`.
+    #
+    # MATCHED AS A WHOLE TOKEN. A substring test passed a token that merely
+    # occurred inside another — `skip` inside `may-skip` — so a new modifier
+    # could be declared, never wired, and still look wired.
     runner_body = runner_logic(RUNNER)
-    for tag in sorted(attributes - {"-"}):
-        if tag not in runner_body:
+    for tag in sorted(rules.row_tags - rules.areas - rules.exclusive):
+        if not re.search(rf"(?<![A-Za-z0-9_-]){re.escape(tag)}(?![A-Za-z0-9_-])", runner_body):
             problems.append(
-                f"scripts/validate declares TAG_ATTRIBUTES token `{tag}` but never acts "
-                f"on it outside that array, so every row tagged `{tag}` would silently "
-                f"behave like `-`. Wire it into the selection or run loop, or drop it."
+                f"the grammar declares token `{tag}` but scripts/validate never acts on "
+                f"it, so every row tagged `{tag}` would silently behave like `-`. Wire "
+                f"it into the selection or run loop, or drop it from the grammar."
             )
 
-    for area in sorted(areas):
+    if rows is None:
+        problems.append(
+            "the per-area and CI-coverage arms did NOT run: they need the manifest "
+            "rows, and the manifest could not be parsed (above)"
+        )
+    for area in sorted(rules.areas) if rows is not None else []:
         # Deliberately ignores `always` rows. Counting them would make this arm
         # dead the moment one exists — every area would look populated — and an
         # area whose only members are the checks EVERY area runs is not an area,
@@ -227,8 +239,7 @@ def main() -> int:
     # scripts/validate applies, and raises before returning a row, so this loop
     # could never have fired. An unreachable check is coverage that does not
     # exist — the thing this file exists to report.
-    areas = runner_areas(RUNNER)
-    # --- the prose copies of the area list must match the runner ------------
+    # --- the prose copies of the area list must match the grammar -----------
     # Both docs enumerate the areas: a second copy of something the runner
     # defines, i.e. the drift axis this check exists to close. So: compared.
     for doc in AREA_ENUMERATING_DOCS:
@@ -242,12 +253,12 @@ def main() -> int:
         except ManifestError as exc:
             problems.append(str(exc))
             continue
-        for name in sorted(declared_areas - stated):
+        for name in sorted(rules.arguments - stated):
             problems.append(
                 f"{rel} enumerates the validate areas but omits `{name}`, which "
                 f"scripts/validate accepts"
             )
-        for name in sorted(stated - declared_areas):
+        for name in sorted(stated - rules.arguments):
             problems.append(
                 f"{rel} lists `{name}` as a validate area, but scripts/validate does "
                 f"not accept it"
@@ -301,7 +312,7 @@ def main() -> int:
     # --- every executable check is invoked, or excluded with a reason ---------
     # The CI half of this arm needs ci_text; without it the manifest half still
     # runs, and the missing comparison is already recorded above.
-    for name in executable_checks():
+    for name in executable_checks() if rows is not None else []:
         if name in NOT_A_SUITE_CHECK:
             continue
         rel = f"scripts/{name}"

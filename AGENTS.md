@@ -163,12 +163,11 @@ basename is session-dependent, so a name written here would be wrong as often
 as right, and the failure reads like a real QML break. The sandbox still gets
 its own runtime dir, HOME and bus, so the live session is untouched:
 
-```bash
-WAYLAND_DISPLAY=<your session's value> XDG_RUNTIME_DIR=/run/user/$(id -u) \
-  scripts/validate qml
-```
-
-VGS-70 is the real fix: `qml-smoke --nested` discovering the socket itself.
+Export `WAYLAND_DISPLAY` with the value a session shell reports for it, and
+`XDG_RUNTIME_DIR` as `/run/user/$(id -u)`, then run `scripts/validate qml`.
+There is no command to paste here: the socket basename is session-dependent, so
+any literal would be wrong as often as right. VGS-70 is the real fix —
+`qml-smoke --nested` discovering the socket itself.
 
 Never read `smoke-surfaces.sh`'s refusal as a pass (VGS-69). Which checks CI
 cannot run, and why, is in
@@ -249,9 +248,11 @@ either: other Quickshell applications on the seat are legitimate.
   session's own socket and it runs — the sandbox still has its own runtime
   dir, HOME and bus, so the live session is untouched:
   ```bash
-  WAYLAND_DISPLAY=<your session's value> XDG_RUNTIME_DIR=/run/user/$(id -u) \
-    scripts/qml-smoke.sh --nested --require-static --require-nested
+  scripts/qml-smoke.sh --nested --require-static --require-nested
   ```
+
+  ...with `WAYLAND_DISPLAY` exported to the value a session shell reports and
+  `XDG_RUNTIME_DIR` to `/run/user/$(id -u)`.
 - `scripts/check-validation-safety.sh` proves validation left no extra VGS
   Quickshell instances or layer surfaces, and blocks unsafe launch instructions
   from returning to the docs.

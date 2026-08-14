@@ -41,7 +41,10 @@ ok() {
 # Exercises every selection shape the real manifest does, plus the multi-tag row
 # it has none of (so that branch is not dead on real data).
 fixture_repo="$tmp/repo"
-mkdir -p "$fixture_repo/scripts"
+mkdir -p "$fixture_repo/scripts/lib"
+# The runner reads its vocabulary from the grammar, so the throwaway repo needs
+# it too — the fixture varies the MANIFEST, not the definition.
+cp "$repo_root/scripts/lib/validation-grammar.conf" "$fixture_repo/scripts/lib/"
 
 write_runner() {
   # $1 = fixture manifest body. Everything else about the runner is the real
@@ -198,9 +201,85 @@ rejected_everywhere() { # $1 name, $2 fixture manifest, $3 expected fragment
   ok "$1"
 }
 
-# name ; expected diagnosis ; the malformed row. `all` is an ARGUMENT not a tag,
-# `-` cannot be combined with an area, and normalisation is ASCII in BOTH
-# readers so a non-breaking space stays a bad tag for each.
+# ═══ GENERATED FROM THE GRAMMAR ════════════════════════════════════════════
+#
+# These cases are DERIVED from scripts/lib/validation-grammar.conf, not listed
+# by hand: for every token the grammar declares, its class properties say what
+# must be rejected and what must be accepted, and the generator below emits one
+# case per property per token. Adding a token or a class to that file therefore
+# produces its own controls — a ninth shape becomes a change to the stated
+# grammar rather than a new bug. Hand-written cases below cover the SYNTAX
+# shapes (separators, whitespace), which are properties of the tag-field form
+# rather than of any token.
+python3 - "$repo_root" >"$tmp/generated-cases" <<'GEN'
+import importlib.util, pathlib, sys
+root = pathlib.Path(sys.argv[1])
+spec = importlib.util.spec_from_file_location(
+    "vm", root / "scripts" / "lib" / "validation_manifest.py"
+)
+mod = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mod)
+g = mod.grammar()
+
+def emit(name, expect, tags):
+    print(f"{name};{expect};{tags:<10}| scripts/stub-go")
+
+for token in sorted(g.tokens):
+    cls = g.token_class[token]
+    props = g.classes[cls]
+    if not props.get("rowtag"):
+        # `all` today: an argument, never a tag.
+        emit(f"{cls} token `{token}` is not a row tag", "malformed tag field", token)
+        continue
+    if not props.get("standalone"):
+        # `may-skip` today: a modifier cannot be a row's only tag.
+        emit(f"{cls} token `{token}` cannot stand alone", "cannot stand alone", token)
+    if props.get("exclusive"):
+        # `-` today: cannot be combined with anything else.
+        for other in sorted(g.row_tags - {token}):
+            emit(f"exclusive `{token}` cannot combine with `{other}`",
+                 "malformed tag field", f"{token},{other}")
+            break
+# A token that is in no class at all.
+emit("a token outside the grammar", "malformed tag field", "notatoken")
+GEN
+while IFS=';' read -r name expect row; do
+  [[ -n "$name" ]] || continue
+  rejected_everywhere "$name" "$row
+always    | scripts/stub-always" "$expect"
+done <"$tmp/generated-cases"
+
+# ...and the ACCEPT side, also generated: every standalone row tag must be
+# accepted alone, so an over-tight rule fails here rather than shipping.
+python3 - "$repo_root" >"$tmp/generated-accepts" <<'GEN'
+import importlib.util, pathlib, sys
+root = pathlib.Path(sys.argv[1])
+spec = importlib.util.spec_from_file_location(
+    "vm", root / "scripts" / "lib" / "validation_manifest.py"
+)
+mod = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mod)
+g = mod.grammar()
+for token in sorted(g.standalone):
+    area = token if token in g.areas else "all"
+    print(f"standalone `{token}` is accepted;{token};{area}")
+for token in sorted(g.row_tags - g.standalone - g.exclusive):
+    for area in sorted(g.areas):
+        print(f"`{token}` beside an area is accepted;{area},{token};{area}")
+        break
+GEN
+while IFS=';' read -r name tags area; do
+  [[ -n "$name" ]] || continue
+  write_runner "$(printf '%-10s| scripts/stub-under-test' "$tags")
+always    | scripts/stub-always"
+  fixture --list "$area"
+  expect_rc 0 "$name"
+  expect_contains "$out" "scripts/stub-under-test" "$name"
+  ok "$name"
+done <"$tmp/generated-accepts"
+
+# The SYNTAX shapes, which belong to the tag-field form rather than to any one
+# token, so they are not generated: name ; expected diagnosis ; malformed row.
 while IFS=';' read -r name expect row; do
   [[ -n "$name" ]] || continue
   rejected_everywhere "$name" "$row
@@ -213,12 +292,6 @@ a separator-only row is fatal;has an empty tag field;   |
 a trailing separator is fatal;it ends with a separator;qml,      | scripts/stub-go
 a leading separator is fatal;it starts with a separator;,qml      | scripts/stub-go
 a repeated separator is fatal;it has a repeated separator;qml,,go   | scripts/stub-go
-a combined dash tag is fatal;cannot be combined;-,go      | scripts/stub-go
-C1 dash with a modifier is fatal;cannot be combined;-,may-skip| scripts/stub-go
-C2 a modifier alone is fatal;carries no selector;may-skip  | scripts/stub-go
-C2 modifiers only is fatal;carries no selector;may-skip,may-skip | scripts/stub-go
-an unknown tag is fatal;malformed tag field;qmll      | scripts/stub-go
-all is rejected as a row tag;malformed tag field;all       | scripts/stub-go
 a non-breaking space is fatal;malformed tag field;$(printf 'go\xc2\xa0')      | scripts/stub-go
 SHAPES
 
@@ -356,7 +429,7 @@ ok "a skip never masks a failure"
 # inventory guard's own, so losing it drops the check that reports malformed
 # rows. A fixture cannot carry that, and without a named case here the scenario
 # surfaces only as an errexit abort further down.
-self_probe="$tmp/self-concealing"
+self_probe="$fixture_repo/scripts/self-concealing"
 for mutation in "alway     :malformed tag field" "          :an empty tag field" "always,   :ends with a separator"; do
   MUT_TO="${mutation%%:*}" python3 - "$runner" >"$self_probe" <<'MUT'
 import os, sys

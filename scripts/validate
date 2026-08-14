@@ -212,14 +212,65 @@ go        | (cd backend && go build ./... && go vet ./... && go test -race ./...
 MANIFEST_EOF
 }
 
-AREAS=(go qml helper packaging docs all)
+# ═══ THE VOCABULARY IS READ, NOT RESTATED ══════════════════════════════════
+#
+# scripts/lib/validation-grammar.conf is the one definition. Eight holes in
+# this change came from consumers each re-deriving the grammar, so this reads
+# it: no array here, nothing to drift from the guard or the library.
+GRAMMAR_FILE="$repo_root/scripts/lib/validation-grammar.conf"
+if [[ ! -r "$GRAMMAR_FILE" ]]; then
+  printf 'scripts/validate: cannot read the grammar at %s\n' "$GRAMMAR_FILE" >&2
+  exit 2
+fi
 
-# Tag tokens that are attributes rather than area selectors. Kept beside AREAS
-# because scripts/check-validation-inventory.py reads both lists out of this
-# file: a tag it cannot classify is a typo that would silently drop a row from
-# the area it was meant for.
-# shellcheck disable=SC2034  # read by scripts/check-validation-inventory.py, not by this shell
-TAG_ATTRIBUTES=(- always may-skip)
+declare -A CLASS_SELECTS=() CLASS_STANDALONE=() CLASS_ROWTAG=() CLASS_EXCLUSIVE=()
+declare -A TOKEN_CLASS=()
+grammar_tokens=()
+while read -r kind name f1 f2 f3 f4; do
+  case "$kind" in
+    class)
+      CLASS_SELECTS[$name]="${f1#selects=}"
+      CLASS_STANDALONE[$name]="${f2#standalone=}"
+      CLASS_ROWTAG[$name]="${f3#rowtag=}"
+      CLASS_EXCLUSIVE[$name]="${f4#exclusive=}"
+      ;;
+    token)
+      if [[ -z "${CLASS_ROWTAG[$f1]:-}" ]]; then
+        # shellcheck disable=SC2016  # backticks quote a name in the message
+        printf 'scripts/validate: grammar token `%s` has unknown class `%s`\n' "$name" "$f1" >&2
+        exit 2
+      fi
+      TOKEN_CLASS[$name]="$f1"
+      grammar_tokens+=("$name")
+      ;;
+    "" | "#"*) ;;
+    *)
+      # shellcheck disable=SC2016  # backticks quote a name in the message
+      printf 'scripts/validate: grammar has unknown line kind `%s`\n' "$kind" >&2
+      exit 2
+      ;;
+  esac
+done < <(sed -e 's/#.*//' -e '/^[[:space:]]*$/d' "$GRAMMAR_FILE")
+
+# Derived sets. Each is a QUERY over the grammar, not a second list.
+AREAS=()          # what `scripts/validate X` accepts
+row_tag_vocabulary=()
+combinable_tags=()
+selector_tags=()
+exclusive_tags=()
+for token in "${grammar_tokens[@]}"; do
+  class="${TOKEN_CLASS[$token]}"
+  [[ "$class" == area || "$class" == argument ]] && AREAS+=("$token")
+  if [[ "${CLASS_ROWTAG[$class]}" == yes ]]; then
+    row_tag_vocabulary+=("$token")
+    if [[ "${CLASS_EXCLUSIVE[$class]}" == yes ]]; then
+      exclusive_tags+=("$token")
+    else
+      combinable_tags+=("$token")
+    fi
+    [[ "${CLASS_SELECTS[$class]}" == yes ]] && selector_tags+=("$token")
+  fi
+done
 
 # Exit status a `may-skip` row uses for "precondition absent, nothing checked".
 # 77 is the autotools convention; anything else from such a row is a failure.
@@ -277,43 +328,20 @@ if [[ $matched_area -eq 0 ]]; then
   exit 2
 fi
 
-# What a manifest row may be tagged with. `all` is an ARGUMENT, not a tag: as a
-# tag it would match only an `all` run and behave like `-` everywhere else,
-# which is the silent-narrowing shape the vocabulary check below exists to stop.
-row_tag_vocabulary=()
-for known in "${AREAS[@]}"; do
-  if [[ "$known" != all ]]; then
-    row_tag_vocabulary+=("$known")
-  fi
-done
-row_tag_vocabulary+=("${TAG_ATTRIBUTES[@]}")
-
-# The accepted language for a tag field: either the lone `-`, or a
-# comma-separated list of one or more tags that are not `-`. Built from the
-# arrays above so the vocabulary has exactly one definition; the `-` case is
-# split out so "only `all` runs this" cannot be combined with an area.
-combinable_tags=()
-for known in "${row_tag_vocabulary[@]}"; do
-  if [[ "$known" != - ]]; then
-    combinable_tags+=("$known")
-  fi
-done
+# The accepted language for a tag field, built from the grammar's own classes:
+# an exclusive token alone, or a comma-separated list of combinable tokens.
+# Neither list is written here — both are queries over the one definition, so a
+# token added there is accepted here without a second edit.
+exclusive_alternation="$(
+  IFS='|'
+  printf '%s' "${exclusive_tags[*]}"
+)"
 tag_alternation="$(
   IFS='|'
   printf '%s' "${combinable_tags[*]}"
 )"
-tags_grammar="^(-|($tag_alternation)(,($tag_alternation))*)$"
+tags_grammar="^(($exclusive_alternation)|($tag_alternation)(,($tag_alternation))*)$"
 
-# C2's half of the grammar: the SELECTORS, the tags that decide when a row
-# runs. Everything else in the vocabulary is a modifier, and a row of modifiers
-# alone selects nothing.
-selector_tags=()
-for known in "${AREAS[@]}"; do
-  if [[ "$known" != all ]]; then
-    selector_tags+=("$known")
-  fi
-done
-selector_tags+=(always)
 
 # Commands selected for this area, in manifest order, with their tags kept
 # alongside so the run loop can tell a `may-skip` row from every other one.
@@ -376,24 +404,29 @@ while IFS= read -r line; do
     printf '  known row tags: %s\n' "${row_tag_vocabulary[*]}" >&2
     exit 2
   fi
-  # C2. The grammar above is syntax; this is the meaning it does not carry. A
-  # row of modifiers alone parses, selects nothing, and so disappears from every
-  # NAMED area while still running under `all` — green, with the row gone from
-  # exactly the scoped runs this repo tells agents to use.
-  if [[ "$tags" != - ]]; then
-    has_selector=0
-    for selector in "${selector_tags[@]}"; do
-      if [[ ",$tags," == *",$selector,"* ]]; then
-        has_selector=1
-      fi
-    done
-    if [[ $has_selector -eq 0 ]]; then
-      printf 'scripts/validate: manifest row carries no selector: %s\n' "$line" >&2
-      # shellcheck disable=SC2016  # the backticks quote tag names in the message
-      printf '  every row needs an area or `always`, or `-` for all-only; %s only modifies\n' \
-        "$tags" >&2
+  # THE CLASS PROPERTIES ARE THE RULES, asked of the grammar rather than
+  # restated here. `standalone` catches a lone modifier; `selects` catches a row
+  # of several tokens none of which selects. Both messages match the library's
+  # word for word, so one malformed row gets one diagnosis from either reader.
+  IFS=, read -r -a row_tag_list <<<"$tags"
+  if [[ ${#row_tag_list[@]} -eq 1 ]]; then
+    only="${row_tag_list[0]}"
+    if [[ "${CLASS_STANDALONE[${TOKEN_CLASS[$only]}]}" != yes ]]; then
+      printf "scripts/validate manifest row's only tag cannot stand alone \`%s\`: %s\n" \
+        "$tags" "$line" >&2
       exit 2
     fi
+  fi
+  has_selector=0
+  for selector in "${selector_tags[@]}"; do
+    if [[ ",$tags," == *",$selector,"* ]]; then
+      has_selector=1
+    fi
+  done
+  if [[ $has_selector -eq 0 ]]; then
+    # shellcheck disable=SC2016  # backticks quote a name in the message
+    printf 'scripts/validate manifest row carries no selector `%s`: %s\n' "$tags" "$line" >&2
+    exit 2
   fi
   if [[ -z "$cmd" ]]; then
     printf 'scripts/validate: manifest row has an empty command: %s\n' "$line" >&2
