@@ -14,6 +14,7 @@ set -euo pipefail
 repo_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 runner="$repo_root/scripts/validate"
 tmp="$(mktemp -d)"
+fixture_dir="$tmp/fixture"
 trap 'rm -rf "$tmp"' EXIT INT TERM
 
 failures=0
@@ -328,7 +329,7 @@ grammar_case "an uppercase token is reported" \
 grammar_case "a duplicated token is reported" \
   "$real_grammar
 token qml        area" \
-  "declared twice"
+  "declares a token twice"
 
 # The table lead-in the local-only/reached-indirectly comparison keys on.
 no_table="$tmp/no-table.md"
@@ -459,6 +460,56 @@ expect_refused "no-PyYAML fixture verdict" "never acts on it"
 expect_contains "$guard_out" "CI coverage was NOT checked" "no-PyYAML fixture verdict"
 expect_absent "$guard_out" "Traceback" "no-PyYAML fixture verdict"
 ok "without PyYAML a fixture still reports its own verdict, and the prerequisite is named too"
+
+# SHARED DIAGNOSTIC TEXT COMES FROM THE GRAMMAR, in both readers. Asserted
+# against the DEFINITION, never against each other: two readers compared only to
+# one another can drift together and still agree. The lone-modifier text drifted
+# twice and was hand-synchronised twice before the text moved into the grammar.
+drift_probe="$fixture_dir/scripts/drift-probe"
+mkdir -p "$fixture_dir/scripts/lib"
+cp "$repo_root/scripts/lib/validation-grammar.conf" "$fixture_dir/scripts/lib/"
+while IFS=';' read -r key row; do
+  [[ -n "$key" ]] || continue
+  text="$(sed -n "s/^message  *$key  *//p" "$repo_root/scripts/lib/validation-grammar.conf")"
+  if [[ -z "$text" ]]; then
+    fail "shared diagnostics" "the grammar declares no message for \`$key\`"
+    continue
+  fi
+  ROW="$row" python3 - "$runner" >"$drift_probe" <<'MUT'
+import os, sys
+t = open(sys.argv[1], encoding="utf-8").read()
+old = "qml       | scripts/check-naming.sh"
+assert t.count(old) == 1, "the naming-check manifest row moved"
+print(t.replace(old, os.environ["ROW"]), end="")
+MUT
+  chmod +x "$drift_probe"
+  runner_said="$("$drift_probe" --list docs 2>&1 >/dev/null || true)"
+  library_said="$(GRAMMAR_PROBE="$drift_probe" python3 - "$repo_root" <<'LIB'
+import importlib.util, os, pathlib, sys
+root = pathlib.Path(sys.argv[1])
+spec = importlib.util.spec_from_file_location(
+    "vm", root / "scripts" / "lib" / "validation_manifest.py"
+)
+mod = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mod)
+try:
+    mod.manifest_rows(pathlib.Path(os.environ["GRAMMAR_PROBE"]))
+    print("ACCEPTED")
+except mod.ManifestError as error:
+    print(error)
+LIB
+)"
+  expect_contains "$runner_said" "$text" "shared diagnostic $key (runner)"
+  expect_contains "$library_said" "$text" "shared diagnostic $key (library)"
+done <<'SHAPES'
+row-no-separator;scripts/check-naming.sh
+row-empty-tags;          | scripts/check-naming.sh
+row-malformed-tags;notatoken | scripts/check-naming.sh
+row-not-standalone;may-skip  | scripts/check-naming.sh
+row-empty-command;qml       |
+row-bad-syntax;qml       | scripts/check-naming.sh &&
+SHAPES
+ok "both readers word every shared diagnostic exactly as the grammar does"
 
 # The executable-bit arm (VGS-30 applied to the entry point itself).
 non_exec="$tmp/non-exec-runner"

@@ -61,48 +61,32 @@ def manifest_rows(runner: Path) -> list[tuple[str, str]]:
         if not _ASCII_SPACE.sub("", line):
             continue
         if "|" not in line:
-            raise ManifestError(
-                f"scripts/validate manifest row has no "
-                f"`AREAS | COMMAND` separator: {line!r}"
-            )
+            raise rules.row_error("row-no-separator", line)
         tags, command = line.split("|", 1)
         tags = _ASCII_SPACE.sub("", tags)
         if not tags:
-            raise ManifestError(
-                f"scripts/validate manifest row has an empty tag field: {line!r}"
-            )
+            raise rules.row_error("row-empty-tags", line)
         if not pattern.match(tags):
-            raise ManifestError(
-                f"scripts/validate manifest row has a malformed tag field "
-                f"{tags!r}: {line!r}"
-            )
+            raise rules.row_error("row-malformed-tags", line, tags)
         row_tags = set(tags.split(","))
         # The class properties ARE the rules; each is asked of the grammar
         # rather than restated. `standalone` catches a lone modifier, and
         # `selects` catches a row of several tokens none of which selects.
         if len(row_tags) == 1 and not (row_tags & rules.standalone):
-            raise ManifestError(
-                f"scripts/validate manifest row's only tag cannot stand alone "
-                f"{tags!r}: {line!r}"
-            )
+            raise rules.row_error("row-not-standalone", line, tags)
         if not (row_tags & rules.exclusive) and not (row_tags & rules.selectors):
-            raise ManifestError(
-                f"scripts/validate manifest row carries no selector "
-                f"{tags!r}: {line!r}"
-            )
+            raise rules.row_error("row-no-selector", line, tags)
         command = _ASCII_SPACE.sub(" ", command).strip(" ")
         if not command:
-            raise ManifestError(
-                f"scripts/validate manifest row has an empty command: {line!r}"
-            )
-        _check_shell_syntax(command, line)
+            raise rules.row_error("row-empty-command", line)
+        _check_shell_syntax(command, line, rules)
         rows.append((tags, command))
     if not rows:
         raise ManifestError("scripts/validate manifest is empty")
     return rows
 
 
-def _check_shell_syntax(command: str, line: str) -> None:
+def _check_shell_syntax(command: str, line: str, rules: "Grammar") -> None:
     """Reject a manifest command that is not valid shell.
 
     VGS-30's rule for this file is that every command must be runnable exactly
@@ -131,9 +115,8 @@ def _check_shell_syntax(command: str, line: str) -> None:
         ) from exc
     if parsed.returncode != 0:
         detail = parsed.stderr.strip() or f"bash -n exited {parsed.returncode}"
-        raise ManifestError(
-            f"scripts/validate manifest row has invalid shell syntax: {line!r}\n  {detail}"
-        )
+        error = rules.row_error("row-bad-syntax", line)
+        raise ManifestError(f"{error}\n  {detail}")
 
 
 GRAMMAR_FILE = Path(__file__).resolve().parent / "validation-grammar.conf"
@@ -152,11 +135,18 @@ class Grammar:
         self.path = path
         self.classes: dict[str, dict[str, bool]] = {}
         self.token_class: dict[str, str] = {}
+        # The SHARED diagnostics: text both readers emit, defined once here so
+        # neither spells it by hand. It drifted twice and was hand-synchronised
+        # twice before this.
+        self.messages: dict[str, str] = {}
         for raw in path.read_text(encoding="utf-8").splitlines():
             line = raw.split("#", 1)[0].strip()
             if not line:
                 continue
             kind, *fields = line.split()
+            if kind == "message":
+                self.messages[fields[0]] = line.split(None, 2)[2]
+                continue
             if kind == "class":
                 name, props = fields[0], fields[1:]
                 self.classes[name] = {
@@ -165,17 +155,35 @@ class Grammar:
                 }
             elif kind == "token":
                 name, cls = fields[0], fields[1]
+                if name in self.token_class:
+                    raise ManifestError(
+                        f"{self.say('grammar-duplicate', 'grammar declares a token twice')}"
+                        f": {name}"
+                    )
                 if cls not in self.classes:
                     raise ManifestError(
-                        f"{path.name}: token `{name}` has unknown class `{cls}`"
+                        f"{self.say('grammar-bad-class', 'grammar token has an unknown class')}"
+                        f": {name} ({cls})"
                     )
-                if name in self.token_class:
-                    raise ManifestError(f"{path.name}: token `{name}` declared twice")
                 self.token_class[name] = cls
             else:
-                raise ManifestError(f"{path.name}: unknown line kind `{kind}`")
+                raise ManifestError(
+                    f"{self.say('grammar-bad-kind', 'grammar has an unknown line kind')}"
+                    f": {kind}"
+                )
         if not self.token_class:
             raise ManifestError(f"{path.name} declares no tokens")
+
+    def say(self, key: str, fallback: str) -> str:
+        """A shared diagnostic by key. The fallback keeps a grammar that is
+        missing a message readable rather than raising inside a raise."""
+        return self.messages.get(key, fallback)
+
+    def row_error(self, key: str, line: str, tags: str | None = None) -> ManifestError:
+        """A row diagnostic, worded by the grammar and contextualised here."""
+        text = self.say(key, key)
+        where = f" `{tags}`" if tags else ""
+        return ManifestError(f"scripts/validate: {text}{where}: {line}")
 
     def _with(self, prop: str) -> set[str]:
         return {t for t, c in self.token_class.items() if self.classes[c].get(prop)}

@@ -285,7 +285,7 @@ while IFS=';' read -r name expect row; do
   rejected_everywhere "$name" "$row
 always    | scripts/stub-always" "$expect"
 done <<SHAPES
-a row with no separator is fatal;has no AREAS | COMMAND separator;scripts/stub-qml
+a row with no separator is fatal;manifest row has no;scripts/stub-qml
 an empty command is fatal;has an empty command;qml       |
 an empty tag field is fatal;has an empty tag field;          | scripts/stub-go
 a separator-only row is fatal;has an empty tag field;   |

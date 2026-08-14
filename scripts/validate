@@ -224,33 +224,52 @@ if [[ ! -r "$GRAMMAR_FILE" ]]; then
 fi
 
 declare -A CLASS_SELECTS=() CLASS_STANDALONE=() CLASS_ROWTAG=() CLASS_EXCLUSIVE=()
-declare -A TOKEN_CLASS=()
+declare -A TOKEN_CLASS=() MSG=()
 grammar_tokens=()
-while read -r kind name f1 f2 f3 f4; do
+
+# AN AMBIGUOUS GRAMMAR IS REFUSED BEFORE ANYTHING RUNS. Every validation below
+# is DERIVED from this definition, so a runner willing to execute against an
+# ambiguous one cannot honour its own promise that a malformed manifest exits 2
+# before anything runs — the promise is computed from the thing in doubt. A
+# token declared twice is ambiguous whether or not the two agree: the same
+# spelling appearing twice is a definition nobody can read confidently.
+grammar_fatal() {
+  printf 'scripts/validate: %s: %s\n' "$1" "$2" >&2
+  exit 2
+}
+
+while read -r kind name rest; do
   case "$kind" in
     class)
+      read -r f1 f2 f3 f4 <<<"$rest"
       CLASS_SELECTS[$name]="${f1#selects=}"
       CLASS_STANDALONE[$name]="${f2#standalone=}"
       CLASS_ROWTAG[$name]="${f3#rowtag=}"
       CLASS_EXCLUSIVE[$name]="${f4#exclusive=}"
       ;;
     token)
-      if [[ -z "${CLASS_ROWTAG[$f1]:-}" ]]; then
-        # shellcheck disable=SC2016  # backticks quote a name in the message
-        printf 'scripts/validate: grammar token `%s` has unknown class `%s`\n' "$name" "$f1" >&2
-        exit 2
+      if [[ -n "${TOKEN_CLASS[$name]:-}" ]]; then
+        grammar_fatal "${MSG[grammar-duplicate]:-grammar declares a token twice}" "$name"
       fi
-      TOKEN_CLASS[$name]="$f1"
+      if [[ -z "${CLASS_ROWTAG[$rest]:-}" ]]; then
+        grammar_fatal "${MSG[grammar-bad-class]:-grammar token has an unknown class}" \
+          "$name ($rest)"
+      fi
+      TOKEN_CLASS[$name]="$rest"
       grammar_tokens+=("$name")
       ;;
+    message) MSG[$name]="$rest" ;;
     "" | "#"*) ;;
-    *)
-      # shellcheck disable=SC2016  # backticks quote a name in the message
-      printf 'scripts/validate: grammar has unknown line kind `%s`\n' "$kind" >&2
-      exit 2
-      ;;
+    *) grammar_fatal "${MSG[grammar-bad-kind]:-grammar has an unknown line kind}" "$kind" ;;
   esac
 done < <(sed -e 's/#.*//' -e '/^[[:space:]]*$/d' "$GRAMMAR_FILE")
+
+for required in row-no-separator row-empty-tags row-malformed-tags \
+  row-not-standalone row-no-selector row-empty-command row-bad-syntax; do
+  if [[ -z "${MSG[$required]:-}" ]]; then
+    grammar_fatal "grammar is missing a shared message" "$required"
+  fi
+done
 
 # Derived sets. Each is a QUERY over the grammar, not a second list.
 AREAS=()          # what `scripts/validate X` accepts
@@ -343,6 +362,22 @@ tag_alternation="$(
 tags_grammar="^(($exclusive_alternation)|($tag_alternation)(,($tag_alternation))*)$"
 
 
+# row_fatal <message key> <line> [offending tags] [detail]
+# The message TEXT comes from the grammar file, which the library reads too;
+# only the context around it is this reader's. Nothing here spells a shared
+# diagnostic by hand — that text drifted twice and was hand-synchronised twice.
+row_fatal() {
+  local key="$1" line="$2" tags="${3:-}" detail="${4:-}"
+  # shellcheck disable=SC2016  # the backticks quote the tags in the message
+  if [[ -n "$tags" ]]; then
+    printf 'scripts/validate: %s `%s`: %s\n' "${MSG[$key]}" "$tags" "$line" >&2
+  else
+    printf 'scripts/validate: %s: %s\n' "${MSG[$key]}" "$line" >&2
+  fi
+  [[ -n "$detail" ]] && printf '  %s\n' "$detail" >&2
+  exit 2
+}
+
 # Commands selected for this area, in manifest order, with their tags kept
 # alongside so the run loop can tell a `may-skip` row from every other one.
 #
@@ -359,8 +394,7 @@ while IFS= read -r line; do
     continue
   fi
   if [[ "$line" != *"|"* ]]; then
-    printf 'scripts/validate: manifest row has no AREAS | COMMAND separator: %s\n' "$line" >&2
-    exit 2
+    row_fatal row-no-separator "$line"
   fi
   tags="${line%%|*}"
   cmd="${line#*|}"
@@ -380,29 +414,28 @@ while IFS= read -r line; do
   # follow-up test. scripts/lib/validation_manifest.py holds the same grammar
   # for the same rows; scripts/test-validate.sh pins the two to one answer.
   if [[ -z "$tags" ]]; then
-    printf 'scripts/validate: manifest row has an empty tag field: %s\n' "$line" >&2
-    # shellcheck disable=SC2016  # the backticks quote tag names in the message
-    printf '  every row needs at least one tag; use `-` for a row only `all` runs\n' >&2
-    exit 2
+    # shellcheck disable=SC2016  # the backticks quote tag names in the hint
+    row_fatal row-empty-tags "$line" "" \
+      'every row needs at least one tag; use `-` for a row only `all` runs'
   fi
   if [[ ! "$tags" =~ $tags_grammar ]]; then
-    # shellcheck disable=SC2016  # the backticks quote the tag field in the message
-    printf 'scripts/validate: manifest row has a malformed tag field `%s`: %s\n' "$tags" "$line" >&2
-    # Diagnosis is separate from the decision: the grammar above already refused
-    # the row, and these only explain WHY. A shape none of them names still
-    # exits 2 with the generic message, which is the property that makes the
-    # rule complete without the diagnostics having to be.
+    # Diagnosis is separate from the decision: the grammar already refused the
+    # row, and these only explain WHY. A shape none of them names still exits 2
+    # with the shared message, which is what makes the rule complete without the
+    # diagnostics having to be.
+    why=""
     case ",$tags," in
-      ,,*) printf '  it starts with a separator\n' >&2 ;;
-      *,,) printf '  it ends with a separator\n' >&2 ;;
-      *,,*) printf '  it has a repeated separator\n' >&2 ;;
+      ,,*) why="it starts with a separator" ;;
+      *,,) why="it ends with a separator" ;;
+      *,,*) why="it has a repeated separator" ;;
     esac
-    if [[ "$tags" == *-* && "$tags" == *,* && ",$tags," == *,-,* ]]; then
-      # shellcheck disable=SC2016  # the backticks quote a tag name
-      printf '  `-` cannot be combined with another tag\n' >&2
+    if [[ ",$tags," == *,-,* && "$tags" == *,* ]]; then
+      # shellcheck disable=SC2016  # the backticks quote a tag name in the hint
+      why='`-` cannot be combined with another tag'
     fi
-    printf '  known row tags: %s\n' "${row_tag_vocabulary[*]}" >&2
-    exit 2
+    [[ -n "$why" ]] && why="$why"$'\n  '
+    # shellcheck disable=SC2016  # the backticks quote tag names in the hint
+    row_fatal row-malformed-tags "$line" "$tags" "${why}known row tags: ${row_tag_vocabulary[*]}"
   fi
   # THE CLASS PROPERTIES ARE THE RULES, asked of the grammar rather than
   # restated here. `standalone` catches a lone modifier; `selects` catches a row
@@ -412,9 +445,7 @@ while IFS= read -r line; do
   if [[ ${#row_tag_list[@]} -eq 1 ]]; then
     only="${row_tag_list[0]}"
     if [[ "${CLASS_STANDALONE[${TOKEN_CLASS[$only]}]}" != yes ]]; then
-      printf "scripts/validate manifest row's only tag cannot stand alone \`%s\`: %s\n" \
-        "$tags" "$line" >&2
-      exit 2
+      row_fatal row-not-standalone "$line" "$tags"
     fi
   fi
   has_selector=0
@@ -424,13 +455,10 @@ while IFS= read -r line; do
     fi
   done
   if [[ $has_selector -eq 0 ]]; then
-    # shellcheck disable=SC2016  # backticks quote a name in the message
-    printf 'scripts/validate manifest row carries no selector `%s`: %s\n' "$tags" "$line" >&2
-    exit 2
+    row_fatal row-no-selector "$line" "$tags"
   fi
   if [[ -z "$cmd" ]]; then
-    printf 'scripts/validate: manifest row has an empty command: %s\n' "$line" >&2
-    exit 2
+    row_fatal row-empty-command "$line"
   fi
   # THE COMMAND HALF OF THE SAME CONTRACT. An invalid-shell command parsed fine,
   # so `--list` exited 0 and a real run executed earlier checks before `eval`
@@ -439,9 +467,7 @@ while IFS= read -r line; do
   # depend on which rows the requested area picks, which is what makes
   # `validate docs` refuse a broken Go-block command. ~30 ms over all 58 rows.
   if ! syntax_error="$(bash -n -c "$cmd" 2>&1)"; then
-    printf 'scripts/validate: manifest row has invalid shell syntax: %s\n' "$line" >&2
-    printf '  %s\n' "${syntax_error//$'\n'/$'\n  '}" >&2
-    exit 2
+    row_fatal row-bad-syntax "$line" "" "${syntax_error//$'\n'/$'\n  '}"
   fi
   if [[ "$area" != all ]]; then
     # `always` rows join every named area; `all` already takes everything.
