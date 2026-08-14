@@ -1,7 +1,8 @@
 // Source-reading helpers for the QML tests: walk a block by braces, pull a
-// function body or a handler, require load-bearing tokens, strip comments,
-// evaluate a marked decision region. A library, not a check — no executable bit,
-// so its self-test is exported and test-ai-usage-wiring.js runs it first.
+// function body or a handler, require load-bearing tokens, strip comments.
+// Reading only — evaluating a marked region is scripts/lib/qml-region.js's, and
+// deliberately separate. A library, not a check: no executable bit, so its
+// self-test is exported and test-ai-usage-wiring.js runs it first.
 //
 // Bound to one source text: `const q = require("./lib/qml-source.js")(text)`.
 //
@@ -17,7 +18,6 @@
 "use strict";
 
 const assert = require("node:assert/strict");
-const vm = require("node:vm");
 
 // Runs of whitespace flattened, so re-wrapping a call across lines is free while
 // renaming or reshaping it still fails.
@@ -106,58 +106,6 @@ function codeOnly(text) {
     return blankRanges(blankRanges(text, ranges.comments, false), ranges.strings, true);
 }
 
-// Evaluate the decision region a QML file marks off, in a context holding
-// NOTHING but the JavaScript intrinsics. `new Function` ran that text in this
-// process with full ambient authority — process, require, fetch — so a QML-only
-// edit executed arbitrary code on the CI runner, and ci.yml triggers on plain
-// `pull_request` with no fork guard, which makes a stranger's fork PR the reach.
-// The region is plain JavaScript needing only Math, JSON, String and Number, so
-// everything else is ABSENT rather than unused. A timeout bounds a planted loop.
-function regionOf(source, marker, label) {
-    const marked = source.match(
-        new RegExp(`// BEGIN ${marker}\\n([\\s\\S]*?)// END ${marker}`)
-    );
-    assert.ok(marked, `${label} must carry the ${marker} markers`);
-    return marked[1];
-}
-
-function evaluateMarked(source, marker, names, label) {
-    const region = regionOf(source, marker, label);
-    // console is Node's, not an intrinsic: shadowed so the region cannot reach it.
-    const context = vm.createContext({ console: undefined });
-    const factory = `(function () {\n${region}\nreturn { ${names.join(", ")} };\n})()`;
-    const exported = vm.runInContext(factory, context,
-        { filename: `${label}:${marker}`, timeout: 5000 });
-
-    // Values built inside the sandbox carry ITS intrinsics, so a plain object
-    // from there is not deepStrictEqual to one written here. Each function hands
-    // its result back as host data; the realm is the sandbox's business.
-    const out = {};
-    for (const name of names) {
-        const value = exported[name];
-        out[name] = typeof value === "function"
-            ? (...args) => hostValue(value(...args))
-            : hostValue(value);
-    }
-    return out;
-}
-
-function hostValue(value) {
-    if (value === null || typeof value !== "object")
-        return value;
-    if (Array.isArray(value)) {
-        // Built here: the sandbox's Array.prototype.map returns ITS array.
-        const list = [];
-        for (let i = 0; i < value.length; i++)
-            list.push(hostValue(value[i]));
-        return list;
-    }
-    const out = {};
-    for (const key of Object.keys(value))
-        out[key] = hostValue(value[key]);
-    return out;
-}
-
 module.exports = function qmlSource(source, fileLabel) {
     const label = fileLabel || "the source";
 
@@ -243,8 +191,6 @@ module.exports = function qmlSource(source, fileLabel) {
     return { blockFrom, body, handlers, requires, indexOf, lastIndexOf, flat, stripComments };
 };
 
-module.exports.evaluateMarked = evaluateMarked;
-module.exports.regionOf = regionOf;
 module.exports.flat = flat;
 module.exports.stripComments = stripComments;
 
@@ -345,39 +291,6 @@ module.exports.selfTest = function selfTest() {
         assert.ok(walked.includes("rightOne()"),
             "body() must locate the real function, not the block after a comment that mentions it");
         assert.ok(!walked.includes("wrongOne()"), "and never the decoy's body");
-    }
-
-    // --- the extracted region gets no ambient authority ---
-    {
-        const region = names => [
-            "// BEGIN SELF TEST", names, "// END SELF TEST"
-        ].join("\n");
-        const ok = evaluateMarked(
-            region("function two() { return Math.max(1, JSON.parse('2')); }\n" +
-                   "function shaped() { return { pct: 2, slots: [{ ok: true }] }; }"),
-            "SELF TEST", ["two", "shaped"], "self-test");
-        assert.equal(ok.two(), 2, "the intrinsics the decision code uses are there");
-        assert.deepEqual(ok.shaped(), { pct: 2, slots: [{ ok: true }] },
-            "and a value built in the sandbox comes back as host data, or every deepEqual in " +
-            "the suites would fail on the realm rather than on the value");
-
-        for (const planted of [
-            "process.exit(0);",
-            "require('node:fs');",
-            "fetch('http://example.invalid');",
-            "globalThis.process.env.HOME;"
-        ]) {
-            assert.throws(
-                () => evaluateMarked(region(`${planted}\nfunction f() {}`), "SELF TEST", ["f"],
-                    "self-test"),
-                /is not defined|Cannot read properties of undefined/,
-                `\`${planted}\` planted in the marked region must be REJECTED, not executed — ` +
-                "that region comes from a repo file, and a fork PR runs this suite on the runner"
-            );
-        }
-        assert.throws(() => evaluateMarked(region("while (true) {}\nfunction f() {}"),
-            "SELF TEST", ["f"], "self-test"), /timed out/,
-            "and a planted infinite loop must time out rather than hang CI");
     }
 
     // --- the lookup helpers read code, not prose ---

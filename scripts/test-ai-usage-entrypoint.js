@@ -23,16 +23,14 @@ const path = require("node:path");
 const { spawnSync } = require("node:child_process");
 
 const repoRoot = path.join(__dirname, "..");
-const LOGIC = path.join(repoRoot, "config", "vshell", "plugins", "aiUsage", "AiUsageLogic.qml");
 
-// The widget's own acceptance rules, extracted from the shipped QML, so this
-// asks whether the WIDGET would accept what the entrypoint emits.
-// Evaluated under node:vm — see scripts/lib/qml-source.js: this text comes from
-// a repo file and a fork PR runs this suite on the CI runner.
-const { evaluateMarked } = require("./lib/qml-source.js");
-const { payloadProvider, payloadIsFor } = evaluateMarked(
-    fs.readFileSync(LOGIC, "utf8"), "PROVIDER DECISION",
-    ["payloadProvider", "payloadIsFor"], "AiUsageLogic.qml");
+// This suite reads the payload's `provider` field directly rather than executing
+// the widget's acceptance rule. It used to extract and RUN that rule from
+// AiUsageLogic.qml, which meant a QML edit executed code in this process on a
+// fork PR's CI run; nothing here needs it. The rule itself — that a payload is
+// accepted only when its own stamp matches the fetch's provider — is proved by
+// executing it in scripts/test-ai-usage-provider.js, and what this suite proves
+// is the other half: that the entrypoint emits a payload carrying that stamp.
 
 // --- 6. the entrypoint the widget actually runs -----------------------------
 //
@@ -79,10 +77,10 @@ try {
             const payload = runEntrypoint(provider, backend);
             assert.equal(payload.ok, false, `${label} reports a failure`);
             assert.equal(
-                payloadProvider(payload), provider,
-                `${label} must still stamp the provider, or the widget discards the real cause`
+                payload.provider, provider,
+                `${label} must still stamp the provider, or the widget discards the real cause — ` +
+                "payloadIsFor() accepts exactly this, proved in test-ai-usage-provider.js"
             );
-            assert.ok(payloadIsFor(provider, payload), `${label} is accepted as that fetch's answer`);
         }
     }
 
@@ -92,7 +90,7 @@ try {
         const payload = runEntrypoint("codex", backend);
         assert.equal(payload.ok, true, "a good payload passes through");
         assert.equal(payload.plan, "Max", "the backend's own fields are untouched");
-        assert.equal(payloadProvider(payload), "codex", "an unstamped backend payload is stamped by the wrapper");
+        assert.equal(payload.provider, "codex", "an unstamped backend payload is stamped by the wrapper");
     }
 
     {
@@ -101,8 +99,9 @@ try {
         // re-introduce attribution by argument.
         const backend = fakeBackend("stamped", 'echo \'{"ok":false,"provider":"claude","error":"nope"}\'');
         const payload = runEntrypoint("codex", backend);
-        assert.equal(payloadProvider(payload), "claude", "an existing stamp is preserved, never overwritten");
-        assert.ok(!payloadIsFor("codex", payload), "and the widget then rejects it, which is the point");
+        assert.equal(payload.provider, "claude", "an existing stamp is preserved, never overwritten");
+        assert.notEqual(payload.provider, "codex",
+            "so the widget rejects it as another provider's payload, which is the point");
     }
 } finally {
     fs.rmSync(tmp, { recursive: true, force: true });

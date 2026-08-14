@@ -37,7 +37,11 @@ const logicSource = fs.readFileSync(LOGIC, "utf8");
 // this text comes from a repo file, ci.yml runs on plain `pull_request` with no
 // fork guard, and `new Function` would have given a stranger's QML edit the CI
 // process's own authority.
-const { evaluateMarked, regionOf } = require("./lib/qml-source.js");
+const { evaluateMarked, regionOf } = require("./lib/qml-region.js");
+
+// Prove the evaluator before it evaluates anything: its casual-path controls
+// (process, require, fetch, eval, the Function constructor, a planted loop).
+require("./lib/qml-region.js").selfTest();
 const {
     normalizeProvider, providerIcon, payloadProvider, payloadIsFor, shouldRelaunch,
     decodePayload, acceptOutcome, launchDecision, stderrReason, headOf, popoutView,

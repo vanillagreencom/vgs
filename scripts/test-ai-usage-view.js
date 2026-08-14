@@ -35,7 +35,7 @@ const logicSource = fs.readFileSync(LOGIC, "utf8");
 
 // Evaluated under node:vm — see scripts/lib/qml-source.js: this text comes from
 // a repo file and a fork PR runs this suite on the CI runner.
-const { evaluateMarked, regionOf } = require("./lib/qml-source.js");
+const { evaluateMarked, regionOf } = require("./lib/qml-region.js");
 const {
     normalizeProvider, providerIcon, headOf, popoutView, accountCount, failureWins,
     pillSlot, pillSlots
