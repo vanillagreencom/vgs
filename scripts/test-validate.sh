@@ -4,17 +4,16 @@
 # `scripts/test-validation-inventory.sh`.
 #
 # The runner is the entry point every agent and dev session invokes and trusts,
-# and before this nothing committed ever executed it. The demonstrated hole:
-# dropping the last manifest row — the whole Go block — left `validate go` and
-# `validate all` printing `ok` while every other check exited 0.
+# and before this nothing committed executed it. The demonstrated hole: dropping
+# the last manifest row — the whole Go block — left `validate go` and `all`
+# printing `ok` while every other check exited 0.
 #
-# TWO FIXTURE STRATEGIES: (1) selection and reporting run from a THROWAWAY REPO,
-# a temp dir holding a copy of `scripts/validate` with a fixture manifest and
-# stub commands, so nothing here reaches this checkout and the fixture can carry
-# shapes the real manifest has none of; (2) membership assertions run against
-# the REAL manifest through `--list`, which executes nothing — a fixture cannot
-# answer "does `validate qml` still contain the surface smoke", and retagging
-# that row is a shrink the inventory guard does not see.
+# TWO FIXTURE STRATEGIES: (1) selection and reporting run from a THROWAWAY REPO
+# holding a copy of `scripts/validate` with a fixture manifest and stub
+# commands, so nothing here reaches this checkout; (2) membership assertions run
+# against the REAL manifest through `--list`, which executes nothing — a fixture
+# cannot answer "does `validate qml` still contain the surface smoke", and
+# retagging that row is a shrink the inventory guard does not see.
 set -euo pipefail
 
 repo_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -180,60 +179,45 @@ ok "unknown option exits 2"
 
 echo "=== malformed manifest rows are fatal, never dropped ==="
 
-write_runner 'go        | scripts/stub-go
-scripts/stub-qml
-always    | scripts/stub-always'
-fixture --list all
-expect_rc 2 "separator-less row"
-expect_contains "$err" "manifest row has no AREAS | COMMAND separator" "separator-less row"
-expect_absent "$out" "scripts/stub-go" "separator-less row"
-ok "a row with no | exits 2 instead of vanishing from every area"
-
-write_runner 'go        | scripts/stub-go
-qml       |
-always    | scripts/stub-always'
-fixture --list all
-expect_rc 2 "empty command row"
-expect_contains "$err" "manifest row has an empty command" "empty command row"
-ok "a row with an empty command exits 2"
-
-# Every malformed-tag shape must be fatal in EVERY area, not only under `all`.
-# The named-area path is where each of these used to be dropped silently, so the
-# assertion is the exit STATUS: the message was absent precisely because nothing
-# fired. An empty tag field is the subtlest — it survives the separator and
-# empty-command checks, and `read -a` on it yields a ZERO-element array, so the
-# vocabulary loop never iterates and the row falls through to the filter.
-rejected_everywhere() {
-  # $1 = case name, $2 = fixture manifest, $3 = expected message fragment
-  write_runner "$2"
+# THE TAG FIELD IS VALIDATED AGAINST A GRAMMAR, so these are samples of a
+# rejected complement, not the definition of it. Two holes came from the
+# opposite approach — rules written against whatever a split produced, missing
+# the empty field (no elements) and the trailing comma (dropped one). Each case
+# asserts the exit STATUS and that NOTHING RAN, across a named area as well as
+# `all`: the named area is where each was dropped, and the message was absent
+# because nothing fired.
+rejected_everywhere() { # $1 name, $2 fixture manifest, $3 expected fragment
   local area
+  write_runner "$2"
   for area in all go qml docs; do
     fixture --list "$area"
     expect_rc 2 "$1 in $area"
     expect_contains "$err" "$3" "$1 in $area"
-    expect_absent "$out" "scripts/stub-" "$1 in $area"
+    expect_absent "$out" "scripts/" "$1 in $area"
   done
   ok "$1"
 }
 
-rejected_everywhere "an empty tag field is fatal" 'go        | scripts/stub-go
-          | scripts/stub-qml
-always    | scripts/stub-always' "manifest row has an empty tag field"
-
-rejected_everywhere "a mistyped area tag is fatal" 'go        | scripts/stub-go
-qmll      | scripts/stub-qml
-always    | scripts/stub-always' "manifest row has unknown tag"
-
-rejected_everywhere "a mistyped attribute tag is fatal" 'go,alway  | scripts/stub-go
-always    | scripts/stub-always' "manifest row has unknown tag"
-
-rejected_everywhere "a bad half of a multi-tag row is fatal" 'go,may-skipp | scripts/stub-go
-always       | scripts/stub-always' "manifest row has unknown tag"
-
-# `all` is an ARGUMENT, not a row tag: accepting it would match only an `all`
-# run and behave like `-` everywhere else — the silent narrowing this closes.
-rejected_everywhere "all is rejected as a row tag" 'all       | scripts/stub-go
-always    | scripts/stub-always' "unknown tag"
+# name ; expected diagnosis ; the malformed row. `all` is an ARGUMENT not a tag,
+# `-` cannot be combined with an area, and normalisation is ASCII in BOTH
+# readers so a non-breaking space stays a bad tag for each.
+while IFS=';' read -r name expect row; do
+  [[ -n "$name" ]] || continue
+  rejected_everywhere "$name" "$row
+always    | scripts/stub-always" "$expect"
+done <<SHAPES
+a row with no separator is fatal;has no AREAS | COMMAND separator;scripts/stub-qml
+an empty command is fatal;has an empty command;qml       |
+an empty tag field is fatal;has an empty tag field;          | scripts/stub-go
+a separator-only row is fatal;has an empty tag field;   |
+a trailing separator is fatal;it ends with a separator;qml,      | scripts/stub-go
+a leading separator is fatal;it starts with a separator;,qml      | scripts/stub-go
+a repeated separator is fatal;it has a repeated separator;qml,,go   | scripts/stub-go
+a combined dash tag is fatal;cannot be combined;-,go      | scripts/stub-go
+an unknown tag is fatal;malformed tag field;qmll      | scripts/stub-go
+all is rejected as a row tag;malformed tag field;all       | scripts/stub-go
+a non-breaking space is fatal;malformed tag field;$(printf 'go\xc2\xa0')      | scripts/stub-go
+SHAPES
 
 echo "=== execution, failure collection and the skip channel ==="
 
@@ -313,6 +297,31 @@ expect_rc 1 "skip plus failure"
 expect_contains "$err" "1 skipped: scripts/stub-skip" "skip plus failure"
 expect_contains "$err" "  - scripts/stub-fail-a" "skip plus failure"
 ok "a skip never masks a failure"
+
+# THE SELF-CONCEALING CASE, on the SHIPPED manifest. The malformed row is the
+# inventory guard's own: lose it and every scoped run drops the check whose job
+# is reporting malformed rows. A fixture cannot carry that, and without a named
+# case the scenario surfaces only as an errexit abort further down.
+self_probe="$tmp/self-concealing"
+for mutation in "alway     :malformed tag field" "          :an empty tag field" "always,   :ends with a separator"; do
+  MUT_TO="${mutation%%:*}" python3 - "$runner" >"$self_probe" <<'MUT'
+import os, sys
+t = open(sys.argv[1], encoding="utf-8").read()
+old = "always    | scripts/check-validation-inventory.py"
+assert t.count(old) == 1, "the inventory guard's manifest row moved"
+print(t.replace(old, os.environ["MUT_TO"] + "| scripts/check-validation-inventory.py"), end="")
+MUT
+  chmod +x "$self_probe"
+  for area in docs go qml all; do
+    rc=0
+    out="$("$self_probe" --list "$area" 2>"$tmp/stderr")" || rc=$?
+    err="$(cat "$tmp/stderr")"
+    [[ "$rc" == 2 ]] || fail "self-concealing" "expected exit 2 in area $area, got $rc"
+    expect_contains "$err" "${mutation##*:}" "self-concealing"
+    expect_absent "$out" "scripts/check-" "self-concealing"
+  done
+done
+ok "a malformed tag on the inventory guard's OWN row fails in every area, unrun"
 
 echo "=== the shipped manifest still reaches the local-only checks ==="
 

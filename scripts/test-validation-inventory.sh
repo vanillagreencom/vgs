@@ -131,7 +131,7 @@ PY
 )" \
   "manifest row has an empty command"
 
-guard_case "an unknown tag is reported" \
+guard_case "an unknown tag is reported (by the shared grammar)" \
   "$(python3 - "$runner" <<'PY'
 import sys
 t = open(sys.argv[1], encoding="utf-8").read()
@@ -139,7 +139,7 @@ print(t.replace("docs      | scripts/check-doc-growth.py",
                 "dcos      | scripts/check-doc-growth.py"), end="")
 PY
 )" \
-  "which is neither an area in the runner's AREAS list"
+  "malformed tag field"
 
 guard_case "an area with no rows is reported" \
   "$(python3 - "$runner" <<'PY'
@@ -236,18 +236,30 @@ MUT
 )" \
   "manifest is empty"
 
-# The two readers must refuse the SAME malformed row. This one was accepted by
-# manifest_rows with empty tags while the runner silently dropped it, so the two
-# readings agreed only in being wrong about it.
-guard_case "a row with an empty tag field is reported" \
-  "$(python3 - "$runner" <<'MUT'
-import sys
+# BOTH READERS MUST REFUSE THE SAME ROWS, and by the same rule rather than by
+# coincidence: the library holds the same tag grammar the runner does, so every
+# shape scripts/test-validate.sh pins on the runner is pinned here on the
+# library. An empty tag field and a trailing comma were each accepted by one
+# reader and dropped by the other before the grammar replaced the shape checks.
+while IFS=';' read -r label bad expect; do
+  [[ -n "$label" ]] || continue
+  guard_case "$label" \
+    "$(MUT_TO="$bad" python3 - "$runner" <<'MUT'
+import os, sys
 t = open(sys.argv[1], encoding="utf-8").read()
-print(t.replace("always    | scripts/check-format-lint.sh",
-                "          | scripts/check-format-lint.sh"), end="")
+old = "always    | scripts/check-format-lint.sh"
+assert t.count(old) == 1, "the format-lint manifest row moved"
+print(t.replace(old, os.environ["MUT_TO"] + "| scripts/check-format-lint.sh"), end="")
 MUT
 )" \
-  "manifest row has an empty tag field"
+    "$expect"
+done <<'SHAPES'
+a row with an empty tag field is reported;          ;has an empty tag field
+a row with a trailing separator is reported;always,   ;malformed tag field
+a row with a leading separator is reported;,always   ;malformed tag field
+a row with a repeated separator is reported;a,,always ;malformed tag field
+a row combining the dash tag is reported;-,go      ;malformed tag field
+SHAPES
 
 guard_case "a missing AREAS list is reported" \
   "${real_runner/AREAS=(go qml helper packaging docs all)/AREA_NAMES=(go qml helper packaging docs all)}" \
@@ -312,7 +324,7 @@ ok "a non-executable runner is reported"
 # would stay green while a neighbouring check failed instead.
 run_guard
 for noise in "has no MANIFEST_EOF heredoc" "manifest row has no" "empty command" \
-  "is neither an area" "no manifest row is tagged with it" "is not executable" \
+  "malformed tag field" "no manifest row is tagged with it" "is not executable" \
   "never acts on it outside that array" "enumerates the validate areas but omits" \
   "no longer states the validate area list"; do
   expect_absent "$guard_out" "$noise" "unmutated control"

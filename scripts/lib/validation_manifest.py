@@ -27,11 +27,37 @@ class ManifestError(Exception):
 
 
 
+# ASCII whitespace only, matching the runner's `[[:space:]]` exactly. Python's
+# str.split()/strip() also eat Unicode whitespace, which made a non-breaking
+# space normalise away here and survive there: the same bytes then produced a
+# valid tag for this reader and an unknown one for the runner.
+_ASCII_SPACE = re.compile(r"[ \t\n\r\f\v]")
+
+
+def tag_grammar(runner: Path) -> re.Pattern[str]:
+    """The accepted language for a manifest row's tag field.
+
+    The same rule scripts/validate applies, built from the same vocabulary: the
+    lone `-`, or a comma-separated list of one or more tags that are not `-`.
+    Stated as a WHITELIST on purpose. Both holes this closes came from rules
+    written against whatever a split produced — an empty field yields no
+    elements, a trailing comma is dropped — and shapes like that cannot be
+    enumerated to exhaustion. A whitelist has no complement to enumerate.
+    """
+    combinable = sorted((runner_areas(runner) | runner_tag_attributes(runner)) - {"-"})
+    alternation = "|".join(re.escape(tag) for tag in combinable)
+    return re.compile(rf"^(?:-|(?:{alternation})(?:,(?:{alternation}))*)$")
+
+
 def manifest_rows(runner: Path) -> list[tuple[str, str]]:
     """`(area tags, command)` pairs from the scripts/validate manifest heredoc.
 
     Parsed statically, not via `scripts/validate --list`: this check must report
     a manifest the runner cannot even parse.
+
+    Refuses exactly the rows the runner refuses, in the same order — tag field,
+    then tag grammar, then command — so one malformed line gets one diagnosis
+    rather than two readers naming different defects on it.
     """
     text = runner.read_text(encoding="utf-8")
     block = re.search(r"<<'MANIFEST_EOF'\n(.*?)\nMANIFEST_EOF\n", text, re.DOTALL)
@@ -40,9 +66,10 @@ def manifest_rows(runner: Path) -> list[tuple[str, str]]:
             "scripts/validate has no MANIFEST_EOF heredoc; "
             "this check parses that block, so moving it silently empties the inventory"
         )
+    grammar = tag_grammar(runner)
     rows: list[tuple[str, str]] = []
     for line in block.group(1).splitlines():
-        if not line.strip():
+        if not _ASCII_SPACE.sub("", line):
             continue
         if "|" not in line:
             raise ManifestError(
@@ -50,22 +77,20 @@ def manifest_rows(runner: Path) -> list[tuple[str, str]]:
                 f"`AREAS | COMMAND` separator: {line!r}"
             )
         tags, command = line.split("|", 1)
-        tags = "".join(tags.split())
+        tags = _ASCII_SPACE.sub("", tags)
         if not tags:
-            # The runner drops such a row from every named area and exits 0.
-            # This reader used to hand it back with empty tags, so the two
-            # readings agreed only in being wrong about the same row.
             raise ManifestError(
                 f"scripts/validate manifest row has an empty tag field: {line!r}"
             )
-        command = command.strip()
-        if not command:
-            # A truncated hand-edit leaves the tag and drops the command. Both
-            # this parser and the runner's loop used to skip such a row, deleting
-            # a check from every area while both halves of the guard stayed green.
+        if not grammar.match(tags):
             raise ManifestError(
-                f"scripts/validate manifest row has an "
-                f"empty command: {line!r}"
+                f"scripts/validate manifest row has a malformed tag field "
+                f"{tags!r}: {line!r}"
+            )
+        command = _ASCII_SPACE.sub(" ", command).strip(" ")
+        if not command:
+            raise ManifestError(
+                f"scripts/validate manifest row has an empty command: {line!r}"
             )
         rows.append((tags, command))
     if not rows:

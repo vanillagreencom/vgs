@@ -232,6 +232,22 @@ for known in "${AREAS[@]}"; do
 done
 row_tag_vocabulary+=("${TAG_ATTRIBUTES[@]}")
 
+# The accepted language for a tag field: either the lone `-`, or a
+# comma-separated list of one or more tags that are not `-`. Built from the
+# arrays above so the vocabulary has exactly one definition; the `-` case is
+# split out so "only `all` runs this" cannot be combined with an area.
+combinable_tags=()
+for known in "${row_tag_vocabulary[@]}"; do
+  if [[ "$known" != - ]]; then
+    combinable_tags+=("$known")
+  fi
+done
+tag_alternation="$(
+  IFS='|'
+  printf '%s' "${combinable_tags[*]}"
+)"
+tags_grammar="^(-|($tag_alternation)(,($tag_alternation))*)$"
+
 # Commands selected for this area, in manifest order, with their tags kept
 # alongside so the run loop can tell a `may-skip` row from every other one.
 #
@@ -256,46 +272,47 @@ while IFS= read -r line; do
   tags="${tags//[[:space:]]/}"
   while [[ "$cmd" == [[:space:]]* ]]; do cmd="${cmd:1}"; done
   while [[ "$cmd" == *[[:space:]] ]]; do cmd="${cmd:0:${#cmd}-1}"; done
-  if [[ -z "$cmd" ]]; then
-    printf 'scripts/validate: manifest row has an empty command: %s\n' "$line" >&2
-    exit 2
-  fi
-  # An EMPTY tag field is rejected here, before the split. `read -a` on an empty
-  # string yields a ZERO-element array, so the vocabulary loop below would never
-  # iterate and the row would fall straight through to the area filter, where
-  # `,,` matches nothing and it is dropped — a named-area run exiting 0 over a
-  # malformed manifest. Guarding before the split makes that state unreachable
-  # rather than merely handled, which is the difference between a fix and a
-  # patch: the loop can then assume what it already assumed.
+  # TAGS ARE VALIDATED AS A STRING, AGAINST A GRAMMAR OF WHAT IS ALLOWED,
+  # before any split and before any check runs. Two holes came from doing it the
+  # other way round — writing the rule in terms of whatever `read -a` produced:
+  # an empty field yields a ZERO-element array so the loop never ran, and a
+  # trailing comma is dropped by `read -a` so `qml,` looked well formed. Both
+  # are shapes; enumerating shapes is endless. A whitelist has no complement to
+  # enumerate: anything that is not exactly `-`, or a comma-separated list of
+  # known non-`-` tags, is rejected whatever it looks like. `-` may not be
+  # combined, because "only the full `all` run selects this row" cannot be true
+  # of a row that also names an area — the grammar says so rather than a
+  # follow-up test. scripts/lib/validation_manifest.py holds the same grammar
+  # for the same rows; scripts/test-validate.sh pins the two to one answer.
   if [[ -z "$tags" ]]; then
     printf 'scripts/validate: manifest row has an empty tag field: %s\n' "$line" >&2
     # shellcheck disable=SC2016  # the backticks quote tag names in the message
     printf '  every row needs at least one tag; use `-` for a row only `all` runs\n' >&2
     exit 2
   fi
-  # VOCABULARY IS CHECKED FOR EVERY ROW, BEFORE ANY FILTERING. A mistyped tag
-  # matches neither `,$area,` nor `,always,`, so filtering alone silently
-  # dropped the row from every named area while `all` kept working — and the
-  # failure is self-concealing: mistype the `always` on the
-  # check-validation-inventory.py row and every scoped run stops running the
-  # one check whose job is to report malformed tags, then prints `ok`. Checking
-  # here, before the area test, is what makes the answer independent of which
-  # rows the requested area happens to select.
-  IFS=, read -r -a row_tags <<<"$tags"
-  for tag in "${row_tags[@]}"; do
-    known=0
-    for valid in "${row_tag_vocabulary[@]}"; do
-      if [[ "$tag" == "$valid" ]]; then
-        known=1
-      fi
-    done
-    if [[ $known -eq 0 ]]; then
-      # shellcheck disable=SC2016  # the backticks quote the tag in the message, not a subshell
-      printf 'scripts/validate: manifest row has unknown tag `%s`: %s\n' "$tag" "$line" >&2
-      printf '  known row tags: %s\n' "${row_tag_vocabulary[*]}" >&2
-      exit 2
+  if [[ ! "$tags" =~ $tags_grammar ]]; then
+    # shellcheck disable=SC2016  # the backticks quote the tag field in the message
+    printf 'scripts/validate: manifest row has a malformed tag field `%s`: %s\n' "$tags" "$line" >&2
+    # Diagnosis is separate from the decision: the grammar above already refused
+    # the row, and these only explain WHY. A shape none of them names still
+    # exits 2 with the generic message, which is the property that makes the
+    # rule complete without the diagnostics having to be.
+    case ",$tags," in
+      ,,*) printf '  it starts with a separator\n' >&2 ;;
+      *,,) printf '  it ends with a separator\n' >&2 ;;
+      *,,*) printf '  it has a repeated separator\n' >&2 ;;
+    esac
+    if [[ "$tags" == *-* && "$tags" == *,* && ",$tags," == *,-,* ]]; then
+      # shellcheck disable=SC2016  # the backticks quote a tag name
+      printf '  `-` cannot be combined with another tag\n' >&2
     fi
-  done
+    printf '  known row tags: %s\n' "${row_tag_vocabulary[*]}" >&2
+    exit 2
+  fi
+  if [[ -z "$cmd" ]]; then
+    printf 'scripts/validate: manifest row has an empty command: %s\n' "$line" >&2
+    exit 2
+  fi
   if [[ "$area" != all ]]; then
     # `always` rows join every named area; `all` already takes everything.
     if [[ ",$tags," != *",$area,"* && ",$tags," != *",always,"* ]]; then

@@ -127,22 +127,13 @@ def main() -> int:
     documented = "\n".join(commands)
     ci_text = ci_run_commands(CI)
 
-    # --- every manifest tag is an area the runner accepts, or an attribute ----
-    # A typo'd tag is invisible otherwise: `scripts/validate <area>` would refuse
-    # the unknown name, but the row would silently drop out of every real area
-    # while still running under `all`, so the scoped run passes over a check it
-    # never executed.
+    # A per-tag vocabulary loop used to live here. It is gone, not relaxed:
+    # manifest_rows now validates the whole tag field against the same grammar
+    # scripts/validate applies, and raises before returning a row, so this loop
+    # could never have fired. An unreachable check is coverage that does not
+    # exist — the thing this file exists to report.
     areas = runner_areas(RUNNER)
     attributes = runner_tag_attributes(RUNNER)
-    for tags, command in rows:
-        for tag in tags.split(","):
-            if tag not in areas and tag not in attributes:
-                problems.append(
-                    f"scripts/validate manifest tags `{command}` with `{tag}`, which is "
-                    f"neither an area in the runner's AREAS list "
-                    f"({', '.join(sorted(areas))}) nor one of its TAG_ATTRIBUTES "
-                    f"({', '.join(sorted(attributes))})"
-                )
     # An attribute the guard accepts but the runner never acts on is worse than
     # an unknown tag: rows carrying it pass here and then behave like `-`. The
     # REMOVAL direction was already fail-closed; this closes ADDITION.
