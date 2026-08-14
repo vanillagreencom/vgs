@@ -15,6 +15,24 @@ was chosen, why, and what would change the answer.
 
 ---
 
-Row format, status values, and what is worth recording at all are owned by the
-decider skill (its `templates/index-row.md` and `schemas/decision-format.md`).
-New rows go at the end of the table above, before this separator.
+## Format Reference
+
+**Log** a path choice whose conditions might change: a technology or transport
+selection with real alternatives, a trade-off taken for a stated reason, or a
+scope boundary a later reader would otherwise re-argue. **Do not log** bug
+fixes, renames, small refactors, or a choice that had no realistic alternative
+— every row here should have a Revisit When worth writing.
+
+**Status values**: `Active`, `Active ([COMPONENTS] → [DECISION_ID])` for a
+partial supersession, `Superseded by [DECISION_ID]`, and `Revisited`. Anything
+starting with `Active` stays listed, so a partial supersession keeps showing up.
+
+**Code marker**: `// REVISIT([DECISION_ID]): [reason]` ties an implementation
+point back to its row, as `quickshell/vshell/Modules/Bar/Widgets/SystemTrayBar.qml`
+does for D003. Repoint these when a decision is superseded.
+
+New rows go at the end of the table above, before the separator. The column
+order is a machine contract — eight cells read positionally, and the Link cell
+must name the decision document — so do not reorder or drop a column. The full
+row-format and document schema are owned by the vstack decider skill, which is
+agent-side tooling and is not vendored into this repo.
