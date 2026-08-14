@@ -14,62 +14,27 @@ what it verifies without overclaiming.
 Offsets are preserved everywhere: blanking replaces characters in place, and the
 region helpers return offsets into the source they were given, so results from
 different helpers can be compared against each other.
+
+`live_code` — which decides what counts as code at all before any of these
+helpers ask what contains what — lives in `qml_scrub` and is re-exported here,
+so a caller still imports one name from one place.
 """
 
 import re
 
+from qml_scrub import live_code
 
-def live_code(text: str, blank_strings: bool = False) -> str:
-    """`text` with comments blanked, offsets and line count preserved.
-
-    Matching raw source counts commented-out code as present, so a correct line
-    left commented above a broken one satisfies a check that reads the file as
-    written. With `blank_strings`, string CONTENTS are blanked too and only the
-    delimiters remain, so a call named inside a log message is not a call. A rule
-    that needs those contents — one matching an argv literal, say — reads the
-    other view instead; both views keep the same offsets, so a caller may hold
-    one of each and compare positions between them.
-    """
-    out: list[str] = []
-    i, end = 0, len(text)
-    while i < end:
-        char = text[i]
-        if char in "\"'`":
-            quote = char
-            out.append(char)
-            i += 1
-            while i < end:
-                if text[i] == "\\" and i + 1 < end:
-                    out.append("  " if blank_strings else text[i:i + 2])
-                    i += 2
-                    continue
-                consumed = text[i]
-                i += 1
-                # An unterminated single-line string ends at the newline; QML has
-                # no multi-line "" literal, and a template literal has no such end.
-                terminator = consumed == quote or (quote != "`" and consumed == "\n")
-                if blank_strings and not terminator:
-                    out.append("\n" if consumed == "\n" else " ")
-                else:
-                    out.append(consumed)
-                if terminator:
-                    break
-            continue
-        if char == "/" and i + 1 < end and text[i + 1] == "/":
-            while i < end and text[i] != "\n":
-                out.append(" ")
-                i += 1
-            continue
-        if char == "/" and i + 1 < end and text[i + 1] == "*":
-            while i < end and not (text[i] == "*" and i + 1 < end and text[i + 1] == "/"):
-                out.append("\n" if text[i] == "\n" else " ")
-                i += 1
-            out.append("  ")
-            i += 2
-            continue
-        out.append(char)
-        i += 1
-    return "".join(out)
+__all__ = [
+    "control_regions",
+    "enclosing_body",
+    "enclosing_function_body",
+    "handler_bodies",
+    "if_regions",
+    "in_function",
+    "live_code",
+    "occurrences_in",
+    "returns_unconditionally",
+]
 
 
 def enclosing_body(source: str, index: int) -> tuple[int, str] | None:
