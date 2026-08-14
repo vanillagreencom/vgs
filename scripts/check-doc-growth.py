@@ -49,11 +49,13 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 # rationale is for the reviewer, so a raise without one is review feedback,
 # not something this script can enforce.
 CEILINGS: dict[str, int] = {
-    # 18,355 B after VGS-123 moved the 55-command validation manifest into
+    # 18,528 B after VGS-123 moved the 56-command validation manifest into
     # scripts/validate and the "What CI covers" tables into the instruction
-    # files. The 25,000 ceiling that survived the VGS-107 diet would leave 7 KB
+    # files. The 25,000 ceiling that survived the VGS-107 diet would leave 6.5 KB
     # of unexamined regrowth headroom here, which is the thing this ratchet
-    # exists to deny, so it drops to measured size plus ~10%.
+    # exists to deny. 19,500 is measured + ~5%, DELIBERATELY tighter than the
+    # +10% adoption default: this file is loaded every session and has just been
+    # cut, so the next growth should be argued for rather than absorbed.
     "AGENTS.md": 19_500,
     # Adopted at 3,289 B. 2026-08-10: owner-approved risk-class +
     # regression-test policy sections plus the PR #120 review rounds

@@ -40,41 +40,70 @@ echo "=== check-validation-inventory.py manifest arms ==="
 
 # The guard's manifest arms. Each mutation must produce its OWN message: a
 # control that merely fails proves nothing about which arm caught it.
-# Runs check-validation-inventory.py with its RUNNER pointed at $1. Importing
-# rather than exec'ing swaps the fixture in without a whole fake repo: every
-# other path the guard reads stays real, so only the mutation's message changes.
+# Runs check-validation-inventory.py against a fixture, capturing BOTH its
+# output and its exit status. Capturing only the text was the hole: every case
+# below then asserted that the right diagnosis appeared, and a guard that printed
+# the right message and returned 0 would have passed — verifying diagnosis, not
+# refusal, in a file whose whole purpose is refusal.
+#
+# The path constants are patched on the loaded module, so the guard reads a
+# mutated runner or doc while every other path it touches (ci.yml, scripts/)
+# stays real. That injection point is why the library takes explicit paths.
+#
+# Usage: run_guard [VAR=PATH ...]   VAR in RUNNER_PATH AGENTS_PATH TABLES_PATH
+# Sets: guard_out, guard_rc
 run_guard() {
-  RUNNER_PATH="$1" python3 - "$repo_root" <<'GUARD_PY'
+  guard_rc=0
+  guard_out="$(env "$@" python3 - "$repo_root" <<'GUARD_PY'
 import contextlib, importlib.util, io, os, pathlib, sys
 spec = importlib.util.spec_from_file_location(
     "inv", pathlib.Path(sys.argv[1]) / "scripts" / "check-validation-inventory.py"
 )
 mod = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(mod)
-mod.RUNNER = pathlib.Path(os.environ["RUNNER_PATH"])
+for var, attr in (
+    ("RUNNER_PATH", "RUNNER"),
+    ("AGENTS_PATH", "AGENTS"),
+    ("TABLES_PATH", "TABLES_DOC"),
+):
+    if os.environ.get(var):
+        setattr(mod, attr, pathlib.Path(os.environ[var]))
+# AREA_ENUMERATING_DOCS captured the originals at import time.
+mod.AREA_ENUMERATING_DOCS = (mod.AGENTS, mod.TABLES_DOC, mod.SKILL_DOC)
 buf = io.StringIO()
+status = 0
 try:
     with contextlib.redirect_stderr(buf):
-        mod.main()
+        status = mod.main()
+except mod.ManifestError as error:
+    buf.write(str(error))
+    status = 1
 except SystemExit as exc:
     buf.write(str(exc))
+    # SystemExit("text") carries a STRING code; passing it to sys.exit would
+    # print it to the real stderr and exit 1, leaking past this capture.
+    status = exc.code if isinstance(exc.code, int) else 1
 print(buf.getvalue())
+sys.exit(status if isinstance(status, int) else 1)
 GUARD_PY
+  )" || guard_rc=$?
+}
+
+# expect_refused <case name> <message fragment> — a mutated fixture must both
+# DIAGNOSE and REFUSE. Asserting only the text is what item #4 caught.
+expect_refused() {
+  expect_contains "$guard_out" "$2" "$1"
+  [[ "$guard_rc" -ne 0 ]] || fail "$1" "guard printed the message but exited 0 — it diagnosed without refusing"
 }
 
 guard_case() {
   # $1 = case name, $2 = fixture runner content, $3 = expected message fragment
-  local name="$1" expect="$3" probe="$tmp/probe-runner" got
+  local name="$1" probe="$tmp/probe-runner"
   printf '%s' "$2" >"$probe"
   chmod +x "$probe"
-  got="$(run_guard "$probe")"
-  if [[ "$got" == *"$expect"* ]]; then
-    ok "$name"
-  else
-    fail "$name" "expected message fragment: $expect
-got:
-$got"
-  fi
+  run_guard "RUNNER_PATH=$probe"
+  expect_refused "$name" "$3"
+  ok "$name"
 }
 
 real_runner="$(cat "$runner")"
@@ -132,21 +161,121 @@ guard_case "an area missing from the prose enumeration is reported" \
   "${real_runner/AREAS=(go qml helper packaging docs all)/AREAS=(go qml helper packaging docs rust all)}" \
   "enumerates the validate areas but omits \`rust\`"
 
+# THE REALISTIC UNWIRING, and the one the arm used to miss entirely: a token
+# that is declared AND carried by a manifest row, whose branch is gone. Leaving
+# the heredoc in the searched body made the row itself satisfy the test, so
+# deleting the `may-skip` branch outright still looked wired.
+guard_case "a declared tag carried by a manifest row but unwired is reported" \
+  "$(python3 - "$runner" <<'MUT'
+import sys
+t = open(sys.argv[1], encoding="utf-8").read()
+t = t.replace("TAG_ATTRIBUTES=(- always may-skip)", "TAG_ATTRIBUTES=(- always may-skip nightly)")
+t = t.replace("docs      | scripts/check-doc-growth.py",
+              "docs,nightly | scripts/check-doc-growth.py")
+print(t, end="")
+MUT
+)" \
+  "never acts on it outside that array"
+
+# The COMMENT-STRIPPING half of the same parser. Without it, a token mentioned
+# once in the header prose reads as wired — the exact scenario the stripping
+# exists to catch, and the half that had no control at all.
+guard_case "a declared tag named only in a comment is reported" \
+  "$(python3 - "$runner" <<'MUT'
+import sys
+t = open(sys.argv[1], encoding="utf-8").read()
+t = t.replace("TAG_ATTRIBUTES=(- always may-skip)", "TAG_ATTRIBUTES=(- always may-skip nightly)")
+t = t.replace("# Exit status a `may-skip` row uses",
+              "# nightly rows would be for a nightly lane.\n# Exit status a `may-skip` row uses")
+print(t, end="")
+MUT
+)" \
+  "never acts on it outside that array"
+
+# The prose arm's OTHER direction: a document that stops stating the list at all
+# used to be skipped silently, so rewording a lead-in turned the comparison off.
+reworded="$tmp/reworded-agents.md"
+python3 - "$repo_root/AGENTS.md" >"$reworded" <<'MUT'
+import sys
+t = open(sys.argv[1], encoding="utf-8").read()
+print(t.replace("areas `go`, `qml`, `helper`,\n`packaging`, `docs`, `all`",
+                "one area per run: `go`, `qml`, `helper`,\n`packaging`, `docs`, `all`"), end="")
+MUT
+run_guard "AGENTS_PATH=$reworded"
+expect_refused "reworded lead-in" "no longer states the validate area list"
+ok "a document that stops stating the area list is reported, not skipped"
+
+# ...and every named document must currently yield a non-empty list, so the
+# case above is catching the rewording rather than a doc that never stated one.
+python3 - "$repo_root" <<'PROBE' || fail "enumerating docs" "a named document yields no area list today"
+import importlib.util, pathlib, sys
+root = pathlib.Path(sys.argv[1])
+spec = importlib.util.spec_from_file_location(
+    "inv", root / "scripts" / "check-validation-inventory.py"
+)
+mod = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mod)
+for doc in mod.AREA_ENUMERATING_DOCS:
+    stated = mod.prose_areas(doc)
+    assert stated, doc
+    print(f"  ok    {doc.name} states {len(stated)} areas")
+PROBE
+ok "every named document states its area list today"
+
+# The remaining library raises, each cheap to reach through a fixture. Left
+# uncovered deliberately: the PyYAML-missing raise (environment, not logic) and
+# `states an empty validate area list` (the regex that finds the enumeration
+# requires at least one backticked name, so a match can never be empty — it is a
+# belt-and-braces raise kept for the day that regex is loosened).
+guard_case "an empty manifest is reported" \
+  "$(python3 - "$runner" <<'MUT'
+import re, sys
+t = open(sys.argv[1], encoding="utf-8").read()
+print(re.sub(r"(<<'MANIFEST_EOF'\n).*?(\nMANIFEST_EOF\n)", r"\1\2", t, flags=re.DOTALL), end="")
+MUT
+)" \
+  "manifest is empty"
+
+guard_case "a missing AREAS list is reported" \
+  "${real_runner/AREAS=(go qml helper packaging docs all)/AREA_NAMES=(go qml helper packaging docs all)}" \
+  "has no AREAS=( ... ) list"
+
+guard_case "a missing TAG_ATTRIBUTES list is reported" \
+  "${real_runner/TAG_ATTRIBUTES=(- always may-skip)/TAG_ATTRS=(- always may-skip)}" \
+  "has no TAG_ATTRIBUTES=( ... ) list"
+
+# The table lead-in the local-only/reached-indirectly comparison keys on.
+no_table="$tmp/no-table.md"
+python3 - "$repo_root/.github/instructions/validation-scripts.instructions.md" >"$no_table" <<'MUT'
+import sys
+t = open(sys.argv[1], encoding="utf-8").read()
+print(t.replace("**Local-only — CI cannot run these at all:**", "**Local-only:**"), end="")
+MUT
+run_guard "TABLES_PATH=$no_table"
+expect_refused "missing table lead-in" "has no table introduced by"
+ok "a table whose lead-in changed is reported"
+
 # The executable-bit arm (VGS-30 applied to the entry point itself).
 non_exec="$tmp/non-exec-runner"
 cp "$runner" "$non_exec"
 chmod -x "$non_exec"
-guard_out="$(run_guard "$non_exec")"
-expect_contains "$guard_out" "scripts/validate is not executable" "runner executable bit"
+run_guard "RUNNER_PATH=$non_exec"
+expect_refused "runner executable bit" "scripts/validate is not executable"
 ok "a non-executable runner is reported"
 
-# CONTROL: the unmutated runner produces none of those messages.
-guard_out="$(run_guard "$runner")"
+# CONTROL: the unmutated runner produces none of those messages AND exits 0. The
+# noise list covers every arm above — a parser whose filter breaks reports EVERY
+# attribute as unwired, and without that fragment here the test owning the arm
+# would stay green while a neighbouring check failed instead.
+run_guard
 for noise in "has no MANIFEST_EOF heredoc" "manifest row has no" "empty command" \
-  "is neither an area" "no manifest row is tagged with it" "is not executable"; do
+  "is neither an area" "no manifest row is tagged with it" "is not executable" \
+  "never acts on it outside that array" "enumerates the validate areas but omits" \
+  "no longer states the validate area list"; do
   expect_absent "$guard_out" "$noise" "unmutated control"
 done
-ok "the unmutated runner triggers none of those arms"
+[[ "$guard_rc" -eq 0 ]] || fail "unmutated control" "the real tree does not pass the guard (rc $guard_rc)"
+ok "the unmutated runner triggers none of those arms and exits 0"
 
 if [[ $failures -ne 0 ]]; then
   printf '\ntest-validation-inventory: %d failure(s)\n' "$failures" >&2

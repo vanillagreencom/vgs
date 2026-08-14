@@ -29,7 +29,8 @@
 #        (dev SKILL.md `--validate-note`), never as a bare pass: handing a caller
 #        a 0 here would be VGS-69's "refusal read as a pass" one layer up.
 #   1    at least one command failed
-#   2    usage or manifest error; nothing was run
+#   2    usage or manifest error — a broken invocation. NOTHING ran, so it is
+#        neither a pass nor a validation failure; fix the invocation and re-run.
 #
 # `scripts/check-validation-inventory.py` parses the MANIFEST_EOF block below
 # and enforces it in both directions: every executable check under `scripts/`
@@ -75,9 +76,16 @@ cd "$repo_root" || exit 1
 # three reserved tokens:
 #
 #   -          only the full `all` run selects this row
-#   always     every area selects it — for checks that are cheap, network-free
-#              and apply to any change, so a scoped run is never weaker than it
-#              needs to be (a Go-scoped run must still gofmt the Go it changed)
+#   always     every area selects it. The bar is high and all three parts are
+#              load-bearing: cheap, network-free, and correct in ANY checkout —
+#              a plain clone, a CI-shaped checkout, a worktree made before
+#              `vstack refresh`. A check that hard-fails when some out-of-tree
+#              artifact is absent does NOT qualify however fast it is, because
+#              every scoped run in that checkout then fails for a reason
+#              unrelated to the change (the vendor-sync checks are exactly this,
+#              and are tagged `-`). What does qualify: the format/lint floor,
+#              this manifest's own guard, `git diff --check` — a Go-scoped run
+#              must still gofmt the Go it just changed.
 #   may-skip   this row is allowed to report exit 77 as "did not check"
 #
 # The per-area sets are the scoping AGENTS.md used to state in prose:
@@ -126,12 +134,12 @@ helper    | bash -n bin/vshell
 always    | git diff --check
 -         | scripts/check-workflows.sh
 -         | scripts/check-coderabbit-config.py
-always    | scripts/check-review-gate-vendor.sh
+-         | scripts/check-review-gate-vendor.sh
 -         | third_party/review-gate/scripts/review-predicate-selftest.sh
 -         | third_party/review-gate/tests/pr-watch.test.sh
 -         | third_party/review-gate/tests/review-writer.test.sh
 -         | third_party/review-gate/tests/review-writer-template.test.sh
-always    | scripts/check-size-ratchet-vendor.sh
+-         | scripts/check-size-ratchet-vendor.sh
 -         | third_party/size-ratchet/scripts/size-ratchet
 -         | third_party/size-ratchet/tests/bash32-portability.test.sh
 -         | third_party/size-ratchet/tests/collection-fail-closed.test.sh
@@ -318,20 +326,4 @@ printf 'validate: FAIL (%s, %d of %d command%s failed%s)\n' \
 for cmd in "${failed[@]}"; do
   printf '  - %s\n' "$cmd" >&2
 done
-# The commonest non-defect failure in this suite, and the one that reads most
-# like a real QML break in a dev agent's `FAILING:` line: the nested smoke needs
-# a host Wayland socket to nest inside, and most agent shells have none. Name
-# the remedy where the failure is reported rather than only in a doc.
-if [[ -z "${WAYLAND_DISPLAY:-}" ]]; then
-  for cmd in "${failed[@]}"; do
-    if [[ "$cmd" == scripts/qml-smoke.sh* ]]; then
-      printf '\nvalidate: WAYLAND_DISPLAY is unset, so the nested smoke had no host socket\n' >&2
-      printf '  to nest inside. Point it at the session and re-run — the sandbox keeps its\n' >&2
-      printf '  own runtime dir, HOME and bus, so the live session is untouched:\n' >&2
-      printf '    WAYLAND_DISPLAY=wayland-1 XDG_RUNTIME_DIR=/run/user/%s scripts/validate %s\n' \
-        "$(id -u)" "$area" >&2
-      break
-    fi
-  done
-fi
 exit 1

@@ -24,10 +24,11 @@ list, which is compared against the runner's own. Adding or renaming a check
 means editing that manifest, not a doc. `scripts/test-validate.sh` covers the
 runner itself.
 
-Its exit status is three-valued, and **77 is not a pass**: `0` means everything
-selected ran and passed, `77` means what ran passed but something did not run
-(the summary names each skipped command — report it with the skip recorded, not
-as a bare pass), `1` is a real failure. A check that can be forced not to
+Its exit status is four-valued, and **77 is not a pass**: `0` everything
+selected ran and passed; `77` what ran passed but something did not run (the
+summary names each skipped command — report it with the skip recorded, not as a
+bare pass); `1` a real failure; `2` a broken invocation where nothing ran, which
+is neither a pass nor a validation failure. A check that can be forced not to
 degrade carries the flag that forces it (`--require-static`,
 `--require-nested`); the skip channel exists only for `smoke-surfaces.sh`, whose
 refusal cannot be flag-forced.

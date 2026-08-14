@@ -29,17 +29,19 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent / "lib"))
 from validation_manifest import (  # noqa: E402
+    ManifestError,
     ci_run_commands,
     documented_table,
     manifest_rows,
     prose_areas,
     runner_areas,
-    runner_body_without_declaration,
+    runner_logic,
     runner_tag_attributes,
 )
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 AGENTS = REPO_ROOT / "AGENTS.md"
+SKILL_DOC = REPO_ROOT / "project-skills" / "vshell-dev" / "SKILL.md"
 RUNNER = REPO_ROOT / "scripts" / "validate"
 TABLES_DOC = REPO_ROOT / ".github" / "instructions" / "validation-scripts.instructions.md"
 CI = REPO_ROOT / ".github" / "workflows" / "ci.yml"
@@ -72,6 +74,12 @@ LOCAL_ONLY = {
 INDIRECT_IN_CI = {
     "qml-smoke.sh": "scripts/check-validation-safety.sh",
 }
+
+# Documents that MUST enumerate the validate areas in prose, checked against the
+# runner's own AREAS. Membership is the decision: a doc that should point at
+# `scripts/validate --list` instead is removed from this tuple in the same edit,
+# which is a recorded choice rather than a regex that quietly stopped matching.
+AREA_ENUMERATING_DOCS = (AGENTS, TABLES_DOC, SKILL_DOC)
 
 # Interpreter invocations that syntax-CHECK a file rather than run it. These are
 # not a mode problem: `node --check`, `bash -n` and `python3 -m py_compile` have
@@ -138,7 +146,7 @@ def main() -> int:
     # An attribute the guard accepts but the runner never acts on is worse than
     # an unknown tag: rows carrying it pass here and then behave like `-`. The
     # REMOVAL direction was already fail-closed; this closes ADDITION.
-    runner_body = runner_body_without_declaration(RUNNER)
+    runner_body = runner_logic(RUNNER)
     for tag in sorted(attributes - {"-"}):
         if tag not in runner_body:
             problems.append(
@@ -161,11 +169,17 @@ def main() -> int:
     # --- the prose copies of the area list must match the runner ------------
     # Both docs enumerate the areas: a second copy of something the runner
     # defines, i.e. the drift axis this check exists to close. So: compared.
-    for doc in (AGENTS, TABLES_DOC):
-        stated = prose_areas(doc)
-        if stated is None:
+    for doc in AREA_ENUMERATING_DOCS:
+        # A fixture copy lives outside the tree (test-validation-inventory.sh
+        # patches these paths), so name it rather than failing to relativise it.
+        rel = doc.name
+        if doc.is_relative_to(REPO_ROOT):
+            rel = doc.relative_to(REPO_ROOT).as_posix()
+        try:
+            stated = prose_areas(doc)
+        except ManifestError as exc:
+            problems.append(str(exc))
             continue
-        rel = doc.relative_to(REPO_ROOT).as_posix()
         for name in sorted((areas | {"all"}) - stated):
             problems.append(
                 f"{rel} enumerates the validate areas but omits `{name}`, which "
@@ -288,4 +302,11 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    # The library raises ManifestError carrying only the parse problem; the name
+    # of the failing check belongs to the check, not to a module that may one
+    # day have two consumers.
+    try:
+        sys.exit(main())
+    except ManifestError as error:
+        print(f"check-validation-inventory: {error}", file=sys.stderr)
+        sys.exit(1)

@@ -282,12 +282,21 @@ nested_unavailable() {
   else
     note "isolated runtime check skipped: $reason"
   fi
+  # Option 4 answers exactly one of the reasons this function is called for, so
+  # it prints only for that one. This is the only place that knows the cause —
+  # a caller matching on the command name would key on a proxy and offer the
+  # nesting remedy for unrelated failures.
+  local nest_remedy=""
+  [[ -n "${WAYLAND_DISPLAY:-}" ]] || nest_remedy="qml-smoke:   4. point the sandbox at the session's own socket (it keeps its own runtime
+qml-smoke:      dir, HOME and bus, so the live session is untouched):
+qml-smoke:        WAYLAND_DISPLAY=wayland-1 XDG_RUNTIME_DIR=/run/user/$(id -u) scripts/validate qml"
   cat >&2 <<EOF
 qml-smoke: a runtime check must run inside its own compositor. Safe options:
 qml-smoke:   1. install a nested compositor (Hyprland is enough) and re-run with --nested
 qml-smoke:   2. validate on a spare TTY/VM session that has no live VGS shell
 qml-smoke:   3. read the live shell's own QML errors: vshell logs -n 200
-qml-smoke: never run 'qs -c vshell' or 'qs -p quickshell/vshell' in a live session.
+${nest_remedy:+$nest_remedy
+}qml-smoke: never run 'qs -c vshell' or 'qs -p quickshell/vshell' in a live session.
 EOF
 }
 

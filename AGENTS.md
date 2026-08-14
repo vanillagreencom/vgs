@@ -147,10 +147,12 @@ cross-cutting work. The command manifest and the per-area scoping live in that
 runner's header, and `scripts/check-validation-inventory.py` enforces it against
 CI and `scripts/` in both directions (VGS-50, VGS-30).
 
-**Exit 77 is not a pass.** `0` means everything selected ran and passed; `77`
-means what ran passed but something did NOT run, with the summary naming each
-skipped command; `1` is a real failure. Report a 77 as a pass with the skip
-recorded in `--validate-note`, never as a bare pass.
+**Exit 77 is not a pass.** The status is four-valued: `0` everything selected
+ran and passed; `77` what ran passed but something did NOT run, with the summary
+naming each skipped command — report it as a pass with the skip recorded in
+`--validate-note`, never as a bare pass; `1` a real failure; `2` a broken
+invocation (bad area or malformed manifest) where NOTHING ran, so it is neither
+a pass nor a validation failure — fix the invocation and re-run.
 
 A green CI run does not prove the shell starts. Run the qml area before
 finishing QML work — most agent shells have no `WAYLAND_DISPLAY`, and the nested

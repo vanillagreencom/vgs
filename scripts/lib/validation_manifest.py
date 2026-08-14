@@ -1,14 +1,17 @@
 """Parsers for the VGS validation manifest and the docs that restate it.
 
-Imported by scripts/check-validation-inventory.py, which owns the RULES — which
-checks are excluded, which are local-only, what CI must contain. This module
-owns only the READING: what the runner says its manifest, areas and tag
-attributes are, and what the prose surfaces claim about them.
+Its one importer today is scripts/check-validation-inventory.py, which owns the
+RULES — which checks are excluded, which are local-only, what CI must contain.
+This module owns only the READING.
 
-Every function takes the path it reads rather than resolving one, so a caller
-can point them at a fixture. scripts/test-validate.sh does exactly that: it
-drives the guard against mutated copies of the runner, which is why a
-module-level RUNNER constant would be the wrong shape here.
+Every function takes the path it reads rather than resolving one. That is what
+makes scripts/test-validation-inventory.sh possible: it drives the guard against
+MUTATED COPIES of the runner and of the docs, by patching the guard's own path
+constants, which only works because nothing here resolves a path of its own.
+
+Parse problems raise ManifestError rather than SystemExit, and carry no caller
+name — the importer prefixes its own. A module that brands its errors with one
+consumer's name cannot honestly gain a second.
 
 Library, not a check: no shebang, no `__main__`, never executed directly.
 """
@@ -16,21 +19,23 @@ Library, not a check: no shebang, no `__main__`, never executed directly.
 from __future__ import annotations
 
 import re
-import sys
 from pathlib import Path
+
+
+class ManifestError(Exception):
+    """A surface this module reads does not say what it must say."""
+
 
 try:
     import yaml
-except ModuleNotFoundError:
+except ModuleNotFoundError as exc:  # pragma: no cover - environment, not logic
     # Fails rather than degrading: without a YAML parse, CI coverage is NOT
     # checked, and a check that silently skips its own subject is the exact
     # false green the importing guard exists to prevent.
-    print(
-        "check-validation-inventory: FAIL: PyYAML is not installed, so ci.yml could not\n"
-        "be parsed and CI coverage was NOT checked (pacman -S python-yaml).",
-        file=sys.stderr,
-    )
-    raise SystemExit(1) from None
+    raise ManifestError(
+        "PyYAML is not installed, so ci.yml could not be parsed and CI coverage "
+        "was NOT checked (pacman -S python-yaml)"
+    ) from exc
 
 
 def manifest_rows(runner: Path) -> list[tuple[str, str]]:
@@ -42,8 +47,8 @@ def manifest_rows(runner: Path) -> list[tuple[str, str]]:
     text = runner.read_text(encoding="utf-8")
     block = re.search(r"<<'MANIFEST_EOF'\n(.*?)\nMANIFEST_EOF\n", text, re.DOTALL)
     if not block:
-        raise SystemExit(
-            "check-validation-inventory: scripts/validate has no MANIFEST_EOF heredoc; "
+        raise ManifestError(
+        "scripts/validate has no MANIFEST_EOF heredoc; "
             "this check parses that block, so moving it silently empties the inventory"
         )
     rows: list[tuple[str, str]] = []
@@ -51,8 +56,8 @@ def manifest_rows(runner: Path) -> list[tuple[str, str]]:
         if not line.strip():
             continue
         if "|" not in line:
-            raise SystemExit(
-                f"check-validation-inventory: scripts/validate manifest row has no "
+            raise ManifestError(
+        f"scripts/validate manifest row has no "
                 f"`AREAS | COMMAND` separator: {line!r}"
             )
         tags, command = line.split("|", 1)
@@ -61,13 +66,14 @@ def manifest_rows(runner: Path) -> list[tuple[str, str]]:
             # A truncated hand-edit leaves the tag and drops the command. Both
             # this parser and the runner's loop used to skip such a row, deleting
             # a check from every area while both halves of the guard stayed green.
-            raise SystemExit(
-                f"check-validation-inventory: scripts/validate manifest row has an "
+            raise ManifestError(
+        f"scripts/validate manifest row has an "
                 f"empty command: {line!r}"
             )
         rows.append(("".join(tags.split()), command))
     if not rows:
-        raise SystemExit("check-validation-inventory: scripts/validate manifest is empty")
+        raise ManifestError(
+        "scripts/validate manifest is empty")
     return rows
 
 
@@ -75,7 +81,8 @@ def runner_areas(runner: Path) -> set[str]:
     """The area names scripts/validate accepts, minus the `all` pseudo-area."""
     match = re.search(r"^AREAS=\(([^)]*)\)", runner.read_text(encoding="utf-8"), re.MULTILINE)
     if not match:
-        raise SystemExit("check-validation-inventory: scripts/validate has no AREAS=( ... ) list")
+        raise ManifestError(
+        "scripts/validate has no AREAS=( ... ) list")
     return set(match.group(1).split()) - {"all"}
 
 
@@ -89,40 +96,75 @@ def runner_tag_attributes(runner: Path) -> set[str]:
         r"^TAG_ATTRIBUTES=\(([^)]*)\)", runner.read_text(encoding="utf-8"), re.MULTILINE
     )
     if not match:
-        raise SystemExit(
-            "check-validation-inventory: scripts/validate has no TAG_ATTRIBUTES=( ... ) list"
+        raise ManifestError(
+        "scripts/validate has no TAG_ATTRIBUTES=( ... ) list"
         )
     return set(match.group(1).split())
 
 
-def runner_body_without_declaration(runner: Path) -> str:
-    """The runner's executable shell, minus comments and the attribute array.
+def runner_logic(runner: Path) -> str:
+    """The runner's executable shell, with everything that is DATA removed.
 
-    Proves an attribute token is WIRED, not merely declared: a token named only
-    in the header prose behaves exactly like an undeclared one at run time.
+    Used to ask whether a tag token is acted upon. Three things are stripped,
+    and each one had to be:
+
+      comments          a token named only in the header prose behaves exactly
+                        like an undeclared one at run time
+      the declarations  TAG_ATTRIBUTES and AREAS list the vocabulary; finding a
+                        token in its own declaration proves nothing
+      the manifest      the heredoc is data. Every attribute in real use appears
+                        in a manifest ROW, so leaving it in made the whole test
+                        vacuous: deleting the `may-skip` branch outright still
+                        looked wired, because `qml,may-skip | ...` was in scope.
+
+    What remains is shell that runs. That is a NECESSARY condition for a token
+    being honoured, not a sufficient one — the behavioral proof that each branch
+    does its job lives in scripts/test-validate.sh.
     """
+    text = runner.read_text(encoding="utf-8")
+    manifest = re.search(r"<<'MANIFEST_EOF'\n.*?\nMANIFEST_EOF\n", text, re.DOTALL)
+    if manifest:
+        text = text.replace(manifest.group(0), "")
     lines = []
-    for line in runner.read_text(encoding="utf-8").splitlines():
+    for line in text.splitlines():
         stripped = line.strip()
-        if stripped.startswith("#") or stripped.startswith("TAG_ATTRIBUTES=("):
+        if stripped.startswith("#"):
+            continue
+        if stripped.startswith("TAG_ATTRIBUTES=(") or stripped.startswith("AREAS=("):
             continue
         lines.append(line)
     return "\n".join(lines)
 
 
-def prose_areas(path: Path) -> set[str] | None:
+def prose_areas(path: Path) -> set[str]:
     """Backticked area names from a prose surface's `areas ...` enumeration.
 
-    None when the file states none, which is allowed: a doc pointing at
-    `scripts/validate --list` instead has nothing to drift.
+    ABSENCE IS AN ERROR, never an empty answer. This returned None on a phrasing
+    miss and the caller skipped that document, so rewording a lead-in — with a
+    real, and possibly wrong, list still on the page — turned the comparison off
+    while the suite stayed green. "An empty result treated as a clean result" is
+    the standing rule this file's own instructions name.
+
+    The wording coupling is the residual weakness: the parser keys on the word
+    `areas` followed by backticked names. A delimited anchor in each document
+    would remove it, and is the better long-term shape; making absence fatal is
+    what stops the coupling from failing OPEN in the meantime.
     """
     match = re.search(
         r"areas\s+((?:`[a-z-]+`(?:,\s*|\s+and\s+|\s*)?)+)",
         path.read_text(encoding="utf-8"),
     )
     if not match:
-        return None
-    return set(re.findall(r"`([a-z-]+)`", match.group(1)))
+        raise ManifestError(
+            f"{path.name} no longer states the validate area list where this guard can "
+            f"read it (the word `areas` followed by backticked names). Restore that "
+            f"phrasing, or drop the enumeration entirely and remove the file from "
+            f"AREA_ENUMERATING_DOCS as a recorded decision."
+        )
+    stated = set(re.findall(r"`([a-z-]+)`", match.group(1)))
+    if not stated:
+        raise ManifestError(f"{path.name} states an empty validate area list")
+    return stated
 
 
 def ci_run_commands(ci: Path) -> str:
@@ -150,7 +192,8 @@ def ci_run_commands(ci: Path) -> str:
 
     walk(workflow)
     if not runs:
-        raise SystemExit("check-validation-inventory: ci.yml has no `run:` blocks at all")
+        raise ManifestError(
+        "ci.yml has no `run:` blocks at all")
     # Strip shell comments too: a `#` line inside a run block is still prose.
     lines = []
     for block in runs:
@@ -166,10 +209,7 @@ def documented_table(doc: Path, lead_in: str) -> set[str]:
     text = doc.read_text(encoding="utf-8")
     start = text.find(lead_in)
     if start == -1:
-        raise SystemExit(
-            f"check-validation-inventory: validation-scripts.instructions.md "
-            f"has no table introduced by {lead_in!r}"
-        )
+        raise ManifestError(f"{doc.name} has no table introduced by {lead_in!r}")
     names: set[str] = set()
     seen_rows = False
     for line in text[start + len(lead_in):].splitlines():

@@ -149,9 +149,10 @@ for file in "${bin_files[@]}" "${script_files[@]}"; do
     '#!'*)
       # A SHEBANG THE CASES ABOVE DID NOT ROUTE — `#!/bin/sh`, `#!/usr/bin/env
       # zsh`, perl, ruby. Asserting on the shebang rather than on the extension
-      # is the point: an extensionless `#!/bin/sh` entry point is exactly how
-      # scripts/validate was silently unlinted before this check was rewritten,
-      # and an extension test cannot see it. A file with NO shebang keeps
+      # is the point. scripts/validate (`#!/usr/bin/env bash`) went unlinted
+      # because it carries no EXTENSION, which shebang routing now covers; an
+      # extension test is blind to the same file arriving with `#!/bin/sh`, so
+      # this arm names it instead of dropping it. A file with NO shebang keeps
       # falling through, which is what leaves data fixtures alone.
       case "$file" in
         scripts/*)

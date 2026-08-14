@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Behavioral coverage for `scripts/validate` and the manifest arms of
-# `scripts/check-validation-inventory.py` (VGS-123).
+# Behavioral coverage for `scripts/validate` itself (VGS-123). The must-fail
+# controls for the guard that READS the runner live in
+# `scripts/test-validation-inventory.sh`.
 #
 # The runner is the entry point every agent and dev session invokes and trusts,
 # and before this nothing committed ever executed it. The demonstrated hole:
@@ -281,6 +282,7 @@ echo "=== the shipped manifest still reaches the local-only checks ==="
 # them, and retagging one to `-` shrinks the area silently.
 real_qml="$("$runner" --list qml)"
 real_go="$("$runner" --list go)"
+real_docs="$("$runner" --list docs)"
 for needed in \
   "scripts/qml-smoke.sh --nested --require-static --require-nested" \
   "scripts/check-validation-safety.sh --require-static" \
@@ -293,13 +295,38 @@ expect_contains "$real_go" "(cd backend && go build ./... && go vet ./... && go 
   "validate go membership"
 ok "validate go still runs the Go block"
 
-# The `always` rows CI cannot run. Tagged `-` they would execute only under
-# `validate all`, so neither CI nor any scoped run would ever reach them.
-for needed in scripts/check-review-gate-vendor.sh scripts/check-size-ratchet-vendor.sh; do
-  expect_contains "$real_go" "$needed" "vendor checks in go"
-  expect_contains "$real_qml" "$needed" "vendor checks in qml"
+# The vendor-sync checks are deliberately NOT `always`: both hard-fail when the
+# vstack-managed copy under .agents/ is absent, so a plain clone or a pre-refresh
+# worktree would fail every scoped run for a reason unrelated to the change.
+for tagged in scripts/check-review-gate-vendor.sh scripts/check-size-ratchet-vendor.sh; do
+  expect_absent "$real_docs" "$tagged" "vendor checks stay out of scoped runs"
 done
-ok "the vendor-drift checks are reachable from a scoped run, not only from all"
+ok "the vendor-sync checks are reachable only from validate all"
+
+# THE TWO PARSERS MUST AGREE. The runner's bash loop decides what actually runs;
+# the shared python reader decides what the guard checks. Nothing tied them
+# together: a row the python side dropped resurfaces only for `scripts/` paths,
+# as "executable but the manifest never runs it", so the third_party/ engine
+# tests and the Go block could have vanished from the guard's view unnoticed.
+python_rows="$(python3 - "$repo_root" <<'ROWS_PY'
+import importlib.util, pathlib, sys
+root = pathlib.Path(sys.argv[1])
+spec = importlib.util.spec_from_file_location(
+    "vm", root / "scripts" / "lib" / "validation_manifest.py"
+)
+mod = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mod)
+for _, command in mod.manifest_rows(root / "scripts" / "validate"):
+    print(command)
+ROWS_PY
+)"
+if [[ "$python_rows" == "$("$runner" --list all)" ]]; then
+  ok "the bash and python manifest readers see the same commands, in the same order"
+else
+  fail "parser agreement" "scripts/validate --list all and validation_manifest.manifest_rows disagree:
+$(diff <(printf '%s\n' "$python_rows") <(printf '%s\n' "$("$runner" --list all)") || true)"
+  ok "parser agreement"
+fi
 
 # Degraded modes that can be flag-forced must be: a skip reads as a pass.
 expect_contains "$real_qml" "--require-nested" "qml-smoke require flags"
