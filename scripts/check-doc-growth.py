@@ -93,7 +93,7 @@ CEILINGS: dict[str, int] = {
     # tables here from AGENTS.md: their audience is whoever is judging a check,
     # which is `scripts/**` work landing on PRs that touch no workflow file, so
     # a workflow-scoped home never auto-attached for them. The next review round
-    # added the runner's three-valued exit status (77 is not a pass) here, where
+    # added the runner's four-valued exit status (77 is not a pass) here, where
     # whoever judges a check reads it; 5,500 keeps ~10% headroom at the
     # resulting 4,977 B, superseding the 4,900 figure measured at 4,388 B.
     ".github/instructions/validation-scripts.instructions.md": 5_500,

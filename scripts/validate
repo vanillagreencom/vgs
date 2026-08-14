@@ -21,7 +21,7 @@
 # nothing was checked"; exit 77 from any other row is a plain failure, and every
 # check whose degraded mode can be flag-forced is listed with the flag that
 # forces it (`--require-static`, `--require-nested`) rather than being allowed to
-# skip at all. This runner's own three statuses:
+# skip at all. This runner's own four statuses:
 #
 #   0    every selected command ran and passed
 #   77   everything that ran passed, but something did NOT run — the summary
@@ -129,6 +129,7 @@ go        | scripts/check-backend-inventory-tests.py
 -         | scripts/test-validate.sh
 -         | scripts/test-validation-inventory.sh
 -         | scripts/test-qml-smoke.sh
+-         | scripts/test-format-lint.sh
 -         | scripts/test-pill-hover-safety.js
 helper    | python3 -m py_compile bin/vshell-helper
 helper    | bash -n bin/vshell

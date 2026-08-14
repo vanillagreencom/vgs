@@ -161,9 +161,26 @@ for file in "${bin_files[@]}" "${script_files[@]}"; do
       esac
       ;;
     *)
-      # No shebang at all. Only scripts/ is asserted here: bin/ deliberately
-      # holds importable Python modules with no shebang (bin/vshell_niri.py and
-      # friends), which is documented in AGENTS.md and is not a lint gap.
+      # NO SHEBANG AT ALL, and the rule is the executable BIT, not the name.
+      # An extensionless executable with no shebang is not inert the way a data
+      # fixture is: bash's ENOEXEC fallback runs it, so it can be a working
+      # manifest command that satisfies check-validation-inventory.py's
+      # executable-bit requirement while no linter ever claims it — scripts/
+      # validate's own shape, one variation over, and nothing forces it to keep
+      # its shebang. Something runs it, so something must lint it.
+      #
+      # Non-executable files still fall through, which is what actually leaves
+      # data fixtures alone; the extension arm still catches a non-executable
+      # .sh/.py/.js, since that is a lint gap regardless of mode. Only scripts/
+      # is asserted: bin/ deliberately holds importable Python modules with no
+      # shebang (bin/vshell_niri.py and friends), documented in AGENTS.md.
+      case "$file" in
+        scripts/*)
+          if [[ -x "$file" ]]; then
+            fail "$file is executable with no shebang — something runs it (bash falls back to ENOEXEC), so something must lint it. Give it a shebang this case statement routes, or drop the executable bit if nothing is meant to run it"
+          fi
+          ;;
+      esac
       case "$file" in
         scripts/*.sh | scripts/*.py | scripts/*.js)
           fail "$file has a language extension but no shebang routing it to a linter — give it one, or this file is silently unlinted"

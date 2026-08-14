@@ -385,8 +385,13 @@ jobs:
       # because it needs setup-go's gofmt plus the shellcheck/ruff install
       # above. A missing tool or an empty file set FAILS the check rather than
       # skipping it — a silent skip is indistinguishable from a pass.
+      # test-format-lint.sh runs HERE rather than with the other test-*.sh
+      # entries: it drives a copy of the check, so it needs the pinned
+      # shellcheck and ruff installed two steps up.
       - name: First-party format and lint floor
-        run: scripts/check-format-lint.sh
+        run: |
+          scripts/check-format-lint.sh
+          scripts/test-format-lint.sh
 
       # CodeRabbit rejects an invalid .coderabbit.yaml and reviews with DEFAULT
       # settings, reporting nothing on the PR. VGS shipped a 376-character
