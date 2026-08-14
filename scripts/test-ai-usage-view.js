@@ -33,9 +33,13 @@ const LOGIC = path.join(PLUGIN, "AiUsageLogic.qml");
 
 const logicSource = fs.readFileSync(LOGIC, "utf8");
 
-// Evaluated under node:vm — see scripts/lib/qml-source.js: this text comes from
-// a repo file and a fork PR runs this suite on the CI runner.
-const { evaluateMarked, regionOf } = require("./lib/qml-region.js");
+// This text comes from a repo file and a fork PR runs this suite on the runner,
+// so it is executed inside a child the parent kills on a wall clock — see
+// scripts/lib/qml-region.js for what that bounds and what it does not.
+const { evaluateMarked, regionOf, guardChild } = require("./lib/qml-region.js");
+
+// Returns only in the child; the parent exits with its status.
+guardChild();
 const {
     normalizeProvider, providerIcon, headOf, popoutView, accountCount, failureWins,
     pillSlot, pillSlots

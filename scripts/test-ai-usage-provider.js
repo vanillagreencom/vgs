@@ -33,11 +33,14 @@ const LOGIC = path.join(PLUGIN, "AiUsageLogic.qml");
 
 const logicSource = fs.readFileSync(LOGIC, "utf8");
 
-// Evaluated under node:vm in a context holding only the JavaScript intrinsics:
-// this text comes from a repo file, ci.yml runs on plain `pull_request` with no
-// fork guard, and `new Function` would have given a stranger's QML edit the CI
-// process's own authority.
-const { evaluateMarked, regionOf } = require("./lib/qml-region.js");
+// This text comes from a repo file and is EXECUTED here, so it runs inside a
+// child the parent kills on a wall clock — scripts/lib/qml-region.js says what
+// that bounds.
+const { evaluateMarked, regionOf, guardChild } = require("./lib/qml-region.js");
+
+// Returns only in the child; the parent exits with its status, so nothing below
+// this line runs in the parent.
+guardChild();
 
 // Prove the evaluator before it evaluates anything: its casual-path controls
 // (process, require, fetch, eval, the Function constructor, a planted loop).
@@ -145,17 +148,11 @@ assert.equal(
     true,
     "the popout holds Claude while Codex is selected — the exact mix-up state"
 );
-assert.equal(
-    shouldRelaunch(fetchState({ inFlight: "", loaded: "", accepted: false }), MAX),
-    false,
-    "an exit with no launch tag started no process, so it replaces nothing"
-);
-assert.equal(
-    shouldRelaunch(fetchState({ loaded: "claude", accepted: false, retries: MAX }), MAX),
-    false,
-    "a helper that keeps delivering nothing still gives up: only an accepted payload or a " +
-    "provider switch restores the budget"
-);
+assert.equal(shouldRelaunch(fetchState({ inFlight: "", loaded: "", accepted: false }), MAX),
+    false, "an exit with no launch tag started no process, so it replaces nothing");
+assert.equal(shouldRelaunch(fetchState({ loaded: "claude", accepted: false, retries: MAX }), MAX),
+    false, "a helper delivering nothing still gives up; only a satisfying payload or a switch " +
+    "restores the budget");
 assert.equal(
     shouldRelaunch(fetchState({ accepted: false, retries: MAX - 1 }), MAX),
     true,
@@ -290,7 +287,7 @@ assert.equal(launchDecision("claude", false), "pend",
     assert.equal(channel.inFlight, "codex", "for the provider that was asked for");
 }
 
-// The account shape these ordering cases file; the view suite has its own.
+// The account shape these ordering cases file.
 const acct = (id, over) => Object.assign(
     { id: id, ok: true, plan: "Max 20x", weekly: { pct: 20 } }, over);
 
@@ -302,7 +299,7 @@ const acct = (id, over) => Object.assign(
 
 {
     // The filing store, driven directly: a stamp per filing is the ordering
-    // evidence, and the widget's storeHeadline/launch do exactly this much.
+    // evidence, and storeHeadline/launch do exactly this much.
     const store = { data: {}, filedAt: {}, seq: 0 };
     const file = (provider, payload) => {
         store.seq += 1;
