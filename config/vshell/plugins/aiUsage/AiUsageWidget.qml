@@ -494,22 +494,30 @@ PluginComponent {
             Qt.callLater(() => root.launch(ch));
 
         // Either there is still nothing for what this channel wants, or this
-        // fetch produced no payload and what is held is now stale. Both are
-        // failures of the same kind: say so rather than sitting on "loading" or
-        // on numbers no fetch stands behind, and drop that provider's headline
-        // so the pill cannot show a number the popout contradicts.
+        // fetch produced no payload and what is held is now stale — the same
+        // kind of failure: say so rather than sitting on "loading" or on numbers
+        // no fetch stands behind.
         if (ch.loaded !== ch.want || !ch.accepted) {
             const why = ch.issue !== "" ? ch.issue : "usage unavailable";
-            // Only when this failure is still the authoritative word on that
-            // provider: the other channel may have filed a good payload for it
-            // while this fetch was failing, and overwriting that would put the
-            // unavailable mark on numbers that had only just arrived.
-            if (logic.failureWins(root.providerData[ch.want], root.providerFiledAt[ch.want],
-                                  ch.launchSeq))
+            // ONE decision, consulted by every write below: a newer successful
+            // result for a provider always wins over an older failure. The other
+            // channel files by payload identity, so mid-switch it can land a good
+            // payload for the provider this one is failing at. Guarding only the
+            // headline write left the popout claiming an error over those
+            // numbers — two guard sites is what let that drift, so there is one.
+            const authoritative = logic.failureWins(
+                root.providerData[ch.want], root.providerFiledAt[ch.want], ch.launchSeq);
+            if (authoritative)
                 root.storeHeadline(ch.want, { ok: false, provider: ch.want, error: why });
             if (ch.primary) {
+                // Loading ends either way: this fetch settled and none is coming
+                // before the poll, so leaving it set would keep the popout saying
+                // it is checking when nothing is. Only the failure TEXT is
+                // conditional — an unauthoritative failure reports nothing rather
+                // than contradicting the payload that beat it.
                 root.loading = false;
-                root.fetchError = why;
+                if (authoritative)
+                    root.fetchError = why;
             }
         }
     }

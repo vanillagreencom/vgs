@@ -31,15 +31,14 @@ const { blockFrom, body, handlers, requires, indexOf, lastIndexOf, stripComments
     require("./lib/qml-source.js")(source, "AiUsageWidget.qml");
 
 // Bans and counts read the source with comments blanked: prose MENTIONING a
-// banned name is not that name, and counting it hides a deletion.
+// banned name is not that name.
 const code = stripComments(source);
 
 // Bans and occurrence counts read the source with comments blanked: prose that
 // merely MENTIONS a banned name or a pinned statement is not that statement, and
 // counting it either hides a deletion or fails a harmless edit.
 
-// Landmarks go through indexOf/lastIndexOf, which search with comments blanked:
-// a comment MENTIONING one was found first, and the block walked was another's.
+// Landmarks go through indexOf/lastIndexOf, which search with comments blanked.
 
 // Prove the walk and the stripper before anything leans on them: the library's
 // own cases first (comment markers and braces inside every quote style and every
@@ -94,8 +93,7 @@ requires(accept, "acceptPayload()", [
     ["outcome.file", "a payload that names a provider updates that provider's pill slot"],
     ["root.noteHeadline(got.data)", "which is what files it"],
     ["outcome.satisfies", "and a payload that does not satisfy this channel goes no further"],
-    ["ch.loaded = ch.want", "the channel records what it holds, or the relaunch predicate " +
-        "answers true on every exit"],
+    ["ch.loaded = ch.want", "the channel records what it holds, or relaunch answers true"],
     ["ch.retries = 0", "a satisfying payload restores the retry budget"],
     ["ch.primary", "only the popout's channel reaches the popout"],
     ["root.applyPayload(got.data)", "which is what shows it"]
@@ -103,8 +101,7 @@ requires(accept, "acceptPayload()", [
 
 requires(body("applyPayload"), "applyPayload()", [
     ["root.current = d", "the popout state is the payload itself"],
-    ['root.fetchError = ""', "a fresh payload clears the failure text"],
-    ["root.loading = false", "and ends the loading state"]]);
+    ['root.fetchError = ""', "a fresh payload clears the failure text"]]);
 
 // --- the channel owns its process -------------------------------------------
 //
@@ -176,9 +173,7 @@ requires(launch, "launch()", [
     ['ch.issue = ""', "and carries no failure reason yet"],
     ['ch.errorOut = ""', "and must not read the previous fetch's stderr as its own cause"],
     ["ch.retryTimer.stop()", "and supersedes any retry still waiting to fire"],
-    ["ch.launchSeq = root.fileSeq",
-        "and stamps the launch, so its failure can tell a payload filed while it ran from an " +
-        "older one"],
+    ["ch.launchSeq = root.fileSeq", "and stamps the launch, so its failure can order itself"],
     // The watchdog is armed in exactly the state a start begins from — tag set,
     // process not running — so leaving the previous one running let it fire
     // against THIS fetch: "could not run" for a healthy process, whose payload
@@ -191,7 +186,7 @@ assert.ok(!stripComments(launch).includes("if (!ch.proc.running)"),
     "for a start that is merely deferred, failing a healthy fetch");
 
 // A start that fails asynchronously reports nothing: Qt emits no exit for a
-// process that never ran, and the pill then sits on an ellipsis forever.
+// process that never ran.
 requires(channel, "the channel's runningChanged handler", [
     ['if (chan.inFlight !== "")', "a process that stopped with its tag still set had no exit"],
     ["stallTimer.restart()", "so the watchdog is armed"],
@@ -207,10 +202,10 @@ assert.ok(body("finishFetch").includes('if (ch.inFlight === "")'),
     "settle a relaunch that is by then running");
 
 requires(body("failLaunch"), "failLaunch()", [
-    ['if (ch.inFlight === "")', "an exit that arrived first wins; the watchdog then does nothing"],
+    ['if (ch.inFlight === "")', "an exit that arrived first wins; the watchdog does nothing"],
     ['ch.issue = "could not run " + root.aiUsageCommand', "a failed start names the command"],
     ["console.warn", "and says so in the log"],
-    ["root.settleFetch(ch)", "then settles exactly like a failed exit — retried, then reported"]]);
+    ["root.settleFetch(ch)", "then settles like a failed exit — retried, then reported"]]);
 
 // --- finishing --------------------------------------------------------------
 
@@ -221,7 +216,7 @@ requires(finish, "finishFetch()", [
         "alone left the empty output's 'parse error' standing as the cause"],
     ['exitStatus !== 0 ? "helper killed"', "and says which of the two happened"],
     ["logic.stderrReason(ch.errorOut, root.maxIssueChars)",
-        "the reason comes from the captured stderr, last line first and truncated"],
+        "the reason is the captured stderr's last line, truncated"],
     ["console.warn", "the failure has to reach vshell logs, or the cause exists nowhere"],
     ["root.settleFetch(ch)", "and then settles through the shared path"]
 ]);
@@ -255,18 +250,22 @@ requires(settle, "settleFetch()", [
     ["Qt.callLater(() => root.launch(ch))",
         "by launching it promptly — and this is the ONLY immediate deferral left in settleFetch", 1],
     ["ch.loaded !== ch.want || !ch.accepted",
-        "a poll that delivered nothing for the provider on screen is a failure, not a silent hold"],
-    ['ch.issue !== "" ? ch.issue : "usage unavailable"',
-        "the recorded reason is filed and shown; the generic text is the fallback"],
+        "a poll that delivered nothing for the provider on screen is a failure"],
+    ['ch.issue !== "" ? ch.issue : "usage unavailable"', "the recorded reason, else the generic"],
     // Conditional: both channels file into the same slots, and an unconditional
     // failure write overwrote a payload the OTHER channel had just filed there.
-    ["logic.failureWins(root.providerData[ch.want], root.providerFiledAt[ch.want], ch.launchSeq)",
-        "filed only when no newer success was filed for that provider"],
-    ["root.storeHeadline(ch.want, { ok: false, provider: ch.want",
-        "and filed for the provider it happened to, so the pill cannot contradict the popout"]
+    // ONE decision, consulted by both writes: guarding only the headline write
+    // left the popout claiming an error over numbers that had just landed.
+    ["const authoritative = logic.failureWins(", "the newer-success rule is decided once", 1],
+    ["root.providerData[ch.want], root.providerFiledAt[ch.want], ch.launchSeq)",
+        "from what is filed for that provider, against this launch's stamp", 1],
+    ["if (authoritative)", "and consulted by BOTH the headline write and the popout's", 2],
+    ["root.storeHeadline(ch.want, { ok: false, provider: ch.want", "filed for its own provider"],
+    ["root.loading = false", "loading ends either way: this fetch settled"],
+    ["root.fetchError = why", "only the failure TEXT is conditional"]
 ]);
 assert.ok(!/launchedFor !== (root\.)?(other)?[Pp]rovider/.test(stripComments(settle)),
-    "comparing the launch tag to the current selection is the dropped-refetch bug");
+    "comparing the tag to the current selection is the dropped-refetch bug");
 assert.ok(settle.indexOf("logic.shouldRelaunch") < settle.indexOf('ch.inFlight = ""'),
     "the decision reads the tag, so it is taken BEFORE the tag is cleared");
 
