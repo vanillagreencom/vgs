@@ -66,9 +66,11 @@ CEILINGS: dict[str, int] = {
     # (colorschemes/ATTRIBUTION.md and the two third_party/ READMEs);
     # correcting that needs the enumerated product-facing set plus the
     # carve-out, which earned the bytes. The two rules were merged into one to
-    # hold the growth down. 4,000 is ~10% headroom over the final 3,554 B size,
-    # rounded up per the adoption rule above.
-    ".github/copilot-instructions.md": 4_000,
+    # hold the growth down. 3,850 at the final 3,554 B size: deliberately
+    # TIGHTER than the 4,000 the adoption formula rounds to, because the
+    # rounding above is an adoption convention and a raise is only required to
+    # carry a rationale — so the tighter line wins over the rounder number.
+    ".github/copilot-instructions.md": 3_850,
     "project-skills/vshell-dev/SKILL.md": 5_000,  # adopted at 4,497 B
     ".github/instructions/agents-md.instructions.md": 500,  # adopted at 403 B
     ".github/instructions/architecture-docs.instructions.md": 500,  # adopted at 393 B
