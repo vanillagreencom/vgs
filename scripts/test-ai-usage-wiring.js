@@ -9,13 +9,11 @@
 // an outcome computed and then ignored.
 //
 // Why source assertions at all: `scripts/qml-smoke.sh --nested` DOES host this
-// plugin — it toggles the aiUsage widget and opens its popout, so these bindings
-// really are evaluated — but that mode is local-only (it needs Hyprland and
-// quickshell on PATH), so CI never runs it, and even locally a harness cannot
-// drive a fetch's exit path or a provider switch through the QML runtime. Each
-// assertion matches load-bearing tokens with whitespace flattened, so
-// reformatting and re-wrapping are free while deleting or reshaping the line is
-// not — the pairing is what these assertions exist to hold.
+// plugin — it toggles the aiUsage widget and opens its popout — but that mode is
+// local-only (Hyprland and quickshell on PATH), so CI never runs it, and even
+// locally a harness cannot drive a fetch's exit path or a provider switch through
+// the QML runtime. Each assertion matches load-bearing tokens with whitespace
+// flattened, so reformatting is free while deleting or reshaping the line is not.
 
 "use strict";
 
@@ -32,14 +30,20 @@ const source = fs.readFileSync(WIDGET, "utf8");
 const { blockFrom, body, handlers, requires, indexOf, lastIndexOf, stripComments } =
     require("./lib/qml-source.js")(source, "AiUsageWidget.qml");
 
-// Landmarks are located through indexOf/lastIndexOf, which search the source with
-// comments blanked. Searching the raw text let a comment MENTIONING a landmark be
-// found first, and the block walked from there is then somebody else's.
+// Bans and counts read the source with comments blanked: prose MENTIONING a
+// banned name is not that name, and counting it hides a deletion.
+const code = stripComments(source);
+
+// Bans and occurrence counts read the source with comments blanked: prose that
+// merely MENTIONS a banned name or a pinned statement is not that statement, and
+// counting it either hides a deletion or fails a harmless edit.
+
+// Landmarks go through indexOf/lastIndexOf, which search with comments blanked:
+// a comment MENTIONING one was found first, and the block walked was another's.
 
 // Prove the walk and the stripper before anything leans on them: the library's
-// own cases first (a comment marker or a brace inside every quote style, and a
-// brace inside each comment form — each of which the pre-tokenizer helpers could
-// not detect), then the same two helpers against the file this test reads.
+// own cases first (comment markers and braces inside every quote style and every
+// comment form), then the same helpers against the file this test reads.
 require("./lib/qml-source.js").selfTest();
 
 {
@@ -82,14 +86,15 @@ requires(accept, "acceptPayload()", [
     ["logic.decodePayload(ch.inFlight, txt)", "validated against ITS OWN channel's tag"],
     ["ch.issue = got.issue", "the reason is recorded on the channel that fetched it"],
     ["ch.accepted = true", "acceptance is what tells the exit path a payload arrived"],
-    ["logic.acceptOutcome(", "the outcome is the extracted decision's"],
-    ["logic.payloadProvider(got.data)", "decided from the payload's OWN provider"],
-    ["ch.want", "against what this channel wants"],
+    // One call, not three operands: `ch.want` alone also occurs two lines below,
+    // so split operands miss the two arguments being swapped.
+    ["logic.acceptOutcome(logic.payloadProvider(got.data), ch.want)",
+        "the outcome is decided from the payload's OWN provider and what this channel wants"],
     ["outcome.file", "a payload that names a provider updates that provider's pill slot"],
     ["root.noteHeadline(got.data)", "which is what files it"],
     ["outcome.satisfies", "and a payload that does not satisfy this channel goes no further"],
-    ["ch.loaded = ch.want", "the channel records what it holds; without it the relaunch " +
-        "predicate answers true on every exit"],
+    ["ch.loaded = ch.want", "the channel records what it holds, or the relaunch predicate " +
+        "answers true on every exit"],
     ["ch.retries = 0", "a satisfying payload restores the retry budget"],
     ["ch.primary", "only the popout's channel reaches the popout"],
     ["root.applyPayload(got.data)", "which is what shows it"]
@@ -113,6 +118,8 @@ requires(channel, "FetchChannel", [
     ["stdout: StdioCollector {", "and its stdout collector"],
     ["stderr: StdioCollector {", "and its stderr collector"],
     ["property Timer stallTimer: Timer {", "and the watchdog that reports a start that never ran"],
+    ["property Timer retryTimer: Timer {", "and the timer its retries wait on"],
+    ["onTriggered: root.launch(chan)", "which relaunches THIS channel when the wait is over"],
     ['property string want: ""', "and the provider it fetches"],
     ["property bool primary: false", "and whether the popout is its"],
     ["onStreamFinished: root.acceptPayload(chan, outCollector.text)",
@@ -126,8 +133,8 @@ requires(channel, "FetchChannel", [
         "the process fetches the provider its own channel wants"]
 ]);
 
-// Nothing outside the component may name a process or a collector: that is what
-// makes the pairing structural rather than a convention.
+// Nothing outside the component may name a process or a collector — that is what
+// makes the pairing structural.
 const componentAt = indexOf("component FetchChannel:");
 const outside = source.slice(0, componentAt) + source.slice(componentAt + channel.length);
 assert.ok(!/\b(usageProc|otherProc|usageOut|otherOut|usageErr|otherErr)\b/.test(outside),
@@ -171,25 +178,26 @@ requires(launch, "launch()", [
     ["ch.accepted = false", "a new fetch has not been answered yet"],
     ['ch.issue = ""', "and carries no failure reason yet"],
     ['ch.errorOut = ""', "and must not read the previous fetch's stderr as its own cause"],
+    ["ch.retryTimer.stop()", "and supersedes any retry still waiting to fire"],
     // The watchdog is armed in exactly the state a start begins from — tag set,
     // process not running — so leaving the previous one running let it fire
     // against THIS fetch: "could not run" for a healthy process, whose payload
     // was then discarded and whose retry was spent.
     ["ch.stallTimer.stop()", "the previous fetch's watchdog is disarmed first"]
 ]);
-assert.ok(!launch.includes("if (!ch.proc.running)"),
+assert.ok(!stripComments(launch).includes("if (!ch.proc.running)"),
     "a runtime `running = true` reads back true even for a missing binary (measured, Quickshell " +
     "0.3.0), so a synchronous check catches nothing — and at component completion it reads false " +
     "for a start that is merely deferred, failing a healthy fetch");
 
-// A start that fails asynchronously reports nothing at all: Qt does not emit an
-// exit for a process that never ran. Without the drain the pill sits on the
-// in-flight ellipsis for a fetch that does not exist.
+// A start that fails asynchronously reports nothing: Qt emits no exit for a
+// process that never ran, and the pill then sits on an ellipsis forever.
 requires(channel, "the channel's runningChanged handler", [
     ['if (chan.inFlight !== "")', "a process that stopped with its tag still set had no exit"],
     ["stallTimer.restart()", "so the watchdog is armed"],
-    ["if (chan.pending)", "and a parked launch"],
-    ["root.launch(chan)", "is applied when the process actually stops"],
+    // One statement: `root.launch(chan)` alone also occurs in the retry handler.
+    ["if (chan.pending) { root.launch(chan);",
+        "and a parked launch is applied when the process actually stops"],
     ["onTriggered: root.failLaunch(chan)", "the watchdog routes a failed start into the failure path"]
 ]);
 
@@ -220,7 +228,7 @@ requires(finish, "finishFetch()", [
 ]);
 // The provider suite proves stderrReason honours the limit it is handed, so what
 // is left to pin is the number the widget hands it. A five-digit "cap" is none.
-const capMatch = source.match(/property int maxIssueChars: (\d+)/);
+const capMatch = code.match(/property int maxIssueChars: (\d+)/);
 assert.ok(capMatch, "the reason's cap must be a named property, not a literal at the call site");
 const cap = Number(capMatch[1]);
 assert.ok(cap > 0 && cap <= 500,
@@ -234,14 +242,19 @@ requires(settle, "settleFetch()", [
     ["logic.shouldRelaunch(ch, root.maxFetchRetries)", "relaunch is the shared predicate's"],
     ['if (ch.inFlight === "")', "a fetch already settled is settled once"],
     ["ch.retries += 1", "a relaunch spends a retry, or the budget bounds nothing"],
-    ["Qt.callLater(() => root.launch(ch))",
-        "the relaunch stays deferred and restarts only the channel that asked"],
+    // A retry WAITS: deferring it to the next event-loop turn spent the whole
+    // budget in consecutive turns, a burst at a provider API once per bar.
+    ["ch.retryTimer.interval = root.retryDelayMs * ch.retries",
+        "the wait grows with the attempt number rather than being one fixed tick"],
+    ["ch.retryTimer.restart()", "and the retry runs off that timer, not the event loop"],
     ["ch.stallTimer.stop()", "a settled fetch stops its own watchdog"],
-    // A request that arrived while this launch was unsettled — tag set, process
-    // already stopped, exit not yet delivered — was parked rather than started,
-    // so settling the tag is the only thing that can let it run.
-    ["if (ch.pending)", "a parked request is drained when the channel settles"],
-    ["Qt.callLater(() => root.launch(ch))", "by launching it, deferred like every other relaunch"],
+    // A request parked while this launch was unsettled runs when the tag clears,
+    // and stays IMMEDIATE: the process it waited on has already stopped. Counted,
+    // because one occurrence used to satisfy two presence pairs — and because an
+    // immediate retry creeping back beside the delayed one shows up here.
+    ["if (ch.pending)", "a parked request is drained when the channel settles", 1],
+    ["Qt.callLater(() => root.launch(ch))",
+        "by launching it promptly — and this is the ONLY immediate deferral left in settleFetch", 1],
     ["ch.loaded !== ch.want || !ch.accepted",
         "a poll that delivered no payload for the provider on screen is a failure, not a silent " +
         "hold of the previous numbers"],
@@ -251,7 +264,7 @@ requires(settle, "settleFetch()", [
         "the failure is filed for the provider it happened to, so the pill cannot contradict " +
         "the popout"]
 ]);
-assert.ok(!/launchedFor !== (root\.)?(other)?[Pp]rovider/.test(settle),
+assert.ok(!/launchedFor !== (root\.)?(other)?[Pp]rovider/.test(stripComments(settle)),
     "comparing the launch tag to the current selection is the dropped-refetch bug");
 assert.ok(settle.indexOf("logic.shouldRelaunch") < settle.indexOf('ch.inFlight = ""'),
     "the decision reads the tag, so it is taken BEFORE the tag is cleared");
@@ -270,7 +283,7 @@ requires(cleared, "clearProviderState()", [
     ["usageFetch.reset()", "the usage channel is invalidated"],
     ["otherFetch.reset()", "the other channel is invalidated through the same path"]
 ]);
-assert.ok(!/providerData/.test(cleared),
+assert.ok(!/providerData/.test(stripComments(cleared)),
     "the per-provider headlines are keyed by identity and survive a switch");
 
 // Every reset must assign a LITERAL reset value: `x = x` also matches "x =".
@@ -281,7 +294,7 @@ for (const [field, value] of [
     assert.ok(reset.includes(`${field} = ${value};`),
         `a channel reset must set ${field} back to ${value}`);
 }
-assert.ok(!/\binFlight = /.test(reset),
+assert.ok(!/\binFlight = /.test(stripComments(reset)),
     "inFlight identifies a process that is still running; clearing it would orphan its payload");
 
 const onProviderChanged = blockFrom(indexOf("onProviderChanged:"), "onProviderChanged");
@@ -293,7 +306,7 @@ assert.ok(invalidateAt < refetchAt,
     "and must invalidate BEFORE refetching, so no window renders the previous provider's data " +
     "under the new provider's label");
 
-assert.equal((source.match(/root\.current = /g) || []).length, 2,
+assert.equal((code.match(/root\.current = /g) || []).length, 2,
     "root.current is written in exactly two places: applyPayload and the reset");
 
 // --- one headline owner -----------------------------------------------------
@@ -310,7 +323,7 @@ requires(source, "AiUsageWidget.qml", [
     ["readonly property var selectedSlot: logic.pillSlot(",
         "the vertical bar renders the selected provider's slot, the shape the pill uses"]
 ]);
-assert.ok(!/aggregatePct|primaryPct/.test(source),
+assert.ok(!/aggregatePct|primaryPct/.test(code),
     "the per-surface headline arithmetic is gone; a second owner is a second answer");
 
 const vertical = blockFrom(indexOf("verticalBarPill:"), "verticalBarPill");
@@ -318,14 +331,14 @@ requires(vertical, "the vertical pill", [
     ["text: root.selectedSlot.text", "it shows what the slot says, not its own reading of the payload"],
     ["name: root.selectedSlot.icon", "including the slot's own provider icon"]
 ]);
-assert.ok(!/headlinePct/.test(vertical),
+assert.ok(!/headlinePct/.test(stripComments(vertical)),
     "a raw percentage here is how the vertical bar came to show 60% beside an error glyph");
 
 // --- one view of the payload ------------------------------------------------
 //
 // The payload's top-level plan/ok/error describe the FIRST LIVE account the
-// backend found, hidden or not: reading them directly printed a hidden account's
-// plan above a visible account's meters. One function answers all of it.
+// backend found, hidden or not: reading them printed a hidden account's plan
+// above a visible account's meters. One function answers all of it.
 
 requires(source, "AiUsageWidget.qml", [
     ["readonly property var view: logic.popoutView(root.current, root.hiddenAccounts, root.loading)",
@@ -339,7 +352,7 @@ requires(source, "AiUsageWidget.qml", [
     ["readonly property bool allHidden: root.view.allHidden", "and the all-hidden case"]
 ]);
 assert.ok(source.includes("root.view.error"), "and the error text");
-assert.ok(!/root\.current\.(plan|ok|error)\b/.test(source),
+assert.ok(!/root\.current\.(plan|ok|error)\b/.test(code),
     "no surface reaches past the view into the payload's top-level account fields");
 
 const details = blockFrom(indexOf("detailsText:"), "detailsText");
@@ -372,7 +385,6 @@ assert.ok(meters.includes("root.view.account") && meters.includes("root.view.fla
 // The pill slots are built from AiUsageLogic. The popout's tabs must be too, or
 // the two can disagree about a provider's name or icon.
 
-const code = stripComments(source);
 assert.ok(code.includes("model: logic.providerOrder()"),
     "the provider tabs are generated from the same order the pill uses");
 for (const literal of ['"Claude"', '"Codex"', '"smart_toy"', '"terminal"']) {

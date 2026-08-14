@@ -215,6 +215,10 @@ PluginComponent {
     // The provider the popout is NOT showing. Only its headline is kept, so the
     // pill can show both without doubling the popout's state.
     readonly property string otherProvider: root.provider === "codex" ? "claude" : "codex"
+    // Base spacing between retries, multiplied by the attempt number. One second
+    // is long enough to be a pause rather than a burst and short enough that a
+    // blip still resolves well inside a poll interval.
+    readonly property int retryDelayMs: 1000
     // Cap on a failure reason before it reaches the popout and the shell log:
     // the text comes from whichever backend is installed, and a log people paste
     // into bug reports should not accumulate arbitrary backend output.
@@ -298,6 +302,17 @@ PluginComponent {
             id: stallTimer
             interval: 1000
             onTriggered: root.failLaunch(chan)
+        }
+
+        // A retry waits. Deferring it to the next event-loop turn spent the whole
+        // budget in consecutive turns — four calls to a provider usage API as
+        // fast as the loop turns, once per configured bar — which gives a
+        // transient failure no time to pass. settleFetch sets the interval from
+        // the retry count, so the attempts are spaced 1s, 2s, 3s.
+        property Timer retryTimer: Timer {
+            id: retryTimer
+            interval: root.retryDelayMs
+            onTriggered: root.launch(chan)
         }
 
         // What a provider switch invalidates. `inFlight` is deliberately not
@@ -396,6 +411,8 @@ PluginComponent {
         // whose payload was then discarded as a mismatch and whose retry was
         // spent. It is per-fetch state like everything above it.
         ch.stallTimer.stop();
+        // This launch supersedes any retry that was still waiting to fire.
+        ch.retryTimer.stop();
         ch.proc.running = true;
     }
 
@@ -441,15 +458,18 @@ PluginComponent {
         // user switched away, never parsed, or the helper never ran. Comparing
         // the launch tag to the selection instead dropped the replacement fetch
         // on a claude -> codex -> claude toggle (VGS-118). Decided BEFORE the tag
-        // is cleared, since the tag is one of the fields the decision reads, and
-        // DEFERRED because a relaunch assigns `running = true`, a no-op while
-        // `running` still reads true; launch() parks it and onRunningChanged
-        // applies it once the process has settled.
+        // is cleared, since the tag is one of the fields the decision reads. The
+        // retry then WAITS: a `running = true` assigned while the process is
+        // still stopping is a no-op, and beyond that a transient failure needs
+        // time to pass rather than the next event-loop turn. launch() parks the
+        // attempt if the process is still stopping and onRunningChanged applies
+        // it then.
         const relaunch = logic.shouldRelaunch(ch, root.maxFetchRetries);
         ch.inFlight = "";
         if (relaunch) {
             ch.retries += 1;
-            Qt.callLater(() => root.launch(ch));
+            ch.retryTimer.interval = root.retryDelayMs * ch.retries;
+            ch.retryTimer.restart();
             return;
         }
         // A request parked while this launch was unsettled runs now that the tag

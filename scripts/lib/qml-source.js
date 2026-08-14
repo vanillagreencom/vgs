@@ -171,10 +171,24 @@ module.exports = function qmlSource(source, fileLabel) {
     // which line went missing. Searched with COMMENTS BLANKED: a token that
     // survives only in a comment is prose about code that may well be gone, so
     // matching it would pass while the statement this pins was deleted.
+    //
+    // A pair may carry an exact occurrence count: [token, why, count]. Presence
+    // alone could not express "twice" — listing a token in two pairs was
+    // satisfied by ONE occurrence, so a second call site meant to be pinned was
+    // not — and it cannot express "once and no more" either, which is how an
+    // immediate deferral would creep back in beside a delayed retry.
     function requires(block, where, pairs) {
         const haystack = flat(stripComments(block));
-        for (const [token, why] of pairs)
-            assert.ok(haystack.includes(flat(token)), `${where} must keep \`${token}\` — ${why}`);
+        for (const [token, why, count] of pairs) {
+            const needle = flat(token);
+            if (count === undefined) {
+                assert.ok(haystack.includes(needle), `${where} must keep \`${token}\` — ${why}`);
+                continue;
+            }
+            const seen = haystack.split(needle).length - 1;
+            assert.equal(seen, count,
+                `${where} must keep \`${token}\` exactly ${count} time(s), found ${seen} — ${why}`);
+        }
     }
 
     return { blockFrom, body, handlers, requires, indexOf, lastIndexOf, flat, stripComments };
@@ -248,6 +262,25 @@ module.exports.selfTest = function selfTest() {
         const withString = module.exports('function f() { g("ch.stallTimer.stop()"); }', "self-test");
         withString.requires(withString.body("f"), "f()",
             [['g("ch.stallTimer.stop()")', "a string literal IS code and still counts"]]);
+    }
+
+    // --- an exact count means exactly that ---
+    {
+        const q = module.exports("function f() { one(); two(); two(); }", "self-test");
+        const block = q.body("f");
+        q.requires(block, "f()", [["two();", "twice", 2], ["one();", "once", 1]]);
+        assert.throws(() => q.requires(block, "f()", [["one();", "twice", 2]]),
+            "one occurrence must NOT satisfy a requirement of two — listing a token twice as two " +
+            "presence pairs did exactly that, leaving the second call site unpinned");
+        assert.throws(() => q.requires(block, "f()", [["two();", "once and no more", 1]]),
+            "and a second occurrence must fail a requirement of one, which is how an immediate " +
+            "deferral would creep back in beside a delayed retry");
+        try {
+            q.requires(block, "f()", [["one();", "twice", 2]]);
+        } catch (e) {
+            assert.ok(e.message.includes("one();") && e.message.includes("twice"),
+                "the failure still names the token and the requirement");
+        }
     }
 
     // --- a comment mentioning a signature must not become the block ---

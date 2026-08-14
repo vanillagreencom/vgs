@@ -112,9 +112,13 @@ try {
 // present, so it is pinned at the source: every payload cmd_ai_usage emits goes
 // through the one stamping helper.
 const helperSource = fs.readFileSync(path.join(repoRoot, "bin", "vshell-helper"), "utf8");
-const cmdAiUsage = helperSource.slice(
-    helperSource.indexOf("def cmd_ai_usage("),
-    helperSource.indexOf("def cmd_fonts(")
+// Comment lines blanked, same reason as everywhere else in this batch: a comment
+// mentioning `print(` or the stamping call is prose, and counting it either hides
+// an unstamped path or fails a harmless edit.
+const helperCode = helperSource.split("\n").map(l => (/^\s*#/.test(l) ? "" : l)).join("\n");
+const cmdAiUsage = helperCode.slice(
+    helperCode.indexOf("def cmd_ai_usage("),
+    helperCode.indexOf("def cmd_fonts(")
 );
 assert.ok(cmdAiUsage.includes('payload.setdefault("provider", provider)'),
     "cmd_ai_usage must stamp the provider on the payloads it emits");
@@ -137,25 +141,35 @@ assert.ok(cmdAiUsage.includes('emit({"ok": False, "error": "ai-usage backend not
 
 const backend = fs.readFileSync(path.join(repoRoot, "bin", "vshell-ai-usage"), "utf8");
 
-// Every brace-balanced object literal in the file, paired with its OWN level
-// (nested objects blanked), so a key belonging to a nested object cannot vouch
-// for its parent.
+// Every brace-balanced object literal, paired with its OWN level: the text at
+// this object's depth, with every nested object left out entirely. Computed
+// during the walk rather than by stripping nested braces afterwards — one
+// regex pass removed only the INNERMOST objects, so a key one level down
+// survived into the parent's own text whenever a deeper sibling existed, and a
+// nested stamp then counted as the payload's own.
 function objectLiterals(text) {
     const out = [];
     for (let i = 0; i < text.length; i++) {
         if (text[i] !== "{")
             continue;
         let depth = 0;
+        let own = "";
         for (let j = i; j < text.length; j++) {
-            if (text[j] === "{") depth += 1;
-            else if (text[j] === "}") {
+            const ch = text[j];
+            if (ch === "{") {
+                depth += 1;
+                continue;
+            }
+            if (ch === "}") {
                 depth -= 1;
                 if (depth === 0) {
-                    const body = text.slice(i + 1, j);
-                    out.push({ body: body, own: body.replace(/\{[^{}]*\}/g, " ") });
+                    out.push({ body: text.slice(i + 1, j), own: own });
                     break;
                 }
+                continue;
             }
+            if (depth === 1)
+                own += ch;
         }
     }
     return out;
@@ -167,6 +181,12 @@ function objectLiterals(text) {
         "a key inside a NESTED object must not count as its parent's");
     assert.ok(sample.some(o => /ok:false/.test(o.own) && /provider/.test(o.own)),
         "a key at the object's own level does count");
+    // The shape a single strip pass got wrong: the stamp one level down survives
+    // into the parent whenever the nested object has an object of its own.
+    const deeper = objectLiterals("{ok:true, a:{provider:$p, b:{x:1}}}");
+    assert.ok(deeper.some(o => /ok:true/.test(o.own) && !/provider/.test(o.own)),
+        "a nested stamp must not count as the payload's own even when a deeper object sits " +
+        "beside it — that let the scan pass after a top-level payload LOST its stamp");
 }
 
 // The programs that BUILD payloads: `jq -n` constructs an object from nothing
@@ -226,7 +246,7 @@ for (const payload of payloads) {
         "every payload bin/vshell-ai-usage builds must name its provider at its own level:\n" +
         payload.body.slice(0, 200));
 }
-assert.ok(!/^\s*(printf|echo)\s+.*['"]\s*\{/m.test(backend),
+assert.ok(!/^\s*(printf|echo)\s+.*['"]\s*\{/m.test(backendCode),
     "a payload printed without jq would bypass the provider stamp entirely");
 
 console.log("ai-usage entrypoint stamping: OK");
