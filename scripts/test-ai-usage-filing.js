@@ -26,9 +26,10 @@ const { evaluateMarked, guardChild } = require("./lib/qml-region.js");
 // Returns only in the child; the parent exits with its status.
 guardChild();
 
-const { failureWins, newerSuccess, headOf, pillSlot } = evaluateMarked(
+const { failureWins, newerSuccess, newerAccepted, headOf, pillSlot, popoutView } = evaluateMarked(
     fs.readFileSync(LOGIC, "utf8"), "PROVIDER DECISION",
-    ["failureWins", "newerSuccess", "headOf", "pillSlot"], "AiUsageLogic.qml");
+    ["failureWins", "newerSuccess", "newerAccepted", "headOf", "pillSlot", "popoutView"],
+    "AiUsageLogic.qml");
 
 // The account shape these cases file.
 const acct = (id, over) => Object.assign(
@@ -198,6 +199,111 @@ const acct = (id, over) => Object.assign(
     assert.equal(newerSuccess({ ok: false, provider: "claude" }, 9, 0), false,
         "and a failure is never a success to promote");
     assert.equal(newerSuccess(null, 9, 0), false, "nor is nothing");
+}
+
+// --- the switch barrier ------------------------------------------------------
+//
+// providerData survives a provider switch on purpose: the pill keeps a slot per
+// provider. So the popout's "what am I showing" stamp cannot reset to zero on a
+// switch — every stored payload beats zero, and the popout promoted the previous
+// session's data for the newly selected provider and stopped looking like it was
+// loading. Holding the stamp the switch happened at is the barrier.
+
+{
+    const store = { data: {}, filedAt: {}, seq: 0 };
+    const file = (provider, payload) => {
+        store.seq += 1;
+        store.data[provider] = payload;
+        store.filedAt[provider] = store.seq;
+    };
+    const popout = { current: null, currentFiledAt: 0, loading: true };
+    const promote = selected => {
+        if (!newerAccepted(store.data[selected], store.filedAt[selected], popout.currentFiledAt))
+            return;
+        popout.current = store.data[selected];
+        popout.currentFiledAt = store.filedAt[selected];
+        popout.loading = false;
+    };
+    // clearProviderState, with the barrier the widget now holds.
+    const switchTo = () => {
+        popout.current = null;
+        popout.currentFiledAt = store.seq;
+        popout.loading = true;
+    };
+
+    const beforeSwitch = { ok: true, provider: "codex", accounts: [acct("c", { weekly: { pct: 9 } })] };
+    file("codex", beforeSwitch);   // filed while codex was the OTHER provider
+    switchTo();                    // the user switches to codex
+    promote("codex");
+
+    assert.equal(popout.current, null,
+        "a payload filed BEFORE the switch must not promote: that is the stale-data-after-switch " +
+        "symptom this issue exists to fix");
+    assert.equal(popout.loading, true, "and the popout keeps looking like it is loading");
+
+    const afterSwitch = { ok: true, provider: "codex", accounts: [acct("c", { weekly: { pct: 55 } })] };
+    file("codex", afterSwitch);    // a fetch for codex lands
+    promote("codex");
+    assert.equal(popout.current, afterSwitch, "a payload filed after the switch does promote");
+    assert.equal(popout.loading, false, "and the popout stops waiting");
+}
+
+// --- an ok:false payload is the provider ANSWERING ---------------------------
+//
+// The helper emits ok:false for a signed-out provider or a missing backend.
+// Promotion was success-only, and settleFetch skips its failure branch for a
+// channel that IS accepted and loaded, so that payload showed nothing at all.
+
+{
+    assert.equal(newerAccepted({ ok: false, provider: "claude", error: "no signed-in accounts found" }, 5, 4),
+        true, "an ok:false payload is stored: it is an answer, and the popout has an error path");
+    assert.equal(newerSuccess({ ok: false, provider: "claude" }, 5, 4), false,
+        "but it is not a SUCCESS, so it still cannot block a failure write");
+    assert.equal(newerAccepted({ ok: false, provider: "claude" }, 3, 4), false,
+        "and the ordering rule is unchanged: an older failure does not displace a newer payload");
+    assert.equal(newerAccepted(null, 9, 0), false, "nothing filed promotes nothing");
+}
+
+// --- health is judged over the accounts on screen ----------------------------
+//
+// A multi-account payload is top-level ok when ANY account succeeded. With the
+// healthy one hidden and every visible one failed, the pill read as fine.
+
+{
+    const data = {
+        ok: true,
+        provider: "claude",
+        accounts: [
+            acct("healthy", { weekly: { pct: 20 } }),
+            acct("broken", { ok: false, error: "session expired" })
+        ]
+    };
+    const hidden = ["healthy"];
+    const slot = pillSlot("claude", headOf(data, "pool", hidden), data, [], "claude", hidden);
+    assert.equal(slot.error, true,
+        "every account the user can SEE has failed, so the provider answered and the answer is " +
+        "not usable — the error mark, not the placeholder");
+    assert.equal(slot.text, "!");
+
+    // The neighbouring states still read as before.
+    const allHidden = pillSlot("claude", headOf(data, "pool", ["healthy", "broken"]), data, [],
+        "claude", ["healthy", "broken"]);
+    assert.equal(allHidden.error, false, "hiding everything is not a failure");
+    assert.equal(allHidden.text, "—", "it is nothing to show");
+    const visible = pillSlot("claude", headOf(data, "pool", []), data, [], "claude", []);
+    assert.equal(visible.text, "20%", "and a visible healthy account is still a number");
+
+    // The popout must tell the same story, since pill/popout disagreement about
+    // hidden accounts has been a defect on this issue twice. It does, in more
+    // detail: no headline, so the header prints no percentage, and it counts the
+    // visible account as unavailable while the card shows that account's own
+    // error text.
+    const view = popoutView(data, hidden, false);
+    assert.equal(headOf(data, "pool", hidden), null, "no headline to print beside the counts");
+    assert.equal(view.liveCount, 0, "no live account on screen");
+    assert.equal(view.shownCount - view.liveCount, 1, "the visible one is counted unavailable");
+    assert.equal(view.hiddenCount, 1, "and the hidden one is counted hidden");
+    assert.equal(view.cards, true, "the card path renders, so its own error text is on screen");
 }
 
 console.log("ai-usage filing order: OK");

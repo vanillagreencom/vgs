@@ -31,7 +31,7 @@ config/vshell/icons/Yaru/cursors/wait	5408
 config/vshell/icons/Yaru/cursors/wait.ani	4513
 config/vshell/icons/Yaru/index.theme	790
 config/vshell/nvim/vgs-theme-bridge.lua	429
-config/vshell/plugins/aiUsage/AiUsageWidget.qml	1053
+config/vshell/plugins/aiUsage/AiUsageWidget.qml	1067
 config/vshell/plugins/cloudSync/CloudSyncWidget.qml	690
 config/vshell/plugins/remoteDesktop/RemoteDesktopWidget.qml	803
 config/vshell/plugins/sudoToggle/SudoToggleWidget.qml	515

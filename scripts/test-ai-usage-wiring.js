@@ -77,24 +77,23 @@ requires(accept, "acceptPayload()", [
         "the outcome is decided from the payload's OWN provider and what this channel wants"],
     ["outcome.file", "a payload that names a provider updates that provider's pill slot"],
     ["root.noteHeadline(got.data)", "which is what files it"],
-    ["root.promoteSelected()", "and the popout takes it if it is the selected provider's, " +
-        "whichever channel fetched it"],
+    ["root.promoteSelected()", "and the popout takes it if it is the selection's"],
     ["outcome.satisfies", "a payload that does not satisfy this channel goes no further"],
     ["ch.loaded = ch.want", "the channel records what it holds, or relaunch answers true"],
     ["ch.retries = 0", "a satisfying payload restores the retry budget"]
 ]);
 
-// The third consumer of the newer-success rule: promotion, not gated on which
-// channel fetched — that left the popout empty after a switch.
+// Third consumer of the rule: promotion, not gated on which channel fetched.
 requires(body("promoteSelected"), "promoteSelected()", [
-    ["logic.newerSuccess(filed, filedAt, root.currentFiledAt)",
-        "the same rule the failure paths ask, against what the popout already shows"],
+    // ACCEPTED, not success-only: an ok:false payload is the provider answering.
+    ["logic.newerAccepted(filed, filedAt, root.currentFiledAt)",
+        "the same ordering the failure paths ask"],
     ["root.current = filed", "the popout state is the payload that was filed"],
     ["root.currentFiledAt = filedAt", "stamped, so the next promotion can compare"],
     ['root.fetchError = ""', "a promoted payload clears the failure text"],
     ["root.loading = false", "and ends the loading state"]]);
 assert.ok(!/ch\.primary/.test(stripComments(body("acceptPayload"))),
-    "acceptPayload must not gate the popout on which channel fetched the payload");
+    "acceptPayload must not gate the popout on which channel fetched");
 
 // --- the channel owns its process, so no call site can cross the pairing -----
 
@@ -277,8 +276,9 @@ assert.equal(exits.length, 1, "the one exit handler lives on the channel's own p
 const cleared = body("clearProviderState");
 requires(cleared, "clearProviderState()", [
     ["root.current = null", "one payload property holds every provider-scoped lane"],
-    ["root.currentFiledAt = 0", "and its stamp, or the next promotion compares against a stale " +
-        "one and declines a payload the popout should take"],
+    // The barrier, not zero: providerData survives a switch, so zero promoted a
+    // pre-switch payload.
+    ["root.currentFiledAt = root.fileSeq", "holding the switch's stamp, so only later filings promote"],
     ['root.fetchError = ""', "the failure text is provider-scoped too"],
     ["root.loading = true", "a switch puts the popout back into loading"],
     ['root.expandedAccountId = ""', "the expanded account belongs to the previous provider's list"],

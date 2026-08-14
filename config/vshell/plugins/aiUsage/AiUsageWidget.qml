@@ -121,7 +121,8 @@ PluginComponent {
         root.provider === "codex" ? root.codexHead : root.claudeHead,
         root.providerData[root.provider],
         root.fetchingProviders,
-        root.provider)
+        root.provider,
+        root.hiddenAccounts)
 
     // The account on screen, or the payload's own lanes for the flat shape.
     readonly property var primaryMeters: {
@@ -220,7 +221,8 @@ PluginComponent {
             claudeData: root.providerData.claude,
             codexHead: root.codexHead,
             codexData: root.providerData.codex,
-            fetching: root.fetchingProviders
+            fetching: root.fetchingProviders,
+            hidden: root.hiddenAccounts
         });
     }
 
@@ -365,7 +367,13 @@ PluginComponent {
     // is keyed BY provider, so neither entry can be read as the other's.
     function clearProviderState() {
         root.current = null;
-        root.currentFiledAt = 0;
+        // The BARRIER, not zero: providerData survives a switch on purpose (the
+        // pill keeps both slots), so comparing against 0 promoted the previous
+        // session's payload for the newly selected provider — stale data on a
+        // switch, which is the symptom this issue exists to fix. Holding the
+        // stamp the switch happened at says "only what is filed from here on",
+        // and needs no second counter: the switch IS the generation boundary.
+        root.currentFiledAt = root.fileSeq;
         root.fetchError = "";
         root.loading = true;
         root.expandedAccountId = "";
@@ -558,7 +566,13 @@ PluginComponent {
     function promoteSelected() {
         const filed = root.providerData[root.provider];
         const filedAt = root.providerFiledAt[root.provider];
-        if (!logic.newerSuccess(filed, filedAt, root.currentFiledAt))
+        // Any ACCEPTED payload, not only a successful one: an ok:false payload is
+        // the provider answering — signed out, backend missing — and the popout
+        // has an error path for it. Storing is an ordering question; `ok` only
+        // decides what is rendered. Success-only left a signed-out provider
+        // showing nothing at all, because settleFetch skips its failure branch
+        // for a channel that IS accepted and loaded.
+        if (!logic.newerAccepted(filed, filedAt, root.currentFiledAt))
             return;
         root.current = filed;
         root.currentFiledAt = filedAt;

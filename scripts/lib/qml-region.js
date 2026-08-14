@@ -26,7 +26,22 @@ const CALL_TIMEOUT_MS = 1000;
 // The wall clock the PARENT enforces on a suite that evaluates a region. Long
 // enough that an ordinary run (well under a second) never approaches it, short
 // enough that a hang is a fast red rather than a job timeout.
-const CHILD_TIMEOUT_MS = Number(process.env.VGS_REGION_CHILD_TIMEOUT_MS || 20000);
+const CHILD_TIMEOUT_DEFAULT_MS = 20000;
+const CHILD_TIMEOUT_MS = childTimeoutFromEnv(process.env.VGS_REGION_CHILD_TIMEOUT_MS);
+
+// A bad override must not silently become NaN: that is an UNDEFINED bound in the
+// one situation the guard has to hold, and it printed "killed after NaNms".
+function childTimeoutFromEnv(value, warn) {
+    if (value === undefined || value === "")
+        return CHILD_TIMEOUT_DEFAULT_MS;
+    const parsed = Number(value);
+    if (Number.isFinite(parsed) && parsed > 0)
+        return parsed;
+    (warn || (text => process.stderr.write(text)))(
+        `VGS_REGION_CHILD_TIMEOUT_MS=${JSON.stringify(value)} is not a positive number; ` +
+        `using ${CHILD_TIMEOUT_DEFAULT_MS}ms.\n`);
+    return CHILD_TIMEOUT_DEFAULT_MS;
+}
 
 // Re-exec the calling suite as a child process the parent can kill on a wall
 // clock, and return only in that child. The FIRST statement of any suite that
@@ -37,6 +52,21 @@ const CHILD_TIMEOUT_MS = Number(process.env.VGS_REGION_CHILD_TIMEOUT_MS || 20000
 // `Promise.resolve().then(() => { while (true) {} })` and returns normally
 // finishes inside every such timeout and then hangs Node from the microtask
 // queue. One kill closes that, an infinite loop and runaway allocation together.
+// What a finished spawnSync says happened. A child that never STARTED is not a
+// hang, and reporting one as the other sends triage after the wrong cause —
+// which defeats a guard whose whole job is making a hang legible. Node keeps
+// them apart: a timeout kill carries the kill signal (and ETIMEDOUT), a spawn
+// failure carries its own errno and no signal.
+function spawnOutcome(run) {
+    if (!run)
+        return "spawn-failed";
+    if (run.signal === "SIGKILL" || (run.error && run.error.code === "ETIMEDOUT"))
+        return "killed";
+    if (run.error)
+        return "spawn-failed";
+    return "ran";
+}
+
 function guardChild(bounds) {
     if (process.env.VGS_REGION_CHILD === "1")
         return;
@@ -48,11 +78,17 @@ function guardChild(bounds) {
         killSignal: "SIGKILL",
         env: Object.assign({}, process.env, { VGS_REGION_CHILD: "1" })
     });
-    if (run.signal === "SIGKILL" || run.error) {
+    if (spawnOutcome(run) === "killed") {
         process.stderr.write(
             `${script}: killed after ${limit}ms — the extracted region did not finish.\n` +
             "A hang is the failure mode a passing suite cannot be told from a slow one, " +
             "so it is a hard kill rather than an in-process timeout.\n");
+        process.exit(1);
+    }
+    if (spawnOutcome(run) === "spawn-failed") {
+        process.stderr.write(
+            `${script}: could not start the child (${run.error.code || run.error.message}) — ` +
+            "this is a spawn failure, NOT a hang.\n");
         process.exit(1);
     }
     process.exit(run.status === null ? 1 : run.status);
@@ -175,6 +211,46 @@ module.exports.selfTest = function selfTest() {
                 "one failure mode a passing suite cannot be told from a slow one");
         } finally {
             fs.rmSync(dir, { recursive: true, force: true });
+        }
+    }
+
+    // --- a child that never started is not a hang ---
+    {
+        // Both shapes taken from real spawnSync results, not fabricated: a
+        // timeout kill and a missing interpreter.
+        const killedRun = spawnSync(process.execPath, ["-e", "setInterval(() => {}, 1000);"],
+            { timeout: 200, killSignal: "SIGKILL" });
+        assert.equal(spawnOutcome(killedRun), "killed",
+            "a child the parent killed on the clock is the hang case");
+
+        const dir = fs.mkdtempSync(path.join(os.tmpdir(), "vgs-region-spawn-"));
+        try {
+            const missing = spawnSync(path.join(dir, "no-such-node"), ["-e", ""], { timeout: 5000 });
+            assert.equal(missing.error && missing.error.code, "ENOENT",
+                "the fixture must genuinely fail to spawn, or this proves nothing");
+            assert.equal(spawnOutcome(missing), "spawn-failed",
+                "a child that never started must NOT be reported as a hang that was killed");
+        } finally {
+            fs.rmSync(dir, { recursive: true, force: true });
+        }
+
+        assert.equal(spawnOutcome(spawnSync(process.execPath, ["-e", "process.exit(3);"])), "ran",
+            "and an ordinary exit is neither");
+    }
+
+    // --- a bad timeout override falls back rather than becoming NaN ---
+    {
+        assert.equal(childTimeoutFromEnv(undefined), CHILD_TIMEOUT_DEFAULT_MS,
+            "unset uses the default");
+        assert.equal(childTimeoutFromEnv("1500"), 1500, "a number is honoured");
+        for (const bad of ["abc", "", "0", "-5", "NaN"]) {
+            const said = [];
+            assert.equal(childTimeoutFromEnv(bad, text => said.push(text)), CHILD_TIMEOUT_DEFAULT_MS,
+                `${JSON.stringify(bad)} must fall back to the default, not become NaN — an ` +
+                "undefined bound in the one situation this guard has to hold");
+            if (bad !== "")
+                assert.ok(said.join("").includes("not a positive number"),
+                    `${JSON.stringify(bad)} must say why it fell back`);
         }
     }
 
