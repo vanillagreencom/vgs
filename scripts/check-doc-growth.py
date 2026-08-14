@@ -85,9 +85,8 @@ CEILINGS: dict[str, int] = {
     ".github/instructions/vendored-go.instructions.md": 500,  # adopted at 367 B
     # Adopted at 302 B. 2026-08-14: ATTRIBUTION.md carve-out (PR #132) — the
     # blanket "never patch in-repo, skip style findings" rule covered a
-    # VGS-authored file. 600 at the final 490 B size, not the 539 that ~10%
-    # would give: the next round number down, 500, leaves 10 B and would trip
-    # on the following edit, so 600 is the tightest sane line here.
+    # VGS-authored file. 600 is the adoption rule applied at the final 490 B
+    # size: plus ~10% is 539, rounded up to the next 100.
     ".github/instructions/vendored-nvim.instructions.md": 600,
     "docs/architecture/backend-daemon.md": 7_800,  # adopted at 7,087 B
     "docs/architecture/cloud-sync.md": 15_400,  # adopted at 13,975 B
