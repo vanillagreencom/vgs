@@ -23,6 +23,14 @@
 # one of them to report loaded before it stops observing, so plugin-owned QML is
 # inside the checked window. It fails if any of them never loads.
 #
+# Before asserting anything about what the sandbox contains, it asserts that
+# the sandbox's own SEED is in effect: a sentinel value matching neither the
+# shipped default nor SettingsData's built-in default is stamped into the seeded
+# settings.json and read back out of the running shell over IPC (VGS-92). Every
+# other assertion here is conditional on that one, because a shell that fell
+# back to defaults answers most of them identically — which is exactly what
+# happened for months while `cp -a` preserved a dangling dotfiles symlink.
+#
 # It then drives two things that loading alone never reaches (VGS-81):
 #
 #   * a plugin POPOUT is opened through `widget toggle` and dismissed with
@@ -290,20 +298,9 @@ host_wayland_socket() {
 # --- plugin phases run inside the sandbox -----------------------------------
 # Both read `sandbox_env`, `repo_root`, `sandbox`, `log` and `qs_group` from
 # nested_check; bash scopes dynamically, so they are visible here.
-
-# The plugin popout is a real layer-shell window whose size comes from its
-# content, so the compositor is the honest witness for BOTH questions: that the
-# popout opened, and that its content instantiated. A popoutContent that failed
-# to build gives a degenerate surface, not a content-sized one.
-popout_namespace="vshell:plugins:plugin"
-# aiUsage, because its popoutContent is the code with no coverage at all: the
-# extracted MeterRow/MeterCard delegates and the in-surface pager (VGS-72/73)
-# live entirely inside it, and it is only instantiated when the popout opens.
-popout_plugin="aiUsage"
-# A different bundled id for the override phase, so the two cannot mask each
-# other. It has to be one the shipped bar layout hosts — a plugin no bar hosts
-# never instantiates its component, and the marker below would never fire.
-override_plugin="tailscale"
+#
+# `popout_namespace`, `popout_plugin` and `override_plugin` are defined once,
+# below `wait_layer_state`, next to the evidence that picked them.
 
 sandbox_ipc() {
   "${sandbox_env[@]}" qs ipc -p "$repo_root/quickshell/vshell" --any-display call "$@" 2>&1 || true
@@ -428,6 +425,39 @@ popout_plugin="aiUsage"
 # other. It has to be one the shipped bar layout hosts - a plugin no bar hosts
 # never instantiates its component, and the marker below would never fire.
 override_plugin="tailscale"
+
+# --- the seeded settings are in effect (VGS-92, D008) -----------------------
+#
+# Every other phase reads as a pass whether or not the shell found the seeded
+# settings.json: SettingsData carries its own built-in default for every key and
+# the shipped `settings.default.json` mostly repeats them. That is not
+# hypothetical — `cp -a` used to preserve the operator's
+# `settings.json -> ~/dotfiles/...` symlink, it dangled inside the sandbox, and
+# every run silently used SettingsData's defaults.
+#
+# So the witness has to DISCRIMINATE: any key whose seeded value equals the QML
+# default answers the same in both worlds. The seeding step stamps a sentinel
+# matching NEITHER default and this reads it back out of the RUNNING shell.
+# Mutation control: drop that stamp and this check fails ('500', not '4242').
+#
+# `customAnimationDuration` carries it because it is inert — MethodTheme
+# consults it only when `animationSpeed` selects Custom, which the shipped
+# default does not. Its QML and shipped defaults are both 500.
+settings_sentinel_key="customAnimationDuration"
+settings_sentinel_value=4242
+
+seeded_settings_check() {
+  local reply
+  # `settings get` answers JSON.stringify of the live SettingsData property
+  # (VGSIPC.qml), so a number comes back bare and compares literally.
+  reply="$(sandbox_ipc settings get "$settings_sentinel_key")"
+  if [[ "$reply" != "$settings_sentinel_value" ]]; then
+    fail "the sandboxed shell is NOT running on the settings the sandbox seeded: \`settings get $settings_sentinel_key\` answered '$reply', expected the sentinel '$settings_sentinel_value' - so every phase after this would be measuring state nobody described (VGS-92)"
+    return 1
+  fi
+  note "seeded settings check passed (the running shell reports the sandbox's sentinel $settings_sentinel_key=$settings_sentinel_value)"
+  return 0
+}
 
 # Plugin widgets are registered with BarWidgetService by the bar's WidgetHost,
 # which mounts them some time AFTER the plugin itself reports loaded. A single
@@ -727,8 +757,12 @@ nested_check() {
   track_dir "$rt_dir"
 
   mkdir -p "$sandbox/home/.config" "$sandbox/home/.local/share" "$sandbox/home/.local/state" "$sandbox/home/.cache"
-  # Seed a realistic (but throwaway) copy of user state so the smoke exercises
-  # the real theme/settings paths without any chance of writing to live state.
+  # Build the sandbox's user state. Two sources, deliberately split, and the
+  # split is the decision recorded in docs/decisions/D008-nested-sandbox-state-seeding.md:
+  # everything any check asserts on is SEEDED from the shipped defaults so the
+  # run is reproducible between machines, and the operator's own
+  # `~/.config/vshell` is copied in only as inert enrichment beneath it.
+  # Nothing here can write to live state - the sandbox is a throwaway HOME.
   # Every step below either succeeds or SAYS SO. A prep failure that is
   # swallowed leaves the run measuring a sandbox that is not the one it
   # describes, which is the same defect as the `cp -a` symlink silently
@@ -792,6 +826,26 @@ nested_check() {
         "$sandbox/home/.config/vshell/settings.json" || { prep_fail "seeding settings.json from the shipped default"; return; }
   cp -- "$repo_root/config/vshell/plugin_settings.default.json" \
         "$sandbox/home/.config/vshell/plugin_settings.json" || { prep_fail "seeding plugin_settings.json from the shipped default"; return; }
+
+  # Stamp the discriminating sentinel `seeded_settings_check` reads back out of
+  # the running shell; without it "the seed is in effect" stays an assumption.
+  # The key must EXIST in the shipped default - a key that does not is a rename
+  # this check was never told about, and inventing it would seed a setting the
+  # shell ignores and then assert on it. That fails loudly instead.
+  python3 - "$sandbox/home/.config/vshell/settings.json" \
+            "$settings_sentinel_key" "$settings_sentinel_value" <<'PY' || { prep_fail "stamping the settings sentinel into the seeded settings.json"; return; }
+import json
+import sys
+
+path, key, value = sys.argv[1], sys.argv[2], int(sys.argv[3])
+with open(path) as fh:
+    data = json.load(fh)
+if key not in data:
+    sys.exit(f"{key!r} is not in config/vshell/settings.default.json")
+data[key] = value
+with open(path, "w") as fh:
+    json.dump(data, fh, indent=2)
+PY
 
   conf="$sandbox/hyprland.conf"
   cat >"$conf" <<'EOF'
@@ -943,12 +997,17 @@ EOF
     done
   fi
 
-  # Both phases drive the shell that is still running, so they come before the
+  # Every phase drives the shell that is still running, so they come before the
   # teardown. They stop at the first failure, and `fail` has already set the
   # exit status by then; the log scan below still runs, because a phase that
   # failed usually left its explanation there.
+  #
+  # `seeded_settings_check` goes FIRST and gates the rest: if the shell is not
+  # on the seeded settings, whatever the later phases observe describes some
+  # other configuration, and reporting those results would be the VGS-92 defect
+  # again with a louder voice.
   if [[ "$plugins_loaded" == true ]]; then
-    if popout_check; then
+    if seeded_settings_check && popout_check; then
       override_check || true
     fi
   fi
