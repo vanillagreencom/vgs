@@ -37,11 +37,12 @@
 # importable modules with no shebang and no `__main__`.
 #
 # WHICH OF THESE CI CAN RUN is not restated here — one enforced copy only.
-# `.github/instructions/ci.instructions.md` § "What CI covers, and what it
-# cannot" holds it, and `scripts/check-validation-inventory.py` machine-compares
-# its tables against that file's `LOCAL_ONLY`/`INDIRECT_IN_CI` maps, so a second
-# prose copy in this header could only drift. The measured economics behind the
-# single CI job are in `docs/decisions/D007-ci-single-job-economics.md`.
+# `.github/instructions/validation-scripts.instructions.md` § "What CI covers,
+# and what it cannot" holds it, and `scripts/check-validation-inventory.py`
+# machine-compares its tables against that file's `LOCAL_ONLY`/`INDIRECT_IN_CI`
+# maps, so a second prose copy in this header could only drift. The measured
+# economics behind the single CI job are in
+# `docs/decisions/D007-ci-single-job-economics.md`.
 #
 # What is true of THIS runner: `scripts/validate qml` runs the nested QML smoke
 # and the surface smoke, neither of which CI can run, so a scoped qml run is the

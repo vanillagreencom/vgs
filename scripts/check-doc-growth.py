@@ -49,12 +49,11 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 # rationale is for the reviewer, so a raise without one is review feedback,
 # not something this script can enforce.
 CEILINGS: dict[str, int] = {
-    # 17,656 B after VGS-123 moved the 54-command validation manifest into
-    # scripts/validate and the "What CI covers" tables into
-    # .github/instructions/ci.instructions.md. The 25,000 ceiling that survived
-    # the VGS-107 diet would leave 7 KB of unexamined regrowth headroom here,
-    # which is the thing this ratchet exists to deny, so it drops to measured
-    # size plus ~10%.
+    # 17,776 B after VGS-123 moved the 55-command validation manifest into
+    # scripts/validate and the "What CI covers" tables into the instruction
+    # files. The 25,000 ceiling that survived the VGS-107 diet would leave 7 KB
+    # of unexamined regrowth headroom here, which is the thing this ratchet
+    # exists to deny, so it drops to measured size plus ~10%.
     "AGENTS.md": 19_500,
     # Adopted at 3,289 B. 2026-08-10: owner-approved risk-class +
     # regression-test policy sections plus the PR #120 review rounds
@@ -78,18 +77,22 @@ CEILINGS: dict[str, int] = {
     ".github/instructions/architecture-docs.instructions.md": 500,  # adopted at 393 B
     ".github/instructions/backend-go.instructions.md": 800,  # adopted at 671 B
     # Adopted at 962 B. VGS-123 moved AGENTS.md § "What CI covers, and what it
-    # cannot" here — required checks, the local-only and reached-indirectly
-    # tables, the whitespace-range rationale — which is 4.4 KB that left an
-    # always-loaded surface for a path-scoped one. The PR review then added the
-    # CI-runs-steps-not-the-runner note and the exit-77 skip contract for
-    # smoke-surfaces.sh; 6,500 keeps ~10% headroom at the resulting 5,908 B,
-    # superseding the 6,000 figure measured mid-review at 5,407 B.
-    ".github/instructions/ci.instructions.md": 6_500,
+    # cannot" out of the always-loaded surface; the required-checks and
+    # whitespace-range halves landed here and the local-only/reached-indirectly
+    # tables went to validation-scripts.instructions.md, whose `scripts/**`
+    # scope is where judging a check actually happens. 3,500 keeps ~10% headroom
+    # at the resulting 3,116 B.
+    ".github/instructions/ci.instructions.md": 3_500,
     ".github/instructions/harness-config.instructions.md": 900,  # adopted at 760 B
     ".github/instructions/helper-cli.instructions.md": 600,  # adopted at 517 B
     ".github/instructions/quickshell-qml.instructions.md": 1_700,  # adopted at 1,459 B
     ".github/instructions/themes.instructions.md": 700,  # adopted at 577 B
-    ".github/instructions/validation-scripts.instructions.md": 1_000,  # adopted at 844 B
+    # Adopted at 844 B. VGS-123 moved the "What CI covers, and what it cannot"
+    # tables here from AGENTS.md: their audience is whoever is judging a check,
+    # which is `scripts/**` work landing on PRs that touch no workflow file, so
+    # a workflow-scoped home never auto-attached for them. 4,900 keeps ~10%
+    # headroom at the resulting 4,388 B.
+    ".github/instructions/validation-scripts.instructions.md": 4_900,
     ".github/instructions/vendored-engine.instructions.md": 1_000,  # adopted at 854 B
     ".github/instructions/vendored-go.instructions.md": 500,  # adopted at 367 B
     # Adopted at 302 B. 2026-08-14: ATTRIBUTION.md carve-out (PR #132) — the

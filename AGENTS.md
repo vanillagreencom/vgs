@@ -143,12 +143,15 @@ Live-machine etiquette:
 ## Validation
 The suite is `scripts/validate [AREA]` — areas `go`, `qml`, `helper`,
 `packaging`, `docs`, `all`. Scope to the area you touched; run `all` for
-cross-cutting work. The command manifest, the per-area scoping, and what a green
-CI run does and does not prove live in that runner's header;
-`.github/instructions/ci.instructions.md` § "What CI covers, and what it cannot"
-carries the local-only and reached-indirectly tables, and
-`scripts/check-validation-inventory.py` enforces the runner against CI and
-`scripts/` in both directions (VGS-50, VGS-30).
+cross-cutting work. The command manifest and the per-area scoping live in that
+runner's header, and `scripts/check-validation-inventory.py` enforces it against
+CI and `scripts/` in both directions (VGS-50, VGS-30).
+
+A green CI run does not prove the shell starts. Run `scripts/validate qml`
+before finishing QML work, and never read `smoke-surfaces.sh`'s refusal as a
+pass (VGS-69). Which checks CI cannot run, and why, is in
+`.github/instructions/validation-scripts.instructions.md` § "What CI covers,
+and what it cannot".
 
 ### Review gate
 

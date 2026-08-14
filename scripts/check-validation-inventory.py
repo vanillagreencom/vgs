@@ -21,7 +21,7 @@ manifest must be runnable exactly as written.
 
 The manifest moved out of AGENTS.md § Validation into `scripts/validate`
 (VGS-123), so this parses the runner; the tables it cross-compares against moved
-with it, to `.github/instructions/ci.instructions.md`.
+with it, to `.github/instructions/validation-scripts.instructions.md`.
 """
 
 from __future__ import annotations
@@ -44,7 +44,7 @@ except ModuleNotFoundError:
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 RUNNER = REPO_ROOT / "scripts" / "validate"
-CI_DOC = REPO_ROOT / ".github" / "instructions" / "ci.instructions.md"
+TABLES_DOC = REPO_ROOT / ".github" / "instructions" / "validation-scripts.instructions.md"
 CI = REPO_ROOT / ".github" / "workflows" / "ci.yml"
 SCRIPTS = REPO_ROOT / "scripts"
 
@@ -60,7 +60,7 @@ NOT_A_SUITE_CHECK = {
 }
 
 # Checks the suite runs but CI cannot, with the reason CI cannot run them.
-# .github/instructions/ci.instructions.md § What CI covers documents these at
+# validation-scripts.instructions.md § What CI covers documents these at
 # length; this is the machine-readable half, so the two cannot disagree
 # silently.
 LOCAL_ONLY = {
@@ -186,8 +186,8 @@ def ci_run_commands() -> str:
     return "\n".join(lines)
 
 
-# The prose tables in .github/instructions/ci.instructions.md § What CI covers,
-# keyed by the bold lead-in above each. Claiming the doc and the code cannot
+# The prose tables in validation-scripts.instructions.md § What CI covers, keyed
+# by the bold lead-in above each. Claiming the doc and the code cannot
 # disagree is only true if something compares them; before this, nothing did,
 # and the table had drifted (it omitted check-review-gate-vendor.sh and listed
 # qml-smoke.sh, which is reached indirectly rather than being local-only).
@@ -199,11 +199,11 @@ DOC_TABLES = {
 
 def documented_table(lead_in: str) -> set[str]:
     """Script basenames named in the first column of the table after `lead_in`."""
-    text = CI_DOC.read_text(encoding="utf-8")
+    text = TABLES_DOC.read_text(encoding="utf-8")
     start = text.find(lead_in)
     if start == -1:
         raise SystemExit(
-            f"check-validation-inventory: .github/instructions/ci.instructions.md "
+            f"check-validation-inventory: validation-scripts.instructions.md "
             f"has no table introduced by {lead_in!r}"
         )
     names: set[str] = set()
@@ -370,11 +370,11 @@ def main() -> int:
         for name in sorted(coded - documented_names):
             problems.append(
                 f"scripts/{name} is in {map_name} but not in the "
-                f".github/instructions/ci.instructions.md table introduced by {lead_in!r}"
+                f"validation-scripts.instructions.md table introduced by {lead_in!r}"
             )
         for name in sorted(documented_names - coded):
             problems.append(
-                f"scripts/{name} is in that ci.instructions.md table but not in {map_name}"
+                f"scripts/{name} is in that instruction-file table but not in {map_name}"
             )
 
     # --- exclusions that no longer name a real file --------------------------

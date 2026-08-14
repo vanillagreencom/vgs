@@ -414,7 +414,7 @@ jobs:
       # plus a Quickshell install inside the runner. The live-session half of
       # this guard degrades cleanly here (no compositor and no Quickshell CLI →
       # "nothing of that kind exists on this system"), which is correct: there is
-      # no live session in CI to disturb. .github/instructions/ci.instructions.md
-      # § "What CI covers, and what it cannot" records what that leaves local-only.
+      # no live session in CI to disturb. The validation-scripts instruction
+      # file's "What CI covers" tables record what that leaves local-only.
       - name: Validation safety and QML static smoke
         run: scripts/check-validation-safety.sh --require-static

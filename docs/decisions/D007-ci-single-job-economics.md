@@ -12,8 +12,9 @@ VGS CI is one suite job (`ci-ok`) plus the structurally separate review-gate
 selftest: no lanes, no change-detection gate, no nightly split, no Go build
 caching, the 2 vCPU runner tier, and a range-scoped (never whole-tree)
 whitespace check. Every one of those is an economics decision driven by
-measured timings. `.github/instructions/ci.instructions.md` § "What CI covers,
-and what it cannot" states the posture, `.github/workflows/ci.yml` implements it, and this record holds the
+measured timings. `.github/instructions/ci.instructions.md` (required checks,
+whitespace range) and `validation-scripts.instructions.md` § "What CI covers,
+and what it cannot" state the posture, `.github/workflows/ci.yml` implements it, and this record holds the
 numbers and the commands that re-derive them.
 
 ## Measurements (2026-08-09, this repo)
@@ -79,7 +80,8 @@ block once with a throwaway `GOCACHE` and `du -sh` that for the cache figure.
 
 ## References
 
-- `.github/instructions/ci.instructions.md` § "What CI covers, and what it
-  cannot" — the working posture.
+- `.github/instructions/ci.instructions.md` and
+  `.github/instructions/validation-scripts.instructions.md` — the working
+  posture.
 - `.github/workflows/ci.yml` — the implementation, with structural comments
   pointing back here for figures.

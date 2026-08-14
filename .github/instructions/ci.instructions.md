@@ -4,9 +4,12 @@ applyTo: ".github/workflows/**"
 
 # CI
 
-Four workflows live here. `ci.yml` runs the `scripts/validate` suite on
-every pull request targeting `main`, every merge-queue entry, and every `main`
-push; its one suite job is deliberate — see the workflow's own header. `review-gate-writer.yml` is the
+Four workflows live here. `ci.yml` runs the `scripts/validate` manifest as
+individual named steps on every pull request targeting `main`, every
+merge-queue entry, and every `main` push; its one suite job is deliberate — see
+the workflow's own header. It never invokes the runner itself; the runner's own
+behavior is covered by `scripts/test-validate.sh`, which CI does run.
+`review-gate-writer.yml` is the
 only writer of the `Review gate` commit status. `publish-aur.yml` pushes
 `packaging/arch/` to the AUR and re-checks the published result.
 `release.yml` builds releases on version tags. CodeQL runs from GitHub's
@@ -14,11 +17,14 @@ default org-level setup rather than a workflow here, and its per-language
 lanes (rust, ruby, c-cpp) report "skipping" because the repo has little or no
 code in those languages — by design, not a broken pipeline.
 
-Before reporting a CI coverage gap, read § "What CI covers, and what it
-cannot" below: a few checks are local-only or reached indirectly, each with a
-documented reason, and the rest of the suite runs on every PR.
+Before reporting a CI coverage gap, read
+`.github/instructions/validation-scripts.instructions.md` § "What CI covers,
+and what it cannot": a few checks are local-only or reached indirectly, each
+with a documented reason, and the rest of the suite runs on every PR. Those
+tables live with the checks they describe rather than here, because judging a
+check is `scripts/**` work and lands on PRs that touch no workflow file.
 
-## What CI covers, and what it cannot
+## Required checks
 
 The merge queue requires `CI / ci-ok`, the workflow's one *suite* job — one job
 is deliberate: at ~30s of total compute, per-job overhead dominates, so there
@@ -40,54 +46,14 @@ gh api repos/vanillagreencom/vgs/rulesets/20260238 \
 
 The gate's own architecture and trust posture are in `AGENTS.md` § Review gate.
 
-Some checks in `scripts/validate` **cannot run in CI**, and one runs there only
-through another entry. Both categories are deliberate, and
-`scripts/check-validation-inventory.py` cross-compares the two tables below
-against its own `LOCAL_ONLY` and `INDIRECT_IN_CI` maps, so the prose and the
-code cannot disagree silently.
+## The whitespace check is range-scoped here
 
-CI runs these commands as individual named steps and never invokes
-`scripts/validate` itself; the runner's own behavior is covered by
-`scripts/test-validate.sh`, which CI does run.
-
-**Local-only — CI cannot run these at all:**
-
-| Check | Why it is local-only |
-|-------|----------------------|
-| `scripts/check-label-taxonomy.py` | Compares `vstack.toml`'s label taxonomy against live Linear; CI has no Linear credentials and no local cache. It FAILS rather than skipping when the inventory is unreachable — `--allow-missing-inventory` is the explicit "I accept the sweep did not happen". |
-| `scripts/check-review-gate-vendor.sh` | Compares the tracked engine at `third_party/review-gate/` against the `vstack refresh`-managed copy under `.agents/`, which a CI checkout does not have. |
-| `scripts/check-size-ratchet-vendor.sh` | Same two-copy situation for the size-ratchet engine at `third_party/size-ratchet/`; CI runs the vendored engine, this check keeps it matching the `.agents/` copy. |
-| `scripts/smoke-surfaces.sh` | Needs a **live** Hyprland VGS session and reads `hyprctl layers`. Anywhere else it prints a skip and exits 77 — "nothing was checked", distinct from both its pass and its failures — so CI could only ever go red on it, never green. `scripts/validate` maps that 77 to a named skip in its summary; a foreign checkout is still a hard failure. |
-
-**Reached indirectly — CI runs these through another entry, not by name:**
-
-| Check | How CI reaches it |
-|-------|-------------------|
-| `scripts/qml-smoke.sh` | `scripts/check-validation-safety.sh --require-static` forwards the flag to the smoke, so the **static** half runs in CI. Only `--nested` is local-only: its sandbox needs both Hyprland and `quickshell` on PATH, neither reasonably installable on a runner. |
-
-`scripts/check-aur-sync.py` runs only its offline half on a PR (PKGBUILD against
-`.SRCINFO`); comparing against what the AUR actually publishes needs network and
-is owned by `publish-aur.yml`. Run `scripts/check-aur-sync.py --remote` by hand
-when you want that answer now.
-
-So a green PR proves the static suite and the Go block. It does **not** prove
-the shell starts or that its surfaces are sane. Run `scripts/validate qml`
-locally before finishing QML work — that area runs the nested smoke with
-`--require-nested`, so a missing sandbox fails rather than quietly downgrading
-to the static half. `scripts/smoke-surfaces.sh` only works from
-the checkout owning the live session, and reports which case it hit: a named
-skip when no VGS shell is live, a failure naming the owning checkout when one is
-live but foreign — even when this checkout's own shell is also live, since
-`hyprctl layers` aggregates every Quickshell instance on the seat. Run it from
-the owning checkout; do not read its refusal as a pass (VGS-69).
-
-One other local/CI difference: `scripts/validate` lists a bare
-`git diff --check`, which is a working-tree check, so on a clean CI checkout it
-would inspect nothing. CI diffs a range instead — on **every** event, with
-exactly one defined base per event, documented and enforced in the workflow's
-whitespace step. **There is no fallback base, deliberately**: if the base cannot
-be resolved the step fails rather than substituting a narrower range, which
-would pass while claiming coverage it does not have. A whole-tree check is
-deliberately not used — the tree's ~1,000 pre-existing findings all sit in
-content VGS ships verbatim; figures and derivation in
-`docs/decisions/D007-ci-single-job-economics.md`.
+`scripts/validate` lists a bare `git diff --check`, which is a working-tree
+check, so on a clean CI checkout it would inspect nothing. CI diffs a range
+instead — on **every** event, with exactly one defined base per event,
+documented and enforced in the workflow's whitespace step. **There is no
+fallback base, deliberately**: if the base cannot be resolved the step fails
+rather than substituting a narrower range, which would pass while claiming
+coverage it does not have. A whole-tree check is deliberately not used — the
+tree's ~1,000 pre-existing findings all sit in content VGS ships verbatim;
+figures and derivation in `docs/decisions/D007-ci-single-job-economics.md`.
