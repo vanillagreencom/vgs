@@ -32,7 +32,12 @@ const source = fs.readFileSync(WIDGET, "utf8");
 const { blockFrom, body, handlers, requires, stripComments } =
     require("./lib/qml-source.js")(source, "AiUsageWidget.qml");
 
-// Prove the walk and the stripper before anything leans on them.
+// Prove the walk and the stripper before anything leans on them: the library's
+// own cases first (a comment marker or a brace inside every quote style, and a
+// brace inside each comment form — each of which the pre-tokenizer helpers could
+// not detect), then the same two helpers against the file this test reads.
+require("./lib/qml-source.js").selfTest();
+
 {
     const walked = body("clearProviderState");
     assert.ok(walked.startsWith("{") && walked.endsWith("}"), "the walk returns a whole block");
