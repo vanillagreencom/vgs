@@ -45,7 +45,9 @@ Pinned, over the QML and JS under `quickshell/vshell/` and `config/vshell/`
      the branch — at the branch's own brace depth and inside no nested `if`.
 
 Comments are blanked before any pattern runs, so commented-out code satisfies
-nothing.
+nothing. The structural reading these rules stand on — blanking, brace and paren
+matching, which statement an `if` controls, whether a region always returns —
+lives in `scripts/lib/qml_source.py`; the rules themselves are here.
 
 Deliberately NOT pinned:
 
@@ -67,6 +69,15 @@ Exits non-zero naming the file and what it found.
 import re
 import sys
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent / "lib"))
+from qml_source import (  # noqa: E402
+    enclosing_function_body,
+    handler_bodies,
+    if_regions,
+    live_code,
+    returns_unconditionally,
+)
 
 REPO = Path(__file__).resolve().parent.parent
 SCAN_ROOTS = ["quickshell/vshell", "config/vshell"]
@@ -114,57 +125,6 @@ NEGATED_ACTIVE_TOPLEVEL_RE = re.compile(r"!\s*(?:\w+\s*\.\s*)*activeToplevel\b")
 NONZERO_EXIT_TEST_RE = re.compile(r"^\s*\(*\s*(?:\w+\s*\.\s*)*exitCode\s*!==?\s*0\s*\)*\s*$")
 
 
-def live_code(text: str, blank_strings: bool = False) -> str:
-    """`text` with comments blanked, offsets and line count preserved.
-
-    Matching raw source counts commented-out code as present: a correct line
-    left commented above a hard-coded one satisfied an earlier version of this
-    check. With `blank_strings`, string CONTENTS are blanked too and only the
-    delimiters remain, so a call named inside a log message is not a call — rule
-    1 is the one arm that needs contents, and it alone reads the other view.
-    """
-    out: list[str] = []
-    i, end = 0, len(text)
-    while i < end:
-        char = text[i]
-        if char in "\"'`":
-            quote = char
-            out.append(char)
-            i += 1
-            while i < end:
-                if text[i] == "\\" and i + 1 < end:
-                    out.append("  " if blank_strings else text[i:i + 2])
-                    i += 2
-                    continue
-                consumed = text[i]
-                i += 1
-                # An unterminated single-line string ends at the newline; QML has
-                # no multi-line "" literal, and a template literal has no such end.
-                terminator = consumed == quote or (quote != "`" and consumed == "\n")
-                if blank_strings and not terminator:
-                    out.append("\n" if consumed == "\n" else " ")
-                else:
-                    out.append(consumed)
-                if terminator:
-                    break
-            continue
-        if char == "/" and i + 1 < end and text[i + 1] == "/":
-            while i < end and text[i] != "\n":
-                out.append(" ")
-                i += 1
-            continue
-        if char == "/" and i + 1 < end and text[i + 1] == "*":
-            while i < end and not (text[i] == "*" and i + 1 < end and text[i + 1] == "/"):
-                out.append("\n" if text[i] == "\n" else " ")
-                i += 1
-            out.append("  ")
-            i += 2
-            continue
-        out.append(char)
-        i += 1
-    return "".join(out)
-
-
 def fail(message: str) -> bool:
     print(f"check-paste-injection: FAIL: {message}", file=sys.stderr)
     return False
@@ -195,148 +155,6 @@ def read_live_with_strings(rel_path: str) -> str | None:
         fail(f"missing {rel_path}")
         return None
     return live_code(path.read_text())
-
-
-def enclosing_body(source: str, index: int) -> tuple[int, str] | None:
-    """The innermost braced block containing `index`, as (start offset, text)."""
-    depth = 0
-    opening = -1
-    for cursor in range(index, -1, -1):
-        if source[cursor] == "}":
-            depth += 1
-        elif source[cursor] == "{":
-            if depth == 0:
-                opening = cursor
-                break
-            depth -= 1
-    if opening == -1:
-        return None
-    depth = 0
-    for cursor in range(opening, len(source)):
-        if source[cursor] == "{":
-            depth += 1
-        elif source[cursor] == "}":
-            depth -= 1
-            if depth == 0:
-                return opening, source[opening:cursor + 1]
-    return None
-
-
-# What a body's preamble looks like when the body is a function or a signal
-# handler: `function name(...) {`, `onExited: exitCode => {`, `onTriggered: {`.
-FUNCTION_PREAMBLE_RE = re.compile(r"(?:\bfunction\b[^{;]*|=>\s*|\bon[A-Z]\w*\s*:\s*)$")
-
-
-def enclosing_function_body(source: str, index: int) -> tuple[int, str] | None:
-    """The function or handler body containing `index`, walking outward.
-
-    The innermost block alone is too tight — wrapping a statement in a
-    conditional inside the same function moves it — and the whole file is too
-    loose, since a guard or a read in an unrelated function proves nothing about
-    this one. The function that runs the statement is the scope where a textual
-    order and a textual guard mean what they say. None when no enclosing block
-    reads as a function or handler, which the callers report rather than widen:
-    a statement no scope contains is what the widening would hide.
-    """
-    scope = enclosing_body(source, index)
-    while scope is not None:
-        start, _ = scope
-        if FUNCTION_PREAMBLE_RE.search(source[max(0, start - 120):start]):
-            return scope
-        if start == 0:
-            return None
-        scope = enclosing_body(source, start - 1)
-    return None
-
-
-def handler_bodies(source: str, handler: str) -> list[tuple[int, int]]:
-    """Every braced body of `handler` in `source`, in declaration order.
-
-    Offsets, not text: the rules over a handler are about what contains what, and
-    a detached substring cannot be compared against the file's other structure.
-    """
-    bodies = []
-    for match in re.finditer(r"\b" + handler + r"\b", source):
-        opening = source.find("{", match.end())
-        if opening == -1:
-            continue
-        depth = 0
-        for cursor in range(opening, len(source)):
-            if source[cursor] == "{":
-                depth += 1
-            elif source[cursor] == "}":
-                depth -= 1
-                if depth == 0:
-                    bodies.append((opening, cursor + 1))
-                    break
-    return bodies
-
-
-def if_regions(source: str) -> list[tuple[str, int, int]]:
-    """Every `if` as (test text, start, end) of the statement it CONTROLS.
-
-    Parens and braces are matched rather than pattern-matched, so a call inside
-    the test does not truncate it and a braceless single-statement body reads as
-    the region it is. This is what separates a real guard from a textual one:
-    code that merely follows an `if` is outside the region, an `else` branch is
-    outside it, and a test that reaches its closing paren is the whole test, so a
-    conjunct that can falsify it cannot hide off the end of a substring match.
-    """
-    regions: list[tuple[str, int, int]] = []
-    for match in re.finditer(r"\bif\s*\(", source):
-        depth = 0
-        close = -1
-        for cursor in range(match.end() - 1, len(source)):
-            if source[cursor] == "(":
-                depth += 1
-            elif source[cursor] == ")":
-                depth -= 1
-                if depth == 0:
-                    close = cursor
-                    break
-        if close == -1:
-            continue
-        test = source[match.end():close]
-        cursor = close + 1
-        while cursor < len(source) and source[cursor].isspace():
-            cursor += 1
-        if cursor >= len(source):
-            continue
-        if source[cursor] != "{":
-            end = source.find(";", cursor)
-            regions.append((test, cursor, len(source) if end == -1 else end + 1))
-            continue
-        depth = 0
-        for scan in range(cursor, len(source)):
-            if source[scan] == "{":
-                depth += 1
-            elif source[scan] == "}":
-                depth -= 1
-                if depth == 0:
-                    regions.append((test, cursor + 1, scan))
-                    break
-    return regions
-
-
-def returns_unconditionally(source: str, regions: list[tuple[str, int, int]], start: int, end: int) -> bool:
-    """Whether `source[start:end]` returns whenever it is entered.
-
-    The return has to sit at the region's own brace depth — so a return inside a
-    nested block or a callback does not count — and inside no `if` nested within
-    the region, which is the braceless form of the same hole.
-    """
-    for match in re.finditer(r"\breturn\b", source[start:end]):
-        offset = start + match.start()
-        if source.count("{", start, offset) != source.count("}", start, offset):
-            continue
-        nested = any(
-            inner_start <= offset < inner_end
-            for _, inner_start, inner_end in regions
-            if start <= inner_start and inner_end <= end and (inner_start, inner_end) != (start, end)
-        )
-        if not nested:
-            return True
-    return False
 
 
 def check_no_literal_argv(files: list[tuple[str, str, str]]) -> bool:
