@@ -303,21 +303,31 @@ PluginComponent {
             onRunningChanged: {
                 if (running)
                     return;
-                if (chan.pending) {
-                    root.launch(chan);
+                // THE INVARIANT, and why it is asked first: a stop with a tag
+                // still set must leave something that will settle this channel —
+                // an armed watchdog here, or the exit still coming for a process
+                // that did run. Draining `pending` ahead of it could swallow the
+                // arming, because launch() re-parks a request while the tag is
+                // owned: nothing started, nothing armed, and this handler never
+                // runs again once the process has stopped — so the channel would
+                // hold its tag with no settle path at all, the pill on the
+                // in-flight ellipsis and no fetch for it until a provider switch.
+                //
+                // Arming means the start itself failed: Qt starts a process
+                // asynchronously and reports nothing when the executable cannot be
+                // run. A launch that DID produce a process is not this timer's
+                // business, whichever of `exited` and `runningChanged` lands
+                // first. Deferred all the same, and failLaunch re-checks, because
+                // `started` is not ordered against this signal either.
+                if (logic.watchdogArms(chan.inFlight, chan.sawProcess)) {
+                    stallTimer.restart();
                     return;
                 }
-                // Stopped for a launch that never produced a process: the start
-                // itself failed. Qt starts a process asynchronously and reports
-                // nothing when the executable cannot be run, so without this the
-                // pill would sit on the in-flight ellipsis for a fetch that never
-                // existed. A launch that DID produce one is not this timer's
-                // business, whichever of `exited` and `runningChanged` lands
-                // first — arming on any stop while tagged made a slow exit read
-                // as a failed start. Deferred all the same, and the handler
-                // re-checks: `started` is not ordered against this signal either.
-                if (logic.watchdogArms(chan.inFlight, chan.sawProcess))
-                    stallTimer.restart();
+                // A parked request runs only once the channel can actually take
+                // it. A tag that is still set is owned until the settle path
+                // clears it, and settleFetch drains `pending` when it does.
+                if (chan.inFlight === "" && chan.pending)
+                    root.launch(chan);
             }
         }
 

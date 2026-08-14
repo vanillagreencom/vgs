@@ -27,12 +27,12 @@ const { blockFrom, body, handlers, requires, indexOf, lastIndexOf, stripComments
     require("./lib/qml-source.js")(source, "AiUsageWidget.qml");
 
 // Bans read the source with comments blanked: prose MENTIONING a banned name is
-// not that name. Landmarks go through indexOf/lastIndexOf, which search a
-// structure-only view; requires() needs both — see the library for why.
+// not that name. Landmarks go through indexOf/lastIndexOf, on a structure-only
+// view; requires() needs both — see the library for why.
 const code = stripComments(source);
 
 // Prove the walk and the stripper before anything leans on them: the library's
-// own cases first, then the same helpers against the file this test reads.
+// own cases, then the same helpers against the file this test reads.
 require("./lib/qml-source.js").selfTest();
 
 {
@@ -70,8 +70,8 @@ requires(accept, "acceptPayload()", [
     ["logic.decodePayload(ch.inFlight, txt)", "validated against ITS OWN channel's tag"],
     ["ch.issue = got.issue", "the reason is recorded on the channel that fetched it"],
     ["ch.accepted = true", "acceptance is what tells the exit path a payload arrived"],
-    // One call, not three operands: `ch.want` alone also occurs two lines below,
-    // so split operands miss the two arguments being swapped.
+    // One call, not three operands: `ch.want` also occurs two lines below, so
+    // split operands miss the two arguments being swapped.
     ["logic.acceptOutcome(logic.payloadProvider(got.data), ch.want)",
         "the outcome is decided from the payload's OWN provider and what this channel wants"],
     ["outcome.file", "a payload that names a provider updates that provider's pill slot"],
@@ -109,23 +109,21 @@ requires(channel, "FetchChannel", [
     ["onStreamFinished: root.acceptPayload(chan, outCollector.text)",
         "stdout goes to this channel's accept path"],
     ["onStreamFinished: chan.errorOut = errCollector.text",
-        "stderr is captured when the stream ends, not read at exit time: StdioCollector only " +
-        "fills text once the stream closes, and that is the repo idiom"],
+        "stderr is captured when the stream ends, not read at exit time: StdioCollector fills " +
+        "text only once the stream closes, which is the repo idiom"],
     ["onExited: (exitCode, exitStatus) => root.finishFetch(chan, exitCode, exitStatus)",
         "the exit carries both the code and the status of THIS channel's process"],
     ["onStarted: chan.sawProcess = true",
-        "and a launch that produced a process records it, which is what tells a slow exit from " +
-        "a start that never ran"],
+        "and a launch that produced a process records it, which is what tells a slow exit " +
+        "from a start that never ran"],
     ['command: [root.aiUsageCommand, "ai-usage", chan.want]',
         "the process fetches the provider its own channel wants"]
 ]);
 
 // Nothing outside the component may name a process or a collector — that is what
-// makes the pairing structural.
-// The span removed must BE the block blockFrom walked: it starts at the open
-// brace, not at the `component` keyword ~33 characters earlier, which left the
-// block's tail inside `outside`. Latent — that tail carries no banned name —
-// but `outside` was then not what it claimed to be.
+// makes the pairing structural. The span removed must BE the block blockFrom
+// walked: from the open brace, not the `component` keyword ~33 characters
+// earlier, which left the block's tail inside `outside` (latent: no banned name).
 const componentAt = indexOf("{", indexOf("component FetchChannel:"));
 assert.equal(source.slice(componentAt, componentAt + channel.length), channel,
     "the removed span is exactly the component block, starting at its own open brace");
@@ -134,7 +132,7 @@ assert.ok(!/\b(usageProc|otherProc|usageOut|otherOut|usageErr|otherErr)\b/.test(
     "per-channel processes and collectors are not nameable from outside the channel");
 
 // Both channels are instantiated with their provider bound, only one is the
-// popout's, and each is found by id then walked back to its FetchChannel.
+// popout's, each found by id then walked back to its FetchChannel.
 function channelNamed(id) {
     const at = indexOf(`id: ${id}`);
     assert.notEqual(at, -1, `AiUsageWidget.qml must declare ${id}`);
@@ -172,7 +170,7 @@ requires(launch, "launch()", [
     ["ch.launchSeq = root.fileSeq", "and stamps the launch, so its failure can order itself"],
     // The watchdog was left running across a launch once: it then fired against
     // THIS fetch — "could not run" for a healthy process, whose payload was
-    // discarded and whose retry was spent.
+    // discarded and its retry spent.
     ["ch.stallTimer.stop()", "the previous fetch's watchdog is disarmed first"],
     ["ch.sawProcess = false",
         "and the previous launch's process is forgotten, or a failed start after a good fetch " +
@@ -183,18 +181,26 @@ assert.ok(!stripComments(launch).includes("if (!ch.proc.running)"),
     "0.3.0), so a synchronous check catches nothing — and at component completion it reads false " +
     "for a start that is merely deferred, failing a healthy fetch");
 
-// A start that fails asynchronously reports nothing: Qt emits no exit for a
-// process that never ran.
+// A start that fails asynchronously reports nothing: Qt emits no exit for it.
 requires(channel, "the channel's runningChanged handler", [
     ["logic.watchdogArms(chan.inFlight, chan.sawProcess)",
         "the watchdog is armed for a launch that never produced a process — arming on ANY stop " +
         "while tagged made a slow exit read as a start that never ran"],
     ["stallTimer.restart()", "which is what arms it"],
     // One statement: `root.launch(chan)` alone also occurs in the retry handler.
-    ["if (chan.pending) { root.launch(chan);",
-        "and a parked launch is applied when the process actually stops"],
+    ['if (chan.inFlight === "" && chan.pending) root.launch(chan)',
+        "and a parked launch is applied only once the channel can TAKE it: draining it against " +
+        "a tag that is still owned re-parked it, leaving the channel with nothing running, " +
+        "nothing armed and no settle path — no fetch again until a provider switch"],
     ["onTriggered: root.failLaunch(chan)", "the watchdog routes a failed start into the failure path"]
 ]);
+// THE INVARIANT: a stop with a tag still set always leaves something that will
+// settle the channel, so the arming question cannot sit behind an early return.
+const stops = handlers("onRunningChanged");
+assert.equal(stops.length, 1, "one stop handler, on the channel's own process");
+assert.ok(stops[0].indexOf("watchdogArms") < stops[0].indexOf("chan.pending"),
+    "the arming question is asked BEFORE the parked request is drained, or a parked request " +
+    "swallows it and nothing settles the channel at all");
 
 // Both failure paths are idempotent: whichever settles the fetch first owns it.
 assert.ok(body("finishFetch").includes('if (ch.inFlight === "")'),
@@ -204,8 +210,7 @@ assert.ok(body("finishFetch").includes('if (ch.inFlight === "")'),
 requires(body("failLaunch"), "failLaunch()", [
     ["if (!logic.watchdogArms(ch.inFlight, ch.sawProcess))",
         "the arming rule is asked again at the moment of reporting — one function, so a fetch " +
-        "that settled or a process that started while the timer waited is never called a " +
-        "failed start"],
+        "that settled or a process that started while the timer waited is never a failed start"],
     ['ch.issue = "could not run " + root.aiUsageCommand', "a failed start names the command"],
     ["console.warn", "and says so in the log"],
     ["root.settleFetch(ch)", "then settles like a failed exit — retried, then reported"]]);
@@ -216,26 +221,26 @@ const finish = body("finishFetch");
 requires(finish, "finishFetch()", [
     ["exitCode !== 0 || exitStatus !== 0",
         "a helper killed by a signal did not fail on its own terms; branching on the exit code " +
-        "alone left the empty output's 'parse error' standing as the cause"],
+        "alone left the empty output's 'parse error' as the cause"],
     ['exitStatus !== 0 ? "helper killed"', "and says which of the two happened"],
     ["logic.stderrReason(ch.errorOut, root.maxIssueChars)",
         "the reason is the captured stderr's last line, truncated"],
     ["console.warn", "the failure has to reach vshell logs, or the cause exists nowhere"],
     ["root.settleFetch(ch)", "and then settles through the shared path"]
 ]);
-// The provider suite proves stderrReason honours the limit it is handed, so what
-// is left to pin is the number the widget hands it. A five-digit "cap" is none.
+// The provider suite proves stderrReason honours the limit it is handed; what is
+// left to pin is the number the widget hands it. A five-digit "cap" is none.
 const capMatch = code.match(/property int maxIssueChars: (\d+)/);
 assert.ok(capMatch, "the reason's cap must be a named property, not a literal at the call site");
 const cap = Number(capMatch[1]);
 assert.ok(cap > 0 && cap <= 500,
     `maxIssueChars is ${cap}: that caps nothing — the line comes from whichever backend is ` +
-    "installed and lands in the popout and in a log people paste into bug reports");
+    "installed and lands in the popout and in logs people paste into bug reports");
 
 const settle = body("settleFetch");
 requires(settle, "settleFetch()", [
-    // Read BY FIELD: three same-typed provider strings in a row could be
-    // swapped, which type-checks and inverts the answer.
+    // Read BY FIELD: three same-typed provider strings could be swapped, which
+    // type-checks and inverts the answer.
     ["logic.shouldRelaunch(ch, root.maxFetchRetries)", "relaunch is the shared predicate's"],
     ['if (ch.inFlight === "")', "a fetch already settled is settled once"],
     ["ch.retries += 1", "a relaunch spends a retry, or the budget bounds nothing"],
@@ -246,9 +251,8 @@ requires(settle, "settleFetch()", [
     ["ch.retryTimer.restart()", "and the retry runs off that timer, not the event loop"],
     ["ch.stallTimer.stop()", "a settled fetch stops its own watchdog"],
     // A parked request runs when the tag clears, and stays IMMEDIATE: the process
-    // it waited on has already stopped. Counted, because one occurrence used to
-    // satisfy two presence pairs, and an immediate retry creeping back beside the
-    // delayed one shows up here.
+    // it waited on has stopped. Counted, because one occurrence used to satisfy
+    // two pairs, and an immediate retry creeping back shows up here.
     ["if (ch.pending)", "a parked request is drained when the channel settles", 1],
     ["Qt.callLater(() => root.launch(ch))",
         "by launching it promptly — and this is the ONLY immediate deferral left in settleFetch", 1],
@@ -257,8 +261,8 @@ requires(settle, "settleFetch()", [
     ['ch.issue !== "" ? ch.issue : "usage unavailable"', "the recorded reason, else the generic"],
     // Conditional: both channels file into the same slots, and an unconditional
     // failure write overwrote a payload the OTHER channel had just filed there.
-    // ONE decision, consulted by both writes: guarding only the headline write
-    // left the popout claiming an error over numbers that had just landed.
+    // ONE decision for both writes: guarding only the headline write left the
+    // popout claiming an error over numbers that had just landed.
     ["const authoritative = logic.failureWins(", "the newer-success rule is decided once", 1],
     ["root.providerData[ch.want], root.providerFiledAt[ch.want], ch.launchSeq)",
         "from what is filed for that provider, against this launch's stamp", 1],
@@ -282,7 +286,7 @@ requires(cleared, "clearProviderState()", [
     ["root.current = null", "one payload property holds every provider-scoped lane"],
     // The barrier, not zero: providerData survives a switch, so zero promoted a
     // pre-switch payload.
-    ["root.currentFiledAt = root.fileSeq", "holding the switch's stamp, so only later filings promote"],
+    ["root.currentFiledAt = root.fileSeq", "the switch's stamp, so only later filings promote"],
     ['root.fetchError = ""', "the failure text is provider-scoped too"],
     ["root.loading = true", "a switch puts the popout back into loading"],
     ['root.expandedAccountId = ""', "the expanded account belongs to the previous provider's list"],
@@ -294,19 +298,17 @@ assert.ok(!/providerData/.test(stripComments(cleared)),
 
 // Every reset must assign a LITERAL reset value: `x = x` also matches "x =".
 const reset = blockFrom(indexOf("function reset()"), "FetchChannel.reset()");
-for (const [field, value] of [
-    ["loaded", '""'], ["retries", "0"], ["accepted", "false"], ["issue", '""']
-]) {
+for (const [field, value] of [["loaded", '""'], ["retries", "0"], ["accepted", "false"],
+                              ["issue", '""']])
     assert.ok(reset.includes(`${field} = ${value};`),
         `a channel reset must set ${field} back to ${value}`);
-}
 assert.ok(!/\binFlight = /.test(stripComments(reset)),
     "inFlight identifies a process that is still running; clearing it would orphan its payload");
 
-const onProviderChanged = blockFrom(indexOf("onProviderChanged:"), "onProviderChanged");
-const invalidateAt = onProviderChanged.indexOf("clearProviderState()");
-const refetchAt = onProviderChanged.indexOf("root.refresh()");
-assert.notEqual(invalidateAt, -1, "a provider switch must invalidate the previous provider's state");
+const switched = blockFrom(indexOf("onProviderChanged:"), "onProviderChanged");
+const invalidateAt = switched.indexOf("clearProviderState()");
+const refetchAt = switched.indexOf("root.refresh()");
+assert.notEqual(invalidateAt, -1, "a switch must invalidate the previous provider's state");
 assert.notEqual(refetchAt, -1, "a provider switch must refetch");
 assert.ok(invalidateAt < refetchAt,
     "and must invalidate BEFORE refetching, so no window renders the previous provider's data " +
@@ -359,8 +361,8 @@ assert.ok(!/root\.current\.(plan|ok|error)\b/.test(code),
 
 const details = blockFrom(indexOf("detailsText:"), "detailsText");
 assert.ok(details.includes("root.pending ?"),
-    "a popout with nothing yet must say it is fetching, not that usage is Unavailable — that " +
-    "invents a fault on every first load and every provider switch");
+    "a popout with nothing yet must say it is fetching, not that usage is Unavailable — a " +
+    "fault invented on every first load and every provider switch");
 assert.ok(details.includes("if (root.allHidden)"),
     "the header must answer the all-hidden case before it prints any percentage");
 assert.ok(details.indexOf("root.allHidden") < details.indexOf("% used"),
@@ -378,7 +380,7 @@ assert.ok(details.includes("root.hasHeadline ?"),
 
 const meters = blockFrom(indexOf("readonly property var primaryMeters:"), "primaryMeters");
 assert.ok(meters.includes("root.view.account") && meters.includes("root.view.flat"),
-    "the single-account view renders the account the view says is on screen, and falls back to " +
+    "the single-account view renders the account the view says is on screen, falling back to " +
     "the payload's own lanes only for the older shape that reports no accounts");
 
 // --- one source of provider identity ----------------------------------------
@@ -387,14 +389,12 @@ assert.ok(meters.includes("root.view.account") && meters.includes("root.view.fla
 
 assert.ok(code.includes("model: logic.providerOrder()"),
     "the provider tabs are generated from the same order the pill uses");
-for (const literal of ['"Claude"', '"Codex"', '"smart_toy"', '"terminal"']) {
+for (const literal of ['"Claude"', '"Codex"', '"smart_toy"', '"terminal"'])
     assert.ok(!code.includes(literal),
         `${literal} must live only in AiUsageLogic — a second copy in CODE is where a rename drifts`);
-}
 assert.ok(
     code.includes('property string provider: logic.normalizeProvider(pluginData.provider) || "claude"'),
     "the provider setting is normalised with a default, so a junk persisted value degrades " +
-    "instead of leaving every payload unattributable"
-);
+    "instead of leaving every payload unattributable");
 
 console.log("ai-usage widget wiring: OK");

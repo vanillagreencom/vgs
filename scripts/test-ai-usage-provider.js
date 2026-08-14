@@ -7,19 +7,17 @@
 //
 // `qml-smoke.sh --nested` does host this plugin — it toggles the aiUsage widget
 // and opens its popout — but that mode is local-only (it needs Hyprland and
-// quickshell on PATH), so CI has no runtime coverage of it at all, and no
-// harness can drive these decisions through a QML runtime anyway: they answer
-// questions about a fetch's exit, not about what is on screen. Every bug this
-// file closes was an ATTRIBUTION bug — a Claude payload rendered under the Codex
-// tab, a Claude percentage in the Codex pill slot. qmllint cannot see any of
-// them, and reproducing them live means holding two provider subscriptions and
-// clicking fast.
+// quickshell on PATH), so CI has no runtime coverage of it, and no harness can
+// drive these decisions through a QML runtime anyway: they answer questions
+// about a fetch's exit, not about what is on screen. Every bug this file closes
+// was an ATTRIBUTION bug — a Claude payload under the Codex tab, a Claude
+// percentage in the Codex pill slot. qmllint cannot see any of them, and
+// reproducing them live means holding two subscriptions and clicking fast.
 //
-// The decision functions are extracted verbatim from the shipped QML between
-// its PROVIDER DECISION markers, so this tests the real source rather than a
-// re-implementation. scripts/test-ai-usage-wiring.js covers the other half:
-// that the widget applies these decisions where a missing line, not a wrong
-// answer, is the bug shape.
+// The decision functions are extracted verbatim from the shipped QML between its
+// PROVIDER DECISION markers, so this tests the real source rather than a
+// re-implementation. scripts/test-ai-usage-wiring.js covers the other half: that
+// the widget applies them, where a missing line is the bug shape.
 
 "use strict";
 
@@ -191,26 +189,16 @@ assert.deepEqual(
     { data: { ok: true, provider: "codex" }, issue: "" },
     "a stamped payload for the launched provider is this fetch's answer"
 );
-assert.deepEqual(
-    decodePayload("codex", "not json at all"),
-    { data: null, issue: "parse error" },
-    "unparseable output names its own cause"
-);
-assert.deepEqual(
-    decodePayload("codex", ""),
-    { data: null, issue: "parse error" },
-    "a fetch that printed nothing is not a payload"
-);
-assert.deepEqual(
-    decodePayload("codex", '{"ok":true,"provider":"claude"}'),
+assert.deepEqual(decodePayload("codex", "not json at all"),
+    { data: null, issue: "parse error" }, "unparseable output names its own cause");
+assert.deepEqual(decodePayload("codex", ""),
+    { data: null, issue: "parse error" }, "a fetch that printed nothing is not a payload");
+assert.deepEqual(decodePayload("codex", '{"ok":true,"provider":"claude"}'),
     { data: null, issue: "provider mismatch" },
-    "a payload naming another provider is not this fetch's answer, and says so"
-);
-assert.deepEqual(
-    decodePayload("codex", '{"ok":false}'),
+    "a payload naming another provider is not this fetch's answer, and says so");
+assert.deepEqual(decodePayload("codex", '{"ok":false}'),
     { data: null, issue: "provider mismatch" },
-    "an unstamped payload cannot be attributed either"
-);
+    "an unstamped payload cannot be attributed either");
 
 assert.deepEqual(
     acceptOutcome("codex", "codex"),
@@ -292,38 +280,95 @@ assert.equal(launchDecision("claude", false), "pend",
 // `exited` and `runningChanged` are not ordered against each other, and the
 // watchdog used to arm on ANY stop while the tag was set: a normal exit landing
 // later than the interval was then reported as "could not run" for a fetch that
-// ran and returned. Both orders are driven below. The glue is the whole of what
-// the widget's handlers do — onStarted records the process, onExited settles,
-// onRunningChanged arms, the timer reports — and
+// ran and returned. Both orders are driven below, and so is the ordering INSIDE
+// the stop handler. The glue is the whole of what the widget's handlers do, and
 // scripts/test-ai-usage-wiring.js pins that the widget has exactly that glue.
 {
-    const replay = signals => {
-        const ch = { inFlight: "claude", sawProcess: false, armed: false, settled: [] };
+    const replay = (signals, park) => {
+        const ch = { want: "claude", inFlight: "claude", running: true, pending: false,
+                     sawProcess: false, armed: false, starts: 1, settled: [] };
+        // launch(): the extracted decision applied as the widget applies it —
+        // park on "pend", tag and run on "start", leave "skip" alone.
+        const request = () => {
+            const decision = launchDecision(ch.inFlight, ch.running);
+            if (decision === "skip")
+                return;
+            if (decision === "pend") {
+                ch.pending = true;
+                return;
+            }
+            ch.pending = false;
+            ch.inFlight = ch.want;
+            ch.sawProcess = false;
+            ch.running = true;
+            ch.armed = false;
+            ch.starts += 1;
+        };
+        // settleFetch(): clears the tag, then drains what was parked.
+        const settle = how => {
+            if (ch.inFlight === "")
+                return;
+            ch.settled.push(how);
+            ch.inFlight = "";
+            ch.armed = false;
+            if (ch.pending)
+                request();
+        };
         const step = {
             started: () => { ch.sawProcess = true; },
-            exited: () => {
-                if (ch.inFlight === "")
-                    return;
-                ch.settled.push("exit");
-                ch.inFlight = "";
-            },
+            exited: () => settle("exit"),
             stopped: () => {
-                if (watchdogArms(ch.inFlight, ch.sawProcess))
+                ch.running = false;
+                // The handler's order IS the property under test: the arming
+                // question is asked first and unconditionally, and a parked
+                // request is drained only when the channel can take it.
+                if (watchdogArms(ch.inFlight, ch.sawProcess)) {
                     ch.armed = true;
+                    return;
+                }
+                if (ch.inFlight === "" && ch.pending)
+                    request();
             },
             // The armed timer coming due: it asks the same rule again, because
             // the fetch may have settled or the process started while it waited.
             watchdog: () => {
                 if (!ch.armed || !watchdogArms(ch.inFlight, ch.sawProcess))
                     return;
-                ch.settled.push("failed-start");
-                ch.inFlight = "";
-            }
+                settle("failed-start");
+            },
+            refresh: request
         };
+        if (park)
+            ch.pending = true;
         for (const name of signals)
             step[name]();
         return ch;
     };
+
+    // The wedge. A launch that produced no process, with a request already parked
+    // against its still-owned tag: draining `pending` first called launch(), which
+    // re-parked it — nothing started, nothing armed, and the handler never runs
+    // again because the process has already stopped. The channel then held its tag
+    // for good, every poll's refresh taking the same parked branch, with the pill
+    // on the in-flight ellipsis — worse than the poll-timer delay VGS-118's
+    // convergence criterion was written against.
+    //
+    // `park` sets that state directly: every writer of `pending` was traced and no
+    // current call site reaches it — while the tag is owned and the process runs, a
+    // request decides "skip" rather than parking — so the wedge is LATENT, and one
+    // signal-order assumption from live, which is this issue's whole class. The
+    // invariant is enforced by the handler's shape rather than by that argument.
+    const wedged = replay(["stopped"], true);
+    assert.equal(wedged.armed, true,
+        "a stop with a tag still set must leave SOMETHING that will settle the channel: a " +
+        "parked request cannot swallow the watchdog, or nothing settles it at all");
+
+    const freed = replay(["stopped", "watchdog", "refresh"], true);
+    assert.deepEqual(freed.settled, ["failed-start"], "so the failed start is still reported");
+    assert.equal(freed.inFlight, "claude",
+        "and the parked request ran, taking the tag for a fetch that is actually running");
+    assert.equal(freed.starts, 2, "which is a real second launch, not another parked one");
+    assert.equal(freed.pending, false, "with nothing left parked");
 
     assert.deepEqual(replay(["started", "exited", "stopped", "watchdog"]).settled, ["exit"],
         "the measured order on Quickshell 0.3.0 — exit first — settles as an exit");
