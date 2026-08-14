@@ -565,6 +565,112 @@ a non-integer class count is reported;skips=no  min=1;skips=no  min=banana
 a non-integer kind arity is reported;kind class   min=2;kind class   min=banana
 COUNTS
 
+# NON-CANONICAL DECIMAL FORMS, at BOTH numeric sites. `^[0-9]+$` accepted `08`,
+# which bash arithmetic reads as octal and then rejects: `[[ 2 -lt 08 ]]` wrote
+# "value too great for base" to stderr and evaluated FALSE, so the arity check
+# and the class-count invariant silently switched themselves off while the run
+# carried on at rc 0. Every form is asserted against the runner directly —
+# exit 2, nothing listed, and NO raw shell error, which is the half a status
+# check alone would miss.
+while IFS=';' read -r label from to; do
+  [[ -n "$label" ]] || continue
+  printf '%s' "${real_grammar/$from/$to}" >"$tmp/canon.conf"
+  cp "$tmp/canon.conf" "$fixture_dir/scripts/lib/validation-grammar.conf"
+  cp "$runner" "$fixture_dir/scripts/validate"
+  chmod +x "$fixture_dir/scripts/validate"
+  for area in docs all; do
+    rc=0
+    out="$("$fixture_dir/scripts/validate" --list "$area" 2>"$tmp/stderr")" || rc=$?
+    err="$(cat "$tmp/stderr")"
+    [[ "$rc" == 2 ]] || fail "$label" "runner exited $rc in area $area, not 2"
+    expect_absent "$out" "scripts/" "$label ($area)"
+    expect_contains "$err" "min and max must be decimal integers" "$label ($area)"
+    expect_absent "$err" "value too great for base" "$label ($area)"
+  done
+  run_guard "GRAMMAR_PATH=$tmp/canon.conf"
+  expect_refused "$label" "min and max must be decimal integers"
+  ok "$label"
+done <<'CANON'
+a leading zero on a kind count is reported;kind token   min=2 max=2;kind token   min=08 max=08
+a leading zero on a class count is reported;skips=no  min=1;skips=no  min=08
+a signed kind count is reported;kind token   min=2;kind token   min=+2
+a decimal-point kind count is reported;kind token   min=2;kind token   min=2.0
+an empty kind count is reported;kind token   min=2;kind token   min=
+a signed class count is reported;skips=no  min=1;skips=no  min=+1
+CANON
+
+# ...and the accept side: ordinary values still parse, so the rule is not merely
+# tight. Proven by the whole suite passing on the real grammar, and pinned here
+# on the two values a reader is most likely to break — 0 and a multi-digit
+# count, neither of which any shipped line uses.
+canon_from='universal=yes skips=no  min=0'
+canon_to='universal=yes skips=no  min=0 max=10'
+printf '%s' "${real_grammar/$canon_from/$canon_to}" >"$tmp/canon.conf"
+grep -qF -- "$canon_to" "$tmp/canon.conf" ||
+  fail "canonical counts accepted" "the mutation did not apply, so the case cannot fail"
+run_guard "GRAMMAR_PATH=$tmp/canon.conf"
+expect_clean_run "canonical counts accepted"
+ok "ordinary decimal counts still parse, including 0 and a multi-digit value"
+
+# EXACTLY ONE CLI DEFAULT, COUNTED ACROSS ALL CLASSES. `argument min=1 max=1`
+# bounds the tokens of ONE class and says nothing about how many classes carry
+# `cli=yes rowtag=no`, which is the pair that decides the default. A second such
+# class left `--list docs` at rc 0 over four commands while the runner picked
+# one of two candidates silently — the runner running against a grammar the
+# guard rejected, which is the split this whole change exists to close.
+#
+# Both shapes are covered, and they are caught by DIFFERENT rules on purpose:
+# two eligible tokens in one class is the class cardinality invariant, two in
+# different classes is the new cross-class one. Testing only the first would
+# have passed before this fix.
+while IFS=';' read -r label extra expect; do
+  [[ -n "$label" ]] || continue
+  # `%%` stands in for a newline: a case's added lines have to fit one record
+  # of this table.
+  printf '%s\n%s\n' "$real_grammar" "${extra//%%/$'\n'}" >"$tmp/default.conf"
+  cp "$tmp/default.conf" "$fixture_dir/scripts/lib/validation-grammar.conf"
+  cp "$runner" "$fixture_dir/scripts/validate"
+  chmod +x "$fixture_dir/scripts/validate"
+  # A named area, `all`, and a real run: the reported symptom was rc 0 from
+  # `--list docs`, so `--list` is not optional coverage here.
+  for invocation in "--list docs" "--list all" "docs"; do
+    rc=0
+    # shellcheck disable=SC2086  # the invocation is a deliberate word list
+    out="$("$fixture_dir/scripts/validate" $invocation 2>"$tmp/stderr")" || rc=$?
+    [[ "$rc" == 2 ]] || fail "$label" "runner exited $rc for \`$invocation\`, not 2"
+    expect_absent "$out" "scripts/" "$label ($invocation)"
+    expect_contains "$(cat "$tmp/stderr")" "$expect" "$label ($invocation)"
+  done
+  run_guard "GRAMMAR_PATH=$tmp/default.conf"
+  expect_refused "$label" "$expect"
+  expect_absent "$guard_out" "Traceback" "$label"
+  ok "$label"
+done <<'DEFAULTS'
+two default-eligible tokens in different classes are reported;class other      selects=no  standalone=no  rowtag=no   exclusive=no  cli=yes universal=no  skips=no  min=1 max=1%%token everything other;exactly one CLI default token
+two default-eligible tokens in one class are reported;token everything argument;wrong number of tokens in a class
+DEFAULTS
+
+# The accept side: the real grammar resolves ONE default, the runner dumps it,
+# and a bare `scripts/validate --list` still uses it. Asserted against the dump
+# rather than against `all` spelled here, so the case tracks the definition.
+dumped_default="$("$runner" --dump-grammar | sed -n 's/^default //p')"
+[[ -n "$dumped_default" ]] || fail "default resolves" "the runner dumped no default area"
+if [[ "$("$runner" --list)" != "$("$runner" --list "$dumped_default")" ]]; then
+  fail "default resolves" "a bare --list does not match --list $dumped_default"
+fi
+python3 - "$repo_root" "$dumped_default" <<'DEF' || fail "default resolves" "the decoder disagrees with the dumped default"
+import importlib.util, pathlib, sys
+root = pathlib.Path(sys.argv[1])
+spec = importlib.util.spec_from_file_location(
+    "vm", root / "scripts" / "lib" / "validation_manifest.py"
+)
+mod = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mod)
+g = mod.grammar(root / "scripts" / "validate")
+sys.exit(0 if g.default_area == sys.argv[2] else 1)
+DEF
+ok "the real grammar resolves one default, and every consumer reads the same one"
+
 # ONE READER, PROVEN BY RELAY. The guard no longer parses the definition — it
 # consumes `scripts/validate --dump-grammar` — so the property worth pinning is
 # that a refusal reaches it as the RUNNER'S OWN sentence, unchanged. Compared
@@ -602,7 +708,7 @@ dump = subprocess.run(
     ["bash", str(runner), "--dump-grammar"], capture_output=True, text=True, check=True
 ).stdout
 g = mod.grammar(runner)
-lines = [f"source {g.source}"]
+lines = [f"source {g.source}", f"default {g.default_area}"]
 for name in sorted(g.classes):
     props = " ".join(f"{p}={'yes' if g.classes[name][p] else 'no'}" for p in mod.CLASS_PROPERTIES)
     counts = g.counts[name]

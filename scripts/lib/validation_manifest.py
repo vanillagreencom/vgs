@@ -185,6 +185,7 @@ class Grammar:
         self.token_class: dict[str, str] = {}
         self.messages: dict[str, str] = {}
         self.source = GRAMMAR_FILE
+        self.default = ""
         self._decode(self._dump())
 
     def _dump(self) -> str:
@@ -233,6 +234,8 @@ class Grammar:
             kind, _, rest = line.partition(" ")
             if kind == "source":
                 self.source = Path(rest)
+            elif kind == "default":
+                self.default = rest
             elif kind == "class":
                 name, *fields = rest.split()
                 props: dict[str, bool] = {}
@@ -264,6 +267,14 @@ class Grammar:
                 raise self._bad_dump(f"unknown dump line kind {kind!r}")
         if not self.classes or not self.token_class:
             raise self._bad_dump("no classes or no tokens")
+        # SHAPE, not rule: the runner decides WHICH token is the default and
+        # whether exactly one is eligible. All this asks is that the dump named
+        # one and named a token it also dumped, so a lookup below cannot return
+        # something that is not in the vocabulary.
+        if self.default not in self.token_class:
+            raise self._bad_dump(
+                f"the default area {self.default!r} is not a dumped token"
+            )
 
     def say(self, key: str, fallback: str) -> str:
         """A shared diagnostic by key. The fallback keeps a grammar that is
@@ -297,18 +308,20 @@ class Grammar:
 
     @property
     def default_area(self) -> str:
-        """The argument that means "every row" — cli, but never a row tag.
+        """The argument that means "every row", AS THE RUNNER RESOLVED IT.
 
-        `argument min=1 max=1` is what makes "the one" well defined, and the
-        runner derives its default the same way rather than hardcoding `all`.
+        A lookup, not a computation. This used to re-derive the default from
+        `cli & not rowtag` and raise when that set was not a singleton — which
+        made the guard reject a grammar the runner had accepted and run against,
+        the exact split the single-reader change exists to close. Re-deriving is
+        not a second parser, but it is a second place the rule is written, and
+        that turned out to be the same thing.
+
+        The invariant itself — exactly one eligible token across all classes —
+        now lives in the runner's pre-flight, so a grammar violating it never
+        produces a dump to decode.
         """
-        candidates = sorted(self._with("cli") - self._with("rowtag"))
-        if len(candidates) != 1:
-            raise ManifestError(
-                f"{self.say('grammar-class-count', 'wrong number of tokens in a class')}"
-                f": exactly one cli-only token is the default area, found {candidates}"
-            )
-        return candidates[0]
+        return self.default
 
     @property
     def universal(self) -> set[str]:

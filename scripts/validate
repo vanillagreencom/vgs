@@ -272,6 +272,25 @@ grammar_fatal() {
 # same ambiguity with the same silent last-one-wins outcome. It is checked in
 # BOTH passes, each for the kinds that pass consumes, so the duplicate is
 # reported instead of a downstream symptom of the merge it caused.
+
+# EVERY NUMERIC FIELD IN THE DEFINITION GOES THROUGH HERE, and there are exactly
+# two sites: a `kind` line's arity and a `class` line's cardinality. One rule in
+# one function is the point — `kind` was unvalidated once already, and a second
+# copy of the regex is how the two sites drift apart.
+#
+# CANONICAL DECIMAL, not merely digits. `^[0-9]+$` accepted `08`, which bash
+# arithmetic reads as octal and then rejects: `[[ 2 -lt 08 ]]` printed
+# "value too great for base" to stderr and evaluated FALSE, so the arity check
+# and the class-count invariant silently turned themselves off while the run
+# continued at rc 0. A value that is not obviously the value written is worse
+# than one that is refused.
+require_count() { # $1 context, $2 field text, $3 value
+  if [[ ! "$3" =~ ^(0|[1-9][0-9]*)$ ]]; then
+    grammar_fatal "${MSG[grammar-count-value]:-grammar min and max must be decimal integers}" \
+      "$1: $2"
+  fi
+}
+
 declare -A KIND_MIN=() KIND_MAX=() SEEN_RECORD=()
 seen_record() {
   if [[ -n "${SEEN_RECORD[$1/$2]:-}" ]]; then
@@ -302,10 +321,7 @@ while read -r kind name rest || [[ -n "$kind" ]]; do
         # arithmetic-evaluates an unknown word to 0 — so a typo silently turned
         # a kind's arity off. It is not a boolean either, so it gets the message
         # that names the rule it broke rather than the yes/no one.
-        if [[ ! "${field#*=}" =~ ^[0-9]+$ ]]; then
-          grammar_fatal "${MSG[grammar-count-value]:-grammar min and max must be decimal integers}" \
-            "kind $name: $field"
-        fi
+        require_count "kind $name" "$field" "${field#*=}"
         case "$field" in
           # min must be at least 1: every branch reads a record's NAME, so a
           # kind that permitted zero fields would leave that read unproven —
@@ -383,11 +399,9 @@ while read -r line || [[ -n "$line" ]]; do
           min | max)
             # NOT a boolean, so not the boolean message: `min=banana` was
             # reported as "must be yes or no", which names a rule `min` does not
-            # have and sends the reader looking for the wrong mistake.
-            if [[ ! "$value" =~ ^[0-9]+$ ]]; then
-              grammar_fatal "${MSG[grammar-count-value]:-grammar min and max must be decimal integers}" \
-                "$name: $prop=$value"
-            fi
+            # have and sends the reader looking for the wrong mistake. Same
+            # function as the `kind` site, so the two cannot drift.
+            require_count "$name" "$prop=$value" "$value"
             ;;
           *)
             case "$value" in
@@ -462,7 +476,8 @@ done
 
 # Derived sets. Each is a QUERY over the grammar, not a second list.
 AREAS=()          # what `scripts/validate X` accepts
-default_area=""   # the lone `argument` token: "every row", and the default
+default_area=""   # the lone CLI-default token: "every row", and the default
+default_candidates=()
 row_tag_vocabulary=()
 combinable_tags=()
 selector_tags=()
@@ -477,6 +492,7 @@ for token in "${grammar_tokens[@]}"; do
   [[ "${CLASS_CLI[$class]}" == yes ]] && AREAS+=("$token")
   if [[ "${CLASS_CLI[$class]}" == yes && "${CLASS_ROWTAG[$class]}" != yes ]]; then
     default_area="$token"
+    default_candidates+=("$token")
   fi
   [[ "${CLASS_UNIVERSAL[$class]}" == yes && "${CLASS_ROWTAG[$class]}" == yes ]] &&
     universal_tags+=("$token")
@@ -508,6 +524,12 @@ done
 dump_grammar() {
   local cls key token
   printf 'source %s\n' "$GRAMMAR_FILE"
+  # THE RESOLVED DEFAULT, so a consumer reads the runner's verdict instead of
+  # recomputing it. Recomputing was how the guard came to reject a grammar the
+  # runner accepted: a query over the dumped tokens is not a second parser, but
+  # it is a second place the rule is written, and that is the same thing wearing
+  # a different name.
+  printf 'default %s\n' "$default_area"
   while IFS= read -r cls; do
     [[ -n "$cls" ]] || continue
     printf 'class %s selects=%s standalone=%s rowtag=%s exclusive=%s cli=%s universal=%s skips=%s min=%s max=%s\n' \
@@ -523,6 +545,20 @@ dump_grammar() {
     printf 'message %s %s\n' "$key" "${MSG[$key]}"
   done < <(printf '%s\n' "${!MSG[@]}" | LC_ALL=C sort)
 }
+
+# EXACTLY ONE TOKEN MAY BE THE CLI DEFAULT, counted across ALL classes. The
+# eligibility test is the property pair that actually decides the default —
+# cli=yes with rowtag=no — and `argument min=1 max=1` does NOT state this: it
+# bounds the tokens of one class and says nothing about how many classes may
+# carry that pair. A second such class left `--list docs` at rc 0 over four
+# commands while the runner picked one of two defaults silently, which is the
+# runner running against a grammar the suite rejects — the split closed twice
+# before, on an invariant nobody had written down. Refused here, in the
+# pre-flight, so nothing runs and `--list` is included.
+if [[ ${#default_candidates[@]} -ne 1 ]]; then
+  grammar_fatal "${MSG[grammar-default-count]:-grammar must declare exactly one CLI default token}" \
+    "cli=yes with rowtag=no: ${#default_candidates[@]} token(s)${default_candidates[*]:+ (${default_candidates[*]})}"
+fi
 
 # Exit status a `may-skip` row uses for "precondition absent, nothing checked".
 # 77 is the autotools convention; anything else from such a row is a failure.
