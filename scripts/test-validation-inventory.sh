@@ -259,6 +259,7 @@ a row with a trailing separator is reported;always,   ;malformed tag field
 a row with a leading separator is reported;,always   ;malformed tag field
 a row with a repeated separator is reported;a,,always ;malformed tag field
 a row combining the dash tag is reported;-,go      ;malformed tag field
+a row carrying only a modifier is reported;may-skip  ;carries no selector
 SHAPES
 
 # The command half, mirrored: the library shells out to the same parser the
@@ -347,6 +348,36 @@ printf 'areas `go`; `qml`; `helper`; `packaging`; `docs`; `all`.\n' >"$areas_pro
 run_guard "AGENTS_PATH=$areas_probe"
 expect_refused "unfollowable separator" "enumerates the validate areas but omits"
 ok "a separator the pattern cannot follow truncates LOUDLY, never silently"
+
+# A bash that cannot be LAUNCHED — present but unreadable, non-executable, or
+# failing for any other OSError reason — used to escape as a traceback, because
+# only FileNotFoundError was caught. Fail-closed in direction, but the
+# diagnostic degraded to noise exactly when someone is debugging it. Same shape
+# as the PyYAML import, and pinned the same way.
+launch_out="$(python3 - "$repo_root" 2>&1 <<'NOBASH' || true
+import importlib.util, pathlib, subprocess, sys
+root = pathlib.Path(sys.argv[1])
+spec = importlib.util.spec_from_file_location(
+    "vm", root / "scripts" / "lib" / "validation_manifest.py"
+)
+mod = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mod)
+
+def boom(*_args, **_kwargs):
+    raise PermissionError(13, "Permission denied")
+
+subprocess.run = boom
+try:
+    mod.manifest_rows(root / "scripts" / "validate")
+    print("ACCEPTED")
+except mod.ManifestError as error:
+    print("MANIFESTERROR", error)
+NOBASH
+)"
+expect_contains "$launch_out" "MANIFESTERROR could not run bash" "bash unlaunchable"
+expect_absent "$launch_out" "Traceback" "bash unlaunchable"
+expect_absent "$launch_out" "ACCEPTED" "bash unlaunchable"
+ok "an unlaunchable bash raises ManifestError, not a traceback"
 
 # The executable-bit arm (VGS-30 applied to the entry point itself).
 non_exec="$tmp/non-exec-runner"

@@ -68,6 +68,7 @@ def manifest_rows(runner: Path) -> list[tuple[str, str]]:
             "this check parses that block, so moving it silently empties the inventory"
         )
     grammar = tag_grammar(runner)
+    selectors = (runner_areas(runner) | {"always"}) - {"all"}
     rows: list[tuple[str, str]] = []
     for line in block.group(1).splitlines():
         if not _ASCII_SPACE.sub("", line):
@@ -86,6 +87,14 @@ def manifest_rows(runner: Path) -> list[tuple[str, str]]:
         if not grammar.match(tags):
             raise ManifestError(
                 f"scripts/validate manifest row has a malformed tag field "
+                f"{tags!r}: {line!r}"
+            )
+        if tags != "-" and not (set(tags.split(",")) & selectors):
+            # C2 of the grammar in scripts/validate's header. Syntax alone
+            # accepts a row of modifiers, which selects nothing and so vanishes
+            # from every named area while still running under `all`.
+            raise ManifestError(
+                f"scripts/validate manifest row carries no selector "
                 f"{tags!r}: {line!r}"
             )
         command = _ASCII_SPACE.sub(" ", command).strip(" ")
@@ -117,9 +126,15 @@ def _check_shell_syntax(command: str, line: str) -> None:
         parsed = subprocess.run(
             ["bash", "-n", "-c", command], capture_output=True, text=True, check=False
         )
-    except FileNotFoundError as exc:
+    except OSError as exc:
+        # OSError, not FileNotFoundError: a bash that is present but
+        # unreadable, non-executable, or unlaunchable for any other reason
+        # raises a different subclass, and those escaped as tracebacks —
+        # fail-closed in direction, but the diagnostic degraded to noise
+        # exactly when someone is debugging. Same shape as the PyYAML import.
         raise ManifestError(
-            "bash is not installed, so manifest command syntax could NOT be checked"
+            f"could not run bash to check manifest command syntax, so it was "
+            f"NOT checked: {exc}"
         ) from exc
     if parsed.returncode != 0:
         detail = parsed.stderr.strip() or f"bash -n exited {parsed.returncode}"

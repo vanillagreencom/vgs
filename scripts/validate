@@ -72,21 +72,52 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)" || exit 1
 cd "$repo_root" || exit 1
 
-# TAGS | COMMAND. Tags are comma-separated; each is an area name, or one of
-# three reserved tokens:
+# ═══ THE MANIFEST GRAMMAR — the authority for what a row may say ═══════════
 #
-#   -          only the full `all` run selects this row
-#   always     every area selects it. The bar is high and all three parts are
-#              load-bearing: cheap, network-free, and correct in ANY checkout —
-#              a plain clone, a CI-shaped checkout, a worktree made before
-#              `vstack refresh`. A check that hard-fails when some out-of-tree
-#              artifact is absent does NOT qualify however fast it is, because
-#              every scoped run in that checkout then fails for a reason
-#              unrelated to the change (the vendor-sync checks are exactly this,
-#              and are tagged `-`). What does qualify: the format/lint floor,
-#              this manifest's own guard, `git diff --check` — a Go-scoped run
-#              must still gofmt the Go it just changed.
-#   may-skip   this row is allowed to report exit 77 as "did not check"
+# Four rounds of review each closed one malformed SHAPE and left the rule
+# unstated, so a fifth shape kept existing. The rule is written here, once, and
+# both readers validate against it: scripts/validate below, and
+# scripts/lib/validation_manifest.py for the guard. The controls in
+# scripts/test-validate.sh are derived from THESE productions — one per thing
+# the grammar forbids — not from the shapes reviewers happened to find.
+#
+#   row        := tags "|" command
+#
+#   tags       := "-" | part { "," part }     # a SET: order and repetition
+#   part       := selector | modifier         # are immaterial
+#   selector   := area | "always"             # decides WHEN the row runs
+#   modifier   := "may-skip"                  # qualifies HOW it may exit
+#   area       := "go" | "qml" | "helper" | "packaging" | "docs"
+#
+#   command    := non-empty after trimming, and accepted by `bash -n`
+#
+# Constraints the productions alone do not carry:
+#
+#   C1  `-` is exclusive — a row tagged `-` carries no other tag. It means
+#       "only the full `all` run selects this row".
+#   C2  every row that is not `-` carries AT LEAST ONE SELECTOR. A row of
+#       modifiers alone is the fourth shape this grammar exists to end:
+#       `may-skip` by itself parses, selects nothing, and so vanishes from
+#       every named area while still running under `all` — green, and the row
+#       gone from exactly the scoped runs this repo tells agents to use.
+#   C3  `all` is an ARGUMENT to this script, never a tag. As a tag it would
+#       match only an `all` run and behave like `-` everywhere else.
+#   C4  whitespace is ASCII, and removed before matching. Python's str.split()
+#       also eats Unicode whitespace; ASCII-only in both readers is what stops
+#       a non-breaking space normalising away for one and not the other.
+#
+# NOT expressible here, and so not claimed: that a command names a program
+# that exists and does what the row says. scripts/check-validation-inventory.py
+# covers the `scripts/` part of that; the rest is only proven by running it.
+#
+# `always` IS A SELECTOR, not a modifier — it stands alone on three shipped
+# rows and must keep doing so. The bar for it is high and all three parts are
+# load-bearing: cheap, network-free, and correct in ANY checkout — a plain
+# clone, a CI-shaped checkout, a worktree made before `vstack refresh`. A check
+# that hard-fails when some out-of-tree artifact is absent does NOT qualify
+# however fast it is (the vendor-sync checks are exactly that, and are `-`).
+# What qualifies: the format/lint floor, this manifest's own guard,
+# `git diff --check` — a Go-scoped run must still gofmt the Go it changed.
 #
 # The per-area sets are the scoping AGENTS.md used to state in prose:
 # go = the backend capability inventory guard plus the Go block; qml = naming,
@@ -248,6 +279,17 @@ tag_alternation="$(
 )"
 tags_grammar="^(-|($tag_alternation)(,($tag_alternation))*)$"
 
+# C2's half of the grammar: the SELECTORS, the tags that decide when a row
+# runs. Everything else in the vocabulary is a modifier, and a row of modifiers
+# alone selects nothing.
+selector_tags=()
+for known in "${AREAS[@]}"; do
+  if [[ "$known" != all ]]; then
+    selector_tags+=("$known")
+  fi
+done
+selector_tags+=(always)
+
 # Commands selected for this area, in manifest order, with their tags kept
 # alongside so the run loop can tell a `may-skip` row from every other one.
 #
@@ -308,6 +350,25 @@ while IFS= read -r line; do
     fi
     printf '  known row tags: %s\n' "${row_tag_vocabulary[*]}" >&2
     exit 2
+  fi
+  # C2. The grammar above is syntax; this is the meaning it does not carry. A
+  # row of modifiers alone parses, selects nothing, and so disappears from every
+  # NAMED area while still running under `all` — green, with the row gone from
+  # exactly the scoped runs this repo tells agents to use.
+  if [[ "$tags" != - ]]; then
+    has_selector=0
+    for selector in "${selector_tags[@]}"; do
+      if [[ ",$tags," == *",$selector,"* ]]; then
+        has_selector=1
+      fi
+    done
+    if [[ $has_selector -eq 0 ]]; then
+      printf 'scripts/validate: manifest row carries no selector: %s\n' "$line" >&2
+      # shellcheck disable=SC2016  # the backticks quote tag names in the message
+      printf '  every row needs an area or `always`, or `-` for all-only; %s only modifies\n' \
+        "$tags" >&2
+      exit 2
+    fi
   fi
   if [[ -z "$cmd" ]]; then
     printf 'scripts/validate: manifest row has an empty command: %s\n' "$line" >&2

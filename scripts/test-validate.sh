@@ -213,6 +213,9 @@ a trailing separator is fatal;it ends with a separator;qml,      | scripts/stub-
 a leading separator is fatal;it starts with a separator;,qml      | scripts/stub-go
 a repeated separator is fatal;it has a repeated separator;qml,,go   | scripts/stub-go
 a combined dash tag is fatal;cannot be combined;-,go      | scripts/stub-go
+C1 dash with a modifier is fatal;cannot be combined;-,may-skip| scripts/stub-go
+C2 a modifier alone is fatal;carries no selector;may-skip  | scripts/stub-go
+C2 modifiers only is fatal;carries no selector;may-skip,may-skip | scripts/stub-go
 an unknown tag is fatal;malformed tag field;qmll      | scripts/stub-go
 all is rejected as a row tag;malformed tag field;all       | scripts/stub-go
 a non-breaking space is fatal;malformed tag field;$(printf 'go\xc2\xa0')      | scripts/stub-go
@@ -234,25 +237,40 @@ an unclosed brace is fatal;{ scripts/stub-go
 an unclosed subshell is fatal;(cd backend && go build
 SHAPES
 
-# THE ACCEPT SIDE — the grammar can fail by being too TIGHT, and no shipped row
-# exercises these: a command containing `|` (the split takes the FIRST
-# separator, so pipelines are commands), whitespace inside the tag field, and a
-# repeated tag. Without them an over-tightening passes every rejection above.
-while IFS=';' read -r name row; do
-  [[ -n "$name" ]] || continue
-  write_runner "$row
+# THE ACCEPT SIDE, derived from the grammar's productions rather than from
+# shapes reviewers found: one per production the grammar ALLOWS. A too-tight
+# rule is as wrong as a too-loose one, and no shipped row exercises several of
+# these. Each asserts the EXACT command of the row under test — asserting a
+# substring any fixture row satisfies made these vacuous, which is the defect
+# class this whole change exists to remove.
+accepted_row() {
+  # $1 = case name, $2 = tag field under test, $3 = area that must select it
+  local name="$1" tags="$2" area="$3"
+  write_runner "$tags | scripts/stub-under-test
 always    | scripts/stub-always"
-  fixture --list all
+  fixture --list "$area"
   expect_rc 0 "$name"
-  expect_contains "$out" "stub" "$name"
+  expect_contains "$out" "scripts/stub-under-test" "$name"
   ok "$name"
-done <<SHAPES
-a command may contain a separator;qml       | scripts/stub-go | tee log
-a multi-line-ish command is accepted;qml       | (cd backend && echo ok)
-whitespace inside the tag field is normalised;go$(printf '\t'),qml  | scripts/stub-go
-a repeated tag is accepted as inert;qml,qml   | scripts/stub-go
-the lone dash is accepted;-         | scripts/stub-go
-SHAPES
+}
+
+accepted_row "a single area selects in that area" "qml      " qml
+accepted_row "several areas select in each" "go,qml   " go
+accepted_row "always alone selects in every area" "always   " docs
+accepted_row "a dash row is selected by all" "-        " all
+accepted_row "an area with a modifier still selects" "qml,may-skip" qml
+accepted_row "always with a modifier still selects" "always,may-skip" helper
+accepted_row "a repeated tag is inert, not an error" "qml,qml  " qml
+accepted_row "a command may contain a separator" "qml      " qml
+
+# ...and the row under test must be ABSENT from an area that does not select it,
+# so "accepted" cannot mean "accepted everywhere".
+write_runner "qml       | scripts/stub-under-test
+always    | scripts/stub-always"
+fixture --list go
+expect_rc 0 "area scoping"
+expect_absent "$out" "scripts/stub-under-test" "area scoping"
+ok "a row tagged for one area is not selected by another"
 
 echo "=== execution, failure collection and the skip channel ==="
 

@@ -208,6 +208,7 @@ scripts/qml-smoke.sh	1255
 scripts/test-pill-hover-safety.js	420
 scripts/test-remote-desktop-state.js	1243
 scripts/test-toast-actions.js	607
-scripts/test-validate.sh	422
-scripts/validate	406
+scripts/test-validate.sh	440
+scripts/test-validation-inventory.sh	408
+scripts/validate	467
 vstack.toml	479
