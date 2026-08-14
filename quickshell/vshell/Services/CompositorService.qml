@@ -53,22 +53,37 @@ Singleton {
     readonly property string activeWorkspaceName: isHyprland ? (Hyprland.activeToplevel?.workspace?.name ?? "") : ""
 
     // The focused window's app id, or "" when nothing is focused or the
-    // compositor does not report one. Read from `ToplevelManager`, which both
-    // supported compositors feed through wlr-foreign-toplevel, so this works on
-    // Hyprland and Niri alike. "" means "unknown", not "no app".
-    readonly property string focusedAppId: ToplevelManager.activeToplevel?.appId ?? ""
+    // compositor does not report one. "" means "unknown", not "no app".
+    //
+    // Per compositor, deliberately. On Hyprland this is the seat's active
+    // toplevel, which the compositor drives through wlr-foreign-toplevel. Niri
+    // does not populate that the same way — everywhere else in this file Niri
+    // activation is derived from `NiriService.windows[].is_focused` rather than
+    // from the active toplevel (see `NiriService.sortToplevels`), and consumers
+    // of focus already skip `activeToplevelChanged` there in favour of Niri's
+    // own events — so the Niri branch reads Niri's IPC-maintained focus. The
+    // Hyprland path is untouched: this is additive, per AGENTS.md § Mission.
+    readonly property string focusedAppId: isNiri
+        ? ((NiriService.windows ?? []).find(window => window.is_focused)?.app_id ?? "")
+        : (ToplevelManager.activeToplevel?.appId ?? "")
 
     // The app id of the window that last held focus, for consumers that need a
     // target across the gaps where `focusedAppId` is "": a shell surface taking
-    // keyboard focus clears the seat's active toplevel, and focus returns
-    // asynchronously.
+    // keyboard focus clears the seat's active toplevel (and, on Niri, leaves no
+    // window with `is_focused`), and focus returns asynchronously.
     //
     // Gated on that window still being alive, so it empties again the moment it
     // closes. Held unconditionally it would name a window that is gone, and a
     // consumer would act on a dead target — for paste, injecting a terminal's
-    // keystroke into whatever replaced it.
+    // keystroke into whatever replaced it. Each branch's gate is the live list
+    // its own compositor maintains: membership in `ToplevelManager.toplevels`
+    // for Hyprland, and for Niri the lookup itself, since `NiriService.windows`
+    // drops a window on `WindowClosed`.
     property var _lastFocusedToplevel: null
-    readonly property string lastFocusedAppId: _lastFocusedToplevel && (ToplevelManager.toplevels?.values ?? []).includes(_lastFocusedToplevel) ? (_lastFocusedToplevel.appId ?? "") : ""
+    property var _lastFocusedNiriWindowId: null
+    readonly property string lastFocusedAppId: isNiri
+        ? ((NiriService.windows ?? []).find(window => window.id === _lastFocusedNiriWindowId)?.app_id ?? "")
+        : (_lastFocusedToplevel && (ToplevelManager.toplevels?.values ?? []).includes(_lastFocusedToplevel) ? (_lastFocusedToplevel.appId ?? "") : "")
 
     Connections {
         target: ToplevelManager
@@ -76,6 +91,16 @@ Singleton {
             if (ToplevelManager.activeToplevel)
                 root._lastFocusedToplevel = ToplevelManager.activeToplevel;
         }
+    }
+
+    // The Niri half of the same remembering. Runs off `NiriService.windows`,
+    // which is reassigned on every focus event, and records only when a window
+    // actually holds focus — recording the absence would overwrite the target a
+    // consumer is about to need.
+    function rememberNiriFocus() {
+        const focused = (NiriService.windows ?? []).find(window => window.is_focused);
+        if (focused)
+            root._lastFocusedNiriWindowId = focused.id;
     }
 
     Component.onCompleted: {
@@ -92,8 +117,10 @@ Singleton {
     Connections {
         target: NiriService
         function onWindowsChanged() {
-            if (root.isNiri)
+            if (root.isNiri) {
+                root.rememberNiriFocus();
                 root.refreshToplevels();
+            }
         }
         function onAllWorkspacesChanged() {
             if (root.isNiri)
