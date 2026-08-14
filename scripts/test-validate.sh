@@ -10,10 +10,9 @@
 #
 # TWO FIXTURE STRATEGIES: (1) selection and reporting run from a THROWAWAY REPO
 # holding a copy of `scripts/validate` with a fixture manifest and stub
-# commands, so nothing here reaches this checkout; (2) membership assertions run
-# against the REAL manifest through `--list`, which executes nothing — a fixture
-# cannot answer "does `validate qml` still contain the surface smoke", and
-# retagging that row is a shrink the inventory guard does not see.
+# commands; (2) membership assertions run against the REAL manifest through
+# `--list`, which executes nothing — a fixture cannot answer "does `validate
+# qml` still contain the surface smoke", and retagging it is a silent shrink.
 set -euo pipefail
 
 repo_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -219,6 +218,25 @@ all is rejected as a row tag;malformed tag field;all       | scripts/stub-go
 a non-breaking space is fatal;malformed tag field;$(printf 'go\xc2\xa0')      | scripts/stub-go
 SHAPES
 
+# THE ACCEPT SIDE — the grammar can fail by being too TIGHT, and no shipped row
+# exercises these: a command containing `|` (the split takes the FIRST
+# separator, so pipelines are commands), whitespace inside the tag field, and a
+# repeated tag. Without them an over-tightening passes every rejection above.
+while IFS=';' read -r name row; do
+  [[ -n "$name" ]] || continue
+  write_runner "$row
+always    | scripts/stub-always"
+  fixture --list all
+  expect_rc 0 "$name"
+  expect_contains "$out" "stub" "$name"
+  ok "$name"
+done <<SHAPES
+a command may contain a separator;qml       | scripts/stub-go | tee log
+whitespace inside the tag field is normalised;go$(printf '\t'),qml  | scripts/stub-go
+a repeated tag is accepted as inert;qml,qml   | scripts/stub-go
+the lone dash is accepted;-         | scripts/stub-go
+SHAPES
+
 echo "=== execution, failure collection and the skip channel ==="
 
 cat >"$fixture_repo/scripts/stub-fail-a" <<'EOF'
@@ -298,10 +316,10 @@ expect_contains "$err" "1 skipped: scripts/stub-skip" "skip plus failure"
 expect_contains "$err" "  - scripts/stub-fail-a" "skip plus failure"
 ok "a skip never masks a failure"
 
-# THE SELF-CONCEALING CASE, on the SHIPPED manifest. The malformed row is the
-# inventory guard's own: lose it and every scoped run drops the check whose job
-# is reporting malformed rows. A fixture cannot carry that, and without a named
-# case the scenario surfaces only as an errexit abort further down.
+# THE SELF-CONCEALING CASE, on the SHIPPED manifest: the malformed row is the
+# inventory guard's own, so losing it drops the check that reports malformed
+# rows. A fixture cannot carry that, and without a named case here the scenario
+# surfaces only as an errexit abort further down.
 self_probe="$tmp/self-concealing"
 for mutation in "alway     :malformed tag field" "          :an empty tag field" "always,   :ends with a separator"; do
   MUT_TO="${mutation%%:*}" python3 - "$runner" >"$self_probe" <<'MUT'
