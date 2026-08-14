@@ -39,6 +39,7 @@ var TERMINAL_APP_IDS = [
     "org.contourterminal.contour",
     "org.gnome.console",
     "org.gnome.terminal",
+    "org.xfce.terminal",
     "page.codeberg.dnkl.foot",
     "rio",
     "sakura",
@@ -101,11 +102,21 @@ function isTerminalAppId(appId) {
 // through here: those characters are dropped and the rest is clamped. Returns
 // "" for an id that is empty or was entirely stripped, which callers render as
 // their own "unknown" wording.
+//
+// The class is the whole Unicode format category (Cf), not the bidi controls
+// alone: choosing characters one at a time is how U+061C ARABIC LETTER MARK was
+// missed while its neighbours were stripped. Cf reaches past the BMP and these
+// patterns match UTF-16 code units, so the format characters above U+FFFF are
+// matched as their surrogate pairs, which is why this is an alternation rather
+// than one character class. Characters that merely render blank without
+// reordering or ending a line (U+3164 HANGUL FILLER and its kin) are outside the
+// category and are left alone: they cannot forge a log line.
 var MAX_LOGGED_APP_ID_LENGTH = 64;
+var LOG_UNSAFE_RE = /[\x00-\x1f\x7f-\x9f\u00ad\u0600-\u0605\u061c\u06dd\u070f\u0890-\u0891\u08e2\u180e\u200b-\u200f\u2028\u2029\u202a-\u202e\u2060-\u2064\u2066-\u206f\ufeff\ufff9-\ufffb]|\ud804[\udcbd\udccd]|\ud80d[\udc30-\udc3f]|\ud82f[\udca0-\udca3]|\ud834[\udd73-\udd7a]|\udb40[\udc01\udc20-\udc7f]/g;
 
 function displayAppId(appId) {
     var id = String(appId === undefined || appId === null ? "" : appId)
-        .replace(/[\x00-\x1f\x7f-\x9f\u200b-\u200f\u2028\u2029\u202a-\u202e\u2066-\u2069]/g, "");
+        .replace(LOG_UNSAFE_RE, "");
     if (id.length <= MAX_LOGGED_APP_ID_LENGTH)
         return id;
     return id.slice(0, MAX_LOGGED_APP_ID_LENGTH) + "...";

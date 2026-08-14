@@ -32,6 +32,13 @@ Singleton {
     // recorded behind it would wait on a run nothing is watching any more.
     property bool _helperStuck: false
     property int _releaseTerminationAttempts: 0
+    // Set from the moment a helper is asked to run until it reports that it did.
+    // A helper that never spawns emits no exit — running falls back to false, or
+    // never becomes true at all — so without this latch the failure is
+    // indistinguishable from the running = false that follows an ordinary exit,
+    // and the paste ends with no keystroke and no error.
+    property bool _injectorAwaitingStart: false
+    property bool _releaseAwaitingStart: false
 
     // Injects paste into whatever window holds focus once the calling surface
     // has closed. Callers check SessionService.wtypeAvailable first and report
@@ -84,8 +91,37 @@ Singleton {
         _terminationAttempts = 0;
         wtypeProcess.command = PasteTarget.pasteCommand(appId);
         log.debug("Pasting into", root.targetForLog(), "with", wtypeProcess.command.join(" "));
+        _injectorAwaitingStart = true;
         wtypeProcess.running = true;
         watchdogTimer.restart();
+    }
+
+    // Drops queued paste work — the recorded request and a settle already
+    // counting down — for the paths that end with the seat in a state VGS cannot
+    // vouch for. Replaying one then would send a keystroke into whichever window
+    // holds focus at that later moment, which the user never chose; every caller
+    // tells the user why at the same time, so this is never silent.
+    function cancelQueuedPaste() {
+        settleTimer.stop();
+        _pendingPaste = false;
+    }
+
+    function reportInjectorFailedToStart() {
+        _injectorAwaitingStart = false;
+        log.warn("Paste helper did not start for target", targetForLog(), "- argv", wtypeProcess.command.join(" "));
+        ToastService.showError(I18n.tr("Paste is unavailable"), I18n.tr("The paste helper could not be started"));
+        cancelQueuedPaste();
+        finishInjection(false);
+    }
+
+    function reportReleaseFailedToStart() {
+        _releaseAwaitingStart = false;
+        releaseWatchdogTimer.stop();
+        releaseEscalationTimer.stop();
+        log.warn("Modifier release did not start - the seat may still hold ctrl or shift");
+        ToastService.showError(I18n.tr("Paste is unavailable"), I18n.tr("The paste modifiers could not be released"));
+        cancelQueuedPaste();
+        finishInjection(false);
     }
 
     // The one completion path: for an injector that exited, for one the watchdog
@@ -115,8 +151,13 @@ Singleton {
         interval: 5000
         repeat: false
         onTriggered: {
-            if (!wtypeProcess.running)
+            if (!wtypeProcess.running) {
+                // The start never took and running never changed, so there was
+                // no transition for onRunningChanged to read.
+                if (root._injectorAwaitingStart)
+                    root.reportInjectorFailedToStart();
                 return;
+            }
             root.log.warn("Paste keystroke did not finish within", interval, "ms for target", root.targetForLog(), "- terminating");
             ToastService.showError(I18n.tr("Paste did not complete"));
             root._terminating = true;
@@ -147,6 +188,7 @@ Singleton {
             root.log.warn("Paste injector survived SIGKILL for target", root.targetForLog(), "- paste stays unavailable until it exits");
             ToastService.showError(I18n.tr("Paste is unavailable"), I18n.tr("The paste helper could not be stopped"));
             root._helperStuck = true;
+            root.cancelQueuedPaste();
             root.finishInjection(false);
         }
     }
@@ -160,6 +202,7 @@ Singleton {
             return;
         }
         _releaseTerminationAttempts = 0;
+        _releaseAwaitingStart = true;
         releaseProcess.running = true;
         releaseWatchdogTimer.restart();
     }
@@ -173,13 +216,29 @@ Singleton {
         id: releaseProcess
         command: PasteTarget.releaseModifiersCommand()
         running: false
+        onStarted: root._releaseAwaitingStart = false
+        onRunningChanged: {
+            if (running || !root._releaseAwaitingStart)
+                return;
+            root.reportReleaseFailedToStart();
+        }
         onExited: exitCode => {
             releaseWatchdogTimer.stop();
             releaseEscalationTimer.stop();
+            root._releaseAwaitingStart = false;
             root._releaseTerminationAttempts = 0;
             root._helperStuck = false;
-            if (exitCode !== 0)
-                root.log.warn("Releasing the paste modifiers failed - exit", exitCode);
+            if (exitCode !== 0) {
+                // Ctrl or shift may still be held. Running a queued paste now
+                // would press the next chord on top of a modifier state VGS
+                // cannot account for, which is the wrong-keystroke outcome this
+                // service exists to prevent.
+                root.log.warn("Releasing the paste modifiers failed - exit", exitCode, "- dropping any queued paste");
+                ToastService.showError(I18n.tr("Paste is unavailable"), I18n.tr("The paste modifiers could not be released"));
+                root.cancelQueuedPaste();
+                root.finishInjection(false);
+                return;
+            }
             root.finishInjection(true);
         }
     }
@@ -193,8 +252,11 @@ Singleton {
         interval: 5000
         repeat: false
         onTriggered: {
-            if (!releaseProcess.running)
+            if (!releaseProcess.running) {
+                if (root._releaseAwaitingStart)
+                    root.reportReleaseFailedToStart();
                 return;
+            }
             root.log.warn("Modifier release did not finish within", interval, "ms - terminating");
             releaseProcess.running = false;
             releaseEscalationTimer.restart();
@@ -219,6 +281,10 @@ Singleton {
             root.log.warn("Modifier release survived SIGKILL - the seat may still hold ctrl or shift, and paste stays unavailable until it exits");
             ToastService.showError(I18n.tr("Paste is unavailable"), I18n.tr("The paste helper could not be stopped"));
             root._helperStuck = true;
+            // Without this the record outlives the give-up: the process is still
+            // alive, so its eventual exit would replay this paste into whatever
+            // window has focus by then.
+            root.cancelQueuedPaste();
             stop();
         }
     }
@@ -226,7 +292,14 @@ Singleton {
     Process {
         id: wtypeProcess
         running: false
+        onStarted: root._injectorAwaitingStart = false
+        onRunningChanged: {
+            if (running || !root._injectorAwaitingStart)
+                return;
+            root.reportInjectorFailedToStart();
+        }
         onExited: exitCode => {
+            root._injectorAwaitingStart = false;
             if (root._terminating) {
                 root.log.warn("Paste injector exited after the watchdog terminated it - exit", exitCode);
                 root._helperStuck = false;

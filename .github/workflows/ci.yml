@@ -282,6 +282,7 @@ jobs:
           scripts/test-ai-usage-filing.js
           scripts/test-ai-usage-lifecycle.js
           scripts/test-paste-target.js
+          scripts/test-paste-lifecycle.js
           scripts/check-paste-injection.py
           scripts/check-notification-takeover.js
           scripts/test-remote-desktop-state.js

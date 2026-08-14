@@ -35,6 +35,9 @@ Item {
     property int gridColumns: SettingsData.appLauncherGridColumns
     property int viewModeVersion: 0
     property bool forceLinearNavigation: false
+    // Set from the moment the plugin copy is asked to run until it reports that
+    // it did, so a helper that never spawns is told apart from one that ran.
+    property bool _copyAwaitingStart: false
 
     signal itemExecuted
     signal searchCompleted
@@ -147,7 +150,19 @@ Item {
     Process {
         id: copyProcess
         running: false
+        onStarted: root._copyAwaitingStart = false
+        // A plugin supplies this argv, so it can name an executable this system
+        // does not have. That start emits no exit, and the launcher has already
+        // closed: without this the entry is neither copied nor pasted and the
+        // user is told nothing.
+        onRunningChanged: {
+            if (running || !root._copyAwaitingStart)
+                return;
+            root._copyAwaitingStart = false;
+            ToastService.showError(I18n.tr("Failed to copy entry"), I18n.tr("The copy helper could not be started"));
+        }
         onExited: exitCode => {
+            root._copyAwaitingStart = false;
             // Pasting after a failed copy would inject whatever stale content
             // is still on the clipboard.
             if (exitCode !== 0) {
@@ -190,6 +205,7 @@ Item {
         if (copyProcess.running)
             return;
         copyProcess.command = pasteArgs;
+        _copyAwaitingStart = true;
         copyProcess.running = true;
         itemExecuted();
     }

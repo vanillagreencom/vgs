@@ -32,7 +32,7 @@ assert.notDeepEqual(CTRL_V, CTRL_SHIFT_V, "the two paste keystrokes must differ"
 // Terminals: plain app ids, Hyprland's capitalized class, process-name ids,
 // reverse-DNS ids whose terminal name is only in the last segment, and the
 // reverse-DNS ids of terminals whose name is too generic to segment-match.
-for (const appId of ["foot", "kitty", "Alacritty", "org.wezfurlong.wezterm", "com.mitchellh.ghostty", "org.gnome.Console", "org.gnome.Terminal", "page.codeberg.dnkl.foot", "com.rioterm.Rio", "org.contourterminal.Contour", "kitty.desktop", "gnome-terminal-server", "io.elementary.terminal", "com.raggesilver.BlackBox", "dev.warp.warp"]) {
+for (const appId of ["foot", "kitty", "Alacritty", "org.wezfurlong.wezterm", "com.mitchellh.ghostty", "org.gnome.Console", "org.gnome.Terminal", "org.xfce.Terminal", "page.codeberg.dnkl.foot", "com.rioterm.Rio", "org.contourterminal.Contour", "kitty.desktop", "gnome-terminal-server", "io.elementary.terminal", "com.raggesilver.BlackBox", "dev.warp.warp"]) {
     assert.equal(PasteTarget.isTerminalAppId(appId), true, `${appId} is a terminal`);
     assert.deepEqual(pasteCommand(appId), CTRL_SHIFT_V, `${appId} pastes with Ctrl+Shift+V`);
 }
@@ -73,8 +73,32 @@ assert.equal(PasteTarget.displayAppId("\u202eDEROLOC"), "DEROLOC", "a right-to-l
 assert.equal(PasteTarget.displayAppId("\u2066a\u2069b\u200bc"), "abc", "directional isolates and zero-width spaces are stripped");
 // Both endpoints of every stripped range, ASCII and Unicode alike, so a class
 // narrowed at either edge fails here rather than nowhere.
-for (const [name, code] of [["U+0000", 0x0000], ["U+001F", 0x001f], ["U+007F", 0x007f], ["U+009F", 0x009f], ["U+200B", 0x200b], ["U+200F", 0x200f], ["U+2028", 0x2028], ["U+2029", 0x2029], ["U+202A", 0x202a], ["U+202E", 0x202e], ["U+2066", 0x2066], ["U+2069", 0x2069]]) {
-    assert.equal(PasteTarget.displayAppId("a" + String.fromCharCode(code) + "b"), "ab", `${name} is stripped`);
+for (const [name, code] of [
+    ["U+0000", 0x0000], ["U+001F", 0x001f], ["U+007F", 0x007f], ["U+009F", 0x009f],
+    ["U+00AD", 0x00ad], ["U+0600", 0x0600], ["U+0605", 0x0605], ["U+061C", 0x061c],
+    ["U+06DD", 0x06dd], ["U+070F", 0x070f], ["U+0890", 0x0890], ["U+0891", 0x0891],
+    ["U+08E2", 0x08e2], ["U+180E", 0x180e], ["U+200B", 0x200b], ["U+200F", 0x200f],
+    ["U+2028", 0x2028], ["U+2029", 0x2029], ["U+202A", 0x202a], ["U+202E", 0x202e],
+    ["U+2060", 0x2060], ["U+2064", 0x2064], ["U+2066", 0x2066], ["U+206F", 0x206f],
+    ["U+FEFF", 0xfeff], ["U+FFF9", 0xfff9], ["U+FFFB", 0xfffb], ["U+110BD", 0x110bd],
+    ["U+110CD", 0x110cd], ["U+13430", 0x13430], ["U+1343F", 0x1343f], ["U+1BCA0", 0x1bca0],
+    ["U+1BCA3", 0x1bca3], ["U+1D173", 0x1d173], ["U+1D17A", 0x1d17a], ["U+E0001", 0xe0001],
+    ["U+E0020", 0xe0020], ["U+E007F", 0xe007f]
+]) {
+    assert.equal(PasteTarget.displayAppId("a" + String.fromCodePoint(code) + "b"), "ab", `${name} is stripped`);
+}
+// The endpoints above pin the ranges as written; this pins the claim behind
+// them, that the class IS the Unicode format category. A code point the category
+// gains, or a range mistyped between two endpoints, fails here.
+const formatCodePoints = [];
+for (let code = 0; code <= 0x10ffff; code++) {
+    if (/\p{Cf}/u.test(String.fromCodePoint(code)))
+        formatCodePoints.push(code);
+}
+assert.ok(formatCodePoints.length > 100, "the format-category sweep enumerated the category");
+for (const code of formatCodePoints) {
+    const name = `U+${code.toString(16).toUpperCase().padStart(4, "0")}`;
+    assert.equal(PasteTarget.displayAppId("a" + String.fromCodePoint(code) + "b"), "ab", `${name} is stripped (format category)`);
 }
 assert.equal(PasteTarget.displayAppId("a\u2028b\u2029c"), "abc", "Unicode line terminators cannot forge a line in a JS log viewer");
 assert.equal(PasteTarget.displayAppId("x".repeat(63)), "x".repeat(63), "an id below the limit is not truncated");
