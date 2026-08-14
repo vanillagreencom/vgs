@@ -313,6 +313,13 @@ Singleton {
             ToastService.showError(I18n.tr("Paste is unavailable"), I18n.tr("The paste helper could not be stopped"));
             root._helperStuck = true;
             root.cancelQueuedPaste();
+            // Locally, as the release ladder does, even though finishInjection()
+            // reaches stopInjectorWatchdogs() and stops this timer today. This is
+            // a repeating timer in a terminal branch: leaving it armed would toast
+            // and re-cancel every second for as long as the zombie lives, so
+            // whether it stops must not depend on a call two hops away continuing
+            // to do it.
+            stop();
             root.finishInjection(false);
         }
     }

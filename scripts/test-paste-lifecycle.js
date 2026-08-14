@@ -753,6 +753,55 @@ function queuePaste(h) {
     assert.equal(h.root.settleTimer.running, false, "a dropped paste must never be replayed by a late exit");
 }
 
+// ---- 5a2. neither give-up leaves its repeating timer armed ----------------
+
+{
+    // Both escalation ladders repeat every second, so a terminal branch that
+    // returns without stopping its timer toasts, warns and re-cancels every
+    // second for as long as the zombie lives. Asserted as the invariant rather
+    // than as the mechanism: what stops the timer may move, but a give-up must
+    // never leave one running.
+    const h = makeHarness();
+    queuePaste(h);
+    h.started("injector");
+    h.fire("watchdogTimer", "watchdogTriggered");
+    h.fire("escalationTimer", "escalationTriggered"); // SIGKILL
+    h.fire("escalationTimer", "escalationTriggered"); // survives it: gives up
+    const afterGiveUp = h.toasts.length;
+    const afterWarnings = h.warnings.length;
+
+    assert.equal(h.root.escalationTimer.running, false, "the injector give-up must leave no repeating timer armed");
+    assert.equal(h.fire("escalationTimer", "escalationTriggered"), false, "so no further tick can reach the branch");
+    assert.equal(h.toasts.length, afterGiveUp, "a stuck injector is reported once, not once per second");
+    assert.equal(h.warnings.length, afterWarnings, "and logged once");
+
+    // The release ladder's own give-up, which already stopped its timer.
+    const r = makeHarness();
+    queuePaste(r);
+    r.started("injector");
+    r.exit("injector", 1); // a failed keystroke sends the release
+    r.started("release");
+    r.fire("releaseWatchdogTimer", "releaseWatchdogTriggered");
+    r.fire("releaseEscalationTimer", "releaseEscalationTriggered"); // SIGKILL
+    r.fire("releaseEscalationTimer", "releaseEscalationTriggered"); // survives it
+    const releaseToasts = r.toasts.length;
+
+    assert.equal(r.root.releaseEscalationTimer.running, false, "the release give-up must leave no repeating timer armed either");
+    assert.equal(r.fire("releaseEscalationTimer", "releaseEscalationTriggered"), false, "so no further tick reaches it");
+    assert.equal(r.toasts.length, releaseToasts, "a stuck release is reported once too");
+}
+{
+    // The other direction, so the stop cannot pass by never reaching the branch:
+    // the first escalation must still SIGKILL and leave the ladder running.
+    const h = makeHarness();
+    queuePaste(h);
+    h.started("injector");
+    h.fire("watchdogTimer", "watchdogTriggered");
+    h.fire("escalationTimer", "escalationTriggered");
+    assert.deepEqual(h.root.wtypeProcess.signals, [9], "the first escalation sends SIGKILL");
+    assert.equal(h.root.escalationTimer.running, true, "and the ladder keeps going, since that is not a terminal branch");
+}
+
 // ---- 5b. injector give-up: the queue must not outlive it either -----------
 
 {
