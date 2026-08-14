@@ -258,41 +258,44 @@ PY
 
 real_grammar="$(cat "$repo_root/scripts/lib/validation-grammar.conf")"
 
-# A token declared in the grammar but never acted on by the runner. Matched as a
-# WHOLE TOKEN: `skip` occurs inside `may-skip`, and a substring test passed it.
-grammar_case "a declared but unwired token is reported" \
-  "$real_grammar
-token nightly    modifier" \
-  "does not act on it"
-
-grammar_case "an unwired token that is a SUBSTRING of a wired one is reported" \
-  "$real_grammar
-token skip       modifier" \
-  "does not act on it"
-
-# PARTICIPATION, NOT APPEARANCE. `status` and `run` are exact whole-token
-# matches against the runner's own variables, so a text search accepted either
-# as a modifier while the tag did nothing. Both must be rejected, and the real
-# tokens must still pass — an over-tight rule that rejects everything would
-# satisfy the reject cases alone.
+# A token the runner never acts on. WHAT "UNWIRED" MEANS CHANGED when the last
+# literal rules became properties: a `modifier` token now participates by
+# construction, because `skips=yes` is what grants the skip channel and the
+# runner reads that property rather than matching `may-skip`. So the inert case
+# is a token in a class that grants NOTHING — which is the honest shape, and the
+# one a new class can still get wrong.
+INERT_CLASS="class inert      selects=no  standalone=no  rowtag=yes exclusive=no  cli=no  universal=no  skips=no  min=0"
 while IFS=';' read -r label token; do
   [[ -n "$label" ]] || continue
   grammar_case "$label" \
-    "$real_grammar
-token $token    modifier" \
+    "${real_grammar/class argument   /$INERT_CLASS
+class argument   }
+token $token    inert" \
     "does not act on it"
-done <<'COLLISIONS'
+done <<'INERT'
+a token in a class that grants nothing is reported;nightly
 an inert token colliding with a runner variable is reported;status
 an inert token colliding with a runner word is reported;run
-an inert token with no collision at all is reported;alsoinert
-COLLISIONS
+INERT
 
-# The accept side: the real non-area tokens participate, so the unmutated
-# grammar passes. Asserted explicitly rather than inferred from the control
-# below, since "everything is rejected" would otherwise look like success.
+# A SECOND UNIVERSAL TOKEN is what distinguishes a DERIVED rule from a literal
+# one. With only `always` declared, `*",always,"*` and "any universal tag"
+# behave identically, so no behavioural test can tell them apart — adding a
+# second selector-class token can: the derived rule selects it, the literal does
+# not. This is the control for "rules come from the definition, not a branch".
+printf '%s\ntoken everywhere selector\n' "$real_grammar" >"$tmp/second-universal.conf"
+run_guard "GRAMMAR_PATH=$tmp/second-universal.conf"
+expect_absent "$guard_out" "does not act on it" "second universal token"
+[[ "$guard_rc" -eq 0 || $have_yaml -eq 0 ]] ||
+  fail "second universal token" "a second universal token is not acted on (rc $guard_rc)"
+ok "a second universal token selects, so the rule is derived and not a literal"
+
+# The accept side: every real token participates, so the unmutated grammar
+# passes. Asserted explicitly — "everything is rejected" would otherwise look
+# like success.
 run_guard
 expect_absent "$guard_out" "does not act on it" "real tokens participate"
-ok "the real always, may-skip and - tokens are all found to participate"
+ok "every token the real grammar declares is found to participate"
 
 grammar_case "a second exclusive token is reported" \
   "$real_grammar
@@ -328,7 +331,8 @@ CLASSES
 # token the other did not. grammar_case writes with printf and no trailing
 # newline, so every case above also exercises this; asserted explicitly because
 # an incidental exercise is not a control.
-printf '%s\ntoken nightly    modifier' "$real_grammar" >"$tmp/unterminated.conf"
+printf '%s\ntoken nightly    inert' "${real_grammar/class argument   /$INERT_CLASS
+class argument   }" >"$tmp/unterminated.conf"
 run_guard "GRAMMAR_PATH=$tmp/unterminated.conf"
 expect_refused "unterminated final line" "does not act on it"
 ok "a final line with no trailing newline is read by both readers"
@@ -619,7 +623,8 @@ expect_contains "$guard_out" "CI coverage was NOT checked" "no-PyYAML fixture ve
 expect_absent "$guard_out" "Traceback" "no-PyYAML fixture verdict"
 
 # The grammar fixture: a declared token nothing acts on.
-printf '%s\ntoken nightly    modifier\n' "$real_grammar" >"$noyaml_grammar"
+printf '%s\ntoken nightly    inert\n' "${real_grammar/class argument   /$INERT_CLASS
+class argument   }" >"$noyaml_grammar"
 run_guard "GRAMMAR_PATH=$noyaml_grammar" "PYTHONPATH=$noyaml_path"
 expect_refused "no-PyYAML fixture verdict" "does not act on it"
 expect_contains "$guard_out" "CI coverage was NOT checked" "no-PyYAML fixture verdict"
@@ -689,6 +694,63 @@ if [[ $have_yaml -eq 1 ]]; then
 else
   ok "documented-count case skipped: no PyYAML, so the guard prints no success line"
 fi
+
+# THE TWO READERS, COMPARED TO EACH OTHER on the same row — not each against
+# its own expectation, since two readers checked only against expectations can
+# both be wrong in the same direction. `may-skip,may-skip` is the case that
+# proves it: the python side collapsed a row's tags with set() and the runner
+# did not, so the same row was "cannot stand alone" to one and "carries no
+# selector" to the other. Length now comes from the list, membership from a set.
+agree_probe="$fixture_dir/scripts/agree-probe"
+while IFS= read -r row_tags; do
+  [[ -n "$row_tags" ]] || continue
+  ROW="$row_tags" python3 - "$runner" >"$agree_probe" <<'MUT'
+import os, sys
+t = open(sys.argv[1], encoding="utf-8").read()
+old = "qml       | scripts/check-naming.sh"
+assert t.count(old) == 1, "the naming-check manifest row moved"
+print(t.replace(old, f"{os.environ['ROW']} | scripts/check-naming.sh"), end="")
+MUT
+  chmod +x "$agree_probe"
+  runner_rc=0
+  "$agree_probe" --list docs >/dev/null 2>"$tmp/stderr" || runner_rc=$?
+  # Trailing space matters: stripping from the backtick leaves one on the
+  # runner side and not the library's, which reads as a difference that is not.
+  runner_said="$(sed -e 's/^scripts\/validate: //' -e 's/`.*//' -e 's/[[:space:]]*$//' "$tmp/stderr" | head -1)"
+  library_said="$(AGREE_PROBE="$agree_probe" python3 - "$repo_root" <<'LIB'
+import importlib.util, os, pathlib, re, sys
+root = pathlib.Path(sys.argv[1])
+spec = importlib.util.spec_from_file_location(
+    "vm", root / "scripts" / "lib" / "validation_manifest.py"
+)
+mod = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mod)
+try:
+    mod.manifest_rows(pathlib.Path(os.environ["AGREE_PROBE"]))
+    print("")
+except mod.ManifestError as error:
+    print(re.sub(r"`.*", "", str(error).replace("scripts/validate: ", "")).strip())
+LIB
+)"
+  library_rc=0
+  [[ -n "$library_said" ]] && library_rc=2
+  [[ "$runner_rc" == 0 ]] && runner_said=""
+  if [[ "$runner_said" != "$library_said" ]]; then
+    fail "reader agreement" "row \`$row_tags\` classified differently:
+  runner  ($runner_rc): ${runner_said:-accepted}
+  library ($library_rc): ${library_said:-accepted}"
+  fi
+done <<'ROWS'
+may-skip,may-skip
+qml,qml
+always,always
+qml,may-skip,may-skip
+may-skip
+-,-
+qml,
+notatoken
+ROWS
+ok "both readers classify every duplicate and malformed row identically"
 
 # The executable-bit arm (VGS-30 applied to the entry point itself).
 non_exec="$tmp/non-exec-runner"

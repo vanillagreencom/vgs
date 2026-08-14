@@ -68,13 +68,19 @@ def manifest_rows(runner: Path) -> list[tuple[str, str]]:
             raise rules.row_error("row-empty-tags", line)
         if not pattern.match(tags):
             raise rules.row_error("row-malformed-tags", line, tags)
-        row_tags = set(tags.split(","))
-        # The class properties ARE the rules; each is asked of the grammar
-        # rather than restated. `standalone` catches a lone modifier, and
-        # `selects` catches a row of several tokens none of which selects.
-        if len(row_tags) == 1 and not (row_tags & rules.standalone):
+        # LENGTH FROM THE LIST, MEMBERSHIP FROM THE SET. Collapsing duplicates
+        # before asking "is this the row's only tag" made `may-skip,may-skip`
+        # look like a lone modifier here and a selector-less row to the runner —
+        # the same row, two classifications, from a set() the runner had no
+        # equivalent of.
+        row_tag_list = tags.split(",")
+        row_tags = set(row_tag_list)
+        # The class properties ARE the rules. `exclusive` needs no special case:
+        # its class has selects=yes, so the selector test below already covers
+        # it — naming the class here was a rule the definition already stated.
+        if len(row_tag_list) == 1 and not (row_tags & rules.standalone):
             raise rules.row_error("row-not-standalone", line, tags)
-        if not (row_tags & rules.exclusive) and not (row_tags & rules.selectors):
+        if not (row_tags & rules.selectors):
             raise rules.row_error("row-no-selector", line, tags)
         command = _ASCII_SPACE.sub(" ", command).strip(" ")
         if not command:
@@ -123,7 +129,9 @@ GRAMMAR_FILE = Path(__file__).resolve().parent / "validation-grammar.conf"
 
 # The four properties a class line must carry, each exactly once. Named here so
 # both the presence check and the unknown-property check read the same list.
-CLASS_PROPERTIES = ("selects", "standalone", "rowtag", "exclusive")
+CLASS_PROPERTIES = (
+    "selects", "standalone", "rowtag", "exclusive", "cli", "universal", "skips",
+)
 # Optional per-class cardinality. These are THE GRAMMAR'S INVARIANTS, stated in
 # the definition so the runner and this reader enforce the same ones — an
 # invariant only one side knew is one the other runs past.
@@ -319,12 +327,40 @@ class Grammar:
 
     @property
     def arguments(self) -> set[str]:
-        """What `scripts/validate X` accepts: areas plus the argument tokens."""
-        return {t for t, c in self.token_class.items() if c in ("area", "argument")}
+        """What `scripts/validate X` accepts — asked as a property, not by class
+        name: `c in ("area", "argument")` was a rule that named two classes."""
+        return self._with("cli")
 
     @property
     def areas(self) -> set[str]:
-        return {t for t, c in self.token_class.items() if c == "area"}
+        """CLI arguments that are also row tags. Derived, so a class renamed or
+        added does not need an edit here."""
+        return self._with("cli") & self._with("rowtag")
+
+    @property
+    def default_area(self) -> str:
+        """The argument that means "every row" — cli, but never a row tag.
+
+        `argument min=1 max=1` is what makes "the one" well defined, and the
+        runner derives its default the same way rather than hardcoding `all`.
+        """
+        candidates = sorted(self._with("cli") - self._with("rowtag"))
+        if len(candidates) != 1:
+            raise ManifestError(
+                f"{self.say('grammar-class-count', 'wrong number of tokens in a class')}"
+                f": exactly one cli-only token is the default area, found {candidates}"
+            )
+        return candidates[0]
+
+    @property
+    def universal(self) -> set[str]:
+        """Tokens that select every area rather than one named after them."""
+        return self._with("universal") & self.row_tags
+
+    @property
+    def skipping(self) -> set[str]:
+        """Tokens that let a row report exit 77 as a skip."""
+        return self._with("skips") & self.row_tags
 
     @property
     def row_tags(self) -> set[str]:

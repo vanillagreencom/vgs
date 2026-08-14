@@ -225,6 +225,7 @@ fi
 
 declare -A CLASS_SELECTS=() CLASS_STANDALONE=() CLASS_ROWTAG=() CLASS_EXCLUSIVE=()
 declare -A CLASS_MIN=() CLASS_MAX=() CLASS_COUNT=()
+declare -A CLASS_CLI=() CLASS_UNIVERSAL=() CLASS_SKIPS=()
 declare -A TOKEN_CLASS=() MSG=()
 grammar_tokens=()
 
@@ -322,7 +323,7 @@ while read -r line || [[ -n "$line" ]]; do
         prop="${field%%=*}"
         value="${field#*=}"
         case "$prop" in
-          selects | standalone | rowtag | exclusive | min | max) ;;
+          selects | standalone | rowtag | exclusive | cli | universal | skips | min | max) ;;
           *) grammar_fatal "${MSG[grammar-class-unknown]:-class has an unknown property}" \
             "$name: $prop" ;;
         esac
@@ -350,11 +351,14 @@ while read -r line || [[ -n "$line" ]]; do
           standalone) CLASS_STANDALONE[$name]="$value" ;;
           rowtag) CLASS_ROWTAG[$name]="$value" ;;
           exclusive) CLASS_EXCLUSIVE[$name]="$value" ;;
+          cli) CLASS_CLI[$name]="$value" ;;
+          universal) CLASS_UNIVERSAL[$name]="$value" ;;
+          skips) CLASS_SKIPS[$name]="$value" ;;
           min) CLASS_MIN[$name]="$value" ;;
           max) CLASS_MAX[$name]="$value" ;;
         esac
       done
-      for prop in selects standalone rowtag exclusive; do
+      for prop in selects standalone rowtag exclusive cli universal skips; do
         if [[ -z "${seen[$prop]:-}" ]]; then
           grammar_fatal "${MSG[grammar-class-missing]:-class is missing a property}" "$name: $prop"
         fi
@@ -412,10 +416,21 @@ row_tag_vocabulary=()
 combinable_tags=()
 selector_tags=()
 exclusive_tags=()
+universal_tags=()
+skip_tags=()
 for token in "${grammar_tokens[@]}"; do
   class="${TOKEN_CLASS[$token]}"
-  [[ "$class" == area || "$class" == argument ]] && AREAS+=("$token")
-  [[ "$class" == argument ]] && default_area="$token"
+  # ASKED AS PROPERTIES, not by class name. `[[ "$class" == area || "$class" ==
+  # argument ]]` was a rule naming two classes, and the default was the literal
+  # `all`; both are questions the definition answers.
+  [[ "${CLASS_CLI[$class]}" == yes ]] && AREAS+=("$token")
+  if [[ "${CLASS_CLI[$class]}" == yes && "${CLASS_ROWTAG[$class]}" != yes ]]; then
+    default_area="$token"
+  fi
+  [[ "${CLASS_UNIVERSAL[$class]}" == yes && "${CLASS_ROWTAG[$class]}" == yes ]] &&
+    universal_tags+=("$token")
+  [[ "${CLASS_SKIPS[$class]}" == yes && "${CLASS_ROWTAG[$class]}" == yes ]] &&
+    skip_tags+=("$token")
   if [[ "${CLASS_ROWTAG[$class]}" == yes ]]; then
     row_tag_vocabulary+=("$token")
     if [[ "${CLASS_EXCLUSIVE[$class]}" == yes ]]; then
@@ -609,8 +624,14 @@ while IFS= read -r line; do
     row_fatal row-bad-syntax "$line" "" "${syntax_error//$'\n'/$'\n  '}"
   fi
   if [[ "$area" != "$default_area" ]]; then
-    # `always` rows join every named area; `all` already takes everything.
-    if [[ ",$tags," != *",$area,"* && ",$tags," != *",always,"* ]]; then
+    # A row joins a named area if it carries that area, or carries any
+    # UNIVERSAL tag — asked of the grammar rather than matching `always`.
+    selected_here=0
+    [[ ",$tags," == *",$area,"* ]] && selected_here=1
+    for universal in "${universal_tags[@]}"; do
+      [[ ",$tags," == *",$universal,"* ]] && selected_here=1
+    done
+    if [[ $selected_here -eq 0 ]]; then
       continue
     fi
   fi
@@ -645,7 +666,11 @@ for i in "${!selected[@]}"; do
   # Only a row that declared it may skip gets the skip channel. Honouring 77
   # from any row would let an unrelated check pick that status by accident and
   # be quietly demoted out of the failure list.
-  if [[ $status -eq $SKIP_STATUS && ",$tags," == *",may-skip,"* ]]; then
+  may_skip=0
+  for skipper in "${skip_tags[@]}"; do
+    [[ ",$tags," == *",$skipper,"* ]] && may_skip=1
+  done
+  if [[ $status -eq $SKIP_STATUS && $may_skip -eq 1 ]]; then
     skipped+=("$cmd")
     continue
   fi
