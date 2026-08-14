@@ -314,6 +314,27 @@ QtObject {
         return count === 1 ? "1 account" : count + " accounts";
     }
 
+    // Whether a failed fetch may file its failure for the provider it wanted.
+    //
+    // The failure write used to be unconditional, so a channel that ran out of
+    // retries overwrote whatever was filed for its want — including a good
+    // payload the OTHER channel had just filed for that same provider, which put
+    // the unavailable mark on a provider whose fresh numbers had only just
+    // arrived. Wrong data for the wrong provider is what this issue is about.
+    //
+    // Not "never overwrite anything", though: a payload that predates this fetch
+    // is exactly what a real failure is entitled to replace, or the widget sits
+    // on numbers no fetch stands behind. So the question is ordering — was the ok
+    // payload filed AFTER this fetch was launched?
+    //   current   — what is filed for that provider now
+    //   filedAt   — the stamp it was filed with
+    //   launchSeq — the stamp this fetch was launched at
+    function failureWins(current, filedAt, launchSeq) {
+        if (!current || current.ok !== true)
+            return true;
+        return (filedAt || 0) <= (launchSeq || 0);
+    }
+
     // --- pill composition ---------------------------------------------------
 
     // One pill slot. It always exists, it always carries its provider's icon,

@@ -37,10 +37,11 @@ const marked = logicSource.match(/\/\/ BEGIN PROVIDER DECISION\n([\s\S]*?)\/\/ E
 assert.ok(marked, "AiUsageLogic.qml must carry the PROVIDER DECISION markers");
 
 const {
-    normalizeProvider, providerIcon, headOf, popoutView, accountCount, pillSlot, pillSlots
+    normalizeProvider, providerIcon, headOf, popoutView, accountCount, failureWins,
+    pillSlot, pillSlots
 } = new Function(
     `${marked[1]}\nreturn { normalizeProvider, providerIcon, headOf, popoutView,` +
-    ` accountCount, pillSlot, pillSlots };`
+    ` accountCount, failureWins, pillSlot, pillSlots };`
 )();
 
 // The extracted region must be free of the widget and of Qt, or this harness is
@@ -318,5 +319,66 @@ function slotsFor(state) {
 
 assert.equal(normalizeProvider("codex"), "codex");
 assert.equal(normalizeProvider("gemini"), "", "an unknown provider normalises to nothing, never to a default");
+
+// --- a failing channel must not overwrite the other one's good payload ------
+//
+// Both channels file into the same per-provider slots, and the failure write was
+// unconditional: a channel that ran out of retries overwrote whatever was filed
+// for its want, INCLUDING a payload the other channel had just filed for that
+// same provider. The pill then showed the unavailable mark for a provider whose
+// fresh numbers had only just arrived — wrong data for the wrong provider.
+
+{
+    // The filing store, driven directly: a stamp per filing is the only ordering
+    // evidence, and the widget's storeHeadline/launch do exactly this much.
+    const store = { data: {}, filedAt: {}, seq: 0 };
+    const file = (provider, payload) => {
+        store.seq += 1;
+        store.data[provider] = payload;
+        store.filedAt[provider] = store.seq;
+    };
+    const launch = () => store.seq;                       // ch.launchSeq = root.fileSeq
+    const failTo = (provider, launchSeq) => {
+        if (failureWins(store.data[provider], store.filedAt[provider], launchSeq))
+            file(provider, { ok: false, provider: provider, error: "usage unavailable" });
+    };
+    const slotFor = provider => pillSlot(
+        provider, headOf(store.data[provider], "pool", []), store.data[provider], [], provider);
+
+    const good = { ok: true, provider: "claude", accounts: [acct("a", { weekly: { pct: 42 } })] };
+
+    // Channel B launches for claude and will fail; channel A then succeeds for
+    // the SAME provider while B is still in flight.
+    const bLaunch = launch();
+    file("claude", good);                                  // A's noteHeadline
+    failTo("claude", bLaunch);                             // B exhausts its retries
+
+    assert.equal(store.data.claude, good,
+        "the good payload the other channel just filed must survive a different channel's " +
+        "failure for the same provider");
+    assert.equal(slotFor("claude").text, "42%",
+        "so the pill still shows its number rather than the unavailable mark");
+    assert.equal(slotFor("claude").error, false, "and reports no error for a provider that is fine");
+}
+
+{
+    // The control: nothing newer was filed, so a real failure DOES replace a
+    // payload that predates it — the widget must not sit on numbers no fetch
+    // stands behind.
+    const store = { data: {}, filedAt: {}, seq: 0 };
+    const file = (provider, payload) => {
+        store.seq += 1;
+        store.data[provider] = payload;
+        store.filedAt[provider] = store.seq;
+    };
+    const stale = { ok: true, provider: "codex", accounts: [acct("b", { weekly: { pct: 7 } })] };
+    file("codex", stale);                                  // filed by an earlier poll
+    const launchSeq = store.seq;                           // this fetch launches after it
+    assert.equal(failureWins(store.data.codex, store.filedAt.codex, launchSeq), true,
+        "a payload that predates this fetch is exactly what its failure replaces");
+    assert.equal(failureWins(undefined, undefined, 0), true, "nothing filed, nothing to protect");
+    assert.equal(failureWins({ ok: false, provider: "codex" }, 9, 0), true,
+        "and one failure may always replace another");
+}
 
 console.log("ai-usage payload view: OK");

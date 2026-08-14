@@ -176,14 +176,24 @@ PluginComponent {
 
     // File a payload under the provider IT names, never under the provider the
     // fetch was launched for or the one currently selected.
+    // A monotonic stamp per filing, and the stamp each provider's entry carries.
+    // That is the only ordering evidence the failure path needs: whether the
+    // payload now filed for a provider arrived after the failing fetch launched.
+    property int fileSeq: 0
+    property var providerFiledAt: ({})
+
     function storeHeadline(provider, data) {
         const which = logic.normalizeProvider(provider);
         if (which === "")
             return;
-        // A new object, because a var property only notifies on assignment.
+        // New objects, because a var property only notifies on assignment.
         const next = { claude: root.providerData.claude, codex: root.providerData.codex };
+        const nextAt = { claude: root.providerFiledAt.claude, codex: root.providerFiledAt.codex };
+        root.fileSeq += 1;
         next[which] = data;
+        nextAt[which] = root.fileSeq;
         root.providerData = next;
+        root.providerFiledAt = nextAt;
     }
     function noteHeadline(data) {
         root.storeHeadline(logic.payloadProvider(data), data);
@@ -264,6 +274,9 @@ PluginComponent {
         // A launch asked for while the previous process was still stopping, to
         // be applied when it actually stops.
         property bool pending: false
+        // The filing stamp this launch started at, so its failure can tell a
+        // payload that predates it from one filed while it was running.
+        property int launchSeq: 0
 
         property Process proc: Process {
             command: [root.aiUsageCommand, "ai-usage", chan.want]
@@ -402,6 +415,8 @@ PluginComponent {
         }
         ch.pending = false;
         ch.inFlight = ch.want;
+        // Everything filed after this point is newer than this fetch.
+        ch.launchSeq = root.fileSeq;
         ch.accepted = false;
         ch.issue = "";
         ch.errorOut = "";
@@ -485,7 +500,13 @@ PluginComponent {
         // so the pill cannot show a number the popout contradicts.
         if (ch.loaded !== ch.want || !ch.accepted) {
             const why = ch.issue !== "" ? ch.issue : "usage unavailable";
-            root.storeHeadline(ch.want, { ok: false, provider: ch.want, error: why });
+            // Only when this failure is still the authoritative word on that
+            // provider: the other channel may have filed a good payload for it
+            // while this fetch was failing, and overwriting that would put the
+            // unavailable mark on numbers that had only just arrived.
+            if (logic.failureWins(root.providerData[ch.want], root.providerFiledAt[ch.want],
+                                  ch.launchSeq))
+                root.storeHeadline(ch.want, { ok: false, provider: ch.want, error: why });
             if (ch.primary) {
                 root.loading = false;
                 root.fetchError = why;

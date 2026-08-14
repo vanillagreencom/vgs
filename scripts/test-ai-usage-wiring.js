@@ -60,15 +60,16 @@ require("./lib/qml-source.js").selfTest();
 
 // --- filing a payload -------------------------------------------------------
 //
-// The headlines are a keyed map, so there is no provider branch that could file
-// an unidentifiable payload under a guess. That guessing is the defect this
-// issue exists to close, so the guard and the keyed write are both pinned.
+// A keyed map, so no provider branch can file an unidentifiable payload under a
+// guess — the defect this issue exists to close.
 
 const store = body("storeHeadline");
 requires(store, "storeHeadline()", [
     ["next[which] = data", "a headline is filed by key, never by branch"],
-    ['if (which === "")', "an unidentifiable provider files nothing"]
-]);
+    ['if (which === "")', "an unidentifiable provider files nothing"],
+    ["root.fileSeq += 1", "every filing takes the next stamp"],
+    ["nextAt[which] = root.fileSeq", "and the entry records it — the ordering evidence the " +
+        "failure path reads"]]);
 assert.ok(!/(claudeData|codexData)\s*=/.test(store),
     "a per-provider branch is what let an unknown provider land under Claude");
 assert.ok(body("noteHeadline").includes("logic.payloadProvider(data)"),
@@ -79,7 +80,7 @@ assert.ok(!body("noteHeadline").includes("root.provider"),
 // --- accepting a payload ----------------------------------------------------
 //
 // One path for both channels, taking only the channel: what it wants, which
-// process it drives and where its output lands are the channel's own.
+// process it drives and where its output lands are its own.
 
 const accept = body("acceptPayload");
 requires(accept, "acceptPayload()", [
@@ -103,14 +104,12 @@ requires(accept, "acceptPayload()", [
 requires(body("applyPayload"), "applyPayload()", [
     ["root.current = d", "the popout state is the payload itself"],
     ['root.fetchError = ""', "a fresh payload clears the failure text"],
-    ["root.loading = false", "and ends the loading state"]
-]);
+    ["root.loading = false", "and ends the loading state"]]);
 
 // --- the channel owns its process -------------------------------------------
 //
 // The Process, its collectors and its watchdog live INSIDE FetchChannel, so no
-// call site can pair one channel with another's process or stderr. That crossing
-// is a typo away, and wildcarding those operands in a test is how it would pass.
+// call site can pair one channel with another's process or stderr.
 
 const channel = blockFrom(indexOf("component FetchChannel:"), "FetchChannel");
 requires(channel, "FetchChannel", [
@@ -140,10 +139,8 @@ const outside = source.slice(0, componentAt) + source.slice(componentAt + channe
 assert.ok(!/\b(usageProc|otherProc|usageOut|otherOut|usageErr|otherErr)\b/.test(outside),
     "per-channel processes and collectors must not be reachable by name from outside the channel");
 
-// Both channels are instantiated with their provider bound, and only one is the
-// popout's.
-// Found by id and walked back to the enclosing FetchChannel, so neither the
-// indentation nor the order of properties inside the block matters.
+// Both channels are instantiated with their provider bound, only one is the
+// popout's, and each is found by id then walked back to its FetchChannel.
 function channelNamed(id) {
     const at = indexOf(`id: ${id}`);
     assert.notEqual(at, -1, `AiUsageWidget.qml must declare ${id}`);
@@ -179,6 +176,9 @@ requires(launch, "launch()", [
     ['ch.issue = ""', "and carries no failure reason yet"],
     ['ch.errorOut = ""', "and must not read the previous fetch's stderr as its own cause"],
     ["ch.retryTimer.stop()", "and supersedes any retry still waiting to fire"],
+    ["ch.launchSeq = root.fileSeq",
+        "and stamps the launch, so its failure can tell a payload filed while it ran from an " +
+        "older one"],
     // The watchdog is armed in exactly the state a start begins from — tag set,
     // process not running — so leaving the previous one running let it fire
     // against THIS fetch: "could not run" for a healthy process, whose payload
@@ -210,8 +210,7 @@ requires(body("failLaunch"), "failLaunch()", [
     ['if (ch.inFlight === "")', "an exit that arrived first wins; the watchdog then does nothing"],
     ['ch.issue = "could not run " + root.aiUsageCommand', "a failed start names the command"],
     ["console.warn", "and says so in the log"],
-    ["root.settleFetch(ch)", "then settles exactly like a failed exit — retried, then reported"]
-]);
+    ["root.settleFetch(ch)", "then settles exactly like a failed exit — retried, then reported"]]);
 
 // --- finishing --------------------------------------------------------------
 
@@ -256,13 +255,15 @@ requires(settle, "settleFetch()", [
     ["Qt.callLater(() => root.launch(ch))",
         "by launching it promptly — and this is the ONLY immediate deferral left in settleFetch", 1],
     ["ch.loaded !== ch.want || !ch.accepted",
-        "a poll that delivered no payload for the provider on screen is a failure, not a silent " +
-        "hold of the previous numbers"],
+        "a poll that delivered nothing for the provider on screen is a failure, not a silent hold"],
     ['ch.issue !== "" ? ch.issue : "usage unavailable"',
-        "the recorded reason is what gets filed and shown; the generic text is the fallback"],
+        "the recorded reason is filed and shown; the generic text is the fallback"],
+    // Conditional: both channels file into the same slots, and an unconditional
+    // failure write overwrote a payload the OTHER channel had just filed there.
+    ["logic.failureWins(root.providerData[ch.want], root.providerFiledAt[ch.want], ch.launchSeq)",
+        "filed only when no newer success was filed for that provider"],
     ["root.storeHeadline(ch.want, { ok: false, provider: ch.want",
-        "the failure is filed for the provider it happened to, so the pill cannot contradict " +
-        "the popout"]
+        "and filed for the provider it happened to, so the pill cannot contradict the popout"]
 ]);
 assert.ok(!/launchedFor !== (root\.)?(other)?[Pp]rovider/.test(stripComments(settle)),
     "comparing the launch tag to the current selection is the dropped-refetch bug");
@@ -311,9 +312,9 @@ assert.equal((code.match(/root\.current = /g) || []).length, 2,
 
 // --- one headline owner -----------------------------------------------------
 //
-// The bar, the vertical bar and the popout header must all come from headOf, or
-// they contradict each other. They did: with both accounts hidden the pill slot
-// showed "!", the vertical pill 60%, and the header "0 accounts · 60% used".
+// Bar, vertical bar and popout header all come from headOf, or they contradict
+// each other: with both accounts hidden they showed "!", 60% and "0 accounts ·
+// 60% used" at once.
 
 requires(source, "AiUsageWidget.qml", [
     ["logic.headOf(root.current, root.headlineMode, root.hiddenAccounts)",
@@ -323,8 +324,7 @@ requires(source, "AiUsageWidget.qml", [
     ["readonly property var selectedSlot: logic.pillSlot(",
         "the vertical bar renders the selected provider's slot, the shape the pill uses"]
 ]);
-assert.ok(!/aggregatePct|primaryPct/.test(code),
-    "the per-surface headline arithmetic is gone; a second owner is a second answer");
+assert.ok(!/aggregatePct|primaryPct/.test(code), "a second owner is a second answer");
 
 const vertical = blockFrom(indexOf("verticalBarPill:"), "verticalBarPill");
 requires(vertical, "the vertical pill", [
@@ -332,7 +332,7 @@ requires(vertical, "the vertical pill", [
     ["name: root.selectedSlot.icon", "including the slot's own provider icon"]
 ]);
 assert.ok(!/headlinePct/.test(stripComments(vertical)),
-    "a raw percentage here is how the vertical bar came to show 60% beside an error glyph");
+    "a raw percentage here is how it came to show 60% beside an error glyph");
 
 // --- one view of the payload ------------------------------------------------
 //
@@ -382,8 +382,8 @@ assert.ok(meters.includes("root.view.account") && meters.includes("root.view.fla
 
 // --- one source of provider identity ----------------------------------------
 //
-// The pill slots are built from AiUsageLogic. The popout's tabs must be too, or
-// the two can disagree about a provider's name or icon.
+// The pill slots are built from AiUsageLogic; the popout's tabs must be too, or
+// they can disagree about a provider's name or icon.
 
 assert.ok(code.includes("model: logic.providerOrder()"),
     "the provider tabs are generated from the same order the pill uses");
