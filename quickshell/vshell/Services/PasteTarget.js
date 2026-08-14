@@ -84,16 +84,19 @@ function isTerminalAppId(appId) {
     return lastSegment !== id && TERMINAL_APP_NAMES.indexOf(lastSegment) !== -1;
 }
 
-// An app id is a string the client chose, so it can carry anything — including
-// terminal escape sequences that would render when an operator reads the log in
-// a terminal, and newlines that would forge extra log lines. Everything that
-// reaches a log line goes through here: control characters are dropped and the
-// rest is clamped. Returns "" for an id that is empty or was entirely control
-// characters, which callers render as their own "unknown" wording.
+// An app id is a string the client chose, so it can carry anything — escape
+// sequences that render when an operator reads the log in a terminal, newlines
+// that forge extra log lines, and Unicode format characters that reorder the
+// rest of the line visually (U+202E and the directional isolates) or end it for
+// a JS-based viewer (U+2028, U+2029). Everything that reaches a log line goes
+// through here: those characters are dropped and the rest is clamped. Returns
+// "" for an id that is empty or was entirely stripped, which callers render as
+// their own "unknown" wording.
 var MAX_LOGGED_APP_ID_LENGTH = 64;
 
 function displayAppId(appId) {
-    var id = String(appId === undefined || appId === null ? "" : appId).replace(/[\x00-\x1f\x7f-\x9f]/g, "");
+    var id = String(appId === undefined || appId === null ? "" : appId)
+        .replace(/[\x00-\x1f\x7f-\x9f\u200b-\u200f\u2028\u2029\u202a-\u202e\u2066-\u2069]/g, "");
     if (id.length <= MAX_LOGGED_APP_ID_LENGTH)
         return id;
     return id.slice(0, MAX_LOGGED_APP_ID_LENGTH) + "...";
@@ -106,4 +109,11 @@ function pasteCommand(appId) {
     if (isTerminalAppId(appId))
         return ["wtype", "-M", "ctrl", "-M", "shift", "-P", "v", "-p", "v", "-m", "shift", "-m", "ctrl"];
     return ["wtype", "-M", "ctrl", "-P", "v", "-p", "v", "-m", "ctrl"];
+}
+
+// Releases both modifiers a paste can press, pressing nothing. An injection
+// terminated mid-keystroke never runs its own release, so this is what clears
+// the seat afterwards.
+function releaseModifiersCommand() {
+    return ["wtype", "-m", "shift", "-m", "ctrl"];
 }

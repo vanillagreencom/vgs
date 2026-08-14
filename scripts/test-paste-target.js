@@ -67,8 +67,23 @@ assert.equal(PasteTarget.displayAppId("\u0000a\u007fb\u0080c\u009fd"), "abcd", "
 assert.equal(PasteTarget.displayAppId("\u0007\u001b"), "", "an id of nothing but controls comes back empty");
 assert.equal(PasteTarget.displayAppId(""), "", "an empty id stays empty");
 assert.equal(PasteTarget.displayAppId(undefined), "", "a missing id is not the string undefined");
-assert.equal(PasteTarget.displayAppId("x".repeat(63)), "x".repeat(63), "an id at the limit is not truncated");
+assert.equal(PasteTarget.displayAppId("\u202eDEROLOC"), "DEROLOC", "a right-to-left override cannot reorder the line");
+assert.equal(PasteTarget.displayAppId("\u2066a\u2069b\u200bc"), "abc", "directional isolates and zero-width spaces are stripped");
+assert.equal(PasteTarget.displayAppId("a\u2028b\u2029c"), "abc", "Unicode line terminators cannot forge a line in a JS log viewer");
+assert.equal(PasteTarget.displayAppId("x".repeat(63)), "x".repeat(63), "an id below the limit is not truncated");
+assert.equal(PasteTarget.displayAppId("x".repeat(64)), "x".repeat(64), "an id exactly at the 64-character limit is not truncated");
+assert.equal(PasteTarget.displayAppId("x".repeat(65)), "x".repeat(64) + "...", "the first id over the limit is clamped and marked");
 assert.equal(PasteTarget.displayAppId("x".repeat(500)), "x".repeat(64) + "...", "a long id is clamped and marked");
+
+// The release run must press nothing: it exists to clear modifiers a terminated
+// injection left held, and a press there would inject a keystroke of its own.
+const release = Array.from(PasteTarget.releaseModifiersCommand());
+assert.equal(release[0], "wtype", "the release run is a wtype invocation");
+assert.deepEqual(release.filter(arg => arg === "-M" || arg === "-P" || arg === "-p"), [], "the release run presses nothing");
+assert.deepEqual(release.filter(arg => arg === "-m"), ["-m", "-m"], "the release run releases both modifiers");
+for (const modifier of ["ctrl", "shift"]) {
+    assert.equal(release.includes(modifier), true, `the release run releases ${modifier}`);
+}
 
 // List hygiene. Matching is exact, so an entry that is not already normalized
 // can never be reached, a duplicate hides a second spelling of the same app,
