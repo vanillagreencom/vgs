@@ -200,10 +200,36 @@ reviews:
 
     - path: "config/vshell/nvim/colorschemes/**"
       instructions: >-
-        Vendored third-party Neovim colorscheme plugins, carried verbatim. Same
-        rule as Go vendor: report real defects as upstream issues, never as
-        in-repo patches. Style, structure, and lint findings here are noise —
-        skip them.
+        The plugin directories here are vendored third-party Neovim
+        colorschemes, carried verbatim. Same rule as Go vendor: report real
+        defects as upstream issues, never as in-repo patches. Style,
+        structure, and lint findings in them are noise — skip them.
+
+        `ATTRIBUTION.md` beside them is the exception: VGS-authored, maintained
+        here, and mapping each vendored dir to its upstream repo and license.
+        Drift between that table and the directories actually present is a
+        valid finding.
+
+    - path: "quickshell/vshell/assets/sounds/plasma/**"
+      instructions: >-
+        The Dream Sounds: Harmony 2 sound theme for KDE Plasma 6, carried
+        verbatim under CC BY-SA 4.0 with its LICENSE and README. Same rule as
+        the other vendored trees: report real defects as upstream issues, never
+        as in-repo patches, and skip style findings.
+
+    - path: "third_party/**"
+      instructions: >-
+        A mixed tree, not a uniformly vendored one. The pinned artifacts
+        (`coderabbit-schema/schema.v2.json`, `asdcontrol/asdcontrol.cpp`) are
+        carried verbatim by the convention their own READMEs record — no check
+        enforces it. The `review-gate/` and `size-ratchet/` engine trees are
+        diffed whole against the vstack-managed copy by LOCAL validation, not
+        CI. Frame findings in any of those as upstream issues.
+
+        `coderabbit-schema/README.md` and `asdcontrol/README.md` are the
+        exception: VGS-authored maintenance docs recording why each artifact is
+        pinned, how to refresh it, and what shipping it obliges. Those two are
+        maintained here, so drift findings on them are valid and wanted.
 
     - path: "themes/**"
       instructions: >-
@@ -223,9 +249,11 @@ reviews:
         This is agent process instruction, not product documentation. Do not ask
         for its content to be mirrored into `README.md`, and do not treat a
         change here as needing user-facing release notes. The doc surfaces are
-        distinct and deliberately non-overlapping: `README.md` and
-        `quickshell/vshell/README.md` are product/user-facing; `docs/architecture/**`
-        are agent reference docs; `AGENTS.md` is process.
+        distinct and deliberately non-overlapping: the product/user-facing set
+        is exactly `README.md`, `packaging/README.md` (which owns per-channel
+        packaging detail) and `packaging/ubuntu/README.md`.
+        `docs/architecture/**` are agent reference docs; `AGENTS.md` and
+        `project-skills/README.md` are process.
 
         Do check that a claim added here matches the code it describes —
         instructions here are executed literally by agents, so a stale command

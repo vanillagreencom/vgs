@@ -5,7 +5,10 @@ VGS is a Hyprland and Niri Quickshell runtime. Hyprland is the reference
 implementation; Niri support is additive and uses native dynamic workspaces and
 the Niri IPC event stream.
 
-Runtime name: `vshell`.
+Runtime name: `vshell`. Quickshell config name `vshell`, started by
+`vshell.service`. App id `com.vanillagreen.vshell` — what the shell's own
+toplevels report, so bar and dock code treats it, alongside `org.quickshell`,
+as a VGS window rather than a launchable app.
 
 ## Entrypoints
 | Entry | Role |
