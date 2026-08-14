@@ -18,6 +18,14 @@ QtObject {
 
     // The two providers, in the order the pill shows them. One list, so a slot's
     // position and its icon can never disagree.
+    //
+    // EXACTLY TWO, deliberately: this list drives the pill slots and the popout
+    // tabs, but the fetching around it is a pair, not a set. Adding a third entry
+    // here alone would render a slot and a tab nothing ever fills. A third
+    // provider needs, at least: a third fetch channel (the widget instantiates
+    // two, one primary and one "other"), a replacement for `otherProvider`, which
+    // is a two-way ternary on the selection, and the two-way ternaries just below
+    // — normalizeProvider, providerIcon, providerName.
     function providerOrder() {
         return ["claude", "codex"];
     }
