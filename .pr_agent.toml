@@ -35,10 +35,10 @@ full-screen layer surfaces, and blacks out the desktop. The sandboxed
 `scripts/qml-smoke.sh --nested` is the supported runtime smoke. Never suggest
 `pkill quickshell`; signal by pid or process group.
 
-`backend/vendor/**` and the plugin directories under
-`config/vshell/nvim/colorschemes/` are byte-exact vendored upstream code.
-Report real defects there as upstream issues to file — never as in-repo
-patches. `colorschemes/ATTRIBUTION.md` is VGS-authored and maintained here:
+`backend/vendor/**`, the plugin directories under
+`config/vshell/nvim/colorschemes/`, and `quickshell/vshell/assets/sounds/plasma/`
+are byte-exact vendored upstream code. Report real defects there as upstream
+issues to file — never as in-repo patches. `colorschemes/ATTRIBUTION.md` is VGS-authored and maintained here:
 it maps each vendored dir to its upstream repo and license, so drift findings
 on it are valid.
 
