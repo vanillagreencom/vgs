@@ -16,6 +16,22 @@ while content is sliced out of the original text at the same offsets. One
 scanner, so a format that learns about a new kind of non-code text teaches every
 caller at once.
 
+WHAT THIS ESTABLISHES. Handled exactly: single and double quotes, `$'...'` and
+`$"..."` (the `$` is not special, so the quote branch takes them), `#` comments
+at a word start, backslash escapes, and heredoc bodies with quoted, unquoted
+and tab-stripping delimiters. Shell's third embedding form — command
+substitution — is deliberately NOT masked when bare, because its contents ARE
+code and blanking them would hide the structure a caller is looking for.
+
+Swept for the two-of-three delimiter gap that recurs in the QML helpers and
+found clean. The one asymmetry: a substitution INSIDE double quotes is blanked
+with the body around it, so `"$(f() { echo; }; f)"` loses its braces — but it
+loses them as a balanced pair, so scope splitting stays correct. Verified, not
+assumed.
+
+Not attempted: expansion, evaluation, or word splitting. This is a mask, not a
+shell.
+
 Run this file directly to execute its self-test.
 """
 

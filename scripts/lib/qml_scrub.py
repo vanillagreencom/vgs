@@ -4,6 +4,46 @@ Split out of `qml_source` because it answers a different question: that
 module asks what CONTAINS what, this one asks which characters are code at
 all. `qml_source` re-exports `live_code`, so callers import one name from
 one place and the seam stays internal.
+
+WHAT THIS ESTABLISHES, so a caller can answer "will this see my construct?"
+without reading the loop. Merge-blocking checks are built on this, and three
+containment bugs in one review cycle were each found by a reviewer rather than
+by this file admitting its limits, so the limits are written down.
+
+Handled exactly, and pinned by `qml_scrub_selftest.py`:
+
+  - Line and block comments, blanked to spaces.
+  - All THREE string delimiters — `'`, `"` and the backtick. Two of three is
+    how a matcher goes vacuous, so the count is stated rather than implied.
+  - Template interpolations. `${...}` is code at any nesting depth: nested
+    braces, a template inside an interpolation, a quoted brace or backtick
+    inside one. Only the literal text AROUND them is blanked.
+  - Regex literals, skipped whole; the body is text like a string's, so a
+    quote inside one is not a delimiter.
+  - Offsets and line count, in EVERY shape above plus the ragged ones —
+    unterminated literal, unterminated interpolation, unterminated block
+    comment, backslash line continuation. Two views of one file can therefore
+    be compared position by position, which callers rely on.
+
+Approximated, with the direction it errs:
+
+  - Regex versus division. Deciding between them needs a parser, so a `/` is
+    read as opening a regex wherever a value may begin. `}` sits in that set
+    though it equally closes an object literal in expression position, and the
+    misread only bites when a second `/` follows on the same line. This
+    heuristic was adopted from `scripts/check-settings-migration.js` rather
+    than re-derived. Direction is NOT uniformly safe: a `/` misread as a regex
+    blanks real code to the next `/`, so a rule requiring a construct reports
+    it missing (loud), while a rule PROHIBITING one can pass without ever
+    seeing it (silent). A prohibition over code that divides on the same line
+    as a later slash is the case to think twice about.
+
+Not attempted at all:
+
+  - Any semantics. This is a lexer's worth of work: no scopes, no types, no
+    evaluation, no reachability.
+  - TypeScript type syntax and JSX, neither of which occurs in the scanned
+    trees.
 """
 
 # A `/` opens a regex literal only where a VALUE may begin. After a value — an
