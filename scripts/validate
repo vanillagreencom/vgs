@@ -128,6 +128,7 @@ go        | scripts/check-backend-inventory-tests.py
 -         | scripts/test-smoke-surfaces.sh
 -         | scripts/test-validate.sh
 -         | scripts/test-validation-inventory.sh
+-         | scripts/test-qml-smoke.sh
 -         | scripts/test-pill-hover-safety.js
 helper    | python3 -m py_compile bin/vshell-helper
 helper    | bash -n bin/vshell

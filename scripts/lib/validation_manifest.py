@@ -48,7 +48,7 @@ def manifest_rows(runner: Path) -> list[tuple[str, str]]:
     block = re.search(r"<<'MANIFEST_EOF'\n(.*?)\nMANIFEST_EOF\n", text, re.DOTALL)
     if not block:
         raise ManifestError(
-        "scripts/validate has no MANIFEST_EOF heredoc; "
+            "scripts/validate has no MANIFEST_EOF heredoc; "
             "this check parses that block, so moving it silently empties the inventory"
         )
     rows: list[tuple[str, str]] = []
@@ -57,7 +57,7 @@ def manifest_rows(runner: Path) -> list[tuple[str, str]]:
             continue
         if "|" not in line:
             raise ManifestError(
-        f"scripts/validate manifest row has no "
+                f"scripts/validate manifest row has no "
                 f"`AREAS | COMMAND` separator: {line!r}"
             )
         tags, command = line.split("|", 1)
@@ -67,13 +67,12 @@ def manifest_rows(runner: Path) -> list[tuple[str, str]]:
             # this parser and the runner's loop used to skip such a row, deleting
             # a check from every area while both halves of the guard stayed green.
             raise ManifestError(
-        f"scripts/validate manifest row has an "
+                f"scripts/validate manifest row has an "
                 f"empty command: {line!r}"
             )
         rows.append(("".join(tags.split()), command))
     if not rows:
-        raise ManifestError(
-        "scripts/validate manifest is empty")
+        raise ManifestError("scripts/validate manifest is empty")
     return rows
 
 
@@ -81,8 +80,7 @@ def runner_areas(runner: Path) -> set[str]:
     """The area names scripts/validate accepts, minus the `all` pseudo-area."""
     match = re.search(r"^AREAS=\(([^)]*)\)", runner.read_text(encoding="utf-8"), re.MULTILINE)
     if not match:
-        raise ManifestError(
-        "scripts/validate has no AREAS=( ... ) list")
+        raise ManifestError("scripts/validate has no AREAS=( ... ) list")
     return set(match.group(1).split()) - {"all"}
 
 
@@ -96,9 +94,7 @@ def runner_tag_attributes(runner: Path) -> set[str]:
         r"^TAG_ATTRIBUTES=\(([^)]*)\)", runner.read_text(encoding="utf-8"), re.MULTILINE
     )
     if not match:
-        raise ManifestError(
-        "scripts/validate has no TAG_ATTRIBUTES=( ... ) list"
-        )
+        raise ManifestError("scripts/validate has no TAG_ATTRIBUTES=( ... ) list")
     return set(match.group(1).split())
 
 
@@ -192,8 +188,7 @@ def ci_run_commands(ci: Path) -> str:
 
     walk(workflow)
     if not runs:
-        raise ManifestError(
-        "ci.yml has no `run:` blocks at all")
+        raise ManifestError("ci.yml has no `run:` blocks at all")
     # Strip shell comments too: a `#` line inside a run block is still prose.
     lines = []
     for block in runs:

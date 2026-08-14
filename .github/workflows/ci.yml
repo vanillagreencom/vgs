@@ -298,6 +298,7 @@ jobs:
           # fail-closed argument and manifest handling, and its skip channel.
           scripts/test-validate.sh
           scripts/test-validation-inventory.sh
+          scripts/test-qml-smoke.sh
 
       - name: Helper and CLI checks
         run: |
