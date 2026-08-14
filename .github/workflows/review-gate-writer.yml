@@ -47,20 +47,20 @@
 # — and the relay is unconditional and group-less, so unlike the writer
 # group it coalesces nothing: that is one billed-minimum run per event,
 # including every status transition from every CI provider on every open
-# head. Each run also spends one content-creating API request against the
-# repo's SHARED secondary-limit budget; exhausting that budget degrades
-# every event to the cron floor rather than breaking convergence. A run
-# that has to back off holds its runner longer — worst modeled case ~4.2
-# minutes (a 60s-bounded attempt, a wait capped at 120s plus up to 14s of
-# jitter, a second 60s-bounded attempt), inside the 5-minute job budget.
-# Event-fast latency grows by a whole run lifecycle (the relay's own queue
-# and runner allocation, then the converge run's, which now starts only
-# after the relay finishes) — dominated by runner allocation, which GitHub
-# does not bound. Typically that is seconds, well inside the cron floor's
-# period; when allocation exceeds the period, the scheduled pass converges
-# the head first and the dispatched run is a redundant no-op, so an overrun
-# costs a run, not convergence. A repo on a constrained or self-hosted
-# runner pool should size that before adopting.
+# head. Each run also spends one content-creating API request — two when the
+# retry path fires its bounded second attempt — against the repo's SHARED
+# secondary-limit budget; exhausting that budget degrades every event to the
+# cron floor rather than breaking convergence. A run that has to back off
+# holds its runner longer — worst modeled case ~4.2 minutes (a 60s-bounded
+# attempt, a wait capped at 120s plus up to 14s of jitter, a second
+# 60s-bounded attempt), inside the 5-minute job budget. Event-fast latency
+# grows by a whole run lifecycle (the relay's own queue and runner allocation,
+# then the converge run's, which now starts only after the relay finishes) —
+# dominated by runner allocation, which GitHub does not bound. Typically that
+# is seconds, well inside the cron floor's period; when allocation exceeds the
+# period, the scheduled pass converges the head first and the dispatched run
+# is a redundant no-op, so an overrun costs a run, not convergence. A repo on
+# a constrained or self-hosted runner pool should size that before adopting.
 #
 # RESIDUAL, stated honestly: this removes EVICTION-driven cancelled checks,
 # not every cancelled check. A relay hung long enough to hit
