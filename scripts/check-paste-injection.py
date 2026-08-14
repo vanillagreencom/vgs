@@ -220,13 +220,24 @@ def check_owner() -> bool:
 
     if not COMMAND_CALL_RE.search(source):
         return fail(f"{OWNER} does not build the wtype argv through the resolver's command function")
-    call = COMMAND_ASSIGN_RE.search(source)
-    if not call:
+    calls = list(COMMAND_ASSIGN_RE.finditer(source))
+    if not calls:
         return fail(
             f"{OWNER} calls the resolver's command function without assigning the result to the "
             "injector's command property, so the resolved argv never reaches the process and paste "
             "runs whatever argv was set last"
         )
+    # Every assignment has to hold up, not the first one found: a second built
+    # somewhere looser is a second injection path with none of the guarantees.
+    for call in calls:
+        if not check_argv_assignment(source, call):
+            return False
+    print(f"check-paste-injection: {OWNER} resolves a target, then assigns the argv, then starts")
+    return True
+
+
+def check_argv_assignment(source: str, call: re.Match) -> bool:
+    """One `command = pasteCommand(...)` and the function that runs it."""
     if QUOTED_ARG_RE.match(source, call.end()):
         return fail(
             f"{OWNER} passes a literal string to the resolver, so every paste would use one target's "
@@ -258,8 +269,6 @@ def check_owner() -> bool:
             f"{OWNER} starts the injector before assigning its command; Quickshell ignores a command "
             "change on a live Process, so it would run the previous injection's argv"
         )
-
-    print(f"check-paste-injection: {OWNER} resolves a target, then assigns the argv, then starts")
     return True
 
 
@@ -347,8 +356,9 @@ def check_launcher_copy_result() -> bool:
     regions = if_regions(source)
     pasting = []
     for start, end in handler_bodies(source, "onExited"):
-        inject = INJECT_CALL_RE.search(source, start, end)
-        if inject:
+        # Every paste in the handler: checking only the first would let a second
+        # one, added below the guarded one, paste ungated.
+        for inject in INJECT_CALL_RE.finditer(source, start, end):
             pasting.append((start, end, inject))
     if not pasting:
         return fail(f"{LAUNCHER} pastes from no process exit handler, so the copy's result is not what gates it")
