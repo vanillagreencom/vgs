@@ -238,24 +238,66 @@ grammar_fatal() {
   exit 2
 }
 
-while read -r kind name rest; do
+# `|| [[ -n "$kind" ]]` keeps a FINAL LINE WITH NO TRAILING NEWLINE. Without it
+# `read` returns non-zero at EOF and the loop drops that line, while the python
+# reader's splitlines() keeps it — so a grammar whose last line is unterminated
+# declared a token for one reader and not the other. Same class of divergence as
+# reading class properties positionally.
+while read -r kind name rest || [[ -n "$kind" ]]; do
   case "$kind" in
     class)
-      read -r f1 f2 f3 f4 <<<"$rest"
-      CLASS_SELECTS[$name]="${f1#selects=}"
-      CLASS_STANDALONE[$name]="${f2#standalone=}"
-      CLASS_ROWTAG[$name]="${f3#rowtag=}"
-      CLASS_EXCLUSIVE[$name]="${f4#exclusive=}"
+      # BY KEY, NEVER BY POSITION. Reading these positionally while the python
+      # reader read them by key made reordering the same four pairs change what
+      # each reader believed — in the file written to end reader disagreements.
+      declare -A seen=()
+      for field in $rest; do
+        if [[ "$field" != *=* ]]; then
+          grammar_fatal "${MSG[grammar-class-malformed]:-class property must be key=value}" \
+            "$name: $field"
+        fi
+        prop="${field%%=*}"
+        value="${field#*=}"
+        case "$prop" in
+          selects | standalone | rowtag | exclusive) ;;
+          *) grammar_fatal "${MSG[grammar-class-unknown]:-class has an unknown property}" \
+            "$name: $prop" ;;
+        esac
+        if [[ -n "${seen[$prop]:-}" ]]; then
+          grammar_fatal "${MSG[grammar-class-repeated]:-class repeats a property}" "$name: $prop"
+        fi
+        case "$value" in
+          yes | no) ;;
+          *) grammar_fatal "${MSG[grammar-class-value]:-class property must be yes or no}" \
+            "$name: $prop=$value" ;;
+        esac
+        seen[$prop]=1
+        case "$prop" in
+          selects) CLASS_SELECTS[$name]="$value" ;;
+          standalone) CLASS_STANDALONE[$name]="$value" ;;
+          rowtag) CLASS_ROWTAG[$name]="$value" ;;
+          exclusive) CLASS_EXCLUSIVE[$name]="$value" ;;
+        esac
+      done
+      for prop in selects standalone rowtag exclusive; do
+        if [[ -z "${seen[$prop]:-}" ]]; then
+          grammar_fatal "${MSG[grammar-class-missing]:-class is missing a property}" "$name: $prop"
+        fi
+      done
       ;;
     token)
+      read -r cls extra <<<"$rest"
+      if [[ -n "$extra" ]]; then
+        grammar_fatal "${MSG[grammar-token-fields]:-token line must be token <name> <class>}" \
+          "$name ($rest)"
+      fi
       if [[ -n "${TOKEN_CLASS[$name]:-}" ]]; then
         grammar_fatal "${MSG[grammar-duplicate]:-grammar declares a token twice}" "$name"
       fi
-      if [[ -z "${CLASS_ROWTAG[$rest]:-}" ]]; then
+      if [[ -z "${CLASS_ROWTAG[$cls]:-}" ]]; then
         grammar_fatal "${MSG[grammar-bad-class]:-grammar token has an unknown class}" \
-          "$name ($rest)"
+          "$name ($cls)"
       fi
-      TOKEN_CLASS[$name]="$rest"
+      TOKEN_CLASS[$name]="$cls"
       grammar_tokens+=("$name")
       ;;
     message) MSG[$name]="$rest" ;;

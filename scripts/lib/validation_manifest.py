@@ -121,6 +121,10 @@ def _check_shell_syntax(command: str, line: str, rules: "Grammar") -> None:
 
 GRAMMAR_FILE = Path(__file__).resolve().parent / "validation-grammar.conf"
 
+# The four properties a class line must carry, each exactly once. Named here so
+# both the presence check and the unknown-property check read the same list.
+CLASS_PROPERTIES = ("selects", "standalone", "rowtag", "exclusive")
+
 
 class Grammar:
     """The one definition, read from validation-grammar.conf.
@@ -149,11 +153,47 @@ class Grammar:
                 continue
             if kind == "class":
                 name, props = fields[0], fields[1:]
-                self.classes[name] = {
-                    key: value == "yes"
-                    for key, value in (field.split("=", 1) for field in props)
-                }
+                # BY KEY, and validated. The bash reader once took these
+                # positionally while this one took them by key, so reordering
+                # the same four pairs changed what each reader believed. Both
+                # now require exactly these four, once each, yes or no.
+                parsed: dict[str, bool] = {}
+                for field in props:
+                    if "=" not in field:
+                        raise ManifestError(
+                            f"{self.say('grammar-class-malformed', 'class property must be key=value')}"
+                            f": {name}: {field}"
+                        )
+                    key, value = field.split("=", 1)
+                    if key not in CLASS_PROPERTIES:
+                        raise ManifestError(
+                            f"{self.say('grammar-class-unknown', 'class has an unknown property')}"
+                            f": {name}: {key}"
+                        )
+                    if key in parsed:
+                        raise ManifestError(
+                            f"{self.say('grammar-class-repeated', 'class repeats a property')}"
+                            f": {name}: {key}"
+                        )
+                    if value not in ("yes", "no"):
+                        raise ManifestError(
+                            f"{self.say('grammar-class-value', 'class property must be yes or no')}"
+                            f": {name}: {key}={value}"
+                        )
+                    parsed[key] = value == "yes"
+                missing = [p for p in CLASS_PROPERTIES if p not in parsed]
+                if missing:
+                    raise ManifestError(
+                        f"{self.say('grammar-class-missing', 'class is missing a property')}"
+                        f": {name}: {missing[0]}"
+                    )
+                self.classes[name] = parsed
             elif kind == "token":
+                if len(fields) != 2:
+                    raise ManifestError(
+                        f"{self.say('grammar-token-fields', 'token line must be token <name> <class>')}"
+                        f": {fields[0]} ({' '.join(fields[1:])})"
+                    )
                 name, cls = fields[0], fields[1]
                 if name in self.token_class:
                     raise ManifestError(
@@ -280,7 +320,11 @@ def token_participates(runner: Path, rules: "Grammar", token: str, workdir: Path
     """
     repo = workdir / "repo"
     (repo / "scripts" / "lib").mkdir(parents=True, exist_ok=True)
-    (repo / "scripts" / "lib" / rules.path.name).write_text(
+    # Written under the name the RUNNER looks for, not the fixture's own
+    # basename: a grammar under test may live anywhere, but the runner resolves
+    # its definition relative to itself. Copying it as `reordered.conf` left the
+    # fixture runner unable to find any grammar, so every token looked inert.
+    (repo / "scripts" / "lib" / GRAMMAR_FILE.name).write_text(
         rules.path.read_text(encoding="utf-8"), encoding="utf-8"
     )
     for stub, body in (("stub-x", "true"), ("stub-go", "true"), ("stub-skip", "exit 77")):

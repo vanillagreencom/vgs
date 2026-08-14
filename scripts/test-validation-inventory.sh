@@ -247,6 +247,44 @@ grammar_case "a second exclusive token is reported" \
 token none       exclusive" \
   "exclusive tokens"
 
+# CLASS PROPERTIES ARE PARSED BY KEY IN BOTH READERS. The bash side read them
+# positionally while python read them by key, so REORDERING the same four pairs
+# made the two readers interpret one definition differently — in the file
+# written to end reader disagreements. The reorder case must PASS; it is the one
+# that proves the fix rather than the refusals.
+reordered="${real_grammar/class area       selects=yes standalone=yes rowtag=yes  exclusive=no/class area       rowtag=yes  exclusive=no selects=yes standalone=yes}"
+printf '%s' "$reordered" >"$tmp/reordered.conf"
+run_guard "GRAMMAR_PATH=$tmp/reordered.conf"
+expect_clean_run "reordered class properties"
+ok "reordering a class line's properties changes nothing"
+
+while IFS=';' read -r label line expect; do
+  [[ -n "$label" ]] || continue
+  grammar_case "$label" \
+    "${real_grammar/class area       selects=yes standalone=yes rowtag=yes  exclusive=no/$line}" \
+    "$expect"
+done <<'CLASSES'
+a class missing a property is reported;class area       selects=yes standalone=yes rowtag=yes;is missing a property
+a class with an unknown property is reported;class area       selects=yes standalone=yes rowtag=yes exclusive=no bogus=yes;has an unknown property
+a class repeating a property is reported;class area       selects=yes selects=no standalone=yes rowtag=yes exclusive=no;repeats a property
+a class property without = is reported;class area       selectsyes standalone=yes rowtag=yes exclusive=no;must be key=value
+a class property that is not yes/no is reported;class area       selects=maybe standalone=yes rowtag=yes exclusive=no;must be yes or no
+CLASSES
+
+# A FINAL LINE WITH NO TRAILING NEWLINE. `read` returns non-zero at EOF, so the
+# bash loop dropped it while python's splitlines() kept it — one reader saw a
+# token the other did not. grammar_case writes with printf and no trailing
+# newline, so every case above also exercises this; asserted explicitly because
+# an incidental exercise is not a control.
+printf '%s\ntoken nightly    modifier' "$real_grammar" >"$tmp/unterminated.conf"
+run_guard "GRAMMAR_PATH=$tmp/unterminated.conf"
+expect_refused "unterminated final line" "does not act on it"
+ok "a final line with no trailing newline is read by both readers"
+
+grammar_case "a token line with an extra field is reported" \
+  "${real_grammar/token go         area/token go         area extra}" \
+  "token line must be"
+
 grammar_case "a token with an unknown class is reported" \
   "$real_grammar
 token weird      nosuchclass" \
