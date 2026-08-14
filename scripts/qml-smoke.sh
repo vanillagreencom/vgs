@@ -23,13 +23,14 @@
 # one of them to report loaded before it stops observing, so plugin-owned QML is
 # inside the checked window. It fails if any of them never loads.
 #
-# The first state-dependent phase asserts that the sandbox's own SEED is in
-# effect, by reading sentinels back out of the running shell (VGS-92); the
-# bundled-plugin wait and the two phases below are gated on it, since a shell
-# that fell back to defaults answers them identically. The full argument, and
-# what the sandbox inherits from the host versus seeds for itself, is
-# docs/decisions/D008-nested-sandbox-state-seeding.md. The log-error scan is
-# independent of all of it.
+# The sandbox's HOME is built from the repo alone — nothing is copied out of
+# `~/.config/vshell`, so no run's outcome can depend on the machine it ran on
+# (docs/decisions/D008-nested-sandbox-state-seeding.md). The first
+# state-dependent phase then asserts that the seed is in EFFECT, by reading
+# sentinels back out of the running shell (VGS-92); the bundled-plugin wait and
+# the two phases below are gated on it, since a shell that fell back to its
+# built-in defaults answers them identically. The log-error scan is independent
+# of all of it and runs on every path that reached teardown.
 #
 # It then drives two things that loading alone never reaches (VGS-81):
 #
@@ -431,9 +432,12 @@ override_plugin="tailscale"
 # The argument, stated once here; the other sites point at this or at D008.
 #
 # Every phase below reads as a pass whether or not the shell found the seeded
-# settings: SettingsData carries a built-in default for every key
-# (Common/SettingsData.qml) and for plugins too (`builtInPluginSettings`), and
-# the shipped `*.default.json` files mostly repeat them. That is not
+# settings: SettingsData declares a default for every key inline
+# (Common/SettingsData.qml), and `getPluginSetting` falls back through
+# `defaultPluginSettings`, which is loaded from the REPO's
+# `config/vshell/plugin_settings.default.json` — never the sandbox copy. Both
+# fallbacks are unstamped, which is what leaves the sandbox's own file as the
+# only possible source of a sentinel. That is not
 # hypothetical — between 57d92829 (2026-08-02) and 6e1673cd (2026-08-09) the
 # host copy was `cp -a`, which preserved the operator's
 # `settings.json -> ~/dotfiles/...` symlink; it dangled inside the sandbox and
@@ -459,24 +463,30 @@ plugin_sentinel_value="{vshell} update run aur --vgs92-seed-sentinel"
 
 # Polls one `settings get` until its reply contains `needle`. Bounded, because
 # SettingsData loads asynchronously and this file's other waits exist for that
-# reason. Prints the last reply, and keeps the two failures apart:
+# reason. Prints the last SUCCESSFUL reply, and keeps the two failures apart:
 #   1 = the shell answered, with something else  -> the seed did not take
-#   2 = the shell never answered the call        -> a dead shell, which says
+#   2 = the LAST call did not answer             -> a dead shell, which says
 #                                                   nothing about the seed
 await_sentinel() {
-  local needle="$1" key="$2" reply="" answered=false
+  local needle="$1" key="$2" reply="" last_good="" answered=false
   for _ in $(seq 1 40); do
+    answered=false
     # NOT `sandbox_ipc`: that folds stderr into stdout and ends in `|| true`, so
     # a transport failure would arrive as a reply and be blamed on the seed.
     if reply="$("${sandbox_env[@]}" qs ipc -p "$repo_root/quickshell/vshell" \
         --any-display call settings get "$key" 2>/dev/null)"; then
       answered=true
+      last_good="$reply"
       [[ "$reply" == *"$needle"* ]] && { printf '%s' "$reply"; return 0; }
     fi
     kill -0 -- "-$qs_group" 2>/dev/null || break
     sleep 0.25
   done
-  printf '%s' "$reply"
+  # `answered` reflects the FINAL attempt only, and the reply printed is the last
+  # one a call actually returned. Carrying "some earlier call worked" forward
+  # reported a shell that died mid-poll as a wrong answer of '' — which defeats
+  # the very split this function exists for.
+  printf '%s' "$last_good"
   [[ "$answered" == true ]] && return 1
   return 2
 }
@@ -775,7 +785,7 @@ override_state_settles() {
 nested_check() {
   local host_socket sandbox rt_dir conf log nested_socket candidate exit_code findings
   local compositor_pgid qs_launcher qs_group loaded targets plugins_loaded plugin_report candidate
-  local host_dir seeded
+  local seeded
   local -a expected_plugins=() missing_plugins=()
   local -a sandbox_env=() dbus_wrapper=()
   # Per-run, so a stale log from an earlier invocation can never satisfy a
@@ -805,9 +815,14 @@ nested_check() {
   track_dir "$rt_dir"
 
   mkdir -p "$sandbox/home/.config" "$sandbox/home/.local/share" "$sandbox/home/.local/state" "$sandbox/home/.cache"
-  # Build the sandbox's user state, from two sources with a deliberate
-  # precedence: docs/decisions/D008-nested-sandbox-state-seeding.md. Nothing
-  # here can touch live state — the sandbox is a throwaway HOME.
+  # The sandbox's user state comes from the REPO ALONE — nothing is read out of
+  # `~/.config/vshell`, not even a narrow allowlist, because a user theme
+  # package composes over a built-in file by file and a user blueprint shadows a
+  # built-in by name: "no phase's outcome may differ because of host state" only
+  # holds if there IS none. Rules, rejected shapes and evidence:
+  # docs/decisions/D008-nested-sandbox-state-seeding.md.
+  #
+  # Nothing here can touch live state either — the sandbox is a throwaway HOME.
   # Every step below either succeeds or SAYS SO. A prep failure that is
   # swallowed leaves the run measuring a sandbox that is not the one it
   # describes, which is the same defect as a failed layer query reading as
@@ -817,36 +832,13 @@ nested_check() {
     return 1
   }
 
-  # An ALLOWLIST of host directories, not a copy-of-everything then delete: a
-  # denylist silently inherits whatever it forgets to name, which is how host
-  # `theme.json` — MethodTheme's source of truth for the entire palette — used
-  # to reach the sandbox. Everything outside these two names is either seeded
-  # below or would steer the run (`theme.json`, `hooks/` host-authored
-  # executables, `generated/` app-target output, `branding/` shipped-asset
-  # replacements). D008 rule 3 is enforced here rather than asserted.
-  #
-  # `cp -aL`, not `cp -a`: the documented workstation wiring reaches
-  # ~/.config/vshell through RELATIVE symlinks into ~/dotfiles, and a preserved
-  # symlink dangles inside the sandbox (VGS-92).
-  #
-  # These copies are the only OPTIONAL steps. A config with a genuinely broken
-  # symlink must not fail everyone's smoke — but it must not pass unmentioned
-  # either, because the run is then thinner than it looks.
   mkdir -p "$sandbox/home/.config/vshell" || { prep_fail "creating the sandbox config directory"; return; }
-  for host_dir in themes blueprints; do
-    [[ -d "$HOME/.config/vshell/$host_dir" ]] || continue
-    if ! cp -aL -- "$HOME/.config/vshell/$host_dir" \
-                   "$sandbox/home/.config/vshell/$host_dir" 2>"$sandbox/cp.err"; then
-      note "DEGRADED: could not copy ~/.config/vshell/$host_dir into the sandbox; continuing without it"
-      sed -n '1,5p' "$sandbox/cp.err" >&2 || true
-      rm -rf -- "$sandbox/home/.config/vshell/$host_dir" || true
-    fi
-  done
-  # The allowlist must not have produced one. override_check plants its fixture
-  # here, and a host plugin surviving into the sandbox would join it under the
-  # same id — which is the ambiguity that phase exists to resolve.
+  # Not seeded: DELIBERATELY ABSENT. override_check plants the only user plugin
+  # that ever appears here, and a second package under the same id would defeat
+  # the ambiguity that phase exists to resolve. Cheap standing proof that the
+  # sandbox HOME really is built from nothing.
   if [[ -e "$sandbox/home/.config/vshell/plugins" ]]; then
-    prep_fail "a user plugin directory reached the sandbox; the host allowlist above is wrong"
+    prep_fail "a user plugin directory exists in a sandbox that copied nothing"
     return
   fi
 
@@ -1077,43 +1069,12 @@ EOF
     fail "sandboxed shell never exposed its IPC targets (exit code $exit_code)"
     return
   fi
-  if [[ "$seeded" != true ]]; then
-    # `seeded_settings_check` already failed the run and named the reason, and
-    # the plugin wait was skipped on purpose. Adding a second, downstream
-    # failure here would only bury it.
-    return
-  fi
-  if [[ "$plugins_loaded" != true ]]; then
-    # Say WHICH failure this is. "Discovered but not loaded" and "never
-    # appeared at all" have different causes, and a timeout that lists names
-    # without distinguishing them sends the reader to the wrong place — a
-    # legitimately disabled plugin would be indistinguishable from a broken
-    # one.
-    local -a not_loaded=() never_seen=()
-    for candidate in "${missing_plugins[@]}"; do
-      if printf '%s\n' "$plugin_report" | grep -q "^${candidate} \["; then
-        not_loaded+=("$candidate")
-      else
-        never_seen+=("$candidate")
-      fi
-    done
-    # shellcheck disable=SC2016  # the backticks are literal quoting in the message
-    printf 'qml-smoke: `plugins list` reported after %ss:\n%s\n' "$plugin_timeout" \
-      "${plugin_report:-<no response from the plugins IPC target>}" >&2
-    if [[ ${#not_loaded[@]} -gt 0 ]]; then
-      # Every bundled plugin is force-enabled by PluginService (a bundled id
-      # backs product UI, so it loads whether or not a user setting names it)
-      # and none declares a startupCheck, so there is no legitimate way for one
-      # to sit here disabled. If that ever changes, this is where the expected
-      # set has to learn about it — a deliberately-disabled plugin must not
-      # look like a broken one.
-      fail "bundled plugin(s) scanned but NOT loaded: ${not_loaded[*]} — a bundled id is force-enabled and declares no startup gate, so this is a load failure, not a disabled plugin"
-      return
-    fi
-    fail "bundled plugin(s) never appeared in the sandbox within ${plugin_timeout}s: ${never_seen[*]} (of ${#expected_plugins[@]} under config/vshell/plugins) — the scan never reached them"
-    return
-  fi
-
+  # THE LOG SCAN COMES FIRST, before the phase verdicts below, and runs on every
+  # path that got this far. It is the only thing here that reads what the shell
+  # itself said, and a failed phase usually left its explanation in there — most
+  # sharply when `seeded_settings_check` failed because the shell DIED, where the
+  # log IS the diagnosis. Ordering it after an early return traded that away.
+  #
   # Services the sandbox deliberately cannot reach (the live PipeWire socket
   # lives in the session's runtime dir, and the private bus has no peers) are
   # environment gaps, not QML defects.
@@ -1153,6 +1114,45 @@ EOF
     fail "QML/runtime errors in the sandboxed shell"
     return
   fi
+
+  # Phase verdicts, after the scan so its output is never lost to them.
+  if [[ "$seeded" != true ]]; then
+    # `seeded_settings_check` already failed the run and named the reason, and
+    # the plugin wait was skipped on purpose. Adding a second, downstream
+    # failure here would only bury it.
+    return
+  fi
+  if [[ "$plugins_loaded" != true ]]; then
+    # Say WHICH failure this is. "Discovered but not loaded" and "never
+    # appeared at all" have different causes, and a timeout that lists names
+    # without distinguishing them sends the reader to the wrong place — a
+    # legitimately disabled plugin would be indistinguishable from a broken
+    # one.
+    local -a not_loaded=() never_seen=()
+    for candidate in "${missing_plugins[@]}"; do
+      if printf '%s\n' "$plugin_report" | grep -q "^${candidate} \["; then
+        not_loaded+=("$candidate")
+      else
+        never_seen+=("$candidate")
+      fi
+    done
+    # shellcheck disable=SC2016  # the backticks are literal quoting in the message
+    printf 'qml-smoke: `plugins list` reported after %ss:\n%s\n' "$plugin_timeout" \
+      "${plugin_report:-<no response from the plugins IPC target>}" >&2
+    if [[ ${#not_loaded[@]} -gt 0 ]]; then
+      # Every bundled plugin is force-enabled by PluginService (a bundled id
+      # backs product UI, so it loads whether or not a user setting names it)
+      # and none declares a startupCheck, so there is no legitimate way for one
+      # to sit here disabled. If that ever changes, this is where the expected
+      # set has to learn about it — a deliberately-disabled plugin must not
+      # look like a broken one.
+      fail "bundled plugin(s) scanned but NOT loaded: ${not_loaded[*]} — a bundled id is force-enabled and declares no startup gate, so this is a load failure, not a disabled plugin"
+      return
+    fi
+    fail "bundled plugin(s) never appeared in the sandbox within ${plugin_timeout}s: ${never_seen[*]} (of ${#expected_plugins[@]} under config/vshell/plugins) — the scan never reached them"
+    return
+  fi
+
   # Only when nothing has failed. A phase that called `fail` set the exit status
   # but does not stop the run, so an unconditional pass line here sits directly
   # under a FAIL line and reads as a summary that contradicts it.
