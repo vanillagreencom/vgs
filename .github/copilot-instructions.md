@@ -40,12 +40,14 @@ live session.
 them and report real defects, but never propose an in-repo patch, refactor, or
 style fix — frame any genuine finding as an upstream issue to file, and say so.
 
-**Doc surfaces are distinct and deliberately non-overlapping.** `README.md` and
-the per-directory READMEs are product/user-facing — `packaging/README.md` owns
-the per-channel packaging detail the architecture docs cite rather than repeat.
-`docs/architecture/**` are agent reference docs. `AGENTS.md` is agent process
-instruction. Do not ask for content to be mirrored between them or for
-changelog entries.
+**Doc surfaces are distinct and deliberately non-overlapping.** The
+product/user-facing set is exactly `README.md`, `packaging/README.md` (which
+owns the per-channel packaging detail the architecture docs cite rather than
+repeat) and `packaging/ubuntu/README.md`. Every other tracked README is a
+vendored upstream copy or agent instruction, not a doc surface to edit.
+`docs/architecture/**` are agent reference docs; `AGENTS.md` and
+`project-skills/README.md` are agent process instruction. Do not ask for
+content to be mirrored between them or for changelog entries.
 
 **Secrets live in one place.** `.env.local` is gitignored and holds every
 credential; `.env.local.example` carries the key names with empty values;

@@ -55,11 +55,13 @@ they are documented inline.
 `vstack refresh` from upstream defaults. Findings about model, effort, or
 sandbox-mode values there belong upstream; an in-repo edit is overwritten.
 
-Doc surfaces are distinct and deliberately non-overlapping: `README.md` and the
-per-directory READMEs are product-facing, with `packaging/README.md` owning
-per-channel packaging detail; `docs/architecture/**` are agent reference docs,
-`AGENTS.md` is agent process instruction. Do not request cross-posting between
-them.
+Doc surfaces are distinct and deliberately non-overlapping: the product-facing
+set is exactly `README.md`, `packaging/README.md` (which owns per-channel
+packaging detail) and `packaging/ubuntu/README.md`; every other tracked README
+is a vendored upstream copy or agent instruction and is not a doc surface to
+edit. `docs/architecture/**` are agent reference docs, `AGENTS.md` and
+`project-skills/README.md` are agent process instruction. Do not request
+cross-posting between them.
 
 Every backend method must map to a documented capability in
 `docs/architecture/backend-methods.json`; QML gates on advertised capabilities,
