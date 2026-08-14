@@ -268,7 +268,14 @@ device — and a setting chooses the source:
   before the refetch. Anything left behind renders under the new source's label
   until a payload replaces it, and a dropped refetch makes that permanent — so
   relaunch on "is the state on screen the selected source's?", never on "did the
-  selection move?", which answers no on a there-and-back toggle.
+  selection move?", which answers no on a there-and-back toggle. A poll that
+  delivered nothing counts as owing a fetch too, bounded by a retry budget only
+  an accepted payload restores, so a blip costs a second and a broken backend
+  still settles into its error state.
+- **One surface owns the derived answer.** Every place that shows a number —
+  bar pill, vertical pill, popout header — reads it from the same function, or
+  they disagree the moment a filter (a hidden account) applies to one path and
+  not the others.
 
 ### Core and the vgsMenu plugin
 The app launcher is a bundled plugin that core cannot do without, so the edge

@@ -6,8 +6,9 @@ import QtQuick
 // can lift that text and run the SHIPPED code rather than a re-implementation
 // of it. Nothing inside the markers may reference the widget, a Theme token or
 // a Qt global, and calls between these functions are deliberately unqualified —
-// the extracted text has to be plain JavaScript. (The presentation helpers
-// below the marker are exempt: they format dates and money via Qt.locale().)
+// the extracted text has to be plain JavaScript. Presentation — meters, status
+// classes, date and money formatting — is AiUsageFormat.qml's, because it reaches
+// for Qt.locale() and is no part of this contract.
 //
 // The provider-identity rules exist because the widget used to attribute a
 // payload by comparing launch tags to the current selection, which mixed the
@@ -58,21 +59,36 @@ QtObject {
     // discarded the payload at stream time and then found the selection back
     // where it started at exit time, so nothing refetched and the popout kept
     // the other provider's accounts until the poll timer — 300s+ on a
-    // multi-account machine. What matters is whether the state on screen belongs
-    // to the provider selected NOW.
+    // multi-account machine. What matters is whether this channel now holds what
+    // it wants, and whether the fetch that just finished delivered anything.
     //
-    // The retry bound keeps a helper that never returns a usable payload from
-    // turning that into an unbounded relaunch loop. It is reset by a payload
-    // that lands for the provider the channel is displaying — a payload for some
-    // other provider is filed but restores nothing — and by a provider switch,
-    // so user-driven churn always gets a fresh budget and only a genuinely
-    // broken fetch runs out of one.
-    function shouldRelaunch(launchedFor, loadedProvider, wantProvider, retries, maxRetries) {
+    // A fetch that produced no payload is retried even when the channel already
+    // held that provider: without it a single empty or crashed poll dropped the
+    // widget to its error state and left it there for a whole poll interval, for
+    // a blip a one-second retry covers. The budget stays bounded because only an
+    // accepted payload — or a provider switch — restores it, so a helper that is
+    // genuinely broken still gives up after `maxRetries` and waits for the poll.
+    function shouldRelaunch(launchedFor, loadedProvider, wantProvider, retries, maxRetries, producedPayload) {
         if (normalizeProvider(launchedFor) === "")
             return false;
-        if (normalizeProvider(loadedProvider) === normalizeProvider(wantProvider))
+        if (producedPayload && normalizeProvider(loadedProvider) === normalizeProvider(wantProvider))
             return false;
         return (retries || 0) < (maxRetries || 0);
+    }
+
+    // The user-visible half of a failed fetch: the LAST non-empty stderr line,
+    // truncated. Last, because the only thing that exits non-zero now is the
+    // Python wrapper, whose first line is the traceback header and whose last is
+    // the exception that names the cause. Truncated, because this line comes from
+    // whichever backend is installed, reaches the popout, and goes into a log
+    // people paste into bug reports.
+    function stderrReason(text, limit) {
+        const lines = String(text || "").split("\n").map(l => l.trim()).filter(l => l !== "");
+        if (lines.length === 0)
+            return "";
+        const last = lines[lines.length - 1];
+        const max = limit || 200;
+        return last.length > max ? last.slice(0, max - 1) + "\u2026" : last;
     }
 
     // What a fetch produced: the payload, or why there is none. The reason
@@ -91,23 +107,17 @@ QtObject {
         return { data: d, issue: "" };
     }
 
-    // What an accepted payload means for the channel that fetched it:
-    //   file          — the pill slot this payload's provider owns takes it
-    //   loaded        — the provider this channel now holds, "" to leave it
-    //   resetRetries  — whether the retry budget is restored
-    //   apply         — whether the popout takes it (the primary channel only)
+    // What an accepted payload means for the channel that fetched it: whether the
+    // pill slot its provider owns takes it, and whether it is the payload this
+    // channel was waiting for. Everything else the caller does — hold it, restore
+    // the retry budget, show it in the popout — follows from `satisfies`.
+    //
     // A payload that arrives after the user switched away is still FILED, so its
-    // provider's pill slot is current, but it satisfies nothing: the channel
-    // still owes a fetch for what is selected now.
-    function acceptOutcome(payloadProviderName, want, primary) {
+    // provider's slot is current, but it satisfies nothing: the channel still owes
+    // a fetch for what is selected now.
+    function acceptOutcome(payloadProviderName, want) {
         const p = normalizeProvider(payloadProviderName);
-        const satisfies = p !== "" && p === normalizeProvider(want);
-        return {
-            file: p !== "",
-            loaded: satisfies ? p : "",
-            resetRetries: satisfies,
-            apply: satisfies && primary === true
-        };
+        return { file: p !== "", satisfies: p !== "" && p === normalizeProvider(want) };
     }
 
     // Whether a launch request can start now. Assigning `running = true` to a
@@ -191,9 +201,11 @@ QtObject {
         return Math.round(sum / peaks.length);
     }
 
-    // One provider's pill number, or null when its last payload cannot produce
-    // one (never fetched, signed out, API failure, every account hidden). A null
-    // head keeps its slot.
+    // THE headline for a payload: the one number that stands for it, or null when
+    // it cannot produce one (never fetched, signed out, API failure, or every
+    // account it reported hidden). Every surface — both pill forms and the popout
+    // header — goes through this, so they cannot disagree about what a payload
+    // says, which is what let the pill show an error beside a popout showing 60%.
     function headOf(data, mode, hidden) {
         if (!data || data.ok !== true)
             return null;
@@ -201,66 +213,26 @@ QtObject {
         if (local !== null)
             return { pct: local };
         // A payload that reported accounts has no headline only because the user
-        // hid them all. Falling back to the payload's aggregate here would put a
-        // number computed over exactly those hidden accounts in the pill, beside
-        // a popout header reading "0 accounts".
+        // hid them all. Falling back to the payload's own aggregate here would put
+        // a number computed over exactly those hidden accounts on the bar, beside
+        // a popout reading "0 accounts".
         if ((data.accounts || []).length > 0)
             return null;
+        // No accounts reported at all: the older single-account shape, whose lanes
+        // live on the payload itself. Its tightest lane, for the same reason an
+        // account's headline is its tightest window.
+        const lanes = [data.session, data.weekly, data.third];
+        let peak = null;
+        for (let i = 0; i < lanes.length; i++) {
+            if (lanes[i] && lanes[i].pct !== undefined && lanes[i].pct !== null)
+                peak = Math.max(peak === null ? 0 : peak, lanes[i].pct);
+        }
+        if (peak !== null)
+            return { pct: peak };
         const agg = data.aggregate;
-        const pct = agg && agg.pct !== undefined && agg.pct !== null ? agg.pct
-            : (data.session ? data.session.pct : (data.weekly ? data.weekly.pct : 0));
-        return { pct: pct };
-    }
-
-    // The lanes a payload describes directly, for the older single-account shape
-    // that carries session/weekly/third instead of an accounts list.
-    function flatMeters(data) {
-        if (!data)
-            return [];
-        const out = [];
-        if (data.session)
-            out.push({ label: "Session (5h)", pct: data.session.pct || 0, reset: data.session.reset || "", resetAt: data.session.resetAt || 0, detail: "" });
-        if (data.weekly)
-            out.push({ label: "Weekly (7d)", pct: data.weekly.pct || 0, reset: data.weekly.reset || "", resetAt: data.weekly.resetAt || 0, detail: "" });
-        if (data.third)
-            out.push({ label: data.third.label || "", pct: data.third.pct || 0, reset: data.third.reset || "", resetAt: data.third.resetAt || 0, detail: "" });
-        return out;
-    }
-
-    // Meters for one account entry, in the same order the single-account view
-    // uses: session, weekly, then every per-model lane the provider reported.
-    function metersFor(account) {
-        if (!account)
-            return [];
-        let out = [];
-        if (account.session)
-            out.push({ label: "Session (5h)", pct: account.session.pct || 0, reset: account.session.reset || "", resetAt: account.session.resetAt || 0 });
-        if (account.weekly)
-            out.push({ label: "Weekly (7d)", pct: account.weekly.pct || 0, reset: account.weekly.reset || "", resetAt: account.weekly.resetAt || 0 });
-        const models = account.models || [];
-        for (let i = 0; i < models.length; i++)
-            out.push({ label: models[i].label || "Model", pct: models[i].pct || 0, reset: models[i].reset || "", resetAt: models[i].resetAt || 0 });
-        // Credit-billed seats have no rate-limit windows at all — their monthly
-        // spend pool is the only usage there is, so it stands in for them.
-        if (account.spend)
-            out.push({ label: "Credits", pct: account.spend.pct || 0, reset: "", resetAt: 0,
-                       detail: account.spend.detail || "",
-                       used: account.spend.used, limit: account.spend.limit, currency: account.spend.currency || "USD" });
-        return out;
-    }
-
-    // One percentage has one status colour everywhere it appears. Provider and
-    // account classes describe their worst lane, so using them for every meter
-    // made a healthy 0% lane red whenever a different lane was exhausted.
-    function percentageClass(pct) {
-        const value = Math.max(0, Math.min(Number(pct) || 0, 100));
-        if (value >= 90)
-            return "critical";
-        if (value >= 75)
-            return "high";
-        if (value >= 50)
-            return "mid";
-        return "low";
+        if (agg && agg.pct !== undefined && agg.pct !== null)
+            return { pct: agg.pct };
+        return null;
     }
 
     // --- pill composition ---------------------------------------------------
@@ -283,7 +255,10 @@ QtObject {
         if (head && head.pct !== null && head.pct !== undefined) {
             slot.pct = head.pct;
             slot.text = head.pct + "%";
-        } else if (data) {
+        } else if (data && data.ok !== true) {
+            // The provider answered and the answer was not usable. A payload that
+            // IS ok but yields no headline — every account hidden — is not an
+            // error: nothing failed, there is simply nothing to show.
             slot.text = "!";
             slot.error = true;
         } else if ((fetching || []).indexOf(provider) !== -1) {
@@ -310,79 +285,4 @@ QtObject {
     }
 
     // END PROVIDER DECISION
-
-    // --- presentation helpers ----------------------------------------------
-    //
-    // Below the marker, because these reach for Qt.locale() and the extracted
-    // block has to stay plain JavaScript. They moved out of the widget with
-    // their behaviour unchanged.
-
-    // Absolute reset instant as wall-clock text. A countdown alone ("4d 17h")
-    // makes you do the arithmetic; the clock time is what you actually plan
-    // around. Same day -> just the time, otherwise the weekday, and the date
-    // once it is far enough out that the weekday is ambiguous. Kept short and
-    // lowercase ("tom 02:59", "thu 04:00") — these sit in a narrow column
-    // beside the bar, so every character costs bar width.
-    function formatResetAt(epoch) {
-        if (!epoch || epoch <= 0)
-            return "";
-        const when = new Date(epoch * 1000);
-        if (isNaN(when.getTime()))
-            return "";
-        const now = new Date();
-        // Past instants are stale data (a window that already rolled over);
-        // showing them would be worse than showing nothing.
-        if (when.getTime() <= now.getTime())
-            return "";
-        // 24h, explicitly — the locale short format drags in AM/PM, which is
-        // three more characters in a column that is already fighting the bar.
-        const time = when.toLocaleTimeString(Qt.locale(), "HH:mm");
-        const startOfDay = d => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
-        const days = Math.round((startOfDay(when) - startOfDay(now)) / 86400000);
-        if (days === 0)
-            return time;
-        if (days === 1)
-            return "tom " + time;
-        if (days < 7)
-            return when.toLocaleDateString(Qt.locale(), "ddd").toLowerCase() + " " + time;
-        return when.toLocaleDateString(Qt.locale(), "d MMM").toLowerCase() + " " + time;
-    }
-
-    // Money for the compact row: no cents, thousands separated. At credit-pool
-    // scale the cents are noise, and this column is only as wide as the bar can
-    // spare. The expanded card keeps the engine's exact string.
-    function formatSpend(meter) {
-        if (!meter || meter.used === undefined || meter.limit === undefined)
-            return "";
-        const sym = meter.currency === "USD" ? "$" : "";
-        const round = n => Math.round(n).toLocaleString(Qt.locale(), "f", 0);
-        return sym + round(meter.used) + " / " + sym + round(meter.limit);
-    }
-
-    // The card has room for the cents. Falls back to the engine's own string
-    // if an older helper sent only that.
-    function formatSpendExact(meter) {
-        if (!meter)
-            return "";
-        if (meter.used === undefined || meter.limit === undefined)
-            return meter.detail || "";
-        const sym = meter.currency === "USD" ? "$" : "";
-        const money = n => sym + n.toLocaleString(Qt.locale(), "f", 2);
-        return money(meter.used) + " of " + money(meter.limit);
-    }
-
-    // "Resets in 4d 17h · thu 04:00", degrading to whichever half we have.
-    function resetLabel(meter) {
-        if (!meter)
-            return "";
-        const at = formatResetAt(meter.resetAt || 0);
-        const inn = meter.reset && meter.reset !== "\u2014" ? meter.reset : "";
-        if (inn && at)
-            return "Resets in " + inn + " \u00b7 " + at;
-        if (at)
-            return "Resets " + at;
-        if (inn)
-            return "Resets in " + inn;
-        return "";
-    }
 }

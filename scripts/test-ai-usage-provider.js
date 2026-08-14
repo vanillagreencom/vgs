@@ -35,10 +35,11 @@ assert.ok(marked, "AiUsageLogic.qml must carry the PROVIDER DECISION markers");
 
 const {
     normalizeProvider, providerIcon, payloadProvider, payloadIsFor, shouldRelaunch,
-    decodePayload, acceptOutcome, launchDecision, headOf, pillSlot, pillSlots
+    decodePayload, acceptOutcome, launchDecision, stderrReason, headOf, pillSlot, pillSlots
 } = new Function(
     `${marked[1]}\nreturn { normalizeProvider, providerIcon, payloadProvider, payloadIsFor,` +
-    ` shouldRelaunch, decodePayload, acceptOutcome, launchDecision, headOf, pillSlot, pillSlots };`
+    ` shouldRelaunch, decodePayload, acceptOutcome, launchDecision, stderrReason, headOf,` +
+    ` pillSlot, pillSlots };`
 )();
 
 // The extracted region must be free of the widget and of Qt, or this harness is
@@ -103,41 +104,66 @@ assert.ok(
 const MAX = 3;
 
 assert.equal(
-    shouldRelaunch("claude", "", "claude", 0, MAX),
+    shouldRelaunch("claude", "", "claude", 0, MAX, true),
     true,
     "claude -> codex -> claude: nothing is loaded, so the fetch must be replaced " +
     "even though the selection ended up back where it started"
 );
 assert.equal(
-    shouldRelaunch("claude", "claude", "claude", 0, MAX),
+    shouldRelaunch("claude", "claude", "claude", 0, MAX, true),
     false,
-    "the selected provider's data is on screen; refetching it would be a poll loop"
+    "the selected provider's data is on screen and this fetch delivered it; " +
+    "refetching would be a poll loop"
 );
 assert.equal(
-    shouldRelaunch("claude", "claude", "codex", 0, MAX),
+    shouldRelaunch("claude", "claude", "claude", 0, MAX, false),
+    true,
+    "a poll that produced no payload is retried even when the channel already holds that " +
+    "provider — otherwise one empty or crashed poll drops the widget to its error state for a " +
+    "whole poll interval, up to five minutes, for a blip a one-second retry covers"
+);
+assert.equal(
+    shouldRelaunch("claude", "claude", "codex", 0, MAX, true),
     true,
     "the popout holds Claude while Codex is selected — the exact mix-up state"
 );
 assert.equal(
-    shouldRelaunch("", "", "claude", 0, MAX),
+    shouldRelaunch("", "", "claude", 0, MAX, false),
     false,
     "an exit with no launch tag started no process, so it replaces nothing"
 );
 assert.equal(
-    shouldRelaunch("claude", "", "claude", MAX, MAX),
+    shouldRelaunch("claude", "claude", "claude", MAX, MAX, false),
     false,
-    "a fetch that never returns a usable payload must stop relaunching, not spin"
+    "a helper that keeps delivering nothing still gives up: only an accepted payload or a " +
+    "provider switch restores the budget"
 );
 assert.equal(
-    shouldRelaunch("claude", "", "claude", MAX - 1, MAX),
+    shouldRelaunch("claude", "", "claude", MAX - 1, MAX, false),
     true,
     "the budget is spent only when it is actually exhausted"
 );
 assert.equal(
-    shouldRelaunch("claude", "", "claude", 0, 0),
+    shouldRelaunch("claude", "", "claude", 0, 0, false),
     false,
     "a zero budget relaunches nothing"
 );
+
+// --- 2b. the failure reason from stderr -------------------------------------
+
+assert.equal(
+    stderrReason("Traceback (most recent call last):\n  File \"x\", line 1\nValueError: nope\n", 200),
+    "ValueError: nope",
+    "the LAST line names the cause; the first is the traceback header, which names nothing"
+);
+assert.equal(stderrReason("   \n\n", 200), "", "stderr with nothing in it contributes no reason");
+assert.equal(stderrReason(null, 200), "", "no stderr contributes no reason");
+{
+    const long = "x".repeat(500);
+    const reason = stderrReason(long, 200);
+    assert.equal(reason.length, 200, "a reason is capped before it reaches the popout and the log");
+    assert.ok(reason.endsWith("\u2026"), "and says it was cut");
+}
 
 // --- 3. heads ---------------------------------------------------------------
 
@@ -181,6 +207,34 @@ assert.deepEqual(
     { pct: 77 },
     "a payload that reported no accounts at all still falls back to its aggregate"
 );
+assert.deepEqual(
+    headOf({
+        ok: true, provider: "claude", session: { pct: 12 }, weekly: { pct: 64 },
+        aggregate: { pct: 12 }
+    }, "pool", []),
+    { pct: 64 },
+    "the older single-account shape reads its tightest lane, not its 5h window — the same rule " +
+    "an account's headline follows"
+);
+assert.equal(
+    headOf({ ok: true, provider: "claude" }, "pool", []),
+    null,
+    "a payload with no accounts and no lanes has no number to show"
+);
+
+// One owner: whatever the widget renders on the bar, in the vertical bar or in
+// the popout header comes from this function, so those three cannot disagree.
+// They did: with both accounts hidden the pill showed an error, the vertical
+// pill 60% and the header "0 accounts, 60% used".
+{
+    const hiddenAll = Object.assign({ aggregate: { pct: 60 } }, twoAccounts);
+    assert.equal(headOf(hiddenAll, "pool", ["a", "b"]), null, "no headline when all are hidden");
+    const slot = pillSlot("claude", headOf(hiddenAll, "pool", ["a", "b"]), hiddenAll, [], "claude");
+    assert.equal(slot.error, false,
+        "hiding every account is not a failure: nothing broke, there is nothing to show");
+    assert.equal(slot.text, "—", "so the slot renders its placeholder, not the error glyph");
+    assert.equal(slot.pct, null, "and carries no percentage for anything else to render");
+}
 assert.deepEqual(
     headOf({ ok: true, provider: "claude", accounts: [], session: { pct: 0 } }, "pool", []),
     { pct: 0 },
@@ -303,30 +357,23 @@ assert.deepEqual(
     "an unstamped payload cannot be attributed either"
 );
 
-{
-    const outcome = acceptOutcome("codex", "codex", true);
-    assert.deepEqual(outcome, { file: true, loaded: "codex", resetRetries: true, apply: true },
-        "a payload for what this channel wants is filed, held, budgeted and shown");
-}
-{
-    const outcome = acceptOutcome("codex", "codex", false);
-    assert.equal(outcome.apply, false, "only the primary channel populates the popout");
-    assert.equal(outcome.loaded, "codex", "the other channel still holds what it fetched");
-}
+assert.deepEqual(
+    acceptOutcome("codex", "codex"),
+    { file: true, satisfies: true },
+    "a payload for what this channel wants is filed and satisfies it"
+);
 {
     // The claude -> codex -> claude window: the payload is real and belongs in
     // its own pill slot, but the channel still owes a fetch for the selection.
-    const outcome = acceptOutcome("claude", "codex", true);
+    const outcome = acceptOutcome("claude", "codex");
     assert.equal(outcome.file, true, "a late payload still updates ITS provider's pill slot");
-    assert.equal(outcome.loaded, "", "it does not make the channel hold the wrong provider");
-    assert.equal(outcome.resetRetries, false, "and it does not restore the retry budget");
-    assert.equal(outcome.apply, false, "and it never reaches the popout");
+    assert.equal(outcome.satisfies, false, "but it does not satisfy the channel that fetched it");
 }
-{
-    const outcome = acceptOutcome("", "claude", true);
-    assert.deepEqual(outcome, { file: false, loaded: "", resetRetries: false, apply: false },
-        "an unidentifiable payload is filed nowhere and satisfies nothing");
-}
+assert.deepEqual(
+    acceptOutcome("", "claude"),
+    { file: false, satisfies: false },
+    "an unidentifiable payload is filed nowhere and satisfies nothing"
+);
 
 assert.equal(launchDecision("", false), "start", "an idle channel launches");
 assert.equal(launchDecision("claude", true), "skip", "a channel already fetching does not relaunch");
