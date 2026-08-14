@@ -60,7 +60,17 @@ CEILINGS: dict[str, int] = {
     # 7,200 keeps ~10% headroom at the final 6,490 B size, superseding the
     # 6,500 figure measured mid-review at 5,865 B.
     "review-bots.md": 7_200,
-    ".github/copilot-instructions.md": 3_200,  # adopted at 2,909 B
+    # Adopted at 2,909 B. 2026-08-14: the PR #132 review found the doc-surface
+    # and vendored-tree rules were telling reviewers to suppress valid drift
+    # findings on the three VGS-authored files inside vendored trees
+    # (colorschemes/ATTRIBUTION.md and the two third_party/ READMEs);
+    # correcting that needs the enumerated product-facing set plus the
+    # carve-out, which earned the bytes. The two rules were merged into one to
+    # hold the growth down. 3,850 at the final 3,554 B size: deliberately
+    # TIGHTER than the 4,000 the adoption formula rounds to, because the
+    # rounding above is an adoption convention and a raise is only required to
+    # carry a rationale — so the tighter line wins over the rounder number.
+    ".github/copilot-instructions.md": 3_850,
     "project-skills/vshell-dev/SKILL.md": 5_000,  # adopted at 4,497 B
     ".github/instructions/agents-md.instructions.md": 500,  # adopted at 403 B
     ".github/instructions/architecture-docs.instructions.md": 500,  # adopted at 393 B
@@ -73,7 +83,11 @@ CEILINGS: dict[str, int] = {
     ".github/instructions/validation-scripts.instructions.md": 1_000,  # adopted at 844 B
     ".github/instructions/vendored-engine.instructions.md": 1_000,  # adopted at 854 B
     ".github/instructions/vendored-go.instructions.md": 500,  # adopted at 367 B
-    ".github/instructions/vendored-nvim.instructions.md": 400,  # adopted at 302 B
+    # Adopted at 302 B. 2026-08-14: ATTRIBUTION.md carve-out (PR #132) — the
+    # blanket "never patch in-repo, skip style findings" rule covered a
+    # VGS-authored file. 600 is the adoption rule applied at the final 490 B
+    # size: plus ~10% is 539, rounded up to the next 100.
+    ".github/instructions/vendored-nvim.instructions.md": 600,
     "docs/architecture/backend-daemon.md": 7_800,  # adopted at 7,087 B
     "docs/architecture/cloud-sync.md": 15_400,  # adopted at 13,975 B
     "docs/architecture/design-language.md": 19_700,  # adopted at 17,886 B
