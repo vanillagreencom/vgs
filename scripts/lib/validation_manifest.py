@@ -50,6 +50,14 @@ def manifest_rows(runner: Path) -> list[tuple[str, str]]:
                 f"`AREAS | COMMAND` separator: {line!r}"
             )
         tags, command = line.split("|", 1)
+        tags = "".join(tags.split())
+        if not tags:
+            # The runner drops such a row from every named area and exits 0.
+            # This reader used to hand it back with empty tags, so the two
+            # readings agreed only in being wrong about the same row.
+            raise ManifestError(
+                f"scripts/validate manifest row has an empty tag field: {line!r}"
+            )
         command = command.strip()
         if not command:
             # A truncated hand-edit leaves the tag and drops the command. Both
@@ -59,7 +67,7 @@ def manifest_rows(runner: Path) -> list[tuple[str, str]]:
                 f"scripts/validate manifest row has an "
                 f"empty command: {line!r}"
             )
-        rows.append(("".join(tags.split()), command))
+        rows.append((tags, command))
     if not rows:
         raise ManifestError("scripts/validate manifest is empty")
     return rows

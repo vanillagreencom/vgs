@@ -236,6 +236,19 @@ MUT
 )" \
   "manifest is empty"
 
+# The two readers must refuse the SAME malformed row. This one was accepted by
+# manifest_rows with empty tags while the runner silently dropped it, so the two
+# readings agreed only in being wrong about it.
+guard_case "a row with an empty tag field is reported" \
+  "$(python3 - "$runner" <<'MUT'
+import sys
+t = open(sys.argv[1], encoding="utf-8").read()
+print(t.replace("always    | scripts/check-format-lint.sh",
+                "          | scripts/check-format-lint.sh"), end="")
+MUT
+)" \
+  "manifest row has an empty tag field"
+
 guard_case "a missing AREAS list is reported" \
   "${real_runner/AREAS=(go qml helper packaging docs all)/AREA_NAMES=(go qml helper packaging docs all)}" \
   "has no AREAS=( ... ) list"

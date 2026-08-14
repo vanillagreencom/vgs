@@ -260,6 +260,19 @@ while IFS= read -r line; do
     printf 'scripts/validate: manifest row has an empty command: %s\n' "$line" >&2
     exit 2
   fi
+  # An EMPTY tag field is rejected here, before the split. `read -a` on an empty
+  # string yields a ZERO-element array, so the vocabulary loop below would never
+  # iterate and the row would fall straight through to the area filter, where
+  # `,,` matches nothing and it is dropped — a named-area run exiting 0 over a
+  # malformed manifest. Guarding before the split makes that state unreachable
+  # rather than merely handled, which is the difference between a fix and a
+  # patch: the loop can then assume what it already assumed.
+  if [[ -z "$tags" ]]; then
+    printf 'scripts/validate: manifest row has an empty tag field: %s\n' "$line" >&2
+    # shellcheck disable=SC2016  # the backticks quote tag names in the message
+    printf '  every row needs at least one tag; use `-` for a row only `all` runs\n' >&2
+    exit 2
+  fi
   # VOCABULARY IS CHECKED FOR EVERY ROW, BEFORE ANY FILTERING. A mistyped tag
   # matches neither `,$area,` nor `,always,`, so filtering alone silently
   # dropped the row from every named area while `all` kept working — and the

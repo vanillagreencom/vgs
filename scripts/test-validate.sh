@@ -197,55 +197,43 @@ expect_rc 2 "empty command row"
 expect_contains "$err" "manifest row has an empty command" "empty command row"
 ok "a row with an empty command exits 2"
 
-echo "=== a tag outside the vocabulary is fatal, in every area ==="
-
-# A mistyped tag matches neither its intended area nor `always`, so FILTERING
-# alone dropped the row silently from every named area. The check runs during
-# the READ, before any filtering, which is what makes it independent of the
-# area asked for.
-for typo in 'qmll      | scripts/stub-qml' 'go,alway  | scripts/stub-go' 'may-skipp | scripts/stub-skip'; do
-  write_runner "go        | scripts/stub-go
-$typo
-always    | scripts/stub-always"
+# Every malformed-tag shape must be fatal in EVERY area, not only under `all`.
+# The named-area path is where each of these used to be dropped silently, so the
+# assertion is the exit STATUS: the message was absent precisely because nothing
+# fired. An empty tag field is the subtlest — it survives the separator and
+# empty-command checks, and `read -a` on it yields a ZERO-element array, so the
+# vocabulary loop never iterates and the row falls through to the filter.
+rejected_everywhere() {
+  # $1 = case name, $2 = fixture manifest, $3 = expected message fragment
+  write_runner "$2"
+  local area
   for area in all go qml docs; do
     fixture --list "$area"
-    expect_rc 2 "unknown tag in $area"
-    expect_contains "$err" "manifest row has unknown tag" "unknown tag in $area"
+    expect_rc 2 "$1 in $area"
+    expect_contains "$err" "$3" "$1 in $area"
+    expect_absent "$out" "scripts/stub-" "$1 in $area"
   done
-done
-ok "an unknown tag exits 2 for every area, including all and --list"
+  ok "$1"
+}
+
+rejected_everywhere "an empty tag field is fatal" 'go        | scripts/stub-go
+          | scripts/stub-qml
+always    | scripts/stub-always' "manifest row has an empty tag field"
+
+rejected_everywhere "a mistyped area tag is fatal" 'go        | scripts/stub-go
+qmll      | scripts/stub-qml
+always    | scripts/stub-always' "manifest row has unknown tag"
+
+rejected_everywhere "a mistyped attribute tag is fatal" 'go,alway  | scripts/stub-go
+always    | scripts/stub-always' "manifest row has unknown tag"
+
+rejected_everywhere "a bad half of a multi-tag row is fatal" 'go,may-skipp | scripts/stub-go
+always       | scripts/stub-always' "manifest row has unknown tag"
 
 # `all` is an ARGUMENT, not a row tag: accepting it would match only an `all`
 # run and behave like `-` everywhere else — the silent narrowing this closes.
-write_runner 'all       | scripts/stub-go
-always    | scripts/stub-always'
-fixture --list all
-expect_rc 2 "all as a row tag"
-expect_contains "$err" "unknown tag \`all\`" "all as a row tag"
-ok 'all is rejected as a row tag, not silently treated like a dash row'
-
-# THE SELF-CONCEALING CASE, on the shipped manifest: mistype the tag on the
-# inventory guard's own row and every scoped run used to drop the one check
-# whose job is reporting malformed tags, then print ok. The guard structurally
-# cannot report this, so the runner has to.
-self_probe="$tmp/self-concealing"
-python3 - "$runner" >"$self_probe" <<'MUT'
-import sys
-t = open(sys.argv[1], encoding="utf-8").read()
-old = "always    | scripts/check-validation-inventory.py"
-assert t.count(old) == 1, "the inventory guard's manifest row moved"
-print(t.replace(old, "alway     | scripts/check-validation-inventory.py"), end="")
-MUT
-chmod +x "$self_probe"
-for area in docs go qml all; do
-  rc=0
-  out="$("$self_probe" --list "$area" 2>"$tmp/stderr")" || rc=$?
-  err="$(cat "$tmp/stderr")"
-  [[ "$rc" == 2 ]] || fail "self-concealing typo" "expected exit 2 for area $area, got $rc"
-  expect_contains "$err" "unknown tag \`alway\`" "self-concealing typo"
-  expect_absent "$out" "scripts/check-" "self-concealing typo"
-done
-ok "a typo on the inventory guard's OWN row fails instead of narrowing the run"
+rejected_everywhere "all is rejected as a row tag" 'all       | scripts/stub-go
+always    | scripts/stub-always' "unknown tag"
 
 echo "=== execution, failure collection and the skip channel ==="
 
