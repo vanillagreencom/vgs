@@ -26,6 +26,7 @@ import os
 import re
 import shlex
 import sys
+import tempfile
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent / "lib"))
@@ -37,7 +38,7 @@ from validation_manifest import (  # noqa: E402
     prose_areas,
     GRAMMAR_FILE,
     grammar,
-    runner_logic,
+    token_participates,
     runner_usage_arguments,
 )
 
@@ -111,8 +112,15 @@ def executable_checks() -> list[str]:
     )
 
 
-def report(problems: list[str]) -> int:
-    """Print every problem found and return the exit status."""
+def report(problems: list[str], documented_count: int) -> int:
+    """Print every problem found and return the exit status.
+
+    TOTAL BY CONSTRUCTION: it takes the count rather than re-deriving it. The
+    success line used to call manifest_rows a second time, which re-ran
+    `bash -n` over all 58 commands on every clean run — the expensive half of
+    the parse, repeated for a number main() already had — and left a reporting
+    function able to fail on a manifest that changed between the two parses.
+    """
     if problems:
         print("check-validation-inventory: FAIL", file=sys.stderr)
         for problem in problems:
@@ -120,7 +128,7 @@ def report(problems: list[str]) -> int:
         return 1
     print(
         f"check-validation-inventory: ok ({len(executable_checks())} executable checks, "
-        f"{len(manifest_rows(RUNNER))} documented commands)"
+        f"{documented_count} documented commands)"
     )
     return 0
 
@@ -192,17 +200,24 @@ def main() -> int:
     # A declared token the runner never acts on is worse than an unknown one:
     # rows carrying it pass every check here and then behave like `-`.
     #
-    # MATCHED AS A WHOLE TOKEN. A substring test passed a token that merely
-    # occurred inside another — `skip` inside `may-skip` — so a new modifier
-    # could be declared, never wired, and still look wired.
-    runner_body = runner_logic(RUNNER)
-    for tag in sorted(rules.row_tags - rules.areas - rules.exclusive):
-        if not re.search(rf"(?<![A-Za-z0-9_-]){re.escape(tag)}(?![A-Za-z0-9_-])", runner_body):
-            problems.append(
-                f"the grammar declares token `{tag}` but scripts/validate never acts on "
-                f"it, so every row tagged `{tag}` would silently behave like `-`. Wire "
-                f"it into the selection or run loop, or drop it from the grammar."
+    # ASKED BEHAVIOURALLY, not by matching text. Whole-token matching closed the
+    # SUBSTRING hole (`skip` inside `may-skip`) but not the INCIDENTAL one:
+    # `status` and `run` match the runner's own variables exactly, so either
+    # could be declared a modifier and pass while the tag did nothing. Tag names
+    # and identifiers come from the same small pool of words, so that collision
+    # recurs. The question the grammar already asks — does this token change
+    # what a row SELECTS or how it EXITS — is the one worth answering.
+    with tempfile.TemporaryDirectory() as workdir:
+        for tag in sorted(rules.row_tags - rules.areas):
+            participates, why = token_participates(
+                RUNNER, rules, tag, Path(workdir)
             )
+            if not participates:
+                problems.append(
+                    f"the grammar declares token `{tag}` but scripts/validate does not "
+                    f"act on it: {why}. Wire it into the selection or run loop, or drop "
+                    f"it from the grammar."
+                )
 
     if rows is None:
         problems.append(
@@ -363,7 +378,7 @@ def main() -> int:
         if not (SCRIPTS / name).is_file():
             problems.append(f"scripts/{name} is excluded here but no longer exists; drop the entry")
 
-    return report(problems)
+    return report(problems, len(commands))
 
 
 if __name__ == "__main__":

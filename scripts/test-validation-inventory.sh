@@ -43,7 +43,7 @@ expect_absent() {
 ARM_MESSAGES=(
   "has no MANIFEST_EOF heredoc" "manifest row has no" "empty command"
   "malformed tag field" "carries no selector" "no manifest row is tagged with it"
-  "is not executable" "never acts on it outside that array"
+  "is not executable" "does not act on it outside that array"
   "enumerates the validate areas but omits" "no longer states the validate area list"
   "invalid shell syntax" "has no table introduced by"
   "no longer declares" "is not a lowercase area token" "grammar A2"
@@ -211,12 +211,36 @@ real_grammar="$(cat "$repo_root/scripts/lib/validation-grammar.conf")"
 grammar_case "a declared but unwired token is reported" \
   "$real_grammar
 token nightly    modifier" \
-  "never acts on it"
+  "does not act on it"
 
 grammar_case "an unwired token that is a SUBSTRING of a wired one is reported" \
   "$real_grammar
 token skip       modifier" \
-  "never acts on it"
+  "does not act on it"
+
+# PARTICIPATION, NOT APPEARANCE. `status` and `run` are exact whole-token
+# matches against the runner's own variables, so a text search accepted either
+# as a modifier while the tag did nothing. Both must be rejected, and the real
+# tokens must still pass — an over-tight rule that rejects everything would
+# satisfy the reject cases alone.
+while IFS=';' read -r label token; do
+  [[ -n "$label" ]] || continue
+  grammar_case "$label" \
+    "$real_grammar
+token $token    modifier" \
+    "does not act on it"
+done <<'COLLISIONS'
+an inert token colliding with a runner variable is reported;status
+an inert token colliding with a runner word is reported;run
+an inert token with no collision at all is reported;alsoinert
+COLLISIONS
+
+# The accept side: the real non-area tokens participate, so the unmutated
+# grammar passes. Asserted explicitly rather than inferred from the control
+# below, since "everything is rejected" would otherwise look like success.
+run_guard
+expect_absent "$guard_out" "does not act on it" "real tokens participate"
+ok "the real always, may-skip and - tokens are all found to participate"
 
 grammar_case "a second exclusive token is reported" \
   "$real_grammar
@@ -456,7 +480,7 @@ expect_absent "$guard_out" "Traceback" "no-PyYAML fixture verdict"
 # The grammar fixture: a declared token nothing acts on.
 printf '%s\ntoken nightly    modifier\n' "$real_grammar" >"$noyaml_grammar"
 run_guard "GRAMMAR_PATH=$noyaml_grammar" "PYTHONPATH=$noyaml_path"
-expect_refused "no-PyYAML fixture verdict" "never acts on it"
+expect_refused "no-PyYAML fixture verdict" "does not act on it"
 expect_contains "$guard_out" "CI coverage was NOT checked" "no-PyYAML fixture verdict"
 expect_absent "$guard_out" "Traceback" "no-PyYAML fixture verdict"
 ok "without PyYAML a fixture still reports its own verdict, and the prerequisite is named too"
@@ -510,6 +534,20 @@ row-empty-command;qml       |
 row-bad-syntax;qml       | scripts/check-naming.sh &&
 SHAPES
 ok "both readers word every shared diagnostic exactly as the grammar does"
+
+# The success line reports what was PARSED, not a recomputed number. report()
+# used to call manifest_rows again, re-running `bash -n` over every command on
+# a clean run and leaving a reporting function that could fail.
+# Only a CLEAN run prints a success line, so without PyYAML there is no count to
+# check — the guard correctly fails on the missing prerequisite instead.
+if [[ $have_yaml -eq 1 ]]; then
+  run_guard
+  parsed_count="$("$runner" --list all | grep -c .)"
+  expect_contains "$guard_out" "$parsed_count documented commands" "documented count"
+  ok "the success line's count matches the rows actually parsed"
+else
+  ok "documented-count case skipped: no PyYAML, so the guard prints no success line"
+fi
 
 # The executable-bit arm (VGS-30 applied to the entry point itself).
 non_exec="$tmp/non-exec-runner"

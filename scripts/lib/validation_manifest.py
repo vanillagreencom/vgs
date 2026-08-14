@@ -259,6 +259,81 @@ def runner_usage_arguments(runner: Path) -> set[str]:
     return set(match.group(1).split("|"))
 
 
+def token_participates(runner: Path, rules: "Grammar", token: str, workdir: Path):
+    """Does the runner ACT on `token` as a tag? Answered by running it.
+
+    Appearance is not participation. Matching whole tokens over the runner's
+    text closed the substring hole (`skip` inside `may-skip`) but not the
+    INCIDENTAL one: `status` and `run` are exact whole-token matches against the
+    runner's own variables, so declaring either as a modifier passed while the
+    tag was completely inert. Tag names and identifiers come from the same small
+    pool of English words, so that collision will keep happening.
+
+    So the question is behavioural, and it is the one the grammar already
+    states: does the token change what a manifest SELECTS, or how a row EXITS?
+
+      exclusive  a row tagged with it is skipped by a named area and taken by all
+      selects    a row tagged with it is taken by an area it does not name
+      modifier   a row tagged with it may exit 77 as a skip; without it, 77 fails
+
+    Returns (participates, reason).
+    """
+    repo = workdir / "repo"
+    (repo / "scripts" / "lib").mkdir(parents=True, exist_ok=True)
+    (repo / "scripts" / "lib" / rules.path.name).write_text(
+        rules.path.read_text(encoding="utf-8"), encoding="utf-8"
+    )
+    for stub, body in (("stub-x", "true"), ("stub-go", "true"), ("stub-skip", "exit 77")):
+        target = repo / "scripts" / stub
+        target.write_text(f"#!/usr/bin/env bash\n{body}\n", encoding="utf-8")
+        target.chmod(0o755)
+
+    def build(manifest: str) -> Path:
+        text = runner.read_text(encoding="utf-8")
+        text = re.sub(
+            r"(<<'MANIFEST_EOF'\n).*?(\nMANIFEST_EOF\n)",
+            lambda m: m.group(1) + manifest + m.group(2),
+            text,
+            flags=re.DOTALL,
+        )
+        probe = repo / "scripts" / "validate"
+        probe.write_text(text, encoding="utf-8")
+        probe.chmod(0o755)
+        return probe
+
+    def run(manifest: str, *args: str):
+        probe = build(manifest)
+        return subprocess.run(
+            [str(probe), *args], capture_output=True, text=True, check=False
+        )
+
+    props = rules.classes[rules.token_class[token]]
+    if props.get("exclusive"):
+        scoped = run(f"{token}       | scripts/stub-x\ngo        | scripts/stub-go", "--list", "go")
+        every = run(f"{token}       | scripts/stub-x\ngo        | scripts/stub-go", "--list", "all")
+        if "stub-x" in scoped.stdout:
+            return False, f"a row tagged `{token}` is selected by a named area, so it is not exclusive"
+        if "stub-x" not in every.stdout:
+            return False, f"a row tagged `{token}` is not selected by `all`, so nothing runs it"
+        return True, ""
+    if props.get("selects"):
+        scoped = run(f"{token}       | scripts/stub-x\ngo        | scripts/stub-go", "--list", "go")
+        if "stub-x" not in scoped.stdout:
+            return False, (
+                f"a row tagged `{token}` is not selected by an area it does not name, "
+                f"so the tag changes nothing"
+            )
+        return True, ""
+    tagged = run(f"go,{token}    | scripts/stub-skip", "go")
+    plain = run("go        | scripts/stub-skip", "go")
+    if tagged.returncode == plain.returncode:
+        return False, (
+            f"a row tagged `{token}` exits {tagged.returncode}, exactly as it does "
+            f"untagged, so the tag changes nothing"
+        )
+    return True, ""
+
+
 def runner_logic(runner: Path) -> str:
     """The runner's executable shell, with everything that is DATA removed.
 
