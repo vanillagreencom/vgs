@@ -27,12 +27,12 @@ const LOGIC = path.join(repoRoot, "config", "vshell", "plugins", "aiUsage", "AiU
 
 // The widget's own acceptance rules, extracted from the shipped QML, so this
 // asks whether the WIDGET would accept what the entrypoint emits.
-const marked = fs.readFileSync(LOGIC, "utf8")
-    .match(/\/\/ BEGIN PROVIDER DECISION\n([\s\S]*?)\/\/ END PROVIDER DECISION/);
-assert.ok(marked, "AiUsageLogic.qml must carry the PROVIDER DECISION markers");
-const { payloadProvider, payloadIsFor } = new Function(
-    `${marked[1]}\nreturn { payloadProvider, payloadIsFor };`
-)();
+// Evaluated under node:vm — see scripts/lib/qml-source.js: this text comes from
+// a repo file and a fork PR runs this suite on the CI runner.
+const { evaluateMarked } = require("./lib/qml-source.js");
+const { payloadProvider, payloadIsFor } = evaluateMarked(
+    fs.readFileSync(LOGIC, "utf8"), "PROVIDER DECISION",
+    ["payloadProvider", "payloadIsFor"], "AiUsageLogic.qml");
 
 // --- 6. the entrypoint the widget actually runs -----------------------------
 //

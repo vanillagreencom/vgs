@@ -33,22 +33,24 @@ const LOGIC = path.join(PLUGIN, "AiUsageLogic.qml");
 
 const logicSource = fs.readFileSync(LOGIC, "utf8");
 
-const marked = logicSource.match(/\/\/ BEGIN PROVIDER DECISION\n([\s\S]*?)\/\/ END PROVIDER DECISION/);
-assert.ok(marked, "AiUsageLogic.qml must carry the PROVIDER DECISION markers");
-
+// Evaluated under node:vm — see scripts/lib/qml-source.js: this text comes from
+// a repo file and a fork PR runs this suite on the CI runner.
+const { evaluateMarked, regionOf } = require("./lib/qml-source.js");
 const {
     normalizeProvider, providerIcon, headOf, popoutView, accountCount, failureWins,
     pillSlot, pillSlots
-} = new Function(
-    `${marked[1]}\nreturn { normalizeProvider, providerIcon, headOf, popoutView,` +
-    ` accountCount, failureWins, pillSlot, pillSlots };`
-)();
+} = evaluateMarked(logicSource, "PROVIDER DECISION", [
+    "normalizeProvider", "providerIcon", "headOf", "popoutView", "accountCount", "failureWins",
+    "pillSlot", "pillSlots"
+], "AiUsageLogic.qml");
+
+const region = regionOf(logicSource, "PROVIDER DECISION", "AiUsageLogic.qml");
 
 // The extracted region must be free of the widget and of Qt, or this harness is
 // testing something the shell does not run.
 for (const forbidden of ["root.", "Theme.", "Qt."]) {
     assert.ok(
-        !marked[1].includes(forbidden),
+        !region.includes(forbidden),
         `the PROVIDER DECISION block must not reference ${forbidden} — it has to stay plain JavaScript`
     );
 }
