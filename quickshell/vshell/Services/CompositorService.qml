@@ -52,8 +52,35 @@ Singleton {
     // else".
     readonly property string activeWorkspaceName: isHyprland ? (Hyprland.activeToplevel?.workspace?.name ?? "") : ""
 
-    // The focused window's app id, or "" when nothing is focused or the
-    // compositor does not report one. "" means "unknown", not "no app".
+    // Which source the focus properties below resolve from. FOUR states, and the
+    // `isHyprland`/`isNiri` pair cannot hold them: both booleans are false
+    // BEFORE detection has answered and again when it answered "cannot tell", so
+    // anything reading them directly resolves those two states through the
+    // Hyprland branch — silently, and at exactly the moment paste is first used.
+    //
+    //   "pending"   detection has not answered yet. It always ends: this state
+    //               is left by `_applyCompositor`, which `detectCompositor`
+    //               reaches on every path, and its `Proc.runCommand` timeout is
+    //               specified to fire the callback rather than wait on the
+    //               process. So a consumer may WAIT for it, and nothing here
+    //               needs a second deadline watching the first.
+    //   "hyprland"  detection answered Hyprland.
+    //   "niri"      detection answered Niri.
+    //   "unknown"   detection answered that it could not tell — the helper
+    //               failed, timed out, or named a compositor VGS does not
+    //               support.
+    //
+    // What each state RESOLVES TO is decided in the two properties below and
+    // stated there. The point of this property is that those are decisions a
+    // reader can find and disagree with, rather than consequences of a boolean's
+    // default value.
+    readonly property string focusSource: !compositorDetected
+        ? "pending"
+        : (isNiri ? "niri" : (isHyprland ? "hyprland" : "unknown"))
+
+    // The focused window's app id, or "" when nothing is focused, the compositor
+    // does not report one, or none is known yet. "" means "unknown", not "no
+    // app"; `focusSource` is what tells a consumer which kind of unknown.
     //
     // Per compositor, deliberately. On Hyprland this is the seat's active
     // toplevel, which the compositor drives through wlr-foreign-toplevel. Niri
@@ -63,9 +90,28 @@ Singleton {
     // of focus already skip `activeToplevelChanged` there in favour of Niri's
     // own events — so the Niri branch reads Niri's IPC-maintained focus. The
     // Hyprland path is untouched: this is additive, per AGENTS.md § Mission.
-    readonly property string focusedAppId: isNiri
+    //
+    // PENDING resolves to "", not to the Hyprland branch. A target resolved
+    // before detection answers is a guess, and the cost of guessing wrong is the
+    // stray input this whole path exists to prevent. The consumer that cares
+    // waits — PasteService queues the paste rather than pressing a chord it
+    // cannot justify, which is the same rule it already applies to a helper in
+    // flight and to an unconfirmed seat.
+    //
+    // UNKNOWN resolves through the Hyprland branch, deliberately, and this is
+    // the decision most worth disagreeing with. Three things argue for it: it is
+    // what every target did before VGS-119, so a detection failure degrades to
+    // the old behaviour instead of taking paste away; the Niri branch has
+    // nothing to offer here anyway, because `NiriService` only connects its
+    // socket once `isNiri` is true, so a failed detection leaves Niri's own
+    // focus source empty; and refusing instead would disable paste for every
+    // Hyprland user over one failed helper exec while still giving a Niri user
+    // nothing. The cost is real and named: on Niri with detection broken, a
+    // terminal gets Ctrl+V — the original bug. Detection failing is already
+    // logged as a warning where it happens.
+    readonly property string focusedAppId: focusSource === "niri"
         ? ((NiriService.windows ?? []).find(window => window.is_focused)?.app_id ?? "")
-        : (ToplevelManager.activeToplevel?.appId ?? "")
+        : (focusSource === "pending" ? "" : (ToplevelManager.activeToplevel?.appId ?? ""))
 
     // The app id of the window that last held focus, for consumers that need a
     // target across the gaps where `focusedAppId` is "": a shell surface taking
@@ -78,12 +124,15 @@ Singleton {
     // keystroke into whatever replaced it. Each branch's gate is the live list
     // its own compositor maintains: membership in `ToplevelManager.toplevels`
     // for Hyprland, and for Niri the lookup itself, since `NiriService.windows`
-    // drops a window on `WindowClosed`.
+    // drops a window on `WindowClosed`. Pending and unknown resolve exactly as
+    // they do for the live value above, for the same reasons: a remembered
+    // window is still a target, and naming one from a compositor nobody has
+    // confirmed yet is still a guess.
     property var _lastFocusedToplevel: null
     property var _lastFocusedNiriWindowId: null
-    readonly property string lastFocusedAppId: isNiri
+    readonly property string lastFocusedAppId: focusSource === "niri"
         ? ((NiriService.windows ?? []).find(window => window.id === _lastFocusedNiriWindowId)?.app_id ?? "")
-        : (_lastFocusedToplevel && (ToplevelManager.toplevels?.values ?? []).includes(_lastFocusedToplevel) ? (_lastFocusedToplevel.appId ?? "") : "")
+        : (focusSource === "pending" ? "" : (_lastFocusedToplevel && (ToplevelManager.toplevels?.values ?? []).includes(_lastFocusedToplevel) ? (_lastFocusedToplevel.appId ?? "") : ""))
 
     Connections {
         target: ToplevelManager

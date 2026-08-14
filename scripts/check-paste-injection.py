@@ -42,17 +42,32 @@ Pinned, over the QML and JS under `quickshell/vshell/` and `config/vshell/`
      same function or handler as the assignment, and the assignment precedes the
      start. Same function means the function ITSELF: a read or a start inside a
      callback nested in it runs on the callback's terms and does not count. Quickshell ignores a command change on a live Process, so the reverse
-     order runs the previous injection's argv.
-  4. Both supported compositors resolve a target, and the sticky fallback
-     empties when its window closes. `focusedAppId` and `lastFocusedAppId` each
-     branch on `isNiri`, so neither compositor can inherit the other's
-     mechanism: Hyprland reads the seat's active toplevel and gates the fallback
-     on membership in `ToplevelManager.toplevels`, while Niri reads its own
+     order runs the previous injection's argv. Ahead of all of it, a branch on
+     `CompositorService.focusSource` that returns unconditionally: while
+     detection is pending the focus properties are empty by design, and empty
+     resolves to Ctrl+V, so an injector that read them and carried on would send
+     exactly the keystroke the pending state exists to withhold.
+  4. Both supported compositors resolve a target, a compositor nobody has
+     confirmed yet resolves none, and the sticky fallback empties when its window
+     closes. `focusedAppId` and `lastFocusedAppId` each branch on the four-state
+     `focusSource` — never on `isNiri` or `isHyprland`, which is the defect this
+     arm exists to catch second: that pair reads false BOTH before detection has
+     answered and when it answered that it could not tell, so a property
+     branching on it resolves those two states through the Hyprland arm, at the
+     first paste of a session. `focusSource` must itself derive from
+     `compositorDetected`, or the pending state it is named for does not exist.
+     Neither compositor can inherit the other's mechanism either: the non-Niri
+     arm reads the seat's active toplevel and gates the fallback on membership in
+     `ToplevelManager.toplevels`, while the Niri arm reads Niri's own
      IPC-maintained `NiriService.windows[].is_focused` and gates the fallback by
      resolving the remembered id through that same live list. Niri does not
      populate the active toplevel the way Hyprland does, so an unbranched
      toplevel read leaves every Niri paste falling back to Ctrl+V — the original
-     bug, on a supported platform. Each fallback is also actually maintained:
+     bug, on a supported platform. The non-Niri arm additionally tests the
+     pending state, so a target cannot be resolved before detection answers.
+     Which compositor the non-Niri arm covers besides Hyprland — that is, what a
+     FAILED detection resolves to — is a decision stated in the QML, not
+     something this arm dictates. Each fallback is also actually maintained:
      every assignment to the private reference its branch reads sits INSIDE the
      statement a focus test controls (its braced body, or the single statement
      of a braceless form), not merely after such a test in the text — an
@@ -160,7 +175,16 @@ LIVENESS_RE = re.compile(r"ToplevelManager\.toplevels")
 # resolution IS the liveness gate, since the list drops a window when it closes.
 NIRI_WINDOWS_RE = re.compile(r"NiriService\.windows\b")
 NIRI_FOCUS_FLAG_RE = re.compile(r"\bis_focused\b")
-COMPOSITOR_BRANCH_RE = re.compile(r"(?<![\w.])(?:\w+\s*\.\s*)*isNiri\b")
+# The four-state focus source, and the two-state pair it exists to replace. The
+# pair reads false BOTH before detection answers and when it answered "cannot
+# tell", so a focus path branching on it resolves those two states through the
+# Hyprland arm — which is why reading them HERE is the defect, even though they
+# are the right thing to read for maintenance and for everything else in QML.
+FOCUS_SOURCE_RE = re.compile(r"(?<![\w.])(?:\w+\s*\.\s*)*focusSource\b")
+COMPOSITOR_BOOLEAN_RE = re.compile(r"(?<![\w.])(?:\w+\s*\.\s*)*is(?:Niri|Hyprland)\b")
+NIRI_SOURCE_TEST_RE = re.compile(r"focusSource\s*===?\s*(['\"])niri\1")
+PENDING_SOURCE_TEST_RE = re.compile(r"focusSource\s*===?\s*(['\"])pending\1")
+DETECTION_COMPLETE_RE = re.compile(r"\bcompositorDetected\b")
 PRIVATE_MEMBER_RE = re.compile(r"\b_[A-Za-z][A-Za-z0-9_]*\b")
 # Polarity matters, in both directions: a test on the ABSENCE of an active
 # toplevel guards the wrong way, and a guard that returns when the copy SUCCEEDED
@@ -303,6 +327,31 @@ def check_argv_assignment(source: str, call: re.Match) -> bool:
             + " — the live value is routinely empty at the moment a paste fires, so both are needed"
         )
 
+    # Emptying the focus properties while detection is pending only helps if the
+    # injector tells empty-because-not-yet-known from empty-because-no-window:
+    # "" resolves to Ctrl+V, so a paste that read it and carried on would land
+    # the exact keystroke the pending state exists to withhold. The branch has to
+    # belong to this function, close before the argv is built, and return —
+    # unconditionally, at its own brace depth and inside nothing that governs
+    # whether it runs.
+    pending = [
+        (region_start, region_end) for test, region_start, region_end in if_regions(source)
+        if body_start <= region_start and region_end <= call.start()
+        and FOCUS_SOURCE_RE.search(test)
+        and in_function(source, region_start, body_start)
+    ]
+    if not pending:
+        return fail(
+            f"{OWNER} builds the argv with no branch ahead of it testing CompositorService.focusSource, "
+            "so a paste requested before compositor detection answers resolves an empty target and "
+            "sends Ctrl+V — into a terminal, that is the stray input this whole path exists to prevent"
+        )
+    if not any(returns_unconditionally(source, *span) for span in pending):
+        return fail(
+            f"{OWNER} tests focusSource but does not leave the function from that branch, so a paste "
+            "requested before detection answers still reaches the argv it was meant to wait for"
+        )
+
     starts = occurrences_in(source, RUNNING_TRUE_RE, body_start, body)
     if not starts:
         return fail(f"{OWNER} never starts the injector in the function that builds its argv")
@@ -390,26 +439,70 @@ def conditional_branches(expression: str) -> tuple[str, str] | None:
 
 
 def focus_branches(source: str, name: str) -> tuple[str, str] | None:
-    """(Niri branch, Hyprland branch) of a focus property's binding."""
+    """(Niri branch, non-Niri branch) of a focus property's binding."""
     binding = declaration_binding(source, name)
     if binding is None:
         fail(f"{FOCUS_SOURCE} does not declare: {name}")
         return None
-    if not COMPOSITOR_BRANCH_RE.search(binding):
+    if COMPOSITOR_BOOLEAN_RE.search(binding):
         fail(
-            f"{FOCUS_SOURCE} resolves {name} without branching on isNiri, so both compositors get the "
-            "Hyprland mechanism — Niri does not populate the active toplevel the same way, so its "
-            "windows resolve to no target and every Niri paste falls back to Ctrl+V"
+            f"{FOCUS_SOURCE} resolves {name} from isNiri or isHyprland directly. Both are false before "
+            "detection has answered AND when it answered that it could not tell, so those two states "
+            "resolve through the Hyprland arm — a guessed target at the first paste of a session. "
+            "Branch on the four-state focusSource instead"
+        )
+        return None
+    if not NIRI_SOURCE_TEST_RE.search(binding):
+        fail(
+            f"{FOCUS_SOURCE} resolves {name} without testing focusSource for Niri, so both compositors "
+            "get the Hyprland mechanism — Niri does not populate the active toplevel the same way, so "
+            "its windows resolve to no target and every Niri paste falls back to Ctrl+V"
         )
         return None
     branches = conditional_branches(binding)
     if branches is None:
         fail(
-            f"{FOCUS_SOURCE} names isNiri in {name} but resolves it through no conditional, so the "
+            f"{FOCUS_SOURCE} tests focusSource in {name} but resolves it through no conditional, so the "
             "branch cannot be read as a per-compositor path"
         )
         return None
+    if not PENDING_SOURCE_TEST_RE.search(branches[1]):
+        fail(
+            f"{FOCUS_SOURCE} resolves {name} without testing focusSource for the pending state, so a "
+            "paste requested before detection answers is resolved through the Hyprland arm by default "
+            "— which is a guess, and the wrong guess types stray input into a terminal"
+        )
+        return None
     return branches
+
+
+def check_focus_source_states() -> bool:
+    """That focusSource can express pending at all.
+
+    Every rule below branches on it, and a two-state stand-in named focusSource
+    would satisfy each of them while collapsing pending back into a compositor.
+    """
+    source = read_live_with_strings(FOCUS_SOURCE)
+    if source is None:
+        return False
+    binding = declaration_binding(source, "focusSource")
+    if binding is None:
+        return fail(
+            f"{FOCUS_SOURCE} declares no focusSource, so nothing distinguishes a compositor VGS has "
+            "confirmed from one it has not asked about yet"
+        )
+    if not DETECTION_COMPLETE_RE.search(binding):
+        return fail(
+            f"{FOCUS_SOURCE} derives focusSource without reading compositorDetected, so it cannot tell "
+            "detection-not-answered from detection-answered and the pending state does not exist"
+        )
+    if not PENDING_SOURCE_TEST_RE.search(source):
+        return fail(
+            f"{FOCUS_SOURCE} never resolves anything on the pending state, so declaring it changes "
+            "nothing"
+        )
+    print(f"check-paste-injection: {FOCUS_SOURCE} publishes a focusSource that can express pending")
+    return True
 
 
 def check_remembered(source: str, branch: str, arm: str, guarded_regions: list[tuple[int, int]],
@@ -467,19 +560,30 @@ def niri_guarded_regions(source: str) -> list[tuple[int, int]]:
 
 def check_focus_source() -> bool:
     source = read_live(FOCUS_SOURCE)
-    if source is None:
+    # The declarations name their states as string literals, so the branch rules
+    # read the view where string contents survive. The structural rules below
+    # keep the blanked view, which is what the shared brace and paren scanning
+    # expects: a brace inside a string elsewhere in the file would otherwise be
+    # counted as code. The two views are read for different questions and their
+    # offsets are never mixed.
+    declared = read_live_with_strings(FOCUS_SOURCE)
+    if source is None or declared is None:
         return False
 
-    live = focus_branches(source, "focusedAppId")
-    sticky = focus_branches(source, "lastFocusedAppId")
+    live = focus_branches(declared, "focusedAppId")
+    sticky = focus_branches(declared, "lastFocusedAppId")
     if live is None or sticky is None:
         return False
-    live_niri, live_hyprland = live
-    sticky_niri, sticky_hyprland = sticky
+    # The second arm is not "Hyprland": it is every state that is not Niri, which
+    # is Hyprland plus the deliberate decision about what a failed detection
+    # resolves to. Both are checked here as the toplevel mechanism, because that
+    # is what the arm reads on either.
+    live_niri, live_toplevel = live
+    sticky_niri, sticky_toplevel = sticky
 
-    if not ACTIVE_TOPLEVEL_TEST_RE.search(live_hyprland):
+    if not ACTIVE_TOPLEVEL_TEST_RE.search(live_toplevel):
         return fail(
-            f"{FOCUS_SOURCE} resolves the Hyprland focusedAppId from something other than the seat's "
+            f"{FOCUS_SOURCE} resolves the non-Niri focusedAppId from something other than the seat's "
             "active toplevel"
         )
     if not (NIRI_WINDOWS_RE.search(live_niri) and NIRI_FOCUS_FLAG_RE.search(live_niri)):
@@ -488,9 +592,9 @@ def check_focus_source() -> bool:
             "window in NiriService.windows, which is where Niri's focus state actually lives"
         )
 
-    if not LIVENESS_RE.search(sticky_hyprland):
+    if not LIVENESS_RE.search(sticky_toplevel):
         return fail(
-            f"{FOCUS_SOURCE} declares the Hyprland lastFocusedAppId without testing the remembered "
+            f"{FOCUS_SOURCE} declares the non-Niri lastFocusedAppId without testing the remembered "
             "window against ToplevelManager.toplevels, so it would keep naming a window after it closed"
         )
     if not NIRI_WINDOWS_RE.search(sticky_niri):
@@ -499,12 +603,12 @@ def check_focus_source() -> bool:
             "through NiriService.windows, so it would keep naming a window after it closed"
         )
 
-    hyprland_regions = [
+    toplevel_regions = [
         (start, end) for test, start, end in if_regions(source)
         if ACTIVE_TOPLEVEL_TEST_RE.search(test) and not NEGATED_ACTIVE_TOPLEVEL_RE.search(test)
     ]
     if not check_remembered(
-        source, sticky_hyprland, "Hyprland", hyprland_regions,
+        source, sticky_toplevel, "non-Niri", toplevel_regions,
         "outside the branch any activeToplevel test controls, so the remembered window would be "
         "overwritten with nothing every time focus leaves a toplevel",
     ):
@@ -516,7 +620,7 @@ def check_focus_source() -> bool:
     ):
         return False
 
-    print(f"check-paste-injection: {FOCUS_SOURCE} resolves focus per compositor and gates both fallbacks on liveness")
+    print(f"check-paste-injection: {FOCUS_SOURCE} resolves focus per compositor, withholds it while pending, and gates both fallbacks on liveness")
     return True
 
 
@@ -603,6 +707,7 @@ def main() -> int:
         check_no_literal_argv(files),
         check_single_injector(files),
         check_owner(),
+        check_focus_source_states(),
         check_focus_source(),
         check_callers(),
         check_launcher_copy_result(),

@@ -212,7 +212,12 @@ function makeHarness() {
         releaseProcess: makeProcess(),
 
         log: { debug() {}, warn: (...a) => warnings.push(a.join(" ")) },
-        CompositorService: { focusedAppId: "foot", lastFocusedAppId: "" },
+        // focusSource is the four-state one: "pending" until compositor
+        // detection answers, and while it is pending both app ids are empty by
+        // design rather than because nothing is focused. The default here is a
+        // session past that point, which is what every case below but the
+        // detection ones is about.
+        CompositorService: { focusSource: "hyprland", focusedAppId: "foot", lastFocusedAppId: "" },
         PasteTarget: {
             pasteCommand: () => ["wtype", "-M", "ctrl", "-M", "shift", "-P", "v", "-p", "v", "-m", "shift", "-m", "ctrl"],
             releaseModifiersCommand: () => ["wtype", "-m", "shift", "-m", "ctrl"],
@@ -596,6 +601,44 @@ function queuePaste(h) {
     h.fire("settleTimer", "settleTriggered");
     assert.equal(h.root.wtypeProcess.running, true, "a paste after a confirmed clean release must actually inject");
     assert.equal(h.root._pendingPaste, false, "and must not be queued behind nothing");
+}
+
+// ---- 4m. a paste requested before compositor detection answers ------------
+
+{
+    // Detection is asynchronous, so the very first paste of a session can beat
+    // it. Until it answers, the focus properties report nothing rather than
+    // guessing a compositor — and empty resolves to Ctrl+V, the stray input the
+    // whole path exists to prevent. So the paste waits.
+    const h = makeHarness();
+    h.root.CompositorService = { focusSource: "pending", focusedAppId: "", lastFocusedAppId: "" };
+
+    queuePaste(h);
+    assert.equal(h.root.wtypeProcess.running, false, "a paste must not inject before detection answers");
+    assert.deepEqual(h.root.wtypeProcess.command, [], "and must not build an argv from an unknown target");
+    assert.equal(h.root.settleTimer.running, true, "it waits rather than being dropped");
+    assert.deepEqual(h.toasts, [], "and nothing has gone wrong, so the user is told nothing");
+
+    // Waiting is not refusing: the seat is untouched, so no recovery runs.
+    assert.equal(h.root._seatUnconfirmed, false, "waiting must not mark the seat");
+    assert.equal(h.root.releaseProcess.running, false, "and must not start a modifier release");
+
+    // Detection lands. The next settle finds a target and injects.
+    h.root.CompositorService = { focusSource: "hyprland", focusedAppId: "foot", lastFocusedAppId: "" };
+    h.fire("settleTimer", "settleTriggered");
+    assert.equal(h.root.wtypeProcess.running, true, "the waiting paste injects once detection answers");
+    assert.equal(h.root._targetAppId, "foot", "into the target detection made resolvable");
+}
+{
+    // Detection answering "cannot tell" is not pending: it is an answer, and the
+    // decision recorded in CompositorService is that it resolves through the
+    // toplevel path. A paste then must not hang waiting for a second answer that
+    // is never coming.
+    const h = makeHarness();
+    h.root.CompositorService = { focusSource: "unknown", focusedAppId: "foot", lastFocusedAppId: "" };
+    queuePaste(h);
+    assert.equal(h.root.wtypeProcess.running, true, "a failed detection still pastes rather than waiting forever");
+    assert.equal(h.root._targetAppId, "foot", "using whatever target the toplevel path could name");
 }
 
 // ---- 5. release give-up: the queue must not outlive it --------------------

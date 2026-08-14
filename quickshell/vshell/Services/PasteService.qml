@@ -127,6 +127,21 @@ Singleton {
             refuseUnconfirmedSeat();
             return;
         }
+        // Compositor detection is asynchronous, and until it answers, VGS does
+        // not know which source the focused window comes from — so the focus
+        // properties report nothing rather than guessing a compositor. Pasting
+        // on that would send Ctrl+V into whatever holds focus, which is the
+        // stray-input bug this service exists to prevent, at the first paste of
+        // a session. So the paste WAITS, the same rule as a helper in flight
+        // above: deferred, not dropped, and not refused either — nothing has
+        // gone wrong, the answer has not arrived. Bounded by the same kind of
+        // argument, stated at CompositorService.focusSource: detection runs
+        // under a Proc timeout that fires the callback rather than waiting on
+        // the process, so pending always ends.
+        if (CompositorService.focusSource === "pending") {
+            settleTimer.restart();
+            return;
+        }
         // "" from focusedAppId means the compositor reports no active toplevel,
         // which is normal while a shell surface holds keyboard focus, so the
         // last window known to have focus is the target.
