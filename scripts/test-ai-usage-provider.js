@@ -223,70 +223,25 @@ assert.equal(launchDecision("claude", true), "skip",
     "a channel already fetching does not relaunch: its result is on its way");
 assert.equal(launchDecision("", true), "pend",
     "assigning running while the previous process is still stopping is a no-op, so the request " +
-    "is parked rather than dropped — dropping it showed a fetch that did not exist until the " +
-    "poll timer");
+    "is parked rather than dropped — dropping it showed no fetch until the poll timer");
 assert.equal(launchDecision("claude", false), "pend",
-    "a TAG WITH A STOPPED PROCESS is a launch that has not settled — `running` goes false before " +
-    "the exit is delivered, which is the state the watchdog arms in. Starting there would " +
-    "overwrite that launch's tag, and its late exit would settle somebody else's fetch");
-
-// The window itself, driven rather than reasoned about: a launch is running, the
-// process stops, the exit has NOT been delivered, and a provider change lands.
-// The glue below is the whole of what the widget's launch() does with the
-// decision — set the tag on "start", park on "pend", leave "skip" alone — and
-// scripts/test-ai-usage-wiring.js pins that the widget has exactly that glue.
-{
-    const channel = { inFlight: "", pending: false, running: false, starts: 0 };
-    const request = want => {
-        const decision = launchDecision(channel.inFlight, channel.running);
-        if (decision === "skip")
-            return decision;
-        if (decision === "pend") {
-            channel.pending = true;
-            return decision;
-        }
-        channel.pending = false;
-        channel.inFlight = want;
-        channel.running = true;
-        channel.starts += 1;
-        return decision;
-    };
-
-    request("claude");
-    assert.equal(channel.starts, 1, "the first launch runs: nothing in flight, nothing stopping");
-    assert.equal(channel.inFlight, "claude");
-
-    // The process stops. No exit yet, so nothing has settled the tag.
-    channel.running = false;
-
-    assert.equal(request("codex"), "pend", "a provider change in that window is parked");
-    assert.equal(channel.starts, 1, "no second launch starts against an unsettled tag");
-    assert.equal(channel.inFlight, "claude",
-        "and the unsettled launch keeps its own tag, so its late exit still settles ITS fetch " +
-        "rather than clearing a new one, spending its retry or discarding its output");
-    assert.equal(channel.pending, true, "the request is remembered, not dropped");
-
-    // The exit finally arrives: settleFetch clears the tag, then runs what was
-    // parked — which is what the widget's `if (ch.pending)` drain does.
-    channel.inFlight = "";
-    if (channel.pending)
-        request("codex");
-    assert.equal(channel.starts, 2, "the parked provider change runs once the channel settles");
-    assert.equal(channel.inFlight, "codex", "for the provider that was asked for");
-}
+    "a TAG WITH A STOPPED PROCESS is a launch that has not settled — `running` can go false " +
+    "before the exit is delivered. Starting there would overwrite that launch's tag, and its " +
+    "late exit would settle somebody else's fetch");
 
 // --- the watchdog fires only for a launch that never produced a process ------
 //
 // `exited` and `runningChanged` are not ordered against each other, and the
 // watchdog used to arm on ANY stop while the tag was set: a normal exit landing
 // later than the interval was then reported as "could not run" for a fetch that
-// ran and returned. Both orders are driven below, and so is the ordering INSIDE
-// the stop handler. The glue is the whole of what the widget's handlers do, and
-// scripts/test-ai-usage-wiring.js pins that the widget has exactly that glue.
+// ran and returned. Both orders are driven below, so is the ordering INSIDE the
+// stop handler, and so is a provider switch landing on an armed timer. The glue
+// is what the widget's handlers do; test-ai-usage-wiring.js pins that it has it.
 {
     const replay = (signals, park) => {
         const ch = { want: "claude", inFlight: "claude", running: true, pending: false,
-                     sawProcess: false, armed: false, starts: 1, settled: [] };
+                     sawProcess: false, armed: false, retryArmed: false, starts: 1,
+                     settled: [] };
         // launch(): the extracted decision applied as the widget applies it —
         // park on "pend", tag and run on "start", leave "skip" alone.
         const request = () => {
@@ -331,12 +286,30 @@ assert.equal(launchDecision("claude", false), "pend",
             },
             // The armed timer coming due: it asks the same rule again, because
             // the fetch may have settled or the process started while it waited.
+            refresh: request,
+            armRetry: () => { ch.retryArmed = true; },
+            retryFires: () => {
+                if (!ch.retryArmed)
+                    return;
+                ch.retryArmed = false;
+                request();
+            },
+            // clearProviderState(): reset() on the channel, then refresh().
+            switched: () => {
+                ch.want = "codex";
+                ch.loaded = "";
+                ch.armed = false;
+                ch.retryArmed = false;
+                ch.pending = false;
+                if (!ch.running && watchdogArms(ch.inFlight, ch.sawProcess))
+                    ch.inFlight = "";
+                request();
+            },
             watchdog: () => {
                 if (!ch.armed || !watchdogArms(ch.inFlight, ch.sawProcess))
                     return;
                 settle("failed-start");
-            },
-            refresh: request
+            }
         };
         if (park)
             ch.pending = true;
@@ -369,6 +342,38 @@ assert.equal(launchDecision("claude", false), "pend",
         "and the parked request ran, taking the tag for a fetch that is actually running");
     assert.equal(freed.starts, 2, "which is a real second launch, not another parked one");
     assert.equal(freed.pending, false, "with nothing left parked");
+
+    // A refresh landing in the unsettled window — tag set, process stopped, exit
+    // not delivered — parks rather than starting: the tag is owned until the
+    // settle path clears it, and starting there would let the late exit settle
+    // somebody else's fetch. It runs on settleFetch's own drain instead.
+    const parked = replay(["stopped", "refresh"]);
+    assert.equal(parked.starts, 1, "no second launch starts against an unsettled tag");
+    assert.equal(parked.inFlight, "claude", "which keeps its own tag");
+    assert.equal(parked.pending, true, "and the request is remembered, not dropped");
+    assert.equal(replay(["stopped", "refresh", "watchdog"]).starts, 2,
+        "and runs once the channel settles");
+
+    // A timer armed before a provider switch must not act after it. The switch is
+    // this branch's generation boundary, and reset() left both timers running, so
+    // the watchdog fired against a channel whose `want` had been rebound. What
+    // stood between that and a wrong provider's error on screen was shouldRelaunch
+    // alone: the switch zeroes `retries`, so settleFetch relaunched and returned
+    // before the failure write. One predicate, and not the one the reset claims.
+    const switched = replay(["stopped", "armRetry", "switched"]);
+    assert.equal(switched.armed, false, "the switch disarms a watchdog armed before it");
+    assert.equal(switched.retryArmed, false, "and the retry that was waiting");
+    assert.equal(switched.inFlight, "codex",
+        "and settles the tag of a launch that produced no process — nothing else would once " +
+        "the watchdog is stopped, and a tag nothing settles owns the channel for good");
+    assert.equal(switched.starts, 2,
+        "so the switch's own refresh RUNS: one fetch, not a request parked behind a launch " +
+        "that can never settle");
+
+    const late = replay(["stopped", "armRetry", "switched", "watchdog", "retryFires"]);
+    assert.deepEqual(late.settled, [],
+        "a timer armed before the switch writes nothing after it — not for the provider it was " +
+        "launched for, and above all not for the one just selected");
 
     assert.deepEqual(replay(["started", "exited", "stopped", "watchdog"]).settled, ["exit"],
         "the measured order on Quickshell 0.3.0 — exit first — settles as an exit");

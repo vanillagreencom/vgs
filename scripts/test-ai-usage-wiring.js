@@ -40,7 +40,6 @@ require("./lib/qml-source.js").selfTest();
     assert.ok(walked.startsWith("{") && walked.endsWith("}"), "the walk returns a whole block");
     assert.ok(walked.includes("otherFetch.reset()"), "the walk reaches the end of the block");
     assert.ok(!walked.includes("function refresh"), "the walk stops at the block it was asked for");
-
     const stripped = stripComments('a(); // "Claude" lives here\nb("kept"); /* gone */ c();');
     assert.ok(!stripped.includes("Claude"), "a line comment must not survive stripping");
     assert.ok(!stripped.includes("gone"), "a block comment must not survive stripping");
@@ -54,8 +53,7 @@ requires(store, "storeHeadline()", [
     ["next[which] = data", "a headline is filed by key, never by branch"],
     ['if (which === "")', "an unidentifiable provider files nothing"],
     ["root.fileSeq += 1", "every filing takes the next stamp"],
-    ["nextAt[which] = root.fileSeq", "and the entry records it — the ordering evidence the " +
-        "failure path reads"]]);
+    ["nextAt[which] = root.fileSeq", "and records it — the ordering evidence failures read"]]);
 assert.ok(!/(claudeData|codexData)\s*=/.test(store),
     "a per-provider branch is what let an unknown provider land under Claude");
 assert.ok(body("noteHeadline").includes("logic.payloadProvider(data)"),
@@ -90,7 +88,7 @@ requires(body("promoteSelected"), "promoteSelected()", [
     ["root.current = filed", "the popout state is the payload that was filed"],
     ["root.currentFiledAt = filedAt", "stamped, so the next promotion can compare"],
     ['root.fetchError = ""', "a promoted payload clears the failure text"],
-    ["root.loading = false", "and ends the loading state"]]);
+    ["root.loading = false", "and ends loading"]]);
 assert.ok(!/ch\.primary/.test(stripComments(body("acceptPayload"))),
     "acceptPayload must not gate the popout on which channel fetched");
 
@@ -178,8 +176,8 @@ requires(launch, "launch()", [
 ]);
 assert.ok(!stripComments(launch).includes("if (!ch.proc.running)"),
     "a runtime `running = true` reads back true even for a missing binary (measured, Quickshell " +
-    "0.3.0), so a synchronous check catches nothing — and at component completion it reads false " +
-    "for a start that is merely deferred, failing a healthy fetch");
+    "0.3.0), so a synchronous check catches nothing — and at component completion it reads " +
+    "false for a deferred start, failing a healthy fetch");
 
 // A start that fails asynchronously reports nothing: Qt emits no exit for it.
 requires(channel, "the channel's runningChanged handler", [
@@ -204,8 +202,7 @@ assert.ok(stops[0].indexOf("watchdogArms") < stops[0].indexOf("chan.pending"),
 
 // Both failure paths are idempotent: whichever settles the fetch first owns it.
 assert.ok(body("finishFetch").includes('if (ch.inFlight === "")'),
-    "an exit arriving after the watchdog already settled must not report a second time, nor " +
-    "settle a relaunch that is by then running");
+    "an exit arriving after the watchdog settled must not report twice, nor settle a relaunch");
 
 requires(body("failLaunch"), "failLaunch()", [
     ["if (!logic.watchdogArms(ch.inFlight, ch.sawProcess))",
@@ -269,10 +266,9 @@ requires(settle, "settleFetch()", [
     ["if (authoritative)", "and consulted by BOTH the headline write and the popout's", 2],
     ["root.storeHeadline(ch.want, { ok: false, provider: ch.want", "filed for its own provider"],
     ["root.loading = false", "loading ends either way: this fetch settled"],
-    ["root.fetchError = why", "only the failure TEXT is conditional"]
-]);
+    ["root.fetchError = why", "only the failure TEXT is conditional"]]);
 assert.ok(!/launchedFor !== (root\.)?(other)?[Pp]rovider/.test(stripComments(settle)),
-    "comparing the tag to the current selection is the dropped-refetch bug");
+    "comparing the tag to the selection is the dropped-refetch bug");
 assert.ok(settle.indexOf("logic.shouldRelaunch") < settle.indexOf('ch.inFlight = ""'),
     "the decision reads the tag, so it is taken BEFORE the tag is cleared");
 
@@ -291,8 +287,7 @@ requires(cleared, "clearProviderState()", [
     ["root.loading = true", "a switch puts the popout back into loading"],
     ['root.expandedAccountId = ""', "the expanded account belongs to the previous provider's list"],
     ["usageFetch.reset()", "the usage channel is invalidated"],
-    ["otherFetch.reset()", "the other channel is invalidated through the same path"]
-]);
+    ["otherFetch.reset()", "the other channel is invalidated through the same path"]]);
 assert.ok(!/providerData/.test(stripComments(cleared)),
     "the per-provider headlines are keyed by identity and survive a switch");
 
@@ -302,8 +297,17 @@ for (const [field, value] of [["loaded", '""'], ["retries", "0"], ["accepted", "
                               ["issue", '""']])
     assert.ok(reset.includes(`${field} = ${value};`),
         `a channel reset must set ${field} back to ${value}`);
-assert.ok(!/\binFlight = /.test(stripComments(reset)),
-    "inFlight identifies a process that is still running; clearing it would orphan its payload");
+requires(reset, "FetchChannel.reset()", [
+    ["stallTimer.stop()", "a switch disarms the watchdog: nothing armed before the generation " +
+        "boundary may act after it"],
+    ["retryTimer.stop()", "and the retry that was waiting to relaunch into it"],
+    ["pending = false", "and drops a request parked for the previous selection"],
+    // BOTH halves matter: a running process still delivers an exit that must
+    // settle its own fetch, while a launch that produced none has nothing coming
+    // once the watchdog above is stopped — and a tag with no settle path is the
+    // wedge this branch already fixed once.
+    ["if (!proc.running && logic.watchdogArms(inFlight, sawProcess)) inFlight = \"\"",
+        "so the switch settles exactly the launches the watchdog would have, and only those"]]);
 
 const switched = blockFrom(indexOf("onProviderChanged:"), "onProviderChanged");
 const invalidateAt = switched.indexOf("clearProviderState()");
@@ -319,9 +323,7 @@ assert.equal((code.match(/root\.current = /g) || []).length, 2,
 
 // --- one headline owner -----------------------------------------------------
 // Bar, vertical bar and popout header all come from headOf, or they contradict
-// each other: with both accounts hidden they showed "!", 60% and "0 accounts ·
-// 60% used" at once.
-
+// each other: with both hidden they showed "!", 60% and "0 accounts · 60% used".
 requires(source, "AiUsageWidget.qml", [
     ["logic.headOf(root.current, root.headlineMode, root.hiddenAccounts)",
         "the popout's headline comes from the same function the pill slots use"],
@@ -343,7 +345,6 @@ assert.ok(!/headlinePct/.test(stripComments(vertical)),
 // --- one view of the payload -------------------------------------------------
 // The payload's top-level plan/ok/error describe the FIRST LIVE account the
 // backend found, hidden or not — one function answers all of it instead.
-
 requires(source, "AiUsageWidget.qml", [
     ["readonly property var view: logic.popoutView(root.current, root.hiddenAccounts, root.loading)",
         "the popout's account-scoped state is one function's, hidden accounts already out"],
@@ -386,7 +387,6 @@ assert.ok(meters.includes("root.view.account") && meters.includes("root.view.fla
 // --- one source of provider identity ----------------------------------------
 // The pill slots are built from AiUsageLogic; the popout's tabs must be too, or
 // they can disagree about a provider's name or icon.
-
 assert.ok(code.includes("model: logic.providerOrder()"),
     "the provider tabs are generated from the same order the pill uses");
 for (const literal of ['"Claude"', '"Codex"', '"smart_toy"', '"terminal"'])

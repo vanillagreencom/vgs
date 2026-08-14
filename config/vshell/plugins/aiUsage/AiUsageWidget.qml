@@ -352,13 +352,31 @@ PluginComponent {
             onTriggered: root.launch(chan)
         }
 
-        // What a provider switch invalidates. `inFlight` is deliberately not
-        // touched: a process is still running and its tag is what identifies it.
+        // What a provider switch invalidates. The switch is this branch's
+        // generation boundary, so nothing armed before it may act after it: both
+        // timers stop here, and a request parked for the previous selection goes
+        // with them, since clearProviderState refreshes anyway.
+        //
+        // The TAG is the deliberate part. It survives while something can still
+        // settle it — a running process delivers an exit, and its payload is
+        // attributed by the payload's own provider rather than by this channel's
+        // `want`, so nothing it does can be read as the new provider's. Clearing
+        // it there would let that exit settle whatever fetch is running by then.
+        // A launch that never produced a process has no exit coming, and the
+        // watchdog that would have said so was just stopped, so leaving its tag
+        // would own the channel with nothing to settle it. The switch therefore
+        // settles exactly the launches the watchdog would have — one rule, asked
+        // here as its third consumer.
         function reset() {
             loaded = "";
             retries = 0;
             accepted = false;
             issue = "";
+            stallTimer.stop();
+            retryTimer.stop();
+            pending = false;
+            if (!proc.running && logic.watchdogArms(inFlight, sawProcess))
+                inFlight = "";
         }
     }
 
