@@ -356,10 +356,18 @@ Singleton {
             const terminated = root._terminating;
             root._terminating = false;
             if (terminated || exitCode !== 0) {
-                if (terminated)
+                if (terminated) {
+                    // The watchdog already said this one out loud when it fired.
                     root.log.warn("Paste injector exited after the watchdog terminated it - exit", exitCode);
-                else
+                } else {
                     root.log.warn("Paste keystroke failed for target", root.targetForLog(), "- argv", wtypeProcess.command.join(" "), "- exit", exitCode);
+                    // Both surfaces that ask for a paste close before it fires,
+                    // so an unreported failure is indistinguishable from a paste
+                    // that did nothing at all. Reported here rather than after
+                    // the cleanup below, so what the user is told does not depend
+                    // on how the modifier release goes.
+                    ToastService.showError(I18n.tr("Paste did not complete"));
+                }
                 root._helperStuck = false;
                 root.stopInjectorWatchdogs();
                 root.startModifierRelease();

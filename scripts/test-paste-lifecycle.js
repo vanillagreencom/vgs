@@ -403,6 +403,51 @@ function queuePaste(h) {
     assert.match(h.toasts[h.toasts.length - 1], /modifiers could not be released/);
 }
 
+// ---- 4f. an ordinary injection failure reaches the user -------------------
+
+{
+    // The surface that asked for the paste has already closed, so a log line is
+    // the same as silence. Reported before the cleanup, so it does not depend on
+    // how the release that follows turns out.
+    const h = makeHarness();
+    queuePaste(h);
+    h.started("injector");
+    h.exit("injector", 1);
+
+    assert.equal(h.toasts.length, 1, "a paste that failed must say so");
+    assert.match(h.toasts[0], /Paste did not complete/, "in the wording the wedged path already uses");
+    assert.equal(h.root.releaseProcess.running, true, "and the report must not have replaced the cleanup");
+
+    // The release succeeding afterwards must not retract or duplicate it.
+    h.started("release");
+    h.exit("release", 0);
+    assert.equal(h.toasts.length, 1, "a successful release must not add a second report");
+}
+
+// ---- 4g. a paste that landed stays silent ---------------------------------
+
+{
+    const h = makeHarness();
+    queuePaste(h);
+    h.started("injector");
+    h.exit("injector", 0);
+
+    assert.deepEqual(h.toasts, [], "a paste that worked must say nothing at all");
+}
+
+// ---- 4h. a wedged injector is reported once, not twice ---------------------
+
+{
+    const h = makeHarness();
+    queuePaste(h);
+    h.started("injector");
+    h.fire("watchdogTimer", "watchdogTriggered"); // the watchdog reports it here
+    const afterWatchdog = h.toasts.length;
+    h.exit("injector", 143);
+
+    assert.equal(h.toasts.length, afterWatchdog, "the terminated path must not report the same failure again");
+}
+
 // ---- 5. release give-up: the queue must not outlive it --------------------
 
 {
