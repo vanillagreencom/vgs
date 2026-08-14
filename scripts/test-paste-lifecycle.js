@@ -58,6 +58,22 @@ function declaredRepeat(id) {
     return flag[1] === "true";
 }
 
+// A property binding, read as the expression the shell ships. Restating it here
+// would make the harness prove something about the restatement instead.
+function bindingExpression(id) {
+    const opener = `readonly property bool ${id}:`;
+    const at = source.indexOf(opener);
+    assert.notEqual(at, -1, `could not find the ${id} binding`);
+    const lines = source.slice(at + opener.length).split("\n");
+    const parts = [lines[0]];
+    for (const line of lines.slice(1)) {
+        if (!/^\s*(\|\||&&|\?|:)/.test(line))
+            break;
+        parts.push(line);
+    }
+    return parts.join(" ").trim();
+}
+
 function bodyAfter(text, marker, opener) {
     const at = text.indexOf(marker);
     assert.notEqual(at, -1, `could not find ${marker}`);
@@ -85,6 +101,12 @@ const bodies = {
     injectorRunningChanged: bodyAfter(source, "id: wtypeProcess", "onRunningChanged:"),
     injectorExited: bodyAfter(source, "id: wtypeProcess", "onExited: exitCode =>"),
 };
+
+const IN_FLIGHT = bindingExpression("_helperInFlight");
+// An extraction that silently came back short would leave the window this
+// binding exists to close untested while every case still passed.
+for (const name of ["wtypeProcess.running", "_injectorAwaitingStart", "releaseProcess.running", "_releaseAwaitingStart"])
+    assert.ok(IN_FLIGHT.includes(name), `the in-flight binding must read ${name}`);
 
 const statements = {
     releaseStarted: extractStatement(source, "onStarted:", source.indexOf("id: releaseProcess")),
@@ -192,6 +214,9 @@ function makeHarness() {
         I18n: { tr: text => text },
     };
     root.root = root;
+    // QML re-evaluates a binding on every read; so does this.
+    const inFlight = compile(`return (${IN_FLIGHT});`);
+    Object.defineProperty(root, "_helperInFlight", { get: () => inFlight(root), configurable: true });
 
     // The bodies call each other as plain QML functions (`cancelQueuedPaste()`),
     // so each is bound to this harness's root before being hung off it.
@@ -254,6 +279,12 @@ function makeHarness() {
                 releaseExited(root, code);
                 root.releaseProcess.stopped();
             }
+        },
+        // Asked to run, with no transition to observe: running never becomes
+        // true, nothing has failed, and only the start latch knows about it.
+        stall(which) {
+            const proc = which === "injector" ? root.wtypeProcess : root.releaseProcess;
+            Object.defineProperty(proc, "running", { get: () => false, set: () => {}, configurable: true });
         },
         // The spawn failed: no `started`, no `exited`, running falls back.
         failToStart(which) {
@@ -449,6 +480,92 @@ function queuePaste(h) {
     h.exit("injector", 143);
 
     assert.equal(h.toasts.length, afterWatchdog, "the terminated path must not report the same failure again");
+}
+
+// ---- 4i. the awaiting-start window counts as in flight --------------------
+
+{
+    // A helper asked to run but not yet transitioned has failed at nothing, so
+    // no state marks the seat unsafe — and its chord may be a moment away. A
+    // settle firing in that window must queue rather than start a second run.
+    const h = makeHarness();
+    queuePaste(h);
+    h.started("injector");
+    h.stall("release"); // its start will produce no transition
+    h.exit("injector", 1); // partial keystroke: the release is asked to start
+
+    assert.equal(h.root._releaseAwaitingStart, true, "the release is awaiting its start");
+    assert.equal(h.root.releaseProcess.running, false, "with nothing in the running flags to show for it");
+    assert.equal(h.root._seatUnconfirmed, false, "and nothing has failed, so no seat state covers it either");
+
+    h.root.injectPaste();
+    h.fire("settleTimer", "settleTriggered");
+
+    assert.equal(h.root.wtypeProcess.running, false, "no chord may be pressed during that window");
+    assert.equal(h.root._pendingPaste, true, "the request must queue instead");
+}
+
+// ---- 4j. the injector's own start window counts too ------------------------
+
+{
+    const h = makeHarness();
+    h.stall("injector");
+    queuePaste(h);
+    assert.equal(h.root._injectorAwaitingStart, true, "the injector is awaiting its start");
+    assert.equal(h.root.wtypeProcess.running, false, "with nothing in the running flag to show for it");
+
+    h.root.injectPaste();
+    h.fire("settleTimer", "settleTriggered");
+    assert.equal(h.root._pendingPaste, true, "a second paste must queue behind it, not start its own run");
+}
+
+// ---- 4k. no second release during the first one's start window -------------
+
+{
+    const h = makeHarness();
+    queuePaste(h);
+    h.started("injector");
+    h.stall("release");
+    h.exit("injector", 1);
+    assert.equal(h.root._releaseAwaitingStart, true, "one release is already awaiting its start");
+
+    const before = h.warnings.length;
+    h.root.startModifierRelease();
+    assert.ok(h.warnings.length > before, "a second release must be refused, and say so");
+}
+
+// ---- 4k2. the funnel refuses on its own, whatever reached it --------------
+
+{
+    // beginInjection is where an injection begins, so the rule holds there and
+    // not only in its caller. Called directly during a start window, it must
+    // defer rather than press a chord.
+    const h = makeHarness();
+    h.stall("injector");
+    queuePaste(h);
+    h.root.settleTimer.stop();
+
+    h.root.beginInjection();
+
+    assert.equal(h.root.wtypeProcess.running, false, "the funnel must not begin an injection while a helper is in flight");
+    assert.equal(h.root.settleTimer.running, true, "it must defer the request rather than drop it");
+}
+
+// ---- 4l. not over-corrected: a settled seat still injects ------------------
+
+{
+    // The other direction, so the fix cannot pass by refusing everything.
+    const h = makeHarness();
+    queuePaste(h);
+    h.started("injector");
+    h.exit("injector", 1);
+    h.started("release");
+    h.exit("release", 0); // confirmed clean: nothing is in flight any more
+
+    h.root.injectPaste();
+    h.fire("settleTimer", "settleTriggered");
+    assert.equal(h.root.wtypeProcess.running, true, "a paste after a confirmed clean release must actually inject");
+    assert.equal(h.root._pendingPaste, false, "and must not be queued behind nothing");
 }
 
 // ---- 5. release give-up: the queue must not outlive it --------------------

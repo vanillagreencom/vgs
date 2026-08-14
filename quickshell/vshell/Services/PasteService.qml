@@ -39,6 +39,14 @@ Singleton {
     // and the paste ends with no keystroke and no error.
     property bool _injectorAwaitingStart: false
     property bool _releaseAwaitingStart: false
+    // In flight means a helper may put keystrokes on the seat between now and
+    // its exit, which starts when it is ASKED to run, not when it reports that
+    // it did: a helper still awaiting its start has failed at nothing yet, and
+    // its chord may be a moment away. Reading the two running flags alone leaves
+    // that window open, and it is up to five seconds wide, until the watchdog
+    // that owns the start resolves it either way.
+    readonly property bool _helperInFlight: wtypeProcess.running || _injectorAwaitingStart
+        || releaseProcess.running || _releaseAwaitingStart
     // The seat holds modifiers VGS pressed and could not confirm releasing.
     // Set by every release that does not come back clean, and cleared by
     // nothing but one that does — not by a timer, not by the next attempt, not
@@ -92,7 +100,7 @@ Singleton {
             // A release in flight counts as in flight: two wtype clients driving
             // the seat at once is how a release of ctrl lands between the new
             // run's press and its v, typing a bare v into the window.
-            if (wtypeProcess.running || releaseProcess.running) {
+            if (root._helperInFlight) {
                 root._pendingPaste = true;
                 return;
             }
@@ -100,15 +108,21 @@ Singleton {
         }
     }
 
-    // Only settleTimer may call this. It does not test for a run in flight, so
-    // calling it during one would relabel the target and re-arm the watchdog
-    // for an injection it did not start.
+    // Only settleTimer may call this: beginning an injection during another one
+    // would relabel the target and re-arm the watchdog for a run it did not
+    // start. The two rules below are not copies of the caller's checks — this is
+    // the one place an injection begins, so it is where they have to hold
+    // whatever reached it, a fresh request or a paste replayed from a queue.
     function beginInjection() {
-        // Not a copy of the entry-point check: this is the one place an
-        // injection begins, so it is where the seat rule holds regardless of
-        // what reached it — a fresh request, or a paste replayed from a queue.
         if (_seatUnconfirmed) {
             refuseUnconfirmedSeat();
+            return;
+        }
+        // Deferred rather than recorded here: the settle timer's in-flight
+        // branch stays the only place a paste becomes pending, and the helper
+        // that is in flight is watchdog-bounded, so this cannot defer forever.
+        if (_helperInFlight) {
+            settleTimer.restart();
             return;
         }
         // "" from focusedAppId means the compositor reports no active toplevel,
@@ -215,6 +229,9 @@ Singleton {
         interval: 1000
         repeat: true
         onTriggered: {
+            // Asks whether the terminate request took, not whether a helper is
+            // in flight: this ladder only runs after the watchdog saw the
+            // process running, so there is no start window to account for.
             if (!wtypeProcess.running) {
                 stop();
                 return;
@@ -237,7 +254,7 @@ Singleton {
     // identical and presses nothing, so a second run would add nothing but a
     // competing wtype client on the seat.
     function startModifierRelease() {
-        if (releaseProcess.running) {
+        if (releaseProcess.running || _releaseAwaitingStart) {
             log.warn("Modifier release still in flight - not starting a second one");
             return;
         }
@@ -314,6 +331,9 @@ Singleton {
         interval: 1000
         repeat: true
         onTriggered: {
+            // Asks whether the terminate request took, not whether a helper is
+            // in flight: this ladder only runs after the watchdog saw the
+            // process running, so there is no start window to account for.
             if (!releaseProcess.running) {
                 stop();
                 return;
