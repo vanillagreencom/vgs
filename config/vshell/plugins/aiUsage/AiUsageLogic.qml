@@ -309,10 +309,12 @@ QtObject {
 
     // One pill slot. It always exists, it always carries its provider's icon,
     // and its text degrades in place: the number, "!" when that provider
-    // answered and the answer was not usable, an ellipsis while its first fetch
-    // is still running, an em dash when there is nothing to say. Dropping the
-    // slot instead — what the old pill did — moved the surviving provider's
-    // number into the other's position with no visual cue that it had moved.
+    // answered and the answer was not usable, an ellipsis while a fetch for it
+    // is running, an em dash when there is nothing to say. Note the ellipsis is
+    // not only a first fetch — a payload that is ok but yields no head (every
+    // account hidden) reaches it on each poll, and settles back to the dash.
+    // Dropping the slot instead — what the old pill did — moved the surviving
+    // provider's number into the other's position with no cue that it had moved.
     function pillSlot(provider, head, data, fetching, selected) {
         const slot = {
             provider: provider,
