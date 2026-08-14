@@ -205,6 +205,19 @@ reviews:
         in-repo patches. Style, structure, and lint findings here are noise —
         skip them.
 
+    - path: "third_party/**"
+      instructions: >-
+        A mixed tree, not a uniformly vendored one. The pinned artifacts
+        (`coderabbit-schema/schema.v2.json`, `asdcontrol/asdcontrol.cpp`) and
+        the `review-gate/` and `size-ratchet/` engine trees are byte-exact —
+        their vendor checks diff them whole, so an in-repo edit fails CI. Frame
+        findings there as upstream issues.
+
+        `coderabbit-schema/README.md` and `asdcontrol/README.md` are the
+        exception: VGS-authored maintenance docs recording why each artifact is
+        pinned, how to refresh it, and what shipping it obliges. Those two are
+        maintained here, so drift findings on them are valid and wanted.
+
     - path: "themes/**"
       instructions: >-
         Theme packages are curated data, not code to normalize. Palettes marked
@@ -225,10 +238,9 @@ reviews:
         change here as needing user-facing release notes. The doc surfaces are
         distinct and deliberately non-overlapping: the product/user-facing set
         is exactly `README.md`, `packaging/README.md` (which owns per-channel
-        packaging detail) and `packaging/ubuntu/README.md`; every other tracked
-        README is a vendored upstream copy or agent instruction and is not a
-        doc surface to edit. `docs/architecture/**` are agent reference docs;
-        `AGENTS.md` and `project-skills/README.md` are process.
+        packaging detail) and `packaging/ubuntu/README.md`.
+        `docs/architecture/**` are agent reference docs; `AGENTS.md` and
+        `project-skills/README.md` are process.
 
         Do check that a claim added here matches the code it describes —
         instructions here are executed literally by agents, so a stale command

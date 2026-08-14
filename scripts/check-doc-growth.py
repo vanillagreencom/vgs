@@ -60,7 +60,12 @@ CEILINGS: dict[str, int] = {
     # 7,200 keeps ~10% headroom at the final 6,490 B size, superseding the
     # 6,500 figure measured mid-review at 5,865 B.
     "review-bots.md": 7_200,
-    ".github/copilot-instructions.md": 3_200,  # adopted at 2,909 B
+    # Adopted at 2,909 B. 2026-08-14: the PR #132 review found the doc-surface
+    # rule was telling reviewers to suppress valid drift findings on the two
+    # VGS-authored READMEs inside third_party/; correcting it needs the
+    # enumerated product-facing set plus that carve-out, which earned the
+    # bytes. 3,850 keeps ~10% headroom at the final 3,480 B size.
+    ".github/copilot-instructions.md": 3_850,
     "project-skills/vshell-dev/SKILL.md": 5_000,  # adopted at 4,497 B
     ".github/instructions/agents-md.instructions.md": 500,  # adopted at 403 B
     ".github/instructions/architecture-docs.instructions.md": 500,  # adopted at 393 B

@@ -43,11 +43,17 @@ style fix — frame any genuine finding as an upstream issue to file, and say so
 **Doc surfaces are distinct and deliberately non-overlapping.** The
 product/user-facing set is exactly `README.md`, `packaging/README.md` (which
 owns the per-channel packaging detail the architecture docs cite rather than
-repeat) and `packaging/ubuntu/README.md`. Every other tracked README is a
-vendored upstream copy or agent instruction, not a doc surface to edit.
-`docs/architecture/**` are agent reference docs; `AGENTS.md` and
-`project-skills/README.md` are agent process instruction. Do not ask for
-content to be mirrored between them or for changelog entries.
+repeat) and `packaging/ubuntu/README.md`. `docs/architecture/**` are agent
+reference docs; `AGENTS.md` and `project-skills/README.md` are agent process
+instruction. Do not ask for content to be mirrored between them or for
+changelog entries.
+
+**A README in a vendored tree may not be vendored.**
+`third_party/coderabbit-schema/README.md` and `third_party/asdcontrol/README.md`
+are VGS-authored — why the artifact is pinned, how to refresh it, what shipping
+it obliges — so drift findings on them are valid. Byte-pinned there are the
+artifacts themselves and the `review-gate/` and `size-ratchet/` engine trees,
+whose vendor checks diff them whole.
 
 **Secrets live in one place.** `.env.local` is gitignored and holds every
 credential; `.env.local.example` carries the key names with empty values;
