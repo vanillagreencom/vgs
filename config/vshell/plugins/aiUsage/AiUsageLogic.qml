@@ -65,9 +65,12 @@ QtObject {
     // A fetch that produced no payload is retried even when the channel already
     // held that provider: without it a single empty or crashed poll dropped the
     // widget to its error state and left it there for a whole poll interval, for
-    // a blip a one-second retry covers. The budget stays bounded because only an
-    // accepted payload — or a provider switch — restores it, so a helper that is
-    // genuinely broken still gives up after `maxRetries` and waits for the poll.
+    // a blip a one-second retry covers. The budget stays bounded because only a
+    // payload that SATISFIES the channel — one for the provider it is waiting for
+    // — restores it, along with a provider switch, which resets the channel. A
+    // payload merely accepted (it decoded for the launch tag) but naming a
+    // provider the user has since switched away from restores nothing, so a
+    // genuinely broken helper still gives up after `maxRetries`.
     //
     // Takes the channel itself, read BY FIELD: three same-typed provider strings
     // in a row could be swapped, which type-checks, runs, and inverts the answer.

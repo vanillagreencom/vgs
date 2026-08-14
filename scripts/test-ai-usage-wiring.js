@@ -4,17 +4,18 @@
 // scripts/test-ai-usage-provider.js proves as behavior (VGS-118).
 //
 // Split deliberately. Those decisions are pure and are executed there; what is
-// left here is wiring, where the bug shape is a MISSING or MISDIRECTED line —
-// a channel's reason written to the other channel's record, a reset that resets
-// nothing, an outcome computed and then ignored.
+// left here is wiring, where the bug shape is a MISSING or MISDIRECTED line — a
+// channel's reason on the other channel's record, a reset that resets nothing,
+// an outcome computed and then ignored.
 //
 // Why source assertions at all: `scripts/qml-smoke.sh --nested` DOES host this
 // plugin — it toggles the aiUsage widget and opens its popout, so these bindings
 // really are evaluated — but that mode is local-only (it needs Hyprland and
 // quickshell on PATH), so CI never runs it, and even locally a harness cannot
 // drive a fetch's exit path or a provider switch through the QML runtime. Each
-// assertion matches the load-bearing token rather than the statement's layout,
-// so reformatting is free and deleting the line is not.
+// assertion matches load-bearing tokens with whitespace flattened, so
+// reformatting and re-wrapping are free while deleting or reshaping the line is
+// not — the pairing is what these assertions exist to hold.
 
 "use strict";
 
@@ -28,65 +29,8 @@ const WIDGET = path.join(
 );
 const source = fs.readFileSync(WIDGET, "utf8");
 
-// Brace-depth walk from an offset, so nothing here depends on how deeply a
-// block happens to be indented — re-indenting the file must not change what
-// these assertions read.
-function blockFrom(at, what) {
-    assert.notEqual(at, -1, `AiUsageWidget.qml must define ${what}`);
-    const open = source.indexOf("{", at);
-    assert.notEqual(open, -1, `${what} has no body`);
-    let depth = 0;
-    for (let i = open; i < source.length; i++) {
-        if (source[i] === "{") depth += 1;
-        else if (source[i] === "}") {
-            depth -= 1;
-            if (depth === 0)
-                return source.slice(open, i + 1);
-        }
-    }
-    return assert.fail(`${what} has no closing brace`);
-}
-
-function body(name) {
-    return blockFrom(source.indexOf(`function ${name}(`), `${name}()`);
-}
-
-// Handlers are found at the start of a line, so a comment MENTIONING one is not
-// mistaken for one — these files are heavily commented precisely because the
-// orderings they encode are subtle.
-function handlers(name) {
-    const out = [];
-    const at = new RegExp(`^[ \\t]*${name}:`, "gm");
-    let hit;
-    while ((hit = at.exec(source)) !== null) {
-        const eol = source.indexOf("\n", hit.index);
-        const line = source.slice(hit.index, eol === -1 ? source.length : eol);
-        // A handler is either a block or a single expression on its own line.
-        out.push(line.includes("{") ? blockFrom(hit.index, `${name} handler`) : line);
-    }
-    return out;
-}
-
-// Every token has to be present, each named on its own so a failure says which
-// line went missing.
-function requires(block, where, pairs) {
-    for (const [token, why] of pairs)
-        assert.ok(block.includes(token), `${where} must keep \`${token}\` — ${why}`);
-}
-
-// Comment text is prose about the code, not the code. Only the literal-ban loop
-// at the end needs this: everything else matches code tokens that do not appear
-// in comments.
-function stripComments(text) {
-    return text
-        .replace(/\/\*[\s\S]*?\*\//g, "")
-        .split("\n")
-        .map(line => {
-            const at = line.indexOf("//");
-            return at === -1 ? line : line.slice(0, at);
-        })
-        .join("\n");
-}
+const { blockFrom, body, handlers, requires, stripComments } =
+    require("./lib/qml-source.js")(source, "AiUsageWidget.qml");
 
 // Prove the walk and the stripper before anything leans on them.
 {
@@ -126,16 +70,17 @@ assert.ok(!body("noteHeadline").includes("root.provider"),
 
 const accept = body("acceptPayload");
 requires(accept, "acceptPayload()", [
-    ["logic.decodePayload(ch.inFlight, txt)", "a payload is validated against ITS OWN channel's tag"],
-    ["ch.issue = got.issue", "the reason is recorded on the channel that fetched it, never shared"],
+    ["logic.decodePayload(ch.inFlight, txt)", "validated against ITS OWN channel's tag"],
+    ["ch.issue = got.issue", "the reason is recorded on the channel that fetched it"],
     ["ch.accepted = true", "acceptance is what tells the exit path a payload arrived"],
-    ["logic.acceptOutcome(logic.payloadProvider(got.data), ch.want)",
-        "decided from the payload's own provider and what this channel wants"],
+    ["logic.acceptOutcome(", "the outcome is the extracted decision's"],
+    ["logic.payloadProvider(got.data)", "decided from the payload's OWN provider"],
+    ["ch.want", "against what this channel wants"],
     ["outcome.file", "a payload that names a provider updates that provider's pill slot"],
     ["root.noteHeadline(got.data)", "which is what files it"],
     ["outcome.satisfies", "and a payload that does not satisfy this channel goes no further"],
     ["ch.loaded = ch.want", "the channel records what it holds; without it the relaunch " +
-        "predicate answers true on every exit and burns the budget each poll"],
+        "predicate answers true on every exit"],
     ["ch.retries = 0", "a satisfying payload restores the retry budget"],
     ["ch.primary", "only the popout's channel reaches the popout"],
     ["root.applyPayload(got.data)", "which is what shows it"]
@@ -181,12 +126,22 @@ assert.ok(!/\b(usageProc|otherProc|usageOut|otherOut|usageErr|otherErr)\b/.test(
 
 // Both channels are instantiated with their provider bound, and only one is the
 // popout's.
-const usageChannel = blockFrom(source.indexOf("FetchChannel {\n        id: usageFetch"), "usageFetch");
+// Found by id and walked back to the enclosing FetchChannel, so neither the
+// indentation nor the order of properties inside the block matters.
+function channelNamed(id) {
+    const at = source.indexOf(`id: ${id}`);
+    assert.notEqual(at, -1, `AiUsageWidget.qml must declare ${id}`);
+    const opens = source.lastIndexOf("FetchChannel {", at);
+    assert.notEqual(opens, -1, `${id} must be a FetchChannel`);
+    return blockFrom(opens, id);
+}
+
+const usageChannel = channelNamed("usageFetch");
 requires(usageChannel, "the usage channel", [
     ["want: root.provider", "it fetches the SELECTED provider"],
     ["primary: true", "and owns the popout"]
 ]);
-const otherChannel = blockFrom(source.indexOf("FetchChannel {\n        id: otherFetch"), "otherFetch");
+const otherChannel = channelNamed("otherFetch");
 assert.ok(otherChannel.includes("want: root.otherProvider"), "the other channel fetches the other provider");
 assert.ok(!otherChannel.includes("primary"), "and does not own the popout");
 
@@ -210,8 +165,8 @@ requires(launch, "launch()", [
     // The watchdog is armed in exactly the state a start begins from — tag set,
     // process not running — so leaving the previous one running let it fire
     // against THIS fetch: "could not run" for a healthy process, whose payload
-    // was then discarded as a mismatch and whose retry was spent.
-    ["ch.stallTimer.stop()", "the previous fetch's watchdog is disarmed before this one starts"]
+    // was then discarded and whose retry was spent.
+    ["ch.stallTimer.stop()", "the previous fetch's watchdog is disarmed first"]
 ]);
 assert.ok(!launch.includes("if (!ch.proc.running)"),
     "a runtime `running = true` reads back true even for a missing binary (measured, Quickshell " +
@@ -254,14 +209,20 @@ requires(finish, "finishFetch()", [
     ["console.warn", "the failure has to reach vshell logs, or the cause exists nowhere"],
     ["root.settleFetch(ch)", "and then settles through the shared path"]
 ]);
-assert.ok(/property int maxIssueChars: \d+/.test(source),
-    "the reason is capped before it reaches the popout and the log");
+// The provider suite proves stderrReason honours the limit it is handed, so what
+// is left to pin is the number the widget hands it. A five-digit "cap" is none.
+const capMatch = source.match(/property int maxIssueChars: (\d+)/);
+assert.ok(capMatch, "the reason's cap must be a named property, not a literal at the call site");
+const cap = Number(capMatch[1]);
+assert.ok(cap > 0 && cap <= 500,
+    `maxIssueChars is ${cap}: that caps nothing — the line comes from whichever backend is ` +
+    "installed and lands in the popout and in a log people paste into bug reports");
 
 const settle = body("settleFetch");
 requires(settle, "settleFetch()", [
-    ["logic.shouldRelaunch(ch, root.maxFetchRetries)",
-        "relaunch is the shared predicate's, reading the channel BY FIELD: three same-typed " +
-        "provider strings in a row could be swapped, which type-checks and inverts the answer"],
+    // Read BY FIELD: three same-typed provider strings in a row could be
+    // swapped, which type-checks and inverts the answer.
+    ["logic.shouldRelaunch(ch, root.maxFetchRetries)", "relaunch is the shared predicate's"],
     ['if (ch.inFlight === "")', "a fetch already settled is settled once"],
     ["ch.retries += 1", "a relaunch spends a retry, or the budget bounds nothing"],
     ["Qt.callLater(() => root.launch(ch))",
@@ -354,7 +315,7 @@ assert.ok(!/headlinePct/.test(vertical),
 
 requires(source, "AiUsageWidget.qml", [
     ["readonly property var view: logic.popoutView(root.current, root.hiddenAccounts)",
-        "the popout's account-scoped state comes from one function, hidden accounts already out"],
+        "the popout's account-scoped state is one function's, hidden accounts already out"],
     ["readonly property bool ok: root.fetchError === \"\" && root.view.ok",
         "usable is that view's answer, not the payload's top-level field"],
     ["readonly property string plan: root.view.plan", "and so is the plan line"],

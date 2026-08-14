@@ -171,19 +171,31 @@ function objectLiterals(text) {
 
 // The programs that BUILD payloads: `jq -n` constructs an object from nothing
 // and its output is printed, while the `jq -c` calls normalise one account from
-// stdin — account objects carry `ok` too and are not payloads. A jq program is
-// single-quoted and cannot contain a literal quote (the script says so itself),
-// so its own text is exactly delimited.
+// stdin — account objects carry `ok` too and are not payloads.
+//
+// The program text is delimited by the single quotes the script uses throughout
+// (it cannot contain a literal quote, as the script says of itself). That is a
+// convention, so it is ENFORCED rather than assumed: a jq invocation whose
+// program does not open with a single quote fails here. Searching forward for
+// the next quote instead was fail-open — a double-quoted unstamped emission read
+// the NEXT program's text and was vouched for by a stamped sibling.
 function jqBuildPrograms(text) {
     const out = [];
     const at = /\bjq -n[a-z]*\b/g;
     let hit;
     while ((hit = at.exec(text)) !== null) {
-        const open = text.indexOf("'", hit.index);
-        if (open === -1)
-            continue;
-        const close = text.indexOf("'", open + 1);
-        out.push(text.slice(open + 1, close === -1 ? text.length : close));
+        const rest = text.slice(hit.index + hit[0].length);
+        // Options may precede the program, but it stays inside this one logical
+        // command: only whitespace, line continuations and --arg/--argjson pairs.
+        const preamble = rest.match(/^(?:\s*\\\n|\s|--arg(?:json)?\s+\w+\s+"[^"]*")*/)[0];
+        const program = rest.slice(preamble.length);
+        assert.equal(program[0], "'",
+            "every jq payload program in bin/vshell-ai-usage must be single-quoted, or this scan " +
+            "cannot tell where it ends and would borrow the next one's text:\n" +
+            program.slice(0, 120));
+        const close = program.indexOf("'", 1);
+        assert.notEqual(close, -1, "an unterminated jq program");
+        out.push(program.slice(1, close));
     }
     return out;
 }

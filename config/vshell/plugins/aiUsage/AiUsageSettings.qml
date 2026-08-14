@@ -19,7 +19,7 @@ PluginSettings {
 
     StyledText {
         width: parent.width
-        text: "Show Claude Code or OpenAI Codex subscription usage in the bar. Click the widget to switch providers and see the full breakdown."
+        text: "Show Claude Code and OpenAI Codex subscription usage in the bar — one labelled slot each. Click the widget for the full breakdown and to switch which provider it opens on."
         font.pixelSize: Theme.fontSizeSmall
         color: Theme.surfaceVariantText
         wrapMode: Text.WordWrap
@@ -91,7 +91,7 @@ PluginSettings {
 
             StyledText {
                 width: parent.width
-                text: "Backed by the 'ai-usage' helper (in ~/.local/bin), which wraps the claudebar/codexbar engines.\n\n• Claude: log in with the 'claude' CLI (reads ~/.claude/.credentials.json)\n• Codex: log in with 'codex login' (reads ~/.codex)\n\nExtra accounts are picked up automatically: any config directory holding its own login (the ones your CLAUDE_CONFIG_DIR / CODEX_HOME wrappers point at) is listed separately, labelled by its signed-in email. Profiles whose tokens live in the desktop keyring can't be polled and are left out.\n\nThe bar pill shows the session (5h) usage %, colored by the worst active window — across all accounts when you have more than one. Click it for session, weekly and per-model limits with reset countdowns; with several accounts you get a per-account overview, and clicking a row expands it."
+                text: "Backed by the 'ai-usage' helper (in ~/.local/bin), which wraps the claudebar/codexbar engines.\n\n• Claude: log in with the 'claude' CLI (reads ~/.claude/.credentials.json)\n• Codex: log in with 'codex login' (reads ~/.codex)\n\nExtra accounts are picked up automatically: any config directory holding its own login (the ones your CLAUDE_CONFIG_DIR / CODEX_HOME wrappers point at) is listed separately, labelled by its signed-in email. Profiles whose tokens live in the desktop keyring can't be polled and are left out.\n\nThe bar pill keeps one slot per provider, each with its own icon and in a fixed order, so a number never changes meaning: it shows that provider's usage %, colored by the worst active window across the accounts on screen, and a dash while there is nothing to show (no accounts, or all of them hidden) or an exclamation mark when that provider could not be read. Click it for session, weekly and per-model limits with reset countdowns; with several accounts you get a per-account overview, and clicking a row expands it."
                 font.pixelSize: Theme.fontSizeSmall
                 color: Theme.surfaceVariantText
                 wrapMode: Text.WordWrap

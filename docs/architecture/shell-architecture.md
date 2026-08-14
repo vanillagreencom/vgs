@@ -269,9 +269,11 @@ device — and a setting chooses the source:
   until a payload replaces it, and a dropped refetch makes that permanent — so
   relaunch on "is the state on screen the selected source's?", never on "did the
   selection move?", which answers no on a there-and-back toggle. A poll that
-  delivered nothing counts as owing a fetch too, bounded by a retry budget only
-  an accepted payload restores, so a blip costs a second and a broken backend
-  still settles into its error state.
+  delivered nothing counts as owing a fetch too, bounded by a retry budget that
+  only a payload SATISFYING the request restores — one for the source being
+  waited on, not merely one that decoded — along with a change of the setting,
+  which resets the request. So a blip costs a second and a broken backend still
+  settles into its error state.
 - **One surface owns the derived answer.** Every place that shows a number —
   bar pill, vertical pill, popout header — reads it from the same function, or
   they disagree the moment a filter (a hidden account) applies to one path and
