@@ -27,6 +27,11 @@ Singleton {
     // reported as the termination it is rather than as a keystroke failure.
     property bool _terminating: false
     property int _terminationAttempts: 0
+    // Set when a termination ladder gives up on a helper it could not stop. Its
+    // Process keeps reading as running until it finally exits, so a paste
+    // recorded behind it would wait on a run nothing is watching any more.
+    property bool _helperStuck: false
+    property int _releaseTerminationAttempts: 0
 
     // Injects paste into whatever window holds focus once the calling surface
     // has closed. Callers check SessionService.wtypeAvailable first and report
@@ -44,12 +49,21 @@ Singleton {
         interval: 200
         repeat: false
         onTriggered: {
+            if (root._helperStuck) {
+                root.log.warn("Paste requested while a helper VGS could not stop is still alive - refusing");
+                ToastService.showError(I18n.tr("Paste is unavailable"), I18n.tr("The paste helper could not be stopped"));
+                return;
+            }
             // Quickshell ignores both a command change and running = true on a
             // live Process, so a paste arriving mid-injection is recorded and
             // replayed from finishInjection() rather than dropped with the
             // earlier argv sent. Killing the live run instead would lose the
             // keystroke anyway and need the modifier cleanup the watchdog does.
-            if (wtypeProcess.running) {
+            //
+            // A release in flight counts as in flight: two wtype clients driving
+            // the seat at once is how a release of ctrl lands between the new
+            // run's press and its v, typing a bare v into the window.
+            if (wtypeProcess.running || releaseProcess.running) {
                 root._pendingPaste = true;
                 return;
             }
@@ -74,10 +88,11 @@ Singleton {
         watchdogTimer.restart();
     }
 
-    // The one completion path, for an injector that exited and for one the
-    // watchdog gave up on. `replay` is false in the second case: the injector is
-    // still alive, so a paste waiting behind it has nothing to run on and is
-    // dropped rather than left pending forever.
+    // The one completion path: for an injector that exited, for one the watchdog
+    // gave up on, and for a modifier release that finished with a paste recorded
+    // behind it. `replay` is false in the give-up case: the injector is still
+    // alive, so a paste waiting behind it has nothing to run on and is dropped
+    // rather than left pending forever.
     function finishInjection(replay) {
         watchdogTimer.stop();
         escalationTimer.stop();
@@ -131,22 +146,80 @@ Singleton {
             }
             root.log.warn("Paste injector survived SIGKILL for target", root.targetForLog(), "- paste stays unavailable until it exits");
             ToastService.showError(I18n.tr("Paste is unavailable"), I18n.tr("The paste helper could not be stopped"));
+            root._helperStuck = true;
             root.finishInjection(false);
         }
+    }
+
+    // Starts the modifier release unless one is still in flight. The argv is
+    // identical and presses nothing, so a second run would add nothing but a
+    // competing wtype client on the seat.
+    function startModifierRelease() {
+        if (releaseProcess.running) {
+            log.warn("Modifier release still in flight - not starting a second one");
+            return;
+        }
+        _releaseTerminationAttempts = 0;
+        releaseProcess.running = true;
+        releaseWatchdogTimer.restart();
     }
 
     // A terminated injector cannot release the modifiers it had pressed, and
     // zwp_virtual_keyboard_v1 does not specify what a compositor does with keys
     // a destroyed keyboard was holding. VGS relies on neither answer: this run
-    // presses nothing and releases both modifiers, so the seat cannot be left
-    // with ctrl or shift stuck down.
+    // presses nothing and releases both modifiers, so whichever way a compositor
+    // resolves it, VGS has sent the releases rather than assumed they happened.
     Process {
         id: releaseProcess
         command: PasteTarget.releaseModifiersCommand()
         running: false
         onExited: exitCode => {
+            releaseWatchdogTimer.stop();
+            releaseEscalationTimer.stop();
+            root._releaseTerminationAttempts = 0;
+            root._helperStuck = false;
             if (exitCode !== 0)
                 root.log.warn("Releasing the paste modifiers failed - exit", exitCode);
+            root.finishInjection(true);
+        }
+    }
+
+    // This run happens because a wtype invocation just wedged, and an input path
+    // that wedged one can wedge the next — so the run meant to guarantee the seat
+    // is never left holding ctrl or shift is the one that must not be started and
+    // forgotten. Same ladder as the injector's: terminate, escalate, then say so.
+    Timer {
+        id: releaseWatchdogTimer
+        interval: 5000
+        repeat: false
+        onTriggered: {
+            if (!releaseProcess.running)
+                return;
+            root.log.warn("Modifier release did not finish within", interval, "ms - terminating");
+            releaseProcess.running = false;
+            releaseEscalationTimer.restart();
+        }
+    }
+
+    Timer {
+        id: releaseEscalationTimer
+        interval: 1000
+        repeat: true
+        onTriggered: {
+            if (!releaseProcess.running) {
+                stop();
+                return;
+            }
+            root._releaseTerminationAttempts++;
+            if (root._releaseTerminationAttempts === 1) {
+                root.log.warn("Modifier release ignored the terminate request - sending SIGKILL");
+                releaseProcess.signal(9);
+                return;
+            }
+            root.log.warn("Modifier release survived SIGKILL - the seat may still hold ctrl or shift, and paste stays unavailable until it exits");
+            ToastService.showError(I18n.tr("Paste is unavailable"), I18n.tr("The paste helper could not be stopped"));
+            root._helperStuck = true;
+            stop();
         }
     }
 
@@ -156,7 +229,8 @@ Singleton {
         onExited: exitCode => {
             if (root._terminating) {
                 root.log.warn("Paste injector exited after the watchdog terminated it - exit", exitCode);
-                releaseProcess.running = true;
+                root._helperStuck = false;
+                root.startModifierRelease();
             } else if (exitCode !== 0) {
                 root.log.warn("Paste keystroke failed for target", root.targetForLog(), "- argv", wtypeProcess.command.join(" "), "- exit", exitCode);
             }

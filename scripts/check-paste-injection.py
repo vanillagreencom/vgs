@@ -13,8 +13,9 @@ Pinned, over the QML and JS under `quickshell/vshell/` and `config/vshell/`
 (bundled plugins ship both, and a paste feature could be written there):
 
   1. No hard-coded keystroke. No file builds an argv whose first element is
-     wtype, in either quote style and whether bound or assigned. The keystroke
-     depends on the target, so a literal one is wrong wherever it appears.
+     wtype, in either quote style and whether bound or assigned — except the
+     resolver itself, `PasteTarget.js`, which is where the argv shapes live. The
+     keystroke depends on the target, so a literal one is wrong everywhere else.
      `["sh", "-c", "command -v wtype"]` is a probe for the binary, not an
      invocation, and does not match.
   2. One injector. Only PasteService may call the resolver's command function:
@@ -26,12 +27,13 @@ Pinned, over the QML and JS under `quickshell/vshell/` and `config/vshell/`
   3. The injector resolves a target rather than assuming one: it imports the
      resolver, calls its command function on something other than a literal
      string, and reads both the live focused app id and the sticky fallback in
-     the same body as that call — then assigns the argv before starting the
-     process. Quickshell ignores a command change on a live Process, so the
-     reverse order runs the previous injection's argv.
+     the same function or handler as that call — then assigns the argv before
+     starting the process. Quickshell ignores a command change on a live Process,
+     so the reverse order runs the previous injection's argv.
   4. The sticky fallback empties when its window closes — a liveness test in the
-     declaration — and is actually maintained, by a guarded assignment to the
-     private reference the declaration reads.
+     declaration — and is actually maintained: every assignment to the private
+     reference the declaration reads sits behind an activeToplevel guard ahead of
+     it in the same function or handler.
   5. The launcher does not paste after a failed copy: its exit handler tests the
      exit code against non-zero and returns before reaching PasteService.
 
@@ -79,7 +81,7 @@ LITERAL_ARGV_RE = re.compile(r"\[\s*(['\"])wtype\1")
 # a read of the resolver, which any surface may do.
 COMMAND_CALL_RE = re.compile(r"\bpasteCommand\s*\(")
 QUOTED_ARG_RE = re.compile(r"\s*['\"]")
-IMPORT_RE = re.compile(r"import\s+\"PasteTarget\.js\"\s+as\s+\w+")
+IMPORT_RE = re.compile(r"^[ \t]*import\s+\"PasteTarget\.js\"\s+as\s+\w+", re.MULTILINE)
 INJECT_CALL_RE = re.compile(r"\bPasteService\.injectPaste\s*\(")
 RUNNING_TRUE_RE = re.compile(r"\.running\s*=\s*true")
 
@@ -200,6 +202,33 @@ def enclosing_body(source: str, index: int) -> tuple[int, str] | None:
     return None
 
 
+# What a body's preamble looks like when the body is a function or a signal
+# handler: `function name(...) {`, `onExited: exitCode => {`, `onTriggered: {`.
+FUNCTION_PREAMBLE_RE = re.compile(r"(?:\bfunction\b[^{;]*|=>\s*|\bon[A-Z]\w*\s*:\s*)$")
+
+
+def enclosing_function_body(source: str, index: int) -> tuple[int, str] | None:
+    """The function or handler body containing `index`, walking outward.
+
+    The innermost block alone is too tight — wrapping a statement in a
+    conditional inside the same function moves it — and the whole file is too
+    loose, since a guard or a read in an unrelated function proves nothing about
+    this one. The function that runs the statement is the scope where a textual
+    order and a textual guard mean what they say. None when no enclosing block
+    reads as a function or handler, which the callers report rather than widen:
+    a statement no scope contains is what the widening would hide.
+    """
+    scope = enclosing_body(source, index)
+    while scope is not None:
+        start, _ = scope
+        if FUNCTION_PREAMBLE_RE.search(source[max(0, start - 120):start]):
+            return scope
+        if start == 0:
+            return None
+        scope = enclosing_body(source, start - 1)
+    return None
+
+
 def handler_bodies(source: str, handler: str) -> list[str]:
     """Every braced body of `handler` in `source`, in declaration order."""
     bodies = []
@@ -242,7 +271,7 @@ def check_single_injector(files: list[tuple[str, str, str]]) -> bool:
             "a paste keystroke is built outside its owner, so a second injector exists: "
             + ", ".join(offenders)
         )
-    print(f"check-paste-injection: {OWNER} is the only file building paste keystrokes")
+    print(f"check-paste-injection: {OWNER} is the only file calling the resolver's command function")
     return True
 
 
@@ -252,7 +281,9 @@ def check_owner() -> bool:
     if source is None or with_strings is None:
         return False
     # The import names the file in a string literal, so it is the one pattern
-    # that reads the view where string contents survive.
+    # that reads the view where string contents survive — and the only positive
+    # rule a string could otherwise satisfy, hence the line anchor: a statement
+    # starts its line, the same text inside an expression does not.
     if not IMPORT_RE.search(with_strings):
         return fail(f"{OWNER} does not import PasteTarget.js")
 
@@ -265,20 +296,23 @@ def check_owner() -> bool:
             "keystroke instead of the focused window's"
         )
 
-    scope = enclosing_body(source, call.start())
+    scope = enclosing_function_body(source, call.start())
     if scope is None:
-        return fail(f"{OWNER} builds the argv outside any block, so nothing scopes the target resolution")
+        return fail(
+            f"{OWNER} builds the argv outside any function or handler, so nothing scopes the target "
+            "resolution"
+        )
     body_start, body = scope
     missing = [name for name in FOCUS_PROPERTIES if f"CompositorService.{name}" not in body]
     if missing:
         return fail(
-            f"{OWNER} builds the argv without reading, in the same body: " + ", ".join(missing)
+            f"{OWNER} builds the argv without reading, in the same function: " + ", ".join(missing)
             + " — the live value is routinely empty at the moment a paste fires, so both are needed"
         )
 
     run = RUNNING_TRUE_RE.search(body)
     if not run:
-        return fail(f"{OWNER} never starts the injector in the body that builds its argv")
+        return fail(f"{OWNER} never starts the injector in the function that builds its argv")
     if run.start() < call.start() - body_start:
         return fail(
             f"{OWNER} starts the injector before assigning its command; Quickshell ignores a command "
@@ -319,20 +353,35 @@ def check_focus_source() -> bool:
             f"{FOCUS_SOURCE} derives lastFocusedAppId from no private reference, so nothing can "
             "maintain it"
         )
-    assigned = [
-        name for name in sorted(remembered)
-        if re.search(r"\b(?:\w+\.)?" + name + r"\s*=(?!=)", source)
-    ]
-    if not assigned:
+    assignments = {
+        name: list(re.finditer(r"\b(?:\w+\.)?" + name + r"\s*=(?!=)", source))
+        for name in sorted(remembered)
+    }
+    if not any(assignments.values()):
         return fail(
             f"{FOCUS_SOURCE} never assigns {', '.join(sorted(remembered))}, so lastFocusedAppId stays "
             "empty and the sticky fallback does nothing"
         )
-    if not ACTIVE_TOPLEVEL_GUARD_RE.search(source):
-        return fail(
-            f"{FOCUS_SOURCE} assigns {', '.join(assigned)} without an activeToplevel guard, so the "
-            "remembered window would be overwritten with nothing every time focus leaves a toplevel"
-        )
+    # Every assignment, and the guard read in the function that runs it: matched
+    # file-wide, an activeToplevel test in an unrelated function would stand in
+    # for the missing one, and one unguarded assignment is enough to overwrite
+    # the remembered window.
+    for name, matches in assignments.items():
+        for match in matches:
+            scope = enclosing_function_body(source, match.start())
+            if scope is None:
+                return fail(
+                    f"{FOCUS_SOURCE} assigns {name} outside any function or handler, so nothing scopes "
+                    "the guard that has to precede it"
+                )
+            body_start, body = scope
+            guard = ACTIVE_TOPLEVEL_GUARD_RE.search(body)
+            if not guard or guard.start() > match.start() - body_start:
+                return fail(
+                    f"{FOCUS_SOURCE} assigns {name} with no activeToplevel guard ahead of it in the "
+                    "same function, so the remembered window would be overwritten with nothing every "
+                    "time focus leaves a toplevel"
+                )
 
     print(f"check-paste-injection: {FOCUS_SOURCE} publishes a liveness-gated lastFocusedAppId and maintains it")
     return True
