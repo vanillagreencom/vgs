@@ -13,7 +13,8 @@ Pinned, over the QML and JS under `quickshell/vshell/` and `config/vshell/`
 (bundled plugins ship both, and a paste feature could be written there):
 
   1. No hard-coded keystroke. No file builds an argv whose first element is
-     wtype, in either quote style and whether bound or assigned — except the
+     wtype, in any of JavaScript's three string delimiters — single, double or
+     a template literal — and whether bound or assigned, except the
      resolver itself, `PasteTarget.js`, which is where the argv shapes live. The
      keystroke depends on the target, so a literal one is wrong everywhere else.
      `["sh", "-c", "command -v wtype"]` is a probe for the binary, not an
@@ -34,8 +35,10 @@ Pinned, over the QML and JS under `quickshell/vshell/` and `config/vshell/`
      leaves injection broken. That means the resolved argv has to reach the
      property in ONE statement: routing it through a local first is behavior the
      rule cannot tell apart from dropping it, so this arm rejects that too.
-     Its argument is something other than a literal
-     string, both the live focused app id and the sticky fallback are read in the
+     Its argument is something other than a literal string in any of the three
+     delimiters — a template literal carrying an interpolation is a computed
+     value, not a literal, and passes —
+     and both the live focused app id and the sticky fallback are read in the
      same function or handler as the assignment, and the assignment precedes the
      start. Same function means the function ITSELF: a read or a start inside a
      callback nested in it runs on the callback's terms and does not count. Quickshell ignores a command change on a live Process, so the reverse
@@ -76,7 +79,10 @@ Pinned, over the QML and JS under `quickshell/vshell/` and `config/vshell/`
 Comments are blanked before any pattern runs, so commented-out code satisfies
 nothing. The structural reading these rules stand on — blanking, brace and paren
 matching, which statement an `if` controls, whether a region always returns —
-lives in `scripts/lib/qml_source.py`; the rules themselves are here.
+lives in `scripts/lib/qml_source.py`, and the delimiter-level reading a literal
+needs — every string form, and code told apart from prose — in
+`scripts/lib/paste_literals.py` with its controls beside it. The rules
+themselves are here.
 
 Deliberately NOT pinned:
 
@@ -110,6 +116,14 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent / "lib"))
+from paste_literals import (  # noqa: E402
+    COMMAND_ASSIGN_RE,
+    IMPORT_RE,
+    LITERAL_ARGV_RE,
+    literal_argv_is_code,
+    literal_string_argument,
+    matcher_problems,
+)
 from qml_source import (  # noqa: E402
     enclosing_function_body,
     handler_bodies,
@@ -133,23 +147,9 @@ CALLERS = [
     LAUNCHER,
 ]
 
-# An array literal whose first element is wtype, in either quote style. Matching
-# the literal rather than a `command:` prefix covers the declarative binding and
-# the imperative assignment alike — the imperative form is what the injector
-# itself uses, so it is the likelier regression.
-LITERAL_ARGV_RE = re.compile(r"\[\s*(['\"])wtype\1")
-
 # The argv builder. Only this function is owner-only; the module alias alone is
 # a read of the resolver, which any surface may do.
 COMMAND_CALL_RE = re.compile(r"\bpasteCommand\s*\(")
-# The call as the right-hand side of the injector's `command` assignment. A bare
-# call proves nothing: its result has to reach the Process, and `command` is
-# Quickshell's own property name, so this is insensitive to how the process, the
-# module alias and the whitespace are spelled without being insensitive to the
-# behavior.
-COMMAND_ASSIGN_RE = re.compile(r"\bcommand\s*=(?!=)\s*(?:\w+\s*\.\s*)*pasteCommand\s*\(")
-QUOTED_ARG_RE = re.compile(r"\s*['\"]")
-IMPORT_RE = re.compile(r"^[ \t]*import\s+\"PasteTarget\.js\"\s+as\s+\w+", re.MULTILINE)
 INJECT_CALL_RE = re.compile(r"\bPasteService\.injectPaste\s*\(")
 RUNNING_TRUE_RE = re.compile(r"\.running\s*=\s*true")
 
@@ -208,45 +208,13 @@ def read_live_with_strings(rel_path: str) -> str | None:
     return live_code(path.read_text())
 
 
-def literal_argv_is_code(source: str, blanked: str, at: int) -> bool:
-    """Whether the argv literal matched at `at` is code rather than prose.
-
-    The pattern has to read the view where string contents survive: an argv
-    literal IS a pair of strings, so blanking them would hide the very thing
-    rule 1 looks for. That view alone cannot tell `["wtype", ...]` written as
-    code from the same characters inside a log message, which is a
-    merge-blocking false positive on a valid edit. The literal's own bracket
-    settles it — the two views keep the same offsets, so a bracket still
-    present in the blanked view opened a real array, and one blanked away sat
-    inside a string body. An interpolation is code in both views, so an argv
-    built inside `${...}` is caught rather than excused as text.
-    """
-    return blanked[at] == "["
-
-
-# Controls for that discriminator, checked on every run: an instrument that
-# stopped separating these would report the whole tree clean while a hard-coded
-# keystroke sat in it. The interpolation row is the one that regressed silently
-# before `live_code` read interpolations as code.
-DISCRIMINATOR_CONTROLS = [
-    ("an argv assignment", 'proc.command = ["wtype", "-", "--"];\n', True),
-    ("an argv inside a template interpolation", 'run(`${["wtype", "-"].join(" ")}`);\n', True),
-    ("prose naming an argv in a string", "log('argv is [\"wtype\", \"-\"] here');\n", False),
-    ("prose naming an argv in a template", 'log(`argv is ["wtype", "-"] here`);\n', False),
-]
-
-
-def check_argv_discriminator() -> bool:
-    for label, fixture, expected in DISCRIMINATOR_CONTROLS:
-        blanked = live_code(fixture, blank_strings=True)
-        found = any(
-            literal_argv_is_code(fixture, blanked, match.start())
-            for match in LITERAL_ARGV_RE.finditer(live_code(fixture))
-        )
-        if found != expected:
-            verdict = "as an argv" if found else "as prose"
-            return fail(f"rule 1's code-versus-prose test reads {label} {verdict}")
-    print("check-paste-injection: rule 1 separates an argv that is code from prose naming one")
+def check_matchers() -> bool:
+    problems = [f"{complaint} — see scripts/lib/paste_literals.py" for complaint in matcher_problems(live_code)]
+    for complaint in problems:
+        fail(complaint)
+    if problems:
+        return False
+    print("check-paste-injection: rules 1 and 3 see every string delimiter and still ignore prose")
     return True
 
 
@@ -312,7 +280,7 @@ def check_owner() -> bool:
 
 def check_argv_assignment(source: str, call: re.Match) -> bool:
     """One `command = pasteCommand(...)` and the function that runs it."""
-    if QUOTED_ARG_RE.match(source, call.end()):
+    if literal_string_argument(source, call.end()):
         return fail(
             f"{OWNER} passes a literal string to the resolver, so every paste would use one target's "
             "keystroke instead of the focused window's"
@@ -625,9 +593,9 @@ def main() -> int:
             "the scan matched no files under " + ", ".join(SCAN_ROOTS)
             + " — a moved tree would make every rule below pass on nothing"
         ) or 1
-    # Before rule 1's verdict means anything, its instrument has to still
-    # discriminate — so this one short-circuits, like the empty-scan guard.
-    if not check_argv_discriminator():
+    # Before rules 1 and 3 mean anything, their matchers have to still see
+    # every delimiter — so this short-circuits, like the empty-scan guard.
+    if not check_matchers():
         return 1
 
     # Deliberately not short-circuiting: report every violation in one run.
