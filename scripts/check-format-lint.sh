@@ -152,10 +152,17 @@ for file in "${bin_files[@]}" "${script_files[@]}"; do
       # is the point. scripts/validate (`#!/usr/bin/env bash`) went unlinted
       # because it carries no EXTENSION, which shebang routing now covers; an
       # extension test is blind to the same file arriving with `#!/bin/sh`, so
-      # this arm names it instead of dropping it. A file with NO shebang keeps
-      # falling through, which is what leaves data fixtures alone.
+      # this arm names it instead of dropping it.
+      #
+      # BOTH TREES, unlike the no-shebang arm below, and the difference is not
+      # an oversight: an ABSENT shebang is a documented pattern in bin/ (the
+      # importable Python modules), while an unrouted PRESENT one is not — it
+      # says something executes this file through an interpreter no linter here
+      # claims, which is as true under bin/ as under scripts/. Excluding bin/
+      # from this arm left the fail-closed guarantee covering half the surface
+      # the loop walks.
       case "$file" in
-        scripts/*)
+        scripts/* | bin/*)
           fail "$file has an unrouted shebang ($shebang) — no linter claims it. Route it in this case statement, rewrite the shebang to one that is routed, or it is silently unlinted"
           ;;
       esac

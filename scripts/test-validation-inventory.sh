@@ -323,6 +323,31 @@ expect_contains "$pyyaml_out" "MANIFESTERROR PyYAML is not installed" "PyYAML ab
 expect_absent "$pyyaml_out" "Traceback" "PyYAML absent"
 ok "without PyYAML the module imports, the other parsers work, and ci.yml fails with one line"
 
+# prose_areas CANNOT SILENTLY TRUNCATE. The concern was that a period straight
+# after the final backtick would end the capture early and drop the last area.
+# Probed rather than reasoned about: the optional separator matches empty, so
+# the capture ends at the last backtick and the period sits outside it. Pinned
+# here so a future regex edit that DID truncate there fails.
+#
+# A separator the pattern cannot follow (`;`, `/`) DOES truncate — and that is
+# loud, not silent: a short capture makes the guard report the missing areas.
+# The second case pins that fail-closed direction, which is the property that
+# matters; a truncated capture can never equal the full set, so it can never
+# agree by accident.
+areas_probe="$tmp/areas-probe.md"
+# shellcheck disable=SC2016  # backticks are markdown quoting in the fixture prose
+printf 'areas `go`, `qml`, `helper`, `packaging`, `docs`, `all`.\n' >"$areas_probe"
+run_guard "AGENTS_PATH=$areas_probe"
+expect_absent "$guard_out" "enumerates the validate areas but omits" "period after final backtick"
+[[ "$guard_rc" -eq 0 ]] || fail "period after final backtick" "guard refused a well-formed enumeration (rc $guard_rc)"
+ok "a period straight after the final backtick does not truncate the capture"
+
+# shellcheck disable=SC2016  # backticks are markdown quoting in the fixture prose
+printf 'areas `go`; `qml`; `helper`; `packaging`; `docs`; `all`.\n' >"$areas_probe"
+run_guard "AGENTS_PATH=$areas_probe"
+expect_refused "unfollowable separator" "enumerates the validate areas but omits"
+ok "a separator the pattern cannot follow truncates LOUDLY, never silently"
+
 # The executable-bit arm (VGS-30 applied to the entry point itself).
 non_exec="$tmp/non-exec-runner"
 cp "$runner" "$non_exec"
