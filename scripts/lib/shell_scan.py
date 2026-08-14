@@ -16,11 +16,14 @@ while content is sliced out of the original text at the same offsets. One
 scanner, so a format that learns about a new kind of non-code text teaches every
 caller at once.
 
-WHAT THIS ESTABLISHES. Every entry below is pinned by a control in
-`shell_scan_selftest.py`, not by a reading of the loop: an earlier version of this
-account claimed `$'...'` was handled exactly when it was not, and a wrong entry
-in this column is worse than no column, because it is what a reader trusts
-instead of checking.
+WHAT THIS ESTABLISHES. Every entry in the handled-exactly list is pinned by a
+control in `shell_scan_selftest.py`, not by a reading of the loop: an earlier
+version of this account claimed `$'...'` was handled exactly when it was not,
+and a wrong entry in this column is worse than no column, because it is what a
+reader trusts instead of checking. The two entries below marked VGS-143 are
+known defects recorded from a reproduction and deferred, and are the exception:
+they are not pinned, because pinning them would freeze behaviour that is meant
+to change.
 
 Handled exactly:
 
@@ -32,13 +35,15 @@ Handled exactly:
     string.
   - `#` comments, only at a word start, so `foo#bar` and `${v#pat}` are not
     comments.
-  - Heredoc bodies, with quoted, unquoted and tab-stripping (`<<-`) delimiters.
+  - Heredoc bodies are masked, and the introducing form is read exactly:
+    quoted, unquoted and tab-stripping (`<<-`) delimiters. Where the body ENDS
+    is only approximate — see below.
   - Herestrings (`<<<`), which are NOT heredocs — the operand is an ordinary
     word, and its quoting is masked as quoting.
   - Parameter expansion bodies and glob character classes, whose contents are
     pattern text: a `(` in `${v//(/x}` or in `b[(]c` opens nothing, and a
-    caller counting delimiters must not see it. An unmatched `${` or `[` is
-    left alone rather than blanked to a far-off closer.
+    caller counting delimiters must not see it. A CLOSED `${...}` is what this
+    covers; an unmatched one is not benign — see below.
   - Offsets and line count, which every caller slices against.
 
 Deliberately not masked: a BARE command substitution. Its contents are code,
@@ -61,6 +66,22 @@ incomplete rather than exhaustive, and add a control when a new shape appears:
   - A substitution inside double quotes is blanked with the body around it, so
     `"$(f() { echo; }; f)"` loses its braces — but as a balanced pair, so scope
     splitting still bounds a function correctly. Verified, not assumed.
+  - Where a heredoc body ENDS is approximate, and it errs OPEN. A body line is
+    taken as the terminator when its stripped text equals the delimiter, so a
+    space-indented `  EOF` inside the body ends the heredoc early; shell ends
+    it only on an exact match, and strips leading TABS only for `<<-`. The
+    rest of that body is then masked as code, so prose in a heredoc containing
+    something shaped like `conflicts=(...)` can be read as recipe metadata that
+    was never declared. Tracked as VGS-143; deferred rather than unknown.
+  - An unmatched `${` is left alone rather than blanked to a far-off closer,
+    which protects the text after it — but the expansion tracker stays open,
+    and comment and glob-class masking are gated on it being closed. So
+    everything after an unterminated `${` keeps its `#` comments and `[...]`
+    classes UNMASKED, and a caller reading that region sees comment text as
+    code. Tracked as VGS-143; deferred rather than unknown. Note the mechanism
+    is the unmatched opener, not quoting: a `${` inside `'...'`, `"..."` or
+    `$'...'` is consumed by the quote branch before the tracker sees it, which
+    was checked rather than assumed.
 
 Not attempted: expansion, evaluation, or word splitting. This is a mask, not a
 shell.
@@ -91,6 +112,9 @@ def code_mask(text: str) -> str:
     pending_heredocs: list[tuple[str, bool]] = []
     # Open `${` expansions, innermost last. Their contents are pattern text,
     # not structure, so a delimiter in there must not be counted as one.
+    # KNOWN DEFECT (VGS-143): an unmatched `${` never pops, and the comment and
+    # glob-class branches are gated on this being empty, so everything after it
+    # goes unmasked. Deferred, not overlooked — see the module docstring.
     expansions: list[int] = []
 
     def blank(start: int, stop: int) -> None:
@@ -125,6 +149,10 @@ def code_mask(text: str) -> str:
                     if line_end == -1:
                         line_end = length
                     line = text[end:line_end]
+                    # KNOWN DEFECT (VGS-143): `.strip()` accepts a
+                    # space-indented body line as the terminator, ending the
+                    # heredoc early. Shell requires an exact match, and strips
+                    # leading TABS only for `<<-`. Deferred, not overlooked.
                     if (line.lstrip("\t") if strip_tabs else line).strip() == delimiter:
                         break
                     end = line_end + 1
