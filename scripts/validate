@@ -291,6 +291,27 @@ require_count() { # $1 context, $2 field text, $3 value
   fi
 }
 
+# A FIELD APPEARS ONCE IN A RECORD, and this is the only implementation of that
+# rule. `class` had one and `kind` had none, so `kind class min=100 min=2` was
+# silently last-one-wins — an ambiguous declaration of the rule that governs how
+# every other record is read, with the runner then executing checks against it.
+# A second implementation beside the first is exactly how the two sites came to
+# disagree, so there is one function and every record kind with named fields
+# calls it.
+#
+# TWO RECORD KINDS CARRY NAMED FIELDS — `kind` (min, max) and `class` (the seven
+# booleans plus min and max). `token <name> <class>` and `message <key> <text>`
+# are positional and have no named field to repeat; `token`'s `max=2` arity
+# means an extra field is refused as arity before it could be one.
+declare -A SEEN_FIELD=()
+begin_record() { SEEN_FIELD=(); }
+seen_field() { # $1 context, $2 field name
+  if [[ -n "${SEEN_FIELD[$2]:-}" ]]; then
+    grammar_fatal "${MSG[grammar-repeated-field]:-grammar record repeats a field}" "$1: $2"
+  fi
+  SEEN_FIELD[$2]=1
+}
+
 declare -A KIND_MIN=() KIND_MAX=() SEEN_RECORD=()
 seen_record() {
   if [[ -n "${SEEN_RECORD[$1/$2]:-}" ]]; then
@@ -310,12 +331,14 @@ while read -r kind name rest || [[ -n "$kind" ]]; do
         grammar_fatal "${MSG[grammar-arity]:-grammar line has the wrong number of fields}" \
           "kind ${name:-}"
       fi
+      begin_record
       for field in $rest; do
         case "$field" in
           min=* | max=*) ;;
-          *) grammar_fatal "${MSG[grammar-class-unknown]:-class has an unknown property}" \
+          *) grammar_fatal "${MSG[grammar-unknown-field]:-grammar record has an unknown field}" \
             "kind $name: $field" ;;
         esac
+        seen_field "kind $name" "${field%%=*}"
         # A COUNT IS AN INTEGER, and unvalidated it was neither. `min=banana`
         # was stored verbatim here and later compared with `-lt`, which
         # arithmetic-evaluates an unknown word to 0 — so a typo silently turned
@@ -379,7 +402,7 @@ while read -r line || [[ -n "$line" ]]; do
       # BY KEY, NEVER BY POSITION. Reading these positionally while the python
       # reader read them by key made reordering the same four pairs change what
       # each reader believed — in the file written to end reader disagreements.
-      declare -A seen=()
+      begin_record
       for field in $rest; do
         if [[ "$field" != *=* ]]; then
           grammar_fatal "${MSG[grammar-class-malformed]:-class property must be key=value}" \
@@ -389,12 +412,12 @@ while read -r line || [[ -n "$line" ]]; do
         value="${field#*=}"
         case "$prop" in
           selects | standalone | rowtag | exclusive | cli | universal | skips | min | max) ;;
-          *) grammar_fatal "${MSG[grammar-class-unknown]:-class has an unknown property}" \
+          *) grammar_fatal "${MSG[grammar-unknown-field]:-grammar record has an unknown field}" \
             "$name: $prop" ;;
         esac
-        if [[ -n "${seen[$prop]:-}" ]]; then
-          grammar_fatal "${MSG[grammar-class-repeated]:-class repeats a property}" "$name: $prop"
-        fi
+        # Same function the `kind` branch calls; the one that used to live here
+        # was the second implementation.
+        seen_field "$name" "$prop"
         case "$prop" in
           min | max)
             # NOT a boolean, so not the boolean message: `min=banana` was
@@ -411,7 +434,6 @@ while read -r line || [[ -n "$line" ]]; do
             esac
             ;;
         esac
-        seen[$prop]=1
         case "$prop" in
           selects) CLASS_SELECTS[$name]="$value" ;;
           standalone) CLASS_STANDALONE[$name]="$value" ;;
@@ -425,7 +447,7 @@ while read -r line || [[ -n "$line" ]]; do
         esac
       done
       for prop in selects standalone rowtag exclusive cli universal skips; do
-        if [[ -z "${seen[$prop]:-}" ]]; then
+        if [[ -z "${SEEN_FIELD[$prop]:-}" ]]; then
           grammar_fatal "${MSG[grammar-class-missing]:-class is missing a property}" "$name: $prop"
         fi
       done

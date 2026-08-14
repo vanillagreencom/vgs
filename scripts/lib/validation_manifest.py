@@ -143,6 +143,11 @@ CLASS_PROPERTIES = (
 )
 CLASS_COUNTS = ("min", "max")
 
+# The same canonical form the runner enforces on the definition: no leading
+# zero, no sign, no padding. Asserted again on the wire rather than assumed,
+# since a dump is the one thing no other check looks at.
+_CANONICAL_INT = re.compile(r"0|[1-9][0-9]*")
+
 
 class Grammar:
     """The grammar as scripts/validate parsed it, decoded from its dump.
@@ -228,43 +233,107 @@ class Grammar:
         )
 
     def _decode(self, dump: str) -> None:
+        """Decode the dump, FAIL-CLOSED on anything it does not recognise.
+
+        Strictness matters more here than anywhere else in this module, for a
+        reason particular to the single-reader shape: this is the ONLY consumer
+        of the dump, so it is the last place a runner dump bug can be caught —
+        and a runner bug is precisely the class the single reader can no longer
+        catch any other way. It is also the code that states the principle: a
+        decoder supplying a default is where a second reader starts having
+        opinions again, and coercing `min=banana` to -1 and then dropping it was
+        that, in the file the note is written in.
+
+        So every field is VALIDATED, never coerced: an unparseable value, an
+        unknown key, a repeated record and a missing required line all raise,
+        naming the runner's dump as the defect, because on a validated .conf
+        that is the only way any of them can be reached.
+        """
+        seen_kinds: set[str] = set()
         for line in dump.splitlines():
             if not line.strip():
                 continue
             kind, _, rest = line.partition(" ")
-            if kind == "source":
-                self.source = Path(rest)
-            elif kind == "default":
-                self.default = rest
+            if kind in ("source", "default"):
+                if kind in seen_kinds:
+                    raise self._bad_dump(f"more than one `{kind}` line")
+                seen_kinds.add(kind)
+                if not rest or rest.split() != [rest]:
+                    raise self._bad_dump(f"`{kind}` line is empty or not one word")
+                if kind == "source":
+                    self.source = Path(rest)
+                else:
+                    self.default = rest
             elif kind == "class":
-                name, *fields = rest.split()
+                fields = rest.split()
+                if not fields:
+                    raise self._bad_dump("a `class` line with no name")
+                name, fields = fields[0], fields[1:]
+                if name in self.classes:
+                    raise self._bad_dump(f"class {name} dumped twice")
                 props: dict[str, bool] = {}
-                counts: dict[str, int] = {}
+                counts: dict[str, int | None] = {}
                 for field in fields:
-                    key, _, value = field.partition("=")
+                    key, sep, value = field.partition("=")
+                    if not sep:
+                        raise self._bad_dump(f"class {name}: `{field}` is not key=value")
+                    if key in props or key in counts:
+                        raise self._bad_dump(f"class {name} repeats `{key}`")
                     if key in CLASS_COUNTS:
-                        counts[key] = int(value) if value.isdigit() else -1
-                    else:
+                        # `-` is the runner's spelling of unbounded, and it is
+                        # only legal on max. Anything else must be a canonical
+                        # decimal — the same form the runner enforces on the
+                        # .conf, asserted again on the wire rather than assumed.
+                        if value == "-" and key == "max":
+                            counts[key] = None
+                        elif _CANONICAL_INT.fullmatch(value):
+                            counts[key] = int(value)
+                        else:
+                            raise self._bad_dump(
+                                f"class {name}: `{key}={value}` is not a decimal integer"
+                                + (" or `-`" if key == "max" else "")
+                            )
+                    elif key in CLASS_PROPERTIES:
+                        if value not in ("yes", "no"):
+                            raise self._bad_dump(
+                                f"class {name}: `{key}={value}` is not yes or no"
+                            )
                         props[key] = value == "yes"
+                    else:
+                        raise self._bad_dump(f"class {name}: unknown field `{key}`")
                 missing = [p for p in CLASS_PROPERTIES if p not in props]
                 if missing:
                     raise self._bad_dump(f"class {name} has no `{missing[0]}`")
                 if set(counts) != set(CLASS_COUNTS):
                     raise self._bad_dump(f"class {name} does not carry min and max")
                 self.classes[name] = props
-                # `max=-` is the runner's spelling of unbounded, decoded to an
-                # absent key so callers ask `if high is not None` as before.
-                self.counts[name] = {k: v for k, v in counts.items() if v >= 0}
+                # An unbounded max is dropped so callers keep asking
+                # `if high is not None`; that is a representation choice on a
+                # value the dump stated, not a default supplied for one it did
+                # not.
+                self.counts[name] = {k: v for k, v in counts.items() if v is not None}
             elif kind == "token":
-                name, _, cls = rest.partition(" ")
+                fields = rest.split()
+                if len(fields) != 2:
+                    raise self._bad_dump(f"`token {rest}` is not `token <name> <class>`")
+                name, cls = fields
+                if name in self.token_class:
+                    raise self._bad_dump(f"token {name} dumped twice")
                 if cls not in self.classes:
                     raise self._bad_dump(f"token {name} names undumped class {cls!r}")
                 self.token_class[name] = cls
             elif kind == "message":
-                key, _, text = rest.partition(" ")
+                key, sep, text = rest.partition(" ")
+                if not key or not sep or not text:
+                    raise self._bad_dump(f"`message {rest}` has no key or no text")
+                if key in self.messages:
+                    raise self._bad_dump(f"message {key} dumped twice")
                 self.messages[key] = text
             else:
                 raise self._bad_dump(f"unknown dump line kind {kind!r}")
+        for required in ("source", "default"):
+            if required not in seen_kinds:
+                raise self._bad_dump(f"no `{required}` line")
         if not self.classes or not self.token_class:
             raise self._bad_dump("no classes or no tokens")
         # SHAPE, not rule: the runner decides WHICH token is the default and

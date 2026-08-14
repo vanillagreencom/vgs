@@ -349,8 +349,8 @@ while IFS=';' read -r label line expect; do
     "$expect"
 done <<'CLASSES'
 a class missing a property is reported;class area       selects=yes standalone=yes rowtag=yes;is missing a property
-a class with an unknown property is reported;class area       selects=yes standalone=yes rowtag=yes exclusive=no bogus=yes;has an unknown property
-a class repeating a property is reported;class area       selects=yes selects=no standalone=yes rowtag=yes exclusive=no;repeats a property
+a class with an unknown property is reported;class area       selects=yes standalone=yes rowtag=yes exclusive=no bogus=yes;has an unknown field
+a class repeating a property is reported;class area       selects=yes selects=no standalone=yes rowtag=yes exclusive=no;repeats a field
 a class property without = is reported;class area       selectsyes standalone=yes rowtag=yes exclusive=no;must be key=value
 a class property that is not yes/no is reported;class area       selects=maybe standalone=yes rowtag=yes exclusive=no;must be yes or no
 CLASSES
@@ -649,6 +649,96 @@ done <<'DEFAULTS'
 two default-eligible tokens in different classes are reported;class other      selects=no  standalone=no  rowtag=no   exclusive=no  cli=yes universal=no  skips=no  min=1 max=1%%token everything other;exactly one CLI default token
 two default-eligible tokens in one class are reported;token everything argument;wrong number of tokens in a class
 DEFAULTS
+
+# A FIELD REPEATED INSIDE ONE RECORD, on every record kind that has named
+# fields. `class` validated this and `kind` did not, so `kind class min=100
+# min=2` was silently last-one-wins — an ambiguous declaration of the rule that
+# governs how every OTHER record is read, with the runner then executing checks
+# against it. The two record kinds with named fields are `kind` (min, max) and
+# `class` (the seven booleans plus min and max); `token <name> <class>` and
+# `message <key> <text>` are positional and have no named field to repeat, and
+# token's `max=2` arity refuses an extra field before it could be one — that
+# case is asserted below so "not covered" and "cannot happen" stay distinct.
+while IFS=';' read -r label from to expect; do
+  [[ -n "$label" ]] || continue
+  printf '%s' "${real_grammar/$from/$to}" >"$tmp/repeat.conf"
+  grep -qF -- "$to" "$tmp/repeat.conf" ||
+    fail "$label" "the mutation did not apply, so the case cannot fail"
+  cp "$tmp/repeat.conf" "$fixture_dir/scripts/lib/validation-grammar.conf"
+  cp "$runner" "$fixture_dir/scripts/validate"
+  chmod +x "$fixture_dir/scripts/validate"
+  for area in docs all; do
+    rc=0
+    out="$("$fixture_dir/scripts/validate" --list "$area" 2>"$tmp/stderr")" || rc=$?
+    [[ "$rc" == 2 ]] || fail "$label" "runner exited $rc in area $area, not 2"
+    expect_absent "$out" "scripts/" "$label ($area)"
+    expect_contains "$(cat "$tmp/stderr")" "$expect" "$label ($area)"
+  done
+  run_guard "GRAMMAR_PATH=$tmp/repeat.conf"
+  expect_refused "$label" "$expect"
+  ok "$label"
+done <<'REPEATS'
+a repeated min on a kind record is reported;kind class   min=2;kind class   min=100 min=2;repeats a field
+a repeated max on a kind record is reported;kind token   min=2 max=2;kind token   min=2 max=2 max=9;repeats a field
+a repeated boolean on a class record is reported;class area       selects=yes;class area       selects=yes selects=no;repeats a field
+a repeated count on a class record is reported;skips=no  min=1;skips=no  min=1 min=9;repeats a field
+a repeated token field is refused as arity;token go         area;token go         area area;wrong number of fields
+REPEATS
+
+# A HAND-BUILT DUMP THE RUNNER WOULD NEVER EMIT. The decoder is the ONLY
+# consumer of the dump, so it is the last place a runner dump bug can be caught
+# — and a runner bug is the one class the single-reader shape cannot catch any
+# other way. It coerced a non-digit min/max to -1 and dropped it, which is the
+# "decoder supplying a default" the dump's own design note forbids. Each case
+# is a stub runner printing a corrupted dump; every one must raise, name the
+# RUNNER'S DUMP as the defect, and reach the guard as a collected problem with
+# no traceback.
+dump_stub="$tmp/dump-stub/scripts/validate"
+mkdir -p "$tmp/dump-stub/scripts/lib"
+cp "$repo_root/scripts/lib/validation-grammar.conf" "$tmp/dump-stub/scripts/lib/"
+good_dump="$("$runner" --dump-grammar)"
+while IFS=';' read -r label from to; do
+  [[ -n "$label" ]] || continue
+  if [[ "$to" == "APPEND" ]]; then
+    corrupt="$good_dump
+$from"
+  else
+    corrupt="${good_dump/$from/$to}"
+    [[ "$corrupt" != "$good_dump" ]] ||
+      fail "$label" "the dump mutation did not apply, so the case cannot fail"
+  fi
+  printf '#!/usr/bin/env bash\ncat <<%s\n%s\nDUMP_EOF\n' "'DUMP_EOF'" "$corrupt" >"$dump_stub"
+  chmod +x "$dump_stub"
+  run_guard "RUNNER_PATH=$dump_stub"
+  expect_refused "$label" "defect in the runner's dump"
+  expect_absent "$guard_out" "Traceback" "$label"
+  ok "$label"
+done <<'DUMPS'
+a non-integer count in the dump is refused;skips=no min=1 max=-;skips=no min=banana max=-
+a dash min in the dump is refused;skips=no min=1 max=-;skips=no min=- max=-
+a non-canonical count in the dump is refused;skips=no min=1 max=-;skips=no min=08 max=-
+an unknown class field in the dump is refused;skips=no min=1;skips=no bogus=yes min=1
+a non-boolean class field in the dump is refused;class area selects=yes;class area selects=maybe
+a missing class field in the dump is refused;universal=no skips=no min=1 max=-;universal=no min=1 max=-
+a repeated class field in the dump is refused;class area selects=yes;class area selects=yes selects=no
+a malformed token line in the dump is refused;token go area;token go area extra
+a duplicated token in the dump is refused;token qml area;APPEND
+a message with no text in the dump is refused;message grammar-arity grammar line has the wrong number of fields;message grammar-arity
+a second default in the dump is refused;default qml;APPEND
+an unknown dump line kind is refused;bogus line;APPEND
+DUMPS
+
+# ...and the two REQUIRED dump lines, whose absence is the shape a `${x/from/to}`
+# mutation cannot express.
+for required in source default; do
+  printf '#!/usr/bin/env bash\ncat <<%s\n%s\nDUMP_EOF\n' "'DUMP_EOF'" \
+    "$(printf '%s\n' "$good_dump" | grep -v "^$required ")" >"$dump_stub"
+  chmod +x "$dump_stub"
+  run_guard "RUNNER_PATH=$dump_stub"
+  expect_refused "missing $required line" "no \`$required\` line"
+  expect_absent "$guard_out" "Traceback" "missing $required line"
+done
+ok "a dump missing a required line is refused, naming the line"
 
 # The accept side: the real grammar resolves ONE default, the runner dumps it,
 # and a bare `scripts/validate --list` still uses it. Asserted against the dump
