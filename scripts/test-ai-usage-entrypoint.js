@@ -118,4 +118,29 @@ assert.equal((cmdAiUsage.match(/print\(/g) || []).length, 1,
 assert.ok(cmdAiUsage.includes('emit({"ok": False, "error": "ai-usage backend not found"})'),
     "the backend-not-found payload is emitted through the stamping helper");
 
+// --- the backend script's own emissions -------------------------------------
+//
+// The wrapper stamps what it emits and fills in a stamp the backend omitted, so
+// a missing stamp in bin/vshell-ai-usage would not reach the widget — but it
+// would silently make the wrapper the source of a provider identity the backend
+// meant to state itself. Every JSON object the backend prints has to carry the
+// key, and this fails at CI rather than at runtime when a new return path forgets.
+
+const backend = fs.readFileSync(path.join(repoRoot, "bin", "vshell-ai-usage"), "utf8");
+
+// `jq -n` is how this script builds an object out of nothing, which is every
+// payload it prints; the account-normalising calls read stdin instead.
+const emissions = backend.split(/\bjq -n/).slice(1);
+assert.ok(emissions.length >= 4,
+    `expected the backend's payload emissions to be found, got ${emissions.length}`);
+for (const emission of emissions) {
+    // Up to the next command, so one emission's text cannot vouch for another.
+    const program = emission.split(/\n(?=[a-z]|\})/)[0];
+    assert.ok(/provider:/.test(program),
+        "every JSON payload bin/vshell-ai-usage emits must name its provider:\n" +
+        program.slice(0, 200));
+}
+assert.ok(!/^\s*(printf|echo)\s+.*['"]\s*\{/m.test(backend),
+    "a payload printed without jq would bypass the provider stamp entirely");
+
 console.log("ai-usage entrypoint stamping: OK");

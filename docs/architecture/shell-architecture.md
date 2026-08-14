@@ -249,9 +249,11 @@ On a second display the assigning instance has gone unbound while the other
 still follows `pluginDataChanged`, so one persisted setting renders as two
 different states (VGS-74).
 
-**A setting that scopes a fetch owns two more rules** (VGS-118). When a widget
-fetches per-source data — a provider, an account, a device — and a setting
-chooses the source:
+### Attributing a fetch that a setting scopes
+
+A setting that chooses which source a widget fetches owns two more rules
+(VGS-118). When a widget fetches per-source data — a provider, an account, a
+device — and a setting chooses the source:
 
 - **Attribute every result by what the payload says it is**, not by the source
   the fetch was launched for and never by the one selected when the output

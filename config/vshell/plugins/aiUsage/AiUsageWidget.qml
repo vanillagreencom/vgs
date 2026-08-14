@@ -54,9 +54,6 @@ PluginComponent {
         id: logic
     }
 
-    function orderedAccounts(list) {
-        return logic.orderedAccounts(list);
-    }
     function shownAccounts(list) {
         return logic.shownIn(list, root.hiddenAccounts);
     }
@@ -121,10 +118,6 @@ PluginComponent {
     }
     readonly property int headlinePct: root.multiAccount ? root.aggregatePct : root.primaryPct
 
-    function metersFor(account) {
-        return logic.metersFor(account);
-    }
-
     // Meters for the single-account view. Prefers the accounts list so lanes the
     // flat payload can't express (a credit pool, a second model) still show up,
     // and falls back to the payload's own lanes if an older helper omits
@@ -132,7 +125,7 @@ PluginComponent {
     readonly property var primaryMeters: {
         const list = root.accounts || [];
         if (list.length > 0)
-            return root.metersFor(list[0]);
+            return logic.metersFor(list[0]);
         return logic.flatMeters(root.current);
     }
 
@@ -186,27 +179,30 @@ PluginComponent {
         return peak;
     }
 
-    // Headline for each provider, kept side by side so the pill can show both
-    // without the popout having to be on that tab. {pct} or null when the
-    // provider has no signed-in accounts.
-    // The last payload per provider. Kept raw rather than reduced to a number,
-    // because the headline mode and the hidden-account list can change between
-    // polls and the pill has to follow them without waiting for a refetch.
-    property var claudeData: null
-    property var codexData: null
+    // The last payload PER PROVIDER, keyed by provider name so the pill can show
+    // both without the popout having to be on that tab. Kept raw rather than
+    // reduced to a number, because the headline mode and the hidden-account list
+    // can change between polls and the pill has to follow them without waiting
+    // for a refetch.
+    //
+    // A map rather than two properties, so filing is a keyed write and there is
+    // no branch that could file an unidentifiable payload under a guess — the
+    // guessing is what mixed the two providers up (VGS-118).
+    property var providerData: ({})
 
-    readonly property var claudeHead: logic.headOf(root.claudeData, root.headlineMode, root.hiddenAccounts)
-    readonly property var codexHead: logic.headOf(root.codexData, root.headlineMode, root.hiddenAccounts)
+    readonly property var claudeHead: logic.headOf(root.providerData.claude, root.headlineMode, root.hiddenAccounts)
+    readonly property var codexHead: logic.headOf(root.providerData.codex, root.headlineMode, root.hiddenAccounts)
 
     // File a payload under the provider IT names, never under the provider the
-    // fetch was launched for or the one currently selected. `provider` must be
-    // a real provider; an unidentifiable payload is filed nowhere.
+    // fetch was launched for or the one currently selected.
     function storeHeadline(provider, data) {
         const which = logic.normalizeProvider(provider);
-        if (which === "codex")
-            root.codexData = data;
-        else if (which === "claude")
-            root.claudeData = data;
+        if (which === "")
+            return;
+        // A new object, because a var property only notifies on assignment.
+        const next = { claude: root.providerData.claude, codex: root.providerData.codex };
+        next[which] = data;
+        root.providerData = next;
     }
     function noteHeadline(data) {
         root.storeHeadline(logic.payloadProvider(data), data);
@@ -227,9 +223,9 @@ PluginComponent {
         return logic.pillSlots({
             selected: root.provider,
             claudeHead: root.claudeHead,
-            claudeData: root.claudeData,
+            claudeData: root.providerData.claude,
             codexHead: root.codexHead,
-            codexData: root.codexData,
+            codexData: root.providerData.codex,
             fetching: root.fetchingProviders
         });
     }
@@ -257,6 +253,12 @@ PluginComponent {
         // never be shown as the other's cause.
         property bool accepted: false
         property string issue: ""
+        // A launch asked for while the previous process was still stopping, to
+        // be applied when it actually stops.
+        property bool pending: false
+        // The channel whose payload the popout shows. The other one keeps only
+        // its provider's headline.
+        property bool primary: false
 
         // What a provider switch invalidates. `inFlight` is deliberately not
         // touched: a process is still running and its tag is what identifies it.
@@ -270,6 +272,7 @@ PluginComponent {
 
     FetchChannel {
         id: usageFetch
+        primary: true
     }
     FetchChannel {
         id: otherFetch
@@ -295,13 +298,6 @@ PluginComponent {
         otherFetch.reset();
     }
 
-    // A tag is only honoured while its process is actually running, so a fetch
-    // that somehow never reports an exit cannot wedge polling forever. And a
-    // tag is only KEPT when the launch actually took: assigning `running = true`
-    // to a Process that has not finished stopping is a no-op, and a tag left
-    // behind by a launch that never happened would block every later refresh
-    // while nothing was fetching.
-    //
     // `which` is "usage", "other", or empty for both. A retry relaunches only
     // the channel that asked for one: restarting both would spend one channel's
     // budget on the other's process, and every launch shells out to a provider
@@ -313,15 +309,24 @@ PluginComponent {
             root.launch(usageFetch, usageProc, root.provider);
     }
 
+    // A tag is only set when a process actually starts. `running = true` on a
+    // Process that has not finished stopping is a no-op, so that case parks the
+    // request on the channel and onRunningChanged applies it — a tag set for a
+    // launch that never happened would show a fetch that does not exist and
+    // block every later refresh until the poll timer.
     function launch(ch, proc, want) {
-        if (ch.inFlight !== "" && proc.running)
+        const decision = logic.launchDecision(ch.inFlight, proc.running);
+        if (decision === "skip")
             return;
+        if (decision === "pend") {
+            ch.pending = true;
+            return;
+        }
+        ch.pending = false;
         ch.inFlight = want;
         ch.accepted = false;
         ch.issue = "";
         proc.running = true;
-        if (!proc.running)
-            ch.inFlight = "";
     }
 
     function setProvider(p) {
@@ -354,7 +359,7 @@ PluginComponent {
         running: false
         stdout: StdioCollector {
             id: usageOut
-            onStreamFinished: root.acceptUsage(usageOut.text)
+            onStreamFinished: root.acceptPayload(usageFetch, root.provider, usageOut.text)
         }
         // Kept, because a helper that fails before printing anything says why
         // here and nowhere else. Without it the widget reported "parse error"
@@ -370,6 +375,12 @@ PluginComponent {
         onExited: (exitCode, exitStatus) => {
             root.finishFetch(usageFetch, "usage", root.provider, exitCode, usageErr.text);
         }
+        // The documented Quickshell restart idiom: a launch requested while this
+        // was still stopping is applied here, when it has actually stopped.
+        onRunningChanged: {
+            if (!running && usageFetch.pending)
+                root.launch(usageFetch, usageProc, root.provider);
+        }
     }
 
     // The provider the popout is NOT showing. Only its headline is kept, so the
@@ -382,13 +393,17 @@ PluginComponent {
         running: false
         stdout: StdioCollector {
             id: otherOut
-            onStreamFinished: root.acceptOther(otherOut.text)
+            onStreamFinished: root.acceptPayload(otherFetch, root.otherProvider, otherOut.text)
         }
         stderr: StdioCollector {
             id: otherErr
         }
         onExited: (exitCode, exitStatus) => {
             root.finishFetch(otherFetch, "other", root.otherProvider, exitCode, otherErr.text);
+        }
+        onRunningChanged: {
+            if (!running && otherFetch.pending)
+                root.launch(otherFetch, otherProc, root.otherProvider);
         }
     }
 
@@ -446,47 +461,26 @@ PluginComponent {
         }
     }
 
-    // A payload is JSON that names the provider its fetch was launched for.
-    // Anything else — unparseable output, a payload naming the other provider —
-    // is not this fetch's answer, and is refetched rather than displayed. The
-    // reason travels WITH the result so it cannot be read as the other
-    // channel's cause.
-    function decodePayload(launchedFor, txt) {
-        let d = null;
-        try {
-            d = JSON.parse((txt || "").trim());
-        } catch (e) {
-            return { data: null, issue: "parse error" };
-        }
-        if (!logic.payloadIsFor(launchedFor, d))
-            return { data: null, issue: "provider mismatch" };
-        return { data: d, issue: "" };
-    }
-
-    function acceptUsage(txt) {
-        const got = root.decodePayload(usageFetch.inFlight, txt);
-        usageFetch.issue = got.issue;
+    // Both channels accept through one path: decode, record the reason on THIS
+    // channel, then apply the outcome AiUsageLogic decided. Filing a payload and
+    // satisfying a channel are separate answers — a result that lands after the
+    // user switched still updates its own provider's pill slot, but leaves the
+    // channel owing a fetch for what is selected now.
+    function acceptPayload(ch, want, txt) {
+        const got = logic.decodePayload(ch.inFlight, txt);
+        ch.issue = got.issue;
         if (!got.data)
             return;
-        usageFetch.accepted = true;
-        // The headline is filed by the payload's own provider, so a result that
-        // lands after the user switched still updates that provider's pill slot.
-        root.noteHeadline(got.data);
-        // The popout, though, only ever shows the selected provider.
-        if (logic.payloadProvider(got.data) !== root.provider)
-            return;
-        root.applyPayload(got.data);
-    }
-
-    function acceptOther(txt) {
-        const got = root.decodePayload(otherFetch.inFlight, txt);
-        otherFetch.issue = got.issue;
-        if (!got.data)
-            return;
-        otherFetch.accepted = true;
-        root.noteHeadline(got.data);
-        otherFetch.loaded = logic.payloadProvider(got.data);
-        otherFetch.retries = 0;
+        ch.accepted = true;
+        const outcome = logic.acceptOutcome(logic.payloadProvider(got.data), want, ch.primary);
+        if (outcome.file)
+            root.noteHeadline(got.data);
+        if (outcome.loaded !== "")
+            ch.loaded = outcome.loaded;
+        if (outcome.resetRetries)
+            ch.retries = 0;
+        if (outcome.apply)
+            root.applyPayload(got.data);
     }
 
     // The whole popout is a binding off `current`, so accepting a payload is one
@@ -497,8 +491,6 @@ PluginComponent {
         root.current = d;
         root.fetchError = "";
         root.loading = false;
-        usageFetch.loaded = root.provider;
-        usageFetch.retries = 0;
     }
 
     Timer {
@@ -697,22 +689,23 @@ PluginComponent {
                                 anchors.verticalCenter: parent.verticalCenter
                                 spacing: Theme.spacingS
 
-                            VgsButton {
-                                text: "Claude"
-                                iconName: "smart_toy"
-                                width: (providerRow.width - Theme.spacingS) / 2
-                                backgroundColor: root.provider === "claude" ? Theme.primary : Theme.surfaceContainerHigh
-                                textColor: root.provider === "claude" ? Theme.primaryText : Theme.surfaceText
-                                onClicked: root.setProvider("claude")
-                            }
+                            // Driven from the same identity source as the pill
+                            // slots, so a tab's label and icon cannot disagree
+                            // with the number the bar shows for that provider.
+                            Repeater {
+                                model: logic.providerOrder()
 
-                            VgsButton {
-                                text: "Codex"
-                                iconName: "terminal"
-                                width: (providerRow.width - Theme.spacingS) / 2
-                                backgroundColor: root.provider === "codex" ? Theme.primary : Theme.surfaceContainerHigh
-                                textColor: root.provider === "codex" ? Theme.primaryText : Theme.surfaceText
-                                onClicked: root.setProvider("codex")
+                                VgsButton {
+                                    required property string modelData
+
+                                    readonly property bool current: root.provider === modelData
+                                    text: logic.providerName(modelData)
+                                    iconName: logic.providerIcon(modelData)
+                                    width: (providerRow.width - Theme.spacingS) / 2
+                                    backgroundColor: current ? Theme.primary : Theme.surfaceContainerHigh
+                                    textColor: current ? Theme.primaryText : Theme.surfaceText
+                                    onClicked: root.setProvider(modelData)
+                                }
                             }
                             }
                         }
@@ -753,7 +746,7 @@ PluginComponent {
                                 required property var modelData
 
                                 readonly property bool expanded: root.expandedAccountId === modelData.id
-                                readonly property var meters: root.metersFor(modelData)
+                                readonly property var meters: logic.metersFor(modelData)
                                 width: parent.width
                                 height: accountCol.implicitHeight + Theme.spacingM * 2
                                 radius: Theme.cornerRadius
@@ -934,7 +927,7 @@ PluginComponent {
 
                                 Repeater {
                                     model: (root.accounts || []).length > 1
-                                        ? root.orderedAccounts(root.accounts) : []
+                                        ? logic.orderedAccounts(root.accounts) : []
 
                                     Item {
                                         required property var modelData

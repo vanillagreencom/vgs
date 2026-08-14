@@ -62,15 +62,68 @@ QtObject {
     // to the provider selected NOW.
     //
     // The retry bound keeps a helper that never returns a usable payload from
-    // turning that into an unbounded relaunch loop. It is reset by any accepted
-    // payload and by a provider switch, so user-driven churn always gets a fresh
-    // budget and only a genuinely broken fetch runs out of one.
+    // turning that into an unbounded relaunch loop. It is reset by a payload
+    // that lands for the provider the channel is displaying — a payload for some
+    // other provider is filed but restores nothing — and by a provider switch,
+    // so user-driven churn always gets a fresh budget and only a genuinely
+    // broken fetch runs out of one.
     function shouldRelaunch(launchedFor, loadedProvider, wantProvider, retries, maxRetries) {
         if (normalizeProvider(launchedFor) === "")
             return false;
         if (normalizeProvider(loadedProvider) === normalizeProvider(wantProvider))
             return false;
         return (retries || 0) < (maxRetries || 0);
+    }
+
+    // What a fetch produced: the payload, or why there is none. The reason
+    // travels WITH the result so it cannot be read as another channel's cause.
+    // A payload is JSON that names the provider its fetch was launched for;
+    // anything else is not this fetch's answer and is refetched, not displayed.
+    function decodePayload(launchedFor, txt) {
+        let d = null;
+        try {
+            d = JSON.parse(String(txt || "").trim());
+        } catch (e) {
+            return { data: null, issue: "parse error" };
+        }
+        if (!payloadIsFor(launchedFor, d))
+            return { data: null, issue: "provider mismatch" };
+        return { data: d, issue: "" };
+    }
+
+    // What an accepted payload means for the channel that fetched it:
+    //   file          — the pill slot this payload's provider owns takes it
+    //   loaded        — the provider this channel now holds, "" to leave it
+    //   resetRetries  — whether the retry budget is restored
+    //   apply         — whether the popout takes it (the primary channel only)
+    // A payload that arrives after the user switched away is still FILED, so its
+    // provider's pill slot is current, but it satisfies nothing: the channel
+    // still owes a fetch for what is selected now.
+    function acceptOutcome(payloadProviderName, want, primary) {
+        const p = normalizeProvider(payloadProviderName);
+        const satisfies = p !== "" && p === normalizeProvider(want);
+        return {
+            file: p !== "",
+            loaded: satisfies ? p : "",
+            resetRetries: satisfies,
+            apply: satisfies && primary === true
+        };
+    }
+
+    // Whether a launch request can start now. Assigning `running = true` to a
+    // Process that has not finished stopping is a NO-OP, so a request made in
+    // that window has to be remembered and applied when the process actually
+    // stops — dropping it left the widget showing a fetch that did not exist
+    // until the poll timer came round, up to five minutes later.
+    //   "skip"  — this channel is already fetching
+    //   "pend"  — the previous process is still stopping; retry on runningChanged
+    //   "start" — launch now
+    function launchDecision(inFlight, running) {
+        if (inFlight !== "" && running)
+            return "skip";
+        if (running)
+            return "pend";
+        return "start";
     }
 
     // --- headline arithmetic ------------------------------------------------

@@ -14,8 +14,9 @@
 //
 // The decision functions are extracted verbatim from the shipped QML between
 // its PROVIDER DECISION markers, so this tests the real source rather than a
-// re-implementation. The widget's own wiring is asserted against its source,
-// because the bug shape there is a MISSING or WRONG line.
+// re-implementation. scripts/test-ai-usage-wiring.js covers the other half:
+// that the widget applies these decisions where a missing line, not a wrong
+// answer, is the bug shape.
 
 "use strict";
 
@@ -26,20 +27,18 @@ const path = require("node:path");
 const repoRoot = path.join(__dirname, "..");
 const PLUGIN = path.join(repoRoot, "config", "vshell", "plugins", "aiUsage");
 const LOGIC = path.join(PLUGIN, "AiUsageLogic.qml");
-const WIDGET = path.join(PLUGIN, "AiUsageWidget.qml");
 
 const logicSource = fs.readFileSync(LOGIC, "utf8");
-const widgetSource = fs.readFileSync(WIDGET, "utf8");
 
 const marked = logicSource.match(/\/\/ BEGIN PROVIDER DECISION\n([\s\S]*?)\/\/ END PROVIDER DECISION/);
 assert.ok(marked, "AiUsageLogic.qml must carry the PROVIDER DECISION markers");
 
 const {
-    normalizeProvider, providerIcon, payloadProvider, payloadIsFor,
-    shouldRelaunch, headOf, pillSlot, pillSlots
+    normalizeProvider, providerIcon, payloadProvider, payloadIsFor, shouldRelaunch,
+    decodePayload, acceptOutcome, launchDecision, headOf, pillSlot, pillSlots
 } = new Function(
     `${marked[1]}\nreturn { normalizeProvider, providerIcon, payloadProvider, payloadIsFor,` +
-    ` shouldRelaunch, headOf, pillSlot, pillSlots };`
+    ` shouldRelaunch, decodePayload, acceptOutcome, launchDecision, headOf, pillSlot, pillSlots };`
 )();
 
 // The extracted region must be free of the widget and of Qt, or this harness is
@@ -273,121 +272,69 @@ function slotsFor(state) {
 assert.equal(normalizeProvider("codex"), "codex");
 assert.equal(normalizeProvider("gemini"), "", "an unknown provider normalises to nothing, never to a default");
 
-// --- 5. the widget's wiring -------------------------------------------------
+// --- 5. decode, accept and launch decisions ---------------------------------
 //
-// The functions above can be right while the widget calls them wrongly, and
-// three of this issue's four bugs were exactly that. These assertions read the
-// widget source, which is where a missing line would live.
+// These used to live in the widget as plain lines a test could only match as
+// text. They are here so an inversion fails an assertion instead of passing one.
 
-function widgetBody(name) {
-    const at = widgetSource.indexOf(`function ${name}(`);
-    assert.notEqual(at, -1, `AiUsageWidget.qml must define ${name}()`);
-    const open = widgetSource.indexOf("{", at);
-    let depth = 0;
-    for (let i = open; i < widgetSource.length; i++) {
-        if (widgetSource[i] === "{") depth += 1;
-        else if (widgetSource[i] === "}") {
-            depth -= 1;
-            if (depth === 0)
-                return widgetSource.slice(open, i + 1);
-        }
-    }
-    assert.fail(`${name}() has no closing brace`);
+assert.deepEqual(
+    decodePayload("codex", '{"ok":true,"provider":"codex"}'),
+    { data: { ok: true, provider: "codex" }, issue: "" },
+    "a stamped payload for the launched provider is this fetch's answer"
+);
+assert.deepEqual(
+    decodePayload("codex", "not json at all"),
+    { data: null, issue: "parse error" },
+    "unparseable output names its own cause"
+);
+assert.deepEqual(
+    decodePayload("codex", ""),
+    { data: null, issue: "parse error" },
+    "a fetch that printed nothing is not a payload"
+);
+assert.deepEqual(
+    decodePayload("codex", '{"ok":true,"provider":"claude"}'),
+    { data: null, issue: "provider mismatch" },
+    "a payload naming another provider is not this fetch's answer, and says so"
+);
+assert.deepEqual(
+    decodePayload("codex", '{"ok":false}'),
+    { data: null, issue: "provider mismatch" },
+    "an unstamped payload cannot be attributed either"
+);
+
+{
+    const outcome = acceptOutcome("codex", "codex", true);
+    assert.deepEqual(outcome, { file: true, loaded: "codex", resetRetries: true, apply: true },
+        "a payload for what this channel wants is filed, held, budgeted and shown");
+}
+{
+    const outcome = acceptOutcome("codex", "codex", false);
+    assert.equal(outcome.apply, false, "only the primary channel populates the popout");
+    assert.equal(outcome.loaded, "codex", "the other channel still holds what it fetched");
+}
+{
+    // The claude -> codex -> claude window: the payload is real and belongs in
+    // its own pill slot, but the channel still owes a fetch for the selection.
+    const outcome = acceptOutcome("claude", "codex", true);
+    assert.equal(outcome.file, true, "a late payload still updates ITS provider's pill slot");
+    assert.equal(outcome.loaded, "", "it does not make the channel hold the wrong provider");
+    assert.equal(outcome.resetRetries, false, "and it does not restore the retry budget");
+    assert.equal(outcome.apply, false, "and it never reaches the popout");
+}
+{
+    const outcome = acceptOutcome("", "claude", true);
+    assert.deepEqual(outcome, { file: false, loaded: "", resetRetries: false, apply: false },
+        "an unidentifiable payload is filed nowhere and satisfies nothing");
 }
 
-assert.ok(widgetBody("noteHeadline").includes("payloadProvider"),
-    "headlines must be filed by the payload's own provider, not by the fetch's tag");
-assert.ok(!widgetBody("noteHeadline").includes("root.provider"),
-    "filing by the CURRENT selection is the bug this issue is about");
-
-const decode = widgetBody("decodePayload");
-assert.ok(decode.includes("payloadIsFor"), "every payload must be checked against the fetch that produced it");
-assert.ok(/return \{ data: [^}]*issue:/.test(decode),
-    "the reason a payload was dropped travels WITH the result; a shared reason field " +
-    "reports one provider's failure as the other's cause");
-
-const acceptUsage = widgetBody("acceptUsage");
-assert.ok(acceptUsage.includes("usageFetch.inFlight"),
-    "the usage payload is validated against ITS channel's launch tag");
-assert.ok(acceptUsage.includes("!== root.provider"),
-    "a payload for a provider that is no longer selected must not populate the popout");
-const acceptOther = widgetBody("acceptOther");
-assert.ok(acceptOther.includes("otherFetch.inFlight"),
-    "the other-provider payload is validated against ITS channel's launch tag");
-for (const [name, body] of [["acceptUsage", acceptUsage], ["acceptOther", acceptOther]]) {
-    assert.ok(/(usage|other)Fetch\.issue = got\.issue/.test(body),
-        `${name}() must record the failure reason on its OWN channel`);
-}
-
-// The popout state is one payload plus the independent view fields, so a switch
-// cannot leave a lane behind. Assert the shape rather than a list of names: a
-// list is exactly the maintenance burden that let a field be forgotten.
-const cleared = widgetBody("clearProviderState");
-assert.ok(cleared.includes("root.current = null"),
-    "one payload property holds every provider-scoped lane, and a switch clears it");
-assert.ok(cleared.includes("root.fetchError = \"\""), "the failure text is provider-scoped too");
-assert.ok(cleared.includes("root.loading = true"), "a switch puts the popout back into loading");
-assert.ok(cleared.includes("root.expandedAccountId = \"\""),
-    "the expanded account belongs to the previous provider's list");
-assert.ok(cleared.includes("usageFetch.reset()") && cleared.includes("otherFetch.reset()"),
-    "both fetch channels are invalidated through the one reset path");
-assert.ok(!cleared.includes("root.claudeData"), "the per-provider headlines are keyed by identity and are kept");
-assert.ok(!cleared.includes("root.codexData"), "the per-provider headlines are keyed by identity and are kept");
-
-// Nothing outside applyPayload may write the popout's payload, or the single
-// clear point stops being single.
-const currentWrites = (widgetSource.match(/root\.current = /g) || []).length;
-assert.equal(currentWrites, 2, "root.current is written in exactly two places: applyPayload and the reset");
-
-const channelReset = widgetSource.match(/function reset\(\) \{([\s\S]*?)\n        \}/);
-assert.ok(channelReset, "the fetch channel must define reset()");
-for (const field of ["loaded", "retries", "accepted", "issue"]) {
-    assert.ok(new RegExp(`${field} = `).test(channelReset[1]),
-        `a channel reset must clear ${field}`);
-}
-assert.ok(!/\binFlight = /.test(channelReset[1]),
-    "inFlight identifies a process that is still running; clearing it would orphan its payload");
-
-const onProviderChanged = widgetSource.match(/onProviderChanged: \{([\s\S]*?)\n    \}/);
-assert.ok(onProviderChanged, "AiUsageWidget.qml must handle onProviderChanged");
-assert.ok(onProviderChanged[1].includes("clearProviderState()"),
-    "a provider switch must invalidate the previous provider's state before refetching");
-assert.ok(/refresh\("\)?"?\)/.test(onProviderChanged[1]), "a provider switch must refetch");
-
-// One exit path, shared by both channels, and a retry that restarts only the
-// channel that asked: refreshing both would spend one channel's budget on the
-// other's process, and every launch shells out to a provider usage API once per
-// configured bar.
-const exits = widgetSource.match(/onExited: \([^)]*\) => \{[\s\S]*?\n        \}/g) || [];
-assert.equal(exits.length, 2, "both fetch processes must handle exit");
-for (const body of exits) {
-    assert.ok(/finishFetch\((usage|other)Fetch, "(usage|other)"/.test(body),
-        "both channels finish through the one shared exit path");
-    assert.ok(/exitCode/.test(body), "the exit code has to reach the handler to be a cause");
-    assert.ok(/Err\.text/.test(body), "stderr has to reach the handler to be reported");
-}
-
-const finish = widgetBody("finishFetch");
-assert.ok(finish.includes("shouldRelaunch"), "relaunch is decided by the shared predicate");
-assert.ok(!/launchedFor !== (root\.)?(other)?[Pp]rovider/.test(finish),
-    "comparing the launch tag to the current selection is the dropped-refetch bug");
-assert.ok(finish.includes("Qt.callLater(() => root.refresh(which))"),
-    "the relaunch stays deferred and restarts only the channel that asked");
-assert.ok(/exitCode !== 0/.test(finish),
-    "a helper that exited non-zero produced no payload; calling that a parse error names the wrong cause");
-assert.ok(finish.includes("console.warn"),
-    "the failure has to reach vshell logs, or the cause exists nowhere");
-assert.ok(/ch\.loaded !== want \|\| !ch\.accepted/.test(finish),
-    "a poll that delivered no payload for the provider on screen is a failure, not a silent hold " +
-    "of the previous numbers");
-
-// Both Process blocks must carry a stderr collector.
-assert.equal((widgetSource.match(/stderr: StdioCollector/g) || []).length, 2,
-    "both fetch processes must capture stderr");
-
-// The persisted provider is normalised, so a junk settings value degrades to the
-// default rather than leaving every payload unattributable and nothing relaunching.
-assert.ok(/property string provider: logic\.normalizeProvider\(pluginData\.provider\) \|\| "claude"/
-    .test(widgetSource), "the provider setting must be normalised with a default fallback");
+assert.equal(launchDecision("", false), "start", "an idle channel launches");
+assert.equal(launchDecision("claude", true), "skip", "a channel already fetching does not relaunch");
+assert.equal(launchDecision("", true), "pend",
+    "assigning running while the previous process is still stopping is a no-op, so the request " +
+    "is parked rather than dropped — dropping it showed a fetch that did not exist until the " +
+    "poll timer");
+assert.equal(launchDecision("claude", false), "start",
+    "a tag with no running process is stale bookkeeping, not a fetch");
 
 console.log("ai-usage provider identity: OK");
