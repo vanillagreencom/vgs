@@ -103,9 +103,30 @@ Singleton {
             root._lastFocusedNiriWindowId = focused.id;
     }
 
+    // Focus that was ALREADY in place when this service was constructed fires no
+    // change signal, so the listeners above never see it and the remembered
+    // target stays empty until focus next moves. The first paste after startup
+    // would then find no target — and a shell surface taking keyboard focus is
+    // itself what empties the live value — so a terminal would get Ctrl+V, which
+    // is the stray-input bug this whole path exists to prevent, at the moment a
+    // user forms their opinion of it. Read the state that is already there
+    // instead of waiting for a transition that may have happened first.
+    //
+    // Runs twice, deliberately. At construction `isNiri` is still false, because
+    // compositor detection is asynchronous, so only the Hyprland half is
+    // reachable then; the second call sits where detection lands, which is also
+    // the moment the Niri listener starts having any effect.
+    function seedRememberedFocus() {
+        if (ToplevelManager.activeToplevel)
+            root._lastFocusedToplevel = ToplevelManager.activeToplevel;
+        if (isNiri)
+            rememberNiriFocus();
+    }
+
     Component.onCompleted: {
         detectCompositor();
         refreshToplevels();
+        seedRememberedFocus();
         randrDataReady();
     }
 
@@ -293,5 +314,6 @@ Singleton {
         compositor = name;
         compositorDetected = true;
         refreshToplevels();
+        seedRememberedFocus();
     }
 }
