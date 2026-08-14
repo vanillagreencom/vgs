@@ -19,10 +19,9 @@ So: every executable check under `scripts/` must be invoked by the manifest and
 by the CI workflow, or carry a written exclusion here; and every command in the
 manifest must be runnable exactly as written.
 
-The manifest used to be AGENTS.md § Validation and moved into `scripts/validate`
-(VGS-123), so this parses the runner rather than the doc. The prose tables it
-cross-compares against — local-only and reached-indirectly — moved with it, to
-`.github/instructions/ci.instructions.md`.
+The manifest moved out of AGENTS.md § Validation into `scripts/validate`
+(VGS-123), so this parses the runner; the tables it cross-compares against moved
+with it, to `.github/instructions/ci.instructions.md`.
 """
 
 from __future__ import annotations
@@ -108,7 +107,16 @@ def manifest_rows() -> list[tuple[str, str]]:
                 f"`AREAS | COMMAND` separator: {line!r}"
             )
         tags, command = line.split("|", 1)
-        rows.append(("".join(tags.split()), command.strip()))
+        command = command.strip()
+        if not command:
+            # A truncated hand-edit leaves the tag and drops the command. Both
+            # this parser and the runner's loop used to skip such a row, deleting
+            # a check from every area while both halves of the guard stayed green.
+            raise SystemExit(
+                f"check-validation-inventory: scripts/validate manifest row has an "
+                f"empty command: {line!r}"
+            )
+        rows.append(("".join(tags.split()), command))
     if not rows:
         raise SystemExit("check-validation-inventory: scripts/validate manifest is empty")
     return rows
@@ -120,6 +128,22 @@ def runner_areas() -> set[str]:
     if not match:
         raise SystemExit("check-validation-inventory: scripts/validate has no AREAS=( ... ) list")
     return set(match.group(1).split()) - {"all"}
+
+
+def runner_tag_attributes() -> set[str]:
+    """Manifest tag tokens that are attributes rather than area selectors.
+
+    Read from the runner, not hardcoded: adding one there needs no edit here,
+    and REMOVING one immediately reports every row still carrying it.
+    """
+    match = re.search(
+        r"^TAG_ATTRIBUTES=\(([^)]*)\)", RUNNER.read_text(encoding="utf-8"), re.MULTILINE
+    )
+    if not match:
+        raise SystemExit(
+            "check-validation-inventory: scripts/validate has no TAG_ATTRIBUTES=( ... ) list"
+        )
+    return set(match.group(1).split())
 
 
 def ci_run_commands() -> str:
@@ -216,31 +240,49 @@ def executable_checks() -> list[str]:
 
 def main() -> int:
     problems: list[str] = []
+
+    # --- the runner itself must be runnable exactly as documented -------------
+    # VGS-30 applied to the entry point: everything below asserts the mode of the
+    # checks the manifest names, and the file doing the naming was exempt.
+    if not RUNNER.is_file():
+        raise SystemExit("check-validation-inventory: scripts/validate does not exist")
+    if not os.access(RUNNER, os.X_OK):
+        raise SystemExit(
+            "check-validation-inventory: scripts/validate is not executable, but every "
+            "documented invocation runs it bare "
+            "(git update-index --chmod=+x scripts/validate)"
+        )
+
     rows = manifest_rows()
     commands = [command for _, command in rows]
     documented = "\n".join(commands)
     ci_text = ci_run_commands()
 
-    # --- every manifest area tag is one the runner accepts --------------------
+    # --- every manifest tag is an area the runner accepts, or an attribute ----
     # A typo'd tag is invisible otherwise: `scripts/validate <area>` would refuse
     # the unknown name, but the row would silently drop out of every real area
     # while still running under `all`, so the scoped run passes over a check it
     # never executed.
     areas = runner_areas()
+    attributes = runner_tag_attributes()
     for tags, command in rows:
-        if tags == "-":
-            continue
         for tag in tags.split(","):
-            if tag not in areas:
+            if tag not in areas and tag not in attributes:
                 problems.append(
-                    f"scripts/validate manifest tags `{command}` with area `{tag}`, "
-                    f"which is not in the runner's AREAS list ({', '.join(sorted(areas))})"
+                    f"scripts/validate manifest tags `{command}` with `{tag}`, which is "
+                    f"neither an area in the runner's AREAS list "
+                    f"({', '.join(sorted(areas))}) nor one of its TAG_ATTRIBUTES "
+                    f"({', '.join(sorted(attributes))})"
                 )
     for area in sorted(areas):
+        # Deliberately ignores `always` rows. Counting them would make this arm
+        # dead the moment one exists — every area would look populated — and an
+        # area whose only members are the checks EVERY area runs is not an area,
+        # it is a name that selects nothing of its own.
         if not any(area in tags.split(",") for tags, _ in rows):
             problems.append(
                 f"scripts/validate accepts area `{area}` but no manifest row is tagged "
-                f"with it, so `scripts/validate {area}` would run nothing"
+                f"with it, so `scripts/validate {area}` would run only the `always` rows"
             )
 
     # --- every documented command runs exactly as written ---------------------

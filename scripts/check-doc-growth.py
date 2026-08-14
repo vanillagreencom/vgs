@@ -80,9 +80,11 @@ CEILINGS: dict[str, int] = {
     # Adopted at 962 B. VGS-123 moved AGENTS.md § "What CI covers, and what it
     # cannot" here — required checks, the local-only and reached-indirectly
     # tables, the whitespace-range rationale — which is 4.4 KB that left an
-    # always-loaded surface for a path-scoped one; 6,000 keeps ~10% headroom at
-    # the resulting 5,407 B.
-    ".github/instructions/ci.instructions.md": 6_000,
+    # always-loaded surface for a path-scoped one. The PR review then added the
+    # CI-runs-steps-not-the-runner note and the exit-77 skip contract for
+    # smoke-surfaces.sh; 6,500 keeps ~10% headroom at the resulting 5,908 B,
+    # superseding the 6,000 figure measured mid-review at 5,407 B.
+    ".github/instructions/ci.instructions.md": 6_500,
     ".github/instructions/harness-config.instructions.md": 900,  # adopted at 760 B
     ".github/instructions/helper-cli.instructions.md": 600,  # adopted at 517 B
     ".github/instructions/quickshell-qml.instructions.md": 1_700,  # adopted at 1,459 B

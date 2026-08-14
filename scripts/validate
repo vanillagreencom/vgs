@@ -8,10 +8,20 @@
 #   scripts/validate [AREA]            AREA: go|qml|helper|packaging|docs|all
 #   scripts/validate --list [AREA]     print the commands without running them
 #
-# Scope to the area touched; run `all` for cross-cutting work. Every selected
-# command runs — failures are collected rather than fail-fast — and the summary
-# names every failing command, because that set is what a dev agent reports as
-# `FAILING: ...` and a first failure must not hide the rest.
+# Scope to the area touched; run `all` for cross-cutting work. Exactly one area
+# per invocation — naming two is rejected rather than silently honouring the
+# last, because a partial run reported as the asked-for scope is the failure
+# this runner exists to prevent. Every selected command runs — failures are
+# collected rather than fail-fast — and the summary names every failing
+# command, because that set is what a dev agent reports as `FAILING: ...` and a
+# first failure must not hide the rest.
+#
+# A check that DID NOT RUN is never counted as a pass. Rows tagged `may-skip`
+# may exit 77 to mean "precondition absent, nothing was checked"; the summary
+# then reads `ok, N skipped (...)` naming each one. Exit 77 from any other row
+# is a plain failure, and every check whose degraded mode can be flag-forced is
+# listed with the flag that forces it (`--require-static`, `--require-nested`)
+# rather than being allowed to skip at all.
 #
 # `scripts/check-validation-inventory.py` parses the MANIFEST_EOF block below
 # and enforces it in both directions: every executable check under `scripts/`
@@ -26,24 +36,18 @@
 # `bin/vshell_niri_kdl.py` and `bin/vshell_theme_color.py` likewise stay
 # importable modules with no shebang and no `__main__`.
 #
-# WHAT CI COVERS, AND WHAT IT CANNOT
+# WHICH OF THESE CI CAN RUN is not restated here — one enforced copy only.
+# `.github/instructions/ci.instructions.md` § "What CI covers, and what it
+# cannot" holds it, and `scripts/check-validation-inventory.py` machine-compares
+# its tables against that file's `LOCAL_ONLY`/`INDIRECT_IN_CI` maps, so a second
+# prose copy in this header could only drift. The measured economics behind the
+# single CI job are in `docs/decisions/D007-ci-single-job-economics.md`.
 #
-# `.github/workflows/ci.yml` runs this suite on every pull request targeting
-# `main`, on merge-queue entries, and on `main` pushes; the merge queue requires
-# `CI / ci-ok` and the `Review gate` status. The prose form of that posture —
-# the required checks, the local-only and reached-indirectly tables with the
-# reason for each, and why the whitespace check is range-scoped in CI — lives in
-# `.github/instructions/ci.instructions.md`, and the measured economics behind
-# the one-job shape in `docs/decisions/D007-ci-single-job-economics.md`.
-#
-# The short version, for whoever is about to trust a green PR: it proves the
-# static suite and the Go block. It does NOT prove the shell starts or that its
-# surfaces are sane. `scripts/qml-smoke.sh --nested --require-static` and
-# `scripts/smoke-surfaces.sh` are local-only and must be run by hand before
-# finishing QML work. `scripts/smoke-surfaces.sh` only works from the checkout
-# owning the live session and reports which case it hit; do not read its refusal
-# as a pass (VGS-69). `scripts/check-aur-sync.py` runs only its offline half
-# here — `--remote` compares against what the AUR publishes and needs network.
+# What is true of THIS runner: `scripts/validate qml` runs the nested QML smoke
+# and the surface smoke, neither of which CI can run, so a scoped qml run is the
+# only thing that proves the shell starts. `scripts/smoke-surfaces.sh` works
+# only from the checkout owning the live session, and its refusal is not a pass
+# (VGS-69) — hence its `may-skip` tag and the named skip in the summary.
 
 # `-e` is on, and the suite loop below deliberately does not rely on it: each
 # check runs inside an `if !` condition, where errexit is suppressed, so one
@@ -53,18 +57,26 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)" || exit 1
 cd "$repo_root" || exit 1
 
-# AREAS | COMMAND. Areas are comma-separated tags, `-` for a command that only
-# the full suite runs. The per-area sets are the scoping AGENTS.md used to state
-# in prose: go = the backend capability inventory guard plus the Go block;
-# qml = naming, the QML smoke, surfaces; helper = the helper checks plus the
+# TAGS | COMMAND. Tags are comma-separated; each is an area name, or one of
+# three reserved tokens:
+#
+#   -          only the full `all` run selects this row
+#   always     every area selects it — for checks that are cheap, network-free
+#              and apply to any change, so a scoped run is never weaker than it
+#              needs to be (a Go-scoped run must still gofmt the Go it changed)
+#   may-skip   this row is allowed to report exit 77 as "did not check"
+#
+# The per-area sets are the scoping AGENTS.md used to state in prose:
+# go = the backend capability inventory guard plus the Go block; qml = naming,
+# the QML smoke, the safety guard, surfaces; helper = the helper checks plus the
 # py_compile/bash -n syntax pass; packaging = the three packaging checks;
 # docs = the instruction-surface growth ratchet.
 manifest() {
   cat <<'MANIFEST_EOF'
 qml       | scripts/check-naming.sh
--         | scripts/check-format-lint.sh
+always    | scripts/check-format-lint.sh
 -         | python3 scripts/lib/shell_scan.py
--         | scripts/check-validation-inventory.py
+always    | scripts/check-validation-inventory.py
 docs      | scripts/check-doc-growth.py
 packaging | scripts/gen-package-metadata.py
 packaging | scripts/check-package-assets.sh
@@ -92,10 +104,11 @@ go        | scripts/check-backend-inventory-tests.py
 -         | scripts/check-vgs-menu-capabilities.js
 -         | scripts/check-vshell-ipc.sh
 -         | scripts/test-smoke-surfaces.sh
+-         | scripts/test-validate.sh
 -         | scripts/test-pill-hover-safety.js
 helper    | python3 -m py_compile bin/vshell-helper
 helper    | bash -n bin/vshell
--         | git diff --check
+always    | git diff --check
 -         | scripts/check-workflows.sh
 -         | scripts/check-coderabbit-config.py
 -         | scripts/check-review-gate-vendor.sh
@@ -110,15 +123,26 @@ helper    | bash -n bin/vshell
 -         | third_party/size-ratchet/tests/ratchet-directions.test.sh
 -         | third_party/size-ratchet/tests/settings-and-config.test.sh
 -         | third_party/size-ratchet/tests/update-tightens.test.sh
-qml       | scripts/qml-smoke.sh --nested --require-static
--         | scripts/check-validation-safety.sh
+qml       | scripts/qml-smoke.sh --nested --require-static --require-nested
+qml       | scripts/check-validation-safety.sh --require-static
 -         | scripts/check-label-taxonomy.py
-qml       | scripts/smoke-surfaces.sh
+qml,may-skip | scripts/smoke-surfaces.sh
 go        | (cd backend && go build ./... && go vet ./... && go test -race ./...)
 MANIFEST_EOF
 }
 
 AREAS=(go qml helper packaging docs all)
+
+# Tag tokens that are attributes rather than area selectors. Kept beside AREAS
+# because scripts/check-validation-inventory.py reads both lists out of this
+# file: a tag it cannot classify is a typo that would silently drop a row from
+# the area it was meant for.
+# shellcheck disable=SC2034  # read by scripts/check-validation-inventory.py, not by this shell
+TAG_ATTRIBUTES=(- always may-skip)
+
+# Exit status a `may-skip` row uses for "precondition absent, nothing checked".
+# 77 is the autotools convention; anything else from such a row is a failure.
+SKIP_STATUS=77
 
 usage() {
   printf 'usage: scripts/validate [--list] [%s]\n' "$(
@@ -129,6 +153,7 @@ usage() {
 
 list_only=0
 area=all
+area_given=0
 for arg in "$@"; do
   case "$arg" in
     --list) list_only=1 ;;
@@ -141,7 +166,19 @@ for arg in "$@"; do
       usage
       exit 2
       ;;
-    *) area="$arg" ;;
+    *)
+      # ONE area per invocation. Assigning each positional in turn would let
+      # `validate go qml` run qml alone and report `ok (qml, ...)` — a partial
+      # run wearing the name of the scope that was asked for, which is exactly
+      # what the unknown-area and empty-selection exits below refuse.
+      if [[ $area_given -eq 1 ]]; then
+        printf 'scripts/validate: one area per run; got %s and %s\n' "$area" "$arg" >&2
+        usage
+        exit 2
+      fi
+      area="$arg"
+      area_given=1
+      ;;
   esac
 done
 
@@ -159,19 +196,42 @@ if [[ $matched_area -eq 0 ]]; then
   exit 2
 fi
 
-# Commands selected for this area, in manifest order.
+# Commands selected for this area, in manifest order, with their tags kept
+# alongside so the run loop can tell a `may-skip` row from every other one.
+#
+# A MALFORMED ROW IS FATAL, never dropped. Splitting on `|` up front would put a
+# separator-less line wholly in the tag field and leave the command empty, and
+# skipping such a row deletes a check from every area — including `all` — while
+# the run still ends in `ok`. That is the one shape the guard on the other side
+# (check-validation-inventory.py) and this loop could both have swallowed, so
+# both now refuse it with the same message.
 selected=()
-while IFS='|' read -r tags cmd; do
+selected_tags=()
+while IFS= read -r line; do
+  if [[ -z "${line//[[:space:]]/}" ]]; then
+    continue
+  fi
+  if [[ "$line" != *"|"* ]]; then
+    printf 'scripts/validate: manifest row has no AREAS | COMMAND separator: %s\n' "$line" >&2
+    exit 2
+  fi
+  tags="${line%%|*}"
+  cmd="${line#*|}"
   tags="${tags//[[:space:]]/}"
   while [[ "$cmd" == [[:space:]]* ]]; do cmd="${cmd:1}"; done
   while [[ "$cmd" == *[[:space:]] ]]; do cmd="${cmd:0:${#cmd}-1}"; done
   if [[ -z "$cmd" ]]; then
-    continue
+    printf 'scripts/validate: manifest row has an empty command: %s\n' "$line" >&2
+    exit 2
   fi
   if [[ "$area" != all ]]; then
-    [[ ",$tags," == *",$area,"* ]] || continue
+    # `always` rows join every named area; `all` already takes everything.
+    if [[ ",$tags," != *",$area,"* && ",$tags," != *",always,"* ]]; then
+      continue
+    fi
   fi
   selected+=("$cmd")
+  selected_tags+=("$tags")
 done < <(manifest)
 
 if [[ ${#selected[@]} -eq 0 ]]; then
@@ -188,11 +248,24 @@ if [[ $list_only -eq 1 ]]; then
 fi
 
 failed=()
-for cmd in "${selected[@]}"; do
+skipped=()
+for i in "${!selected[@]}"; do
+  cmd="${selected[$i]}"
+  tags="${selected_tags[$i]}"
   printf '\n== %s\n' "$cmd"
-  if ! eval "$cmd"; then
-    failed+=("$cmd")
+  status=0
+  eval "$cmd" || status=$?
+  if [[ $status -eq 0 ]]; then
+    continue
   fi
+  # Only a row that declared it may skip gets the skip channel. Honouring 77
+  # from any row would let an unrelated check pick that status by accident and
+  # be quietly demoted out of the failure list.
+  if [[ $status -eq $SKIP_STATUS && ",$tags," == *",may-skip,"* ]]; then
+    skipped+=("$cmd")
+    continue
+  fi
+  failed+=("$cmd")
 done
 
 printf '\n'
@@ -200,12 +273,22 @@ plural=s
 if [[ ${#selected[@]} -eq 1 ]]; then
   plural=
 fi
+skip_note=
+if [[ ${#skipped[@]} -gt 0 ]]; then
+  skip_note=", ${#skipped[@]} skipped ($(
+    IFS=,
+    printf '%s' "${skipped[*]}"
+  ))"
+fi
 if [[ ${#failed[@]} -eq 0 ]]; then
-  printf 'validate: ok (%s, %d command%s)\n' "$area" "${#selected[@]}" "$plural"
+  # `ok` is never bare when something did not run: a skipped check is not a
+  # pass, so it is named here rather than folded into the count.
+  printf 'validate: ok (%s, %d command%s)%s\n' "$area" "${#selected[@]}" "$plural" "$skip_note"
   exit 0
 fi
 
-printf 'validate: FAIL (%s, %d of %d command%s)\n' "$area" "${#failed[@]}" "${#selected[@]}" "$plural" >&2
+printf 'validate: FAIL (%s, %d of %d command%s)%s\n' \
+  "$area" "${#failed[@]}" "${#selected[@]}" "$plural" "$skip_note" >&2
 for cmd in "${failed[@]}"; do
   printf '  - %s\n' "$cmd" >&2
 done

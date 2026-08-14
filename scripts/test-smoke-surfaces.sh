@@ -17,6 +17,11 @@
 # points at a fabricated procfs.
 set -euo pipefail
 
+# The status smoke-surfaces.sh exits on a skip path (VGS-123): "nothing was
+# checked", distinct from both its pass (0) and its failures (1). Asserting the
+# literal here is what keeps a skip from regressing back into a pass.
+SKIP_STATUS=77
+
 repo_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
@@ -173,7 +178,7 @@ expect_stdout "surface smoke passed"
 run_smoke "no VGS shell" \
   VSHELL_PROC_ROOT="$proc" \
   FAKE_QS_JSON="[]"
-expect_rc 0
+expect_rc "$SKIP_STATUS"
 expect_stdout "surface smoke skipped: no live VGS shell on this session"
 
 # Some other Quickshell app on the seat is none of this script's business. This
@@ -183,7 +188,7 @@ expect_stdout "surface smoke skipped: no live VGS shell on this session"
 run_smoke "unrelated quickshell shell" \
   VSHELL_PROC_ROOT="$proc" \
   FAKE_QS_JSON="[$(entry 101 "$tmp/somebody-else/quickshell/caelestia")]"
-expect_rc 0
+expect_rc "$SKIP_STATUS"
 expect_stdout "surface smoke skipped: no live VGS shell on this session"
 
 # ...and it must still skip when it sits beside our own live shell, rather than
@@ -230,21 +235,21 @@ expect_stderr "$foreign_root (pid 202)"
 run_smoke "foreign entry whose process is a zombie" \
   VSHELL_PROC_ROOT="$proc" \
   FAKE_QS_JSON="[$(entry 303 "$foreign_config")]"
-expect_rc 0
+expect_rc "$SKIP_STATUS"
 expect_stdout "surface smoke skipped: no live VGS shell on this session"
 
 # After PID reuse the number belongs to something unrelated.
 run_smoke "foreign entry whose pid was reused" \
   VSHELL_PROC_ROOT="$proc" \
   FAKE_QS_JSON="[$(entry 404 "$foreign_config")]"
-expect_rc 0
+expect_rc "$SKIP_STATUS"
 expect_stdout "surface smoke skipped: no live VGS shell on this session"
 
 # The pid is gone from the process table entirely.
 run_smoke "foreign entry whose process is gone" \
   VSHELL_PROC_ROOT="$tmp/empty-proc" \
   FAKE_QS_JSON="[$(entry 202 "$foreign_config")]"
-expect_rc 0
+expect_rc "$SKIP_STATUS"
 expect_stdout "surface smoke skipped: no live VGS shell on this session"
 
 # Garbage in the registry must FAIL. Falling back to the skip here would be a
@@ -355,7 +360,7 @@ cp "$bin_dir/hyprctl" "$nocli/hyprctl"
 
 run_smoke_on "$nocli" "no Quickshell CLI on PATH" \
   VSHELL_PROC_ROOT="$proc"
-expect_rc 0
+expect_rc "$SKIP_STATUS"
 expect_stdout "no Quickshell CLI (qs, quickshell) on PATH"
 
 echo "smoke-surfaces precondition checks passed"

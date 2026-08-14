@@ -46,6 +46,10 @@ through another entry. Both categories are deliberate, and
 against its own `LOCAL_ONLY` and `INDIRECT_IN_CI` maps, so the prose and the
 code cannot disagree silently.
 
+CI runs these commands as individual named steps and never invokes
+`scripts/validate` itself; the runner's own behavior is covered by
+`scripts/test-validate.sh`, which CI does run.
+
 **Local-only — CI cannot run these at all:**
 
 | Check | Why it is local-only |
@@ -53,7 +57,7 @@ code cannot disagree silently.
 | `scripts/check-label-taxonomy.py` | Compares `vstack.toml`'s label taxonomy against live Linear; CI has no Linear credentials and no local cache. It FAILS rather than skipping when the inventory is unreachable — `--allow-missing-inventory` is the explicit "I accept the sweep did not happen". |
 | `scripts/check-review-gate-vendor.sh` | Compares the tracked engine at `third_party/review-gate/` against the `vstack refresh`-managed copy under `.agents/`, which a CI checkout does not have. |
 | `scripts/check-size-ratchet-vendor.sh` | Same two-copy situation for the size-ratchet engine at `third_party/size-ratchet/`; CI runs the vendored engine, this check keeps it matching the `.agents/` copy. |
-| `scripts/smoke-surfaces.sh` | Needs a **live** Hyprland VGS session and reads `hyprctl layers`. Anywhere else it prints a skip and exits 0, so running it in CI would manufacture a false green. |
+| `scripts/smoke-surfaces.sh` | Needs a **live** Hyprland VGS session and reads `hyprctl layers`. Anywhere else it prints a skip and exits 77 — "nothing was checked", distinct from both its pass and its failures — so CI could only ever go red on it, never green. `scripts/validate` maps that 77 to a named skip in its summary; a foreign checkout is still a hard failure. |
 
 **Reached indirectly — CI runs these through another entry, not by name:**
 
@@ -68,7 +72,9 @@ when you want that answer now.
 
 So a green PR proves the static suite and the Go block. It does **not** prove
 the shell starts or that its surfaces are sane. Run `scripts/validate qml`
-locally before finishing QML work. `scripts/smoke-surfaces.sh` only works from
+locally before finishing QML work — that area runs the nested smoke with
+`--require-nested`, so a missing sandbox fails rather than quietly downgrading
+to the static half. `scripts/smoke-surfaces.sh` only works from
 the checkout owning the live session, and reports which case it hit: a named
 skip when no VGS shell is live, a failure naming the owning checkout when one is
 live but foreign — even when this checkout's own shell is also live, since

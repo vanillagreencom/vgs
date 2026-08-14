@@ -1,9 +1,9 @@
 name: CI
 
-# Runs the scripts/validate suite on every pull request. Before this workflow
-# the only checks on a VGS PR were CodeQL default-setup Analyze jobs, which say
-# nothing about VGS's own suite — which is how `check-validation-safety.sh` sat
-# red on clean `main` (VGS-18) with nothing surfacing it.
+# Runs the scripts/validate manifest on every pull request as individual named
+# steps, never by invoking the runner. Before this workflow the only checks on a
+# VGS PR were CodeQL default-setup Analyze jobs, which say nothing about VGS's
+# own suite — how `check-validation-safety.sh` sat red on clean main (VGS-18).
 #
 # ONE JOB, DELIBERATELY, on the 2 vCPU runner (shared CI_RUNNER_2V repository
 # variable; Blacksmith when set, `ubuntu-latest` when unset — that fallback is
@@ -294,6 +294,9 @@ jobs:
           # stubs — a fake `qs` registry, a fabricated procfs, a stub `hyprctl`
           # — so the branch that decides skip-vs-fail IS checkable here.
           scripts/test-smoke-surfaces.sh
+          # The only thing in CI that runs scripts/validate: its area selection,
+          # fail-closed argument and manifest handling, and its skip channel.
+          scripts/test-validate.sh
 
       - name: Helper and CLI checks
         run: |
