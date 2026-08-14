@@ -92,10 +92,11 @@ function blankRanges(text, ranges, keepDelimiters) {
     return out.join("");
 }
 
-// Comment text is prose about the code, not the code. Only assertions that ban a
-// literal outright need this; token matching does not, since the tokens are code.
-// String literals survive — they ARE code, and banning one is the usual reason
-// to call this.
+// Comment text is prose about the code, not the code. EVERY read of the source
+// goes through this or through codeOnly(): a required token found in a comment
+// satisfied requires() while the production statement it pins was deleted, which
+// is a guard manufacturing confidence. String literals survive — they ARE code,
+// and banning one is the usual reason to call this.
 function stripComments(text) {
     return blankRanges(text, scanRanges(text).comments, false);
 }
@@ -132,8 +133,22 @@ module.exports = function qmlSource(source, fileLabel) {
         return assert.fail(`${what} has no closing brace`);
     }
 
+    // Located on the structure-only copy, like every other lookup here: a comment
+    // merely MENTIONING a signature matched first on the raw source, and the walk
+    // then returned the next structural block — silently inspecting a different
+    // function while reporting green.
     function body(name) {
-        return blockFrom(source.indexOf(`function ${name}(`), `${name}()`);
+        return blockFrom(indexOf(`function ${name}(`), `${name}()`);
+    }
+
+    // Offsets are preserved by codeOnly(), so an index into the structure-only
+    // copy is an index into the original. Callers that need to find their own
+    // landmark use these rather than searching the raw source.
+    function indexOf(needle) {
+        return structure.indexOf(needle);
+    }
+    function lastIndexOf(needle, from) {
+        return structure.lastIndexOf(needle, from);
     }
 
     // Handlers are found at the start of a line in the structure-only copy, so a
@@ -153,14 +168,16 @@ module.exports = function qmlSource(source, fileLabel) {
     }
 
     // Every token has to be present, each named on its own so a failure says
-    // which line went missing.
+    // which line went missing. Searched with COMMENTS BLANKED: a token that
+    // survives only in a comment is prose about code that may well be gone, so
+    // matching it would pass while the statement this pins was deleted.
     function requires(block, where, pairs) {
-        const haystack = flat(block);
+        const haystack = flat(stripComments(block));
         for (const [token, why] of pairs)
             assert.ok(haystack.includes(flat(token)), `${where} must keep \`${token}\` — ${why}`);
     }
 
-    return { blockFrom, body, handlers, requires, flat, stripComments };
+    return { blockFrom, body, handlers, requires, indexOf, lastIndexOf, flat, stripComments };
 };
 
 module.exports.flat = flat;
@@ -212,4 +229,49 @@ module.exports.selfTest = function selfTest() {
     assert.ok(module.exports('function f() { g("//"); }\nfunction h() { keepMe(); }', "self-test")
         .body("f").includes('g("//")'),
         "a comment marker inside a string does not swallow the rest of the file either");
+
+    // --- a token that lives only in a comment pins nothing ---
+    {
+        const q = module.exports(
+            'function f() {\n    // ch.stallTimer.stop() used to be here\n    keepMe();\n}',
+            "self-test");
+        assert.throws(() => q.requires(q.body("f"), "f()", [["ch.stallTimer.stop()", "pinned"]]),
+            "a required token found ONLY in a comment must FAIL: otherwise deleting the statement " +
+            "it pins leaves the check green, which is a guard manufacturing confidence");
+        q.requires(q.body("f"), "f()", [["keepMe()", "still there"]]);
+        const withString = module.exports('function f() { g("ch.stallTimer.stop()"); }', "self-test");
+        withString.requires(withString.body("f"), "f()",
+            [['g("ch.stallTimer.stop()")', "a string literal IS code and still counts"]]);
+    }
+
+    // --- a comment mentioning a signature must not become the block ---
+    {
+        const decoy = [
+            "// see function target( for details",
+            "function decoy() { wrongOne(); }",
+            "function target() { rightOne(); }"
+        ].join("\n");
+        const walked = module.exports(decoy, "self-test").body("target");
+        assert.ok(walked.includes("rightOne()"),
+            "body() must locate the real function, not the block after a comment that mentions it");
+        assert.ok(!walked.includes("wrongOne()"), "and never the decoy's body");
+    }
+
+    // --- the lookup helpers read code, not prose ---
+    {
+        // A raw search finds the mention, and the walk from there returns the
+        // NEXT block — the decoy — while still reporting green.
+        const text = [
+            "// detailsText: mentioned in prose",
+            "decoyBlock: { wrongOne(); }",
+            "detailsText: { real(); }"
+        ].join("\n");
+        const q = module.exports(text, "self-test");
+        const at = q.indexOf("detailsText:");
+        const walked = q.blockFrom(at, "detailsText");
+        assert.ok(walked.includes("real()"), "indexOf skips a landmark that exists only in a comment");
+        assert.ok(!walked.includes("wrongOne()"), "so the walk cannot land in the block beside it");
+        assert.equal(q.lastIndexOf("detailsText:", q.indexOf("real()")), at,
+            "and so does the backward search callers use to reach an enclosing block");
+    }
 };

@@ -29,8 +29,12 @@ const WIDGET = path.join(
 );
 const source = fs.readFileSync(WIDGET, "utf8");
 
-const { blockFrom, body, handlers, requires, stripComments } =
+const { blockFrom, body, handlers, requires, indexOf, lastIndexOf, stripComments } =
     require("./lib/qml-source.js")(source, "AiUsageWidget.qml");
+
+// Landmarks are located through indexOf/lastIndexOf, which search the source with
+// comments blanked. Searching the raw text let a comment MENTIONING a landmark be
+// found first, and the block walked from there is then somebody else's.
 
 // Prove the walk and the stripper before anything leans on them: the library's
 // own cases first (a comment marker or a brace inside every quote style, and a
@@ -103,7 +107,7 @@ requires(body("applyPayload"), "applyPayload()", [
 // call site can pair one channel with another's process or stderr. That crossing
 // is a typo away, and wildcarding those operands in a test is how it would pass.
 
-const channel = blockFrom(source.indexOf("component FetchChannel:"), "FetchChannel");
+const channel = blockFrom(indexOf("component FetchChannel:"), "FetchChannel");
 requires(channel, "FetchChannel", [
     ["property Process proc: Process {", "the channel owns its process"],
     ["stdout: StdioCollector {", "and its stdout collector"],
@@ -124,8 +128,8 @@ requires(channel, "FetchChannel", [
 
 // Nothing outside the component may name a process or a collector: that is what
 // makes the pairing structural rather than a convention.
-const outside = source.slice(0, source.indexOf("component FetchChannel:"))
-    + source.slice(source.indexOf("component FetchChannel:") + channel.length);
+const componentAt = indexOf("component FetchChannel:");
+const outside = source.slice(0, componentAt) + source.slice(componentAt + channel.length);
 assert.ok(!/\b(usageProc|otherProc|usageOut|otherOut|usageErr|otherErr)\b/.test(outside),
     "per-channel processes and collectors must not be reachable by name from outside the channel");
 
@@ -134,9 +138,9 @@ assert.ok(!/\b(usageProc|otherProc|usageOut|otherOut|usageErr|otherErr)\b/.test(
 // Found by id and walked back to the enclosing FetchChannel, so neither the
 // indentation nor the order of properties inside the block matters.
 function channelNamed(id) {
-    const at = source.indexOf(`id: ${id}`);
+    const at = indexOf(`id: ${id}`);
     assert.notEqual(at, -1, `AiUsageWidget.qml must declare ${id}`);
-    const opens = source.lastIndexOf("FetchChannel {", at);
+    const opens = lastIndexOf("FetchChannel {", at);
     assert.notEqual(opens, -1, `${id} must be a FetchChannel`);
     return blockFrom(opens, id);
 }
@@ -265,7 +269,7 @@ assert.ok(!/providerData/.test(cleared),
     "the per-provider headlines are keyed by identity and survive a switch");
 
 // Every reset must assign a LITERAL reset value: `x = x` also matches "x =".
-const reset = blockFrom(source.indexOf("function reset()"), "FetchChannel.reset()");
+const reset = blockFrom(indexOf("function reset()"), "FetchChannel.reset()");
 for (const [field, value] of [
     ["loaded", '""'], ["retries", "0"], ["accepted", "false"], ["issue", '""']
 ]) {
@@ -275,7 +279,7 @@ for (const [field, value] of [
 assert.ok(!/\binFlight = /.test(reset),
     "inFlight identifies a process that is still running; clearing it would orphan its payload");
 
-const onProviderChanged = blockFrom(source.indexOf("onProviderChanged:"), "onProviderChanged");
+const onProviderChanged = blockFrom(indexOf("onProviderChanged:"), "onProviderChanged");
 const invalidateAt = onProviderChanged.indexOf("clearProviderState()");
 const refetchAt = onProviderChanged.indexOf("root.refresh()");
 assert.notEqual(invalidateAt, -1, "a provider switch must invalidate the previous provider's state");
@@ -304,7 +308,7 @@ requires(source, "AiUsageWidget.qml", [
 assert.ok(!/aggregatePct|primaryPct/.test(source),
     "the per-surface headline arithmetic is gone; a second owner is a second answer");
 
-const vertical = blockFrom(source.indexOf("verticalBarPill:"), "verticalBarPill");
+const vertical = blockFrom(indexOf("verticalBarPill:"), "verticalBarPill");
 requires(vertical, "the vertical pill", [
     ["text: root.selectedSlot.text", "it shows what the slot says, not its own reading of the payload"],
     ["name: root.selectedSlot.icon", "including the slot's own provider icon"]
@@ -333,7 +337,7 @@ assert.ok(source.includes("root.view.error"), "and the error text");
 assert.ok(!/root\.current\.(plan|ok|error)\b/.test(source),
     "no surface reaches past the view into the payload's top-level account fields");
 
-const details = blockFrom(source.indexOf("detailsText:"), "detailsText");
+const details = blockFrom(indexOf("detailsText:"), "detailsText");
 assert.ok(details.includes("root.pending ?"),
     "a popout with nothing yet must say it is fetching, not that usage is Unavailable — that " +
     "invents a fault on every first load and every provider switch");
@@ -353,7 +357,7 @@ assert.ok(details.includes("root.hasHeadline ?"),
     "and print no percentage when there is no headline — several accounts on screen, none ok, " +
     "where the pill already shows its placeholder");
 
-const meters = blockFrom(source.indexOf("readonly property var primaryMeters:"), "primaryMeters");
+const meters = blockFrom(indexOf("readonly property var primaryMeters:"), "primaryMeters");
 assert.ok(meters.includes("root.view.account") && meters.includes("root.view.flat"),
     "the single-account view renders the account the view says is on screen, and falls back to " +
     "the payload's own lanes only for the older shape that reports no accounts");
