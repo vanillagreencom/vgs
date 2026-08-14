@@ -1,3 +1,5 @@
+.pragma library
+
 // Paste from history is injected as a keystroke into whatever window holds
 // focus, so the keystroke has to match that window's paste binding. Terminal
 // emulators keep Ctrl+V for the terminal itself (readline reads it as
@@ -62,9 +64,9 @@ var TERMINAL_APP_NAMES = [
     "yakuake"
 ];
 
-// Wayland app ids and Hyprland window classes differ in case for the same
-// application (Alacritty vs alacritty), and desktop-file-derived ids can carry
-// the suffix.
+// App ids are reported with whatever casing the vendor chose (Alacritty,
+// org.gnome.Console), and a desktop-file-derived id can carry the .desktop
+// suffix. The lists below are lower-case and suffix-free.
 function normalizeAppId(appId) {
     var id = String(appId === undefined || appId === null ? "" : appId).trim().toLowerCase();
     if (id.length > 8 && id.lastIndexOf(".desktop") === id.length - 8)
@@ -89,14 +91,4 @@ function pasteCommand(appId) {
     if (isTerminalAppId(appId))
         return ["wtype", "-M", "ctrl", "-M", "shift", "-P", "v", "-p", "v", "-m", "shift", "-m", "ctrl"];
     return ["wtype", "-M", "ctrl", "-P", "v", "-p", "v", "-m", "ctrl"];
-}
-
-if (typeof module !== "undefined" && module.exports) {
-    module.exports = {
-        TERMINAL_APP_IDS: TERMINAL_APP_IDS,
-        TERMINAL_APP_NAMES: TERMINAL_APP_NAMES,
-        normalizeAppId: normalizeAppId,
-        isTerminalAppId: isTerminalAppId,
-        pasteCommand: pasteCommand
-    };
 }
