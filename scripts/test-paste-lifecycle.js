@@ -92,6 +92,9 @@ const statements = {
 };
 
 const launcherBodies = {
+    reportCopyFailedToStart: extractBlock(launcherSource, "function reportCopyFailedToStart()"),
+    copyStartTriggered: bodyAfter(launcherSource, "id: copyStartTimer", "onTriggered:"),
+    copyStarted: bodyAfter(launcherSource, "id: copyProcess", "onStarted:"),
     copyRunningChanged: bodyAfter(launcherSource, "id: copyProcess", "onRunningChanged:"),
     copyExited: bodyAfter(launcherSource, "id: copyProcess", "onExited: exitCode =>"),
 };
@@ -635,39 +638,115 @@ function queuePaste(h) {
 
 // ---- 9. the launcher's copy helper failing to start ----------------------
 
-{
+// The launcher has the same two spawn-failure shapes as the injector, so it
+// needs the same two detection paths: the transition that falls back, and the
+// start that never transitions at all.
+function makeLauncher() {
     const toasts = [];
     const pastes = [];
     const scope = {
-        _copyAwaitingStart: true,
+        _copyAwaitingStart: false,
         running: false,
+        copyStartTimer: { running: false, restart() { this.running = true; }, stop() { this.running = false; } },
         ToastService: { showError: (title, body) => toasts.push([title, body].filter(Boolean).join(" | ")) },
         I18n: { tr: text => text },
+        PasteService: { injectPaste: () => pastes.push("paste") },
     };
     scope.root = scope;
-    compile(launcherBodies.copyRunningChanged)(scope);
+    const report = compile(launcherBodies.reportCopyFailedToStart);
+    scope.reportCopyFailedToStart = () => report(scope);
+    return {
+        scope,
+        toasts,
+        pastes,
+        // What pasteSelected() does when it starts the copy.
+        request() {
+            scope._copyAwaitingStart = true;
+            scope.copyStartTimer.restart();
+        },
+        // Only the exit handler takes a parameter, and it is named in the QML.
+        run(name, ...args) {
+            compile(launcherBodies[name], ...(name === "copyExited" ? ["exitCode"] : []))(scope, ...args);
+        },
+    };
+}
 
-    assert.equal(toasts.length, 1, "a copy helper that never starts must reach the user");
-    assert.match(toasts[0], /Failed to copy entry/, "the launcher's own wording");
-    assert.equal(scope._copyAwaitingStart, false, "the latch must clear");
+{
+    // The start site itself: both detection paths are armed with the run, or
+    // neither can report anything. pasteSelected() cannot be run here — it
+    // reaches the whole launcher — so this is asserted on its shipped body,
+    // which is why the three statements must stay adjacent.
+    const pasteSelected = extractBlock(launcherSource, "function pasteSelected()");
+    assert.match(
+        pasteSelected,
+        /_copyAwaitingStart = true;\s*copyProcess\.running = true;\s*copyStartTimer\.restart\(\);/,
+        "starting the copy must arm the latch and the start timer with it",
+    );
+}
 
-    // The same handler on the ordinary running = false after an exit must say
-    // nothing: the exit handler owns that outcome.
-    const quiet = Object.assign({}, scope, { _copyAwaitingStart: false });
-    quiet.root = quiet;
-    compile(launcherBodies.copyRunningChanged)(quiet);
-    assert.equal(toasts.length, 1, "an ordinary stop must not be reported as a failed start");
+{
+    // Shape one: running falls back to false.
+    const h = makeLauncher();
+    h.request();
+    h.run("copyRunningChanged");
 
-    // The exit handler owns the same latch, so a helper that ran and exited
-    // cannot leave it armed for the stop that follows.
-    const exited = Object.assign({}, scope, {
-        _copyAwaitingStart: true,
-        PasteService: { injectPaste: () => pastes.push("paste") },
-    });
-    exited.root = exited;
-    compile(launcherBodies.copyExited, "exitCode")(exited, 0);
-    assert.equal(exited._copyAwaitingStart, false, "an exit must clear the start latch");
-    assert.deepEqual(pastes, ["paste"], "a clean copy still pastes");
+    assert.equal(h.toasts.length, 1, "a copy helper that never starts must reach the user");
+    assert.match(h.toasts[0], /Failed to copy entry/, "in the launcher's own wording");
+    assert.equal(h.scope._copyAwaitingStart, false, "the latch must not stay armed after a failure");
+    assert.equal(h.scope.copyStartTimer.running, false, "and the second detection path must be disarmed");
+}
+
+{
+    // Shape two: running never becomes true, so there is no transition to see.
+    const h = makeLauncher();
+    h.request();
+    h.run("copyStartTriggered");
+
+    assert.equal(h.toasts.length, 1, "a start that never took must be reported by the timer");
+    assert.match(h.toasts[0], /The copy helper could not be started/, "with the same cause as the other path");
+    assert.equal(h.scope._copyAwaitingStart, false, "the latch must clear");
+}
+
+{
+    // A copy that runs and succeeds must say nothing on any of the three paths.
+    const h = makeLauncher();
+    h.request();
+    h.run("copyStarted");
+    assert.equal(h.scope._copyAwaitingStart, false, "started clears the latch");
+    assert.equal(h.scope.copyStartTimer.running, false, "and disarms the timer that would report it");
+
+    h.run("copyStartTriggered"); // fires anyway: must find nothing to report
+    h.run("copyRunningChanged"); // the ordinary stop after an exit
+    h.run("copyExited", 0);
+
+    assert.deepEqual(h.toasts, [], "a copy that worked must produce no report at all");
+    assert.deepEqual(h.pastes, ["paste"], "and must still paste");
+}
+
+{
+    // A copy that ran and failed is the exit handler's outcome, not a start
+    // failure, and it must not paste.
+    const h = makeLauncher();
+    h.request();
+    h.run("copyStarted");
+    h.run("copyExited", 1);
+
+    assert.equal(h.toasts.length, 1, "a failed copy is reported once");
+    assert.equal(h.toasts[0], "Failed to copy entry", "as a copy failure, not a start failure");
+    assert.deepEqual(h.pastes, [], "and must not paste stale clipboard content");
+}
+
+{
+    // An exit is proof the helper ran, whatever order the signals arrived in, so
+    // it clears the start latch itself rather than trusting `started` to have.
+    const h = makeLauncher();
+    h.request();
+    h.run("copyExited", 0);
+
+    assert.equal(h.scope._copyAwaitingStart, false, "an exit must clear the start latch");
+    assert.equal(h.scope.copyStartTimer.running, false, "and disarm the timer watching for a start");
+    h.run("copyStartTriggered");
+    assert.deepEqual(h.toasts, [], "so nothing reports a start failure for a helper that ran");
 }
 
 console.log("paste lifecycle: OK");

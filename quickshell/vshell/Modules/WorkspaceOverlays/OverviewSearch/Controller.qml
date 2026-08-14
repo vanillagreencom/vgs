@@ -147,22 +147,46 @@ Item {
         }
     }
 
+    // A plugin supplies this argv, so it can name an executable this system does
+    // not have. A start that never happens emits no exit, and the launcher has
+    // already closed by then: unreported, the entry is neither copied nor pasted
+    // and the person is told nothing at all.
+    function reportCopyFailedToStart() {
+        _copyAwaitingStart = false;
+        copyStartTimer.stop();
+        ToastService.showError(I18n.tr("Failed to copy entry"), I18n.tr("The copy helper could not be started"));
+    }
+
+    // The second detection path. Quickshell fails a start in two shapes and
+    // emits nothing for either: running falls back to false, which the handler
+    // below sees, or it never becomes true at all, which has no transition to
+    // see and is what this timer is for.
+    Timer {
+        id: copyStartTimer
+        interval: 5000
+        repeat: false
+        onTriggered: {
+            if (!root._copyAwaitingStart)
+                return;
+            root.reportCopyFailedToStart();
+        }
+    }
+
     Process {
         id: copyProcess
         running: false
-        onStarted: root._copyAwaitingStart = false
-        // A plugin supplies this argv, so it can name an executable this system
-        // does not have. That start emits no exit, and the launcher has already
-        // closed: without this the entry is neither copied nor pasted and the
-        // user is told nothing.
+        onStarted: {
+            root._copyAwaitingStart = false;
+            copyStartTimer.stop();
+        }
         onRunningChanged: {
             if (running || !root._copyAwaitingStart)
                 return;
-            root._copyAwaitingStart = false;
-            ToastService.showError(I18n.tr("Failed to copy entry"), I18n.tr("The copy helper could not be started"));
+            root.reportCopyFailedToStart();
         }
         onExited: exitCode => {
             root._copyAwaitingStart = false;
+            copyStartTimer.stop();
             // Pasting after a failed copy would inject whatever stale content
             // is still on the clipboard.
             if (exitCode !== 0) {
@@ -207,6 +231,7 @@ Item {
         copyProcess.command = pasteArgs;
         _copyAwaitingStart = true;
         copyProcess.running = true;
+        copyStartTimer.restart();
         itemExecuted();
     }
 

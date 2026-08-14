@@ -34,7 +34,8 @@ Pinned, over the QML and JS under `quickshell/vshell/` and `config/vshell/`
      Its argument is something other than a literal
      string, both the live focused app id and the sticky fallback are read in the
      same function or handler as the assignment, and the assignment precedes the
-     start. Quickshell ignores a command change on a live Process, so the reverse
+     start. Same function means the function ITSELF: a read or a start inside a
+     callback nested in it runs on the callback's terms and does not count. Quickshell ignores a command change on a live Process, so the reverse
      order runs the previous injection's argv.
   4. The sticky fallback empties when its window closes — a liveness test in the
      declaration — and is actually maintained: every assignment to the private
@@ -43,7 +44,10 @@ Pinned, over the QML and JS under `quickshell/vshell/` and `config/vshell/`
      form), not merely after such a test in the text.
   5. The launcher does not paste after a failed copy: its exit handler returns
      from inside a branch whose whole test is the non-zero exit-code comparison,
-     and that branch closes before the paste. The test must carry no further
+     and that branch closes before the paste. Branch and paste must both belong
+     to the handler itself — a branch nested in a callback returns from the
+     callback, and a paste nested in one runs on terms no branch in the handler
+     governs. The test must carry no further
      conjunct that could falsify it, and the return must be unconditional within
      the branch — at the branch's own brace depth and inside nothing nested that
      governs whether it runs, which is a branch or a loop alike: a loop that may
@@ -66,6 +70,16 @@ Deliberately NOT pinned:
     in-flight copy guard. Those are runtime state machines; expressing them as
     patterns would pin a flag's name and a handler's shape rather than a
     behavior, and their behavior needs a live session.
+  - Reachability, and it is the largest gap here. Every rule proves a construct
+    exists inside a function of the right shape; none proves anything ever calls
+    that function. A whole handler could be unreachable and every rule below
+    would still pass. Scoping to the function that runs a statement is as close
+    as a source scan gets to "governs the code path", and it stops there.
+  - The data flow inside rule 3: it proves both focus properties are read in the
+    function that builds the argv, not that the value handed to the resolver
+    derives from them. `pasteCommand(other)` beside an unused read would pass.
+  - Rule 2's caller arm proves each surface CONTAINS a call to
+    PasteService.injectPaste(), not that the call runs.
   - Anything outside the two scanned roots, or written in neither QML nor JS: a
     keystroke built in the Go backend or the helper CLI is out of scope here.
 
@@ -81,7 +95,9 @@ from qml_source import (  # noqa: E402
     enclosing_function_body,
     handler_bodies,
     if_regions,
+    in_function,
     live_code,
+    occurrences_in,
     returns_unconditionally,
 )
 
@@ -224,17 +240,20 @@ def check_owner() -> bool:
             "resolution"
         )
     body_start, body = scope
-    missing = [name for name in FOCUS_PROPERTIES if f"CompositorService.{name}" not in body]
+    missing = [
+        name for name in FOCUS_PROPERTIES
+        if not occurrences_in(source, re.compile(r"\bCompositorService\." + name + r"\b"), body_start, body)
+    ]
     if missing:
         return fail(
             f"{OWNER} builds the argv without reading, in the same function: " + ", ".join(missing)
             + " — the live value is routinely empty at the moment a paste fires, so both are needed"
         )
 
-    run = RUNNING_TRUE_RE.search(body)
-    if not run:
+    starts = occurrences_in(source, RUNNING_TRUE_RE, body_start, body)
+    if not starts:
         return fail(f"{OWNER} never starts the injector in the function that builds its argv")
-    if run.start() < call.start() - body_start:
+    if starts[0].start() < call.start():
         return fail(
             f"{OWNER} starts the injector before assigning its command; Quickshell ignores a command "
             "change on a live Process, so it would run the previous injection's argv"
@@ -335,12 +354,23 @@ def check_launcher_copy_result() -> bool:
         return fail(f"{LAUNCHER} pastes from no process exit handler, so the copy's result is not what gates it")
 
     for start, end, inject in pasting:
+        # Both the paste and the branch that guards it have to belong to the
+        # handler itself. A branch inside a callback nested in the handler
+        # returns from the callback, so its return cannot stop the handler from
+        # reaching the paste — and a paste inside one runs on the callback's
+        # terms, which no branch in the handler governs.
+        if not in_function(source, inject.start(), start):
+            return fail(
+                f"{LAUNCHER} pastes from inside a function nested in its exit handler, where no branch in "
+                "the handler can gate it, so a failed copy would paste stale clipboard content"
+            )
         # The branch has to close before the paste and the paste has to be
         # outside it, so entering the branch means never reaching the paste.
         failing = [
             (region_start, region_end) for test, region_start, region_end in regions
             if start <= region_start and region_end <= end
             and region_end <= inject.start() and NONZERO_EXIT_TEST_RE.match(test)
+            and in_function(source, region_start, start)
         ]
         if not failing:
             return fail(
