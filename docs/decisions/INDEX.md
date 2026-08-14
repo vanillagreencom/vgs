@@ -15,23 +15,6 @@ was chosen, why, and what would change the answer.
 
 ---
 
-## Format Reference
-
-### What to Log
-- Technology selections with alternatives considered
-- Performance trade-offs (chose X over Y for reason Z)
-- Significant path choices where conditions might change
-- Research-informed decisions (reference research ID in rationale)
-
-### What NOT to Log
-- Variable names, small refactors, bug fixes
-- Obvious choices with no realistic alternatives
-- Standard pattern applications
-
-### Status Values
-- **Active**: Current decision in effect
-- **Superseded by [DECISION_ID]**: Replaced by newer decision
-- **Revisited**: Re-evaluated, with outcome noted
-
-### Code Comments
-Use `// REVISIT([DECISION_ID]):` in code to mark implementation points tied to decisions.
+Row format, status values, and what is worth recording at all are owned by the
+decider skill (its `templates/index-row.md` and `schemas/decision-format.md`).
+New rows go at the end of the table above, before this separator.

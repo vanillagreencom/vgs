@@ -40,9 +40,9 @@ live session.
 them and report real defects, but never propose an in-repo patch, refactor, or
 style fix — frame any genuine finding as an upstream issue to file, and say so.
 
-**Doc surfaces are distinct and deliberately non-overlapping.** `README.md` and
-`quickshell/vshell/README.md` are product/user-facing. `docs/architecture/**`
-are agent reference docs. `AGENTS.md` is agent process instruction. Do not ask
+**Doc surfaces are distinct and deliberately non-overlapping.** `README.md` is
+product/user-facing. `docs/architecture/**` are agent reference docs.
+`AGENTS.md` is agent process instruction. Do not ask
 for content to be mirrored between them or for changelog entries.
 
 **Secrets live in one place.** `.env.local` is gitignored and holds every

@@ -223,8 +223,8 @@ reviews:
         This is agent process instruction, not product documentation. Do not ask
         for its content to be mirrored into `README.md`, and do not treat a
         change here as needing user-facing release notes. The doc surfaces are
-        distinct and deliberately non-overlapping: `README.md` and
-        `quickshell/vshell/README.md` are product/user-facing; `docs/architecture/**`
+        distinct and deliberately non-overlapping: `README.md` is
+        product/user-facing; `docs/architecture/**`
         are agent reference docs; `AGENTS.md` is process.
 
         Do check that a claim added here matches the code it describes —
