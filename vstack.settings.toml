@@ -107,8 +107,8 @@ PR_REVIEW_ON_TIMEOUT = "proceed"
 # "auto-selected: [option] — [reason]" in the round record (workflow-state
 # auto_decisions) — for fleet launchers whose workers would otherwise
 # serialize on one supervisor. Decision-record revisits, scope expansion
-# beyond the issue, anything touching benchmark-host protocol, and merge
-# ALWAYS ask, in every mode.
+# beyond the issue, and anything touching benchmark-host protocol ALWAYS
+# ask, in every mode; merge is governed by ORCH_MERGE_AUTONOMY.
 ORCH_DECISION_MODE = "ask"
 
 # LINEAR — which Linear team this project writes to.
