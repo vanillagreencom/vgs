@@ -164,9 +164,11 @@ seeded files already are.
 
 ```bash
 WAYLAND_DISPLAY=<your session's value> XDG_RUNTIME_DIR=/run/user/$(id -u) \
-
   scripts/qml-smoke.sh --nested --require-static --require-nested
 ```
+
+The socket basename is session-dependent, so this cannot name it; VGS-70 will
+have `--nested` discover it.
 
 A passing run prints `seeded settings check passed`. Two must-fail controls,
 both exercised on this branch:
