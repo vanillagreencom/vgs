@@ -197,6 +197,56 @@ expect_rc 2 "empty command row"
 expect_contains "$err" "manifest row has an empty command" "empty command row"
 ok "a row with an empty command exits 2"
 
+echo "=== a tag outside the vocabulary is fatal, in every area ==="
+
+# A mistyped tag matches neither its intended area nor `always`, so FILTERING
+# alone dropped the row silently from every named area. The check runs during
+# the READ, before any filtering, which is what makes it independent of the
+# area asked for.
+for typo in 'qmll      | scripts/stub-qml' 'go,alway  | scripts/stub-go' 'may-skipp | scripts/stub-skip'; do
+  write_runner "go        | scripts/stub-go
+$typo
+always    | scripts/stub-always"
+  for area in all go qml docs; do
+    fixture --list "$area"
+    expect_rc 2 "unknown tag in $area"
+    expect_contains "$err" "manifest row has unknown tag" "unknown tag in $area"
+  done
+done
+ok "an unknown tag exits 2 for every area, including all and --list"
+
+# `all` is an ARGUMENT, not a row tag: accepting it would match only an `all`
+# run and behave like `-` everywhere else — the silent narrowing this closes.
+write_runner 'all       | scripts/stub-go
+always    | scripts/stub-always'
+fixture --list all
+expect_rc 2 "all as a row tag"
+expect_contains "$err" "unknown tag \`all\`" "all as a row tag"
+ok 'all is rejected as a row tag, not silently treated like a dash row'
+
+# THE SELF-CONCEALING CASE, on the shipped manifest: mistype the tag on the
+# inventory guard's own row and every scoped run used to drop the one check
+# whose job is reporting malformed tags, then print ok. The guard structurally
+# cannot report this, so the runner has to.
+self_probe="$tmp/self-concealing"
+python3 - "$runner" >"$self_probe" <<'MUT'
+import sys
+t = open(sys.argv[1], encoding="utf-8").read()
+old = "always    | scripts/check-validation-inventory.py"
+assert t.count(old) == 1, "the inventory guard's manifest row moved"
+print(t.replace(old, "alway     | scripts/check-validation-inventory.py"), end="")
+MUT
+chmod +x "$self_probe"
+for area in docs go qml all; do
+  rc=0
+  out="$("$self_probe" --list "$area" 2>"$tmp/stderr")" || rc=$?
+  err="$(cat "$tmp/stderr")"
+  [[ "$rc" == 2 ]] || fail "self-concealing typo" "expected exit 2 for area $area, got $rc"
+  expect_contains "$err" "unknown tag \`alway\`" "self-concealing typo"
+  expect_absent "$out" "scripts/check-" "self-concealing typo"
+done
+ok "a typo on the inventory guard's OWN row fails instead of narrowing the run"
+
 echo "=== execution, failure collection and the skip channel ==="
 
 cat >"$fixture_repo/scripts/stub-fail-a" <<'EOF'

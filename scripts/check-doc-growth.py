@@ -49,10 +49,10 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 # rationale is for the reviewer, so a raise without one is review feedback,
 # not something this script can enforce.
 CEILINGS: dict[str, int] = {
-    # 18,528 B after VGS-123 moved the 56-command validation manifest into
-    # scripts/validate and the "What CI covers" tables into the instruction
-    # files. The 25,000 ceiling that survived the VGS-107 diet would leave 6.5 KB
-    # of unexamined regrowth headroom here, which is the thing this ratchet
+    # 18,528 B after VGS-123 moved the validation manifest (`scripts/validate
+    # --list all` is the authority on its size) and the "What CI covers" tables
+    # into the instruction files. The 25,000 ceiling that survived VGS-107 left
+    # 6.5 KB of unexamined regrowth headroom here, which this ratchet
     # exists to deny. 19,500 is measured + ~5%, DELIBERATELY tighter than the
     # +10% adoption default: this file is loaded every session and has just been
     # cut, so the next growth should be argued for rather than absorbed.

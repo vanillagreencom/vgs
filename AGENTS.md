@@ -160,7 +160,7 @@ smoke is `--require-nested`, so point it at the session socket (the sandbox
 keeps its own runtime dir, HOME and bus, so the live session is untouched):
 
 ```bash
-WAYLAND_DISPLAY=wayland-1 XDG_RUNTIME_DIR=/run/user/1000 scripts/validate qml
+WAYLAND_DISPLAY=wayland-1 XDG_RUNTIME_DIR=/run/user/$(id -u) scripts/validate qml
 ```
 
 Never read `smoke-surfaces.sh`'s refusal as a pass (VGS-69). Which checks CI
@@ -242,7 +242,7 @@ either: other Quickshell applications on the seat are legitimate.
   session's own socket and it runs — the sandbox still has its own runtime
   dir, HOME and bus, so the live session is untouched:
   ```bash
-  WAYLAND_DISPLAY=wayland-1 XDG_RUNTIME_DIR=/run/user/1000 \
+  WAYLAND_DISPLAY=wayland-1 XDG_RUNTIME_DIR=/run/user/$(id -u) \
     scripts/qml-smoke.sh --nested --require-static --require-nested
   ```
 - `scripts/check-validation-safety.sh` proves validation left no extra VGS

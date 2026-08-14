@@ -255,6 +255,36 @@ run_guard "TABLES_PATH=$no_table"
 expect_refused "missing table lead-in" "has no table introduced by"
 ok "a table whose lead-in changed is reported"
 
+# WITHOUT PyYAML the module must still import, every non-YAML parser must still
+# work, and the ci.yml parse must fail with the concise prerequisite line rather
+# than a traceback. This was raised at module scope, so the failure fired during
+# IMPORT — before the caller installed its handler — turning one clear line into
+# a traceback from the guard and a cascade of unrelated fixture failures here.
+# Simulated with a sys.modules sentinel, which makes `import yaml` raise exactly
+# as an absent package does.
+pyyaml_out="$(python3 - "$repo_root" 2>&1 <<'NOYAML' || true
+import importlib.util, pathlib, sys
+sys.modules["yaml"] = None  # makes `import yaml` raise ModuleNotFoundError
+root = pathlib.Path(sys.argv[1])
+spec = importlib.util.spec_from_file_location(
+    "vm", root / "scripts" / "lib" / "validation_manifest.py"
+)
+mod = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mod)
+print("IMPORTED")
+print("ROWS", len(mod.manifest_rows(root / "scripts" / "validate")))
+try:
+    mod.ci_run_commands(root / ".github" / "workflows" / "ci.yml")
+except mod.ManifestError as error:
+    print("MANIFESTERROR", error)
+NOYAML
+)"
+expect_contains "$pyyaml_out" "IMPORTED" "PyYAML absent"
+expect_contains "$pyyaml_out" "ROWS 58" "PyYAML absent"
+expect_contains "$pyyaml_out" "MANIFESTERROR PyYAML is not installed" "PyYAML absent"
+expect_absent "$pyyaml_out" "Traceback" "PyYAML absent"
+ok "without PyYAML the module imports, the other parsers work, and ci.yml fails with one line"
+
 # The executable-bit arm (VGS-30 applied to the entry point itself).
 non_exec="$tmp/non-exec-runner"
 cp "$runner" "$non_exec"

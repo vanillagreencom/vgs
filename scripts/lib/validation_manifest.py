@@ -26,17 +26,6 @@ class ManifestError(Exception):
     """A surface this module reads does not say what it must say."""
 
 
-try:
-    import yaml
-except ModuleNotFoundError as exc:  # pragma: no cover - environment, not logic
-    # Fails rather than degrading: without a YAML parse, CI coverage is NOT
-    # checked, and a check that silently skips its own subject is the exact
-    # false green the importing guard exists to prevent.
-    raise ManifestError(
-        "PyYAML is not installed, so ci.yml could not be parsed and CI coverage "
-        "was NOT checked (pacman -S python-yaml)"
-    ) from exc
-
 
 def manifest_rows(runner: Path) -> list[tuple[str, str]]:
     """`(area tags, command)` pairs from the scripts/validate manifest heredoc.
@@ -172,6 +161,23 @@ def ci_run_commands(ci: Path) -> str:
     way too — a comment naming a local-only script would report a failure that
     is not real. A YAML parse is the honest form.
     """
+    # IMPORTED HERE, not at module scope. At module scope the failure fires
+    # during import — before the caller has installed its ManifestError handler
+    # — so a python3 without PyYAML got a traceback out of the guard and a
+    # cascade of unrelated fixture failures out of the two shell suites, in
+    # place of one clear prerequisite line. Deferring also keeps every other
+    # parser in this module usable without PyYAML at all.
+    try:
+        import yaml
+    except ModuleNotFoundError as exc:
+        # Fails rather than degrading: without a YAML parse, CI coverage is NOT
+        # checked, and a check that silently skips its own subject is the exact
+        # false green the importing guard exists to prevent.
+        raise ManifestError(
+            "PyYAML is not installed, so ci.yml could not be parsed and CI "
+            "coverage was NOT checked (pacman -S python-yaml)"
+        ) from exc
+
     workflow = yaml.safe_load(ci.read_text(encoding="utf-8"))
     runs: list[str] = []
 
