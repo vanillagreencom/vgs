@@ -74,6 +74,13 @@ function bindingExpression(id) {
     return parts.join(" ").trim();
 }
 
+function launcherBinding(id) {
+    const opener = `readonly property bool ${id}:`;
+    const at = launcherSource.indexOf(opener);
+    assert.notEqual(at, -1, `could not find the ${id} binding`);
+    return launcherSource.slice(at + opener.length, launcherSource.indexOf("\n", at)).trim();
+}
+
 function bodyAfter(text, marker, opener) {
     const at = text.indexOf(marker);
     assert.notEqual(at, -1, `could not find ${marker}`);
@@ -114,6 +121,7 @@ const statements = {
 };
 
 const launcherBodies = {
+    startPluginCopy: extractBlock(launcherSource, "function startPluginCopy(pasteArgs)"),
     reportCopyFailedToStart: extractBlock(launcherSource, "function reportCopyFailedToStart()"),
     copyStartTriggered: bodyAfter(launcherSource, "id: copyStartTimer", "onTriggered:"),
     copyStarted: bodyAfter(launcherSource, "id: copyProcess", "onStarted:"),
@@ -786,7 +794,10 @@ function makeLauncher() {
     const pastes = [];
     const scope = {
         _copyAwaitingStart: false,
+        // `running` bare is the Process's own property, as a handler in the QML
+        // sees it; copyProcess.running is the same state read from outside.
         running: false,
+        copyProcess: { command: [], running: false },
         copyStartTimer: { running: false, restart() { this.running = true; }, stop() { this.running = false; } },
         ToastService: { showError: (title, body) => toasts.push([title, body].filter(Boolean).join(" | ")) },
         I18n: { tr: text => text },
@@ -795,14 +806,16 @@ function makeLauncher() {
     scope.root = scope;
     const report = compile(launcherBodies.reportCopyFailedToStart);
     scope.reportCopyFailedToStart = () => report(scope);
+    const inFlight = compile(`return (${launcherBinding("_copyInFlight")});`);
+    Object.defineProperty(scope, "_copyInFlight", { get: () => inFlight(scope), configurable: true });
+    const start = compile(launcherBodies.startPluginCopy, "pasteArgs");
     return {
         scope,
         toasts,
         pastes,
-        // What pasteSelected() does when it starts the copy.
-        request() {
-            scope._copyAwaitingStart = true;
-            scope.copyStartTimer.restart();
+        // The shipped start, guard and all: pasteSelected() calls exactly this.
+        request(args = ["wl-copy", "x"]) {
+            return start(scope, args);
         },
         // Only the exit handler takes a parameter, and it is named in the QML.
         run(name, ...args) {
@@ -812,16 +825,51 @@ function makeLauncher() {
 }
 
 {
-    // The start site itself: both detection paths are armed with the run, or
-    // neither can report anything. pasteSelected() cannot be run here — it
-    // reaches the whole launcher — so this is asserted on its shipped body,
-    // which is why the three statements must stay adjacent.
-    const pasteSelected = extractBlock(launcherSource, "function pasteSelected()");
-    assert.match(
-        pasteSelected,
-        /_copyAwaitingStart = true;\s*copyProcess\.running = true;\s*copyStartTimer\.restart\(\);/,
-        "starting the copy must arm the latch and the start timer with it",
-    );
+    // The start arms both detection paths, or neither can report anything.
+    const h = makeLauncher();
+    assert.equal(h.request(), true, "the first request starts a copy");
+    assert.equal(h.scope._copyAwaitingStart, true, "arming the latch");
+    assert.equal(h.scope.copyStartTimer.running, true, "and the timer that watches for the start");
+    assert.equal(h.scope.copyProcess.running, true, "and asking the process to run");
+}
+
+{
+    // A copy asked to start but not yet transitioned must read as busy: a
+    // second request then would copy and paste the PREVIOUS selection.
+    const h = makeLauncher();
+    h.request(["wl-copy", "first"]);
+    assert.equal(h.scope.copyProcess.running, true, "the process was asked to run");
+    h.scope.copyProcess.running = false; // asked, no transition yet
+    assert.equal(h.scope._copyAwaitingStart, true, "and it is still awaiting its start");
+
+    assert.equal(h.request(["wl-copy", "second"]), false, "a second request during that window must be refused");
+    assert.deepEqual(h.scope.copyProcess.command, ["wl-copy", "first"], "and must not relabel the copy in flight");
+}
+
+{
+    // ...and after a CONFIRMED outcome the launcher works normally again, so
+    // the rule is not over-corrected into refusing legitimate copies.
+    const h = makeLauncher();
+    h.request(["wl-copy", "first"]);
+    h.scope.copyProcess.running = false;
+    h.run("copyStartTriggered"); // the watchdog confirms the failure
+    assert.equal(h.scope._copyAwaitingStart, false, "the failure is confirmed");
+
+    assert.equal(h.request(["wl-copy", "second"]), true, "a request after a confirmed failure must start");
+    assert.deepEqual(h.scope.copyProcess.command, ["wl-copy", "second"], "with its own argv");
+}
+
+{
+    // A copy confirmed running is busy too — the case that already worked.
+    const h = makeLauncher();
+    h.request();
+    h.run("copyStarted");
+    assert.equal(h.scope._copyAwaitingStart, false, "started, so not awaiting");
+    assert.equal(h.request(), false, "but still in flight, so a second request is refused");
+
+    h.run("copyExited", 0);
+    h.scope.copyProcess.running = false;
+    assert.equal(h.request(), true, "and after it exits, the next request starts");
 }
 
 {

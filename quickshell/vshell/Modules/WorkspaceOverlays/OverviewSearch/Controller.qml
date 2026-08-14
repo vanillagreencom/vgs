@@ -38,6 +38,10 @@ Item {
     // Set from the moment the plugin copy is asked to run until it reports that
     // it did, so a helper that never spawns is told apart from one that ran.
     property bool _copyAwaitingStart: false
+    // A copy asked to start is as busy as one already running: Quickshell
+    // reports neither a start nor a failure until it transitions, so the raw
+    // running flag reads idle through a window the watchdog owns.
+    readonly property bool _copyInFlight: copyProcess.running || _copyAwaitingStart
 
     signal itemExecuted
     signal searchCompleted
@@ -223,16 +227,23 @@ Item {
         const pasteArgs = AppSearchService.getPluginPasteArgs(pluginId, selectedItem.data);
         if (!pasteArgs)
             return;
-        // Quickshell ignores a command change on a live Process, so starting a
-        // second copy now would copy and paste the PREVIOUS selection while
-        // dropping this one. The copy in flight finishes and pastes on its own.
-        if (copyProcess.running)
+        if (!startPluginCopy(pasteArgs))
             return;
+        itemExecuted();
+    }
+
+    // Quickshell ignores a command change on a live Process, so starting a
+    // second copy while one is in flight would copy and paste the PREVIOUS
+    // selection while dropping this one. The copy in flight finishes and pastes
+    // on its own. Returns whether this request started one.
+    function startPluginCopy(pasteArgs) {
+        if (_copyInFlight)
+            return false;
         copyProcess.command = pasteArgs;
         _copyAwaitingStart = true;
         copyProcess.running = true;
         copyStartTimer.restart();
-        itemExecuted();
+        return true;
     }
 
     readonly property var sectionDefinitions: [
