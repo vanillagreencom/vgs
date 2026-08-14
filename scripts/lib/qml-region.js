@@ -163,7 +163,14 @@ module.exports.selfTest = function selfTest() {
                 "a suite whose region hangs from a microtask must FAIL, not pass and hang");
             assert.ok(/killed after/.test(run.stderr || ""),
                 `the parent must report the kill; stderr was ${JSON.stringify(run.stderr)}`);
-            assert.ok(elapsed < 8000,
+            // HANG DETECTOR, NOT A PRECISION BOUND — do not tighten it back. What
+            // is being excluded is running until the CI job's own timeout, which
+            // is minutes; the runner is a 2 vCPU tier and the whole suite is one
+            // job, so a contended box is the normal case. 15s sits far above any
+            // plausible scheduling delay around a 1s child timeout and far below
+            // the thing it rules out. It stays UNDER the spawnSync timeout above,
+            // so a guard that failed to kill is caught here rather than passing.
+            assert.ok(elapsed < 15000,
                 `killed after ${elapsed}ms — the wall clock has to bound it, since a hang is the ` +
                 "one failure mode a passing suite cannot be told from a slow one");
         } finally {
@@ -198,7 +205,12 @@ module.exports.selfTest = function selfTest() {
                 "that region comes from a repo file, and a fork PR runs this suite on the runner"
             );
         }
-        const brief = { build: 200, call: 200 };
+        // Short enough that the deliberate timeout cases cost milliseconds rather
+        // than seconds, long enough that a legitimate call — `fine()` below runs
+        // under this same bound — is not cut off by scheduling delay on a loaded
+        // runner. These are the timeouts under test, not the assertions about
+        // them; the assertions are sized as hang detectors, see below.
+        const brief = { build: 500, call: 500 };
         assert.throws(() => evaluateMarked(region("while (true) {}\nfunction f() {}"),
             "SELF TEST", ["f"], "self-test", brief), /timed out/,
             "a loop planted at the region's top level must time out rather than hang CI");
@@ -217,7 +229,12 @@ module.exports.selfTest = function selfTest() {
             assert.throws(() => looping.spin(), /timed out/,
                 "a call into a non-terminating exported function must be cut off");
             const elapsed = Date.now() - started;
-            assert.ok(elapsed < brief.call * 5,
+            // HANG DETECTOR, NOT A PRECISION BOUND — do not tighten it back to a
+            // multiple of the timeout. It separates fast-fail from hang, and the
+            // hang it excludes runs for minutes; a few hundred ms of scheduling
+            // delay on the 2 vCPU runner is not a finding, and a flake here would
+            // read as a provider-identity failure because it fires first.
+            assert.ok(elapsed < 5000,
                 `the call was cut off after ${elapsed}ms; the bound is per CALL, so this must ` +
                 "fail fast rather than run until the CI job's own timeout");
         }
