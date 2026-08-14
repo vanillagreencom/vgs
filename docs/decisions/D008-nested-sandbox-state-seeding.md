@@ -48,10 +48,13 @@ source of truth for the whole palette, reached every sandbox unnoticed.
 Narrowing that to an allowlist of `themes/` + `blueprints/` did not hold
 either: a user theme package composes over a built-in file by file and a user
 blueprint shadows a built-in by name (`bin/vshell-helper::compose_theme_files`,
-`::list_themes`), so `vshell theme current` still resolved `coppernight`
-through the operator's files, and the run's log-error scan still depended on
-whatever theme the host supplied. Applied honestly, "no phase's outcome may
-differ because of host state" leaves no host state.
+`::list_themes`). So whichever theme a sandbox resolved was the operator's to
+steer — the moment they overlay a name the run touches, that name composes from
+their files, and the log-error scan is then reading a theme the repo never
+shipped. Exposure is a property of one machine's config, not of the design:
+whether any *particular* run was steered depends on which names that operator
+happens to overlay. Applied honestly, "no phase's outcome may differ because of
+host state" leaves no host state.
 
 ## Decision
 
@@ -72,19 +75,20 @@ differ because of host state" leaves no host state.
    `::list_themes`), so `themes/` and `blueprints/` both steer what
    `vshell theme current` resolves and therefore what the log-error scan sees;
    `hooks/` is host-authored executables. The sandbox's
-   `~/.config/vshell/plugins` is neither copied nor seeded but asserted
-   **absent**, so `override_check`'s fixture is the only user plugin package
-   that ever exists there.
+   `~/.config/vshell/plugins` is neither copied nor seeded, and `override_check`
+   asserts no user package is in it before planting its fixture — the moment
+   that property matters, rather than at prep time where nothing could have
+   created one.
 4. **The seed's effect is asserted, not assumed — for every seeded file.** Both
    `settings.json` (`customAnimationDuration=4242`) and `plugin_settings.json`
    (`sysUpdate.aurUpdateCommand`) carry a sentinel equal to neither the shipped
    value nor the fallback the shell would use without the file, and
    `seeded_settings_check` reads both back out of the running shell via
    `qs ipc call settings get`. It is the first state-dependent phase and gates
-   the bundled-plugin wait, the popout phase and the override phase. The
-   log-error scan is independent of it and runs on every path that reaches
-   teardown, including a failed seed check — that case is exactly when the log
-   holds the diagnosis.
+   the popout and override phases; the bundled-plugin wait is NOT gated on it,
+   because plugin loading does not depend on settings. Diagnostics — the
+   log-error scan included — are all emitted before any verdict returns, so no
+   failure can withhold the evidence for itself.
 
 ## Rationale
 
@@ -121,7 +125,7 @@ non-discriminating shape is precisely what let VGS-92 survive.
 | Host state only, fixed with `cp -aL` | Correct but not reproducible: the run's meaning changes when the operator edits their config, and it could never move to CI |
 | Keep both with no stated precedence | The status quo ante, and the direct cause of a comment that asserted a property the code did not have |
 | Copy everything, then delete what is seeded | Let host `theme.json` — MethodTheme's whole palette — into the sandbox unnoticed. A denylist inherits whatever it forgets to name |
-| Copy an allowlist of `themes/` + `blueprints/` | The same defect one level down: user theme packages compose over built-ins file by file and user blueprints shadow built-ins by name, so the operator still decided which theme the run generated |
+| Copy an allowlist of `themes/` + `blueprints/` | The same defect one level down: user theme packages compose over built-ins file by file and user blueprints shadow built-ins by name, so any name the operator overlays is theirs to steer. Whether a given machine's config actually overlays the name a run resolves is luck, and a guarantee that holds by luck is not one |
 | Seed the current theme from a repo-only source and keep the allowlist | Machinery to buy back an inheritance nothing needed; the repo's own `themes/` already reaches the sandbox through `VSHELL_ROOT` |
 | Assert on a normal seeded key instead of a sentinel | Non-discriminating: its seeded value equals the fallback, so it passes in both worlds |
 | Assert only on `settings.json` | `plugin_settings.json` is seeded on the adjacent line and has its own repo-file fallback, so the same defect one file over would pass every phase |
