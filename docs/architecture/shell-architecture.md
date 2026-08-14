@@ -251,33 +251,31 @@ different states (VGS-74).
 
 ### Attributing a fetch that a setting scopes
 
-A setting that chooses which source a widget fetches owns two more rules
-(VGS-118). When a widget fetches per-source data — a provider, an account, a
-device — and a setting chooses the source:
+A widget that fetches per-source data — a provider, an account, a device — with
+a setting choosing the source owns three more rules (VGS-118):
 
 - **Attribute every result by what the payload says it is**, not by the source
   the fetch was launched for and never by the one selected when the output
   arrives. Launch tags race: a tag can be reassigned while the process holding
-  it is still running, and the old process's payload then passes the tag check
-  under the new source's name. Helpers must therefore stamp their own identity
-  on every path they return from, failures included — **every layer the widget
-  runs through**, not just the innermost one: `vshell ai-usage` wraps a backend
-  that may be third-party, so the wrapper stamps its own error payloads and
-  fills the stamp in on a backend payload that lacks one.
+  it still runs, and that process's payload then passes the tag check under the
+  new source's name. So helpers stamp their own identity on every path they
+  return from, failures included, at **every layer the widget runs through**:
+  `vshell ai-usage` wraps a possibly third-party backend, so it stamps its own
+  errors and fills in a stamp the backend omitted.
 - **Invalidate the source-scoped state when the setting changes**, together and
   before the refetch. Anything left behind renders under the new source's label
   until a payload replaces it, and a dropped refetch makes that permanent — so
   relaunch on "is the state on screen the selected source's?", never on "did the
   selection move?", which answers no on a there-and-back toggle. A poll that
-  delivered nothing counts as owing a fetch too, bounded by a retry budget that
-  only a payload SATISFYING the request restores — one for the source being
-  waited on, not merely one that decoded — along with a change of the setting,
-  which resets the request. So a blip costs a second and a broken backend still
-  settles into its error state.
+  delivered nothing owes a fetch too, bounded by a budget only a payload
+  SATISFYING the request restores — one for the source being waited on, not
+  merely one that decoded — plus a change of the setting, which resets the
+  request. A blip then costs a second; a broken backend still settles into its
+  error state.
 - **One surface owns the derived answer.** Every place that shows a number —
-  bar pill, vertical pill, popout header — reads it from the same function, or
-  they disagree the moment a filter (a hidden account) applies to one path and
-  not the others.
+  bar pill, vertical pill, popout header — reads it from one function, or they
+  disagree the moment a filter (a hidden account) applies to one and not the
+  others.
 
 ### Core and the vgsMenu plugin
 The app launcher is a bundled plugin that core cannot do without, so the edge

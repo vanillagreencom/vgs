@@ -260,8 +260,12 @@ QtObject {
     //   flat       — no accounts at all: the older shape, whose lanes are on the
     //                payload itself
     //   allHidden  — accounts were reported and the user is hiding all of them
+    //   pending    — no payload yet and a fetch is running: still fetching, which
+    //                is NOT a failure. Without it the popout reported
+    //                "Unavailable" for every first load and every provider
+    //                switch, inventing a fault the user does not have
     //   ok / error — usable, and why not, judged by what is actually on screen
-    function popoutView(data, hidden) {
+    function popoutView(data, hidden, loading) {
         const accounts = (data && data.accounts) || [];
         const shown = shownIn(accounts, hidden);
         const cards = accounts.length > 1;
@@ -276,6 +280,7 @@ QtObject {
             shownCount: shown.length,
             liveCount: shown.filter(a => a && a.ok).length,
             hiddenCount: accounts.length - shown.length,
+            pending: !data && loading === true,
             ok: payloadOk && (account === null || account.ok === true),
             error: "",
             // Only the single-account and flat views print a plan line; each card

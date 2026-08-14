@@ -314,8 +314,10 @@ assert.ok(!/headlinePct/.test(vertical),
 // plan above a visible account's meters. One function answers all of it.
 
 requires(source, "AiUsageWidget.qml", [
-    ["readonly property var view: logic.popoutView(root.current, root.hiddenAccounts)",
+    ["readonly property var view: logic.popoutView(root.current, root.hiddenAccounts, root.loading)",
         "the popout's account-scoped state is one function's, hidden accounts already out"],
+    ["readonly property bool pending: root.fetchError === \"\" && root.view.pending",
+        "and whether it is merely still fetching comes from there too"],
     ["readonly property bool ok: root.fetchError === \"\" && root.view.ok",
         "usable is that view's answer, not the payload's top-level field"],
     ["readonly property string plan: root.view.plan", "and so is the plan line"],
@@ -327,6 +329,9 @@ assert.ok(!/root\.current\.(plan|ok|error)\b/.test(source),
     "no surface reaches past the view into the payload's top-level account fields");
 
 const details = blockFrom(source.indexOf("detailsText:"), "detailsText");
+assert.ok(details.includes("root.pending ?"),
+    "a popout with nothing yet must say it is fetching, not that usage is Unavailable — that " +
+    "invents a fault on every first load and every provider switch");
 assert.ok(details.includes("if (root.allHidden)"),
     "the header must answer the all-hidden case before it prints any percentage");
 assert.ok(details.indexOf("root.allHidden") < details.indexOf("% used"),

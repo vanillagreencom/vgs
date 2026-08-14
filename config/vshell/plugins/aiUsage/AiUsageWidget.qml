@@ -80,11 +80,13 @@ PluginComponent {
     // already taken the hidden accounts out. The payload's own top-level fields
     // describe the first LIVE account the backend found, hidden or not, so they
     // are only trustworthy for the older shape that reports no accounts at all.
-    readonly property var view: logic.popoutView(root.current, root.hiddenAccounts)
+    readonly property var view: logic.popoutView(root.current, root.hiddenAccounts, root.loading)
 
     readonly property bool ok: root.fetchError === "" && root.view.ok
     readonly property string errorText: root.fetchError !== "" ? root.fetchError : root.view.error
     readonly property string plan: root.view.plan
+    // Still fetching, which the popout must not render as a failure.
+    readonly property bool pending: root.fetchError === "" && root.view.pending
 
     // --- Multi-account state ---
     // People run several subscriptions side by side (one config dir per wrapper
@@ -109,8 +111,8 @@ PluginComponent {
     readonly property bool hasHeadline: root.currentHead !== null
     readonly property int headlinePct: root.currentHead ? root.currentHead.pct : 0
 
-    // What the bar shows for the SELECTED provider, as one slot — the same shape
-    // the horizontal pill renders, so the vertical form cannot say something else.
+    // The SELECTED provider as one slot, the shape the horizontal pill renders,
+    // so the vertical form cannot say something else about the same payload.
     readonly property var selectedSlot: logic.pillSlot(
         root.provider,
         root.provider === "codex" ? root.codexHead : root.claudeHead,
@@ -118,8 +120,7 @@ PluginComponent {
         root.fetchingProviders,
         root.provider)
 
-    // Meters for the single-account view: the account actually on screen, or the
-    // payload's own lanes for the older shape with no accounts.
+    // The account on screen, or the payload's own lanes for the flat shape.
     readonly property var primaryMeters: {
         if (root.view.flat)
             return fmt.flatMeters(root.current);
@@ -602,9 +603,8 @@ PluginComponent {
                 if (popout.onSettings)
                     return "How the bar number is chosen, and which accounts count.";
                 if (!root.ok)
-                    return root.errorText || "Unavailable";
-                // Every account hidden: there is no number to print, and printing
-                // one computed over the hidden accounts is the leak this closes.
+                    return root.pending ? "Checking usage…" : (root.errorText || "Unavailable");
+                // Every account hidden: a number over them is the leak this closes.
                 if (root.allHidden)
                     return logic.accountCount(root.view.totalCount) + " hidden";
                 if (!root.multiAccount)
@@ -864,7 +864,7 @@ PluginComponent {
                         StyledText {
                             visible: !root.ok
                             width: parent.width
-                            text: root.errorText || "No data"
+                            text: root.errorText || (root.pending ? "Checking usage…" : "No data")
                             wrapMode: Text.WordWrap
                             font.pixelSize: Theme.fontSizeMedium
                             color: Theme.surfaceVariantText

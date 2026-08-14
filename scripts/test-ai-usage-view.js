@@ -215,6 +215,22 @@ const acct = (id, over) => Object.assign(
 
 assert.equal(popoutView(null, []).error, "",
     "no payload yet is nothing known, not a failure with a cause");
+
+{
+    // Still fetching is not a failure. Without this the popout printed
+    // "Unavailable" for every first load and every provider switch — a fault the
+    // user does not have, which is the class this issue spent its rounds closing.
+    const fetching = popoutView(null, [], true);
+    assert.equal(fetching.pending, true, "no payload and a fetch running is pending, not failed");
+    assert.equal(fetching.error, "", "and has nothing to report");
+    assert.equal(fetching.ok, false, "there is still nothing to render");
+    assert.equal(popoutView(null, [], false).pending, false,
+        "no payload and no fetch running is not pending: whatever settled it owns the reason");
+    assert.equal(popoutView({ ok: true, provider: "claude", accounts: [acct("a")] }, [], true).pending,
+        false, "a payload already on screen is shown while the next fetch runs, not hidden");
+    assert.equal(popoutView({ ok: false, provider: "claude", error: "nope" }, [], true).pending,
+        false, "and a failed payload is a failure even while the retry runs");
+}
 assert.equal(popoutView({ ok: false, provider: "claude", error: "no signed-in accounts found" }, []).error,
     "no signed-in accounts found", "a failed payload reports its own reason");
 
