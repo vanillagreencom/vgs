@@ -331,6 +331,14 @@ assert.ok(details.includes("if (root.allHidden)"),
     "the header must answer the all-hidden case before it prints any percentage");
 assert.ok(details.indexOf("root.allHidden") < details.indexOf("% used"),
     "and answer it BEFORE the percentage, not after");
+// A count concatenated with a bare " account(s)" literal is the shape that lost
+// the singular; the page's own prose about accounts is not.
+const detailsCode = stripComments(details);
+assert.ok(!/\+\s*" accounts?\b/.test(detailsCode),
+    "both header lines count accounts through logic.accountCount(), so neither can lose its " +
+    "singular: hiding a three-account payload down to one visible read '1 accounts'");
+assert.equal((details.match(/logic\.accountCount\(/g) || []).length, 2,
+    "which is once per counted line — the card line and the all-hidden line");
 assert.ok(details.includes("root.hasHeadline ?"),
     "and print no percentage when there is no headline — several accounts on screen, none ok, " +
     "where the pill already shows its placeholder");

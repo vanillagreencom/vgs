@@ -283,6 +283,15 @@ QtObject {
         return view;
     }
 
+    // "1 account" / "3 accounts". One helper, because the popout header says this
+    // on two lines — the counted line and the all-hidden line — and only one of
+    // them had a singular form: hiding a three-account payload down to one
+    // visible account read "1 accounts · 10% used · 2 hidden".
+    function accountCount(n) {
+        const count = Number(n) || 0;
+        return count === 1 ? "1 account" : count + " accounts";
+    }
+
     // --- pill composition ---------------------------------------------------
 
     // One pill slot. It always exists, it always carries its provider's icon,

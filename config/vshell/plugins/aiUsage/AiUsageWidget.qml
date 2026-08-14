@@ -606,8 +606,7 @@ PluginComponent {
                 // Every account hidden: there is no number to print, and printing
                 // one computed over the hidden accounts is the leak this closes.
                 if (root.allHidden)
-                    return root.view.totalCount === 1 ? "1 account hidden"
-                                                      : root.view.totalCount + " accounts hidden";
+                    return logic.accountCount(root.view.totalCount) + " hidden";
                 if (!root.multiAccount)
                     return root.plan || "";
                 // Counted over what is actually on screen — saying "5 accounts"
@@ -619,7 +618,7 @@ PluginComponent {
                 // No headline means no number: several accounts on screen and not
                 // one of them ok. The pill already renders its placeholder there.
                 const used = root.hasHeadline ? (" · " + root.headlinePct + "% used") : "";
-                return root.view.liveCount + " accounts" + used + suffix;
+                return logic.accountCount(root.view.liveCount) + used + suffix;
             }
             showCloseButton: true
 

@@ -37,10 +37,10 @@ const marked = logicSource.match(/\/\/ BEGIN PROVIDER DECISION\n([\s\S]*?)\/\/ E
 assert.ok(marked, "AiUsageLogic.qml must carry the PROVIDER DECISION markers");
 
 const {
-    normalizeProvider, providerIcon, headOf, popoutView, pillSlot, pillSlots
+    normalizeProvider, providerIcon, headOf, popoutView, accountCount, pillSlot, pillSlots
 } = new Function(
     `${marked[1]}\nreturn { normalizeProvider, providerIcon, headOf, popoutView,` +
-    ` pillSlot, pillSlots };`
+    ` accountCount, pillSlot, pillSlots };`
 )();
 
 // The extracted region must be free of the widget and of Qt, or this harness is
@@ -186,6 +186,21 @@ const acct = (id, over) => Object.assign(
     const view = popoutView(data, []);
     assert.equal(view.liveCount, 0, "no live account is on screen");
     assert.equal(headOf(data, "pool", []), null, "so there is no headline to print beside them");
+}
+
+{
+    // Both header lines count accounts, and only one of them had a singular:
+    // hiding a three-account payload down to one visible account read
+    // "1 accounts · 10% used · 2 hidden".
+    const data = { ok: true, provider: "claude", accounts: [acct("a"), acct("b"), acct("c")] };
+    const view = popoutView(data, ["b", "c"]);
+    assert.equal(view.cards, true, "the card path follows what the payload reported");
+    assert.equal(view.liveCount, 1, "with one account left on screen");
+    assert.equal(accountCount(view.liveCount), "1 account", "which the header says in the singular");
+    assert.equal(accountCount(view.hiddenCount), "2 accounts", "and two in the plural");
+    assert.equal(accountCount(0), "0 accounts", "zero is plural");
+    assert.equal(accountCount(popoutView(data, ["a", "b", "c"]).totalCount), "3 accounts",
+        "and the all-hidden line counts the same way, from the same helper");
 }
 
 {
