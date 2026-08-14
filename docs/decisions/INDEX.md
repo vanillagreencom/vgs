@@ -31,8 +31,14 @@ starting with `Active` stays listed, so a partial supersession keeps showing up.
 point back to its row, as `quickshell/vshell/Modules/Bar/Widgets/SystemTrayBar.qml`
 does for D003. Repoint these when a decision is superseded.
 
-New rows go at the end of the table above, before the separator. The column
-order is a machine contract — eight cells read positionally, and the Link cell
-must name the decision document — so do not reorder or drop a column. The full
-row-format and document schema are owned by the vstack decider skill, which is
-agent-side tooling and is not vendored into this repo.
+**Row placement is append-only.** New rows go at the end of the table above,
+before the separator, and existing rows are never re-sorted. The order is
+therefore the order rows were added, not date order: the decider skill's row
+template asks for date order, and this table already departs from it — D004,
+dated 2026-08-04, sits after D005, dated 2026-08-08. Appending is the rule
+here, because re-sorting a log churns rows nobody changed.
+
+The column order is a machine contract — eight cells read positionally, and the
+Link cell must name the decision document — so do not reorder or drop a column.
+The full row-format and document schema are owned by the vstack decider skill,
+which is agent-side tooling and is not vendored into this repo.
