@@ -23,6 +23,18 @@ Singleton {
     property string currentOutput: ""
     property var outputs: ({})
     property var windows: []
+    // Whether `windows` holds a list niri actually sent, rather than the empty
+    // one it starts as. The list itself cannot answer that: `[]` is equally what
+    // a session with no windows looks like, so anything reading `windows.length`
+    // to decide whether the data has arrived is reading a coincidence. Set from
+    // the event that carries the list, cleared on any link transition — what
+    // arrived over a connection that has since dropped says nothing about now.
+    property bool windowsSnapshotReceived: false
+    // The event stream's link, which is the only health signal this socket has.
+    // It says the unix socket is connected, NOT that niri is answering: a peer
+    // that accepted the connection and then went quiet reads as up here. Nothing
+    // in the protocol distinguishes those, so nothing here claims to.
+    readonly property bool eventStreamUp: eventStreamSocket.linkUp
     property var displayScales: ({})
     property bool inOverview: false
     property var casts: []
@@ -58,6 +70,11 @@ Singleton {
         path: root.socketPath
         connected: root.available
         onConnectionStateChanged: {
+            // Either direction invalidates it: a drop leaves `windows` describing
+            // a session VGS is no longer being told about, and a fresh link has
+            // not delivered its own list yet — niri sends that in response to the
+            // EventStream request below, not on connect.
+            root.windowsSnapshotReceived = false;
             if (linkUp) {
                 send("\"EventStream\"");
                 root.fetchOutputs();
@@ -169,7 +186,12 @@ Singleton {
             handleWindowFocusChanged(data);
             break;
         case "WindowsChanged":
+            // The event that carries the whole list, which niri sends once when
+            // the event stream opens and again whenever it changes wholesale.
+            // Receiving it is what makes `windows` an answer rather than a
+            // default, so it is the one place the snapshot is marked received.
             windows = sortWindowsByLayout(data.windows || []);
+            windowsSnapshotReceived = true;
             break;
         case "WindowClosed":
             windows = windows.filter(window => window.id !== data.id);

@@ -78,9 +78,68 @@ Singleton {
         ? "pending"
         : (isNiri ? "niri" : (isHyprland ? "hyprland" : "unknown"))
 
+    // Whether the wlr-foreign-toplevel source has ever told VGS anything at all.
+    // See `focusReady` for why this is the closest observable thing to "the
+    // initial list has arrived" and for what it cannot distinguish.
+    property bool _toplevelSourceAnswered: false
+    function noteToplevelSource() {
+        if (ToplevelManager.activeToplevel || (ToplevelManager.toplevels?.values?.length ?? 0) > 0)
+            root._toplevelSourceAnswered = true;
+    }
+
+    // THE question anything wanting focus should ask: can the focus source
+    // answer a focus query right now? Not "has a flag been set" — three separate
+    // bugs in this file came from asking that, each about a different flag, and
+    // this property exists so there is one thing to be right about instead of a
+    // growing row of them.
+    //
+    // Per state, and every condition named, including the ones VGS cannot see:
+    //
+    //   "pending"   NOT ready. Detection has not named a source, so there is no
+    //               source to ask. Ends on its own: `detectCompositor` reaches
+    //               `_applyCompositor` on every path, under a Proc timeout that
+    //               fires the callback rather than waiting on the process.
+    //
+    //   "niri"      The event stream's link is up AND the window snapshot has
+    //               arrived. Both are needed and neither implies the other:
+    //               `NiriService.windows` starts as `[]` and stays that way
+    //               until a WindowsChanged event lands, which is well after
+    //               detection completes — a paste in that gap resolved no target
+    //               and pasted Ctrl+V, which is what this round fixes.
+    //               NOT observable, and therefore NOT claimed: whether niri is
+    //               actually answering. `eventStreamUp` says the unix socket is
+    //               connected; a peer that accepted the connection and went
+    //               quiet reads as up. The deadline in PasteService is what
+    //               covers that, by refusing rather than waiting forever.
+    //
+    //   "hyprland"  The toplevel source has answered at least once.
+    //               NOT observable, and therefore NOT claimed: whether the
+    //               initial toplevel list has finished arriving.
+    //               wlr-foreign-toplevel delivers the existing windows when
+    //               Quickshell binds the global, but `ToplevelManager` surfaces
+    //               no signal for it — verified against Quickshell 0.3's own
+    //               type information, which declares `toplevels` and
+    //               `activeToplevel` and nothing else — and an empty list is
+    //               also what an empty session looks like. So VGS uses the one
+    //               thing it CAN see: whether any toplevel has ever been
+    //               reported. That is sound in one direction only, and the
+    //               consequence is stated rather than hidden: on a seat with no
+    //               windows open this never becomes true, and a paste there is
+    //               refused at the deadline instead of pressing a chord into a
+    //               window that does not exist.
+    //
+    //   "unknown"   Follows the Hyprland arm. Detection failing resolves through
+    //               the toplevel path — decided and argued where that decision
+    //               lives, on `focusedAppId` — so readiness is the same question
+    //               there. Waiting instead would be waiting for an answer that
+    //               already came back negative.
+    readonly property bool focusReady: focusSource === "niri"
+        ? (NiriService.eventStreamUp && NiriService.windowsSnapshotReceived)
+        : (focusSource === "pending" ? false : _toplevelSourceAnswered)
+
     // The focused window's app id, or "" when nothing is focused, the compositor
-    // does not report one, or none is known yet. "" means "unknown", not "no
-    // app"; `focusSource` is what tells a consumer which kind of unknown.
+    // does not report one, or the source cannot answer yet. "" means "unknown",
+    // not "no app"; `focusReady` is what tells a consumer which kind of unknown.
     //
     // Per compositor, deliberately. On Hyprland this is the seat's active
     // toplevel, which the compositor drives through wlr-foreign-toplevel. Niri
@@ -91,12 +150,15 @@ Singleton {
     // own events — so the Niri branch reads Niri's IPC-maintained focus. The
     // Hyprland path is untouched: this is additive, per AGENTS.md § Mission.
     //
-    // PENDING resolves to "", not to the Hyprland branch. A target resolved
-    // before detection answers is a guess, and the cost of guessing wrong is the
-    // stray input this whole path exists to prevent. The consumer that cares
-    // waits — PasteService queues the paste rather than pressing a chord it
-    // cannot justify, which is the same rule it already applies to a helper in
-    // flight and to an unconfirmed seat.
+    // A SOURCE THAT CANNOT ANSWER resolves to "" on either arm, which is one
+    // rule rather than a list of the ways it can happen: detection still
+    // pending, Niri's snapshot not yet delivered, no toplevel ever reported.
+    // `focusReady` is that rule and the only gate here — a target named by a
+    // source that has not answered is a guess, and the cost of guessing wrong is
+    // the stray input this whole path exists to prevent. The consumer that cares
+    // waits: PasteService queues the paste rather than pressing a chord it
+    // cannot justify, the same rule it already applies to a helper in flight and
+    // to an unconfirmed seat.
     //
     // UNKNOWN resolves through the Hyprland branch, deliberately, and this is
     // the decision most worth disagreeing with. Three things argue for it: it is
@@ -110,8 +172,8 @@ Singleton {
     // terminal gets Ctrl+V — the original bug. Detection failing is already
     // logged as a warning where it happens.
     readonly property string focusedAppId: focusSource === "niri"
-        ? ((NiriService.windows ?? []).find(window => window.is_focused)?.app_id ?? "")
-        : (focusSource === "pending" ? "" : (ToplevelManager.activeToplevel?.appId ?? ""))
+        ? (focusReady ? ((NiriService.windows ?? []).find(window => window.is_focused)?.app_id ?? "") : "")
+        : (focusReady ? (ToplevelManager.activeToplevel?.appId ?? "") : "")
 
     // The app id of the window that last held focus, for consumers that need a
     // target across the gaps where `focusedAppId` is "": a shell surface taking
@@ -124,19 +186,20 @@ Singleton {
     // keystroke into whatever replaced it. Each branch's gate is the live list
     // its own compositor maintains: membership in `ToplevelManager.toplevels`
     // for Hyprland, and for Niri the lookup itself, since `NiriService.windows`
-    // drops a window on `WindowClosed`. Pending and unknown resolve exactly as
-    // they do for the live value above, for the same reasons: a remembered
-    // window is still a target, and naming one from a compositor nobody has
-    // confirmed yet is still a guess.
+    // drops a window on `WindowClosed`. A source that cannot answer resolves
+    // exactly as it does for the live value above, for the same reason: a
+    // remembered window is still a target, and naming one from a source that has
+    // not spoken is still a guess.
     property var _lastFocusedToplevel: null
     property var _lastFocusedNiriWindowId: null
     readonly property string lastFocusedAppId: focusSource === "niri"
-        ? ((NiriService.windows ?? []).find(window => window.id === _lastFocusedNiriWindowId)?.app_id ?? "")
-        : (focusSource === "pending" ? "" : (_lastFocusedToplevel && (ToplevelManager.toplevels?.values ?? []).includes(_lastFocusedToplevel) ? (_lastFocusedToplevel.appId ?? "") : ""))
+        ? (focusReady ? ((NiriService.windows ?? []).find(window => window.id === _lastFocusedNiriWindowId)?.app_id ?? "") : "")
+        : (focusReady ? (_lastFocusedToplevel && (ToplevelManager.toplevels?.values ?? []).includes(_lastFocusedToplevel) ? (_lastFocusedToplevel.appId ?? "") : "") : "")
 
     Connections {
         target: ToplevelManager
         function onActiveToplevelChanged() {
+            root.noteToplevelSource();
             if (ToplevelManager.activeToplevel)
                 root._lastFocusedToplevel = ToplevelManager.activeToplevel;
         }
@@ -166,6 +229,7 @@ Singleton {
     // reachable then; the second call sits where detection lands, which is also
     // the moment the Niri listener starts having any effect.
     function seedRememberedFocus() {
+        noteToplevelSource();
         if (ToplevelManager.activeToplevel)
             root._lastFocusedToplevel = ToplevelManager.activeToplevel;
         if (isNiri)
@@ -181,7 +245,10 @@ Singleton {
 
     Connections {
         target: ToplevelManager.toplevels
-        function onValuesChanged() { root.refreshToplevels(); }
+        function onValuesChanged() {
+            root.noteToplevelSource();
+            root.refreshToplevels();
+        }
     }
 
     Connections {

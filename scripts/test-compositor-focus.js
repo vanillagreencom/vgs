@@ -53,6 +53,12 @@ const { extractBlock } = require("./lib/qml-block.js");
 
 const QML = path.join(__dirname, "..", "quickshell", "vshell", "Services", "CompositorService.qml");
 const source = fs.readFileSync(QML, "utf8");
+// Readiness on Niri turns on a flag NiriService owns, so the flag's upkeep is
+// read from there rather than assumed: a snapshot that is never marked received
+// leaves paste waiting, and one marked without the event leaves it pasting into
+// a window list that is still the empty default.
+const NIRI_QML = path.join(__dirname, "..", "quickshell", "vshell", "Services", "NiriService.qml");
+const niriSource = fs.readFileSync(NIRI_QML, "utf8");
 
 // ---- extract the shipped expressions --------------------------------------
 
@@ -61,8 +67,8 @@ const source = fs.readFileSync(QML, "utf8");
 // declaration's own line would extract `isNiri` and drop both branches — the
 // test would then pass on nothing, which is the failure mode it exists to catch,
 // so every extraction is asserted on below.
-function bindingExpression(name) {
-    const opener = new RegExp(`^([ \\t]*)(?:readonly[ \\t]+)?property[ \\t]+string[ \\t]+${name}[ \\t]*:(.*)$`, "m");
+function bindingExpression(name, kind = "string") {
+    const opener = new RegExp(`^([ \\t]*)(?:readonly[ \\t]+)?property[ \\t]+${kind}[ \\t]+${name}[ \\t]*:(.*)$`, "m");
     const match = source.match(opener);
     assert.ok(match, `could not find the ${name} binding`);
     const indent = match[1].length;
@@ -76,6 +82,7 @@ function bindingExpression(name) {
 }
 
 const FOCUS_SOURCE = bindingExpression("focusSource");
+const FOCUS_READY = bindingExpression("focusReady", "bool");
 const FOCUSED = bindingExpression("focusedAppId");
 const LAST_FOCUSED = bindingExpression("lastFocusedAppId");
 const bodies = {
@@ -85,14 +92,23 @@ const bodies = {
     applyCompositor: extractBlock(source, "function _applyCompositor(name)"),
     activeToplevelChanged: extractBlock(source, "function onActiveToplevelChanged()"),
     windowsChanged: extractBlock(source, "function onWindowsChanged()", source.indexOf("target: NiriService")),
+    noteToplevelSource: extractBlock(source, "function noteToplevelSource()"),
+    toplevelValuesChanged: extractBlock(source, "function onValuesChanged()", source.indexOf("target: ToplevelManager.toplevels")),
+    niriEvent: extractBlock(niriSource, "function handleNiriEvent(event)"),
+    niriLinkChanged: extractBlock(niriSource, "onConnectionStateChanged:"),
 };
 
 // An extraction that came back short would leave the branch each test exists to
 // exercise unexamined while every case still passed.
 for (const [label, text, needles] of [
     ["focusSource", FOCUS_SOURCE, ["compositorDetected", "pending", "niri", "hyprland", "unknown"]],
-    ["focusedAppId", FOCUSED, ["focusSource", "is_focused", "activeToplevel"]],
-    ["lastFocusedAppId", LAST_FOCUSED, ["focusSource", "NiriService.windows", "ToplevelManager.toplevels"]],
+    ["focusReady", FOCUS_READY, ["focusSource", "NiriService.", "_toplevelSourceAnswered"]],
+    ["noteToplevelSource", bodies.noteToplevelSource, ["activeToplevel", "_toplevelSourceAnswered"]],
+    ["onValuesChanged", bodies.toplevelValuesChanged, ["noteToplevelSource"]],
+    ["handleNiriEvent", bodies.niriEvent, ["WindowsChanged", "windowsSnapshotReceived"]],
+    ["onConnectionStateChanged", bodies.niriLinkChanged, ["windowsSnapshotReceived", "linkUp"]],
+    ["focusedAppId", FOCUSED, ["focusSource", "focusReady", "is_focused", "activeToplevel"]],
+    ["lastFocusedAppId", LAST_FOCUSED, ["focusSource", "focusReady", "NiriService.windows", "ToplevelManager.toplevels"]],
     ["rememberNiriFocus", bodies.remember, ["is_focused", "_lastFocusedNiriWindowId"]],
     ["seedRememberedFocus", bodies.seed, ["activeToplevel", "_lastFocusedToplevel", "rememberNiriFocus"]],
     ["Component.onCompleted", bodies.completed, ["seedRememberedFocus"]],
@@ -115,6 +131,14 @@ function call(body, root, parameters = [], args = []) {
     return new Function("root", ...parameters, `with (root) {\n${body}\n}`)(root, ...args);
 }
 
+// A handler that belongs to a child object — a socket's own `linkUp` — reads
+// names from that object AND assigns through `root` to the component. Layering
+// the scopes is what keeps the assignment landing on the component instead of
+// shadowing it on a throwaway, which would make the handler look like it worked.
+function callInScope(body, root, scope) {
+    return new Function("root", "scope", `with (scope) { with (root) {\n${body}\n} }`)(root, scope);
+}
+
 const foot = { id: 7, app_id: "foot", is_focused: true };
 const kitty = { id: 9, app_id: "kitty", is_focused: false };
 const unfocused = (window) => Object.assign({}, window, { is_focused: false });
@@ -128,6 +152,7 @@ function shell(overrides = {}) {
         compositorDetected: false,
         _lastFocusedToplevel: null,
         _lastFocusedNiriWindowId: null,
+        _toplevelSourceAnswered: false,
         NiriService: { windows: [] },
         ToplevelManager: { activeToplevel: null, toplevels: { values: [] } },
         log: { warn() {}, info() {} },
@@ -142,7 +167,31 @@ function shell(overrides = {}) {
     // it.
     root.detectCompositor = () => root.calls.push("detectCompositor");
 
+    // NiriService's own state, and the event handler that maintains it. The
+    // snapshot flag is modelled through the shipped handler rather than set by
+    // hand, so a WindowsChanged event is what makes Niri ready here exactly as
+    // it is in the shell.
+    root.NiriService.windowsSnapshotReceived = root.NiriService.windowsSnapshotReceived ?? false;
+    root.NiriService.eventStreamUp = root.NiriService.eventStreamUp ?? false;
+    root.NiriService.sortWindowsByLayout = list => list;
+    // The one other branch of the dispatch these cases reach. Recorded rather
+    // than ignored, so the case that proves a single-window event does NOT mark
+    // the snapshot can also prove the event was handled at all — an event that
+    // fell through the switch would otherwise look identical.
+    root.NiriService.handled = [];
+    root.NiriService.handleWindowOpenedOrChanged = () => root.NiriService.handled.push("WindowOpenedOrChanged");
+    root.niriEvent = (event) => call(bodies.niriEvent, root.NiriService, ["event"], [event]);
+    root.NiriService.fetchOutputs = () => {};
+    // The link changing, run as the socket runs it: `linkUp` is the socket's,
+    // the snapshot flag is the service's.
+    root.niriLink = (up) => {
+        root.NiriService.eventStreamUp = up;
+        callInScope(bodies.niriLinkChanged, root.NiriService, { linkUp: up, send: () => {} });
+    };
+
     root.rememberNiriFocus = () => call(bodies.remember, root);
+    root.noteToplevelSource = () => call(bodies.noteToplevelSource, root);
+    root.toplevelsChanged = () => call(bodies.toplevelValuesChanged, root);
     root.seedRememberedFocus = () => call(bodies.seed, root);
     root.construct = () => call(bodies.completed, root);
     root.detected = (name) => call(bodies.applyCompositor, root, ["name"], [name]);
@@ -153,6 +202,7 @@ function shell(overrides = {}) {
     // and half of what this file tests is that it changes underneath them as
     // detection lands.
     Object.defineProperty(root, "focusSource", { get: () => call(`return (${FOCUS_SOURCE});`, root) });
+    Object.defineProperty(root, "focusReady", { get: () => call(`return (${FOCUS_READY});`, root) });
 
     root.focusedAppId = () => call(`return (${FOCUSED});`, root);
     root.lastFocusedAppId = () => call(`return (${LAST_FOCUSED});`, root);
@@ -166,12 +216,19 @@ function shell(overrides = {}) {
 // not represent it would be unable to test the half of this file that matters
 // most.
 function settled(compositor, overrides = {}) {
-    return shell(Object.assign({
+    const root = shell(Object.assign({
         compositorDetected: true,
         isHyprland: compositor === "hyprland",
         isNiri: compositor === "niri",
         compositor,
     }, overrides));
+    // Past detection AND past the point each source can answer, which are two
+    // different moments — the gap between them is what the readiness cases below
+    // are about, so it is spelled out here rather than folded into detection.
+    root._toplevelSourceAnswered = true;
+    root.NiriService.eventStreamUp = true;
+    root.NiriService.windowsSnapshotReceived = true;
+    return root;
 }
 
 // ---- Hyprland: the live value ----------------------------------------------
@@ -343,9 +400,14 @@ function settled(compositor, overrides = {}) {
     assert.equal(root.isNiri, true, "detection applied");
     assert.equal(root._lastFocusedNiriWindowId, foot.id, "detection seeds the focus niri already reported");
 
+    // The event stream comes up and niri sends the list. Detection completing is
+    // NOT that moment, which is the whole point of the readiness cases below.
+    root.NiriService.eventStreamUp = true;
+    root.niriEvent({ WindowsChanged: { windows: [kitty, foot] } });
+
     // And the first paste: the surface takes focus, niri clears is_focused, and
     // only the seeded value can name the terminal.
-    root.NiriService.windows = [kitty, unfocused(foot)];
+    root.niriEvent({ WindowsChanged: { windows: [kitty, unfocused(foot)] } });
     root.windowsChanged();
     assert.equal(root.focusedAppId(), "", "the shell surface emptied the live value");
     assert.equal(root.lastFocusedAppId(), "foot", "the first paste of the session still resolves its target");
@@ -356,17 +418,23 @@ function settled(compositor, overrides = {}) {
     const root = shell({ NiriService: { windows: [kitty] } });
     root.construct();
     root.detected("niri");
+    root.NiriService.eventStreamUp = true;
+    root.niriEvent({ WindowsChanged: { windows: [kitty] } });
+    assert.equal(root.focusReady, true, "the source can answer");
     assert.equal(root._lastFocusedNiriWindowId, null, "no focused Niri window seeds nothing");
     assert.equal(root.lastFocusedAppId(), "", "and resolves to no target");
 }
 {
     // Seeding must not cross compositors: detection landing on Hyprland must not
     // adopt a Niri window, which would name a target that cannot be pasted into.
-    const root = shell({ NiriService: { windows: [foot] } });
+    const root = shell({
+        NiriService: { windows: [foot] },
+        ToplevelManager: { activeToplevel: { appId: "kitty" }, toplevels: { values: [] } },
+    });
     root.construct();
     root.detected("hyprland");
     assert.equal(root._lastFocusedNiriWindowId, null, "the Hyprland seed leaves Niri's list alone");
-    assert.equal(root.lastFocusedAppId(), "", "and the Hyprland fallback stays empty");
+    assert.equal(root.focusedAppId(), "kitty", "and resolves its own source instead");
 }
 
 // ---- detection: pending is its own state, not a third meaning of Hyprland --
@@ -413,13 +481,119 @@ function settled(compositor, overrides = {}) {
     assert.equal(root.focusedAppId(), "foot", "the live target resolves once detection answers");
     assert.equal(root.lastFocusedAppId(), "foot", "and so does the remembered one");
 }
+
+// ---- readiness: detection answering is not the source answering ------------
+
 {
-    // The same wait, ending on Niri.
-    const root = shell({ NiriService: { windows: [foot] } });
-    assert.equal(root.focusedAppId(), "", "no live target before the compositor is known");
+    // The finding this round is about. On Niri, detection completing and the
+    // window list arriving are two moments, and the gap between them is real:
+    // `windows` is [] until niri's event stream delivers the snapshot, which is
+    // its own round trip after the socket connects. A paste in that gap used to
+    // end its wait, resolve nothing, and press Ctrl+V.
+    const root = shell();
+    root.construct();
     root.detected("niri");
-    assert.equal(root.focusedAppId(), "foot", "Niri's own focus resolves once detection answers");
-    assert.equal(root.lastFocusedAppId(), "foot", "seeded and resolvable at the same moment");
+    assert.equal(root.focusSource, "niri", "detection has answered");
+    assert.equal(root.focusReady, false, "but the source cannot answer yet");
+
+    // The link alone is not it either: connected says the socket is open, not
+    // that niri has said anything.
+    root.niriLink(true);
+    assert.equal(root.focusReady, false, "an open socket is not an answer");
+
+    // The snapshot is what makes the list an answer, and it is marked from the
+    // shipped event handler rather than by hand.
+    root.niriEvent({ WindowsChanged: { windows: [foot] } });
+    assert.equal(root.NiriService.windowsSnapshotReceived, true, "the WindowsChanged event marks it received");
+    assert.equal(root.focusReady, true, "now the source can answer");
+    assert.equal(root.focusedAppId(), "foot", "and it names the focused window");
+
+    // A dropped link is its own disqualification, before anything touches the
+    // snapshot: the list may be intact and still describe a session VGS is no
+    // longer being told about.
+    root.NiriService.eventStreamUp = false;
+    assert.equal(root.NiriService.windowsSnapshotReceived, true, "the snapshot flag is untouched so far");
+    assert.equal(root.focusReady, false, "but a dropped link is not an answer");
+    assert.equal(root.focusedAppId(), "", "and names no target while it is down");
+
+    // And the drop clears the snapshot through the shipped handler, so a
+    // reconnect cannot resolve from the list the old connection left behind.
+    root.niriLink(false);
+    assert.equal(root.NiriService.windowsSnapshotReceived, false, "the link transition invalidated it");
+    root.niriLink(true);
+    assert.equal(root.NiriService.windowsSnapshotReceived, false, "and coming back up does not restore it");
+    assert.equal(root.focusReady, false, "readiness waits for the new snapshot");
+    root.niriEvent({ WindowsChanged: { windows: [foot] } });
+    assert.equal(root.focusReady, true, "which the reconnected stream delivers");
+}
+{
+    // An empty snapshot is still an ANSWER: niri said there are no windows.
+    // Readiness must not confuse that with silence, or a paste on an empty seat
+    // would wait for a list that already came.
+    const root = shell();
+    root.detected("niri");
+    root.niriLink(true);
+    root.niriEvent({ WindowsChanged: { windows: [] } });
+    assert.equal(root.focusReady, true, "no windows is an answer, not a wait");
+    assert.equal(root.focusedAppId(), "", "and the answer is that nothing is focused");
+}
+{
+    // An event that is not the snapshot must not stand in for one — it carries
+    // one window, not the list, so the list is still the empty default.
+    const root = shell();
+    root.detected("niri");
+    root.niriLink(true);
+    root.niriEvent({ WindowOpenedOrChanged: { window: foot } });
+    assert.deepEqual(root.NiriService.handled, ["WindowOpenedOrChanged"], "the event was dispatched");
+    assert.equal(root.focusReady, false, "a single-window event is not the snapshot");
+}
+{
+    // Hyprland has the same shape, and it was NOT assumed ready: nothing has
+    // reported a toplevel, so the source has said nothing.
+    const root = shell();
+    root.construct();
+    root.detected("hyprland");
+    assert.equal(root.focusReady, false, "no toplevel has ever been reported");
+    assert.equal(root.focusedAppId(), "", "so no target is named");
+
+    // Quickshell surfaces no "initial list delivered" signal, so what VGS can
+    // observe is the first toplevel it hears about — through the listener the
+    // shell already had.
+    const toplevel = { appId: "foot" };
+    root.ToplevelManager = { activeToplevel: toplevel, toplevels: { values: [toplevel] } };
+    root.toplevelsChanged();
+    assert.equal(root.focusReady, true, "a reported toplevel is the source answering");
+    assert.equal(root.focusedAppId(), "foot", "and the target resolves");
+
+    // Sticky: focus leaving every window does not un-answer the question.
+    root.ToplevelManager.activeToplevel = null;
+    assert.equal(root.focusReady, true, "the source has answered once and that stands");
+}
+{
+    // The failed-detection state, which follows the toplevel arm by the decision
+    // recorded in CompositorService: readiness is the same question there, so a
+    // paste waits on the same thing rather than on a second answer that is never
+    // coming.
+    const root = shell();
+    root.detected("unknown");
+    assert.equal(root.focusReady, false, "nothing has reported a toplevel yet");
+    const toplevel = { appId: "foot" };
+    root.ToplevelManager = { activeToplevel: toplevel, toplevels: { values: [toplevel] } };
+    root.toplevelsChanged();
+    assert.equal(root.focusReady, true, "and it is ready on the same terms as Hyprland");
+    assert.equal(root.focusedAppId(), "foot", "resolving through the toplevel path");
+}
+{
+    // Readiness is never true while pending, whatever else is in place — the
+    // source has not been identified, so there is nothing to be ready.
+    const toplevel = { appId: "foot" };
+    const root = shell({
+        _toplevelSourceAnswered: true,
+        NiriService: { windows: [foot], eventStreamUp: true, windowsSnapshotReceived: true },
+        ToplevelManager: { activeToplevel: toplevel, toplevels: { values: [toplevel] } },
+    });
+    assert.equal(root.focusSource, "pending", "detection has not answered");
+    assert.equal(root.focusReady, false, "so nothing is ready, however much data is lying around");
 }
 
 // ---- detection failing: the stated decision, exercised ---------------------

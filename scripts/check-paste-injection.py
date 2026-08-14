@@ -43,19 +43,21 @@ Pinned, over the QML and JS under `quickshell/vshell/` and `config/vshell/`
      start. Same function means the function ITSELF: a read or a start inside a
      callback nested in it runs on the callback's terms and does not count. Quickshell ignores a command change on a live Process, so the reverse
      order runs the previous injection's argv. Ahead of all of it, a branch on
-     `CompositorService.focusSource` that returns unconditionally: while
-     detection is pending the focus properties are empty by design, and empty
+     `CompositorService.focusReady` that returns unconditionally: when the focus
+     source cannot answer, the focus properties are empty by design, and empty
      resolves to Ctrl+V, so an injector that read them and carried on would send
-     exactly the keystroke the pending state exists to withhold.
-  4. Both supported compositors resolve a target, a compositor nobody has
-     confirmed yet resolves none, and the sticky fallback empties when its window
-     closes. `focusedAppId` and `lastFocusedAppId` each branch on the four-state
-     `focusSource` — never on `isNiri` or `isHyprland`, which is the defect this
-     arm exists to catch second: that pair reads false BOTH before detection has
-     answered and when it answered that it could not tell, so a property
-     branching on it resolves those two states through the Hyprland arm, at the
-     first paste of a session. `focusSource` must itself derive from
-     `compositorDetected`, or the pending state it is named for does not exist.
+     exactly the keystroke readiness exists to withhold. On the predicate and
+     nothing beside it — the injector must not assemble its own readiness out of
+     individual flags, which is how three variants of one bug got written.
+  4. Both supported compositors resolve a target, a source that cannot answer
+     resolves none, and the sticky fallback empties when its window closes.
+
+     `focusedAppId` and `lastFocusedAppId` each branch on the four-state
+     `focusSource` — never on `isNiri` or `isHyprland`. That pair reads false
+     BOTH before detection has answered and when it answered that it could not
+     tell, so a property branching on it resolves those two states through the
+     Hyprland arm, at the first paste of a session. `focusSource` must itself
+     derive from `compositorDetected`, or the pending state does not exist.
      Neither compositor can inherit the other's mechanism either: the non-Niri
      arm reads the seat's active toplevel and gates the fallback on membership in
      `ToplevelManager.toplevels`, while the Niri arm reads Niri's own
@@ -63,11 +65,20 @@ Pinned, over the QML and JS under `quickshell/vshell/` and `config/vshell/`
      resolving the remembered id through that same live list. Niri does not
      populate the active toplevel the way Hyprland does, so an unbranched
      toplevel read leaves every Niri paste falling back to Ctrl+V — the original
-     bug, on a supported platform. The non-Niri arm additionally tests the
-     pending state, so a target cannot be resolved before detection answers.
-     Which compositor the non-Niri arm covers besides Hyprland — that is, what a
-     FAILED detection resolves to — is a decision stated in the QML, not
-     something this arm dictates. Each fallback is also actually maintained:
+     bug, on a supported platform. What a FAILED detection resolves to is a
+     decision stated in the QML, not something this arm dictates.
+
+     BOTH arms of both properties test `focusReady`, the one predicate meaning
+     "the focus source can answer right now". Three bugs on this path were each a
+     different flag standing in for that question — the remembered toplevel never
+     seeded, resolution ungated on detection, readiness declared before the data
+     could answer — so the predicate is pinned as one thing rather than as the
+     conditions of the day: it must express not-ready per source, derive its Niri
+     arm from `NiriService` (whose snapshot arrives well after detection), and
+     contain no literal `true` anywhere. That last one is the general form of the
+     mistake: a condition nothing can observe does not become satisfied by being
+     unobservable. Say so in the comment and derive the arm from what can be
+     seen. Each fallback is also actually maintained:
      every assignment to the private reference its branch reads sits INSIDE the
      statement a focus test controls (its braced body, or the single statement
      of a braceless form), not merely after such a test in the text — an
@@ -185,6 +196,14 @@ COMPOSITOR_BOOLEAN_RE = re.compile(r"(?<![\w.])(?:\w+\s*\.\s*)*is(?:Niri|Hyprlan
 NIRI_SOURCE_TEST_RE = re.compile(r"focusSource\s*===?\s*(['\"])niri\1")
 PENDING_SOURCE_TEST_RE = re.compile(r"focusSource\s*===?\s*(['\"])pending\1")
 DETECTION_COMPLETE_RE = re.compile(r"\bcompositorDetected\b")
+# The readiness predicate: can the focus source answer a focus query right now?
+# One question, so one name — every consumer waits on this and nothing else.
+FOCUS_READY_RE = re.compile(r"(?<![\w.])(?:\w+\s*\.\s*)*focusReady\b")
+# Readiness asserted as a constant, which is the mistake this arm exists to
+# catch: an unobservable condition treated as satisfied because nothing can see
+# it. A predicate derived from state never needs the literal.
+ASSERTED_READY_RE = re.compile(r"(?<![\w.])true\b")
+NIRI_SERVICE_RE = re.compile(r"\bNiriService\s*\.")
 PRIVATE_MEMBER_RE = re.compile(r"\b_[A-Za-z][A-Za-z0-9_]*\b")
 # Polarity matters, in both directions: a test on the ABSENCE of an active
 # toplevel guards the wrong way, and a guard that returns when the copy SUCCEEDED
@@ -337,19 +356,20 @@ def check_argv_assignment(source: str, call: re.Match) -> bool:
     pending = [
         (region_start, region_end) for test, region_start, region_end in if_regions(source)
         if body_start <= region_start and region_end <= call.start()
-        and FOCUS_SOURCE_RE.search(test)
+        and FOCUS_READY_RE.search(test)
         and in_function(source, region_start, body_start)
     ]
     if not pending:
         return fail(
-            f"{OWNER} builds the argv with no branch ahead of it testing CompositorService.focusSource, "
-            "so a paste requested before compositor detection answers resolves an empty target and "
-            "sends Ctrl+V — into a terminal, that is the stray input this whole path exists to prevent"
+            f"{OWNER} builds the argv with no branch ahead of it testing "
+            "CompositorService.focusReady, so a paste requested while the focus source cannot answer "
+            "resolves an empty target and sends Ctrl+V — into a terminal, that is the stray input this "
+            "whole path exists to prevent"
         )
     if not any(returns_unconditionally(source, *span) for span in pending):
         return fail(
-            f"{OWNER} tests focusSource but does not leave the function from that branch, so a paste "
-            "requested before detection answers still reaches the argv it was meant to wait for"
+            f"{OWNER} tests focusReady but does not leave the function from that branch, so a paste "
+            "requested while the source cannot answer still reaches the argv it was meant to wait for"
         )
 
     starts = occurrences_in(source, RUNNING_TRUE_RE, body_start, body)
@@ -363,7 +383,7 @@ def check_argv_assignment(source: str, call: re.Match) -> bool:
     return True
 
 
-def declaration_binding(source: str, name: str) -> str | None:
+def declaration_binding(source: str, name: str, kind: str = "string") -> str | None:
     """The binding expression of `name`, across QML's continuation lines.
 
     A binding routinely spans lines, and reading only the declaration's own line
@@ -372,7 +392,7 @@ def declaration_binding(source: str, name: str) -> str | None:
     further belong to the declaration, and a blank line or a dedent ends it.
     """
     declaration = re.search(
-        r"^([ \t]*)(?:readonly[ \t]+)?property[ \t]+string[ \t]+" + name + r"\b[ \t]*:(.*)$",
+        r"^([ \t]*)(?:readonly[ \t]+)?property[ \t]+" + kind + r"[ \t]+" + name + r"\b[ \t]*:(.*)$",
         source,
         re.MULTILINE,
     )
@@ -466,42 +486,75 @@ def focus_branches(source: str, name: str) -> tuple[str, str] | None:
             "branch cannot be read as a per-compositor path"
         )
         return None
-    if not PENDING_SOURCE_TEST_RE.search(branches[1]):
+    ungated = [arm for arm, branch in zip(("Niri", "non-Niri"), branches) if not FOCUS_READY_RE.search(branch)]
+    if ungated:
         fail(
-            f"{FOCUS_SOURCE} resolves {name} without testing focusSource for the pending state, so a "
-            "paste requested before detection answers is resolved through the Hyprland arm by default "
-            "— which is a guess, and the wrong guess types stray input into a terminal"
+            f"{FOCUS_SOURCE} resolves {name} on its " + " and ".join(ungated) + " arm without testing "
+            "focusReady, so a target is named by a source that has not answered — detection still "
+            "running, Niri's snapshot not yet delivered, no toplevel ever reported. Each of those "
+            "resolves empty, and empty pastes Ctrl+V into whatever holds focus"
         )
         return None
     return branches
 
 
-def check_focus_source_states() -> bool:
-    """That focusSource can express pending at all.
+def check_focus_readiness() -> bool:
+    """The readiness predicate, and that it is derived rather than asserted.
 
-    Every rule below branches on it, and a two-state stand-in named focusSource
-    would satisfy each of them while collapsing pending back into a compositor.
+    Three separate bugs on this path were each a flag standing in for readiness —
+    the remembered toplevel unseeded, resolution ungated on detection, readiness
+    declared before the focus data could answer. What they had in common is that
+    a flag was true while the source could not answer, so this arm asks of the
+    predicate the two things a fourth variant would violate: that it can express
+    not-ready per source, and that no arm of it is a constant.
     """
     source = read_live_with_strings(FOCUS_SOURCE)
     if source is None:
         return False
-    binding = declaration_binding(source, "focusSource")
-    if binding is None:
+
+    states = declaration_binding(source, "focusSource")
+    if states is None:
         return fail(
             f"{FOCUS_SOURCE} declares no focusSource, so nothing distinguishes a compositor VGS has "
             "confirmed from one it has not asked about yet"
         )
-    if not DETECTION_COMPLETE_RE.search(binding):
+    if not DETECTION_COMPLETE_RE.search(states):
         return fail(
             f"{FOCUS_SOURCE} derives focusSource without reading compositorDetected, so it cannot tell "
             "detection-not-answered from detection-answered and the pending state does not exist"
         )
-    if not PENDING_SOURCE_TEST_RE.search(source):
+
+    ready = declaration_binding(source, "focusReady", kind="bool")
+    if ready is None:
         return fail(
-            f"{FOCUS_SOURCE} never resolves anything on the pending state, so declaring it changes "
-            "nothing"
+            f"{FOCUS_SOURCE} declares no focusReady, so there is no single answer to whether the focus "
+            "source can answer a query — and every consumer is left assembling one out of flags, which "
+            "is what produced three separate variants of this bug"
         )
-    print(f"check-paste-injection: {FOCUS_SOURCE} publishes a focusSource that can express pending")
+    if ASSERTED_READY_RE.search(ready):
+        return fail(
+            f"{FOCUS_SOURCE} asserts readiness as a literal true somewhere in focusReady. A condition "
+            "that cannot be observed does not become satisfied by being unobservable — say so in the "
+            "comment and derive the arm from what CAN be seen"
+        )
+    if not PENDING_SOURCE_TEST_RE.search(ready):
+        return fail(
+            f"{FOCUS_SOURCE} derives focusReady without testing focusSource for the pending state, so "
+            "a source VGS has not identified yet reads as able to answer"
+        )
+    branches = conditional_branches(ready)
+    if branches is None or not NIRI_SOURCE_TEST_RE.search(ready):
+        return fail(
+            f"{FOCUS_SOURCE} derives focusReady without a per-source branch, so one compositor's "
+            "conditions stand in for the other's — and Niri's are the ones that arrive late"
+        )
+    if not NIRI_SERVICE_RE.search(branches[0]):
+        return fail(
+            f"{FOCUS_SOURCE} derives Niri readiness without reading NiriService, so it cannot know "
+            "whether the event stream is up or whether the window snapshot has arrived — the window "
+            "between detection completing and that snapshot is exactly where a paste resolved nothing"
+        )
+    print(f"check-paste-injection: {FOCUS_SOURCE} publishes a focusReady derived per source, never asserted")
     return True
 
 
@@ -707,7 +760,7 @@ def main() -> int:
         check_no_literal_argv(files),
         check_single_injector(files),
         check_owner(),
-        check_focus_source_states(),
+        check_focus_readiness(),
         check_focus_source(),
         check_callers(),
         check_launcher_copy_result(),

@@ -98,7 +98,9 @@ const bodies = {
     reportReleaseFailedToStart: extractBlock(source, "function reportReleaseFailedToStart()"),
     startModifierRelease: extractBlock(source, "function startModifierRelease()"),
     targetForLog: extractBlock(source, "function targetForLog()"),
+    compositorForLog: extractBlock(source, "function compositorForLog()"),
     settleTriggered: bodyAfter(source, "id: settleTimer", "onTriggered:"),
+    readinessTriggered: bodyAfter(source, "id: readinessTimer", "onTriggered:"),
     watchdogTriggered: bodyAfter(source, "id: watchdogTimer", "onTriggered:"),
     escalationTriggered: bodyAfter(source, "id: escalationTimer", "onTriggered:"),
     releaseWatchdogTriggered: bodyAfter(source, "id: releaseWatchdogTimer", "onTriggered:"),
@@ -204,6 +206,7 @@ function makeHarness() {
         _seatUnconfirmed: false,
 
         settleTimer: makeTimer("settleTimer"),
+        readinessTimer: makeTimer("readinessTimer"),
         watchdogTimer: makeTimer("watchdogTimer"),
         escalationTimer: makeTimer("escalationTimer"),
         releaseWatchdogTimer: makeTimer("releaseWatchdogTimer"),
@@ -212,12 +215,14 @@ function makeHarness() {
         releaseProcess: makeProcess(),
 
         log: { debug() {}, warn: (...a) => warnings.push(a.join(" ")) },
-        // focusSource is the four-state one: "pending" until compositor
-        // detection answers, and while it is pending both app ids are empty by
-        // design rather than because nothing is focused. The default here is a
-        // session past that point, which is what every case below but the
-        // detection ones is about.
-        CompositorService: { focusSource: "hyprland", focusedAppId: "foot", lastFocusedAppId: "" },
+        // focusReady is the single predicate: can the focus source answer a
+        // focus query right now? It covers detection, Niri's event stream and
+        // snapshot, and whether any toplevel has been reported — enumerated on
+        // CompositorService, deliberately not restated here, since a copy of the
+        // conditions is the failure mode the predicate exists to end. The
+        // default is a session where the source can answer, which is what every
+        // case below but the readiness ones is about.
+        CompositorService: { focusSource: "hyprland", focusReady: true, focusedAppId: "foot", lastFocusedAppId: "" },
         PasteTarget: {
             pasteCommand: () => ["wtype", "-M", "ctrl", "-M", "shift", "-P", "v", "-p", "v", "-m", "shift", "-m", "ctrl"],
             releaseModifiersCommand: () => ["wtype", "-m", "shift", "-m", "ctrl"],
@@ -603,42 +608,71 @@ function queuePaste(h) {
     assert.equal(h.root._pendingPaste, false, "and must not be queued behind nothing");
 }
 
-// ---- 4m. a paste requested before compositor detection answers ------------
+// ---- 4m. a paste requested before the focus source can answer -------------
 
 {
-    // Detection is asynchronous, so the very first paste of a session can beat
-    // it. Until it answers, the focus properties report nothing rather than
-    // guessing a compositor — and empty resolves to Ctrl+V, the stray input the
-    // whole path exists to prevent. So the paste waits.
+    // One question, asked once. Whether it is detection still running, Niri's
+    // window snapshot not yet delivered, or no toplevel ever reported, the
+    // answer here is the same and this service does not care which — it waits.
+    // Resolving anyway would resolve "" and press Ctrl+V into whatever holds
+    // focus, which is the stray input the whole path exists to prevent.
     const h = makeHarness();
-    h.root.CompositorService = { focusSource: "pending", focusedAppId: "", lastFocusedAppId: "" };
+    h.root.CompositorService = { focusSource: "niri", focusReady: false, focusedAppId: "", lastFocusedAppId: "" };
 
     queuePaste(h);
-    assert.equal(h.root.wtypeProcess.running, false, "a paste must not inject before detection answers");
+    assert.equal(h.root.wtypeProcess.running, false, "a paste must not inject while the source cannot answer");
     assert.deepEqual(h.root.wtypeProcess.command, [], "and must not build an argv from an unknown target");
     assert.equal(h.root.settleTimer.running, true, "it waits rather than being dropped");
-    assert.deepEqual(h.toasts, [], "and nothing has gone wrong, so the user is told nothing");
+    assert.equal(h.root.readinessTimer.running, true, "and the wait is bounded from the first deferral");
+    assert.deepEqual(h.toasts, [], "nothing has gone wrong yet, so the user is told nothing");
 
     // Waiting is not refusing: the seat is untouched, so no recovery runs.
     assert.equal(h.root._seatUnconfirmed, false, "waiting must not mark the seat");
     assert.equal(h.root.releaseProcess.running, false, "and must not start a modifier release");
 
-    // Detection lands. The next settle finds a target and injects.
-    h.root.CompositorService = { focusSource: "hyprland", focusedAppId: "foot", lastFocusedAppId: "" };
+    // The source answers. The next settle finds a target and injects.
+    h.root.CompositorService = { focusSource: "niri", focusReady: true, focusedAppId: "foot", lastFocusedAppId: "" };
     h.fire("settleTimer", "settleTriggered");
-    assert.equal(h.root.wtypeProcess.running, true, "the waiting paste injects once detection answers");
-    assert.equal(h.root._targetAppId, "foot", "into the target detection made resolvable");
+    assert.equal(h.root.wtypeProcess.running, true, "the waiting paste injects once the source can answer");
+    assert.equal(h.root._targetAppId, "foot", "into the target that became resolvable");
+    assert.equal(h.root.readinessTimer.running, false, "and the deadline is stood down");
 }
 {
-    // Detection answering "cannot tell" is not pending: it is an answer, and the
-    // decision recorded in CompositorService is that it resolves through the
-    // toplevel path. A paste then must not hang waiting for a second answer that
-    // is never coming.
+    // The deadline. Parts of readiness cannot be observed — a socket that is up
+    // but silent, a toplevel list that may never arrive — so "not yet" and
+    // "never" look identical from here. Without a floor the paste would wait for
+    // the rest of the session in silence.
     const h = makeHarness();
-    h.root.CompositorService = { focusSource: "unknown", focusedAppId: "foot", lastFocusedAppId: "" };
+    h.root.CompositorService = { focusSource: "niri", focusReady: false, focusedAppId: "", lastFocusedAppId: "" };
     queuePaste(h);
-    assert.equal(h.root.wtypeProcess.running, true, "a failed detection still pastes rather than waiting forever");
-    assert.equal(h.root._targetAppId, "foot", "using whatever target the toplevel path could name");
+    assert.equal(h.root.readinessTimer.running, true, "the deadline is running");
+
+    assert.equal(h.fire("readinessTimer", "readinessTriggered"), true, "the deadline expires");
+    assert.equal(h.root.wtypeProcess.running, false, "it must not paste on expiry - a chord for a window VGS could not identify is the bug");
+    assert.equal(h.root.settleTimer.running, false, "the wait is over, not still counting");
+    assert.equal(h.root._pendingPaste, false, "and nothing is left queued to replay later");
+    assert.equal(h.toasts.length, 1, "the user is told, rather than the paste silently doing nothing");
+    assert.match(h.toasts[0], /Paste is unavailable/, "and told what happened");
+    assert.equal(h.root._seatUnconfirmed, false, "no chord was pressed, so the seat is not in doubt");
+}
+{
+    // Not over-corrected: the deadline must not fire on a session that answers.
+    const h = makeHarness();
+    queuePaste(h);
+    assert.equal(h.root.wtypeProcess.running, true, "a ready source injects immediately");
+    assert.equal(h.root.readinessTimer.running, false, "and no deadline is left armed behind it");
+}
+{
+    // A second paste after a readiness refusal still works: the refusal dropped
+    // the queue, it did not disable the service.
+    const h = makeHarness();
+    h.root.CompositorService = { focusSource: "hyprland", focusReady: false, focusedAppId: "", lastFocusedAppId: "" };
+    queuePaste(h);
+    h.fire("readinessTimer", "readinessTriggered");
+
+    h.root.CompositorService = { focusSource: "hyprland", focusReady: true, focusedAppId: "foot", lastFocusedAppId: "" };
+    queuePaste(h);
+    assert.equal(h.root.wtypeProcess.running, true, "the next paste injects once the source answers");
 }
 
 // ---- 5. release give-up: the queue must not outlive it --------------------

@@ -127,21 +127,29 @@ Singleton {
             refuseUnconfirmedSeat();
             return;
         }
-        // Compositor detection is asynchronous, and until it answers, VGS does
-        // not know which source the focused window comes from — so the focus
-        // properties report nothing rather than guessing a compositor. Pasting
-        // on that would send Ctrl+V into whatever holds focus, which is the
-        // stray-input bug this service exists to prevent, at the first paste of
-        // a session. So the paste WAITS, the same rule as a helper in flight
-        // above: deferred, not dropped, and not refused either — nothing has
-        // gone wrong, the answer has not arrived. Bounded by the same kind of
-        // argument, stated at CompositorService.focusSource: detection runs
-        // under a Proc timeout that fires the callback rather than waiting on
-        // the process, so pending always ends.
-        if (CompositorService.focusSource === "pending") {
+        // One question, asked once: can the focus source answer right now?
+        // Which conditions that covers per compositor — detection, Niri's link
+        // and snapshot, whether any toplevel has been reported — belongs to
+        // CompositorService.focusReady and is enumerated there. This service
+        // deliberately does not restate them or add a condition beside them:
+        // three bugs on this path were each a different flag standing in for
+        // readiness, and a fourth flag here would be the fourth.
+        //
+        // Not ready means the paste WAITS, the same rule as a helper in flight
+        // above: deferred, not dropped, and not refused — nothing has gone
+        // wrong, the answer has not arrived. Resolving anyway would resolve ""
+        // and send Ctrl+V, the stray input this service exists to prevent.
+        if (!CompositorService.focusReady) {
+            // Some of what readiness waits on cannot be observed — a socket that
+            // is up but silent, a toplevel list that may never come — so the
+            // wait is bounded here rather than trusted to end. Its expiry is the
+            // deadline timer's job; this only starts it.
+            if (!readinessTimer.running)
+                readinessTimer.restart();
             settleTimer.restart();
             return;
         }
+        readinessTimer.stop();
         // "" from focusedAppId means the compositor reports no active toplevel,
         // which is normal while a shell surface holds keyboard focus, so the
         // last window known to have focus is the target.
@@ -163,7 +171,37 @@ Singleton {
     // tells the user why at the same time, so this is never silent.
     function cancelQueuedPaste() {
         settleTimer.stop();
+        readinessTimer.stop();
         _pendingPaste = false;
+    }
+
+    // The readiness wait cannot be open-ended. Parts of what it waits on are not
+    // observable — CompositorService.focusReady names which — so "not ready yet"
+    // and "never going to be" look identical from here, and a wait with no floor
+    // under it would leave paste silently dead for the rest of the session.
+    //
+    // It ends in a refusal rather than a paste, and that is the whole point: the
+    // only thing VGS could do instead is press a chord for a window it could not
+    // identify, which for a terminal is the stray input this service exists to
+    // prevent. The user is told, so the outcome is a message rather than a paste
+    // that quietly did nothing — and the content is already on the clipboard, so
+    // their own paste keystroke still works.
+    //
+    // Generous on purpose: compositor detection alone may take up to its own 3s
+    // timeout, so this has to clear that with room rather than race it.
+    Timer {
+        id: readinessTimer
+        interval: 8000
+        repeat: false
+        onTriggered: {
+            root.log.warn("Paste requested but", root.compositorForLog(), "never reported which window has focus - refusing");
+            ToastService.showError(I18n.tr("Paste is unavailable"), I18n.tr("VGS could not tell which window has focus"));
+            root.cancelQueuedPaste();
+        }
+    }
+
+    function compositorForLog() {
+        return PasteTarget.displayAppId(CompositorService.focusSource) || "the compositor";
     }
 
     function reportInjectorFailedToStart() {
