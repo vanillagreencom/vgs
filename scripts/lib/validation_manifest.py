@@ -148,11 +148,54 @@ class Grammar:
         # neither spells it by hand. It drifted twice and was hand-synchronised
         # twice before this.
         self.messages: dict[str, str] = {}
+        self.arity: dict[str, dict[str, int]] = {}
         for raw in path.read_text(encoding="utf-8").splitlines():
             line = raw.split("#", 1)[0].strip()
             if not line:
                 continue
             kind, *fields = line.split()
+            # ARITY BEFORE INDEXING. Every branch below read fields it had not
+            # proven present, so a bare `token` line raised IndexError — a
+            # traceback out of the reader instead of a diagnostic. Checked from
+            # the `kind` table in the definition, so a new line kind cannot be
+            # added without declaring its arity.
+            if kind == "kind":
+                if len(fields) < 2:
+                    raise ManifestError(
+                        f"{self.say('grammar-arity', 'grammar line has the wrong number of fields')}"
+                        f": {line}"
+                    )
+                limits: dict[str, int] = {}
+                for field in fields[1:]:
+                    if not re.fullmatch(r"(min|max)=[0-9]+", field):
+                        raise ManifestError(
+                            f"{self.say('grammar-class-unknown', 'class has an unknown property')}"
+                            f": kind {fields[0]}: {field}"
+                        )
+                    key, value = field.split("=", 1)
+                    if key == "min" and int(value) < 1:
+                        # Every branch reads a record's NAME, so a kind
+                        # permitting zero fields leaves that read unproven.
+                        raise ManifestError(
+                            f"{self.say('grammar-arity', 'grammar line has the wrong number of fields')}"
+                            f": kind {fields[0]}: min must be at least 1"
+                        )
+                    limits[key] = int(value)
+                self.arity[fields[0]] = limits
+                continue
+            low = self.arity.get(kind, {}).get("min")
+            high = self.arity.get(kind, {}).get("max")
+            if low is None:
+                raise ManifestError(
+                    f"{self.say('grammar-bad-kind', 'grammar has an unknown line kind')}: {kind}"
+                )
+            if len(fields) < low or (high is not None and len(fields) > high):
+                raise ManifestError(
+                    f"{self.say('grammar-arity', 'grammar line has the wrong number of fields')}"
+                    f": {line} ({len(fields)} field(s), min {low}"
+                    + (f", max {high}" if high is not None else "")
+                    + ")"
+                )
             if kind == "message":
                 self.messages[fields[0]] = line.split(None, 2)[2]
                 continue
@@ -226,10 +269,15 @@ class Grammar:
                         f": {name} ({cls})"
                     )
                 self.token_class[name] = cls
-            else:
+            else:  # pragma: no cover - the arity check above rejects it first
                 raise ManifestError(
                     f"{self.say('grammar-bad-kind', 'grammar has an unknown line kind')}"
                     f": {kind}"
+                )
+        for required in ("class", "token", "message"):
+            if required not in self.arity:
+                raise ManifestError(
+                    f"{path.name} declares no arity for the `{required}` line kind"
                 )
         if not self.token_class:
             raise ManifestError(f"{path.name} declares no tokens")

@@ -157,7 +157,18 @@ def main() -> int:
     # exclusive" and "at least one area" here, which meant the RUNNER did not
     # know them and would execute against a grammar this check was about to
     # reject.
-    rules = grammar(GRAMMAR)
+    # NOTHING BUT A DIAGNOSTIC CROSSES THIS BOUNDARY. The reader raises
+    # ManifestError by design, but an unvalidated record used to raise
+    # IndexError straight through this call — a traceback instead of a problem,
+    # the abort-suppresses-diagnostics shape twice fixed already.
+    try:
+        rules = grammar(GRAMMAR)
+    except ManifestError as error:
+        return report([str(error)], 0)
+    except Exception as error:  # noqa: BLE001 - a reader defect must still read as one
+        return report(
+            [f"the grammar could not be read: {type(error).__name__}: {error}"], 0
+        )
 
     # The runner must actually OFFER what the grammar declares. Asked by running
     # `scripts/validate -h`, not by matching an array that no longer exists:

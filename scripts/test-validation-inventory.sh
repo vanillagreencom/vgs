@@ -333,9 +333,60 @@ run_guard "GRAMMAR_PATH=$tmp/unterminated.conf"
 expect_refused "unterminated final line" "does not act on it"
 ok "a final line with no trailing newline is read by both readers"
 
+# INCOMPLETE RECORDS, one case per line kind per shape. Each branch used to
+# index fields it had not proven present: three of four kinds gave the runner a
+# raw bash error at rc 1 — indistinguishable from an ordinary check failure —
+# and three of four gave the guard a traceback instead of a diagnostic.
+#
+# The runner assertion is exit 2 with NOTHING RUN; the guard assertion is a
+# named problem with NO TRACEBACK. The traceback assertion is explicit because a
+# traceback plus a non-zero status satisfies a status-only check — the vacuous
+# shape this PR has hit three times.
+while IFS=';' read -r label bad expect; do
+  [[ -n "$label" ]] || continue
+  printf '%s\n%s\n' "$real_grammar" "$bad" >"$tmp/arity.conf"
+
+  # Runner: exit 2, no check run, no raw shell error.
+  cp "$runner" "$fixture_dir/scripts/validate" 2>/dev/null || {
+    mkdir -p "$fixture_dir/scripts/lib"; cp "$runner" "$fixture_dir/scripts/validate"
+  }
+  chmod +x "$fixture_dir/scripts/validate"
+  cp "$tmp/arity.conf" "$fixture_dir/scripts/lib/validation-grammar.conf"
+  rc=0
+  out="$("$fixture_dir/scripts/validate" --list docs 2>"$tmp/stderr")" || rc=$?
+  err="$(cat "$tmp/stderr")"
+  [[ "$rc" == 2 ]] || fail "arity: $label" "runner exited $rc, not 2"
+  expect_absent "$out" "scripts/" "arity: $label"
+  # A bash error reads `scripts/validate: line 314: ...`; the legitimate
+  # diagnostic contains "grammar line has", so match the `: line ` marker.
+  expect_absent "$err" ": line " "arity: $label (raw shell error)"
+
+  # Guard: a named problem, no traceback.
+  run_guard "GRAMMAR_PATH=$tmp/arity.conf"
+  expect_refused "arity: $label" "$expect"
+  expect_absent "$guard_out" "Traceback" "arity: $label"
+done <<'ARITY'
+a bare class line;class;wrong number of fields
+a bare token line;token;wrong number of fields
+a token line with only a name;token nightly;wrong number of fields
+a bare message line;message;wrong number of fields
+a bare kind line;kind;wrong number of fields
+a kind line with no counts;kind bogus;wrong number of fields
+a message line with no text;message somekey;wrong number of fields
+an unknown line kind;bogus x y;unknown line kind
+ARITY
+ok "every line kind refuses an incomplete record: exit 2, nothing run, no traceback"
+
+# A kind permitting zero fields would leave every branch's NAME read unproven.
+printf '%s\nkind bogus   min=0\n' "$real_grammar" >"$tmp/arity.conf"
+run_guard "GRAMMAR_PATH=$tmp/arity.conf"
+expect_refused "min=0 kind" "min must be at least 1"
+expect_absent "$guard_out" "Traceback" "min=0 kind"
+ok "a line kind may not permit zero fields"
+
 grammar_case "a token line with an extra field is reported" \
   "${real_grammar/token go         area/token go         area extra}" \
-  "token line must be"
+  "wrong number of fields"
 
 grammar_case "a token with an unknown class is reported" \
   "$real_grammar

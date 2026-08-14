@@ -244,15 +244,70 @@ grammar_fatal() {
 # reader's splitlines() keeps it — so a grammar whose last line is unterminated
 # declared a token for one reader and not the other. Same class of divergence as
 # reading class properties positionally.
-# MESSAGES FIRST, in their own pass. They are declared at the end of the file,
-# so a single pass left MSG empty while the class and token lines were being
-# checked — those failures fell back to their built-in wording and so read
-# differently from the library's, in the file that exists to stop exactly that.
+# METADATA FIRST — the `kind` arity table and the messages — because both are
+# needed to VALIDATE the records that follow, and both are declared after them.
+# A single pass left class and token failures using built-in fallback wording,
+# and left every record's field count unchecked.
+declare -A KIND_MIN=() KIND_MAX=()
 while read -r kind name rest || [[ -n "$kind" ]]; do
-  [[ "$kind" == message ]] && MSG[$name]="$rest"
+  case "$kind" in
+    kind)
+      # The bootstrap: `kind` lines are checked inline against the shape they
+      # themselves describe, since the table does not exist yet.
+      if [[ -z "$name" || -z "$rest" ]]; then
+        grammar_fatal "${MSG[grammar-arity]:-grammar line has the wrong number of fields}" \
+          "kind ${name:-}"
+      fi
+      for field in $rest; do
+        case "$field" in
+          # min must be at least 1: every branch reads a record's NAME, so a
+          # kind that permitted zero fields would leave that read unproven —
+          # the same shape as the missing arity check, one level up.
+          min=0) grammar_fatal "${MSG[grammar-arity]:-grammar line has the wrong number of fields}" \
+            "kind $name: min must be at least 1" ;;
+          min=*) KIND_MIN[$name]="${field#min=}" ;;
+          max=*) KIND_MAX[$name]="${field#max=}" ;;
+          *) grammar_fatal "${MSG[grammar-class-unknown]:-class has an unknown property}" \
+            "kind $name: $field" ;;
+        esac
+      done
+      ;;
+    message)
+      # The metadata pass indexes too, so it proves the key present first: a
+      # bare `message` line made `MSG[$name]` a bad-subscript bash error at
+      # rc 1. The arity check in the main pass reports it properly.
+      [[ -n "$name" ]] && MSG[$name]="$rest"
+      ;;
+  esac
 done < <(sed -e 's/#.*//' -e '/^[[:space:]]*$/d' "$GRAMMAR_FILE")
 
-while read -r kind name rest || [[ -n "$kind" ]]; do
+if [[ -z "${KIND_MIN[class]:-}" || -z "${KIND_MIN[token]:-}" || -z "${KIND_MIN[message]:-}" ]]; then
+  grammar_fatal "grammar declares no arity for a required line kind" "class/token/message"
+fi
+
+# ARITY IS CHECKED BEFORE ANYTHING IS INDEXED. Every branch below used to read
+# fields it had not proven present.
+check_arity() {
+  local kind="$1" count="$2" line="$3"
+  local low="${KIND_MIN[$kind]:-}" high="${KIND_MAX[$kind]:-}"
+  if [[ -z "$low" ]]; then
+    grammar_fatal "${MSG[grammar-bad-kind]:-grammar has an unknown line kind}" "$kind"
+  fi
+  if [[ "$count" -lt "$low" ]] || [[ -n "$high" && "$count" -gt "$high" ]]; then
+    grammar_fatal "${MSG[grammar-arity]:-grammar line has the wrong number of fields}" \
+      "$line ($count field(s), min ${low}${high:+, max $high})"
+  fi
+}
+
+while read -r line || [[ -n "$line" ]]; do
+  read -r kind rest_all <<<"$line"
+  [[ -n "$kind" ]] || continue
+  # shellcheck disable=SC2206  # deliberate word splitting to count fields
+  fields=($rest_all)
+  check_arity "$kind" "${#fields[@]}" "$line"
+  name="${fields[0]}"
+  rest="${rest_all#"${fields[0]}"}"
+  rest="${rest# }"
   case "$kind" in
     class)
       # BY KEY, NEVER BY POSITION. Reading these positionally while the python
@@ -325,9 +380,7 @@ while read -r kind name rest || [[ -n "$kind" ]]; do
       CLASS_COUNT[$cls]=$(( ${CLASS_COUNT[$cls]:-0} + 1 ))
       grammar_tokens+=("$name")
       ;;
-    message) ;; # already read in the pass above
-    "" | "#"*) ;;
-    *) grammar_fatal "${MSG[grammar-bad-kind]:-grammar has an unknown line kind}" "$kind" ;;
+    kind | message) ;; # read in the metadata pass above
   esac
 done < <(sed -e 's/#.*//' -e '/^[[:space:]]*$/d' "$GRAMMAR_FILE")
 
