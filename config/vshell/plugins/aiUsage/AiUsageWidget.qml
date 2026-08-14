@@ -42,62 +42,24 @@ PluginComponent {
             root.pluginService.savePluginData("aiUsage", "headlineMode", m);
     }
 
-    // The tightest window an account has — what actually blocks it.
-    function accountPeak(a) {
-        if (!a)
-            return 0;
-        let peak = 0;
-        if (a.session && a.session.pct !== undefined) peak = Math.max(peak, a.session.pct);
-        if (a.weekly && a.weekly.pct !== undefined) peak = Math.max(peak, a.weekly.pct);
-        const ms = a.models || [];
-        for (let i = 0; i < ms.length; i++) peak = Math.max(peak, ms[i].pct || 0);
-        if (a.spend && a.spend.pct !== undefined) peak = Math.max(peak, a.spend.pct);
-        return peak;
+    // Provider identity, headline arithmetic and pill composition. Extracted so
+    // scripts/test-ai-usage-provider.js runs the shipped code; the wrappers
+    // below just bind the widget's settings to it.
+    AiUsageLogic {
+        id: logic
     }
+
     function isEnterpriseAccount(account) {
-        if (!account)
-            return false;
-        if (account.enterprise === true)
-            return true;
-        // Compatibility with helper payloads from before `enterprise` was
-        // explicit. Never infer account type from the email address.
-        const plan = String(account.plan || "").toLowerCase();
-        return plan.indexOf("enterprise") === 0 || account.spend !== null && account.spend !== undefined;
+        return logic.isEnterpriseAccount(account);
     }
     function orderedAccounts(list) {
-        const ordered = (list || []).slice();
-        ordered.sort((a, b) => {
-            const groupA = root.isEnterpriseAccount(a) ? 1 : 0;
-            const groupB = root.isEnterpriseAccount(b) ? 1 : 0;
-            if (groupA !== groupB)
-                return groupA - groupB;
-            const labelA = String(a.label || a.id || "");
-            const labelB = String(b.label || b.id || "");
-            const foldedA = labelA.toLowerCase();
-            const foldedB = labelB.toLowerCase();
-            if (foldedA < foldedB)
-                return -1;
-            if (foldedA > foldedB)
-                return 1;
-            return labelA < labelB ? -1 : (labelA > labelB ? 1 : 0);
-        });
-        return ordered;
+        return logic.orderedAccounts(list);
     }
     function shownAccounts(list) {
-        return root.orderedAccounts(list).filter(a => a && !root.isHidden(a.id));
+        return logic.shownIn(list, root.hiddenAccounts);
     }
-    // Headline over whichever accounts are visible, in the chosen mode.
     function headlineFor(list) {
-        const peaks = root.shownAccounts(list).filter(a => a.ok).map(root.accountPeak);
-        if (peaks.length === 0)
-            return null;
-        if (root.headlineMode === "best")
-            return Math.min.apply(null, peaks);
-        if (root.headlineMode === "worst")
-            return Math.max.apply(null, peaks);
-        let sum = 0;
-        for (let i = 0; i < peaks.length; i++) sum += peaks[i];
-        return Math.round(sum / peaks.length);
+        return logic.headlineOf(list, root.headlineMode, root.hiddenAccounts);
     }
 
     // --- Live state ---
@@ -153,26 +115,8 @@ PluginComponent {
     }
     readonly property int headlinePct: root.multiAccount ? root.aggregatePct : root.primaryPct
 
-    // Meters for one account entry, in the same order the single-account view
-    // uses: session, weekly, then every per-model lane the provider reported.
     function metersFor(account) {
-        if (!account)
-            return [];
-        let out = [];
-        if (account.session)
-            out.push({ label: "Session (5h)", pct: account.session.pct || 0, reset: account.session.reset || "", resetAt: account.session.resetAt || 0 });
-        if (account.weekly)
-            out.push({ label: "Weekly (7d)", pct: account.weekly.pct || 0, reset: account.weekly.reset || "", resetAt: account.weekly.resetAt || 0 });
-        const models = account.models || [];
-        for (let i = 0; i < models.length; i++)
-            out.push({ label: models[i].label || "Model", pct: models[i].pct || 0, reset: models[i].reset || "", resetAt: models[i].resetAt || 0 });
-        // Credit-billed seats have no rate-limit windows at all — their monthly
-        // spend pool is the only usage there is, so it stands in for them.
-        if (account.spend)
-            out.push({ label: "Credits", pct: account.spend.pct || 0, reset: "", resetAt: 0,
-                       detail: account.spend.detail || "",
-                       used: account.spend.used, limit: account.spend.limit, currency: account.spend.currency || "USD" });
-        return out;
+        return logic.metersFor(account);
     }
 
     // Meters for the single-account view. Prefers the accounts list so lanes the
@@ -192,80 +136,24 @@ PluginComponent {
         return out;
     }
 
-    // Absolute reset instant as wall-clock text. A countdown alone ("4d 17h")
-    // makes you do the arithmetic; the clock time is what you actually plan
-    // around. Same day -> just the time, otherwise the weekday, and the date
-    // once it is far enough out that the weekday is ambiguous. Kept short and
-    // lowercase ("tom 02:59", "thu 04:00") — these sit in a narrow column
-    // beside the bar, so every character costs bar width.
     function formatResetAt(epoch) {
-        if (!epoch || epoch <= 0)
-            return "";
-        const when = new Date(epoch * 1000);
-        if (isNaN(when.getTime()))
-            return "";
-        const now = new Date();
-        // Past instants are stale data (a window that already rolled over);
-        // showing them would be worse than showing nothing.
-        if (when.getTime() <= now.getTime())
-            return "";
-        // 24h, explicitly — the locale short format drags in AM/PM, which is
-        // three more characters in a column that is already fighting the bar.
-        const time = when.toLocaleTimeString(Qt.locale(), "HH:mm");
-        const startOfDay = d => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
-        const days = Math.round((startOfDay(when) - startOfDay(now)) / 86400000);
-        if (days === 0)
-            return time;
-        if (days === 1)
-            return "tom " + time;
-        if (days < 7)
-            return when.toLocaleDateString(Qt.locale(), "ddd").toLowerCase() + " " + time;
-        return when.toLocaleDateString(Qt.locale(), "d MMM").toLowerCase() + " " + time;
+        return logic.formatResetAt(epoch);
     }
-
-    // Money for the compact row: no cents, thousands separated. At credit-pool
-    // scale the cents are noise, and this column is only as wide as the bar can
-    // spare. The expanded card keeps the engine's exact string.
     function formatSpend(meter) {
-        if (!meter || meter.used === undefined || meter.limit === undefined)
-            return "";
-        const sym = meter.currency === "USD" ? "$" : "";
-        const round = n => Math.round(n).toLocaleString(Qt.locale(), "f", 0);
-        return sym + round(meter.used) + " / " + sym + round(meter.limit);
+        return logic.formatSpend(meter);
     }
-
-    // The card has room for the cents. Falls back to the engine's own string
-    // if an older helper sent only that.
     function formatSpendExact(meter) {
-        if (!meter)
-            return "";
-        if (meter.used === undefined || meter.limit === undefined)
-            return meter.detail || "";
-        const sym = meter.currency === "USD" ? "$" : "";
-        const money = n => sym + n.toLocaleString(Qt.locale(), "f", 2);
-        return money(meter.used) + " of " + money(meter.limit);
+        return logic.formatSpendExact(meter);
     }
-
-    // "Resets in 4d 17h · thu 04:00", degrading to whichever half we have.
     function resetLabel(meter) {
-        if (!meter)
-            return "";
-        const at = root.formatResetAt(meter.resetAt || 0);
-        const inn = meter.reset && meter.reset !== "\u2014" ? meter.reset : "";
-        if (inn && at)
-            return "Resets in " + inn + " \u00b7 " + at;
-        if (at)
-            return "Resets " + at;
-        if (inn)
-            return "Resets in " + inn;
-        return "";
+        return logic.resetLabel(meter);
     }
 
     function providerIcon() {
-        return root.provider === "codex" ? "terminal" : "smart_toy";
+        return logic.providerIcon(root.provider);
     }
     function providerName() {
-        return root.provider === "codex" ? "Codex" : "Claude";
+        return logic.providerName(root.provider);
     }
     function classColor(c) {
         switch (c) {
@@ -323,49 +211,100 @@ PluginComponent {
     property var codexData: null
 
     function computeHead(data) {
-        if (!data || data.ok !== true)
-            return null;
-        const agg = data.aggregate;
-        const local = root.headlineFor(data.accounts);
-        const pct = local !== null ? local
-            : (agg && agg.pct !== undefined && agg.pct !== null ? agg.pct
-            : (data.session ? data.session.pct : (data.weekly ? data.weekly.pct : 0)));
-        return { pct: pct };
+        return logic.headOf(data, root.headlineMode, root.hiddenAccounts);
     }
 
     readonly property var claudeHead: root.computeHead(root.claudeData)
     readonly property var codexHead: root.computeHead(root.codexData)
 
-    function noteHeadline(provider, data) {
-        if (provider === "codex")
+    // File a payload under the provider IT names, never under the provider the
+    // fetch was launched for or the one currently selected. `provider` must be
+    // a real provider; an unidentifiable payload is filed nowhere.
+    function storeHeadline(provider, data) {
+        const which = logic.normalizeProvider(provider);
+        if (which === "codex")
             root.codexData = data;
-        else
+        else if (which === "claude")
             root.claudeData = data;
+    }
+    function noteHeadline(data) {
+        root.storeHeadline(logic.payloadProvider(data), data);
+    }
+
+    // The providers with a fetch actually running, so a slot with no number yet
+    // can say "waiting" rather than "nothing".
+    readonly property var fetchingProviders: {
+        const out = [];
+        if (root.usageInFlight !== "")
+            out.push(root.usageInFlight);
+        if (root.otherInFlight !== "")
+            out.push(root.otherInFlight);
+        return out;
     }
 
     function pillHeads() {
-        const heads = [];
-        if (root.claudeHead)
-            heads.push({ pct: root.claudeHead.pct });
-        if (root.codexHead)
-            heads.push({ pct: root.codexHead.pct });
-        if (heads.length > 0)
-            return heads;
-        if (root.loading && !root.ok && root.errorText === "")
-            return [{ text: "…", pct: null, error: false }];
-        if (!root.ok)
-            return [{ text: "!", pct: null, error: true }];
-        return [{ pct: root.headlinePct }];
+        return logic.pillSlots({
+            selected: root.provider,
+            claudeHead: root.claudeHead,
+            claudeData: root.claudeData,
+            codexHead: root.codexHead,
+            codexData: root.codexData,
+            fetching: root.fetchingProviders
+        });
     }
 
     // The provider each fetch was LAUNCHED for, empty when nothing is in
     // flight. A Process command is a binding on root.provider, but a fetch
-    // already running when the provider changes keeps its old argument — and
-    // without this tag its payload would be attributed to whichever provider
-    // happens to be selected when the output arrives. Every result is checked
-    // against the tag and dropped when it no longer matches.
+    // already running when the provider changes keeps its old argument. The tag
+    // says which argument a running process actually got; the payload's own
+    // `provider` field is what decides where its data may be filed, because a
+    // tag can be reassigned while the process that owns it is still running.
     property string usageInFlight: ""
     property string otherInFlight: ""
+
+    // The provider whose payload is populating the popout below, and the one
+    // whose headline otherProc last filed. These are the "are we there yet"
+    // answers the relaunch decision needs: a fetch is replaced whenever what is
+    // on screen is not the provider that is selected now.
+    property string loadedProvider: ""
+    property string otherLoadedProvider: ""
+    property int usageRetries: 0
+    property int otherRetries: 0
+    // Immediate relaunches allowed before giving up and waiting for the poll
+    // timer. Reset by any accepted payload and by a provider switch, so this
+    // only ever runs out on a helper that keeps returning nothing usable.
+    readonly property int maxFetchRetries: 3
+
+    // Every one of these describes ONE provider, so a switch makes all of them
+    // wrong at the same instant. Clearing them together is what stops the popout
+    // rendering the previous provider's accounts, plan, aggregate and error text
+    // under the new provider's name — worst case is now an empty, loading
+    // popout. The per-provider headlines (claudeData/codexData) are deliberately
+    // kept: they are keyed by provider identity, so they cannot be mixed up.
+    function clearProviderState() {
+        root.loading = true;
+        root.ok = false;
+        root.errorText = "";
+        root.plan = "";
+        root.accounts = [];
+        root.aggregate = null;
+        root.expandedAccountId = "";
+        root.loadedProvider = "";
+        root.usageRetries = 0;
+        root.hasSession = true;
+        root.sessionPct = 0;
+        root.sessionReset = "";
+        root.sessionResetAt = 0;
+        root.hasWeekly = true;
+        root.weeklyPct = 0;
+        root.weeklyReset = "";
+        root.weeklyResetAt = 0;
+        root.hasThird = true;
+        root.thirdLabel = "";
+        root.thirdPct = 0;
+        root.thirdReset = "";
+        root.thirdResetAt = 0;
+    }
 
     // A tag is only honoured while its process is actually running, so a fetch
     // that somehow never reports an exit cannot wedge polling forever. And a
@@ -406,7 +345,8 @@ PluginComponent {
     // PREVIOUS provider's accounts and plan under the new provider's label
     // until its own poll timer fired, up to refreshSeconds later.
     onProviderChanged: {
-        root.loading = true;
+        root.clearProviderState();
+        root.otherRetries = 0;
         root.refresh();
     }
 
@@ -418,11 +358,7 @@ PluginComponent {
         running: false
         stdout: StdioCollector {
             id: usageOut
-            onStreamFinished: {
-                if (root.usageInFlight !== root.provider)
-                    return;  // stale: launched for a provider no longer selected
-                root.parseOutput(usageOut.text);
-            }
+            onStreamFinished: root.acceptUsage(usageOut.text)
         }
         // Clearing the tag belongs here rather than in onStreamFinished: the
         // stream closes before the process is reaped (the same ordering
@@ -432,9 +368,12 @@ PluginComponent {
         onExited: {
             const launchedFor = root.usageInFlight;
             root.usageInFlight = "";
-            // The selection moved while this was running, so its output was
-            // discarded above and nothing has fetched the current provider yet
-            // — refresh() was a no-op for as long as the tag was set.
+            // Relaunch whenever the popout is not showing the provider that is
+            // selected now — whatever the reason: the payload was discarded as
+            // misattributed, it arrived after the user switched away, or it
+            // never parsed. Comparing `launchedFor` to the selection instead
+            // dropped the replacement fetch on a claude -> codex -> claude
+            // toggle, which is where the stale accounts came from (VGS-118).
             //
             // DEFERRED, because refresh() restarts by assigning `running = true`
             // and that is a no-op while `running` still reads true. Quickshell
@@ -444,8 +383,22 @@ PluginComponent {
             // `running` has already flipped when `exited` fires. Assuming it has
             // would silently drop the replacement fetch and leave the widget on
             // loading = true until the poll timer. Next turn, both have settled.
-            if (launchedFor !== "" && launchedFor !== root.provider)
+            if (logic.shouldRelaunch(launchedFor, root.loadedProvider, root.provider,
+                                     root.usageRetries, root.maxFetchRetries)) {
+                root.usageRetries += 1;
                 Qt.callLater(root.refresh);
+                return;
+            }
+            // Out of retries with still nothing for the selected provider. Say
+            // so — sitting on "loading" would claim a fetch is coming when the
+            // next one is a poll interval away — and drop this provider's stale
+            // headline, so the pill cannot show a number the popout contradicts.
+            if (launchedFor !== "" && root.loadedProvider !== root.provider) {
+                root.loading = false;
+                root.ok = false;
+                root.errorText = root.lastFetchIssue || "usage unavailable";
+                root.storeHeadline(root.provider, { ok: false, provider: root.provider, error: root.errorText });
+            }
         }
     }
 
@@ -459,56 +412,95 @@ PluginComponent {
         running: false
         stdout: StdioCollector {
             id: otherOut
-            onStreamFinished: {
-                if (root.otherInFlight !== root.otherProvider)
-                    return;  // stale: the providers swapped mid-flight
-                try {
-                    root.noteHeadline(root.otherProvider, JSON.parse((otherOut.text || "").trim()));
-                } catch (e) {
-                    root.noteHeadline(root.otherProvider, null);
-                }
-            }
+            onStreamFinished: root.acceptOther(otherOut.text)
         }
         onExited: {
             const launchedFor = root.otherInFlight;
             root.otherInFlight = "";
             // Deferred for the same reason as usageProc's relaunch above.
-            if (launchedFor !== "" && launchedFor !== root.otherProvider)
+            if (logic.shouldRelaunch(launchedFor, root.otherLoadedProvider, root.otherProvider,
+                                     root.otherRetries, root.maxFetchRetries)) {
+                root.otherRetries += 1;
                 Qt.callLater(root.refresh);
+                return;
+            }
+            if (launchedFor !== "" && root.otherLoadedProvider !== root.otherProvider)
+                root.storeHeadline(root.otherProvider,
+                                   { ok: false, provider: root.otherProvider, error: "usage unavailable" });
         }
     }
 
-    function parseOutput(txt) {
-        root.loading = false;
+    // Why the last payload could not be used, so the popout can say something
+    // truer than "unavailable" once the retries run out.
+    property string lastFetchIssue: ""
+
+    // A payload is JSON that names the provider its fetch was launched for.
+    // Anything else — unparseable output, a payload naming the other provider —
+    // is not this fetch's answer and is refetched rather than displayed.
+    function decodePayload(launchedFor, txt) {
+        let d = null;
         try {
-            const d = JSON.parse((txt || "").trim());
-            root.ok = d.ok === true;
-            root.noteHeadline(root.provider, d);
-            root.accounts = d.accounts || [];
-            root.aggregate = d.aggregate || null;
-            if (!root.ok) {
-                root.errorText = d.error || "usage unavailable";
-                return;
-            }
-            root.errorText = "";
-            root.plan = d.plan || "";
-            root.hasSession = !!d.session;
-            root.sessionPct = (d.session && d.session.pct) || 0;
-            root.sessionReset = (d.session && d.session.reset) || "";
-            root.sessionResetAt = (d.session && d.session.resetAt) || 0;
-            root.hasWeekly = !!d.weekly;
-            root.weeklyPct = (d.weekly && d.weekly.pct) || 0;
-            root.weeklyReset = (d.weekly && d.weekly.reset) || "";
-            root.weeklyResetAt = (d.weekly && d.weekly.resetAt) || 0;
-            root.hasThird = !!d.third;
-            root.thirdLabel = (d.third && d.third.label) || "";
-            root.thirdPct = (d.third && d.third.pct) || 0;
-            root.thirdReset = (d.third && d.third.reset) || "";
-            root.thirdResetAt = (d.third && d.third.resetAt) || 0;
+            d = JSON.parse((txt || "").trim());
         } catch (e) {
-            root.ok = false;
-            root.errorText = "parse error";
+            root.lastFetchIssue = "parse error";
+            return null;
         }
+        if (!logic.payloadIsFor(launchedFor, d)) {
+            root.lastFetchIssue = "provider mismatch";
+            return null;
+        }
+        root.lastFetchIssue = "";
+        return d;
+    }
+
+    function acceptUsage(txt) {
+        const d = root.decodePayload(root.usageInFlight, txt);
+        if (!d)
+            return;
+        // The headline is filed by the payload's own provider, so a result that
+        // lands after the user switched still updates that provider's pill slot.
+        root.noteHeadline(d);
+        // The popout, though, only ever shows the selected provider.
+        if (logic.payloadProvider(d) !== root.provider)
+            return;
+        root.applyPayload(d);
+    }
+
+    function acceptOther(txt) {
+        const d = root.decodePayload(root.otherInFlight, txt);
+        if (!d)
+            return;
+        root.noteHeadline(d);
+        root.otherLoadedProvider = logic.payloadProvider(d);
+        root.otherRetries = 0;
+    }
+
+    function applyPayload(d) {
+        root.loading = false;
+        root.loadedProvider = root.provider;
+        root.usageRetries = 0;
+        root.ok = d.ok === true;
+        root.accounts = d.accounts || [];
+        root.aggregate = d.aggregate || null;
+        if (!root.ok) {
+            root.errorText = d.error || "usage unavailable";
+            return;
+        }
+        root.errorText = "";
+        root.plan = d.plan || "";
+        root.hasSession = !!d.session;
+        root.sessionPct = (d.session && d.session.pct) || 0;
+        root.sessionReset = (d.session && d.session.reset) || "";
+        root.sessionResetAt = (d.session && d.session.resetAt) || 0;
+        root.hasWeekly = !!d.weekly;
+        root.weeklyPct = (d.weekly && d.weekly.pct) || 0;
+        root.weeklyReset = (d.weekly && d.weekly.reset) || "";
+        root.weeklyResetAt = (d.weekly && d.weekly.resetAt) || 0;
+        root.hasThird = !!d.third;
+        root.thirdLabel = (d.third && d.third.label) || "";
+        root.thirdPct = (d.third && d.third.pct) || 0;
+        root.thirdReset = (d.third && d.third.reset) || "";
+        root.thirdResetAt = (d.third && d.third.resetAt) || 0;
     }
 
     Timer {
@@ -523,45 +515,39 @@ PluginComponent {
         onTriggered: root.refresh()
     }
 
+    // One slot per provider, each carrying its own icon. The icon is what makes
+    // a slot readable on its own: with a single leading icon and a bare "x / y",
+    // a provider with no number dropped its slot entirely and the other value
+    // slid left, changing meaning with nothing on screen to say so.
     horizontalBarPill: Component {
         Row {
             spacing: Theme.spacingXS
 
-            VgsIcon {
-                name: root.providerIcon()
-                size: root.iconSize
-                color: Theme.surfaceText
-                anchors.verticalCenter: parent.verticalCenter
-            }
+            Repeater {
+                model: root.pillHeads()
 
-            Row {
-                spacing: 0
-                anchors.verticalCenter: parent.verticalCenter
+                Row {
+                    required property var modelData
+                    spacing: 2
+                    anchors.verticalCenter: parent.verticalCenter
 
-                Repeater {
-                    model: root.pillHeads()
+                    VgsIcon {
+                        name: modelData.icon
+                        size: root.iconSize
+                        // The selected provider — the one the popout and the
+                        // click target belong to — reads at full strength.
+                        color: modelData.selected ? Theme.surfaceText : Theme.surfaceVariantText
+                        anchors.verticalCenter: parent.verticalCenter
+                    }
 
-                    Row {
-                        required property var modelData
-                        required property int index
-                        spacing: 0
-
-                        StyledText {
-                            visible: index > 0
-                            text: " / "
-                            font.pixelSize: root.pillFontSize
-                            font.weight: Font.Medium
-                            color: Theme.surfaceVariantText
-                        }
-
-                        StyledText {
-                            text: modelData.text !== undefined ? modelData.text : (modelData.pct + "%")
-                            font.pixelSize: root.pillFontSize
-                            font.weight: Font.Medium
-                            color: modelData.error ? Theme.error
-                                : (modelData.pct === null ? Theme.surfaceVariantText
-                                                        : root.percentageColor(modelData.pct))
-                        }
+                    StyledText {
+                        text: modelData.text
+                        font.pixelSize: root.pillFontSize
+                        font.weight: Font.Medium
+                        color: modelData.error ? Theme.error
+                            : (modelData.pct === null ? Theme.surfaceVariantText
+                                                    : root.percentageColor(modelData.pct))
+                        anchors.verticalCenter: parent.verticalCenter
                     }
                 }
             }

@@ -249,6 +249,22 @@ On a second display the assigning instance has gone unbound while the other
 still follows `pluginDataChanged`, so one persisted setting renders as two
 different states (VGS-74).
 
+**A setting that scopes a fetch owns two more rules** (VGS-118). When a widget
+fetches per-source data — a provider, an account, a device — and a setting
+chooses the source:
+
+- **Attribute every result by what the payload says it is**, not by the source
+  the fetch was launched for and never by the one selected when the output
+  arrives. Launch tags race: a tag can be reassigned while the process holding
+  it is still running, and the old process's payload then passes the tag check
+  under the new source's name. Helpers must therefore stamp their own identity
+  on every path they return from, failures included.
+- **Invalidate the source-scoped state when the setting changes**, together and
+  before the refetch. Anything left behind renders under the new source's label
+  until a payload replaces it, and a dropped refetch makes that permanent — so
+  relaunch on "is the state on screen the selected source's?", never on "did the
+  selection move?", which answers no on a there-and-back toggle.
+
 ### Core and the vgsMenu plugin
 The app launcher is a bundled plugin that core cannot do without, so the edge
 between them is one-way and named at both ends. See
