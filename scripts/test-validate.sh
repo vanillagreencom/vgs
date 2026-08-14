@@ -219,7 +219,7 @@ spec = importlib.util.spec_from_file_location(
 )
 mod = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(mod)
-g = mod.grammar()
+g = mod.grammar(root / "scripts" / "validate")
 
 def emit(name, expect, tags):
     print(f"{name};{expect};{tags:<10}| scripts/stub-go")
@@ -259,7 +259,7 @@ spec = importlib.util.spec_from_file_location(
 )
 mod = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(mod)
-g = mod.grammar()
+g = mod.grammar(root / "scripts" / "validate")
 for token in sorted(g.standalone):
     area = token if token in g.areas else "all"
     print(f"standalone `{token}` is accepted;{token};{area}")

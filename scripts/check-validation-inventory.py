@@ -35,7 +35,6 @@ from validation_manifest import (  # noqa: E402
     documented_table,
     manifest_rows,
     prose_areas,
-    GRAMMAR_FILE,
     grammar,
     token_participates,
     runner_usage_arguments,
@@ -44,7 +43,6 @@ from validation_manifest import (  # noqa: E402
 REPO_ROOT = Path(__file__).resolve().parents[1]
 AGENTS = REPO_ROOT / "AGENTS.md"
 SKILL_DOC = REPO_ROOT / "project-skills" / "vshell-dev" / "SKILL.md"
-GRAMMAR = GRAMMAR_FILE
 RUNNER = REPO_ROOT / "scripts" / "validate"
 TABLES_DOC = REPO_ROOT / ".github" / "instructions" / "validation-scripts.instructions.md"
 CI = REPO_ROOT / ".github" / "workflows" / "ci.yml"
@@ -147,22 +145,21 @@ def main() -> int:
         )
 
     # --- the GRAMMAR itself, before anything that is built from it ----------
-    # scripts/lib/validation-grammar.conf is the one definition; the runner, the
-    # library and this file all read it. Checked first because everything below
-    # is derived from it: a bad grammar makes correctly-written rows fail, and
-    # the manifest arm would answer first, blaming the rows.
-    # The grammar's own rules — token names, class cardinality, everything —
-    # are enforced by Grammar itself, from the `min`/`max` in the definition, so
-    # this file no longer restates any of them. It used to hardcode "exactly one
-    # exclusive" and "at least one area" here, which meant the RUNNER did not
-    # know them and would execute against a grammar this check was about to
-    # reject.
-    # NOTHING BUT A DIAGNOSTIC CROSSES THIS BOUNDARY. The reader raises
-    # ManifestError by design, but an unvalidated record used to raise
-    # IndexError straight through this call — a traceback instead of a problem,
-    # the abort-suppresses-diagnostics shape twice fixed already.
+    # ASKED OF THE RUNNER, not parsed here. scripts/lib/validation-grammar.conf
+    # has exactly one parser — scripts/validate — and this reads
+    # `scripts/validate --dump-grammar`. Two readers of one definition is the
+    # same bug as two definitions, one level up, and it produced three
+    # divergences before the second parser was deleted.
+    #
+    # Checked first because everything below is derived from it: a bad grammar
+    # makes correctly-written rows fail, and the manifest arm would answer
+    # first, blaming the rows.
+    #
+    # NOTHING BUT A DIAGNOSTIC CROSSES THIS BOUNDARY, and on a grammar the
+    # runner refuses that diagnostic is the RUNNER'S OWN, relayed verbatim —
+    # never a traceback, never a silent skip.
     try:
-        rules = grammar(GRAMMAR)
+        rules = grammar(RUNNER)
     except ManifestError as error:
         return report([str(error)], 0)
     except Exception as error:  # noqa: BLE001 - a reader defect must still read as one

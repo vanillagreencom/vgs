@@ -41,11 +41,15 @@ def manifest_rows(runner: Path) -> list[tuple[str, str]]:
     Parsed statically, not via `scripts/validate --list`: this check must report
     a manifest the runner cannot even parse.
 
-    Every rule applied here comes from validation-grammar.conf, the same file
-    the runner reads — no vocabulary and no rule is restated. Rows are refused
-    in the same ORDER the runner refuses them (tag field, tag pattern, class
-    rules, command) so one malformed line gets one diagnosis, not two readers
-    naming different defects on it.
+    THE MANIFEST IS THE ONE THING STILL READ TWICE, and deliberately: this must
+    report a manifest with its PER-ROW TAGS, which `--list` does not carry, and
+    it must report one the runner refuses rather than relaying a refusal. The
+    grammar it applies is not a second copy — it comes from the runner's dump —
+    but the row loop is a second reader, and scripts/test-validate.sh's
+    parser-agreement case plus this file's reader-agreement cases are what hold
+    the two to one answer. Rows are refused in the same ORDER the runner refuses
+    them (tag field, tag pattern, class rules, command) so one malformed line
+    gets one diagnosis, not two readers naming different defects on it.
     """
     text = runner.read_text(encoding="utf-8")
     block = re.search(r"<<'MANIFEST_EOF'\n(.*?)\nMANIFEST_EOF\n", text, re.DOTALL)
@@ -54,7 +58,7 @@ def manifest_rows(runner: Path) -> list[tuple[str, str]]:
             "scripts/validate has no MANIFEST_EOF heredoc; "
             "this check parses that block, so moving it silently empties the inventory"
         )
-    rules = grammar()
+    rules = grammar(runner)
     pattern = rules.tag_pattern()
     rows: list[tuple[str, str]] = []
     for line in block.group(1).splitlines():
@@ -127,185 +131,139 @@ def _check_shell_syntax(command: str, line: str, rules: "Grammar") -> None:
 
 GRAMMAR_FILE = Path(__file__).resolve().parent / "validation-grammar.conf"
 
-# The four properties a class line must carry, each exactly once. Named here so
-# both the presence check and the unknown-property check read the same list.
+# The flag that asks scripts/validate for the normalized grammar it parsed.
+DUMP_FLAG = "--dump-grammar"
+
+# The booleans every dumped `class` line carries, in the order the runner emits
+# them. This is the DUMP's contract, not a restatement of the grammar's rules:
+# whether a class may omit one, repeat one, or spell it `maybe` is the runner's
+# question and is settled before anything reaches here.
 CLASS_PROPERTIES = (
     "selects", "standalone", "rowtag", "exclusive", "cli", "universal", "skips",
 )
-# Optional per-class cardinality. These are THE GRAMMAR'S INVARIANTS, stated in
-# the definition so the runner and this reader enforce the same ones — an
-# invariant only one side knew is one the other runs past.
 CLASS_COUNTS = ("min", "max")
 
 
 class Grammar:
-    """The one definition, read from validation-grammar.conf.
+    """The grammar as scripts/validate parsed it, decoded from its dump.
 
-    Every consumer reads THIS rather than re-deriving the vocabulary from the
-    runner's arrays. Eight holes in VGS-123 came from consumers each carrying
-    their own copy: an unvalidated AREAS array, an unvalidated TAG_ATTRIBUTES
-    array, and a wiring check that matched tokens as substrings.
+    NOT A PARSER OF validation-grammar.conf — deliberately, and this is the
+    point of the change that introduced it. One definition removed "the grammar
+    exists in two places" but left TWO READERS of it, and they disagreed about
+    invalid or ambiguous input three times: the lone-modifier wording, a set()
+    de-duplication, and a duplicate class declaration that one reader merged
+    key-by-key and the other record-by-record. Same file, two meanings.
+
+    So scripts/validate is the only parser — it must read and validate the
+    definition anyway, with nothing on its critical path — and this decodes
+    `scripts/validate --dump-grammar`. Divergence is now impossible by
+    construction rather than detectable afterwards.
+
+    A conformance corpus was the alternative and was rejected: a corpus
+    ENUMERATES malformed shapes, and the lesson of the eight holes in VGS-123 is
+    that such enumerations are incomplete. It would have caught neither the
+    missing-trailing-newline divergence nor the metadata-pass indexing bug, both
+    of which surfaced only while fixing something else.
+
+    WHAT THIS GIVES UP, named rather than discovered later: nothing here can
+    catch a bug in the runner's own parse. A runner that mis-reads the
+    definition now mis-reports it identically to every consumer. That is covered
+    behaviourally instead — scripts/test-validate.sh drives the runner against
+    mutated grammars and asserts exit 2 with the definition's own wording, and
+    scripts/test-validation-inventory.sh asserts the guard relays exactly what
+    the runner said.
+
+    The decode below validates the dump's SHAPE only. It supplies no defaults:
+    the runner normalizes every field, so a decoder filling one in is where a
+    second reader would start having opinions again.
     """
 
-    def __init__(self, path: Path = GRAMMAR_FILE) -> None:
-        self.path = path
+    def __init__(self, runner: Path) -> None:
+        self.runner = runner
         self.classes: dict[str, dict[str, bool]] = {}
         self.counts: dict[str, dict[str, int]] = {}
         self.token_class: dict[str, str] = {}
-        # The SHARED diagnostics: text both readers emit, defined once here so
-        # neither spells it by hand. It drifted twice and was hand-synchronised
-        # twice before this.
         self.messages: dict[str, str] = {}
-        self.arity: dict[str, dict[str, int]] = {}
-        for raw in path.read_text(encoding="utf-8").splitlines():
-            line = raw.split("#", 1)[0].strip()
-            if not line:
+        self.source = GRAMMAR_FILE
+        self._decode(self._dump())
+
+    def _dump(self) -> str:
+        """Ask the runner for the grammar. Its refusal is the answer, verbatim.
+
+        A grammar the runner rejects must reach the caller as ONE diagnostic
+        naming the runner's own wording — never a traceback, and never a silent
+        skip that lets the arms below report something other than the real
+        problem.
+        """
+        try:
+            dumped = subprocess.run(
+                ["bash", str(self.runner), DUMP_FLAG],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+        except OSError as exc:
+            raise ManifestError(
+                f"could not run {self.runner.name} {DUMP_FLAG}, so the grammar was "
+                f"NOT read: {exc}"
+            ) from exc
+        if dumped.returncode != 0:
+            detail = (
+                dumped.stderr.strip()
+                or dumped.stdout.strip()
+                or f"exit {dumped.returncode} with no diagnostic"
+            )
+            raise ManifestError(
+                f"{self.runner.name} refuses its own grammar, so nothing derived from "
+                f"it could be checked: {detail}"
+            )
+        return dumped.stdout
+
+    def _bad_dump(self, why: str) -> ManifestError:
+        return ManifestError(
+            f"{self.runner.name} {DUMP_FLAG} emitted something this decoder cannot "
+            f"read, which is a defect in the runner's dump rather than in the "
+            f"grammar: {why}"
+        )
+
+    def _decode(self, dump: str) -> None:
+        for line in dump.splitlines():
+            if not line.strip():
                 continue
-            kind, *fields = line.split()
-            # ARITY BEFORE INDEXING. Every branch below read fields it had not
-            # proven present, so a bare `token` line raised IndexError — a
-            # traceback out of the reader instead of a diagnostic. Checked from
-            # the `kind` table in the definition, so a new line kind cannot be
-            # added without declaring its arity.
-            if kind == "kind":
-                if len(fields) < 2:
-                    raise ManifestError(
-                        f"{self.say('grammar-arity', 'grammar line has the wrong number of fields')}"
-                        f": {line}"
-                    )
-                limits: dict[str, int] = {}
-                for field in fields[1:]:
-                    if not re.fullmatch(r"(min|max)=[0-9]+", field):
-                        raise ManifestError(
-                            f"{self.say('grammar-class-unknown', 'class has an unknown property')}"
-                            f": kind {fields[0]}: {field}"
-                        )
-                    key, value = field.split("=", 1)
-                    if key == "min" and int(value) < 1:
-                        # Every branch reads a record's NAME, so a kind
-                        # permitting zero fields leaves that read unproven.
-                        raise ManifestError(
-                            f"{self.say('grammar-arity', 'grammar line has the wrong number of fields')}"
-                            f": kind {fields[0]}: min must be at least 1"
-                        )
-                    limits[key] = int(value)
-                self.arity[fields[0]] = limits
-                continue
-            low = self.arity.get(kind, {}).get("min")
-            high = self.arity.get(kind, {}).get("max")
-            if low is None:
-                raise ManifestError(
-                    f"{self.say('grammar-bad-kind', 'grammar has an unknown line kind')}: {kind}"
-                )
-            if len(fields) < low or (high is not None and len(fields) > high):
-                raise ManifestError(
-                    f"{self.say('grammar-arity', 'grammar line has the wrong number of fields')}"
-                    f": {line} ({len(fields)} field(s), min {low}"
-                    + (f", max {high}" if high is not None else "")
-                    + ")"
-                )
-            if kind == "message":
-                self.messages[fields[0]] = line.split(None, 2)[2]
-                continue
-            if kind == "class":
-                name, props = fields[0], fields[1:]
-                # BY KEY, and validated. The bash reader once took these
-                # positionally while this one took them by key, so reordering
-                # the same four pairs changed what each reader believed. Both
-                # now require exactly these four, once each, yes or no.
-                parsed: dict[str, bool] = {}
-                parsed_counts: dict[str, int] = {}
-                for field in props:
-                    if "=" not in field:
-                        raise ManifestError(
-                            f"{self.say('grammar-class-malformed', 'class property must be key=value')}"
-                            f": {name}: {field}"
-                        )
-                    key, value = field.split("=", 1)
+            kind, _, rest = line.partition(" ")
+            if kind == "source":
+                self.source = Path(rest)
+            elif kind == "class":
+                name, *fields = rest.split()
+                props: dict[str, bool] = {}
+                counts: dict[str, int] = {}
+                for field in fields:
+                    key, _, value = field.partition("=")
                     if key in CLASS_COUNTS:
-                        if not value.isdigit():
-                            raise ManifestError(
-                                f"{self.say('grammar-class-value', 'class property must be yes or no')}"
-                                f": {name}: {key}={value}"
-                            )
-                        if key in parsed_counts:
-                            raise ManifestError(
-                                f"{self.say('grammar-class-repeated', 'class repeats a property')}"
-                                f": {name}: {key}"
-                            )
-                        parsed_counts[key] = int(value)
-                        continue
-                    if key not in CLASS_PROPERTIES:
-                        raise ManifestError(
-                            f"{self.say('grammar-class-unknown', 'class has an unknown property')}"
-                            f": {name}: {key}"
-                        )
-                    if key in parsed:
-                        raise ManifestError(
-                            f"{self.say('grammar-class-repeated', 'class repeats a property')}"
-                            f": {name}: {key}"
-                        )
-                    if value not in ("yes", "no"):
-                        raise ManifestError(
-                            f"{self.say('grammar-class-value', 'class property must be yes or no')}"
-                            f": {name}: {key}={value}"
-                        )
-                    parsed[key] = value == "yes"
-                missing = [p for p in CLASS_PROPERTIES if p not in parsed]
+                        counts[key] = int(value) if value.isdigit() else -1
+                    else:
+                        props[key] = value == "yes"
+                missing = [p for p in CLASS_PROPERTIES if p not in props]
                 if missing:
-                    raise ManifestError(
-                        f"{self.say('grammar-class-missing', 'class is missing a property')}"
-                        f": {name}: {missing[0]}"
-                    )
-                self.classes[name] = parsed
-                self.counts[name] = parsed_counts
+                    raise self._bad_dump(f"class {name} has no `{missing[0]}`")
+                if set(counts) != set(CLASS_COUNTS):
+                    raise self._bad_dump(f"class {name} does not carry min and max")
+                self.classes[name] = props
+                # `max=-` is the runner's spelling of unbounded, decoded to an
+                # absent key so callers ask `if high is not None` as before.
+                self.counts[name] = {k: v for k, v in counts.items() if v >= 0}
             elif kind == "token":
-                if len(fields) != 2:
-                    raise ManifestError(
-                        f"{self.say('grammar-token-fields', 'token line must be token <name> <class>')}"
-                        f": {fields[0]} ({' '.join(fields[1:])})"
-                    )
-                name, cls = fields[0], fields[1]
-                if name in self.token_class:
-                    raise ManifestError(
-                        f"{self.say('grammar-duplicate', 'grammar declares a token twice')}"
-                        f": {name}"
-                    )
+                name, _, cls = rest.partition(" ")
                 if cls not in self.classes:
-                    raise ManifestError(
-                        f"{self.say('grammar-bad-class', 'grammar token has an unknown class')}"
-                        f": {name} ({cls})"
-                    )
+                    raise self._bad_dump(f"token {name} names undumped class {cls!r}")
                 self.token_class[name] = cls
-            else:  # pragma: no cover - the arity check above rejects it first
-                raise ManifestError(
-                    f"{self.say('grammar-bad-kind', 'grammar has an unknown line kind')}"
-                    f": {kind}"
-                )
-        for required in ("class", "token", "message"):
-            if required not in self.arity:
-                raise ManifestError(
-                    f"{path.name} declares no arity for the `{required}` line kind"
-                )
-        if not self.token_class:
-            raise ManifestError(f"{path.name} declares no tokens")
-        for name, cls in sorted(self.token_class.items()):
-            if not re.fullmatch(r"[a-z][a-z0-9-]*|-", name):
-                raise ManifestError(
-                    f"{self.say('grammar-token-name', 'token name must be lowercase')}: {name}"
-                )
-            del cls
-        for cls, limits in sorted(self.counts.items()):
-            count = sum(1 for c in self.token_class.values() if c == cls)
-            low = limits.get("min", 0)
-            high = limits.get("max")
-            if count < low or (high is not None and count > high):
-                raise ManifestError(
-                    f"{self.say('grammar-class-count', 'wrong number of tokens in a class')}"
-                    f": {cls}: {count} (min {low}"
-                    + (f", max {high}" if high is not None else "")
-                    + ")"
-                )
+            elif kind == "message":
+                key, _, text = rest.partition(" ")
+                self.messages[key] = text
+            else:
+                raise self._bad_dump(f"unknown dump line kind {kind!r}")
+        if not self.classes or not self.token_class:
+            raise self._bad_dump("no classes or no tokens")
 
     def say(self, key: str, fallback: str) -> str:
         """A shared diagnostic by key. The fallback keeps a grammar that is
@@ -384,7 +342,7 @@ class Grammar:
         comb = sorted(self.row_tags - self.exclusive)
         if not excl or not comb:
             raise ManifestError(
-                f"{self.path.name}: the grammar needs both exclusive and combinable "
+                f"{self.source.name}: the grammar needs both exclusive and combinable "
                 f"row tags to form a tag field pattern"
             )
         excl_alt = "|".join(re.escape(t) for t in excl)
@@ -392,9 +350,10 @@ class Grammar:
         return re.compile(rf"^(?:(?:{excl_alt})|(?:{comb_alt})(?:,(?:{comb_alt}))*)$")
 
 
-def grammar(path: Path = GRAMMAR_FILE) -> Grammar:
-    """The parsed grammar. A thin function so callers need not import the class."""
-    return Grammar(path)
+def grammar(runner: Path) -> Grammar:
+    """The grammar as `runner` parsed it. Takes the RUNNER, not the .conf: the
+    runner is the only parser, and asking it is the whole point."""
+    return Grammar(runner)
 
 
 def runner_usage_arguments(runner: Path) -> set[str]:
@@ -445,8 +404,11 @@ def token_participates(runner: Path, rules: "Grammar", token: str, workdir: Path
     # basename: a grammar under test may live anywhere, but the runner resolves
     # its definition relative to itself. Copying it as `reordered.conf` left the
     # fixture runner unable to find any grammar, so every token looked inert.
+    # The SOURCE PATH COMES FROM THE DUMP — the runner reports the file it
+    # actually read — rather than being re-derived here, which would be this
+    # module deciding again where the grammar lives.
     (repo / "scripts" / "lib" / GRAMMAR_FILE.name).write_text(
-        rules.path.read_text(encoding="utf-8"), encoding="utf-8"
+        rules.source.read_text(encoding="utf-8"), encoding="utf-8"
     )
     for stub, body in (("stub-x", "true"), ("stub-go", "true"), ("stub-skip", "exit 77")):
         target = repo / "scripts" / stub

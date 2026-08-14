@@ -7,6 +7,7 @@
 #
 #   scripts/validate [AREA]            AREA: go|qml|helper|packaging|docs|all
 #   scripts/validate --list [AREA]     print the commands without running them
+#   scripts/validate --dump-grammar    print the normalized tag grammar and exit
 #
 # Scope to the area touched; run `all` for cross-cutting work. Exactly one area
 # per invocation — naming two is rejected rather than silently honouring the
@@ -214,9 +215,22 @@ MANIFEST_EOF
 
 # ═══ THE VOCABULARY IS READ, NOT RESTATED ══════════════════════════════════
 #
-# scripts/lib/validation-grammar.conf is the one definition. Eight holes in
-# this change came from consumers each re-deriving the grammar, so this reads
-# it: no array here, nothing to drift from the guard or the library.
+# scripts/lib/validation-grammar.conf is the one definition, and THIS IS ITS
+# ONLY PARSER. Eight holes came from consumers each re-deriving the grammar;
+# writing one definition fixed that and left two READERS of it, which disagreed
+# about invalid and ambiguous input three more times. So the definition is
+# parsed and validated here — the runner must do it anyway, with nothing on its
+# critical path — and `--dump-grammar` emits the normalized result for every
+# other consumer. scripts/lib/validation_manifest.py DECODES that dump; it does
+# not read the .conf.
+#
+# The alternative considered and rejected was a conformance corpus shared by two
+# parsers. A corpus is an ENUMERATION of malformed shapes, and the lesson of
+# these eight holes is that such enumerations are incomplete: a corpus would
+# have caught neither the missing-trailing-newline divergence nor the
+# metadata-pass indexing bug, both of which surfaced only while fixing something
+# else. One reader makes divergence impossible by construction rather than
+# detectable afterwards — the same move as one definition, one level up.
 GRAMMAR_FILE="$repo_root/scripts/lib/validation-grammar.conf"
 if [[ ! -r "$GRAMMAR_FILE" ]]; then
   printf 'scripts/validate: cannot read the grammar at %s\n' "$GRAMMAR_FILE" >&2
@@ -249,8 +263,26 @@ grammar_fatal() {
 # needed to VALIDATE the records that follow, and both are declared after them.
 # A single pass left class and token failures using built-in fallback wording,
 # and left every record's field count unchecked.
-declare -A KIND_MIN=() KIND_MAX=()
+#
+# A NAME IS DECLARED ONCE, whatever its line kind. A duplicate `class` line was
+# accepted silently and merged one way by the runner and another by the reader
+# that used to sit beside it: same file, two meanings. The rule is checked for
+# every kind, not for `class`, because "declared twice" is the rule and `class`
+# was only the shape that surfaced — a second `message` or `kind` line is the
+# same ambiguity with the same silent last-one-wins outcome. It is checked in
+# BOTH passes, each for the kinds that pass consumes, so the duplicate is
+# reported instead of a downstream symptom of the merge it caused.
+declare -A KIND_MIN=() KIND_MAX=() SEEN_RECORD=()
+seen_record() {
+  if [[ -n "${SEEN_RECORD[$1/$2]:-}" ]]; then
+    grammar_fatal "${MSG[grammar-duplicate]:-grammar declares the same record twice}" "$1 $2"
+  fi
+  SEEN_RECORD[$1/$2]=1
+}
 while read -r kind name rest || [[ -n "$kind" ]]; do
+  case "$kind" in
+    kind | message) [[ -n "$name" ]] && seen_record "$kind" "$name" ;;
+  esac
   case "$kind" in
     kind)
       # The bootstrap: `kind` lines are checked inline against the shape they
@@ -261,6 +293,20 @@ while read -r kind name rest || [[ -n "$kind" ]]; do
       fi
       for field in $rest; do
         case "$field" in
+          min=* | max=*) ;;
+          *) grammar_fatal "${MSG[grammar-class-unknown]:-class has an unknown property}" \
+            "kind $name: $field" ;;
+        esac
+        # A COUNT IS AN INTEGER, and unvalidated it was neither. `min=banana`
+        # was stored verbatim here and later compared with `-lt`, which
+        # arithmetic-evaluates an unknown word to 0 — so a typo silently turned
+        # a kind's arity off. It is not a boolean either, so it gets the message
+        # that names the rule it broke rather than the yes/no one.
+        if [[ ! "${field#*=}" =~ ^[0-9]+$ ]]; then
+          grammar_fatal "${MSG[grammar-count-value]:-grammar min and max must be decimal integers}" \
+            "kind $name: $field"
+        fi
+        case "$field" in
           # min must be at least 1: every branch reads a record's NAME, so a
           # kind that permitted zero fields would leave that read unproven —
           # the same shape as the missing arity check, one level up.
@@ -268,8 +314,6 @@ while read -r kind name rest || [[ -n "$kind" ]]; do
             "kind $name: min must be at least 1" ;;
           min=*) KIND_MIN[$name]="${field#min=}" ;;
           max=*) KIND_MAX[$name]="${field#max=}" ;;
-          *) grammar_fatal "${MSG[grammar-class-unknown]:-class has an unknown property}" \
-            "kind $name: $field" ;;
         esac
       done
       ;;
@@ -309,6 +353,11 @@ while read -r line || [[ -n "$line" ]]; do
   name="${fields[0]}"
   rest="${rest_all#"${fields[0]}"}"
   rest="${rest# }"
+  # The other half of the duplicate rule; `kind` and `message` were checked in
+  # the metadata pass, which is where their merge would otherwise happen.
+  case "$kind" in
+    class | token) seen_record "$kind" "$name" ;;
+  esac
   case "$kind" in
     class)
       # BY KEY, NEVER BY POSITION. Reading these positionally while the python
@@ -332,8 +381,11 @@ while read -r line || [[ -n "$line" ]]; do
         fi
         case "$prop" in
           min | max)
+            # NOT a boolean, so not the boolean message: `min=banana` was
+            # reported as "must be yes or no", which names a rule `min` does not
+            # have and sends the reader looking for the wrong mistake.
             if [[ ! "$value" =~ ^[0-9]+$ ]]; then
-              grammar_fatal "${MSG[grammar-class-value]:-class property must be yes or no}" \
+              grammar_fatal "${MSG[grammar-count-value]:-grammar min and max must be decimal integers}" \
                 "$name: $prop=$value"
             fi
             ;;
@@ -370,9 +422,8 @@ while read -r line || [[ -n "$line" ]]; do
         grammar_fatal "${MSG[grammar-token-fields]:-token line must be token <name> <class>}" \
           "$name ($rest)"
       fi
-      if [[ -n "${TOKEN_CLASS[$name]:-}" ]]; then
-        grammar_fatal "${MSG[grammar-duplicate]:-grammar declares a token twice}" "$name"
-      fi
+      # No duplicate check here: SEEN_RECORD above covers every kind, and a
+      # per-kind copy is the shape-by-shape habit this file exists to end.
       if [[ -z "${CLASS_ROWTAG[$cls]:-}" ]]; then
         grammar_fatal "${MSG[grammar-bad-class]:-grammar token has an unknown class}" \
           "$name ($cls)"
@@ -442,6 +493,37 @@ for token in "${grammar_tokens[@]}"; do
   fi
 done
 
+# ═══ THE DUMP — what every other consumer reads instead of the .conf ═══════
+#
+# NORMALIZED, so a decoder never supplies a default: every boolean is present in
+# a fixed order, `min` is always present, `max` is an integer or `-`. Supplying
+# defaults is how a second reader starts having opinions, and opinions are what
+# diverged. Ordering is deterministic (classes and messages sorted, tokens in
+# declaration order) so the dump is diffable and a control can compare two runs.
+#
+# Reached only after the whole definition has been validated above, so anything
+# this prints is a grammar the runner itself accepted. A grammar it refuses
+# never produces a dump at all — it exits 2 with the diagnostic, which is what
+# the consumer reports.
+dump_grammar() {
+  local cls key token
+  printf 'source %s\n' "$GRAMMAR_FILE"
+  while IFS= read -r cls; do
+    [[ -n "$cls" ]] || continue
+    printf 'class %s selects=%s standalone=%s rowtag=%s exclusive=%s cli=%s universal=%s skips=%s min=%s max=%s\n' \
+      "$cls" "${CLASS_SELECTS[$cls]}" "${CLASS_STANDALONE[$cls]}" "${CLASS_ROWTAG[$cls]}" \
+      "${CLASS_EXCLUSIVE[$cls]}" "${CLASS_CLI[$cls]}" "${CLASS_UNIVERSAL[$cls]}" \
+      "${CLASS_SKIPS[$cls]}" "${CLASS_MIN[$cls]:-0}" "${CLASS_MAX[$cls]:--}"
+  done < <(printf '%s\n' "${!CLASS_ROWTAG[@]}" | LC_ALL=C sort)
+  for token in "${grammar_tokens[@]}"; do
+    printf 'token %s %s\n' "$token" "${TOKEN_CLASS[$token]}"
+  done
+  while IFS= read -r key; do
+    [[ -n "$key" ]] || continue
+    printf 'message %s %s\n' "$key" "${MSG[$key]}"
+  done < <(printf '%s\n' "${!MSG[@]}" | LC_ALL=C sort)
+}
+
 # Exit status a `may-skip` row uses for "precondition absent, nothing checked".
 # 77 is the autotools convention; anything else from such a row is a failure.
 SKIP_STATUS=77
@@ -451,6 +533,7 @@ usage() {
     IFS='|'
     printf '%s' "${AREAS[*]}"
   )" >&2
+  printf '       scripts/validate --dump-grammar\n' >&2
 }
 
 list_only=0
@@ -462,6 +545,14 @@ area_given=0
 for arg in "$@"; do
   case "$arg" in
     --list) list_only=1 ;;
+    # Answered before any other argument is considered: this is the grammar
+    # reader's output, and it must be obtainable from a runner whose MANIFEST is
+    # broken — otherwise a consumer asking "what is the vocabulary" gets an
+    # answer about the rows instead.
+    --dump-grammar)
+      dump_grammar
+      exit 0
+      ;;
     -h | --help)
       usage
       exit 0

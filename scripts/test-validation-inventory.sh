@@ -142,10 +142,40 @@ echo "=== check-validation-inventory.py manifest arms ==="
 # stays real. That injection point is why the library takes explicit paths.
 #
 # Usage: run_guard [VAR=PATH ...]   VAR in RUNNER_PATH AGENTS_PATH TABLES_PATH
+#                                   GRAMMAR_PATH PYTHONPATH
 # Sets: guard_out, guard_rc
+#
+# GRAMMAR_PATH IS NO LONGER A PATH THE GUARD READS. The grammar has one parser —
+# scripts/validate — and the guard consumes `--dump-grammar`, so a grammar
+# fixture is a RUNNER fixture and a runner fixture needs its grammar: both are
+# laid out at the paths the runner resolves (scripts/validate plus
+# scripts/lib/<conf>) and RUNNER_PATH is pointed at that copy. Every call site
+# below is unchanged, which is the point — the cases still say "this grammar" or
+# "this runner", and the plumbing that makes the runner the one reader lives
+# here.
 run_guard() {
+  local arg grammar_override="" runner_override=""
+  local -a env_args=()
+  for arg in "$@"; do
+    case "$arg" in
+      GRAMMAR_PATH=*) grammar_override="${arg#GRAMMAR_PATH=}" ;;
+      RUNNER_PATH=*) runner_override="${arg#RUNNER_PATH=}" ;;
+      *) env_args+=("$arg") ;;
+    esac
+  done
+  if [[ -n "$grammar_override" || -n "$runner_override" ]]; then
+    rm -rf "$tmp/paired"
+    mkdir -p "$tmp/paired/scripts/lib"
+    # `cp` carries the source's mode, which the non-executable-runner case
+    # depends on: a fixture that silently gained the executable bit here would
+    # make that control unable to fail.
+    cp "${runner_override:-$runner}" "$tmp/paired/scripts/validate"
+    cp "${grammar_override:-$repo_root/scripts/lib/validation-grammar.conf}" \
+      "$tmp/paired/scripts/lib/validation-grammar.conf"
+    env_args+=("RUNNER_PATH=$tmp/paired/scripts/validate")
+  fi
   guard_rc=0
-  guard_out="$(env "$@" python3 - "$repo_root" <<'GUARD_PY'
+  guard_out="$(env "${env_args[@]}" python3 - "$repo_root" <<'GUARD_PY'
 import contextlib, importlib.util, io, os, pathlib, sys
 spec = importlib.util.spec_from_file_location(
     "inv", pathlib.Path(sys.argv[1]) / "scripts" / "check-validation-inventory.py"
@@ -156,7 +186,6 @@ for var, attr in (
     ("RUNNER_PATH", "RUNNER"),
     ("AGENTS_PATH", "AGENTS"),
     ("TABLES_PATH", "TABLES_DOC"),
-    ("GRAMMAR_PATH", "GRAMMAR"),
 ):
     if os.environ.get(var):
         setattr(mod, attr, pathlib.Path(os.environ[var]))
@@ -495,10 +524,105 @@ grammar_case "an uppercase token is reported" \
   "${real_grammar/token qml        area/token Qml        area}" \
   "token name must be lowercase"
 
-grammar_case "a duplicated token is reported" \
-  "$real_grammar
-token qml        area" \
-  "declares a token twice"
+# A NAME DECLARED TWICE, one case per line kind. `class` is the reported defect:
+# it was accepted SILENTLY by both former readers and merged differently by each
+# — python replaced the whole record, bash overwrote only the later line's keys
+# — so one file meant two things. The other three kinds are here because
+# "declared twice" is the rule; fixing `class` alone would have been the ninth
+# shape.
+while IFS=';' read -r label extra; do
+  [[ -n "$label" ]] || continue
+  grammar_case "$label" "$real_grammar
+$extra" "declares the same record twice"
+done <<'DUPES'
+a duplicated token is reported;token qml        area
+a duplicated class is reported;class area       selects=no  standalone=no  rowtag=no   exclusive=no  cli=no  universal=no  skips=no
+a duplicated message is reported;message row-empty-tags  a different wording
+a duplicated line kind is reported;kind token   min=5
+DUPES
+
+# A COUNT IS AN INTEGER, and saying so is half the fix: `min=banana` was already
+# refused, but as "class property must be yes or no", which names a rule `min`
+# does not have. Both the `class` and `kind` sites are covered — the `kind` one
+# was not validated at all, so a typo there silently turned that kind's arity
+# off by arithmetic-evaluating an unknown word to 0.
+while IFS=';' read -r label from to; do
+  [[ -n "$label" ]] || continue
+  # The anchor must exist and must be on a REAL line: matching inside a comment
+  # would produce a fixture the runner strips before parsing, i.e. a control
+  # that cannot fail. Both anchors are checked against the uncommented text.
+  if ! sed -e 's/#.*//' "$repo_root/scripts/lib/validation-grammar.conf" | grep -qF -- "$from"; then
+    fail "$label" "the anchor '$from' is not on an uncommented line, so the mutation is inert"
+    continue
+  fi
+  printf '%s' "${real_grammar/$from/$to}" >"$tmp/counts.conf"
+  run_guard "GRAMMAR_PATH=$tmp/counts.conf"
+  expect_refused "$label" "min and max must be decimal integers"
+  expect_absent "$guard_out" "must be yes or no" "$label"
+  ok "$label"
+done <<'COUNTS'
+a non-integer class count is reported;skips=no  min=1;skips=no  min=banana
+a non-integer kind arity is reported;kind class   min=2;kind class   min=banana
+COUNTS
+
+# ONE READER, PROVEN BY RELAY. The guard no longer parses the definition — it
+# consumes `scripts/validate --dump-grammar` — so the property worth pinning is
+# that a refusal reaches it as the RUNNER'S OWN sentence, unchanged. Compared
+# against what the runner actually printed, not against an expected string:
+# comparing both sides to one expectation is how two readers drift together.
+printf '%s\ntoken qml        area\n' "$real_grammar" >"$tmp/relay.conf"
+mkdir -p "$tmp/relay/scripts/lib"
+cp "$runner" "$tmp/relay/scripts/validate"
+chmod +x "$tmp/relay/scripts/validate"
+cp "$tmp/relay.conf" "$tmp/relay/scripts/lib/validation-grammar.conf"
+relay_rc=0
+relay_said="$("$tmp/relay/scripts/validate" --dump-grammar 2>&1 >/dev/null)" || relay_rc=$?
+[[ "$relay_rc" == 2 ]] || fail "runner relay" "the runner accepted the bad grammar (rc $relay_rc)"
+run_guard "GRAMMAR_PATH=$tmp/relay.conf"
+expect_refused "runner relay" "$relay_said"
+expect_contains "$guard_out" "refuses its own grammar" "runner relay"
+expect_absent "$guard_out" "Traceback" "runner relay"
+ok "a grammar the runner refuses reaches the guard as the runner's own diagnostic"
+
+# ...and the accept side of the same relay: the guard's view of a GOOD grammar
+# is the dump, byte for byte. A decoder that quietly supplied a default, or
+# dropped a record, would pass every refusal case above and fail here.
+run_guard
+expect_clean_run "dump is the guard's only source"
+python3 - "$repo_root" <<'DUMP' || fail "dump agreement" "the decoded grammar does not match the dump"
+import importlib.util, pathlib, subprocess, sys
+root = pathlib.Path(sys.argv[1])
+spec = importlib.util.spec_from_file_location(
+    "vm", root / "scripts" / "lib" / "validation_manifest.py"
+)
+mod = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mod)
+runner = root / "scripts" / "validate"
+dump = subprocess.run(
+    ["bash", str(runner), "--dump-grammar"], capture_output=True, text=True, check=True
+).stdout
+g = mod.grammar(runner)
+lines = [f"source {g.source}"]
+for name in sorted(g.classes):
+    props = " ".join(f"{p}={'yes' if g.classes[name][p] else 'no'}" for p in mod.CLASS_PROPERTIES)
+    counts = g.counts[name]
+    lines.append(
+        f"class {name} {props} min={counts.get('min', 0)} "
+        f"max={counts['max'] if 'max' in counts else '-'}"
+    )
+for token, cls in g.token_class.items():
+    lines.append(f"token {token} {cls}")
+for key in sorted(g.messages):
+    lines.append(f"message {key} {g.messages[key]}")
+if "\n".join(lines) + "\n" != dump:
+    import difflib
+    sys.stdout.writelines(difflib.unified_diff(
+        dump.splitlines(True), [line + "\n" for line in lines],
+        "dump", "decoded"))
+    sys.exit(1)
+print(f"  ok    the decoder round-trips all {len(dump.splitlines())} dumped records")
+DUMP
+ok "the guard's grammar is exactly what the runner dumped, with nothing supplied"
 
 # The table lead-in the local-only/reached-indirectly comparison keys on.
 no_table="$tmp/no-table.md"
@@ -570,6 +694,9 @@ ok "a separator the pattern cannot follow truncates LOUDLY, never silently"
 # only FileNotFoundError was caught. Fail-closed in direction, but the
 # diagnostic degraded to noise exactly when someone is debugging it. Same shape
 # as the PyYAML import, and pinned the same way.
+# Both places the module launches bash are covered: the row syntax check, and
+# the grammar dump the single-reader change added. A dump that cannot be
+# launched is the worst case of the two — every arm is derived from it.
 launch_out="$(python3 - "$repo_root" 2>&1 <<'NOBASH' || true
 import importlib.util, pathlib, subprocess, sys
 root = pathlib.Path(sys.argv[1])
@@ -578,22 +705,30 @@ spec = importlib.util.spec_from_file_location(
 )
 mod = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(mod)
+runner = root / "scripts" / "validate"
+rules = mod.grammar(runner)  # a real dump, before bash is taken away
 
 def boom(*_args, **_kwargs):
     raise PermissionError(13, "Permission denied")
 
 subprocess.run = boom
 try:
-    mod.manifest_rows(root / "scripts" / "validate")
+    mod._check_shell_syntax("true", "qml | true", rules)
     print("ACCEPTED")
 except mod.ManifestError as error:
-    print("MANIFESTERROR", error)
+    print("SYNTAX", error)
+try:
+    mod.grammar(runner)
+    print("ACCEPTED")
+except mod.ManifestError as error:
+    print("DUMP", error)
 NOBASH
 )"
-expect_contains "$launch_out" "MANIFESTERROR could not run bash" "bash unlaunchable"
+expect_contains "$launch_out" "SYNTAX could not run bash" "bash unlaunchable"
+expect_contains "$launch_out" "DUMP could not run validate --dump-grammar" "bash unlaunchable"
 expect_absent "$launch_out" "Traceback" "bash unlaunchable"
 expect_absent "$launch_out" "ACCEPTED" "bash unlaunchable"
-ok "an unlaunchable bash raises ManifestError, not a traceback"
+ok "an unlaunchable bash raises ManifestError at both call sites, not a traceback"
 
 # A MISSING PREREQUISITE MUST NOT REPLACE A FIXTURE'S VERDICT. The CI parse used
 # to raise straight out of main, so on a python3 without PyYAML every fixture
