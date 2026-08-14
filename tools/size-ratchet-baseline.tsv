@@ -208,4 +208,4 @@ scripts/qml-smoke.sh	1235
 scripts/test-pill-hover-safety.js	420
 scripts/test-remote-desktop-state.js	1243
 scripts/test-toast-actions.js	607
-vstack.toml	478
+vstack.toml	479
