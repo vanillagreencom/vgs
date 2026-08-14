@@ -225,12 +225,60 @@ assert.deepEqual(
 );
 
 assert.equal(launchDecision("", false), "start", "an idle channel launches");
-assert.equal(launchDecision("claude", true), "skip", "a channel already fetching does not relaunch");
+assert.equal(launchDecision("claude", true), "skip",
+    "a channel already fetching does not relaunch: its result is on its way");
 assert.equal(launchDecision("", true), "pend",
     "assigning running while the previous process is still stopping is a no-op, so the request " +
     "is parked rather than dropped — dropping it showed a fetch that did not exist until the " +
     "poll timer");
-assert.equal(launchDecision("claude", false), "start",
-    "a tag with no running process is stale bookkeeping, not a fetch");
+assert.equal(launchDecision("claude", false), "pend",
+    "a TAG WITH A STOPPED PROCESS is a launch that has not settled — `running` goes false before " +
+    "the exit is delivered, which is the state the watchdog arms in. Starting there would " +
+    "overwrite that launch's tag, and its late exit would settle somebody else's fetch");
+
+// The window itself, driven rather than reasoned about: a launch is running, the
+// process stops, the exit has NOT been delivered, and a provider change lands.
+// The glue below is the whole of what the widget's launch() does with the
+// decision — set the tag on "start", park on "pend", leave "skip" alone — and
+// scripts/test-ai-usage-wiring.js pins that the widget has exactly that glue.
+{
+    const channel = { inFlight: "", pending: false, running: false, starts: 0 };
+    const request = want => {
+        const decision = launchDecision(channel.inFlight, channel.running);
+        if (decision === "skip")
+            return decision;
+        if (decision === "pend") {
+            channel.pending = true;
+            return decision;
+        }
+        channel.pending = false;
+        channel.inFlight = want;
+        channel.running = true;
+        channel.starts += 1;
+        return decision;
+    };
+
+    request("claude");
+    assert.equal(channel.starts, 1, "the first launch runs: nothing in flight, nothing stopping");
+    assert.equal(channel.inFlight, "claude");
+
+    // The process stops. No exit yet, so nothing has settled the tag.
+    channel.running = false;
+
+    assert.equal(request("codex"), "pend", "a provider change in that window is parked");
+    assert.equal(channel.starts, 1, "no second launch starts against an unsettled tag");
+    assert.equal(channel.inFlight, "claude",
+        "and the unsettled launch keeps its own tag, so its late exit still settles ITS fetch " +
+        "rather than clearing a new one, spending its retry or discarding its output");
+    assert.equal(channel.pending, true, "the request is remembered, not dropped");
+
+    // The exit finally arrives: settleFetch clears the tag, then runs what was
+    // parked — which is what the widget's `if (ch.pending)` drain does.
+    channel.inFlight = "";
+    if (channel.pending)
+        request("codex");
+    assert.equal(channel.starts, 2, "the parked provider change runs once the channel settles");
+    assert.equal(channel.inFlight, "codex", "for the provider that was asked for");
+}
 
 console.log("ai-usage provider identity: OK");

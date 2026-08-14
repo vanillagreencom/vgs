@@ -135,20 +135,29 @@ QtObject {
         return { file: p !== "", satisfies: p !== "" && p === normalizeProvider(want) };
     }
 
-    // Whether a launch request can start now. Assigning `running = true` to a
-    // Process that has not finished stopping is a NO-OP, so a request made in
-    // that window has to be remembered and applied when the process actually
-    // stops — dropping it left the widget showing a fetch that did not exist
-    // until the poll timer came round, up to five minutes later.
-    //   "skip"  — this channel is already fetching
-    //   "pend"  — the previous process is still stopping; retry on runningChanged
-    //   "start" — launch now
+    // Whether a launch request can start now. Two windows make "not running"
+    // useless on its own:
+    //
+    //   * assigning `running = true` to a Process that has not finished stopping
+    //     is a NO-OP, so a request made then has to be remembered rather than
+    //     dropped — dropping it left the widget showing a fetch that did not
+    //     exist until the poll timer came round, up to five minutes later;
+    //   * `running` goes false BEFORE the exit is delivered, so a non-empty tag
+    //     with a stopped process is a launch that has not settled yet — the very
+    //     state the stall watchdog arms in. Starting there would overwrite that
+    //     launch's tag, and its late exit would then settle somebody else's
+    //     fetch: clearing the new tag, spending its retry, or discarding its
+    //     output.
+    //
+    // So a non-empty tag is OWNED until the settle path clears it, whatever
+    // `running` says.
+    //   "skip"  — this channel is already fetching; its result is on its way
+    //   "pend"  — unsettled or still stopping; run this request once it settles
+    //   "start" — nothing in flight and nothing stopping
     function launchDecision(inFlight, running) {
-        if (inFlight !== "" && running)
-            return "skip";
-        if (running)
-            return "pend";
-        return "start";
+        if (inFlight !== "")
+            return running ? "skip" : "pend";
+        return running ? "pend" : "start";
     }
 
     // --- headline arithmetic ------------------------------------------------

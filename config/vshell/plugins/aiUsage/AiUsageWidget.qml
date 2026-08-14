@@ -437,17 +437,14 @@ PluginComponent {
         ch.stallTimer.stop();
 
         // Relaunch whenever this channel is not holding the provider it should
-        // be, or this fetch delivered nothing — the payload was discarded as
-        // misattributed, it arrived after the user switched away, it never
-        // parsed, or the helper never ran. Comparing the launch tag to the
-        // selection instead dropped the replacement fetch on a claude -> codex
-        // -> claude toggle, which is where the stale accounts came from
-        // (VGS-118). Decided BEFORE the tag is cleared, because the tag is one
-        // of the fields the decision reads.
-        //
-        // DEFERRED, because a relaunch assigns `running = true` and that is a
-        // no-op while `running` still reads true; launch() parks it in that case
-        // and onRunningChanged applies it when the process has settled.
+        // be, or this fetch delivered nothing — misattributed, arrived after the
+        // user switched away, never parsed, or the helper never ran. Comparing
+        // the launch tag to the selection instead dropped the replacement fetch
+        // on a claude -> codex -> claude toggle (VGS-118). Decided BEFORE the tag
+        // is cleared, since the tag is one of the fields the decision reads, and
+        // DEFERRED because a relaunch assigns `running = true`, a no-op while
+        // `running` still reads true; launch() parks it and onRunningChanged
+        // applies it once the process has settled.
         const relaunch = logic.shouldRelaunch(ch, root.maxFetchRetries);
         ch.inFlight = "";
         if (relaunch) {
@@ -455,6 +452,11 @@ PluginComponent {
             Qt.callLater(() => root.launch(ch));
             return;
         }
+        // A request parked while this launch was unsettled runs now that the tag
+        // is clear. Deferred: the process may still be stopping, in which case
+        // launch() parks it again and onRunningChanged applies it.
+        if (ch.pending)
+            Qt.callLater(() => root.launch(ch));
 
         // Either there is still nothing for what this channel wants, or this
         // fetch produced no payload and what is held is now stale. Both are

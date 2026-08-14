@@ -237,6 +237,11 @@ requires(settle, "settleFetch()", [
     ["Qt.callLater(() => root.launch(ch))",
         "the relaunch stays deferred and restarts only the channel that asked"],
     ["ch.stallTimer.stop()", "a settled fetch stops its own watchdog"],
+    // A request that arrived while this launch was unsettled — tag set, process
+    // already stopped, exit not yet delivered — was parked rather than started,
+    // so settling the tag is the only thing that can let it run.
+    ["if (ch.pending)", "a parked request is drained when the channel settles"],
+    ["Qt.callLater(() => root.launch(ch))", "by launching it, deferred like every other relaunch"],
     ["ch.loaded !== ch.want || !ch.accepted",
         "a poll that delivered no payload for the provider on screen is a failure, not a silent " +
         "hold of the previous numbers"],
