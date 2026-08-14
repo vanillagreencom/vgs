@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 
 // Pins the aiUsage widget's provider identity: which payload may be filed under
-// which provider, when a finished fetch has to be replaced, and what the bar
-// pill renders when a provider has no number (VGS-118).
+// which provider, when a finished fetch has to be replaced, and how a failed one
+// names its cause (VGS-118). Its sibling scripts/test-ai-usage-view.js pins what
+// the widget then SHOWS for a payload.
 //
 // `qml-smoke.sh --nested` does host this plugin — it toggles the aiUsage widget
 // and opens its popout — but that mode is local-only (it needs Hyprland and
@@ -37,11 +38,12 @@ assert.ok(marked, "AiUsageLogic.qml must carry the PROVIDER DECISION markers");
 
 const {
     normalizeProvider, providerIcon, payloadProvider, payloadIsFor, shouldRelaunch,
-    decodePayload, acceptOutcome, launchDecision, stderrReason, headOf, pillSlot, pillSlots
+    decodePayload, acceptOutcome, launchDecision, stderrReason, headOf, popoutView,
+    pillSlot, pillSlots
 } = new Function(
     `${marked[1]}\nreturn { normalizeProvider, providerIcon, payloadProvider, payloadIsFor,` +
     ` shouldRelaunch, decodePayload, acceptOutcome, launchDecision, stderrReason, headOf,` +
-    ` pillSlot, pillSlots };`
+    ` popoutView, pillSlot, pillSlots };`
 )();
 
 // The extracted region must be free of the widget and of Qt, or this harness is
@@ -105,51 +107,57 @@ assert.ok(
 
 const MAX = 3;
 
+// Read BY FIELD: three same-typed provider strings in a row could be swapped
+// silently, so the channel passes itself and the test passes its shape.
+const fetchState = (over) => Object.assign(
+    { inFlight: "claude", loaded: "", want: "claude", retries: 0, accepted: true }, over);
+
 assert.equal(
-    shouldRelaunch("claude", "", "claude", 0, MAX, true),
+    shouldRelaunch(fetchState({ loaded: "" }), MAX),
     true,
     "claude -> codex -> claude: nothing is loaded, so the fetch must be replaced " +
     "even though the selection ended up back where it started"
 );
 assert.equal(
-    shouldRelaunch("claude", "claude", "claude", 0, MAX, true),
+    shouldRelaunch(fetchState({ loaded: "claude" }), MAX),
     false,
     "the selected provider's data is on screen and this fetch delivered it; " +
     "refetching would be a poll loop"
 );
 assert.equal(
-    shouldRelaunch("claude", "claude", "claude", 0, MAX, false),
+    shouldRelaunch(fetchState({ loaded: "claude", accepted: false }), MAX),
     true,
     "a poll that produced no payload is retried even when the channel already holds that " +
     "provider — otherwise one empty or crashed poll drops the widget to its error state for a " +
     "whole poll interval, up to five minutes, for a blip a one-second retry covers"
 );
 assert.equal(
-    shouldRelaunch("claude", "claude", "codex", 0, MAX, true),
+    shouldRelaunch(fetchState({ loaded: "claude", want: "codex" }), MAX),
     true,
     "the popout holds Claude while Codex is selected — the exact mix-up state"
 );
 assert.equal(
-    shouldRelaunch("", "", "claude", 0, MAX, false),
+    shouldRelaunch(fetchState({ inFlight: "", loaded: "", accepted: false }), MAX),
     false,
     "an exit with no launch tag started no process, so it replaces nothing"
 );
 assert.equal(
-    shouldRelaunch("claude", "claude", "claude", MAX, MAX, false),
+    shouldRelaunch(fetchState({ loaded: "claude", accepted: false, retries: MAX }), MAX),
     false,
     "a helper that keeps delivering nothing still gives up: only an accepted payload or a " +
     "provider switch restores the budget"
 );
 assert.equal(
-    shouldRelaunch("claude", "", "claude", MAX - 1, MAX, false),
+    shouldRelaunch(fetchState({ accepted: false, retries: MAX - 1 }), MAX),
     true,
     "the budget is spent only when it is actually exhausted"
 );
 assert.equal(
-    shouldRelaunch("claude", "", "claude", 0, 0, false),
+    shouldRelaunch(fetchState({ accepted: false }), 0),
     false,
     "a zero budget relaunches nothing"
 );
+assert.equal(shouldRelaunch(null, MAX), false, "no channel, nothing to relaunch");
 
 // --- 2b. the failure reason from stderr -------------------------------------
 
@@ -166,167 +174,6 @@ assert.equal(stderrReason(null, 200), "", "no stderr contributes no reason");
     assert.equal(reason.length, 200, "a reason is capped before it reaches the popout and the log");
     assert.ok(reason.endsWith("\u2026"), "and says it was cut");
 }
-
-// --- 3. heads ---------------------------------------------------------------
-
-const claudePayload = {
-    ok: true,
-    provider: "claude",
-    accounts: [{ id: "a", ok: true, session: { pct: 10 }, weekly: { pct: 40 } }]
-};
-const codexPayload = {
-    ok: true,
-    provider: "codex",
-    accounts: [{ id: "b", ok: true, session: { pct: 70 }, weekly: { pct: 90 } }]
-};
-
-assert.deepEqual(headOf(claudePayload, "pool", []), { pct: 40 }, "the head is the account's tightest lane");
-assert.deepEqual(headOf(codexPayload, "pool", []), { pct: 90 });
-assert.equal(headOf({ ok: false, provider: "claude" }, "pool", []), null, "a failed payload has no head");
-assert.equal(headOf(null, "pool", []), null, "no payload has no head");
-const twoAccounts = {
-    ok: true,
-    provider: "claude",
-    accounts: [{ id: "a", ok: true, weekly: { pct: 40 } }, { id: "b", ok: true, weekly: { pct: 80 } }]
-};
-assert.deepEqual(headOf(twoAccounts, "pool", []), { pct: 60 }, "the pool head averages the visible accounts");
-assert.deepEqual(
-    headOf(twoAccounts, "pool", ["b"]),
-    { pct: 40 },
-    "a head counts only the accounts the user still shows"
-);
-assert.deepEqual(headOf(twoAccounts, "worst", []), { pct: 80 });
-assert.deepEqual(headOf(twoAccounts, "best", []), { pct: 40 });
-assert.equal(
-    headOf(Object.assign({ aggregate: { pct: 77 } }, twoAccounts), "pool", ["a", "b"]),
-    null,
-    "with every reported account hidden the pill must show its placeholder, not the payload's " +
-    "aggregate — that number is computed over exactly the accounts the user excluded, beside a " +
-    "popout header reading 0 accounts"
-);
-assert.deepEqual(
-    headOf({ ok: true, provider: "claude", accounts: [], aggregate: { pct: 77 } }, "pool", []),
-    { pct: 77 },
-    "a payload that reported no accounts at all still falls back to its aggregate"
-);
-assert.deepEqual(
-    headOf({
-        ok: true, provider: "claude", session: { pct: 12 }, weekly: { pct: 64 },
-        aggregate: { pct: 12 }
-    }, "pool", []),
-    { pct: 64 },
-    "the older single-account shape reads its tightest lane, not its 5h window — the same rule " +
-    "an account's headline follows"
-);
-assert.equal(
-    headOf({ ok: true, provider: "claude" }, "pool", []),
-    null,
-    "a payload with no accounts and no lanes has no number to show"
-);
-
-// One owner: whatever the widget renders on the bar, in the vertical bar or in
-// the popout header comes from this function, so those three cannot disagree.
-// They did: with both accounts hidden the pill showed an error, the vertical
-// pill 60% and the header "0 accounts, 60% used".
-{
-    const hiddenAll = Object.assign({ aggregate: { pct: 60 } }, twoAccounts);
-    assert.equal(headOf(hiddenAll, "pool", ["a", "b"]), null, "no headline when all are hidden");
-    const slot = pillSlot("claude", headOf(hiddenAll, "pool", ["a", "b"]), hiddenAll, [], "claude");
-    assert.equal(slot.error, false,
-        "hiding every account is not a failure: nothing broke, there is nothing to show");
-    assert.equal(slot.text, "—", "so the slot renders its placeholder, not the error glyph");
-    assert.equal(slot.pct, null, "and carries no percentage for anything else to render");
-}
-assert.deepEqual(
-    headOf({ ok: true, provider: "claude", accounts: [], session: { pct: 0 } }, "pool", []),
-    { pct: 0 },
-    "0% is a number, not a missing head"
-);
-
-// --- 4. the pill keeps both slots -------------------------------------------
-//
-// The old pill pushed claude-then-codex and skipped whichever head was null, so
-// a signed-out or not-yet-fetched provider made the surviving number slide into
-// the left slot with no separator and no label. Position was the only thing
-// saying which provider a number belonged to, and it moved.
-
-function slotsFor(state) {
-    return pillSlots(Object.assign({
-        selected: "claude",
-        claudeHead: null, claudeData: null,
-        codexHead: null, codexData: null,
-        fetching: []
-    }, state));
-}
-
-{
-    const slots = slotsFor({
-        claudeHead: { pct: 40 }, claudeData: claudePayload,
-        codexHead: { pct: 90 }, codexData: codexPayload
-    });
-    assert.equal(slots.length, 2, "both providers always get a slot");
-    assert.deepEqual(slots.map(s => s.provider), ["claude", "codex"], "slot order is fixed");
-    assert.deepEqual(slots.map(s => s.text), ["40%", "90%"]);
-    assert.deepEqual(
-        slots.map(s => s.icon),
-        [providerIcon("claude"), providerIcon("codex")],
-        "each slot carries its own provider's icon, so position cannot be misread"
-    );
-    assert.notEqual(providerIcon("claude"), providerIcon("codex"), "the two icons must be distinguishable");
-    assert.deepEqual(slots.map(s => s.selected), [true, false], "the selected provider is marked, not assumed");
-}
-
-{
-    // One head missing — the reported symptom's shape.
-    const slots = slotsFor({
-        claudeHead: { pct: 40 }, claudeData: claudePayload,
-        codexData: { ok: false, provider: "codex", error: "no signed-in accounts found" }
-    });
-    assert.equal(slots.length, 2, "a provider without a number keeps its slot");
-    assert.equal(slots[0].text, "40%", "the surviving number stays in ITS provider's slot");
-    assert.equal(slots[0].pct, 40);
-    assert.equal(slots[1].error, true, "a provider that answered unusably says so");
-    assert.equal(slots[1].pct, null, "an error slot carries no percentage to colour");
-    assert.notEqual(slots[1].text, "40%", "the other provider's number never appears in this slot");
-}
-
-{
-    const slots = slotsFor({ fetching: ["claude", "codex"] });
-    assert.deepEqual(slots.map(s => s.text), ["…", "…"], "a first fetch in flight reads as waiting");
-    assert.deepEqual(slots.map(s => s.error), [false, false], "waiting is not an error");
-}
-
-{
-    const slots = slotsFor({ fetching: ["claude"] });
-    assert.equal(slots[0].text, "…", "the provider being fetched is waiting");
-    assert.equal(
-        slots[1].text,
-        "—",
-        "a provider with no data and no fetch renders a placeholder, never an empty slot"
-    );
-}
-
-{
-    // Stale data plus a refetch in flight keeps showing the number: blanking it
-    // every poll would make the pill flicker.
-    const slots = slotsFor({
-        claudeHead: { pct: 40 }, claudeData: claudePayload, fetching: ["claude"]
-    });
-    assert.equal(slots[0].text, "40%", "an in-flight refresh does not blank a known number");
-}
-
-{
-    const slots = slotsFor({ selected: "codex" });
-    assert.deepEqual(
-        slots.map(s => s.provider),
-        ["claude", "codex"],
-        "switching the selection must not reorder the slots"
-    );
-    assert.deepEqual(slots.map(s => s.selected), [false, true]);
-}
-
-assert.equal(normalizeProvider("codex"), "codex");
-assert.equal(normalizeProvider("gemini"), "", "an unknown provider normalises to nothing, never to a default");
 
 // --- 5. decode, accept and launch decisions ---------------------------------
 //

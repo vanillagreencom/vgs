@@ -62,9 +62,6 @@ PluginComponent {
     function shownAccounts(list) {
         return logic.shownIn(list, root.hiddenAccounts);
     }
-    function headlineFor(list) {
-        return logic.headlineOf(list, root.headlineMode, root.hiddenAccounts);
-    }
 
     // --- Live state ---
     //
@@ -79,22 +76,26 @@ PluginComponent {
     property string fetchError: ""
     property bool loading: true
 
-    readonly property bool ok: root.fetchError === "" && root.current !== null && root.current.ok === true
-    readonly property string errorText: {
-        if (root.fetchError !== "")
-            return root.fetchError;
-        if (root.current && root.current.ok !== true)
-            return root.current.error || "usage unavailable";
-        return "";
-    }
-    readonly property string plan: (root.current && root.current.plan) || ""
+    // Everything the popout shows about the payload, from one function that has
+    // already taken the hidden accounts out. The payload's own top-level fields
+    // describe the first LIVE account the backend found, hidden or not, so they
+    // are only trustworthy for the older shape that reports no accounts at all.
+    readonly property var view: logic.popoutView(root.current, root.hiddenAccounts)
+
+    readonly property bool ok: root.fetchError === "" && root.view.ok
+    readonly property string errorText: root.fetchError !== "" ? root.fetchError : root.view.error
+    readonly property string plan: root.view.plan
 
     // --- Multi-account state ---
     // People run several subscriptions side by side (one config dir per wrapper
-    // script). With a single account this stays a one-entry list and every path
-    // below falls back to the payload's flat lanes, so nothing changes for them.
+    // script). One account keeps the single-account view; several render a card
+    // each, carrying their own label, plan and error — which is why the card path
+    // follows what the payload REPORTED, not what is left after hiding.
     readonly property var accounts: (root.current && root.current.accounts) || []
-    readonly property bool multiAccount: root.shownAccounts(root.accounts).length > 1
+    readonly property bool multiAccount: root.view.cards
+    // The payload reported accounts and the user is hiding all of them: nothing
+    // failed, there is simply nothing to show.
+    readonly property bool allHidden: root.view.allHidden
     property string expandedAccountId: ""
     readonly property int pillFontSize: Theme.barTextSize(
         root.barThickness, root.barConfig?.fontScale, root.barConfig?.maximizeWidgetText)
@@ -107,10 +108,6 @@ PluginComponent {
     readonly property var currentHead: logic.headOf(root.current, root.headlineMode, root.hiddenAccounts)
     readonly property bool hasHeadline: root.currentHead !== null
     readonly property int headlinePct: root.currentHead ? root.currentHead.pct : 0
-    // The payload reported accounts and the user is hiding all of them: nothing
-    // failed, there is simply nothing to show.
-    readonly property bool allHidden: (root.accounts || []).length > 0
-        && root.shownAccounts(root.accounts).length === 0
 
     // What the bar shows for the SELECTED provider, as one slot — the same shape
     // the horizontal pill renders, so the vertical form cannot say something else.
@@ -121,18 +118,12 @@ PluginComponent {
         root.fetchingProviders,
         root.provider)
 
-    // Meters for the single-account view. Prefers the accounts list so lanes the
-    // flat payload can't express (a credit pool, a second model) still show up,
-    // and falls back to the payload's own lanes if an older helper omits
-    // accounts. Hidden accounts are not "the first account": a hidden one
-    // contributes no meters, exactly as it contributes no headline.
+    // Meters for the single-account view: the account actually on screen, or the
+    // payload's own lanes for the older shape with no accounts.
     readonly property var primaryMeters: {
-        const list = root.accounts || [];
-        if (list.length > 0) {
-            const shown = root.shownAccounts(list);
-            return shown.length > 0 ? fmt.metersFor(shown[0]) : [];
-        }
-        return fmt.flatMeters(root.current);
+        if (root.view.flat)
+            return fmt.flatMeters(root.current);
+        return root.view.account ? fmt.metersFor(root.view.account) : [];
     }
 
     function formatResetAt(epoch) {
@@ -398,18 +389,26 @@ PluginComponent {
         ch.accepted = false;
         ch.issue = "";
         ch.errorOut = "";
+        // The previous launch's watchdog is armed in exactly the state this one
+        // starts from — tag set, process not running — so leaving it running let
+        // it fire against THIS fetch: "could not run" for a healthy process,
+        // whose payload was then discarded as a mismatch and whose retry was
+        // spent. It is per-fetch state like everything above it.
+        ch.stallTimer.stop();
         ch.proc.running = true;
-        // The synchronous half of the same failure: an assignment that did not
-        // take at all produces no signal to wait for.
-        if (!ch.proc.running)
-            root.failLaunch(ch);
     }
 
-    // The process stopped, or never ran. `exitStatus` is Qt's: non-zero means
-    // the helper did not exit on its own terms (a signal, an OOM kill), which
-    // has to name itself — otherwise the reason left standing is the "parse
-    // error" recorded for the empty output it never wrote.
+    // The process stopped. `exitStatus` is Qt's: non-zero means the helper did
+    // not exit on its own terms (a signal, an OOM kill), which has to name
+    // itself — otherwise the reason left standing is the "parse error" recorded
+    // for the empty output it never wrote.
     function finishFetch(ch, exitCode, exitStatus) {
+        // Symmetric with failLaunch: whichever path settles the fetch first owns
+        // it. Without this an exit arriving after the watchdog already settled
+        // reported a second time, and could overwrite the reason of — and settle
+        // — a relaunch that was by then running.
+        if (ch.inFlight === "")
+            return;
         if (!ch.accepted && (exitCode !== 0 || exitStatus !== 0)) {
             const reason = logic.stderrReason(ch.errorOut, root.maxIssueChars);
             ch.issue = (exitStatus !== 0 ? "helper killed" : "helper exited " + exitCode)
@@ -432,25 +431,25 @@ PluginComponent {
 
     // What a finished fetch means, however it finished.
     function settleFetch(ch) {
-        const launchedFor = ch.inFlight;
-        ch.inFlight = "";
-        ch.stallTimer.stop();
-        if (launchedFor === "")
+        if (ch.inFlight === "")
             return;
+        ch.stallTimer.stop();
 
         // Relaunch whenever this channel is not holding the provider it should
         // be, or this fetch delivered nothing — the payload was discarded as
         // misattributed, it arrived after the user switched away, it never
-        // parsed, or the helper never ran. Comparing `launchedFor` to the
+        // parsed, or the helper never ran. Comparing the launch tag to the
         // selection instead dropped the replacement fetch on a claude -> codex
         // -> claude toggle, which is where the stale accounts came from
-        // (VGS-118).
+        // (VGS-118). Decided BEFORE the tag is cleared, because the tag is one
+        // of the fields the decision reads.
         //
         // DEFERRED, because a relaunch assigns `running = true` and that is a
         // no-op while `running` still reads true; launch() parks it in that case
         // and onRunningChanged applies it when the process has settled.
-        if (logic.shouldRelaunch(launchedFor, ch.loaded, ch.want, ch.retries,
-                                 root.maxFetchRetries, ch.accepted)) {
+        const relaunch = logic.shouldRelaunch(ch, root.maxFetchRetries);
+        ch.inFlight = "";
+        if (relaunch) {
             ch.retries += 1;
             Qt.callLater(() => root.launch(ch));
             return;
@@ -607,19 +606,20 @@ PluginComponent {
                 // Every account hidden: there is no number to print, and printing
                 // one computed over the hidden accounts is the leak this closes.
                 if (root.allHidden)
-                    return root.accounts.length + " accounts hidden";
+                    return root.view.totalCount === 1 ? "1 account hidden"
+                                                      : root.view.totalCount + " accounts hidden";
                 if (!root.multiAccount)
                     return root.plan || "";
                 // Counted over what is actually on screen — saying "5 accounts"
                 // beside a number derived from four of them is just wrong.
-                const shown = root.shownAccounts(root.accounts);
-                const live = shown.filter(a => a.ok).length;
-                const hidden = root.accounts.length - shown.length;
-                const unavailable = shown.length - live;
+                const unavailable = root.view.shownCount - root.view.liveCount;
                 let suffix = unavailable > 0 ? (" · " + unavailable + " unavailable") : "";
-                if (hidden > 0)
-                    suffix += " · " + hidden + " hidden";
-                return live + " accounts · " + root.headlinePct + "% used" + suffix;
+                if (root.view.hiddenCount > 0)
+                    suffix += " · " + root.view.hiddenCount + " hidden";
+                // No headline means no number: several accounts on screen and not
+                // one of them ok. The pill already renders its placeholder there.
+                const used = root.hasHeadline ? (" · " + root.headlinePct + "% used") : "";
+                return root.view.liveCount + " accounts" + used + suffix;
             }
             showCloseButton: true
 

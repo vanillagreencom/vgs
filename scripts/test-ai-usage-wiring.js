@@ -10,11 +10,11 @@
 //
 // Why source assertions at all: `scripts/qml-smoke.sh --nested` DOES host this
 // plugin — it toggles the aiUsage widget and opens its popout, so these bindings
-// really are instantiated and evaluated — but that mode is local-only (it needs
-// Hyprland and quickshell on PATH), so CI never runs it, and even locally a
-// harness cannot drive a fetch's exit path or a provider switch through the QML
-// runtime. Each assertion below matches the load-bearing token rather than the
-// statement's layout, so reformatting is free and deleting the line is not.
+// really are evaluated — but that mode is local-only (it needs Hyprland and
+// quickshell on PATH), so CI never runs it, and even locally a harness cannot
+// drive a fetch's exit path or a provider switch through the QML runtime. Each
+// assertion matches the load-bearing token rather than the statement's layout,
+// so reformatting is free and deleting the line is not.
 
 "use strict";
 
@@ -130,12 +130,12 @@ requires(accept, "acceptPayload()", [
     ["ch.issue = got.issue", "the reason is recorded on the channel that fetched it, never shared"],
     ["ch.accepted = true", "acceptance is what tells the exit path a payload arrived"],
     ["logic.acceptOutcome(logic.payloadProvider(got.data), ch.want)",
-        "the outcome is decided from the payload's own provider and what this channel wants"],
+        "decided from the payload's own provider and what this channel wants"],
     ["outcome.file", "a payload that names a provider updates that provider's pill slot"],
     ["root.noteHeadline(got.data)", "which is what files it"],
     ["outcome.satisfies", "and a payload that does not satisfy this channel goes no further"],
-    ["ch.loaded = ch.want", "the channel records what it now holds — without it the relaunch " +
-        "predicate answers true on every exit and burns the retry budget each poll"],
+    ["ch.loaded = ch.want", "the channel records what it holds; without it the relaunch " +
+        "predicate answers true on every exit and burns the budget each poll"],
     ["ch.retries = 0", "a satisfying payload restores the retry budget"],
     ["ch.primary", "only the popout's channel reaches the popout"],
     ["root.applyPayload(got.data)", "which is what shows it"]
@@ -207,10 +207,16 @@ requires(launch, "launch()", [
     ["ch.accepted = false", "a new fetch has not been answered yet"],
     ['ch.issue = ""', "and carries no failure reason yet"],
     ['ch.errorOut = ""', "and must not read the previous fetch's stderr as its own cause"],
-    ["root.failLaunch(ch)", "an assignment that did not take at all produces no signal to wait for"]
+    // The watchdog is armed in exactly the state a start begins from — tag set,
+    // process not running — so leaving the previous one running let it fire
+    // against THIS fetch: "could not run" for a healthy process, whose payload
+    // was then discarded as a mismatch and whose retry was spent.
+    ["ch.stallTimer.stop()", "the previous fetch's watchdog is disarmed before this one starts"]
 ]);
-assert.ok(launch.includes("if (!ch.proc.running)"),
-    "the synchronous failed start is checked after the assignment, not assumed away");
+assert.ok(!launch.includes("if (!ch.proc.running)"),
+    "a runtime `running = true` reads back true even for a missing binary (measured, Quickshell " +
+    "0.3.0), so a synchronous check catches nothing — and at component completion it reads false " +
+    "for a start that is merely deferred, failing a healthy fetch");
 
 // A start that fails asynchronously reports nothing at all: Qt does not emit an
 // exit for a process that never ran. Without the drain the pill sits on the
@@ -222,6 +228,11 @@ requires(channel, "the channel's runningChanged handler", [
     ["root.launch(chan)", "is applied when the process actually stops"],
     ["onTriggered: root.failLaunch(chan)", "the watchdog routes a failed start into the failure path"]
 ]);
+
+// Both failure paths are idempotent: whichever settles the fetch first owns it.
+assert.ok(body("finishFetch").includes('if (ch.inFlight === "")'),
+    "an exit arriving after the watchdog already settled must not report a second time, nor " +
+    "settle a relaunch that is by then running");
 
 requires(body("failLaunch"), "failLaunch()", [
     ['if (ch.inFlight === "")', "an exit that arrived first wins; the watchdog then does nothing"],
@@ -248,10 +259,10 @@ assert.ok(/property int maxIssueChars: \d+/.test(source),
 
 const settle = body("settleFetch");
 requires(settle, "settleFetch()", [
-    ["logic.shouldRelaunch(launchedFor, ch.loaded, ch.want, ch.retries",
-        "relaunch is decided by the shared predicate, against what this channel holds"],
-    ["root.maxFetchRetries, ch.accepted)",
-        "and against whether this fetch produced a payload at all, so a blip is retried"],
+    ["logic.shouldRelaunch(ch, root.maxFetchRetries)",
+        "relaunch is the shared predicate's, reading the channel BY FIELD: three same-typed " +
+        "provider strings in a row could be swapped, which type-checks and inverts the answer"],
+    ['if (ch.inFlight === "")', "a fetch already settled is settled once"],
     ["ch.retries += 1", "a relaunch spends a retry, or the budget bounds nothing"],
     ["Qt.callLater(() => root.launch(ch))",
         "the relaunch stays deferred and restarts only the channel that asked"],
@@ -267,6 +278,8 @@ requires(settle, "settleFetch()", [
 ]);
 assert.ok(!/launchedFor !== (root\.)?(other)?[Pp]rovider/.test(settle),
     "comparing the launch tag to the current selection is the dropped-refetch bug");
+assert.ok(settle.indexOf("logic.shouldRelaunch") < settle.indexOf('ch.inFlight = ""'),
+    "the decision reads the tag, so it is taken BEFORE the tag is cleared");
 
 const exits = handlers("onExited");
 assert.equal(exits.length, 1, "the one exit handler lives on the channel's own process");
@@ -333,18 +346,38 @@ requires(vertical, "the vertical pill", [
 assert.ok(!/headlinePct/.test(vertical),
     "a raw percentage here is how the vertical bar came to show 60% beside an error glyph");
 
+// --- one view of the payload ------------------------------------------------
+//
+// The payload's top-level plan/ok/error describe the FIRST LIVE account the
+// backend found, hidden or not: reading them directly printed a hidden account's
+// plan above a visible account's meters. One function answers all of it.
+
+requires(source, "AiUsageWidget.qml", [
+    ["readonly property var view: logic.popoutView(root.current, root.hiddenAccounts)",
+        "the popout's account-scoped state comes from one function, hidden accounts already out"],
+    ["readonly property bool ok: root.fetchError === \"\" && root.view.ok",
+        "usable is that view's answer, not the payload's top-level field"],
+    ["readonly property string plan: root.view.plan", "and so is the plan line"],
+    ["readonly property bool multiAccount: root.view.cards", "and the card path"],
+    ["readonly property bool allHidden: root.view.allHidden", "and the all-hidden case"]
+]);
+assert.ok(source.includes("root.view.error"), "and the error text");
+assert.ok(!/root\.current\.(plan|ok|error)\b/.test(source),
+    "no surface reaches past the view into the payload's top-level account fields");
+
 const details = blockFrom(source.indexOf("detailsText:"), "detailsText");
 assert.ok(details.includes("if (root.allHidden)"),
     "the header must answer the all-hidden case before it prints any percentage");
 assert.ok(details.indexOf("root.allHidden") < details.indexOf("% used"),
     "and answer it BEFORE the percentage, not after");
-assert.ok(/readonly property bool allHidden:[\s\S]{0,200}shownAccounts\(root\.accounts\)\.length === 0/
-    .test(source), "all-hidden is decided from the accounts actually on screen");
+assert.ok(details.includes("root.hasHeadline ?"),
+    "and print no percentage when there is no headline — several accounts on screen, none ok, " +
+    "where the pill already shows its placeholder");
 
 const meters = blockFrom(source.indexOf("readonly property var primaryMeters:"), "primaryMeters");
-assert.ok(meters.includes("shownAccounts(list)") && meters.includes("metersFor(shown[0])"),
-    "the single-account view renders the first SHOWN account: a hidden account contributes no " +
-    "meters, exactly as it contributes no headline");
+assert.ok(meters.includes("root.view.account") && meters.includes("root.view.flat"),
+    "the single-account view renders the account the view says is on screen, and falls back to " +
+    "the payload's own lanes only for the older shape that reports no accounts");
 
 // --- one source of provider identity ----------------------------------------
 //

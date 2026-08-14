@@ -59,7 +59,7 @@ QtObject {
     // discarded the payload at stream time and then found the selection back
     // where it started at exit time, so nothing refetched and the popout kept
     // the other provider's accounts until the poll timer — 300s+ on a
-    // multi-account machine. What matters is whether this channel now holds what
+    // multi-account machine. What matters is whether the channel now holds what
     // it wants, and whether the fetch that just finished delivered anything.
     //
     // A fetch that produced no payload is retried even when the channel already
@@ -68,12 +68,16 @@ QtObject {
     // a blip a one-second retry covers. The budget stays bounded because only an
     // accepted payload — or a provider switch — restores it, so a helper that is
     // genuinely broken still gives up after `maxRetries` and waits for the poll.
-    function shouldRelaunch(launchedFor, loadedProvider, wantProvider, retries, maxRetries, producedPayload) {
-        if (normalizeProvider(launchedFor) === "")
+    //
+    // Takes the channel itself, read BY FIELD: three same-typed provider strings
+    // in a row could be swapped, which type-checks, runs, and inverts the answer.
+    function shouldRelaunch(fetch, maxRetries) {
+        const f = fetch || {};
+        if (normalizeProvider(f.inFlight) === "")
             return false;
-        if (producedPayload && normalizeProvider(loadedProvider) === normalizeProvider(wantProvider))
+        if (f.accepted && normalizeProvider(f.loaded) === normalizeProvider(f.want))
             return false;
-        return (retries || 0) < (maxRetries || 0);
+        return (f.retries || 0) < (maxRetries || 0);
     }
 
     // The user-visible half of a failed fetch: the LAST non-empty stderr line,
@@ -233,6 +237,47 @@ QtObject {
         if (agg && agg.pct !== undefined && agg.pct !== null)
             return { pct: agg.pct };
         return null;
+    }
+
+    // What the popout shows for a payload once the hidden accounts are taken out.
+    // The payload's top-level plan/ok/error describe the FIRST LIVE account the
+    // backend found — hidden or not — so reading them directly printed a hidden
+    // account's plan above a visible account's meters, and reported healthy while
+    // the account on screen was unavailable.
+    //   cards      — several accounts were reported, so each renders its own card
+    //   account    — the one account the single-account view shows, else null
+    //   flat       — no accounts at all: the older shape, whose lanes are on the
+    //                payload itself
+    //   allHidden  — accounts were reported and the user is hiding all of them
+    //   ok / error — usable, and why not, judged by what is actually on screen
+    function popoutView(data, hidden) {
+        const accounts = (data && data.accounts) || [];
+        const shown = shownIn(accounts, hidden);
+        const cards = accounts.length > 1;
+        const account = !cards && shown.length === 1 ? shown[0] : null;
+        const payloadOk = !!data && data.ok === true;
+        const view = {
+            cards: cards,
+            account: account,
+            flat: accounts.length === 0,
+            allHidden: accounts.length > 0 && shown.length === 0,
+            totalCount: accounts.length,
+            shownCount: shown.length,
+            liveCount: shown.filter(a => a && a.ok).length,
+            hiddenCount: accounts.length - shown.length,
+            ok: payloadOk && (account === null || account.ok === true),
+            error: "",
+            // Only the single-account and flat views print a plan line; each card
+            // carries its own, and the payload's is the first LIVE account's.
+            plan: account ? (account.plan || "")
+                : (cards || !payloadOk ? "" : (data.plan || ""))
+        };
+        // No payload yet is not a failure with a cause; it is nothing known.
+        if (data && !payloadOk)
+            view.error = data.error || "usage unavailable";
+        else if (account && account.ok !== true)
+            view.error = account.error || "usage unavailable";
+        return view;
     }
 
     // --- pill composition ---------------------------------------------------
