@@ -279,6 +279,10 @@ PluginComponent {
         // A launch asked for while the previous process was still stopping, to
         // be applied when it actually stops.
         property bool pending: false
+        // Whether THIS launch produced a process — `started` is the signal for
+        // "exec succeeded", and a launch that never gets there is the only thing
+        // the watchdog is for. See AiUsageLogic.watchdogArms.
+        property bool sawProcess: false
         // The filing stamp this launch started at, so its failure can tell a
         // payload that predates it from one filed while it was running.
         property int launchSeq: 0
@@ -294,6 +298,7 @@ PluginComponent {
                 id: errCollector
                 onStreamFinished: chan.errorOut = errCollector.text
             }
+            onStarted: chan.sawProcess = true
             onExited: (exitCode, exitStatus) => root.finishFetch(chan, exitCode, exitStatus)
             onRunningChanged: {
                 if (running)
@@ -302,20 +307,24 @@ PluginComponent {
                     root.launch(chan);
                     return;
                 }
-                // Stopped with its tag still set means no exit was delivered for
-                // it — the start itself failed. Qt starts a process
-                // asynchronously and reports nothing when the executable cannot
-                // be run, so without this the pill would sit on the in-flight
-                // ellipsis for a fetch that never existed. Deferred, because an
-                // exit for this same launch may still be on its way; the timer's
-                // handler re-checks the tag and does nothing if it arrived.
-                if (chan.inFlight !== "")
+                // Stopped for a launch that never produced a process: the start
+                // itself failed. Qt starts a process asynchronously and reports
+                // nothing when the executable cannot be run, so without this the
+                // pill would sit on the in-flight ellipsis for a fetch that never
+                // existed. A launch that DID produce one is not this timer's
+                // business, whichever of `exited` and `runningChanged` lands
+                // first — arming on any stop while tagged made a slow exit read
+                // as a failed start. Deferred all the same, and the handler
+                // re-checks: `started` is not ordered against this signal either.
+                if (logic.watchdogArms(chan.inFlight, chan.sawProcess))
                     stallTimer.restart();
             }
         }
 
-        // Long enough that an exit racing the running signal always wins, short
-        // enough that a broken command is reported rather than waited out.
+        // Long enough that a `started` arriving after the stop still wins, short
+        // enough that a broken command is reported rather than waited out. It is
+        // NOT sized against the exit: a launch that produced a process never arms
+        // it, so a slow helper cannot be reported as one that never ran.
         property Timer stallTimer: Timer {
             id: stallTimer
             interval: 1000
@@ -427,6 +436,9 @@ PluginComponent {
         }
         ch.pending = false;
         ch.inFlight = ch.want;
+        // Per-fetch, like the tag: the previous launch's process says nothing
+        // about whether this one gets off the ground.
+        ch.sawProcess = false;
         // Everything filed after this point is newer than this fetch.
         ch.launchSeq = root.fileSeq;
         ch.accepted = false;
@@ -467,8 +479,12 @@ PluginComponent {
     // exit, so a missing or unrunnable CLI is reported and retried exactly like
     // a helper that ran and failed, instead of leaving the widget waiting.
     function failLaunch(ch) {
-        if (ch.inFlight === "")
-            return;  // the exit arrived after all
+        // The arming rule, asked again at the moment it would report: the fetch
+        // may have settled while the timer waited, or the process may have
+        // started after the stop. One function, two consumers — a second copy of
+        // the condition here is how it would drift.
+        if (!logic.watchdogArms(ch.inFlight, ch.sawProcess))
+            return;
         ch.issue = "could not run " + root.aiUsageCommand;
         console.warn("aiUsage: " + ch.inFlight + " fetch " + ch.issue);
         root.settleFetch(ch);

@@ -5,12 +5,12 @@ import QtQuick
 // pure, so the suites can lift that text and run the SHIPPED code rather than a
 // re-implementation. Nothing inside the markers may reference the widget, a Theme
 // token or a Qt global, and calls between these functions are unqualified — the
-// extracted text has to be plain JavaScript. Presentation (meters, status
-// classes, date and money) is AiUsageFormat.qml's: it needs Qt.locale().
+// extracted text has to be plain JavaScript. Presentation (meters, status classes,
+// date and money) is AiUsageFormat.qml's: it needs Qt.locale().
 //
-// The provider-identity rules exist because the widget used to attribute a
-// payload by comparing launch tags to the current selection, which mixed the
-// two providers' data whenever the tags raced (VGS-118).
+// These rules exist because the widget used to attribute a payload by comparing
+// launch tags to the current selection, which mixed the two providers' data
+// whenever the tags raced (VGS-118).
 QtObject {
     // BEGIN PROVIDER DECISION
 
@@ -18,12 +18,11 @@ QtObject {
     // position and its icon can never disagree.
     //
     // EXACTLY TWO, deliberately: this list drives the pill slots and the popout
-    // tabs, but the fetching around it is a pair, not a set. Adding a third entry
-    // here alone would render a slot and a tab nothing ever fills. A third
-    // provider needs, at least: a third fetch channel (the widget instantiates
-    // two, one primary and one "other"), a replacement for `otherProvider`, which
-    // is a two-way ternary on the selection, and the two-way ternaries just below
-    // — normalizeProvider, providerIcon, providerName.
+    // tabs, but the fetching around it is a pair, not a set, so a third entry
+    // here alone renders a slot and a tab nothing ever fills. A third provider
+    // needs at least a third fetch channel (the widget instantiates one primary
+    // and one "other"), a replacement for `otherProvider`, and the two-way
+    // ternaries just below — normalizeProvider, providerIcon, providerName.
     function providerOrder() {
         return ["claude", "codex"];
     }
@@ -63,18 +62,17 @@ QtObject {
     // the wrong question: claude -> codex -> claude discarded the payload at
     // stream time and found the selection back where it started at exit time, so
     // nothing refetched and the popout kept the other provider's accounts until
-    // the poll timer — 300s+ on a multi-account machine. What matters is whether
-    // the channel holds what it wants, and whether this fetch delivered anything.
+    // the poll timer. What matters is whether the channel holds what it wants,
+    // and whether this fetch delivered anything.
     //
     // A fetch that produced no payload is retried even when the channel already
     // held that provider: one empty or crashed poll otherwise dropped the widget
     // to its error state for a whole poll interval. The budget stays bounded
     // because only a payload that SATISFIES the channel restores it, along with a
-    // provider switch; a payload merely accepted but naming a provider the user
-    // has since left restores nothing, so a broken helper still gives up.
+    // provider switch — so a broken helper still gives up.
     //
     // Takes the channel itself, read BY FIELD: three same-typed provider strings
-    // in a row could be swapped, which type-checks, runs, and inverts the answer.
+    // in a row could be swapped, which type-checks and inverts the answer.
     function shouldRelaunch(fetch, maxRetries) {
         const f = fetch || {};
         if (normalizeProvider(f.inFlight) === "")
@@ -87,8 +85,7 @@ QtObject {
     // The user-visible half of a failed fetch: the LAST non-empty stderr line,
     // truncated. Last, because what exits non-zero is the Python wrapper, whose
     // first line is the traceback header and whose last names the cause.
-    // Truncated, because it comes from whichever backend is installed, reaches
-    // the popout, and lands in logs people paste into bug reports.
+    // Truncated, because it reaches the popout and the logs people paste.
     function stderrReason(text, limit) {
         const lines = String(text || "").split("\n").map(l => l.trim()).filter(l => l !== "");
         if (lines.length === 0)
@@ -99,9 +96,8 @@ QtObject {
     }
 
     // What a fetch produced: the payload, or why there is none. The reason travels
-    // WITH the result so it cannot be read as another channel's cause. A payload
-    // is JSON naming the provider its fetch was launched for; anything else is
-    // refetched, not displayed.
+    // WITH the result so it cannot be read as another channel's cause. A payload is
+    // JSON naming the provider it was launched for; anything else is refetched.
     function decodePayload(launchedFor, txt) {
         let d = null;
         try {
@@ -116,9 +112,8 @@ QtObject {
 
     // What an accepted payload means for the channel that fetched it: whether its
     // provider's pill slot takes it, and whether it is what this channel waited
-    // for. Everything else follows from `satisfies`. A payload arriving after the
-    // user switched away is still FILED — its slot is current — but satisfies
-    // nothing: the channel still owes a fetch for what is selected now.
+    // for. A payload arriving after the user switched away is still FILED — its
+    // slot is current — but satisfies nothing: the channel still owes a fetch.
     function acceptOutcome(payloadProviderName, want) {
         const p = normalizeProvider(payloadProviderName);
         return { file: p !== "", satisfies: p !== "" && p === normalizeProvider(want) };
@@ -127,11 +122,10 @@ QtObject {
     // Whether a launch can start now. Two windows make "not running" useless on
     // its own: assigning `running = true` to a Process that has not finished
     // stopping is a NO-OP, so the request must be remembered rather than dropped;
-    // and `running` goes false BEFORE the exit is delivered, so a non-empty tag
-    // with a stopped process is a launch that has not settled — the state the
-    // watchdog arms in — where starting would overwrite that launch's tag and its
-    // late exit would settle somebody else's fetch. So a non-empty tag is OWNED
-    // until the settle path clears it, whatever `running` says.
+    // and `running` can go false BEFORE the exit is delivered, so a non-empty tag
+    // with a stopped process is a launch that has not settled, where starting
+    // would overwrite its tag and its late exit would settle somebody else's
+    // fetch. A non-empty tag is OWNED until the settle path clears it.
     //   "skip"  — this channel is already fetching; its result is on its way
     //   "pend"  — unsettled or still stopping; run this request once it settles
     //   "start" — nothing in flight and nothing stopping
@@ -139,6 +133,18 @@ QtObject {
         if (inFlight !== "")
             return running ? "skip" : "pend";
         return running ? "pend" : "start";
+    }
+
+    // Whether a process that just stopped needs the failed-start watchdog. The
+    // watchdog is for ONE case: a launch that never produced a process, which
+    // delivers no exit and would leave the pill on the in-flight ellipsis. Arming
+    // on any stop while tagged made a NORMAL exit its business too — nothing
+    // orders `exited` against `runningChanged`, so an exit delivered later than
+    // the interval was reported as "could not run" for a fetch that ran and
+    // returned. A launch that did produce a process settles through that exit,
+    // whichever signal lands first.
+    function watchdogArms(inFlight, sawProcess) {
+        return inFlight !== "" && !sawProcess;
     }
 
     // --- headline arithmetic ------------------------------------------------
@@ -209,8 +215,8 @@ QtObject {
     // THE headline for a payload: the one number that stands for it, or null when
     // it cannot produce one (never fetched, signed out, API failure, or every
     // account it reported hidden). Every surface — both pill forms and the popout
-    // header — goes through this, so they cannot disagree about what a payload
-    // says, which is what let the pill show an error beside a popout showing 60%.
+    // header — goes through this, which is what let the pill show an error beside
+    // a popout showing 60%.
     function headOf(data, mode, hidden) {
         if (!data || data.ok !== true)
             return null;
@@ -222,8 +228,8 @@ QtObject {
         // over exactly those hidden accounts on the bar.
         if ((data.accounts || []).length > 0)
             return null;
-        // No accounts reported: the older single-account shape, whose lanes live on
-        // the payload. Its tightest lane, as an account's headline is.
+        // No accounts reported: the older single-account shape, whose lanes live
+        // on the payload. Its tightest lane, as an account's headline is.
         const lanes = [data.session, data.weekly, data.third];
         let peak = null;
         for (let i = 0; i < lanes.length; i++) {
@@ -245,13 +251,11 @@ QtObject {
     // the account on screen was unavailable.
     //   cards      — several accounts were reported, so each renders its own card
     //   account    — the one account the single-account view shows, else null
-    //   flat       — no accounts at all: the older shape, whose lanes are on the
-    //                payload itself
+    //   flat       — no accounts at all: the older shape, lanes on the payload
     //   allHidden  — accounts were reported and the user is hiding all of them
-    //   pending    — no payload yet and a fetch is running: still fetching, which
-    //                is NOT a failure. Without it the popout reported
-    //                "Unavailable" for every first load and every provider
-    //                switch, inventing a fault the user does not have
+    //   pending    — no payload yet and a fetch is running: NOT a failure. Without
+    //                it the popout said "Unavailable" on every first load and
+    //                every switch, inventing a fault the user does not have
     //   ok / error — usable, and why not, judged by what is actually on screen
     function popoutView(data, hidden, loading) {
         const accounts = (data && data.accounts) || [];
@@ -285,32 +289,29 @@ QtObject {
     }
 
     // "1 account" / "3 accounts". One helper, because the popout header says this
-    // on two lines — the counted line and the all-hidden line — and only one of
-    // them had a singular form: hiding a three-account payload down to one
-    // visible account read "1 accounts · 10% used · 2 hidden".
+    // on two lines and only one of them had a singular form: hiding a
+    // three-account payload down to one read "1 accounts · 10% used · 2 hidden".
     function accountCount(n) {
         const count = Number(n) || 0;
         return count === 1 ? "1 account" : count + " accounts";
     }
 
-    // THE rule, with three consumers: a newer result for a provider wins over
-    // anything an older fetch has to say. `sinceSeq` is what the asker already
-    // has — a failing fetch passes the stamp it launched at, the popout the stamp
-    // of what it shows. One function because it was one rule with three writers:
-    // guarding only the headline write left the popout claiming an error over
-    // numbers that had just landed, and gating the popout on which channel
-    // fetched left it empty when the OTHER channel filed for the selection.
-    // The ordering core: is this filed payload newer than what the asker has?
-    // `ok` is not part of it — an ok:false payload is the provider ANSWERING,
-    // and the popout has an error path for exactly that, so whether a payload is
-    // STORED is an ordering question and only what is RENDERED depends on ok.
-    // Making the store success-only left a signed-out provider showing nothing.
+    // THE ordering rule, with three consumers: is this filed payload newer than
+    // what the asker already has? `sinceSeq` is that — a failing fetch passes the
+    // stamp it launched at, the popout the stamp of what it shows. One function
+    // because it was one rule with three writers: guarding only the headline
+    // write left the popout claiming an error over numbers that had just landed,
+    // and gating the popout on which channel fetched left it empty when the OTHER
+    // channel filed for the selection. `ok` is deliberately not part of it — an
+    // ok:false payload is the provider ANSWERING, and the popout has an error
+    // path for exactly that, so only what is RENDERED depends on ok. A
+    // success-only store left a signed-out provider showing nothing.
     function newerAccepted(filed, filedAt, sinceSeq) {
         return !!filed && (filedAt || 0) > (sinceSeq || 0);
     }
 
-    // The same ordering, restricted to a usable answer. This is what a FAILURE
-    // must not displace.
+    // The same ordering, restricted to a usable answer: what a FAILURE may not
+    // displace.
     function newerSuccess(filed, filedAt, sinceSeq) {
         return newerAccepted(filed, filedAt, sinceSeq) && filed.ok === true;
     }
@@ -323,13 +324,6 @@ QtObject {
 
     // --- pill composition ---------------------------------------------------
 
-    // One pill slot. It always exists, always carries its provider's icon, and its
-    // text degrades in place: the number, "!" when the answer is not usable, an
-    // ellipsis while a fetch for it runs, an em dash when there is nothing to say.
-    // The ellipsis is not only a first fetch — an ok payload with every account
-    // hidden reaches it on each poll and settles back to the dash. Dropping the
-    // slot instead, as the old pill did, moved the surviving provider's number
-    // into the other's position with no cue that it had moved.
     // Whether a payload is usable FROM THE USER'S SIDE. Top-level `ok` is not that
     // answer: a multi-account payload is ok when ANY account succeeded, so a
     // healthy HIDDEN account made a pill whose every visible account had failed
@@ -352,6 +346,13 @@ QtObject {
         return shown.filter(a => a && a.ok).length > 0 ? "ok" : "error";
     }
 
+    // One pill slot. It always exists, always carries its provider's icon, and its
+    // text degrades in place: the number, "!" when the answer is not usable, an
+    // ellipsis while a fetch for it runs, an em dash when there is nothing to say.
+    // The ellipsis is not only a first fetch — an ok payload with every account
+    // hidden reaches it on each poll and settles back to the dash. Dropping the
+    // slot instead, as the old pill did, moved the surviving provider's number
+    // into the other's position with no cue that it had moved.
     function pillSlot(provider, head, data, fetching, selected, hidden) {
         const slot = {
             provider: provider,

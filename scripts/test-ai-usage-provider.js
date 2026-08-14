@@ -35,24 +35,24 @@ const logicSource = fs.readFileSync(LOGIC, "utf8");
 
 // This text comes from a repo file and is EXECUTED here, so it runs inside a
 // child the parent kills on a wall clock — scripts/lib/qml-region.js says what
-// that bounds.
+// that bounds and what it does not.
 const { evaluateMarked, regionOf, guardChild } = require("./lib/qml-region.js");
 
 // Returns only in the child; the parent exits with its status, so nothing below
 // this line runs in the parent.
 guardChild();
 
-// Prove the evaluator before it evaluates anything: its casual-path controls
-// (process, require, fetch, eval, the Function constructor, a planted loop).
+// Prove the evaluator before it evaluates anything: that a region which does not
+// finish becomes a fast, named red rather than a hung job.
 require("./lib/qml-region.js").selfTest();
 const {
     normalizeProvider, providerIcon, payloadProvider, payloadIsFor, shouldRelaunch,
     decodePayload, acceptOutcome, launchDecision, stderrReason, headOf, failureWins,
-    newerSuccess, pillSlot
+    newerSuccess, pillSlot, watchdogArms
 } = evaluateMarked(logicSource, "PROVIDER DECISION", [
     "normalizeProvider", "providerIcon", "payloadProvider", "payloadIsFor", "shouldRelaunch",
     "decodePayload", "acceptOutcome", "launchDecision", "stderrReason", "headOf", "failureWins",
-    "newerSuccess", "pillSlot"
+    "newerSuccess", "pillSlot", "watchdogArms"
 ], "AiUsageLogic.qml");
 
 
@@ -285,6 +285,62 @@ assert.equal(launchDecision("claude", false), "pend",
         request("codex");
     assert.equal(channel.starts, 2, "the parked provider change runs once the channel settles");
     assert.equal(channel.inFlight, "codex", "for the provider that was asked for");
+}
+
+// --- the watchdog fires only for a launch that never produced a process ------
+//
+// `exited` and `runningChanged` are not ordered against each other, and the
+// watchdog used to arm on ANY stop while the tag was set: a normal exit landing
+// later than the interval was then reported as "could not run" for a fetch that
+// ran and returned. Both orders are driven below. The glue is the whole of what
+// the widget's handlers do — onStarted records the process, onExited settles,
+// onRunningChanged arms, the timer reports — and
+// scripts/test-ai-usage-wiring.js pins that the widget has exactly that glue.
+{
+    const replay = signals => {
+        const ch = { inFlight: "claude", sawProcess: false, armed: false, settled: [] };
+        const step = {
+            started: () => { ch.sawProcess = true; },
+            exited: () => {
+                if (ch.inFlight === "")
+                    return;
+                ch.settled.push("exit");
+                ch.inFlight = "";
+            },
+            stopped: () => {
+                if (watchdogArms(ch.inFlight, ch.sawProcess))
+                    ch.armed = true;
+            },
+            // The armed timer coming due: it asks the same rule again, because
+            // the fetch may have settled or the process started while it waited.
+            watchdog: () => {
+                if (!ch.armed || !watchdogArms(ch.inFlight, ch.sawProcess))
+                    return;
+                ch.settled.push("failed-start");
+                ch.inFlight = "";
+            }
+        };
+        for (const name of signals)
+            step[name]();
+        return ch;
+    };
+
+    assert.deepEqual(replay(["started", "exited", "stopped", "watchdog"]).settled, ["exit"],
+        "the measured order on Quickshell 0.3.0 — exit first — settles as an exit");
+
+    const slow = replay(["started", "stopped", "watchdog", "exited"]);
+    assert.deepEqual(slow.settled, ["exit"],
+        "and so does the OTHER order: a process that ran and returned late must settle as its " +
+        "own exit, never as a start that never happened");
+    assert.equal(slow.armed, false,
+        "the watchdog is not even armed for it — a launch that produced a process is not its " +
+        "business, whichever signal lands first");
+
+    const failed = replay(["stopped", "watchdog"]);
+    assert.deepEqual(failed.settled, ["failed-start"],
+        "while a genuine failed start — no process, so no exit is ever coming — is still " +
+        "reported rather than leaving the pill on the in-flight ellipsis forever");
+    assert.equal(failed.inFlight, "", "and its tag is cleared, so the channel can fetch again");
 }
 
 // The account shape these ordering cases file.

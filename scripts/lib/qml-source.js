@@ -23,6 +23,25 @@ const assert = require("node:assert/strict");
 // renaming or reshaping it still fails.
 const flat = text => String(text).replace(/\s+/g, " ");
 
+// How many times `token` appears in the block AS CODE: matched with its own
+// literal text on the comment-blanked view, then confirmed at the same offset on
+// the structure view, where a string's contents are blanked away — so a match
+// that lives inside a string literal has nothing but spaces there and does not
+// count. Whitespace in the token matches any run of whitespace, which is what
+// makes re-wrapping a call across lines free while renaming it still fails.
+function codeOccurrences(literalView, structureView, token) {
+    const shape = flat(codeOnly(token));
+    const at = new RegExp(
+        flat(token).replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/ /g, "\\s+"), "g");
+    let seen = 0;
+    let hit;
+    while ((hit = at.exec(literalView)) !== null) {
+        if (flat(structureView.slice(hit.index, hit.index + hit[0].length)) === shape)
+            seen += 1;
+    }
+    return seen;
+}
+
 // One walk over the source, answering where the comments are and where the
 // string literals are. A comment marker inside a string is text, and a quote
 // inside a comment is text: whichever opens first owns the run.
@@ -167,43 +186,39 @@ module.exports = function qmlSource(source, fileLabel) {
     // Every token has to be present, each named on its own so a failure says
     // which line went missing.
     //
-    // TWO views, deliberately, and they must not be unified — the callers want
-    // opposite things and dropping either one reopens a hole:
-    //
-    //   * STRUCTURE (comments and string CONTENTS blanked) decides whether the
-    //     statement is there. A pinned statement whose text survives only inside
-    //     a string literal — `const decoy = "root.current = d"` — satisfied a
-    //     search that kept string contents, so deleting the real assignment left
-    //     the guard green.
-    //   * LITERALS (comments blanked, strings intact) then confirms the token's
-    //     own literal text, because the structure view blanks every string to the
-    //     same run of spaces, so `x = "foo"` and `x = "bar"` are one shape there.
+    // ONE occurrence has to satisfy the whole pin. Two things must hold — the
+    // token's exact text, literals and all, and that the text is CODE rather
+    // than the inside of a string — and asking them of two views SEPARATELY let
+    // two different statements answer them: one supplying the shape, an
+    // unrelated one supplying the literal inside a string, with the statement
+    // the pin names absent. So the search runs once, on the comment-blanked view
+    // where literals are intact, and every hit is confirmed to be code AT THAT
+    // SAME OFFSET on the structure view. Both views come out of blankRanges,
+    // which blanks in place, and an offset therefore means the same thing in
+    // each — that is what makes "the same occurrence" checkable at all.
     //
     // Ban assertions elsewhere in the suites use stripComments directly: they
-    // must SEE literals, which is the same reason this needs both views.
+    // must SEE literals, which is why the literal-bearing view is the one
+    // searched here.
     //
     // A pair may carry an exact occurrence count: [token, why, count]. Presence
     // alone could not express "twice" — listing a token in two pairs was
     // satisfied by ONE occurrence — and it cannot express "once and no more"
     // either, which is how an immediate deferral would creep back beside a
-    // delayed retry. The count is taken on the structure view.
+    // delayed retry.
     function requires(block, where, pairs) {
-        const structureHay = flat(codeOnly(block));
-        const literalHay = flat(stripComments(block));
+        const literalView = stripComments(block);
+        const structureView = codeOnly(block);
         for (const [token, why, count] of pairs) {
-            const structureNeedle = flat(codeOnly(token));
-            const literalNeedle = flat(token);
+            const seen = codeOccurrences(literalView, structureView, token);
             if (count === undefined) {
-                assert.ok(structureHay.includes(structureNeedle),
-                    `${where} must keep \`${token}\` as CODE — ${why}`);
+                assert.ok(seen > 0,
+                    `${where} must keep \`${token}\` as CODE, with its own literals — ${why}`);
             } else {
-                const seen = structureHay.split(structureNeedle).length - 1;
                 assert.equal(seen, count,
                     `${where} must keep \`${token}\` exactly ${count} time(s) as code, found ` +
                     `${seen} — ${why}`);
             }
-            assert.ok(literalHay.includes(literalNeedle),
-                `${where} must keep \`${token}\` with its own literals — ${why}`);
         }
     }
 
@@ -315,6 +330,17 @@ module.exports.selfTest = function selfTest() {
         assert.throws(
             () => literal.requires(literal.body("f"), "f()", [['ch.issue = "something else"', "x"]]),
             "a different literal must not satisfy a pin, which the structure view alone would allow");
+        // The composition the two views defeated while they were searched
+        // independently: the SHAPE comes from one statement and the LITERAL from
+        // an unrelated one, and the statement the pin names is nowhere.
+        const split = module.exports(
+            'function f() {\n    ch.issue = "other";\n    const decoy = \'ch.issue = "could not run"\';\n}',
+            "self-test");
+        assert.throws(
+            () => split.requires(split.body("f"), "f()",
+                [['ch.issue = "could not run"', "one statement, not two halves"]]),
+            "a pin satisfied by a SHAPE from one statement and a LITERAL from another must FAIL: " +
+            "the statement it names is absent, which is the whole thing a pin claims");
     }
 
     // --- a comment mentioning a signature must not become the block ---

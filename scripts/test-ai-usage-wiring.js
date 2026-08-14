@@ -7,9 +7,9 @@
 // and then ignored. This suite parses only; it executes nothing.
 //
 // Why source assertions at all: `qml-smoke.sh --nested` DOES host this plugin,
-// but it is local-only (Hyprland and quickshell on PATH) so CI never runs it,
-// and a harness cannot drive a fetch's exit path through the QML runtime. Tokens
-// match with whitespace flattened: reformatting is free, deleting is not.
+// but it is local-only (Hyprland and quickshell on PATH) so CI never runs it, and
+// a harness cannot drive a fetch's exit path through the QML runtime. Tokens match
+// with whitespace flattened: reformatting is free, deleting is not.
 
 "use strict";
 
@@ -27,9 +27,8 @@ const { blockFrom, body, handlers, requires, indexOf, lastIndexOf, stripComments
     require("./lib/qml-source.js")(source, "AiUsageWidget.qml");
 
 // Bans read the source with comments blanked: prose MENTIONING a banned name is
-// not that name. Landmarks go through indexOf/lastIndexOf, which search the same
-// way, and requires() searches a structure-only view — see the library for why
-// those two differ.
+// not that name. Landmarks go through indexOf/lastIndexOf, which search a
+// structure-only view; requires() needs both — see the library for why.
 const code = stripComments(source);
 
 // Prove the walk and the stripper before anything leans on them: the library's
@@ -102,7 +101,7 @@ requires(channel, "FetchChannel", [
     ["property Process proc: Process {", "the channel owns its process"],
     ["stdout: StdioCollector {", "and its stdout collector"],
     ["stderr: StdioCollector {", "and its stderr collector"],
-    ["property Timer stallTimer: Timer {", "and the watchdog that reports a start that never ran"],
+    ["property Timer stallTimer: Timer {", "the watchdog that reports a start that never ran"],
     ["property Timer retryTimer: Timer {", "and the timer its retries wait on"],
     ["onTriggered: root.launch(chan)", "which relaunches THIS channel when the wait is over"],
     ['property string want: ""', "and the provider it fetches"],
@@ -114,16 +113,15 @@ requires(channel, "FetchChannel", [
         "fills text once the stream closes, and that is the repo idiom"],
     ["onExited: (exitCode, exitStatus) => root.finishFetch(chan, exitCode, exitStatus)",
         "the exit carries both the code and the status of THIS channel's process"],
+    ["onStarted: chan.sawProcess = true",
+        "and a launch that produced a process records it, which is what tells a slow exit from " +
+        "a start that never ran"],
     ['command: [root.aiUsageCommand, "ai-usage", chan.want]',
         "the process fetches the provider its own channel wants"]
 ]);
 
 // Nothing outside the component may name a process or a collector — that is what
 // makes the pairing structural.
-// The block starts at its OPEN BRACE, not at the `component` keyword: slicing
-// from the keyword left the component's last ~33 characters inside `outside`.
-// Latent today — that tail is `issue = ""; } }`, which carries no banned name —
-// but the span has to be the one blockFrom actually walked.
 // The span removed must BE the block blockFrom walked: it starts at the open
 // brace, not at the `component` keyword ~33 characters earlier, which left the
 // block's tail inside `outside`. Latent — that tail carries no banned name —
@@ -165,19 +163,20 @@ requires(launch, "launch()", [
     ["ch.pending = true", "which is what parks it"],
     ["ch.inFlight = ch.want", "a start tags the channel with what it is fetching"],
     ["ch.proc.running = true", "and runs the channel's own process"],
-    // Per-fetch resets: `accepted` carrying over from the previous fetch makes a
-    // poll that produced nothing read as satisfied, so the widget holds the old
-    // numbers with nothing standing behind them — silently.
+    // Per-fetch resets: `accepted` carrying over makes a poll that produced
+    // nothing read as satisfied, so the widget silently holds the old numbers.
     ["ch.accepted = false", "a new fetch has not been answered yet"],
     ['ch.issue = ""', "and carries no failure reason yet"],
     ['ch.errorOut = ""', "and must not read the previous fetch's stderr as its own cause"],
     ["ch.retryTimer.stop()", "and supersedes any retry still waiting to fire"],
     ["ch.launchSeq = root.fileSeq", "and stamps the launch, so its failure can order itself"],
-    // The watchdog is armed in exactly the state a start begins from — tag set,
-    // process not running — so leaving the previous one running let it fire
-    // against THIS fetch: "could not run" for a healthy process, whose payload
-    // was then discarded and whose retry was spent.
-    ["ch.stallTimer.stop()", "the previous fetch's watchdog is disarmed first"]
+    // The watchdog was left running across a launch once: it then fired against
+    // THIS fetch — "could not run" for a healthy process, whose payload was
+    // discarded and whose retry was spent.
+    ["ch.stallTimer.stop()", "the previous fetch's watchdog is disarmed first"],
+    ["ch.sawProcess = false",
+        "and the previous launch's process is forgotten, or a failed start after a good fetch " +
+        "would be waited out as though a process were still running"]
 ]);
 assert.ok(!stripComments(launch).includes("if (!ch.proc.running)"),
     "a runtime `running = true` reads back true even for a missing binary (measured, Quickshell " +
@@ -187,8 +186,10 @@ assert.ok(!stripComments(launch).includes("if (!ch.proc.running)"),
 // A start that fails asynchronously reports nothing: Qt emits no exit for a
 // process that never ran.
 requires(channel, "the channel's runningChanged handler", [
-    ['if (chan.inFlight !== "")', "a process that stopped with its tag still set had no exit"],
-    ["stallTimer.restart()", "so the watchdog is armed"],
+    ["logic.watchdogArms(chan.inFlight, chan.sawProcess)",
+        "the watchdog is armed for a launch that never produced a process — arming on ANY stop " +
+        "while tagged made a slow exit read as a start that never ran"],
+    ["stallTimer.restart()", "which is what arms it"],
     // One statement: `root.launch(chan)` alone also occurs in the retry handler.
     ["if (chan.pending) { root.launch(chan);",
         "and a parked launch is applied when the process actually stops"],
@@ -201,7 +202,10 @@ assert.ok(body("finishFetch").includes('if (ch.inFlight === "")'),
     "settle a relaunch that is by then running");
 
 requires(body("failLaunch"), "failLaunch()", [
-    ['if (ch.inFlight === "")', "an exit that arrived first wins; the watchdog does nothing"],
+    ["if (!logic.watchdogArms(ch.inFlight, ch.sawProcess))",
+        "the arming rule is asked again at the moment of reporting — one function, so a fetch " +
+        "that settled or a process that started while the timer waited is never called a " +
+        "failed start"],
     ['ch.issue = "could not run " + root.aiUsageCommand', "a failed start names the command"],
     ["console.warn", "and says so in the log"],
     ["root.settleFetch(ch)", "then settles like a failed exit — retried, then reported"]]);
@@ -241,10 +245,10 @@ requires(settle, "settleFetch()", [
         "the wait grows with the attempt number rather than being one fixed tick"],
     ["ch.retryTimer.restart()", "and the retry runs off that timer, not the event loop"],
     ["ch.stallTimer.stop()", "a settled fetch stops its own watchdog"],
-    // A request parked while this launch was unsettled runs when the tag clears,
-    // and stays IMMEDIATE: the process it waited on has already stopped. Counted,
-    // because one occurrence used to satisfy two presence pairs — and because an
-    // immediate retry creeping back beside the delayed one shows up here.
+    // A parked request runs when the tag clears, and stays IMMEDIATE: the process
+    // it waited on has already stopped. Counted, because one occurrence used to
+    // satisfy two presence pairs, and an immediate retry creeping back beside the
+    // delayed one shows up here.
     ["if (ch.pending)", "a parked request is drained when the channel settles", 1],
     ["Qt.callLater(() => root.launch(ch))",
         "by launching it promptly — and this is the ONLY immediate deferral left in settleFetch", 1],
@@ -309,10 +313,9 @@ assert.ok(invalidateAt < refetchAt,
     "under the new provider's label");
 
 assert.equal((code.match(/root\.current = /g) || []).length, 2,
-    "root.current is written in exactly two places: applyPayload and the reset");
+    "root.current is written in exactly two places: the promotion path and the switch's reset");
 
 // --- one headline owner -----------------------------------------------------
-//
 // Bar, vertical bar and popout header all come from headOf, or they contradict
 // each other: with both accounts hidden they showed "!", 60% and "0 accounts ·
 // 60% used" at once.
@@ -336,7 +339,6 @@ assert.ok(!/headlinePct/.test(stripComments(vertical)),
     "a raw percentage here is how it came to show 60% beside an error glyph");
 
 // --- one view of the payload -------------------------------------------------
-//
 // The payload's top-level plan/ok/error describe the FIRST LIVE account the
 // backend found, hidden or not — one function answers all of it instead.
 
@@ -363,8 +365,7 @@ assert.ok(details.includes("if (root.allHidden)"),
     "the header must answer the all-hidden case before it prints any percentage");
 assert.ok(details.indexOf("root.allHidden") < details.indexOf("% used"),
     "and answer it BEFORE the percentage, not after");
-// A count concatenated with a bare " account(s)" literal is the shape that lost
-// the singular; the page's own prose about accounts is not.
+// A count concatenated with a bare " account(s)" literal lost the singular.
 const detailsCode = stripComments(details);
 assert.ok(!/\+\s*" accounts?\b/.test(detailsCode),
     "both header lines count accounts through logic.accountCount(), so neither can lose its " +
@@ -381,7 +382,6 @@ assert.ok(meters.includes("root.view.account") && meters.includes("root.view.fla
     "the payload's own lanes only for the older shape that reports no accounts");
 
 // --- one source of provider identity ----------------------------------------
-//
 // The pill slots are built from AiUsageLogic; the popout's tabs must be too, or
 // they can disagree about a provider's name or icon.
 
