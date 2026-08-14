@@ -141,138 +141,14 @@ Live-machine etiquette:
   source of truth for pending work. Read or write it only on request, or when resuming from one.
 
 ## Validation
-Scope to the area touched (Go-only: inventory guard + go block; QML-only: naming, QML smoke, surfaces; helper: py_compile + helper checks; packaging: the three packaging checks; docs-only: check-doc-growth.py); run the full suite for cross-cutting work:
-```bash
-scripts/check-naming.sh
-scripts/check-format-lint.sh
-python3 scripts/lib/shell_scan.py
-scripts/check-validation-inventory.py
-scripts/check-doc-growth.py
-scripts/gen-package-metadata.py
-scripts/check-package-assets.sh
-scripts/check-aur-sync.py
-scripts/check-command-declarations.py
-node --check scripts/check-settings-migration.js
-scripts/check-settings-migration.js
-scripts/test-restyle-queue.js
-scripts/test-theme-requests.js
-scripts/test-sudo-toggle-confirm.js
-scripts/test-latest-transaction-queue.js
-scripts/test-bundled-override.js
-scripts/test-plugin-requirement-report.js
-scripts/test-toast-actions.js
-scripts/check-notification-takeover.js
-scripts/test-remote-desktop-state.js
-scripts/test-idle-reload-snapshot.js
-scripts/test-idle-lock-request.js
-scripts/check-vshell-helper.py
-scripts/check-brightness.py
-scripts/check-backend-inventory.py
-scripts/check-backend-inventory-tests.py
-scripts/check-lock-reload-order.py
-scripts/check-display-config-fixtures.js
-scripts/check-vgs-menu-capabilities.js
-scripts/check-vshell-ipc.sh
-scripts/test-smoke-surfaces.sh
-scripts/test-pill-hover-safety.js
-python3 -m py_compile bin/vshell-helper
-bash -n bin/vshell
-git diff --check
-scripts/check-workflows.sh
-scripts/check-coderabbit-config.py
-scripts/check-review-gate-vendor.sh
-third_party/review-gate/scripts/review-predicate-selftest.sh
-third_party/review-gate/tests/pr-watch.test.sh
-third_party/review-gate/tests/review-writer.test.sh
-third_party/review-gate/tests/review-writer-template.test.sh
-scripts/check-size-ratchet-vendor.sh
-third_party/size-ratchet/scripts/size-ratchet
-third_party/size-ratchet/tests/bash32-portability.test.sh
-third_party/size-ratchet/tests/collection-fail-closed.test.sh
-third_party/size-ratchet/tests/ratchet-directions.test.sh
-third_party/size-ratchet/tests/settings-and-config.test.sh
-third_party/size-ratchet/tests/update-tightens.test.sh
-scripts/qml-smoke.sh --nested --require-static
-scripts/check-validation-safety.sh
-scripts/check-label-taxonomy.py
-scripts/smoke-surfaces.sh
-(cd backend && go build ./... && go vet ./... && go test -race ./...)
-```
-
-Every command above runs exactly as written, and
-`scripts/check-validation-inventory.py` enforces it in both directions: every
-executable check under `scripts/` must appear here and in CI or carry a
-written exclusion (VGS-50), and every command here must be runnable as written
-— the scripts invoked bare all carry the executable bit (VGS-30). The
-interpreter prefixes that do appear are deliberate: `node --check`,
-`python3 -m py_compile` and `bash -n` are syntax checks over a file, and
-`scripts/lib/` holds non-executable libraries reached only by import, sourcing,
-or an explicit interpreter — `python3 scripts/lib/shell_scan.py` runs a
-library's self-test (`shell_scan.py` carries a `__main__` only for that;
-`session-snapshot.sh` is sourced, never run). `bin/vshell_niri.py`,
-`bin/vshell_niri_kdl.py` and `bin/vshell_theme_color.py` likewise stay
-importable modules with no shebang and no `__main__`.
-
-### What CI covers, and what it cannot
-
-`.github/workflows/ci.yml` runs this suite on every pull request targeting
-`main`, on merge-queue entries, and on `main` pushes. The merge queue requires
-`CI / ci-ok`, the workflow's one *suite* job — one job is deliberate: at ~30s
-of total compute, per-job overhead dominates, so there are no lanes, no
-nightly, no Go caching, and the 2 vCPU runner tier. The measured economics
-behind that shape, and the commands to re-measure them, live in
-`docs/decisions/D007-ci-single-job-economics.md`.
-
-`Review gate` **is** the second required check: `main merge queue` requires
-`ci-ok` and `Review gate`. They differ in kind — `ci-ok` is the check run
-from `ci.yml`'s job of that name; `Review gate` is a commit status the writer
-posts. Require the writer's STATUS, never its job name: the writer job on PR
-heads is the relay (`Request a gate convergence pass`), so a required
-`Evaluate and write the review gate` would block every PR. Live list:
-
-```bash
-gh api repos/vanillagreencom/vgs/rulesets/20260238 \
-  --jq '.rules[]|select(.type=="required_status_checks").parameters.required_status_checks[].context'
-```
-
-See § Review gate.
-
-Some checks in the list above **cannot run in CI**, and one runs there only
-through another entry. Both categories are deliberate, and
-`scripts/check-validation-inventory.py` cross-compares the two tables below
-against its own `LOCAL_ONLY` and `INDIRECT_IN_CI` maps, so the prose and the
-code cannot disagree silently.
-
-**Local-only — CI cannot run these at all:**
-
-| Check | Why it is local-only |
-|-------|----------------------|
-| `scripts/check-label-taxonomy.py` | Compares `vstack.toml`'s label taxonomy against live Linear; CI has no Linear credentials and no local cache. It FAILS rather than skipping when the inventory is unreachable — `--allow-missing-inventory` is the explicit "I accept the sweep did not happen". |
-| `scripts/check-review-gate-vendor.sh` | Compares the tracked engine at `third_party/review-gate/` against the `vstack refresh`-managed copy under `.agents/`, which a CI checkout does not have. |
-| `scripts/check-size-ratchet-vendor.sh` | Same two-copy situation for the size-ratchet engine at `third_party/size-ratchet/`; CI runs the vendored engine, this check keeps it matching the `.agents/` copy. |
-| `scripts/smoke-surfaces.sh` | Needs a **live** Hyprland VGS session and reads `hyprctl layers`. Anywhere else it prints a skip and exits 0, so running it in CI would manufacture a false green. |
-
-**Reached indirectly — CI runs these through another entry, not by name:**
-
-| Check | How CI reaches it |
-|-------|-------------------|
-| `scripts/qml-smoke.sh` | `scripts/check-validation-safety.sh --require-static` forwards the flag to the smoke, so the **static** half runs in CI. Only `--nested` is local-only: its sandbox needs both Hyprland and `quickshell` on PATH, neither reasonably installable on a runner. |
-
-`scripts/check-aur-sync.py` runs only its offline half on a PR (PKGBUILD
-against `.SRCINFO`); comparing against what the AUR actually publishes needs
-network and is owned by `.github/workflows/publish-aur.yml`. Run
-`scripts/check-aur-sync.py --remote` by hand when you want that answer now.
-
-So a green PR proves the static suite and the Go block. It does **not** prove
-the shell starts or that its surfaces are sane. Run
-`scripts/qml-smoke.sh --nested --require-static` and
-`scripts/smoke-surfaces.sh` locally before finishing QML work.
-`scripts/smoke-surfaces.sh` only works from the checkout owning the live
-session, and reports which case it hit: a named skip when no VGS shell is
-live, a failure naming the owning checkout when one is live but foreign —
-even when this checkout's own shell is also live, since `hyprctl layers`
-aggregates every Quickshell instance on the seat. Run it from the owning
-checkout; do not read its refusal as a pass (VGS-69).
+The suite is `scripts/validate [AREA]` — areas `go`, `qml`, `helper`,
+`packaging`, `docs`, `all`. Scope to the area you touched; run `all` for
+cross-cutting work. The command manifest, the per-area scoping, and what a green
+CI run does and does not prove live in that runner's header;
+`.github/instructions/ci.instructions.md` § "What CI covers, and what it cannot"
+carries the local-only and reached-indirectly tables, and
+`scripts/check-validation-inventory.py` enforces the runner against CI and
+`scripts/` in both directions (VGS-50, VGS-30).
 
 ### Review gate
 
@@ -326,17 +202,6 @@ CodeRabbit silently review with **default** settings, which once left the whole
 file inert on every PR, so `scripts/check-coderabbit-config.py` validates it
 against CodeRabbit's own schema, vendored at `third_party/coderabbit-schema/`
 so the check is offline.
-
-One other local/CI difference: the bare `git diff --check` above is a
-working-tree check, so on a clean CI checkout it would inspect nothing. CI
-diffs a range instead — on **every** event, with exactly one defined base per
-event, documented and enforced in the workflow's whitespace step. **There is
-no fallback base, deliberately**: if the base cannot be resolved the step
-fails rather than substituting a narrower range, which would pass while
-claiming coverage it does not have. A whole-tree check is deliberately not
-used — the tree's ~1,000 pre-existing findings all sit in content VGS ships
-verbatim; figures and derivation in
-`docs/decisions/D007-ci-single-job-economics.md`.
 
 ### Never launch a second shell into the live session
 Never run `qs -c vshell` or `qs -p quickshell/vshell`: each starts a **full second

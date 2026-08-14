@@ -1,0 +1,212 @@
+#!/usr/bin/env bash
+# The VGS validation suite: one runner, one manifest (VGS-123).
+#
+# This list used to live in AGENTS.md § Validation, where every agent session
+# re-read forty command lines and a script machine-parsed them — which is what a
+# manifest is, not prose. It lives here now, and AGENTS.md carries a pointer.
+#
+#   scripts/validate [AREA]            AREA: go|qml|helper|packaging|docs|all
+#   scripts/validate --list [AREA]     print the commands without running them
+#
+# Scope to the area touched; run `all` for cross-cutting work. Every selected
+# command runs — failures are collected rather than fail-fast — and the summary
+# names every failing command, because that set is what a dev agent reports as
+# `FAILING: ...` and a first failure must not hide the rest.
+#
+# `scripts/check-validation-inventory.py` parses the MANIFEST_EOF block below
+# and enforces it in both directions: every executable check under `scripts/`
+# must appear here and in CI or carry a written exclusion (VGS-50), and every
+# command here must be runnable exactly as written (VGS-30). The interpreter
+# prefixes that do appear are deliberate: `node --check`, `python3 -m
+# py_compile` and `bash -n` are syntax checks over a file, and `scripts/lib/`
+# holds non-executable libraries reached only by import, sourcing, or an
+# explicit interpreter — `python3 scripts/lib/shell_scan.py` runs a library's
+# self-test (`shell_scan.py` carries a `__main__` only for that;
+# `session-snapshot.sh` is sourced, never run). `bin/vshell_niri.py`,
+# `bin/vshell_niri_kdl.py` and `bin/vshell_theme_color.py` likewise stay
+# importable modules with no shebang and no `__main__`.
+#
+# WHAT CI COVERS, AND WHAT IT CANNOT
+#
+# `.github/workflows/ci.yml` runs this suite on every pull request targeting
+# `main`, on merge-queue entries, and on `main` pushes; the merge queue requires
+# `CI / ci-ok` and the `Review gate` status. The prose form of that posture —
+# the required checks, the local-only and reached-indirectly tables with the
+# reason for each, and why the whitespace check is range-scoped in CI — lives in
+# `.github/instructions/ci.instructions.md`, and the measured economics behind
+# the one-job shape in `docs/decisions/D007-ci-single-job-economics.md`.
+#
+# The short version, for whoever is about to trust a green PR: it proves the
+# static suite and the Go block. It does NOT prove the shell starts or that its
+# surfaces are sane. `scripts/qml-smoke.sh --nested --require-static` and
+# `scripts/smoke-surfaces.sh` are local-only and must be run by hand before
+# finishing QML work. `scripts/smoke-surfaces.sh` only works from the checkout
+# owning the live session and reports which case it hit; do not read its refusal
+# as a pass (VGS-69). `scripts/check-aur-sync.py` runs only its offline half
+# here — `--remote` compares against what the AUR publishes and needs network.
+
+# `-e` is on, and the suite loop below deliberately does not rely on it: each
+# check runs inside an `if !` condition, where errexit is suppressed, so one
+# failing check is collected rather than aborting the run.
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)" || exit 1
+cd "$repo_root" || exit 1
+
+# AREAS | COMMAND. Areas are comma-separated tags, `-` for a command that only
+# the full suite runs. The per-area sets are the scoping AGENTS.md used to state
+# in prose: go = the backend capability inventory guard plus the Go block;
+# qml = naming, the QML smoke, surfaces; helper = the helper checks plus the
+# py_compile/bash -n syntax pass; packaging = the three packaging checks;
+# docs = the instruction-surface growth ratchet.
+manifest() {
+  cat <<'MANIFEST_EOF'
+qml       | scripts/check-naming.sh
+-         | scripts/check-format-lint.sh
+-         | python3 scripts/lib/shell_scan.py
+-         | scripts/check-validation-inventory.py
+docs      | scripts/check-doc-growth.py
+packaging | scripts/gen-package-metadata.py
+packaging | scripts/check-package-assets.sh
+packaging | scripts/check-aur-sync.py
+-         | scripts/check-command-declarations.py
+-         | node --check scripts/check-settings-migration.js
+-         | scripts/check-settings-migration.js
+-         | scripts/test-restyle-queue.js
+-         | scripts/test-theme-requests.js
+-         | scripts/test-sudo-toggle-confirm.js
+-         | scripts/test-latest-transaction-queue.js
+-         | scripts/test-bundled-override.js
+-         | scripts/test-plugin-requirement-report.js
+-         | scripts/test-toast-actions.js
+-         | scripts/check-notification-takeover.js
+-         | scripts/test-remote-desktop-state.js
+-         | scripts/test-idle-reload-snapshot.js
+-         | scripts/test-idle-lock-request.js
+helper    | scripts/check-vshell-helper.py
+helper    | scripts/check-brightness.py
+go        | scripts/check-backend-inventory.py
+go        | scripts/check-backend-inventory-tests.py
+-         | scripts/check-lock-reload-order.py
+-         | scripts/check-display-config-fixtures.js
+-         | scripts/check-vgs-menu-capabilities.js
+-         | scripts/check-vshell-ipc.sh
+-         | scripts/test-smoke-surfaces.sh
+-         | scripts/test-pill-hover-safety.js
+helper    | python3 -m py_compile bin/vshell-helper
+helper    | bash -n bin/vshell
+-         | git diff --check
+-         | scripts/check-workflows.sh
+-         | scripts/check-coderabbit-config.py
+-         | scripts/check-review-gate-vendor.sh
+-         | third_party/review-gate/scripts/review-predicate-selftest.sh
+-         | third_party/review-gate/tests/pr-watch.test.sh
+-         | third_party/review-gate/tests/review-writer.test.sh
+-         | third_party/review-gate/tests/review-writer-template.test.sh
+-         | scripts/check-size-ratchet-vendor.sh
+-         | third_party/size-ratchet/scripts/size-ratchet
+-         | third_party/size-ratchet/tests/bash32-portability.test.sh
+-         | third_party/size-ratchet/tests/collection-fail-closed.test.sh
+-         | third_party/size-ratchet/tests/ratchet-directions.test.sh
+-         | third_party/size-ratchet/tests/settings-and-config.test.sh
+-         | third_party/size-ratchet/tests/update-tightens.test.sh
+qml       | scripts/qml-smoke.sh --nested --require-static
+-         | scripts/check-validation-safety.sh
+-         | scripts/check-label-taxonomy.py
+qml       | scripts/smoke-surfaces.sh
+go        | (cd backend && go build ./... && go vet ./... && go test -race ./...)
+MANIFEST_EOF
+}
+
+AREAS=(go qml helper packaging docs all)
+
+usage() {
+  printf 'usage: scripts/validate [--list] [%s]\n' "$(
+    IFS='|'
+    printf '%s' "${AREAS[*]}"
+  )" >&2
+}
+
+list_only=0
+area=all
+for arg in "$@"; do
+  case "$arg" in
+    --list) list_only=1 ;;
+    -h | --help)
+      usage
+      exit 0
+      ;;
+    -*)
+      printf 'scripts/validate: unknown option %s\n' "$arg" >&2
+      usage
+      exit 2
+      ;;
+    *) area="$arg" ;;
+  esac
+done
+
+# An unknown area must never degrade to "run everything" or "run nothing": both
+# would exit reporting a scope that was never the one asked for.
+matched_area=0
+for known in "${AREAS[@]}"; do
+  if [[ "$area" == "$known" ]]; then
+    matched_area=1
+  fi
+done
+if [[ $matched_area -eq 0 ]]; then
+  printf 'scripts/validate: unknown area %s\n' "$area" >&2
+  usage
+  exit 2
+fi
+
+# Commands selected for this area, in manifest order.
+selected=()
+while IFS='|' read -r tags cmd; do
+  tags="${tags//[[:space:]]/}"
+  while [[ "$cmd" == [[:space:]]* ]]; do cmd="${cmd:1}"; done
+  while [[ "$cmd" == *[[:space:]] ]]; do cmd="${cmd:0:${#cmd}-1}"; done
+  if [[ -z "$cmd" ]]; then
+    continue
+  fi
+  if [[ "$area" != all ]]; then
+    [[ ",$tags," == *",$area,"* ]] || continue
+  fi
+  selected+=("$cmd")
+done < <(manifest)
+
+if [[ ${#selected[@]} -eq 0 ]]; then
+  # Unreachable while every area tag names at least one row. If the manifest is
+  # ever edited into that state, say so rather than exiting 0 over nothing.
+  printf 'scripts/validate: area %s selects no commands — the manifest lost its rows\n' \
+    "$area" >&2
+  exit 2
+fi
+
+if [[ $list_only -eq 1 ]]; then
+  printf '%s\n' "${selected[@]}"
+  exit 0
+fi
+
+failed=()
+for cmd in "${selected[@]}"; do
+  printf '\n== %s\n' "$cmd"
+  if ! eval "$cmd"; then
+    failed+=("$cmd")
+  fi
+done
+
+printf '\n'
+plural=s
+if [[ ${#selected[@]} -eq 1 ]]; then
+  plural=
+fi
+if [[ ${#failed[@]} -eq 0 ]]; then
+  printf 'validate: ok (%s, %d command%s)\n' "$area" "${#selected[@]}" "$plural"
+  exit 0
+fi
+
+printf 'validate: FAIL (%s, %d of %d command%s)\n' "$area" "${#failed[@]}" "${#selected[@]}" "$plural" >&2
+for cmd in "${failed[@]}"; do
+  printf '  - %s\n' "$cmd" >&2
+done
+exit 1

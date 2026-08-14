@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Keep AGENTS.md § Validation, CI and scripts/ from drifting apart.
+"""Keep the scripts/validate manifest, CI and scripts/ from drifting apart.
 
 Two failure shapes, both of which had already happened when this was written:
 
@@ -10,14 +10,19 @@ Two failure shapes, both of which had already happened when this was written:
    sat there, which is the same reason this file exists rather than a note in a
    review checklist.
 
-2. **A documented command that cannot run.** § Validation lists bare
+2. **A documented command that cannot run.** The manifest lists bare
    invocations; a script without the executable bit fails with "permission
    denied", which reads like a broken check rather than a mode problem
    (VGS-30).
 
-So: every executable check under `scripts/` must be invoked by § Validation and
-by the CI workflow, or carry a written exclusion here; and every command in
-§ Validation must be runnable exactly as written.
+So: every executable check under `scripts/` must be invoked by the manifest and
+by the CI workflow, or carry a written exclusion here; and every command in the
+manifest must be runnable exactly as written.
+
+The manifest used to be AGENTS.md § Validation and moved into `scripts/validate`
+(VGS-123), so this parses the runner rather than the doc. The prose tables it
+cross-compares against — local-only and reached-indirectly — moved with it, to
+`.github/instructions/ci.instructions.md`.
 """
 
 from __future__ import annotations
@@ -39,13 +44,15 @@ except ModuleNotFoundError:
     raise SystemExit(1)
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-AGENTS = REPO_ROOT / "AGENTS.md"
+RUNNER = REPO_ROOT / "scripts" / "validate"
+CI_DOC = REPO_ROOT / ".github" / "instructions" / "ci.instructions.md"
 CI = REPO_ROOT / ".github" / "workflows" / "ci.yml"
 SCRIPTS = REPO_ROOT / "scripts"
 
 # Executable files under scripts/ that are NOT part of the validation suite.
 # Each needs a reason: an unexplained entry here is how an orphan comes back.
 NOT_A_SUITE_CHECK = {
+    "validate": "the suite runner itself: it invokes the checks below rather than being one",
     "build-release.sh": "release tooling, driven by .github/workflows/release.yml",
     "check-release.sh": "release preflight, driven by the release path and packaging/README.md",
     "check-vshell-niri.py": "the Niri half of the helper suite; invoked by scripts/check-vshell-helper.py",
@@ -54,8 +61,9 @@ NOT_A_SUITE_CHECK = {
 }
 
 # Checks the suite runs but CI cannot, with the reason CI cannot run them.
-# AGENTS.md § What CI covers documents these at length; this is the machine-
-# readable half, so the two cannot disagree silently.
+# .github/instructions/ci.instructions.md § What CI covers documents these at
+# length; this is the machine-readable half, so the two cannot disagree
+# silently.
 LOCAL_ONLY = {
     "smoke-surfaces.sh": "needs a live Hyprland VGS session and reads `hyprctl layers`",
     "check-label-taxonomy.py": "reads live Linear label inventory; CI has no Linear credentials and no local cache",
@@ -76,16 +84,42 @@ INDIRECT_IN_CI = {
 SYNTAX_CHECK_FLAGS = {"--check", "-n", "py_compile"}
 
 
-def validation_commands() -> list[str]:
-    """The command lines inside AGENTS.md § Validation's bash fence."""
-    text = AGENTS.read_text(encoding="utf-8")
-    match = re.search(r"^## Validation$(.*?)^#{2,3} ", text, re.MULTILINE | re.DOTALL)
+def manifest_rows() -> list[tuple[str, str]]:
+    """`(area tags, command)` pairs from the scripts/validate manifest heredoc.
+
+    Parsed statically rather than by running `scripts/validate --list`: this
+    check must report a manifest the runner cannot even parse, and a runner that
+    refuses to start would otherwise make this check unable to say why.
+    """
+    text = RUNNER.read_text(encoding="utf-8")
+    block = re.search(r"<<'MANIFEST_EOF'\n(.*?)\nMANIFEST_EOF\n", text, re.DOTALL)
+    if not block:
+        raise SystemExit(
+            "check-validation-inventory: scripts/validate has no MANIFEST_EOF heredoc; "
+            "this check parses that block, so moving it silently empties the inventory"
+        )
+    rows: list[tuple[str, str]] = []
+    for line in block.group(1).splitlines():
+        if not line.strip():
+            continue
+        if "|" not in line:
+            raise SystemExit(
+                f"check-validation-inventory: scripts/validate manifest row has no "
+                f"`AREAS | COMMAND` separator: {line!r}"
+            )
+        tags, command = line.split("|", 1)
+        rows.append(("".join(tags.split()), command.strip()))
+    if not rows:
+        raise SystemExit("check-validation-inventory: scripts/validate manifest is empty")
+    return rows
+
+
+def runner_areas() -> set[str]:
+    """The area names scripts/validate accepts, minus the `all` pseudo-area."""
+    match = re.search(r"^AREAS=\(([^)]*)\)", RUNNER.read_text(encoding="utf-8"), re.MULTILINE)
     if not match:
-        raise SystemExit("check-validation-inventory: AGENTS.md has no '## Validation' section")
-    fence = re.search(r"```bash\n(.*?)```", match.group(1), re.DOTALL)
-    if not fence:
-        raise SystemExit("check-validation-inventory: AGENTS.md § Validation has no ```bash block")
-    return [line for line in fence.group(1).splitlines() if line.strip()]
+        raise SystemExit("check-validation-inventory: scripts/validate has no AREAS=( ... ) list")
+    return set(match.group(1).split()) - {"all"}
 
 
 def ci_run_commands() -> str:
@@ -128,11 +162,11 @@ def ci_run_commands() -> str:
     return "\n".join(lines)
 
 
-# The prose tables in AGENTS.md § What CI covers, keyed by the bold lead-in
-# above each. Claiming the doc and the code cannot disagree is only true if
-# something compares them; before this, nothing did, and the table had drifted
-# (it omitted check-review-gate-vendor.sh and listed qml-smoke.sh, which is
-# reached indirectly rather than being local-only).
+# The prose tables in .github/instructions/ci.instructions.md § What CI covers,
+# keyed by the bold lead-in above each. Claiming the doc and the code cannot
+# disagree is only true if something compares them; before this, nothing did,
+# and the table had drifted (it omitted check-review-gate-vendor.sh and listed
+# qml-smoke.sh, which is reached indirectly rather than being local-only).
 DOC_TABLES = {
     "LOCAL_ONLY": "**Local-only — CI cannot run these at all:**",
     "INDIRECT_IN_CI": "**Reached indirectly — CI runs these through another entry, not by name:**",
@@ -141,11 +175,12 @@ DOC_TABLES = {
 
 def documented_table(lead_in: str) -> set[str]:
     """Script basenames named in the first column of the table after `lead_in`."""
-    text = AGENTS.read_text(encoding="utf-8")
+    text = CI_DOC.read_text(encoding="utf-8")
     start = text.find(lead_in)
     if start == -1:
         raise SystemExit(
-            f"check-validation-inventory: AGENTS.md has no table introduced by {lead_in!r}"
+            f"check-validation-inventory: .github/instructions/ci.instructions.md "
+            f"has no table introduced by {lead_in!r}"
         )
     names: set[str] = set()
     seen_rows = False
@@ -181,9 +216,32 @@ def executable_checks() -> list[str]:
 
 def main() -> int:
     problems: list[str] = []
-    commands = validation_commands()
+    rows = manifest_rows()
+    commands = [command for _, command in rows]
     documented = "\n".join(commands)
     ci_text = ci_run_commands()
+
+    # --- every manifest area tag is one the runner accepts --------------------
+    # A typo'd tag is invisible otherwise: `scripts/validate <area>` would refuse
+    # the unknown name, but the row would silently drop out of every real area
+    # while still running under `all`, so the scoped run passes over a check it
+    # never executed.
+    areas = runner_areas()
+    for tags, command in rows:
+        if tags == "-":
+            continue
+        for tag in tags.split(","):
+            if tag not in areas:
+                problems.append(
+                    f"scripts/validate manifest tags `{command}` with area `{tag}`, "
+                    f"which is not in the runner's AREAS list ({', '.join(sorted(areas))})"
+                )
+    for area in sorted(areas):
+        if not any(area in tags.split(",") for tags, _ in rows):
+            problems.append(
+                f"scripts/validate accepts area `{area}` but no manifest row is tagged "
+                f"with it, so `scripts/validate {area}` would run nothing"
+            )
 
     # --- every documented command runs exactly as written ---------------------
     for line in commands:
@@ -194,7 +252,7 @@ def main() -> int:
         try:
             argv = shlex.split(stripped)
         except ValueError:
-            problems.append(f"§ Validation line is not parseable as a command: {stripped}")
+            problems.append(f"scripts/validate manifest line is not parseable as a command: {stripped}")
             continue
         if not argv:
             continue
@@ -205,28 +263,28 @@ def main() -> int:
             if SYNTAX_CHECK_FLAGS.intersection(argv[1:]):
                 continue
             # scripts/lib/ holds LIBRARIES — imported or sourced, never run as
-            # a command. AGENTS.md § Validation says they stay non-executable
+            # a command. The runner's header says they stay non-executable
             # deliberately, so running a library's built-in self-test through
             # its interpreter is the correct form, not the VGS-30 defect of a
-            # doc that omits a prefix the file actually needs.
+            # manifest that omits a prefix the file actually needs.
             if any(a.startswith("scripts/lib/") for a in argv[1:]):
                 continue
             target = next((a for a in argv[1:] if not a.startswith("-")), None)
             if target and (REPO_ROOT / target).is_file():
                 problems.append(
-                    f"§ Validation runs `{stripped}` through `{head}`. "
-                    f"Give {target} the executable bit and document it bare, "
-                    f"or the doc and the file disagree about how it runs."
+                    f"scripts/validate runs `{stripped}` through `{head}`. "
+                    f"Give {target} the executable bit and list it bare, "
+                    f"or the manifest and the file disagree about how it runs."
                 )
             continue
         if "/" not in head:
             continue  # git, and anything else resolved from PATH
         path = REPO_ROOT / head
         if not path.is_file():
-            problems.append(f"§ Validation runs `{head}`, which does not exist")
+            problems.append(f"scripts/validate runs `{head}`, which does not exist")
         elif not os.access(path, os.X_OK):
             problems.append(
-                f"§ Validation runs `{head}` bare, but it is not executable "
+                f"scripts/validate runs `{head}` bare, but it is not executable "
                 f"(git update-index --chmod=+x {head})"
             )
 
@@ -237,7 +295,7 @@ def main() -> int:
         rel = f"scripts/{name}"
         if rel not in documented:
             problems.append(
-                f"{rel} is executable but AGENTS.md § Validation never runs it. "
+                f"{rel} is executable but the scripts/validate manifest never runs it. "
                 f"Wire it into the suite, or add it to NOT_A_SUITE_CHECK with a reason, "
                 f"or delete it — a check nothing runs implies coverage that does not exist."
             )
@@ -257,7 +315,8 @@ def main() -> int:
             continue
         if rel not in ci_text:
             problems.append(
-                f"{rel} is in AGENTS.md § Validation but not in .github/workflows/ci.yml. "
+                f"{rel} is in the scripts/validate manifest but not in "
+                f".github/workflows/ci.yml. "
                 f"Add it to the workflow, record it in LOCAL_ONLY with the reason CI cannot run it, "
                 f"or in INDIRECT_IN_CI naming the entry that reaches it."
             )
@@ -268,12 +327,12 @@ def main() -> int:
         documented_names = documented_table(lead_in)
         for name in sorted(coded - documented_names):
             problems.append(
-                f"scripts/{name} is in {map_name} but not in the AGENTS.md table "
-                f"introduced by {lead_in!r}"
+                f"scripts/{name} is in {map_name} but not in the "
+                f".github/instructions/ci.instructions.md table introduced by {lead_in!r}"
             )
         for name in sorted(documented_names - coded):
             problems.append(
-                f"scripts/{name} is in that AGENTS.md table but not in {map_name}"
+                f"scripts/{name} is in that ci.instructions.md table but not in {map_name}"
             )
 
     # --- exclusions that no longer name a real file --------------------------

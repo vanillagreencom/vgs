@@ -49,11 +49,13 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 # rationale is for the reviewer, so a raise without one is review feedback,
 # not something this script can enforce.
 CEILINGS: dict[str, int] = {
-    # 23,149 B after the VGS-107 diet (23,312 B with this check's own
-    # § Validation wiring). The do-not-cut sections alone sum to ~15.6 KB, so
-    # 25 KB is honest headroom while a tighter ceiling would force cutting
-    # protected content (VGS-107 handoff arithmetic).
-    "AGENTS.md": 25_000,
+    # 17,656 B after VGS-123 moved the 54-command validation manifest into
+    # scripts/validate and the "What CI covers" tables into
+    # .github/instructions/ci.instructions.md. The 25,000 ceiling that survived
+    # the VGS-107 diet would leave 7 KB of unexamined regrowth headroom here,
+    # which is the thing this ratchet exists to deny, so it drops to measured
+    # size plus ~10%.
+    "AGENTS.md": 19_500,
     # Adopted at 3,289 B. 2026-08-10: owner-approved risk-class +
     # regression-test policy sections plus the PR #120 review rounds
     # (coverage gaps, property-defined privileged class) earned the bytes;
@@ -75,7 +77,12 @@ CEILINGS: dict[str, int] = {
     ".github/instructions/agents-md.instructions.md": 500,  # adopted at 403 B
     ".github/instructions/architecture-docs.instructions.md": 500,  # adopted at 393 B
     ".github/instructions/backend-go.instructions.md": 800,  # adopted at 671 B
-    ".github/instructions/ci.instructions.md": 1_100,  # adopted at 962 B
+    # Adopted at 962 B. VGS-123 moved AGENTS.md § "What CI covers, and what it
+    # cannot" here — required checks, the local-only and reached-indirectly
+    # tables, the whitespace-range rationale — which is 4.4 KB that left an
+    # always-loaded surface for a path-scoped one; 6,000 keeps ~10% headroom at
+    # the resulting 5,407 B.
+    ".github/instructions/ci.instructions.md": 6_000,
     ".github/instructions/harness-config.instructions.md": 900,  # adopted at 760 B
     ".github/instructions/helper-cli.instructions.md": 600,  # adopted at 517 B
     ".github/instructions/quickshell-qml.instructions.md": 1_700,  # adopted at 1,459 B

@@ -3,7 +3,8 @@
 # per surface, no style rewrites:
 #
 #   Go      gofmt -l     backend/ minus vendor/ — any listed file is a failure
-#   Shell   shellcheck   scripts/*.sh, scripts/lib/*.sh, install.sh,
+#   Shell   shellcheck   scripts/*.sh, scripts/lib/*.sh, scripts/validate,
+#                        install.sh,
 #                        uninstall.sh, packaging/*.sh, the packaging hooks
 #                        (*.postinst has a shebang; the sourced *.install
 #                        scriptlets carry an in-file shell= directive) and
@@ -102,8 +103,11 @@ fi
 
 # --- Shell: shellcheck -------------------------------------------------------
 shell_files=()
-list_files 'scripts/*.sh' 'scripts/lib/*.sh' 'install.sh' 'uninstall.sh' 'packaging/*.sh' \
-  'packaging/*.install' 'packaging/*.postinst' \
+# `scripts/validate` carries no .sh extension (it is the suite's entry point, run
+# as `scripts/validate go`), so it needs naming explicitly or the lint floor
+# silently skips the one shell file agents run most.
+list_files 'scripts/*.sh' 'scripts/lib/*.sh' 'scripts/validate' 'install.sh' 'uninstall.sh' \
+  'packaging/*.sh' 'packaging/*.install' 'packaging/*.postinst' \
   && mapfile -d '' -t shell_files <"$list_tmp"
 for file in "${bin_files[@]}"; do
   IFS= read -r shebang <"$file" || continue

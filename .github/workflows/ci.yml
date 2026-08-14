@@ -1,7 +1,7 @@
 name: CI
 
-# Runs AGENTS.md § Validation on every pull request. Before this workflow the
-# only checks on a VGS PR were CodeQL default-setup Analyze jobs, which say
+# Runs the scripts/validate suite on every pull request. Before this workflow
+# the only checks on a VGS PR were CodeQL default-setup Analyze jobs, which say
 # nothing about VGS's own suite — which is how `check-validation-safety.sh` sat
 # red on clean `main` (VGS-18) with nothing surfacing it.
 #
@@ -140,8 +140,8 @@ jobs:
       - name: Naming guard
         run: scripts/check-naming.sh
 
-      # Asserts this workflow and AGENTS.md § Validation still name the same
-      # checks. Four checks under scripts/ were committed and invoked by nothing
+      # Asserts this workflow and the scripts/validate manifest still name the
+      # same checks. Four checks under scripts/ were committed and invoked by nothing
       # at all before this existed (VGS-50).
       - name: Validation inventory
         run: scripts/check-validation-inventory.py
@@ -175,7 +175,7 @@ jobs:
             bash "$t"
           done
 
-      # AGENTS.md lists a bare `git diff --check`, which is a working-tree
+      # scripts/validate lists a bare `git diff --check`, which is a working-tree
       # check: on a clean CI checkout it inspects nothing at all. The form that
       # means something is a range of what the event actually introduces.
       #
@@ -411,7 +411,7 @@ jobs:
       # plus a Quickshell install inside the runner. The live-session half of
       # this guard degrades cleanly here (no compositor and no Quickshell CLI →
       # "nothing of that kind exists on this system"), which is correct: there is
-      # no live session in CI to disturb. AGENTS.md § "What CI covers, and what
-      # it cannot" records exactly what that leaves local-only.
+      # no live session in CI to disturb. .github/instructions/ci.instructions.md
+      # § "What CI covers, and what it cannot" records what that leaves local-only.
       - name: Validation safety and QML static smoke
         run: scripts/check-validation-safety.sh --require-static
