@@ -19,6 +19,7 @@ Library, not a check: no shebang, no `__main__`, never executed directly.
 from __future__ import annotations
 
 import re
+import subprocess
 from pathlib import Path
 
 
@@ -92,10 +93,39 @@ def manifest_rows(runner: Path) -> list[tuple[str, str]]:
             raise ManifestError(
                 f"scripts/validate manifest row has an empty command: {line!r}"
             )
+        _check_shell_syntax(command, line)
         rows.append((tags, command))
     if not rows:
         raise ManifestError("scripts/validate manifest is empty")
     return rows
+
+
+def _check_shell_syntax(command: str, line: str) -> None:
+    """Reject a manifest command that is not valid shell.
+
+    VGS-30's rule for this file is that every command must be runnable exactly
+    as written, and a syntax error is the one way a command can fail that rule
+    without being absent or mis-moded. Left to the runner alone, this check
+    would have been the first place the two readers disagreed on whether a row
+    is acceptable — so it is here too, by shelling out to the same parser the
+    runner uses rather than approximating one.
+
+    A MISSING bash is a failure, not a skip: unable-to-verify must never read as
+    verified, which is the standing rule for every check in this repo.
+    """
+    try:
+        parsed = subprocess.run(
+            ["bash", "-n", "-c", command], capture_output=True, text=True, check=False
+        )
+    except FileNotFoundError as exc:
+        raise ManifestError(
+            "bash is not installed, so manifest command syntax could NOT be checked"
+        ) from exc
+    if parsed.returncode != 0:
+        detail = parsed.stderr.strip() or f"bash -n exited {parsed.returncode}"
+        raise ManifestError(
+            f"scripts/validate manifest row has invalid shell syntax: {line!r}\n  {detail}"
+        )
 
 
 def runner_areas(runner: Path) -> set[str]:

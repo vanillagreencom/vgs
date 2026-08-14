@@ -218,6 +218,22 @@ all is rejected as a row tag;malformed tag field;all       | scripts/stub-go
 a non-breaking space is fatal;malformed tag field;$(printf 'go\xc2\xa0')      | scripts/stub-go
 SHAPES
 
+# THE COMMAND HALF of `TAGS | COMMAND`. A command that is not valid shell parsed
+# fine, so `--list` exited 0 and a real run executed earlier checks before
+# `eval` returned 2, aggregated into an ordinary exit 1. Checked for EVERY row,
+# not only selected ones, so `validate docs` refuses a broken Go-block command —
+# the same area-independence the tags grammar has.
+while IFS=';' read -r name command; do
+  [[ -n "$name" ]] || continue
+  rejected_everywhere "$name" "always    | $command
+qml       | scripts/stub-qml" "invalid shell syntax"
+done <<'SHAPES'
+a trailing operator is fatal;scripts/stub-go &&
+an unbalanced quote is fatal;scripts/stub-go "oops
+an unclosed brace is fatal;{ scripts/stub-go
+an unclosed subshell is fatal;(cd backend && go build
+SHAPES
+
 # THE ACCEPT SIDE — the grammar can fail by being too TIGHT, and no shipped row
 # exercises these: a command containing `|` (the split takes the FIRST
 # separator, so pipelines are commands), whitespace inside the tag field, and a
@@ -232,6 +248,7 @@ always    | scripts/stub-always"
   ok "$name"
 done <<SHAPES
 a command may contain a separator;qml       | scripts/stub-go | tee log
+a multi-line-ish command is accepted;qml       | (cd backend && echo ok)
 whitespace inside the tag field is normalised;go$(printf '\t'),qml  | scripts/stub-go
 a repeated tag is accepted as inert;qml,qml   | scripts/stub-go
 the lone dash is accepted;-         | scripts/stub-go

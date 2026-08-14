@@ -261,6 +261,19 @@ a row with a repeated separator is reported;a,,always ;malformed tag field
 a row combining the dash tag is reported;-,go      ;malformed tag field
 SHAPES
 
+# The command half, mirrored: the library shells out to the same parser the
+# runner uses, so neither reader accepts a row the other refuses.
+guard_case "a row with invalid shell syntax is reported" \
+  "$(python3 - "$runner" <<'MUT'
+import sys
+t = open(sys.argv[1], encoding="utf-8").read()
+old = "always    | scripts/check-format-lint.sh"
+assert t.count(old) == 1, "the format-lint manifest row moved"
+print(t.replace(old, 'always    | scripts/check-format-lint.sh "oops'), end="")
+MUT
+)" \
+  "invalid shell syntax"
+
 guard_case "a missing AREAS list is reported" \
   "${real_runner/AREAS=(go qml helper packaging docs all)/AREA_NAMES=(go qml helper packaging docs all)}" \
   "has no AREAS=( ... ) list"

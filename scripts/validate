@@ -313,6 +313,17 @@ while IFS= read -r line; do
     printf 'scripts/validate: manifest row has an empty command: %s\n' "$line" >&2
     exit 2
   fi
+  # THE COMMAND HALF OF THE SAME CONTRACT. An invalid-shell command parsed fine,
+  # so `--list` exited 0 and a real run executed earlier checks before `eval`
+  # returned 2, aggregated into an ordinary exit 1. EVERY ROW, not only the
+  # selected ones, matching the tags grammar: the verdict on a manifest must not
+  # depend on which rows the requested area picks, which is what makes
+  # `validate docs` refuse a broken Go-block command. ~30 ms over all 58 rows.
+  if ! syntax_error="$(bash -n -c "$cmd" 2>&1)"; then
+    printf 'scripts/validate: manifest row has invalid shell syntax: %s\n' "$line" >&2
+    printf '  %s\n' "${syntax_error//$'\n'/$'\n  '}" >&2
+    exit 2
+  fi
   if [[ "$area" != all ]]; then
     # `always` rows join every named area; `all` already takes everything.
     if [[ ",$tags," != *",$area,"* && ",$tags," != *",always,"* ]]; then
