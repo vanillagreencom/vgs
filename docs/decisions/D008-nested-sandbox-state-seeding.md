@@ -64,8 +64,8 @@ host state" leaves no host state.
 2. **Nothing is copied out of `~/.config/vshell`.** Not `theme.json`, not
    `themes/`, not `blueprints/`, not `hooks/`, `generated/` or `branding/`.
    There is no allowlist to audit and no `DEGRADED` path, because there is no
-   host read. Real theme content still reaches the run: the shipped packages
-   under `themes/` in the repo are resolved through `VSHELL_ROOT`.
+   host read. The repo's theme *packages* remain reachable through
+   `VSHELL_ROOT`, but no `theme.json` is generated — see § Scope.
 3. **No phase's outcome may differ because of host state**, which rule 2 makes
    structurally true rather than a claim to police. The test each candidate
    directory failed is "can any phase's outcome differ because of it?" —
@@ -86,9 +86,14 @@ host state" leaves no host state.
    `seeded_settings_check` reads both back out of the running shell via
    `qs ipc call settings get`. It is the first state-dependent phase and gates
    the popout and override phases; the bundled-plugin wait is NOT gated on it,
-   because plugin loading does not depend on settings. Diagnostics — the
-   log-error scan included — are all emitted before any verdict returns, so no
-   failure can withhold the evidence for itself.
+   because plugin loading does not depend on settings. Both reads are EXACT —
+   the scalar compared literally, the plugin one parsed as JSON and asserted at
+   `sysUpdate.aurUpdateCommand` — because a substring test would accept `14242`
+   for a `4242` sentinel, or the right pair under the wrong section. From
+   teardown on, every diagnostic (the log-error scan included) precedes every
+   verdict, so no failure withholds the evidence for itself; of the two
+   failures that can end a run earlier, the launch failure prints the log tail
+   and "no bundled plugins in the repo" has no log evidence to print.
 
 ## Rationale
 
@@ -118,6 +123,31 @@ never the sandbox copy), so the same is true one file over. A check reading any
 unstamped key answers identically whether the seed was found or not, and that
 non-discriminating shape is precisely what let VGS-92 survive.
 
+## Scope: theme state is out
+
+**The sandbox seeds no `theme.json`, so the shell renders on `MethodTheme`'s
+hardcoded `fallbackColors`.** A `theme.json` regression, or a theme that fails
+to load, passes this smoke unseen. That is a deliberate boundary, not an
+oversight, and it is the one place where "the repo's content reaches the run"
+has a hole: the theme *packages* under `themes/` are reachable through
+`VSHELL_ROOT`, but nothing generates the file the shell actually reads
+(`Common/MethodTheme.qml` § `themePath`).
+
+Seeding one was considered and rejected on measurement:
+
+| Route | Why not |
+|-------|---------|
+| Copy a repo file | None exists. A package's `theme.json` is a manifest (`name`, `mode`, `pair`, `source`, `wallpaper`); the runtime file additionally needs a `colors` map |
+| Compose it in the smoke from `colors.toml` | Would reimplement the helper's `colors.toml` → role mapping, a second source of truth that drifts — the defect class this record exists to remove |
+| Generate it with `vshell theme apply` | Measured in an isolated HOME: renders a dozen app-target configs (kitty, alacritty, btop, qt6ct, …) and runs hooks that reach the **live tmux socket** and attempt a shell reload. A validation script must not do that |
+
+**Revisit when** the helper grows a hook-free, single-target way to write only
+`theme.json` — `_apply_theme_obj_unlocked` already supports
+`only_target=`/`run_hooks=False`, but only reachable through
+`theme adjust --preview` on the already-current theme. Exposing that as a
+seeding entry point would make theme state assertable here the way the two
+seeded files already are.
+
 ## Alternatives Considered
 
 | Alternative | Why rejected |
@@ -142,6 +172,10 @@ both exercised on this branch:
 
 - Suppress either sentinel stamp in `scripts/qml-smoke.sh::nested_check` and
   re-run: the check must fail with the unstamped value, not pass.
+- Stamp `14242` instead of `4242`, or write the plugin pair under `aiUsage`
+  instead of `sysUpdate`: both must fail. A substring match passes both.
+- Set a sentinel equal to the value already in the shipped default: the stamp
+  step must refuse it rather than seeding a witness that cannot discriminate.
 - Plant a runtime QML error *and* suppress a stamp: the run must still print
   the log-scan findings, because rule 4's log scan runs regardless of the phase
   verdicts.

@@ -28,8 +28,11 @@
 # configuration (docs/decisions/D008-nested-sandbox-state-seeding.md; the
 # machine still supplies the compositor and the installed binaries). A phase
 # asserts the seed is in EFFECT by reading sentinels back out of the running
-# shell (VGS-92), gating the popout and override phases below. Every
-# diagnostic, the log-error scan included, is emitted before any verdict.
+# shell (VGS-92), gating the popout and override phases below. Theme state is
+# deliberately OUT OF SCOPE (D008 § Scope). No failure withholds its own
+# evidence: from teardown on, every diagnostic precedes every verdict, and of
+# the two failures that can end a run earlier, the launch failure prints the log
+# tail and "no bundled plugins in the repo" has no log evidence to print.
 #
 # It then drives two things that loading alone never reaches (VGS-81):
 #
@@ -440,18 +443,39 @@ plugin_sentinel_plugin="sysUpdate"
 plugin_sentinel_key="aurUpdateCommand"
 plugin_sentinel_value="{vshell} update run aur --vgs92-seed-sentinel"
 
-# Polls one `settings get` until its reply contains `needle`; bounded, because
+# EXACT matchers, never substring: `*4242*` would accept 14242, and searching
+# the whole `pluginSettings` blob for a `"key":"value"` pair would accept it
+# under the wrong section. Both are the pass-without-checking shape this branch
+# removes. Each takes the reply as $1.
+# shellcheck disable=SC2329  # invoked by name through await_sentinel's $matcher
+sentinel_is_exactly() { [[ "$1" == "$2" ]]; }
+
+# reply, plugin, key, value. An unparsable reply is a miss, not an error: the
+# poll may simply have caught the shell mid-answer.
+# shellcheck disable=SC2329  # invoked by name through await_sentinel's $matcher
+sentinel_at_path() {
+  python3 -c 'import json, sys
+try: data = json.loads(sys.argv[1])
+except ValueError: sys.exit(1)
+section = data.get(sys.argv[2])
+sys.exit(0 if isinstance(section, dict) and section.get(sys.argv[3]) == sys.argv[4] else 1)' "$@"
+}
+
+# Polls `settings get $key` until `$matcher` accepts the reply; bounded, because
 # SettingsData loads asynchronously. Prints the last reply a call returned, and
-# never folds one failure reason into another — misattribution is what this
+# never folds one failure reason into another - misattribution is what this
 # split exists to prevent:
-#   1 = answered a real value, and it was wrong  -> the seed
-#   2 = process group gone, or nothing answered  -> a dead shell, saying nothing
-#                                                   about the seed
-#   3 = answered `undefined`                     -> `$key` is not a SettingsData
-#       property any more, so the SENTINEL needs repointing. VGSIPC's `get` is
-#       JSON.stringify(SettingsData?.[key]), so a rename exits 0 and reads as 1.
+#   1 = answered a real value, the matcher rejected it -> the seed
+#   2 = process group gone, or nothing answered        -> a dead shell, saying
+#                                                         nothing about the seed
+#   3 = answered `undefined`, or answered empty        -> the KEY is gone from
+#       SettingsData, so the sentinel needs repointing. VGSIPC's `get` is
+#       JSON.stringify(SettingsData?.[key]), so a rename exits 0 and would
+#       otherwise read as 1. The caller reports the two separately.
 await_sentinel() {
-  local needle="$1" key="$2" reply="" last_good="" answered=false gone=false
+  local key="$1" matcher="$2"
+  shift 2
+  local reply="" last_good="" answered=false gone=false
   for _ in $(seq 1 40); do
     # NOT `sandbox_ipc`: that folds stderr into stdout and ends in `|| true`, so
     # a transport failure would arrive as a reply and be blamed on the seed.
@@ -459,7 +483,7 @@ await_sentinel() {
         --any-display call settings get "$key" 2>/dev/null)"; then
       answered=true
       last_good="$reply"
-      [[ "$reply" == *"$needle"* ]] && { printf '%s' "$reply"; return 0; }
+      "$matcher" "$reply" "$@" && { printf '%s' "$reply"; return 0; }
     fi
     # Liveness decides state 2, NOT whether the final attempt happened to
     # answer: a shell that answered the wrong value all window and missed only
@@ -472,36 +496,41 @@ await_sentinel() {
   done
   printf '%s' "$last_good"
   { [[ "$gone" == true ]] || [[ "$answered" != true ]]; } && return 2
-  [[ -z "$last_good" || "$last_good" == "undefined" ]] && return 3
+  { [[ -z "$last_good" ]] || [[ "$last_good" == "undefined" ]]; } && return 3
+  return 1
+}
+
+# One probe: the IPC key, a human-readable statement of what the matcher demands
+# (printed on failure, so the message and the assertion say the same thing),
+# then the matcher and its arguments.
+seed_probe() {
+  local key="$1" want="$2" reply state=0
+  shift 2
+  reply="$(await_sentinel "$key" "$@")" || state=$?
+  case "$state" in
+    0) return 0 ;;
+    2)
+      # Whatever it managed to say is kept: the best evidence about a shell that
+      # then died.
+      # shellcheck disable=SC2016  # the quotes inside ${reply:+...} are literal text; $reply does expand
+      fail "the sandboxed shell stopped answering \`settings get $key\` - the shell or its IPC is gone, so nothing was learned about the seed${reply:+ (last reply: '$reply')}" ;;
+    3)
+      if [[ "$reply" == "undefined" ]]; then
+        fail "'$key' is not a SettingsData property any more - the SENTINEL needs repointing, and this says nothing about the seed"
+      else
+        fail "\`settings get $key\` answered nothing - VGSIPC returns JSON for any live property, so this is a change in the IPC itself, not a seed failure"
+      fi ;;
+    *)
+      fail "the sandboxed shell is NOT running on the state it seeded: \`settings get $key\` answered '$reply', and the sandbox stamped $want (VGS-92, D008)" ;;
+  esac
   return 1
 }
 
 seeded_settings_check() {
-  local spec key needle reply state
-  # `<key>|<needle>`. `settings get` answers JSON.stringify of the live property
-  # (VGSIPC.qml): a bare number for the scalar, the whole `pluginSettings`
-  # object for the plugin read — hence a needle of the full `"key":"value"` pair
-  # there, which only this stamp can produce.
-  for spec in "$settings_sentinel_key|$settings_sentinel_value" \
-              "pluginSettings|\"$plugin_sentinel_key\":\"$plugin_sentinel_value\""; do
-    key="${spec%%|*}"
-    needle="${spec#*|}"
-    state=0
-    reply="$(await_sentinel "$needle" "$key")" || state=$?
-    if [[ "$state" -eq 2 ]]; then
-      # Whatever it managed to say is kept: the best evidence about a shell that
-      # then died.
-      # shellcheck disable=SC2016  # the quotes inside ${reply:+...} are literal text; $reply does expand
-      fail "the sandboxed shell stopped answering \`settings get $key\` — the shell or its IPC is gone, so nothing was learned about the seed${reply:+ (last reply: '$reply')}"
-      return 1
-    elif [[ "$state" -eq 3 ]]; then
-      fail "'$key' is not a SettingsData property any more — the SENTINEL needs repointing, and this says nothing about the seed (VGSIPC \`settings get\` answered '$reply')"
-      return 1
-    elif [[ "$state" -ne 0 ]]; then
-      fail "the sandboxed shell is NOT running on the state it seeded: \`settings get $key\` answered '$reply', which does not carry the sandbox sentinel '$needle' (VGS-92, D008)"
-      return 1
-    fi
-  done
+  seed_probe "$settings_sentinel_key" "$settings_sentinel_value" \
+    sentinel_is_exactly "$settings_sentinel_value" || return 1
+  seed_probe pluginSettings "$plugin_sentinel_plugin.$plugin_sentinel_key=$plugin_sentinel_value" \
+    sentinel_at_path "$plugin_sentinel_plugin" "$plugin_sentinel_key" "$plugin_sentinel_value" || return 1
 
   note "seeded settings check passed (the running shell reports both sandbox sentinels: $settings_sentinel_key and $plugin_sentinel_plugin.$plugin_sentinel_key)"
   return 0
@@ -620,16 +649,29 @@ plugin_is_loaded() {
 }
 
 override_check() {
-  local dir reply live loads teardowns loads_before teardowns_before strays
+  local dir reply live loads teardowns loads_before teardowns_before
+  local strays strays_dir strays_rc=0
 
   # HERE, not at sandbox prep, where nothing could have created one yet: by now
   # the shell has been running in that HOME. A second package under this id
   # would make "which copy loaded?" — the question this phase answers —
   # unanswerable. An empty `plugins/` directory is fine; a package is not.
-  strays="$(find "$sandbox/home/.config/vshell/plugins" -mindepth 1 -maxdepth 1 -type d -printf '%f ' 2>/dev/null)"
-  if [[ -n "$strays" ]]; then
-    fail "user plugin package(s) already in the sandbox before the override fixture was planted: $strays"
-    return 1
+  # Three states, not two: the directory is normally ABSENT, so a scan that
+  # swallowed find's status would look identical on a healthy run and on "I
+  # could not look" — the failed-query-reads-as-absence class this file has
+  # already had three times. No `-printf` either; it is GNU-only, and a BSD
+  # find would degrade the guard to an unconditional pass.
+  strays_dir="$sandbox/home/.config/vshell/plugins"
+  if [[ -d "$strays_dir" ]]; then
+    strays="$(find "$strays_dir" -mindepth 1 -maxdepth 1 -type d)" || strays_rc=$?
+    if [[ "${strays_rc:-0}" -ne 0 ]]; then
+      fail "could not enumerate '$strays_dir' (find exit $strays_rc) — 'I could not look' is not 'nothing is there'"
+      return 1
+    fi
+    if [[ -n "$strays" ]]; then
+      fail "user plugin package(s) already in the sandbox before the override fixture was planted:"$'\n'"$strays"
+      return 1
+    fi
   fi
 
   dir="$sandbox/home/.config/vshell/plugins/$override_plugin"
@@ -821,6 +863,12 @@ nested_check() {
   # override_check. Why, and which narrower shapes were tried and rejected:
   # docs/decisions/D008-nested-sandbox-state-seeding.md.
   #
+  # NOT seeded, deliberately: `theme.json`. The shell renders on MethodTheme's
+  # fallback palette, so THEME STATE IS OUT OF THIS SMOKE'S SCOPE and a
+  # theme-load regression passes here unseen. The repo has no runtime
+  # theme.json to copy and generating one runs hooks that reach the live
+  # session — measurements and the revisit condition: D008 § Scope.
+  #
   # Every step below either succeeds or SAYS SO. A swallowed prep failure leaves
   # the run measuring a sandbox that is not the one it describes — the same
   # defect as a failed layer query reading as absence, which this file has now
@@ -861,6 +909,12 @@ def stamp(name, path, value):
         node = node[key]
     if path[-1] not in node:
         sys.exit(f"{name}: {path[-1]!r} is not in the shipped default")
+    # A sentinel equal to what the shipped file already holds -- which is also
+    # what the shell falls back to -- would pass in both worlds and witness
+    # nothing. That is the one way to pick a sentinel that cannot discriminate,
+    # so it fails here rather than passing quietly for years.
+    if node[path[-1]] == value:
+        sys.exit(f"{name}: the sentinel for {'.'.join(path)} equals the shipped value {value!r}")
     node[path[-1]] = value
     with open(full, "w") as fh:
         json.dump(data, fh, indent=2)
@@ -948,6 +1002,10 @@ EOF
     "${dbus_wrapper[@]}" \
     timeout --signal=TERM --kill-after=5 "$nested_timeout" \
     qs --no-color -p "$repo_root/quickshell/vshell" >"$log" 2>&1; then
+    # stdout and stderr are already redirected into $log, so there can be a
+    # reason to show even this early. Same rule as the post-teardown block:
+    # never report a failure while withholding its evidence.
+    tail -n 40 "$log" >&2 || true
     fail "sandboxed shell failed to launch"
     return
   fi
