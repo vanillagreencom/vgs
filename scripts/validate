@@ -176,6 +176,7 @@ packaging | scripts/check-aur-sync.py
 -         | scripts/test-plugin-requirement-report.js
 -         | scripts/test-toast-actions.js
 -         | scripts/test-ai-usage-provider.js
+-         | scripts/test-ai-usage-entrypoint.js
 -         | scripts/check-notification-takeover.js
 -         | scripts/test-remote-desktop-state.js
 -         | scripts/test-idle-reload-snapshot.js

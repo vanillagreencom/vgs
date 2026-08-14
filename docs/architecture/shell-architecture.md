@@ -258,7 +258,10 @@ chooses the source:
   arrives. Launch tags race: a tag can be reassigned while the process holding
   it is still running, and the old process's payload then passes the tag check
   under the new source's name. Helpers must therefore stamp their own identity
-  on every path they return from, failures included.
+  on every path they return from, failures included — **every layer the widget
+  runs through**, not just the innermost one: `vshell ai-usage` wraps a backend
+  that may be third-party, so the wrapper stamps its own error payloads and
+  fills the stamp in on a backend payload that lacks one.
 - **Invalidate the source-scoped state when the setting changes**, together and
   before the refetch. Anything left behind renders under the new source's label
   until a payload replaces it, and a dropped refetch makes that permanent — so

@@ -170,6 +170,18 @@ assert.deepEqual(
 );
 assert.deepEqual(headOf(twoAccounts, "worst", []), { pct: 80 });
 assert.deepEqual(headOf(twoAccounts, "best", []), { pct: 40 });
+assert.equal(
+    headOf(Object.assign({ aggregate: { pct: 77 } }, twoAccounts), "pool", ["a", "b"]),
+    null,
+    "with every reported account hidden the pill must show its placeholder, not the payload's " +
+    "aggregate — that number is computed over exactly the accounts the user excluded, beside a " +
+    "popout header reading 0 accounts"
+);
+assert.deepEqual(
+    headOf({ ok: true, provider: "claude", accounts: [], aggregate: { pct: 77 } }, "pool", []),
+    { pct: 77 },
+    "a payload that reported no accounts at all still falls back to its aggregate"
+);
 assert.deepEqual(
     headOf({ ok: true, provider: "claude", accounts: [], session: { pct: 0 } }, "pool", []),
     { pct: 0 },
@@ -290,48 +302,92 @@ assert.ok(!widgetBody("noteHeadline").includes("root.provider"),
 
 const decode = widgetBody("decodePayload");
 assert.ok(decode.includes("payloadIsFor"), "every payload must be checked against the fetch that produced it");
+assert.ok(/return \{ data: [^}]*issue:/.test(decode),
+    "the reason a payload was dropped travels WITH the result; a shared reason field " +
+    "reports one provider's failure as the other's cause");
 
 const acceptUsage = widgetBody("acceptUsage");
-assert.ok(acceptUsage.includes("root.usageInFlight"),
-    "the usage payload is validated against ITS launch tag");
-assert.ok(acceptUsage.includes("payloadProvider(d) !== root.provider"),
+assert.ok(acceptUsage.includes("usageFetch.inFlight"),
+    "the usage payload is validated against ITS channel's launch tag");
+assert.ok(acceptUsage.includes("!== root.provider"),
     "a payload for a provider that is no longer selected must not populate the popout");
 const acceptOther = widgetBody("acceptOther");
-assert.ok(acceptOther.includes("root.otherInFlight"),
-    "the other-provider payload is validated against ITS launch tag");
-
-// Every provider-scoped property the popout renders has to be cleared on a
-// switch. A field left behind is the other provider's value under the new
-// provider's label — the reported symptom.
-const cleared = widgetBody("clearProviderState");
-for (const field of [
-    "root.accounts", "root.aggregate", "root.plan", "root.ok", "root.errorText",
-    "root.expandedAccountId", "root.loadedProvider",
-    "root.sessionPct", "root.sessionReset", "root.sessionResetAt", "root.hasSession",
-    "root.weeklyPct", "root.weeklyReset", "root.weeklyResetAt", "root.hasWeekly",
-    "root.thirdLabel", "root.thirdPct", "root.thirdReset", "root.thirdResetAt", "root.hasThird"
-]) {
-    assert.ok(cleared.includes(`${field} =`), `clearProviderState() must reset ${field}`);
+assert.ok(acceptOther.includes("otherFetch.inFlight"),
+    "the other-provider payload is validated against ITS channel's launch tag");
+for (const [name, body] of [["acceptUsage", acceptUsage], ["acceptOther", acceptOther]]) {
+    assert.ok(/(usage|other)Fetch\.issue = got\.issue/.test(body),
+        `${name}() must record the failure reason on its OWN channel`);
 }
+
+// The popout state is one payload plus the independent view fields, so a switch
+// cannot leave a lane behind. Assert the shape rather than a list of names: a
+// list is exactly the maintenance burden that let a field be forgotten.
+const cleared = widgetBody("clearProviderState");
+assert.ok(cleared.includes("root.current = null"),
+    "one payload property holds every provider-scoped lane, and a switch clears it");
+assert.ok(cleared.includes("root.fetchError = \"\""), "the failure text is provider-scoped too");
 assert.ok(cleared.includes("root.loading = true"), "a switch puts the popout back into loading");
+assert.ok(cleared.includes("root.expandedAccountId = \"\""),
+    "the expanded account belongs to the previous provider's list");
+assert.ok(cleared.includes("usageFetch.reset()") && cleared.includes("otherFetch.reset()"),
+    "both fetch channels are invalidated through the one reset path");
 assert.ok(!cleared.includes("root.claudeData"), "the per-provider headlines are keyed by identity and are kept");
 assert.ok(!cleared.includes("root.codexData"), "the per-provider headlines are keyed by identity and are kept");
+
+// Nothing outside applyPayload may write the popout's payload, or the single
+// clear point stops being single.
+const currentWrites = (widgetSource.match(/root\.current = /g) || []).length;
+assert.equal(currentWrites, 2, "root.current is written in exactly two places: applyPayload and the reset");
+
+const channelReset = widgetSource.match(/function reset\(\) \{([\s\S]*?)\n        \}/);
+assert.ok(channelReset, "the fetch channel must define reset()");
+for (const field of ["loaded", "retries", "accepted", "issue"]) {
+    assert.ok(new RegExp(`${field} = `).test(channelReset[1]),
+        `a channel reset must clear ${field}`);
+}
+assert.ok(!/\binFlight = /.test(channelReset[1]),
+    "inFlight identifies a process that is still running; clearing it would orphan its payload");
 
 const onProviderChanged = widgetSource.match(/onProviderChanged: \{([\s\S]*?)\n    \}/);
 assert.ok(onProviderChanged, "AiUsageWidget.qml must handle onProviderChanged");
 assert.ok(onProviderChanged[1].includes("clearProviderState()"),
     "a provider switch must invalidate the previous provider's state before refetching");
-assert.ok(onProviderChanged[1].includes("refresh()"), "a provider switch must refetch");
+assert.ok(/refresh\("\)?"?\)/.test(onProviderChanged[1]), "a provider switch must refetch");
 
-// The exit handlers must ask shouldRelaunch, not compare tags to the selection.
-const exits = widgetSource.match(/onExited: \{[\s\S]*?\n        \}/g) || [];
+// One exit path, shared by both channels, and a retry that restarts only the
+// channel that asked: refreshing both would spend one channel's budget on the
+// other's process, and every launch shells out to a provider usage API once per
+// configured bar.
+const exits = widgetSource.match(/onExited: \([^)]*\) => \{[\s\S]*?\n        \}/g) || [];
 assert.equal(exits.length, 2, "both fetch processes must handle exit");
 for (const body of exits) {
-    assert.ok(body.includes("shouldRelaunch"), "relaunch is decided by the shared predicate");
-    assert.ok(!/launchedFor !== root\.(other)?[Pp]rovider/.test(body),
-        "comparing the launch tag to the current selection is the dropped-refetch bug");
-    assert.ok(body.includes("Qt.callLater(root.refresh)"),
-        "the relaunch stays deferred: assigning running = true is a no-op while the process is still stopping");
+    assert.ok(/finishFetch\((usage|other)Fetch, "(usage|other)"/.test(body),
+        "both channels finish through the one shared exit path");
+    assert.ok(/exitCode/.test(body), "the exit code has to reach the handler to be a cause");
+    assert.ok(/Err\.text/.test(body), "stderr has to reach the handler to be reported");
 }
+
+const finish = widgetBody("finishFetch");
+assert.ok(finish.includes("shouldRelaunch"), "relaunch is decided by the shared predicate");
+assert.ok(!/launchedFor !== (root\.)?(other)?[Pp]rovider/.test(finish),
+    "comparing the launch tag to the current selection is the dropped-refetch bug");
+assert.ok(finish.includes("Qt.callLater(() => root.refresh(which))"),
+    "the relaunch stays deferred and restarts only the channel that asked");
+assert.ok(/exitCode !== 0/.test(finish),
+    "a helper that exited non-zero produced no payload; calling that a parse error names the wrong cause");
+assert.ok(finish.includes("console.warn"),
+    "the failure has to reach vshell logs, or the cause exists nowhere");
+assert.ok(/ch\.loaded !== want \|\| !ch\.accepted/.test(finish),
+    "a poll that delivered no payload for the provider on screen is a failure, not a silent hold " +
+    "of the previous numbers");
+
+// Both Process blocks must carry a stderr collector.
+assert.equal((widgetSource.match(/stderr: StdioCollector/g) || []).length, 2,
+    "both fetch processes must capture stderr");
+
+// The persisted provider is normalised, so a junk settings value degrades to the
+// default rather than leaving every payload unattributable and nothing relaunching.
+assert.ok(/property string provider: logic\.normalizeProvider\(pluginData\.provider\) \|\| "claude"/
+    .test(widgetSource), "the provider setting must be normalised with a default fallback");
 
 console.log("ai-usage provider identity: OK");

@@ -7091,6 +7091,18 @@ def cmd_update(argv: List[str]) -> int:
 
 def cmd_ai_usage(argv: List[str]) -> int:
     provider = argv[0] if argv else "claude"
+
+    def emit(payload: Dict[str, Any]) -> int:
+        # The widget files every payload under the provider the payload itself
+        # names and discards anything unstamped, so this wrapper's own errors
+        # carry the stamp too — and so does a backend's payload that lacks one,
+        # since `ai-usage` may be a third-party engine from PATH that predates
+        # the field. An unstamped payload would otherwise be dropped and the
+        # real cause replaced by "provider mismatch" (VGS-118).
+        payload.setdefault("provider", provider)
+        print(json.dumps(payload))
+        return 0
+
     cmd_env = os.environ.get("VSHELL_AI_USAGE_CMD", "").strip()
     candidates = []
     if cmd_env:
@@ -7098,14 +7110,18 @@ def cmd_ai_usage(argv: List[str]) -> int:
     candidates.extend([str(repo_root() / "bin" / "vshell-ai-usage"), str(home() / ".local" / "bin" / "ai-usage"), "ai-usage"])
     runner = next((c for c in candidates if ("/" in c and Path(c).exists()) or ("/" not in c and shutil.which(c))), "")
     if not runner:
-        print(json.dumps({"ok": False, "error": "ai-usage backend not found"}))
-        return 0
+        return emit({"ok": False, "error": "ai-usage backend not found"})
     proc = subprocess.run([runner, provider], text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     if proc.returncode != 0:
-        print(json.dumps({"ok": False, "error": proc.stderr.strip() or "ai-usage failed"}))
-        return 0
-    print(proc.stdout.strip() or json.dumps({"ok": False, "error": "ai-usage returned no data"}))
-    return 0
+        return emit({"ok": False, "error": proc.stderr.strip() or "ai-usage failed"})
+    out = proc.stdout.strip()
+    try:
+        parsed = json.loads(out) if out else None
+    except ValueError:
+        parsed = None
+    if isinstance(parsed, dict):
+        return emit(parsed)
+    return emit({"ok": False, "error": "ai-usage returned no data" if not out else "ai-usage returned unreadable output"})
 
 
 def cmd_fonts(argv: List[str]) -> int:

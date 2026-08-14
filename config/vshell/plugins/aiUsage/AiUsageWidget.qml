@@ -10,7 +10,12 @@ PluginComponent {
     id: root
 
     // --- Settings-backed config ---
-    property string provider: pluginData.provider || "claude"
+    // Normalised, so a settings file carrying anything else degrades to the
+    // default instead of leaving the widget inert: an unknown provider is
+    // rejected as a launch tag, so every payload would be discarded and nothing
+    // would ever relaunch, with no way back but editing settings by hand. It is
+    // also what keeps the argv the helper receives a known provider.
+    readonly property string provider: logic.normalizeProvider(pluginData.provider) || "claude"
     property int refreshSeconds: pluginData.refreshSeconds || 300
     // How the bar number is derived from the pool. "pool" = mean of each
     // account's tightest window, "best" = the account with the most headroom,
@@ -49,9 +54,6 @@ PluginComponent {
         id: logic
     }
 
-    function isEnterpriseAccount(account) {
-        return logic.isEnterpriseAccount(account);
-    }
     function orderedAccounts(list) {
         return logic.orderedAccounts(list);
     }
@@ -63,30 +65,34 @@ PluginComponent {
     }
 
     // --- Live state ---
+    //
+    // ONE accepted payload, for the provider that is selected. Everything the
+    // popout renders is a binding off it, so a provider switch invalidates all
+    // of it by clearing this single property — there is no hand-maintained
+    // mirror to forget a field in, which is how the previous provider's numbers
+    // used to survive a switch (VGS-118).
+    property var current: null
+    // Why the last fetch for the selected provider could not deliver a payload.
+    // Non-empty means what `current` holds is no longer trustworthy.
+    property string fetchError: ""
     property bool loading: true
-    property bool ok: false
-    property string errorText: ""
-    property string plan: ""
-    property int sessionPct: 0
-    property string sessionReset: ""
-    property double sessionResetAt: 0
-    property bool hasSession: true  // absent when the provider reports no ~5h window (e.g. weekly-only Codex accounts)
-    property int weeklyPct: 0
-    property string weeklyReset: ""
-    property double weeklyResetAt: 0
-    property bool hasWeekly: true
-    property string thirdLabel: ""
-    property int thirdPct: 0
-    property string thirdReset: ""
-    property double thirdResetAt: 0
-    property bool hasThird: true   // model-scoped weekly (Claude) / extra lane (Codex); hidden when the API omits it
+
+    readonly property bool ok: root.fetchError === "" && root.current !== null && root.current.ok === true
+    readonly property string errorText: {
+        if (root.fetchError !== "")
+            return root.fetchError;
+        if (root.current && root.current.ok !== true)
+            return root.current.error || "usage unavailable";
+        return "";
+    }
+    readonly property string plan: (root.current && root.current.plan) || ""
 
     // --- Multi-account state ---
     // People run several subscriptions side by side (one config dir per wrapper
     // script). With a single account this stays a one-entry list and every path
-    // below falls back to the flat fields above, so nothing changes for them.
-    property var accounts: []
-    property var aggregate: null
+    // below falls back to the payload's flat lanes, so nothing changes for them.
+    readonly property var accounts: (root.current && root.current.accounts) || []
+    readonly property var aggregate: (root.current && root.current.aggregate) || null
     readonly property bool multiAccount: (root.accounts || []).length > 1
     property string expandedAccountId: ""
     readonly property int pillFontSize: Theme.barTextSize(
@@ -120,20 +126,14 @@ PluginComponent {
     }
 
     // Meters for the single-account view. Prefers the accounts list so lanes the
-    // flat fields can't express (a credit pool, a second model) still show up,
-    // and falls back to the flat fields if an older helper omits accounts.
+    // flat payload can't express (a credit pool, a second model) still show up,
+    // and falls back to the payload's own lanes if an older helper omits
+    // accounts.
     readonly property var primaryMeters: {
         const list = root.accounts || [];
         if (list.length > 0)
             return root.metersFor(list[0]);
-        let out = [];
-        if (root.hasSession)
-            out.push({ label: "Session (5h)", pct: root.sessionPct, reset: root.sessionReset, resetAt: root.sessionResetAt, detail: "" });
-        if (root.hasWeekly)
-            out.push({ label: "Weekly (7d)", pct: root.weeklyPct, reset: root.weeklyReset, resetAt: root.weeklyResetAt, detail: "" });
-        if (root.hasThird)
-            out.push({ label: root.thirdLabel, pct: root.thirdPct, reset: root.thirdReset, resetAt: root.thirdResetAt, detail: "" });
-        return out;
+        return logic.flatMeters(root.current);
     }
 
     function formatResetAt(epoch) {
@@ -168,21 +168,8 @@ PluginComponent {
         }
     }
 
-    // One percentage has one status colour everywhere it appears. Provider and
-    // account classes describe their worst lane, so using them for every meter
-    // made a healthy 0% lane red whenever a different lane was exhausted.
-    function percentageClass(pct) {
-        const value = Math.max(0, Math.min(Number(pct) || 0, 100));
-        if (value >= 90)
-            return "critical";
-        if (value >= 75)
-            return "high";
-        if (value >= 50)
-            return "mid";
-        return "low";
-    }
     function percentageColor(pct) {
-        return classColor(percentageClass(pct));
+        return classColor(logic.percentageClass(pct));
     }
 
     // Headline percentage: the tightest lane this account has. Same reasoning as
@@ -196,9 +183,7 @@ PluginComponent {
         let peak = 0;
         for (let i = 0; i < lanes.length; i++)
             peak = Math.max(peak, lanes[i].pct || 0);
-        if (lanes.length > 0)
-            return peak;
-        return root.hasSession ? root.sessionPct : root.weeklyPct;
+        return peak;
     }
 
     // Headline for each provider, kept side by side so the pill can show both
@@ -210,12 +195,8 @@ PluginComponent {
     property var claudeData: null
     property var codexData: null
 
-    function computeHead(data) {
-        return logic.headOf(data, root.headlineMode, root.hiddenAccounts);
-    }
-
-    readonly property var claudeHead: root.computeHead(root.claudeData)
-    readonly property var codexHead: root.computeHead(root.codexData)
+    readonly property var claudeHead: logic.headOf(root.claudeData, root.headlineMode, root.hiddenAccounts)
+    readonly property var codexHead: logic.headOf(root.codexData, root.headlineMode, root.hiddenAccounts)
 
     // File a payload under the provider IT names, never under the provider the
     // fetch was launched for or the one currently selected. `provider` must be
@@ -235,10 +216,10 @@ PluginComponent {
     // can say "waiting" rather than "nothing".
     readonly property var fetchingProviders: {
         const out = [];
-        if (root.usageInFlight !== "")
-            out.push(root.usageInFlight);
-        if (root.otherInFlight !== "")
-            out.push(root.otherInFlight);
+        if (usageFetch.inFlight !== "")
+            out.push(usageFetch.inFlight);
+        if (otherFetch.inFlight !== "")
+            out.push(otherFetch.inFlight);
         return out;
     }
 
@@ -253,57 +234,65 @@ PluginComponent {
         });
     }
 
-    // The provider each fetch was LAUNCHED for, empty when nothing is in
-    // flight. A Process command is a binding on root.provider, but a fetch
-    // already running when the provider changes keeps its old argument. The tag
-    // says which argument a running process actually got; the payload's own
-    // `provider` field is what decides where its data may be filed, because a
-    // tag can be reassigned while the process that owns it is still running.
-    property string usageInFlight: ""
-    property string otherInFlight: ""
+    // One record per fetch channel. Both channels ask the same four questions,
+    // and holding them separately was how the shared failure-reason field ended
+    // up reporting one provider's cause as the other's: two copies of a concept
+    // stay in step only as long as somebody remembers both.
+    component FetchChannel: QtObject {
+        // The provider this channel's process was LAUNCHED for, empty when
+        // nothing is running. A Process command is a binding on the provider,
+        // but a fetch already running when the provider changes keeps its old
+        // argument. The tag says which argument a running process actually got;
+        // the payload's own `provider` field is what decides where its data may
+        // be filed, because a tag can be reassigned while the process holding
+        // it is still running.
+        property string inFlight: ""
+        // The provider whose payload this channel last filed. The relaunch
+        // decision is "is this what is selected now?", never "did the selection
+        // move?".
+        property string loaded: ""
+        property int retries: 0
+        // Whether the launch now finishing produced a payload this channel could
+        // use, and why it did not. Per channel, so one channel's failure can
+        // never be shown as the other's cause.
+        property bool accepted: false
+        property string issue: ""
 
-    // The provider whose payload is populating the popout below, and the one
-    // whose headline otherProc last filed. These are the "are we there yet"
-    // answers the relaunch decision needs: a fetch is replaced whenever what is
-    // on screen is not the provider that is selected now.
-    property string loadedProvider: ""
-    property string otherLoadedProvider: ""
-    property int usageRetries: 0
-    property int otherRetries: 0
+        // What a provider switch invalidates. `inFlight` is deliberately not
+        // touched: a process is still running and its tag is what identifies it.
+        function reset() {
+            loaded = "";
+            retries = 0;
+            accepted = false;
+            issue = "";
+        }
+    }
+
+    FetchChannel {
+        id: usageFetch
+    }
+    FetchChannel {
+        id: otherFetch
+    }
+
     // Immediate relaunches allowed before giving up and waiting for the poll
     // timer. Reset by any accepted payload and by a provider switch, so this
     // only ever runs out on a helper that keeps returning nothing usable.
     readonly property int maxFetchRetries: 3
 
-    // Every one of these describes ONE provider, so a switch makes all of them
-    // wrong at the same instant. Clearing them together is what stops the popout
-    // rendering the previous provider's accounts, plan, aggregate and error text
-    // under the new provider's name — worst case is now an empty, loading
-    // popout. The per-provider headlines (claudeData/codexData) are deliberately
-    // kept: they are keyed by provider identity, so they cannot be mixed up.
+    // A provider switch makes every provider-scoped answer wrong at once: the
+    // payload, the failure text, and both channels' "what do we hold" state. One
+    // path clears all of it, so the popout shows a loading state rather than the
+    // previous provider's accounts, plan and errors. The per-provider headlines
+    // (claudeData/codexData) are deliberately kept: they are keyed by provider
+    // identity, so they cannot be mixed up.
     function clearProviderState() {
+        root.current = null;
+        root.fetchError = "";
         root.loading = true;
-        root.ok = false;
-        root.errorText = "";
-        root.plan = "";
-        root.accounts = [];
-        root.aggregate = null;
         root.expandedAccountId = "";
-        root.loadedProvider = "";
-        root.usageRetries = 0;
-        root.hasSession = true;
-        root.sessionPct = 0;
-        root.sessionReset = "";
-        root.sessionResetAt = 0;
-        root.hasWeekly = true;
-        root.weeklyPct = 0;
-        root.weeklyReset = "";
-        root.weeklyResetAt = 0;
-        root.hasThird = true;
-        root.thirdLabel = "";
-        root.thirdPct = 0;
-        root.thirdReset = "";
-        root.thirdResetAt = 0;
+        usageFetch.reset();
+        otherFetch.reset();
     }
 
     // A tag is only honoured while its process is actually running, so a fetch
@@ -312,19 +301,27 @@ PluginComponent {
     // to a Process that has not finished stopping is a no-op, and a tag left
     // behind by a launch that never happened would block every later refresh
     // while nothing was fetching.
-    function refresh() {
-        if (root.otherInFlight === "" || !otherProc.running) {
-            root.otherInFlight = root.otherProvider;
-            otherProc.running = true;
-            if (!otherProc.running)
-                root.otherInFlight = "";
-        }
-        if (root.usageInFlight !== "" && usageProc.running)
+    //
+    // `which` is "usage", "other", or empty for both. A retry relaunches only
+    // the channel that asked for one: restarting both would spend one channel's
+    // budget on the other's process, and every launch shells out to a provider
+    // usage API once per configured bar.
+    function refresh(which) {
+        if (which !== "usage")
+            root.launch(otherFetch, otherProc, root.otherProvider);
+        if (which !== "other")
+            root.launch(usageFetch, usageProc, root.provider);
+    }
+
+    function launch(ch, proc, want) {
+        if (ch.inFlight !== "" && proc.running)
             return;
-        root.usageInFlight = root.provider;
-        usageProc.running = true;
-        if (!usageProc.running)
-            root.usageInFlight = "";
+        ch.inFlight = want;
+        ch.accepted = false;
+        ch.issue = "";
+        proc.running = true;
+        if (!proc.running)
+            ch.inFlight = "";
     }
 
     function setProvider(p) {
@@ -346,8 +343,7 @@ PluginComponent {
     // until its own poll timer fired, up to refreshSeconds later.
     onProviderChanged: {
         root.clearProviderState();
-        root.otherRetries = 0;
-        root.refresh();
+        root.refresh("");
     }
 
     readonly property string aiUsageCommand: Paths.vshellCli
@@ -360,45 +356,19 @@ PluginComponent {
             id: usageOut
             onStreamFinished: root.acceptUsage(usageOut.text)
         }
-        // Clearing the tag belongs here rather than in onStreamFinished: the
-        // stream closes before the process is reaped (the same ordering
-        // Common/settings/Processes.qml relies on), so by the time this runs
-        // the stale/fresh decision above has already been made, and a fetch
+        // Kept, because a helper that fails before printing anything says why
+        // here and nowhere else. Without it the widget reported "parse error"
+        // for a payload the helper never produced.
+        stderr: StdioCollector {
+            id: usageErr
+        }
+        // Clearing the tag belongs in the exit handler rather than in
+        // onStreamFinished: the stream closes before the process is reaped (the
+        // same ordering Common/settings/Processes.qml relies on), so by the time
+        // it runs the accept/discard decision has already been made, and a fetch
         // that produced no output at all still releases the slot.
-        onExited: {
-            const launchedFor = root.usageInFlight;
-            root.usageInFlight = "";
-            // Relaunch whenever the popout is not showing the provider that is
-            // selected now — whatever the reason: the payload was discarded as
-            // misattributed, it arrived after the user switched away, or it
-            // never parsed. Comparing `launchedFor` to the selection instead
-            // dropped the replacement fetch on a claude -> codex -> claude
-            // toggle, which is where the stale accounts came from (VGS-118).
-            //
-            // DEFERRED, because refresh() restarts by assigning `running = true`
-            // and that is a no-op while `running` still reads true. Quickshell
-            // 0.3.0 documents `running = false` as "send SIGTERM" and gives the
-            // restart idiom as `onRunningChanged: if (!running) running = true`
-            // — against runningChanged, not exited — and nowhere states that
-            // `running` has already flipped when `exited` fires. Assuming it has
-            // would silently drop the replacement fetch and leave the widget on
-            // loading = true until the poll timer. Next turn, both have settled.
-            if (logic.shouldRelaunch(launchedFor, root.loadedProvider, root.provider,
-                                     root.usageRetries, root.maxFetchRetries)) {
-                root.usageRetries += 1;
-                Qt.callLater(root.refresh);
-                return;
-            }
-            // Out of retries with still nothing for the selected provider. Say
-            // so — sitting on "loading" would claim a fetch is coming when the
-            // next one is a poll interval away — and drop this provider's stale
-            // headline, so the pill cannot show a number the popout contradicts.
-            if (launchedFor !== "" && root.loadedProvider !== root.provider) {
-                root.loading = false;
-                root.ok = false;
-                root.errorText = root.lastFetchIssue || "usage unavailable";
-                root.storeHeadline(root.provider, { ok: false, provider: root.provider, error: root.errorText });
-            }
+        onExited: (exitCode, exitStatus) => {
+            root.finishFetch(usageFetch, "usage", root.provider, exitCode, usageErr.text);
         }
     }
 
@@ -414,93 +384,121 @@ PluginComponent {
             id: otherOut
             onStreamFinished: root.acceptOther(otherOut.text)
         }
-        onExited: {
-            const launchedFor = root.otherInFlight;
-            root.otherInFlight = "";
-            // Deferred for the same reason as usageProc's relaunch above.
-            if (logic.shouldRelaunch(launchedFor, root.otherLoadedProvider, root.otherProvider,
-                                     root.otherRetries, root.maxFetchRetries)) {
-                root.otherRetries += 1;
-                Qt.callLater(root.refresh);
-                return;
-            }
-            if (launchedFor !== "" && root.otherLoadedProvider !== root.otherProvider)
-                root.storeHeadline(root.otherProvider,
-                                   { ok: false, provider: root.otherProvider, error: "usage unavailable" });
+        stderr: StdioCollector {
+            id: otherErr
+        }
+        onExited: (exitCode, exitStatus) => {
+            root.finishFetch(otherFetch, "other", root.otherProvider, exitCode, otherErr.text);
         }
     }
 
-    // Why the last payload could not be used, so the popout can say something
-    // truer than "unavailable" once the retries run out.
-    property string lastFetchIssue: ""
+    // One exit path for both channels. `want` is the provider this channel is
+    // supposed to be holding — the selected one for the usage channel, the other
+    // one for its neighbour.
+    function finishFetch(ch, which, want, exitCode, errorOut) {
+        const launchedFor = ch.inFlight;
+        ch.inFlight = "";
+        if (launchedFor === "")
+            return;
+
+        // A non-zero exit means the helper never produced a payload, so naming
+        // this "parse error" would report the wrong cause. The first stderr line
+        // is what the helper writes when it knows why it failed.
+        if (!ch.accepted && exitCode !== 0) {
+            const lines = String(errorOut || "").split("\n").filter(l => l.trim() !== "");
+            ch.issue = "helper exited " + exitCode + (lines.length > 0 ? ": " + lines[0].trim() : "");
+            console.warn("aiUsage: " + launchedFor + " fetch " + ch.issue);
+        }
+
+        // Relaunch whenever this channel is not holding the provider it should
+        // be — whatever the reason: the payload was discarded as misattributed,
+        // it arrived after the user switched away, or it never parsed. Comparing
+        // `launchedFor` to the selection instead dropped the replacement fetch on
+        // a claude -> codex -> claude toggle, which is where the stale accounts
+        // came from (VGS-118).
+        //
+        // DEFERRED, because a relaunch assigns `running = true` and that is a
+        // no-op while `running` still reads true. Quickshell 0.3.0 documents
+        // `running = false` as "send SIGTERM" and gives the restart idiom as
+        // `onRunningChanged: if (!running) running = true` — against
+        // runningChanged, not exited — and nowhere states that `running` has
+        // already flipped when `exited` fires. Assuming it has would silently
+        // drop the replacement fetch and leave the widget on loading = true
+        // until the poll timer. Next turn, both have settled.
+        if (logic.shouldRelaunch(launchedFor, ch.loaded, want, ch.retries, root.maxFetchRetries)) {
+            ch.retries += 1;
+            Qt.callLater(() => root.refresh(which));
+            return;
+        }
+
+        // Either there is still nothing for `want`, or this fetch produced no
+        // payload and what is held is now stale. Both are failures of the same
+        // kind: say so rather than sitting on "loading" or on numbers no fetch
+        // stands behind, and drop that provider's headline so the pill cannot
+        // show a number the popout contradicts.
+        if (ch.loaded !== want || !ch.accepted) {
+            const why = ch.issue !== "" ? ch.issue : "usage unavailable";
+            root.storeHeadline(want, { ok: false, provider: want, error: why });
+            if (want === root.provider) {
+                root.loading = false;
+                root.fetchError = why;
+            }
+        }
+    }
 
     // A payload is JSON that names the provider its fetch was launched for.
     // Anything else — unparseable output, a payload naming the other provider —
-    // is not this fetch's answer and is refetched rather than displayed.
+    // is not this fetch's answer, and is refetched rather than displayed. The
+    // reason travels WITH the result so it cannot be read as the other
+    // channel's cause.
     function decodePayload(launchedFor, txt) {
         let d = null;
         try {
             d = JSON.parse((txt || "").trim());
         } catch (e) {
-            root.lastFetchIssue = "parse error";
-            return null;
+            return { data: null, issue: "parse error" };
         }
-        if (!logic.payloadIsFor(launchedFor, d)) {
-            root.lastFetchIssue = "provider mismatch";
-            return null;
-        }
-        root.lastFetchIssue = "";
-        return d;
+        if (!logic.payloadIsFor(launchedFor, d))
+            return { data: null, issue: "provider mismatch" };
+        return { data: d, issue: "" };
     }
 
     function acceptUsage(txt) {
-        const d = root.decodePayload(root.usageInFlight, txt);
-        if (!d)
+        const got = root.decodePayload(usageFetch.inFlight, txt);
+        usageFetch.issue = got.issue;
+        if (!got.data)
             return;
+        usageFetch.accepted = true;
         // The headline is filed by the payload's own provider, so a result that
         // lands after the user switched still updates that provider's pill slot.
-        root.noteHeadline(d);
+        root.noteHeadline(got.data);
         // The popout, though, only ever shows the selected provider.
-        if (logic.payloadProvider(d) !== root.provider)
+        if (logic.payloadProvider(got.data) !== root.provider)
             return;
-        root.applyPayload(d);
+        root.applyPayload(got.data);
     }
 
     function acceptOther(txt) {
-        const d = root.decodePayload(root.otherInFlight, txt);
-        if (!d)
+        const got = root.decodePayload(otherFetch.inFlight, txt);
+        otherFetch.issue = got.issue;
+        if (!got.data)
             return;
-        root.noteHeadline(d);
-        root.otherLoadedProvider = logic.payloadProvider(d);
-        root.otherRetries = 0;
+        otherFetch.accepted = true;
+        root.noteHeadline(got.data);
+        otherFetch.loaded = logic.payloadProvider(got.data);
+        otherFetch.retries = 0;
     }
 
+    // The whole popout is a binding off `current`, so accepting a payload is one
+    // assignment. Adding a lane later means adding it to the payload and to
+    // AiUsageLogic.flatMeters — never to a mirror here that a switch has to
+    // remember to clear.
     function applyPayload(d) {
+        root.current = d;
+        root.fetchError = "";
         root.loading = false;
-        root.loadedProvider = root.provider;
-        root.usageRetries = 0;
-        root.ok = d.ok === true;
-        root.accounts = d.accounts || [];
-        root.aggregate = d.aggregate || null;
-        if (!root.ok) {
-            root.errorText = d.error || "usage unavailable";
-            return;
-        }
-        root.errorText = "";
-        root.plan = d.plan || "";
-        root.hasSession = !!d.session;
-        root.sessionPct = (d.session && d.session.pct) || 0;
-        root.sessionReset = (d.session && d.session.reset) || "";
-        root.sessionResetAt = (d.session && d.session.resetAt) || 0;
-        root.hasWeekly = !!d.weekly;
-        root.weeklyPct = (d.weekly && d.weekly.pct) || 0;
-        root.weeklyReset = (d.weekly && d.weekly.reset) || "";
-        root.weeklyResetAt = (d.weekly && d.weekly.resetAt) || 0;
-        root.hasThird = !!d.third;
-        root.thirdLabel = (d.third && d.third.label) || "";
-        root.thirdPct = (d.third && d.third.pct) || 0;
-        root.thirdReset = (d.third && d.third.reset) || "";
-        root.thirdResetAt = (d.third && d.third.resetAt) || 0;
+        usageFetch.loaded = root.provider;
+        usageFetch.retries = 0;
     }
 
     Timer {
@@ -512,7 +510,7 @@ PluginComponent {
         repeat: true
         running: true
         triggeredOnStart: true
-        onTriggered: root.refresh()
+        onTriggered: root.refresh("")
     }
 
     // One slot per provider, each carrying its own icon. The icon is what makes

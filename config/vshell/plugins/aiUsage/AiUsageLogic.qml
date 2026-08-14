@@ -139,16 +139,39 @@ QtObject {
     }
 
     // One provider's pill number, or null when its last payload cannot produce
-    // one (never fetched, signed out, API failure). A null head keeps its slot.
+    // one (never fetched, signed out, API failure, every account hidden). A null
+    // head keeps its slot.
     function headOf(data, mode, hidden) {
         if (!data || data.ok !== true)
             return null;
-        const agg = data.aggregate;
         const local = headlineOf(data.accounts, mode, hidden);
-        const pct = local !== null ? local
-            : (agg && agg.pct !== undefined && agg.pct !== null ? agg.pct
-            : (data.session ? data.session.pct : (data.weekly ? data.weekly.pct : 0)));
+        if (local !== null)
+            return { pct: local };
+        // A payload that reported accounts has no headline only because the user
+        // hid them all. Falling back to the payload's aggregate here would put a
+        // number computed over exactly those hidden accounts in the pill, beside
+        // a popout header reading "0 accounts".
+        if ((data.accounts || []).length > 0)
+            return null;
+        const agg = data.aggregate;
+        const pct = agg && agg.pct !== undefined && agg.pct !== null ? agg.pct
+            : (data.session ? data.session.pct : (data.weekly ? data.weekly.pct : 0));
         return { pct: pct };
+    }
+
+    // The lanes a payload describes directly, for the older single-account shape
+    // that carries session/weekly/third instead of an accounts list.
+    function flatMeters(data) {
+        if (!data)
+            return [];
+        const out = [];
+        if (data.session)
+            out.push({ label: "Session (5h)", pct: data.session.pct || 0, reset: data.session.reset || "", resetAt: data.session.resetAt || 0, detail: "" });
+        if (data.weekly)
+            out.push({ label: "Weekly (7d)", pct: data.weekly.pct || 0, reset: data.weekly.reset || "", resetAt: data.weekly.resetAt || 0, detail: "" });
+        if (data.third)
+            out.push({ label: data.third.label || "", pct: data.third.pct || 0, reset: data.third.reset || "", resetAt: data.third.resetAt || 0, detail: "" });
+        return out;
     }
 
     // Meters for one account entry, in the same order the single-account view
@@ -171,6 +194,20 @@ QtObject {
                        detail: account.spend.detail || "",
                        used: account.spend.used, limit: account.spend.limit, currency: account.spend.currency || "USD" });
         return out;
+    }
+
+    // One percentage has one status colour everywhere it appears. Provider and
+    // account classes describe their worst lane, so using them for every meter
+    // made a healthy 0% lane red whenever a different lane was exhausted.
+    function percentageClass(pct) {
+        const value = Math.max(0, Math.min(Number(pct) || 0, 100));
+        if (value >= 90)
+            return "critical";
+        if (value >= 75)
+            return "high";
+        if (value >= 50)
+            return "mid";
+        return "low";
     }
 
     // --- pill composition ---------------------------------------------------
