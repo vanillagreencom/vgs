@@ -154,6 +154,7 @@ cd "$repo_root" || exit 1
 # the QML smoke, the safety guard, surfaces; helper = the helper checks plus the
 # py_compile/bash -n syntax pass; packaging = the three packaging checks;
 # docs = the instruction-surface growth ratchet.
+# shellcheck disable=SC2329  # invoked indirectly, as an argument to collect()
 manifest() {
   cat <<'MANIFEST_EOF'
 qml       | scripts/check-naming.sh
@@ -272,6 +273,44 @@ if [[ ! -r "$GRAMMAR_FILE" ]]; then
   exit 2
 fi
 
+# ═══ COLLECTION IS CHECKED, NOT ASSUMED ════════════════════════════════════
+#
+# `done < <(producer)` DISCARDS the producer's exit status: the loop consumes
+# whatever bytes arrived and the shell never asks whether the producer finished.
+# Verified before this was written — with a `sed` wrapper that emits the real
+# output and then exits 42, `scripts/validate --list docs` returned 0 and listed
+# commands. A TRUNCATED grammar is the worst possible input here, because every
+# rule below is derived from it: a class or token that never arrived does not
+# fail, it silently changes what the runner selects.
+#
+# So each producer is run through a command substitution, whose status the shell
+# DOES report, and the status is checked before the bytes are used. `set -e`
+# alone is not the answer: it would abort with no diagnostic at all, and a
+# TRANSPORT failure needs a different sentence from a malformed grammar, because
+# the remedies are different — one is "fix the file", the other is "your read
+# failed and nothing was validated".
+#
+# These two messages are hardcoded rather than read from the grammar, and that
+# is not the drift hazard it looks like: they are reported when the grammar
+# could not be COLLECTED, so its message table does not exist yet. The
+# `cannot read the grammar at ...` error above is hardcoded for the same reason.
+# Sets `collected`; NEVER writes to stdout and is never wrapped in a command
+# substitution. `$( )` runs a subshell, so an `exit 2` inside one would end the
+# substitution and leave the caller running on empty output — a fail-open in the
+# very function written to close one.
+collected=""
+collect() { # $1 what, then the producer and its arguments
+  local what="$1" status=0
+  shift
+  collected="$("$@")" || status=$?
+  if [[ $status -ne 0 ]]; then
+    printf 'scripts/validate: READING %s failed (collection exited %d)\n' "$what" "$status" >&2
+    printf '  This is a read/transport failure, not a malformed %s: the bytes that\n' "$what" >&2
+    printf '  arrived may be a partial file, so NOTHING was validated and nothing ran.\n' >&2
+    exit 2
+  fi
+}
+
 declare -A CLASS_SELECTS=() CLASS_STANDALONE=() CLASS_ROWTAG=() CLASS_EXCLUSIVE=()
 declare -A CLASS_MIN=() CLASS_MAX=() CLASS_COUNT=()
 declare -A CLASS_CLI=() CLASS_UNIVERSAL=() CLASS_SKIPS=()
@@ -338,6 +377,12 @@ require_count() { # $1 context, $2 field text, $3 value
 # booleans plus min and max). `token <name> <class>` and `message <key> <text>`
 # are positional and have no named field to repeat; `token`'s `max=2` arity
 # means an extra field is refused as arity before it could be one.
+# COLLECTED ONCE, and both passes read the SAME BYTES. Reading the file twice
+# also let it change between the passes, so the metadata a record was validated
+# against need not have been the metadata in the file.
+collect "the grammar" sed -e 's/#.*//' -e "/^[$ASCII_SPACE_LINE]*\$/d" "$GRAMMAR_FILE"
+grammar_text="$collected"
+
 declare -A SEEN_FIELD=()
 begin_record() { SEEN_FIELD=(); }
 seen_field() { # $1 context, $2 field name
@@ -398,7 +443,7 @@ while read -r kind name rest || [[ -n "$kind" ]]; do
       [[ -n "$name" ]] && MSG[$name]="$rest"
       ;;
   esac
-done < <(sed -e 's/#.*//' -e "/^[$ASCII_SPACE_LINE]*\$/d" "$GRAMMAR_FILE")
+done <<<"$grammar_text"
 
 if [[ -z "${KIND_MIN[class]:-}" || -z "${KIND_MIN[token]:-}" || -z "${KIND_MIN[message]:-}" ]]; then
   grammar_fatal "grammar declares no arity for a required line kind" "class/token/message"
@@ -508,7 +553,7 @@ while read -r line || [[ -n "$line" ]]; do
       ;;
     kind | message) ;; # read in the metadata pass above
   esac
-done < <(sed -e 's/#.*//' -e "/^[$ASCII_SPACE_LINE]*\$/d" "$GRAMMAR_FILE")
+done <<<"$grammar_text"
 
 # THE INVARIANTS, enforced here as well as in the guard and taken from the same
 # `min`/`max` in the definition. The runner goes first, so an invariant only the
@@ -578,6 +623,12 @@ done
 # this prints is a grammar the runner itself accepted. A grammar it refuses
 # never produces a dump at all — it exits 2 with the diagnostic, which is what
 # the consumer reports.
+# `printf | sort` is a pipeline, and a pipeline inside a process substitution
+# discards its status twice over. Wrapped so `collect` can see it; pipefail is
+# already on, so a failure in either half surfaces.
+# shellcheck disable=SC2329  # invoked indirectly, as an argument to collect()
+sort_names() { printf '%s\n' "$@" | LC_ALL=C sort; }
+
 dump_grammar() {
   local cls key token
   printf 'source %s\n' "$GRAMMAR_FILE"
@@ -587,20 +638,22 @@ dump_grammar() {
   # it is a second place the rule is written, and that is the same thing wearing
   # a different name.
   printf 'default %s\n' "$default_area"
+  collect "the dumped class list" sort_names "${!CLASS_ROWTAG[@]}"
   while IFS= read -r cls; do
     [[ -n "$cls" ]] || continue
     printf 'class %s selects=%s standalone=%s rowtag=%s exclusive=%s cli=%s universal=%s skips=%s min=%s max=%s\n' \
       "$cls" "${CLASS_SELECTS[$cls]}" "${CLASS_STANDALONE[$cls]}" "${CLASS_ROWTAG[$cls]}" \
       "${CLASS_EXCLUSIVE[$cls]}" "${CLASS_CLI[$cls]}" "${CLASS_UNIVERSAL[$cls]}" \
       "${CLASS_SKIPS[$cls]}" "${CLASS_MIN[$cls]:-0}" "${CLASS_MAX[$cls]:--}"
-  done < <(printf '%s\n' "${!CLASS_ROWTAG[@]}" | LC_ALL=C sort)
+  done <<<"$collected"
   for token in "${grammar_tokens[@]}"; do
     printf 'token %s %s\n' "$token" "${TOKEN_CLASS[$token]}"
   done
+  collect "the dumped message list" sort_names "${!MSG[@]}"
   while IFS= read -r key; do
     [[ -n "$key" ]] || continue
     printf 'message %s %s\n' "$key" "${MSG[$key]}"
-  done < <(printf '%s\n' "${!MSG[@]}" | LC_ALL=C sort)
+  done <<<"$collected"
 }
 
 # EXACTLY ONE TOKEN MAY BE THE CLI DEFAULT, counted across ALL classes. The
@@ -725,6 +778,8 @@ row_fatal() {
 # the run still ends in `ok`. That is the one shape the guard on the other side
 # (check-validation-inventory.py) and this loop could both have swallowed, so
 # both now refuse it with the same message.
+collect "the manifest" manifest
+manifest_text="$collected"
 selected=()
 selected_tags=()
 while IFS= read -r line; do
@@ -821,7 +876,7 @@ while IFS= read -r line; do
   fi
   selected+=("$cmd")
   selected_tags+=("$tags")
-done < <(manifest)
+done <<<"$manifest_text"
 
 if [[ ${#selected[@]} -eq 0 ]]; then
   # Unreachable while every area tag names at least one row. If the manifest is

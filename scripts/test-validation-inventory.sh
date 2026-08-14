@@ -163,7 +163,14 @@ run_guard() {
       *) env_args+=("$arg") ;;
     esac
   done
-  if [[ -n "$grammar_override" || -n "$runner_override" ]]; then
+  # A runner fixture that ALREADY has its grammar beside it is used where it
+  # lies. Copying it unconditionally silently relocated it, which made the
+  # spaced-path control vacuous: the fixture was built under a directory with a
+  # space and then copied to one without, so it passed with the bug restored.
+  if [[ -z "$grammar_override" && -n "$runner_override" ]] &&
+    [[ -r "$(dirname -- "$runner_override")/lib/validation-grammar.conf" ]]; then
+    env_args+=("RUNNER_PATH=$runner_override")
+  elif [[ -n "$grammar_override" || -n "$runner_override" ]]; then
     rm -rf "$tmp/paired"
     mkdir -p "$tmp/paired/scripts/lib"
     # `cp` carries the source's mode, which the non-executable-runner case
@@ -1166,6 +1173,90 @@ $(printf '  %s\n' "${verdicts[@]}")"
   done
   ok "C4 holds for both readers under C and ${locales[*]}"
 fi
+
+# A CHECKOUT UNDER A PATH CONTAINING A SPACE. The runner dumps the grammar's
+# absolute path, and requiring that value to be one whitespace-free word made
+# the guard refuse to run on a correct tree at such a path — the strictness was
+# right, the shape of the field was wrong. Built as a real tree rather than a
+# hand-written dump, so the actual emission path is what is exercised.
+spaced="$tmp/a directory with spaces"
+mkdir -p "$spaced/scripts/lib"
+cp "$runner" "$spaced/scripts/validate"
+chmod +x "$spaced/scripts/validate"
+cp "$repo_root/scripts/lib/validation-grammar.conf" "$spaced/scripts/lib/"
+rc=0
+"$spaced/scripts/validate" --list docs >/dev/null 2>"$tmp/stderr" || rc=$?
+[[ "$rc" == 0 ]] || fail "spaced path" "the runner failed at a spaced path (rc $rc): $(cat "$tmp/stderr")"
+run_guard "RUNNER_PATH=$spaced/scripts/validate"
+expect_absent "$guard_out" "cannot read" "spaced path"
+expect_clean_run "spaced path"
+ok "a checkout under a path containing a space runs, and the guard reads its dump"
+
+# ...and the field is still VALIDATED, not merely relaxed: an empty `source` is
+# refused. The missing-line case is asserted above.
+empty_source="$(printf '%s\n' "$good_dump" | sed -e 's|^source .*|source|')"
+[[ "$empty_source" == *$'\nsource\n'* || "$empty_source" == source$'\n'* ]] ||
+  fail "empty source" "the mutation did not produce a bare source line"
+printf '#!/usr/bin/env bash\ncat <<%s\n%s\nDUMP_EOF\n' "'DUMP_EOF'" \
+  "$empty_source" >"$dump_stub"
+chmod +x "$dump_stub"
+run_guard "RUNNER_PATH=$dump_stub"
+expect_refused "empty source" "\`source\` line is empty"
+ok "an empty source line is still refused, so the field is relaxed and not dropped"
+
+# A PRODUCER THAT FAILS AFTER EMITTING. `done < <(producer)` discards the
+# producer's status, so both grammar passes accepted whatever bytes arrived —
+# and a TRUNCATED grammar is the worst input there is, since every rule below is
+# derived from it: a class or token that never arrived does not fail, it
+# silently changes what the runner selects. Reproduced the way it was reported,
+# with a wrapper that emits the real output and then exits non-zero.
+#
+# Both grammar passes are covered by one case now: they read the same collected
+# bytes, so there is one collection point rather than two to fail separately.
+# The manifest heredoc is a second producer and gets its own case.
+wrapper_dir="$tmp/failing-producers"
+mkdir -p "$wrapper_dir"
+while IFS=';' read -r tool invocations label; do
+  [[ -n "$tool" ]] || continue
+  real="$(command -v "$tool")"
+  [[ -n "$real" ]] || { fail "$label" "no $tool on PATH to wrap"; continue; }
+  printf '#!/usr/bin/env bash\n%s "$@"\nexit 42\n' "$real" >"$wrapper_dir/$tool"
+  chmod +x "$wrapper_dir/$tool"
+  # The invocations differ because the two producers are reached from different
+  # paths: `--dump-grammar` answers from the grammar alone and never collects
+  # the manifest, so listing it for the manifest producer would assert a
+  # refusal that SHOULD not happen.
+  # shellcheck disable=SC2086  # the invocation list is a deliberate word list
+  for invocation in $invocations; do
+    invocation="${invocation//+/ }"
+    rc=0
+    # shellcheck disable=SC2086  # the invocation is a deliberate word list
+    out="$(PATH="$wrapper_dir:$PATH" "$runner" $invocation 2>"$tmp/stderr")" || rc=$?
+    err="$(cat "$tmp/stderr")"
+    [[ "$rc" == 2 ]] || fail "$label" "exited $rc for \`$invocation\`, not 2"
+    expect_absent "$out" "scripts/" "$label ($invocation)"
+    # A TRANSPORT failure must not read as a malformed grammar: the remedies
+    # differ, so the message says which one happened.
+    expect_contains "$err" "collection exited 42" "$label ($invocation)"
+    expect_contains "$err" "read/transport failure" "$label ($invocation)"
+  done
+  rm -f "$wrapper_dir/$tool"
+  ok "$label"
+done <<'PRODUCERS'
+sed;--list+docs --list+all docs --dump-grammar;a failing grammar producer exits 2 with nothing listed
+cat;--list+docs --list+all docs;a failing manifest producer exits 2 with nothing listed
+PRODUCERS
+
+# CONTROL FOR THE CONTROL: the same wrapper that exits 0 changes nothing, so the
+# cases above are catching the STATUS and not the wrapper's presence.
+real_sed="$(command -v sed)"
+printf '#!/usr/bin/env bash\n%s "$@"\n' "$real_sed" >"$wrapper_dir/sed"
+chmod +x "$wrapper_dir/sed"
+rc=0
+PATH="$wrapper_dir:$PATH" "$runner" --list docs >/dev/null 2>&1 || rc=$?
+[[ "$rc" == 0 ]] || fail "producer wrapper" "a passthrough wrapper changed the outcome (rc $rc)"
+rm -f "$wrapper_dir/sed"
+ok "a passthrough wrapper is transparent, so the cases above catch the status"
 
 # The executable-bit arm (VGS-30 applied to the entry point itself).
 non_exec="$tmp/non-exec-runner"

@@ -267,11 +267,27 @@ class Grammar:
                 if kind in seen_kinds:
                     raise self._bad_dump(f"more than one `{kind}` line")
                 seen_kinds.add(kind)
-                if not rest or rest.split() != [rest]:
-                    raise self._bad_dump(f"`{kind}` line is empty or not one word")
+                if not rest:
+                    raise self._bad_dump(f"`{kind}` line is empty")
                 if kind == "source":
+                    # A PATH, so it takes the rest of the line — the way
+                    # `message` takes free text after its key. Requiring one
+                    # whitespace-free word broke every checkout under a
+                    # directory whose path contains a space: the grammar and the
+                    # checkout were both correct and the guard simply refused to
+                    # run. The strictness this replaces was added for a real
+                    # reason, so the field stays validated (present, non-empty,
+                    # dumped once) — it just no longer forbids a value a path
+                    # may legitimately take.
                     self.source = Path(rest)
                 else:
+                    # A TOKEN, which the runner constrains to `[a-z][a-z0-9-]*`
+                    # or `-`, so it genuinely cannot contain a space. Checked
+                    # here as well because the membership test below would
+                    # otherwise report `qml all` as an unknown token rather than
+                    # as a malformed line.
+                    if rest.split() != [rest]:
+                        raise self._bad_dump(f"`default {rest}` is not one token")
                     self.default = rest
             elif kind == "class":
                 fields = rest.split()
@@ -461,6 +477,17 @@ def runner_usage_arguments(runner: Path) -> set[str]:
         )
     except OSError as exc:
         raise ManifestError(f"could not run {runner.name} -h: {exc}") from exc
+    # THE STATUS IS PART OF THE ANSWER. `-h` exits 0; anything else means the
+    # runner never reached its usage line, and reporting that as "printed no
+    # usage line" names the symptom instead of the cause. Same discarded-status
+    # class as the runner's process substitutions.
+    if shown.returncode != 0:
+        detail = (shown.stderr.strip() or shown.stdout.strip()).splitlines()
+        raise ManifestError(
+            f"{runner.name} -h exited {shown.returncode} instead of printing its usage, "
+            f"so the arguments it offers could not be read: "
+            f"{detail[0] if detail else 'no output'}"
+        )
     match = re.search(r"\[--list\] \[([^\]]*)\]", shown.stderr + shown.stdout)
     if not match:
         raise ManifestError(
@@ -525,18 +552,37 @@ def token_participates(runner: Path, rules: "Grammar", token: str, workdir: Path
             [str(probe), *args], capture_output=True, text=True, check=False
         )
 
+    def listing(manifest: str, *args: str) -> str:
+        """A `--list` probe's stdout, with a FAILED probe distinguished.
+
+        The exclusive and selects branches read stdout only, so a probe that
+        exited 2 for an unrelated reason produced empty output and was reported
+        as "the tag changes nothing" — a discarded status turning into a
+        confident wrong diagnosis about the token. Raising keeps the two apart.
+        """
+        result = run(manifest, *args)
+        if result.returncode != 0:
+            detail = (result.stderr.strip() or result.stdout.strip()).splitlines()
+            raise ManifestError(
+                f"the participation probe for `{token}` exited {result.returncode} "
+                f"instead of listing, so whether the runner acts on the token was NOT "
+                f"determined: {detail[0] if detail else 'no output'}"
+            )
+        return result.stdout
+
     props = rules.classes[rules.token_class[token]]
+    probe_manifest = f"{token}       | scripts/stub-x\ngo        | scripts/stub-go"
     if props.get("exclusive"):
-        scoped = run(f"{token}       | scripts/stub-x\ngo        | scripts/stub-go", "--list", "go")
-        every = run(f"{token}       | scripts/stub-x\ngo        | scripts/stub-go", "--list", "all")
-        if "stub-x" in scoped.stdout:
+        scoped = listing(probe_manifest, "--list", "go")
+        every = listing(probe_manifest, "--list", "all")
+        if "stub-x" in scoped:
             return False, f"a row tagged `{token}` is selected by a named area, so it is not exclusive"
-        if "stub-x" not in every.stdout:
+        if "stub-x" not in every:
             return False, f"a row tagged `{token}` is not selected by `all`, so nothing runs it"
         return True, ""
     if props.get("selects"):
-        scoped = run(f"{token}       | scripts/stub-x\ngo        | scripts/stub-go", "--list", "go")
-        if "stub-x" not in scoped.stdout:
+        scoped = listing(probe_manifest, "--list", "go")
+        if "stub-x" not in scoped:
             return False, (
                 f"a row tagged `{token}` is not selected by an area it does not name, "
                 f"so the tag changes nothing"
