@@ -23,13 +23,13 @@
 # one of them to report loaded before it stops observing, so plugin-owned QML is
 # inside the checked window. It fails if any of them never loads.
 #
-# Before asserting anything about what the sandbox contains, it asserts that
-# the sandbox's own SEED is in effect: a sentinel value matching neither the
-# shipped default nor SettingsData's built-in default is stamped into the seeded
-# settings.json and read back out of the running shell over IPC (VGS-92). Every
-# other assertion here is conditional on that one, because a shell that fell
-# back to defaults answers most of them identically — which is exactly what
-# happened for months while `cp -a` preserved a dangling dotfiles symlink.
+# The first state-dependent phase asserts that the sandbox's own SEED is in
+# effect, by reading sentinels back out of the running shell (VGS-92); the
+# bundled-plugin wait and the two phases below are gated on it, since a shell
+# that fell back to defaults answers them identically. The full argument, and
+# what the sandbox inherits from the host versus seeds for itself, is
+# docs/decisions/D008-nested-sandbox-state-seeding.md. The log-error scan is
+# independent of all of it.
 #
 # It then drives two things that loading alone never reaches (VGS-81):
 #
@@ -426,36 +426,83 @@ popout_plugin="aiUsage"
 # never instantiates its component, and the marker below would never fire.
 override_plugin="tailscale"
 
-# --- the seeded settings are in effect (VGS-92, D008) -----------------------
+# --- the seeded settings are in effect (VGS-92, D008 rule 4) ----------------
 #
-# Every other phase reads as a pass whether or not the shell found the seeded
-# settings.json: SettingsData carries its own built-in default for every key and
-# the shipped `settings.default.json` mostly repeats them. That is not
-# hypothetical — `cp -a` used to preserve the operator's
-# `settings.json -> ~/dotfiles/...` symlink, it dangled inside the sandbox, and
-# every run silently used SettingsData's defaults.
+# The argument, stated once here; the other sites point at this or at D008.
 #
-# So the witness has to DISCRIMINATE: any key whose seeded value equals the QML
-# default answers the same in both worlds. The seeding step stamps a sentinel
-# matching NEITHER default and this reads it back out of the RUNNING shell.
-# Mutation control: drop that stamp and this check fails ('500', not '4242').
+# Every phase below reads as a pass whether or not the shell found the seeded
+# settings: SettingsData carries a built-in default for every key
+# (Common/SettingsData.qml) and for plugins too (`builtInPluginSettings`), and
+# the shipped `*.default.json` files mostly repeat them. That is not
+# hypothetical — between 57d92829 (2026-08-02) and 6e1673cd (2026-08-09) the
+# host copy was `cp -a`, which preserved the operator's
+# `settings.json -> ~/dotfiles/...` symlink; it dangled inside the sandbox and
+# every run silently used the built-in defaults while claiming otherwise.
 #
-# `customAnimationDuration` carries it because it is inert — MethodTheme
-# consults it only when `animationSpeed` selects Custom, which the shipped
-# default does not. Its QML and shipped defaults are both 500.
+# So the witness has to DISCRIMINATE: a key whose seeded value equals the
+# built-in default answers identically in both worlds and proves nothing. Each
+# seeded file therefore carries a sentinel matching NEITHER default, stamped at
+# prep time and read back out of the RUNNING shell — the file on disk is not
+# evidence about what the shell loaded. Mutation control: suppress a stamp and
+# this check fails.
+#
+# Both carriers are inert. `customAnimationDuration` is read only when
+# `animationSpeed` selects Custom (Common/MethodTheme.qml), which the shipped
+# default does not; `sysUpdate.aurUpdateCommand` is a command string run only on
+# a user-initiated update. Their shipped and built-in defaults agree, which is
+# precisely why neither could witness anything without the sentinel.
 settings_sentinel_key="customAnimationDuration"
 settings_sentinel_value=4242
+plugin_sentinel_plugin="sysUpdate"
+plugin_sentinel_key="aurUpdateCommand"
+plugin_sentinel_value="{vshell} update run aur --vgs92-seed-sentinel"
+
+# Polls one `settings get` until its reply contains `needle`. Bounded, because
+# SettingsData loads asynchronously and this file's other waits exist for that
+# reason. Prints the last reply, and keeps the two failures apart:
+#   1 = the shell answered, with something else  -> the seed did not take
+#   2 = the shell never answered the call        -> a dead shell, which says
+#                                                   nothing about the seed
+await_sentinel() {
+  local needle="$1" key="$2" reply="" answered=false
+  for _ in $(seq 1 40); do
+    # NOT `sandbox_ipc`: that folds stderr into stdout and ends in `|| true`, so
+    # a transport failure would arrive as a reply and be blamed on the seed.
+    if reply="$("${sandbox_env[@]}" qs ipc -p "$repo_root/quickshell/vshell" \
+        --any-display call settings get "$key" 2>/dev/null)"; then
+      answered=true
+      [[ "$reply" == *"$needle"* ]] && { printf '%s' "$reply"; return 0; }
+    fi
+    kill -0 -- "-$qs_group" 2>/dev/null || break
+    sleep 0.25
+  done
+  printf '%s' "$reply"
+  [[ "$answered" == true ]] && return 1
+  return 2
+}
 
 seeded_settings_check() {
-  local reply
-  # `settings get` answers JSON.stringify of the live SettingsData property
-  # (VGSIPC.qml), so a number comes back bare and compares literally.
-  reply="$(sandbox_ipc settings get "$settings_sentinel_key")"
-  if [[ "$reply" != "$settings_sentinel_value" ]]; then
-    fail "the sandboxed shell is NOT running on the settings the sandbox seeded: \`settings get $settings_sentinel_key\` answered '$reply', expected the sentinel '$settings_sentinel_value' - so every phase after this would be measuring state nobody described (VGS-92)"
-    return 1
-  fi
-  note "seeded settings check passed (the running shell reports the sandbox's sentinel $settings_sentinel_key=$settings_sentinel_value)"
+  local spec key needle reply state
+  # `<key>|<needle>`. `settings get` answers JSON.stringify of the live
+  # SettingsData property (VGSIPC.qml): a bare number for the scalar, and the
+  # whole `pluginSettings` object for the plugin read — hence a needle of the
+  # full `"key":"value"` pair there, which only this stamp can produce.
+  for spec in "$settings_sentinel_key|$settings_sentinel_value" \
+              "pluginSettings|\"$plugin_sentinel_key\":\"$plugin_sentinel_value\""; do
+    key="${spec%%|*}"
+    needle="${spec#*|}"
+    state=0
+    reply="$(await_sentinel "$needle" "$key")" || state=$?
+    if [[ "$state" -eq 2 ]]; then
+      fail "the sandboxed shell never answered \`settings get $key\` — the shell or its IPC is gone, so nothing was learned about the seed"
+      return 1
+    elif [[ "$state" -ne 0 ]]; then
+      fail "the sandboxed shell is NOT running on the state it seeded: \`settings get $key\` answered '$reply', which does not carry the sandbox sentinel '$needle' (VGS-92, D008)"
+      return 1
+    fi
+  done
+
+  note "seeded settings check passed (the running shell reports both sandbox sentinels: $settings_sentinel_key and $plugin_sentinel_plugin.$plugin_sentinel_key)"
   return 0
 }
 
@@ -728,6 +775,7 @@ override_state_settles() {
 nested_check() {
   local host_socket sandbox rt_dir conf log nested_socket candidate exit_code findings
   local compositor_pgid qs_launcher qs_group loaded targets plugins_loaded plugin_report candidate
+  local host_dir seeded
   local -a expected_plugins=() missing_plugins=()
   local -a sandbox_env=() dbus_wrapper=()
   # Per-run, so a stale log from an earlier invocation can never satisfy a
@@ -757,94 +805,89 @@ nested_check() {
   track_dir "$rt_dir"
 
   mkdir -p "$sandbox/home/.config" "$sandbox/home/.local/share" "$sandbox/home/.local/state" "$sandbox/home/.cache"
-  # Build the sandbox's user state. Two sources, deliberately split, and the
-  # split is the decision recorded in docs/decisions/D008-nested-sandbox-state-seeding.md:
-  # everything any check asserts on is SEEDED from the shipped defaults so the
-  # run is reproducible between machines, and the operator's own
-  # `~/.config/vshell` is copied in only as inert enrichment beneath it.
-  # Nothing here can write to live state - the sandbox is a throwaway HOME.
+  # Build the sandbox's user state, from two sources with a deliberate
+  # precedence: docs/decisions/D008-nested-sandbox-state-seeding.md. Nothing
+  # here can touch live state — the sandbox is a throwaway HOME.
   # Every step below either succeeds or SAYS SO. A prep failure that is
   # swallowed leaves the run measuring a sandbox that is not the one it
-  # describes, which is the same defect as the `cp -a` symlink silently
-  # yielding default settings and a failed layer query reading as absence —
-  # this file has now had that bug three times, and twice it was here.
+  # describes, which is the same defect as a failed layer query reading as
+  # absence — this file has now had that bug three times, twice of them here.
   prep_fail() {
     fail "sandbox preparation failed at: $1"
     return 1
   }
 
-  # `cp -aL`, not `cp -a`. This machine's documented workstation wiring points
-  # `~/.config/vshell/settings.json` at ~/dotfiles through a RELATIVE symlink,
-  # which `cp -a` preserves and which then dangles inside the sandbox — so the
-  # comment that used to sit here, claiming the copy "exercises the real
-  # theme/settings paths", had never been true on a dotfiles-symlinked config.
-  # `-L` dereferences, so what lands in the sandbox is real files.
+  # An ALLOWLIST of host directories, not a copy-of-everything then delete: a
+  # denylist silently inherits whatever it forgets to name, which is how host
+  # `theme.json` — MethodTheme's source of truth for the entire palette — used
+  # to reach the sandbox. Everything outside these two names is either seeded
+  # below or would steer the run (`theme.json`, `hooks/` host-authored
+  # executables, `generated/` app-target output, `branding/` shipped-asset
+  # replacements). D008 rule 3 is enforced here rather than asserted.
   #
-  # This one copy is the only OPTIONAL step: it enriches the sandbox with real
-  # theme and blueprint state, and everything the checks actually assert on is
-  # seeded below. A user config containing a genuinely broken symlink must not
-  # fail everyone's smoke — but it must not pass unmentioned either, because
-  # the run is then thinner than it looks.
-  if [[ -d "$HOME/.config/vshell" ]]; then
-    if ! cp -aL -- "$HOME/.config/vshell" "$sandbox/home/.config/vshell" 2>"$sandbox/cp.err"; then
-      note "DEGRADED: could not copy ~/.config/vshell into the sandbox; continuing with shipped defaults only"
-      sed -n '1,5p' "$sandbox/cp.err" >&2 || true
-    fi
-  fi
-
-  # Everything the checks below depend on is SEEDED from the shipped defaults
-  # rather than inherited. Dereferencing the copy fixes correctness, not
-  # determinism: the operator's own bar layout, plugin settings and user plugin
-  # packages would still decide what this run exercises, and a sandbox whose
-  # result depends on the machine it ran on is not a sandbox.
-  # TWO different things are called "the rm failed", and they pull in opposite
-  # directions:
+  # `cp -aL`, not `cp -a`: the documented workstation wiring reaches
+  # ~/.config/vshell through RELATIVE symlinks into ~/dotfiles, and a preserved
+  # symlink dangles inside the sandbox (VGS-92).
   #
-  #   * "it was not there" is the normal case — nothing was copied in, because
-  #     the operator has no user plugins or no config at all. `-f`/`-rf` make
-  #     that a success, which is what stops a bare `rm` aborting the script
-  #     under `set -euo pipefail`.
-  #   * "it was there and could not be removed" is a prep failure. The seeded
-  #     state would then be sitting underneath whatever survived, and the run
-  #     would measure a sandbox nobody described. That fails, and names itself.
-  #
-  # `-f` distinguishes them exactly: it suppresses the missing-file error and
-  # nothing else, so a permission or busy error still returns non-zero. Their
-  # stderr is NOT discarded, so the reason reaches the reader.
+  # These copies are the only OPTIONAL steps. A config with a genuinely broken
+  # symlink must not fail everyone's smoke — but it must not pass unmentioned
+  # either, because the run is then thinner than it looks.
   mkdir -p "$sandbox/home/.config/vshell" || { prep_fail "creating the sandbox config directory"; return; }
-  rm -rf -- "$sandbox/home/.config/vshell/plugins" || { prep_fail "removing the copied user plugin directory"; return; }
-  rm -f -- "$sandbox/home/.config/vshell/settings.json" \
-           "$sandbox/home/.config/vshell/plugin_settings.json" || { prep_fail "removing the copied settings files"; return; }
-  # Belt and braces: `rm -rf` reports success for a directory it could not fully
-  # remove in some conditions, and a surviving user plugin would silently join
-  # the override phase's fixture under the same id.
+  for host_dir in themes blueprints; do
+    [[ -d "$HOME/.config/vshell/$host_dir" ]] || continue
+    if ! cp -aL -- "$HOME/.config/vshell/$host_dir" \
+                   "$sandbox/home/.config/vshell/$host_dir" 2>"$sandbox/cp.err"; then
+      note "DEGRADED: could not copy ~/.config/vshell/$host_dir into the sandbox; continuing without it"
+      sed -n '1,5p' "$sandbox/cp.err" >&2 || true
+      rm -rf -- "$sandbox/home/.config/vshell/$host_dir" || true
+    fi
+  done
+  # The allowlist must not have produced one. override_check plants its fixture
+  # here, and a host plugin surviving into the sandbox would join it under the
+  # same id — which is the ambiguity that phase exists to resolve.
   if [[ -e "$sandbox/home/.config/vshell/plugins" ]]; then
-    prep_fail "the copied user plugin directory still exists after removal"
+    prep_fail "a user plugin directory reached the sandbox; the host allowlist above is wrong"
     return
   fi
+
   cp -- "$repo_root/config/vshell/settings.default.json" \
         "$sandbox/home/.config/vshell/settings.json" || { prep_fail "seeding settings.json from the shipped default"; return; }
   cp -- "$repo_root/config/vshell/plugin_settings.default.json" \
         "$sandbox/home/.config/vshell/plugin_settings.json" || { prep_fail "seeding plugin_settings.json from the shipped default"; return; }
 
-  # Stamp the discriminating sentinel `seeded_settings_check` reads back out of
-  # the running shell; without it "the seed is in effect" stays an assumption.
-  # The key must EXIST in the shipped default - a key that does not is a rename
-  # this check was never told about, and inventing it would seed a setting the
-  # shell ignores and then assert on it. That fails loudly instead.
-  python3 - "$sandbox/home/.config/vshell/settings.json" \
-            "$settings_sentinel_key" "$settings_sentinel_value" <<'PY' || { prep_fail "stamping the settings sentinel into the seeded settings.json"; return; }
+  # Stamp the sentinels `seeded_settings_check` reads back out of the running
+  # shell — see its own comment for why they are what makes the seed evidence
+  # rather than an assumption. Each key must ALREADY EXIST in the shipped
+  # default: one that does not is a rename this check was never told about, and
+  # inventing it would seed a setting the shell ignores and then assert on it.
+  python3 - "$sandbox/home/.config/vshell" \
+            "$settings_sentinel_key" "$settings_sentinel_value" \
+            "$plugin_sentinel_plugin" "$plugin_sentinel_key" "$plugin_sentinel_value" \
+            <<'PY' || { prep_fail "stamping the seed sentinels into the seeded settings"; return; }
 import json
 import sys
 
-path, key, value = sys.argv[1], sys.argv[2], int(sys.argv[3])
-with open(path) as fh:
-    data = json.load(fh)
-if key not in data:
-    sys.exit(f"{key!r} is not in config/vshell/settings.default.json")
-data[key] = value
-with open(path, "w") as fh:
-    json.dump(data, fh, indent=2)
+root, skey, svalue, pplugin, pkey, pvalue = sys.argv[1:7]
+
+
+def stamp(name, path, value):
+    full = f"{root}/{name}"
+    with open(full) as fh:
+        data = json.load(fh)
+    node = data
+    for key in path[:-1]:
+        if key not in node:
+            sys.exit(f"{name}: no {key!r} section in the shipped default")
+        node = node[key]
+    if path[-1] not in node:
+        sys.exit(f"{name}: {path[-1]!r} is not in the shipped default")
+    node[path[-1]] = value
+    with open(full, "w") as fh:
+        json.dump(data, fh, indent=2)
+
+
+stamp("settings.json", (skey,), int(svalue))
+stamp("plugin_settings.json", (pplugin, pkey), pvalue)
 PY
 
   conf="$sandbox/hyprland.conf"
@@ -969,9 +1012,22 @@ EOF
     return
   fi
 
+  # FIRST of the state-dependent phases, and gated on `loaded` rather than
+  # `plugins_loaded`, because it needs nothing but the shell's IPC — while the
+  # seeded settings.json is what supplies the bar layout those plugin widgets
+  # mount into. Run it after the plugin wait and a missed seed surfaces as
+  # "no plugin ever registered", which is the symptom, not the cause.
+  seeded=false
+  if [[ "$loaded" == true ]] && seeded_settings_check; then
+    seeded=true
+  fi
+
   plugins_loaded=false
   plugin_report=""
-  if [[ "$loaded" == true ]]; then
+  # Deliberately skipped when the seed did not take: every plugin failure the
+  # wait could report would be downstream of that, and `seeded_settings_check`
+  # has already failed the run with the honest reason.
+  if [[ "$seeded" == true ]]; then
     for _ in $(seq 1 $((plugin_timeout * 2))); do
       # The `plugins` IPC target, NOT `plugin-scan`. Both expose a `list`, and
       # they format differently: this one emits "<id> [loaded|disabled]"
@@ -997,17 +1053,13 @@ EOF
     done
   fi
 
-  # Every phase drives the shell that is still running, so they come before the
+  # These two drive the shell that is still running, so they come before the
   # teardown. They stop at the first failure, and `fail` has already set the
   # exit status by then; the log scan below still runs, because a phase that
-  # failed usually left its explanation there.
-  #
-  # `seeded_settings_check` goes FIRST and gates the rest: if the shell is not
-  # on the seeded settings, whatever the later phases observe describes some
-  # other configuration, and reporting those results would be the VGS-92 defect
-  # again with a louder voice.
+  # failed usually left its explanation there. Both are gated on the seed
+  # (D008), transitively through `plugins_loaded`.
   if [[ "$plugins_loaded" == true ]]; then
-    if seeded_settings_check && popout_check; then
+    if popout_check; then
       override_check || true
     fi
   fi
@@ -1023,6 +1075,12 @@ EOF
   if [[ "$loaded" != true ]]; then
     tail -n 40 "$log" >&2 || true
     fail "sandboxed shell never exposed its IPC targets (exit code $exit_code)"
+    return
+  fi
+  if [[ "$seeded" != true ]]; then
+    # `seeded_settings_check` already failed the run and named the reason, and
+    # the plugin wait was skipped on purpose. Adding a second, downstream
+    # failure here would only bury it.
     return
   fi
   if [[ "$plugins_loaded" != true ]]; then
@@ -1095,6 +1153,10 @@ EOF
     fail "QML/runtime errors in the sandboxed shell"
     return
   fi
+  # Only when nothing has failed. A phase that called `fail` set the exit status
+  # but does not stop the run, so an unconditional pass line here sits directly
+  # under a FAIL line and reads as a summary that contradicts it.
+  [[ "$status" -eq 0 ]] || return
   note "isolated runtime check passed (shell loaded, all ${#expected_plugins[@]} bundled plugins loaded, answered IPC in the sandbox)"
 }
 

@@ -19,47 +19,58 @@ the shell is running on.
 
 ## Context
 
-The two approaches arrived independently and conflicted in the same block of
-code.
+**Both halves already landed**, together, in 6e1673cd (VGS-81, PR #98,
+2026-08-09); `main` carries them. What had never been decided is which of them
+wins, and that is what this record settles.
 
-VGS-92 found that `cp -a -- "$HOME/.config/vshell" ...` preserved symlinks. On
-the documented workstation wiring (AGENTS.md § Live workstation wiring)
-`~/.config/vshell/settings.json` is a *relative* symlink into `~/dotfiles`,
-which dangles once copied into the sandbox's HOME. The sandboxed shell found no
+The first half answers VGS-92. Between 57d92829 (2026-08-02) and that commit,
+the sandbox copied host state with `cp -a`, which preserves symlinks. On the
+documented workstation wiring (AGENTS.md § Live workstation wiring)
+`~/.config/vshell/settings.json` is a *relative* symlink into `~/dotfiles`, so
+it dangled once copied into the sandbox's HOME. The sandboxed shell found no
 settings and fell back to SettingsData's defaults — silently, since the shell
-starts and the plugins load either way. Every nested run had been exercising
-whatever the fallback produced while the comment above the copy claimed it
-exercised "the real theme/settings paths". The narrow fix is `cp -aL`.
+starts and the plugins load either way. Every nested run in that window
+exercised whatever the fallback produced while the comment above the copy
+claimed it exercised "the real theme/settings paths". `cp -aL` dereferences.
 
-VGS-81 (PR #98) had meanwhile started seeding `settings.json` and
-`plugin_settings.json` from `config/vshell/*.default.json` so the popout and
-override phases had a bar layout they could rely on.
+The second half seeds `settings.json` and `plugin_settings.json` from
+`config/vshell/*.default.json`, so the popout and override phases have a bar
+layout they can rely on.
 
 Those pull in opposite directions. `cp -aL` makes the *host's* configuration
 decide what the run exercises; seeding makes the *repo's* defaults decide.
-Keeping both without saying which one wins is how the block became
-self-contradictory in the first place.
+Carrying both with no stated precedence is how the block became
+self-contradictory, and it is why the VGS-92 diff adds the sentinel rather than
+the `cp -aL` a reader might go looking for here.
 
 ## Decision
 
 1. **Seeded state is authoritative.** `settings.json` and
-   `plugin_settings.json` are removed after the host copy and written fresh
-   from `config/vshell/settings.default.json` and
-   `config/vshell/plugin_settings.default.json`. The copied user `plugins/`
-   directory is removed outright, and its removal is verified rather than
-   assumed.
-2. **The host copy stays, dereferenced (`cp -aL`), and is optional.** It brings
-   real themes, wallpapers and blueprints into the sandbox, which makes the
-   theme paths exercise something plausible. It may fail — a genuinely broken
-   symlink in someone's config must not fail everyone's smoke — and when it
-   does the run says `DEGRADED` and continues on shipped defaults alone.
-3. **No assertion may depend on host state.** Anything a check reads must be
-   seeded. That is what makes the copy safe to be optional.
-4. **The seed's effect is asserted, not assumed.** The seeding step stamps a
-   sentinel (`customAnimationDuration=4242`) that equals neither the shipped
-   default nor SettingsData's own default, and `seeded_settings_check` reads it
-   back out of the running shell via `qs ipc call settings get`. It runs first
-   and gates the popout and override phases.
+   `plugin_settings.json` are written from `config/vshell/settings.default.json`
+   and `config/vshell/plugin_settings.default.json`.
+2. **The host contributes only an allowlist, dereferenced (`cp -aL`), and
+   optionally.** Exactly `themes/` and `blueprints/` are copied from
+   `~/.config/vshell`, by name. They bring real theme and wallpaper content the
+   theme paths can chew on. A copy may fail — a genuinely broken symlink in
+   someone's config must not fail everyone's smoke — and when it does the run
+   says `DEGRADED` and continues without it.
+3. **No assertion may depend on host state**, which is enforced by rule 2
+   rather than asserted: an allowlist means the host cannot *supply* state
+   worth depending on. Everything outside those two names is either seeded
+   (`settings.json`, `plugin_settings.json`, `plugins/`) or would silently
+   steer the run — `theme.json` is `Common/MethodTheme.qml`'s source of truth
+   for the whole palette, `hooks/` is host-authored executables, `generated/`
+   is app-target output, `branding/` replaces shipped assets. A copy-everything
+   -then-delete shape cannot hold this line, because it must enumerate what to
+   remove and silently inherits anything it forgets — which is how `theme.json`
+   reached the sandbox unnoticed.
+4. **The seed's effect is asserted, not assumed — for every seeded file.** Both
+   `settings.json` (`customAnimationDuration=4242`) and `plugin_settings.json`
+   (`sysUpdate.aurUpdateCommand`) carry a sentinel equal to neither the shipped
+   default nor SettingsData's own default, and `seeded_settings_check` reads
+   both back out of the running shell via `qs ipc call settings get`. It is the
+   first state-dependent phase and gates the bundled-plugin wait, the popout
+   phase and the override phase. The log-error scan is independent of it.
 
 ## Rationale
 
@@ -67,7 +78,7 @@ self-contradictory in the first place.
 |---------|-----------------|------------------------------|
 | Reproducible across machines | Yes — the same bytes on every checkout | No — the result depends on whose bar layout it ran on |
 | Reproducible across runs | Yes | No — the operator edits their settings between runs |
-| Runnable in CI | Yes | No — a runner has no `~/.config/vshell` at all |
+| Forecloses running in CI | No | Yes — a runner has no `~/.config/vshell` at all. Neither column runs in CI *today*: per AGENTS.md § "What CI covers", only the static half of `qml-smoke.sh` runs there and `--nested` is local-only, needing Hyprland and `quickshell` on PATH |
 | Covers what VGS ships | Yes — the shipped defaults are what a new user gets | Only incidentally |
 | Catches "my config breaks the shell" | No | Yes, but only for one person's config |
 
@@ -76,24 +87,28 @@ ran on is not a sandbox. VGS-92's own symptom demonstrates the cost directly:
 the bar layout every nested run exercised had been chosen by an accident of how
 one operator stores their dotfiles, and nothing in the run said so.
 
-The host copy is nonetheless kept rather than deleted, because the theme and
-wallpaper paths benefit from real content and no check asserts on it. Deleting
-it would be defensible; it is not free, and it buys nothing that rule 3 does
-not already guarantee.
+The host allowlist is nonetheless kept rather than dropped, because the theme
+and wallpaper paths benefit from real content and no check asserts on it.
+Dropping it would be defensible; it is not free, and it buys nothing rules 2
+and 3 do not already guarantee.
 
 Rule 4 exists because rules 1-3 are unobservable without it. Most keys in
-`settings.default.json` repeat SettingsData's built-in default, so a check
-reading any of them answers identically whether the seed was found or not —
-that non-discriminating check is precisely the shape that let VGS-92 survive.
+`settings.default.json` repeat SettingsData's built-in default — and
+`plugin_settings.default.json` is loaded into `builtInPluginSettings` as well
+as `pluginSettings`, so the same is true one file over. A check reading any of
+them answers identically whether the seed was found or not, and that
+non-discriminating shape is precisely what let VGS-92 survive.
 
 ## Alternatives Considered
 
 | Alternative | Why rejected |
 |-------------|--------------|
-| Host state only, fixed with `cp -aL` | Correct but not reproducible: unrunnable in CI, and the run's meaning changes when the operator edits their config |
-| Drop the host copy entirely | Loses real theme/wallpaper/blueprint content for no correctness gain, since no assertion depends on it |
+| Host state only, fixed with `cp -aL` | Correct but not reproducible: the run's meaning changes when the operator edits their config, and it could never move to CI |
+| Drop the host allowlist entirely | Loses real theme/wallpaper/blueprint content for no correctness gain, since no assertion depends on it |
 | Keep both with no stated precedence | The status quo ante, and the direct cause of a comment that asserted a property the code did not have |
-| Assert on a normal seeded key instead of a sentinel | Non-discriminating: its seeded value equals the QML default, so it passes in both worlds |
+| Copy everything, then delete what is seeded | The shape that let host `theme.json` — MethodTheme's whole palette — into the sandbox unnoticed. A denylist inherits whatever it forgets to name |
+| Assert on a normal seeded key instead of a sentinel | Non-discriminating: its seeded value equals the built-in default, so it passes in both worlds |
+| Assert only on `settings.json` | `plugin_settings.json` is seeded on the adjacent line and has its own built-in fallback, so the same defect one file over would pass every phase |
 
 ## Verification
 
@@ -103,9 +118,15 @@ WAYLAND_DISPLAY=wayland-1 XDG_RUNTIME_DIR=/run/user/1000 \
 ```
 
 A passing run prints `seeded settings check passed`. The must-fail control for
-that assertion is to remove the sentinel-stamping step in
+that assertion is to suppress a sentinel stamp in
 `scripts/qml-smoke.sh::nested_check` and re-run: the check must then fail with
 the shipped default's value, not pass.
+
+**This assertion is local-only by construction.** `--nested` needs Hyprland and
+`quickshell` on PATH, so CI runs only the static half of `qml-smoke.sh`
+(AGENTS.md § "What CI covers, and what it cannot"). Nothing in CI enforces
+D008; a green PR is not evidence the sandbox seeded correctly, and the command
+above has to be run locally before finishing QML work.
 
 ## References
 
