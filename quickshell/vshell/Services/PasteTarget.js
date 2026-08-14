@@ -31,6 +31,7 @@ var TERMINAL_APP_IDS = [
     "io.elementary.terminal",
     "kgx",
     "org.gnome.console",
+    "org.gnome.terminal",
     "rio",
     "sakura",
     "st",
