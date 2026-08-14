@@ -29,7 +29,17 @@ _MASK_CONTROLS = [
     ("locale quoting", 'x=$"a } b"\n', 'x=$"     "\n'),
     ("a comment at a word start", "x=1 # note\n", "x=1       \n"),
     ("a hash inside a word is not a comment", "x=foo#bar\n", "x=foo#bar\n"),
-    ("a hash in a parameter expansion is not a comment", "x=${v#pat}\n", "x=${v#pat}\n"),
+    # The `#` must not start a comment, which the trailing code proves: it is
+    # still there. The expansion's own body is blanked because it is pattern
+    # text, not structure — a delimiter in there opens and closes nothing.
+    ("a hash in a parameter expansion is not a comment", "x=${v#pat} y=1\n", "x=${     } y=1\n"),
+    ("an expansion's body is not structure", "x=${v//(/z} y=1\n", "x=${      } y=1\n"),
+    ("a nested expansion is blanked in one pass", "x=${a:-${b}} y=1\n", "x=${       } y=1\n"),
+    # Left alone rather than guessed at: blanking to a far-off closer would
+    # destroy real structure, which is the failure this scanner exists to stop.
+    ("an unmatched expansion is left alone", "x=${v\ny=1\n", "x=${v\ny=1\n"),
+    ("a glob character class is literal text", "x=b[(]c y=1\n", "x=b[ ]c y=1\n"),
+    ("an unmatched bracket is left alone", "x=a[b\ny=1\n", "x=a[b\ny=1\n"),
     ("a top-level escape opens no string", "x=\\' y=1\n", "x=   y=1\n"),
     ("a line continuation keeps its newline", "x=a\\\nb\n", "x=a \nb\n"),
     ("a quoted heredoc body", "cat <<'EOF'\n}\nEOF\n", "cat <<'EOF'\n \nEOF\n"),
@@ -78,8 +88,49 @@ def selftest() -> int:
         assignments("conflicts=(a $((1 + 2)) c)\n", "conflicts"),
         ["a $((1 + 2)) c"],
     )
-
+    # Counting every paren as nesting was the regression that replaced the
+    # bug above: a literal paren opens nothing, so a valid recipe read as
+    # unterminated and packaging validation rejected it.
+    check(
+        "a paren in a parameter expansion does not open nesting",
+        assignments("conflicts=(a ${value//(/x} c)\n", "conflicts"),
+        ["a ${value//(/x} c"],
+    )
+    check(
+        "a paren in a glob class does not open nesting",
+        assignments("conflicts=(a b[(]c d)\n", "conflicts"),
+        ["a b[(]c d"],
+    )
+    check(
+        "a plain array is untouched by any of it",
+        assignments("conflicts=(a b c)\n", "conflicts"),
+        ["a b c"],
+    )
+    # The one known shape that still ends an array early, pinned so the
+    # docstring's account of it cannot drift from what the code does.
+    check(
+        "a case pattern inside a substitution still ends the array early",
+        assignments("conflicts=(a $(case x in b) echo;; esac) c)\n", "conflicts"),
+        ["a $(case x in b) echo;; esac"],
+    )
+    # Brace counting is the other nesting counter, and it reads the same mask.
     func = re.compile(r"^(package(?:_[\w.+-]+)?)\s*\(\)")
+    for label, source in (
+        ("a brace inside an expansion", "package_sub() {\n  x=${v//\\}/y}\n  conflicts=('b')\n}\nafter=1\n"),
+        ("a brace inside a glob class", "package_sub() {\n  x=a[}]b\n  conflicts=('b')\n}\nafter=1\n"),
+    ):
+        top, bodies = split_scopes(source, func)
+        check(f"{label} does not close the scope", "conflicts=('b')" in bodies["package_sub"], True)
+        check(f"{label} does not leak to top", "conflicts=('b')" in top, False)
+
+    # ...and the other direction, so the fix is not simply accepting anything.
+    for unterminated in ("conflicts=(a b\n", "conflicts=(a ${v//(/x} b\n"):
+        try:
+            assignments(unterminated, "conflicts")
+        except ValueError:
+            pass
+        else:
+            failures.append(f"unterminated {unterminated!r}: expected ValueError, got a result")
 
     # A brace in a comment must not close the function.
     top, bodies = split_scopes(

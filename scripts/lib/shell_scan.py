@@ -35,19 +35,32 @@ Handled exactly:
   - Heredoc bodies, with quoted, unquoted and tab-stripping (`<<-`) delimiters.
   - Herestrings (`<<<`), which are NOT heredocs — the operand is an ordinary
     word, and its quoting is masked as quoting.
+  - Parameter expansion bodies and glob character classes, whose contents are
+    pattern text: a `(` in `${v//(/x}` or in `b[(]c` opens nothing, and a
+    caller counting delimiters must not see it. An unmatched `${` or `[` is
+    left alone rather than blanked to a far-off closer.
   - Offsets and line count, which every caller slices against.
 
 Deliberately not masked: a BARE command substitution. Its contents are code,
 and blanking them would hide the structure a caller is looking for.
 
-Approximated, with the direction it errs:
+WHERE DELIMITER COUNTING IS NOT SOUND. This is the entry to read before
+trusting a count, and the one this file has now had to correct twice — first
+for locating a delimiter without honouring escapes, then for counting one
+without honouring the contexts where it is not structural. Treat it as
+incomplete rather than exhaustive, and add a control when a new shape appears:
 
+  - A `case` pattern inside a command substitution. `$(case x in b) ;; esac)`
+    holds a `)` that closes nothing, and no character-level rule tells it from
+    the one that closes the substitution — that needs shell grammar. It ends an
+    array EARLY, so entries after it are dropped SILENTLY. This is the one
+    known shape that fails open, and the reason the array reader raises on a
+    count it cannot complete rather than guessing.
+  - An unquoted `}` sitting inside a word (`x=foo#}bar`) counts toward brace
+    depth and closes a scope early, under-reporting a function body.
   - A substitution inside double quotes is blanked with the body around it, so
     `"$(f() { echo; }; f)"` loses its braces — but as a balanced pair, so scope
     splitting still bounds a function correctly. Verified, not assumed.
-  - An unquoted `}` sitting inside a word (`x=foo#}bar`) stays in the mask and
-    counts toward brace depth, which closes a scope early. That under-reports a
-    function body rather than widening it.
 
 Not attempted: expansion, evaluation, or word splitting. This is a mask, not a
 shell.
@@ -76,6 +89,9 @@ def code_mask(text: str) -> str:
     # Heredoc bodies begin at the newline that ends the line introducing them,
     # so redirections are collected as they are seen and applied at that newline.
     pending_heredocs: list[tuple[str, bool]] = []
+    # Open `${` expansions, innermost last. Their contents are pattern text,
+    # not structure, so a delimiter in there must not be counted as one.
+    expansions: list[int] = []
 
     def blank(start: int, stop: int) -> None:
         for position in range(start, min(stop, length)):
@@ -84,6 +100,21 @@ def code_mask(text: str) -> str:
 
     while index < length:
         char = text[index]
+
+        if text.startswith("${", index):
+            expansions.append(index)
+            index += 2
+            continue
+
+        if char == "}" and expansions:
+            opening = expansions.pop()
+            if not expansions:
+                # Blanked at the OUTERMOST close, so one pass covers a nested
+                # expansion too. The braces themselves stay, as a string's
+                # quotes do, and they balance for anything counting braces.
+                blank(opening + 2, index)
+            index += 1
+            continue
 
         if char == "\n" and pending_heredocs:
             index += 1
@@ -153,7 +184,19 @@ def code_mask(text: str) -> str:
             index = end
             continue
 
-        if char == "#" and (index == 0 or text[index - 1] in _WORD_START):
+        if char == "[" and not expansions:
+            # A glob character class is literal text: `b[(]c` holds a paren that
+            # opens nothing. Bounded to the line, because an unmatched `[` is
+            # ordinary shell (`x=a[b`) and running to a far-off `]` would blank
+            # real structure — the failure this scanner exists to prevent.
+            line_end = text.find("\n", index)
+            close = text.find("]", index + 1, length if line_end == -1 else line_end)
+            if close != -1:
+                blank(index + 1, close)
+                index = close + 1
+                continue
+
+        if char == "#" and not expansions and (index == 0 or text[index - 1] in _WORD_START):
             end = text.find("\n", index)
             end = length if end == -1 else end
             blank(index, end)
