@@ -107,8 +107,8 @@ PR_REVIEW_ON_TIMEOUT = "proceed"
 # "auto-selected: [option] — [reason]" in the round record (workflow-state
 # auto_decisions) — for fleet launchers whose workers would otherwise
 # serialize on one supervisor. Decision-record revisits, scope expansion
-# beyond the issue, anything touching benchmark-host protocol, and merge
-# ALWAYS ask, in every mode.
+# beyond the issue, and anything touching benchmark-host protocol ALWAYS
+# ask, in every mode; merge is governed by ORCH_MERGE_AUTONOMY.
 ORCH_DECISION_MODE = "ask"
 
 # LINEAR — which Linear team this project writes to.
@@ -358,3 +358,8 @@ ORCH_TMUX_VERIFY_SECS = "15"
 # one is — unless it is declared here as deliberately guarding paths that
 # do not exist yet. Inert while REVIEW_GATE_CARRY_FORWARD_EXCLUDE is empty.
 REVIEW_GATE_CARRY_FORWARD_EXCLUDE_PROPHYLACTIC = ""
+
+# Used by: orch (`start-worktree` § 5.5). "auto" merges without asking once
+# every merge gate is green; "ask" presents the merge decision.
+# MERGE_READY = false never auto-merges.
+ORCH_MERGE_AUTONOMY = "auto"
