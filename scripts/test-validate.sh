@@ -148,7 +148,8 @@ for area in go qml docs helper packaging all; do
 done
 ok "the always row is selected by every area"
 
-# No argument means `all`.
+# No argument means `all` — which is why `all` must stay in AREAS, and why the
+# guard asserts its declaration separately from the row-tag vocabulary (C3).
 fixture --list
 expect_rc 0 "default area"
 expect_contains "$out" "scripts/stub-only-all" "default area"

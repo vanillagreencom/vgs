@@ -163,7 +163,9 @@ seeded files already are.
 ## Verification
 
 ```bash
-WAYLAND_DISPLAY=wayland-1 XDG_RUNTIME_DIR=/run/user/1000 \
+export XDG_RUNTIME_DIR="/run/user/$(id -u)"
+export WAYLAND_DISPLAY="$(basename "$(ls "$XDG_RUNTIME_DIR"/wayland-[0-9] | head -1)")"
+
   scripts/qml-smoke.sh --nested --require-static --require-nested
 ```
 

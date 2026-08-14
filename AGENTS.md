@@ -157,11 +157,16 @@ fix the invocation and re-run. (Agents running under orch record that skip in
 
 A green CI run does not prove the shell starts. Run the qml area before
 finishing QML work — most agent shells have no `WAYLAND_DISPLAY`, and the nested
-smoke is `--require-nested`, so point it at the session socket (the sandbox
-keeps its own runtime dir, HOME and bus, so the live session is untouched):
+smoke is `--require-nested`, so point it at the session socket. Derive the
+name rather than hardcoding it — `wayland-0` and `wayland-1` are both common,
+and naming the wrong one fails in a way that reads like a real QML break. The
+sandbox still gets its own runtime dir, HOME and bus, so the live session is
+untouched:
 
 ```bash
-WAYLAND_DISPLAY=wayland-1 XDG_RUNTIME_DIR=/run/user/$(id -u) scripts/validate qml
+export XDG_RUNTIME_DIR="/run/user/$(id -u)"
+export WAYLAND_DISPLAY="$(basename "$(ls "$XDG_RUNTIME_DIR"/wayland-[0-9] | head -1)")"
+scripts/validate qml
 ```
 
 Never read `smoke-surfaces.sh`'s refusal as a pass (VGS-69). Which checks CI
@@ -243,8 +248,9 @@ either: other Quickshell applications on the seat are legitimate.
   session's own socket and it runs — the sandbox still has its own runtime
   dir, HOME and bus, so the live session is untouched:
   ```bash
-  WAYLAND_DISPLAY=wayland-1 XDG_RUNTIME_DIR=/run/user/$(id -u) \
-    scripts/qml-smoke.sh --nested --require-static --require-nested
+  export XDG_RUNTIME_DIR="/run/user/$(id -u)"
+  export WAYLAND_DISPLAY="$(basename "$(ls "$XDG_RUNTIME_DIR"/wayland-[0-9] | head -1)")"
+  scripts/qml-smoke.sh --nested --require-static --require-nested
   ```
 - `scripts/check-validation-safety.sh` proves validation left no extra VGS
   Quickshell instances or layer surfaces, and blocks unsafe launch instructions

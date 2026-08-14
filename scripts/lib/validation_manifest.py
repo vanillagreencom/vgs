@@ -143,12 +143,24 @@ def _check_shell_syntax(command: str, line: str) -> None:
         )
 
 
-def runner_areas(runner: Path) -> set[str]:
-    """The area names scripts/validate accepts, minus the `all` pseudo-area."""
+def runner_declared_areas(runner: Path) -> set[str]:
+    """Every name in the runner's AREAS array, exactly as declared.
+
+    Separate from `runner_areas` because `all` is real to the ARGUMENT parser
+    and forbidden as a row TAG (grammar C3). Discarding it here and re-adding it
+    in the caller made its deletion invisible: the runner defaults to `all`, so
+    a bare `scripts/validate` would then fail as an unknown area with nothing
+    saying why.
+    """
     match = re.search(r"^AREAS=\(([^)]*)\)", runner.read_text(encoding="utf-8"), re.MULTILINE)
     if not match:
         raise ManifestError("scripts/validate has no AREAS=( ... ) list")
-    return set(match.group(1).split()) - {"all"}
+    return set(match.group(1).split())
+
+
+def runner_areas(runner: Path) -> set[str]:
+    """The area names usable as a row TAG — declared, minus `all` (C3)."""
+    return runner_declared_areas(runner) - {"all"}
 
 
 def runner_tag_attributes(runner: Path) -> set[str]:
@@ -247,7 +259,11 @@ def ci_run_commands(ci: Path) -> str:
     # parser in this module usable without PyYAML at all.
     try:
         import yaml
-    except ModuleNotFoundError as exc:
+    except ImportError as exc:
+        # ImportError, not ModuleNotFoundError: a PyYAML that is INSTALLED but
+        # fails to import — a broken build, a partial upgrade, a shadowing
+        # module — raises the base class, and that escaped uncaught. Same
+        # too-narrow-catch shape as FileNotFoundError vs OSError next door.
         # Fails rather than degrading: without a YAML parse, CI coverage is NOT
         # checked, and a check that silently skips its own subject is the exact
         # false green the importing guard exists to prevent.

@@ -204,11 +204,11 @@ scripts/check-settings-migration.js	952
 scripts/check-vshell-helper.py	5815
 scripts/check-vshell-niri.py	678
 scripts/gen-package-metadata.py	985
-scripts/qml-smoke.sh	1255
+scripts/qml-smoke.sh	1258
 scripts/test-pill-hover-safety.js	420
 scripts/test-remote-desktop-state.js	1243
 scripts/test-toast-actions.js	607
-scripts/test-validate.sh	440
-scripts/test-validation-inventory.sh	408
+scripts/test-validate.sh	441
+scripts/test-validation-inventory.sh	478
 scripts/validate	467
 vstack.toml	479

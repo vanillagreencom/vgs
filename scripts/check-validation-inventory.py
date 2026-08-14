@@ -35,6 +35,7 @@ from validation_manifest import (  # noqa: E402
     manifest_rows,
     prose_areas,
     runner_areas,
+    runner_declared_areas,
     runner_logic,
     runner_tag_attributes,
 )
@@ -125,7 +126,19 @@ def main() -> int:
     rows = manifest_rows(RUNNER)
     commands = [command for _, command in rows]
     documented = "\n".join(commands)
-    ci_text = ci_run_commands(CI)
+    # A PREREQUISITE IS A PROBLEM, NOT AN ABORT. This raised straight out of
+    # main, so on a python3 without PyYAML every OTHER arm — area, prose,
+    # tag-wiring, tables — was replaced by the prerequisite message, and the
+    # harness that drives fixtures through this function reported ten failures
+    # that were not its fixtures' verdicts, including a false claim that the
+    # real tree does not pass. Collected here instead: the CI comparison is
+    # genuinely impossible, so it FAILS loudly, and every arm that does not
+    # need ci_text still reports its own answer.
+    ci_text: str | None = None
+    try:
+        ci_text = ci_run_commands(CI)
+    except ManifestError as error:
+        problems.append(f"CI coverage was NOT checked: {error}")
 
     # A per-tag vocabulary loop used to live here. It is gone, not relaxed:
     # manifest_rows now validates the whole tag field against the same grammar
@@ -133,6 +146,16 @@ def main() -> int:
     # could never have fired. An unreachable check is coverage that does not
     # exist — the thing this file exists to report.
     areas = runner_areas(RUNNER)
+    declared_areas = runner_declared_areas(RUNNER)
+    # `all` is asserted on its own rather than assumed. It is the runner's
+    # DEFAULT area, so deleting it from AREAS makes a bare `scripts/validate`
+    # fail as an unknown area — and the prose comparison used to re-add it,
+    # which made exactly that deletion invisible here.
+    if "all" not in declared_areas:
+        problems.append(
+            "scripts/validate's AREAS no longer declares `all`, but the runner "
+            "defaults to it, so a bare `scripts/validate` would fail as an unknown area"
+        )
     attributes = runner_tag_attributes(RUNNER)
     # An attribute the guard accepts but the runner never acts on is worse than
     # an unknown tag: rows carrying it pass here and then behave like `-`. The
@@ -171,12 +194,12 @@ def main() -> int:
         except ManifestError as exc:
             problems.append(str(exc))
             continue
-        for name in sorted((areas | {"all"}) - stated):
+        for name in sorted(declared_areas - stated):
             problems.append(
                 f"{rel} enumerates the validate areas but omits `{name}`, which "
                 f"scripts/validate accepts"
             )
-        for name in sorted(stated - (areas | {"all"})):
+        for name in sorted(stated - declared_areas):
             problems.append(
                 f"{rel} lists `{name}` as a validate area, but scripts/validate does "
                 f"not accept it"
@@ -228,6 +251,8 @@ def main() -> int:
             )
 
     # --- every executable check is invoked, or excluded with a reason ---------
+    # The CI half of this arm needs ci_text; without it the manifest half still
+    # runs, and the missing comparison is already recorded above.
     for name in executable_checks():
         if name in NOT_A_SUITE_CHECK:
             continue
@@ -240,19 +265,19 @@ def main() -> int:
             )
             continue
         if name in LOCAL_ONLY:
-            if rel in ci_text:
+            if ci_text is not None and rel in ci_text:
                 problems.append(
                     f"{rel} is recorded as local-only ({LOCAL_ONLY[name]}) but ci.yml runs it anyway"
                 )
             continue
         if name in INDIRECT_IN_CI:
             caller = INDIRECT_IN_CI[name]
-            if caller not in ci_text:
+            if ci_text is not None and caller not in ci_text:
                 problems.append(
                     f"{rel} is recorded as reached through {caller}, but ci.yml does not run {caller}"
                 )
             continue
-        if rel not in ci_text:
+        if ci_text is not None and rel not in ci_text:
             problems.append(
                 f"{rel} is in the scripts/validate manifest but not in "
                 f".github/workflows/ci.yml. "

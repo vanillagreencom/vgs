@@ -36,6 +36,44 @@ expect_absent() {
   [[ "$1" != *"$2"* ]] || fail "$3" "expected NOT to contain: $2 (got: $1)"
 }
 
+# Every arm-specific message this file drives a fixture to produce. Used two
+# ways: as the noise list for the unmutated control, and to assert that a
+# fixture's OWN verdict is never replaced by a prerequisite message.
+ARM_MESSAGES=(
+  "has no MANIFEST_EOF heredoc" "manifest row has no" "empty command"
+  "malformed tag field" "carries no selector" "no manifest row is tagged with it"
+  "is not executable" "never acts on it outside that array"
+  "enumerates the validate areas but omits" "no longer states the validate area list"
+  "invalid shell syntax" "has no table introduced by"
+  "no longer declares"
+)
+
+# PyYAML is a PREREQUISITE of one arm, not of this file. Without it the guard
+# cannot compare against ci.yml and correctly fails — so a well-formed tree
+# exits 1 carrying exactly that one problem, and every other arm still answers.
+# Detected rather than assumed, because the expectations below differ.
+have_yaml=1
+python3 -c 'import yaml' >/dev/null 2>&1 || have_yaml=0
+
+noyaml_path="$tmp/noyaml"
+mkdir -p "$noyaml_path/yaml"
+printf 'raise ImportError("no yaml (test shim)")\n' >"$noyaml_path/yaml/__init__.py"
+
+# expect_clean_run <case> — the guard found nothing of its OWN. With PyYAML that
+# is exit 0; without it, exit 1 carrying the CI prerequisite and nothing else.
+expect_clean_run() {
+  local name="$1" msg
+  for msg in "${ARM_MESSAGES[@]}"; do
+    expect_absent "$guard_out" "$msg" "$name"
+  done
+  if [[ $have_yaml -eq 1 ]]; then
+    [[ "$guard_rc" -eq 0 ]] || fail "$name" "the real tree does not pass the guard (rc $guard_rc)"
+  else
+    [[ "$guard_rc" -ne 0 ]] || fail "$name" "PyYAML is absent but the guard passed anyway"
+    expect_contains "$guard_out" "CI coverage was NOT checked" "$name"
+  fi
+}
+
 echo "=== check-validation-inventory.py manifest arms ==="
 
 # The guard's manifest arms. Each mutation must produce its OWN message: a
@@ -275,6 +313,13 @@ MUT
 )" \
   "invalid shell syntax"
 
+# `all` is the runner's DEFAULT area and is forbidden as a row tag (C3), so it
+# is asserted on its own. The prose comparison used to re-add it, which made
+# deleting it from AREAS invisible while a bare `scripts/validate` broke.
+guard_case "deleting all from AREAS is reported" \
+  "${real_runner/AREAS=(go qml helper packaging docs all)/AREAS=(go qml helper packaging docs)}" \
+  "no longer declares \`all\`"
+
 guard_case "a missing AREAS list is reported" \
   "${real_runner/AREAS=(go qml helper packaging docs all)/AREA_NAMES=(go qml helper packaging docs all)}" \
   "has no AREAS=( ... ) list"
@@ -339,8 +384,7 @@ areas_probe="$tmp/areas-probe.md"
 # shellcheck disable=SC2016  # backticks are markdown quoting in the fixture prose
 printf 'areas `go`, `qml`, `helper`, `packaging`, `docs`, `all`.\n' >"$areas_probe"
 run_guard "AGENTS_PATH=$areas_probe"
-expect_absent "$guard_out" "enumerates the validate areas but omits" "period after final backtick"
-[[ "$guard_rc" -eq 0 ]] || fail "period after final backtick" "guard refused a well-formed enumeration (rc $guard_rc)"
+expect_clean_run "period after final backtick"
 ok "a period straight after the final backtick does not truncate the capture"
 
 # shellcheck disable=SC2016  # backticks are markdown quoting in the fixture prose
@@ -379,6 +423,38 @@ expect_absent "$launch_out" "Traceback" "bash unlaunchable"
 expect_absent "$launch_out" "ACCEPTED" "bash unlaunchable"
 ok "an unlaunchable bash raises ManifestError, not a traceback"
 
+# A MISSING PREREQUISITE MUST NOT REPLACE A FIXTURE'S VERDICT. The CI parse used
+# to raise straight out of main, so on a python3 without PyYAML every fixture
+# below reported the prerequisite instead of its own result — ten failures, none
+# of them the fixtures' verdicts, one of them a false claim that the real tree
+# does not pass. Driven under a PYTHONPATH shim whose `yaml` raises on import,
+# which is what an absent or broken PyYAML looks like from here.
+# The fixtures that matter here are the ones whose manifest PARSES — the area,
+# prose and tag-wiring arms. A fixture with a malformed manifest raises before
+# main reaches the CI parse, so it never exercised this at all; picking one of
+# those would have been a control that could not fail.
+noyaml_probe="$tmp/noyaml-probe"
+while IFS=';' read -r find replace expect; do
+  [[ -n "$find" ]] || continue
+  FIND="$find" REPL="$replace" python3 - "$runner" >"$noyaml_probe" <<'MUT'
+import os, sys
+t = open(sys.argv[1], encoding="utf-8").read()
+old = os.environ["FIND"]
+assert t.count(old) == 1, f"anchor moved: {old}"
+print(t.replace(old, os.environ["REPL"]), end="")
+MUT
+  chmod +x "$noyaml_probe"
+  run_guard "RUNNER_PATH=$noyaml_probe" "PYTHONPATH=$noyaml_path"
+  expect_refused "no-PyYAML fixture verdict" "$expect"
+  expect_contains "$guard_out" "CI coverage was NOT checked" "no-PyYAML fixture verdict"
+  expect_absent "$guard_out" "Traceback" "no-PyYAML fixture verdict"
+done <<SHAPES
+docs      | scripts/check-doc-growth.py;-         | scripts/check-doc-growth.py;no manifest row is tagged with it
+TAG_ATTRIBUTES=(- always may-skip);TAG_ATTRIBUTES=(- always may-skip nightly);never acts on it outside that array
+AREAS=(go qml helper packaging docs all);AREAS=(go qml helper packaging docs rust all);enumerates the validate areas but omits
+SHAPES
+ok "without PyYAML a fixture still reports its own verdict, and the prerequisite is named too"
+
 # The executable-bit arm (VGS-30 applied to the entry point itself).
 non_exec="$tmp/non-exec-runner"
 cp "$runner" "$non_exec"
@@ -392,14 +468,8 @@ ok "a non-executable runner is reported"
 # attribute as unwired, and without that fragment here the test owning the arm
 # would stay green while a neighbouring check failed instead.
 run_guard
-for noise in "has no MANIFEST_EOF heredoc" "manifest row has no" "empty command" \
-  "malformed tag field" "no manifest row is tagged with it" "is not executable" \
-  "never acts on it outside that array" "enumerates the validate areas but omits" \
-  "no longer states the validate area list"; do
-  expect_absent "$guard_out" "$noise" "unmutated control"
-done
-[[ "$guard_rc" -eq 0 ]] || fail "unmutated control" "the real tree does not pass the guard (rc $guard_rc)"
-ok "the unmutated runner triggers none of those arms and exits 0"
+expect_clean_run "unmutated control"
+ok "the unmutated runner triggers none of its arms"
 
 if [[ $failures -ne 0 ]]; then
   printf '\ntest-validation-inventory: %d failure(s)\n' "$failures" >&2
