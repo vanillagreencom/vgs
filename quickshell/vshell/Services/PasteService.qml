@@ -194,6 +194,20 @@ Singleton {
         interval: 8000
         repeat: false
         onTriggered: {
+            // Nothing is waiting on readiness any more. The attempt this was
+            // armed for ended some other way — refused for an unconfirmed seat,
+            // dropped for a helper VGS could not stop — and speaking now would
+            // report a failure for a paste that is no longer pending. The settle
+            // timer running IS the wait, so its absence is the question.
+            if (!settleTimer.running)
+                return;
+            // The wait already ended. Readiness can arrive between two settle
+            // polls, and this deadline bounds an unbounded wait rather than
+            // capping one that is over: firing on elapsed time alone would throw
+            // away a paste that can now succeed and tell the user it was
+            // unavailable. The settle poll still pending will inject it.
+            if (CompositorService.focusReady)
+                return;
             root.log.warn("Paste requested but", root.compositorForLog(), "never reported which window has focus - refusing");
             ToastService.showError(I18n.tr("Paste is unavailable"), I18n.tr("VGS could not tell which window has focus"));
             root.cancelQueuedPaste();

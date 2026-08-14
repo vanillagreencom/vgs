@@ -656,6 +656,55 @@ function queuePaste(h) {
     assert.equal(h.root._seatUnconfirmed, false, "no chord was pressed, so the seat is not in doubt");
 }
 {
+    // The deadline racing readiness. Readiness can arrive between two settle
+    // polls, and the deadline bounds an unbounded wait rather than capping one
+    // that is over — firing on elapsed time alone discarded a paste that could
+    // now succeed and told the user it was unavailable.
+    const h = makeHarness();
+    h.root.CompositorService = { focusSource: "niri", focusReady: false, focusedAppId: "", lastFocusedAppId: "" };
+    queuePaste(h);
+
+    // The source answers, and the deadline expires before the next settle poll.
+    h.root.CompositorService = { focusSource: "niri", focusReady: true, focusedAppId: "foot", lastFocusedAppId: "" };
+    assert.equal(h.fire("readinessTimer", "readinessTriggered"), true, "the deadline expires");
+    assert.deepEqual(h.toasts, [], "a paste that can now succeed is not reported as unavailable");
+    assert.equal(h.root._pendingPaste, false, "and nothing was dropped");
+    assert.equal(h.root.settleTimer.running, true, "the wait's own poll is still pending");
+
+    h.fire("settleTimer", "settleTriggered");
+    assert.equal(h.root.wtypeProcess.running, true, "which injects the paste");
+    assert.equal(h.root._targetAppId, "foot", "into the target that became resolvable");
+}
+{
+    // The other half of that: the deadline must still refuse when readiness
+    // really never arrives, so re-checking cannot become a way to never refuse.
+    const h = makeHarness();
+    h.root.CompositorService = { focusSource: "niri", focusReady: false, focusedAppId: "", lastFocusedAppId: "" };
+    queuePaste(h);
+    h.fire("readinessTimer", "readinessTriggered");
+    assert.equal(h.toasts.length, 1, "a wait that never ended is still refused");
+    assert.equal(h.root.wtypeProcess.running, false, "with no keystroke");
+}
+{
+    // The deadline outliving the attempt it was armed for. An unconfirmed seat
+    // refuses the paste on the next settle, which ends the wait without
+    // cancelling the queue — so a deadline still armed would fire afterwards and
+    // report a second failure for a paste that is no longer pending.
+    const h = makeHarness();
+    h.root.CompositorService = { focusSource: "niri", focusReady: false, focusedAppId: "", lastFocusedAppId: "" };
+    queuePaste(h);
+    assert.equal(h.root.readinessTimer.running, true, "the deadline is armed");
+
+    h.root._seatUnconfirmed = true;
+    h.fire("settleTimer", "settleTriggered");
+    const afterRefusal = h.toasts.length;
+    assert.equal(afterRefusal, 1, "the seat refusal is reported once");
+    assert.equal(h.root.settleTimer.running, false, "and nothing is waiting on readiness any more");
+
+    h.fire("readinessTimer", "readinessTriggered");
+    assert.equal(h.toasts.length, afterRefusal, "the stale deadline says nothing");
+}
+{
     // Not over-corrected: the deadline must not fire on a session that answers.
     const h = makeHarness();
     queuePaste(h);

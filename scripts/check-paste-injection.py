@@ -75,10 +75,17 @@ Pinned, over the QML and JS under `quickshell/vshell/` and `config/vshell/`
      could answer — so the predicate is pinned as one thing rather than as the
      conditions of the day: it must express not-ready per source, derive its Niri
      arm from `NiriService` (whose snapshot arrives well after detection), and
-     contain no literal `true` anywhere. That last one is the general form of the
-     mistake: a condition nothing can observe does not become satisfied by being
-     unobservable. Say so in the comment and derive the arm from what can be
-     seen. Each fallback is also actually maintained:
+     contain no literal `true` anywhere.
+
+     That last rule is about assertion, not strictness, and the difference cost
+     a regression to learn. Readiness may be as weak as "a source has been
+     named" — on a source whose emptiness cannot be told apart from its silence,
+     a stricter arm refuses pastes that used to work, which is a worse defect
+     than the one it prevents. What the rule forbids is an arm that asserts
+     rather than tests: a condition nothing can observe does not become
+     satisfied by being unobservable. Say so in the comment, and write whatever
+     the arm does assert as a condition. Each fallback is also actually
+     maintained:
      every assignment to the private reference its branch reads sits INSIDE the
      statement a focus test controls (its braced body, or the single statement
      of a braceless form), not merely after such a test in the text — an
@@ -194,7 +201,9 @@ NIRI_FOCUS_FLAG_RE = re.compile(r"\bis_focused\b")
 FOCUS_SOURCE_RE = re.compile(r"(?<![\w.])(?:\w+\s*\.\s*)*focusSource\b")
 COMPOSITOR_BOOLEAN_RE = re.compile(r"(?<![\w.])(?:\w+\s*\.\s*)*is(?:Niri|Hyprland)\b")
 NIRI_SOURCE_TEST_RE = re.compile(r"focusSource\s*===?\s*(['\"])niri\1")
-PENDING_SOURCE_TEST_RE = re.compile(r"focusSource\s*===?\s*(['\"])pending\1")
+# Either polarity: testing that the source IS pending and testing that it is
+# NOT are the same test, and the toplevel arm reads better as the negative.
+PENDING_SOURCE_TEST_RE = re.compile(r"focusSource\s*[!=]==?\s*(['\"])pending\1")
 DETECTION_COMPLETE_RE = re.compile(r"\bcompositorDetected\b")
 # The readiness predicate: can the focus source answer a focus query right now?
 # One question, so one name — every consumer waits on this and nothing else.

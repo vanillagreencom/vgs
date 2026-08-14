@@ -92,8 +92,6 @@ const bodies = {
     applyCompositor: extractBlock(source, "function _applyCompositor(name)"),
     activeToplevelChanged: extractBlock(source, "function onActiveToplevelChanged()"),
     windowsChanged: extractBlock(source, "function onWindowsChanged()", source.indexOf("target: NiriService")),
-    noteToplevelSource: extractBlock(source, "function noteToplevelSource()"),
-    toplevelValuesChanged: extractBlock(source, "function onValuesChanged()", source.indexOf("target: ToplevelManager.toplevels")),
     niriEvent: extractBlock(niriSource, "function handleNiriEvent(event)"),
     niriLinkChanged: extractBlock(niriSource, "onConnectionStateChanged:"),
 };
@@ -102,9 +100,7 @@ const bodies = {
 // exercise unexamined while every case still passed.
 for (const [label, text, needles] of [
     ["focusSource", FOCUS_SOURCE, ["compositorDetected", "pending", "niri", "hyprland", "unknown"]],
-    ["focusReady", FOCUS_READY, ["focusSource", "NiriService.", "_toplevelSourceAnswered"]],
-    ["noteToplevelSource", bodies.noteToplevelSource, ["activeToplevel", "_toplevelSourceAnswered"]],
-    ["onValuesChanged", bodies.toplevelValuesChanged, ["noteToplevelSource"]],
+    ["focusReady", FOCUS_READY, ["focusSource", "NiriService.", "pending"]],
     ["handleNiriEvent", bodies.niriEvent, ["WindowsChanged", "windowsSnapshotReceived"]],
     ["onConnectionStateChanged", bodies.niriLinkChanged, ["windowsSnapshotReceived", "linkUp"]],
     ["focusedAppId", FOCUSED, ["focusSource", "focusReady", "is_focused", "activeToplevel"]],
@@ -152,7 +148,6 @@ function shell(overrides = {}) {
         compositorDetected: false,
         _lastFocusedToplevel: null,
         _lastFocusedNiriWindowId: null,
-        _toplevelSourceAnswered: false,
         NiriService: { windows: [] },
         ToplevelManager: { activeToplevel: null, toplevels: { values: [] } },
         log: { warn() {}, info() {} },
@@ -190,8 +185,6 @@ function shell(overrides = {}) {
     };
 
     root.rememberNiriFocus = () => call(bodies.remember, root);
-    root.noteToplevelSource = () => call(bodies.noteToplevelSource, root);
-    root.toplevelsChanged = () => call(bodies.toplevelValuesChanged, root);
     root.seedRememberedFocus = () => call(bodies.seed, root);
     root.construct = () => call(bodies.completed, root);
     root.detected = (name) => call(bodies.applyCompositor, root, ["name"], [name]);
@@ -222,10 +215,10 @@ function settled(compositor, overrides = {}) {
         isNiri: compositor === "niri",
         compositor,
     }, overrides));
-    // Past detection AND past the point each source can answer, which are two
-    // different moments — the gap between them is what the readiness cases below
-    // are about, so it is spelled out here rather than folded into detection.
-    root._toplevelSourceAnswered = true;
+    // Past detection AND past the point the source can answer. On Niri those are
+    // two different moments and the gap between them is what the readiness cases
+    // below are about, so it is spelled out here rather than folded into
+    // detection. On the toplevel path they are the same moment, by decision.
     root.NiriService.eventStreamUp = true;
     root.NiriService.windowsSnapshotReceived = true;
     return root;
@@ -234,7 +227,8 @@ function settled(compositor, overrides = {}) {
 // ---- Hyprland: the live value ----------------------------------------------
 
 {
-    const root = settled("hyprland", { ToplevelManager: { activeToplevel: { appId: "foot" }, toplevels: { values: [] } } });
+    const toplevel = { appId: "foot" };
+    const root = settled("hyprland", { ToplevelManager: { activeToplevel: toplevel, toplevels: { values: [toplevel] } } });
     assert.equal(root.focusedAppId(), "foot", "Hyprland resolves the active toplevel's app id");
 }
 {
@@ -325,16 +319,18 @@ function settled(compositor, overrides = {}) {
     // The regression the per-compositor branch is about: on Niri the active
     // toplevel is not the focus source, so reading it would resolve the wrong
     // window — or, when it is empty, no window at all.
+    const kittyToplevel = { appId: "kitty" };
     const root = settled("niri", {
         NiriService: { windows: [foot] },
-        ToplevelManager: { activeToplevel: { appId: "kitty" }, toplevels: { values: [] } },
+        ToplevelManager: { activeToplevel: kittyToplevel, toplevels: { values: [kittyToplevel] } },
     });
     assert.equal(root.focusedAppId(), "foot", "Niri ignores the active toplevel in favour of its own focus");
 }
 {
+    const kittyToplevel = { appId: "kitty" };
     const root = settled("niri", {
         NiriService: { windows: [kitty] },
-        ToplevelManager: { activeToplevel: { appId: "kitty" }, toplevels: { values: [] } },
+        ToplevelManager: { activeToplevel: kittyToplevel, toplevels: { values: [kittyToplevel] } },
     });
     assert.equal(root.focusedAppId(), "", "an active toplevel does not stand in for Niri focus");
 }
@@ -427,9 +423,10 @@ function settled(compositor, overrides = {}) {
 {
     // Seeding must not cross compositors: detection landing on Hyprland must not
     // adopt a Niri window, which would name a target that cannot be pasted into.
+    const kittyToplevel = { appId: "kitty" };
     const root = shell({
         NiriService: { windows: [foot] },
-        ToplevelManager: { activeToplevel: { appId: "kitty" }, toplevels: { values: [] } },
+        ToplevelManager: { activeToplevel: kittyToplevel, toplevels: { values: [kittyToplevel] } },
     });
     root.construct();
     root.detected("hyprland");
@@ -548,47 +545,67 @@ function settled(compositor, overrides = {}) {
     assert.equal(root.focusReady, false, "a single-window event is not the snapshot");
 }
 {
-    // Hyprland has the same shape, and it was NOT assumed ready: nothing has
-    // reported a toplevel, so the source has said nothing.
+    // The Hyprland arm, and the decision behind it. Its emptiness cannot be told
+    // apart from its silence — Quickshell surfaces no "initial list delivered"
+    // signal — so VGS resolves the ambiguity toward the answer it can give: no
+    // toplevel means nothing is focused.
     const root = shell();
     root.construct();
     root.detected("hyprland");
-    assert.equal(root.focusReady, false, "no toplevel has ever been reported");
-    assert.equal(root.focusedAppId(), "", "so no target is named");
-
-    // Quickshell surfaces no "initial list delivered" signal, so what VGS can
-    // observe is the first toplevel it hears about — through the listener the
-    // shell already had.
+    assert.equal(root.focusReady, true, "naming the source is what makes the toplevel path ready");
+    assert.equal(root.focusedAppId(), "", "and its answer is that nothing is focused");
+    assert.equal(root.lastFocusedAppId(), "", "with nothing remembered either");
+}
+{
+    // The regression control. An earlier arm gated this on having ever seen a
+    // toplevel, which never becomes true on a seat with no windows open — so
+    // paste was refused outright on Hyprland, where it had always worked. That
+    // broke AGENTS.md § Mission: Niri support must be additive. A Hyprland
+    // session must never be made unready by a condition this PR introduced.
+    for (const compositor of ["hyprland", "unknown"]) {
+        const empty = shell({ ToplevelManager: { activeToplevel: null, toplevels: { values: [] } } });
+        empty.construct();
+        empty.detected(compositor);
+        assert.equal(empty.focusReady, true, `an empty ${compositor} session is ready, not waiting`);
+        assert.equal(empty.focusedAppId(), "", "it resolves no target");
+        assert.equal(empty.lastFocusedAppId(), "", "and no remembered one");
+    }
+}
+{
+    // And with a window, the same arm resolves it — readiness was never what
+    // stood between the toplevel path and its answer.
     const toplevel = { appId: "foot" };
-    root.ToplevelManager = { activeToplevel: toplevel, toplevels: { values: [toplevel] } };
-    root.toplevelsChanged();
-    assert.equal(root.focusReady, true, "a reported toplevel is the source answering");
-    assert.equal(root.focusedAppId(), "foot", "and the target resolves");
-
-    // Sticky: focus leaving every window does not un-answer the question.
-    root.ToplevelManager.activeToplevel = null;
-    assert.equal(root.focusReady, true, "the source has answered once and that stands");
+    const root = shell({ ToplevelManager: { activeToplevel: toplevel, toplevels: { values: [toplevel] } } });
+    root.construct();
+    root.detected("hyprland");
+    assert.equal(root.focusReady, true, "ready");
+    assert.equal(root.focusedAppId(), "foot", "and it names the focused window");
 }
 {
     // The failed-detection state, which follows the toplevel arm by the decision
-    // recorded in CompositorService: readiness is the same question there, so a
-    // paste waits on the same thing rather than on a second answer that is never
-    // coming.
-    const root = shell();
-    root.detected("unknown");
-    assert.equal(root.focusReady, false, "nothing has reported a toplevel yet");
+    // recorded in CompositorService: the same question, answered the same way.
     const toplevel = { appId: "foot" };
-    root.ToplevelManager = { activeToplevel: toplevel, toplevels: { values: [toplevel] } };
-    root.toplevelsChanged();
-    assert.equal(root.focusReady, true, "and it is ready on the same terms as Hyprland");
+    const root = shell({ ToplevelManager: { activeToplevel: toplevel, toplevels: { values: [toplevel] } } });
+    root.detected("unknown");
+    assert.equal(root.focusReady, true, "ready on the same terms as Hyprland");
     assert.equal(root.focusedAppId(), "foot", "resolving through the toplevel path");
+}
+{
+    // The asymmetry is the point, and it is not an accident: Niri gets the
+    // strict arm because it HAS the observable that settles the same ambiguity.
+    // An empty list before its snapshot is silence; after it, it is an answer.
+    const niri = shell();
+    niri.detected("niri");
+    assert.equal(niri.focusReady, false, "Niri waits, because it can tell the difference");
+    const hyprland = shell();
+    hyprland.detected("hyprland");
+    assert.equal(hyprland.focusReady, true, "the toplevel path does not, because it cannot");
 }
 {
     // Readiness is never true while pending, whatever else is in place — the
     // source has not been identified, so there is nothing to be ready.
     const toplevel = { appId: "foot" };
     const root = shell({
-        _toplevelSourceAnswered: true,
         NiriService: { windows: [foot], eventStreamUp: true, windowsSnapshotReceived: true },
         ToplevelManager: { activeToplevel: toplevel, toplevels: { values: [toplevel] } },
     });
