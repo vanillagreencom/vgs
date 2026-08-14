@@ -25,17 +25,24 @@ Pinned, over the QML and JS under `quickshell/vshell/` and `config/vshell/`
      is not restricted. The two surfaces that paste must each call into
      PasteService.
   3. The injector resolves a target rather than assuming one: it imports the
-     resolver, calls its command function on something other than a literal
-     string, and reads both the live focused app id and the sticky fallback in
-     the same function or handler as that call — then assigns the argv before
-     starting the process. Quickshell ignores a command change on a live Process,
-     so the reverse order runs the previous injection's argv.
+     resolver, and the resolved argv is assigned to the injector's `command`
+     property — the call is matched as the right-hand side of that assignment,
+     not as a free-standing occurrence, since a call whose result goes nowhere
+     leaves injection broken. Its argument is something other than a literal
+     string, both the live focused app id and the sticky fallback are read in the
+     same function or handler as the assignment, and the assignment precedes the
+     start. Quickshell ignores a command change on a live Process, so the reverse
+     order runs the previous injection's argv.
   4. The sticky fallback empties when its window closes — a liveness test in the
      declaration — and is actually maintained: every assignment to the private
-     reference the declaration reads sits behind an activeToplevel guard ahead of
-     it in the same function or handler.
-  5. The launcher does not paste after a failed copy: its exit handler tests the
-     exit code against non-zero and returns before reaching PasteService.
+     reference the declaration reads sits INSIDE the statement an activeToplevel
+     test controls (its braced body, or the single statement of a braceless
+     form), not merely after such a test in the text.
+  5. The launcher does not paste after a failed copy: its exit handler returns
+     from inside a branch whose whole test is the non-zero exit-code comparison,
+     and that branch closes before the paste. The test must carry no further
+     conjunct that could falsify it, and the return must be unconditional within
+     the branch — at the branch's own brace depth and inside no nested `if`.
 
 Comments are blanked before any pattern runs, so commented-out code satisfies
 nothing.
@@ -44,6 +51,9 @@ Deliberately NOT pinned:
 
   - String literals are not neutralized for rule 1 (it needs their contents), so
     a wtype argv assembled from string fragments would pass it.
+  - Object identity between the assignment and the start in rule 3: the check
+    proves an argv assignment precedes a `.running = true` in the same function,
+    not that both name the same Process.
   - PasteService's queue latch, its watchdog ladder and the launcher's
     in-flight copy guard. Those are runtime state machines; expressing them as
     patterns would pin a flag's name and a handler's shape rather than a
@@ -80,6 +90,12 @@ LITERAL_ARGV_RE = re.compile(r"\[\s*(['\"])wtype\1")
 # The argv builder. Only this function is owner-only; the module alias alone is
 # a read of the resolver, which any surface may do.
 COMMAND_CALL_RE = re.compile(r"\bpasteCommand\s*\(")
+# The call as the right-hand side of the injector's `command` assignment. A bare
+# call proves nothing: its result has to reach the Process, and `command` is
+# Quickshell's own property name, so this is insensitive to how the process, the
+# module alias and the whitespace are spelled without being insensitive to the
+# behavior.
+COMMAND_ASSIGN_RE = re.compile(r"\bcommand\s*=(?!=)\s*(?:\w+\s*\.\s*)*pasteCommand\s*\(")
 QUOTED_ARG_RE = re.compile(r"\s*['\"]")
 IMPORT_RE = re.compile(r"^[ \t]*import\s+\"PasteTarget\.js\"\s+as\s+\w+", re.MULTILINE)
 INJECT_CALL_RE = re.compile(r"\bPasteService\.injectPaste\s*\(")
@@ -88,10 +104,14 @@ RUNNING_TRUE_RE = re.compile(r"\.running\s*=\s*true")
 FOCUS_PROPERTIES = ("focusedAppId", "lastFocusedAppId")
 LIVENESS_RE = re.compile(r"ToplevelManager\.toplevels")
 PRIVATE_MEMBER_RE = re.compile(r"\b_[A-Za-z][A-Za-z0-9_]*\b")
-ACTIVE_TOPLEVEL_GUARD_RE = re.compile(r"if\s*\([^)]*activeToplevel[^)]*\)")
-# Polarity matters: a guard that returns when the copy SUCCEEDED pastes only
-# after failures, which is the bug inverted rather than fixed.
-NONZERO_EXIT_GUARD_RE = re.compile(r"if\s*\([^)]*exitCode\s*!==?\s*0[^)]*\)")
+# Polarity matters, in both directions: a test on the ABSENCE of an active
+# toplevel guards the wrong way, and a guard that returns when the copy SUCCEEDED
+# pastes only after failures, which is the bug inverted rather than fixed.
+ACTIVE_TOPLEVEL_TEST_RE = re.compile(r"(?<![\w.])(?:\w+\s*\.\s*)*activeToplevel\b")
+NEGATED_ACTIVE_TOPLEVEL_RE = re.compile(r"!\s*(?:\w+\s*\.\s*)*activeToplevel\b")
+# The WHOLE test, anchored: `exitCode !== 0 && false` is a non-zero comparison
+# that never holds, and satisfied a substring match while pasting on failure.
+NONZERO_EXIT_TEST_RE = re.compile(r"^\s*\(*\s*(?:\w+\s*\.\s*)*exitCode\s*!==?\s*0\s*\)*\s*$")
 
 
 def live_code(text: str, blank_strings: bool = False) -> str:
@@ -229,8 +249,12 @@ def enclosing_function_body(source: str, index: int) -> tuple[int, str] | None:
     return None
 
 
-def handler_bodies(source: str, handler: str) -> list[str]:
-    """Every braced body of `handler` in `source`, in declaration order."""
+def handler_bodies(source: str, handler: str) -> list[tuple[int, int]]:
+    """Every braced body of `handler` in `source`, in declaration order.
+
+    Offsets, not text: the rules over a handler are about what contains what, and
+    a detached substring cannot be compared against the file's other structure.
+    """
     bodies = []
     for match in re.finditer(r"\b" + handler + r"\b", source):
         opening = source.find("{", match.end())
@@ -243,9 +267,76 @@ def handler_bodies(source: str, handler: str) -> list[str]:
             elif source[cursor] == "}":
                 depth -= 1
                 if depth == 0:
-                    bodies.append(source[opening:cursor + 1])
+                    bodies.append((opening, cursor + 1))
                     break
     return bodies
+
+
+def if_regions(source: str) -> list[tuple[str, int, int]]:
+    """Every `if` as (test text, start, end) of the statement it CONTROLS.
+
+    Parens and braces are matched rather than pattern-matched, so a call inside
+    the test does not truncate it and a braceless single-statement body reads as
+    the region it is. This is what separates a real guard from a textual one:
+    code that merely follows an `if` is outside the region, an `else` branch is
+    outside it, and a test that reaches its closing paren is the whole test, so a
+    conjunct that can falsify it cannot hide off the end of a substring match.
+    """
+    regions: list[tuple[str, int, int]] = []
+    for match in re.finditer(r"\bif\s*\(", source):
+        depth = 0
+        close = -1
+        for cursor in range(match.end() - 1, len(source)):
+            if source[cursor] == "(":
+                depth += 1
+            elif source[cursor] == ")":
+                depth -= 1
+                if depth == 0:
+                    close = cursor
+                    break
+        if close == -1:
+            continue
+        test = source[match.end():close]
+        cursor = close + 1
+        while cursor < len(source) and source[cursor].isspace():
+            cursor += 1
+        if cursor >= len(source):
+            continue
+        if source[cursor] != "{":
+            end = source.find(";", cursor)
+            regions.append((test, cursor, len(source) if end == -1 else end + 1))
+            continue
+        depth = 0
+        for scan in range(cursor, len(source)):
+            if source[scan] == "{":
+                depth += 1
+            elif source[scan] == "}":
+                depth -= 1
+                if depth == 0:
+                    regions.append((test, cursor + 1, scan))
+                    break
+    return regions
+
+
+def returns_unconditionally(source: str, regions: list[tuple[str, int, int]], start: int, end: int) -> bool:
+    """Whether `source[start:end]` returns whenever it is entered.
+
+    The return has to sit at the region's own brace depth — so a return inside a
+    nested block or a callback does not count — and inside no `if` nested within
+    the region, which is the braceless form of the same hole.
+    """
+    for match in re.finditer(r"\breturn\b", source[start:end]):
+        offset = start + match.start()
+        if source.count("{", start, offset) != source.count("}", start, offset):
+            continue
+        nested = any(
+            inner_start <= offset < inner_end
+            for _, inner_start, inner_end in regions
+            if start <= inner_start and inner_end <= end and (inner_start, inner_end) != (start, end)
+        )
+        if not nested:
+            return True
+    return False
 
 
 def check_no_literal_argv(files: list[tuple[str, str, str]]) -> bool:
@@ -287,9 +378,15 @@ def check_owner() -> bool:
     if not IMPORT_RE.search(with_strings):
         return fail(f"{OWNER} does not import PasteTarget.js")
 
-    call = COMMAND_CALL_RE.search(source)
-    if not call:
+    if not COMMAND_CALL_RE.search(source):
         return fail(f"{OWNER} does not build the wtype argv through the resolver's command function")
+    call = COMMAND_ASSIGN_RE.search(source)
+    if not call:
+        return fail(
+            f"{OWNER} calls the resolver's command function without assigning the result to the "
+            "injector's command property, so the resolved argv never reaches the process and paste "
+            "runs whatever argv was set last"
+        )
     if QUOTED_ARG_RE.match(source, call.end()):
         return fail(
             f"{OWNER} passes a literal string to the resolver, so every paste would use one target's "
@@ -362,25 +459,21 @@ def check_focus_source() -> bool:
             f"{FOCUS_SOURCE} never assigns {', '.join(sorted(remembered))}, so lastFocusedAppId stays "
             "empty and the sticky fallback does nothing"
         )
-    # Every assignment, and the guard read in the function that runs it: matched
-    # file-wide, an activeToplevel test in an unrelated function would stand in
-    # for the missing one, and one unguarded assignment is enough to overwrite
-    # the remembered window.
+    # Every assignment, and containment rather than order: an activeToplevel test
+    # that merely precedes the assignment guards nothing — moving the assignment
+    # below the branch, or leaving an unrelated test above it, overwrites the
+    # remembered window with nothing, and one such assignment is enough.
+    guarded_regions = [
+        (start, end) for test, start, end in if_regions(source)
+        if ACTIVE_TOPLEVEL_TEST_RE.search(test) and not NEGATED_ACTIVE_TOPLEVEL_RE.search(test)
+    ]
     for name, matches in assignments.items():
         for match in matches:
-            scope = enclosing_function_body(source, match.start())
-            if scope is None:
+            if not any(start <= match.start() < end for start, end in guarded_regions):
                 return fail(
-                    f"{FOCUS_SOURCE} assigns {name} outside any function or handler, so nothing scopes "
-                    "the guard that has to precede it"
-                )
-            body_start, body = scope
-            guard = ACTIVE_TOPLEVEL_GUARD_RE.search(body)
-            if not guard or guard.start() > match.start() - body_start:
-                return fail(
-                    f"{FOCUS_SOURCE} assigns {name} with no activeToplevel guard ahead of it in the "
-                    "same function, so the remembered window would be overwritten with nothing every "
-                    "time focus leaves a toplevel"
+                    f"{FOCUS_SOURCE} assigns {name} outside the branch any activeToplevel test "
+                    "controls, so the remembered window would be overwritten with nothing every time "
+                    "focus leaves a toplevel"
                 )
 
     print(f"check-paste-injection: {FOCUS_SOURCE} publishes a liveness-gated lastFocusedAppId and maintains it")
@@ -408,24 +501,33 @@ def check_launcher_copy_result() -> bool:
 
     # Every exit handler that pastes, not one located by position: a handler
     # added above this one must not be able to take the check's attention.
-    pasting = [
-        (body, INJECT_CALL_RE.search(body))
-        for body in handler_bodies(source, "onExited")
-        if INJECT_CALL_RE.search(body)
-    ]
+    regions = if_regions(source)
+    pasting = []
+    for start, end in handler_bodies(source, "onExited"):
+        inject = INJECT_CALL_RE.search(source, start, end)
+        if inject:
+            pasting.append((start, end, inject))
     if not pasting:
         return fail(f"{LAUNCHER} pastes from no process exit handler, so the copy's result is not what gates it")
 
-    for body, inject in pasting:
-        guard = NONZERO_EXIT_GUARD_RE.search(body)
-        if not guard or guard.end() > inject.start():
+    for start, end, inject in pasting:
+        # The branch has to close before the paste and the paste has to be
+        # outside it, so entering the branch means never reaching the paste.
+        failing = [
+            (region_start, region_end) for test, region_start, region_end in regions
+            if start <= region_start and region_end <= end
+            and region_end <= inject.start() and NONZERO_EXIT_TEST_RE.match(test)
+        ]
+        if not failing:
             return fail(
-                f"{LAUNCHER} pastes without testing the copy's exit code against non-zero first, so a "
-                "failed copy pastes whatever stale content is still on the clipboard"
+                f"{LAUNCHER} pastes with no branch ahead of it whose whole test is the copy's exit code "
+                "against non-zero — an extra conjunct does not count, since it can falsify the test and "
+                "paste whatever stale content is still on the clipboard"
             )
-        if "return" not in body[guard.end():inject.start()]:
+        if not any(returns_unconditionally(source, regions, *span) for span in failing):
             return fail(
-                f"{LAUNCHER} tests the copy's exit code but does not return before pasting on failure"
+                f"{LAUNCHER} tests the copy's exit code but does not unconditionally return from that "
+                "branch, so a failed copy still reaches the paste"
             )
 
     print(f"check-paste-injection: {LAUNCHER} pastes only after a successful copy")
