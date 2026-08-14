@@ -329,17 +329,17 @@ PluginComponent {
     }
 
     // Immediate relaunches allowed before a channel gives up and waits for the
-    // poll timer. Restored by a payload that satisfies the channel and by a
-    // provider switch, so this only runs out on a helper that keeps returning
-    // nothing usable.
+    // poll timer. Spent per channel; restored only by a payload that SATISFIES
+    // that channel and by a provider switch. When it is spent is
+    // AiUsageLogic.shouldRelaunch's to say, and only its comment says it — two
+    // copies of that rule is how this one drifted.
     readonly property int maxFetchRetries: 3
 
     // A provider switch makes every provider-scoped answer wrong at once: the
     // payload, the failure text, and both channels' "what do we hold" state. One
     // path clears all of it, so the popout shows a loading state rather than the
-    // previous provider's accounts, plan and errors. The per-provider headlines
-    // are deliberately kept: they are keyed by provider identity, so they cannot
-    // be mixed up.
+    // previous provider's accounts, plan and errors. `providerData` is kept: it
+    // is keyed BY provider, so neither entry can be read as the other's.
     function clearProviderState() {
         root.current = null;
         root.fetchError = "";

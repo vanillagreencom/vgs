@@ -6,13 +6,15 @@
 // Split deliberately. Those decisions are pure and are executed there; what is
 // left here is wiring, where the bug shape is a MISSING or MISDIRECTED line —
 // a channel's reason written to the other channel's record, a reset that resets
-// nothing, an outcome computed and then ignored. No test can execute that
-// without a QML runtime, so it is asserted against the source, and every
-// assertion below is written so that inverting the line it guards fails it.
+// nothing, an outcome computed and then ignored.
 //
-// Bundled plugins get no runtime coverage from `qml-smoke.sh --nested` either:
-// the sandbox loads them but never places one in a bar, so none of these
-// bindings is ever evaluated there.
+// Why source assertions at all: `scripts/qml-smoke.sh --nested` DOES host this
+// plugin — it toggles the aiUsage widget and opens its popout, so these bindings
+// really are instantiated and evaluated — but that mode is local-only (it needs
+// Hyprland and quickshell on PATH), so CI never runs it, and even locally a
+// harness cannot drive a fetch's exit path or a provider switch through the QML
+// runtime. Each assertion below matches the load-bearing token rather than the
+// statement's layout, so reformatting is free and deleting the line is not.
 
 "use strict";
 
@@ -65,12 +67,38 @@ function handlers(name) {
     return out;
 }
 
-// Prove the walk before anything leans on it.
+// Every token has to be present, each named on its own so a failure says which
+// line went missing.
+function requires(block, where, pairs) {
+    for (const [token, why] of pairs)
+        assert.ok(block.includes(token), `${where} must keep \`${token}\` — ${why}`);
+}
+
+// Comment text is prose about the code, not the code. Only the literal-ban loop
+// at the end needs this: everything else matches code tokens that do not appear
+// in comments.
+function stripComments(text) {
+    return text
+        .replace(/\/\*[\s\S]*?\*\//g, "")
+        .split("\n")
+        .map(line => {
+            const at = line.indexOf("//");
+            return at === -1 ? line : line.slice(0, at);
+        })
+        .join("\n");
+}
+
+// Prove the walk and the stripper before anything leans on them.
 {
     const walked = body("clearProviderState");
     assert.ok(walked.startsWith("{") && walked.endsWith("}"), "the walk returns a whole block");
     assert.ok(walked.includes("otherFetch.reset()"), "the walk reaches the end of the block");
     assert.ok(!walked.includes("function refresh"), "the walk stops at the block it was asked for");
+
+    const stripped = stripComments('a(); // "Claude" lives here\nb("kept"); /* gone */ c();');
+    assert.ok(!stripped.includes("Claude"), "a line comment must not survive stripping");
+    assert.ok(!stripped.includes("gone"), "a block comment must not survive stripping");
+    assert.ok(stripped.includes('b("kept")'), "code must survive stripping");
 }
 
 // --- filing a payload -------------------------------------------------------
@@ -80,9 +108,10 @@ function handlers(name) {
 // issue exists to close, so the guard and the keyed write are both pinned.
 
 const store = body("storeHeadline");
-assert.ok(/next\[which\] = data/.test(store), "a headline is filed by key, never by branch");
-assert.ok(/if \(which === ""\)\s*\n\s*return;/.test(store),
-    "an unidentifiable provider files nothing");
+requires(store, "storeHeadline()", [
+    ["next[which] = data", "a headline is filed by key, never by branch"],
+    ['if (which === "")', "an unidentifiable provider files nothing"]
+]);
 assert.ok(!/(claudeData|codexData)\s*=/.test(store),
     "a per-provider branch is what let an unknown provider land under Claude");
 assert.ok(body("noteHeadline").includes("logic.payloadProvider(data)"),
@@ -96,29 +125,27 @@ assert.ok(!body("noteHeadline").includes("root.provider"),
 // process it drives and where its output lands are the channel's own.
 
 const accept = body("acceptPayload");
-assert.ok(accept.includes("logic.decodePayload(ch.inFlight, txt)"),
-    "a payload is validated against ITS OWN channel's launch tag");
-assert.ok(/ch\.issue = got\.issue;/.test(accept),
-    "the failure reason is recorded on the channel that fetched it, never on a shared field");
-assert.ok(/if \(!got\.data\)\s*\n\s*return;/.test(accept), "a dropped payload changes nothing else");
-assert.ok(/ch\.accepted = true;/.test(accept), "acceptance is what tells the exit path a payload arrived");
-assert.ok(accept.includes("logic.acceptOutcome(logic.payloadProvider(got.data), ch.want)"),
-    "the outcome is decided from the payload's own provider and what this channel wants");
-assert.ok(/if \(outcome\.file\)\s*\n\s*root\.noteHeadline\(got\.data\);/.test(accept),
-    "a payload that names a provider updates that provider's pill slot");
-assert.ok(/if \(!outcome\.satisfies\)\s*\n\s*return;/.test(accept),
-    "a payload that does not satisfy this channel goes no further than its pill slot");
-assert.ok(/ch\.loaded = ch\.want;/.test(accept),
-    "the channel records what it now holds — without it the relaunch predicate answers true " +
-    "on every exit and burns the retry budget each poll");
-assert.ok(/ch\.retries = 0;/.test(accept), "a satisfying payload restores the retry budget");
-assert.ok(/if \(ch\.primary\)\s*\n\s*root\.applyPayload\(got\.data\);/.test(accept),
-    "only the primary channel's payload reaches the popout");
+requires(accept, "acceptPayload()", [
+    ["logic.decodePayload(ch.inFlight, txt)", "a payload is validated against ITS OWN channel's tag"],
+    ["ch.issue = got.issue", "the reason is recorded on the channel that fetched it, never shared"],
+    ["ch.accepted = true", "acceptance is what tells the exit path a payload arrived"],
+    ["logic.acceptOutcome(logic.payloadProvider(got.data), ch.want)",
+        "the outcome is decided from the payload's own provider and what this channel wants"],
+    ["outcome.file", "a payload that names a provider updates that provider's pill slot"],
+    ["root.noteHeadline(got.data)", "which is what files it"],
+    ["outcome.satisfies", "and a payload that does not satisfy this channel goes no further"],
+    ["ch.loaded = ch.want", "the channel records what it now holds — without it the relaunch " +
+        "predicate answers true on every exit and burns the retry budget each poll"],
+    ["ch.retries = 0", "a satisfying payload restores the retry budget"],
+    ["ch.primary", "only the popout's channel reaches the popout"],
+    ["root.applyPayload(got.data)", "which is what shows it"]
+]);
 
-const applied = body("applyPayload");
-assert.ok(applied.includes("root.current = d"), "the popout state is the payload itself");
-assert.ok(applied.includes("root.fetchError = \"\""), "a fresh payload clears the failure text");
-assert.ok(applied.includes("root.loading = false"), "and ends the loading state");
+requires(body("applyPayload"), "applyPayload()", [
+    ["root.current = d", "the popout state is the payload itself"],
+    ['root.fetchError = ""', "a fresh payload clears the failure text"],
+    ["root.loading = false", "and ends the loading state"]
+]);
 
 // --- the channel owns its process -------------------------------------------
 //
@@ -127,25 +154,23 @@ assert.ok(applied.includes("root.loading = false"), "and ends the loading state"
 // is a typo away, and wildcarding those operands in a test is how it would pass.
 
 const channel = blockFrom(source.indexOf("component FetchChannel:"), "FetchChannel");
-for (const [what, pattern] of [
-    ["its process", /property Process proc: Process \{/],
-    ["its stdout collector", /stdout: StdioCollector \{/],
-    ["its stderr collector", /stderr: StdioCollector \{/],
-    ["its stall watchdog", /property Timer stallTimer: Timer \{/],
-    ["the provider it wants", /property string want: ""/],
-    ["whether it is the popout's", /property bool primary: false/]
-]) {
-    assert.ok(pattern.test(channel), `FetchChannel must own ${what}`);
-}
-assert.ok(/onStreamFinished: root\.acceptPayload\(chan, outCollector\.text\)/.test(channel),
-    "stdout goes to this channel's accept path");
-assert.ok(/onStreamFinished: chan\.errorOut = errCollector\.text/.test(channel),
-    "stderr is captured when the stream ends, not read at exit time — StdioCollector only fills " +
-    "text once the stream closes, and the repo idiom is to capture it here");
-assert.ok(/onExited: \(exitCode, exitStatus\) => root\.finishFetch\(chan, exitCode, exitStatus\)/.test(channel),
-    "the exit carries both the code and the status of THIS channel's process");
-assert.ok(/command: \[root\.aiUsageCommand, "ai-usage", chan\.want\]/.test(channel),
-    "the process fetches the provider its own channel wants");
+requires(channel, "FetchChannel", [
+    ["property Process proc: Process {", "the channel owns its process"],
+    ["stdout: StdioCollector {", "and its stdout collector"],
+    ["stderr: StdioCollector {", "and its stderr collector"],
+    ["property Timer stallTimer: Timer {", "and the watchdog that reports a start that never ran"],
+    ['property string want: ""', "and the provider it fetches"],
+    ["property bool primary: false", "and whether the popout is its"],
+    ["onStreamFinished: root.acceptPayload(chan, outCollector.text)",
+        "stdout goes to this channel's accept path"],
+    ["onStreamFinished: chan.errorOut = errCollector.text",
+        "stderr is captured when the stream ends, not read at exit time: StdioCollector only " +
+        "fills text once the stream closes, and that is the repo idiom"],
+    ["onExited: (exitCode, exitStatus) => root.finishFetch(chan, exitCode, exitStatus)",
+        "the exit carries both the code and the status of THIS channel's process"],
+    ['command: [root.aiUsageCommand, "ai-usage", chan.want]',
+        "the process fetches the provider its own channel wants"]
+]);
 
 // Nothing outside the component may name a process or a collector: that is what
 // makes the pairing structural rather than a convention.
@@ -156,92 +181,107 @@ assert.ok(!/\b(usageProc|otherProc|usageOut|otherOut|usageErr|otherErr)\b/.test(
 
 // Both channels are instantiated with their provider bound, and only one is the
 // popout's.
-assert.ok(/FetchChannel \{\s*\n\s*id: usageFetch\s*\n\s*want: root\.provider\s*\n\s*primary: true\s*\n\s*\}/.test(source),
-    "the usage channel wants the SELECTED provider and owns the popout");
-assert.ok(/FetchChannel \{\s*\n\s*id: otherFetch\s*\n\s*want: root\.otherProvider\s*\n\s*\}/.test(source),
-    "the other channel wants the other provider and does not own the popout");
+const usageChannel = blockFrom(source.indexOf("FetchChannel {\n        id: usageFetch"), "usageFetch");
+requires(usageChannel, "the usage channel", [
+    ["want: root.provider", "it fetches the SELECTED provider"],
+    ["primary: true", "and owns the popout"]
+]);
+const otherChannel = blockFrom(source.indexOf("FetchChannel {\n        id: otherFetch"), "otherFetch");
+assert.ok(otherChannel.includes("want: root.otherProvider"), "the other channel fetches the other provider");
+assert.ok(!otherChannel.includes("primary"), "and does not own the popout");
 
 // --- launching --------------------------------------------------------------
 
 const launch = body("launch");
-assert.ok(launch.includes("logic.launchDecision(ch.inFlight, ch.proc.running)"),
-    "whether a launch can start now is the extracted decision, not an inline guess");
-assert.ok(/if \(decision === "skip"\)\s*\n\s*return;/.test(launch), "an in-flight channel is left alone");
-assert.ok(/if \(decision === "pend"\) \{\s*\n\s*ch\.pending = true;\s*\n\s*return;\s*\n\s*\}/.test(launch),
-    "a launch requested while the process is still stopping is parked, not dropped");
-assert.ok(/ch\.inFlight = ch\.want;/.test(launch) && /ch\.proc\.running = true;/.test(launch),
-    "a start sets the tag and runs the channel's own process");
-assert.ok(/ch\.errorOut = "";/.test(launch),
-    "the previous fetch's stderr must not be read as this one's cause");
-assert.ok(/if \(!ch\.proc\.running\)\s*\n\s*root\.failLaunch\(ch\);/.test(launch),
-    "an assignment that did not take at all produces no signal to wait for, so it fails here");
+requires(launch, "launch()", [
+    ["logic.launchDecision(ch.inFlight, ch.proc.running)",
+        "whether a launch can start now is the extracted decision, not an inline guess"],
+    ['decision === "skip"', "an in-flight channel is left alone"],
+    ['decision === "pend"', "a launch requested while the process is still stopping is parked"],
+    ["ch.pending = true", "which is what parks it"],
+    ["ch.inFlight = ch.want", "a start tags the channel with what it is fetching"],
+    ["ch.proc.running = true", "and runs the channel's own process"],
+    // Per-fetch resets: `accepted` carrying over from the previous fetch makes a
+    // poll that produced nothing read as satisfied, so the widget holds the old
+    // numbers with nothing standing behind them — silently.
+    ["ch.accepted = false", "a new fetch has not been answered yet"],
+    ['ch.issue = ""', "and carries no failure reason yet"],
+    ['ch.errorOut = ""', "and must not read the previous fetch's stderr as its own cause"],
+    ["root.failLaunch(ch)", "an assignment that did not take at all produces no signal to wait for"]
+]);
+assert.ok(launch.includes("if (!ch.proc.running)"),
+    "the synchronous failed start is checked after the assignment, not assumed away");
 
 // A start that fails asynchronously reports nothing at all: Qt does not emit an
 // exit for a process that never ran. Without the drain the pill sits on the
 // in-flight ellipsis for a fetch that does not exist.
-assert.ok(/if \(chan\.inFlight !== ""\)\s*\n\s*stallTimer\.restart\(\);/.test(channel),
-    "a process that stopped with its tag still set had no exit delivered: start the watchdog");
-assert.ok(/onTriggered: root\.failLaunch\(chan\)/.test(channel),
-    "the watchdog routes a failed start into the failure path");
-assert.ok(/if \(chan\.pending\) \{\s*\n\s*root\.launch\(chan\);/.test(channel),
-    "a parked launch is applied when the process actually stops");
+requires(channel, "the channel's runningChanged handler", [
+    ['if (chan.inFlight !== "")', "a process that stopped with its tag still set had no exit"],
+    ["stallTimer.restart()", "so the watchdog is armed"],
+    ["if (chan.pending)", "and a parked launch"],
+    ["root.launch(chan)", "is applied when the process actually stops"],
+    ["onTriggered: root.failLaunch(chan)", "the watchdog routes a failed start into the failure path"]
+]);
 
-const failLaunch = body("failLaunch");
-assert.ok(/if \(ch\.inFlight === ""\)\s*\n\s*return;/.test(failLaunch),
-    "an exit that arrived first wins; the watchdog then does nothing");
-assert.ok(/ch\.issue = "could not run " \+ root\.aiUsageCommand;/.test(failLaunch),
-    "a failed start names the command that could not be run");
-assert.ok(failLaunch.includes("console.warn"), "and says so in the log");
-assert.ok(failLaunch.includes("root.settleFetch(ch)"),
-    "a failed start settles exactly like a failed exit — retried, then reported");
+requires(body("failLaunch"), "failLaunch()", [
+    ['if (ch.inFlight === "")', "an exit that arrived first wins; the watchdog then does nothing"],
+    ['ch.issue = "could not run " + root.aiUsageCommand', "a failed start names the command"],
+    ["console.warn", "and says so in the log"],
+    ["root.settleFetch(ch)", "then settles exactly like a failed exit — retried, then reported"]
+]);
 
 // --- finishing --------------------------------------------------------------
 
 const finish = body("finishFetch");
-assert.ok(/exitCode !== 0 \|\| exitStatus !== 0/.test(finish),
-    "a helper killed by a signal did not fail on its own terms; branching on the exit code alone " +
-    "left the empty output's 'parse error' standing as the cause");
-assert.ok(/exitStatus !== 0 \? "helper killed"/.test(finish), "and says which of the two happened");
-assert.ok(finish.includes("logic.stderrReason(ch.errorOut, root.maxIssueChars)"),
-    "the reason comes from the captured stderr, last line first and truncated");
-assert.ok(finish.includes("console.warn"),
-    "the failure has to reach vshell logs, or the cause exists nowhere");
-assert.ok(finish.includes("root.settleFetch(ch)"), "and then settles through the shared path");
+requires(finish, "finishFetch()", [
+    ["exitCode !== 0 || exitStatus !== 0",
+        "a helper killed by a signal did not fail on its own terms; branching on the exit code " +
+        "alone left the empty output's 'parse error' standing as the cause"],
+    ['exitStatus !== 0 ? "helper killed"', "and says which of the two happened"],
+    ["logic.stderrReason(ch.errorOut, root.maxIssueChars)",
+        "the reason comes from the captured stderr, last line first and truncated"],
+    ["console.warn", "the failure has to reach vshell logs, or the cause exists nowhere"],
+    ["root.settleFetch(ch)", "and then settles through the shared path"]
+]);
 assert.ok(/property int maxIssueChars: \d+/.test(source),
     "the reason is capped before it reaches the popout and the log");
 
 const settle = body("settleFetch");
-assert.ok(settle.includes("logic.shouldRelaunch(launchedFor, ch.loaded, ch.want, ch.retries,"),
-    "relaunch is decided by the shared predicate, against what this channel holds");
-assert.ok(/root\.maxFetchRetries, ch\.accepted\)/.test(settle),
-    "and against whether this fetch produced a payload at all, so a blip is retried");
+requires(settle, "settleFetch()", [
+    ["logic.shouldRelaunch(launchedFor, ch.loaded, ch.want, ch.retries",
+        "relaunch is decided by the shared predicate, against what this channel holds"],
+    ["root.maxFetchRetries, ch.accepted)",
+        "and against whether this fetch produced a payload at all, so a blip is retried"],
+    ["ch.retries += 1", "a relaunch spends a retry, or the budget bounds nothing"],
+    ["Qt.callLater(() => root.launch(ch))",
+        "the relaunch stays deferred and restarts only the channel that asked"],
+    ["ch.stallTimer.stop()", "a settled fetch stops its own watchdog"],
+    ["ch.loaded !== ch.want || !ch.accepted",
+        "a poll that delivered no payload for the provider on screen is a failure, not a silent " +
+        "hold of the previous numbers"],
+    ['ch.issue !== "" ? ch.issue : "usage unavailable"',
+        "the recorded reason is what gets filed and shown; the generic text is the fallback"],
+    ["root.storeHeadline(ch.want, { ok: false, provider: ch.want",
+        "the failure is filed for the provider it happened to, so the pill cannot contradict " +
+        "the popout"]
+]);
 assert.ok(!/launchedFor !== (root\.)?(other)?[Pp]rovider/.test(settle),
     "comparing the launch tag to the current selection is the dropped-refetch bug");
-assert.ok(settle.includes("Qt.callLater(() => root.launch(ch))"),
-    "the relaunch stays deferred and restarts only the channel that asked");
-assert.ok(/ch\.retries \+= 1;/.test(settle), "a relaunch spends a retry, or the budget bounds nothing");
-assert.ok(/ch\.stallTimer\.stop\(\);/.test(settle), "a settled fetch stops its own watchdog");
-assert.ok(/ch\.loaded !== ch\.want \|\| !ch\.accepted/.test(settle),
-    "a poll that delivered no payload for the provider on screen is a failure, not a silent hold " +
-    "of the previous numbers");
-assert.ok(/ch\.issue !== "" \? ch\.issue : "usage unavailable"/.test(settle),
-    "the recorded reason is what gets filed and shown; the generic text is the fallback");
-assert.ok(/storeHeadline\(ch\.want, \{ ok: false, provider: ch\.want/.test(settle),
-    "the failure is filed for the provider it happened to, so the pill cannot contradict the popout");
+
+const exits = handlers("onExited");
+assert.equal(exits.length, 1, "the one exit handler lives on the channel's own process");
 
 // --- invalidation -----------------------------------------------------------
 
 const cleared = body("clearProviderState");
-for (const [assignment, why] of [
+requires(cleared, "clearProviderState()", [
     ["root.current = null", "one payload property holds every provider-scoped lane"],
-    ["root.fetchError = \"\"", "the failure text is provider-scoped too"],
+    ['root.fetchError = ""', "the failure text is provider-scoped too"],
     ["root.loading = true", "a switch puts the popout back into loading"],
-    ["root.expandedAccountId = \"\"", "the expanded account belongs to the previous provider's list"],
+    ['root.expandedAccountId = ""', "the expanded account belongs to the previous provider's list"],
     ["usageFetch.reset()", "the usage channel is invalidated"],
     ["otherFetch.reset()", "the other channel is invalidated through the same path"]
-]) {
-    assert.ok(cleared.includes(assignment), `clearProviderState() must do ${assignment}: ${why}`);
-}
+]);
 assert.ok(!/providerData/.test(cleared),
     "the per-provider headlines are keyed by identity and survive a switch");
 
@@ -250,16 +290,20 @@ const reset = blockFrom(source.indexOf("function reset()"), "FetchChannel.reset(
 for (const [field, value] of [
     ["loaded", '""'], ["retries", "0"], ["accepted", "false"], ["issue", '""']
 ]) {
-    assert.ok(new RegExp(`${field} = ${value.replace(/[".]/g, "\\$&")};`).test(reset),
+    assert.ok(reset.includes(`${field} = ${value};`),
         `a channel reset must set ${field} back to ${value}`);
 }
 assert.ok(!/\binFlight = /.test(reset),
     "inFlight identifies a process that is still running; clearing it would orphan its payload");
 
 const onProviderChanged = blockFrom(source.indexOf("onProviderChanged:"), "onProviderChanged");
-assert.ok(onProviderChanged.includes("clearProviderState()"),
-    "a provider switch must invalidate the previous provider's state before refetching");
-assert.ok(/root\.refresh\(\)/.test(onProviderChanged), "a provider switch must refetch both channels");
+const invalidateAt = onProviderChanged.indexOf("clearProviderState()");
+const refetchAt = onProviderChanged.indexOf("root.refresh()");
+assert.notEqual(invalidateAt, -1, "a provider switch must invalidate the previous provider's state");
+assert.notEqual(refetchAt, -1, "a provider switch must refetch");
+assert.ok(invalidateAt < refetchAt,
+    "and must invalidate BEFORE refetching, so no window renders the previous provider's data " +
+    "under the new provider's label");
 
 assert.equal((source.match(/root\.current = /g) || []).length, 2,
     "root.current is written in exactly two places: applyPayload and the reset");
@@ -270,30 +314,35 @@ assert.equal((source.match(/root\.current = /g) || []).length, 2,
 // they contradict each other. They did: with both accounts hidden the pill slot
 // showed "!", the vertical pill 60%, and the header "0 accounts · 60% used".
 
-assert.ok(/readonly property var currentHead: logic\.headOf\(root\.current, root\.headlineMode, root\.hiddenAccounts\)/
-    .test(source), "the popout's headline comes from the same function the pill slots use");
-assert.ok(/readonly property int headlinePct: root\.currentHead \? root\.currentHead\.pct : 0/.test(source),
-    "and the percentage is that head's, with no second arithmetic beside it");
+requires(source, "AiUsageWidget.qml", [
+    ["logic.headOf(root.current, root.headlineMode, root.hiddenAccounts)",
+        "the popout's headline comes from the same function the pill slots use"],
+    ["root.currentHead ? root.currentHead.pct : 0",
+        "and the percentage is that head's, with no second arithmetic beside it"],
+    ["readonly property var selectedSlot: logic.pillSlot(",
+        "the vertical bar renders the selected provider's slot, the shape the pill uses"]
+]);
 assert.ok(!/aggregatePct|primaryPct/.test(source),
     "the per-surface headline arithmetic is gone; a second owner is a second answer");
-assert.ok(/readonly property var selectedSlot: logic\.pillSlot\(/.test(source),
-    "the vertical bar renders the selected provider's slot, the same shape the horizontal pill uses");
 
 const vertical = blockFrom(source.indexOf("verticalBarPill:"), "verticalBarPill");
-assert.ok(/text: root\.selectedSlot\.text/.test(vertical),
-    "the vertical pill shows what the slot says, not its own reading of the payload");
-assert.ok(/name: root\.selectedSlot\.icon/.test(vertical), "including the slot's own provider icon");
+requires(vertical, "the vertical pill", [
+    ["text: root.selectedSlot.text", "it shows what the slot says, not its own reading of the payload"],
+    ["name: root.selectedSlot.icon", "including the slot's own provider icon"]
+]);
 assert.ok(!/headlinePct/.test(vertical),
     "a raw percentage here is how the vertical bar came to show 60% beside an error glyph");
 
 const details = blockFrom(source.indexOf("detailsText:"), "detailsText");
-assert.ok(/if \(root\.allHidden\)/.test(details),
+assert.ok(details.includes("if (root.allHidden)"),
     "the header must answer the all-hidden case before it prints any percentage");
+assert.ok(details.indexOf("root.allHidden") < details.indexOf("% used"),
+    "and answer it BEFORE the percentage, not after");
 assert.ok(/readonly property bool allHidden:[\s\S]{0,200}shownAccounts\(root\.accounts\)\.length === 0/
     .test(source), "all-hidden is decided from the accounts actually on screen");
 
 const meters = blockFrom(source.indexOf("readonly property var primaryMeters:"), "primaryMeters");
-assert.ok(/shownAccounts\(list\)/.test(meters) && /metersFor\(shown\[0\]\)/.test(meters),
+assert.ok(meters.includes("shownAccounts(list)") && meters.includes("metersFor(shown[0])"),
     "the single-account view renders the first SHOWN account: a hidden account contributes no " +
     "meters, exactly as it contributes no headline");
 
@@ -302,14 +351,15 @@ assert.ok(/shownAccounts\(list\)/.test(meters) && /metersFor\(shown\[0\]\)/.test
 // The pill slots are built from AiUsageLogic. The popout's tabs must be too, or
 // the two can disagree about a provider's name or icon.
 
-assert.ok(/model: logic\.providerOrder\(\)/.test(source),
+const code = stripComments(source);
+assert.ok(code.includes("model: logic.providerOrder()"),
     "the provider tabs are generated from the same order the pill uses");
 for (const literal of ['"Claude"', '"Codex"', '"smart_toy"', '"terminal"']) {
-    assert.ok(!source.includes(literal),
-        `${literal} must live only in AiUsageLogic — a second copy is where a rename drifts`);
+    assert.ok(!code.includes(literal),
+        `${literal} must live only in AiUsageLogic — a second copy in CODE is where a rename drifts`);
 }
 assert.ok(
-    /property string provider: logic\.normalizeProvider\(pluginData\.provider\) \|\| "claude"/.test(source),
+    code.includes('property string provider: logic.normalizeProvider(pluginData.provider) || "claude"'),
     "the provider setting is normalised with a default, so a junk persisted value degrades " +
     "instead of leaving every payload unattributable"
 );

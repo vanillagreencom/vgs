@@ -66,42 +66,47 @@ function runEntrypoint(provider, backend) {
     return parsed;
 }
 
-for (const [label, backend] of [
-    ["a backend that fails", fakeBackend("fails", 'echo "boom" >&2\nexit 7')],
-    ["a backend that prints nothing", fakeBackend("silent", "exit 0")],
-    ["a backend that prints non-JSON", fakeBackend("garbage", "echo not-json")]
-]) {
-    for (const provider of ["claude", "codex"]) {
-        const payload = runEntrypoint(provider, backend);
-        assert.equal(payload.ok, false, `${label} reports a failure`);
-        assert.equal(
-            payloadProvider(payload), provider,
-            `${label} must still stamp the provider, or the widget discards the real cause`
-        );
-        assert.ok(payloadIsFor(provider, payload), `${label} is accepted as that fetch's answer`);
+// try/finally, because a failing assertion throws past a trailing cleanup and
+// leaves a directory of executable fake backends behind — which it did, five
+// times, before this was wrapped.
+try {
+    for (const [label, backend] of [
+        ["a backend that fails", fakeBackend("fails", 'echo "boom" >&2\nexit 7')],
+        ["a backend that prints nothing", fakeBackend("silent", "exit 0")],
+        ["a backend that prints non-JSON", fakeBackend("garbage", "echo not-json")]
+    ]) {
+        for (const provider of ["claude", "codex"]) {
+            const payload = runEntrypoint(provider, backend);
+            assert.equal(payload.ok, false, `${label} reports a failure`);
+            assert.equal(
+                payloadProvider(payload), provider,
+                `${label} must still stamp the provider, or the widget discards the real cause`
+            );
+            assert.ok(payloadIsFor(provider, payload), `${label} is accepted as that fetch's answer`);
+        }
     }
-}
 
-{
-    // A third-party ai-usage engine from PATH predates the field entirely.
-    const backend = fakeBackend("unstamped", 'echo \'{"ok":true,"plan":"Max","session":{"pct":12}}\'');
-    const payload = runEntrypoint("codex", backend);
-    assert.equal(payload.ok, true, "a good payload passes through");
-    assert.equal(payload.plan, "Max", "the backend's own fields are untouched");
-    assert.equal(payloadProvider(payload), "codex", "an unstamped backend payload is stamped by the wrapper");
-}
+    {
+        // A third-party ai-usage engine from PATH predates the field entirely.
+        const backend = fakeBackend("unstamped", 'echo \'{"ok":true,"plan":"Max","session":{"pct":12}}\'');
+        const payload = runEntrypoint("codex", backend);
+        assert.equal(payload.ok, true, "a good payload passes through");
+        assert.equal(payload.plan, "Max", "the backend's own fields are untouched");
+        assert.equal(payloadProvider(payload), "codex", "an unstamped backend payload is stamped by the wrapper");
+    }
 
-{
-    // The stamp must not overwrite what a backend already said: the backend is
-    // the authority on its own identity, and a wrapper that overwrote it would
-    // re-introduce attribution by argument.
-    const backend = fakeBackend("stamped", 'echo \'{"ok":false,"provider":"claude","error":"nope"}\'');
-    const payload = runEntrypoint("codex", backend);
-    assert.equal(payloadProvider(payload), "claude", "an existing stamp is preserved, never overwritten");
-    assert.ok(!payloadIsFor("codex", payload), "and the widget then rejects it, which is the point");
+    {
+        // The stamp must not overwrite what a backend already said: the backend is
+        // the authority on its own identity, and a wrapper that overwrote it would
+        // re-introduce attribution by argument.
+        const backend = fakeBackend("stamped", 'echo \'{"ok":false,"provider":"claude","error":"nope"}\'');
+        const payload = runEntrypoint("codex", backend);
+        assert.equal(payloadProvider(payload), "claude", "an existing stamp is preserved, never overwritten");
+        assert.ok(!payloadIsFor("codex", payload), "and the widget then rejects it, which is the point");
+    }
+} finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
 }
-
-fs.rmSync(tmp, { recursive: true, force: true });
 
 // The backend-not-found branch cannot be reached with the repo's own backend
 // present, so it is pinned at the source: every payload cmd_ai_usage emits goes
@@ -123,22 +128,91 @@ assert.ok(cmdAiUsage.includes('emit({"ok": False, "error": "ai-usage backend not
 // The wrapper stamps what it emits and fills in a stamp the backend omitted, so
 // a missing stamp in bin/vshell-ai-usage would not reach the widget — but it
 // would silently make the wrapper the source of a provider identity the backend
-// meant to state itself. Every JSON object the backend prints has to carry the
-// key, and this fails at CI rather than at runtime when a new return path forgets.
+// meant to state itself. Every payload the backend builds has to carry the key.
+//
+// Scanned per payload OBJECT, not per jq invocation: the main emission is ONE jq
+// program holding TWO payload objects — the no-live-account failure and the
+// success — so a per-invocation scan was satisfied by either sibling's key while
+// the other went unstamped, and the success object is the everyday path.
 
 const backend = fs.readFileSync(path.join(repoRoot, "bin", "vshell-ai-usage"), "utf8");
 
-// `jq -n` is how this script builds an object out of nothing, which is every
-// payload it prints; the account-normalising calls read stdin instead.
-const emissions = backend.split(/\bjq -n/).slice(1);
-assert.ok(emissions.length >= 4,
-    `expected the backend's payload emissions to be found, got ${emissions.length}`);
-for (const emission of emissions) {
-    // Up to the next command, so one emission's text cannot vouch for another.
-    const program = emission.split(/\n(?=[a-z]|\})/)[0];
-    assert.ok(/provider:/.test(program),
-        "every JSON payload bin/vshell-ai-usage emits must name its provider:\n" +
-        program.slice(0, 200));
+// Every brace-balanced object literal in the file, paired with its OWN level
+// (nested objects blanked), so a key belonging to a nested object cannot vouch
+// for its parent.
+function objectLiterals(text) {
+    const out = [];
+    for (let i = 0; i < text.length; i++) {
+        if (text[i] !== "{")
+            continue;
+        let depth = 0;
+        for (let j = i; j < text.length; j++) {
+            if (text[j] === "{") depth += 1;
+            else if (text[j] === "}") {
+                depth -= 1;
+                if (depth === 0) {
+                    const body = text.slice(i + 1, j);
+                    out.push({ body: body, own: body.replace(/\{[^{}]*\}/g, " ") });
+                    break;
+                }
+            }
+        }
+    }
+    return out;
+}
+
+{
+    const sample = objectLiterals('{ok:true, nested:{provider:$p}} {ok:false,provider:$p}');
+    assert.ok(sample.some(o => /ok:true/.test(o.own) && !/provider/.test(o.own)),
+        "a key inside a NESTED object must not count as its parent's");
+    assert.ok(sample.some(o => /ok:false/.test(o.own) && /provider/.test(o.own)),
+        "a key at the object's own level does count");
+}
+
+// The programs that BUILD payloads: `jq -n` constructs an object from nothing
+// and its output is printed, while the `jq -c` calls normalise one account from
+// stdin — account objects carry `ok` too and are not payloads. A jq program is
+// single-quoted and cannot contain a literal quote (the script says so itself),
+// so its own text is exactly delimited.
+function jqBuildPrograms(text) {
+    const out = [];
+    const at = /\bjq -n[a-z]*\b/g;
+    let hit;
+    while ((hit = at.exec(text)) !== null) {
+        const open = text.indexOf("'", hit.index);
+        if (open === -1)
+            continue;
+        const close = text.indexOf("'", open + 1);
+        out.push(text.slice(open + 1, close === -1 ? text.length : close));
+    }
+    return out;
+}
+
+// Comment lines are blanked first: this file documents its payload shape in a
+// worked example, which is prose, not an emission.
+const backendCode = backend.split("\n").map(l => (/^\s*#/.test(l) ? "" : l)).join("\n");
+
+// A payload is what the widget parses: the object carrying `ok`. Both jq's bare
+// keys and JSON's quoted ones, so a payload written any other way is covered too.
+const hasKey = (text, key) => new RegExp(`(^|[{,\\s])"?${key}"?\\s*:`).test(text);
+const programs = jqBuildPrograms(backendCode);
+assert.ok(programs.length >= 4,
+    `expected the backend's payload-building jq programs to be found, got ${programs.length}`);
+const payloads = [];
+for (const program of programs) {
+    for (const object of objectLiterals(program)) {
+        if (hasKey(object.own, "ok"))
+            payloads.push(object);
+    }
+}
+// One program holds two of them — the no-live-account failure and the success —
+// which is exactly the pair a per-invocation scan let cover for each other.
+assert.ok(payloads.length >= 5,
+    `expected every payload object the backend builds to be found, got ${payloads.length}`);
+for (const payload of payloads) {
+    assert.ok(hasKey(payload.own, "provider"),
+        "every payload bin/vshell-ai-usage builds must name its provider at its own level:\n" +
+        payload.body.slice(0, 200));
 }
 assert.ok(!/^\s*(printf|echo)\s+.*['"]\s*\{/m.test(backend),
     "a payload printed without jq would bypass the provider stamp entirely");

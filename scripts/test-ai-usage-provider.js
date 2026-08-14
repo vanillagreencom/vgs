@@ -4,13 +4,15 @@
 // which provider, when a finished fetch has to be replaced, and what the bar
 // pill renders when a provider has no number (VGS-118).
 //
-// Bundled plugins get no runtime coverage from `qml-smoke.sh --nested` — the
-// sandbox loads them but never places one in a bar, so none of these bindings
-// is ever evaluated there (the same reason scripts/test-remote-desktop-state.js
-// exists). Every bug this file closes was an ATTRIBUTION bug: a Claude payload
-// rendered under the Codex tab, a Claude percentage rendered in the Codex pill
-// slot. qmllint cannot see any of them, and reproducing them live means holding
-// two provider subscriptions and clicking fast.
+// `qml-smoke.sh --nested` does host this plugin — it toggles the aiUsage widget
+// and opens its popout — but that mode is local-only (it needs Hyprland and
+// quickshell on PATH), so CI has no runtime coverage of it at all, and no
+// harness can drive these decisions through a QML runtime anyway: they answer
+// questions about a fetch's exit, not about what is on screen. Every bug this
+// file closes was an ATTRIBUTION bug — a Claude payload rendered under the Codex
+// tab, a Claude percentage in the Codex pill slot. qmllint cannot see any of
+// them, and reproducing them live means holding two provider subscriptions and
+// clicking fast.
 //
 // The decision functions are extracted verbatim from the shipped QML between
 // its PROVIDER DECISION markers, so this tests the real source rather than a
