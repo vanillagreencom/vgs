@@ -120,6 +120,22 @@ if [[ ${#script_files[@]} -eq 0 ]]; then
   fail "no files matched scripts/* — stale pathspec or the git failure above; scripts/ has dropped out of every lint surface"
 fi
 
+# `:(glob)scripts/*` stops at the top level and scripts/lib/ is listed by hand
+# below, so a NEW subdirectory would never be collected, never enter the router,
+# and therefore never trip the unrouted arm either — a quiet coverage drop
+# instead of a decision. Naming the known depth here makes adding one a
+# conscious edit.
+scripts_all=()
+list_files 'scripts/' && mapfile -d '' -t scripts_all <"$list_tmp"
+for file in "${scripts_all[@]}"; do
+  case "$file" in
+    scripts/lib/*) continue ;;
+    scripts/*/*)
+      fail "$file lives under a scripts/ subdirectory this check does not collect (only scripts/* and scripts/lib/* are). Add its directory to the pathspecs here in the same PR, or it is silently unlinted"
+      ;;
+  esac
+done
+
 shebang_shell=()
 shebang_python=()
 shebang_js=()
@@ -130,10 +146,23 @@ for file in "${bin_files[@]}" "${script_files[@]}"; do
     '#!'*bash*) shebang_shell+=("$file") ;;
     '#!'*python*) shebang_python+=("$file") ;;
     '#!'*node*) shebang_js+=("$file") ;;
+    '#!'*)
+      # A SHEBANG THE CASES ABOVE DID NOT ROUTE — `#!/bin/sh`, `#!/usr/bin/env
+      # zsh`, perl, ruby. Asserting on the shebang rather than on the extension
+      # is the point: an extensionless `#!/bin/sh` entry point is exactly how
+      # scripts/validate was silently unlinted before this check was rewritten,
+      # and an extension test cannot see it. A file with NO shebang keeps
+      # falling through, which is what leaves data fixtures alone.
+      case "$file" in
+        scripts/*)
+          fail "$file has an unrouted shebang ($shebang) — no linter claims it. Route it in this case statement, rewrite the shebang to one that is routed, or it is silently unlinted"
+          ;;
+      esac
+      ;;
     *)
-      # Only scripts/ is asserted here: bin/ deliberately holds importable
-      # Python modules with no shebang (bin/vshell_niri.py and friends), which
-      # is documented in AGENTS.md and is not a lint gap.
+      # No shebang at all. Only scripts/ is asserted here: bin/ deliberately
+      # holds importable Python modules with no shebang (bin/vshell_niri.py and
+      # friends), which is documented in AGENTS.md and is not a lint gap.
       case "$file" in
         scripts/*.sh | scripts/*.py | scripts/*.js)
           fail "$file has a language extension but no shebang routing it to a linter — give it one, or this file is silently unlinted"

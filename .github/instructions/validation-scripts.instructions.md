@@ -17,10 +17,20 @@ was reporting "passed", and a failed baseline snapshot was discarding damage
 the after-snapshot plainly showed.
 
 `scripts/validate [AREA]` is the suite's entry point: it carries the manifest of
-every command above, selects the subset for an area (`go`, `qml`, `helper`,
-`packaging`, `docs`, `all`), and is what `scripts/check-validation-inventory.py`
-parses. Adding or renaming a check means editing that manifest, not a doc.
-`scripts/test-validate.sh` covers the runner itself.
+every check in this directory, selects the subset for one of the areas `go`,
+`qml`, `helper`, `packaging`, `docs`, `all`, and is what
+`scripts/check-validation-inventory.py` parses — including this sentence's area
+list, which is compared against the runner's own. Adding or renaming a check
+means editing that manifest, not a doc. `scripts/test-validate.sh` covers the
+runner itself.
+
+Its exit status is three-valued, and **77 is not a pass**: `0` means everything
+selected ran and passed, `77` means what ran passed but something did not run
+(the summary names each skipped command — report it with the skip recorded, not
+as a bare pass), `1` is a real failure. A check that can be forced not to
+degrade carries the flag that forces it (`--require-static`,
+`--require-nested`); the skip channel exists only for `smoke-surfaces.sh`, whose
+refusal cannot be flag-forced.
 
 Never suggest validating this repo with `qs -c vshell` or
 `qs -p quickshell/vshell` — see `AGENTS.md` § Never launch a second shell into

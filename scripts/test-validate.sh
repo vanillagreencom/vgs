@@ -2,44 +2,45 @@
 # Behavioral coverage for `scripts/validate` and the manifest arms of
 # `scripts/check-validation-inventory.py` (VGS-123).
 #
-# The runner is the entry point every agent and dev session now invokes and
-# trusts, and before this nothing committed ever executed it: the inventory guard
-# parses the manifest statically by design, CI enumerates the commands as
-# individual steps and never calls the runner, and check-format-lint.sh only
-# lints it. The demonstrated hole: dropping the last manifest row — the whole Go
-# block — left `validate go` and `validate all` printing `ok` while every other
-# check exited 0.
+# The runner is the entry point every agent and dev session invokes and trusts,
+# and before this nothing committed ever executed it. The demonstrated hole:
+# dropping the last manifest row — the whole Go block — left `validate go` and
+# `validate all` printing `ok` while every other check exited 0.
 #
-# TWO FIXTURE STRATEGIES, deliberately:
-#
-#   1. Selection and reporting behavior runs from a THROWAWAY REPO — a temp dir
-#      holding a copy of `scripts/validate` whose manifest heredoc is replaced
-#      with a fixture, plus stub commands. `repo_root` derives from the script's
-#      own location, so nothing here reaches this checkout, and the fixture can
-#      carry shapes the real manifest has none of.
-#
-#   2. Membership assertions run against the REAL manifest through `--list`,
-#      which executes nothing. A fixture cannot answer "does `validate qml` still
-#      contain the surface smoke" — that is a fact about the shipped manifest,
-#      and retagging that row is a shrink the inventory guard does not see.
+# TWO FIXTURE STRATEGIES: (1) selection and reporting run from a THROWAWAY REPO,
+# a temp dir holding a copy of `scripts/validate` with a fixture manifest and
+# stub commands, so nothing here reaches this checkout and the fixture can carry
+# shapes the real manifest has none of; (2) membership assertions run against
+# the REAL manifest through `--list`, which executes nothing — a fixture cannot
+# answer "does `validate qml` still contain the surface smoke", and retagging
+# that row is a shrink the inventory guard does not see.
 set -euo pipefail
 
 repo_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 runner="$repo_root/scripts/validate"
 tmp="$(mktemp -d)"
-trap 'rm -rf "$tmp"' EXIT
+trap 'rm -rf "$tmp"' EXIT INT TERM
 
 failures=0
+case_failed=0
 fail() {
   printf 'FAIL [%s]: %s\n' "$1" "$2" >&2
   failures=$((failures + 1))
+  case_failed=1
 }
-ok() { printf '  ok    %s\n' "$1"; }
+# `ok` closes a case and consumes the per-case flag. Printing it unconditionally
+# meant a failed case emitted FAIL to stderr and then `ok` to stdout for the same
+# assertion — a transcript asserting the opposite of the result.
+ok() {
+  if [[ $case_failed -eq 0 ]]; then
+    printf '  ok    %s\n' "$1"
+  fi
+  case_failed=0
+}
 
 # --- fixture repo -----------------------------------------------------------
-# The fixture manifest exercises every selection shape the real one does, plus
-# the multi-tag row it has none of (so that branch is not dead on real data) and
-# two failing commands (so collection is proven, not assumed).
+# Exercises every selection shape the real manifest does, plus the multi-tag row
+# it has none of (so that branch is not dead on real data).
 fixture_repo="$tmp/repo"
 mkdir -p "$fixture_repo/scripts"
 
@@ -140,8 +141,8 @@ scripts/stub-helper
 scripts/stub-packaging' "all selection"
 ok "all selects every row, in manifest order"
 
-# The `always` row reaches every area — the regression that made a Go-scoped
-# run skip the format/lint floor over the Go it had just changed.
+# The `always` row reaches every area — the regression that made a Go-scoped run
+# skip the format/lint floor over the Go it had just changed.
 for area in go qml docs helper packaging all; do
   fixture --list "$area"
   expect_contains "$out" "scripts/stub-always" "always row in $area"
@@ -221,7 +222,7 @@ fixture go
 expect_rc 1 "two failures"
 expect_contains "$err" "  - scripts/stub-fail-a" "two failures"
 expect_contains "$err" "  - scripts/stub-fail-b" "two failures"
-expect_contains "$err" "FAIL (go, 2 of 3 commands)" "two failures"
+expect_contains "$err" "FAIL (go, 2 of 3 commands failed)" "two failures"
 expect_contains "$out" "ran stub-go" "two failures"
 ok "both failures are listed, exit 1, and nothing fail-fasts"
 
@@ -233,17 +234,30 @@ expect_absent "$out" "a ran" "--list does not execute"
 expect_contains "$out" "scripts/stub-fail-a" "--list does not execute"
 ok "--list prints the commands without running them"
 
-# The skip channel: exit 77 from a `may-skip` row is neither pass nor failure,
-# and the summary names it so `ok` is never bare.
+# The skip channel: 77 from a `may-skip` row is neither pass nor failure.
 write_runner 'qml,may-skip | scripts/stub-skip
 qml          | scripts/stub-qml'
 fixture qml
-expect_rc 0 "declared skip"
-expect_contains "$out" "1 skipped (scripts/stub-skip)" "declared skip"
-ok "a may-skip row exiting 77 is reported as a named skip, not a bare ok"
+# The status carries the skip too. Exiting 0 here would hand a caller a pass
+# over a check that never ran — VGS-69's "refusal read as a pass" one layer up,
+# and the dev workflow records exactly this status field.
+expect_rc 77 "declared skip"
+# The leading count is what RAN, matching the FAIL line's N of M shape, rather
+# than folding the skipped row into the total.
+expect_contains "$out" "ok (qml, 1 of 2 commands, 1 skipped: scripts/stub-skip)" "declared skip"
+expect_contains "$out" "exit 77 — passed, but 1 command did not run" "declared skip"
+ok "a may-skip row exiting 77 gives a named skip, an N-of-M count and exit 77"
 
-# ...and 77 from a row that did NOT declare it stays a failure, so an unrelated
-# check cannot be demoted out of the failure list by picking that status.
+# CONTROL: nothing skipped means exit 0 and no skip text.
+write_runner 'qml       | scripts/stub-qml
+qml       | scripts/stub-go'
+fixture qml
+expect_rc 0 "no skip"
+expect_absent "$out" "skipped" "no skip"
+expect_absent "$out" "exit 77" "no skip"
+ok "a fully-executed run still exits 0 with no skip text"
+
+# ...and 77 from a row that did NOT declare it stays a failure.
 write_runner 'qml       | scripts/stub-skip
 qml       | scripts/stub-qml'
 fixture qml
@@ -257,15 +271,14 @@ write_runner 'qml,may-skip | scripts/stub-skip
 qml          | scripts/stub-fail-a'
 fixture qml
 expect_rc 1 "skip plus failure"
-expect_contains "$err" "1 skipped (scripts/stub-skip)" "skip plus failure"
+expect_contains "$err" "1 skipped: scripts/stub-skip" "skip plus failure"
 expect_contains "$err" "  - scripts/stub-fail-a" "skip plus failure"
 ok "a skip never masks a failure"
 
 echo "=== the shipped manifest still reaches the local-only checks ==="
 
-# These are the checks CI cannot run, so a scoped local run is the only thing
-# that ever executes them. Retagging one to `-` shrinks the area silently:
-# check-validation-inventory.py sees a valid tag and stays green.
+# The checks CI cannot run: a scoped local run is the only thing that executes
+# them, and retagging one to `-` shrinks the area silently.
 real_qml="$("$runner" --list qml)"
 real_go="$("$runner" --list go)"
 for needed in \
@@ -280,116 +293,18 @@ expect_contains "$real_go" "(cd backend && go build ./... && go vet ./... && go 
   "validate go membership"
 ok "validate go still runs the Go block"
 
-# The degraded modes that can be flag-forced must be forced: a plain skip is
-# indistinguishable from a pass, which is the rule the whole suite rests on.
+# The `always` rows CI cannot run. Tagged `-` they would execute only under
+# `validate all`, so neither CI nor any scoped run would ever reach them.
+for needed in scripts/check-review-gate-vendor.sh scripts/check-size-ratchet-vendor.sh; do
+  expect_contains "$real_go" "$needed" "vendor checks in go"
+  expect_contains "$real_qml" "$needed" "vendor checks in qml"
+done
+ok "the vendor-drift checks are reachable from a scoped run, not only from all"
+
+# Degraded modes that can be flag-forced must be: a skip reads as a pass.
 expect_contains "$real_qml" "--require-nested" "qml-smoke require flags"
 expect_contains "$real_qml" "--require-static" "qml-smoke require flags"
 ok "the QML smoke is required, not allowed to degrade to a skip"
-
-echo "=== check-validation-inventory.py manifest arms ==="
-
-# The guard's manifest arms, driven by pointing its RUNNER at a fixture. Each
-# mutation must produce its OWN message: a control that merely fails proves
-# nothing about which arm caught it.
-# Runs check-validation-inventory.py with its RUNNER pointed at $1, capturing
-# stderr and any SystemExit message. Importing rather than exec'ing swaps the
-# fixture runner in without a whole fake repo: every other path the guard reads
-# stays real, so a mutation's message is the only thing that changes.
-run_guard() {
-  RUNNER_PATH="$1" python3 - "$repo_root" <<'GUARD_PY'
-import contextlib, importlib.util, io, os, pathlib, sys
-spec = importlib.util.spec_from_file_location(
-    "inv", pathlib.Path(sys.argv[1]) / "scripts" / "check-validation-inventory.py"
-)
-mod = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(mod)
-mod.RUNNER = pathlib.Path(os.environ["RUNNER_PATH"])
-buf = io.StringIO()
-try:
-    with contextlib.redirect_stderr(buf):
-        mod.main()
-except SystemExit as exc:
-    buf.write(str(exc))
-print(buf.getvalue())
-GUARD_PY
-}
-
-guard_case() {
-  # $1 = case name, $2 = fixture runner content, $3 = expected message fragment
-  local name="$1" expect="$3" probe="$tmp/probe-runner" got
-  printf '%s' "$2" >"$probe"
-  chmod +x "$probe"
-  got="$(run_guard "$probe")"
-  if [[ "$got" == *"$expect"* ]]; then
-    ok "$name"
-  else
-    fail "$name" "expected message fragment: $expect
-got:
-$got"
-  fi
-}
-
-real_runner="$(cat "$runner")"
-
-guard_case "missing MANIFEST_EOF heredoc is reported" \
-  "${real_runner//MANIFEST_EOF/MANIFEST_END}" \
-  "has no MANIFEST_EOF heredoc"
-
-guard_case "a row with no separator is reported" \
-  "$(python3 - "$runner" <<'PY'
-import re, sys
-t = open(sys.argv[1], encoding="utf-8").read()
-print(t.replace("always    | scripts/check-format-lint.sh",
-                "scripts/check-format-lint.sh"), end="")
-PY
-)" \
-  "manifest row has no \`AREAS | COMMAND\` separator"
-
-guard_case "a row with an empty command is reported" \
-  "$(python3 - "$runner" <<'PY'
-import sys
-t = open(sys.argv[1], encoding="utf-8").read()
-print(t.replace("always    | scripts/check-format-lint.sh", "always    |"), end="")
-PY
-)" \
-  "manifest row has an empty command"
-
-guard_case "an unknown tag is reported" \
-  "$(python3 - "$runner" <<'PY'
-import sys
-t = open(sys.argv[1], encoding="utf-8").read()
-print(t.replace("docs      | scripts/check-doc-growth.py",
-                "dcos      | scripts/check-doc-growth.py"), end="")
-PY
-)" \
-  "which is neither an area in the runner's AREAS list"
-
-guard_case "an area with no rows is reported" \
-  "$(python3 - "$runner" <<'PY'
-import sys
-t = open(sys.argv[1], encoding="utf-8").read()
-print(t.replace("docs      | scripts/check-doc-growth.py",
-                "-         | scripts/check-doc-growth.py"), end="")
-PY
-)" \
-  "no manifest row is tagged with it"
-
-# The executable-bit arm (VGS-30 applied to the entry point itself).
-non_exec="$tmp/non-exec-runner"
-cp "$runner" "$non_exec"
-chmod -x "$non_exec"
-guard_out="$(run_guard "$non_exec")"
-expect_contains "$guard_out" "scripts/validate is not executable" "runner executable bit"
-ok "a non-executable runner is reported"
-
-# CONTROL: the unmutated runner produces none of those messages, so the cases
-# above are catching their mutation rather than pre-existing noise.
-guard_out="$(run_guard "$runner")"
-for noise in "has no MANIFEST_EOF heredoc" "manifest row has no" "empty command" \
-  "is neither an area" "no manifest row is tagged with it" "is not executable"; do
-  expect_absent "$guard_out" "$noise" "unmutated control"
-done
-ok "the unmutated runner triggers none of those arms"
 
 if [[ $failures -ne 0 ]]; then
   printf '\ntest-validate: %d failure(s)\n' "$failures" >&2

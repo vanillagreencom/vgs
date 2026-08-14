@@ -16,12 +16,20 @@
 # command, because that set is what a dev agent reports as `FAILING: ...` and a
 # first failure must not hide the rest.
 #
-# A check that DID NOT RUN is never counted as a pass. Rows tagged `may-skip`
-# may exit 77 to mean "precondition absent, nothing was checked"; the summary
-# then reads `ok, N skipped (...)` naming each one. Exit 77 from any other row
-# is a plain failure, and every check whose degraded mode can be flag-forced is
-# listed with the flag that forces it (`--require-static`, `--require-nested`)
-# rather than being allowed to skip at all.
+# A check that DID NOT RUN is never counted as a pass, in the summary OR in the
+# exit status. Rows tagged `may-skip` may exit 77 to mean "precondition absent,
+# nothing was checked"; exit 77 from any other row is a plain failure, and every
+# check whose degraded mode can be flag-forced is listed with the flag that
+# forces it (`--require-static`, `--require-nested`) rather than being allowed to
+# skip at all. This runner's own three statuses:
+#
+#   0    every selected command ran and passed
+#   77   everything that ran passed, but something did NOT run — the summary
+#        names each skipped command. Report it as a pass with the skip recorded
+#        (dev SKILL.md `--validate-note`), never as a bare pass: handing a caller
+#        a 0 here would be VGS-69's "refusal read as a pass" one layer up.
+#   1    at least one command failed
+#   2    usage or manifest error; nothing was run
 #
 # `scripts/check-validation-inventory.py` parses the MANIFEST_EOF block below
 # and enforces it in both directions: every executable check under `scripts/`
@@ -32,7 +40,8 @@
 # holds non-executable libraries reached only by import, sourcing, or an
 # explicit interpreter — `python3 scripts/lib/shell_scan.py` runs a library's
 # self-test (`shell_scan.py` carries a `__main__` only for that;
-# `session-snapshot.sh` is sourced, never run). `bin/vshell_niri.py`,
+# `session-snapshot.sh` is sourced and `validation_manifest.py` is imported by
+# the inventory guard, neither run). `bin/vshell_niri.py`,
 # `bin/vshell_niri_kdl.py` and `bin/vshell_theme_color.py` likewise stay
 # importable modules with no shebang and no `__main__`.
 #
@@ -44,15 +53,19 @@
 # economics behind the single CI job are in
 # `docs/decisions/D007-ci-single-job-economics.md`.
 #
-# What is true of THIS runner: `scripts/validate qml` runs the nested QML smoke
-# and the surface smoke, neither of which CI can run, so a scoped qml run is the
-# only thing that proves the shell starts. `scripts/smoke-surfaces.sh` works
-# only from the checkout owning the live session, and its refusal is not a pass
-# (VGS-69) — hence its `may-skip` tag and the named skip in the summary.
+# What is true of THIS runner: the nested QML smoke and the surface smoke are
+# tagged `qml` and neither can run in CI, so only a run that includes the qml
+# rows (`scripts/validate qml` or `all`) proves the shell starts.
+# `scripts/smoke-surfaces.sh` works only from the checkout owning the live
+# session, and its refusal is not a pass (VGS-69) — hence its `may-skip` tag,
+# the named skip in the summary, and the 77 above.
 
 # `-e` is on, and the suite loop below deliberately does not rely on it: each
-# check runs inside an `if !` condition, where errexit is suppressed, so one
-# failing check is collected rather than aborting the run.
+# check runs as `eval "$cmd" || status=$?`, where the `||` both suppresses
+# errexit and CAPTURES the status. The captured VALUE, not merely its
+# truthiness, is what separates 77-from-a-may-skip-row from every other non-zero
+# result — so do not "simplify" that line back to `if ! eval ...`, which
+# collapses every failure into one branch and silently deletes the skip channel.
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)" || exit 1
@@ -106,18 +119,19 @@ go        | scripts/check-backend-inventory-tests.py
 -         | scripts/check-vshell-ipc.sh
 -         | scripts/test-smoke-surfaces.sh
 -         | scripts/test-validate.sh
+-         | scripts/test-validation-inventory.sh
 -         | scripts/test-pill-hover-safety.js
 helper    | python3 -m py_compile bin/vshell-helper
 helper    | bash -n bin/vshell
 always    | git diff --check
 -         | scripts/check-workflows.sh
 -         | scripts/check-coderabbit-config.py
--         | scripts/check-review-gate-vendor.sh
+always    | scripts/check-review-gate-vendor.sh
 -         | third_party/review-gate/scripts/review-predicate-selftest.sh
 -         | third_party/review-gate/tests/pr-watch.test.sh
 -         | third_party/review-gate/tests/review-writer.test.sh
 -         | third_party/review-gate/tests/review-writer-template.test.sh
--         | scripts/check-size-ratchet-vendor.sh
+always    | scripts/check-size-ratchet-vendor.sh
 -         | third_party/size-ratchet/scripts/size-ratchet
 -         | third_party/size-ratchet/tests/bash32-portability.test.sh
 -         | third_party/size-ratchet/tests/collection-fail-closed.test.sh
@@ -276,21 +290,48 @@ if [[ ${#selected[@]} -eq 1 ]]; then
 fi
 skip_note=
 if [[ ${#skipped[@]} -gt 0 ]]; then
-  skip_note=", ${#skipped[@]} skipped ($(
+  skip_note=", ${#skipped[@]} skipped: $(
     IFS=,
     printf '%s' "${skipped[*]}"
-  ))"
+  )"
 fi
+ran=$((${#selected[@]} - ${#skipped[@]}))
+
 if [[ ${#failed[@]} -eq 0 ]]; then
-  # `ok` is never bare when something did not run: a skipped check is not a
-  # pass, so it is named here rather than folded into the count.
-  printf 'validate: ok (%s, %d command%s)%s\n' "$area" "${#selected[@]}" "$plural" "$skip_note"
-  exit 0
+  if [[ ${#skipped[@]} -eq 0 ]]; then
+    printf 'validate: ok (%s, %d command%s)\n' "$area" "${#selected[@]}" "$plural"
+    exit 0
+  fi
+  # Never a bare `ok`, and never a bare 0. The leading count is what RAN, in the
+  # same `N of M` shape the FAIL line uses, and the status is 77 so a caller
+  # mapping exit code to a verdict cannot record a pass over a check that did
+  # not happen.
+  printf 'validate: ok (%s, %d of %d command%s%s)\n' \
+    "$area" "$ran" "${#selected[@]}" "$plural" "$skip_note"
+  printf 'validate: exit 77 — passed, but %d command%s did not run\n' \
+    "${#skipped[@]}" "$([[ ${#skipped[@]} -eq 1 ]] || printf s)"
+  exit "$SKIP_STATUS"
 fi
 
-printf 'validate: FAIL (%s, %d of %d command%s)%s\n' \
+printf 'validate: FAIL (%s, %d of %d command%s failed%s)\n' \
   "$area" "${#failed[@]}" "${#selected[@]}" "$plural" "$skip_note" >&2
 for cmd in "${failed[@]}"; do
   printf '  - %s\n' "$cmd" >&2
 done
+# The commonest non-defect failure in this suite, and the one that reads most
+# like a real QML break in a dev agent's `FAILING:` line: the nested smoke needs
+# a host Wayland socket to nest inside, and most agent shells have none. Name
+# the remedy where the failure is reported rather than only in a doc.
+if [[ -z "${WAYLAND_DISPLAY:-}" ]]; then
+  for cmd in "${failed[@]}"; do
+    if [[ "$cmd" == scripts/qml-smoke.sh* ]]; then
+      printf '\nvalidate: WAYLAND_DISPLAY is unset, so the nested smoke had no host socket\n' >&2
+      printf '  to nest inside. Point it at the session and re-run — the sandbox keeps its\n' >&2
+      printf '  own runtime dir, HOME and bus, so the live session is untouched:\n' >&2
+      printf '    WAYLAND_DISPLAY=wayland-1 XDG_RUNTIME_DIR=/run/user/%s scripts/validate %s\n' \
+        "$(id -u)" "$area" >&2
+      break
+    fi
+  done
+fi
 exit 1

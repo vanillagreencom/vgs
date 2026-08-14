@@ -4,16 +4,12 @@
 Two failure shapes, both of which had already happened when this was written:
 
 1. **A check nobody runs.** Four executable checks under `scripts/` were
-   committed, maintained, and referenced by nothing — not the documented suite,
-   not the CI workflow, not another script (VGS-50). A dead check is worse than
-   no check: it implies coverage. Nothing detected them for however long they
-   sat there, which is the same reason this file exists rather than a note in a
-   review checklist.
+   committed, maintained, and referenced by nothing (VGS-50). A dead check is
+   worse than no check: it implies coverage, and nothing detected them.
 
 2. **A documented command that cannot run.** The manifest lists bare
    invocations; a script without the executable bit fails with "permission
-   denied", which reads like a broken check rather than a mode problem
-   (VGS-30).
+   denied", which reads like a broken check rather than a mode problem (VGS-30).
 
 So: every executable check under `scripts/` must be invoked by the manifest and
 by the CI workflow, or carry a written exclusion here; and every command in the
@@ -27,22 +23,23 @@ with it, to `.github/instructions/validation-scripts.instructions.md`.
 from __future__ import annotations
 
 import os
-import re
 import shlex
 import sys
 from pathlib import Path
 
-try:
-    import yaml
-except ModuleNotFoundError:
-    print(
-        "check-validation-inventory: FAIL: PyYAML is not installed, so ci.yml could not\n"
-        "be parsed and CI coverage was NOT checked (pacman -S python-yaml).",
-        file=sys.stderr,
-    )
-    raise SystemExit(1)
+sys.path.insert(0, str(Path(__file__).resolve().parent / "lib"))
+from validation_manifest import (  # noqa: E402
+    ci_run_commands,
+    documented_table,
+    manifest_rows,
+    prose_areas,
+    runner_areas,
+    runner_body_without_declaration,
+    runner_tag_attributes,
+)
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
+AGENTS = REPO_ROOT / "AGENTS.md"
 RUNNER = REPO_ROOT / "scripts" / "validate"
 TABLES_DOC = REPO_ROOT / ".github" / "instructions" / "validation-scripts.instructions.md"
 CI = REPO_ROOT / ".github" / "workflows" / "ci.yml"
@@ -83,109 +80,6 @@ INDIRECT_IN_CI = {
 SYNTAX_CHECK_FLAGS = {"--check", "-n", "py_compile"}
 
 
-def manifest_rows() -> list[tuple[str, str]]:
-    """`(area tags, command)` pairs from the scripts/validate manifest heredoc.
-
-    Parsed statically rather than by running `scripts/validate --list`: this
-    check must report a manifest the runner cannot even parse, and a runner that
-    refuses to start would otherwise make this check unable to say why.
-    """
-    text = RUNNER.read_text(encoding="utf-8")
-    block = re.search(r"<<'MANIFEST_EOF'\n(.*?)\nMANIFEST_EOF\n", text, re.DOTALL)
-    if not block:
-        raise SystemExit(
-            "check-validation-inventory: scripts/validate has no MANIFEST_EOF heredoc; "
-            "this check parses that block, so moving it silently empties the inventory"
-        )
-    rows: list[tuple[str, str]] = []
-    for line in block.group(1).splitlines():
-        if not line.strip():
-            continue
-        if "|" not in line:
-            raise SystemExit(
-                f"check-validation-inventory: scripts/validate manifest row has no "
-                f"`AREAS | COMMAND` separator: {line!r}"
-            )
-        tags, command = line.split("|", 1)
-        command = command.strip()
-        if not command:
-            # A truncated hand-edit leaves the tag and drops the command. Both
-            # this parser and the runner's loop used to skip such a row, deleting
-            # a check from every area while both halves of the guard stayed green.
-            raise SystemExit(
-                f"check-validation-inventory: scripts/validate manifest row has an "
-                f"empty command: {line!r}"
-            )
-        rows.append(("".join(tags.split()), command))
-    if not rows:
-        raise SystemExit("check-validation-inventory: scripts/validate manifest is empty")
-    return rows
-
-
-def runner_areas() -> set[str]:
-    """The area names scripts/validate accepts, minus the `all` pseudo-area."""
-    match = re.search(r"^AREAS=\(([^)]*)\)", RUNNER.read_text(encoding="utf-8"), re.MULTILINE)
-    if not match:
-        raise SystemExit("check-validation-inventory: scripts/validate has no AREAS=( ... ) list")
-    return set(match.group(1).split()) - {"all"}
-
-
-def runner_tag_attributes() -> set[str]:
-    """Manifest tag tokens that are attributes rather than area selectors.
-
-    Read from the runner, not hardcoded: adding one there needs no edit here,
-    and REMOVING one immediately reports every row still carrying it.
-    """
-    match = re.search(
-        r"^TAG_ATTRIBUTES=\(([^)]*)\)", RUNNER.read_text(encoding="utf-8"), re.MULTILINE
-    )
-    if not match:
-        raise SystemExit(
-            "check-validation-inventory: scripts/validate has no TAG_ATTRIBUTES=( ... ) list"
-        )
-    return set(match.group(1).split())
-
-
-def ci_run_commands() -> str:
-    """Only the shell inside ci.yml's `run:` blocks, never the whole file.
-
-    A raw substring test over ci.yml counts COMMENTS as invocations. ci.yml
-    mentions several scripts in comments explaining why a step exists, so
-    deleting a check from its `run:` block while leaving the comment above it
-    kept this guard green — the exact false green it exists to prevent. It also
-    cuts the other way: a comment naming a local-only script would report a
-    failure that is not real.
-
-    A YAML parse is the honest form. Anything that is not a `run:` scalar is
-    prose about the workflow, not the workflow.
-    """
-    workflow = yaml.safe_load(CI.read_text(encoding="utf-8"))
-    runs: list[str] = []
-
-    def walk(node) -> None:
-        if isinstance(node, dict):
-            for key, value in node.items():
-                if key == "run" and isinstance(value, str):
-                    runs.append(value)
-                else:
-                    walk(value)
-        elif isinstance(node, list):
-            for item in node:
-                walk(item)
-
-    walk(workflow)
-    if not runs:
-        raise SystemExit("check-validation-inventory: ci.yml has no `run:` blocks at all")
-    # Strip shell comments too: a `#` line inside a run block is still prose.
-    lines = []
-    for block in runs:
-        for line in block.splitlines():
-            stripped = line.strip()
-            if stripped and not stripped.startswith("#"):
-                lines.append(line)
-    return "\n".join(lines)
-
-
 # The prose tables in validation-scripts.instructions.md § What CI covers, keyed
 # by the bold lead-in above each. Claiming the doc and the code cannot
 # disagree is only true if something compares them; before this, nothing did,
@@ -195,38 +89,6 @@ DOC_TABLES = {
     "LOCAL_ONLY": "**Local-only — CI cannot run these at all:**",
     "INDIRECT_IN_CI": "**Reached indirectly — CI runs these through another entry, not by name:**",
 }
-
-
-def documented_table(lead_in: str) -> set[str]:
-    """Script basenames named in the first column of the table after `lead_in`."""
-    text = TABLES_DOC.read_text(encoding="utf-8")
-    start = text.find(lead_in)
-    if start == -1:
-        raise SystemExit(
-            f"check-validation-inventory: validation-scripts.instructions.md "
-            f"has no table introduced by {lead_in!r}"
-        )
-    names: set[str] = set()
-    seen_rows = False
-    for line in text[start + len(lead_in):].splitlines():
-        stripped = line.strip()
-        if not stripped:
-            if seen_rows:
-                break
-            continue
-        if not stripped.startswith("|"):
-            break
-        cells = stripped.split("|")
-        if len(cells) < 2:
-            continue
-        first = cells[1].strip()
-        if set(first) <= {"-", ":", " "}:  # the header underline
-            continue
-        match = re.search(r"`scripts/([A-Za-z0-9._-]+)`", first)
-        if match:
-            names.add(match.group(1))
-            seen_rows = True
-    return names
 
 
 def executable_checks() -> list[str]:
@@ -241,7 +103,6 @@ def executable_checks() -> list[str]:
 def main() -> int:
     problems: list[str] = []
 
-    # --- the runner itself must be runnable exactly as documented -------------
     # VGS-30 applied to the entry point: everything below asserts the mode of the
     # checks the manifest names, and the file doing the naming was exempt.
     if not RUNNER.is_file():
@@ -253,18 +114,18 @@ def main() -> int:
             "(git update-index --chmod=+x scripts/validate)"
         )
 
-    rows = manifest_rows()
+    rows = manifest_rows(RUNNER)
     commands = [command for _, command in rows]
     documented = "\n".join(commands)
-    ci_text = ci_run_commands()
+    ci_text = ci_run_commands(CI)
 
     # --- every manifest tag is an area the runner accepts, or an attribute ----
     # A typo'd tag is invisible otherwise: `scripts/validate <area>` would refuse
     # the unknown name, but the row would silently drop out of every real area
     # while still running under `all`, so the scoped run passes over a check it
     # never executed.
-    areas = runner_areas()
-    attributes = runner_tag_attributes()
+    areas = runner_areas(RUNNER)
+    attributes = runner_tag_attributes(RUNNER)
     for tags, command in rows:
         for tag in tags.split(","):
             if tag not in areas and tag not in attributes:
@@ -274,6 +135,18 @@ def main() -> int:
                     f"({', '.join(sorted(areas))}) nor one of its TAG_ATTRIBUTES "
                     f"({', '.join(sorted(attributes))})"
                 )
+    # An attribute the guard accepts but the runner never acts on is worse than
+    # an unknown tag: rows carrying it pass here and then behave like `-`. The
+    # REMOVAL direction was already fail-closed; this closes ADDITION.
+    runner_body = runner_body_without_declaration(RUNNER)
+    for tag in sorted(attributes - {"-"}):
+        if tag not in runner_body:
+            problems.append(
+                f"scripts/validate declares TAG_ATTRIBUTES token `{tag}` but never acts "
+                f"on it outside that array, so every row tagged `{tag}` would silently "
+                f"behave like `-`. Wire it into the selection or run loop, or drop it."
+            )
+
     for area in sorted(areas):
         # Deliberately ignores `always` rows. Counting them would make this arm
         # dead the moment one exists — every area would look populated — and an
@@ -283,6 +156,25 @@ def main() -> int:
             problems.append(
                 f"scripts/validate accepts area `{area}` but no manifest row is tagged "
                 f"with it, so `scripts/validate {area}` would run only the `always` rows"
+            )
+
+    # --- the prose copies of the area list must match the runner ------------
+    # Both docs enumerate the areas: a second copy of something the runner
+    # defines, i.e. the drift axis this check exists to close. So: compared.
+    for doc in (AGENTS, TABLES_DOC):
+        stated = prose_areas(doc)
+        if stated is None:
+            continue
+        rel = doc.relative_to(REPO_ROOT).as_posix()
+        for name in sorted((areas | {"all"}) - stated):
+            problems.append(
+                f"{rel} enumerates the validate areas but omits `{name}`, which "
+                f"scripts/validate accepts"
+            )
+        for name in sorted(stated - (areas | {"all"})):
+            problems.append(
+                f"{rel} lists `{name}` as a validate area, but scripts/validate does "
+                f"not accept it"
             )
 
     # --- every documented command runs exactly as written ---------------------
@@ -366,7 +258,7 @@ def main() -> int:
     # --- the prose tables and the maps above must agree ----------------------
     for map_name, lead_in in DOC_TABLES.items():
         coded = set(globals()[map_name])
-        documented_names = documented_table(lead_in)
+        documented_names = documented_table(TABLES_DOC, lead_in)
         for name in sorted(coded - documented_names):
             problems.append(
                 f"scripts/{name} is in {map_name} but not in the "

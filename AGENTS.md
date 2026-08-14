@@ -147,9 +147,22 @@ cross-cutting work. The command manifest and the per-area scoping live in that
 runner's header, and `scripts/check-validation-inventory.py` enforces it against
 CI and `scripts/` in both directions (VGS-50, VGS-30).
 
-A green CI run does not prove the shell starts. Run `scripts/validate qml`
-before finishing QML work, and never read `smoke-surfaces.sh`'s refusal as a
-pass (VGS-69). Which checks CI cannot run, and why, is in
+**Exit 77 is not a pass.** `0` means everything selected ran and passed; `77`
+means what ran passed but something did NOT run, with the summary naming each
+skipped command; `1` is a real failure. Report a 77 as a pass with the skip
+recorded in `--validate-note`, never as a bare pass.
+
+A green CI run does not prove the shell starts. Run the qml area before
+finishing QML work — most agent shells have no `WAYLAND_DISPLAY`, and the nested
+smoke is `--require-nested`, so point it at the session socket (the sandbox
+keeps its own runtime dir, HOME and bus, so the live session is untouched):
+
+```bash
+WAYLAND_DISPLAY=wayland-1 XDG_RUNTIME_DIR=/run/user/1000 scripts/validate qml
+```
+
+Never read `smoke-surfaces.sh`'s refusal as a pass (VGS-69). Which checks CI
+cannot run, and why, is in
 `.github/instructions/validation-scripts.instructions.md` § "What CI covers,
 and what it cannot".
 

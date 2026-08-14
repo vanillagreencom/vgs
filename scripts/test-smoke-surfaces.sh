@@ -131,6 +131,24 @@ run_smoke_on() {
   err="$(cat "$tmp/stderr")"
 }
 
+# run_smoke_bare <PATH> <case name> [VAR=VAL ...] — like run_smoke_on, but it
+# does NOT inject HYPRLAND_INSTANCE_SIGNATURE. That injection is what made the
+# Hyprland precondition itself untestable: every other case satisfies it, so
+# reverting that arm to exit 0 left the whole suite green (VGS-123 review).
+# `env -u` runs before the assignments in "$@", so a case that wants the
+# signature SET can still pass it and have it stick.
+run_smoke_bare() {
+  local path="$1"
+  case_name="$2"
+  shift 2
+  rc=0
+  out="$(env -u HYPRLAND_INSTANCE_SIGNATURE "$@" \
+    PATH="$path" \
+    FAKE_LAYERS_JSON="$layers_json" \
+    "$fake_repo/scripts/smoke-surfaces.sh" 2>"$tmp/stderr")" || rc=$?
+  err="$(cat "$tmp/stderr")"
+}
+
 fail() {
   {
     echo "FAIL [$case_name]: $*"
@@ -362,5 +380,16 @@ run_smoke_on "$nocli" "no Quickshell CLI on PATH" \
   VSHELL_PROC_ROOT="$proc"
 expect_rc "$SKIP_STATUS"
 expect_stdout "no Quickshell CLI (qs, quickshell) on PATH"
+
+# The Hyprland precondition, both arms. This is the skip path that fires most
+# often — an agent shell, a headless checkout, CI itself — and until these two
+# cases existed it was the one arm of the four with no must-fail control at all.
+run_smoke_bare "$min_path" "no hyprctl on PATH" HYPRLAND_INSTANCE_SIGNATURE=test
+expect_rc "$SKIP_STATUS"
+expect_stdout "surface smoke skipped: Hyprland session not available"
+
+run_smoke_bare "$bin_dir:$PATH" "HYPRLAND_INSTANCE_SIGNATURE unset"
+expect_rc "$SKIP_STATUS"
+expect_stdout "surface smoke skipped: Hyprland session not available"
 
 echo "smoke-surfaces precondition checks passed"

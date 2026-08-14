@@ -49,7 +49,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 # rationale is for the reviewer, so a raise without one is review feedback,
 # not something this script can enforce.
 CEILINGS: dict[str, int] = {
-    # 17,776 B after VGS-123 moved the 55-command validation manifest into
+    # 18,355 B after VGS-123 moved the 55-command validation manifest into
     # scripts/validate and the "What CI covers" tables into the instruction
     # files. The 25,000 ceiling that survived the VGS-107 diet would leave 7 KB
     # of unexamined regrowth headroom here, which is the thing this ratchet
@@ -90,9 +90,11 @@ CEILINGS: dict[str, int] = {
     # Adopted at 844 B. VGS-123 moved the "What CI covers, and what it cannot"
     # tables here from AGENTS.md: their audience is whoever is judging a check,
     # which is `scripts/**` work landing on PRs that touch no workflow file, so
-    # a workflow-scoped home never auto-attached for them. 4,900 keeps ~10%
-    # headroom at the resulting 4,388 B.
-    ".github/instructions/validation-scripts.instructions.md": 4_900,
+    # a workflow-scoped home never auto-attached for them. The next review round
+    # added the runner's three-valued exit status (77 is not a pass) here, where
+    # whoever judges a check reads it; 5,500 keeps ~10% headroom at the
+    # resulting 4,977 B, superseding the 4,900 figure measured at 4,388 B.
+    ".github/instructions/validation-scripts.instructions.md": 5_500,
     ".github/instructions/vendored-engine.instructions.md": 1_000,  # adopted at 854 B
     ".github/instructions/vendored-go.instructions.md": 500,  # adopted at 367 B
     # Adopted at 302 B. 2026-08-14: ATTRIBUTION.md carve-out (PR #132) — the
