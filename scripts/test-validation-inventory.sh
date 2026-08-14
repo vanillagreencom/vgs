@@ -1083,6 +1083,90 @@ notatoken
 ROWS
 ok "both readers classify every duplicate and malformed row identically"
 
+# C4 UNDER A NON-C LOCALE, which is the only place this can be tested. The
+# runner used `[[:space:]]`, whose meaning bash resolves through the LOCALE:
+# under this machine's own en_US.UTF-8 it matched U+2002 EN SPACE and U+3000
+# IDEOGRAPHIC SPACE, so a row tagged `qml<U+2002>` was normalised to `qml` and
+# ACCEPTED by the runner while the library — explicitly ASCII — refused it. C4
+# was asserted by the definition and true only incidentally. A control run in
+# whatever locale happens to be ambient cannot catch that, so this one names its
+# locales and fails if none is available rather than quietly proving nothing.
+#
+# glibc excludes NBSP from `space`, so U+00A0 — the character the review named —
+# is not the one that bites here. All three are exercised: the rule is about the
+# CLASS being locale-resolved, not about one character.
+locales=()
+while IFS= read -r loc; do
+  case "$loc" in
+    *.utf8 | *.UTF-8) locales+=("$loc") ;;
+  esac
+done < <(locale -a 2>/dev/null)
+
+if [[ ${#locales[@]} -eq 0 ]]; then
+  # NAMED, not substituted. A weaker test passing here would assert that the
+  # rule holds under a locale nobody exercised.
+  printf '  SKIP  C4 locale control: this system provides no UTF-8 locale (locale -a), so the\n' >&2
+  printf '        one condition that distinguishes an ASCII rule from a locale-resolved class\n' >&2
+  printf '        could not be created. The rule is NOT proven on this machine.\n' >&2
+else
+  space_probe="$fixture_dir/scripts/space-probe"
+  for codepoint in 00A0 2002 3000; do
+    CODEPOINT="$codepoint" python3 - "$runner" >"$space_probe" <<'MUT'
+import os, sys
+t = open(sys.argv[1], encoding="utf-8").read()
+old = "qml       | scripts/check-naming.sh"
+assert t.count(old) == 1, "the naming-check manifest row moved"
+tag = "qml" + chr(int(os.environ["CODEPOINT"], 16))
+print(t.replace(old, f"{tag}       | scripts/check-naming.sh"), end="")
+MUT
+    chmod +x "$space_probe"
+    verdicts=()
+    for loc in C "${locales[@]}"; do
+      rc=0
+      LC_ALL="$loc" "$space_probe" --list docs >/dev/null 2>"$tmp/stderr" || rc=$?
+      said="accepted"
+      # The message is compared too, not just the verdict: two readers can
+      # refuse a row for different reasons, which is the divergence that
+      # produced `may-skip,may-skip`. Trimmed with an explicit ASCII set, since
+      # a locale-resolved class in the TEST would have the same flaw.
+      [[ "$rc" != 0 ]] && said="$(LC_ALL=C sed -e 's/^scripts\/validate: //' -e 's/`.*//' \
+        -e 's/[ \t]*$//' "$tmp/stderr" | head -1)"
+      verdicts+=("runner/$loc: $rc $said")
+      lib="$(LC_ALL="$loc" SPACE_PROBE="$space_probe" python3 - "$repo_root" <<'LIB'
+import importlib.util, os, pathlib, re, sys
+root = pathlib.Path(sys.argv[1])
+spec = importlib.util.spec_from_file_location(
+    "vm", root / "scripts" / "lib" / "validation_manifest.py"
+)
+mod = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mod)
+try:
+    mod.manifest_rows(pathlib.Path(os.environ["SPACE_PROBE"]))
+    print("0 accepted")
+except mod.ManifestError as error:
+    print("2 " + re.sub(r"`.*", "", str(error).replace("scripts/validate: ", "")).strip())
+LIB
+)"
+      verdicts+=("library/$loc: $lib")
+    done
+    # Every verdict must be the same one: same status, same sentence, every
+    # reader, every locale.
+    first="${verdicts[0]#*: }"
+    for verdict in "${verdicts[@]}"; do
+      if [[ "${verdict#*: }" != "$first" ]]; then
+        fail "C4 locale control" "U+$codepoint in a tag field is classified differently:
+$(printf '  %s\n' "${verdicts[@]}")"
+        break
+      fi
+    done
+    # ...and that one verdict must be a REFUSAL. Agreeing to accept a Unicode
+    # space would satisfy the loop above and defeat C4.
+    [[ "$first" == 2\ * ]] ||
+      fail "C4 locale control" "U+$codepoint in a tag field is ACCEPTED ($first)"
+  done
+  ok "C4 holds for both readers under C and ${locales[*]}"
+fi
+
 # The executable-bit arm (VGS-30 applied to the entry point itself).
 non_exec="$tmp/non-exec-runner"
 cp "$runner" "$non_exec"

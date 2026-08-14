@@ -28,10 +28,19 @@ class ManifestError(Exception):
 
 
 
-# ASCII whitespace only, matching the runner's `[[:space:]]` exactly. Python's
-# str.split()/strip() also eat Unicode whitespace, which made a non-breaking
-# space normalise away here and survive there: the same bytes then produced a
-# valid tag for this reader and an unknown one for the runner.
+# ASCII whitespace only. Python's str.split()/strip() also eat Unicode
+# whitespace, which made a Unicode space normalise away on one side and survive
+# on the other: the same bytes then produced a valid tag for one reader and an
+# unknown one for the other.
+#
+# WHAT MAKES THE TWO SIDES MATCH is that the runner spells the same six
+# characters out — `ASCII_SPACE=$' \t\n\r\f\v'` in scripts/validate — NOT that
+# `[[:space:]]` happens to mean ASCII. This comment used to claim the two
+# matched "exactly" while the runner used `[[:space:]]`, whose meaning bash
+# resolves through the LOCALE: under this machine's en_US.UTF-8 it matches
+# U+2002 and U+3000, so the equivalence the comment asserted was false in the
+# ambient locale and the claim was worse than no comment. If the runner's
+# constant changes, this set changes with it; nothing else keeps them equal.
 _ASCII_SPACE = re.compile(r"[ \t\n\r\f\v]")
 
 

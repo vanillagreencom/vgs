@@ -105,7 +105,11 @@ cd "$repo_root" || exit 1
 #       match only an `all` run and behave like `-` everywhere else.
 #   C4  whitespace is ASCII, and removed before matching. Python's str.split()
 #       also eats Unicode whitespace; ASCII-only in both readers is what stops
-#       a non-breaking space normalising away for one and not the other.
+#       a Unicode space normalising away for one and not the other. Enforced by
+#       SPELLING THE SIX CHARACTERS OUT on both sides — `ASCII_SPACE` below, and
+#       `_ASCII_SPACE` there. `[[:space:]]` did NOT enforce it: bash resolves
+#       character classes through the LOCALE, so C4 was asserted here and true
+#       only incidentally, until a locale change made it false.
 #
 # ─── and the AREA DECLARATION, one level up ────────────────────────────────
 #
@@ -231,6 +235,37 @@ MANIFEST_EOF
 # metadata-pass indexing bug, both of which surfaced only while fixing something
 # else. One reader makes divergence impossible by construction rather than
 # detectable afterwards — the same move as one definition, one level up.
+# ═══ WHITESPACE IS ASCII, SPELLED OUT ══════════════════════════════════════
+#
+# C4 says whitespace is ASCII and removed before matching. `[[:space:]]` did NOT
+# guarantee that: bash resolves character classes through the LOCALE, and under
+# this machine's own en_US.UTF-8 it matches U+2002 EN SPACE and U+3000
+# IDEOGRAPHIC SPACE. Verified end to end, in the ambient locale, before this
+# was written: a row tagged `qml<U+2002>` had the en space stripped here and so
+# parsed as `qml`, while validation_manifest.py — explicitly ASCII — refused the
+# same row as a malformed tag field. That is exactly the divergence C4 exists to
+# stop, one layer below where an earlier round fixed it. (glibc excludes NBSP
+# from `space`, so the character the review named is not the one that bites;
+# the class is.)
+#
+# WHY NOT `export LC_ALL=C`. It would settle this in one line, and it leaks:
+# every manifest command runs through `eval` in this process's environment, so
+# 58 checks — the Go block, node, python, shellcheck — would run under a locale
+# chosen for a tag-parsing reason. A suite whose results depend on a setting
+# made for the parser is a worse trade than spelling six patterns out. The two
+# `LC_ALL=C sort` calls in the dump stay as they are: they answer a different
+# question (deterministic collation), and they are already scoped to one
+# command each, which is what a global export would have to give up.
+#
+# Ranges were checked too, since `[a-z]` is collation-dependent in principle:
+# on this glibc `[[ "Q" =~ ^[a-z]+$ ]]` is false under C and under en_US.UTF-8
+# alike, so the token-name rule is not affected.
+ASCII_SPACE=$' \t\n\r\f\v'
+# ...minus the newline, for the line-oriented tools that cannot carry one.
+# Derived rather than written twice: two spellings of one set is how the readers
+# came to disagree in the first place.
+ASCII_SPACE_LINE="${ASCII_SPACE//$'\n'/}"
+
 GRAMMAR_FILE="$repo_root/scripts/lib/validation-grammar.conf"
 if [[ ! -r "$GRAMMAR_FILE" ]]; then
   printf 'scripts/validate: cannot read the grammar at %s\n' "$GRAMMAR_FILE" >&2
@@ -363,7 +398,7 @@ while read -r kind name rest || [[ -n "$kind" ]]; do
       [[ -n "$name" ]] && MSG[$name]="$rest"
       ;;
   esac
-done < <(sed -e 's/#.*//' -e '/^[[:space:]]*$/d' "$GRAMMAR_FILE")
+done < <(sed -e 's/#.*//' -e "/^[$ASCII_SPACE_LINE]*\$/d" "$GRAMMAR_FILE")
 
 if [[ -z "${KIND_MIN[class]:-}" || -z "${KIND_MIN[token]:-}" || -z "${KIND_MIN[message]:-}" ]]; then
   grammar_fatal "grammar declares no arity for a required line kind" "class/token/message"
@@ -473,7 +508,7 @@ while read -r line || [[ -n "$line" ]]; do
       ;;
     kind | message) ;; # read in the metadata pass above
   esac
-done < <(sed -e 's/#.*//' -e '/^[[:space:]]*$/d' "$GRAMMAR_FILE")
+done < <(sed -e 's/#.*//' -e "/^[$ASCII_SPACE_LINE]*\$/d" "$GRAMMAR_FILE")
 
 # THE INVARIANTS, enforced here as well as in the guard and taken from the same
 # `min`/`max` in the definition. The runner goes first, so an invariant only the
@@ -693,7 +728,7 @@ row_fatal() {
 selected=()
 selected_tags=()
 while IFS= read -r line; do
-  if [[ -z "${line//[[:space:]]/}" ]]; then
+  if [[ -z "${line//[$ASCII_SPACE]/}" ]]; then
     continue
   fi
   if [[ "$line" != *"|"* ]]; then
@@ -701,9 +736,9 @@ while IFS= read -r line; do
   fi
   tags="${line%%|*}"
   cmd="${line#*|}"
-  tags="${tags//[[:space:]]/}"
-  while [[ "$cmd" == [[:space:]]* ]]; do cmd="${cmd:1}"; done
-  while [[ "$cmd" == *[[:space:]] ]]; do cmd="${cmd:0:${#cmd}-1}"; done
+  tags="${tags//[$ASCII_SPACE]/}"
+  while [[ "$cmd" == ["$ASCII_SPACE"]* ]]; do cmd="${cmd:1}"; done
+  while [[ "$cmd" == *["$ASCII_SPACE"] ]]; do cmd="${cmd:0:${#cmd}-1}"; done
   # TAGS ARE VALIDATED AS A STRING, AGAINST A GRAMMAR OF WHAT IS ALLOWED,
   # before any split and before any check runs. Two holes came from doing it the
   # other way round — writing the rule in terms of whatever `read -a` produced:
