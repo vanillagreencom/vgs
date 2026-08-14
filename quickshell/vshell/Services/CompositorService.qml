@@ -52,6 +52,12 @@ Singleton {
     // else".
     readonly property string activeWorkspaceName: isHyprland ? (Hyprland.activeToplevel?.workspace?.name ?? "") : ""
 
+    // The focused window's app id, or "" when nothing is focused or the
+    // compositor does not report one. Read from `ToplevelManager`, which both
+    // supported compositors feed through wlr-foreign-toplevel, so this works on
+    // Hyprland and Niri alike. "" means "unknown", not "no app".
+    readonly property string focusedAppId: ToplevelManager.activeToplevel?.appId ?? ""
+
     Component.onCompleted: {
         detectCompositor();
         refreshToplevels();

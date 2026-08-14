@@ -9,6 +9,7 @@ import "Scorer.js" as Scorer
 import "ControllerUtils.js" as Utils
 import "NavigationHelpers.js" as Nav
 import "ItemTransformers.js" as Transform
+import "../../../Services/PasteTarget.js" as PasteTarget
 
 Item {
     id: root
@@ -146,7 +147,6 @@ Item {
 
     Process {
         id: wtypeProcess
-        command: ["wtype", "-M", "ctrl", "-P", "v", "-p", "v", "-m", "ctrl"]
         running: false
     }
 
@@ -156,11 +156,16 @@ Item {
         onExited: pasteTimer.start()
     }
 
+    // The delay lets focus settle back on the target after the launcher closes,
+    // so the app id resolved here is the window the keystroke reaches.
     Timer {
         id: pasteTimer
         interval: 200
         repeat: false
-        onTriggered: wtypeProcess.running = true
+        onTriggered: {
+            wtypeProcess.command = PasteTarget.pasteCommand(CompositorService.focusedAppId);
+            wtypeProcess.running = true;
+        }
     }
 
     function pasteSelected() {

@@ -6,6 +6,7 @@ import Quickshell
 import Quickshell.Io
 import qs.Common
 import qs.Services
+import "PasteTarget.js" as PasteTarget
 
 Singleton {
     id: root
@@ -114,18 +115,22 @@ Singleton {
 
     Process {
         id: wtypeProcess
-        // TODO: This is only a paste shortcut fallback. It assumes the target
-        // application accepts Ctrl+V, which is false for many terminals.
-        // Replace with a more reliable target-aware paste strategy.
-        command: ["wtype", "-M", "ctrl", "-P", "v", "-p", "v", "-m", "ctrl"]
         running: false
     }
 
+    // The delay lets focus settle back on the target after the clipboard
+    // surface closes, so the app id resolved here is the window the keystroke
+    // will actually reach.
     Timer {
         id: pasteTimer
         interval: 200
         repeat: false
-        onTriggered: wtypeProcess.running = true
+        onTriggered: {
+            const appId = CompositorService.focusedAppId;
+            wtypeProcess.command = PasteTarget.pasteCommand(appId);
+            log.debug("Pasting into", appId || "unknown target", "with", wtypeProcess.command.join(" "));
+            wtypeProcess.running = true;
+        }
     }
 
     // Pinned first, then newest copy first: recency is the timestamp (bumped
