@@ -35,10 +35,17 @@ applications on the seat are legitimate, so signal by pid or process group.
 Causal chain and recovery: `AGENTS.md` § Never launch a second shell into the
 live session.
 
-**Vendored trees are byte-exact.** `backend/vendor/**` and
-`config/vshell/nvim/colorschemes/**` are carried verbatim from upstream. Read
-them and report real defects, but never propose an in-repo patch, refactor, or
-style fix — frame any genuine finding as an upstream issue to file, and say so.
+**Vendored trees are byte-exact — but not uniformly.** Carried verbatim:
+`backend/vendor/**`, the plugin directories under
+`config/vshell/nvim/colorschemes/`, `quickshell/vshell/assets/sounds/plasma/`,
+and `third_party/`'s pinned artifacts (`schema.v2.json`, `asdcontrol.cpp`, by
+the convention their READMEs record rather than by any check) and its
+`review-gate/` and `size-ratchet/` trees, which local validation diffs whole
+against the vstack-managed copy. Report real defects in those as upstream
+issues to file — never an in-repo patch, refactor, or style fix. Three files
+among them are VGS-authored and maintained here, so drift findings on them are
+wanted: `colorschemes/ATTRIBUTION.md`, `third_party/coderabbit-schema/README.md`
+and `third_party/asdcontrol/README.md`.
 
 **Doc surfaces are distinct and deliberately non-overlapping.** The
 product/user-facing set is exactly `README.md`, `packaging/README.md` (which
@@ -47,13 +54,6 @@ repeat) and `packaging/ubuntu/README.md`. `docs/architecture/**` are agent
 reference docs; `AGENTS.md` and `project-skills/README.md` are agent process
 instruction. Do not ask for content to be mirrored between them or for
 changelog entries.
-
-**A README in a vendored tree may not be vendored.**
-`third_party/coderabbit-schema/README.md` and `third_party/asdcontrol/README.md`
-are VGS-authored — why the artifact is pinned, how to refresh it, what shipping
-it obliges — so drift findings on them are valid. Byte-pinned there are the
-artifacts themselves and the `review-gate/` and `size-ratchet/` engine trees,
-whose vendor checks diff them whole.
 
 **Secrets live in one place.** `.env.local` is gitignored and holds every
 credential; `.env.local.example` carries the key names with empty values;

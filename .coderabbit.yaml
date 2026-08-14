@@ -200,18 +200,31 @@ reviews:
 
     - path: "config/vshell/nvim/colorschemes/**"
       instructions: >-
-        Vendored third-party Neovim colorscheme plugins, carried verbatim. Same
-        rule as Go vendor: report real defects as upstream issues, never as
-        in-repo patches. Style, structure, and lint findings here are noise —
-        skip them.
+        The plugin directories here are vendored third-party Neovim
+        colorschemes, carried verbatim. Same rule as Go vendor: report real
+        defects as upstream issues, never as in-repo patches. Style,
+        structure, and lint findings in them are noise — skip them.
+
+        `ATTRIBUTION.md` beside them is the exception: VGS-authored, maintained
+        here, and mapping each vendored dir to its upstream repo and license.
+        Drift between that table and the directories actually present is a
+        valid finding.
+
+    - path: "quickshell/vshell/assets/sounds/plasma/**"
+      instructions: >-
+        The Dream Sounds: Harmony 2 sound theme for KDE Plasma 6, carried
+        verbatim under CC BY-SA 4.0 with its LICENSE and README. Same rule as
+        the other vendored trees: report real defects as upstream issues, never
+        as in-repo patches, and skip style findings.
 
     - path: "third_party/**"
       instructions: >-
         A mixed tree, not a uniformly vendored one. The pinned artifacts
-        (`coderabbit-schema/schema.v2.json`, `asdcontrol/asdcontrol.cpp`) and
-        the `review-gate/` and `size-ratchet/` engine trees are byte-exact —
-        their vendor checks diff them whole, so an in-repo edit fails CI. Frame
-        findings there as upstream issues.
+        (`coderabbit-schema/schema.v2.json`, `asdcontrol/asdcontrol.cpp`) are
+        carried verbatim by the convention their own READMEs record — no check
+        enforces it. The `review-gate/` and `size-ratchet/` engine trees are
+        diffed whole against the vstack-managed copy by LOCAL validation, not
+        CI. Frame findings in any of those as upstream issues.
 
         `coderabbit-schema/README.md` and `asdcontrol/README.md` are the
         exception: VGS-authored maintenance docs recording why each artifact is

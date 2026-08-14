@@ -35,9 +35,12 @@ full-screen layer surfaces, and blacks out the desktop. The sandboxed
 `scripts/qml-smoke.sh --nested` is the supported runtime smoke. Never suggest
 `pkill quickshell`; signal by pid or process group.
 
-`backend/vendor/**` and `config/vshell/nvim/colorschemes/**` are byte-exact
-vendored upstream code. Report real defects there as upstream issues to file —
-never as in-repo patches.
+`backend/vendor/**` and the plugin directories under
+`config/vshell/nvim/colorschemes/` are byte-exact vendored upstream code.
+Report real defects there as upstream issues to file — never as in-repo
+patches. `colorschemes/ATTRIBUTION.md` is VGS-authored and maintained here:
+it maps each vendored dir to its upstream repo and license, so drift findings
+on it are valid.
 
 `scripts/**` is the test suite; there is no test framework. A check whose
 failure path is unreachable is vacuous: watch for a suppressed exit status, an
@@ -64,10 +67,12 @@ process instruction. Do not request cross-posting between them.
 A README inside a vendored tree is not automatically vendored.
 `third_party/coderabbit-schema/README.md` and `third_party/asdcontrol/README.md`
 are VGS-authored maintenance docs — why the artifact is pinned, how to refresh
-it, what shipping it obliges — so drift findings on those two are valid. What
-is byte-pinned beside them is the artifact itself (`schema.v2.json`,
-`asdcontrol.cpp`), plus the `third_party/review-gate/` and
-`third_party/size-ratchet/` engine trees, which their vendor checks diff whole.
+it, what shipping it obliges — so drift findings on those two are valid.
+Pinned beside them are the artifacts themselves (`schema.v2.json`,
+`asdcontrol.cpp`), by the convention those READMEs record rather than by any
+check, and the `third_party/review-gate/` and `third_party/size-ratchet/`
+engine trees, which local validation — not CI — diffs whole against the
+vstack-managed copy.
 
 Every backend method must map to a documented capability in
 `docs/architecture/backend-methods.json`; QML gates on advertised capabilities,

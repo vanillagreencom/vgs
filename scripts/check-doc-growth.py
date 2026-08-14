@@ -61,11 +61,14 @@ CEILINGS: dict[str, int] = {
     # 6,500 figure measured mid-review at 5,865 B.
     "review-bots.md": 7_200,
     # Adopted at 2,909 B. 2026-08-14: the PR #132 review found the doc-surface
-    # rule was telling reviewers to suppress valid drift findings on the two
-    # VGS-authored READMEs inside third_party/; correcting it needs the
-    # enumerated product-facing set plus that carve-out, which earned the
-    # bytes. 3,850 keeps ~10% headroom at the final 3,480 B size.
-    ".github/copilot-instructions.md": 3_850,
+    # and vendored-tree rules were telling reviewers to suppress valid drift
+    # findings on the three VGS-authored files inside vendored trees
+    # (colorschemes/ATTRIBUTION.md and the two third_party/ READMEs);
+    # correcting that needs the enumerated product-facing set plus the
+    # carve-out, which earned the bytes. The two rules were merged into one to
+    # hold the growth down. 4,000 is ~10% headroom over the final 3,554 B size,
+    # rounded up per the adoption rule above.
+    ".github/copilot-instructions.md": 4_000,
     "project-skills/vshell-dev/SKILL.md": 5_000,  # adopted at 4,497 B
     ".github/instructions/agents-md.instructions.md": 500,  # adopted at 403 B
     ".github/instructions/architecture-docs.instructions.md": 500,  # adopted at 393 B
@@ -78,7 +81,10 @@ CEILINGS: dict[str, int] = {
     ".github/instructions/validation-scripts.instructions.md": 1_000,  # adopted at 844 B
     ".github/instructions/vendored-engine.instructions.md": 1_000,  # adopted at 854 B
     ".github/instructions/vendored-go.instructions.md": 500,  # adopted at 367 B
-    ".github/instructions/vendored-nvim.instructions.md": 400,  # adopted at 302 B
+    # Adopted at 302 B. 2026-08-14: ATTRIBUTION.md carve-out (PR #132) — the
+    # blanket "never patch in-repo, skip style findings" rule covered a
+    # VGS-authored file. 600 is ~10% headroom over the final 490 B size.
+    ".github/instructions/vendored-nvim.instructions.md": 600,
     "docs/architecture/backend-daemon.md": 7_800,  # adopted at 7,087 B
     "docs/architecture/cloud-sync.md": 15_400,  # adopted at 13,975 B
     "docs/architecture/design-language.md": 19_700,  # adopted at 17,886 B
