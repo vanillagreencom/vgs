@@ -40,19 +40,18 @@ Singleton {
     property bool _injectorAwaitingStart: false
     property bool _releaseAwaitingStart: false
     // In flight means a helper may put keystrokes on the seat between now and
-    // its exit, which starts when it is ASKED to run, not when it reports that
-    // it did: a helper still awaiting its start has failed at nothing yet, and
-    // its chord may be a moment away. Reading the two running flags alone leaves
-    // that window open, and it is up to five seconds wide, until the watchdog
-    // that owns the start resolves it either way.
+    // its exit, which starts when it is ASKED to run: until a helper transitions
+    // its chord may already be a moment away, and the running flags alone leave
+    // that window — a watchdog interval wide — looking idle.
     readonly property bool _helperInFlight: wtypeProcess.running || _injectorAwaitingStart
         || releaseProcess.running || _releaseAwaitingStart
-    // The seat holds modifiers VGS pressed and could not confirm releasing.
-    // Set by every release that does not come back clean, and cleared by
-    // nothing but one that does — not by a timer, not by the next attempt, not
-    // by time passing. VGS cannot observe the seat, so anything else would be a
-    // guess recorded as a fact, and the fact it stands in for is whether the
-    // next chord lands on top of a held ctrl.
+    // The seat may hold modifiers VGS pressed and has not confirmed releasing.
+    // Set the moment a modifier release is REQUESTED, which is the moment a
+    // partial keystroke is detected, and cleared only when a release process
+    // exits zero — not by a timer, not by the next attempt, not by time passing.
+    // Set at the request rather than at a failure because the request is what
+    // makes the seat uncertain: a flag that waited for the answer would leave
+    // the interval before it looking exactly like a seat nobody had touched.
     property bool _seatUnconfirmed: false
 
     // Injects paste into whatever window holds focus once the calling surface
@@ -60,7 +59,10 @@ Singleton {
     // the missing dependency themselves, since only they know which UI to
     // attach the message to.
     function injectPaste() {
-        if (_seatUnconfirmed) {
+        // Order matters, the same at both decision points: a helper in flight
+        // will resolve the seat either way, so a request arriving then QUEUES
+        // behind it. Only a seat nothing is still answering for is refused.
+        if (_seatUnconfirmed && !_helperInFlight) {
             refuseUnconfirmedSeat();
             return;
         }
@@ -114,15 +116,15 @@ Singleton {
     // the one place an injection begins, so it is where they have to hold
     // whatever reached it, a fresh request or a paste replayed from a queue.
     function beginInjection() {
-        if (_seatUnconfirmed) {
-            refuseUnconfirmedSeat();
-            return;
-        }
         // Deferred rather than recorded here: the settle timer's in-flight
         // branch stays the only place a paste becomes pending, and the helper
         // that is in flight is watchdog-bounded, so this cannot defer forever.
         if (_helperInFlight) {
             settleTimer.restart();
+            return;
+        }
+        if (_seatUnconfirmed) {
+            refuseUnconfirmedSeat();
             return;
         }
         // "" from focusedAppId means the compositor reports no active toplevel,
@@ -163,7 +165,6 @@ Singleton {
         _releaseAwaitingStart = false;
         releaseWatchdogTimer.stop();
         releaseEscalationTimer.stop();
-        _seatUnconfirmed = true;
         log.warn("Modifier release did not start - the seat may still hold ctrl or shift");
         ToastService.showError(I18n.tr("Paste is unavailable"), I18n.tr("The paste modifiers could not be released"));
         cancelQueuedPaste();
@@ -229,9 +230,8 @@ Singleton {
         interval: 1000
         repeat: true
         onTriggered: {
-            // Asks whether the terminate request took, not whether a helper is
-            // in flight: this ladder only runs after the watchdog saw the
-            // process running, so there is no start window to account for.
+            // Asks whether the terminate took, not whether a helper is in
+            // flight: reached only after the watchdog saw it running.
             if (!wtypeProcess.running) {
                 stop();
                 return;
@@ -254,6 +254,9 @@ Singleton {
     // identical and presses nothing, so a second run would add nothing but a
     // competing wtype client on the seat.
     function startModifierRelease() {
+        // Requesting it is what marks the seat, so this precedes the in-flight
+        // refusal: both callers reach here as the seat becomes uncertain.
+        _seatUnconfirmed = true;
         if (releaseProcess.running || _releaseAwaitingStart) {
             log.warn("Modifier release still in flight - not starting a second one");
             return;
@@ -292,7 +295,6 @@ Singleton {
                 // chord onto the same held modifiers. So the seat itself is
                 // marked, and every injection is refused until a release comes
                 // back clean.
-                root._seatUnconfirmed = true;
                 root.log.warn("Releasing the paste modifiers failed - exit", exitCode, "- dropping any queued paste");
                 ToastService.showError(I18n.tr("Paste is unavailable"), I18n.tr("The paste modifiers could not be released"));
                 root.cancelQueuedPaste();
@@ -331,9 +333,8 @@ Singleton {
         interval: 1000
         repeat: true
         onTriggered: {
-            // Asks whether the terminate request took, not whether a helper is
-            // in flight: this ladder only runs after the watchdog saw the
-            // process running, so there is no start window to account for.
+            // Asks whether the terminate took, not whether a helper is in
+            // flight: reached only after the watchdog saw it running.
             if (!releaseProcess.running) {
                 stop();
                 return;
@@ -344,7 +345,6 @@ Singleton {
                 releaseProcess.signal(9);
                 return;
             }
-            root._seatUnconfirmed = true;
             root.log.warn("Modifier release survived SIGKILL - the seat may still hold ctrl or shift, and paste stays unavailable until it exits");
             ToastService.showError(I18n.tr("Paste is unavailable"), I18n.tr("The paste helper could not be stopped"));
             root._helperStuck = true;

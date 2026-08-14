@@ -496,7 +496,10 @@ function queuePaste(h) {
 
     assert.equal(h.root._releaseAwaitingStart, true, "the release is awaiting its start");
     assert.equal(h.root.releaseProcess.running, false, "with nothing in the running flags to show for it");
-    assert.equal(h.root._seatUnconfirmed, false, "and nothing has failed, so no seat state covers it either");
+    // The window this finding was about: nothing has FAILED yet, so a flag that
+    // waited for a failure would read exactly like an untouched seat. Set at the
+    // request instead, it is already true here.
+    assert.equal(h.root._seatUnconfirmed, true, "the seat is marked from the request, before anything has failed");
 
     h.root.injectPaste();
     h.fire("settleTimer", "settleTriggered");
@@ -551,6 +554,25 @@ function queuePaste(h) {
     assert.equal(h.root.settleTimer.running, true, "it must defer the request rather than drop it");
 }
 
+{
+    // Same order at the funnel as at the entry point: a release in flight marks
+    // the seat, and the paste must still queue behind it rather than be refused
+    // for a seat that release is about to answer for.
+    const h = makeHarness();
+    queuePaste(h);
+    h.started("injector");
+    h.stall("release");
+    h.exit("injector", 1);
+    assert.equal(h.root._seatUnconfirmed, true, "the release request marked the seat");
+    h.root.settleTimer.stop();
+
+    const before = h.toasts.length;
+    h.root.beginInjection();
+
+    assert.equal(h.toasts.length, before, "an in-flight release must not be reported as an unconfirmed seat");
+    assert.equal(h.root.settleTimer.running, true, "the request defers behind it instead");
+}
+
 // ---- 4l. not over-corrected: a settled seat still injects ------------------
 
 {
@@ -590,6 +612,7 @@ function queuePaste(h) {
 
     assert.equal(h.root._pendingPaste, false, "a give-up must drop the queued paste, not bank it");
     assert.equal(h.root.settleTimer.running, false, "and must stop a settle already counting down");
+    assert.equal(h.root._seatUnconfirmed, true, "and the seat stays marked, since only a clean release clears it");
 
     // The unkillable release finally exits, minutes later.
     h.exit("release", 0);
