@@ -19,9 +19,15 @@
 // last segment of a reverse-DNS id (org.wezfurlong.wezterm,
 // com.mitchellh.ghostty), and holds only names distinctive enough that an
 // unrelated app carrying one is implausible.
+//
+// A terminal whose name is too generic to segment-match therefore needs its
+// reverse-DNS id spelled out in full in the first list — org.gnome.Terminal and
+// page.codeberg.dnkl.foot end in "terminal" and "foot", which nobody else may
+// claim by suffix.
 var TERMINAL_APP_IDS = [
     "blackbox",
     "com.raggesilver.blackbox",
+    "com.rioterm.rio",
     "contour",
     "dev.warp.warp",
     "foot",
@@ -30,8 +36,10 @@ var TERMINAL_APP_IDS = [
     "hyper",
     "io.elementary.terminal",
     "kgx",
+    "org.contourterminal.contour",
     "org.gnome.console",
     "org.gnome.terminal",
+    "page.codeberg.dnkl.foot",
     "rio",
     "sakura",
     "st",

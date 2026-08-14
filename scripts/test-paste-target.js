@@ -30,8 +30,9 @@ const CTRL_SHIFT_V = ["wtype", "-M", "ctrl", "-M", "shift", "-P", "v", "-p", "v"
 assert.notDeepEqual(CTRL_V, CTRL_SHIFT_V, "the two paste keystrokes must differ");
 
 // Terminals: plain app ids, Hyprland's capitalized class, process-name ids,
-// and reverse-DNS ids whose terminal name is only in the last segment.
-for (const appId of ["foot", "kitty", "Alacritty", "org.wezfurlong.wezterm", "com.mitchellh.ghostty", "org.gnome.Console", "org.gnome.Terminal", "kitty.desktop", "gnome-terminal-server", "io.elementary.terminal", "com.raggesilver.BlackBox", "dev.warp.warp"]) {
+// reverse-DNS ids whose terminal name is only in the last segment, and the
+// reverse-DNS ids of terminals whose name is too generic to segment-match.
+for (const appId of ["foot", "kitty", "Alacritty", "org.wezfurlong.wezterm", "com.mitchellh.ghostty", "org.gnome.Console", "org.gnome.Terminal", "page.codeberg.dnkl.foot", "com.rioterm.Rio", "org.contourterminal.Contour", "kitty.desktop", "gnome-terminal-server", "io.elementary.terminal", "com.raggesilver.BlackBox", "dev.warp.warp"]) {
     assert.equal(PasteTarget.isTerminalAppId(appId), true, `${appId} is a terminal`);
     assert.deepEqual(pasteCommand(appId), CTRL_SHIFT_V, `${appId} pastes with Ctrl+Shift+V`);
 }
@@ -44,7 +45,7 @@ for (const appId of ["firefox", "org.gnome.Nautilus", "code", "com.vanillagreen.
 
 // A generic name is matched as a whole app id only, so a reverse-DNS id ending
 // in one belongs to whoever else claims it.
-for (const appId of ["com.example.Console", "com.example.Terminal", "com.example.Warp", "com.example.hyper", "com.example.st", "org.example.rio", "net.example.tabby"]) {
+for (const appId of ["com.example.Console", "com.example.Terminal", "com.example.Warp", "com.example.foot", "com.example.hyper", "com.example.st", "org.example.contour", "org.example.rio", "net.example.tabby"]) {
     assert.equal(PasteTarget.isTerminalAppId(appId), false, `${appId} is not a terminal`);
 }
 assert.equal(PasteTarget.isTerminalAppId("console"), false, "a bare console app id is not a terminal");
