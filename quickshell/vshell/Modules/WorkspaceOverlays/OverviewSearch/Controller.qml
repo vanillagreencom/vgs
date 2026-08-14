@@ -184,6 +184,11 @@ Item {
         const pasteArgs = AppSearchService.getPluginPasteArgs(pluginId, selectedItem.data);
         if (!pasteArgs)
             return;
+        // Quickshell ignores a command change on a live Process, so starting a
+        // second copy now would copy and paste the PREVIOUS selection while
+        // dropping this one. The copy in flight finishes and pastes on its own.
+        if (copyProcess.running)
+            return;
         copyProcess.command = pasteArgs;
         copyProcess.running = true;
         itemExecuted();

@@ -84,6 +84,21 @@ function isTerminalAppId(appId) {
     return lastSegment !== id && TERMINAL_APP_NAMES.indexOf(lastSegment) !== -1;
 }
 
+// An app id is a string the client chose, so it can carry anything — including
+// terminal escape sequences that would render when an operator reads the log in
+// a terminal, and newlines that would forge extra log lines. Everything that
+// reaches a log line goes through here: control characters are dropped and the
+// rest is clamped. Returns "" for an id that is empty or was entirely control
+// characters, which callers render as their own "unknown" wording.
+var MAX_LOGGED_APP_ID_LENGTH = 64;
+
+function displayAppId(appId) {
+    var id = String(appId === undefined || appId === null ? "" : appId).replace(/[\x00-\x1f\x7f-\x9f]/g, "");
+    if (id.length <= MAX_LOGGED_APP_ID_LENGTH)
+        return id;
+    return id.slice(0, MAX_LOGGED_APP_ID_LENGTH) + "...";
+}
+
 // argv for wtype: press modifiers, press+release the key, release modifiers.
 // An empty or unknown app id resolves to Ctrl+V — the target is unknown, and
 // that is the documented fallback rather than a guess.

@@ -58,6 +58,18 @@ assert.equal(PasteTarget.isTerminalAppId("fastmail"), false, "a name containing 
 assert.equal(PasteTarget.normalizeAppId("  Foot.desktop  "), "foot", "app ids normalize case, padding and .desktop");
 assert.equal(PasteTarget.normalizeAppId(".desktop"), ".desktop", "a bare .desktop id is not stripped to empty");
 
+// Log sanitizing: an app id is client-supplied, so escape sequences and
+// newlines must not survive into a log line an operator reads in a terminal.
+assert.equal(PasteTarget.displayAppId("foot"), "foot", "an ordinary app id is logged as-is");
+assert.equal(PasteTarget.displayAppId("foo\u001b[31mbar"), "foo[31mbar", "escape characters are stripped");
+assert.equal(PasteTarget.displayAppId("foo\nWARN forged line"), "fooWARN forged line", "newlines cannot forge a log line");
+assert.equal(PasteTarget.displayAppId("\u0000a\u007fb\u0080c\u009fd"), "abcd", "NUL, DEL and C1 controls are stripped");
+assert.equal(PasteTarget.displayAppId("\u0007\u001b"), "", "an id of nothing but controls comes back empty");
+assert.equal(PasteTarget.displayAppId(""), "", "an empty id stays empty");
+assert.equal(PasteTarget.displayAppId(undefined), "", "a missing id is not the string undefined");
+assert.equal(PasteTarget.displayAppId("x".repeat(63)), "x".repeat(63), "an id at the limit is not truncated");
+assert.equal(PasteTarget.displayAppId("x".repeat(500)), "x".repeat(64) + "...", "a long id is clamped and marked");
+
 // List hygiene. Matching is exact, so an entry that is not already normalized
 // can never be reached, a duplicate hides a second spelling of the same app,
 // and both lists are maintained in sorted order. A typo in an entry is NOT

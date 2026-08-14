@@ -48,22 +48,51 @@ Singleton {
     }
 
     function startPaste() {
+        // Clearing the latch here, rather than only where it is consumed, keeps
+        // a queue flag set by a run that never reported an exit from firing a
+        // second paste the user did not ask for.
+        _queued = false;
         // "" from focusedAppId means the compositor reports no active toplevel,
         // which is normal while a shell surface holds keyboard focus, so the
         // last window known to have focus is the target.
         const appId = CompositorService.focusedAppId || CompositorService.lastFocusedAppId;
         _targetAppId = appId;
         wtypeProcess.command = PasteTarget.pasteCommand(appId);
-        log.debug("Pasting into", appId || "unknown target", "with", wtypeProcess.command.join(" "));
+        log.debug("Pasting into", root.targetForLog(), "with", wtypeProcess.command.join(" "));
         wtypeProcess.running = true;
+        watchdogTimer.restart();
+    }
+
+    function targetForLog() {
+        return PasteTarget.displayAppId(_targetAppId) || "unknown target";
+    }
+
+    // An injector that never exits would otherwise disable paste for the rest
+    // of the session in silence, since every later request takes the queue
+    // branch and waits on a run that never ends. wtype delivers a keystroke in
+    // milliseconds, so this only ever fires on a wedged one; terminating it
+    // both surfaces the failure and releases the virtual keyboard.
+    Timer {
+        id: watchdogTimer
+        interval: 5000
+        repeat: false
+        onTriggered: {
+            if (!wtypeProcess.running)
+                return;
+            root.log.warn("Paste keystroke did not finish within", interval, "ms for target", root.targetForLog(), "- terminating");
+            ToastService.showError(I18n.tr("Paste did not complete"));
+            root._queued = false;
+            wtypeProcess.running = false;
+        }
     }
 
     Process {
         id: wtypeProcess
         running: false
         onExited: exitCode => {
+            watchdogTimer.stop();
             if (exitCode !== 0)
-                root.log.warn("Paste keystroke failed for target", root._targetAppId || "unknown", "- argv", wtypeProcess.command.join(" "), "- exit", exitCode);
+                root.log.warn("Paste keystroke failed for target", root.targetForLog(), "- argv", wtypeProcess.command.join(" "), "- exit", exitCode);
             if (!root._queued)
                 return;
             root._queued = false;

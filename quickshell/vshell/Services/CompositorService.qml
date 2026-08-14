@@ -58,15 +58,24 @@ Singleton {
     // Hyprland and Niri alike. "" means "unknown", not "no app".
     readonly property string focusedAppId: ToplevelManager.activeToplevel?.appId ?? ""
 
-    // The last app id `focusedAppId` reported, held across the gaps where it is
-    // "": a shell surface taking keyboard focus clears the seat's active
-    // toplevel, and focus comes back asynchronously, so a consumer that needs a
-    // target across a popout's lifetime reads this when the live value is empty.
-    property string lastFocusedAppId: ""
+    // The app id of the window that last held focus, for consumers that need a
+    // target across the gaps where `focusedAppId` is "": a shell surface taking
+    // keyboard focus clears the seat's active toplevel, and focus returns
+    // asynchronously.
+    //
+    // Gated on that window still being alive, so it empties again the moment it
+    // closes. Held unconditionally it would name a window that is gone, and a
+    // consumer would act on a dead target — for paste, injecting a terminal's
+    // keystroke into whatever replaced it.
+    property var _lastFocusedToplevel: null
+    readonly property string lastFocusedAppId: _lastFocusedToplevel && (ToplevelManager.toplevels?.values ?? []).includes(_lastFocusedToplevel) ? (_lastFocusedToplevel.appId ?? "") : ""
 
-    onFocusedAppIdChanged: {
-        if (focusedAppId.length > 0)
-            lastFocusedAppId = focusedAppId;
+    Connections {
+        target: ToplevelManager
+        function onActiveToplevelChanged() {
+            if (ToplevelManager.activeToplevel)
+                root._lastFocusedToplevel = ToplevelManager.activeToplevel;
+        }
     }
 
     Component.onCompleted: {

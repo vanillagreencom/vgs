@@ -59,7 +59,14 @@ def target_expr_re(name: str) -> re.Pattern:
 
 
 def property_re(name: str) -> re.Pattern:
-    return re.compile(r"^\s*(?:readonly\s+)?property\s+string\s+" + re.escape(name) + r"\b", re.MULTILINE)
+    return re.compile(r"^\s*(?:readonly\s+)?property\s+string\s+" + re.escape(name) + r"\b.*$", re.MULTILINE)
+
+
+# The sticky fallback must empty itself when the window it names closes, or a
+# paste resolves against a target that no longer exists — the terminal's
+# keystroke going to whatever took its place. Only a liveness test against the
+# live toplevel list can express that, so the declaration has to carry one.
+LIVENESS_RE = re.compile(r"ToplevelManager\.toplevels")
 
 
 def fail(message: str) -> bool:
@@ -127,11 +134,19 @@ def check_focus_source() -> bool:
     if source is None:
         return False
 
-    missing = [name for name in ("focusedAppId", "lastFocusedAppId") if not property_re(name).search(source)]
+    declarations = {name: property_re(name).search(source) for name in ("focusedAppId", "lastFocusedAppId")}
+    missing = [name for name, match in declarations.items() if not match]
     if missing:
         return fail(f"{FOCUS_SOURCE} does not declare: " + ", ".join(missing))
 
-    print(f"check-paste-injection: {FOCUS_SOURCE} publishes focusedAppId and lastFocusedAppId")
+    sticky = declarations["lastFocusedAppId"].group(0)
+    if not LIVENESS_RE.search(sticky):
+        return fail(
+            f"{FOCUS_SOURCE} declares lastFocusedAppId without testing the remembered window against "
+            "ToplevelManager.toplevels, so it would keep naming a window after it closed"
+        )
+
+    print(f"check-paste-injection: {FOCUS_SOURCE} publishes focusedAppId and a liveness-gated lastFocusedAppId")
     return True
 
 
