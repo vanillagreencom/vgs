@@ -71,6 +71,9 @@ PluginComponent {
     // mirror to forget a field in, which is how the previous provider's numbers
     // used to survive a switch (VGS-118).
     property var current: null
+    // The filing stamp of what `current` holds, so the promotion path can ask
+    // the same newer-success question the failure paths ask.
+    property int currentFiledAt: 0
     // Why the last fetch for the selected provider could not deliver a payload.
     // Non-empty means what `current` holds is no longer trustworthy.
     property string fetchError: ""
@@ -362,6 +365,7 @@ PluginComponent {
     // is keyed BY provider, so neither entry can be read as the other's.
     function clearProviderState() {
         root.current = null;
+        root.currentFiledAt = 0;
         root.fetchError = "";
         root.loading = true;
         root.expandedAccountId = "";
@@ -536,20 +540,28 @@ PluginComponent {
         const outcome = logic.acceptOutcome(logic.payloadProvider(got.data), ch.want);
         if (outcome.file)
             root.noteHeadline(got.data);
+        // The promotion path, third consumer of the newer-success rule: a good
+        // payload for the SELECTED provider belongs in the popout whichever
+        // channel fetched it. Gating on ch.primary left the popout empty after a
+        // switch, when the other channel files for what is now selected.
+        root.promoteSelected();
         if (!outcome.satisfies)
             return;
         ch.loaded = ch.want;
         ch.retries = 0;
-        if (ch.primary)
-            root.applyPayload(got.data);
     }
 
-    // The whole popout is a binding off `current`, so accepting a payload is one
-    // assignment. Adding a lane later means adding it to the payload and to
-    // AiUsageFormat.flatMeters — never to a mirror here that a switch has to
-    // remember to clear.
-    function applyPayload(d) {
-        root.current = d;
+    // The popout shows whatever is filed for the selected provider, promoted here
+    // rather than written by whichever channel happened to fetch it. Adding a
+    // lane later means adding it to the payload and to AiUsageFormat.flatMeters —
+    // never to a mirror here that a switch has to remember to clear.
+    function promoteSelected() {
+        const filed = root.providerData[root.provider];
+        const filedAt = root.providerFiledAt[root.provider];
+        if (!logic.newerSuccess(filed, filedAt, root.currentFiledAt))
+            return;
+        root.current = filed;
+        root.currentFiledAt = filedAt;
         root.fetchError = "";
         root.loading = false;
     }

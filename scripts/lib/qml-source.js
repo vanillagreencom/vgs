@@ -142,8 +142,8 @@ module.exports = function qmlSource(source, fileLabel) {
     // Offsets are preserved by codeOnly(), so an index into the structure-only
     // copy is an index into the original. Callers that need to find their own
     // landmark use these rather than searching the raw source.
-    function indexOf(needle) {
-        return structure.indexOf(needle);
+    function indexOf(needle, from) {
+        return structure.indexOf(needle, from);
     }
     function lastIndexOf(needle, from) {
         return structure.lastIndexOf(needle, from);
@@ -165,26 +165,45 @@ module.exports = function qmlSource(source, fileLabel) {
     }
 
     // Every token has to be present, each named on its own so a failure says
-    // which line went missing. Searched with COMMENTS BLANKED: a token that
-    // survives only in a comment is prose about code that may well be gone, so
-    // matching it would pass while the statement this pins was deleted.
+    // which line went missing.
+    //
+    // TWO views, deliberately, and they must not be unified — the callers want
+    // opposite things and dropping either one reopens a hole:
+    //
+    //   * STRUCTURE (comments and string CONTENTS blanked) decides whether the
+    //     statement is there. A pinned statement whose text survives only inside
+    //     a string literal — `const decoy = "root.current = d"` — satisfied a
+    //     search that kept string contents, so deleting the real assignment left
+    //     the guard green.
+    //   * LITERALS (comments blanked, strings intact) then confirms the token's
+    //     own literal text, because the structure view blanks every string to the
+    //     same run of spaces, so `x = "foo"` and `x = "bar"` are one shape there.
+    //
+    // Ban assertions elsewhere in the suites use stripComments directly: they
+    // must SEE literals, which is the same reason this needs both views.
     //
     // A pair may carry an exact occurrence count: [token, why, count]. Presence
     // alone could not express "twice" — listing a token in two pairs was
-    // satisfied by ONE occurrence, so a second call site meant to be pinned was
-    // not — and it cannot express "once and no more" either, which is how an
-    // immediate deferral would creep back in beside a delayed retry.
+    // satisfied by ONE occurrence — and it cannot express "once and no more"
+    // either, which is how an immediate deferral would creep back beside a
+    // delayed retry. The count is taken on the structure view.
     function requires(block, where, pairs) {
-        const haystack = flat(stripComments(block));
+        const structureHay = flat(codeOnly(block));
+        const literalHay = flat(stripComments(block));
         for (const [token, why, count] of pairs) {
-            const needle = flat(token);
+            const structureNeedle = flat(codeOnly(token));
+            const literalNeedle = flat(token);
             if (count === undefined) {
-                assert.ok(haystack.includes(needle), `${where} must keep \`${token}\` — ${why}`);
-                continue;
+                assert.ok(structureHay.includes(structureNeedle),
+                    `${where} must keep \`${token}\` as CODE — ${why}`);
+            } else {
+                const seen = structureHay.split(structureNeedle).length - 1;
+                assert.equal(seen, count,
+                    `${where} must keep \`${token}\` exactly ${count} time(s) as code, found ` +
+                    `${seen} — ${why}`);
             }
-            const seen = haystack.split(needle).length - 1;
-            assert.equal(seen, count,
-                `${where} must keep \`${token}\` exactly ${count} time(s), found ${seen} — ${why}`);
+            assert.ok(literalHay.includes(literalNeedle),
+                `${where} must keep \`${token}\` with its own literals — ${why}`);
         }
     }
 
@@ -278,6 +297,24 @@ module.exports.selfTest = function selfTest() {
             assert.ok(e.message.includes("one();") && e.message.includes("twice"),
                 "the failure still names the token and the requirement");
         }
+    }
+
+    // --- a statement that survives only inside a STRING pins nothing ---
+    {
+        const q = module.exports(
+            'function f() {\n    const decoy = "root.current = d";\n}', "self-test");
+        assert.throws(() => q.requires(q.body("f"), "f()", [["root.current = d", "pinned"]]),
+            "a token found only inside a string literal must FAIL: deleting the real statement " +
+            "would otherwise leave the guard green");
+        const real = module.exports('function f() {\n    root.current = d;\n}', "self-test");
+        real.requires(real.body("f"), "f()", [["root.current = d", "genuinely in code"]]);
+        // And the literal view still has to hold, or every string-valued pin
+        // would match any other string of any length.
+        const literal = module.exports('function f() { ch.issue = "could not run"; }', "self-test");
+        literal.requires(literal.body("f"), "f()", [['ch.issue = "could not run"', "its own text"]]);
+        assert.throws(
+            () => literal.requires(literal.body("f"), "f()", [['ch.issue = "something else"', "x"]]),
+            "a different literal must not satisfy a pin, which the structure view alone would allow");
     }
 
     // --- a comment mentioning a signature must not become the block ---

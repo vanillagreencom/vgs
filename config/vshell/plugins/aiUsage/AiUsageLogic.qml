@@ -314,25 +314,25 @@ QtObject {
         return count === 1 ? "1 account" : count + " accounts";
     }
 
-    // Whether a failed fetch may file its failure for the provider it wanted.
+    // THE rule, with three consumers: a newer successful result for a provider
+    // wins over anything an older fetch has to say about it. `sinceSeq` is what
+    // the asking consumer already has — a failing fetch passes the stamp it
+    // launched at, the popout passes the stamp of the payload it is showing.
     //
-    // The failure write used to be unconditional, so a channel that ran out of
-    // retries overwrote whatever was filed for its want — including a good
-    // payload the OTHER channel had just filed for that same provider, which put
-    // the unavailable mark on a provider whose fresh numbers had only just
-    // arrived. Wrong data for the wrong provider is what this issue is about.
-    //
-    // Not "never overwrite anything", though: a payload that predates this fetch
-    // is exactly what a real failure is entitled to replace, or the widget sits
-    // on numbers no fetch stands behind. So the question is ordering — was the ok
-    // payload filed AFTER this fetch was launched?
-    //   current   — what is filed for that provider now
-    //   filedAt   — the stamp it was filed with
-    //   launchSeq — the stamp this fetch was launched at
+    // It is one function because it was one rule with three writers: guarding
+    // only the headline write left the popout claiming an error over numbers
+    // that had just landed, and gating the popout on which channel fetched left
+    // it empty when the OTHER channel filed for the selected provider.
+    function newerSuccess(filed, filedAt, sinceSeq) {
+        return !!filed && filed.ok === true && (filedAt || 0) > (sinceSeq || 0);
+    }
+
+    // A failure may be filed unless a newer success beat it there. Not "never
+    // overwrite anything": a payload that predates this fetch is exactly what a
+    // real failure replaces, or the widget sits on numbers no fetch stands
+    // behind.
     function failureWins(current, filedAt, launchSeq) {
-        if (!current || current.ok !== true)
-            return true;
-        return (filedAt || 0) <= (launchSeq || 0);
+        return !newerSuccess(current, filedAt, launchSeq);
     }
 
     // --- pill composition ---------------------------------------------------

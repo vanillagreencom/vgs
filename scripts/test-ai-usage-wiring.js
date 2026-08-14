@@ -1,19 +1,15 @@
 #!/usr/bin/env node
 
-// Pins how AiUsageWidget.qml APPLIES the provider-identity decisions that
-// scripts/test-ai-usage-provider.js proves as behavior (VGS-118).
+// Pins how AiUsageWidget.qml APPLIES the decisions the sibling suites prove as
+// behavior (VGS-118). Those are pure and executed there; what is left here is
+// wiring, where the bug shape is a MISSING or MISDIRECTED line — a channel's
+// reason on the other's record, a reset that resets nothing, an outcome computed
+// and then ignored. This suite parses only; it executes nothing.
 //
-// Split deliberately. Those decisions are pure and are executed there; what is
-// left here is wiring, where the bug shape is a MISSING or MISDIRECTED line — a
-// channel's reason on the other channel's record, a reset that resets nothing,
-// an outcome computed and then ignored.
-//
-// Why source assertions at all: `scripts/qml-smoke.sh --nested` DOES host this
-// plugin — it toggles the aiUsage widget and opens its popout — but that mode is
-// local-only (Hyprland and quickshell on PATH), so CI never runs it, and even
-// locally a harness cannot drive a fetch's exit path or a provider switch through
-// the QML runtime. Each assertion matches load-bearing tokens with whitespace
-// flattened, so reformatting is free while deleting or reshaping the line is not.
+// Why source assertions at all: `qml-smoke.sh --nested` DOES host this plugin,
+// but it is local-only (Hyprland and quickshell on PATH) so CI never runs it,
+// and a harness cannot drive a fetch's exit path through the QML runtime. Tokens
+// match with whitespace flattened: reformatting is free, deleting is not.
 
 "use strict";
 
@@ -30,19 +26,14 @@ const source = fs.readFileSync(WIDGET, "utf8");
 const { blockFrom, body, handlers, requires, indexOf, lastIndexOf, stripComments } =
     require("./lib/qml-source.js")(source, "AiUsageWidget.qml");
 
-// Bans and counts read the source with comments blanked: prose MENTIONING a
-// banned name is not that name.
+// Bans read the source with comments blanked: prose MENTIONING a banned name is
+// not that name. Landmarks go through indexOf/lastIndexOf, which search the same
+// way, and requires() searches a structure-only view — see the library for why
+// those two differ.
 const code = stripComments(source);
 
-// Bans and occurrence counts read the source with comments blanked: prose that
-// merely MENTIONS a banned name or a pinned statement is not that statement, and
-// counting it either hides a deletion or fails a harmless edit.
-
-// Landmarks go through indexOf/lastIndexOf, which search with comments blanked.
-
 // Prove the walk and the stripper before anything leans on them: the library's
-// own cases first (comment markers and braces inside every quote style and every
-// comment form), then the same helpers against the file this test reads.
+// own cases first, then the same helpers against the file this test reads.
 require("./lib/qml-source.js").selfTest();
 
 {
@@ -57,10 +48,7 @@ require("./lib/qml-source.js").selfTest();
     assert.ok(stripped.includes('b("kept")'), "code must survive stripping");
 }
 
-// --- filing a payload -------------------------------------------------------
-//
-// A keyed map, so no provider branch can file an unidentifiable payload under a
-// guess — the defect this issue exists to close.
+// --- filing a payload: a keyed map, so no branch can file under a guess ------
 
 const store = body("storeHeadline");
 requires(store, "storeHeadline()", [
@@ -76,10 +64,7 @@ assert.ok(body("noteHeadline").includes("logic.payloadProvider(data)"),
 assert.ok(!body("noteHeadline").includes("root.provider"),
     "filing by the CURRENT selection is the bug this issue is about");
 
-// --- accepting a payload ----------------------------------------------------
-//
-// One path for both channels, taking only the channel: what it wants, which
-// process it drives and where its output lands are its own.
+// --- accepting a payload: one path for both channels, taking only the channel -
 
 const accept = body("acceptPayload");
 requires(accept, "acceptPayload()", [
@@ -92,21 +77,26 @@ requires(accept, "acceptPayload()", [
         "the outcome is decided from the payload's OWN provider and what this channel wants"],
     ["outcome.file", "a payload that names a provider updates that provider's pill slot"],
     ["root.noteHeadline(got.data)", "which is what files it"],
-    ["outcome.satisfies", "and a payload that does not satisfy this channel goes no further"],
+    ["root.promoteSelected()", "and the popout takes it if it is the selected provider's, " +
+        "whichever channel fetched it"],
+    ["outcome.satisfies", "a payload that does not satisfy this channel goes no further"],
     ["ch.loaded = ch.want", "the channel records what it holds, or relaunch answers true"],
-    ["ch.retries = 0", "a satisfying payload restores the retry budget"],
-    ["ch.primary", "only the popout's channel reaches the popout"],
-    ["root.applyPayload(got.data)", "which is what shows it"]
+    ["ch.retries = 0", "a satisfying payload restores the retry budget"]
 ]);
 
-requires(body("applyPayload"), "applyPayload()", [
-    ["root.current = d", "the popout state is the payload itself"],
-    ['root.fetchError = ""', "a fresh payload clears the failure text"]]);
+// The third consumer of the newer-success rule: promotion, not gated on which
+// channel fetched — that left the popout empty after a switch.
+requires(body("promoteSelected"), "promoteSelected()", [
+    ["logic.newerSuccess(filed, filedAt, root.currentFiledAt)",
+        "the same rule the failure paths ask, against what the popout already shows"],
+    ["root.current = filed", "the popout state is the payload that was filed"],
+    ["root.currentFiledAt = filedAt", "stamped, so the next promotion can compare"],
+    ['root.fetchError = ""', "a promoted payload clears the failure text"],
+    ["root.loading = false", "and ends the loading state"]]);
+assert.ok(!/ch\.primary/.test(stripComments(body("acceptPayload"))),
+    "acceptPayload must not gate the popout on which channel fetched the payload");
 
-// --- the channel owns its process -------------------------------------------
-//
-// The Process, its collectors and its watchdog live INSIDE FetchChannel, so no
-// call site can pair one channel with another's process or stderr.
+// --- the channel owns its process, so no call site can cross the pairing -----
 
 const channel = blockFrom(indexOf("component FetchChannel:"), "FetchChannel");
 requires(channel, "FetchChannel", [
@@ -117,7 +107,7 @@ requires(channel, "FetchChannel", [
     ["property Timer retryTimer: Timer {", "and the timer its retries wait on"],
     ["onTriggered: root.launch(chan)", "which relaunches THIS channel when the wait is over"],
     ['property string want: ""', "and the provider it fetches"],
-    ["property bool primary: false", "and whether the popout is its"],
+    ["property bool primary: false", "and whether a failure of its reaches the popout"],
     ["onStreamFinished: root.acceptPayload(chan, outCollector.text)",
         "stdout goes to this channel's accept path"],
     ["onStreamFinished: chan.errorOut = errCollector.text",
@@ -131,10 +121,20 @@ requires(channel, "FetchChannel", [
 
 // Nothing outside the component may name a process or a collector — that is what
 // makes the pairing structural.
-const componentAt = indexOf("component FetchChannel:");
+// The block starts at its OPEN BRACE, not at the `component` keyword: slicing
+// from the keyword left the component's last ~33 characters inside `outside`.
+// Latent today — that tail is `issue = ""; } }`, which carries no banned name —
+// but the span has to be the one blockFrom actually walked.
+// The span removed must BE the block blockFrom walked: it starts at the open
+// brace, not at the `component` keyword ~33 characters earlier, which left the
+// block's tail inside `outside`. Latent — that tail carries no banned name —
+// but `outside` was then not what it claimed to be.
+const componentAt = indexOf("{", indexOf("component FetchChannel:"));
+assert.equal(source.slice(componentAt, componentAt + channel.length), channel,
+    "the removed span is exactly the component block, starting at its own open brace");
 const outside = source.slice(0, componentAt) + source.slice(componentAt + channel.length);
-assert.ok(!/\b(usageProc|otherProc|usageOut|otherOut|usageErr|otherErr)\b/.test(outside),
-    "per-channel processes and collectors must not be reachable by name from outside the channel");
+assert.ok(!/\b(usageProc|otherProc|usageOut|otherOut|usageErr|otherErr)\b/.test(stripComments(outside)),
+    "per-channel processes and collectors are not nameable from outside the channel");
 
 // Both channels are instantiated with their provider bound, only one is the
 // popout's, and each is found by id then walked back to its FetchChannel.
@@ -277,6 +277,8 @@ assert.equal(exits.length, 1, "the one exit handler lives on the channel's own p
 const cleared = body("clearProviderState");
 requires(cleared, "clearProviderState()", [
     ["root.current = null", "one payload property holds every provider-scoped lane"],
+    ["root.currentFiledAt = 0", "and its stamp, or the next promotion compares against a stale " +
+        "one and declines a payload the popout should take"],
     ['root.fetchError = ""', "the failure text is provider-scoped too"],
     ["root.loading = true", "a switch puts the popout back into loading"],
     ['root.expandedAccountId = ""', "the expanded account belongs to the previous provider's list"],
@@ -333,11 +335,10 @@ requires(vertical, "the vertical pill", [
 assert.ok(!/headlinePct/.test(stripComments(vertical)),
     "a raw percentage here is how it came to show 60% beside an error glyph");
 
-// --- one view of the payload ------------------------------------------------
+// --- one view of the payload -------------------------------------------------
 //
 // The payload's top-level plan/ok/error describe the FIRST LIVE account the
-// backend found, hidden or not: reading them printed a hidden account's plan
-// above a visible account's meters. One function answers all of it.
+// backend found, hidden or not — one function answers all of it instead.
 
 requires(source, "AiUsageWidget.qml", [
     ["readonly property var view: logic.popoutView(root.current, root.hiddenAccounts, root.loading)",
