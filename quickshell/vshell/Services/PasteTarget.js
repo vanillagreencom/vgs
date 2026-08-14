@@ -11,47 +11,55 @@
 // default target the primary selection rather than the clipboard, so guessing
 // a combo for them would trade one wrong keystroke for another.
 //
-// Names are matched against the whole app id and against the last segment of a
-// reverse-DNS id (org.wezfurlong.wezterm, com.mitchellh.ghostty). Terminals
-// whose last segment is a common word are listed by their full id so the
-// segment match cannot claim an unrelated app.
+// Two lists, because app ids come in two shapes. TERMINAL_APP_IDS is matched
+// against the whole app id only, so a generic name (st, hyper, rio) claims
+// nothing but itself. TERMINAL_APP_NAMES is additionally matched against the
+// last segment of a reverse-DNS id (org.wezfurlong.wezterm,
+// com.mitchellh.ghostty), and holds only names distinctive enough that an
+// unrelated app carrying one is implausible.
 var TERMINAL_APP_IDS = [
-    "alacritty",
     "blackbox",
+    "com.raggesilver.blackbox",
     "contour",
-    "cool-retro-term",
-    "deepin-terminal",
     "dev.warp.warp",
-    "extraterm",
     "foot",
     "footclient",
-    "ghostty",
-    "gnome-terminal",
-    "guake",
     "havoc",
     "hyper",
+    "io.elementary.terminal",
     "kgx",
-    "kitty",
-    "konsole",
-    "lxterminal",
-    "mate-terminal",
     "org.gnome.console",
-    "ptyxis",
-    "qterminal",
     "rio",
     "sakura",
     "st",
     "tabby",
+    "wayst",
+    "zutty"
+];
+
+var TERMINAL_APP_NAMES = [
+    "alacritty",
+    "cool-retro-term",
+    "deepin-terminal",
+    "extraterm",
+    "ghostty",
+    "gnome-terminal",
+    "gnome-terminal-server",
+    "guake",
+    "kitty",
+    "konsole",
+    "lxterminal",
+    "mate-terminal",
+    "ptyxis",
+    "qterminal",
     "terminator",
     "terminology",
     "termite",
     "tilix",
-    "wayst",
     "wezterm",
     "wezterm-gui",
     "xfce4-terminal",
-    "yakuake",
-    "zutty"
+    "yakuake"
 ];
 
 // Wayland app ids and Hyprland window classes differ in case for the same
@@ -64,21 +72,14 @@ function normalizeAppId(appId) {
     return id;
 }
 
-function appIdTokens(appId) {
+function isTerminalAppId(appId) {
     var id = normalizeAppId(appId);
     if (id.length === 0)
-        return [];
+        return false;
+    if (TERMINAL_APP_IDS.indexOf(id) !== -1 || TERMINAL_APP_NAMES.indexOf(id) !== -1)
+        return true;
     var lastSegment = id.slice(id.lastIndexOf(".") + 1);
-    return lastSegment === id ? [id] : [id, lastSegment];
-}
-
-function isTerminalAppId(appId) {
-    var tokens = appIdTokens(appId);
-    for (var i = 0; i < tokens.length; i++) {
-        if (TERMINAL_APP_IDS.indexOf(tokens[i]) !== -1)
-            return true;
-    }
-    return false;
+    return lastSegment !== id && TERMINAL_APP_NAMES.indexOf(lastSegment) !== -1;
 }
 
 // argv for wtype: press modifiers, press+release the key, release modifiers.
@@ -93,6 +94,7 @@ function pasteCommand(appId) {
 if (typeof module !== "undefined" && module.exports) {
     module.exports = {
         TERMINAL_APP_IDS: TERMINAL_APP_IDS,
+        TERMINAL_APP_NAMES: TERMINAL_APP_NAMES,
         normalizeAppId: normalizeAppId,
         isTerminalAppId: isTerminalAppId,
         pasteCommand: pasteCommand

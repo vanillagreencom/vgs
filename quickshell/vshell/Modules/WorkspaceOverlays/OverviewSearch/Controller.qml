@@ -9,7 +9,6 @@ import "Scorer.js" as Scorer
 import "ControllerUtils.js" as Utils
 import "NavigationHelpers.js" as Nav
 import "ItemTransformers.js" as Transform
-import "../../../Services/PasteTarget.js" as PasteTarget
 
 Item {
     id: root
@@ -146,25 +145,16 @@ Item {
     }
 
     Process {
-        id: wtypeProcess
-        running: false
-    }
-
-    Process {
         id: copyProcess
         running: false
-        onExited: pasteTimer.start()
-    }
-
-    // The delay lets focus settle back on the target after the launcher closes,
-    // so the app id resolved here is the window the keystroke reaches.
-    Timer {
-        id: pasteTimer
-        interval: 200
-        repeat: false
-        onTriggered: {
-            wtypeProcess.command = PasteTarget.pasteCommand(CompositorService.focusedAppId);
-            wtypeProcess.running = true;
+        onExited: exitCode => {
+            // Pasting after a failed copy would inject whatever stale content
+            // is still on the clipboard.
+            if (exitCode !== 0) {
+                ToastService.showError(I18n.tr("Failed to copy entry"));
+                return;
+            }
+            PasteService.injectPaste();
         }
     }
 

@@ -6,7 +6,6 @@ import Quickshell
 import Quickshell.Io
 import qs.Common
 import qs.Services
-import "PasteTarget.js" as PasteTarget
 
 Singleton {
     id: root
@@ -111,26 +110,6 @@ Singleton {
         root.pinnedCount = root.pinnedEntries.length;
         root.updateFilteredModel();
         return true;
-    }
-
-    Process {
-        id: wtypeProcess
-        running: false
-    }
-
-    // The delay lets focus settle back on the target after the clipboard
-    // surface closes, so the app id resolved here is the window the keystroke
-    // will actually reach.
-    Timer {
-        id: pasteTimer
-        interval: 200
-        repeat: false
-        onTriggered: {
-            const appId = CompositorService.focusedAppId;
-            wtypeProcess.command = PasteTarget.pasteCommand(appId);
-            log.debug("Pasting into", appId || "unknown target", "with", wtypeProcess.command.join(" "));
-            wtypeProcess.running = true;
-        }
     }
 
     // Pinned first, then newest copy first: recency is the timestamp (bumped
@@ -358,7 +337,7 @@ Singleton {
         if (closeCallback) {
             closeCallback();
         }
-        pasteTimer.start();
+        PasteService.injectPaste();
     }
 
     function pasteEntry(entry, closeCallback) {
@@ -376,7 +355,7 @@ Singleton {
             if (closeCallback) {
                 closeCallback();
             }
-            pasteTimer.start();
+            PasteService.injectPaste();
         });
     }
 

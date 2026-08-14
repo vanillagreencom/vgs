@@ -58,6 +58,17 @@ Singleton {
     // Hyprland and Niri alike. "" means "unknown", not "no app".
     readonly property string focusedAppId: ToplevelManager.activeToplevel?.appId ?? ""
 
+    // The last app id `focusedAppId` reported, held across the gaps where it is
+    // "": a shell surface taking keyboard focus clears the seat's active
+    // toplevel, and focus comes back asynchronously, so a consumer that needs a
+    // target across a popout's lifetime reads this when the live value is empty.
+    property string lastFocusedAppId: ""
+
+    onFocusedAppIdChanged: {
+        if (focusedAppId.length > 0)
+            lastFocusedAppId = focusedAppId;
+    }
+
     Component.onCompleted: {
         detectCompositor();
         refreshToplevels();
