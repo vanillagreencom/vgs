@@ -188,16 +188,22 @@ module.exports.stripComments = stripComments;
 // the thing they claim to.
 module.exports.selfTest = function selfTest() {
     // --- stripComments keeps strings, drops comments ---
+    // The property is that a DOUBLE SLASH inside a string literal is text, so the
+    // fixture is a plain string rather than a URL — a URL shape here matched a
+    // CodeQL substring-sanitization rule that has nothing to do with what this
+    // proves.
     for (const [quoted, what] of [
-        ['"http://example.com/x"', "double quotes"],
-        ["'http://example.com/x'", "single quotes"],
-        ["`http://example.com/x`", "backticks"]
+        ['"ratio 3//4 kept"', "double quotes"],
+        ["'ratio 3//4 kept'", "single quotes"],
+        ["`ratio 3//4 kept`", "backticks"]
     ]) {
         const stripped = stripComments(`const a = ${quoted}; keepMe();`);
         assert.ok(stripped.includes("keepMe()"),
             `a double slash inside ${what} is text, not a comment — dropping the rest of the ` +
             "line would let a banned literal be stripped away before the assertion sees it");
-        assert.ok(stripped.includes("example.com"), `the string itself survives (${what})`);
+        assert.ok(stripped.includes("3//4 kept"),
+            `the string's own content survives intact (${what}), which is what an assertion ` +
+            "banning a literal actually reads");
     }
     // The string's CONTENT is what proves this one: the old block-comment regex
     // left `keepMe()` alone but ate the marker out of the literal, so an
