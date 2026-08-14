@@ -69,8 +69,9 @@ assert.equal(PasteTarget.displayAppId(""), "", "an empty id stays empty");
 assert.equal(PasteTarget.displayAppId(undefined), "", "a missing id is not the string undefined");
 assert.equal(PasteTarget.displayAppId("\u202eDEROLOC"), "DEROLOC", "a right-to-left override cannot reorder the line");
 assert.equal(PasteTarget.displayAppId("\u2066a\u2069b\u200bc"), "abc", "directional isolates and zero-width spaces are stripped");
-// Endpoints of every stripped range, so a class narrowed at either edge fails.
-for (const [name, code] of [["U+200B", 0x200b], ["U+200F", 0x200f], ["U+2028", 0x2028], ["U+2029", 0x2029], ["U+202A", 0x202a], ["U+202E", 0x202e], ["U+2066", 0x2066], ["U+2069", 0x2069]]) {
+// Both endpoints of every stripped range, ASCII and Unicode alike, so a class
+// narrowed at either edge fails here rather than nowhere.
+for (const [name, code] of [["U+0000", 0x0000], ["U+001F", 0x001f], ["U+007F", 0x007f], ["U+009F", 0x009f], ["U+200B", 0x200b], ["U+200F", 0x200f], ["U+2028", 0x2028], ["U+2029", 0x2029], ["U+202A", 0x202a], ["U+202E", 0x202e], ["U+2066", 0x2066], ["U+2069", 0x2069]]) {
     assert.equal(PasteTarget.displayAppId("a" + String.fromCharCode(code) + "b"), "ab", `${name} is stripped`);
 }
 assert.equal(PasteTarget.displayAppId("a\u2028b\u2029c"), "abc", "Unicode line terminators cannot forge a line in a JS log viewer");
