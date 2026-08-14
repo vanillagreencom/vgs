@@ -68,6 +68,7 @@ const bodies = {
     injectPaste: extractBlock(source, "function injectPaste()"),
     beginInjection: extractBlock(source, "function beginInjection()"),
     cancelQueuedPaste: extractBlock(source, "function cancelQueuedPaste()"),
+    refuseUnconfirmedSeat: extractBlock(source, "function refuseUnconfirmedSeat()"),
     stopInjectorWatchdogs: extractBlock(source, "function stopInjectorWatchdogs()"),
     finishInjection: extractBlock(source, "function finishInjection(replay)"),
     reportInjectorFailedToStart: extractBlock(source, "function reportInjectorFailedToStart()"),
@@ -167,6 +168,7 @@ function makeHarness() {
         _releaseTerminationAttempts: 0,
         _injectorAwaitingStart: false,
         _releaseAwaitingStart: false,
+        _seatUnconfirmed: false,
 
         settleTimer: makeTimer("settleTimer"),
         watchdogTimer: makeTimer("watchdogTimer"),
@@ -512,6 +514,78 @@ function queuePaste(h) {
     assert.match(h.toasts[h.toasts.length - 1], /modifiers could not be released/);
     assert.equal(h.root._releaseAwaitingStart, false, "the latch must clear");
     assert.equal(h.root.releaseWatchdogTimer.running, false, "no watchdog may be left armed for it");
+}
+
+// ---- 8b. an unconfirmed seat outlives the request that discovered it ------
+
+{
+    // Per-request cancellation cannot reach this: the next paste is a brand-new
+    // request with nothing queued, and it would press a fresh chord onto the
+    // same modifiers the queued one was dropped for.
+    const h = makeHarness();
+    queuePaste(h);
+    h.started("injector");
+    h.exit("injector", 1); // partial keystroke: the release runs
+    h.started("release");
+    h.exit("release", 1); // and fails
+    assert.equal(h.root._seatUnconfirmed, true, "a release that did not come back clean must mark the seat");
+
+    const before = h.toasts.length;
+    h.root.injectPaste(); // the user tries again, seconds later
+
+    assert.equal(h.root.settleTimer.running, false, "a later request must not be armed onto an unconfirmed seat");
+    assert.equal(h.root.wtypeProcess.running, false, "and must not press a chord onto it");
+    assert.ok(h.toasts.length > before, "the user must learn why, not watch nothing happen");
+    assert.match(h.toasts[h.toasts.length - 1], /Paste is unavailable/);
+}
+
+// ---- 8c. only a confirmed release clears it, and it is reachable ----------
+
+{
+    const h = makeHarness();
+    h.root._seatUnconfirmed = true;
+
+    h.root.injectPaste();
+    assert.equal(h.root.releaseProcess.running, true, "a refused paste must retry the release, or nothing ever clears it");
+    assert.equal(h.root._seatUnconfirmed, true, "and must not clear it in advance of the answer");
+
+    h.started("release");
+    h.exit("release", 1); // still failing: the seat stays unconfirmed
+    assert.equal(h.root._seatUnconfirmed, true, "a failed retry leaves the seat exactly as it was");
+
+    h.root.injectPaste();
+    h.started("release");
+    h.exit("release", 0); // confirmed clean
+    assert.equal(h.root._seatUnconfirmed, false, "a clean release is the one thing that clears it");
+
+    h.root.injectPaste();
+    assert.equal(h.root.settleTimer.running, true, "and paste works again afterwards");
+}
+
+// ---- 8d. a replay cannot slip past the seat rule either ------------------
+
+{
+    // beginInjection is the funnel every injection passes through, so the rule
+    // holds for a paste replayed from a queue as well as for a fresh request.
+    const h = makeHarness();
+    h.root._seatUnconfirmed = true;
+    h.root._pendingPaste = true;
+    h.root.settleTimer.restart();
+
+    h.fire("settleTimer", "settleTriggered");
+
+    assert.equal(h.root.wtypeProcess.running, false, "a replayed paste must be refused on an unconfirmed seat too");
+}
+
+// ---- 8e. a release that never starts marks the seat as well --------------
+
+{
+    const h = makeHarness();
+    queuePaste(h);
+    h.started("injector");
+    h.exit("injector", 1);
+    h.failToStart("release");
+    assert.equal(h.root._seatUnconfirmed, true, "a release that never ran confirms nothing");
 }
 
 // ---- 9. the launcher's copy helper failing to start ----------------------

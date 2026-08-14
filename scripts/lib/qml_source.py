@@ -149,18 +149,53 @@ def handler_bodies(source: str, handler: str) -> list[tuple[int, int]]:
     return bodies
 
 
-def if_regions(source: str) -> list[tuple[str, int, int]]:
-    """Every `if` as (test text, start, end) of the statement it CONTROLS.
+def _statement_after(source: str, cursor: int) -> tuple[int, int] | None:
+    """The region of the statement starting at or after `cursor`.
 
-    Parens and braces are matched rather than pattern-matched, so a call inside
-    the test does not truncate it and a braceless single-statement body reads as
-    the region it is. This is what separates a real guard from a textual one:
-    code that merely follows an `if` is outside the region, an `else` branch is
-    outside it, and a test that reaches its closing paren is the whole test, so a
-    conjunct that can falsify it cannot hide off the end of a substring match.
+    A braced body reports its inside; a braceless one runs to its semicolon.
     """
-    regions: list[tuple[str, int, int]] = []
-    for match in re.finditer(r"\bif\s*\(", source):
+    while cursor < len(source) and source[cursor].isspace():
+        cursor += 1
+    if cursor >= len(source):
+        return None
+    if source[cursor] != "{":
+        end = source.find(";", cursor)
+        return cursor, len(source) if end == -1 else end + 1
+    depth = 0
+    for scan in range(cursor, len(source)):
+        if source[scan] == "{":
+            depth += 1
+        elif source[scan] == "}":
+            depth -= 1
+            if depth == 0:
+                return cursor + 1, scan
+    return None
+
+
+# Heads that govern whether the statement after them runs at all. `switch` is
+# here for its braced body; `else` has no parenthesised head and is matched
+# separately.
+CONTROL_HEAD_RE = re.compile(r"(?<![\w.$])(if|for|while|switch)\s*\(")
+ELSE_RE = re.compile(r"(?<![\w.$])else(?![\w$])")
+
+
+def control_regions(source: str) -> list[tuple[str, str, int, int]]:
+    """Every governed region as (keyword, test text, start, end).
+
+    Governed means the statement does not necessarily run: an `if` may not take
+    its branch, a `for` or `while` may not reach a first iteration, an `else`
+    runs only when its `if` did not, a `switch` may match no case. Recognising
+    only `if` reads a `for (...) return;` as an unconditional return, a guard
+    passing on code that can fall straight through it.
+
+    Parens and braces are matched rather than pattern-matched, so a call in a
+    test does not truncate it and a braceless body reads as the region it is.
+    Code that merely follows a construct is outside its region, and a test read
+    to its closing paren is the whole test, so a conjunct that can falsify it
+    cannot hide off the end of a substring match.
+    """
+    regions: list[tuple[str, str, int, int]] = []
+    for match in CONTROL_HEAD_RE.finditer(source):
         depth = 0
         close = -1
         for cursor in range(match.end() - 1, len(source)):
@@ -173,45 +208,46 @@ def if_regions(source: str) -> list[tuple[str, int, int]]:
                     break
         if close == -1:
             continue
-        test = source[match.end():close]
-        cursor = close + 1
-        while cursor < len(source) and source[cursor].isspace():
-            cursor += 1
-        if cursor >= len(source):
-            continue
-        if source[cursor] != "{":
-            end = source.find(";", cursor)
-            regions.append((test, cursor, len(source) if end == -1 else end + 1))
-            continue
-        depth = 0
-        for scan in range(cursor, len(source)):
-            if source[scan] == "{":
-                depth += 1
-            elif source[scan] == "}":
-                depth -= 1
-                if depth == 0:
-                    regions.append((test, cursor + 1, scan))
-                    break
+        region = _statement_after(source, close + 1)
+        if region is not None:
+            regions.append((match.group(1), source[match.end():close], *region))
+    for match in ELSE_RE.finditer(source):
+        # `else if` needs no separate entry: the `if` head that follows governs
+        # the same statement, and one region covering it is enough.
+        region = _statement_after(source, match.end())
+        if region is not None:
+            regions.append(("else", "", *region))
     return regions
 
 
-def returns_unconditionally(source: str, regions: list[tuple[str, int, int]], start: int, end: int) -> bool:
+def if_regions(source: str) -> list[tuple[str, int, int]]:
+    """Every `if` as (test text, start, end) of the statement it CONTROLS.
+
+    The `if` subset of `control_regions`, for callers asking whether a specific
+    test guards a specific statement.
+    """
+    return [(test, start, end) for keyword, test, start, end in control_regions(source) if keyword == "if"]
+
+
+def returns_unconditionally(source: str, start: int, end: int) -> bool:
     """Whether `source[start:end]` returns whenever it is entered.
 
     The return has to sit at the region's own brace depth — so a return inside a
-    nested block or a callback does not count — and inside no `if` nested within
-    the region, which is the braceless form of the same hole.
+    nested block or a callback does not count — and inside no construct nested
+    within the region that governs whether it runs. A branch is the obvious one;
+    a loop that may iterate zero times is the same hole wearing another keyword.
     """
+    regions = control_regions(source)
     for match in re.finditer(r"\breturn\b", source[start:end]):
         offset = start + match.start()
         if source.count("{", start, offset) != source.count("}", start, offset):
             continue
-        nested = any(
+        governed = any(
             inner_start <= offset < inner_end
-            for _, inner_start, inner_end in regions
+            for _, _, inner_start, inner_end in regions
             if start <= inner_start and inner_end <= end and (inner_start, inner_end) != (start, end)
         )
-        if not nested:
+        if not governed:
             return True
     return False
 
@@ -219,12 +255,10 @@ def returns_unconditionally(source: str, regions: list[tuple[str, int, int]], st
 def _selftest() -> int:
     """Pin the discriminations these helpers exist to make.
 
-    Each pair below is a shape a wiring check must separate from its neighbour:
-    a guard from code that merely follows one, a whole test from a test with a
-    conjunct hung off it, an unconditional return from one behind another
-    condition. A helper that stopped separating them would still answer every
-    call, and every check built on it would still pass, which is why they are
-    asserted here rather than left to whichever rule happens to depend on them.
+    Each check below is a shape a wiring check must separate from its neighbour.
+    A helper that stopped separating them would still answer every call, and
+    every check built on it would still pass — which is why they are asserted
+    here rather than left to whichever rule happens to depend on them.
     """
     failures: list[str] = []
 
@@ -288,27 +322,35 @@ def _selftest() -> int:
     )
 
     # --- returns_unconditionally -------------------------------------------
-    def returns(source: str) -> bool:
-        regions = if_regions(source)
-        start, end = next((s, e) for test, s, e in regions if test.strip() == "bad")
-        return returns_unconditionally(source, regions, start, end)
+    def returns(body: str) -> bool:
+        source = "if (bad) {\n" + body + "\n}\n"
+        start, end = next((s, e) for test, s, e in if_regions(source) if test.strip() == "bad")
+        return returns_unconditionally(source, start, end)
 
-    check("a return at the region's own depth counts", returns("if (bad) {\n    return;\n}\n"), True)
+    check("a return at the region's own depth counts", returns("    return;"), True)
+    # Everything that can stop the return from running.
+    check("a return behind a nested if does not", returns("    if (worse)\n        return;"), False)
+    check("a return behind a braced if does not", returns("    if (worse) {\n        return;\n    }"), False)
+    check("a return in a braceless for does not", returns("    for (const x of xs)\n        return;"), False)
+    check("a return in a braced for does not", returns("    for (;;) {\n        return;\n    }"), False)
+    check("a return in a braceless while does not", returns("    while (more)\n        return;"), False)
+    check("a return in an else branch does not", returns("    if (a)\n        log();\n    else\n        return;"), False)
+    check("a return in a switch case does not", returns("    switch (a) {\n    case 1:\n        return;\n    }"), False)
+    check("a return inside a nested block does not", returns("    once(() => {\n        return;\n    });"), False)
+    # ...and the other direction, so the helper is not simply answering False.
+    check("a return after a nested if still counts", returns("    if (worse)\n        log();\n    return;"), True)
+    check("a return after a loop still counts", returns("    for (const x of xs)\n        log(x);\n    return;"), True)
+    check("a return after an if/else still counts", returns("    if (a)\n        log();\n    else\n        warn();\n    return;"), True)
+
+    # --- control_regions ---------------------------------------------------
     check(
-        "a return behind a nested if does not",
-        returns("if (bad) {\n    if (worse)\n        return;\n}\n"),
-        False,
+        "every governing keyword is recognised",
+        sorted({keyword for keyword, _, _, _ in control_regions(
+            "if (a) x();\nfor (;;) y();\nwhile (b) z();\nswitch (c) { }\nif (d) e(); else f();\n"
+        )}),
+        ["else", "for", "if", "switch", "while"],
     )
-    check(
-        "a return inside a nested block does not",
-        returns("if (bad) {\n    once(() => {\n        return;\n    });\n}\n"),
-        False,
-    )
-    check(
-        "a return after a nested if still counts",
-        returns("if (bad) {\n    if (worse)\n        log();\n    return;\n}\n"),
-        True,
-    )
+    check("a word ending in a keyword is not a keyword", control_regions("notif (a) x();\n"), [])
 
     # --- enclosing_function_body -------------------------------------------
     two = (
@@ -331,8 +373,8 @@ def _selftest() -> int:
         enclosing_function_body(handler, handler.index("x = 1")),
         (handler.index("{"), "{\n    x = 1;\n}"),
     )
-    # An object body is not a function: widening to it is what would let a guard
-    # in one handler stand in for the missing guard in another.
+    # Widening to an object body would let one handler's guard stand in for
+    # another handler's missing one.
     plain = "Item {\n    x = 1;\n}\n"
     check("a plain object body is not a function", enclosing_function_body(plain, plain.index("x = 1")), None)
     check("no enclosing block at all is None", enclosing_function_body("x = 1;\n", 2), None)

@@ -39,13 +39,35 @@ Singleton {
     // and the paste ends with no keystroke and no error.
     property bool _injectorAwaitingStart: false
     property bool _releaseAwaitingStart: false
+    // The seat holds modifiers VGS pressed and could not confirm releasing.
+    // Set by every release that does not come back clean, and cleared by
+    // nothing but one that does — not by a timer, not by the next attempt, not
+    // by time passing. VGS cannot observe the seat, so anything else would be a
+    // guess recorded as a fact, and the fact it stands in for is whether the
+    // next chord lands on top of a held ctrl.
+    property bool _seatUnconfirmed: false
 
     // Injects paste into whatever window holds focus once the calling surface
     // has closed. Callers check SessionService.wtypeAvailable first and report
     // the missing dependency themselves, since only they know which UI to
     // attach the message to.
     function injectPaste() {
+        if (_seatUnconfirmed) {
+            refuseUnconfirmedSeat();
+            return;
+        }
         settleTimer.restart();
+    }
+
+    // The seat is unaccounted for, so no chord may be pressed onto it — and
+    // saying only "no" would leave paste dead until the shell restarts. So the
+    // refusal carries the one way back: another release, whose clean exit is the
+    // only thing that clears the flag. A user who keeps pressing paste keeps
+    // retrying the recovery, and learns each time why nothing happened.
+    function refuseUnconfirmedSeat() {
+        log.warn("Paste requested while the seat may still hold ctrl or shift - refusing and retrying the release");
+        ToastService.showError(I18n.tr("Paste is unavailable"), I18n.tr("The paste modifiers could not be released"));
+        startModifierRelease();
     }
 
     // Focus returns to the target asynchronously — KeyboardFocus restores it
@@ -82,6 +104,13 @@ Singleton {
     // calling it during one would relabel the target and re-arm the watchdog
     // for an injection it did not start.
     function beginInjection() {
+        // Not a copy of the entry-point check: this is the one place an
+        // injection begins, so it is where the seat rule holds regardless of
+        // what reached it — a fresh request, or a paste replayed from a queue.
+        if (_seatUnconfirmed) {
+            refuseUnconfirmedSeat();
+            return;
+        }
         // "" from focusedAppId means the compositor reports no active toplevel,
         // which is normal while a shell surface holds keyboard focus, so the
         // last window known to have focus is the target.
@@ -114,12 +143,13 @@ Singleton {
         finishInjection(false);
     }
 
-    // Drops the queued paste for the reason spelled out at the release's exit
-    // handler, and lets a later request through on the same reasoning.
+    // A release that never ran confirms nothing, so it marks the seat and drops
+    // the queue exactly as a failed one does.
     function reportReleaseFailedToStart() {
         _releaseAwaitingStart = false;
         releaseWatchdogTimer.stop();
         releaseEscalationTimer.stop();
+        _seatUnconfirmed = true;
         log.warn("Modifier release did not start - the seat may still hold ctrl or shift");
         ToastService.showError(I18n.tr("Paste is unavailable"), I18n.tr("The paste modifiers could not be released"));
         cancelQueuedPaste();
@@ -239,23 +269,22 @@ Singleton {
             root._releaseTerminationAttempts = 0;
             root._helperStuck = false;
             if (exitCode !== 0) {
-                // Ctrl or shift may still be held. Running a queued paste now
-                // would press the next chord on top of a modifier state VGS
-                // cannot account for, which is the wrong-keystroke outcome this
-                // service exists to prevent.
-                //
-                // A paste the user asks for AFTER this is let through onto that
-                // same seat, and the asymmetry is deliberate: the queued one
-                // would run unattended, while a fresh request is a choice made
-                // with the toast on screen. Refusing those too would disable
-                // paste for the session over a failure that is usually transient,
-                // and VGS has no way to observe the seat to know when to stop.
+                // Ctrl or shift may still be held, and that outlives this
+                // request: dropping the queued paste alone would leave the next
+                // one, seconds later with nothing queued, free to press a fresh
+                // chord onto the same held modifiers. So the seat itself is
+                // marked, and every injection is refused until a release comes
+                // back clean.
+                root._seatUnconfirmed = true;
                 root.log.warn("Releasing the paste modifiers failed - exit", exitCode, "- dropping any queued paste");
                 ToastService.showError(I18n.tr("Paste is unavailable"), I18n.tr("The paste modifiers could not be released"));
                 root.cancelQueuedPaste();
                 root.finishInjection(false);
                 return;
             }
+            // The only thing that can vouch for the seat: this run pressed
+            // nothing and released both modifiers, and it exited saying so.
+            root._seatUnconfirmed = false;
             root.finishInjection(true);
         }
     }
@@ -295,6 +324,7 @@ Singleton {
                 releaseProcess.signal(9);
                 return;
             }
+            root._seatUnconfirmed = true;
             root.log.warn("Modifier release survived SIGKILL - the seat may still hold ctrl or shift, and paste stays unavailable until it exits");
             ToastService.showError(I18n.tr("Paste is unavailable"), I18n.tr("The paste helper could not be stopped"));
             root._helperStuck = true;

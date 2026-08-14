@@ -45,7 +45,10 @@ Pinned, over the QML and JS under `quickshell/vshell/` and `config/vshell/`
      from inside a branch whose whole test is the non-zero exit-code comparison,
      and that branch closes before the paste. The test must carry no further
      conjunct that could falsify it, and the return must be unconditional within
-     the branch — at the branch's own brace depth and inside no nested `if`.
+     the branch — at the branch's own brace depth and inside nothing nested that
+     governs whether it runs, which is a branch or a loop alike: a loop that may
+     iterate zero times returns no more reliably than an `if` that may not be
+     taken.
 
 Comments are blanked before any pattern runs, so commented-out code satisfies
 nothing. The structural reading these rules stand on — blanking, brace and paren
@@ -345,7 +348,7 @@ def check_launcher_copy_result() -> bool:
                 "against non-zero — an extra conjunct does not count, since it can falsify the test and "
                 "paste whatever stale content is still on the clipboard"
             )
-        if not any(returns_unconditionally(source, regions, *span) for span in failing):
+        if not any(returns_unconditionally(source, *span) for span in failing):
             return fail(
                 f"{LAUNCHER} tests the copy's exit code but does not unconditionally return from that "
                 "branch, so a failed copy still reaches the paste"
