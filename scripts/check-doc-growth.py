@@ -28,6 +28,15 @@ Three failure shapes:
    updates or drops the entry in the same PR — a stale entry is coverage that
    does not exist.
 
+4. **A ceilings comment records a size the file no longer has.** Growth UNDER a
+   ceiling is deliberately free, so nothing used to force these figures to be
+   refreshed — and they went stale five times across VGS-124's review, three of
+   its fix rounds spent re-deriving them by hand. The rationales lean on the
+   numbers ("~10% headroom", "almost none"), so a wrong one is the audit trail
+   failing quietly. Update the figure; do not loosen the parser. An entry that
+   records no size at all is fine, and `adopted at N B` IS the recorded size for
+   the many entries that only state that.
+
 docs/decisions/*.md are deliberately NOT watched: decision records are where
 content dieted out of AGENTS.md goes to live (VGS-105, VGS-107), so a ceiling
 there would penalize exactly the move the diet depends on. They are read on
@@ -37,10 +46,12 @@ demand, not loaded ambiently.
 from __future__ import annotations
 
 import math
+import re
 import sys
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
+SELF = Path(__file__).resolve()
 
 # Ceilings in bytes. Adoption rule (VGS-108): size measured on post-diet main
 # plus ~10% headroom, rounded up to the next 100 bytes; each comment records
@@ -198,9 +209,143 @@ WATCHED_GLOBS = (
 # same thing; a budget nobody chose is just a tight ceiling.
 HARD_BUDGETS = frozenset({"AGENTS.md"})
 
+# ─── RECORDED SIZES ─────────────────────────────────────────────────────────
+#
+# Each entry's comment records what the file measured, and the rationale above
+# it reasons from that number. The phrasings below are the ones this file
+# actually uses; a figure not introduced by one of them is not a measurement —
+# that is what keeps ceilings ("7,200 keeps ~10% headroom"), arithmetic ("plus
+# ~10% is 539") and remainders ("~190 B left") out of the comparison.
+#
+# The LAST match wins, by position. Comments are written chronologically —
+# adoption first, revisions appended — so the newest measurement is the current
+# one, and the superseded figures a rationale narrates stay readable without
+# being mistaken for today's size.
+RECORDED_SIZE_PATTERNS = (
+    re.compile(r"\badopted at\s+([\d,_]+)\s*B\b", re.I),
+    re.compile(r"\bat the resulting\s+([\d,_]+)\s*B\b", re.I),
+    re.compile(r"\bat the final\s+([\d,_]+)\s*B\b", re.I),
+    re.compile(r"\bnow\s+([\d,_]+)\s*B\b", re.I),
+    re.compile(r"\bthe file is\s+([\d,_]+)\s*B\b", re.I),
+    # "adopted at 18,453 B; 18,569 after VGS-124" — a revision written as a
+    # bare number rather than a phrase.
+    re.compile(r";\s*([\d,_]+)\s+after\b", re.I),
+)
+
+ENTRY_LINE = re.compile(r'^    "([^"]+)":\s*[\d_]+,(?:\s*#\s*(.*))?$')
+
+
+def recorded_size(comment: str) -> int | None:
+    """The size a comment records, or None when it records none."""
+    latest: tuple[int, int] | None = None
+    for pattern in RECORDED_SIZE_PATTERNS:
+        for match in pattern.finditer(comment):
+            value = int(match.group(1).replace(",", "").replace("_", ""))
+            if latest is None or match.start() > latest[0]:
+                latest = (match.start(), value)
+    return None if latest is None else latest[1]
+
+
+def ceiling_comments(source: str) -> dict[str, str]:
+    """Each CEILINGS entry mapped to its own comment, from this file's text."""
+    body = source.split("CEILINGS: dict[str, int] = {", 1)[1].split("\n}\n", 1)[0]
+    comments: dict[str, str] = {}
+    pending: list[str] = []
+    for line in body.split("\n"):
+        stripped = line.strip()
+        if stripped.startswith("#"):
+            pending.append(stripped.lstrip("#").strip())
+            continue
+        match = ENTRY_LINE.match(line)
+        if match:
+            comments[match.group(1)] = " ".join(filter(None, [*pending, match.group(2) or ""]))
+        pending = []
+    return comments
+
+
+def recorded_size_problems(source: str, sizes: dict[str, int]) -> list[str]:
+    """Entries whose comment records a size the file no longer has."""
+    comments = ceiling_comments(source)
+    missed = sorted(sizes.keys() - comments.keys())
+    if missed:
+        return [
+            f"the CEILINGS comment parser read {len(comments)} entries and missed "
+            f"{len(missed)} that have a measured size to check, so this arm cannot "
+            f"report a stale figure for them. First unread: {missed[:3]}. Fix the "
+            f"parser rather than the table — an arm that reads nothing passes "
+            f"everything."
+        ]
+    problems = []
+    for rel, size in sizes.items():
+        stated = recorded_size(comments[rel])
+        if stated is not None and stated != size:
+            problems.append(
+                f"{rel}'s ceiling comment records {stated:,} bytes but the file is "
+                f"{size:,}. The rationale reasons from that number, so update it to "
+                f"the measured size in this PR — the figure is the audit trail, and a "
+                f"wrong one is worse than none."
+            )
+    return problems
+
+
+# Fixtures for the arm above, run on every invocation rather than behind a flag:
+# it exists because stale figures went unnoticed five times, and a control that
+# can be skipped is that same failure one level up. Each shape in real use is
+# covered, so no single phrasing can quietly stop being recognised.
+RECORDED_SIZE_FIXTURES = (
+    ("adopted at 671 B", 671),
+    ("Adopted at 962 B. ... That 3,500 kept ~10% headroom at the resulting 3,116 B.", 3_116),
+    ("Adopted at 302 B. 600 is the adoption rule applied at the final 490 B size.", 490),
+    ("7,200 keeps ~10% headroom at the final 6,490 B size. Now 6,569 B (~9.6% left).", 6_569),
+    ("4,500 is a budget the issue set: the file is 4,498 B, so there is almost none.", 4_498),
+    ("adopted at 18,453 B; 18,569 after VGS-124", 18_569),
+    ("owner-approved risk-class sections earned the bytes", None),
+)
+
+
+def self_test() -> list[str]:
+    """The arm must be able to fail, and must not fire on correct records."""
+    failures = []
+    for comment, expected in RECORDED_SIZE_FIXTURES:
+        actual = recorded_size(comment)
+        if actual != expected:
+            failures.append(
+                f"recorded_size read {actual!r}, expected {expected!r}, from: {comment!r}"
+            )
+
+    # The must-fail control: a wrong figure has to be REPORTED. Driven through
+    # the real comparison, not just the parser, so the arm is proven end to end.
+    fixture_source = (
+        'CEILINGS: dict[str, int] = {\n'
+        '    "fixture.md": 900,  # adopted at 800 B\n'
+        '}\n'
+    )
+    if not recorded_size_problems(fixture_source, {"fixture.md": 850}):
+        failures.append(
+            "a comment recording 800 B for an 850-byte file was accepted, so this arm "
+            "is vacuous and every recorded size is unchecked."
+        )
+    # Reports what it actually got: a broken entry parser reaches here too, and
+    # calling that "fires on correct records" would name the wrong cause — the
+    # mistake this file's other diagnostics were fixed for twice.
+    spurious = recorded_size_problems(fixture_source, {"fixture.md": 800})
+    if spurious:
+        failures.append(
+            f"a comment recording 800 B for an 800-byte file was not accepted: {spurious}"
+        )
+    return failures
+
 
 def main() -> int:
+    broken = self_test()
+    if broken:
+        print("check-doc-growth: FAIL (self-test)", file=sys.stderr)
+        for problem in broken:
+            print(f"  - {problem}", file=sys.stderr)
+        return 1
+
     problems: list[str] = []
+    sizes: dict[str, int] = {}
 
     # A budget naming a path with no ceiling would never be consulted, so the
     # entry would look like policy while enforcing nothing.
@@ -220,6 +365,7 @@ def main() -> int:
             )
             continue
         size = path.stat().st_size
+        sizes[rel] = size
         if size > ceiling:
             if rel in HARD_BUDGETS:
                 problems.append(
@@ -242,6 +388,10 @@ def main() -> int:
                 f"keeps ~10% headroom at today's size) with a rationale comment "
                 f"saying what earned the bytes."
             )
+
+    # Only over entries whose file exists: a missing one is already reported
+    # above, and its comment says nothing about a file that is not there.
+    problems.extend(recorded_size_problems(SELF.read_text(encoding="utf-8"), sizes))
 
     for pattern in WATCHED_GLOBS:
         matched = False
