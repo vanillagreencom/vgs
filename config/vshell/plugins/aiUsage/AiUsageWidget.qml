@@ -286,13 +286,25 @@ PluginComponent {
         // The filing stamp this launch started at, so its failure can tell a
         // payload that predates it from one filed while it was running.
         property int launchSeq: 0
+        // The two halves of a finished fetch. Nothing orders stdout closing
+        // against the exit, so a fetch settles only once BOTH have landed:
+        // settling on the exit alone cleared the tag acceptPayload decodes
+        // against, and a VALID payload arriving second was then discarded as a
+        // provider mismatch and refetched — the inverse of the rule this issue
+        // exists to enforce, and a retry spent on a fetch that succeeded.
+        property bool outDone: false
+        property bool exitDone: false
 
         property Process proc: Process {
             command: [root.aiUsageCommand, "ai-usage", chan.want]
             running: false
             stdout: StdioCollector {
                 id: outCollector
-                onStreamFinished: root.acceptPayload(chan, outCollector.text)
+                onStreamFinished: {
+                    chan.outDone = true;
+                    root.acceptPayload(chan, outCollector.text);
+                    root.completeFetch(chan);
+                }
             }
             stderr: StdioCollector {
                 id: errCollector
@@ -341,6 +353,17 @@ PluginComponent {
             onTriggered: root.failLaunch(chan)
         }
 
+        // The grace an exit gives stdout to close, and the only reason waiting for
+        // both halves cannot hang: a helper can leave its stdout open in a child
+        // it spawned, so the payload half may never arrive at all. Long enough
+        // that an ordinary close always wins it, short enough that a fetch is not
+        // left sitting on one that never comes.
+        property Timer flushTimer: Timer {
+            id: flushTimer
+            interval: 1000
+            onTriggered: root.settleFetch(chan)
+        }
+
         // A retry waits. Deferring it to the next event-loop turn spent the whole
         // budget in consecutive turns — four calls to a provider usage API as
         // fast as the loop turns, once per configured bar — which gives a
@@ -357,16 +380,24 @@ PluginComponent {
         // timers stop here, and a request parked for the previous selection goes
         // with them, since clearProviderState refreshes anyway.
         //
-        // The TAG is the deliberate part. It survives while something can still
-        // settle it — a running process delivers an exit, and its payload is
+        // The TAG is the deliberate part, and the question is about the LAUNCH,
+        // not about the process object. A launch that produced a process has an
+        // exit coming, and that exit must settle its own fetch — its payload is
         // attributed by the payload's own provider rather than by this channel's
-        // `want`, so nothing it does can be read as the new provider's. Clearing
-        // it there would let that exit settle whatever fetch is running by then.
-        // A launch that never produced a process has no exit coming, and the
-        // watchdog that would have said so was just stopped, so leaving its tag
-        // would own the channel with nothing to settle it. The switch therefore
-        // settles exactly the launches the watchdog would have — one rule, asked
-        // here as its third consumer.
+        // rebound `want`, so nothing it does can be read as the new provider's.
+        // A launch that produced none has no exit coming and its watchdog has
+        // just been stopped, so leaving the tag would own the channel with
+        // nothing to settle it, and every later refresh would answer "skip"
+        // forever. Asking `proc.running` here instead was a bug of exactly the
+        // shape this issue is about: it reads back TRUE for a start that failed
+        // (measured on Quickshell 0.3.0 — a nonexistent binary reports the
+        // failure only later, as runningChanged), which is the one case the
+        // clear exists for. So the switch settles exactly the launches the
+        // watchdog would have — one rule, asked here as its third consumer.
+        //
+        // Clearing it while a process is still starting is safe: launch() parks
+        // a request whenever `running` is true, so no new tag can be taken while
+        // that process could still deliver an exit.
         function reset() {
             loaded = "";
             retries = 0;
@@ -374,8 +405,9 @@ PluginComponent {
             issue = "";
             stallTimer.stop();
             retryTimer.stop();
+            flushTimer.stop();
             pending = false;
-            if (!proc.running && logic.watchdogArms(inFlight, sawProcess))
+            if (logic.watchdogArms(inFlight, sawProcess))
                 inFlight = "";
         }
     }
@@ -472,6 +504,9 @@ PluginComponent {
         ch.accepted = false;
         ch.issue = "";
         ch.errorOut = "";
+        ch.outDone = false;
+        ch.exitDone = false;
+        ch.flushTimer.stop();
         // The previous launch's watchdog is armed in exactly the state this one
         // starts from — tag set, process not running — so leaving it running let
         // it fire against THIS fetch: "could not run" for a healthy process,
@@ -494,11 +529,28 @@ PluginComponent {
         // — a relaunch that was by then running.
         if (ch.inFlight === "")
             return;
+        ch.exitDone = true;
         if (!ch.accepted && (exitCode !== 0 || exitStatus !== 0)) {
             const reason = logic.stderrReason(ch.errorOut, root.maxIssueChars);
             ch.issue = (exitStatus !== 0 ? "helper killed" : "helper exited " + exitCode)
                 + (reason !== "" ? ": " + reason : "");
             console.warn("aiUsage: " + ch.inFlight + " fetch " + ch.issue);
+        }
+        root.completeFetch(ch);
+    }
+
+    // Both halves of a finished fetch, in whichever order they land. The tag has
+    // to outlive the payload path, because that is what the payload is decoded
+    // against; settling on the exit alone made a valid payload look like another
+    // provider's. Whichever half lands last settles, and an exit that lands first
+    // gives stdout a bounded grace rather than an open-ended wait.
+    function completeFetch(ch) {
+        if (ch.inFlight === "")
+            return;
+        if (!ch.outDone || !ch.exitDone) {
+            if (ch.exitDone)
+                ch.flushTimer.restart();
+            return;
         }
         root.settleFetch(ch);
     }
@@ -523,6 +575,7 @@ PluginComponent {
         if (ch.inFlight === "")
             return;
         ch.stallTimer.stop();
+        ch.flushTimer.stop();
 
         // Relaunch whenever this channel is not holding the provider it should
         // be, or this fetch delivered nothing — misattributed, arrived after the

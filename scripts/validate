@@ -180,6 +180,7 @@ packaging | scripts/check-aur-sync.py
 -         | scripts/test-ai-usage-wiring.js
 -         | scripts/test-ai-usage-view.js
 -         | scripts/test-ai-usage-filing.js
+-         | scripts/test-ai-usage-lifecycle.js
 -         | scripts/check-notification-takeover.js
 -         | scripts/test-remote-desktop-state.js
 -         | scripts/test-idle-reload-snapshot.js

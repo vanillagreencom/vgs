@@ -104,13 +104,20 @@ requires(channel, "FetchChannel", [
     ["onTriggered: root.launch(chan)", "which relaunches THIS channel when the wait is over"],
     ['property string want: ""', "and the provider it fetches"],
     ["property bool primary: false", "and whether a failure of its reaches the popout"],
-    ["onStreamFinished: root.acceptPayload(chan, outCollector.text)",
-        "stdout goes to this channel's accept path"],
+    ["chan.outDone = true; root.acceptPayload(chan, outCollector.text);",
+        "stdout marks its half done and goes to this channel's accept path, IN THAT ORDER"],
+    ["root.completeFetch(chan)",
+        "and then asks whether the fetch is finished — settling on the exit alone cleared the " +
+        "tag the payload is decoded against, discarding a valid payload as a mismatch"],
+    ["property Timer flushTimer: Timer {",
+        "and an exit that lands first waits on a BOUNDED grace, so a stream that never closes " +
+        "still settles"],
     ["onStreamFinished: chan.errorOut = errCollector.text",
         "stderr is captured when the stream ends, not read at exit time: StdioCollector fills " +
         "text only once the stream closes, which is the repo idiom"],
     ["onExited: (exitCode, exitStatus) => root.finishFetch(chan, exitCode, exitStatus)",
         "the exit carries both the code and the status of THIS channel's process"],
+    ["onTriggered: root.settleFetch(chan)", "and the grace timer settles this channel's fetch"],
     ["onStarted: chan.sawProcess = true",
         "and a launch that produced a process records it, which is what tells a slow exit " +
         "from a start that never ran"],
@@ -148,61 +155,19 @@ const otherChannel = channelNamed("otherFetch");
 assert.ok(otherChannel.includes("want: root.otherProvider"), "the other channel fetches the other provider");
 assert.ok(!otherChannel.includes("primary"), "and does not own the popout");
 
-// --- launching --------------------------------------------------------------
-
-const launch = body("launch");
-requires(launch, "launch()", [
-    ["logic.launchDecision(ch.inFlight, ch.proc.running)",
-        "whether a launch can start now is the extracted decision, not an inline guess"],
-    ['decision === "skip"', "an in-flight channel is left alone"],
-    ['decision === "pend"', "a launch requested while the process is still stopping is parked"],
-    ["ch.pending = true", "which is what parks it"],
-    ["ch.inFlight = ch.want", "a start tags the channel with what it is fetching"],
-    ["ch.proc.running = true", "and runs the channel's own process"],
-    // Per-fetch resets: `accepted` carrying over makes a poll that produced
-    // nothing read as satisfied, so the widget silently holds the old numbers.
-    ["ch.accepted = false", "a new fetch has not been answered yet"],
-    ['ch.issue = ""', "and carries no failure reason yet"],
-    ['ch.errorOut = ""', "and must not read the previous fetch's stderr as its own cause"],
-    ["ch.retryTimer.stop()", "and supersedes any retry still waiting to fire"],
-    ["ch.launchSeq = root.fileSeq", "and stamps the launch, so its failure can order itself"],
-    // The watchdog was left running across a launch once: it then fired against
-    // THIS fetch — "could not run" for a healthy process, whose payload was
-    // discarded and its retry spent.
-    ["ch.stallTimer.stop()", "the previous fetch's watchdog is disarmed first"],
-    ["ch.sawProcess = false",
-        "and the previous launch's process is forgotten, or a failed start after a good fetch " +
-        "would be waited out as though a process were still running"]
-]);
-assert.ok(!stripComments(launch).includes("if (!ch.proc.running)"),
-    "a runtime `running = true` reads back true even for a missing binary (measured, Quickshell " +
-    "0.3.0), so a synchronous check catches nothing — and at component completion it reads " +
-    "false for a deferred start, failing a healthy fetch");
-
-// A start that fails asynchronously reports nothing: Qt emits no exit for it.
-requires(channel, "the channel's runningChanged handler", [
-    ["logic.watchdogArms(chan.inFlight, chan.sawProcess)",
-        "the watchdog is armed for a launch that never produced a process — arming on ANY stop " +
-        "while tagged made a slow exit read as a start that never ran"],
-    ["stallTimer.restart()", "which is what arms it"],
-    // One statement: `root.launch(chan)` alone also occurs in the retry handler.
-    ['if (chan.inFlight === "" && chan.pending) root.launch(chan)',
-        "and a parked launch is applied only once the channel can TAKE it: draining it against " +
-        "a tag that is still owned re-parked it, leaving the channel with nothing running, " +
-        "nothing armed and no settle path — no fetch again until a provider switch"],
-    ["onTriggered: root.failLaunch(chan)", "the watchdog routes a failed start into the failure path"]
-]);
-// THE INVARIANT: a stop with a tag still set always leaves something that will
-// settle the channel, so the arming question cannot sit behind an early return.
-const stops = handlers("onRunningChanged");
-assert.equal(stops.length, 1, "one stop handler, on the channel's own process");
-assert.ok(stops[0].indexOf("watchdogArms") < stops[0].indexOf("chan.pending"),
-    "the arming question is asked BEFORE the parked request is drained, or a parked request " +
-    "swallows it and nothing settles the channel at all");
-
 // Both failure paths are idempotent: whichever settles the fetch first owns it.
 assert.ok(body("finishFetch").includes('if (ch.inFlight === "")'),
     "an exit arriving after the watchdog settled must not report twice, nor settle a relaunch");
+
+requires(body("completeFetch"), "completeFetch()", [
+    ['if (ch.inFlight === "")', "a settled fetch is not completed twice"],
+    ["if (!ch.outDone || !ch.exitDone)", "BOTH halves must have landed, in either order — the " +
+        "tag has to outlive the payload path, which is what the payload is decoded against"],
+    ["if (ch.exitDone) ch.flushTimer.restart()", "and only an exit that landed first waits, " +
+        "on a bound, so a stream that never closes cannot hang the fetch"],
+    ["root.settleFetch(ch)", "and the last half in settles"]]);
+requires(body("finishFetch"), "the exit half of finishFetch()", [
+    ["ch.exitDone = true", "the exit records its half rather than settling on its own"]]);
 
 requires(body("failLaunch"), "failLaunch()", [
     ["if (!logic.watchdogArms(ch.inFlight, ch.sawProcess))",
@@ -223,8 +188,8 @@ requires(finish, "finishFetch()", [
     ["logic.stderrReason(ch.errorOut, root.maxIssueChars)",
         "the reason is the captured stderr's last line, truncated"],
     ["console.warn", "the failure has to reach vshell logs, or the cause exists nowhere"],
-    ["root.settleFetch(ch)", "and then settles through the shared path"]
-]);
+    ["root.completeFetch(ch)", "and then asks whether BOTH halves have landed, rather than " +
+        "settling on the exit alone"]]);
 // The provider suite proves stderrReason honours the limit it is handed; what is
 // left to pin is the number the widget hands it. A five-digit "cap" is none.
 const capMatch = code.match(/property int maxIssueChars: (\d+)/);
@@ -290,24 +255,6 @@ requires(cleared, "clearProviderState()", [
     ["otherFetch.reset()", "the other channel is invalidated through the same path"]]);
 assert.ok(!/providerData/.test(stripComments(cleared)),
     "the per-provider headlines are keyed by identity and survive a switch");
-
-// Every reset must assign a LITERAL reset value: `x = x` also matches "x =".
-const reset = blockFrom(indexOf("function reset()"), "FetchChannel.reset()");
-for (const [field, value] of [["loaded", '""'], ["retries", "0"], ["accepted", "false"],
-                              ["issue", '""']])
-    assert.ok(reset.includes(`${field} = ${value};`),
-        `a channel reset must set ${field} back to ${value}`);
-requires(reset, "FetchChannel.reset()", [
-    ["stallTimer.stop()", "a switch disarms the watchdog: nothing armed before the generation " +
-        "boundary may act after it"],
-    ["retryTimer.stop()", "and the retry that was waiting to relaunch into it"],
-    ["pending = false", "and drops a request parked for the previous selection"],
-    // BOTH halves matter: a running process still delivers an exit that must
-    // settle its own fetch, while a launch that produced none has nothing coming
-    // once the watchdog above is stopped — and a tag with no settle path is the
-    // wedge this branch already fixed once.
-    ["if (!proc.running && logic.watchdogArms(inFlight, sawProcess)) inFlight = \"\"",
-        "so the switch settles exactly the launches the watchdog would have, and only those"]]);
 
 const switched = blockFrom(indexOf("onProviderChanged:"), "onProviderChanged");
 const invalidateAt = switched.indexOf("clearProviderState()");
