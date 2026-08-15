@@ -46,11 +46,15 @@ it closes; shell and jq spellings are not, which is why that apparatus went to
 VGS-156. Answer any future "the check missed spelling X" by asking whether the
 PARSER can decide it, not by adding a pattern.
 
-THE LOCATOR IS SUBORDINATE TO THE PARSER and cannot skip what the parser saw: a
-key tomllib reports whose assignment the raw scan cannot locate is a loud failure
-naming that key, never a pass. So any spelling tomllib understands is either
-located and checked, or a clear error — which is why no further spelling can pass
-in silence, whatever it turns out to be.
+THE LOCATOR IS SUBORDINATE TO THE PARSER, in both directions and as one rule:
+every key tomllib reports must be bound to the raw span belonging to THAT KEY'S
+TABLE — never skipped, and never satisfied by a same-named key somewhere else.
+Anything it cannot bind unambiguously is a loud failure naming the key and its
+table. Half a rule was not enough: binding by name alone let another table's
+literal delimiter stand in for a BASIC value here, which passed silently while
+technically "finding" something. So any spelling tomllib understands is either
+bound to its own table and checked, or a clear error — which is why no further
+spelling can pass in silence, whatever it turns out to be.
 
 COLLECTION POINTS. This file implements the invariant stated in
 `.github/instructions/validation-scripts.instructions.md` — a collection step
@@ -102,6 +106,19 @@ KEY_PART = f"(?:{BARE_KEY}|{BASIC_KEY}|{LITERAL_KEY})"
 SINGLE_KEY = re.compile(f"{KEY_PART}$")
 ONE_PART = re.compile(KEY_PART)
 DOT_SEPARATOR = re.compile(r"\s*\.\s*")
+KEY_PATH = rf"{KEY_PART}(?:\s*\.\s*{KEY_PART})*"
+# Any line that opens a bracket is a table header or a defect — never ignorable,
+# because a header this cannot read makes every later binding go to the wrong
+# table. `[[array]]` lands here too and is reported rather than assumed.
+OPENS_BRACKET = re.compile(r"\s*\[")
+TABLE_HEADER_LINE = re.compile(rf"\s*\[\s*(?P<path>{KEY_PATH})\s*\]\s*(?:#.*)?$")
+# An inline table's entries are single-line by definition, so they are readable
+# and therefore must be read: an unreachable key is a loud failure, but a
+# reachable one should simply be checked.
+INLINE_TABLE = re.compile(rf"\s*(?P<key>{KEY_PATH})\s*=\s*\{{(?P<body>.*)\}}\s*(?:#.*)?$")
+ASSIGNMENT_ANYWHERE = re.compile(
+    rf"(?P<key>{KEY_PATH})\s*=\s*(?P<delim>'''|\"\"\"|'|\")"
+)
 ASSIGNMENT = re.compile(
     rf"\s*(?P<key>{KEY_PART}(?:\s*\.\s*{KEY_PART})*)\s*=\s*(?P<delim>'''|\"\"\"|'|\")"
 )
@@ -116,10 +133,22 @@ LITERAL_DELIMITERS = frozenset({LITERAL_MULTILINE, "'"})
 REQUIRED_BLOCKS = frozenset({"linear"})
 
 
+def table_of(text: str) -> object:
+    """Whatever tomllib makes of `[skill-instructions]` — not assumed to be a table.
+
+    `[[skill-instructions]]` is valid TOML and produces a LIST, which used to
+    reach `.items()` and raise. A shape this check cannot judge is reported by
+    `audit`, never crashed on and never skipped.
+    """
+    return tomllib.loads(text).get(TABLE, {})
+
+
 def blocks(text: str) -> dict[str, str]:
     """The `[skill-instructions]` values tomllib produces, non-empty ones only."""
-    parsed = tomllib.loads(text)
-    return {k: v for k, v in parsed.get(TABLE, {}).items() if isinstance(v, str) and v.strip()}
+    parsed = table_of(text)
+    if not isinstance(parsed, dict):
+        return {}
+    return {k: v for k, v in parsed.items() if isinstance(v, str) and v.strip()}
 
 
 def decode_key(spelling: str) -> str | None:
@@ -198,47 +227,72 @@ def closes_here(line: str, delimiter: str) -> bool:
     return close_offset(line, delimiter) != -1
 
 
-def assignments(text: str, keys: Collection[str]) -> dict[str, list[str]]:
-    """Each of `keys` mapped to every delimiter its assignment is written with.
+def assignments(text: str, keys: Collection[str]) -> tuple[dict[str, list[str]], list[str]]:
+    """Each of `keys` mapped to the delimiters of assignments IN ITS OWN TABLE.
 
-    THE SCAN DOES NOT DECIDE WHAT EXISTS. `keys` is tomllib's own key set for the
-    table, so this function's whole job is to locate an assignment tomllib has
-    already reported and read the delimiter token after its `=`. That is the
-    generalisation that ended a family of defects rather than a third instance of
-    it: header parsing is gone, so an inline comment after the header, a quoted
-    table name, unusual spacing and a dotted key all stop mattering — none of
-    them changes what tomllib reports, and none of them is read here any more.
+    THE SCAN DOES NOT DECIDE WHAT EXISTS. `keys` is tomllib's own key set, so this
+    function's whole job is to locate an assignment tomllib has already reported
+    and read the delimiter token after its `=` — the one fact the parser discards.
 
-    Three valid spellings had each been a separate false positive before that:
-    an indented key, a value opening and closing on its assignment line, and a
-    header carrying an inline comment. The first two are handled below; the third
-    stopped being expressible.
+    BINDING IS BY FULL PATH, and that is the half this file learned last. Matching
+    a bare key name anywhere let `[other]`'s `linear` supply the delimiter for the
+    checked table's `linear`, so a BASIC value passed on a literal delimiter that
+    was never its own. Every assignment's path is therefore built as
+    <enclosing table> + <key path> and must equal this table's, so a same-named
+    key elsewhere cannot satisfy anything.
 
-    What the scan still must do is SKIP a multi-line string's body, so an
-    assignment-shaped line inside a runbook is not read as source.
+    That means the enclosing table has to be tracked again — but under the same
+    discipline as everything else here: a line that opens a bracket and does NOT
+    parse as a table header is REPORTED, never ignored, because from then on
+    every binding would be against the wrong table. Header spellings are read
+    with the same finite grammar and the same tomllib decoding as keys, so an
+    inline comment, a quoted name and unusual spacing all still pass.
 
-    Returns a LIST per key, never a single delimiter: the same key name can be
-    assigned under another table, and this scan no longer tracks which table it
-    is in. Two sightings mean the value is ambiguous, and the caller reports that
-    rather than picking one — guessing is how a scan starts being wrong quietly.
+    Inline tables are scanned too (`skill-instructions = { linear = '''x''' }`),
+    since their entries are single-line by definition and are otherwise
+    unreachable — an unreachable key is a loud failure, but a readable one should
+    simply be read.
+
+    Returns (delimiters per key, problems). A LIST per key because the same key
+    can legitimately appear twice only if the file says so; two sightings inside
+    one table is ambiguity the caller reports rather than resolving.
     """
     found: dict[str, list[str]] = {}
+    problems: list[str] = []
     wanted = set(keys)
     lines = text.split("\n")
+    table_path: list[str] = []
     index = 0
     while index < len(lines):
         line = lines[index]
+        if OPENS_BRACKET.match(line):
+            header = TABLE_HEADER_LINE.match(line)
+            decoded = decode_key_path(header.group("path")) if header else None
+            if decoded is None:
+                problems.append(
+                    f"this line opens a table but does not parse as a header, so every "
+                    f"key after it would be bound to the wrong table: {line.strip()!r}"
+                )
+                return found, problems
+            table_path = decoded
+            index += 1
+            continue
         match = ASSIGNMENT.match(line)
         if not match:
+            inline = INLINE_TABLE.match(line)
+            if inline:
+                owner = decode_key_path(inline.group("key"))
+                if owner is not None:
+                    for entry in ASSIGNMENT_ANYWHERE.finditer(inline.group("body")):
+                        entry_path = decode_key_path(entry.group("key"))
+                        if entry_path is None:
+                            continue
+                        full = table_path + owner + entry_path
+                        if full[:-1] == [TABLE] and full[-1] in wanted:
+                            found.setdefault(full[-1], []).append(entry.group("delim"))
             index += 1
             continue
         path = decode_key_path(match.group("key"))
-        # A bare key belongs to whatever table is open; a DOTTED one names its
-        # table outright, so it counts only when the leading parts are this
-        # table. `other.linear = ...` is some other table's business.
-        key = None
-        if path and (len(path) == 1 or path[:-1] == [TABLE]):
-            key = path[-1]
         delimiter = match.group("delim")
         # What follows the OPENING delimiter on this same line. A closer in here
         # ends the value where it sits; only when there is none does the body
@@ -251,9 +305,12 @@ def assignments(text: str, keys: Collection[str]) -> dict[str, list[str]]:
             index = cursor + 1
         else:
             index += 1
-        if key in wanted:
-            found.setdefault(key, []).append(delimiter)
-    return found
+        if path is None:
+            continue
+        full = table_path + path
+        if full[:-1] == [TABLE] and full[-1] in wanted:
+            found.setdefault(full[-1], []).append(delimiter)
+    return found, problems
 
 
 def audit(
@@ -266,9 +323,16 @@ def audit(
     problems: list[str] = []
     try:
         table = blocks(text)
-        parsed = tomllib.loads(text).get(TABLE, {})
+        parsed = table_of(text)
     except tomllib.TOMLDecodeError as exc:
         return [f"{source} is not valid TOML: {exc}"]
+
+    if not isinstance(parsed, dict):
+        return [
+            f"{source} [{TABLE}] is a {type(parsed).__name__}, not a table — an array of "
+            f"tables has no single set of blocks to judge, so nothing here can be "
+            f"checked. That is DID NOT RUN, not a pass."
+        ]
 
     # OUT OF CONTRACT, decided by the parser rather than by pattern. `blocks()`
     # drops anything that is not a string — silently, until now. This is about
@@ -309,7 +373,10 @@ def audit(
 
     # The scan is handed tomllib's key set rather than discovering keys itself,
     # so a table header this file cannot parse is no longer a thing that exists.
-    written = assignments(text, table)
+    written, locator_problems = assignments(text, table)
+    # A header the locator cannot read is reported here, not swallowed: every
+    # binding after it would be against the wrong table.
+    problems.extend(f"{source}: {one}" for one in locator_problems)
 
     for key in sorted(table):
         # COLLECTION POINT 2 — this key's delimiter. tomllib sees the key, so the
@@ -327,17 +394,12 @@ def audit(
                 )
             )
             continue
-        if len(seen) > 1:
-            # Not tracking tables is what made the header spellings stop mattering;
-            # the cost is that a key of the same name elsewhere is indistinguishable.
-            # Reported rather than guessed at.
-            problems.append(
-                f"{source} [{TABLE}] {key} matches {len(seen)} assignments in the "
-                f"source ({', '.join(seen)}), so which one carries this value is "
-                f"ambiguous and the delimiter cannot be judged. Rename the other key, "
-                f"or teach the scanner to tell them apart — do not let it pick."
-            )
-            continue
+        # There was an ambiguity branch here, for a key matched more than once.
+        # Binding by full path removed the only way to reach it: two sightings
+        # would mean two assignments to the SAME path, which is a duplicate key
+        # and a TOMLDecodeError this function has already returned on. A branch
+        # whose failure path cannot be reached is what this repo rejects, so it
+        # went rather than staying as decoration.
         delimiter = seen[0]
 
         # THE ASSERTION. Not inferred from damage: a basic string that happens to
@@ -456,7 +518,7 @@ def self_test() -> list[str]:
                 f"a VALID TOML file with {shape} was rejected — the scanner cannot read "
                 f"the shape, so the check fails CI on correct content: {reported}"
             )
-        resolved = set(assignments(fixture, blocks(fixture)))
+        resolved = set(assignments(fixture, blocks(fixture))[0])
         if resolved != expected:
             failures.append(
                 f"with {shape} the scanner resolved {sorted(resolved)}, expected "
@@ -475,20 +537,54 @@ def self_test() -> list[str]:
                 f"violation, so reading the shape was traded for no longer judging it."
             )
 
-    # THE SUBORDINATION INVARIANT, and the control that proves it holds for
-    # spellings nobody has thought of yet. An inline table puts the assignment
-    # mid-line where the locator cannot span it — tomllib reads the value fine,
-    # so the check must fail LOUDLY naming that key rather than passing. Every
-    # future TOML spelling is therefore either located and checked, or this.
-    unspannable = f"{TABLE} = {{ linear = '''x''' }}\n"
+    # BINDING BY TABLE, both directions. A same-named key in ANOTHER table must
+    # never supply this one's delimiter — that bound a literal delimiter to a
+    # BASIC value and let it pass — and the mirror must not fail for the opposite
+    # reason. The pair is what proves the fix is binding, not "distrust inline
+    # tables".
+    inline_basic = f'{TABLE} = {{ linear = """bad""" }}\n[other]\nlinear = ' + "'''good'''\n"
+    inline_literal = f"{TABLE} = {{ linear = '''good''' }}\n[other]\nlinear = " + '"""bad"""\n'
+    for shape, fixture, want_violation in (
+        ("an inline BASIC value beside another table's literal key", inline_basic, True),
+        ("an inline LITERAL value beside another table's basic key", inline_literal, False),
+    ):
+        reported = fixture_audit(fixture, source=f"<fixture: {shape}>")
+        violation = any("written as a BASIC string" in problem for problem in reported)
+        if violation != want_violation or bool(reported) != want_violation:
+            failures.append(
+                f"with {shape} the check reported {reported or 'nothing'} — a key must be "
+                f"bound to the assignment in ITS OWN table, so the checked value decides "
+                f"the verdict and a same-named key elsewhere decides nothing."
+            )
+
+    # THE SUBORDINATION INVARIANT: a bracket line the locator cannot read is
+    # reported, never ignored — every binding after it would be to the wrong
+    # table. `[[other]]` is valid TOML and is exactly that line.
     if not any(
-        "cannot locate its assignment" in problem
-        for problem in fixture_audit(unspannable, source="<fixture: inline table>")
+        "does not parse as a header" in problem
+        for problem in fixture_audit(
+            f"[{TABLE}]\nlinear = '''x'''\n[[other]]\nz = 1\n",
+            source="<fixture: unreadable bracket line>",
+        )
     ):
         failures.append(
-            "a key the locator cannot span was not reported, so a spelling the raw scan "
-            "does not understand passes unexamined. The locator is subordinate to the "
-            "parser: it may fail to read something, but never silently."
+            "a bracket line the locator could not parse was ignored, so every key after "
+            "it would be bound to the wrong table without a word. The locator is "
+            "subordinate to the parser: it may fail to read something, but never "
+            "silently."
+        )
+
+    # ...and the table itself may not be a table: `[[skill-instructions]]` is
+    # valid TOML, produces a list, and used to raise AttributeError.
+    if not any(
+        "not a table" in problem
+        for problem in fixture_audit(
+            f"[[{TABLE}]]\nlinear = '''x'''\n", source="<fixture: array of tables>"
+        )
+    ):
+        failures.append(
+            "an array-of-tables spelling of the table was not reported, so a shape with "
+            "no single set of blocks either crashes or passes unexamined."
         )
 
     # Out of contract, and it must SAY so rather than being dropped by the
@@ -505,16 +601,13 @@ def self_test() -> list[str]:
             "sub-table here passes unexamined — its delimiter is never judged."
         )
 
-    # The cost of not tracking tables: a key of the same name elsewhere is
-    # indistinguishable. It must be REPORTED, never resolved by picking one.
-    ambiguous = f"[other]\nlinear = \"\"\"z\"\"\"\n[{TABLE}]\nlinear = '''x'''\n"
-    if not any(
-        "matches 2 assignments" in problem
-        for problem in fixture_audit(ambiguous, source="<fixture: ambiguous key>")
-    ):
+    # A same-named key under another table is no longer ambiguous — it simply
+    # does not bind — so the checked table's own value decides, and nothing else.
+    other_table = f"[other]\nlinear = \"\"\"z\"\"\"\n[{TABLE}]\nlinear = '''x'''\n"
+    if fixture_audit(other_table, source="<fixture: same name, other table>"):
         failures.append(
-            "a key assigned under two tables was not reported as ambiguous, so the scan "
-            "picked one — and picking is how it starts being wrong quietly."
+            "a literal value was rejected because another table happens to use the same "
+            "key name, so binding is still matching names rather than paths."
         )
 
     # COLLECTION POINT 2, and the escaped-delimiter scan that serves it.
@@ -524,7 +617,7 @@ def self_test() -> list[str]:
             f"a basic string containing an escaped delimiter was not reported against "
             f"`linear`, so the scan ended early and named the wrong key: {escaped}"
         )
-    scanned = assignments(ESCAPED_DELIMITER_FIXTURE, blocks(ESCAPED_DELIMITER_FIXTURE))
+    scanned, _ = assignments(ESCAPED_DELIMITER_FIXTURE, blocks(ESCAPED_DELIMITER_FIXTURE))
     if scanned.get("after") != [LITERAL_MULTILINE]:
         failures.append(
             f"the key after a basic string containing an escaped delimiter resolved to "
