@@ -86,42 +86,86 @@ CONTINUATION = re.compile(r"(?<!\\)\\$", re.M)
 # rather than widening one regex against it.
 CONTINUATION_JOIN = re.compile(r"\\\n\s*")
 JQ_TOKEN = re.compile(r"\bjq\b")
-QUOTED_PROGRAM = re.compile(r"'([^']*)'")
+# `"$VAR"`, `$VAR`, `"${VAR}"` — a program held in a shell variable, and the ONE
+# spelling that genuinely cannot be checked from the text: its value is not here.
+SHELL_VARIABLE = re.compile(r"^\$\{?[A-Za-z_][A-Za-z0-9_]*\}?$")
+EXPANSION = re.compile(r"[$`]")
 
 
 def jq_programs(fenced: str) -> tuple[list[str], list[str]]:
-    """(compilable programs, jq lines this cannot read) from one fenced block.
+    """(compilable programs, jq invocations this cannot read) from one block.
 
-    The second half is why this returns a pair. An occurrence nothing could be
-    extracted from used to vanish, and a vanished occurrence is indistinguishable
-    from a clean one — the empty-collection-reads-as-clean shape that
-    `.github/instructions/validation-scripts.instructions.md` now names. So a jq
-    line that carries a quote but yields no program is REPORTED, not skipped.
+    ALL THREE literal spellings are compiled — single-quoted, double-quoted and
+    unquoted. The reader used to take single-quoted only, so `jq -r .title` (which
+    this repo's own runbook writes) added neither a program nor a complaint: the
+    arm asserted nothing while the check still claimed every jq program compiles.
+    Mutating that filter to `.[` left the audit clean.
 
-    A jq with an unquoted filter (`jq -r .title "$f"`) is not a miss: there is no
-    program text to hand the compiler. Arms 1 and 2 still cover its bytes.
+    Nothing is dropped in silence. An invocation that yields no program is
+    REPORTED — the empty-collection-reads-as-clean shape named in
+    `.github/instructions/validation-scripts.instructions.md`. The sole silent
+    exemption is a program held in a shell variable, because its text is not in
+    the file to compile; a double-quoted program carrying an expansion among
+    other text is reported instead, since it is visibly a filter this cannot
+    resolve.
+
+    Option parsing is deliberately shallow: leading `-`-prefixed tokens are
+    skipped and the next token is the filter. A value-taking option (`--arg x y`)
+    would make the value look like the filter — none is used here, and the result
+    would be a LOUD false failure rather than a silent miss, which is the right
+    direction to be wrong in.
     """
     programs: list[str] = []
     unreadable: list[str] = []
     joined = CONTINUATION_JOIN.sub(" ", fenced)
     position = 0
     while token := JQ_TOKEN.search(joined, position):
-        opening = joined.find("'", token.end())
-        newline = joined.find("\n", token.end())
-        # The quote must open on this jq's own logical command. Past a newline it
-        # belongs to some later command, and associating the two would compile a
-        # program this invocation never had.
-        if opening == -1 or (newline != -1 and newline < opening):
-            position = len(joined) if newline == -1 else newline + 1
-            continue
-        # The BODY may span newlines: a shell single-quoted string keeps real
-        # newlines, and a mangled block is exactly where they turn up.
-        closing = joined.find("'", opening + 1)
-        if closing == -1:
-            unreadable.append(joined[token.start():].split("\n", 1)[0].strip())
+        command_end = joined.find("\n", token.end())
+        if command_end == -1:
+            command_end = len(joined)
+        cursor = token.end()
+
+        # Skip this invocation's options to reach its filter.
+        while cursor < command_end:
+            while cursor < command_end and joined[cursor].isspace():
+                cursor += 1
+            if cursor < command_end and joined[cursor] == "-":
+                while cursor < command_end and not joined[cursor].isspace():
+                    cursor += 1
+                continue
             break
-        programs.append(joined[opening + 1 : closing])
-        position = closing + 1
+
+        if cursor >= command_end:
+            unreadable.append(joined[token.start() : command_end].strip())
+            position = command_end + 1
+            continue
+
+        quote = joined[cursor]
+        if quote in "'\"":
+            # A quoted body may span real newlines — a shell quoted string keeps
+            # them, and a TOML-mangled block is where they turn up — so the close
+            # is searched past `command_end`.
+            closing = joined.find(quote, cursor + 1)
+            if closing == -1:
+                unreadable.append(joined[token.start() : command_end].strip())
+                break
+            program = joined[cursor + 1 : closing]
+            position = closing + 1
+            if quote == '"' and EXPANSION.search(program):
+                if not SHELL_VARIABLE.match(program):
+                    unreadable.append(joined[token.start() : command_end].strip())
+                continue
+        else:
+            end = cursor
+            while end < command_end and not joined[end].isspace():
+                end += 1
+            program = joined[cursor:end]
+            position = end
+            if EXPANSION.search(program):
+                if not SHELL_VARIABLE.match(program):
+                    unreadable.append(joined[token.start() : command_end].strip())
+                continue
+        programs.append(program)
     return programs, unreadable
 
 
@@ -134,6 +178,37 @@ def blocks(text: str) -> dict[str, str]:
 TABLE_HEADER = re.compile(r"\s*\[([^\[\]]+)\]\s*$")
 ASSIGNMENT = re.compile(r"([A-Za-z0-9_-]+)\s*=\s*('''|\"\"\"|'|\")")
 LITERAL_DELIMITERS = frozenset({"'''", "'"})
+
+
+def close_offset(line: str, delimiter: str) -> int:
+    """Where `delimiter` closes the value on this line, or -1.
+
+    A LITERAL string has no escapes, so its first occurrence is genuinely the
+    close. A BASIC string may carry an escaped `\\\"\"\"` that TOML does NOT treat
+    as the end, and taking it would truncate the span — producing a false
+    identity failure, or hiding a continuation loss, on the one string kind where
+    those arms have work to do. Counting the preceding backslashes is four lines
+    and keeps every arm live on basic strings; skipping the comparison there
+    instead would have made both arms unreachable, since a literal string never
+    mangles and so can never fail them.
+    """
+    at = line.find(delimiter)
+    if delimiter != '"""':
+        return at
+    while at != -1:
+        backslashes = 0
+        probe = at - 1
+        while probe >= 0 and line[probe] == "\\":
+            backslashes += 1
+            probe -= 1
+        if backslashes % 2 == 0:
+            return at
+        at = line.find(delimiter, at + 1)
+    return -1
+
+
+def closes_here(line: str, delimiter: str) -> bool:
+    return close_offset(line, delimiter) != -1
 
 
 def assignments(text: str) -> dict[str, tuple[str, str]]:
@@ -168,13 +243,13 @@ def assignments(text: str) -> dict[str, tuple[str, str]]:
         if delimiter in ("'''", '"""'):
             body: list[str] = []
             cursor = index + 1
-            while cursor < len(lines) and delimiter not in lines[cursor]:
+            while cursor < len(lines) and not closes_here(lines[cursor], delimiter):
                 body.append(lines[cursor])
                 cursor += 1
             # A closing delimiter may trail content on its own line; keep that
             # content, or the span would be short and arm 2 would fire falsely.
             if cursor < len(lines):
-                prefix = lines[cursor].split(delimiter, 1)[0]
+                prefix = lines[cursor][: close_offset(lines[cursor], delimiter)]
                 if prefix:
                     body.append(prefix)
                     raw = "\n".join(body)
@@ -322,6 +397,32 @@ jq -n 'while(true; .)'
 '''
 """
 
+
+def literal_block(command: str) -> str:
+    """A correct block — literal string, one fenced command — around `command`.
+
+    So a control isolates the arm it is for: nothing else in the fixture can trip
+    a different arm and let it pass for the wrong reason.
+    """
+    return f"[skill-instructions]\ndemo = '''\n```bash\n{command}\n```\n'''\n"
+
+
+# One per literal spelling, each carrying the SAME invalid filter, so a spelling
+# the reader stops handling shows up as that spelling going quiet. The unquoted
+# one is the shape this repo's own runbook writes — `jq -r .title "$f"` inside a
+# command substitution — which is exactly the occurrence the reader used to drop.
+INVALID_FILTER_FIXTURES = (
+    ("unquoted", 'tool create --title "$(jq -r .[ "$gh_json")"'),
+    ("double-quoted", 'jq -r ".[" "$f"'),
+    ("single-quoted", "jq -r '.[' \"$f\""),
+)
+
+# An escaped `\"""` inside a BASIC string. TOML does not end the value there, so
+# a scanner that stops at the first delimiter substring truncates the span — and
+# then reports a difference it manufactured rather than the one TOML made.
+ESCAPED_DELIMITER_FIXTURE = '[skill-instructions]\ndemo = """\nsays \\""" inside\n"""\n'
+ESCAPED_DELIMITER_SPAN = 'says \\""" inside\n'
+
 # The case a whole-file substring test cannot see. Its ONLY escape damage is
 # backslash collapsing, and the parsed value (`\\s`) really is a substring of its
 # own raw source (`\\\\s`, from the second backslash on) — so the proxy reports
@@ -412,6 +513,47 @@ def self_test() -> list[str]:
             f"fire on content rather than on the delimiter: {collapse_fixed}"
         )
 
+    # EVERY LITERAL SPELLING IS COMPILED. A spelling the reader stops handling
+    # adds no program and no complaint, so the arm goes quiet on it while the
+    # check still claims every jq program compiles — which is how `jq -r .title`
+    # went unchecked in this repo's own runbook.
+    for spelling, command in INVALID_FILTER_FIXTURES:
+        reported = audit(
+            literal_block(command), source=f"<fixture: {spelling} invalid filter>"
+        )
+        if not any("does not compile" in problem for problem in reported):
+            failures.append(
+                f"an invalid {spelling} jq filter was not compiled, so arm 3 asserts "
+                f"nothing about that spelling: {reported}"
+            )
+
+    # A program held in a shell variable is the ONE silent exemption, so it must
+    # stay silent — otherwise every runbook using one fails for being unreadable.
+    variable_form = audit(
+        literal_block('jq -r "$PROGRAM" "$f"'), source="<fixture: shell variable>"
+    )
+    if variable_form:
+        failures.append(
+            f"a jq program held in a shell variable was reported, but its text is not "
+            f"in the file to compile: {variable_form}"
+        )
+
+    # THE SPAN MUST REACH TOML'S OWN CLOSE. An escaped delimiter inside a basic
+    # string does not end the value; stopping there manufactures a difference.
+    escaped = assignments(ESCAPED_DELIMITER_FIXTURE).get("demo", ("", ""))
+    if escaped[1] != ESCAPED_DELIMITER_SPAN:
+        failures.append(
+            f"an escaped delimiter inside a basic string truncated the raw span: read "
+            f"{escaped[1]!r}, expected {ESCAPED_DELIMITER_SPAN!r}. Arms 2 and 4 would "
+            f"then compare against a span this scanner invented."
+        )
+    escaped_problems = audit(ESCAPED_DELIMITER_FIXTURE, source="<fixture: escaped delimiter>")
+    if not any("written as a BASIC string" in problem for problem in escaped_problems):
+        failures.append(
+            f"a basic string containing an escaped delimiter was not reported as a "
+            f"delimiter violation: {escaped_problems}"
+        )
+
     # ARM 3'S READER, not jq. A continued invocation must actually be collected:
     # while it was not, this fixture passed with an invalid filter.
     multiline = audit(MULTILINE_JQ_FIXTURE, source="<fixture: continued jq invocation>")
@@ -468,8 +610,9 @@ def main() -> int:
     print(
         f"check-skill-instructions: ok ({count} [{TABLE}] block(s) are literal strings "
         f"rendering verbatim; self-test proved all four arms fail on the pre-fix form, "
-        f"that backslash-collapse-only damage is caught, and that a non-terminating jq "
-        f"program is reported rather than hanging the check)"
+        f"that every literal jq spelling is compiled, that backslash-collapse and "
+        f"escaped-delimiter damage are caught, and that a non-terminating jq program is "
+        f"reported rather than hanging the check)"
     )
     return 0
 
