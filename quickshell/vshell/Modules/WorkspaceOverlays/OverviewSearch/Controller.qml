@@ -35,6 +35,13 @@ Item {
     property int gridColumns: SettingsData.appLauncherGridColumns
     property int viewModeVersion: 0
     property bool forceLinearNavigation: false
+    // Set from the moment the plugin copy is asked to run until it reports that
+    // it did, so a helper that never spawns is told apart from one that ran.
+    property bool _copyAwaitingStart: false
+    // A copy asked to start is as busy as one already running: Quickshell
+    // reports neither a start nor a failure until it transitions, so the raw
+    // running flag reads idle through a window the watchdog owns.
+    readonly property bool _copyInFlight: copyProcess.running || _copyAwaitingStart
 
     signal itemExecuted
     signal searchCompleted
@@ -144,23 +151,54 @@ Item {
         }
     }
 
-    Process {
-        id: wtypeProcess
-        command: ["wtype", "-M", "ctrl", "-P", "v", "-p", "v", "-m", "ctrl"]
-        running: false
+    // A plugin supplies this argv, so it can name an executable this system does
+    // not have. A start that never happens emits no exit, and the launcher has
+    // already closed by then: unreported, the entry is neither copied nor pasted
+    // and the person is told nothing at all.
+    function reportCopyFailedToStart() {
+        _copyAwaitingStart = false;
+        copyStartTimer.stop();
+        ToastService.showError(I18n.tr("Failed to copy entry"), I18n.tr("The copy helper could not be started"));
+    }
+
+    // The second detection path. Quickshell fails a start in two shapes and
+    // emits nothing for either: running falls back to false, which the handler
+    // below sees, or it never becomes true at all, which has no transition to
+    // see and is what this timer is for.
+    Timer {
+        id: copyStartTimer
+        interval: 5000
+        repeat: false
+        onTriggered: {
+            if (!root._copyAwaitingStart)
+                return;
+            root.reportCopyFailedToStart();
+        }
     }
 
     Process {
         id: copyProcess
         running: false
-        onExited: pasteTimer.start()
-    }
-
-    Timer {
-        id: pasteTimer
-        interval: 200
-        repeat: false
-        onTriggered: wtypeProcess.running = true
+        onStarted: {
+            root._copyAwaitingStart = false;
+            copyStartTimer.stop();
+        }
+        onRunningChanged: {
+            if (running || !root._copyAwaitingStart)
+                return;
+            root.reportCopyFailedToStart();
+        }
+        onExited: exitCode => {
+            root._copyAwaitingStart = false;
+            copyStartTimer.stop();
+            // Pasting after a failed copy would inject whatever stale content
+            // is still on the clipboard.
+            if (exitCode !== 0) {
+                ToastService.showError(I18n.tr("Failed to copy entry"));
+                return;
+            }
+            PasteService.injectPaste();
+        }
     }
 
     function pasteSelected() {
@@ -189,9 +227,33 @@ Item {
         const pasteArgs = AppSearchService.getPluginPasteArgs(pluginId, selectedItem.data);
         if (!pasteArgs)
             return;
-        copyProcess.command = pasteArgs;
-        copyProcess.running = true;
+        if (!startPluginCopy(pasteArgs)) {
+            // A second Enter while the first entry is still being copied. The
+            // copy in flight will finish and paste the entry IT was started for,
+            // so this request is dropped rather than queued — and a keypress
+            // dropped with no outcome is the silent failure this path spent a
+            // round removing on the injector side: the launcher would just sit
+            // there. Reported and left open, like every other refusal here:
+            // closing would say the entry was pasted when it was not, and
+            // pressing Enter again once the first lands does work.
+            ToastService.showError(I18n.tr("Failed to copy entry"), I18n.tr("Another entry is still being copied"));
+            return;
+        }
         itemExecuted();
+    }
+
+    // Quickshell ignores a command change on a live Process, so starting a
+    // second copy while one is in flight would copy and paste the PREVIOUS
+    // selection while dropping this one. The copy in flight finishes and pastes
+    // on its own. Returns whether this request started one.
+    function startPluginCopy(pasteArgs) {
+        if (_copyInFlight)
+            return false;
+        copyProcess.command = pasteArgs;
+        _copyAwaitingStart = true;
+        copyProcess.running = true;
+        copyStartTimer.restart();
+        return true;
     }
 
     readonly property var sectionDefinitions: [

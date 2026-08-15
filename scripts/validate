@@ -40,10 +40,12 @@
 # prefixes that do appear are deliberate: `node --check`, `python3 -m
 # py_compile` and `bash -n` are syntax checks over a file, and `scripts/lib/`
 # holds non-executable libraries reached only by import, sourcing, or an
-# explicit interpreter — `python3 scripts/lib/shell_scan.py` runs a library's
-# self-test (`shell_scan.py` carries a `__main__` only for that;
-# `session-snapshot.sh` is sourced and `validation_manifest.py` is imported by
-# the inventory guard, neither run). `bin/vshell_niri.py`,
+# explicit interpreter — `python3 scripts/lib/shell_scan.py` and
+# `python3 scripts/lib/qml_source_selftest.py` run a library's self-test (each
+# carries a `__main__` only for that; `session-snapshot.sh` is sourced,
+# `validation_manifest.py` is imported by the inventory guard, and
+# `qml_scrub_selftest.py` and `shell_scan_selftest.py` are imported by the two
+# self-test entry points above, none of them run). `bin/vshell_niri.py`,
 # `bin/vshell_niri_kdl.py` and `bin/vshell_theme_color.py` likewise stay
 # importable modules with no shebang and no `__main__`.
 #
@@ -160,6 +162,7 @@ manifest() {
 qml       | scripts/check-naming.sh
 always    | scripts/check-format-lint.sh
 -         | python3 scripts/lib/shell_scan.py
+-         | python3 scripts/lib/qml_source_selftest.py
 always    | scripts/check-validation-inventory.py
 docs      | scripts/check-doc-growth.py
 packaging | scripts/gen-package-metadata.py
@@ -181,6 +184,10 @@ packaging | scripts/check-aur-sync.py
 -         | scripts/test-ai-usage-view.js
 -         | scripts/test-ai-usage-filing.js
 -         | scripts/test-ai-usage-lifecycle.js
+-         | scripts/test-paste-target.js
+-         | scripts/test-paste-lifecycle.js
+-         | scripts/test-compositor-focus.js
+-         | scripts/check-paste-injection.py
 -         | scripts/check-notification-takeover.js
 -         | scripts/test-remote-desktop-state.js
 -         | scripts/test-idle-reload-snapshot.js

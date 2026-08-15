@@ -8,12 +8,24 @@
 // block comments, and all three string forms (including `${...}` interpolation,
 // which can nest code and further strings), and counts braces only in real code.
 //
+// WHAT THIS ESTABLISHES. Handled exactly: line and block comments, all three
+// string delimiters, and `${...}` interpolation nesting code and further
+// strings — swept and confirmed, the backtick has its own branch rather than
+// being the third form a two-of-three scanner forgets.
+//
 // KNOWN LIMIT: regex literals are not recognised. Telling `/` as division from
 // `/` as a regex delimiter needs a real JS lexer, so a regex literal containing
 // an unbalanced brace (`/[{]/`) would confuse the scan. No body extracted by
-// these tests contains one. When the scan does go wrong it fails loudly rather
-// than silently: an unterminated string or unbalanced brace throws, and every
-// caller additionally asserts on content it expects the body to contain.
+// these tests contains one. This is a real DIVERGENCE from the Python
+// scrubber, `scripts/lib/qml_scrub.py`, which does recognise them since a
+// regex holding a quote once hid 377 lines of a file from every rule built on
+// it; anyone choosing between the two should know this one stops short there.
+// When the scan does go wrong it fails loudly rather than silently: an
+// unterminated string or unbalanced brace throws, and every caller
+// additionally asserts on content it expects the body to contain.
+//
+// Not attempted: containment beyond the braces — which statement a condition
+// governs, whether a region returns — which is `qml_source.py`'s job.
 
 "use strict";
 

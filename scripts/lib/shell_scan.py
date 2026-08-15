@@ -16,13 +16,82 @@ while content is sliced out of the original text at the same offsets. One
 scanner, so a format that learns about a new kind of non-code text teaches every
 caller at once.
 
+WHAT THIS ESTABLISHES. Every entry in the handled-exactly list is pinned by a
+control in `shell_scan_selftest.py`, not by a reading of the loop: an earlier
+version of this account claimed `$'...'` was handled exactly when it was not,
+and a wrong entry in this column is worse than no column, because it is what a
+reader trusts instead of checking. The two entries below marked VGS-143 are
+known defects recorded from a reproduction and deferred, and are the exception:
+they are not pinned, because pinning them would freeze behaviour that is meant
+to change.
+
+Handled exactly:
+
+  - Bare `'...'`, `"..."`, `$'...'` and `$"..."`.
+  - Backslash escapes, which differ BY QUOTING FORM and are the reason `$'...'`
+    cannot share a branch with `'...'`: an escape is honoured inside `"..."`,
+    inside `$'...'` and at the top level, and is LITERAL inside `'...'`, where
+    POSIX gives backslash no meaning and the first quote really does close the
+    string.
+  - `#` comments, only at a word start, so `foo#bar` and `${v#pat}` are not
+    comments.
+  - Heredoc bodies are masked, and the introducing form is read exactly:
+    quoted, unquoted and tab-stripping (`<<-`) delimiters. Where the body ENDS
+    is only approximate — see below.
+  - Herestrings (`<<<`), which are NOT heredocs — the operand is an ordinary
+    word, and its quoting is masked as quoting.
+  - Parameter expansion bodies and glob character classes, whose contents are
+    pattern text: a `(` in `${v//(/x}` or in `b[(]c` opens nothing, and a
+    caller counting delimiters must not see it. A CLOSED `${...}` is what this
+    covers; an unmatched one is not benign — see below.
+  - Offsets and line count, which every caller slices against.
+
+Deliberately not masked: a BARE command substitution. Its contents are code,
+and blanking them would hide the structure a caller is looking for.
+
+WHERE DELIMITER COUNTING IS NOT SOUND. This is the entry to read before
+trusting a count, and the one this file has now had to correct twice — first
+for locating a delimiter without honouring escapes, then for counting one
+without honouring the contexts where it is not structural. Treat it as
+incomplete rather than exhaustive, and add a control when a new shape appears:
+
+  - A `case` pattern inside a command substitution. `$(case x in b) ;; esac)`
+    holds a `)` that closes nothing, and no character-level rule tells it from
+    the one that closes the substitution — that needs shell grammar. It ends an
+    array EARLY, so entries after it are dropped SILENTLY. This is the one
+    known shape that fails open, and the reason the array reader raises on a
+    count it cannot complete rather than guessing.
+  - An unquoted `}` sitting inside a word (`x=foo#}bar`) counts toward brace
+    depth and closes a scope early, under-reporting a function body.
+  - A substitution inside double quotes is blanked with the body around it, so
+    `"$(f() { echo; }; f)"` loses its braces — but as a balanced pair, so scope
+    splitting still bounds a function correctly. Verified, not assumed.
+  - Where a heredoc body ENDS is approximate, and it errs OPEN. A body line is
+    taken as the terminator when its stripped text equals the delimiter, so a
+    space-indented `  EOF` inside the body ends the heredoc early; shell ends
+    it only on an exact match, and strips leading TABS only for `<<-`. The
+    rest of that body is then masked as code, so prose in a heredoc containing
+    something shaped like `conflicts=(...)` can be read as recipe metadata that
+    was never declared. Tracked as VGS-143; deferred rather than unknown.
+  - An unmatched `${` is left alone rather than blanked to a far-off closer,
+    which protects the text after it — but the expansion tracker stays open,
+    and comment and glob-class masking are gated on it being closed. So
+    everything after an unterminated `${` keeps its `#` comments and `[...]`
+    classes UNMASKED, and a caller reading that region sees comment text as
+    code. Tracked as VGS-143; deferred rather than unknown. Note the mechanism
+    is the unmatched opener, not quoting: a `${` inside `'...'`, `"..."` or
+    `$'...'` is consumed by the quote branch before the tracker sees it, which
+    was checked rather than assumed.
+
+Not attempted: expansion, evaluation, or word splitting. This is a mask, not a
+shell.
+
 Run this file directly to execute its self-test.
 """
 
 from __future__ import annotations
 
 import re
-import sys
 
 # A `#` opens a comment only at the start of a word. `foo#bar` is one word and
 # `${x#y}` is a parameter expansion; neither is a comment.
@@ -41,6 +110,12 @@ def code_mask(text: str) -> str:
     # Heredoc bodies begin at the newline that ends the line introducing them,
     # so redirections are collected as they are seen and applied at that newline.
     pending_heredocs: list[tuple[str, bool]] = []
+    # Open `${` expansions, innermost last. Their contents are pattern text,
+    # not structure, so a delimiter in there must not be counted as one.
+    # KNOWN DEFECT (VGS-143): an unmatched `${` never pops, and the comment and
+    # glob-class branches are gated on this being empty, so everything after it
+    # goes unmasked. Deferred, not overlooked — see the module docstring.
+    expansions: list[int] = []
 
     def blank(start: int, stop: int) -> None:
         for position in range(start, min(stop, length)):
@@ -49,6 +124,21 @@ def code_mask(text: str) -> str:
 
     while index < length:
         char = text[index]
+
+        if text.startswith("${", index):
+            expansions.append(index)
+            index += 2
+            continue
+
+        if char == "}" and expansions:
+            opening = expansions.pop()
+            if not expansions:
+                # Blanked at the OUTERMOST close, so one pass covers a nested
+                # expansion too. The braces themselves stay, as a string's
+                # quotes do, and they balance for anything counting braces.
+                blank(opening + 2, index)
+            index += 1
+            continue
 
         if char == "\n" and pending_heredocs:
             index += 1
@@ -59,6 +149,10 @@ def code_mask(text: str) -> str:
                     if line_end == -1:
                         line_end = length
                     line = text[end:line_end]
+                    # KNOWN DEFECT (VGS-143): `.strip()` accepts a
+                    # space-indented body line as the terminator, ending the
+                    # heredoc early. Shell requires an exact match, and strips
+                    # leading TABS only for `<<-`. Deferred, not overlooked.
                     if (line.lstrip("\t") if strip_tabs else line).strip() == delimiter:
                         break
                     end = line_end + 1
@@ -72,7 +166,30 @@ def code_mask(text: str) -> str:
             index += 2
             continue
 
+        if text.startswith("$'", index):
+            # ANSI-C quoting, and the ONE quoting form in shell where a
+            # backslash escape can hide a closing quote. Ending it at a raw
+            # `find("'")` stopped `$'can\'t'` at the escaped quote and read the
+            # real one as a new opener, so everything after it was masked as
+            # string and a following `conflicts=()` was invisible to the caller.
+            end = index + 2
+            closed = False
+            while end < length:
+                if text[end] == "\\" and end + 1 < length:
+                    end += 2
+                    continue
+                if text[end] == "'":
+                    closed = True
+                    break
+                end += 1
+            blank(index + 2, end)
+            index = end + 1 if closed else end
+            continue
+
         if char == "'":
+            # A bare single-quoted string honours NO escapes — POSIX says a
+            # backslash is literal in it — so the first quote really does end
+            # it. That is why this one may search and `$'...'` above may not.
             end = text.find("'", index + 1)
             end = length if end == -1 else end + 1
             # The delimiters stay: the mask is meant to show where a string is,
@@ -95,14 +212,35 @@ def code_mask(text: str) -> str:
             index = end
             continue
 
-        if char == "#" and (index == 0 or text[index - 1] in _WORD_START):
+        if char == "[" and not expansions:
+            # A glob character class is literal text: `b[(]c` holds a paren that
+            # opens nothing. Bounded to the line, because an unmatched `[` is
+            # ordinary shell (`x=a[b`) and running to a far-off `]` would blank
+            # real structure — the failure this scanner exists to prevent.
+            line_end = text.find("\n", index)
+            close = text.find("]", index + 1, length if line_end == -1 else line_end)
+            if close != -1:
+                blank(index + 1, close)
+                index = close + 1
+                continue
+
+        if char == "#" and not expansions and (index == 0 or text[index - 1] in _WORD_START):
             end = text.find("\n", index)
             end = length if end == -1 else end
             blank(index, end)
             index = end
             continue
 
-        if char == "<" and text.startswith("<<", index) and not text.startswith("<<<", index):
+        if text.startswith("<<<", index):
+            # A herestring is not a heredoc, and all THREE characters have to be
+            # stepped over: guarding only the first `<` left the inner `<<` to be
+            # re-read on the next pass, so `cat <<<'}'` became a heredoc whose
+            # delimiter was `}` and masked everything up to the line that closed
+            # the function — the widening this scanner exists to prevent.
+            index += 3
+            continue
+
+        if char == "<" and text.startswith("<<", index):
             after = index + 2
             strip_tabs = after < length and text[after] == "-"
             if strip_tabs:
@@ -158,6 +296,19 @@ def split_scopes(text: str, header: re.Pattern[str]) -> tuple[str, dict[str, str
     return "".join(top), {name: "".join(body) for name, body in bodies.items()}
 
 
+def _closing_paren(mask: str, opening: int) -> int:
+    """The offset of the `)` closing the `(` at `opening`, or -1."""
+    depth = 0
+    for cursor in range(opening, len(mask)):
+        if mask[cursor] == "(":
+            depth += 1
+        elif mask[cursor] == ")":
+            depth -= 1
+            if depth == 0:
+                return cursor
+    return -1
+
+
 def assignments(text: str, name: str) -> list[str] | None:
     """Raw value fragments assigned to `name`, or None if it is never assigned.
 
@@ -181,7 +332,14 @@ def assignments(text: str, name: str) -> list[str] | None:
         opener = mask[start]
         if opener in "('\"":
             closer = ")" if opener == "(" else opener
-            end = mask.find(closer, start + 1)
+            if opener == "(":
+                # Matched, not searched: a substitution inside the list carries
+                # its own parens into the mask, and the first `)` in
+                # `conflicts=(a $(uname) c)` closed the substitution, not the
+                # array — so the entry after it was silently dropped.
+                end = _closing_paren(mask, start)
+            else:
+                end = mask.find(closer, start + 1)
             if end == -1:
                 # An unterminated list or string is not something to guess at.
                 raise ValueError(f"unterminated {name}={opener}...{closer} assignment")
@@ -196,87 +354,7 @@ def assignments(text: str, name: str) -> list[str] | None:
     return found
 
 
-def _selftest() -> int:
-    failures: list[str] = []
-
-    def check(label: str, actual: object, expected: object) -> None:
-        if actual != expected:
-            failures.append(f"{label}: expected {expected!r}, got {actual!r}")
-
-    func = re.compile(r"^(package(?:_[\w.+-]+)?)\s*\(\)")
-
-    # A brace in a comment must not close the function.
-    top, bodies = split_scopes(
-        "conflicts=('a')\n"
-        "package_main() {\n"
-        "  true\n"
-        "}\n"
-        "package_sub() {\n"
-        "  # }\n"
-        "  conflicts=('b')\n"
-        "}\n",
-        func,
-    )
-    check("comment brace stays in the subpackage", "conflicts=('b')" in bodies["package_sub"], True)
-    check("comment brace does not leak to top", "conflicts=('b')" in top, False)
-
-    # A brace in a quoted string must not close the function either.
-    _, bodies = split_scopes(
-        'package_sub() {\n  echo "}"\n  conflicts=(\'b\')\n}\n',
-        func,
-    )
-    check("quoted brace stays in the subpackage", "conflicts=('b')" in bodies["package_sub"], True)
-
-    # A heredoc body is not shell syntax.
-    top, bodies = split_scopes(
-        "package_sub() {\n  cat <<'EOF'\n}\nEOF\n  conflicts=('b')\n}\n",
-        func,
-    )
-    check("heredoc brace stays in the subpackage", "conflicts=('b')" in bodies["package_sub"], True)
-
-    # A function header inside a comment is not a function.
-    top, bodies = split_scopes("# package_sub() {\nconflicts=('a')\n", func)
-    check("commented-out header is not a function", bodies, {})
-    check("commented-out header leaves the top level whole", "conflicts=('a')" in top, True)
-
-    # Assignments: comments dropped, delimiters found on code.
-    check("array fragment", assignments("conflicts=('a' 'b')\n", "conflicts"), ["'a' 'b'"])
-    check("unassigned is None", assignments("depends=(x)\n", "conflicts"), None)
-    check("assigned empty is not None", assignments("conflicts=()\n", "conflicts"), [""])
-    check(
-        "paren inside a string does not close the array",
-        assignments('conflicts=("a)b" c)\n', "conflicts"),
-        ['"a)b" c'],
-    )
-    check(
-        "commented assignment is not an assignment",
-        assignments("# conflicts=('a')\nconflicts=('b')\n", "conflicts"),
-        ["'b'"],
-    )
-    check("quoted string fragment", assignments('conflicts="a b" # )\n', "conflicts"), ["a b"])
-    check("bare word fragment", assignments("pkgbase=vgs-shell\n", "pkgbase"), ["vgs-shell"])
-
-    # An apostrophe in a comment is not an unterminated string.
-    check(
-        "apostrophe in a comment",
-        assignments("conflicts=(\n  # it doesn't matter\n  'a'\n)\n", "conflicts"),
-        ["\n  # it doesn't matter\n  'a'\n"],
-    )
-
-    try:
-        assignments("conflicts=('a'\n", "conflicts")
-    except ValueError:
-        pass
-    else:
-        failures.append("unterminated array: expected ValueError, got a result")
-
-    for failure in failures:
-        print(f"shell_scan selftest: {failure}", file=sys.stderr)
-    if failures:
-        return 1
-    print("shell_scan selftest: ok")
-    return 0
-
-
 if __name__ == "__main__":
-    raise SystemExit(_selftest())
+    from shell_scan_selftest import selftest
+
+    raise SystemExit(selftest())
