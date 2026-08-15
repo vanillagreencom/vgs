@@ -215,7 +215,7 @@ function selectionWritesGoThroughHovered(src) {
     const expected = hoverDelegateCount(src);
     const writesOnHovered = handlerBodies(src, "Hovered")
         .filter(body => /selectedItemIndex/.test(body));
-    const pointerHandlers = ["Entered", "Exited", "ContainsMouseChanged"]
+    const pointerHandlers = ["Entered", "Exited", "ContainsMouseChanged", "PositionChanged"]
         .flatMap(signalName => handlerBodies(src, signalName));
     return expected >= 2
         && writesOnHovered.length === expected
@@ -238,7 +238,9 @@ function keyboardTakesSelection(src) {
 
 // The RESULT DELEGATES only. The sidebar, tool and context-menu rows tint on
 // hover with no latch involved, and must keep doing so — they are not what
-// Enter launches.
+// Enter launches. Found by name, so the count is checked against the delegates
+// that declare the signal: one named outside the convention would otherwise
+// have its gate and its re-arm pinned while its tint escaped unchecked.
 function resultDelegateBodies(src) {
     const bodies = [];
     const marker = /\bcomponent Result\w+:[^{]*\{/g;
@@ -256,8 +258,9 @@ function resultDelegateBodies(src) {
 const TINT = /^color: selected \? .+ : \(\w+Area\.containsMouse && root\.hoverGate\.armed\) \? Theme\.surfaceHover : "transparent"$/;
 
 function hoverTintFollowsLatch(src) {
+    const expected = hoverDelegateCount(src);
     const delegates = resultDelegateBodies(src);
-    if (delegates.length < 2) return false;
+    if (expected < 2 || delegates.length !== expected) return false;
     return delegates.every(body => {
         const start = body.indexOf("color:");
         const end = body.indexOf('"transparent"', start);
@@ -359,6 +362,12 @@ const MUTANTS = [
         selectionWritesGoThroughHovered, menuSource, menuSource.replace(
             "onHovered: {\n                                        if (!actionContextMenu.visible)\n                                            root.selectedItemIndex = index;\n                                    }",
             "onHovered: {\n                                    }")],
+    ["a delegate writes the selection index straight from onPositionChanged",
+        selectionWritesGoThroughHovered, menuSource, menuSource.replace(
+            "onPositionChanged: mouse => {\n                if (root.hoverGate.notePointer(rowArea, mouse))",
+            "onPositionChanged: mouse => {\n                root.selectedItemIndex = 0;\n                if (root.hoverGate.notePointer(rowArea, mouse))")],
+    ["a hover-capable delegate is renamed out of the tint predicate's reach",
+        hoverTintFollowsLatch, menuSource, menuSource.replace("component ResultCard:", "component GridCell:")],
     ["the hover tint stops following the latch",
         hoverTintFollowsLatch, menuSource, menuSource.replace(/containsMouse && root\.hoverGate\.armed/g, "containsMouse")],
     ["the hover tint keeps the latch in its binding but neuters it with a disjunct",

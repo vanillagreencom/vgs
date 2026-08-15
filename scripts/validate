@@ -158,10 +158,11 @@ cd "$repo_root" || exit 1
 # py_compile/bash -n syntax pass; packaging = the three packaging checks;
 # docs = the instruction-surface growth ratchet.
 #
-# The older QML source lints (pill-hover, menu capabilities, bundled override,
-# toast actions) are still `-`, so `all` alone reaches them. `qml` is the better
-# tag for a new one — it runs the guard in the area AGENTS.md tells agents to
-# run before finishing QML work — but retagging that family is its own change.
+# The older QML source lints are still `-`, so only `all` reaches them, and the
+# family is bigger than it looks: 23 of today's `-` rows read .qml source, from
+# pill-hover to the six ai-usage checks. `qml` is the better tag for a new one —
+# it runs the guard in the area AGENTS.md tells agents to run before finishing
+# QML work — but retagging two dozen rows is its own change, not a drive-by.
 # shellcheck disable=SC2329  # invoked indirectly, as an argument to collect()
 manifest() {
   cat <<'MANIFEST_EOF'
