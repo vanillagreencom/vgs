@@ -32,6 +32,20 @@ probed across every literal shape TOML allows, and none of them differ. It was
 guarding this file's own span scanner rather than the config, and with the
 comparison gone the scanner no longer captures a span to guard.
 
+WHY THIS FILE HAD A LONG REVIEW TAIL, recorded because the rule outlives the
+fix. It hand-parsed TOML with regexes, so every legal spelling the patterns did
+not anticipate was a miss — an indented key, a value closing on its assignment
+line, an inline comment on the header, a quoted table name, a quoted key — and
+each round fixed one while the next found another. The enumeration had no end,
+the same unbounded-matcher problem as #133's argv guard and #135's grammar
+shapes. It stopped when `tomllib` became the authority: the parser decides what
+exists and what a value contains, and the source is read for ONE fact only —
+the delimiter — because that is the single thing the parser discards (`a = '''x'''`
+and `b = \"\"\"x\"\"\"` both decode to `x`). TOML's key grammar is finite, so matching
+it closes; shell and jq spellings are not, which is why that apparatus went to
+VGS-156. Answer any future "the check missed spelling X" by asking whether the
+PARSER can decide it, not by adding a pattern.
+
 COLLECTION POINTS. This file implements the invariant stated in
 `.github/instructions/validation-scripts.instructions.md` — a collection step
 must assert it collected what it expected; a matcher that comes back empty is a
@@ -69,9 +83,20 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 CONFIG = REPO_ROOT / "vstack.toml"
 TABLE = "skill-instructions"
 
-# Leading whitespace allowed: TOML permits an indented key, and anchoring at
-# column 0 left a reindented file unjudged.
-ASSIGNMENT = re.compile(r"\s*([A-Za-z0-9_-]+)\s*=\s*('''|\"\"\"|'|\")")
+# TOML's KEY GRAMMAR, which is finite: a key is bare, basic-quoted or
+# literal-quoted, optionally dotted, with whitespace allowed around all of it.
+# Matching bare tokens only meant `"linear" = '''x'''` — which tomllib decodes to
+# `linear` — could not be located, and a valid literal value failed CI. This is
+# an enumeration that CLOSES, unlike the shell and jq spellings that produced
+# this file's earlier tail.
+BARE_KEY = r"[A-Za-z0-9_-]+"
+BASIC_KEY = r'"(?:[^"\\]|\\.)*"'
+LITERAL_KEY = r"'[^']*'"
+KEY_PART = f"(?:{BARE_KEY}|{BASIC_KEY}|{LITERAL_KEY})"
+SINGLE_KEY = re.compile(f"{KEY_PART}$")
+ASSIGNMENT = re.compile(
+    rf"\s*(?P<key>{KEY_PART}(?:\s*\.\s*{KEY_PART})*)\s*=\s*(?P<delim>'''|\"\"\"|'|\")"
+)
 LITERAL_MULTILINE = "'''"
 LITERAL_DELIMITERS = frozenset({LITERAL_MULTILINE, "'"})
 
@@ -87,6 +112,24 @@ def blocks(text: str) -> dict[str, str]:
     """The `[skill-instructions]` values tomllib produces, non-empty ones only."""
     parsed = tomllib.loads(text)
     return {k: v for k, v in parsed.get(TABLE, {}).items() if isinstance(v, str) and v.strip()}
+
+
+def decode_key(spelling: str) -> str | None:
+    """The key TOML means by this spelling, or None if it is dotted.
+
+    The DECODING is tomllib's too, not another hand-rolled unescape: a quoted key
+    is handed back to the parser as a one-line document and the key it produces
+    is the answer. Raw text is never compared to raw text — `"linear"` and
+    `linear` are the same key, and only the parser is entitled to say so.
+    """
+    if not SINGLE_KEY.fullmatch(spelling):
+        return None
+    if not spelling.startswith(('"', "'")):
+        return spelling
+    try:
+        return next(iter(tomllib.loads(f"{spelling} = 0")))
+    except tomllib.TOMLDecodeError:
+        return None
 
 
 def close_offset(line: str, delimiter: str) -> int:
@@ -152,7 +195,8 @@ def assignments(text: str, keys: Collection[str]) -> dict[str, list[str]]:
         if not match:
             index += 1
             continue
-        key, delimiter = match.groups()
+        key = decode_key(match.group("key"))
+        delimiter = match.group("delim")
         # What follows the OPENING delimiter on this same line. A closer in here
         # ends the value where it sits; only when there is none does the body
         # continue onto the lines below.
@@ -179,8 +223,23 @@ def audit(
     problems: list[str] = []
     try:
         table = blocks(text)
+        parsed = tomllib.loads(text).get(TABLE, {})
     except tomllib.TOMLDecodeError as exc:
         return [f"{source} is not valid TOML: {exc}"]
+
+    # OUT OF CONTRACT, decided by the parser rather than by pattern. A dotted key
+    # (`linear.sub = ...`) makes tomllib nest a table here, and `blocks()` drops
+    # anything that is not a string — silently, until now. Reported instead of
+    # skipped, and detected from the parsed shape so a dotted key in some OTHER
+    # table is none of this check's business.
+    for key, value in sorted(parsed.items()):
+        if not isinstance(value, str):
+            problems.append(
+                f"{source} [{TABLE}] {key} is a {type(value).__name__}, not a string — a "
+                f"dotted key or sub-table here is out of this check's contract, which is "
+                f"one string value per block. Its delimiter cannot be judged, so it would "
+                f"otherwise pass unexamined."
+            )
 
     # COLLECTION POINT 1 — the table itself. The assertion below runs inside a
     # loop over it, so an empty one asserts nothing while the check reports ok.
@@ -342,6 +401,8 @@ def self_test() -> list[str]:
         ("an inline comment on the header", f"[{TABLE}] # runbooks\nlinear = '''x'''\n", {"linear"}),
         ("a quoted table name", f'["{TABLE}"]\nlinear = \'\'\'x\'\'\'\n', {"linear"}),
         ("tabs around the equals", f"[{TABLE}]\nlinear\t=\t'''x'''\n", {"linear"}),
+        ("a basic-quoted key", f'[{TABLE}]\n"linear" = \'\'\'x\'\'\'\n', {"linear"}),
+        ("a literal-quoted key", f"[{TABLE}]\n'linear' = '''x'''\n", {"linear"}),
     )
     for shape, fixture, expected in shapes:
         reported = fixture_audit(fixture, source=f"<fixture: {shape}>")
@@ -368,6 +429,20 @@ def self_test() -> list[str]:
                 f"a BASIC-string key with {shape} was not reported as a delimiter "
                 f"violation, so reading the shape was traded for no longer judging it."
             )
+
+    # Out of contract, and it must SAY so rather than being dropped by the
+    # is-it-a-string filter.
+    if not any(
+        "not a string" in problem
+        for problem in fixture_audit(
+            f"[{TABLE}]\nlinear = '''x'''\nfoo.bar = '''y'''\n",
+            source="<fixture: dotted key>",
+        )
+    ):
+        failures.append(
+            "a dotted key under the table was not reported as out of contract, so a "
+            "sub-table here passes unexamined — its delimiter is never judged."
+        )
 
     # The cost of not tracking tables: a key of the same name elsewhere is
     # indistinguishable. It must be REPORTED, never resolved by picking one.
