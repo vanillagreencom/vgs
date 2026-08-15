@@ -156,6 +156,10 @@ PluginComponent {
     function routeSearchText(text) {
         if (resettingState)
             return;
+        // Every change to the search text, however it arrived. handleKey does
+        // not see input-method composition (CJK commits through
+        // inputMethodEvent) or a paste, and both rebuild the result list.
+        hoverGate.disarm();
         let mode = "";
         let category = "";
         if (text.indexOf("a:") === 0)
@@ -969,6 +973,13 @@ PluginComponent {
         event.accepted = false;
     }
 
+    // EVERY repopulation hands selection back to the keyboard, on the one
+    // funnel each rebuild must pass through rather than beside each
+    // `visibleItems =` a later edit can forget. Keying the latch to key presses
+    // alone left the defect alive on the async path: a DSearchService reply
+    // lands hundreds of ms after the keystroke, the rebuilt row under the
+    // resting pointer fires its synthetic hover, and selection snaps to it.
+    onVisibleItemsChanged: hoverGate.disarm()
     onQueryChanged: {
         if (resettingState || routingPrefix)
             return;
@@ -2106,7 +2117,10 @@ PluginComponent {
         signal contextRequested(var sender, real localX, real localY)
 
         radius: Theme.controlRadius
-        color: selected ? Theme.surfaceSelected : cardArea.containsMouse ? Theme.surfaceHover : "transparent"
+        // Tint follows the latch: while hover is dormant, tinting the pointer's
+        // row would show two live rows, the tinted one not what Enter launches.
+        color: selected ? Theme.surfaceSelected
+            : (cardArea.containsMouse && root.hoverGate.armed) ? Theme.surfaceHover : "transparent"
         border.width: selected ? Theme.focusRingWidth : 1
         border.color: selected ? Theme.focusRing : Theme.borderColor
         clip: true
@@ -2171,8 +2185,7 @@ PluginComponent {
                     resultCard.hovered();
             }
             onPositionChanged: mouse => {
-                const scenePos = mapToItem(null, mouse.x, mouse.y);
-                if (root.hoverGate.notePointer(scenePos.x, scenePos.y))
+                if (root.hoverGate.notePointer(cardArea, mouse))
                     resultCard.hovered();
             }
             onClicked: mouse => {
@@ -2201,7 +2214,9 @@ PluginComponent {
         signal contextRequested(var sender, real localX, real localY)
 
         radius: Theme.cornerRadius
-        color: selected ? Theme.withAlpha(Theme.primary, 0.16) : rowArea.containsMouse ? Theme.surfaceHover : "transparent"
+        // Tint follows the latch, as in ResultCard above.
+        color: selected ? Theme.withAlpha(Theme.primary, 0.16)
+            : (rowArea.containsMouse && root.hoverGate.armed) ? Theme.surfaceHover : "transparent"
         clip: true
 
         Row {
@@ -2313,8 +2328,7 @@ PluginComponent {
                     resultRow.hovered();
             }
             onPositionChanged: mouse => {
-                const scenePos = mapToItem(null, mouse.x, mouse.y);
-                if (root.hoverGate.notePointer(scenePos.x, scenePos.y))
+                if (root.hoverGate.notePointer(rowArea, mouse))
                     resultRow.hovered();
             }
             onClicked: mouse => {
