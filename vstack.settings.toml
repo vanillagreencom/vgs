@@ -387,3 +387,12 @@ ORCH_OVERSEER_LANES = "3"
 # the default list. Empty disables the filter (an explicit choice to count
 # errored rows as evidence).
 REVIEW_GATE_REVIEW_OBJECT_ERROR_PATTERNS = "encountered an error and was unable to review"
+
+# Used by: orch (`approval-wait`). Comma-separated reviewer logins that must
+# EACH have a review pinned to the current head — with zero unresolved
+# threads — before the review gate opens, in either mode. The multi-bot
+# enqueue gate: one bot's pass cannot open the gate while a listed sibling
+# has not yet reacted to this head; findings hold the gate as threads.
+# Empty = off. The wait deadline and PR_REVIEW_ON_TIMEOUT still bound a
+# dead reviewer.
+PR_REVIEW_QUORUM = ""
