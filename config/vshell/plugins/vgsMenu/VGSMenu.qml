@@ -533,6 +533,17 @@ PluginComponent {
         filePreviewRevealed = false;
     }
 
+    // Whether a file search actually runs for this query: the shared
+    // two-character rule, plus the two legs that deliberately dispatch below it
+    // — zoxide, which needs no query, and an explicit folder path, which the
+    // helper completes directly. The empty state reads this too, or it tells the
+    // user to type more about a search that ran and found nothing.
+    function fileSearchDispatches(trimmed) {
+        const explicitFolderPath = fileSearchType === "dir"
+            && (trimmed.indexOf("~/") === 0 || trimmed.indexOf("/") === 0 || trimmed === "~");
+        return DSearchService.queryIsDispatchable(trimmed) || fileSearchType === "zoxide" || explicitFolderPath;
+    }
+
     function refreshFileItems() {
         if (resettingState || routingPrefix)
             return;
@@ -542,9 +553,7 @@ PluginComponent {
         visibleItems = [];
         selectedItemIndex = 0;
         filePreviewRevealed = false;
-        const explicitFolderPath = fileSearchType === "dir"
-            && (trimmed.indexOf("~/") === 0 || trimmed.indexOf("/") === 0 || trimmed === "~");
-        if (!DSearchService.queryIsDispatchable(trimmed) && fileSearchType !== "zoxide" && !explicitFolderPath) {
+        if (!fileSearchDispatches(trimmed)) {
             fileSearching = false;
             return;
         }
@@ -1854,7 +1863,7 @@ PluginComponent {
                                 StyledText {
                                     width: 260
                                     text: root.fileSearching ? "Searching…"
-                                        : (root.categories[root.selectedCategoryIndex]?.id === "files" && !DSearchService.queryIsDispatchable(root.query)
+                                        : (root.categories[root.selectedCategoryIndex]?.id === "files" && !root.fileSearchDispatches(root.query.trim())
                                             ? "Type at least two characters"
                                             : "No matching results")
                                     font.pixelSize: Theme.fontSizeMedium

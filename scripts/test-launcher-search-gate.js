@@ -749,11 +749,26 @@ for (const [label, source] of [["Controller.qml", controllerSource], ["ResultsLi
     for (const call of [
         "fileSearching = DSearchService.queryIsDispatchable(trimmed);",
         "if (!DSearchService.queryIsDispatchable(trimmed))",
-        "!DSearchService.queryIsDispatchable(root.query)"
+        "return DSearchService.queryIsDispatchable(trimmed) || fileSearchType === \"zoxide\" || explicitFolderPath;"
     ]) {
         assert.ok(code.includes(qmlSource.flat(call)),
             `VGSMenu must ask the one threshold owner: \`${call}\`. Its own literal would keep ` +
             "searching at two characters while the launcher's own rule moved");
+    }
+
+    // The dispatch predicate and the empty state must be the SAME predicate.
+    // They were not: the dispatch site exempts an explicit folder path, so
+    // typing "~" in folder mode runs a real search while the empty state said
+    // "Type at least two characters" about it.
+    q.requires(q.body("refreshFileItems"), "refreshFileItems()", [
+        ["if (!fileSearchDispatches(trimmed))", "the dispatch site asks the shared predicate"]
+    ]);
+    assert.ok(code.includes(qmlSource.flat("!root.fileSearchDispatches(root.query.trim())")),
+        "and so does the files-category empty state, or it tells the user to type more about a " +
+        "search that ran and found nothing");
+    for (const fn of ["refreshFileItems"]) {
+        assert.ok(!/explicitFolderPath/.test(stripComments(q.body(fn))),
+            `${fn} must not keep its own copy of the folder-path exemption beside the shared one`);
     }
 
     const openFolder = q.body("openFolder");

@@ -37,7 +37,7 @@ config/vshell/plugins/remoteDesktop/RemoteDesktopWidget.qml	803
 config/vshell/plugins/sudoToggle/SudoToggleWidget.qml	515
 config/vshell/plugins/sysUpdate/SysUpdateWidget.qml	712
 config/vshell/plugins/tailscale/TailscaleWidget.qml	804
-config/vshell/plugins/vgsMenu/VGSMenu.qml	2302
+config/vshell/plugins/vgsMenu/VGSMenu.qml	2311
 config/vshell/settings.default.json	757
 docs/architecture/scratchpads.md	410
 docs/media/vgs-demo-poster.jpg	1197
@@ -211,7 +211,7 @@ scripts/gen-package-metadata.py	985
 scripts/lib/validation_manifest.py	749
 scripts/qml-smoke.sh	1258
 scripts/test-compositor-focus.js	791
-scripts/test-launcher-search-gate.js	900
+scripts/test-launcher-search-gate.js	915
 scripts/test-paste-lifecycle.js	1168
 scripts/test-pill-hover-safety.js	420
 scripts/test-remote-desktop-state.js	1243
