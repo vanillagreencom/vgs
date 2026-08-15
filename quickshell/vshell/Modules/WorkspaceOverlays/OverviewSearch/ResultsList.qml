@@ -18,7 +18,67 @@ Item {
     property var transientSurfaceTracker: null
     readonly property bool _bottomSectionHeaderActive: leadingSectionHeaderAtBottom && (controller?.sections?.length ?? 0) > 0
 
+    // One reading of the search backend for the whole empty state, so the
+    // message, the hint and the icon cannot disagree with the gate the
+    // controller applied. The controller owns the kind and the effective query;
+    // DSearchService owns which tool answers for them.
+    readonly property string _fileQuery: controller ? controller.fileSearchQuery() : ""
+    readonly property string _fileBackendState: controller
+        ? DSearchService.backendState(controller.fileSearchKind(), _fileQuery) : "unknown"
+    readonly property string _missingBackendCommand: controller && _fileBackendState === "missing"
+        ? DSearchService.backendCommandFor(controller.fileSearchKind()) : ""
+    readonly property string _fileStateKey: fileEmptyStateKey(_fileBackendState, _missingBackendCommand, _fileQuery.length)
+    // A file search is on screen in files mode, and outside it whenever the
+    // controller has a query long enough to dispatch one (the "/" prefix form).
+    readonly property bool _fileLegActive: (controller?.searchMode ?? "") === "files" || _fileQuery.length >= 2
+
     signal itemRightClicked(int index, var item, real mouseX, real mouseY)
+
+    // What the files-mode empty state says, as keys rather than copy: the copy
+    // is I18n's and cannot run outside Qt, while the CHOICE is what
+    // scripts/test-launcher-search-gate.js pins.
+    // BEGIN EMPTY STATE DECISION
+    function fileEmptyStateKey(backendState, missingCommand, queryLength) {
+        if (backendState === "checking")
+            return "checking";
+        if (backendState === "missing")
+            return missingCommand === "rg" ? "missing-rg" : "missing-fd";
+        if (queryLength === 0)
+            return "prompt";
+        if (queryLength < 2)
+            return "short";
+        return "empty";
+    }
+
+    // The second line: an install step for a tool that is genuinely missing, or
+    // the probe's own failure when nobody could tell which tools are there.
+    // Never an install step on the strength of an answer nobody has.
+    //
+    // `fileLegActive` is what makes it honest outside files mode: the hint may
+    // only appear where a file search would actually have run, or it promises
+    // that installing fd fixes a mode that never searched files at all.
+    function fileHintKey(fileLegActive, backendState, missingCommand, probeState) {
+        if (!fileLegActive)
+            return "";
+        if (backendState === "missing")
+            return missingCommand === "rg" ? "install-rg" : "install-fd";
+        if (probeState === "failed")
+            return "probe-failed";
+        return "";
+    }
+
+    function fileEmptyIcon(stateKey, fileType) {
+        if (stateKey === "checking")
+            return "hourglass_empty";
+        if (stateKey === "missing-rg" || stateKey === "missing-fd")
+            return "search_off";
+        if (fileType === "text")
+            return "article";
+        if (fileType === "file")
+            return "insert_drive_file";
+        return "folder_open";
+    }
+    // END EMPTY STATE DECISION
 
     function _rebuildVisualModel() {
         var sections = root.controller?.sections ?? [];
@@ -498,15 +558,7 @@ Item {
                     var mode = root.controller?.searchMode ?? "all";
                     switch (mode) {
                     case "files":
-                        var fileType = root.controller?.fileSearchType ?? "all";
-                        switch (fileType) {
-                        case "dir":
-                            return "folder_open";
-                        case "file":
-                            return "insert_drive_file";
-                        default:
-                            return "folder_open";
-                        }
+                        return root.fileEmptyIcon(root._fileStateKey, root.controller?.fileSearchType ?? "all");
                     case "plugins":
                         return "extension";
                     case "apps":
@@ -530,18 +582,19 @@ Item {
 
                     switch (mode) {
                     case "files":
-                        if (!DSearchService.statusKnown)
-                            return I18n.tr("Launcher search is unavailable");
-                        if (!DSearchService.backendAvailable(root.controller?.fileSearchKind()))
-                            return (root.controller?.fileSearchType ?? "file") === "text"
-                                ? I18n.tr("Text search needs ripgrep", "Overview search empty state when the ripgrep binary is missing")
-                                : I18n.tr("File search needs fd", "Overview search empty state when the fd binary is missing");
-                        if (!hasQuery)
+                        switch (root._fileStateKey) {
+                        case "checking":
+                            return I18n.tr("Checking search tools", "Overview search empty state while the search-tool probe has not answered");
+                        case "missing-rg":
+                            return I18n.tr("Text search needs ripgrep", "Overview search empty state when the ripgrep binary is missing");
+                        case "missing-fd":
+                            return I18n.tr("File search needs fd", "Overview search empty state when the fd binary is missing");
+                        case "prompt":
                             return I18n.tr("Type to search files");
-                        if (root.controller.searchQuery.length < 2)
+                        case "short":
                             return I18n.tr("Type at least 2 characters");
-                        var fileType = root.controller?.fileSearchType ?? "all";
-                        switch (fileType) {
+                        }
+                        switch (root.controller?.fileSearchType ?? "all") {
                         case "dir":
                             return I18n.tr("No folders found");
                         case "file":
@@ -570,17 +623,18 @@ Item {
                 wrapMode: Text.WordWrap
 
                 // Named so a missing search backend reads as an install step
-                // rather than as a query that matched nothing.
+                // rather than as a query that matched nothing — and so a probe
+                // that could not run says that instead of blaming a tool.
                 function getDependencyHint() {
-                    if ((root.controller?.searchMode ?? "all") !== "files")
-                        return "";
-                    if (!DSearchService.statusKnown)
-                        return "";
-                    if (DSearchService.backendAvailable(root.controller?.fileSearchKind()))
-                        return "";
-                    return (root.controller?.fileSearchType ?? "file") === "text"
-                        ? I18n.tr("Install the ripgrep package to search inside file contents.", "Overview search hint when the ripgrep binary is missing")
-                        : I18n.tr("Install the fd package (fd-find on Debian and Fedora) to search files and folders by name.", "Overview search hint when the fd binary is missing");
+                    switch (root.fileHintKey(root._fileLegActive, root._fileBackendState, root._missingBackendCommand, DSearchService.statusState)) {
+                    case "install-rg":
+                        return I18n.tr("Install the ripgrep package to search inside file contents.", "Overview search hint when the ripgrep binary is missing");
+                    case "install-fd":
+                        return I18n.tr("Install the fd package (fd-find on Debian and Fedora) to search files and folders by name.", "Overview search hint when the fd binary is missing");
+                    case "probe-failed":
+                        return I18n.tr("Could not check which search tools are installed: %1. Searches still run.", "Overview search hint when the launcher-search status probe failed").arg(DSearchService.statusError);
+                    }
+                    return "";
                 }
             }
         }

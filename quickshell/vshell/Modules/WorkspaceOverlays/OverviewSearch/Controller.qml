@@ -56,6 +56,12 @@ Item {
     }
 
     onActiveChanged: {
+        if (active) {
+            // A probe that gave up earlier gets its second chance when a surface
+            // that needs the answer opens, rather than leaving search refused
+            // for the life of the shell.
+            DSearchService.ensureStatus();
+        }
         if (!active) {
             SessionData.addLauncherHistory(searchQuery);
 
@@ -118,6 +124,34 @@ Item {
 
             searchDebounce.restart();
         }
+    }
+
+    Connections {
+        target: DSearchService
+
+        // The probe answers milliseconds after the launcher opens, so a query
+        // typed in that window is declined while the answer is unknown. Nothing
+        // else would re-run it: without this the results stay empty until the
+        // next keystroke.
+        function onStatusStateChanged() {
+            root._retryFileSearchAfterProbe();
+        }
+        function onFdAvailableChanged() {
+            root._retryFileSearchAfterProbe();
+        }
+        function onRipgrepAvailableChanged() {
+            root._retryFileSearchAfterProbe();
+        }
+    }
+
+    function _retryFileSearchAfterProbe() {
+        if (!active)
+            return;
+        if (searchMode !== "files" && !searchQuery.startsWith("/"))
+            return;
+        if (fileSearchQuery().length < 2)
+            return;
+        fileSearchDebounce.restart();
     }
 
     Connections {
@@ -796,9 +830,8 @@ Item {
         clearActivePluginViewPreference();
 
         if (searchMode === "files") {
-            var prefixInfo = Utils.parseFileSearchPrefix(searchQuery);
-            var fileQuery = prefixInfo ? prefixInfo.query : searchQuery.trim();
-            isFileSearching = fileQuery.length >= 2 && DSearchService.backendAvailable(fileSearchKind());
+            var fileQuery = fileSearchQuery();
+            isFileSearching = fileQuery.length >= 2 && DSearchService.canDispatch(fileSearchKind(), fileQuery);
             sections = [];
             flatModel = [];
             selectedFlatIndex = 0;
@@ -1078,37 +1111,47 @@ Item {
         searchCompleted();
     }
 
-    // The DSearchService kind backing the current file-search type. "all" folds
-    // into the name kind; _applyFileSearchResults splits files from folders.
+    // The single reading of the current file-search type, so the gate, the
+    // dispatch and ResultsList's empty state cannot disagree about the kind.
+    // The overview deliberately narrows the "all" type to the "files" kind: the
+    // helper's "files" kind returns no directories, so _applyFileSearchResults'
+    // folders branch is dead for this path (the helper's own "all" kind, which
+    // does return both, is vgsMenu's).
     function fileSearchKind() {
-        var type = fileSearchType || "file";
-        return type === "dir" ? "folders" : type === "text" ? "text" : "files";
+        return DSearchService.kindForType(fileSearchType || "file");
+    }
+
+    // The query the file search actually sends: the "/" prefix form drops the
+    // prefix, files mode sends the trimmed query, and no other mode searches
+    // files at all.
+    function fileSearchQuery() {
+        if (searchQuery.startsWith("/")) {
+            var prefixInfo = Utils.parseFileSearchPrefix(searchQuery);
+            return prefixInfo ? prefixInfo.query : searchQuery.substring(1).trim();
+        }
+        if (searchMode === "files")
+            return searchQuery.trim();
+        return "";
     }
 
     function performFileSearch() {
-        var fileQuery = "";
         var effectiveType = fileSearchType || "file";
         var kind = fileSearchKind();
-
-        // fd backs name search and ripgrep backs text search, so each kind gates
-        // on its own tool: one missing tool must not silence the other.
-        // ResultsList names the missing tool in the empty state.
-        if (!DSearchService.backendAvailable(kind)) {
-            isFileSearching = false;
-            return;
-        }
-
-        if (searchQuery.startsWith("/")) {
-            var prefixInfo = Utils.parseFileSearchPrefix(searchQuery);
-            fileQuery = prefixInfo ? prefixInfo.query : searchQuery.substring(1).trim();
-        } else if (searchMode === "files") {
-            fileQuery = searchQuery.trim();
-        } else {
-            return;
-        }
+        var fileQuery = fileSearchQuery();
 
         if (fileQuery.length < 2) {
             isFileSearching = false;
+            return;
+        }
+
+        // fd backs name search and ripgrep backs text search, so each kind waits
+        // on its own tool. Results are cleared before the return: the chips and
+        // the Tab cycle reach this without going through performSearch, and
+        // leaving the previous kind's hits on screen hides the very empty state
+        // that names the missing tool.
+        if (!DSearchService.canDispatch(kind, fileQuery)) {
+            isFileSearching = false;
+            _applyFileSearchResults([], effectiveType);
             return;
         }
 

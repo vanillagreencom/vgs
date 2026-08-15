@@ -175,11 +175,13 @@
       "$comment": [
         "Launcher FILE and FOLDER search. Despite the name, fd is not an",
         "optional accelerator: bin/vshell-helper keeps an os.walk fallback,",
-        "but the overview never reaches it -- OverviewSearch gates name",
-        "search on fd and shows an install hint instead, because a",
-        "per-keystroke walk of $HOME is hostile without debounce and caching.",
-        "Missing fd/fdfind therefore means no overview file or folder search.",
-        "Text search is gated separately on rg and keeps working without fd."
+        "but the overview declines it and shows an install hint instead -- a",
+        "full walk of the search roots per query, with nothing cached between",
+        "them, cannot answer at typing speed. Missing fd/fdfind therefore",
+        "means no overview file or folder search, except folder completion",
+        "for a path query, which the helper answers without fd. Text search",
+        "is gated separately on rg and keeps working without fd. The vgsMenu",
+        "plugin is not gated and still reaches the walk."
       ],
       "anyCommands": [
         [

@@ -13229,12 +13229,15 @@ def _launcher_search_name_hits(
 ) -> List[Dict[str, Any]]:
     """Rank file and folder names matching `query` under `roots`.
 
-    fd does the walking when it is installed. The os.walk branch below is the
-    fallback for callers that accept an unbounded walk of the roots: the
-    `vshell launcher-search` CLI and the vgsMenu plugin, which pass the query
-    straight through. The overview's own file search does not -- it gates on fd
-    and shows a dependency hint instead, because a per-keystroke walk of $HOME
-    needs debouncing and caching this function does not have.
+    A folder query that starts at a path is answered below by
+    `_launcher_folder_path_hits`, before fd is consulted at all.
+
+    Otherwise fd does the walking when it is installed. The os.walk branch is
+    the fallback for callers that accept a full walk of the roots: the
+    `vshell launcher-search` CLI, and the vgsMenu plugin, which runs a search
+    per keystroke. The overview declines it and shows a dependency hint
+    instead -- a full walk per query, with nothing cached between them, cannot
+    answer at typing speed.
     """
     if kind == "folders" and query.strip().startswith(("~", "/")):
         return _launcher_folder_path_hits(query, roots, ignores, limit)

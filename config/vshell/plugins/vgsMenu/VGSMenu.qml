@@ -549,9 +549,7 @@ PluginComponent {
             return;
         }
         fileSearching = true;
-        const kind = fileSearchType === "dir" ? "folders"
-            : fileSearchType === "text" ? "text"
-            : fileSearchType === "zoxide" ? "zoxide" : "files";
+        const kind = DSearchService.kindForType(fileSearchType);
         DSearchService.search(trimmed, { kind: kind, limit: 120 }, response => {
             if (generation !== fileSearchGeneration
                     || categories[selectedCategoryIndex]?.id !== "files"
