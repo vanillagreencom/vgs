@@ -9,19 +9,55 @@ Hard-coding the argv again, assuming a target instead of resolving one, or
 letting a second surface grow its own injector would pass the entire suite while
 terminal pastes misfire — the exact bug VGS-119 fixed.
 
+WHAT THIS DOES NOT CLAIM, first, because it used to claim it. There was a rule
+1: "no file anywhere under the scanned roots builds a hard-coded wtype argv."
+It is GONE, and nothing here replaces it. Concretely, and this is the cost a
+reader should not have to infer from a missing rule: A HARD-CODED ARGV
+INTRODUCED SOMEWHERE OTHER THAN THE PASTE OWNER IS NOT CAUGHT BY THIS CHECK.
+Rules 2 to 5 keep their numbers so every message and control that names one
+still means it, and so the gap here reads as what it is.
+
+Its absence is a DECISION, not an oversight or an unfinished edit. It was
+removed because it could not be made true, not because it was inconvenient.
+Seven spellings evaded it across one review — comments, template literals,
+string interiors, braceless regions, regex literals, division after an object
+literal, and finally `[("wtype"), ...]`, where a transparent paren made the
+argv unrecognisable while changing nothing about the value. Each fix invited
+the next spelling, so it was removed rather than patched an eighth time.
+
+That is the general lesson, and it is the thing to carry away when adding a
+rule here:
+
+  - An unbounded ABSENCE claim over source text — "nothing anywhere does X" —
+    cannot be established by matching. Valid JavaScript has unbounded ways to
+    spell one expression, so a matcher can only ever enumerate the spellings
+    someone thought of. Passing means "none of the spellings I know", which
+    reads as "none", and that gap is where seven evasions lived.
+  - A POSITIVE STRUCTURAL claim about a NAMED SITE can be: this call exists,
+    this assignment is guarded by that test, this owner is the only caller,
+    this branch returns before that start. The site is known, so the question
+    is bounded, and every remaining rule is of this kind — which is why they
+    held once they were made structural rather than textual.
+
+The removal NARROWS this guard; it does not leave the fix unguarded, and both
+halves of that matter to a reader deciding how much to worry. An edit to
+PasteService that hard-codes the keystroke still trips rule 3 — not by
+recognising the literal, but because the owner would no longer be calling the
+resolver at all, which rule 3 requires of the one site that injects. What rule
+1 added on top was the rarer case of a brand-new second injector written
+somewhere else entirely.
+
+Rebuilding that coverage needs a parse rather than patterns, and is tracked as
+VGS-146, which carries Codex's planted `[("wtype"), ...]` as its first
+acceptance test — planted and watched to fail, not described — the other six
+evaded forms as further planted cases, and the requirement that the scrubber's
+fail-closed property survives any rebuild: an input the tool cannot parse must
+refuse loudly rather than return a view that silently satisfies every rule
+built on it.
+
 Pinned, over the QML and JS under `quickshell/vshell/` and `config/vshell/`
 (bundled plugins ship both, and a paste feature could be written there):
 
-  1. No hard-coded keystroke. No file builds an argv whose first element is
-     wtype, in any of JavaScript's three string delimiters — single, double or
-     a template literal — and whether bound or assigned, except the
-     resolver itself, `PasteTarget.js`, which is where the argv shapes live. The
-     keystroke depends on the target, so a literal one is wrong everywhere else.
-     `["sh", "-c", "command -v wtype"]` is a probe for the binary, not an
-     invocation, and does not match. Only an argv that is CODE counts: the same
-     characters inside a log message name an argv rather than building one, and
-     a rule that cried wolf over prose would be turned off, costing the real
-     coverage. Inside a template interpolation is code, and is caught.
   2. One injector. Only PasteService may call the resolver functions that BUILD
      a wtype argv, and that set is READ OUT OF THE RESOLVER rather than listed
      here: every `function` in `PasteTarget.js` whose body contains a literal
@@ -128,8 +164,6 @@ themselves are here.
 
 Deliberately NOT pinned:
 
-  - A wtype argv assembled from string fragments passes rule 1: the pattern
-    matches a literal array, and concatenation is not one.
   - Object identity between the assignment and the start in rule 3: the check
     proves an argv assignment precedes a `.running = true` in the same function,
     not that both name the same Process.
@@ -166,8 +200,6 @@ from paste_literals import (  # noqa: E402
     builder_call_re,
     resolver_aliases,
     IMPORT_RE,
-    LITERAL_ARGV_RE,
-    literal_argv_is_code,
     literal_string_argument,
     matcher_problems,
 )
@@ -282,23 +314,8 @@ def check_matchers() -> bool:
         fail(complaint)
     if problems:
         return False
-    print("check-paste-injection: rules 1 and 3 see every string delimiter and still ignore prose")
-    return True
-
-
-def check_no_literal_argv(files: list[tuple[str, str, str]]) -> bool:
-    offenders = [
-        rel_path for rel_path, source, blanked in files
-        if rel_path != RESOLVER_LIB and any(
-            literal_argv_is_code(source, blanked, match.start())
-            for match in LITERAL_ARGV_RE.finditer(source)
-        )
-    ]
-    if offenders:
-        return fail(
-            "a wtype argv is hard-coded, so the keystroke ignores the target: " + ", ".join(offenders)
-        )
-    print(f"check-paste-injection: no hard-coded wtype argv in {len(files)} files under {', '.join(SCAN_ROOTS)}")
+    print("check-paste-injection: rule 3's matchers see every string delimiter, and rule 2's "
+          "builder derivation still tells an argv from prose")
     return True
 
 
@@ -841,7 +858,6 @@ def run() -> int:
         return 1
 
     results = [
-        check_no_literal_argv(files),
         check_single_injector(files, builders),
         check_owner(),
         check_focus_readiness(),

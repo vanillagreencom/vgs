@@ -1,21 +1,26 @@
 """Recognise a literal in QML or JS source, across EVERY string delimiter.
 
 Split out of `scripts/check-paste-injection.py` because this layer is where
-that check's guards kept going vacuous: a matcher that knows some of a
-construct's forms and silently ignores the rest passes while the thing it
-guards is broken. Rule 1 knew `'` and `"` but not the backtick, so a
-hard-coded keystroke written `[`wtype`, ...]` walked through a merge-blocking
-check; the resolver's argument test had the same two-of-three gap.
+that check's matchers kept going vacuous: one that knows some of a construct's
+forms and silently ignores the rest passes while the thing it guards is broken.
+The resolver's argument test knew `'` and `"` but not the backtick, so a
+literal target written `` `firefox` `` walked through a merge-blocking check.
 
 So the delimiter contract lives here with its own controls beside it, rather
-than as three regexes scattered through a file of rules. Two directions, both
-pinned by `matcher_problems()`:
+than as regexes scattered through a file of rules. Two directions, both pinned
+by `matcher_problems()`:
 
-  - A prohibition must see all three delimiters. A form it does not know is a
+  - A matcher must see all three delimiters. A form it does not know is a
     silent pass, which is the failure that keeps recurring.
-  - It must still ignore prose. The same characters inside a log message name
-    a construct rather than building one, and a rule that cried wolf over that
-    would be turned off, costing the coverage it was widened to give.
+  - It must still tell code from prose. The same characters inside a log
+    message name a construct rather than building one.
+
+WHAT THESE ARE FOR NOW. Everything here serves a BOUNDED question about a
+known site — which functions of `PasteTarget.js` build an argv, what the
+injector passes its resolver, whether a file imports the resolver. The
+tree-wide absence rule these once also served is gone from the check, and its
+controls with it; see that file's header for why an absence claim over source
+text is not something matching can establish.
 
 Every predicate here takes offsets into the views `live_code` produces, and
 both views share offsets, so a caller may hold one of each and compare
@@ -84,25 +89,18 @@ def literal_string_argument(source: str, at: int) -> bool:
     return "${" not in source[match.end():close]
 
 
-# Every row names the delimiter it covers, because two of three delimiters is
-# how each of these went vacuous in the first place. The prose rows are the
-# inverse control, so closing the gap cannot reopen the false positive that
-# read a log message as an argv.
-ARGV_CONTROLS = [
-    ("a double-quoted argv", 'proc.command = ["wtype", "-", "--"];\n', True),
-    ("a single-quoted argv", "proc.command = ['wtype', '-', '--'];\n", True),
-    ("a template-literal argv", 'proc.command = [`wtype`, "-", "--"];\n', True),
-    ("an argv inside a template interpolation", 'run(`${["wtype", "-"].join(" ")}`);\n', True),
-    # The CONSEQUENCE control for the scrubber's regex-versus-division call: a
-    # `/` after an object literal was read as a regex opener, blanking this
-    # argv out of the view this rule reads, so the guard reported clean while a
-    # target-blind keystroke sat in the file. Fixing the scrubber alone would
-    # not have proved this property; only a control at this level does.
-    ("an argv after an object-literal division",
-     'const x = {} / 2; proc.command = ["wtype", "-"]; const y = a / b;\n', True),
-    ("prose naming an argv in a string", "log('argv is [\"wtype\", \"-\"] here');\n", False),
-    ("prose naming a template-literal argv", "log('argv is [`wtype`, `-`] here');\n", False),
-    ("prose naming an argv in a template", 'log(`argv is ["wtype", "-"] here`);\n', False),
+# `LITERAL_ARGV_RE` and `literal_argv_is_code` survive the removal of the
+# tree-wide absence rule because rule 2's derivation still needs them: they are
+# how `argv_builders` decides which resolver functions BUILD an argv. That is a
+# bounded question about one known file, not an absence claim over the tree.
+# The row below pins the discrimination that derivation depends on.
+BUILDER_BODY_CONTROLS = [
+    ("a builder returning a literal argv",
+     'function pasteCommand(id) {\n    return ["wtype", "-M", "ctrl"];\n}\n', ["pasteCommand"]),
+    ("prose naming an argv in a comment",
+     'function notABuilder(id) {\n    // returns ["wtype", "-M", "ctrl"] one day\n    return id;\n}\n', []),
+    ("prose naming an argv in a log string",
+     'function notABuilder(id) {\n    log(\'shape is ["wtype", "-M"]\');\n    return id;\n}\n', []),
 ]
 
 # The resolver's argument: a literal target in any delimiter is the bug, an
@@ -130,14 +128,10 @@ def matcher_problems(live_code) -> list[str]:
     before any rule built on it is believed.
     """
     problems = []
-    for label, fixture, expected in ARGV_CONTROLS:
-        blanked = live_code(fixture, blank_strings=True)
-        found = any(
-            literal_argv_is_code(fixture, blanked, match.start())
-            for match in LITERAL_ARGV_RE.finditer(live_code(fixture))
-        )
+    for label, fixture, expected in BUILDER_BODY_CONTROLS:
+        found = argv_builders(live_code(fixture), live_code(fixture, blank_strings=True))
         if found != expected:
-            problems.append(f"the argv matcher reads {label} {'as an argv' if found else 'as prose'}")
+            problems.append(f"the builder derivation reads {label} as {found or 'no builder'}")
     for label, argument, expected in ARGUMENT_CONTROLS:
         fixture = live_code(f"command = Paste.pasteCommand({argument});\n", blank_strings=True)
         call = COMMAND_ASSIGN_RE.search(fixture)
