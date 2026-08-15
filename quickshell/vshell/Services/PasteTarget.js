@@ -30,9 +30,12 @@
 // AppStream ids, Flathub — not confirmed against a running session, which is
 // also why they are exact whole-id entries: a wrong one matches nothing and
 // costs nothing, while a wrong segment would claim other vendors' apps. On the
-// same evidence and by the same rule, Hyper is deliberately absent: no id of
-// that shape could be found for it at all, and co.zeit.hyper is a package name
-// rather than an app id, so listing it would assert something unevidenced.
+// same evidence and by the same rule, no reverse-DNS id for Hyper is listed:
+// none of that shape could be found for it, and co.zeit.hyper is a package
+// name rather than an app id, so listing it would assert something
+// unevidenced. The bare `hyper` whole-id entry above is a different claim and
+// stands — matched against the whole id only, it classifies an app whose id IS
+// `hyper` and, as the two-list rule says, claims nothing but itself.
 var TERMINAL_APP_IDS = [
     "blackbox",
     "com.raggesilver.blackbox",

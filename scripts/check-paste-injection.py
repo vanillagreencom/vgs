@@ -164,6 +164,7 @@ from paste_literals import (  # noqa: E402
     OWNERSHIP_CONTROLS,
     argv_builders,
     builder_call_re,
+    resolver_aliases,
     IMPORT_RE,
     LITERAL_ARGV_RE,
     literal_argv_is_code,
@@ -322,24 +323,27 @@ def resolver_argv_builders() -> list[str] | None:
 
 
 def check_ownership_controls(builders: list[str]) -> bool:
-    call_re = builder_call_re(builders)
     for label, fixture, expected in OWNERSHIP_CONTROLS:
-        if bool(call_re.search(live_code(fixture, blank_strings=True))) != expected:
+        call_re = builder_call_re(builders, resolver_aliases(live_code(fixture)))
+        found = call_re is not None and bool(call_re.search(live_code(fixture, blank_strings=True)))
+        if found != expected:
             return fail(
-                f"rule 2 reads {label} as {'owner-only' if not expected else 'allowed'}"
+                f"rule 2 reads {label} as {'an unauthorised injector' if found else 'allowed'}"
             )
     print(
         "check-paste-injection: rule 2 covers every argv builder the resolver declares "
-        f"({', '.join(builders)}) and still allows the read-only calls"
+        f"({', '.join(builders)}), only through the resolver, and still allows the read-only calls"
     )
     return True
 
 
 def check_single_injector(files: list[tuple[str, str, str]], builders: list[str]) -> bool:
-    call_re = builder_call_re(builders)
     offenders = []
-    for rel_path, _, source in files:
+    for rel_path, with_strings, source in files:
         if rel_path in (OWNER, RESOLVER_LIB):
+            continue
+        call_re = builder_call_re(builders, resolver_aliases(with_strings))
+        if call_re is None:
             continue
         found = call_re.search(source)
         if found:

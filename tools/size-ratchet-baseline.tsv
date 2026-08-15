@@ -202,7 +202,7 @@ quickshell/vshell/Widgets/VgsDropdown.qml	565
 quickshell/vshell/Widgets/VgsPopoutStandalone.qml	986
 scripts/check-aur-sync.py	410
 scripts/check-notification-takeover.js	454
-scripts/check-paste-injection.py	863
+scripts/check-paste-injection.py	867
 scripts/check-settings-migration.js	952
 scripts/check-vshell-helper.py	5815
 scripts/check-vshell-niri.py	678

@@ -40,7 +40,7 @@ LITERAL_ARG_RE = re.compile(r"\s*(['\"`])")
 # template literal is not valid there. This one is a positive requirement,
 # where an unknown delimiter cries wolf instead of passing silently — so
 # accepting both is the strictly safer spelling, not a loosening.
-IMPORT_RE = re.compile(r"^[ \t]*import\s+(['\"])PasteTarget\.js\1\s+as\s+\w+", re.MULTILINE)
+IMPORT_RE = re.compile(r"^[ \t]*\.?import\s+(['\"])PasteTarget\.js\1\s+as\s+(\w+)", re.MULTILINE)
 # The resolver call as the right-hand side of the injector's `command`
 # assignment. A bare call proves nothing: its result has to reach the Process,
 # and `command` is Quickshell's own property name, so this is insensitive to
@@ -185,9 +185,35 @@ def argv_builders(source: str, blanked: str) -> list[str]:
     return sorted(set(names))
 
 
-def builder_call_re(builders: list[str]) -> re.Pattern:
-    """A call to any of the resolver's argv builders."""
-    return re.compile(r"\b(?:" + "|".join(re.escape(name) for name in builders) + r")\s*\(")
+def resolver_aliases(source: str) -> list[str]:
+    """Every local name this file binds `PasteTarget.js` to.
+
+    Read from the view where string contents survive — the import names the
+    file in a string literal. A file that imports the resolver under no name
+    cannot reach its builders at all.
+    """
+    return [match.group(2) for match in IMPORT_RE.finditer(source)]
+
+
+def builder_call_re(builders: list[str], aliases: list[str]) -> re.Pattern | None:
+    """A call reaching one of the resolver's argv builders THROUGH the resolver.
+
+    Qualified by the importing file's own alias, never the bare name. The
+    owner-only property is about calls INTO the resolver, and a bare-name match
+    said instead "no object anywhere may have a method spelled like this" — so
+    `Other.releaseModifiersCommand()`, which builds no wtype argv and never
+    touches the resolver, was reported as an unauthorised injector. A
+    merge-blocking check that rejects valid work is the failure mode that gets
+    a check switched off, and this one lands on other people's changes.
+
+    None when the file imports no resolver: there is nothing it could reach.
+    """
+    if not aliases:
+        return None
+    return re.compile(
+        r"\b(?:" + "|".join(re.escape(alias) for alias in aliases) + r")\s*\.\s*"
+        r"(?:" + "|".join(re.escape(name) for name in builders) + r")\s*\("
+    )
 
 
 # Both directions of the ownership rule, checked on every run. The read-only
@@ -195,8 +221,24 @@ def builder_call_re(builders: list[str]) -> re.Pattern:
 # which keystroke a target will get, and a rule that swallowed it would push
 # those surfaces into copying argv shapes — the duplication rule 2 prevents.
 OWNERSHIP_CONTROLS = [
-    ("a second file building the paste argv", "PasteTarget.pasteCommand(id);\n", True),
-    ("a second file releasing modifiers", "PasteTarget.releaseModifiersCommand();\n", True),
-    ("a read-only terminal question", "const t = PasteTarget.isTerminalAppId(id);\n", False),
-    ("a read-only keystroke display", "label.text = PasteTarget.displayAppId(id);\n", False),
+    # Reaching the builders THROUGH the resolver is the offence, so every row
+    # is a whole file: the import is what makes a call reach it at all.
+    ("a second file building the paste argv",
+     'import "PasteTarget.js" as Paste\nPaste.pasteCommand(id);\n', True),
+    ("a second file releasing modifiers",
+     'import "PasteTarget.js" as Paste\nPaste.releaseModifiersCommand();\n', True),
+    ("a second file using its own alias",
+     'import "PasteTarget.js" as Resolver\nResolver.pasteCommand(id);\n', True),
+    ("a .js file importing with the leading-dot spelling",
+     '.import "PasteTarget.js" as Paste\nPaste.pasteCommand(id);\n', True),
+    # ...and everything that must NOT be flagged. The bare-name match reported
+    # the first two of these as unauthorised injectors, rejecting valid work.
+    ("an unrelated object with a same-named method",
+     "Other.releaseModifiersCommand();\n", False),
+    ("a local function of the same name",
+     "function pasteCommand(x) {\n    return x;\n}\n", False),
+    ("a read-only terminal question",
+     'import "PasteTarget.js" as Paste\nconst t = Paste.isTerminalAppId(id);\n', False),
+    ("a read-only keystroke display",
+     'import "PasteTarget.js" as Paste\nlabel.text = Paste.displayAppId(id);\n', False),
 ]

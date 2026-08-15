@@ -52,6 +52,11 @@ assert.equal(PasteTarget.isTerminalAppId("console"), false, "a bare console app 
 assert.equal(PasteTarget.isTerminalAppId("terminal"), false, "a bare terminal app id is not a terminal");
 assert.equal(PasteTarget.isTerminalAppId("warp"), false, "a bare warp app id is not a terminal");
 assert.equal(PasteTarget.isTerminalAppId("hyper"), true, "the hyper terminal's own app id still resolves");
+// The two halves of the resolver's Hyper claim, asserted so neither can drift
+// back into the other. The bare whole-id entry stands; the reverse-DNS id the
+// comment discusses is a PACKAGE name and is deliberately not listed, so it
+// must not resolve — and it cannot reach the bare entry by segment either.
+assert.equal(PasteTarget.isTerminalAppId("co.zeit.hyper"), false, "co.zeit.hyper is a package name, not a listed app id");
 
 // Segment matching must not turn a substring into a match.
 assert.equal(PasteTarget.isTerminalAppId("kitty-notes"), false, "a name containing a terminal name is not a terminal");
