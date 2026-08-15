@@ -595,9 +595,11 @@ for (const state of ["available", "unknown", "checking"])
         ["var generation = ++_fileSearchGeneration;",
             "a controller-side generation, because DSearchService versions per KIND: a files " +
             "answer still lands after the chip switched to text"],
-        ["_fileSearchGeneration++;",
-            "and the DECLINED path supersedes what is in flight too, or an answer already on " +
-            "its way lands on top of the empty state explaining why this search was declined", 1],
+        ["_supersedeFileSearch();",
+            "BOTH abandon paths supersede what is in flight: the declined gate, whose answer " +
+            "would otherwise land on the empty state explaining the refusal, and the " +
+            "sub-threshold return, where nothing dispatches to supersede it — deleting 'docs' " +
+            "back to 'd' then repaints the 'docs' hits for a query that no longer exists", 2],
         ["if (generation !== root._fileSearchGeneration) return;",
             "checked in the callback, so a stale answer neither overwrites the current kind's " +
             "results nor attributes its error to them"]
@@ -664,6 +666,36 @@ for (const state of ["available", "unknown", "checking"])
     q.requires(q.body("fileSearchKind"), "fileSearchKind()", [
         ["DSearchService.kindForType", "the type-to-kind mapping stays in its owner"]
     ]);
+
+    // The other three abandon paths. A response in flight outlives all of them,
+    // and _applyFileSearchResults CONCATENATES outside files mode, so one that
+    // outlives a mode change appends Files and Folders sections into the apps
+    // list rather than replacing anything.
+    q.requires(q.body("setSearchQuery"), "setSearchQuery()", [
+        ["_supersedeFileSearch();",
+            "a query change supersedes at the KEYSTROKE, not at the dispatch 200ms later: " +
+            "performSearch has already cleared the results by then, and a response landing in " +
+            "that window repaints hits for a query the user has left"]
+    ]);
+    q.requires(q.body("reset"), "reset()", [
+        ["_supersedeFileSearch();",
+            "explicitly, because a reset that leaves the mode alone fires no mode change"]
+    ]);
+    {
+        const handler = qmlSource.flat(stripComments(q.handlers("onSearchModeChanged").join("\n")));
+        assert.ok(handler.includes("_supersedeFileSearch();"),
+            "a MODE change supersedes too, hooked on the change rather than on setMode: " +
+            "restorePreviousMode assigns searchMode directly, so a setMode-only bump misses it");
+    }
+
+    // One owner for the bump, so every path above is the same act.
+    q.requires(q.body("_supersedeFileSearch"), "_supersedeFileSearch()", [
+        ["_fileSearchGeneration++;", "which is the whole of it"]
+    ]);
+    assert.equal(
+        (stripComments(controllerSource).match(/_fileSearchGeneration\+\+;/g) || []).length, 1,
+        "and nowhere else raises the generation by hand — a bump outside the owner is a path " +
+        "that has not said what it is abandoning");
 
     q.requires(q.body("_retryFileSearchAfterProbe"), "_retryFileSearchAfterProbe()", [
         ["if (!shouldRetryAfterProbe(active, DSearchService.queryIsDispatchable(fileSearchQuery())))",

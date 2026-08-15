@@ -162,7 +162,7 @@ quickshell/vshell/Modules/Settings/WidgetsTabSection.qml	493
 quickshell/vshell/Modules/Settings/WindowRulesTab.qml	1065
 quickshell/vshell/Modules/Toast.qml	506
 quickshell/vshell/Modules/WallpaperBackground.qml	1081
-quickshell/vshell/Modules/WorkspaceOverlays/OverviewSearch/Controller.qml	2225
+quickshell/vshell/Modules/WorkspaceOverlays/OverviewSearch/Controller.qml	2252
 quickshell/vshell/Modules/WorkspaceOverlays/OverviewSearch/OverviewSearchContent.qml	1199
 quickshell/vshell/Modules/WorkspaceOverlays/OverviewSearch/OverviewSearchContextMenu.qml	699
 quickshell/vshell/Modules/WorkspaceOverlays/OverviewSearch/ResultsList.qml	711
@@ -211,7 +211,7 @@ scripts/gen-package-metadata.py	985
 scripts/lib/validation_manifest.py	749
 scripts/qml-smoke.sh	1258
 scripts/test-compositor-focus.js	791
-scripts/test-launcher-search-gate.js	984
+scripts/test-launcher-search-gate.js	1016
 scripts/test-paste-lifecycle.js	1168
 scripts/test-pill-hover-safety.js	420
 scripts/test-remote-desktop-state.js	1243

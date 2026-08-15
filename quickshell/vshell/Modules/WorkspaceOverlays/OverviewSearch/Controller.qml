@@ -74,6 +74,11 @@ Item {
     }
 
     onSearchModeChanged: {
+        // Hooked on the CHANGE, not on setMode: restorePreviousMode assigns the
+        // mode directly, and a file response landing after the mode left files
+        // is appended rather than replaced by _applyFileSearchResults — Files
+        // and Folders sections in the middle of the apps list.
+        _supersedeFileSearch();
         if (searchMode === "apps") {
             _loadAppCategories();
         } else {
@@ -506,6 +511,12 @@ Item {
 
     function setSearchQuery(query) {
         _searchVersion++;
+        // The query the in-flight file search was for no longer exists. This has
+        // to happen HERE rather than when the debounce fires: between the
+        // keystroke and the dispatch 200ms later, performSearch has already
+        // cleared the results, and a response landing in that window repaints
+        // hits for a query the user has left.
+        _supersedeFileSearch();
         _queryDrivenSearch = true;
         _pluginPhasePending = false;
         _phase1Items = [];
@@ -579,6 +590,10 @@ Item {
     }
 
     function reset() {
+        // Explicitly, because a reset that leaves the mode where it was fires no
+        // mode change: a response from the previous session must not repaint
+        // into the next one.
+        _supersedeFileSearch();
         searchQuery = "";
         searchMode = "apps";
         previousSearchMode = "apps";
@@ -1167,12 +1182,24 @@ Item {
     }
     // END FILE SEARCH DECISION
 
+    // Every path that abandons a file search calls this, so a response already in
+    // flight cannot repaint a query, kind or mode the user has left. The dispatch
+    // path captures the value it produces; the callback drops anything older.
+    function _supersedeFileSearch() {
+        _fileSearchGeneration++;
+    }
+
     function performFileSearch() {
         var effectiveType = fileSearchType || "file";
         var kind = fileSearchKind();
         var fileQuery = fileSearchQuery();
 
         if (!DSearchService.queryIsDispatchable(fileQuery)) {
+            // Nothing will dispatch for this query, so nothing supersedes the
+            // last one: without this, deleting "docs" back to "d" leaves the
+            // "docs" response current and it repaints hits for a query that no
+            // longer exists.
+            _supersedeFileSearch();
             isFileSearching = false;
             return;
         }
@@ -1187,7 +1214,7 @@ Item {
             fileSearchError = "";
             // Supersede anything already in flight, or its answer lands on top
             // of the empty state that explains why this one was declined.
-            _fileSearchGeneration++;
+            _supersedeFileSearch();
             _applyFileSearchResults([], effectiveType);
             return;
         }
