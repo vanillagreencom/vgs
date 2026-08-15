@@ -115,11 +115,15 @@ jq -r '(.body | sub("\\s+$"; "")) + "\n\n---\n\nMirrored from GitHub issue [" + 
 
 .agents/skills/linear/scripts/linear.sh issues create --title "$(jq -r .title "$gh_json")" \
   --description-file "$gh_body"
+rm -f "$gh_json" "$gh_body"
 ```
 
 `mktemp`, not `/tmp/gh-<n>.json`: that path is fully predictable from the issue
 number, so two lanes mirroring the same issue overwrite each other's file, and
-a pre-created symlink there would be followed by the redirect.
+a pre-created symlink there would be followed by the redirect. The `rm` is
+explicit rather than a `trap ... EXIT`, because these are separate commands an
+agent runs one at a time: a trap would fire whenever the shell exits, not when
+the runbook finishes, so it would look like cleanup without being it.
 
 The list query carries `url` so the triage table is actionable; `body` is
 fetched per issue rather than for all 50, and every field the description needs
