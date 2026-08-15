@@ -241,6 +241,12 @@ RECORDED_SIZE_PATTERNS = (
 
 ENTRY_LINE = re.compile(r'^    "([^"]+)":\s*[\d_]+,(?:\s*#\s*(.*))?$')
 
+# This file parses ITSELF to read those comments, so it is pinned to two
+# literals in its own source. Named rather than inlined in a split, so a
+# reformat produces a sentence naming the anchor that moved.
+CEILINGS_OPEN = "CEILINGS: dict[str, int] = {"
+CEILINGS_CLOSE = "\n}\n"
+
 
 def recorded_size(comment: str) -> int | None:
     """The size a comment records, or None when it records none."""
@@ -253,9 +259,43 @@ def recorded_size(comment: str) -> int | None:
     return None if latest is None else latest[1]
 
 
+class AnchorError(Exception):
+    """A literal this file parses ITSELF by is no longer where it was."""
+
+
+def ceiling_body(source: str) -> str:
+    """The text between the CEILINGS anchors, or a sentence saying which moved.
+
+    Both anchors are checked, and neither is allowed to fail quietly. A missing
+    opening one used to raise IndexError out of a split, handing the operator a
+    traceback instead of a diagnostic; a missing closing one read to end of file,
+    scanning the rest of the module for entries. Reporting nothing is not an
+    option either — an unreadable table means the recorded-size arm DID NOT RUN,
+    never that it is clean (validation-scripts.instructions.md).
+    """
+    start = source.find(CEILINGS_OPEN)
+    if start == -1:
+        raise AnchorError(
+            f"the CEILINGS opening anchor ({CEILINGS_OPEN!r}) is not in "
+            f"scripts/check-doc-growth.py, so no entry's comment can be read and the "
+            f"recorded-size arm cannot run. The declaration was reformatted or "
+            f"renamed — update CEILINGS_OPEN in this file to match it."
+        )
+    rest = source[start + len(CEILINGS_OPEN) :]
+    end = rest.find(CEILINGS_CLOSE)
+    if end == -1:
+        raise AnchorError(
+            f"the CEILINGS closing anchor ({CEILINGS_CLOSE!r}) is not in "
+            f"scripts/check-doc-growth.py after the opening one, so the table has no "
+            f"end and the parser would read the rest of the module as entries. The "
+            f"closing brace's whitespace changed — update CEILINGS_CLOSE to match."
+        )
+    return rest[:end]
+
+
 def ceiling_comments(source: str) -> dict[str, str]:
     """Each CEILINGS entry mapped to its own comment, from this file's text."""
-    body = source.split("CEILINGS: dict[str, int] = {", 1)[1].split("\n}\n", 1)[0]
+    body = ceiling_body(source)
     comments: dict[str, str] = {}
     pending: list[str] = []
     for line in body.split("\n"):
@@ -272,7 +312,10 @@ def ceiling_comments(source: str) -> dict[str, str]:
 
 def recorded_size_problems(source: str, sizes: dict[str, int]) -> list[str]:
     """Entries whose comment records a size the file no longer has."""
-    comments = ceiling_comments(source)
+    try:
+        comments = ceiling_comments(source)
+    except AnchorError as exc:
+        return [str(exc)]
     missed = sorted(sizes.keys() - comments.keys())
     if missed:
         return [
@@ -340,6 +383,28 @@ def self_test() -> list[str]:
         failures.append(
             f"a comment recording 800 B for an 800-byte file was not accepted: {spurious}"
         )
+
+    # ANCHOR DRIFT MUST BE A SENTENCE, not a traceback and not silence. This
+    # file parses its own source, so a reformat is a real way for the arm to
+    # stop working; each anchor is removed in turn and the report checked.
+    for anchor, drifted in (
+        ("opening", fixture_source.replace(CEILINGS_OPEN, "CEILINGS = {", 1)),
+        ("closing", fixture_source.replace(CEILINGS_CLOSE, "\n}", 1)),
+    ):
+        try:
+            reported = recorded_size_problems(drifted, {"fixture.md": 800})
+        except Exception as exc:  # noqa: BLE001 — any escape is the defect
+            failures.append(
+                f"a missing {anchor} CEILINGS anchor raised {type(exc).__name__} out of "
+                f"the arm instead of reporting it: {exc}"
+            )
+            continue
+        if not any("anchor" in problem for problem in reported):
+            failures.append(
+                f"a missing {anchor} CEILINGS anchor was not reported as anchor drift, "
+                f"so the arm cannot read the table and says so nowhere — an unreadable "
+                f"table means DID NOT RUN, never clean: {reported}"
+            )
     return failures
 
 
