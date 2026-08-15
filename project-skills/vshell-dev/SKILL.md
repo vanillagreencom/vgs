@@ -86,8 +86,8 @@ Reference: `references/plugin-development.md`.
 2. Debug with `vshell backend doctor|methods|request <method> [json]`.
 
 ## Validation
-The suite is `scripts/validate [AREA]`, areas `go`, `qml`, `helper`,
-`packaging`, `docs`, `all` — run the area for what you touched. The command
+The suite is `scripts/validate [AREA]`, <!-- validate-areas -->areas `go`, `qml`, `helper`,
+`packaging`, `docs`, `all`<!-- /validate-areas --> — run the area for what you touched. The command
 manifest and its per-area scoping live in that runner; no command list is
 restated here, because a partial copy reads as complete. Its exit status is
 four-valued: `0` ran and passed, `77` passed but something did not run — report

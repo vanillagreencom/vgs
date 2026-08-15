@@ -450,6 +450,39 @@ MUT
 done
 ok "a malformed tag on the inventory guard's OWN row fails in every area, unrun"
 
+# THE SAME SELF-CONCEALMENT REACHED THROUGH THE GRAMMAR, which is the shape a
+# row mutation cannot express. Flipping the selector class to `universal=no` is
+# one character and leaves every row well formed: `always` still parses, still
+# combines, still stands alone — and selects nothing in any named area. Measured
+# before the fix: `--list docs` listed ONE command at rc 0, having dropped the
+# format/lint floor, `git diff --check` and the inventory guard, which is the
+# check that would have reported the edit.
+#
+# Refused in the runner's pre-flight now, so the assertion is exit 2 with
+# NOTHING listed — in every area, including `all`, where the rows do still run.
+grammar_probe="$tmp/grammar-probe"
+mkdir -p "$grammar_probe/scripts/lib"
+cp "$runner" "$grammar_probe/scripts/validate"
+chmod +x "$grammar_probe/scripts/validate"
+python3 - "$repo_root/scripts/lib/validation-grammar.conf" \
+  >"$grammar_probe/scripts/lib/validation-grammar.conf" <<'MUT'
+import sys
+t = open(sys.argv[1], encoding="utf-8").read()
+old = "cli=no  universal=yes"
+assert t.count(old) == 1, "the selector class's universal property moved"
+print(t.replace(old, "cli=no  universal=no "), end="")
+MUT
+for area in docs go qml all; do
+  rc=0
+  out="$("$grammar_probe/scripts/validate" --list "$area" 2>"$tmp/stderr")" || rc=$?
+  err="$(cat "$tmp/stderr")"
+  [[ "$rc" == 2 ]] || fail "inert selector" "expected exit 2 in area $area, got $rc"
+  expect_contains "$err" "selects nothing in any named area" "inert selector in $area"
+  expect_contains "$err" "always" "inert selector in $area"
+  expect_absent "$out" "scripts/" "inert selector in $area"
+done
+ok "a selector class that stops being universal is refused, not silently narrowed"
+
 echo "=== the shipped manifest still reaches the local-only checks ==="
 
 # The checks CI cannot run: a scoped local run is the only thing that executes

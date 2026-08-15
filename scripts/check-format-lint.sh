@@ -86,6 +86,29 @@ list_files() {
   fi
 }
 
+# Is the tracked blob a BINARY? Asked of git — `--eol` reports `i/-text` for a
+# blob git considers binary — rather than sniffed here, because git is already
+# the tool that discovers every file this check looks at.
+#
+# It exists for one arm: the executable-bit rule below says "something runs it,
+# so something must lint it", and a compiled binary is the case where nothing
+# here could ever lint it and nothing should. bin/vshell-asdcontrol is a tracked
+# ELF, and reporting it as an unlinted script would be a false finding with no
+# fix available. A shebang-less TEXT file in the same place is the real hazard
+# and stays reported.
+#
+# A git failure FAILS the check and answers "binary", so unable-to-tell never
+# becomes a confident second message about a file this could not classify —
+# status is already 1 by then, so the exemption cannot hide anything.
+is_binary() {
+  local eol
+  if ! eol="$(git ls-files --eol -- "$1")"; then
+    fail "git ls-files --eol failed for $1, so whether it is a binary could not be determined"
+    return 0
+  fi
+  [[ "$eol" == i/-text* ]]
+}
+
 # --- Go: gofmt over the non-vendored backend ---------------------------------
 go_files=()
 list_files 'backend/*.go' ':!backend/vendor' && mapfile -d '' -t go_files <"$list_tmp"
@@ -125,12 +148,27 @@ fi
 # and therefore never trip the unrouted arm either — a quiet coverage drop
 # instead of a decision. Naming the known depth here makes adding one a
 # conscious edit.
+#
+# THE GUARD HOLDS AT ANY DEPTH, and not by accident: `*` in a bash case pattern
+# matches `/` (unlike a pathname expansion), so `scripts/*/*` catches
+# scripts/a/b/c as readily as scripts/a/b. Verified before this was written,
+# and scripts/test-format-lint.sh pins it at depth so a future rewrite into a
+# form where `*` does stop at `/` fails instead of silently narrowing.
+#
+# scripts/lib/ is exempt only at ITS OWN level. The lib pathspecs below are
+# `scripts/lib/*.py` and friends, and a git pathspec's `*` does cross `/`, so a
+# nested .py there is still linted — but a nested EXTENSIONLESS file is in
+# neither the pathspecs nor the router, which is the same quiet drop one
+# directory over. So a nested directory under lib/ is a conscious edit too.
 scripts_all=()
 list_files 'scripts/' && mapfile -d '' -t scripts_all <"$list_tmp"
 for file in "${scripts_all[@]}"; do
-  case "$file" in
-    scripts/lib/*) continue ;;
-    scripts/*/*)
+  case "${file#scripts/}" in
+    lib/*/*)
+      fail "$file lives under a scripts/lib/ subdirectory this check does not collect (the lib pathspecs below name scripts/lib/ itself). Add its directory to the pathspecs here in the same PR, or an extensionless file there is silently unlinted"
+      ;;
+    lib/*) continue ;;
+    */*)
       fail "$file lives under a scripts/ subdirectory this check does not collect (only scripts/* and scripts/lib/* are). Add its directory to the pathspecs here in the same PR, or it is silently unlinted"
       ;;
   esac
@@ -178,12 +216,19 @@ for file in "${bin_files[@]}" "${script_files[@]}"; do
       #
       # Non-executable files still fall through, which is what actually leaves
       # data fixtures alone; the extension arm still catches a non-executable
-      # .sh/.py/.js, since that is a lint gap regardless of mode. Only scripts/
-      # is asserted: bin/ deliberately holds importable Python modules with no
-      # shebang (bin/vshell_niri.py and friends), documented in AGENTS.md.
+      # .sh/.py/.js, since that is a lint gap regardless of mode.
+      #
+      # BOTH TREES, and the two exemptions this arm needs are both properties of
+      # the file rather than of its directory. bin/ deliberately holds importable
+      # Python modules with no shebang (bin/vshell_niri.py and friends,
+      # documented in AGENTS.md) — they are NON-EXECUTABLE, so the mode rule
+      # already leaves them alone and naming the tree was never what protected
+      # them. Restricting the arm to scripts/ instead left an executable
+      # shebang-less bin/ file — a working entry point through ENOEXEC — claimed
+      # by no linter, which is the hole this rule exists to close.
       case "$file" in
-        scripts/*)
-          if [[ -x "$file" ]]; then
+        scripts/* | bin/*)
+          if [[ -x "$file" ]] && ! is_binary "$file"; then
             fail "$file is executable with no shebang — something runs it (bash falls back to ENOEXEC), so something must lint it. Give it a shebang this case statement routes, or drop the executable bit if nothing is meant to run it"
           fi
           ;;

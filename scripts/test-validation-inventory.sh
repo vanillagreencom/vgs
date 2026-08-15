@@ -55,7 +55,7 @@ GUARD_ONLY_MESSAGES=(
   "no manifest row is tagged with it"
   "is not executable"
   "enumerates the validate areas but omits"
-  "no longer states the validate area list"
+  "anchor around its validate area list"
   "has no table introduced by"
   "does not act on it"
   "the runner's derivation and the definition have drifted"
@@ -333,6 +333,15 @@ run_guard
 expect_absent "$guard_out" "does not act on it" "real tokens participate"
 ok "every token the real grammar declares is found to participate"
 
+# A SELECTOR THAT STOPS BEING UNIVERSAL. The mutation is one character and every
+# row stays well formed, so nothing downstream can see it: `always` rows simply
+# leave every named area, taking the inventory guard with them. The runner now
+# refuses it in its pre-flight, and this is the guard's half — it reads a dump
+# that never arrives, so it relays the runner's own sentence.
+grammar_case "a selector class that stops being universal is reported" \
+  "${real_grammar/cli=no  universal=yes/cli=no  universal=no }" \
+  "selects nothing in any named area"
+
 grammar_case "a second exclusive token is reported" \
   "$real_grammar
 token none       exclusive" \
@@ -438,18 +447,80 @@ grammar_case "an area the runner does not offer is reported" \
 token rust       area" \
   "no manifest row is tagged with it"
 
-# The prose arm's OTHER direction: a document that stops stating the list at all
-# used to be skipped silently, so rewording a lead-in turned the comparison off.
-reworded="$tmp/reworded-agents.md"
-python3 - "$repo_root/AGENTS.md" >"$reworded" <<'MUT'
+# The prose arm's OTHER direction: a document that stops stating the list where
+# the guard can read it used to be skipped silently, so the read turned itself
+# off while the page kept a real — and possibly wrong — list on it.
+#
+# THE ANCHOR IS WHAT IS READ, not a phrasing. The parser used to key on the word
+# `areas` followed by backticked names, so rewording a lead-in moved the list out
+# of view; now only the markers matter. Both directions are pinned below: the
+# missing anchor refuses, and a completely reworded region does not.
+anchored="$tmp/anchored-agents.md"
+python3 - "$repo_root/AGENTS.md" >"$anchored" <<'MUT'
 import sys
 t = open(sys.argv[1], encoding="utf-8").read()
-print(t.replace("areas `go`, `qml`, `helper`,\n`packaging`, `docs`, `all`",
-                "one area per run: `go`, `qml`, `helper`,\n`packaging`, `docs`, `all`"), end="")
+print(t.replace("<!-- validate-areas -->", "").replace("<!-- /validate-areas -->", ""), end="")
 MUT
-run_guard "AGENTS_PATH=$reworded"
-expect_refused "reworded lead-in" "no longer states the validate area list"
-ok "a document that stops stating the area list is reported, not skipped"
+run_guard "AGENTS_PATH=$anchored"
+expect_refused "anchor removed" "anchor around its validate area list"
+ok "a document whose area anchor is gone is reported, not skipped"
+
+python3 - "$repo_root/AGENTS.md" >"$anchored" <<'MUT'
+import re, sys
+t = open(sys.argv[1], encoding="utf-8").read()
+new = re.sub(
+    r"<!-- validate-areas -->.*?<!-- /validate-areas -->",
+    "<!-- validate-areas -->one area per run, spelled `go` / `qml` / `helper` / "
+    "`packaging` / `docs`; or `all`<!-- /validate-areas -->",
+    t,
+    flags=re.DOTALL,
+)
+assert new != t, "the anchored region was not found"
+print(new, end="")
+MUT
+run_guard "AGENTS_PATH=$anchored"
+expect_clean_run "reworded inside the anchor"
+ok "prose reworded inside the anchor still reads, so the wording coupling is gone"
+
+# ...and the fail-closed direction survives the move: a list that is short
+# INSIDE the anchor is still reported. A control that only proved wording
+# independence would be satisfied by a parser that reads nothing at all.
+python3 - "$repo_root/AGENTS.md" >"$anchored" <<'MUT'
+import re, sys
+t = open(sys.argv[1], encoding="utf-8").read()
+new = re.sub(
+    r"<!-- validate-areas -->.*?<!-- /validate-areas -->",
+    "<!-- validate-areas -->areas `go`, `qml`, `helper`, `packaging`, `all`"
+    "<!-- /validate-areas -->",
+    t,
+    flags=re.DOTALL,
+)
+assert new != t, "the anchored region was not found"
+print(new, end="")
+MUT
+run_guard "AGENTS_PATH=$anchored"
+expect_refused "short list inside the anchor" "enumerates the validate areas but omits"
+ok "an area missing from inside the anchor is still reported"
+
+# The anchor's own malformed shapes, each of which would otherwise read one
+# region and ignore the rest.
+python3 - "$repo_root/AGENTS.md" >"$anchored" <<'MUT'
+import sys
+t = open(sys.argv[1], encoding="utf-8").read()
+print(t.replace("<!-- /validate-areas -->", ""), end="")
+MUT
+run_guard "AGENTS_PATH=$anchored"
+expect_refused "unterminated anchor" "but never closes it"
+ok "an anchor that is opened and never closed is reported"
+
+python3 - "$repo_root/AGENTS.md" >"$anchored" <<'MUT'
+import sys
+t = open(sys.argv[1], encoding="utf-8").read()
+print(t + "\n<!-- validate-areas -->areas `go`<!-- /validate-areas -->\n", end="")
+MUT
+run_guard "AGENTS_PATH=$anchored"
+expect_refused "two anchors" "must be anchored exactly once"
+ok "a second anchored region is reported rather than silently ignored"
 
 # ...and every named document must currently yield a non-empty list, so the
 # case above is catching the rewording rather than a doc that never stated one.
@@ -733,11 +804,17 @@ a duplicated token in the dump is refused;token qml area;APPEND
 a message with no text in the dump is refused;message grammar-arity grammar line has the wrong number of fields;message grammar-arity
 a second default in the dump is refused;default qml;APPEND
 an unknown dump line kind is refused;bogus line;APPEND
+a non-hex whitespace codepoint is refused;whitespace 20 09;whitespace 20 tab
+an odd-length whitespace codepoint is refused;whitespace 20 09;whitespace 20 9
+an uppercase whitespace codepoint is refused;whitespace 20 09;whitespace 20 0A
+a non-ASCII whitespace codepoint is refused;whitespace 20 09;whitespace 20 a0
+a repeated whitespace codepoint is refused;whitespace 20 09;whitespace 20 20
+a second whitespace line is refused;whitespace 20 09 0a 0d 0c 0b;APPEND
 DUMPS
 
-# ...and the two REQUIRED dump lines, whose absence is the shape a `${x/from/to}`
-# mutation cannot express.
-for required in source default; do
+# ...and the three REQUIRED dump lines, whose absence is the shape a
+# `${x/from/to}` mutation cannot express.
+for required in source default whitespace; do
   printf '#!/usr/bin/env bash\ncat <<%s\n%s\nDUMP_EOF\n' "'DUMP_EOF'" \
     "$(printf '%s\n' "$good_dump" | grep -v "^$required ")" >"$dump_stub"
   chmod +x "$dump_stub"
@@ -805,7 +882,8 @@ dump = subprocess.run(
     ["bash", str(runner), "--dump-grammar"], capture_output=True, text=True, check=True
 ).stdout
 g = mod.grammar(runner)
-lines = [f"source {g.source}", f"default {g.default_area}"]
+whitespace = " ".join(f"{ord(c):02x}" for c in g.whitespace)
+lines = [f"source {g.source}", f"default {g.default_area}", f"whitespace {whitespace}"]
 for name in sorted(g.classes):
     props = " ".join(f"{p}={'yes' if g.classes[name][p] else 'no'}" for p in mod.CLASS_PROPERTIES)
     counts = g.counts[name]
@@ -868,29 +946,18 @@ expect_contains "$pyyaml_out" "MANIFESTERROR PyYAML is not installed" "PyYAML ab
 expect_absent "$pyyaml_out" "Traceback" "PyYAML absent"
 ok "without PyYAML the module imports, the other parsers work, and ci.yml fails with one line"
 
-# prose_areas CANNOT SILENTLY TRUNCATE. The concern was that a period straight
-# after the final backtick would end the capture early and drop the last area.
-# Probed rather than reasoned about: the optional separator matches empty, so
-# the capture ends at the last backtick and the period sits outside it. Pinned
-# here so a future regex edit that DID truncate there fails.
-#
-# A separator the pattern cannot follow (`;`, `/`) DOES truncate — and that is
-# loud, not silent: a short capture makes the guard report the missing areas.
-# The second case pins that fail-closed direction, which is the property that
-# matters; a truncated capture can never equal the full set, so it can never
-# agree by accident.
+# prose_areas CANNOT SILENTLY TRUNCATE. The old regex ended its capture at a
+# separator it could not follow, so the shape worth pinning was "which
+# punctuation still parses". The anchor removed that class of question entirely
+# — the region is delimited, and every backticked name inside it is read — so
+# what is pinned now is that PUNCTUATION AND LAYOUT DO NOT MATTER, with the
+# fail-closed direction covered by the short-list case above.
 areas_probe="$tmp/areas-probe.md"
 # shellcheck disable=SC2016  # backticks are markdown quoting in the fixture prose
-printf 'areas `go`, `qml`, `helper`, `packaging`, `docs`, `all`.\n' >"$areas_probe"
+printf '<!-- validate-areas -->areas `go`; `qml` / `helper`\n| `packaging` | `docs` | and `all`.<!-- /validate-areas -->\n' >"$areas_probe"
 run_guard "AGENTS_PATH=$areas_probe"
-expect_clean_run "period after final backtick"
-ok "a period straight after the final backtick does not truncate the capture"
-
-# shellcheck disable=SC2016  # backticks are markdown quoting in the fixture prose
-printf 'areas `go`; `qml`; `helper`; `packaging`; `docs`; `all`.\n' >"$areas_probe"
-run_guard "AGENTS_PATH=$areas_probe"
-expect_refused "unfollowable separator" "enumerates the validate areas but omits"
-ok "a separator the pattern cannot follow truncates LOUDLY, never silently"
+expect_clean_run "punctuation inside the anchor"
+ok "separators and line breaks inside the anchor cannot truncate the list"
 
 # A bash that cannot be LAUNCHED — present but unreadable, non-executable, or
 # failing for any other OSError reason — used to escape as a traceback, because
@@ -932,6 +999,117 @@ expect_contains "$launch_out" "DUMP could not run validate --dump-grammar" "bash
 expect_absent "$launch_out" "Traceback" "bash unlaunchable"
 expect_absent "$launch_out" "ACCEPTED" "bash unlaunchable"
 ok "an unlaunchable bash raises ManifestError at both call sites, not a traceback"
+
+# C4's WHITESPACE SET IS THE RUNNER'S, not a second spelling of it. The library
+# used to carry its own `[ \t\n\r\f\v]` under a comment claiming the two moved
+# together; nothing enforced that, and no locale control could — a locale changes
+# what a CLASS means, never what a spelled-out set contains. Dropping a character
+# from the runner's constant is the edit that used to divide the readers
+# silently, so it is the control: both must now refuse the row identically,
+# because both read the same dumped set.
+ws_probe="$tmp/ws-probe/scripts/validate"
+mkdir -p "$tmp/ws-probe/scripts/lib"
+cp "$repo_root/scripts/lib/validation-grammar.conf" "$tmp/ws-probe/scripts/lib/"
+python3 - "$runner" >"$ws_probe" <<'MUT'
+import sys
+t = open(sys.argv[1], encoding="utf-8").read()
+old = "ASCII_SPACE=$' \\t\\n\\r\\f\\v'"
+assert t.count(old) == 1, "the ASCII_SPACE constant moved"
+t = t.replace(old, "ASCII_SPACE=$' \\n\\r\\f\\v'")
+# ...and a row whose tag field carries the character that was dropped. A reader
+# still spelling six characters strips the tab and ACCEPTS `qml`; a reader using
+# the runner's five keeps it and refuses a malformed tag field. That divergence
+# is the whole point of the control — asserting only that the set arrives would
+# pass just as well against a pattern built from a hardcoded set.
+row = "qml       | scripts/check-naming.sh"
+assert t.count(row) == 1, "the naming-check manifest row moved"
+print(t.replace(row, "qml\t      | scripts/check-naming.sh"), end="")
+MUT
+chmod +x "$ws_probe"
+ws_dumped="$("$ws_probe" --dump-grammar | sed -n 's/^whitespace //p')"
+[[ "$ws_dumped" == "20 0a 0d 0c 0b" ]] ||
+  fail "whitespace is dumped" "the probe dumped \`$ws_dumped\`, so the mutation did not reach the dump"
+ws_decoded="$(WS_PROBE="$ws_probe" python3 - "$repo_root" <<'LIB'
+import importlib.util, os, pathlib, sys
+root = pathlib.Path(sys.argv[1])
+spec = importlib.util.spec_from_file_location(
+    "vm", root / "scripts" / "lib" / "validation_manifest.py"
+)
+mod = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mod)
+g = mod.grammar(pathlib.Path(os.environ["WS_PROBE"]))
+print(" ".join(f"{ord(c):02x}" for c in g.whitespace))
+LIB
+)"
+[[ "$ws_decoded" == "$ws_dumped" ]] ||
+  fail "whitespace is read" "the library decoded \`$ws_decoded\` where the runner dumped \`$ws_dumped\`"
+
+# ...and the set is what each reader APPLIES, asked of the row rather than of the
+# value. Compared to each other, never to an expectation: two readers checked
+# only against expectations can both be wrong in the same direction.
+# The probe exits 2 by design, so its status is taken deliberately rather than
+# through a command substitution errexit would abort on.
+ws_rc=0
+LC_ALL=C "$ws_probe" --list docs >/dev/null 2>"$tmp/stderr" || ws_rc=$?
+ws_runner_said="$(LC_ALL=C sed -e 's/^scripts\/validate: //' -e 's/`.*//' \
+  -e 's/[ \t]*$//' "$tmp/stderr" | head -1)"
+[[ "$ws_rc" != 0 ]] || ws_runner_said="ACCEPTED"
+ws_library_said="$(WS_PROBE="$ws_probe" python3 - "$repo_root" <<'LIB'
+import importlib.util, os, pathlib, re, sys
+root = pathlib.Path(sys.argv[1])
+spec = importlib.util.spec_from_file_location(
+    "vm", root / "scripts" / "lib" / "validation_manifest.py"
+)
+mod = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mod)
+try:
+    mod.manifest_rows(pathlib.Path(os.environ["WS_PROBE"]))
+    print("ACCEPTED")
+except mod.ManifestError as error:
+    print(re.sub(r"`.*", "", str(error).replace("scripts/validate: ", "")).strip())
+LIB
+)"
+[[ "$ws_runner_said" == "$ws_library_said" ]] ||
+  fail "whitespace is applied" "a tag field carrying the dropped character is classified differently:
+  runner : ${ws_runner_said:-accepted}
+  library: ${ws_library_said:-accepted}"
+expect_contains "$ws_library_said" "malformed tag field" "whitespace is applied"
+ok "the whitespace set travels from the runner's constant to the pattern each reader applies"
+
+# UNREADABLE SURFACES ARE DIAGNOSED, NOT TRACEBACKS. Every read in the library
+# goes through one helper for this reason; before it, a document that had become
+# unreadable escaped as a traceback out of whichever arm touched it first —
+# fail-closed in direction, noise in diagnosis. Driven with a directory in place
+# of each file, which is an OSError no fixture content can produce.
+unreadable_out="$(python3 - "$repo_root" "$tmp" 2>&1 <<'UNREADABLE' || true
+import importlib.util, pathlib, sys
+root, tmp = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2])
+spec = importlib.util.spec_from_file_location(
+    "vm", root / "scripts" / "lib" / "validation_manifest.py"
+)
+mod = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mod)
+nowhere = tmp / "a-directory-where-a-file-should-be"
+nowhere.mkdir(exist_ok=True)
+for label, call in (
+    ("ROWS", lambda: mod.manifest_rows(nowhere)),
+    ("PROSE", lambda: mod.prose_areas(nowhere)),
+    ("TABLE", lambda: mod.documented_table(nowhere, "**Local-only")),
+    ("LOGIC", lambda: mod.runner_logic(nowhere)),
+):
+    try:
+        call()
+        print(f"{label} ACCEPTED")
+    except mod.ManifestError as error:
+        print(f"{label} {error}")
+UNREADABLE
+)"
+for label in ROWS PROSE TABLE LOGIC; do
+  expect_contains "$unreadable_out" "$label could not read" "unreadable surface"
+done
+expect_absent "$unreadable_out" "Traceback" "unreadable surface"
+expect_absent "$unreadable_out" "ACCEPTED" "unreadable surface"
+ok "an unreadable surface raises ManifestError naming the path, not a traceback"
 
 # A MISSING PREREQUISITE MUST NOT REPLACE A FIXTURE'S VERDICT. The CI parse used
 # to raise straight out of main, so on a python3 without PyYAML every fixture
@@ -1102,12 +1280,40 @@ ok "both readers classify every duplicate and malformed row identically"
 # glibc excludes NBSP from `space`, so U+00A0 — the character the review named —
 # is not the one that bites here. All three are exercised: the rule is about the
 # CLASS being locale-resolved, not about one character.
+#
+# BOUNDED, not exhaustive. This iterated every UTF-8 locale `locale -a` reports
+# × 3 codepoints × 2 readers, which on a locale-rich system is minutes of
+# subprocesses and a diagnostic nobody reads — while proving nothing the second
+# locale had not already proven. What the control needs is ONE locale that is not
+# C, since the property under test is "the rule survives a locale that resolves
+# character classes differently", so it takes at most two: the preferred locale
+# when present, plus one more as a hedge against that one behaving like C.
+# Selection is deterministic (sorted, preferred name first) so a failure here
+# reproduces.
+LOCALE_SAMPLE=2
+PREFERRED_LOCALE=en_US.utf8
 locales=()
+utf8_locales=()
+c_locales=()
 while IFS= read -r loc; do
   case "$loc" in
-    *.utf8 | *.UTF-8) locales+=("$loc") ;;
+    # `C.utf8` is the C locale wearing a UTF-8 encoding, so it is the one UTF-8
+    # locale that cannot demonstrate a locale-resolved character class. Kept as
+    # a last resort — a system offering nothing else still gets a control —
+    # but never chosen ahead of a real one.
+    C.utf8 | C.UTF-8) c_locales+=("$loc") ;;
+    *.utf8 | *.UTF-8) utf8_locales+=("$loc") ;;
   esac
-done < <(locale -a 2>/dev/null)
+done < <(locale -a 2>/dev/null | LC_ALL=C sort)
+utf8_locales+=("${c_locales[@]}")
+for loc in "$PREFERRED_LOCALE" "${utf8_locales[@]}"; do
+  [[ ${#locales[@]} -lt $LOCALE_SAMPLE ]] || break
+  # The preferred name is a CANDIDATE, not an assumption: it is taken only if
+  # this system actually provides it, and skipped silently otherwise.
+  printf '%s\n' "${utf8_locales[@]}" | grep -qxF -- "$loc" || continue
+  printf '%s\n' "${locales[@]}" | grep -qxF -- "$loc" && continue
+  locales+=("$loc")
+done
 
 if [[ ${#locales[@]} -eq 0 ]]; then
   # NAMED, not substituted. A weaker test passing here would assert that the

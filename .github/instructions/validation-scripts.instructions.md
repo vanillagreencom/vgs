@@ -17,10 +17,12 @@ was reporting "passed", and a failed baseline snapshot was discarding damage
 the after-snapshot plainly showed.
 
 `scripts/validate [AREA]` is the suite's entry point: it carries the manifest of
-every check in this directory, selects the subset for one of the areas `go`,
-`qml`, `helper`, `packaging`, `docs`, `all`, and is what
-`scripts/check-validation-inventory.py` parses — including this sentence's area
-list, which is compared against the runner's own. Adding or renaming a check
+every check in this directory, selects the subset for one of the <!-- validate-areas -->areas `go`,
+`qml`, `helper`, `packaging`, `docs`, `all`<!-- /validate-areas -->, and is what
+`scripts/check-validation-inventory.py` parses — including the anchored area
+list above, which is compared against the runner's own. The anchor, not the
+wording, is what the guard reads: reword freely inside it, and moving or
+deleting it fails the guard rather than turning the comparison off. Adding or renaming a check
 means editing that manifest, not a doc. `scripts/test-validate.sh` covers the
 runner itself.
 
