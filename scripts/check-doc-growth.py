@@ -11,7 +11,7 @@ itself is not the defect; UNEXAMINED growth is. So the ceiling is enforced,
 and raising it takes a one-line edit in the same PR as the growth, where a
 reviewer sees the trade stated explicitly.
 
-Three failure shapes:
+Four failure shapes:
 
 1. **A surface outgrew its ceiling.** Cut it back below the ceiling, or raise
    the ceiling here in the SAME PR with a rationale comment saying what earned
@@ -28,14 +28,20 @@ Three failure shapes:
    updates or drops the entry in the same PR — a stale entry is coverage that
    does not exist.
 
-4. **A ceilings comment records a size the file no longer has.** Growth UNDER a
-   ceiling is deliberately free, so nothing used to force these figures to be
-   refreshed — and they went stale five times across VGS-124's review, three of
-   its fix rounds spent re-deriving them by hand. The rationales lean on the
-   numbers ("~10% headroom", "almost none"), so a wrong one is the audit trail
-   failing quietly. Update the figure; do not loosen the parser. An entry that
-   records no size at all is fine, and `adopted at N B` IS the recorded size for
-   the many entries that only state that.
+4. **A ceilings comment records a size the file no longer has, or records none
+   this parser can find.** Growth UNDER a ceiling is deliberately free, so
+   nothing used to force these figures to be refreshed — and they went stale
+   five times across VGS-124's review, three of its fix rounds spent re-deriving
+   them by hand. The rationales lean on the numbers ("~10% headroom", "almost
+   none"), so a wrong one is the audit trail failing quietly.
+
+   EVERY entry records its measured size; `adopted at N B` is that record for
+   the many that state only it. An entry whose comment yields no size the parser
+   can find is a FAILURE, not an exemption — whether the figure was never
+   written or was reworded out of a recognised phrasing, which are
+   indistinguishable from outside and both mean the audit trail is broken.
+   Restore the figure in a recognised phrasing, or teach the parser the new one.
+   Update the figure; do not loosen the parser.
 
 docs/decisions/*.md are deliberately NOT watched: decision records are where
 content dieted out of AGENTS.md goes to live (VGS-105, VGS-107), so a ceiling
