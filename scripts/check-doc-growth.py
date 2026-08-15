@@ -244,7 +244,17 @@ ENTRY_LINE = re.compile(r'^    "([^"]+)":\s*[\d_]+,(?:\s*#\s*(.*))?$')
 # This file parses ITSELF to read those comments, so it is pinned to two
 # literals in its own source. Named rather than inlined in a split, so a
 # reformat produces a sentence naming the anchor that moved.
+#
+# SELF-REFERENTIAL HAZARD, and it is the trap that made this subtle: the source
+# being parsed CONTAINS these constants, so the opening literal occurs three
+# times here — the real declaration, the assignment just below, and the
+# self-test's fixture. A plain `find` matched the second one and then blamed the
+# CLOSING anchor for a drifted declaration, sending the operator to a constant
+# that was correct. The lookup is therefore anchored to column 0, which only the
+# declaration satisfies: the other two are an assignment value and an indented
+# string literal.
 CEILINGS_OPEN = "CEILINGS: dict[str, int] = {"
+CEILINGS_OPEN_LINE = re.compile(rf"^{re.escape(CEILINGS_OPEN)}", re.M)
 CEILINGS_CLOSE = "\n}\n"
 
 
@@ -273,15 +283,15 @@ def ceiling_body(source: str) -> str:
     option either — an unreadable table means the recorded-size arm DID NOT RUN,
     never that it is clean (validation-scripts.instructions.md).
     """
-    start = source.find(CEILINGS_OPEN)
-    if start == -1:
+    opening = CEILINGS_OPEN_LINE.search(source)
+    if opening is None:
         raise AnchorError(
-            f"the CEILINGS opening anchor ({CEILINGS_OPEN!r}) is not in "
+            f"the CEILINGS opening anchor ({CEILINGS_OPEN!r}) does not start a line in "
             f"scripts/check-doc-growth.py, so no entry's comment can be read and the "
             f"recorded-size arm cannot run. The declaration was reformatted or "
             f"renamed — update CEILINGS_OPEN in this file to match it."
         )
-    rest = source[start + len(CEILINGS_OPEN) :]
+    rest = source[opening.end() :]
     end = rest.find(CEILINGS_CLOSE)
     if end == -1:
         raise AnchorError(
@@ -384,27 +394,49 @@ def self_test() -> list[str]:
             f"a comment recording 800 B for an 800-byte file was not accepted: {spurious}"
         )
 
-    # ANCHOR DRIFT MUST BE A SENTENCE, not a traceback and not silence. This
-    # file parses its own source, so a reformat is a real way for the arm to
-    # stop working; each anchor is removed in turn and the report checked.
-    for anchor, drifted in (
-        ("opening", fixture_source.replace(CEILINGS_OPEN, "CEILINGS = {", 1)),
-        ("closing", fixture_source.replace(CEILINGS_CLOSE, "\n}", 1)),
-    ):
-        try:
-            reported = recorded_size_problems(drifted, {"fixture.md": 800})
-        except Exception as exc:  # noqa: BLE001 — any escape is the defect
-            failures.append(
-                f"a missing {anchor} CEILINGS anchor raised {type(exc).__name__} out of "
-                f"the arm instead of reporting it: {exc}"
-            )
-            continue
-        if not any("anchor" in problem for problem in reported):
-            failures.append(
-                f"a missing {anchor} CEILINGS anchor was not reported as anchor drift, "
-                f"so the arm cannot read the table and says so nowhere — an unreadable "
-                f"table means DID NOT RUN, never clean: {reported}"
-            )
+    # ANCHOR DRIFT MUST BE A SENTENCE naming the RIGHT anchor — not a traceback,
+    # not silence, and not the other anchor's remedy.
+    #
+    # Driven against THIS FILE's own text, not a synthetic fixture, and that is
+    # the whole point: the hazard only exists because the parsed source contains
+    # the anchor constants, so a fixture with one occurrence cannot see it. The
+    # earlier controls were synthetic, passed, and missed a drifted declaration
+    # being reported as a drifted closing brace.
+    real = SELF.read_text(encoding="utf-8")
+    opening = CEILINGS_OPEN_LINE.search(real)
+    closing_at = real.find(CEILINGS_CLOSE, opening.end()) if opening else -1
+    if opening is None or closing_at == -1:
+        failures.append(
+            "this file's own CEILINGS anchors could not be located, so the drift "
+            "controls below could not be built and prove nothing."
+        )
+    else:
+        drifts = (
+            (
+                "opening",
+                real[: opening.start()] + "CEILINGS = {" + real[opening.end() :],
+            ),
+            (
+                "closing",
+                real[:closing_at] + "\n    }\n" + real[closing_at + len(CEILINGS_CLOSE) :],
+            ),
+        )
+        for anchor, drifted in drifts:
+            try:
+                reported = recorded_size_problems(drifted, {"AGENTS.md": 1})
+            except Exception as exc:  # noqa: BLE001 — any escape is the defect
+                failures.append(
+                    f"a drifted {anchor} CEILINGS anchor raised {type(exc).__name__} out "
+                    f"of the arm instead of reporting it: {exc}"
+                )
+                continue
+            if not any(f"{anchor} anchor" in problem for problem in reported):
+                failures.append(
+                    f"a drifted {anchor} CEILINGS anchor was not reported as {anchor}-"
+                    f"anchor drift, so the operator is sent to the wrong constant (or "
+                    f"nowhere). An unreadable table means DID NOT RUN, never clean, and "
+                    f"the cause has to be the one that actually moved: {reported}"
+                )
     return failures
 
 
