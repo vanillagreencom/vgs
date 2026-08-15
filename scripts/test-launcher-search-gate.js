@@ -702,9 +702,16 @@ for (const state of ["available", "unknown", "checking"])
             "restorePreviousMode assigns searchMode directly, so a setMode-only bump misses it");
     }
 
-    // One owner for the bump, so every path above is the same act.
+    // One owner for the bump, so every path above is the same act — and
+    // abandoning means the search is no longer IN FLIGHT as well as no longer
+    // current. The callback returns at the generation check before it would
+    // clear the flag, and outside files mode nothing else does, so without this
+    // a mode change leaves the flag set for the life of the Controller and the
+    // empty state — which requires !isFileSearching — never renders again in any
+    // mode: a zero-result search then paints a blank panel.
     q.requires(q.body("_supersedeFileSearch"), "_supersedeFileSearch()", [
-        ["_fileSearchGeneration++;", "which is the whole of it"]
+        ["_fileSearchGeneration++;", "the generation moves"],
+        ["isFileSearching = false;", "and nothing is left marked in flight"]
     ]);
     assert.equal(
         (stripComments(controllerSource).match(/_fileSearchGeneration\+\+;/g) || []).length, 1,

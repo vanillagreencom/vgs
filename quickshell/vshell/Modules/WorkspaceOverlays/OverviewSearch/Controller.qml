@@ -1185,8 +1185,17 @@ Item {
     // Every path that abandons a file search calls this, so a response already in
     // flight cannot repaint a query, kind or mode the user has left. The dispatch
     // path captures the value it produces; the callback drops anything older.
+    //
+    // Clearing the in-flight flag is part of abandoning, not a separate step: the
+    // callback returns at the generation check BEFORE it would have cleared it,
+    // and outside files mode nothing else ever does — so a search abandoned by a
+    // mode change would leave the flag set for the life of the Controller, and
+    // ResultsList's empty state, which requires !isFileSearching, would never
+    // render again in ANY mode. The dispatch path is unaffected: it raises the
+    // flag and increments inline rather than through here.
     function _supersedeFileSearch() {
         _fileSearchGeneration++;
+        isFileSearching = false;
     }
 
     function performFileSearch() {
