@@ -157,7 +157,7 @@ classification/workflow labels, then pass the full validated set.
 
 orch = ""
 
-project-management = """
+project-management = '''
 ## Linear projects
 
 Every new non-mirror issue gets exactly one project. The set (all team
@@ -272,9 +272,9 @@ oversight, and gets "fixed" by someone assigning it.
 | `iced` | Same. |
 | `rust-core` | Same. |
 | `feature` | Duplicate of `enhancement` ("New capability or product behavior" vs "New feature or request"). VGS uses `enhancement`; `feature` is on zero VGS issues. It is workspace-level and may serve another team, so do not delete it — just do not assign it here. |
-"""
+'''
 
-reviewer = """
+reviewer = '''
 ## VGS review policy
 
 Risk-classed review depth and the regression-test expectation live in
@@ -288,7 +288,7 @@ privileged operations (elevation or system writes, WHEREVER they live —
 not only `backend/`) — are merge-blocking by default. The class
 definitions and derivation commands stay in review-bots.md; do not
 re-derive them from this summary.
-"""
+'''
 
 second-opinion = ""
 

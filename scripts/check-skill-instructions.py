@@ -15,16 +15,25 @@ The fix is a LITERAL string (`'''`), which passes bytes through untouched. This
 check pins it, because a later edit back to `\"\"\"` would look harmless in
 review and ship the broken runbook again with CI green.
 
-THREE ARMS, on the value tomllib produces — the same bytes a rendered skill
-carries, not the raw source:
+FOUR ARMS. The first states the rule; the rest are independent signals that the
+rule is doing its job.
 
-1. IDENTITY. Every block must appear verbatim in the file's raw text. A basic
-   string cannot: escape processing makes the parsed value differ. This is the
-   general statement of the bug, so it catches forms 2 and 3 would miss.
-2. JQ COMPILES. Every `jq` program in a fenced block must compile. Judged on
+1. DELIMITER. A block carrying content must be written as a LITERAL string
+   (`'''` or `'`), never a basic one (`\"\"\"` or `\"`). This is the invariant
+   itself — these blocks ship shell and jq verbatim — so it cannot be satisfied
+   by accident. Empty values are exempt: `dev = \"\"` ships nothing, and `\"\"` is
+   the ordinary way to write empty.
+2. IDENTITY. The parsed value must equal that key's OWN raw span, byte for byte.
+   Kept as a second signal, and scoped to the key rather than searched for
+   anywhere in the file: a whole-file substring test is a PROXY, and a value
+   mangled only by backslash collapsing can still be found somewhere in its own
+   raw source (`\\\\s` contains `\\s` from its second backslash). The self-test
+   pins that exact case.
+3. JQ COMPILES. Every `jq` program in a fenced block must compile. Judged on
    jq's COMPILE status (3) alone: running a filter with no input exits 5, and
-   treating that as a break would make the arm fail on correct programs.
-3. CONTINUATIONS SURVIVE. A block's parsed text must carry as many trailing-`\\`
+   treating that as a break would make the arm fail on correct programs. Bounded
+   by a timeout, because `jq -n` runs what it compiles.
+4. CONTINUATIONS SURVIVE. A block's parsed text must carry as many trailing-`\\`
    continuation lines as its raw text. That was the second thing basic strings
    ate, and unlike the jq breakage it produces valid shell — `bash -n` is happy
    with the joined command — so nothing else would notice.
@@ -81,20 +90,67 @@ def blocks(text: str) -> dict[str, str]:
     return {k: v for k, v in parsed.get(TABLE, {}).items() if isinstance(v, str) and v.strip()}
 
 
-def raw_source(text: str, key: str) -> str:
-    """The bytes between a key's opening and closing string delimiters.
+TABLE_HEADER = re.compile(r"\s*\[([^\[\]]+)\]\s*$")
+ASSIGNMENT = re.compile(r"([A-Za-z0-9_-]+)\s*=\s*('''|\"\"\"|'|\")")
+LITERAL_DELIMITERS = frozenset({"'''", "'"})
 
-    Sliced exactly rather than by a length guess: the whole point of arm 3 is
-    that the parsed value is SHORTER than its source, so any window derived from
-    the parsed length is the wrong size in the failing direction.
+
+def assignments(text: str) -> dict[str, tuple[str, str]]:
+    """Every `[skill-instructions]` key mapped to its (delimiter, raw span).
+
+    A line scanner rather than a regex over the whole file, for two reasons the
+    review asked about. It tracks the CURRENT TABLE, so a key of the same name
+    under a different table cannot be picked up; and it skips over a multi-line
+    string's body, so a line inside a runbook that looks like `[a-header]` cannot
+    be mistaken for one. The raw span is sliced between the delimiters, with
+    TOML's rule that a newline immediately after an opening `'''`/`\"\"\"` is not
+    part of the value — which is what lets arm 2 compare it to the parsed value
+    byte for byte.
     """
-    match = re.search(rf"^{re.escape(key)}\s*=\s*('''|\"\"\"|'|\")", text, re.M)
-    if not match:
-        return ""
-    delimiter = match.group(1)
-    start = match.end()
-    end = text.find(delimiter, start)
-    return text[start:end] if end != -1 else text[start:]
+    found: dict[str, tuple[str, str]] = {}
+    lines = text.split("\n")
+    table: str | None = None
+    index = 0
+    while index < len(lines):
+        line = lines[index]
+        header = TABLE_HEADER.fullmatch(line)
+        if header:
+            table = header.group(1)
+            index += 1
+            continue
+        match = ASSIGNMENT.match(line)
+        if not match:
+            index += 1
+            continue
+        key, delimiter = match.groups()
+        rest = line[match.end():]
+        if delimiter in ("'''", '"""'):
+            body: list[str] = []
+            cursor = index + 1
+            while cursor < len(lines) and delimiter not in lines[cursor]:
+                body.append(lines[cursor])
+                cursor += 1
+            # A closing delimiter may trail content on its own line; keep that
+            # content, or the span would be short and arm 2 would fire falsely.
+            if cursor < len(lines):
+                prefix = lines[cursor].split(delimiter, 1)[0]
+                if prefix:
+                    body.append(prefix)
+                    raw = "\n".join(body)
+                else:
+                    raw = "".join(f"{one}\n" for one in body)
+            else:
+                raw = "\n".join(body)
+            if rest:  # content on the opening line, which TOML keeps
+                raw = f"{rest}\n{raw}"
+            index = cursor + 1
+        else:
+            end = rest.find(delimiter)
+            raw = rest[:end] if end != -1 else rest
+            index += 1
+        if table == TABLE:
+            found[key] = (delimiter, raw)
+    return found
 
 
 def jq_available() -> bool:
@@ -109,18 +165,43 @@ def audit(text: str, *, source: str, jq_timeout: float = JQ_TIMEOUT_SECONDS) -> 
     except tomllib.TOMLDecodeError as exc:
         return [f"{source} is not valid TOML: {exc}"]
 
+    written = assignments(text)
+
     for key, value in sorted(table.items()):
-        # --- arm 1: identity through the parser -----------------------------
-        if value not in text:
+        delimiter, raw = written.get(key, ("", ""))
+        if not delimiter:
             problems.append(
-                f"{source} [{TABLE}] {key}: the parsed value differs from the bytes in "
-                f"the file, so TOML processed escapes inside it. That is a BASIC string "
-                f'(""" or "); this block ships commands and must be a LITERAL string '
-                f"(''' or '), which passes bytes through untouched."
+                f"{source} [{TABLE}] {key}: tomllib sees this key but the source scanner "
+                f"does not, so neither the delimiter nor the identity arm can judge it. "
+                f"Fix the scanner — an arm that cannot read an entry passes it."
+            )
+            continue
+
+        # --- arm 1: the invariant, asserted directly ------------------------
+        # Not inferred from damage: a basic string that happens to carry no
+        # escapes today is one backslash away from silently mangling a runbook,
+        # and the whole point of this check is that the mangling is invisible.
+        # Empty values are exempt because `""` ships nothing and is the ordinary
+        # way to write empty; `blocks()` filters them out before this loop.
+        if delimiter not in LITERAL_DELIMITERS:
+            problems.append(
+                f"{source} [{TABLE}] {key} is written as a BASIC string ({delimiter}), "
+                f"which makes TOML process escapes inside it: `\\\\s` reaches the reader "
+                f"as `\\s`, `\\n` becomes a real newline, and a trailing `\\` swallows its "
+                f"own line. These blocks ship shell and jq verbatim, so use a LITERAL "
+                f"string (''' or ') instead."
             )
 
-        # --- arm 3: shell line continuations --------------------------------
-        raw_continuations = len(CONTINUATION.findall(raw_source(text, key)))
+        # --- arm 2: identity against THIS key's own raw span ----------------
+        if value != raw:
+            problems.append(
+                f"{source} [{TABLE}] {key}: the parsed value is not byte-identical to the "
+                f"source between its delimiters, so the parser transformed it on the way "
+                f"through. Whatever a reader runs is not what this file shows."
+            )
+
+        # --- arm 4: shell line continuations --------------------------------
+        raw_continuations = len(CONTINUATION.findall(raw))
         parsed_continuations = len(CONTINUATION.findall(value))
         if raw_continuations > parsed_continuations:
             problems.append(
@@ -130,7 +211,7 @@ def audit(text: str, *, source: str, jq_timeout: float = JQ_TIMEOUT_SECONDS) -> 
                 f"still valid shell, so no syntax check would catch it."
             )
 
-        # --- arm 2: every jq program compiles -------------------------------
+        # --- arm 3: every jq program compiles -------------------------------
         for fenced in FENCE.findall(value):
             for program in JQ_PROGRAM.findall(fenced):
                 try:
@@ -187,6 +268,22 @@ jq -n 'while(true; .)'
 '''
 """
 
+# The case a whole-file substring test cannot see. Its ONLY escape damage is
+# backslash collapsing, and the parsed value (`\\s`) really is a substring of its
+# own raw source (`\\\\s`, from the second backslash on) — so the proxy reports
+# clean while the block is mangled. This is why arm 1 asserts the delimiter and
+# arm 2 compares against the key's own span. Deliberately carries no jq
+# invocation and no continuation, so only those two arms can catch it.
+COLLAPSE_ONLY_FIXTURE = '[skill-instructions]\ndemo = """\n\\\\s\n"""\n'
+
+# The same bytes written correctly, so the fixture above is shown to be about the
+# delimiter rather than about its content.
+COLLAPSE_ONLY_FIXED = COLLAPSE_ONLY_FIXTURE.replace('"""', "'''")
+
+# What tomllib makes of the mangled fixture, computed once so the self-test can
+# state the premise (`value in raw_file`) rather than assume it.
+COLLAPSE_ONLY_VALUE = tomllib.loads(COLLAPSE_ONLY_FIXTURE)[TABLE]["demo"]
+
 
 def self_test() -> list[str]:
     """The arms must be able to fail. Runs on every invocation, never optional."""
@@ -200,7 +297,8 @@ def self_test() -> list[str]:
         )
     else:
         for arm, needle in (
-            ("identity", "BASIC string"),
+            ("delimiter", "written as a BASIC string"),
+            ("identity", "not byte-identical"),
             ("jq compiles", "does not compile"),
             ("continuations", "line continuation"),
         ):
@@ -215,6 +313,33 @@ def self_test() -> list[str]:
         failures.append(
             "the post-fix literal-string fixture FAILED, so the check rejects the very "
             f"form it prescribes: {fixed}"
+        )
+
+    # THE PROXY'S BLIND SPOT, pinned. First the premise — the old whole-file
+    # substring test really would have called this clean — then that both
+    # value-level arms catch it anyway.
+    if COLLAPSE_ONLY_VALUE not in COLLAPSE_ONLY_FIXTURE:
+        failures.append(
+            "the backslash-collapse fixture no longer demonstrates the gap it exists "
+            "for: its parsed value is not a substring of its raw source, so it would "
+            "have failed the old proxy too and proves nothing about the new arms."
+        )
+    collapsed = audit(COLLAPSE_ONLY_FIXTURE, source="<fixture: backslash collapse only>")
+    for arm, needle in (
+        ("delimiter", "written as a BASIC string"),
+        ("identity", "not byte-identical"),
+    ):
+        if not any(needle in problem for problem in collapsed):
+            failures.append(
+                f"a block mangled ONLY by backslash collapsing was not caught by the "
+                f"`{arm}` arm, which is the exact case a whole-file substring test "
+                f"misses (looked for {needle!r}): {collapsed}"
+            )
+    collapse_fixed = audit(COLLAPSE_ONLY_FIXED, source="<fixture: same bytes, literal>")
+    if collapse_fixed:
+        failures.append(
+            "the same bytes written as a literal string were rejected, so those arms "
+            f"fire on content rather than on the delimiter: {collapse_fixed}"
         )
 
     # `jq -n` RUNS what it compiles, so the bound is what stops a pathological
@@ -261,9 +386,10 @@ def main() -> int:
 
     count = len(blocks(CONFIG.read_text(encoding="utf-8")))
     print(
-        f"check-skill-instructions: ok ({count} [{TABLE}] block(s) render verbatim, "
-        f"self-test proved all three arms fail on the pre-fix form and that a "
-        f"non-terminating jq program is reported rather than hanging the check)"
+        f"check-skill-instructions: ok ({count} [{TABLE}] block(s) are literal strings "
+        f"rendering verbatim; self-test proved all four arms fail on the pre-fix form, "
+        f"that backslash-collapse-only damage is caught, and that a non-terminating jq "
+        f"program is reported rather than hanging the check)"
     )
     return 0
 
