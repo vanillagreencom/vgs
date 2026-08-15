@@ -452,7 +452,7 @@ ok "a malformed tag on the inventory guard's OWN row fails in every area, unrun"
 
 # THE SAME SELF-CONCEALMENT REACHED THROUGH THE GRAMMAR, which is the shape a
 # row mutation cannot express. Flipping the selector class to `universal=no` is
-# one character and leaves every row well formed: `always` still parses, still
+# a single yes/no flip and leaves every row well formed: `always` still parses, still
 # combines, still stands alone — and selects nothing in any named area. Measured
 # before the fix: `--list docs` listed ONE command at rc 0, having dropped the
 # format/lint floor, `git diff --check` and the inventory guard, which is the

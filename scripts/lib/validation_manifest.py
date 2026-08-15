@@ -68,8 +68,9 @@ def manifest_rows(runner: Path) -> list[tuple[str, str]]:
 
     The grammar it applies is not a second copy — it comes from the runner's dump
     — but the row loop is a second reader, and scripts/test-validate.sh's
-    parser-agreement case plus this file's reader-agreement cases are what hold
-    the two to one answer. Rows are refused in the same ORDER the runner refuses
+    parser-agreement case plus scripts/test-validation-inventory.sh's
+    reader-agreement cases are what hold the two to one answer. Rows are refused
+    in the same ORDER the runner refuses
     them (tag field, tag pattern, class rules, command) so one malformed line
     gets one diagnosis, not two readers naming different defects on it.
     """
@@ -82,7 +83,9 @@ def manifest_rows(runner: Path) -> list[tuple[str, str]]:
         )
     rules = grammar(runner)
     pattern = rules.tag_pattern()
-    # C4's set, AS THE RUNNER SPELLS IT. This used to be a regex written here
+    # C4's set, AS THE RUNNER SPELLS IT — C4 being the constraint in
+    # scripts/validate's manifest-grammar header that whitespace is ASCII and
+    # removed before matching. This used to be a regex written here
     # under a comment claiming it changed with the runner's `ASCII_SPACE`;
     # nothing enforced that, so an ASCII character dropped from one side alone
     # would have divided the two readers exactly as a locale-resolved class once
@@ -710,6 +713,13 @@ def runner_logic(runner: Path) -> str:
 AREA_ANCHOR_OPEN = "<!-- validate-areas -->"
 AREA_ANCHOR_CLOSE = "<!-- /validate-areas -->"
 
+# A FENCED BLOCK IS NOT A MARKER, it is a picture of one. Without this the
+# document that DOCUMENTS the anchor could not show it: a second literal
+# `<!-- validate-areas -->` anywhere on the page — even inside a code fence
+# demonstrating the contract — trips the exactly-once refusal below, so the
+# mechanism was unnameable in the one place it is explained.
+_FENCED_BLOCK = re.compile(r"^```.*?^```", re.DOTALL | re.MULTILINE)
+
 
 def prose_areas(path: Path) -> set[str]:
     """Backticked area names from between a document's validate-areas anchors.
@@ -719,15 +729,21 @@ def prose_areas(path: Path) -> set[str]:
     happened to share: rewording a lead-in, or separating the names with
     something the pattern could not follow, changed what the guard read. Absence
     being fatal kept that from failing OPEN, but the coupling itself was the
-    defect — a document may now say whatever it likes between the markers, and
-    the parser reads the PROSE inside them rather than a sentence shape.
+    defect.
+
+    WHAT THE ANCHOR DECOUPLES IS THE PROSE, NOT THE CODE SPANS. Every backticked
+    lowercase token between the markers is read as an area name, so a document
+    may reword the sentence however it likes but must put nothing else in
+    backticks in there — a stray "see `bin`" inside the region is reported as an
+    area the runner does not accept. Saying "whatever it likes" overstated the
+    contract by exactly that much.
 
     ABSENCE IS STILL AN ERROR, never an empty answer, and so is a second anchor:
     with two anchored regions the parser would read one and silently ignore the
     other, which is "an empty result treated as a clean result" wearing the next
     disguise.
     """
-    text = _read(path, "an area-enumerating document")
+    text = _FENCED_BLOCK.sub("", _read(path, "an area-enumerating document"))
     opens = text.count(AREA_ANCHOR_OPEN)
     closes = text.count(AREA_ANCHOR_CLOSE)
     if opens == 0:

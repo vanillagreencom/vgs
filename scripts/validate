@@ -717,7 +717,7 @@ fi
 # exclusive, names no area (cli=no) and is not universal has exactly that
 # behaviour: it parses, it combines, and it selects nothing in any named area.
 #
-# The edit that reaches it is one character — `universal=no` on the selector
+# The edit that reaches it is a single yes/no flip — `universal=no` on the selector
 # class — and it is SELF-CONCEALING: every `always` row vanishes from every
 # scoped run, including scripts/check-validation-inventory.py, which is the check
 # that would report the edit. `scripts/validate --list docs` then lists one

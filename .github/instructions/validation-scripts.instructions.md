@@ -19,15 +19,25 @@ the after-snapshot plainly showed.
 `scripts/validate [AREA]` is the suite's entry point: it carries the manifest of
 every check in this directory, selects the subset for one of the <!-- validate-areas -->areas `go`,
 `qml`, `helper`, `packaging`, `docs`, `all`<!-- /validate-areas -->, and is what
-`scripts/check-validation-inventory.py` parses — including the anchored area
-list above, which is compared against the runner's own. The anchor, not the
-wording, is what the guard reads: prose inside it is free, but every
-backticked lowercase word in there is read as an area name, so put nothing else
-in backticks between the markers. Moving or deleting the anchor, opening or
-closing it twice, or leaving it empty all fail the guard rather than turning the
-comparison off. Adding or renaming a check
-means editing that manifest, not a doc. `scripts/test-validate.sh` covers the
-runner itself.
+`scripts/check-validation-inventory.py` parses. Adding or renaming a check means
+editing that manifest, not a doc. `scripts/test-validate.sh` covers the runner
+itself.
+
+**That area list is machine-read**, here and in `AGENTS.md` § Validation and
+`project-skills/vshell-dev/SKILL.md` § Validation, each wrapped in HTML comment
+markers that render as nothing:
+
+```markdown
+one of the <!-- validate-areas -->areas `go`, `qml`, `all`<!-- /validate-areas -->, and
+```
+
+`prose_areas` in `scripts/lib/validation_manifest.py` compares what lies between
+them against the runner's own list. Reword inside freely, but every backticked
+lowercase word in there is read as an area name; exactly one marker pair per
+file; an empty region is refused; markers inside a code fence are a picture, not
+the contract. Each of those FAILS the guard rather than turning the comparison
+off. Dropping the enumeration is a recorded decision — remove the file from
+`AREA_ENUMERATING_DOCS` in the same edit.
 
 Its exit status is four-valued, and **77 is not a pass**: `0` everything
 selected ran and passed; `77` what ran passed but something did not run (the

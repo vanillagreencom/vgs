@@ -571,6 +571,34 @@ run_guard "AGENTS_PATH=$anchored"
 expect_refused "empty anchored region" "anchors an empty validate area list"
 ok "an anchor holding prose but no area names is reported"
 
+# A MARKER INSIDE A CODE FENCE IS A PICTURE OF THE CONTRACT, NOT THE CONTRACT.
+# Without this, the document that documents the anchor could not show it: a
+# second literal opener anywhere on the page — even in a block demonstrating the
+# rule — trips the exactly-once refusal, so the mechanism was unnameable in the
+# one place it is explained. The refusal direction is what is pinned here: a doc
+# whose ONLY anchor is fenced has no anchor at all.
+areas_probe="$tmp/areas-probe.md"
+# shellcheck disable=SC2016  # backticks are markdown quoting in the fixture prose
+{
+  printf 'the guard reads markers like this:\n\n'
+  printf '```markdown\n<!-- validate-areas -->areas `go`<!-- /validate-areas -->\n```\n'
+} >"$areas_probe"
+run_guard "AGENTS_PATH=$areas_probe"
+expect_refused "fenced marker" "anchor around its validate area list"
+ok "a marker inside a code fence is not an anchor"
+
+# ...and the accept side, which is the whole point: a real anchor plus a fenced
+# demonstration of one is exactly what the instructions file now carries, and it
+# must parse. Without this case the strip above could delete the real region too.
+# shellcheck disable=SC2016  # backticks are markdown quoting in the fixture prose
+{
+  printf 'areas: <!-- validate-areas -->`go`, `qml`, `helper`, `packaging`, `docs`, `all`<!-- /validate-areas -->\n\n'
+  printf '```markdown\n<!-- validate-areas -->areas `go`<!-- /validate-areas -->\n```\n'
+} >"$areas_probe"
+run_guard "AGENTS_PATH=$areas_probe"
+expect_clean_run "real anchor beside a fenced one"
+ok "a document may show the markers in a fence and still carry a real anchor"
+
 # ...and every named document must currently yield a non-empty list, so the
 # case above is catching the rewording rather than a doc that never stated one.
 python3 - "$repo_root" <<'PROBE' || fail "enumerating docs" "a named document yields no area list today"
@@ -1427,10 +1455,16 @@ utf8_locales=()
 c_locales=()
 while IFS= read -r loc; do
   case "$loc" in
-    # `C.utf8` is the C locale wearing a UTF-8 encoding, so it is the one UTF-8
-    # locale that cannot demonstrate a locale-resolved character class. Kept as
-    # a last resort — a system offering nothing else still gets a control —
-    # but never chosen ahead of a real one.
+    # `C.utf8` is RANKED LAST, not disqualified. It was written here as the one
+    # UTF-8 locale that cannot demonstrate a locale-resolved class, and that is
+    # measurably false on this glibc: with the runner's tag strip reverted to
+    # `[[:space:]]`, plain C refused a U+2002-tagged row while C.utf8 accepted
+    # it, exactly as en_US.utf8 did — modern glibc derives C.utf8's LC_CTYPE
+    # from Unicode. So it is a working control and is kept as a fallback; a
+    # named regional locale simply comes first, for reproducibility and because
+    # older glibc and musl may resolve C.utf8 like C. Whether a selected locale
+    # ACTUALLY resolves the class is measured below rather than inferred from
+    # its name, so this ordering cannot decide the verdict either way.
     C.utf8 | C.UTF-8) c_locales+=("$loc") ;;
     *.utf8 | *.UTF-8) utf8_locales+=("$loc") ;;
   esac
@@ -1445,17 +1479,28 @@ for loc in "$PREFERRED_LOCALE" "${utf8_locales[@]}"; do
   locales+=("$loc")
 done
 
-# A SAMPLE OF C LOCALES IS A SKIP, NOT A PASS. On a system whose only UTF-8
-# locale is `C.utf8` — a stock CI runner — every selected locale is the C locale
-# in UTF-8 clothing, which by this block's own reasoning cannot demonstrate a
-# locale-resolved character class. The comparisons below still run and still have
-# to agree, but printing `ok` over them would report the rule as proven by the
-# one environment that cannot prove it, which is this repo's standing refusal
-# dressed as a locale list.
+# A SAMPLE THAT RESOLVES NOTHING IS A SKIP, NOT A PASS — and whether it resolves
+# anything is MEASURED, never inferred from the locale's name. The first version
+# of this asked "are they all named C.*", which is the same guess the comment
+# above got wrong; a name-based answer would call a working C.utf8 control a
+# skip on one libc and miss a genuinely inert locale on another.
+#
+# The probe is the property under test, one layer down: does `[[:space:]]`
+# swallow a character that is whitespace only in Unicode? The input is written as
+# raw UTF-8 BYTES rather than with printf's \u, so the same bytes are fed to
+# every locale — under C, ` ` would not even encode the same way.
+locale_resolves_class() { # $1 locale
+  local stripped
+  stripped="$(LC_ALL="$1" bash -c \
+    'x="$(printf "x\xe2\x80\x82")"; printf "%s" "${x//[[:space:]]/}"')" || return 1
+  [[ "$stripped" == "x" ]]
+}
+
 locale_sample_is_degenerate=1
 for loc in ${locales[@]+"${locales[@]}"}; do
-  printf '%s\n' ${c_locales[@]+"${c_locales[@]}"} | grep -qxF -- "$loc" ||
+  if locale_resolves_class "$loc"; then
     locale_sample_is_degenerate=0
+  fi
 done
 
 if [[ ${#locales[@]} -eq 0 ]]; then
@@ -1521,11 +1566,13 @@ $(printf '  %s\n' "${verdicts[@]}")"
       fail "C4 locale control" "U+$codepoint in a tag field is ACCEPTED ($first)"
   done
   if [[ $locale_sample_is_degenerate -eq 1 ]]; then
-    printf '  SKIP  C4 locale control: the only UTF-8 locale(s) this system provides (%s) are\n' \
+    printf '  SKIP  C4 locale control: no locale this system provides (%s) resolves a Unicode\n' \
       "${locales[*]}" >&2
-    printf '        the C locale in UTF-8 clothing, so the one condition that distinguishes an\n' >&2
-    printf '        ASCII rule from a locale-resolved class could not be created. Both readers\n' >&2
-    printf '        agreed on every codepoint, but the rule is NOT proven on this machine.\n' >&2
+    # shellcheck disable=SC2016  # the backticks quote a shell pattern in the notice
+    printf '        space through `[[:space:]]`, measured directly, so the one condition that\n' >&2
+    printf '        distinguishes an ASCII rule from a locale-resolved class could not be\n' >&2
+    printf '        created. Both readers agreed on every codepoint, but the rule is NOT\n' >&2
+    printf '        proven on this machine.\n' >&2
   else
     ok "C4 holds for both readers under C and ${locales[*]}"
   fi

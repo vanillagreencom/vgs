@@ -142,7 +142,10 @@ Live-machine etiquette:
 
 ## Validation
 The suite is `scripts/validate [AREA]` — <!-- validate-areas -->areas `go`, `qml`, `helper`,
-`packaging`, `docs`, `all`<!-- /validate-areas -->. Scope to the area you touched; run `all` for
+`packaging`, `docs`, `all`<!-- /validate-areas -->. (The validate-areas comment markers around that
+list are read by `scripts/check-validation-inventory.py` and compared against the
+runner's own; keep them, and put nothing else in backticks between them. Contract:
+`.github/instructions/validation-scripts.instructions.md`.) Scope to the area you touched; run `all` for
 cross-cutting work. The command manifest and the per-area scoping live in that
 runner's header, and `scripts/check-validation-inventory.py` enforces it against
 CI and `scripts/` in both directions (VGS-50, VGS-30).

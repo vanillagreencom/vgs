@@ -87,7 +87,9 @@ Reference: `references/plugin-development.md`.
 
 ## Validation
 The suite is `scripts/validate [AREA]`, <!-- validate-areas -->areas `go`, `qml`, `helper`,
-`packaging`, `docs`, `all`<!-- /validate-areas --> — run the area for what you touched. The command
+`packaging`, `docs`, `all`<!-- /validate-areas --> — run the area for what you touched. (Keep the
+validate-areas markers: the inventory guard reads between them. Contract in
+`.github/instructions/validation-scripts.instructions.md`.) The command
 manifest and its per-area scoping live in that runner; no command list is
 restated here, because a partial copy reads as complete. Its exit status is
 four-valued: `0` ran and passed, `77` passed but something did not run — report

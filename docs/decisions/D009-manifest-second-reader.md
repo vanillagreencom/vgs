@@ -4,7 +4,7 @@
 
 **Date**: 2026-08-15
 **Status**: Active
-**Research**: —
+**Research**: VGS-144
 
 **Context**: VGS-123 made `scripts/validate` the only parser of
 `scripts/lib/validation-grammar.conf` and deleted the second one, because two
@@ -41,8 +41,9 @@ much it costs.
   was already needed to end a real divergence; this one would be built to enable
   one.
 - The known cost is accepted and bounded: two readers of the rows can disagree,
-  and the agreement tests are an ENUMERATION — the same shape this file's own
-  notes reject for grammar conformance. They are `scripts/test-validate.sh`'s
+  and the agreement tests are an ENUMERATION — the same shape
+  `scripts/lib/validation-grammar.conf`'s header rejects for grammar
+  conformance. They are `scripts/test-validate.sh`'s
   parser-agreement case (`--list all` compared against `manifest_rows`) and
   `scripts/test-validation-inventory.sh`'s reader-agreement table, plus the
   shared `row-*` diagnostics in the grammar, which both readers are pinned to
@@ -55,10 +56,17 @@ the trade should be re-weighed with that evidence); or the guard stops being an
 inventory of the runner's own coverage.
 
 **Verification**: `scripts/test-validate.sh` § parser agreement compares the two
-readers' row sets on the shipped manifest; `scripts/test-validation-inventory.sh`
-§ reader agreement drives eight malformed and duplicate rows through both and
+readers' COMMAND SEQUENCES on the shipped manifest — the tag half is what
+`--list` cannot carry, so it is checked separately;
+`scripts/test-validation-inventory.sh` § reader agreement drives ten malformed,
+duplicate and control-character rows through both readers, with their tags, and
 requires an identical classification.
 
 **References**: VGS-123 (one runner, one manifest), VGS-144 (deferred review
-findings), [D007](D007-ci-single-job-economics.md) for why CI invokes the
-manifest's commands as individually named steps.
+findings). CI invokes the manifest's commands as individually named steps rather
+than running the runner — the shape that makes a self-concealing local run
+unable to reach `main` — which is stated in
+[`.github/instructions/ci.instructions.md`](../../.github/instructions/ci.instructions.md)
+and `.github/workflows/ci.yml`'s header;
+[D007](D007-ci-single-job-economics.md) decides the surrounding shape (one suite
+job, no lanes or nightly, `ci-ok` as the stable required context).
