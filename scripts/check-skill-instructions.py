@@ -46,6 +46,12 @@ it closes; shell and jq spellings are not, which is why that apparatus went to
 VGS-156. Answer any future "the check missed spelling X" by asking whether the
 PARSER can decide it, not by adding a pattern.
 
+THE LOCATOR IS SUBORDINATE TO THE PARSER and cannot skip what the parser saw: a
+key tomllib reports whose assignment the raw scan cannot locate is a loud failure
+naming that key, never a pass. So any spelling tomllib understands is either
+located and checked, or a clear error — which is why no further spelling can pass
+in silence, whatever it turns out to be.
+
 COLLECTION POINTS. This file implements the invariant stated in
 `.github/instructions/validation-scripts.instructions.md` — a collection step
 must assert it collected what it expected; a matcher that comes back empty is a
@@ -94,6 +100,8 @@ BASIC_KEY = r'"(?:[^"\\]|\\.)*"'
 LITERAL_KEY = r"'[^']*'"
 KEY_PART = f"(?:{BARE_KEY}|{BASIC_KEY}|{LITERAL_KEY})"
 SINGLE_KEY = re.compile(f"{KEY_PART}$")
+ONE_PART = re.compile(KEY_PART)
+DOT_SEPARATOR = re.compile(r"\s*\.\s*")
 ASSIGNMENT = re.compile(
     rf"\s*(?P<key>{KEY_PART}(?:\s*\.\s*{KEY_PART})*)\s*=\s*(?P<delim>'''|\"\"\"|'|\")"
 )
@@ -115,7 +123,7 @@ def blocks(text: str) -> dict[str, str]:
 
 
 def decode_key(spelling: str) -> str | None:
-    """The key TOML means by this spelling, or None if it is dotted.
+    """The key TOML means by one key PART, or None if it will not decode.
 
     The DECODING is tomllib's too, not another hand-rolled unescape: a quoted key
     is handed back to the parser as a one-line document and the key it produces
@@ -130,6 +138,35 @@ def decode_key(spelling: str) -> str | None:
         return next(iter(tomllib.loads(f"{spelling} = 0")))
     except tomllib.TOMLDecodeError:
         return None
+
+
+def decode_key_path(spelling: str) -> list[str] | None:
+    """Every part of a possibly-dotted key, each decoded, or None.
+
+    `skill-instructions.linear = '''x'''` needs no header, and tomllib nests it
+    into exactly the table a header would produce — so the value is already
+    right and only the locator could not span it. Reading part-then-separator
+    left to right keeps that spelling checked rather than erroring, and keeps
+    EVERY part the parser's business: a quoted half is decoded the same way as a
+    whole key, so a dot INSIDE a quoted part is content rather than a separator.
+    """
+    parts: list[str] = []
+    position = 0
+    while True:
+        part = ONE_PART.match(spelling, position)
+        if not part:
+            return None
+        decoded = decode_key(part.group(0))
+        if decoded is None:
+            return None
+        parts.append(decoded)
+        position = part.end()
+        if position == len(spelling):
+            return parts
+        separator = DOT_SEPARATOR.match(spelling, position)
+        if not separator:
+            return None
+        position = separator.end()
 
 
 def close_offset(line: str, delimiter: str) -> int:
@@ -195,7 +232,13 @@ def assignments(text: str, keys: Collection[str]) -> dict[str, list[str]]:
         if not match:
             index += 1
             continue
-        key = decode_key(match.group("key"))
+        path = decode_key_path(match.group("key"))
+        # A bare key belongs to whatever table is open; a DOTTED one names its
+        # table outright, so it counts only when the leading parts are this
+        # table. `other.linear = ...` is some other table's business.
+        key = None
+        if path and (len(path) == 1 or path[:-1] == [TABLE]):
+            key = path[-1]
         delimiter = match.group("delim")
         # What follows the OPENING delimiter on this same line. A closer in here
         # ends the value where it sits; only when there is none does the body
@@ -227,18 +270,18 @@ def audit(
     except tomllib.TOMLDecodeError as exc:
         return [f"{source} is not valid TOML: {exc}"]
 
-    # OUT OF CONTRACT, decided by the parser rather than by pattern. A dotted key
-    # (`linear.sub = ...`) makes tomllib nest a table here, and `blocks()` drops
-    # anything that is not a string — silently, until now. Reported instead of
-    # skipped, and detected from the parsed shape so a dotted key in some OTHER
-    # table is none of this check's business.
+    # OUT OF CONTRACT, decided by the parser rather than by pattern. `blocks()`
+    # drops anything that is not a string — silently, until now. This is about
+    # the VALUE's shape, not how its key was spelled: a dotted key naming this
+    # table is checked like any other, but a value that is a sub-table, a number
+    # or a list has no delimiter to judge and must say so rather than vanish.
     for key, value in sorted(parsed.items()):
         if not isinstance(value, str):
             problems.append(
-                f"{source} [{TABLE}] {key} is a {type(value).__name__}, not a string — a "
-                f"dotted key or sub-table here is out of this check's contract, which is "
-                f"one string value per block. Its delimiter cannot be judged, so it would "
-                f"otherwise pass unexamined."
+                f"{source} [{TABLE}] {key} is a {type(value).__name__}, not a string — "
+                f"this check's contract is one string value per block, and a value of "
+                f"that shape has no delimiter to judge. It would otherwise pass "
+                f"unexamined."
             )
 
     # COLLECTION POINT 1 — the table itself. The assertion below runs inside a
@@ -403,6 +446,8 @@ def self_test() -> list[str]:
         ("tabs around the equals", f"[{TABLE}]\nlinear\t=\t'''x'''\n", {"linear"}),
         ("a basic-quoted key", f'[{TABLE}]\n"linear" = \'\'\'x\'\'\'\n', {"linear"}),
         ("a literal-quoted key", f"[{TABLE}]\n'linear' = '''x'''\n", {"linear"}),
+        ("a dotted key and no header", f"{TABLE}.linear = '''x'''\n", {"linear"}),
+        ("a dotted key with a quoted part", f'{TABLE}."linear" = \'\'\'x\'\'\'\n', {"linear"}),
     )
     for shape, fixture, expected in shapes:
         reported = fixture_audit(fixture, source=f"<fixture: {shape}>")
@@ -429,6 +474,22 @@ def self_test() -> list[str]:
                 f"a BASIC-string key with {shape} was not reported as a delimiter "
                 f"violation, so reading the shape was traded for no longer judging it."
             )
+
+    # THE SUBORDINATION INVARIANT, and the control that proves it holds for
+    # spellings nobody has thought of yet. An inline table puts the assignment
+    # mid-line where the locator cannot span it — tomllib reads the value fine,
+    # so the check must fail LOUDLY naming that key rather than passing. Every
+    # future TOML spelling is therefore either located and checked, or this.
+    unspannable = f"{TABLE} = {{ linear = '''x''' }}\n"
+    if not any(
+        "cannot locate its assignment" in problem
+        for problem in fixture_audit(unspannable, source="<fixture: inline table>")
+    ):
+        failures.append(
+            "a key the locator cannot span was not reported, so a spelling the raw scan "
+            "does not understand passes unexamined. The locator is subordinate to the "
+            "parser: it may fail to read something, but never silently."
+        )
 
     # Out of contract, and it must SAY so rather than being dropped by the
     # is-it-a-string filter.
