@@ -179,11 +179,12 @@
         "full walk of the search roots per query, with nothing cached between",
         "them, cannot answer at typing speed. Missing fd/fdfind therefore",
         "means no overview file or folder search, except folder completion",
-        "for a ~-rooted query, which the helper answers without fd (a leading",
-        "/ is the launcher's own file-search prefix and is consumed before the",
-        "query reaches the helper). Text search is gated separately on rg and",
-        "keeps working without fd. The vgsMenu plugin is not gated and still",
-        "reaches the walk."
+        "for a path query -- ~-rooted, or /-rooted through the '/d ' typed-type",
+        "prefix -- which the helper answers without fd. (A BARE leading / is",
+        "the launcher's own file-search trigger and is consumed before the",
+        "query reaches the helper; '/d ' consumes only itself.) Text search is",
+        "gated separately on rg and keeps working without fd. The vgsMenu",
+        "plugin is not gated and still reaches the walk."
       ],
       "anyCommands": [
         [

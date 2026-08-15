@@ -145,7 +145,7 @@ Item {
     }
 
     function _retryFileSearchAfterProbe() {
-        if (!shouldRetryAfterProbe(active, fileSearchQuery()))
+        if (!shouldRetryAfterProbe(active, DSearchService.queryIsDispatchable(fileSearchQuery())))
             return;
         fileSearchDebounce.restart();
     }
@@ -365,6 +365,10 @@ Item {
         searchQueryRequested(targetText);
     }
 
+    // The last file search's own failure text, straight from the helper. The
+    // empty state shows it: the diagnosis was already produced and was being
+    // thrown away.
+    property string fileSearchError: ""
     property string fileSearchType: "file"
     property string fileSearchExt: ""
     property string fileSearchFolder: ""
@@ -579,6 +583,7 @@ Item {
         previousSearchMode = "apps";
         autoSwitchedToFiles = false;
         isFileSearching = false;
+        fileSearchError = "";
         fileSearchType = "file";
         fileSearchExt = "";
         fileSearchFolder = "";
@@ -827,7 +832,7 @@ Item {
 
         if (searchMode === "files") {
             var fileQuery = fileSearchQuery();
-            isFileSearching = fileQuery.length >= 2 && DSearchService.canDispatch(fileSearchKind(), fileQuery);
+            isFileSearching = DSearchService.queryIsDispatchable(fileQuery) && DSearchService.canDispatch(fileSearchKind(), fileQuery);
             sections = [];
             flatModel = [];
             selectedFlatIndex = 0;
@@ -1136,8 +1141,7 @@ Item {
     // scripts/test-launcher-search-gate.js runs it; this reads the properties
     // and the parsed prefix, and decides nothing.
     function fileSearchQuery() {
-        var prefixInfo = Utils.parseFileSearchPrefix(searchQuery);
-        return fileSearchQueryFrom(searchMode, searchQuery, prefixInfo ? prefixInfo.query : searchQuery.substring(1).trim());
+        return fileSearchQueryFrom(searchMode, searchQuery, Utils.parseFileSearchPrefix(searchQuery)?.query ?? "");
     }
 
     // BEGIN FILE SEARCH DECISION
@@ -1154,10 +1158,11 @@ Item {
     }
 
     // A search declined while the tools were unknown is re-run once they are
-    // known — but only for a surface still open, and only for a query long
-    // enough to have dispatched.
-    function shouldRetryAfterProbe(isActive, query) {
-        return !!isActive && String(query || "").length >= 2;
+    // known — but only for a surface still open, and only for a query that
+    // would have dispatched. The length rule itself is
+    // DSearchService.queryIsDispatchable's, read by the caller.
+    function shouldRetryAfterProbe(isActive, dispatchable) {
+        return !!isActive && !!dispatchable;
     }
     // END FILE SEARCH DECISION
 
@@ -1166,7 +1171,7 @@ Item {
         var kind = fileSearchKind();
         var fileQuery = fileSearchQuery();
 
-        if (fileQuery.length < 2) {
+        if (!DSearchService.queryIsDispatchable(fileQuery)) {
             isFileSearching = false;
             return;
         }
@@ -1178,11 +1183,13 @@ Item {
         // that names the missing tool.
         if (!DSearchService.canDispatch(kind, fileQuery)) {
             isFileSearching = false;
+            fileSearchError = "";
             _applyFileSearchResults([], effectiveType);
             return;
         }
 
         isFileSearching = true;
+        fileSearchError = "";
 
         DSearchService.search(fileQuery, {
             kind: kind,
@@ -1190,6 +1197,10 @@ Item {
         }, function (response) {
             isFileSearching = false;
             if (response.error) {
+                // The helper's own diagnosis — "ripgrep is required for text
+                // search" and the like. Dropping it left the empty state saying
+                // "No results found" for a search that never ran.
+                fileSearchError = response.error;
                 _applyFileSearchResults([], effectiveType);
                 return;
             }
@@ -2176,9 +2187,10 @@ Item {
         if (!path)
             return;
         var target = openDirectory ? path : path.substring(0, path.lastIndexOf("/"));
-        var args = [Paths.vshellCli, "launcher-search", "open-folder", target];
+        var args = [Paths.vshellCli, "launcher-search", "open-folder"];
         if (SettingsData.launcherFolderOpenCommand)
-            args.push("--command", SettingsData.launcherFolderOpenCommand);
+            args.push("--command=" + SettingsData.launcherFolderOpenCommand);
+        args.push("--", target);
         Quickshell.execDetached(args);
     }
 

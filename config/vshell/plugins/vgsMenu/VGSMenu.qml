@@ -457,9 +457,9 @@ PluginComponent {
         visibleItems = allImmediateItems;
         selectedItemIndex = 0;
         filePreviewRevealed = visibleItems.length > 0 && visibleItems[0]?.kind === "file";
-        fileSearching = trimmed.length >= 2;
+        fileSearching = DSearchService.queryIsDispatchable(trimmed);
         resetResultListPosition();
-        if (trimmed.length < 2)
+        if (!DSearchService.queryIsDispatchable(trimmed))
             return;
 
         DSearchService.search(trimmed, { kind: "all", limit: 80 }, response => {
@@ -544,7 +544,7 @@ PluginComponent {
         filePreviewRevealed = false;
         const explicitFolderPath = fileSearchType === "dir"
             && (trimmed.indexOf("~/") === 0 || trimmed.indexOf("/") === 0 || trimmed === "~");
-        if (trimmed.length < 2 && fileSearchType !== "zoxide" && !explicitFolderPath) {
+        if (!DSearchService.queryIsDispatchable(trimmed) && fileSearchType !== "zoxide" && !explicitFolderPath) {
             fileSearching = false;
             return;
         }
@@ -679,14 +679,15 @@ PluginComponent {
     }
 
     function openFolder(path, opener) {
-        const args = [Paths.vshellCli, "launcher-search", "open-folder", path];
+        const args = [Paths.vshellCli, "launcher-search", "open-folder"];
         if (!opener || opener === "default") {
             args.push("--opener", "default");
         } else {
             args.push("--opener", opener);
         }
         if ((!opener || opener === "default") && SettingsData.launcherFolderOpenCommand)
-            args.push("--command", SettingsData.launcherFolderOpenCommand);
+            args.push("--command=" + SettingsData.launcherFolderOpenCommand);
+        args.push("--", path);
         Quickshell.execDetached(args);
     }
 

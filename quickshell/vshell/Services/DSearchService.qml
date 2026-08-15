@@ -21,9 +21,14 @@ Singleton {
     // "pending" only while the FIRST probe is outstanding, then "ready", or
     // "retrying" from the first failure until the attempts are spent, then
     // "failed". The tool flags mean nothing outside "ready", so no caller may
-    // report a tool as missing on their strength alone — and everything past
-    // the first failure is honestly "nobody knows" rather than "checking",
-    // which is what lets dispatch resume instead of waiting out the retries.
+    // report a tool as missing on their strength alone.
+    //
+    // Everything past the first failure is honestly "nobody knows" rather than
+    // "checking", and that distinction buys exactly one thing: the kinds that
+    // need no fd fallback — text, zoxide, path completion — resume dispatching
+    // at the first failure instead of waiting out the retries. An fd-backed
+    // name search stays refused until the probe settles, because dispatching it
+    // unproven would silently buy the helper's full directory walk.
     property string statusState: "pending"
     property string statusError: ""
     property int _statusAttempts: 0
@@ -62,12 +67,13 @@ Singleton {
         _probeStatus();
     }
 
-    // Re-probe only where a previous episode gave up. A surface that opens after
-    // the shell has been running for hours is the moment a transient failure
-    // gets a second chance; re-probing a settled answer would spawn a process
-    // per open for nothing.
+    // Re-probe unless the last answer is settled — a successful probe that found
+    // every tool. A launcher open is when a transient failure gets its second
+    // chance, and when the user who just installed fd on our own instruction
+    // gets the answer that instruction promised. Single-flight bounds it to one
+    // process per open, and the probe answer repaints the surface.
     function ensureStatus() {
-        if (statusState === "failed")
+        if (!probeSettled(_probeSnapshot()))
             rediscover();
     }
 
@@ -116,9 +122,9 @@ Singleton {
             // forever would spawn a process a second for the same lifetime.
             //
             // The state leaves "pending" on the FIRST failure rather than at the
-            // end of the sequence: the answer is already unknown, and holding
-            // "checking" across the retries refused every search for the ~12s
-            // they take on a machine whose tools are fine.
+            // end of the sequence: the answer is already unknown, so the kinds
+            // that need no fd fallback stop waiting out the ~12s the retries
+            // take. Name search still waits — see statusState.
             root.statusState = "retrying";
             statusRetryTimer.interval = 1000 * root._statusAttempts;
             statusRetryTimer.start();
@@ -165,11 +171,19 @@ Singleton {
     // Folder queries that start at a path are answered by the helper's own
     // directory walk (bin/vshell-helper::_launcher_folder_path_hits), which runs
     // before fd is consulted, so path completion must not be gated on fd. The
-    // condition mirrors that branch, "~" and "/" alike; from the overview only
-    // the "~" form arrives, because a leading "/" is the launcher's own
-    // file-search trigger and parseFileSearchPrefix consumes it.
+    // condition mirrors that branch, "~" and "/" alike, and both forms arrive
+    // from the overview: the BARE "/" is the launcher's own file-search trigger
+    // and parseFileSearchPrefix consumes it, but the "/d " typed-type prefix
+    // consumes only itself and passes a "/"-rooted query through intact.
     function pathCompletion(kind, query) {
         return kind === "folders" && /^[~/]/.test(String(query || "").trim());
+    }
+
+    // The one owner of "long enough to search". Six sites across the launcher
+    // asked this question with their own literal; a threshold changed in five of
+    // them leaves the sixth believing a search ran that never did.
+    function queryIsDispatchable(query) {
+        return String(query || "").trim().length >= 2;
     }
 
     // "checking" | "available" | "missing" | "unknown". `probe` carries the
@@ -200,11 +214,12 @@ Singleton {
     }
 
     // Whether a caller that will not accept the helper's directory walk may
-    // dispatch. "available" always may. "unknown" may only where dispatching
-    // cannot silently buy that walk: ripgrep fails fast with a real cause, and
-    // a path completion is one iterdir. A name search in the unknown state is
-    // refused instead — a full walk of the roots per keystroke is the cost the
-    // fd gate exists to avoid, and taking it because a probe could not run
+    // dispatch. "available" always may — which is the arm a path completion
+    // takes, since backendStateFor answers it before any probe state is read.
+    // "unknown" may only where dispatching cannot silently buy that walk:
+    // ripgrep fails fast with a real cause. A name search in the unknown state
+    // is refused instead — a full walk of the roots per keystroke is the cost
+    // the fd gate exists to avoid, and taking it because a probe could not run
     // would be taking it by accident.
     function dispatchAllowed(state, kind) {
         if (state === "available")
@@ -223,28 +238,34 @@ Singleton {
         return state === "missing" && !helperHasFallback(kind);
     }
 
-    // The composition itself, so which property lands in which slot is
-    // executable rather than assumed. Reading the probe out of the singleton is
-    // then the only thing left outside the region, and it is one line long.
-    function backendStateFrom(kind, query, probeState, fdPresent, rgPresent) {
-        return backendStateFor(kind, query, {
-            state: probeState,
-            fd: fdPresent,
-            ripgrep: rgPresent
-        });
+    // One entry point per decision, each over the same named snapshot. The
+    // fields are named rather than positional on purpose: two adjacent booleans
+    // transposed at a call site reads correctly and reinstates the original
+    // defect, while `fd: ripgrepAvailable` is visible on sight.
+    function canDispatchFor(kind, query, probe) {
+        return dispatchAllowed(backendStateFor(kind, query, probe), kind);
     }
 
-    function canDispatchFrom(kind, query, probeState, fdPresent, rgPresent) {
-        return dispatchAllowed(backendStateFrom(kind, query, probeState, fdPresent, rgPresent), kind);
+    // Whether the last answer can be left alone. Only a successful probe that
+    // found every tool settles anything: a user told to install fd must see that
+    // answer change once they have, and "ready" with fd absent is precisely the
+    // state that instruction is given from.
+    function probeSettled(probe) {
+        const answer = probe || {};
+        return answer.state === "ready" && !!answer.fd && !!answer.ripgrep;
     }
     // END SEARCH BACKEND DECISION
 
+    function _probeSnapshot() {
+        return { state: statusState, fd: fdAvailable, ripgrep: ripgrepAvailable };
+    }
+
     function backendState(kind, query) {
-        return backendStateFrom(kind, query, statusState, fdAvailable, ripgrepAvailable);
+        return backendStateFor(kind, query, _probeSnapshot());
     }
 
     function canDispatch(kind, query) {
-        return canDispatchFrom(kind, query, statusState, fdAvailable, ripgrepAvailable);
+        return canDispatchFor(kind, query, _probeSnapshot());
     }
 
     function refreshFolderOpeners() {
@@ -263,12 +284,15 @@ Singleton {
         }, 0, 3000);
     }
 
+    // Joined "--flag=value", not two argv entries: a configured root or ignore
+    // path beginning with "-" is read as an option name in the separated form
+    // and argparse rejects the call.
     function _appendListArgs(args, flag, values) {
         const list = Array.isArray(values) ? values : [];
         for (let i = 0; i < list.length; i++) {
             const value = String(list[i] || "").trim();
             if (value)
-                args.push(flag, value);
+                args.push(flag + "=" + value);
         }
     }
 
@@ -342,8 +366,10 @@ Singleton {
         const args = [Paths.vshellCli, "launcher-search", "preview", "--lines", "700"];
         if (line)
             args.push("--line", String(line));
+        // Joined, because the highlight query is the user's search text and a
+        // text search for "-n" now returns hits to preview.
         if (query)
-            args.push("--query", String(query));
+            args.push("--query=" + String(query));
         // Same shape as search(): a path can begin with "-" too.
         args.push("--", String(path));
         Proc.runCommand("launcher-file-preview", args, (stdout, exitCode, stderr) => {
