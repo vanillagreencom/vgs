@@ -158,7 +158,8 @@ cd "$repo_root" || exit 1
 # the QML smoke, the safety guard, surfaces, plus the QML source lints carrying
 # the tag (today the launcher hover latch); helper = the helper checks plus the
 # py_compile/bash -n syntax pass; packaging = the three packaging checks;
-# docs = the instruction-surface growth ratchet.
+# docs = the instruction-surface growth ratchet and the skill-instructions
+# render guard.
 #
 # The older QML source lints are still `-`, so only `all` reaches them, and the
 # family is bigger than it looks: 23 of today's `-` rows read .qml source, from
@@ -174,6 +175,7 @@ always    | scripts/check-format-lint.sh
 -         | python3 scripts/lib/qml_source_selftest.py
 always    | scripts/check-validation-inventory.py
 docs      | scripts/check-doc-growth.py
+docs      | scripts/check-skill-instructions.py
 packaging | scripts/gen-package-metadata.py
 packaging | scripts/check-package-assets.sh
 packaging | scripts/check-aur-sync.py
