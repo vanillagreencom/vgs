@@ -57,6 +57,9 @@ import sys
 import tomllib
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent / "lib"))
+from collected import members_missing, nothing_collected  # noqa: E402
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 CONFIG = REPO_ROOT / "vstack.toml"
 TABLE = "skill-instructions"
@@ -75,7 +78,13 @@ JQ_COMPILE_ERROR = 3
 JQ_TIMEOUT_SECONDS = 5.0
 JQ_FIXTURE_TIMEOUT_SECONDS = 0.5
 
-FENCE = re.compile(r"^```(?:bash|sh)?\n(.*?)^```", re.M | re.S)
+# EVERY fenced block, whatever its info string. Enumerating language tags is the
+# same trap one level down: the pattern used to accept `bash`, `sh` and bare, so
+# a block fenced ```shell yielded ZERO spans, arm 3 never ran on it, and an
+# invalid filter inside it audited clean. Collect them all and filter afterwards
+# — a spelling nobody predicted then shows up instead of disappearing.
+FENCE = re.compile(r"^```[^\n]*\n(.*?)^```", re.M | re.S)
+FENCE_OPENING = re.compile(r"^```", re.M)
 CONTINUATION = re.compile(r"(?<!\\)\\$", re.M)
 
 # Shell line continuations are JOINED before any jq invocation is looked for.
@@ -92,8 +101,8 @@ SHELL_VARIABLE = re.compile(r"^\$\{?[A-Za-z_][A-Za-z0-9_]*\}?$")
 EXPANSION = re.compile(r"[$`]")
 
 
-def jq_programs(fenced: str) -> tuple[list[str], list[str]]:
-    """(compilable programs, jq invocations this cannot read) from one block.
+def jq_programs(fenced: str) -> tuple[list[str], list[str], list[str]]:
+    """(programs, invocations this cannot read, exempt invocations) from a block.
 
     ALL THREE literal spellings are compiled — single-quoted, double-quoted and
     unquoted. The reader used to take single-quoted only, so `jq -r .title` (which
@@ -101,13 +110,14 @@ def jq_programs(fenced: str) -> tuple[list[str], list[str]]:
     arm asserted nothing while the check still claimed every jq program compiles.
     Mutating that filter to `.[` left the audit clean.
 
-    Nothing is dropped in silence. An invocation that yields no program is
-    REPORTED — the empty-collection-reads-as-clean shape named in
-    `.github/instructions/validation-scripts.instructions.md`. The sole silent
-    exemption is a program held in a shell variable, because its text is not in
-    the file to compile; a double-quoted program carrying an expansion among
-    other text is reported instead, since it is visibly a filter this cannot
-    resolve.
+    NOTHING IS DROPPED, and the third list is what makes that structural rather
+    than careful. Every `jq` token lands in exactly one of the three, so the
+    caller can assert programs + unreadable + exempt == tokens seen; a future
+    branch that forgets to record an occurrence fails that accounting instead of
+    going quiet. Reporting is the default and `exempt` is the one sanctioned
+    silence: a program held in a shell variable, whose text is not in the file to
+    compile. A double-quoted program carrying an expansion among OTHER text is
+    reported instead, since it is visibly a filter this cannot resolve.
 
     Option parsing is deliberately shallow: leading `-`-prefixed tokens are
     skipped and the next token is the filter. A value-taking option (`--arg x y`)
@@ -117,6 +127,7 @@ def jq_programs(fenced: str) -> tuple[list[str], list[str]]:
     """
     programs: list[str] = []
     unreadable: list[str] = []
+    exempt: list[str] = []
     joined = CONTINUATION_JOIN.sub(" ", fenced)
     position = 0
     while token := JQ_TOKEN.search(joined, position):
@@ -152,8 +163,11 @@ def jq_programs(fenced: str) -> tuple[list[str], list[str]]:
             program = joined[cursor + 1 : closing]
             position = closing + 1
             if quote == '"' and EXPANSION.search(program):
-                if not SHELL_VARIABLE.match(program):
-                    unreadable.append(joined[token.start() : command_end].strip())
+                occurrence = joined[token.start() : command_end].strip()
+                if SHELL_VARIABLE.match(program):
+                    exempt.append(occurrence)
+                else:
+                    unreadable.append(occurrence)
                 continue
         else:
             end = cursor
@@ -162,11 +176,14 @@ def jq_programs(fenced: str) -> tuple[list[str], list[str]]:
             program = joined[cursor:end]
             position = end
             if EXPANSION.search(program):
-                if not SHELL_VARIABLE.match(program):
-                    unreadable.append(joined[token.start() : command_end].strip())
+                occurrence = joined[token.start() : command_end].strip()
+                if SHELL_VARIABLE.match(program):
+                    exempt.append(occurrence)
+                else:
+                    unreadable.append(occurrence)
                 continue
         programs.append(program)
-    return programs, unreadable
+    return programs, unreadable, exempt
 
 
 def blocks(text: str) -> dict[str, str]:
@@ -295,23 +312,29 @@ def audit(
     except tomllib.TOMLDecodeError as exc:
         return [f"{source} is not valid TOML: {exc}"]
 
-    # THIS FILE PUBLISHES THE RULE, SO IT OBEYS IT. Every arm below lives inside
-    # a loop over `table`; an empty one made all four assert nothing and the
-    # check printed "ok (0 blocks)" while the runbooks it guards had been renamed
-    # away or emptied. An empty collection is DID NOT RUN, never clean
-    # (.github/instructions/validation-scripts.instructions.md).
-    if not table:
-        return [
-            f"{source} has no non-empty [{TABLE}] block at all — the table is absent, "
-            f"renamed, or every value is empty. Nothing was examined, so this is DID "
-            f"NOT RUN, not a pass."
-        ]
-    for key in sorted(required - table.keys()):
-        problems.append(
-            f"{source} [{TABLE}] {key} is missing or empty. It is pinned because it "
-            f"ships a runbook agents paste and run, so its disappearance has to be "
-            f"louder than the rest of the table still being fine."
-        )
+    # COLLECTION POINT 1 — the table itself. Every arm below runs inside a loop
+    # over it, so an empty one made all four assert nothing while the check
+    # printed "ok (0 blocks)".
+    absent = nothing_collected(
+        table,
+        what=f"non-empty [{TABLE}] block",
+        selector=f"the [{TABLE}] table in {source}",
+        cause="the table is absent, renamed, or every value is empty",
+    )
+    if absent:
+        return [absent]
+    # ...and the partial half: the table being non-empty says nothing about the
+    # block that actually ships the runbook still being there.
+    shortfall = members_missing(
+        table,
+        required,
+        what=f"[{TABLE}] blocks",
+        selector=f"the [{TABLE}] table in {source}",
+        cause="a pinned block that ships a runbook agents paste and run was "
+        "deleted or emptied",
+    )
+    if shortfall:
+        problems.append(shortfall)
 
     written = assignments(text)
 
@@ -360,12 +383,35 @@ def audit(
             )
 
         # --- arm 3: every jq program compiles -------------------------------
-        for fenced in FENCE.findall(value):
-            programs, unreadable = jq_programs(fenced)
-            # AN EMPTY COLLECTION IS "DID NOT RUN", NEVER "CLEAN". The loop below
-            # carries every assertion this arm makes, so if nothing is collected
-            # it asserts nothing and the block passes unexamined. Reported here
-            # rather than left implicit.
+        #
+        # COLLECTION POINT 2 — the fenced blocks. The tag-enumerating pattern
+        # returned no spans for a ```shell block, so this whole arm skipped it.
+        # Every fence is collected now, and the count is checked against the
+        # opening fences in the value: a value with fences that yields no spans
+        # means the pattern stopped matching, not that there is nothing to check.
+        fences = FENCE.findall(value)
+        openings = len(FENCE_OPENING.findall(value)) // 2
+        if openings and len(fences) != openings:
+            problems.append(
+                f"{source} [{TABLE}] {key}: {openings} fenced block(s) in the value but "
+                f"{len(fences)} collected — the fence pattern no longer matches them "
+                f"all, so the jq arm skips whatever it missed. That is DID NOT RUN for "
+                f"those blocks, not a clean result."
+            )
+        for fenced in fences:
+            # COLLECTION POINT 3 — the jq occurrences inside one fence. Every
+            # token lands in exactly one of the three lists, and the accounting
+            # below is what makes a silently-dropped occurrence impossible: a
+            # branch that forgets to record one fails here instead of vanishing.
+            programs, unreadable, exempt = jq_programs(fenced)
+            seen = len(JQ_TOKEN.findall(CONTINUATION_JOIN.sub(" ", fenced)))
+            if seen != len(programs) + len(unreadable) + len(exempt):
+                problems.append(
+                    f"{source} [{TABLE}] {key}: {seen} jq occurrence(s) in a fenced "
+                    f"block but {len(programs)} compiled, {len(unreadable)} reported "
+                    f"unreadable and {len(exempt)} exempt — the rest were dropped "
+                    f"without a word. Every occurrence must land in one of the three."
+                )
             for line in unreadable:
                 problems.append(
                     f"{source} [{TABLE}] {key}: this jq invocation carries a quoted "
@@ -521,6 +567,16 @@ def self_test() -> list[str]:
                 f"never clean, which is the rule this check publishes."
             )
 
+    # COLLECTION POINT 1 in ISOLATION. The three cases above are all caught by
+    # the pinned-set guard as well, so on their own they cannot prove the
+    # emptiness guard is live. With the pin waived, only that guard is left.
+    if not fixture_audit("[other-table]\nx = 1\n", source="<fixture: empty, pin waived>"):
+        failures.append(
+            f"an absent [{TABLE}] table was reported CLEAN with the pinned-block "
+            f"requirement waived, so the emptiness guard itself is not doing anything — "
+            f"only the pin was, and a table with different keys would pass unexamined."
+        )
+
     broken = fixture_audit(BROKEN_FIXTURE, source="<fixture: pre-fix basic string>")
     if not broken:
         failures.append(
@@ -545,6 +601,33 @@ def self_test() -> list[str]:
         failures.append(
             "the post-fix literal-string fixture FAILED, so the check rejects the very "
             f"form it prescribes: {fixed}"
+        )
+
+    # COLLECTION POINT 2's control — a fence whose info string nobody enumerated.
+    # Under the tag-matching pattern each of these yielded zero spans, so the jq
+    # arm skipped the block entirely and an invalid filter audited clean.
+    for tag in ("shell", "zsh", "console"):
+        other_fence = literal_block("jq -r '.[' \"$f\"").replace("```bash", f"```{tag}", 1)
+        if not any(
+            "does not compile" in problem
+            for problem in fixture_audit(other_fence, source=f"<fixture: ```{tag} fence>")
+        ):
+            failures.append(
+                f"a block fenced ```{tag} was not examined by the jq arm, so an "
+                f"unenumerated fence spelling removes a block from this check silently."
+            )
+
+    # COLLECTION POINT 3's control — every jq occurrence lands in exactly one of
+    # the three lists. Driven on the reader itself, since that accounting is what
+    # makes a forgotten branch impossible rather than merely unlikely.
+    accounting_fence = "jq -r '.a' f\njq -r \"$PROGRAM\" f\njq -r 'unterminated\n"
+    got_programs, got_unreadable, got_exempt = jq_programs(accounting_fence)
+    tokens = len(JQ_TOKEN.findall(CONTINUATION_JOIN.sub(" ", accounting_fence)))
+    if tokens != len(got_programs) + len(got_unreadable) + len(got_exempt):
+        failures.append(
+            f"jq_programs dropped an occurrence: {tokens} jq token(s) in, "
+            f"{len(got_programs)} program(s) + {len(got_unreadable)} unreadable + "
+            f"{len(got_exempt)} exempt out. Every occurrence must be accounted for."
         )
 
     # THE PROXY'S BLIND SPOT, pinned. First the premise — the old whole-file

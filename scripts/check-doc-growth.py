@@ -51,6 +51,9 @@ import sys
 import tempfile
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent / "lib"))
+from collected import members_missing, nothing_collected  # noqa: E402
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SELF = Path(__file__).resolve()
 
@@ -342,6 +345,20 @@ def recorded_size_problems(source: str, sizes: dict[str, int]) -> list[str]:
             f"parser rather than the table — an arm that reads nothing passes "
             f"everything."
         ]
+    # COLLECTION POINT 6, the second half. The span parse is guarded by the
+    # anchors above; this guards the PER-ENTRY parse. An entry that yields no
+    # comment text at all is not "an entry with nothing to say" — every entry
+    # carries at least its adoption size by the rule at the top of this file —
+    # so it means the entry line was matched but its comment was not collected.
+    silent = sorted(rel for rel in sizes if not comments.get(rel, "").strip())
+    if silent:
+        problems = [
+            f"{len(silent)} CEILINGS entr(y/ies) parsed with no comment text at all "
+            f"({', '.join(silent[:3])}) — every entry records at least its adoption "
+            f"size, so this is the comment parser failing to collect, not an entry "
+            f"with nothing to say. It cannot be checked, which is DID NOT RUN."
+        ]
+        return problems
     problems = []
     for rel, size in sizes.items():
         stated = recorded_size(comments[rel])
@@ -379,9 +396,26 @@ def watched_glob_problems(root: Path, ceilinged: set[str]) -> list[str]:
     """
     problems: list[str] = []
     for pattern in WATCHED_GLOBS:
-        matched = False
+        discovered = {
+            path.relative_to(root).as_posix() for path in sorted(root.glob(pattern))
+        }
+        # COLLECTION POINT 5, the PARTIAL half. "Did it match anything?" was
+        # satisfied by the top-level files while a nested surface was invisible,
+        # so the expected set is named instead: every ceilinged file living under
+        # this pattern's root must be rediscovered by it.
+        root_prefix = pattern.split("*", 1)[0]
+        expected = {rel for rel in ceilinged if rel.startswith(root_prefix)}
+        shortfall = members_missing(
+            discovered,
+            expected,
+            what="watched surfaces",
+            selector=f"the glob `{pattern}`",
+            cause="the pattern no longer reaches files that carry a ceiling, so "
+            "they are no longer ratcheted",
+        )
+        if shortfall:
+            problems.append(shortfall)
         for path in sorted(root.glob(pattern)):
-            matched = True
             rel = path.relative_to(root).as_posix()
             if rel not in ceilinged:
                 size = path.stat().st_size
@@ -395,14 +429,16 @@ def watched_glob_problems(root: Path, ceilinged: set[str]) -> list[str]:
                     f"({suggested:,} for this file today), with a comment "
                     f"recording the measured size."
                 )
-        if not matched:
-            problems.append(
-                f"the watched glob `{pattern}` matches no files at all, so the "
-                f"new-file ratchet is silently disabled for it — the glob is "
-                f"stale. Update WATCHED_GLOBS in scripts/check-doc-growth.py in "
-                f"the same PR as the rename or removal that emptied it, or drop "
-                f"the glob if that surface class is genuinely gone."
-            )
+        empty = nothing_collected(
+            discovered,
+            what="watched surfaces",
+            selector=f"the glob `{pattern}`",
+            cause="the glob is stale — update WATCHED_GLOBS in the same PR as the "
+            "rename or removal that emptied it, or drop it if that surface class "
+            "is genuinely gone",
+        )
+        if empty:
+            problems.append(empty)
     return problems
 
 
@@ -457,6 +493,30 @@ def self_test() -> list[str]:
     if spurious:
         failures.append(
             f"a comment recording 800 B for an 800-byte file was not accepted: {spurious}"
+        )
+
+    # COLLECTION POINT 5's control, PARTIAL half. A root that still matches some
+    # files keeps the "did it match anything?" guard satisfied, which is exactly
+    # how a nested surface stayed invisible. Ceilinged files that the glob no
+    # longer reaches must be named.
+    partial = watched_glob_problems(REPO_ROOT, set(CEILINGS) | {"docs/architecture/ghost.md"})
+    if not any("ghost.md" in problem for problem in partial):
+        failures.append(
+            "a ceilinged surface the globs do not reach was not reported, so partial "
+            f"coverage still reads as full coverage: {partial}"
+        )
+
+    # COLLECTION POINT 6's control — an entry whose comment does not parse must be
+    # distinguishable from an entry with nothing to say.
+    commentless = 'CEILINGS: dict[str, int] = {\n    "fixture.md": 900,\n}\n'
+    if not any(
+        "no comment text" in problem
+        for problem in recorded_size_problems(commentless, {"fixture.md": 800})
+    ):
+        failures.append(
+            "a CEILINGS entry that parsed with no comment at all was accepted, so a "
+            "comment parser that collects nothing is indistinguishable from a table "
+            "with nothing to check."
         )
 
     # ANCHOR DRIFT MUST BE A SENTENCE naming the RIGHT anchor — not a traceback,
