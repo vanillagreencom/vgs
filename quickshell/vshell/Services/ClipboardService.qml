@@ -112,22 +112,6 @@ Singleton {
         return true;
     }
 
-    Process {
-        id: wtypeProcess
-        // TODO: This is only a paste shortcut fallback. It assumes the target
-        // application accepts Ctrl+V, which is false for many terminals.
-        // Replace with a more reliable target-aware paste strategy.
-        command: ["wtype", "-M", "ctrl", "-P", "v", "-p", "v", "-m", "ctrl"]
-        running: false
-    }
-
-    Timer {
-        id: pasteTimer
-        interval: 200
-        repeat: false
-        onTriggered: wtypeProcess.running = true
-    }
-
     // Pinned first, then newest copy first: recency is the timestamp (bumped
     // when existing content is re-copied), with id as a stable tiebreak.
     function compareEntries(a, b) {
@@ -353,7 +337,7 @@ Singleton {
         if (closeCallback) {
             closeCallback();
         }
-        pasteTimer.start();
+        PasteService.injectPaste();
     }
 
     function pasteEntry(entry, closeCallback) {
@@ -371,7 +355,7 @@ Singleton {
             if (closeCallback) {
                 closeCallback();
             }
-            pasteTimer.start();
+            PasteService.injectPaste();
         });
     }
 

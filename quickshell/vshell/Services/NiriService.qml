@@ -23,6 +23,18 @@ Singleton {
     property string currentOutput: ""
     property var outputs: ({})
     property var windows: []
+    // Whether `windows` holds a list niri actually sent, rather than the empty
+    // one it starts as. The list itself cannot answer that: `[]` is equally what
+    // a session with no windows looks like, so anything reading `windows.length`
+    // to decide whether the data has arrived is reading a coincidence. Set from
+    // the event that carries the list, cleared on any link transition — what
+    // arrived over a connection that has since dropped says nothing about now.
+    property bool windowsSnapshotReceived: false
+    // The event stream's link, which is the only health signal this socket has.
+    // It says the unix socket is connected, NOT that niri is answering: a peer
+    // that accepted the connection and then went quiet reads as up here. Nothing
+    // in the protocol distinguishes those, so nothing here claims to.
+    readonly property bool eventStreamUp: eventStreamSocket.linkUp
     property var displayScales: ({})
     property bool inOverview: false
     property var casts: []
@@ -58,6 +70,11 @@ Singleton {
         path: root.socketPath
         connected: root.available
         onConnectionStateChanged: {
+            // Either direction invalidates it: a drop leaves `windows` describing
+            // a session VGS is no longer being told about, and a fresh link has
+            // not delivered its own list yet — niri sends that in response to the
+            // EventStream request below, not on connect.
+            root.windowsSnapshotReceived = false;
             if (linkUp) {
                 send("\"EventStream\"");
                 root.fetchOutputs();
@@ -169,7 +186,12 @@ Singleton {
             handleWindowFocusChanged(data);
             break;
         case "WindowsChanged":
+            // The event that carries the whole list, which niri sends once when
+            // the event stream opens and again whenever it changes wholesale.
+            // Receiving it is what makes `windows` an answer rather than a
+            // default, so it is the one place the snapshot is marked received.
             windows = sortWindowsByLayout(data.windows || []);
+            windowsSnapshotReceived = true;
             break;
         case "WindowClosed":
             windows = windows.filter(window => window.id !== data.id);
@@ -264,25 +286,42 @@ Singleton {
         updateCurrentOutputWorkspaces();
     }
 
+    // INVARIANT: at most one window in `windows` carries `is_focused`, because
+    // focus belongs to the seat and not to a workspace.
+    //
+    // Every place VGS derives the marker goes through here, so the property
+    // holds by construction rather than by each caller remembering it. It has to
+    // hold, because consumers resolve the focused window with a first-match
+    // `find()`: a second marked window makes that pick depend on array order,
+    // and for paste that means a terminal's keystroke going to whichever
+    // application happened to sort first. Returns the window it marked, or null.
+    //
+    // One place inherits the invariant rather than establishing it: the
+    // WindowsChanged snapshot is niri's own report of the seat, so exclusivity
+    // there is niri's to state and VGS does not second-guess it.
+    function markFocusedWindow(id) {
+        let focused = null;
+        windows = windows.map(window => {
+            const next = Object.assign({}, window, { is_focused: window.id === id });
+            if (next.is_focused)
+                focused = next;
+            return next;
+        });
+        return focused;
+    }
+
     function handleWorkspaceActiveWindowChanged(data) {
         updateWorkspace(data.workspace_id, { active_window_id: data.active_window_id });
-        const next = windows.map(window => {
-            if (window.workspace_id !== data.workspace_id)
-                return window;
-            return Object.assign({}, window, { is_focused: window.id === data.active_window_id });
-        });
-        windows = next;
+        // A workspace's active window is the one that WOULD take focus there, so
+        // it is the focused window only when that workspace is the focused one.
+        // Marking it unconditionally put `is_focused` on a window in a background
+        // workspace while the real one still carried it, leaving two.
+        if (data.workspace_id === focusedWorkspaceId)
+            markFocusedWindow(data.active_window_id);
     }
 
     function handleWindowFocusChanged(data) {
-        let focusedWindow = null;
-        windows = windows.map(window => {
-            const focused = window.id === data.id;
-            const next = Object.assign({}, window, { is_focused: focused });
-            if (focused)
-                focusedWindow = next;
-            return next;
-        });
+        const focusedWindow = markFocusedWindow(data.id);
         if (focusedWindow)
             updateWorkspace(focusedWindow.workspace_id, { active_window_id: focusedWindow.id });
     }
@@ -293,6 +332,12 @@ Singleton {
         const next = windows.filter(window => window.id !== data.window.id);
         next.push(data.window);
         windows = sortWindowsByLayout(next);
+        // niri sends the whole window, marker included, so one arriving focused
+        // would sit beside the window that still carries the marker until
+        // WindowFocusChanged lands. Re-establish the invariant here rather than
+        // depending on which of the two events arrives first.
+        if (data.window.is_focused)
+            markFocusedWindow(data.window.id);
     }
 
     function handleWindowLayoutsChanged(data) {

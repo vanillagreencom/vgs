@@ -252,6 +252,7 @@ jobs:
       - name: Packaging metadata and assets
         run: |
           python3 scripts/lib/shell_scan.py
+          python3 scripts/lib/qml_source_selftest.py
           scripts/gen-package-metadata.py
           scripts/check-package-assets.sh
           scripts/check-aur-sync.py
@@ -281,6 +282,10 @@ jobs:
           scripts/test-ai-usage-view.js
           scripts/test-ai-usage-filing.js
           scripts/test-ai-usage-lifecycle.js
+          scripts/test-paste-target.js
+          scripts/test-paste-lifecycle.js
+          scripts/test-compositor-focus.js
+          scripts/check-paste-injection.py
           scripts/check-notification-takeover.js
           scripts/test-remote-desktop-state.js
           scripts/test-idle-reload-snapshot.js

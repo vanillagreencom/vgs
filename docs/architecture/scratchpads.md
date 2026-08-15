@@ -227,9 +227,9 @@ about focus, scratchpads included. Quickshell's `ToplevelManager` and
 hyprland event socket (socket2)" — and `CompositorService` is where VGS
 attaches to them; a second connection is what the one-owner rule forbids.
 
-It publishes one fact, and scratchpads read only that: `activeWorkspaceName` —
-the workspace the focused window is on, `""` when unknown. It comes from
-`Hyprland.activeToplevel`, which the singleton maintains from the event socket.
+It publishes the focus facts the shell needs; scratchpads read only
+`activeWorkspaceName` — the workspace the focused window is on, `""` when
+unknown, from `Hyprland.activeToplevel`, maintained off the event socket.
 
 **The trigger is the focus transition off a pad's workspace, not "the pad is
 visible and unfocused".** Visibility would have to come from a monitor's
