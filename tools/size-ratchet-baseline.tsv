@@ -206,7 +206,7 @@ scripts/check-doc-growth.py	696
 scripts/check-notification-takeover.js	454
 scripts/check-paste-injection.py	897
 scripts/check-settings-migration.js	952
-scripts/check-skill-instructions.py	912
+scripts/check-skill-instructions.py	426
 scripts/check-validation-inventory.py	411
 scripts/check-vshell-helper.py	5815
 scripts/check-vshell-niri.py	678

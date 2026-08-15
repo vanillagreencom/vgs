@@ -59,6 +59,7 @@ from __future__ import annotations
 import re
 import sys
 import tomllib
+from collections.abc import Collection
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent / "lib"))
@@ -68,11 +69,11 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 CONFIG = REPO_ROOT / "vstack.toml"
 TABLE = "skill-instructions"
 
-TABLE_HEADER = re.compile(r"\s*\[([^\[\]]+)\]\s*$")
 # Leading whitespace allowed: TOML permits an indented key, and anchoring at
 # column 0 left a reindented file unjudged.
 ASSIGNMENT = re.compile(r"\s*([A-Za-z0-9_-]+)\s*=\s*('''|\"\"\"|'|\")")
-LITERAL_DELIMITERS = frozenset({"'''", "'"})
+LITERAL_MULTILINE = "'''"
+LITERAL_DELIMITERS = frozenset({LITERAL_MULTILINE, "'"})
 
 # Blocks that must exist AND carry content. Small on purpose — each entry is a
 # runbook whose silent removal this check could not otherwise distinguish from a
@@ -117,38 +118,36 @@ def closes_here(line: str, delimiter: str) -> bool:
     return close_offset(line, delimiter) != -1
 
 
-def assignments(text: str) -> dict[str, str]:
-    """Every `[skill-instructions]` key mapped to the delimiter it is written with.
+def assignments(text: str, keys: Collection[str]) -> dict[str, list[str]]:
+    """Each of `keys` mapped to every delimiter its assignment is written with.
 
-    A line scanner rather than a regex over the whole file, for two reasons. It
-    tracks the CURRENT TABLE, so a key of the same name under a different table
-    cannot be picked up; and it skips over a multi-line string's body, so a line
-    inside a runbook that looks like `[a-header]` — or like an assignment —
-    cannot be mistaken for one.
+    THE SCAN DOES NOT DECIDE WHAT EXISTS. `keys` is tomllib's own key set for the
+    table, so this function's whole job is to locate an assignment tomllib has
+    already reported and read the delimiter token after its `=`. That is the
+    generalisation that ended a family of defects rather than a third instance of
+    it: header parsing is gone, so an inline comment after the header, a quoted
+    table name, unusual spacing and a dotted key all stop mattering — none of
+    them changes what tomllib reports, and none of them is read here any more.
 
-    TWO TOML SHAPES IT USED TO MISREAD, both valid and both therefore false
-    positives rather than misses — the reconciliation in `audit()` turned each
-    into a named failure on correct content, which is the more damaging way for
-    a CI check to be wrong:
+    Three valid spellings had each been a separate false positive before that:
+    an indented key, a value opening and closing on its assignment line, and a
+    header carrying an inline comment. The first two are handled below; the third
+    stopped being expressible.
 
-      * an INDENTED key. TOML allows leading whitespace before a key, and
-        matching only at column 0 left a reindented file unjudged.
-      * a value that OPENS AND CLOSES on the assignment line
-        (`linear = '''x'''`). Scanning forward from the next line consumed the
-        following assignments until it met another delimiter, so every key after
-        it became unresolvable.
+    What the scan still must do is SKIP a multi-line string's body, so an
+    assignment-shaped line inside a runbook is not read as source.
+
+    Returns a LIST per key, never a single delimiter: the same key name can be
+    assigned under another table, and this scan no longer tracks which table it
+    is in. Two sightings mean the value is ambiguous, and the caller reports that
+    rather than picking one — guessing is how a scan starts being wrong quietly.
     """
-    found: dict[str, str] = {}
+    found: dict[str, list[str]] = {}
+    wanted = set(keys)
     lines = text.split("\n")
-    table: str | None = None
     index = 0
     while index < len(lines):
         line = lines[index]
-        header = TABLE_HEADER.fullmatch(line)
-        if header:
-            table = header.group(1)
-            index += 1
-            continue
         match = ASSIGNMENT.match(line)
         if not match:
             index += 1
@@ -165,8 +164,8 @@ def assignments(text: str) -> dict[str, str]:
             index = cursor + 1
         else:
             index += 1
-        if table == TABLE:
-            found[key] = delimiter
+        if key in wanted:
+            found.setdefault(key, []).append(delimiter)
     return found
 
 
@@ -206,24 +205,38 @@ def audit(
     if shortfall:
         problems.append(shortfall)
 
-    written = assignments(text)
+    # The scan is handed tomllib's key set rather than discovering keys itself,
+    # so a table header this file cannot parse is no longer a thing that exists.
+    written = assignments(text, table)
 
     for key in sorted(table):
         # COLLECTION POINT 2 — this key's delimiter. tomllib sees the key, so the
         # scanner must too; without it there is nothing to judge, which is DID
         # NOT RUN for that block rather than a pass.
-        delimiter = written.get(key)
-        if not delimiter:
+        seen = written.get(key, [])
+        if not seen:
             problems.append(
                 nothing_collected(
-                    [],
+                    seen,
                     what="delimiter",
                     selector=f"{source} [{TABLE}] {key} in the source scanner",
-                    cause="tomllib sees this key but the scanner does not, so the "
-                    "delimiter cannot be judged — fix the scanner",
+                    cause="tomllib sees this key but the scanner cannot locate its "
+                    "assignment, so the delimiter cannot be judged — fix the scanner",
                 )
             )
             continue
+        if len(seen) > 1:
+            # Not tracking tables is what made the header spellings stop mattering;
+            # the cost is that a key of the same name elsewhere is indistinguishable.
+            # Reported rather than guessed at.
+            problems.append(
+                f"{source} [{TABLE}] {key} matches {len(seen)} assignments in the "
+                f"source ({', '.join(seen)}), so which one carries this value is "
+                f"ambiguous and the delimiter cannot be judged. Rename the other key, "
+                f"or teach the scanner to tell them apart — do not let it pick."
+            )
+            continue
+        delimiter = seen[0]
 
         # THE ASSERTION. Not inferred from damage: a basic string that happens to
         # carry no escapes today is one backslash away from silently mangling a
@@ -245,14 +258,14 @@ def audit(
 PRE_FIX_FIXTURE = f'[{TABLE}]\nlinear = """\njq -r \'sub("\\\\s+$"; "")\'\n"""\n'
 POST_FIX_FIXTURE = PRE_FIX_FIXTURE.replace('"""', "'''")
 
-# A basic string carrying an escaped delimiter, with an assignment-shaped line
-# BELOW it, then a real key. TOML does not end the value at `\\"""`, so a scanner
-# that stopped there would resume inside the runbook and take `phantom` for a
-# key — which is what makes this fixture discriminate rather than merely pass:
-# `phantom` is invisible to tomllib, so a scanner that reports it is reading the
-# body as source.
+# A basic string carrying an escaped delimiter, with an assignment for a REAL key
+# inside its body, then that key's actual assignment. TOML does not end the value
+# at `\\"""`, so a scanner that stopped there would resume inside the runbook and
+# see `after` TWICE. The in-body line wears a real key name deliberately: the scan
+# now records only keys tomllib reported, so an invented name would be discarded
+# and the fixture would pass either way.
 ESCAPED_DELIMITER_FIXTURE = (
-    f'[{TABLE}]\nlinear = """\nsays \\""" inside\nphantom = "x"\n"""\n'
+    f'[{TABLE}]\nlinear = """\nsays \\""" inside\nafter = "x"\n"""\n'
     "after = '''\ncontent\n'''\n"
 )
 
@@ -314,7 +327,11 @@ def self_test() -> list[str]:
     # key as unresolvable and fail CI on correct content. Each valid form must
     # audit clean AND resolve every key, since "clean" would also be the answer
     # if the scanner had stopped seeing the table entirely.
-    for shape, fixture, expected in (
+    # Three of these were separate defects before the scan stopped deciding what
+    # exists; the last two are here to prove the GENERALISATION rather than three
+    # more patterns — neither was ever special-cased, and both work because
+    # nothing about the header is read any more.
+    shapes = (
         ("an indented key", f"[{TABLE}]\n  linear = '''\nx\n'''\n", {"linear"}),
         ("an indented key closing on its own line", f"[{TABLE}]\n  linear = '''x'''\n", {"linear"}),
         (
@@ -322,30 +339,46 @@ def self_test() -> list[str]:
             f"[{TABLE}]\nlinear = '''x'''\nreviewer = '''y'''\n",
             {"linear", "reviewer"},
         ),
-    ):
+        ("an inline comment on the header", f"[{TABLE}] # runbooks\nlinear = '''x'''\n", {"linear"}),
+        ("a quoted table name", f'["{TABLE}"]\nlinear = \'\'\'x\'\'\'\n', {"linear"}),
+        ("tabs around the equals", f"[{TABLE}]\nlinear\t=\t'''x'''\n", {"linear"}),
+    )
+    for shape, fixture, expected in shapes:
         reported = fixture_audit(fixture, source=f"<fixture: {shape}>")
         if reported:
             failures.append(
                 f"a VALID TOML file with {shape} was rejected — the scanner cannot read "
                 f"the shape, so the check fails CI on correct content: {reported}"
             )
-        resolved = set(assignments(fixture))
+        resolved = set(assignments(fixture, blocks(fixture)))
         if resolved != expected:
             failures.append(
                 f"with {shape} the scanner resolved {sorted(resolved)}, expected "
                 f"{sorted(expected)} — a key it cannot see is one it cannot judge."
             )
-    # ...and the fix must not turn a genuine violation into a pass: the same
-    # shapes wearing a BASIC string are still violations.
+    # ...and reading a shape must not cost the ability to JUDGE it: the same
+    # spellings wearing a BASIC string are still violations.
+    for shape, fixture, _ in shapes:
+        basic = fixture.replace("'''", '"""')
+        if not any(
+            "written as a BASIC string" in problem
+            for problem in fixture_audit(basic, source=f"<fixture: basic, {shape}>")
+        ):
+            failures.append(
+                f"a BASIC-string key with {shape} was not reported as a delimiter "
+                f"violation, so reading the shape was traded for no longer judging it."
+            )
+
+    # The cost of not tracking tables: a key of the same name elsewhere is
+    # indistinguishable. It must be REPORTED, never resolved by picking one.
+    ambiguous = f"[other]\nlinear = \"\"\"z\"\"\"\n[{TABLE}]\nlinear = '''x'''\n"
     if not any(
-        "written as a BASIC string" in problem
-        for problem in fixture_audit(
-            f'[{TABLE}]\n  linear = """x"""\n', source="<fixture: indented basic string>"
-        )
+        "matches 2 assignments" in problem
+        for problem in fixture_audit(ambiguous, source="<fixture: ambiguous key>")
     ):
         failures.append(
-            "an INDENTED basic-string key was not reported as a delimiter violation, so "
-            "reading the shape was traded for no longer judging it."
+            "a key assigned under two tables was not reported as ambiguous, so the scan "
+            "picked one — and picking is how it starts being wrong quietly."
         )
 
     # COLLECTION POINT 2, and the escaped-delimiter scan that serves it.
@@ -355,18 +388,13 @@ def self_test() -> list[str]:
             f"a basic string containing an escaped delimiter was not reported against "
             f"`linear`, so the scan ended early and named the wrong key: {escaped}"
         )
-    scanned = assignments(ESCAPED_DELIMITER_FIXTURE)
-    if "after" not in scanned:
+    scanned = assignments(ESCAPED_DELIMITER_FIXTURE, blocks(ESCAPED_DELIMITER_FIXTURE))
+    if scanned.get("after") != [LITERAL_MULTILINE]:
         failures.append(
-            "the key after a basic string containing an escaped delimiter was not "
-            "found, so the scan resumed inside the value and every later key is "
-            "invisible — DID NOT RUN for all of them."
-        )
-    if "phantom" in scanned:
-        failures.append(
-            "an assignment-shaped line INSIDE a basic string was taken for a key, so "
-            "the scan ended at an escaped delimiter and is reading runbook text as "
-            "source — every judgement below it is about the wrong thing."
+            f"the key after a basic string containing an escaped delimiter resolved to "
+            f"{scanned.get('after')}, expected exactly its own literal assignment. More "
+            f"than one sighting means the scan ended at the escaped delimiter and read "
+            f"the runbook body as source; none means every later key is invisible."
         )
     return failures
 
