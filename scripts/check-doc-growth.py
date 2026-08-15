@@ -55,14 +55,14 @@ failure of the check, never a clean result — through `scripts/lib/collected.py
 Two steps here collect something, and each has its own must-fail control. Add a
 new one the same way, or it becomes the next instance:
 
-3. the surfaces a watched glob finds     `WATCHED_GLOBS`      recursive, and the
+2. the surfaces a watched glob finds     `WATCHED_GLOBS`      recursive, and the
                                                               discovered set is
                                                               asserted against
                                                               the ceilinged files
                                                               under each root —
                                                               partial coverage is
                                                               not full coverage
-4. the CEILINGS table and each entry's   `ceiling_comments()` both anchors must
+3. the CEILINGS table and each entry's   `ceiling_comments()` both anchors must
    recorded size                                              resolve, and every
                                                               entry must yield a
                                                               SIZE — prose whose
@@ -72,9 +72,10 @@ new one the same way, or it becomes the next instance:
                                                               not an entry with
                                                               none
 
-(The numbering continues check-skill-instructions.py's 1-2, so the four points
-the invariant governs are named once across both files. The apparatus that held
-points 3-4 of the old numbering moved to VGS-156 with the jq machinery.)
+(The numbering continues check-skill-instructions.py's point 1, so the three
+points the invariant governs are named once across both files. The delimiter
+locator that held two more was deleted when that check moved from asserting a
+proxy to asserting the decoded value.)
 """
 
 from __future__ import annotations
@@ -379,7 +380,7 @@ def recorded_size_problems(source: str, sizes: dict[str, int]) -> list[str]:
             f"parser rather than the table — an arm that reads nothing passes "
             f"everything."
         ]
-    # COLLECTION POINT 4, the second half. The span parse is guarded by the
+    # COLLECTION POINT 3, the second half. The span parse is guarded by the
     # anchors above; this guards the PER-ENTRY parse — and it guards the SIZE,
     # not merely the presence of a comment.
     #
@@ -444,7 +445,7 @@ def watched_glob_problems(root: Path, ceilinged: set[str]) -> list[str]:
         discovered = {
             path.relative_to(root).as_posix() for path in sorted(root.glob(pattern))
         }
-        # COLLECTION POINT 3, the PARTIAL half. "Did it match anything?" was
+        # COLLECTION POINT 2, the PARTIAL half. "Did it match anything?" was
         # satisfied by the top-level files while a nested surface was invisible,
         # so the expected set is named instead: every ceilinged file living under
         # this pattern's root must be rediscovered by it.
@@ -540,7 +541,7 @@ def self_test() -> list[str]:
             f"a comment recording 800 B for an 800-byte file was not accepted: {spurious}"
         )
 
-    # COLLECTION POINT 3's control, PARTIAL half. A root that still matches some
+    # COLLECTION POINT 2's control, PARTIAL half. A root that still matches some
     # files keeps the "did it match anything?" guard satisfied, which is exactly
     # how a nested surface stayed invisible. Ceilinged files that the glob no
     # longer reaches must be named.
@@ -551,7 +552,7 @@ def self_test() -> list[str]:
             f"coverage still reads as full coverage: {partial}"
         )
 
-    # COLLECTION POINT 4's controls — an entry that yields NO SIZE must fail,
+    # COLLECTION POINT 3's controls — an entry that yields NO SIZE must fail,
     # whichever way it got there. The middle case is the one that used to slip:
     # a comment full of prose whose measurement was reworded out of pattern range
     # returned None, and None skipped the comparison.
