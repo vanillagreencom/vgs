@@ -69,7 +69,9 @@ CONFIG = REPO_ROOT / "vstack.toml"
 TABLE = "skill-instructions"
 
 TABLE_HEADER = re.compile(r"\s*\[([^\[\]]+)\]\s*$")
-ASSIGNMENT = re.compile(r"([A-Za-z0-9_-]+)\s*=\s*('''|\"\"\"|'|\")")
+# Leading whitespace allowed: TOML permits an indented key, and anchoring at
+# column 0 left a reindented file unjudged.
+ASSIGNMENT = re.compile(r"\s*([A-Za-z0-9_-]+)\s*=\s*('''|\"\"\"|'|\")")
 LITERAL_DELIMITERS = frozenset({"'''", "'"})
 
 # Blocks that must exist AND carry content. Small on purpose — each entry is a
@@ -123,6 +125,18 @@ def assignments(text: str) -> dict[str, str]:
     cannot be picked up; and it skips over a multi-line string's body, so a line
     inside a runbook that looks like `[a-header]` — or like an assignment —
     cannot be mistaken for one.
+
+    TWO TOML SHAPES IT USED TO MISREAD, both valid and both therefore false
+    positives rather than misses — the reconciliation in `audit()` turned each
+    into a named failure on correct content, which is the more damaging way for
+    a CI check to be wrong:
+
+      * an INDENTED key. TOML allows leading whitespace before a key, and
+        matching only at column 0 left a reindented file unjudged.
+      * a value that OPENS AND CLOSES on the assignment line
+        (`linear = '''x'''`). Scanning forward from the next line consumed the
+        following assignments until it met another delimiter, so every key after
+        it became unresolvable.
     """
     found: dict[str, str] = {}
     lines = text.split("\n")
@@ -140,7 +154,11 @@ def assignments(text: str) -> dict[str, str]:
             index += 1
             continue
         key, delimiter = match.groups()
-        if delimiter in ("'''", '"""'):
+        # What follows the OPENING delimiter on this same line. A closer in here
+        # ends the value where it sits; only when there is none does the body
+        # continue onto the lines below.
+        rest = line[match.end() :]
+        if delimiter in ("'''", '"""') and close_offset(rest, delimiter) == -1:
             cursor = index + 1
             while cursor < len(lines) and not closes_here(lines[cursor], delimiter):
                 cursor += 1
@@ -289,6 +307,45 @@ def self_test() -> list[str]:
         failures.append(
             "the post-fix literal-string fixture FAILED, so the check rejects the very "
             f"form it prescribes: {post_fix}"
+        )
+
+    # TOML SHAPES THE SCANNER MUST READ. These are valid files, so the failure
+    # direction here is a FALSE POSITIVE — the reconciliation would report the
+    # key as unresolvable and fail CI on correct content. Each valid form must
+    # audit clean AND resolve every key, since "clean" would also be the answer
+    # if the scanner had stopped seeing the table entirely.
+    for shape, fixture, expected in (
+        ("an indented key", f"[{TABLE}]\n  linear = '''\nx\n'''\n", {"linear"}),
+        ("an indented key closing on its own line", f"[{TABLE}]\n  linear = '''x'''\n", {"linear"}),
+        (
+            "a value that closes on the assignment line, followed by another key",
+            f"[{TABLE}]\nlinear = '''x'''\nreviewer = '''y'''\n",
+            {"linear", "reviewer"},
+        ),
+    ):
+        reported = fixture_audit(fixture, source=f"<fixture: {shape}>")
+        if reported:
+            failures.append(
+                f"a VALID TOML file with {shape} was rejected — the scanner cannot read "
+                f"the shape, so the check fails CI on correct content: {reported}"
+            )
+        resolved = set(assignments(fixture))
+        if resolved != expected:
+            failures.append(
+                f"with {shape} the scanner resolved {sorted(resolved)}, expected "
+                f"{sorted(expected)} — a key it cannot see is one it cannot judge."
+            )
+    # ...and the fix must not turn a genuine violation into a pass: the same
+    # shapes wearing a BASIC string are still violations.
+    if not any(
+        "written as a BASIC string" in problem
+        for problem in fixture_audit(
+            f'[{TABLE}]\n  linear = """x"""\n', source="<fixture: indented basic string>"
+        )
+    ):
+        failures.append(
+            "an INDENTED basic-string key was not reported as a delimiter violation, so "
+            "reading the shape was traded for no longer judging it."
         )
 
     # COLLECTION POINT 2, and the escaped-delimiter scan that serves it.
