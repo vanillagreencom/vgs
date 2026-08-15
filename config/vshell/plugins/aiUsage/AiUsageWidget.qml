@@ -380,24 +380,26 @@ PluginComponent {
         // timers stop here, and a request parked for the previous selection goes
         // with them, since clearProviderState refreshes anyway.
         //
-        // The TAG is the deliberate part, and the question is about the LAUNCH,
-        // not about the process object. A launch that produced a process has an
-        // exit coming, and that exit must settle its own fetch — its payload is
-        // attributed by the payload's own provider rather than by this channel's
-        // rebound `want`, so nothing it does can be read as the new provider's.
-        // A launch that produced none has no exit coming and its watchdog has
-        // just been stopped, so leaving the tag would own the channel with
-        // nothing to settle it, and every later refresh would answer "skip"
-        // forever. Asking `proc.running` here instead was a bug of exactly the
-        // shape this issue is about: it reads back TRUE for a start that failed
-        // (measured on Quickshell 0.3.0 — a nonexistent binary reports the
-        // failure only later, as runningChanged), which is the one case the
-        // clear exists for. So the switch settles exactly the launches the
-        // watchdog would have — one rule, asked here as its third consumer.
+        // The TAG is the deliberate part, and the question is whether ANYTHING
+        // can still settle this fetch — not whether a process was seen. A tag
+        // kept with nothing coming owns the channel for good: launchDecision
+        // answers "pend" for an owned tag with no running process, so every
+        // refresh and every poll parks, and a later switch takes this same
+        // branch again. Asking "was a process seen?" got the flush grace exactly
+        // wrong: mid-grace a process HAS run and exited, so that question kept
+        // the tag while this function stopped the grace — the last thing left
+        // that would have settled it.
         //
-        // Clearing it while a process is still starting is safe: launch() parks
-        // a request whenever `running` is true, so no new tag can be taken while
-        // that process could still deliver an exit.
+        // What is still owed is the whole of it, and it is one question:
+        // settleIsComing. A running process delivers an exit that must settle
+        // its own fetch, and its payload is attributed by the payload's own
+        // provider rather than by this channel's rebound `want`, so nothing it
+        // does can be read as the new provider's; a process that already ran
+        // still owes its exit until one arrives, and clearing the tag there
+        // would let that late exit settle whatever fetch is running by then.
+        // Everything else — a launch that never produced a process, and one
+        // whose exit landed while stdout never closed — was waiting on a timer
+        // this function just stopped, so the switch settles it.
         function reset() {
             loaded = "";
             retries = 0;
@@ -407,7 +409,8 @@ PluginComponent {
             retryTimer.stop();
             flushTimer.stop();
             pending = false;
-            if (logic.watchdogArms(inFlight, sawProcess))
+            if (!logic.settleIsComing({ inFlight: inFlight, running: proc.running,
+                                        sawProcess: sawProcess, exitDone: exitDone }))
                 inFlight = "";
         }
     }

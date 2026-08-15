@@ -218,6 +218,93 @@ assert.deepEqual(
     "an unidentifiable payload is filed nowhere and satisfies nothing"
 );
 
+// --- 6. a valid payload is never discarded as another provider's -----------
+// The identity rule's inverse, which is why it is here and not in the lifecycle
+// suite: `streamFinished` and `exited` are not ordered against each other, and
+// settling on the exit alone cleared `inFlight` — the tag acceptPayload decodes
+// against. A VALID payload arriving second then failed on an empty want, was
+// discarded as a provider mismatch and spent a retry on a fetch that had
+// succeeded: the exact inverse of the rule this issue exists to enforce.
+{
+    const MINE = '{"ok":true,"provider":"claude","accounts":[]}';
+    const run = (order, txt) => {
+        const ch = { want: "claude", inFlight: "claude", loaded: "", retries: 0, accepted: false,
+                     issue: "", outDone: false, exitDone: false, graced: false, settled: 0 };
+        // settleFetch(): the relaunch question is asked BEFORE the tag clears.
+        const settle = () => {
+            if (ch.inFlight === "")
+                return;
+            ch.settled += 1;
+            if (shouldRelaunch(ch, 3))
+                ch.retries += 1;
+            ch.inFlight = "";
+        };
+        // completeFetch(): whichever half lands last settles, and an exit that
+        // lands first waits on the bounded grace rather than settling.
+        const complete = () => {
+            if (ch.inFlight === "")
+                return;
+            if (!ch.outDone || !ch.exitDone) {
+                if (ch.exitDone)
+                    ch.graced = true;   // the exit landed first: stdout gets its grace
+                return;
+            }
+            settle();
+        };
+        const step = {
+            // acceptPayload(), decoding against the tag this launch was given.
+            stream: () => {
+                ch.outDone = true;
+                const got = decodePayload(ch.inFlight, txt === undefined ? MINE : txt);
+                ch.issue = got.issue;
+                if (got.data) {
+                    ch.accepted = true;
+                    ch.loaded = ch.want;
+                }
+                complete();
+            },
+            exit: () => {
+                if (ch.inFlight !== "") {
+                    ch.exitDone = true;
+                    complete();
+                }
+            },
+            grace: () => { if (ch.graced) settle(); }
+        };
+        for (const name of order)
+            step[name]();
+        return ch;
+    };
+
+    for (const order of [["stream", "exit"], ["exit", "stream"]]) {
+        const how = order.join(" then ");
+        const ch = run(order);
+        assert.equal(ch.issue, "",
+            `${how}: a payload naming the provider this fetch was launched for is its ANSWER — ` +
+            "calling it a mismatch inverts the rule, and it is the TAG that decides");
+        assert.equal(ch.accepted, true, `${how}: so the fetch is answered`);
+        assert.equal(ch.retries, 0, `${how}: spending no retry on a fetch that succeeded`);
+        assert.equal(ch.settled, 1, `${how}: settling exactly once, and clearing its tag then`);
+        assert.equal(ch.inFlight, "", `${how}: which is what a settle means here`);
+    }
+
+    // The bound, so waiting for both halves cannot become waiting forever: a
+    // helper can leave stdout open in a child, and that stream never closes.
+    const stuck = run(["exit", "grace"]);
+    assert.equal(stuck.settled, 1, "a stream that never closes still settles, on that grace");
+    assert.equal(stuck.retries, 1, "and is retried, since it delivered nothing");
+
+    // And the rule this must not invert: a payload naming ANOTHER provider is
+    // still discarded and refetched, in either order.
+    for (const order of [["stream", "exit"], ["exit", "stream"]]) {
+        const other = run(order, '{"ok":true,"provider":"codex"}');
+        assert.equal(other.accepted, false,
+            `${order.join(" then ")}: a payload naming a provider this fetch did not ask for`);
+        assert.equal(other.issue, "provider mismatch", "is still discarded, and says why");
+        assert.equal(other.retries, 1, "and is refetched");
+    }
+}
+
 // The account shape these ordering cases file.
 const acct = (id, over) => Object.assign(
     { id: id, ok: true, plan: "Max 20x", weekly: { pct: 20 } }, over);
