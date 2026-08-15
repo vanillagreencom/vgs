@@ -166,10 +166,11 @@ Known limits, deliberate rather than accidental:
   `vshell.service` shell that yielded is not restarted. That is why yielding
   requires positive proof of an older live peer.
 
-Validation must never launch a shell into the live session — the rule, the
-smoke modes (`scripts/qml-smoke.sh`), and the post-run assertion
-(`scripts/check-validation-safety.sh`) are canonical in AGENTS.md § Never
-launch a second shell into the live session.
+Validation must never launch a shell into the live session. The rule and its
+recovery are canonical in AGENTS.md § Never launch a second shell into the live
+session; the smoke modes are documented in `scripts/qml-smoke.sh`'s own header,
+and the post-run assertion in `scripts/check-validation-safety.sh` and
+`.github/instructions/validation-scripts.instructions.md`.
 
 ## IPC
 Use:

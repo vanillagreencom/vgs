@@ -49,14 +49,20 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 # rationale is for the reviewer, so a raise without one is review feedback,
 # not something this script can enforce.
 CEILINGS: dict[str, int] = {
-    # 4,416 B after the VGS-124 second diet cut this file to invariants only:
-    # the routing tables (§ Layout, § Architecture docs, § Project skills,
-    # § Documentation resources), the machine-specific § Live workstation
-    # wiring, the § Review gate narrative and the Linear mirroring runbook all
-    # left for the surface that owns each. Those registers are what regrew
-    # after VGS-107, so the ceiling is 4,500 — measured + ~2%, tighter than
-    # both the +10% adoption default and VGS-123's +5%. Anything that does not
-    # fit is a signal the content belongs in a per-area surface, not here.
+    # The VGS-124 second diet cut this file to invariants only. RELOCATED to
+    # the surface that owns each: § Project skills (project-skills/README.md),
+    # § Documentation resources and the layout tree (the vshell-dev skill),
+    # § Review gate (review-gate-writer.yml's header and vstack.settings.toml),
+    # the Linear mirroring runbook (vstack.toml, D002) and § Live workstation
+    # wiring (the untracked AGENTS.local.md). DROPPED outright, with no
+    # successor: § Layout's path/purpose table and § Architecture docs'
+    # per-file "when to read" routing, both of which had measurably rotted —
+    # a pointer at docs/architecture/ replaces them. Those registers are what
+    # regrew after VGS-107, so 4,500 is a hard budget set by the issue rather
+    # than a measured size plus headroom: the file is 4,492 B, so there is
+    # almost none, and that is the point. The next addition has to displace
+    # something or move to a per-area surface, which is what the two diets
+    # kept having to do by hand.
     "AGENTS.md": 4_500,
     # Adopted at 3,289 B. 2026-08-10: owner-approved risk-class +
     # regression-test policy sections plus the PR #120 review rounds
@@ -75,13 +81,21 @@ CEILINGS: dict[str, int] = {
     # rounding above is an adoption convention and a raise is only required to
     # carry a rationale — so the tighter line wins over the rounder number.
     ".github/copilot-instructions.md": 3_850,
-    "project-skills/vshell-dev/SKILL.md": 5_000,  # adopted at 4,497 B
+    # Adopted at 4,497 B. VGS-124: "a green CI run does not prove the shell
+    # starts — run the qml area, which forces --require-nested" left AGENTS.md
+    # with the rest of the validation runbook, and its only remaining home was
+    # validation-scripts.instructions.md, scoped to `scripts/**` — invisible to
+    # a QML agent, which loads this skill. That is the VGS-69 class losing its
+    # last auto-loaded warning, so it moved here; 5,700 keeps ~10% headroom at
+    # the resulting 5,158 B.
+    "project-skills/vshell-dev/SKILL.md": 5_700,
     # Adopted at 403 B. VGS-124: the diet's own rewrap un-exempted a sanctioned
-    # `qs -c vshell` mention in check-validation-safety.sh (line-scoped spans)
-    # and came within one no-op substitution of silently disabling an arm of
-    # test-validation-inventory.sh. Naming both couplings where an AGENTS.md
-    # edit is reviewed earned the bytes; 1,000 keeps ~10% headroom at 860 B.
-    ".github/instructions/agents-md.instructions.md": 1_000,
+    # direct-launch mention in check-validation-safety.sh (line-scoped spans),
+    # and that check does not run in the `docs` area an AGENTS.md edit reaches
+    # for. Naming both exact-string couplings, and the commands that actually
+    # cover them, where an AGENTS.md edit is reviewed earned the bytes; 1,100
+    # keeps ~10% headroom at the resulting 994 B.
+    ".github/instructions/agents-md.instructions.md": 1_100,
     ".github/instructions/architecture-docs.instructions.md": 500,  # adopted at 393 B
     ".github/instructions/backend-go.instructions.md": 800,  # adopted at 671 B
     # Adopted at 962 B. VGS-123 moved AGENTS.md § "What CI covers, and what it

@@ -78,7 +78,12 @@ dev = ""
 
 github = ""
 
-linear = """
+# LITERAL string ('''), not a basic one ("""). This block ships shell and jq
+# commands, and TOML processes escapes inside """: `\\s` arrived at jq as `\s`
+# ("Invalid escape ... while parsing", exit 3), `\n` became a real newline, and
+# the trailing `\` line continuations swallowed their newlines — so the rendered
+# runbook did not run. Keep it ''' and the bytes reach the reader verbatim.
+linear = '''
 ## Tracker policy: Linear is canonical; GitHub Issues is intake-only
 
 Create, label, and work issues ONLY in Linear (team vg-shell, identifiers
@@ -139,7 +144,7 @@ without explicit user authorization.
 updates, compute the intended final full set from current labels: replace only
 the target exclusive category (`agent:*`), preserve unrelated
 classification/workflow labels, then pass the full validated set.
-"""
+'''
 
 orch = ""
 

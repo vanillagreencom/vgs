@@ -23,9 +23,10 @@ wins, and that is what this record settles.
 
 The first half answers VGS-92. Between 57d92829 (2026-08-02) and that commit,
 the sandbox copied host state with `cp -a`, which preserves symlinks. On the
-documented workstation wiring (`AGENTS.local.md`, untracked and machine-local)
-`~/.config/vshell/settings.json` is a *relative* symlink into `~/dotfiles`, so
-it dangled once copied into the sandbox's HOME. The sandboxed shell found no
+reference workstation `~/.config/vshell/settings.json` is a *relative* symlink
+into `~/dotfiles` (that machine's wiring is recorded in `AGENTS.local.md`,
+untracked and therefore absent from a fresh clone), so it dangled once copied
+into the sandbox's HOME. The sandboxed shell found no
 settings and fell back to SettingsData's defaults — silently, since the shell
 starts and the plugins load either way. Every nested run in that window
 exercised whatever the fallback produced while the comment above the copy
@@ -197,5 +198,6 @@ above has to be run locally before finishing QML work.
 - VGS-81 / PR #98 — introduced the deterministic seeding
 - `scripts/qml-smoke.sh` — `nested_check`'s seeding block, `await_sentinel` and `seeded_settings_check`
 - `bin/vshell-helper` — `compose_theme_files` and `list_themes`, the user-over-builtin precedence that ruled out a `themes/` allowlist
-- `AGENTS.local.md` (untracked, machine-local) — the dotfiles symlink that
-  started this
+- `AGENTS.local.md` (untracked, machine-local; absent on a fresh clone) — the
+  reference workstation's wiring, where the dotfiles symlink stated above is
+  recorded. Supplementary: the fact this record turns on is inlined above
