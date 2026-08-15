@@ -286,25 +286,42 @@ Singleton {
         updateCurrentOutputWorkspaces();
     }
 
+    // INVARIANT: at most one window in `windows` carries `is_focused`, because
+    // focus belongs to the seat and not to a workspace.
+    //
+    // Every place VGS derives the marker goes through here, so the property
+    // holds by construction rather than by each caller remembering it. It has to
+    // hold, because consumers resolve the focused window with a first-match
+    // `find()`: a second marked window makes that pick depend on array order,
+    // and for paste that means a terminal's keystroke going to whichever
+    // application happened to sort first. Returns the window it marked, or null.
+    //
+    // One place inherits the invariant rather than establishing it: the
+    // WindowsChanged snapshot is niri's own report of the seat, so exclusivity
+    // there is niri's to state and VGS does not second-guess it.
+    function markFocusedWindow(id) {
+        let focused = null;
+        windows = windows.map(window => {
+            const next = Object.assign({}, window, { is_focused: window.id === id });
+            if (next.is_focused)
+                focused = next;
+            return next;
+        });
+        return focused;
+    }
+
     function handleWorkspaceActiveWindowChanged(data) {
         updateWorkspace(data.workspace_id, { active_window_id: data.active_window_id });
-        const next = windows.map(window => {
-            if (window.workspace_id !== data.workspace_id)
-                return window;
-            return Object.assign({}, window, { is_focused: window.id === data.active_window_id });
-        });
-        windows = next;
+        // A workspace's active window is the one that WOULD take focus there, so
+        // it is the focused window only when that workspace is the focused one.
+        // Marking it unconditionally put `is_focused` on a window in a background
+        // workspace while the real one still carried it, leaving two.
+        if (data.workspace_id === focusedWorkspaceId)
+            markFocusedWindow(data.active_window_id);
     }
 
     function handleWindowFocusChanged(data) {
-        let focusedWindow = null;
-        windows = windows.map(window => {
-            const focused = window.id === data.id;
-            const next = Object.assign({}, window, { is_focused: focused });
-            if (focused)
-                focusedWindow = next;
-            return next;
-        });
+        const focusedWindow = markFocusedWindow(data.id);
         if (focusedWindow)
             updateWorkspace(focusedWindow.workspace_id, { active_window_id: focusedWindow.id });
     }
@@ -315,6 +332,12 @@ Singleton {
         const next = windows.filter(window => window.id !== data.window.id);
         next.push(data.window);
         windows = sortWindowsByLayout(next);
+        // niri sends the whole window, marker included, so one arriving focused
+        // would sit beside the window that still carries the marker until
+        // WindowFocusChanged lands. Re-establish the invariant here rather than
+        // depending on which of the two events arrives first.
+        if (data.window.is_focused)
+            markFocusedWindow(data.window.id);
     }
 
     function handleWindowLayoutsChanged(data) {

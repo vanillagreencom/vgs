@@ -161,6 +161,12 @@ Singleton {
     // own events — so the Niri branch reads Niri's IPC-maintained focus. The
     // Hyprland path is untouched: this is additive, per AGENTS.md § Mission.
     //
+    // The first match is THE match: `NiriService.markFocusedWindow` keeps at
+    // most one window carrying `is_focused`, so this `find()` is not choosing
+    // between candidates. Without that invariant it would return whichever
+    // window sorted first, which is how a background workspace's active window
+    // once took a terminal's keystroke.
+    //
     // A SOURCE THAT CANNOT ANSWER resolves to "" on either arm, which is one
     // rule rather than a list of the ways it can happen: detection still
     // pending, Niri's snapshot not yet delivered, no toplevel ever reported.

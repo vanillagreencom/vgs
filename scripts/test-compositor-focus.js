@@ -94,6 +94,10 @@ const bodies = {
     windowsChanged: extractBlock(source, "function onWindowsChanged()", source.indexOf("target: NiriService")),
     niriEvent: extractBlock(niriSource, "function handleNiriEvent(event)"),
     niriLinkChanged: extractBlock(niriSource, "onConnectionStateChanged:"),
+    markFocusedWindow: extractBlock(niriSource, "function markFocusedWindow(id)"),
+    workspaceActiveWindowChanged: extractBlock(niriSource, "function handleWorkspaceActiveWindowChanged(data)"),
+    windowFocusChanged: extractBlock(niriSource, "function handleWindowFocusChanged(data)"),
+    windowOpenedOrChanged: extractBlock(niriSource, "function handleWindowOpenedOrChanged(data)"),
 };
 
 // An extraction that came back short would leave the branch each test exists to
@@ -103,6 +107,13 @@ for (const [label, text, needles] of [
     ["focusReady", FOCUS_READY, ["focusSource", "NiriService.", "pending"]],
     ["handleNiriEvent", bodies.niriEvent, ["WindowsChanged", "windowsSnapshotReceived"]],
     ["onConnectionStateChanged", bodies.niriLinkChanged, ["windowsSnapshotReceived", "linkUp"]],
+    ["markFocusedWindow", bodies.markFocusedWindow, ["is_focused", "window.id === id"]],
+    // Identifying needles only — enough to prove the right block was extracted,
+    // never the shape of the fix. A needle naming the fix would fail a control
+    // before its behaviour case could, which hides whether the case works.
+    ["handleWorkspaceActiveWindowChanged", bodies.workspaceActiveWindowChanged, ["active_window_id"]],
+    ["handleWindowFocusChanged", bodies.windowFocusChanged, ["updateWorkspace"]],
+    ["handleWindowOpenedOrChanged", bodies.windowOpenedOrChanged, ["sortWindowsByLayout"]],
     ["focusedAppId", FOCUSED, ["focusSource", "focusReady", "is_focused", "activeToplevel"]],
     ["lastFocusedAppId", LAST_FOCUSED, ["focusSource", "focusReady", "NiriService.windows", "ToplevelManager.toplevels"]],
     ["rememberNiriFocus", bodies.remember, ["is_focused", "_lastFocusedNiriWindowId"]],
@@ -169,12 +180,22 @@ function shell(overrides = {}) {
     root.NiriService.windowsSnapshotReceived = root.NiriService.windowsSnapshotReceived ?? false;
     root.NiriService.eventStreamUp = root.NiriService.eventStreamUp ?? false;
     root.NiriService.sortWindowsByLayout = list => list;
-    // The one other branch of the dispatch these cases reach. Recorded rather
-    // than ignored, so the case that proves a single-window event does NOT mark
-    // the snapshot can also prove the event was handled at all — an event that
-    // fell through the switch would otherwise look identical.
-    root.NiriService.handled = [];
-    root.NiriService.handleWindowOpenedOrChanged = () => root.NiriService.handled.push("WindowOpenedOrChanged");
+    // The focus marker's own maintenance, shipped rather than stubbed. These are
+    // where the at-most-one-focused invariant is established, so a test that set
+    // `is_focused` by hand would be testing its own arrangement — and a state
+    // with ONE focused window cannot distinguish a sound rule from an unsound
+    // one, which is why this defect survived every earlier test on this path.
+    root.NiriService.focusedWorkspaceId = root.NiriService.focusedWorkspaceId ?? null;
+    root.NiriService.workspaceUpdates = [];
+    root.NiriService.updateWorkspace = (id, changes) => root.NiriService.workspaceUpdates.push([id, changes]);
+    root.NiriService.markFocusedWindow = (id) =>
+        call(bodies.markFocusedWindow, root.NiriService, ["id"], [id]);
+    for (const [name, body] of [
+        ["handleWorkspaceActiveWindowChanged", bodies.workspaceActiveWindowChanged],
+        ["handleWindowFocusChanged", bodies.windowFocusChanged],
+        ["handleWindowOpenedOrChanged", bodies.windowOpenedOrChanged],
+    ])
+        root.NiriService[name] = (data) => call(body, root.NiriService, ["data"], [data]);
     root.niriEvent = (event) => call(bodies.niriEvent, root.NiriService, ["event"], [event]);
     root.NiriService.fetchOutputs = () => {};
     // The link changing, run as the socket runs it: `linkUp` is the socket's,
@@ -479,6 +500,102 @@ function settled(compositor, overrides = {}) {
     assert.equal(root.lastFocusedAppId(), "foot", "and so does the remembered one");
 }
 
+// ---- at most one window is focused -----------------------------------------
+
+// Every case here has TWO windows and drives the shipped event handlers,
+// because a case with one focused window cannot fail whatever the resolution
+// rule is — which is exactly how a first-match `find()` over an ambiguous
+// marker survived every earlier test on this path.
+
+function niriSession(windows, focusedWorkspaceId) {
+    const root = shell();
+    root.detected("niri");
+    root.niriLink(true);
+    root.NiriService.focusedWorkspaceId = focusedWorkspaceId;
+    root.niriEvent({ WindowsChanged: { windows } });
+    return root;
+}
+
+const focusedCount = (root) => root.NiriService.windows.filter(window => window.is_focused).length;
+
+// Two workspaces: 1 is focused and holds the terminal, 2 is in the background.
+const term = { id: 1, app_id: "foot", workspace_id: 1, is_focused: true };
+const editor = { id: 2, app_id: "code", workspace_id: 2, is_focused: false };
+const browser = { id: 3, app_id: "firefox", workspace_id: 2, is_focused: false };
+
+{
+    // The reported defect. A background workspace's active window changing is
+    // not a focus change, and marking it left the terminal marked too — after
+    // which `find()` returned whichever sorted first.
+    const root = niriSession([editor, term], 1);
+    assert.equal(root.focusedAppId(), "foot", "the terminal holds focus");
+
+    root.niriEvent({ WorkspaceActiveWindowChanged: { workspace_id: 2, active_window_id: editor.id } });
+
+    assert.equal(focusedCount(root), 1, "a background workspace's active window must not be a second focused window");
+    assert.equal(root.focusedAppId(), "foot", "so focus is still the terminal");
+    assert.equal(root.NiriService.windows.find(window => window.is_focused).id, term.id, "and it is the window the seat actually focuses");
+}
+{
+    // Array order is what made the old behaviour arbitrary, so the same event
+    // with the background window FIRST must give the same answer. Under the old
+    // rule this case and the one above disagreed.
+    const root = niriSession([editor, browser, term], 1);
+    root.niriEvent({ WorkspaceActiveWindowChanged: { workspace_id: 2, active_window_id: browser.id } });
+    assert.equal(root.focusedAppId(), "foot", "the answer does not depend on where the window sits in the list");
+    assert.equal(focusedCount(root), 1, "with still exactly one marked");
+}
+{
+    // The same event for the FOCUSED workspace is a real focus change, so it
+    // must still move the marker — the fix must not simply ignore the event.
+    const root = niriSession([term, editor], 1);
+    const second = { id: 4, app_id: "kitty", workspace_id: 1, is_focused: false };
+    root.niriEvent({ WindowsChanged: { windows: [term, editor, second] } });
+    root.niriEvent({ WorkspaceActiveWindowChanged: { workspace_id: 1, active_window_id: second.id } });
+    assert.equal(root.focusedAppId(), "kitty", "focus moves within the focused workspace");
+    assert.equal(focusedCount(root), 1, "and still exactly one window is marked");
+}
+{
+    // A window arriving already focused, which niri sends as the whole window.
+    // If WindowOpenedOrChanged lands before WindowFocusChanged, the incoming
+    // window and the outgoing one both carry the marker.
+    const root = niriSession([term, editor], 1);
+    const popup = { id: 5, app_id: "kitty", workspace_id: 1, is_focused: true };
+    root.niriEvent({ WindowOpenedOrChanged: { window: popup } });
+    assert.equal(focusedCount(root), 1, "a window arriving focused does not make two");
+    assert.equal(root.focusedAppId(), "kitty", "and it is the one that arrived focused");
+}
+{
+    // The global focus event still clears everywhere, including across
+    // workspaces, and focus leaving every window leaves none marked.
+    const root = niriSession([term, editor], 1);
+    root.niriEvent({ WindowFocusChanged: { id: editor.id } });
+    assert.equal(focusedCount(root), 1, "focus moving across workspaces marks one window");
+    assert.equal(root.focusedAppId(), "code", "the one the event named");
+    root.niriEvent({ WindowFocusChanged: { id: null } });
+    assert.equal(focusedCount(root), 0, "and focus leaving every window marks none");
+    assert.equal(root.focusedAppId(), "", "which resolves to no target");
+}
+{
+    // The sticky fallback is the second consumer and reads the same collection,
+    // so the invariant has to carry it too: a remembered terminal must not be
+    // displaced by a background workspace's active window.
+    const root = niriSession([term, editor], 1);
+    root.windowsChanged();
+    assert.equal(root.lastFocusedAppId(), "foot", "the terminal is remembered");
+
+    root.niriEvent({ WorkspaceActiveWindowChanged: { workspace_id: 2, active_window_id: editor.id } });
+    root.windowsChanged();
+    assert.equal(root.lastFocusedAppId(), "foot", "and stays remembered through a background workspace's change");
+
+    // Focus really leaving it: the live value empties, the fallback still names
+    // the terminal, and neither names the background window.
+    root.niriEvent({ WindowFocusChanged: { id: null } });
+    root.windowsChanged();
+    assert.equal(root.focusedAppId(), "", "nothing is focused");
+    assert.equal(root.lastFocusedAppId(), "foot", "and the remembered target is still the terminal");
+}
+
 // ---- readiness: detection answering is not the source answering ------------
 
 {
@@ -540,8 +657,8 @@ function settled(compositor, overrides = {}) {
     const root = shell();
     root.detected("niri");
     root.niriLink(true);
-    root.niriEvent({ WindowOpenedOrChanged: { window: foot } });
-    assert.deepEqual(root.NiriService.handled, ["WindowOpenedOrChanged"], "the event was dispatched");
+    root.niriEvent({ WindowOpenedOrChanged: { window: kitty } });
+    assert.equal(root.NiriService.windows.length, 1, "the event was dispatched and the window recorded");
     assert.equal(root.focusReady, false, "a single-window event is not the snapshot");
 }
 {

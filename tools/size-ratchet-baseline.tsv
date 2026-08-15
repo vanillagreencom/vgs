@@ -174,7 +174,7 @@ quickshell/vshell/Services/BluetoothService.qml	620
 quickshell/vshell/Services/CalendarBackend.qml	481
 quickshell/vshell/Services/ClipboardService.qml	514
 quickshell/vshell/Services/CloudSyncService.qml	728
-quickshell/vshell/Services/CompositorService.qml	441
+quickshell/vshell/Services/CompositorService.qml	447
 quickshell/vshell/Services/CupsService.qml	868
 quickshell/vshell/Services/DgopService.qml	780
 quickshell/vshell/Services/DisplayService.qml	1453
@@ -182,7 +182,7 @@ quickshell/vshell/Services/IdleService.qml	798
 quickshell/vshell/Services/KeybindsService.qml	665
 quickshell/vshell/Services/LegacyNetworkService.qml	627
 quickshell/vshell/Services/NetworkBackendService.qml	1039
-quickshell/vshell/Services/NiriService.qml	642
+quickshell/vshell/Services/NiriService.qml	665
 quickshell/vshell/Services/NotepadStorageService.qml	522
 quickshell/vshell/Services/NotificationService.qml	2168
 quickshell/vshell/Services/PasteService.qml	473
@@ -209,7 +209,7 @@ scripts/check-vshell-niri.py	678
 scripts/gen-package-metadata.py	985
 scripts/lib/validation_manifest.py	749
 scripts/qml-smoke.sh	1258
-scripts/test-compositor-focus.js	674
+scripts/test-compositor-focus.js	791
 scripts/test-paste-lifecycle.js	1115
 scripts/test-pill-hover-safety.js	420
 scripts/test-remote-desktop-state.js	1243
