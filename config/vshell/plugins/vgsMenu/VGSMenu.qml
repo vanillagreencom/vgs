@@ -979,6 +979,9 @@ PluginComponent {
     // alone left the defect alive on the async path: a DSearchService reply
     // lands hundreds of ms after the keystroke, the rebuilt row under the
     // resting pointer fires its synthetic hover, and selection snaps to it.
+    // It fires per ASSIGNMENT, so every repopulation must assign a fresh array
+    // and must never write the current reference back — Qt raises no signal for
+    // that, and the rebuild would skip the disarm with nothing to notice.
     onVisibleItemsChanged: hoverGate.disarm()
     onQueryChanged: {
         if (resettingState || routingPrefix)

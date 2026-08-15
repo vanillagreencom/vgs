@@ -13,22 +13,22 @@
 //
 // Two halves, and both are checked here:
 //
-//   1. The latch itself. `config/vshell/plugins/vgsMenu/HoverSelectionGate.js`
-//      is the shipped decision, pure functions over an explicit state value, so
-//      this requires the module and runs it — the same object the QML forwards
-//      to, not a transcript of its source.
+//   1. The latch itself. `HoverSelectionGate.js` is the shipped decision, pure
+//      functions over an explicit state value, so this requires the module and
+//      runs it — the same object the QML forwards to, not a transcript.
 //
-//   2. The wiring in VGSMenu.qml. The nested smoke loads the plugin but never
+//   2. The wiring: VGSMenu.qml's delegates and handlers, and the forwarder
+//      `HoverSelectionGate.qml`. The nested smoke loads the plugin but never
 //      opens the launcher, types into it, or moves a pointer across its
-//      delegates, so nothing there would notice the handlers being unwired.
-//      They are read from the source instead.
+//      delegates, so nothing there would notice either being unwired.
 //
 // SECTION 2 IS A LINT, AND A LINT MEASURES A SPELLING. That is why every
-// predicate below is proven against MUTANTS OF THE SHIPPED SOURCE that keep the
+// predicate is proven against MUTANTS OF THE SHIPPED SOURCES that keep the
 // matched text and remove the behavior — `armed || true`, a `notePointer()`
 // whose answer is discarded, a `disarm()` deleted from one caller while others
-// keep theirs. Controls that merely delete the matched text prove only that a
-// predicate runs; these prove it still says something.
+// keep theirs, item-local coordinates handed to the latch behind a mapToItem
+// line kept for show. Controls that merely delete the matched text prove only
+// that a predicate runs; these prove it still says something.
 
 "use strict";
 
@@ -121,13 +121,7 @@ const armed = latch.notePointer(anchored, 10 + T + 1, 10).state;
 assert.equal(latch.notePointer(armed, 999, 999).state, armed,
     "an armed latch decides nothing further and must return the same state value");
 
-// The QML holds the state and forwards; nothing may be decided in the QML.
-assert.match(gateQml, /import "\.\/HoverSelectionGate\.js" as Latch/,
-    "HoverSelectionGate.qml must forward to the shared module this test runs");
-assert.match(gateQml, /function notePointer\(area, mouse\)[\s\S]*?area\.mapToItem\(null, mouse\.x, mouse\.y\)/,
-    "the gate must do its own scene mapping so no caller can pass item-local coordinates");
-
-// --- 2. The wiring in VGSMenu.qml -------------------------------------------
+// --- 2. The wiring, in VGSMenu.qml and in the forwarder ---------------------
 
 // Slices a handler body: `onFoo: { … }`, `onFoo: mouse => { … }`, or the rest
 // of the line for the single-expression form. Brace-walked rather than ended at
@@ -170,11 +164,12 @@ function functionRange(src, name) {
     return { start: open + 1, end: open + 1 + body.length, body };
 }
 
+// Total on purpose: a predicate reading a function a mutant deleted must return
+// false, not throw. That the REAL sources declare each one non-empty is asserted
+// once, below, so a predicate can never be reading an empty string here.
 function functionBody(src, name) {
     const range = functionRange(src, name);
-    assert.ok(range && range.body.trim().length > 0,
-        `${name} must exist in VGSMenu.qml with a non-empty body — this predicate has nothing to read otherwise`);
-    return range.body;
+    return range ? range.body : "";
 }
 
 const squash = text => text.replace(/\s+/g, " ").trim();
@@ -254,28 +249,73 @@ function resultDelegateBodies(src) {
 }
 
 // The tint reads the latch too, so a dormant hover cannot paint a row as active
-// while Enter would launch a different one.
+// while Enter would launch a different one. Anchored end to end like
+// GATED_ENTER and REARM: as a substring test, `armed || true` kept the match and
+// killed the gate. The selected arm is free — it differs per delegate and
+// carries no latch decision.
+const TINT = /^color: selected \? .+ : \(\w+Area\.containsMouse && root\.hoverGate\.armed\) \? Theme\.surfaceHover : "transparent"$/;
+
 function hoverTintFollowsLatch(src) {
     const delegates = resultDelegateBodies(src);
     if (delegates.length < 2) return false;
     return delegates.every(body => {
-        const tint = body.match(/\w+Area\.containsMouse[^\n]*Theme\.surfaceHover/);
-        return tint !== null && /containsMouse && root\.hoverGate\.armed/.test(tint[0]);
+        const start = body.indexOf("color:");
+        const end = body.indexOf('"transparent"', start);
+        if (start === -1 || end === -1) return false;
+        return TINT.test(squash(body.slice(start, end + '"transparent"'.length)));
     });
 }
 
+// --- The forwarder, HoverSelectionGate.qml ----------------------------------
+//
+// It holds the state and decides nothing, which is exactly why it needs pinning
+// by spelling: the module is executed above and VGSMenu.qml is linted above, so
+// this file in between was the one place a one-line edit could restore VGS-134
+// whole with the suite green. Pinning the whole body is the point, not
+// incidental strictness — those four statements are the file's entire
+// behavior, so changing them means changing the form here and proving the new
+// one against mutants below.
+const FORWARDS_TO_MODULE = /^import "\.\/HoverSelectionGate\.js" as Latch$/m;
+const ARMED_BINDING = /^\s*readonly property bool armed: latchState\.armed\s*$/m;
+const DISARM_BODY = "latchState = Latch.emptyState();";
+const NOTE_POINTER_BODY = "const scene = area.mapToItem(null, mouse.x, mouse.y); "
+    + "const transition = Latch.notePointer(latchState, scene.x, scene.y); "
+    + "if (transition.state !== latchState) latchState = transition.state; "
+    + "return transition.hoverOwnsSelection;";
+
+function forwarderIsIntact(src) {
+    return FORWARDS_TO_MODULE.test(src)
+        && ARMED_BINDING.test(src)
+        && squash(functionBody(src, "disarm")) === DISARM_BODY
+        && squash(functionBody(src, "notePointer")) === NOTE_POINTER_BODY;
+}
+
+// Every function the predicates read exists and is non-empty in the REAL
+// sources. The predicates themselves are total, so without this a deleted
+// function would read as an empty body somewhere rather than being reported.
+for (const [label, src, names] of [
+    ["VGSMenu.qml", menuSource, ["resetLauncherState", "handleKey", "routeSearchText"]],
+    ["HoverSelectionGate.qml", gateQml, ["disarm", "notePointer"]]
+]) {
+    for (const name of names) {
+        assert.ok(functionBody(src, name).trim().length > 0,
+            `${label} must declare ${name} with a non-empty body — the predicates have nothing to read otherwise`);
+    }
+}
+
 const CHECKS = [
-    [enterEmissionsAreGated, "each result delegate's onEntered must be exactly `if (root.hoverGate.armed) X.hovered();`"],
-    [motionRearmsSelection, "each result delegate's onPositionChanged must emit hovered() FROM the notePointer() answer"],
-    [selectionWritesGoThroughHovered, "every delegate must reach selection through onHovered, and no pointer handler may write selectedItemIndex directly"],
-    [keyboardTakesSelection, "disarm must run on launcher open, on every key, on every query change, and on every result rebuild"],
-    [hoverTintFollowsLatch, "the delegate hover tint must be gated on hoverGate.armed"]
+    [enterEmissionsAreGated, menuSource, "each result delegate's onEntered must be exactly `if (root.hoverGate.armed) X.hovered();`"],
+    [motionRearmsSelection, menuSource, "each result delegate's onPositionChanged must emit hovered() FROM the notePointer() answer"],
+    [selectionWritesGoThroughHovered, menuSource, "every delegate must reach selection through onHovered, and no pointer handler may write selectedItemIndex directly"],
+    [keyboardTakesSelection, menuSource, "disarm must run on launcher open, on every key, on every query change, and on every result rebuild"],
+    [hoverTintFollowsLatch, menuSource, "the delegate hover tint must be gated on hoverGate.armed"],
+    [forwarderIsIntact, gateQml, "HoverSelectionGate.qml must forward every decision to the module, in the exact form this test pins"]
 ];
 
-for (const [check, message] of CHECKS)
-    assert.ok(check(menuSource), message);
+for (const [check, source, message] of CHECKS)
+    assert.ok(check(source), message);
 
-// --- 3. Mutants of the shipped source, each of which must be caught ---------
+// --- 3. Mutants of the shipped sources, each of which must be caught --------
 
 // Deletes the first `hoverGate.disarm()` inside one named function, leaving
 // every other caller's intact — the inverse control a whole-file grep cannot
@@ -288,41 +328,68 @@ function withoutDisarmIn(src, name) {
     return src.slice(0, range.start) + mutated + src.slice(range.end);
 }
 
+// Each entry: what a maintainer might do, the predicate that must notice, the
+// source it was derived from, and the mutated text.
 const MUTANTS = [
     ["handleKey loses its disarm while others keep theirs",
-        keyboardTakesSelection, withoutDisarmIn(menuSource, "handleKey")],
+        keyboardTakesSelection, menuSource, withoutDisarmIn(menuSource, "handleKey")],
     ["resetLauncherState loses its disarm",
-        keyboardTakesSelection, withoutDisarmIn(menuSource, "resetLauncherState")],
+        keyboardTakesSelection, menuSource, withoutDisarmIn(menuSource, "resetLauncherState")],
     ["routeSearchText loses its disarm, so IME and paste stop disarming",
-        keyboardTakesSelection, withoutDisarmIn(menuSource, "routeSearchText")],
+        keyboardTakesSelection, menuSource, withoutDisarmIn(menuSource, "routeSearchText")],
     ["the rebuild funnel stops disarming, restoring the async-result defect",
-        keyboardTakesSelection, menuSource.replace(/onVisibleItemsChanged: hoverGate\.disarm\(\)/, "")],
+        keyboardTakesSelection, menuSource, menuSource.replace(/onVisibleItemsChanged: hoverGate\.disarm\(\)/, "")],
     ["the onEntered guard is neutered with an added disjunct",
-        enterEmissionsAreGated, menuSource.replace(/root\.hoverGate\.armed\)/g, "root.hoverGate.armed || true)")],
+        enterEmissionsAreGated, menuSource, menuSource.replace(/root\.hoverGate\.armed\)/g, "root.hoverGate.armed || true)")],
     ["both onEntered handlers are removed entirely",
-        enterEmissionsAreGated, menuSource.replace(/onEntered: \{\s*if \(root\.hoverGate\.armed\)\s*\w+\.hovered\(\);\s*\}/g, "")],
+        enterEmissionsAreGated, menuSource, menuSource.replace(/onEntered: \{\s*if \(root\.hoverGate\.armed\)\s*\w+\.hovered\(\);\s*\}/g, "")],
     ["the notePointer answer is discarded, so hover never re-takes selection",
-        motionRearmsSelection, menuSource.replace(
+        motionRearmsSelection, menuSource, menuSource.replace(
             /if \(root\.hoverGate\.notePointer\((\w+), mouse\)\)\s*(\w+)\.hovered\(\);/g,
             "root.hoverGate.notePointer($1, mouse);")],
     ["one delegate loses its re-arm handler, so it can never take selection back after a keystroke",
-        motionRearmsSelection, menuSource.replace(
+        motionRearmsSelection, menuSource, menuSource.replace(
             /onPositionChanged: mouse => \{\s*if \(root\.hoverGate\.notePointer\(rowArea, mouse\)\)\s*resultRow\.hovered\(\);\s*\}/,
             "")],
     ["a delegate writes the selection index straight from onEntered",
-        selectionWritesGoThroughHovered, menuSource.replace(
+        selectionWritesGoThroughHovered, menuSource, menuSource.replace(
             "onEntered: {\n                if (root.hoverGate.armed)",
             "onEntered: {\n                root.selectedItemIndex = 0;\n                if (root.hoverGate.armed)")],
     ["one delegate stops reaching selection through onHovered, leaving its gate guarding nothing",
-        selectionWritesGoThroughHovered, menuSource.replace(
+        selectionWritesGoThroughHovered, menuSource, menuSource.replace(
             "onHovered: {\n                                        if (!actionContextMenu.visible)\n                                            root.selectedItemIndex = index;\n                                    }",
             "onHovered: {\n                                    }")],
     ["the hover tint stops following the latch",
-        hoverTintFollowsLatch, menuSource.replace(/containsMouse && root\.hoverGate\.armed/g, "containsMouse")]
+        hoverTintFollowsLatch, menuSource, menuSource.replace(/containsMouse && root\.hoverGate\.armed/g, "containsMouse")],
+    ["the hover tint keeps the latch in its binding but neuters it with a disjunct",
+        hoverTintFollowsLatch, menuSource, menuSource.replace(
+            /\((\w+Area)\.containsMouse && root\.hoverGate\.armed\)/g,
+            "($1.containsMouse && root.hoverGate.armed || true)")],
+
+    // The forwarder. Each of these left the suite printing "checks passed"
+    // before this round, with VGS-134 restored in full.
+    ["the forwarder reports itself permanently armed",
+        forwarderIsIntact, gateQml, gateQml.replace("readonly property bool armed: latchState.armed",
+            "readonly property bool armed: true")],
+    ["disarm() becomes a no-op, so all four callsites lint clean and do nothing",
+        forwarderIsIntact, gateQml, gateQml.replace("        latchState = Latch.emptyState();\n", "")],
+    ["the forwarder always answers that hover owns selection",
+        forwarderIsIntact, gateQml, gateQml.replace("return transition.hoverOwnsSelection;", "return true;")],
+    ["the state write-back is dropped, so the latch can never advance",
+        forwarderIsIntact, gateQml, gateQml.replace(
+            "        if (transition.state !== latchState)\n            latchState = transition.state;\n", "")],
+    ["the module stops being reached by the shell, though the test still runs it",
+        forwarderIsIntact, gateQml, gateQml.replace(
+            "const transition = Latch.notePointer(latchState, scene.x, scene.y);",
+            "const transition = { state: latchState, hoverOwnsSelection: true };")],
+    ["item-local coordinates are fed to the latch behind a mapToItem line kept for show",
+        forwarderIsIntact, gateQml, gateQml.replace(
+            "Latch.notePointer(latchState, scene.x, scene.y)",
+            "Latch.notePointer(latchState, mouse.x, mouse.y)")]
 ];
 
-for (const [name, check, mutant] of MUTANTS) {
-    assert.notEqual(mutant, menuSource, `mutant did not apply, so it proves nothing: ${name}`);
+for (const [name, check, source, mutant] of MUTANTS) {
+    assert.notEqual(mutant, source, `mutant did not apply, so it proves nothing: ${name}`);
     assert.equal(check(mutant), false, `this mutant must be caught: ${name}`);
 }
 

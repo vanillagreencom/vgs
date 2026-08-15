@@ -29,11 +29,15 @@ QtObject {
     // to SCENE coordinates here so no caller can pass item-local ones, which
     // move under a still cursor as the list rebuilds.
     //
-    // A scene position is window-local: it is stable under a resting pointer
-    // because menuWindow's geometry derives only from screen metrics, and the
-    // one path that moves the window — `open()` reassigning `menuWindow.screen`
-    // — disarms immediately afterwards through `resetLauncherState()`. Moving
-    // that geometry off screen metrics would need this re-checked.
+    // A scene position is window-local, and stable under a resting pointer only
+    // while the window holds still. It does, on two assumptions: menuWindow's
+    // geometry derives from nothing but the screen metrics, which are taken to
+    // be constant for the life of an open launcher — a resolution or scale
+    // change mid-session moves the window and arms hover one event early, which
+    // is the whole cost — and the one path that moves it deliberately, `open()`
+    // reassigning `menuWindow.screen`, disarms immediately afterwards through
+    // `resetLauncherState()`. Deriving that geometry from anything else would
+    // need this re-checked.
     function notePointer(area, mouse) {
         const scene = area.mapToItem(null, mouse.x, mouse.y);
         const transition = Latch.notePointer(latchState, scene.x, scene.y);

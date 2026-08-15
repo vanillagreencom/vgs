@@ -153,9 +153,15 @@ cd "$repo_root" || exit 1
 #
 # The per-area sets are the scoping AGENTS.md used to state in prose:
 # go = the backend capability inventory guard plus the Go block; qml = naming,
-# the QML smoke, the safety guard, surfaces; helper = the helper checks plus the
+# the QML smoke, the safety guard, surfaces, plus the QML source lints carrying
+# the tag (today the launcher hover latch); helper = the helper checks plus the
 # py_compile/bash -n syntax pass; packaging = the three packaging checks;
 # docs = the instruction-surface growth ratchet.
+#
+# The older QML source lints (pill-hover, menu capabilities, bundled override,
+# toast actions) are still `-`, so `all` alone reaches them. `qml` is the better
+# tag for a new one — it runs the guard in the area AGENTS.md tells agents to
+# run before finishing QML work — but retagging that family is its own change.
 # shellcheck disable=SC2329  # invoked indirectly, as an argument to collect()
 manifest() {
   cat <<'MANIFEST_EOF'
