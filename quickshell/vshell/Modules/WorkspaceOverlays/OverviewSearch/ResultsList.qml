@@ -530,8 +530,12 @@ Item {
 
                     switch (mode) {
                     case "files":
-                        if (!DSearchService.dsearchAvailable)
+                        if (!DSearchService.statusKnown)
                             return I18n.tr("Launcher search is unavailable");
+                        if (!DSearchService.backendAvailable(root.controller?.fileSearchKind()))
+                            return (root.controller?.fileSearchType ?? "file") === "text"
+                                ? I18n.tr("Text search needs ripgrep", "Overview search empty state when the ripgrep binary is missing")
+                                : I18n.tr("File search needs fd", "Overview search empty state when the fd binary is missing");
                         if (!hasQuery)
                             return I18n.tr("Type to search files");
                         if (root.controller.searchQuery.length < 2)
@@ -552,6 +556,31 @@ Item {
                     default:
                         return I18n.tr("No results found");
                     }
+                }
+            }
+
+            StyledText {
+                anchors.horizontalCenter: parent.horizontalCenter
+                width: Math.min(320, Math.max(160, root.width - Theme.spacingXL * 2))
+                visible: text.length > 0
+                text: getDependencyHint()
+                font.pixelSize: Theme.fontSizeSmall
+                color: Theme.surfaceVariantText
+                horizontalAlignment: Text.AlignHCenter
+                wrapMode: Text.WordWrap
+
+                // Named so a missing search backend reads as an install step
+                // rather than as a query that matched nothing.
+                function getDependencyHint() {
+                    if ((root.controller?.searchMode ?? "all") !== "files")
+                        return "";
+                    if (!DSearchService.statusKnown)
+                        return "";
+                    if (DSearchService.backendAvailable(root.controller?.fileSearchKind()))
+                        return "";
+                    return (root.controller?.fileSearchType ?? "file") === "text"
+                        ? I18n.tr("Install the ripgrep package to search inside file contents.", "Overview search hint when the ripgrep binary is missing")
+                        : I18n.tr("Install the fd package (fd-find on Debian and Fedora) to search files and folders by name.", "Overview search hint when the fd binary is missing");
                 }
             }
         }

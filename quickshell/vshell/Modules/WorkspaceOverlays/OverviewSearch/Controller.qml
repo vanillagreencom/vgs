@@ -798,7 +798,7 @@ Item {
         if (searchMode === "files") {
             var prefixInfo = Utils.parseFileSearchPrefix(searchQuery);
             var fileQuery = prefixInfo ? prefixInfo.query : searchQuery.trim();
-            isFileSearching = fileQuery.length >= 2 && DSearchService.dsearchAvailable;
+            isFileSearching = fileQuery.length >= 2 && DSearchService.backendAvailable(fileSearchKind());
             sections = [];
             flatModel = [];
             selectedFlatIndex = 0;
@@ -1078,11 +1078,25 @@ Item {
         searchCompleted();
     }
 
+    // The DSearchService kind backing the current file-search type. "all" folds
+    // into the name kind; _applyFileSearchResults splits files from folders.
+    function fileSearchKind() {
+        var type = fileSearchType || "file";
+        return type === "dir" ? "folders" : type === "text" ? "text" : "files";
+    }
+
     function performFileSearch() {
-        if (!DSearchService.dsearchAvailable)
-            return;
         var fileQuery = "";
         var effectiveType = fileSearchType || "file";
+        var kind = fileSearchKind();
+
+        // fd backs name search and ripgrep backs text search, so each kind gates
+        // on its own tool: one missing tool must not silence the other.
+        // ResultsList names the missing tool in the empty state.
+        if (!DSearchService.backendAvailable(kind)) {
+            isFileSearching = false;
+            return;
+        }
 
         if (searchQuery.startsWith("/")) {
             var prefixInfo = Utils.parseFileSearchPrefix(searchQuery);
@@ -1100,7 +1114,6 @@ Item {
 
         isFileSearching = true;
 
-        var kind = effectiveType === "dir" ? "folders" : effectiveType === "text" ? "text" : "files";
         DSearchService.search(fileQuery, {
             kind: kind,
             limit: 100

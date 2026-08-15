@@ -11,13 +11,15 @@ import qs.Common
 Singleton {
     id: root
 
-    property bool dsearchAvailable: true
     property bool supportsTypeFilter: true
     property bool versionChecked: true
     property int indexVersion: 3
     property string backendName: "fd + ripgrep"
     property bool fdAvailable: false
     property bool ripgrepAvailable: false
+    // False until the status probe answers. The tool flags say nothing while it
+    // is false, so callers must not report a tool as missing on their strength.
+    property bool statusKnown: false
     property var folderOpeners: [{ id: "default", label: I18n.tr("Preferred app"), icon: "open_in_new" }]
     property var _requestVersions: ({})
     property int _previewVersion: 0
@@ -40,7 +42,7 @@ Singleton {
                 root.fdAvailable = !!status.fd;
                 root.ripgrepAvailable = !!status.ripgrep;
                 root.backendName = status.backend || "fd + ripgrep";
-                root.dsearchAvailable = root.fdAvailable;
+                root.statusKnown = true;
                 root.statsReceived(status);
             } catch (e) {
                 root.errorOccurred(I18n.tr("Unable to read launcher search status"));
@@ -48,9 +50,12 @@ Singleton {
         }, 0, 3000);
     }
 
-    function ping(callback) {
-        if (callback)
-            callback({ result: { ok: dsearchAvailable, backend: backendName } });
+    // Kinds do not share a backend: text search shells out to ripgrep, name
+    // search to fd. A caller that gates one kind on the other tool silences a
+    // backend that is installed, so availability is answered per kind. `kind`
+    // is a name kind ("files", "folders", "all") or "text".
+    function backendAvailable(kind) {
+        return kind === "text" ? ripgrepAvailable : fdAvailable;
     }
 
     function refreshFolderOpeners() {
