@@ -21,8 +21,11 @@ every check in this directory, selects the subset for one of the <!-- validate-a
 `qml`, `helper`, `packaging`, `docs`, `all`<!-- /validate-areas -->, and is what
 `scripts/check-validation-inventory.py` parses — including the anchored area
 list above, which is compared against the runner's own. The anchor, not the
-wording, is what the guard reads: reword freely inside it, and moving or
-deleting it fails the guard rather than turning the comparison off. Adding or renaming a check
+wording, is what the guard reads: prose inside it is free, but every
+backticked lowercase word in there is read as an area name, so put nothing else
+in backticks between the markers. Moving or deleting the anchor, opening or
+closing it twice, or leaving it empty all fail the guard rather than turning the
+comparison off. Adding or renaming a check
 means editing that manifest, not a doc. `scripts/test-validate.sh` covers the
 runner itself.
 

@@ -89,7 +89,14 @@ def manifest_rows(runner: Path) -> list[tuple[str, str]]:
     # did. Read from the dump, the two cannot hold different sets.
     spaces = rules.whitespace_pattern()
     rows: list[tuple[str, str]] = []
-    for line in block.group(1).splitlines():
+    # SPLIT ON `\n`, NEVER `str.splitlines()`, AND FOR THE SAME REASON THE SET
+    # ABOVE IS SHARED. splitlines() also breaks on \v and \f — two of the six
+    # characters in that very set — so a row tagged `qml\x0b` was ONE line the
+    # runner stripped to `qml` and accepted, and TWO lines here, the first of
+    # which has no `|` and was refused as a row with no separator. Verified end
+    # to end before this was written. Sharing the character set does not settle
+    # C4 on its own: the LINE BOUNDARY has to be the runner's too.
+    for line in block.group(1).split("\n"):
         if not spaces.sub("", line):
             continue
         if "|" not in line:
@@ -279,7 +286,13 @@ class Grammar:
         that is the only way any of them can be reached.
         """
         seen_kinds: set[str] = set()
-        for line in dump.splitlines():
+        # `\n` here too: this decodes text the RUNNER emitted, so its line
+        # boundary is the runner's. splitlines() would break a message carrying a
+        # \v or \f into two dump lines and report the tail as an unknown line
+        # kind — a refusal aimed at the wrong thing. Left alone deliberately:
+        # ci_run_commands (YAML text, and no reader compares its line set with
+        # the runner's) and runner_logic (compares no boundaries at all).
+        for line in dump.split("\n"):
             if not line.strip():
                 continue
             kind, _, rest = line.partition(" ")
@@ -716,17 +729,22 @@ def prose_areas(path: Path) -> set[str]:
     """
     text = _read(path, "an area-enumerating document")
     opens = text.count(AREA_ANCHOR_OPEN)
+    closes = text.count(AREA_ANCHOR_CLOSE)
     if opens == 0:
         raise ManifestError(
             f"{path.name} has no {AREA_ANCHOR_OPEN} anchor around its validate area "
             f"list. Restore the anchor, or drop the enumeration entirely and remove "
             f"the file from AREA_ENUMERATING_DOCS as a recorded decision."
         )
-    if opens > 1:
+    # BOTH MARKERS ARE COUNTED. Counting only the opener left the identical hole
+    # through the other end: one opener and two closers reads open..close#1, and
+    # anything between close#1 and close#2 is a region no reader looks at — the
+    # very thing the open-count check exists to prevent.
+    if opens > 1 or closes > 1:
         raise ManifestError(
-            f"{path.name} opens the validate area anchor {opens} times; the area list "
-            f"must be anchored exactly once, or one region is read and the rest are "
-            f"silently ignored."
+            f"{path.name} carries {opens} opening and {closes} closing validate area "
+            f"markers; the area list must be anchored exactly once, or one region is "
+            f"read and the rest are silently ignored."
         )
     start = text.index(AREA_ANCHOR_OPEN) + len(AREA_ANCHOR_OPEN)
     end = text.find(AREA_ANCHOR_CLOSE, start)

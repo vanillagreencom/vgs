@@ -724,12 +724,25 @@ fi
 # command and exits 0. Refused here, in the pre-flight beside the undecidable
 # default, so no consumer ever sees a dump of such a grammar and no scoped run is
 # quietly narrowed.
+#
+# ASKED OF THE DERIVED SETS, not of the class properties again. Those sets were
+# just computed from exactly these properties, and re-spelling five CLASS_*
+# lookups here would put "what makes a token a selector" in two places — the
+# shape this file's own notes reject everywhere else.
+in_list() { # $1 needle, then the haystack
+  local needle="$1" item
+  shift
+  for item in "$@"; do
+    [[ "$item" == "$needle" ]] && return 0
+  done
+  return 1
+}
+
 inert_selectors=()
-for token in "${grammar_tokens[@]}"; do
-  class="${TOKEN_CLASS[$token]}"
-  if [[ "${CLASS_ROWTAG[$class]}" == yes && "${CLASS_SELECTS[$class]}" == yes &&
-    "${CLASS_EXCLUSIVE[$class]}" != yes && "${CLASS_CLI[$class]}" != yes &&
-    "${CLASS_UNIVERSAL[$class]}" != yes ]]; then
+for token in "${selector_tags[@]}"; do
+  if ! in_list "$token" "${AREAS[@]}" &&
+    ! in_list "$token" "${universal_tags[@]}" &&
+    ! in_list "$token" "${exclusive_tags[@]}"; then
     inert_selectors+=("$token")
   fi
 done

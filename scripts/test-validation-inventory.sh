@@ -55,7 +55,12 @@ GUARD_ONLY_MESSAGES=(
   "no manifest row is tagged with it"
   "is not executable"
   "enumerates the validate areas but omits"
+  "as a validate area, but scripts/validate does not"
   "anchor around its validate area list"
+  "opens the validate area anchor but never closes it"
+  "must be anchored exactly once"
+  "anchors an empty validate area list"
+  "could not read"
   "has no table introduced by"
   "does not act on it"
   "the runner's derivation and the definition have drifted"
@@ -521,6 +526,50 @@ MUT
 run_guard "AGENTS_PATH=$anchored"
 expect_refused "two anchors" "must be anchored exactly once"
 ok "a second anchored region is reported rather than silently ignored"
+
+# ...and the CLOSING marker is counted too. One opener and two closers reads
+# open..close#1, leaving anything between the two closers in a region no reader
+# looks at — the same silently-ignored region the opener count exists to prevent,
+# reached through the other marker.
+python3 - "$repo_root/AGENTS.md" >"$anchored" <<'MUT'
+import sys
+t = open(sys.argv[1], encoding="utf-8").read()
+assert t.count("<!-- /validate-areas -->") == 1, "AGENTS.md no longer closes the anchor once"
+print(t + "\nstray `docs-only`<!-- /validate-areas -->\n", end="")
+MUT
+run_guard "AGENTS_PATH=$anchored"
+expect_refused "two closing markers" "must be anchored exactly once"
+ok "a second closing marker is reported, not read as a wider region"
+
+# THE REVERSE DIRECTION of the prose comparison, which had no fixture at all
+# while the anchor rewrite routed MORE input into it: every backticked lowercase
+# token inside the region is now read as an area name, so a stray one must be
+# reported rather than quietly widening the guard's idea of the vocabulary.
+python3 - "$repo_root/AGENTS.md" >"$anchored" <<'MUT'
+import re, sys
+t = open(sys.argv[1], encoding="utf-8").read()
+new = re.sub(
+    r"<!-- validate-areas -->.*?<!-- /validate-areas -->",
+    "<!-- validate-areas -->areas `go`, `qml`, `helper`, `packaging`, `docs`, "
+    "`docs-only`, `all`<!-- /validate-areas -->",
+    t,
+    flags=re.DOTALL,
+)
+assert new != t, "the anchored region was not found"
+print(new, end="")
+MUT
+run_guard "AGENTS_PATH=$anchored"
+expect_refused "extra area in the anchor" "as a validate area, but scripts/validate does not"
+ok "a token inside the anchor that the runner does not accept is reported"
+
+# ...and the empty-region raise, which the anchor made reachable: a region with
+# prose but no backticked name at all. Distinct from the missing-anchor case —
+# the markers are present and correct, and there is simply nothing in them.
+# shellcheck disable=SC2016  # the fixture prose is deliberately backtick-free
+printf 'see the runner for the areas <!-- validate-areas -->run it for what you touched<!-- /validate-areas -->\n' >"$anchored"
+run_guard "AGENTS_PATH=$anchored"
+expect_refused "empty anchored region" "anchors an empty validate area list"
+ok "an anchor holding prose but no area names is reported"
 
 # ...and every named document must currently yield a non-empty list, so the
 # case above is catching the rewording rather than a doc that never stated one.
@@ -1040,7 +1089,7 @@ spec.loader.exec_module(mod)
 g = mod.grammar(pathlib.Path(os.environ["WS_PROBE"]))
 print(" ".join(f"{ord(c):02x}" for c in g.whitespace))
 LIB
-)"
+)" || true
 [[ "$ws_decoded" == "$ws_dumped" ]] ||
   fail "whitespace is read" "the library decoded \`$ws_decoded\` where the runner dumped \`$ws_dumped\`"
 
@@ -1054,6 +1103,10 @@ LC_ALL=C "$ws_probe" --list docs >/dev/null 2>"$tmp/stderr" || ws_rc=$?
 ws_runner_said="$(LC_ALL=C sed -e 's/^scripts\/validate: //' -e 's/`.*//' \
   -e 's/[ \t]*$//' "$tmp/stderr" | head -1)"
 [[ "$ws_rc" != 0 ]] || ws_runner_said="ACCEPTED"
+# `|| true` on both substitutions: a module broken badly enough to raise
+# something other than ManifestError must be REPORTED by the assertions below,
+# not end the run under errexit with the remaining arms unstated. An abort is
+# fail-closed in status and useless as a diagnosis.
 ws_library_said="$(WS_PROBE="$ws_probe" python3 - "$repo_root" <<'LIB'
 import importlib.util, os, pathlib, re, sys
 root = pathlib.Path(sys.argv[1])
@@ -1068,7 +1121,7 @@ try:
 except mod.ManifestError as error:
     print(re.sub(r"`.*", "", str(error).replace("scripts/validate: ", "")).strip())
 LIB
-)"
+)" || true
 [[ "$ws_runner_said" == "$ws_library_said" ]] ||
   fail "whitespace is applied" "a tag field carrying the dropped character is classified differently:
   runner : ${ws_runner_said:-accepted}
@@ -1091,11 +1144,26 @@ mod = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(mod)
 nowhere = tmp / "a-directory-where-a-file-should-be"
 nowhere.mkdir(exist_ok=True)
+runner = root / "scripts" / "validate"
+
+
+def participate():
+    # The grammar the probe COPIES is the unreadable one. Reached by pointing the
+    # decoded source at it, the same injection the guard's own harness uses on
+    # the module's path constants — the alternative is a hand-built dump, which
+    # would exercise the decoder rather than this read.
+    rules = mod.grammar(runner)
+    rules.source = nowhere
+    return mod.token_participates(runner, rules, "always", tmp / "participate-work")
+
+
 for label, call in (
     ("ROWS", lambda: mod.manifest_rows(nowhere)),
     ("PROSE", lambda: mod.prose_areas(nowhere)),
     ("TABLE", lambda: mod.documented_table(nowhere, "**Local-only")),
     ("LOGIC", lambda: mod.runner_logic(nowhere)),
+    ("CI", lambda: mod.ci_run_commands(nowhere)),
+    ("PARTICIPATE", participate),
 ):
     try:
         call()
@@ -1104,12 +1172,55 @@ for label, call in (
         print(f"{label} {error}")
 UNREADABLE
 )"
-for label in ROWS PROSE TABLE LOGIC; do
+for label in ROWS PROSE TABLE LOGIC PARTICIPATE; do
   expect_contains "$unreadable_out" "$label could not read" "unreadable surface"
 done
+if [[ $have_yaml -eq 1 ]]; then
+  expect_contains "$unreadable_out" "CI could not read" "unreadable surface"
+else
+  # Without PyYAML the CI arm never reaches its read, and says so. Asserting the
+  # read message here would make the case report a prerequisite as a defect.
+  expect_contains "$unreadable_out" "CI PyYAML is not installed" "unreadable surface"
+fi
 expect_absent "$unreadable_out" "Traceback" "unreadable surface"
 expect_absent "$unreadable_out" "ACCEPTED" "unreadable surface"
 ok "an unreadable surface raises ManifestError naming the path, not a traceback"
+
+# ...and the invariant is SELF-ENFORCING rather than sampled. The loop above
+# covers the six call sites that exist today; a seventh added tomorrow would go
+# uncovered, and the arms it feeds would emit a traceback in the one file whose
+# stated rule is that they do not. So the rule is checked at the source: nothing
+# in the module reads a file except the helper that turns the failure into a
+# diagnostic. Same shape as the shared-diagnostic liveness block above.
+if ! python3 - "$repo_root" <<'READS'
+import pathlib, sys
+lines = (pathlib.Path(sys.argv[1]) / "scripts" / "lib" / "validation_manifest.py").read_text(
+    encoding="utf-8"
+).split("\n")
+starts = [i for i, line in enumerate(lines) if line.startswith("def _read(")]
+if len(starts) != 1:
+    print(f"validation_manifest.py declares {len(starts)} `_read` helpers, so the "
+          f"one-reader rule below cannot be checked")
+    sys.exit(1)
+start = starts[0]
+end = next(
+    (i for i in range(start + 1, len(lines))
+     if lines[i].startswith("def ") or lines[i].startswith("class ")),
+    len(lines),
+)
+stray = [
+    (i + 1, line.strip())
+    for i, line in enumerate(lines)
+    if "read_text(" in line and not start <= i < end
+]
+for number, line in stray:
+    print(f"validation_manifest.py:{number} reads a file outside _read(): {line}")
+sys.exit(1 if stray else 0)
+READS
+then
+  fail "one reader per file" "the reads above bypass _read(), so they raise tracebacks instead of diagnostics"
+fi
+ok "every file read in the module goes through the helper that diagnoses failure"
 
 # A MISSING PREREQUISITE MUST NOT REPLACE A FIXTURE'S VERDICT. The CI parse used
 # to raise straight out of main, so on a python3 without PyYAML every fixture
@@ -1218,8 +1329,11 @@ fi
 # did not, so the same row was "cannot stand alone" to one and "carries no
 # selector" to the other. Length now comes from the list, membership from a set.
 agree_probe="$fixture_dir/scripts/agree-probe"
-while IFS= read -r row_tags; do
-  [[ -n "$row_tags" ]] || continue
+# A FUNCTION, so the table below is not the only way in: two of these rows carry
+# a CONTROL CHARACTER, which a quoted heredoc cannot express and an unquoted one
+# would only express by turning every other row into an expansion.
+agree_row() {
+  local row_tags="$1" label="${2:-$1}"
   ROW="$row_tags" python3 - "$runner" >"$agree_probe" <<'MUT'
 import os, sys
 t = open(sys.argv[1], encoding="utf-8").read()
@@ -1228,7 +1342,7 @@ assert t.count(old) == 1, "the naming-check manifest row moved"
 print(t.replace(old, f"{os.environ['ROW']} | scripts/check-naming.sh"), end="")
 MUT
   chmod +x "$agree_probe"
-  runner_rc=0
+  local runner_rc=0 runner_said library_said library_rc=0
   "$agree_probe" --list docs >/dev/null 2>"$tmp/stderr" || runner_rc=$?
   # Trailing space matters: stripping from the backtick leaves one on the
   # runner side and not the library's, which reads as a difference that is not.
@@ -1248,14 +1362,17 @@ except mod.ManifestError as error:
     print(re.sub(r"`.*", "", str(error).replace("scripts/validate: ", "")).strip())
 LIB
 )"
-  library_rc=0
   [[ -n "$library_said" ]] && library_rc=2
   [[ "$runner_rc" == 0 ]] && runner_said=""
   if [[ "$runner_said" != "$library_said" ]]; then
-    fail "reader agreement" "row \`$row_tags\` classified differently:
+    fail "reader agreement" "row $label classified differently:
   runner  ($runner_rc): ${runner_said:-accepted}
   library ($library_rc): ${library_said:-accepted}"
   fi
+}
+while IFS= read -r row_tags; do
+  [[ -n "$row_tags" ]] || continue
+  agree_row "$row_tags"
 done <<'ROWS'
 may-skip,may-skip
 qml,qml
@@ -1267,6 +1384,19 @@ qml,
 notatoken
 ROWS
 ok "both readers classify every duplicate and malformed row identically"
+
+# THE LINE BOUNDARY IS PART OF C4, and this is the row that proves it. Sharing
+# the whitespace set settled which characters are STRIPPED; it said nothing about
+# where a row ENDS. `str.splitlines()` breaks on \v and \f — two of the six
+# characters in that same set — so a row tagged `qml\x0b` was one line to the
+# runner, which stripped it to `qml` and RAN the command, and two lines to the
+# library, whose first had no `|` and was refused as a row with no separator. The
+# runner is the authority on both questions, so both readers must accept here.
+for control in '\v' '\f'; do
+  printf -v control_tags 'qml%b' "$control"
+  agree_row "$control_tags" "qml followed by a literal $control"
+done
+ok "a row tagged with a \\v or \\f is one row to both readers, not two"
 
 # C4 UNDER A NON-C LOCALE, which is the only place this can be tested. The
 # runner used `[[:space:]]`, whose meaning bash resolves through the LOCALE:
@@ -1313,6 +1443,19 @@ for loc in "$PREFERRED_LOCALE" "${utf8_locales[@]}"; do
   printf '%s\n' "${utf8_locales[@]}" | grep -qxF -- "$loc" || continue
   printf '%s\n' "${locales[@]}" | grep -qxF -- "$loc" && continue
   locales+=("$loc")
+done
+
+# A SAMPLE OF C LOCALES IS A SKIP, NOT A PASS. On a system whose only UTF-8
+# locale is `C.utf8` — a stock CI runner — every selected locale is the C locale
+# in UTF-8 clothing, which by this block's own reasoning cannot demonstrate a
+# locale-resolved character class. The comparisons below still run and still have
+# to agree, but printing `ok` over them would report the rule as proven by the
+# one environment that cannot prove it, which is this repo's standing refusal
+# dressed as a locale list.
+locale_sample_is_degenerate=1
+for loc in ${locales[@]+"${locales[@]}"}; do
+  printf '%s\n' ${c_locales[@]+"${c_locales[@]}"} | grep -qxF -- "$loc" ||
+    locale_sample_is_degenerate=0
 done
 
 if [[ ${#locales[@]} -eq 0 ]]; then
@@ -1377,7 +1520,15 @@ $(printf '  %s\n' "${verdicts[@]}")"
     [[ "$first" == 2\ * ]] ||
       fail "C4 locale control" "U+$codepoint in a tag field is ACCEPTED ($first)"
   done
-  ok "C4 holds for both readers under C and ${locales[*]}"
+  if [[ $locale_sample_is_degenerate -eq 1 ]]; then
+    printf '  SKIP  C4 locale control: the only UTF-8 locale(s) this system provides (%s) are\n' \
+      "${locales[*]}" >&2
+    printf '        the C locale in UTF-8 clothing, so the one condition that distinguishes an\n' >&2
+    printf '        ASCII rule from a locale-resolved class could not be created. Both readers\n' >&2
+    printf '        agreed on every codepoint, but the rule is NOT proven on this machine.\n' >&2
+  else
+    ok "C4 holds for both readers under C and ${locales[*]}"
+  fi
 fi
 
 # A CHECKOUT UNDER A PATH CONTAINING A SPACE. The runner dumps the grammar's
