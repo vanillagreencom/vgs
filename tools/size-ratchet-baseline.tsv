@@ -23,7 +23,7 @@ bin/codexbar	1311
 bin/vshell	472
 bin/vshell-capture-screenrecording	593
 bin/vshell-capture-screenshot	741
-bin/vshell-helper	15946
+bin/vshell-helper	15959
 bin/vshell_niri.py	1110
 config/vshell/icons/Yaru/cursors/half-busy	10208
 config/vshell/icons/Yaru/cursors/half-busy.ani	3364
@@ -162,10 +162,10 @@ quickshell/vshell/Modules/Settings/WidgetsTabSection.qml	493
 quickshell/vshell/Modules/Settings/WindowRulesTab.qml	1065
 quickshell/vshell/Modules/Toast.qml	506
 quickshell/vshell/Modules/WallpaperBackground.qml	1081
-quickshell/vshell/Modules/WorkspaceOverlays/OverviewSearch/Controller.qml	2211
+quickshell/vshell/Modules/WorkspaceOverlays/OverviewSearch/Controller.qml	2225
 quickshell/vshell/Modules/WorkspaceOverlays/OverviewSearch/OverviewSearchContent.qml	1199
 quickshell/vshell/Modules/WorkspaceOverlays/OverviewSearch/OverviewSearchContextMenu.qml	699
-quickshell/vshell/Modules/WorkspaceOverlays/OverviewSearch/ResultsList.qml	688
+quickshell/vshell/Modules/WorkspaceOverlays/OverviewSearch/ResultsList.qml	711
 quickshell/vshell/Modules/WorkspaceOverlays/OverviewWidget.qml	466
 quickshell/vshell/Services/AppSearchService.qml	1042
 quickshell/vshell/Services/AudioService.qml	1085
@@ -176,6 +176,7 @@ quickshell/vshell/Services/ClipboardService.qml	514
 quickshell/vshell/Services/CloudSyncService.qml	728
 quickshell/vshell/Services/CompositorService.qml	447
 quickshell/vshell/Services/CupsService.qml	868
+quickshell/vshell/Services/DSearchService.qml	415
 quickshell/vshell/Services/DgopService.qml	780
 quickshell/vshell/Services/DisplayService.qml	1453
 quickshell/vshell/Services/IdleService.qml	798
@@ -210,7 +211,7 @@ scripts/gen-package-metadata.py	985
 scripts/lib/validation_manifest.py	749
 scripts/qml-smoke.sh	1258
 scripts/test-compositor-focus.js	791
-scripts/test-launcher-search-gate.js	738
+scripts/test-launcher-search-gate.js	900
 scripts/test-paste-lifecycle.js	1168
 scripts/test-pill-hover-safety.js	420
 scripts/test-remote-desktop-state.js	1243

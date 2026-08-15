@@ -24,11 +24,16 @@ Singleton {
     // report a tool as missing on their strength alone.
     //
     // Everything past the first failure is honestly "nobody knows" rather than
-    // "checking", and that distinction buys exactly one thing: the kinds that
-    // need no fd fallback — text, zoxide, path completion — resume dispatching
-    // at the first failure instead of waiting out the retries. An fd-backed
-    // name search stays refused until the probe settles, because dispatching it
-    // unproven would silently buy the helper's full directory walk.
+    // "checking", and that distinction buys exactly one thing: text search
+    // resumes dispatching at the first failure instead of waiting out the
+    // retries. An fd-backed name search stays refused until the probe settles,
+    // because dispatching it unproven would silently buy the helper's full
+    // directory walk. (Path completion and zoxide never waited on any of this:
+    // backendStateFor answers the first before it reads a probe state, and no
+    // probe covers the second.)
+    //
+    // A state that reached "ready" is never demoted by a later failure —
+    // probeFailureOutcome.
     property string statusState: "pending"
     property string statusError: ""
     property int _statusAttempts: 0
@@ -115,23 +120,25 @@ Singleton {
 
     function _statusProbeFailed(reason) {
         root.log.warn("launcher search status probe failed:", reason);
-        root.statusError = reason;
-        if (root._statusAttempts < root._statusMaxAttempts) {
+        const outcome = probeFailureOutcome(root.statusState, root._statusAttempts, root._statusMaxAttempts);
+        if (outcome.publishReason)
+            root.statusError = reason;
+        root.statusState = outcome.state;
+        if (outcome.retry) {
             // Bounded backoff, one budget per episode. One failed probe used to
             // leave search unanswerable for the life of the shell; retrying
             // forever would spawn a process a second for the same lifetime.
             //
-            // The state leaves "pending" on the FIRST failure rather than at the
-            // end of the sequence: the answer is already unknown, so the kinds
-            // that need no fd fallback stop waiting out the ~12s the retries
-            // take. Name search still waits — see statusState.
-            root.statusState = "retrying";
+            // Where there is no earlier answer, the state leaves "pending" on
+            // the FIRST failure rather than at the end of the sequence: the
+            // answer is already unknown, so the kinds that need no fd fallback
+            // stop waiting out the ~12s the retries take.
             statusRetryTimer.interval = 1000 * root._statusAttempts;
             statusRetryTimer.start();
             return;
         }
-        root.statusState = "failed";
-        root.errorOccurred(I18n.tr("Unable to read launcher search status"));
+        if (outcome.state === "failed")
+            root.errorOccurred(I18n.tr("Unable to read launcher search status"));
     }
 
     // The single owner of "which tool does this search need, and do we have it".
@@ -179,9 +186,14 @@ Singleton {
         return kind === "folders" && /^[~/]/.test(String(query || "").trim());
     }
 
-    // The one owner of "long enough to search". Six sites across the launcher
-    // asked this question with their own literal; a threshold changed in five of
-    // them leaves the sixth believing a search ran that never did.
+    // The one owner of "long enough to search", for every launcher surface that
+    // decides whether to run a file search or to say why it did not. Each of
+    // them used to carry the literal, and a threshold changed in all but one
+    // leaves that one believing a search ran that never did.
+    //
+    // ADVISORY, not enforced: search() dispatches whatever it is given, because
+    // vgsMenu's zoxide and explicit-folder-path legs deliberately run below the
+    // threshold. It answers "would a plain name search run", nothing more.
     function queryIsDispatchable(query) {
         return String(query || "").trim().length >= 2;
     }
@@ -253,6 +265,20 @@ Singleton {
     function probeSettled(probe) {
         const answer = probe || {};
         return answer.state === "ready" && !!answer.fd && !!answer.ripgrep;
+    }
+
+    // What a failed probe publishes. A previous SUCCESSFUL answer survives it:
+    // re-probing runs on every open of an incomplete machine, and letting one
+    // slow re-probe demote "ready" would refuse name search and blame tools that
+    // were found seconds earlier. The retry still runs; only the answer on
+    // screen is protected.
+    function probeFailureOutcome(currentState, attempts, maxAttempts) {
+        const mayRetry = attempts < maxAttempts;
+        if (currentState === "ready")
+            return { state: "ready", retry: mayRetry, publishReason: false };
+        if (mayRetry)
+            return { state: "retrying", retry: true, publishReason: true };
+        return { state: "failed", retry: false, publishReason: true };
     }
     // END SEARCH BACKEND DECISION
 

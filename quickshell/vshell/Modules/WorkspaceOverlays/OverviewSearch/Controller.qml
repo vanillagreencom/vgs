@@ -369,6 +369,7 @@ Item {
     // empty state shows it: the diagnosis was already produced and was being
     // thrown away.
     property string fileSearchError: ""
+    property int _fileSearchGeneration: 0
     property string fileSearchType: "file"
     property string fileSearchExt: ""
     property string fileSearchFolder: ""
@@ -1184,6 +1185,9 @@ Item {
         if (!DSearchService.canDispatch(kind, fileQuery)) {
             isFileSearching = false;
             fileSearchError = "";
+            // Supersede anything already in flight, or its answer lands on top
+            // of the empty state that explains why this one was declined.
+            _fileSearchGeneration++;
             _applyFileSearchResults([], effectiveType);
             return;
         }
@@ -1191,10 +1195,20 @@ Item {
         isFileSearching = true;
         fileSearchError = "";
 
+        // DSearchService versions its requests per KIND, so a superseded
+        // same-kind answer is dropped there — but a files answer still arrives
+        // after the chip switched to text, up to the 12s command timeout, which
+        // is exactly how long a slow failure takes. Its results would overwrite
+        // the current kind's, and its error would be attributed to a search that
+        // did not produce it.
+        var generation = ++_fileSearchGeneration;
+
         DSearchService.search(fileQuery, {
             kind: kind,
             limit: 100
         }, function (response) {
+            if (generation !== root._fileSearchGeneration)
+                return;
             isFileSearching = false;
             if (response.error) {
                 // The helper's own diagnosis — "ripgrep is required for text

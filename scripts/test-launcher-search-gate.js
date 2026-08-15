@@ -11,31 +11,44 @@
 // tool. So the decisions are extracted verbatim from the shipped QML between its
 // markers and executed here, and the wiring around them is pinned as source.
 //
-// WHERE THE SEAM IS, and why it moved. A first version of this suite executed
-// the pure regions and pinned everything AROUND them by presence of a token; a
-// mutation run killed 1 of 10 planted mutants, because a mutant that keeps the
-// token and removes the behavior walks past a presence check. Two changes
-// followed. The composition itself was pushed INTO the regions — which property
-// lands in which slot is now executed (backendStateFrom, canDispatchFrom,
-// fileSearchQueryFrom, shouldRetryAfterProbe, fileLegActive) — and what has to
-// stay a QML binding is pinned by ORDER and BRANCH: the full argument list of a
-// call, a statement's position relative to the `return` after it, the block a
-// call sits inside. Section 4's `pathBranch < fdLookup` was the model.
+// WHERE THE SEAM IS, and why it moved twice. A first version executed the pure
+// regions and pinned everything AROUND them by presence of a token; a mutation
+// run killed 1 of 10, because a mutant that keeps the token and removes the
+// behavior walks past a presence check. So the composition moved INTO the
+// regions — backendStateFor and canDispatchFor over one named snapshot,
+// fileSearchQueryFrom, shouldRetryAfterProbe, fileLegActive, probeSettled,
+// probeFailureOutcome, errorLine — leaving exactly one adapter line per
+// decision, of which _probeSnapshot() is the only place a QML property becomes
+// a field. A second run then killed 19 of 26: the CONSUMERS of the view's facts
+// were pinned and their PRODUCERS were not, so the seam had merely moved a line
+// up. Both halves are pinned now, and what has to stay a QML binding is pinned
+// by ORDER and BRANCH — the full argument list of a call, a statement's
+// position relative to the `return` after it, the block a call sits inside.
+// Section 4's `pathBranch < fdLookup` was the model.
+//
+// Every assertion over the view's facts uses a combination the program can
+// actually build; see the note on `facts` in section 7. A control satisfied only
+// by an impossible input covers nothing, and one such control hid a dangling
+// hint on the first open of every machine.
 //
 // MUST-FAIL CONTROLS, each seen red, applied one at a time to the shipped tree.
 // In-region: an inverted ternary in the command table; an inverted unknown arm
 // in dispatchAllowed; a disabled "/" branch in fileSearchQueryFrom; the
-// prompt/checking order put back the wrong way round. Across the seam, which is
-// where the first version of this suite was blind: the fd and ripgrep slots
-// swapped in backendState; canDispatch reduced to a bare equality;
-// fileEmptyStateKey's leading arguments swapped; the hint fed the backend state
-// where the probe state belongs; the retry predicate inverted; ensureStatus()
-// moved to the launcher-CLOSED branch with the opened branch left in place; a
-// `return` hoisted above the stale-result clear; the fallback conjunct dropped
-// from search()'s refusal; _fileLegActive hardcoded false; the single-flight
-// guard moved below the budget reset; the generation check moved below the
-// in-flight reset; the retrying state never published; helperHasFallback
-// restated instead of derived. Plus the pre-fix sources, both the
+// prompt/checking and missing/error arm orders swapped. Across the seam: a
+// field of _probeSnapshot() assigned from the wrong property (the original
+// VGS-114 symptom, and now the only way left to express it); canDispatch
+// reduced to a bare equality; the three ResultsList producer bindings mutated —
+// kind and query transposed, a negation dropped, a command hardcoded; a fact
+// carrying the backend state where the probe state belongs; the retry predicate
+// inverted; ensureStatus() moved to the launcher-CLOSED branch with the opened
+// branch left in place, and its condition narrowed back; a `return` hoisted
+// above the stale-result clear; the fileSearchError capture and its reset
+// deleted; the fallback conjunct dropped from search()'s refusal; _fileLegActive
+// hardcoded false; the single-flight guard moved below the budget reset; the
+// generation check moved below the in-flight reset and made to fall through
+// instead of return; the retrying state never published; statusState declared
+// "ready"; helperHasFallback restated instead of derived; the argv terminator
+// and joined values reverted in either file. Plus the pre-fix sources, both the
 // `isFileSearching = ... && DSearchService.dsearchAvailable` form and the
 // `if (!DSearchService.dsearchAvailable) return;` form.
 
@@ -50,11 +63,14 @@ const SERVICE = path.join(repoRoot, "quickshell", "vshell", "Services", "DSearch
 const OVERVIEW = path.join(repoRoot, "quickshell", "vshell", "Modules", "WorkspaceOverlays", "OverviewSearch");
 const CONTROLLER = path.join(OVERVIEW, "Controller.qml");
 const RESULTS = path.join(OVERVIEW, "ResultsList.qml");
+const MENU = path.join(repoRoot, "config", "vshell", "plugins", "vgsMenu", "VGSMenu.qml");
 const HELPER = path.join(repoRoot, "bin", "vshell-helper");
 
 const serviceSource = fs.readFileSync(SERVICE, "utf8");
 const controllerSource = fs.readFileSync(CONTROLLER, "utf8");
 const resultsSource = fs.readFileSync(RESULTS, "utf8");
+const menuSource = fs.readFileSync(MENU, "utf8");
+const helperSource = fs.readFileSync(HELPER, "utf8");
 
 // This text comes from repo files and is EXECUTED here, so it runs inside a
 // child the parent kills on a wall clock — scripts/lib/qml-region.js says what
@@ -75,11 +91,11 @@ qmlSource.selfTest();
 const backend = evaluateMarked(serviceSource, "SEARCH BACKEND DECISION", [
     "backendCommandFor", "kindForType", "pathCompletion", "queryIsDispatchable",
     "backendStateFor", "dispatchAllowed", "helperHasFallback", "serviceRefuses",
-    "canDispatchFor", "probeSettled"
+    "canDispatchFor", "probeSettled", "probeFailureOutcome"
 ], "DSearchService.qml");
 
 const view = evaluateMarked(resultsSource, "EMPTY STATE DECISION", [
-    "fileEmptyStateKey", "fileHintKey", "fileEmptyIcon", "fileLegActive"
+    "fileEmptyStateKey", "fileHintKey", "fileEmptyIcon", "fileLegActive", "errorLine"
 ], "ResultsList.qml");
 
 const files = evaluateMarked(controllerSource, "FILE SEARCH DECISION", [
@@ -219,6 +235,12 @@ for (const type of ["file", "all", "", undefined, "nonsense"])
 // The decisions read NAMED FIELDS, so a fact cannot arrive in the wrong slot;
 // what the view builds is pinned verbatim in section 8b.
 
+// EVERY combination below is one the program can actually produce. That is not
+// decoration: `declined` defaults false, and a missing or checking backend state
+// with a dispatchable query ALWAYS declines — so an assertion that leaves the
+// default there is satisfied by an input the shell cannot build, and stops
+// covering the arm it names. Each case sets declined explicitly where the state
+// implies it.
 const facts = extra => Object.assign({
     backendState: "available",
     missingCommand: "",
@@ -229,42 +251,65 @@ const facts = extra => Object.assign({
     searchError: "",
     legActive: true
 }, extra);
+const declinedFacts = extra => facts(Object.assign({ declined: true }, extra));
 
-assert.equal(view.fileEmptyStateKey(facts({ backendState: "checking" })), "checking",
-    "a pending probe says so rather than claiming search is unavailable");
-assert.equal(view.fileEmptyStateKey(facts({ backendState: "missing", missingCommand: "rg" })), "missing-rg");
-assert.equal(view.fileEmptyStateKey(facts({ backendState: "missing", missingCommand: "fd" })), "missing-fd");
+assert.equal(view.fileEmptyStateKey(declinedFacts({ backendState: "checking" })), "checking",
+    "a probe still running says so rather than claiming search is unavailable — and this is the " +
+    "real startup state: the first probe declines every kind, so `declined` is true here");
+assert.equal(view.fileEmptyStateKey(declinedFacts({ backendState: "missing", missingCommand: "rg" })),
+    "missing-rg");
+assert.equal(view.fileEmptyStateKey(declinedFacts({ backendState: "missing", missingCommand: "fd" })),
+    "missing-fd");
 assert.equal(view.fileEmptyStateKey(facts({ queryLength: 0, dispatchable: false })), "prompt");
 assert.equal(view.fileEmptyStateKey(facts({ queryLength: 1, dispatchable: false })), "short");
 assert.equal(view.fileEmptyStateKey(facts({})), "empty");
 assert.equal(view.fileEmptyStateKey(facts({ backendState: "unknown" })), "empty",
     "an unanswerable probe does not rewrite the result message — the search still ran");
-assert.equal(view.fileEmptyStateKey(facts({
+assert.equal(view.fileEmptyStateKey(declinedFacts({
     backendState: "missing", missingCommand: "fd", queryLength: 0, dispatchable: false
 })), "missing-fd", "and a missing tool is worth saying before a query is typed");
 assert.equal(view.fileEmptyStateKey(facts({ searchError: "ripgrep is required for text search" })),
     "error",
     "a search that RAN and failed shows the helper's own diagnosis rather than 'no results'");
-assert.equal(view.fileEmptyStateKey(facts({ backendState: "unknown", declined: true })), "unchecked",
+assert.equal(view.fileEmptyStateKey(declinedFacts({ backendState: "unknown" })), "unchecked",
     "and one the gate refused says that instead");
 
-assert.equal(view.fileHintKey(facts({ backendState: "missing", missingCommand: "rg" })), "install-rg");
-assert.equal(view.fileHintKey(facts({ backendState: "missing", missingCommand: "fd" })), "install-fd");
-assert.equal(view.fileHintKey(facts({ backendState: "unknown", declined: true, probeState: "failed" })),
+// ARM ORDER, with both arms true at once — one field per assertion cannot see
+// a reordering, and both of these reorderings pass every assertion above.
+assert.equal(view.fileEmptyStateKey(declinedFacts({
+    backendState: "missing", missingCommand: "fd", searchError: "boom"
+})), "missing-fd",
+    "a missing tool outranks a leftover error: the tool is why the next search will fail too");
+assert.equal(view.fileEmptyStateKey(declinedFacts({ backendState: "checking" })), "checking",
+    "and a probe still running outranks declined — during the first probe EVERY kind is " +
+    "declined, so the other order makes the startup window say the tools could not be checked " +
+    "while they are being checked");
+
+assert.equal(view.fileHintKey(declinedFacts({ backendState: "missing", missingCommand: "rg" })),
+    "install-rg");
+assert.equal(view.fileHintKey(declinedFacts({ backendState: "missing", missingCommand: "fd" })),
+    "install-fd");
+assert.equal(view.fileHintKey(declinedFacts({ backendState: "unknown", probeState: "failed" })),
     "probe-failed",
     "a probe that could not run names ITSELF; blaming fd for it is the wrong cause");
-assert.equal(view.fileHintKey(facts({ backendState: "unknown", declined: true, probeState: "retrying" })),
+assert.equal(view.fileHintKey(declinedFacts({ backendState: "unknown", probeState: "retrying" })),
     "probe-retrying",
     "a retry in progress asks the user for NOTHING — it will answer on its own, and the reopen " +
     "advice is a no-op while an episode is in flight");
 assert.equal(view.fileHintKey(facts({ backendState: "unknown", probeState: "failed" })), "",
     "no probe line beside a search that actually ran, whatever the probe did");
-assert.equal(view.fileHintKey(facts({ backendState: "checking", probeState: "pending" })), "",
-    "nothing is claimed while the first answer is still coming");
+// THE STARTUP WINDOW, as the program produces it: first probe outstanding, two
+// characters typed, so the query is dispatchable and therefore declined. The
+// same case with declined:false is unreachable, and pinning that instead left
+// this silent — the hint rendered "Still checking ...: " with a dangling colon
+// and no reason, under a message already saying "Checking search tools".
+assert.equal(view.fileHintKey(declinedFacts({ backendState: "checking", probeState: "pending" })), "",
+    "the first probe reports NOTHING: there is no reason yet, and the message above already " +
+    "says the tools are being checked");
 assert.equal(view.fileHintKey(facts({})), "",
     "and a working backend needs no install step");
 for (const extra of [{ backendState: "missing", missingCommand: "fd" },
-    { backendState: "unknown", declined: true, probeState: "failed" }]) {
+    { backendState: "unknown", probeState: "failed" }]) {
     assert.equal(view.fileHintKey(facts(Object.assign({ legActive: false }, extra))), "",
         "no hint where no file search would have run: 'install fd' in a mode that never searches " +
         "files promises a fix that changes nothing");
@@ -274,20 +319,32 @@ assert.equal(view.fileEmptyIcon("checking", "file"), "hourglass_empty");
 assert.equal(view.fileEmptyIcon("missing-fd", "file"), "search_off");
 assert.equal(view.fileEmptyIcon("missing-rg", "text"), "search_off");
 assert.equal(view.fileEmptyIcon("unchecked", "file"), "search_off");
+assert.equal(view.fileEmptyIcon("error", "file"), "search_off");
 assert.equal(view.fileEmptyIcon("empty", "file"), "insert_drive_file");
 assert.equal(view.fileEmptyIcon("empty", "dir"), "folder_open");
 assert.equal(view.fileEmptyIcon("empty", "text"), "article");
 
 // The prompt comes first: nothing is being checked on the user's behalf before a
-// query that could dispatch.
+// query that could dispatch, and a query too short to dispatch is not declined.
 assert.equal(view.fileEmptyStateKey(facts({
     backendState: "checking", queryLength: 0, dispatchable: false
 })), "prompt", "an empty field prompts even while the probe is outstanding");
 assert.equal(view.fileEmptyStateKey(facts({
     backendState: "checking", queryLength: 1, dispatchable: false
 })), "short", "and a short query is short, not checking");
-assert.equal(view.fileEmptyStateKey(facts({ backendState: "checking" })), "checking",
-    "checking still wins for a query that would actually dispatch");
+
+// The helper's text, made safe to put on screen.
+assert.equal(view.errorLine("ripgrep is required for text search"),
+    "ripgrep is required for text search", "an ordinary diagnosis passes through");
+assert.equal(view.errorLine("usage: vshell launcher-search\n  --kind\n  --limit"),
+    "usage: vshell launcher-search",
+    "only the FIRST line: an argparse failure is a six-line usage block");
+assert.equal(view.errorLine("no such file: we\u0007ird\u202ename"), "no such file: we ird name",
+    "control and bidi characters are dropped — a filename out of the search roots ends up here");
+assert.equal(view.errorLine("x".repeat(400)).length, 160,
+    "and the length is bounded, so a whole argv cannot stretch the centered column");
+assert.equal(view.errorLine(""), "");
+assert.equal(view.errorLine(null), "");
 
 // --- 7b. the file-search leg, and the query it would send -------------------
 
@@ -373,6 +430,28 @@ for (const [fd, rg] of [[true, true], [true, false], [false, true], [false, fals
         assert.equal(backend.canDispatchFor("folders", "~/dev", probe(state, fd, rg)), true,
             "and path completion always dispatches: the helper answers it before fd is consulted");
     }
+}
+
+// A failed probe never demotes a successful one. Re-probing runs on every open
+// of a machine missing a tool, so one slow re-probe replacing "ready" would
+// refuse name search and blame tools that were found seconds earlier.
+{
+    const kept = backend.probeFailureOutcome("ready", 1, 3);
+    assert.equal(kept.state, "ready",
+        "a re-probe that fails leaves the previous successful answer standing");
+    assert.equal(kept.publishReason, false,
+        "and does not overwrite its reason with this failure's");
+    assert.ok(kept.retry, "while the retry still runs in the background");
+    assert.equal(backend.probeFailureOutcome("ready", 3, 3).state, "ready",
+        "even once the retries are spent: the earlier answer is still the best one we have");
+
+    assert.equal(backend.probeFailureOutcome("pending", 1, 3).state, "retrying",
+        "with no earlier answer, the first failure publishes retrying");
+    assert.equal(backend.probeFailureOutcome("retrying", 3, 3).state, "failed",
+        "and the last one gives up");
+    assert.ok(backend.probeFailureOutcome("pending", 1, 3).publishReason,
+        "those two do publish the reason, since there is nothing better to show");
+    assert.ok(!backend.probeFailureOutcome("retrying", 3, 3).retry, "and stop retrying");
 }
 
 // A settled answer is the only one worth leaving alone. "ready" with a tool
@@ -494,7 +573,21 @@ for (const state of ["available", "unknown", "checking"])
             "and the gate asks about THAT kind, with the query the search will send"],
         ["_applyFileSearchResults([], effectiveType)",
             "BOTH ways a search ends with nothing clear the previous kind's hits — the gate " +
-            "declining it and the search failing", 2]
+            "declining it and the search failing", 2],
+        ["fileSearchError = response.error;",
+            "the helper's diagnosis is CAPTURED. Every other pin for this feature — the executed " +
+            "arm, the facts field, the case in getEmptyText — is satisfied with this one line " +
+            "deleted, and then the fact is never non-empty and the whole feature is gone"],
+        ['fileSearchError = "";',
+            "and cleared on both paths that supersede it: the declined gate and a fresh " +
+            "dispatch. Without the dispatch reset the previous failure's text sits under the " +
+            "next search's empty result", 2],
+        ["var generation = ++_fileSearchGeneration;",
+            "a controller-side generation, because DSearchService versions per KIND: a files " +
+            "answer still lands after the chip switched to text"],
+        ["if (generation !== root._fileSearchGeneration) return;",
+            "checked at the TOP of the callback, so a stale answer neither overwrites the " +
+            "current kind's results nor attributes its error to them"]
     ]);
 
     // ORDER, not presence: a `return` placed above the clear leaves both tokens
@@ -602,8 +695,30 @@ for (const state of ["available", "unknown", "checking"])
     q.requires(q.body("getEmptyText"), "getEmptyText()", [
         ["case \"unchecked\":", "a refused search has its own message"],
         ["case \"checking\":", "as does a probe still running"],
-        ["case \"error\":", "and a search that ran and failed shows what the helper said"]
+        ["case \"error\":", "and a search that ran and failed shows what the helper said"],
+        ["root.errorLine(root.controller?.fileSearchError)",
+            "through errorLine, never raw: that text can be a whole argv or a filename out of " +
+            "the search roots, carrying control and bidi characters into a launcher overlay"]
     ]);
+
+    // The label that renders it is bounded like the hint beside it. Unbounded,
+    // a long diagnosis stretches the centered column past the results panel.
+    {
+        const at = q.indexOf("text: getEmptyText()");
+        assert.notEqual(at, -1, "ResultsList must render the empty-state message");
+        const label = qmlSource.flat(stripComments(
+            q.blockFrom(q.lastIndexOf("StyledText {", at), "the empty-state message label")));
+        for (const [needed, why] of [
+            ["width: Math.min(", "a width bound"],
+            ["wrapMode: Text.WordWrap", "wrapping"],
+            ["maximumLineCount:", "a line cap"],
+            ["elide:", "an elide"]
+        ]) {
+            assert.ok(label.includes(needed),
+                `the empty-state message label needs ${why} — it renders the helper's own text, ` +
+                "which is not length-bounded at the source");
+        }
+    }
     q.requires(q.body("getDependencyHint"), "getDependencyHint()", [
         ["case \"probe-retrying\":",
             "a retry in progress gets its own line: the reopen advice is a no-op while an " +
@@ -621,6 +736,75 @@ for (const [label, source] of [["Controller.qml", controllerSource], ["ResultsLi
             `${label} must not read \`${banned}\`: one flag answering for two backends is the ` +
             "defect — availability comes from DSearchService.backendState/canDispatch per kind");
     }
+}
+
+// --- 8c. the vgsMenu plugin, which this branch also changed -----------------
+//
+// Read here because it is in the diff: the same threshold owner, the same argv
+// shape, and a plugin the suite did not open before.
+{
+    const q = qmlSource(menuSource, "VGSMenu.qml");
+    const code = qmlSource.flat(stripComments(menuSource));
+
+    for (const call of [
+        "fileSearching = DSearchService.queryIsDispatchable(trimmed);",
+        "if (!DSearchService.queryIsDispatchable(trimmed))",
+        "!DSearchService.queryIsDispatchable(root.query)"
+    ]) {
+        assert.ok(code.includes(qmlSource.flat(call)),
+            `VGSMenu must ask the one threshold owner: \`${call}\`. Its own literal would keep ` +
+            "searching at two characters while the launcher's own rule moved");
+    }
+
+    const openFolder = q.body("openFolder");
+    const terminator = openFolder.indexOf('args.push("--", path);');
+    const launched = openFolder.indexOf("Quickshell.execDetached(args)");
+    assert.notEqual(terminator, -1,
+        "openFolder must terminate its options before the path, exactly as search() and " +
+        "preview() do — the folder-open command is user-configured");
+    assert.ok(terminator < launched, "and do it before launching");
+    assert.ok(qmlSource.flat(stripComments(openFolder)).includes('args.push("--command=" + SettingsData.launcherFolderOpenCommand);'),
+        "and pass that configured command joined to its flag");
+}
+
+// No launcher SEARCH surface may carry its own length literal. Scoped to the
+// functions that dispatch a file search: the Controller's plugin-phase and
+// clipboard legs have their own thresholds for a different question and are
+// deliberately untouched.
+for (const [label, source, fns] of [
+    ["Controller.qml", controllerSource, ["performFileSearch", "fileSearchQuery", "_retryFileSearchAfterProbe"]],
+    ["VGSMenu.qml", menuSource, ["refreshAllItems", "refreshFileItems"]]
+]) {
+    const q = qmlSource(source, label);
+    for (const fn of fns) {
+        const body = stripComments(q.body(fn));
+        assert.ok(!/length\s*[<>]=?\s*2/.test(body),
+            `${label}::${fn} must not carry its own two-character literal — ` +
+            "DSearchService.queryIsDispatchable owns that rule for every search surface");
+    }
+}
+
+// --- 8d. the helper's own argv, one layer down ------------------------------
+//
+// The second time an option-vs-value ambiguity crossed this boundary: the QML
+// joined its flags, argparse accepted the value, and fd rejected it — silently,
+// because the run was not checked.
+{
+    const nameHits = helperSource.slice(helperSource.indexOf("def _launcher_search_name_hits("));
+    const fdCall = nameHits.indexOf("subprocess.run(command");
+    assert.ok(nameHits.includes('command.append("--exclude=" + value)'),
+        "the helper must pass an ignore entry joined to its flag: separated, a value starting " +
+        "with '-' is an option name to fd and the whole invocation is refused");
+    assert.ok(!nameHits.slice(0, fdCall).includes('"--exclude", value'),
+        "and must not keep the separated form beside it");
+    assert.ok(nameHits.includes("if completed.returncode != 0:"),
+        "and must CHECK fd's exit: fd exits 0 for an ordinary search including permission " +
+        "warnings, so non-zero means the invocation was refused, and reporting that as an empty " +
+        "result set is a wrong answer wearing a successful one's clothes");
+    assert.ok(nameHits.slice(0, nameHits.indexOf("if completed.returncode != 0:")).includes("stderr=subprocess.PIPE"),
+        "capturing fd's stderr, so the report names the cause");
+    assert.ok(nameHits.indexOf("raise RuntimeError(", fdCall) !== -1,
+        "and raise rather than continue with an empty candidate list");
 }
 
 // --- 9. the view cannot call a controller function that does not exist ------
@@ -650,37 +834,15 @@ for (const [label, source] of [["Controller.qml", controllerSource], ["ResultsLi
 
     q.requires(q.body("_statusProbeFailed"), "_statusProbeFailed()", [
         ["root.log.warn(", "a failed probe is logged rather than swallowed"],
-        ["statusRetryTimer.start()", "and retried"],
-        ["root._statusAttempts < root._statusMaxAttempts",
-            "under a bound, so it cannot spawn a process a second for the life of the shell"],
-        ['root.statusState = "failed"', "before it finally gives up in a state callers can see"]
+        ["probeFailureOutcome(root.statusState, root._statusAttempts, root._statusMaxAttempts)",
+            "what it publishes is the executed rule's answer, current state included — that is " +
+            "what stops a failed re-probe from demoting a successful one"],
+        ["root.statusState = outcome.state;", "and the state it publishes is that answer"],
+        ["if (outcome.publishReason) root.statusError = reason;",
+            "the reason is published only where the rule says so, or a re-probe's failure " +
+            "overwrites the reason belonging to an answer still on screen"],
+        ["statusRetryTimer.start()", "the retry still runs whatever is published"]
     ]);
-
-    q.requires(q.body("_probeStatus"), "_probeStatus()", [
-        ["exitCode === 124",
-            "a timeout is named as one: 'the CLI never answered' is a different diagnosis from " +
-            "'the CLI answered with a failure'"],
-        ["root._statusProbeFailed(", "and every failure path goes through the same handler", 2],
-        ['root.statusState = "ready"', "success is the ONLY thing that publishes the tool flags"]
-    ]);
-
-    // ORDER inside _statusProbeFailed: the retrying state has to be published
-    // from the retry branch, before the timer is armed and before the give-up
-    // assignment, or the whole retry window reads as "checking" and refuses
-    // every search for the ~12s it lasts.
-    {
-        const failed = q.body("_statusProbeFailed");
-        const retrying = failed.indexOf('root.statusState = "retrying"');
-        const armed = failed.indexOf("statusRetryTimer.start()");
-        const gaveUp = failed.indexOf('root.statusState = "failed"');
-        assert.ok(retrying !== -1 && armed !== -1 && gaveUp !== -1,
-            "the retry path must publish a retrying state, arm the timer, and keep a give-up state");
-        assert.ok(retrying < armed,
-            "the state has to change before the timer is armed, so a search racing the retry " +
-            "already sees an unknown answer rather than a pending one");
-        assert.ok(armed < gaveUp,
-            "and giving up has to come after the retries, not instead of them");
-    }
 
     // ORDER inside the probe: the generation check is the FIRST thing its
     // callback does. Below the in-flight reset it would let a superseded probe

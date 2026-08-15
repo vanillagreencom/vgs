@@ -93,6 +93,11 @@ Item {
             return f.missingCommand === "rg" ? "install-rg" : "install-fd";
         if (!f.declined)
             return "";
+        // The first probe declines every kind, so "declined" alone would put a
+        // second line under "Checking search tools" on the first open of every
+        // machine — reporting a reason nobody has yet.
+        if (f.probeState === "pending")
+            return "";
         // A probe still retrying will answer on its own; only a spent one is
         // worth asking the user to do something about.
         return f.probeState === "failed" ? "probe-failed" : "probe-retrying";
@@ -104,6 +109,16 @@ Item {
     // message can render over plugin results.
     function fileLegActive(searchMode, dispatchable) {
         return searchMode === "files" || !!dispatchable;
+    }
+
+    // The helper's diagnosis, made safe to render: first line only, control and
+    // bidi characters dropped, length bounded. The text can quote a filename
+    // from the search roots or a whole argv, and this label is one line in a
+    // centered column. The full text stays in the log.
+    function errorLine(text) {
+        const first = String(text || "").split("\n")[0];
+        const clean = first.replace(/[\u0000-\u001f\u007f-\u009f\u200e\u200f\u202a-\u202e\u2066-\u2069]/g, " ").trim();
+        return clean.length > 160 ? clean.slice(0, 159) + "…" : clean;
     }
 
     function fileEmptyIcon(stateKey, fileType) {
@@ -611,10 +626,18 @@ Item {
 
             StyledText {
                 anchors.horizontalCenter: parent.horizontalCenter
+                // Bounded like the hint below: the error arm renders text from
+                // the helper, which can carry a whole argv or a filename out of
+                // the search roots, and this column is centered inside the
+                // results panel.
+                width: Math.min(360, Math.max(160, root.width - Theme.spacingXL * 2))
                 text: getEmptyText()
                 font.pixelSize: Theme.fontSizeMedium
                 color: Theme.surfaceVariantText
                 horizontalAlignment: Text.AlignHCenter
+                wrapMode: Text.WordWrap
+                maximumLineCount: 3
+                elide: Text.ElideRight
 
                 function getEmptyText() {
                     var mode = root.controller?.searchMode ?? "all";
@@ -632,7 +655,7 @@ Item {
                         case "unchecked":
                             return I18n.tr("Search tools could not be checked", "Overview search empty state when the probe failed and the search was not attempted");
                         case "error":
-                            return root.controller?.fileSearchError ?? I18n.tr("Search failed");
+                            return root.errorLine(root.controller?.fileSearchError) || I18n.tr("Search failed");
                         case "prompt":
                             return I18n.tr("Type to search files");
                         case "short":

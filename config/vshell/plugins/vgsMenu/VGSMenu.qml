@@ -1854,7 +1854,7 @@ PluginComponent {
                                 StyledText {
                                     width: 260
                                     text: root.fileSearching ? "Searching…"
-                                        : (root.categories[root.selectedCategoryIndex]?.id === "files" && root.query.trim().length < 2
+                                        : (root.categories[root.selectedCategoryIndex]?.id === "files" && !DSearchService.queryIsDispatchable(root.query)
                                             ? "Type at least two characters"
                                             : "No matching results")
                                     font.pixelSize: Theme.fontSizeMedium
