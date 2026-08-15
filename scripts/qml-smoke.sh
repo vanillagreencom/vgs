@@ -275,19 +275,42 @@ static_check() {
 
 # --- isolated nested runtime check ------------------------------------------
 
+# nested_unavailable <reason> [no-host-socket]
+#
+# The second argument is what makes option 4 appear, and it is an ARGUMENT
+# rather than a test of the environment on purpose. This function has six call
+# sites and only one of them is the missing-host-socket case; the Hyprland, qs
+# and python3 preconditions are checked first, so a headless agent shell hits
+# those with WAYLAND_DISPLAY equally unset. Gating on WAYLAND_DISPLAY offered
+# "point the sandbox at the session socket" as the fix for a missing Hyprland
+# binary — the same keying-on-a-proxy defect that moving this remedy out of
+# scripts/validate was meant to end. Only the call site that knows the cause
+# passes the flag, and a reword of the reason string cannot break it.
 nested_unavailable() {
-  local reason="$1"
+  local reason="$1" cause="${2:-}"
   if [[ "$require_nested" == true ]]; then
     fail "isolated runtime check unavailable: $reason"
   else
     note "isolated runtime check skipped: $reason"
+  fi
+  # The WAYLAND_DISPLAY test stays as a SECONDARY guard: with one set, pointing
+  # the sandbox at "the session socket" is not the advice the reader needs.
+  local nest_remedy=""
+  if [[ "$cause" == no-host-socket && -z "${WAYLAND_DISPLAY:-}" ]]; then
+    nest_remedy="qml-smoke:   4. point the sandbox at the session's own socket (it keeps its own runtime
+qml-smoke:      dir, HOME and bus, so the live session is untouched). Use the value
+qml-smoke:      a session shell reports for WAYLAND_DISPLAY — the basename is
+qml-smoke:      session-dependent, so this cannot name it for you (VGS-70 will make
+qml-smoke:      --nested discover it). Export WAYLAND_DISPLAY to that value and
+qml-smoke:      XDG_RUNTIME_DIR to /run/user/\$(id -u), then re-run scripts/validate qml"
   fi
   cat >&2 <<EOF
 qml-smoke: a runtime check must run inside its own compositor. Safe options:
 qml-smoke:   1. install a nested compositor (Hyprland is enough) and re-run with --nested
 qml-smoke:   2. validate on a spare TTY/VM session that has no live VGS shell
 qml-smoke:   3. read the live shell's own QML errors: vshell logs -n 200
-qml-smoke: never run 'qs -c vshell' or 'qs -p quickshell/vshell' in a live session.
+${nest_remedy:+$nest_remedy
+}qml-smoke: never run 'qs -c vshell' or 'qs -p quickshell/vshell' in a live session.
 EOF
 }
 
@@ -843,7 +866,7 @@ nested_check() {
   if ! host_socket="$(host_wayland_socket)" || [[ ! -S "$host_socket" ]]; then
     # Without a host Wayland socket a nested compositor would fall back to DRM
     # and fight the real session for the GPU/VT. Refuse rather than risk it.
-    nested_unavailable "no host Wayland socket to nest inside (WAYLAND_DISPLAY unset)"
+    nested_unavailable "no host Wayland socket to nest inside (WAYLAND_DISPLAY unset)" no-host-socket
     return
   fi
 

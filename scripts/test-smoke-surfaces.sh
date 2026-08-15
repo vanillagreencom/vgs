@@ -17,6 +17,11 @@
 # points at a fabricated procfs.
 set -euo pipefail
 
+# The status smoke-surfaces.sh exits on a skip path (VGS-123): "nothing was
+# checked", distinct from both its pass (0) and its failures (1). Asserting the
+# literal here is what keeps a skip from regressing back into a pass.
+SKIP_STATUS=77
+
 repo_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
@@ -126,6 +131,24 @@ run_smoke_on() {
   err="$(cat "$tmp/stderr")"
 }
 
+# run_smoke_bare <PATH> <case name> [VAR=VAL ...] — like run_smoke_on, but it
+# does NOT inject HYPRLAND_INSTANCE_SIGNATURE. That injection is what made the
+# Hyprland precondition itself untestable: every other case satisfies it, so
+# reverting that arm to exit 0 left the whole suite green (VGS-123 review).
+# `env -u` runs before the assignments in "$@", so a case that wants the
+# signature SET can still pass it and have it stick.
+run_smoke_bare() {
+  local path="$1"
+  case_name="$2"
+  shift 2
+  rc=0
+  out="$(env -u HYPRLAND_INSTANCE_SIGNATURE "$@" \
+    PATH="$path" \
+    FAKE_LAYERS_JSON="$layers_json" \
+    "$fake_repo/scripts/smoke-surfaces.sh" 2>"$tmp/stderr")" || rc=$?
+  err="$(cat "$tmp/stderr")"
+}
+
 fail() {
   {
     echo "FAIL [$case_name]: $*"
@@ -173,7 +196,7 @@ expect_stdout "surface smoke passed"
 run_smoke "no VGS shell" \
   VSHELL_PROC_ROOT="$proc" \
   FAKE_QS_JSON="[]"
-expect_rc 0
+expect_rc "$SKIP_STATUS"
 expect_stdout "surface smoke skipped: no live VGS shell on this session"
 
 # Some other Quickshell app on the seat is none of this script's business. This
@@ -183,7 +206,7 @@ expect_stdout "surface smoke skipped: no live VGS shell on this session"
 run_smoke "unrelated quickshell shell" \
   VSHELL_PROC_ROOT="$proc" \
   FAKE_QS_JSON="[$(entry 101 "$tmp/somebody-else/quickshell/caelestia")]"
-expect_rc 0
+expect_rc "$SKIP_STATUS"
 expect_stdout "surface smoke skipped: no live VGS shell on this session"
 
 # ...and it must still skip when it sits beside our own live shell, rather than
@@ -230,21 +253,21 @@ expect_stderr "$foreign_root (pid 202)"
 run_smoke "foreign entry whose process is a zombie" \
   VSHELL_PROC_ROOT="$proc" \
   FAKE_QS_JSON="[$(entry 303 "$foreign_config")]"
-expect_rc 0
+expect_rc "$SKIP_STATUS"
 expect_stdout "surface smoke skipped: no live VGS shell on this session"
 
 # After PID reuse the number belongs to something unrelated.
 run_smoke "foreign entry whose pid was reused" \
   VSHELL_PROC_ROOT="$proc" \
   FAKE_QS_JSON="[$(entry 404 "$foreign_config")]"
-expect_rc 0
+expect_rc "$SKIP_STATUS"
 expect_stdout "surface smoke skipped: no live VGS shell on this session"
 
 # The pid is gone from the process table entirely.
 run_smoke "foreign entry whose process is gone" \
   VSHELL_PROC_ROOT="$tmp/empty-proc" \
   FAKE_QS_JSON="[$(entry 202 "$foreign_config")]"
-expect_rc 0
+expect_rc "$SKIP_STATUS"
 expect_stdout "surface smoke skipped: no live VGS shell on this session"
 
 # Garbage in the registry must FAIL. Falling back to the skip here would be a
@@ -355,7 +378,18 @@ cp "$bin_dir/hyprctl" "$nocli/hyprctl"
 
 run_smoke_on "$nocli" "no Quickshell CLI on PATH" \
   VSHELL_PROC_ROOT="$proc"
-expect_rc 0
+expect_rc "$SKIP_STATUS"
 expect_stdout "no Quickshell CLI (qs, quickshell) on PATH"
+
+# The Hyprland precondition, both arms. This is the skip path that fires most
+# often — an agent shell, a headless checkout, CI itself — and until these two
+# cases existed it was the one arm of the four with no must-fail control at all.
+run_smoke_bare "$min_path" "no hyprctl on PATH" HYPRLAND_INSTANCE_SIGNATURE=test
+expect_rc "$SKIP_STATUS"
+expect_stdout "surface smoke skipped: Hyprland session not available"
+
+run_smoke_bare "$bin_dir:$PATH" "HYPRLAND_INSTANCE_SIGNATURE unset"
+expect_rc "$SKIP_STATUS"
+expect_stdout "surface smoke skipped: Hyprland session not available"
 
 echo "smoke-surfaces precondition checks passed"

@@ -1,12 +1,25 @@
 #!/usr/bin/env bash
+# Live-session surface smoke. Local-only: it needs a Hyprland VGS session and
+# reads `hyprctl layers`.
+#
+# EXIT 77 MEANS "NOTHING WAS CHECKED" (VGS-123). Every skip path below — no
+# Hyprland, no Quickshell CLI, no live VGS shell — exits 77 rather than 0, so a
+# caller cannot read a precondition failure as a pass. `scripts/validate` maps
+# 77 on this row to a NAMED skip in its summary; a foreign checkout is still a
+# hard failure (exit 1), because there the assertions were requested and could
+# not be trusted. Branch coverage: scripts/test-smoke-surfaces.sh.
 set -euo pipefail
+
+# Autotools' "skipped" convention, so "did not run" is distinguishable from
+# both a pass and a failure by status alone.
+readonly SKIP_STATUS=77
 
 repo_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 vshell_bin="$repo_root/bin/vshell"
 
 if ! command -v hyprctl >/dev/null 2>&1 || [[ -z ${HYPRLAND_INSTANCE_SIGNATURE:-} ]]; then
   echo "surface smoke skipped: Hyprland session not available"
-  exit 0
+  exit "$SKIP_STATUS"
 fi
 
 snapshot_layers() {
@@ -112,7 +125,7 @@ require_own_shell() {
   done
   if [[ -z "$qs_bin" ]]; then
     echo "surface smoke skipped: no Quickshell CLI (qs, quickshell) on PATH, no instance registry to consult"
-    exit 0
+    exit "$SKIP_STATUS"
   fi
 
   # stdout and stderr are captured SEPARATELY on purpose. Folding them together
@@ -289,7 +302,7 @@ PY
     0) return 0 ;;
     10)
       echo "surface smoke skipped: no live VGS shell on this session"
-      exit 0
+      exit "$SKIP_STATUS"
       ;;
     11)
       {

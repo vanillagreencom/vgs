@@ -86,9 +86,13 @@ Reference: `references/plugin-development.md`.
 2. Debug with `vshell backend doctor|methods|request <method> [json]`.
 
 ## Validation
-The canonical check list and its per-area scoping (Go-only, QML-only, helper,
-packaging) live in AGENTS.md § Validation — run the subset for what you
-touched. No command list is restated here: a partial copy reads as complete.
+The suite is `scripts/validate [AREA]`, areas `go`, `qml`, `helper`,
+`packaging`, `docs`, `all` — run the area for what you touched. The command
+manifest and its per-area scoping live in that runner; no command list is
+restated here, because a partial copy reads as complete. Its exit status is
+four-valued: `0` ran and passed, `77` passed but something did not run — report
+it as "passed, N skipped", naming them, never as a bare pass — `1` failed, `2` a
+broken invocation that ran nothing.
 Smoke-mode coverage, the sandbox recipe, and the second-shell rule
 (never `qs -c vshell` or `qs -p quickshell/vshell` against a live session,
 never `pkill quickshell`) are under AGENTS.md § Never launch a second shell
