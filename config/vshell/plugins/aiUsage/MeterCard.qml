@@ -8,17 +8,20 @@ import qs.Widgets
 // markup from two separate copies, so every per-meter field had to be written
 // twice here and a third time in MeterRow. Now it is written once. (VGS-72)
 //
-// `host` is the widget root rather than one function property per helper:
-// the delegate needs percentageColor, resetLabel and the spend formatters, and
-// threading four callables through every call site is the duplication this is
-// meant to remove. A sibling type resolves from the plugin's own directory with
+// `host` is the widget root rather than one function property per helper. This
+// card reads percentageColor from it; its sibling MeterRow also reads
+// formatSpend and formatResetAt, and the call sites compose detailText from
+// resetLabel/formatSpendExact. Threading those callables through every call site
+// is the duplication this is meant to remove. They are the widget's own surface;
+// the arithmetic behind them lives in AiUsageFormat.qml. A sibling type resolves from the plugin's own directory with
 // no import — verified in the running shell, see the commit message.
 Column {
     id: card
 
     // The AiUsageWidget root. Supplies the shared formatting/colour helpers.
     property var host: null
-    // One entry from host.metersFor()/host.primaryMeters.
+    // One entry from host.primaryMeters, or from AiUsageFormat.metersFor() for
+    // a per-account card.
     property var meter: null
     // False when the account this meter belongs to failed to report: the
     // numbers are stale, so they read as error rather than as a healthy

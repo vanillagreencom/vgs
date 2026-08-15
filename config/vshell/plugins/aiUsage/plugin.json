@@ -1,7 +1,7 @@
 {
     "id": "aiUsage",
     "name": "AI Usage",
-    "description": "AI provider usage widget backed by optional local ai-usage compatible command.",
+    "description": "Claude and Codex subscription usage in the bar, one labelled slot per provider, backed by an optional local ai-usage compatible command.",
     "version": "1.0.0",
     "license": "MIT",
     "author": "VanillaGreen",

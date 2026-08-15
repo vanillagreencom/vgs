@@ -10,7 +10,12 @@ PluginComponent {
     id: root
 
     // --- Settings-backed config ---
-    property string provider: pluginData.provider || "claude"
+    // Normalised, so a settings file carrying anything else degrades to the
+    // default instead of leaving the widget inert: an unknown provider is
+    // rejected as a launch tag, so every payload would be discarded and nothing
+    // would ever relaunch, with no way back but editing settings by hand. It is
+    // also what keeps the argv the helper receives a known provider.
+    readonly property string provider: logic.normalizeProvider(pluginData.provider) || "claude"
     property int refreshSeconds: pluginData.refreshSeconds || 300
     // How the bar number is derived from the pool. "pool" = mean of each
     // account's tightest window, "best" = the account with the most headroom,
@@ -42,230 +47,105 @@ PluginComponent {
             root.pluginService.savePluginData("aiUsage", "headlineMode", m);
     }
 
-    // The tightest window an account has — what actually blocks it.
-    function accountPeak(a) {
-        if (!a)
-            return 0;
-        let peak = 0;
-        if (a.session && a.session.pct !== undefined) peak = Math.max(peak, a.session.pct);
-        if (a.weekly && a.weekly.pct !== undefined) peak = Math.max(peak, a.weekly.pct);
-        const ms = a.models || [];
-        for (let i = 0; i < ms.length; i++) peak = Math.max(peak, ms[i].pct || 0);
-        if (a.spend && a.spend.pct !== undefined) peak = Math.max(peak, a.spend.pct);
-        return peak;
+    // Provider identity, headline arithmetic and pill composition. Extracted so
+    // scripts/test-ai-usage-provider.js runs the shipped code; the wrappers
+    // below just bind the widget's settings to it.
+    AiUsageLogic {
+        id: logic
     }
-    function isEnterpriseAccount(account) {
-        if (!account)
-            return false;
-        if (account.enterprise === true)
-            return true;
-        // Compatibility with helper payloads from before `enterprise` was
-        // explicit. Never infer account type from the email address.
-        const plan = String(account.plan || "").toLowerCase();
-        return plan.indexOf("enterprise") === 0 || account.spend !== null && account.spend !== undefined;
+
+    // Meters, status classes and the date/money formatting the popout renders.
+    AiUsageFormat {
+        id: fmt
     }
-    function orderedAccounts(list) {
-        const ordered = (list || []).slice();
-        ordered.sort((a, b) => {
-            const groupA = root.isEnterpriseAccount(a) ? 1 : 0;
-            const groupB = root.isEnterpriseAccount(b) ? 1 : 0;
-            if (groupA !== groupB)
-                return groupA - groupB;
-            const labelA = String(a.label || a.id || "");
-            const labelB = String(b.label || b.id || "");
-            const foldedA = labelA.toLowerCase();
-            const foldedB = labelB.toLowerCase();
-            if (foldedA < foldedB)
-                return -1;
-            if (foldedA > foldedB)
-                return 1;
-            return labelA < labelB ? -1 : (labelA > labelB ? 1 : 0);
-        });
-        return ordered;
-    }
+
     function shownAccounts(list) {
-        return root.orderedAccounts(list).filter(a => a && !root.isHidden(a.id));
-    }
-    // Headline over whichever accounts are visible, in the chosen mode.
-    function headlineFor(list) {
-        const peaks = root.shownAccounts(list).filter(a => a.ok).map(root.accountPeak);
-        if (peaks.length === 0)
-            return null;
-        if (root.headlineMode === "best")
-            return Math.min.apply(null, peaks);
-        if (root.headlineMode === "worst")
-            return Math.max.apply(null, peaks);
-        let sum = 0;
-        for (let i = 0; i < peaks.length; i++) sum += peaks[i];
-        return Math.round(sum / peaks.length);
+        return logic.shownIn(list, root.hiddenAccounts);
     }
 
     // --- Live state ---
+    //
+    // ONE accepted payload, for the provider that is selected. Everything the
+    // popout renders is a binding off it, so a provider switch invalidates all
+    // of it by clearing this single property — there is no hand-maintained
+    // mirror to forget a field in, which is how the previous provider's numbers
+    // used to survive a switch (VGS-118).
+    property var current: null
+    // The filing stamp of what `current` holds, so the promotion path can ask
+    // the same newer-success question the failure paths ask.
+    property int currentFiledAt: 0
+    // Why the last fetch for the selected provider could not deliver a payload.
+    // Non-empty means what `current` holds is no longer trustworthy.
+    property string fetchError: ""
     property bool loading: true
-    property bool ok: false
-    property string errorText: ""
-    property string plan: ""
-    property int sessionPct: 0
-    property string sessionReset: ""
-    property double sessionResetAt: 0
-    property bool hasSession: true  // absent when the provider reports no ~5h window (e.g. weekly-only Codex accounts)
-    property int weeklyPct: 0
-    property string weeklyReset: ""
-    property double weeklyResetAt: 0
-    property bool hasWeekly: true
-    property string thirdLabel: ""
-    property int thirdPct: 0
-    property string thirdReset: ""
-    property double thirdResetAt: 0
-    property bool hasThird: true   // model-scoped weekly (Claude) / extra lane (Codex); hidden when the API omits it
+
+    // Everything the popout shows about the payload, from one function that has
+    // already taken the hidden accounts out. The payload's own top-level fields
+    // describe the first LIVE account the backend found, hidden or not, so they
+    // are only trustworthy for the older shape that reports no accounts at all.
+    readonly property var view: logic.popoutView(root.current, root.hiddenAccounts, root.loading)
+
+    readonly property bool ok: root.fetchError === "" && root.view.ok
+    readonly property string errorText: root.fetchError !== "" ? root.fetchError : root.view.error
+    readonly property string plan: root.view.plan
+    // Still fetching, which the popout must not render as a failure.
+    readonly property bool pending: root.fetchError === "" && root.view.pending
 
     // --- Multi-account state ---
     // People run several subscriptions side by side (one config dir per wrapper
-    // script). With a single account this stays a one-entry list and every path
-    // below falls back to the flat fields above, so nothing changes for them.
-    property var accounts: []
-    property var aggregate: null
-    readonly property bool multiAccount: (root.accounts || []).length > 1
+    // script). One account keeps the single-account view; several render a card
+    // each, carrying their own label, plan and error — which is why the card path
+    // follows what the payload REPORTED, not what is left after hiding.
+    readonly property var accounts: (root.current && root.current.accounts) || []
+    readonly property bool multiAccount: root.view.cards
+    // The payload reported accounts and the user is hiding all of them: nothing
+    // failed, there is simply nothing to show.
+    readonly property bool allHidden: root.view.allHidden
     property string expandedAccountId: ""
     readonly property int pillFontSize: Theme.barTextSize(
         root.barThickness, root.barConfig?.fontScale, root.barConfig?.maximizeWidgetText)
 
-    // Consumption across the whole pool: each account contributes one 100%
-    // allowance, so this is consumed/available — four accounts at 50% read as
-    // 50%, not 200%. Prefers the session window like the single-account pill.
-    readonly property int aggregatePct: {
-        if (!root.aggregate)
-            return root.primaryPct;
-        // `pct` is the mean of each account's tightest window. The older
-        // session/weekly means are kept for compatibility but must not be the
-        // headline: averaging the 5h window alone read 8% on a pool whose
-        // weeklies were at 96-100%.
-        const local = root.headlineFor(root.accounts);
-        if (local !== null)
-            return local;
-        if (root.aggregate.pct !== null && root.aggregate.pct !== undefined)
-            return root.aggregate.pct;
-        if (root.aggregate.weekly !== null && root.aggregate.weekly !== undefined)
-            return root.aggregate.weekly;
-        if (root.aggregate.session !== null && root.aggregate.session !== undefined)
-            return root.aggregate.session;
-        return 0;
-    }
-    readonly property int headlinePct: root.multiAccount ? root.aggregatePct : root.primaryPct
+    // THE headline for what the popout is showing, from the same function the
+    // pill slots use, so the bar, the vertical bar and the popout header cannot
+    // disagree. Null when the payload yields no number — including the case where
+    // the user has hidden every account it reported, where the old per-surface
+    // arithmetic showed an error, 60% and "0 accounts · 60% used" at once.
+    readonly property var currentHead: logic.headOf(root.current, root.headlineMode, root.hiddenAccounts)
+    readonly property bool hasHeadline: root.currentHead !== null
+    readonly property int headlinePct: root.currentHead ? root.currentHead.pct : 0
 
-    // Meters for one account entry, in the same order the single-account view
-    // uses: session, weekly, then every per-model lane the provider reported.
-    function metersFor(account) {
-        if (!account)
-            return [];
-        let out = [];
-        if (account.session)
-            out.push({ label: "Session (5h)", pct: account.session.pct || 0, reset: account.session.reset || "", resetAt: account.session.resetAt || 0 });
-        if (account.weekly)
-            out.push({ label: "Weekly (7d)", pct: account.weekly.pct || 0, reset: account.weekly.reset || "", resetAt: account.weekly.resetAt || 0 });
-        const models = account.models || [];
-        for (let i = 0; i < models.length; i++)
-            out.push({ label: models[i].label || "Model", pct: models[i].pct || 0, reset: models[i].reset || "", resetAt: models[i].resetAt || 0 });
-        // Credit-billed seats have no rate-limit windows at all — their monthly
-        // spend pool is the only usage there is, so it stands in for them.
-        if (account.spend)
-            out.push({ label: "Credits", pct: account.spend.pct || 0, reset: "", resetAt: 0,
-                       detail: account.spend.detail || "",
-                       used: account.spend.used, limit: account.spend.limit, currency: account.spend.currency || "USD" });
-        return out;
-    }
+    // The SELECTED provider as one slot, the shape the horizontal pill renders,
+    // so the vertical form cannot say something else about the same payload.
+    readonly property var selectedSlot: logic.pillSlot(
+        root.provider,
+        root.provider === "codex" ? root.codexHead : root.claudeHead,
+        root.providerData[root.provider],
+        root.fetchingProviders,
+        root.provider,
+        root.hiddenAccounts)
 
-    // Meters for the single-account view. Prefers the accounts list so lanes the
-    // flat fields can't express (a credit pool, a second model) still show up,
-    // and falls back to the flat fields if an older helper omits accounts.
+    // The account on screen, or the payload's own lanes for the flat shape.
     readonly property var primaryMeters: {
-        const list = root.accounts || [];
-        if (list.length > 0)
-            return root.metersFor(list[0]);
-        let out = [];
-        if (root.hasSession)
-            out.push({ label: "Session (5h)", pct: root.sessionPct, reset: root.sessionReset, resetAt: root.sessionResetAt, detail: "" });
-        if (root.hasWeekly)
-            out.push({ label: "Weekly (7d)", pct: root.weeklyPct, reset: root.weeklyReset, resetAt: root.weeklyResetAt, detail: "" });
-        if (root.hasThird)
-            out.push({ label: root.thirdLabel, pct: root.thirdPct, reset: root.thirdReset, resetAt: root.thirdResetAt, detail: "" });
-        return out;
+        if (root.view.flat)
+            return fmt.flatMeters(root.current);
+        return root.view.account ? fmt.metersFor(root.view.account) : [];
     }
 
-    // Absolute reset instant as wall-clock text. A countdown alone ("4d 17h")
-    // makes you do the arithmetic; the clock time is what you actually plan
-    // around. Same day -> just the time, otherwise the weekday, and the date
-    // once it is far enough out that the weekday is ambiguous. Kept short and
-    // lowercase ("tom 02:59", "thu 04:00") — these sit in a narrow column
-    // beside the bar, so every character costs bar width.
     function formatResetAt(epoch) {
-        if (!epoch || epoch <= 0)
-            return "";
-        const when = new Date(epoch * 1000);
-        if (isNaN(when.getTime()))
-            return "";
-        const now = new Date();
-        // Past instants are stale data (a window that already rolled over);
-        // showing them would be worse than showing nothing.
-        if (when.getTime() <= now.getTime())
-            return "";
-        // 24h, explicitly — the locale short format drags in AM/PM, which is
-        // three more characters in a column that is already fighting the bar.
-        const time = when.toLocaleTimeString(Qt.locale(), "HH:mm");
-        const startOfDay = d => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
-        const days = Math.round((startOfDay(when) - startOfDay(now)) / 86400000);
-        if (days === 0)
-            return time;
-        if (days === 1)
-            return "tom " + time;
-        if (days < 7)
-            return when.toLocaleDateString(Qt.locale(), "ddd").toLowerCase() + " " + time;
-        return when.toLocaleDateString(Qt.locale(), "d MMM").toLowerCase() + " " + time;
+        return fmt.formatResetAt(epoch);
     }
-
-    // Money for the compact row: no cents, thousands separated. At credit-pool
-    // scale the cents are noise, and this column is only as wide as the bar can
-    // spare. The expanded card keeps the engine's exact string.
     function formatSpend(meter) {
-        if (!meter || meter.used === undefined || meter.limit === undefined)
-            return "";
-        const sym = meter.currency === "USD" ? "$" : "";
-        const round = n => Math.round(n).toLocaleString(Qt.locale(), "f", 0);
-        return sym + round(meter.used) + " / " + sym + round(meter.limit);
+        return fmt.formatSpend(meter);
     }
-
-    // The card has room for the cents. Falls back to the engine's own string
-    // if an older helper sent only that.
     function formatSpendExact(meter) {
-        if (!meter)
-            return "";
-        if (meter.used === undefined || meter.limit === undefined)
-            return meter.detail || "";
-        const sym = meter.currency === "USD" ? "$" : "";
-        const money = n => sym + n.toLocaleString(Qt.locale(), "f", 2);
-        return money(meter.used) + " of " + money(meter.limit);
+        return fmt.formatSpendExact(meter);
     }
-
-    // "Resets in 4d 17h · thu 04:00", degrading to whichever half we have.
     function resetLabel(meter) {
-        if (!meter)
-            return "";
-        const at = root.formatResetAt(meter.resetAt || 0);
-        const inn = meter.reset && meter.reset !== "\u2014" ? meter.reset : "";
-        if (inn && at)
-            return "Resets in " + inn + " \u00b7 " + at;
-        if (at)
-            return "Resets " + at;
-        if (inn)
-            return "Resets in " + inn;
-        return "";
+        return fmt.resetLabel(meter);
     }
 
-    function providerIcon() {
-        return root.provider === "codex" ? "terminal" : "smart_toy";
-    }
     function providerName() {
-        return root.provider === "codex" ? "Codex" : "Claude";
+        return logic.providerName(root.provider);
     }
     function classColor(c) {
         switch (c) {
@@ -280,112 +160,297 @@ PluginComponent {
         }
     }
 
-    // One percentage has one status colour everywhere it appears. Provider and
-    // account classes describe their worst lane, so using them for every meter
-    // made a healthy 0% lane red whenever a different lane was exhausted.
-    function percentageClass(pct) {
-        const value = Math.max(0, Math.min(Number(pct) || 0, 100));
-        if (value >= 90)
-            return "critical";
-        if (value >= 75)
-            return "high";
-        if (value >= 50)
-            return "mid";
-        return "low";
-    }
     function percentageColor(pct) {
-        return classColor(percentageClass(pct));
+        return classColor(fmt.percentageClass(pct));
     }
 
-    // Headline percentage: the tightest lane this account has. Same reasoning as
-    // aggregatePct — the 5h session is usually the emptiest window and says
-    // nothing about whether the weekly is about to block you.
-    readonly property int primaryPct: {
-        const one = root.headlineFor(root.accounts);
-        if (one !== null && (root.accounts || []).length > 0)
-            return one;
-        const lanes = root.primaryMeters || [];
-        let peak = 0;
-        for (let i = 0; i < lanes.length; i++)
-            peak = Math.max(peak, lanes[i].pct || 0);
-        if (lanes.length > 0)
-            return peak;
-        return root.hasSession ? root.sessionPct : root.weeklyPct;
+    // The last payload PER PROVIDER, keyed by provider name so the pill can show
+    // both without the popout having to be on that tab. Kept raw rather than
+    // reduced to a number, because the headline mode and the hidden-account list
+    // can change between polls and the pill has to follow them without waiting
+    // for a refetch.
+    //
+    // A map rather than two properties, so filing is a keyed write and there is
+    // no branch that could file an unidentifiable payload under a guess — the
+    // guessing is what mixed the two providers up (VGS-118).
+    property var providerData: ({})
+
+    readonly property var claudeHead: logic.headOf(root.providerData.claude, root.headlineMode, root.hiddenAccounts)
+    readonly property var codexHead: logic.headOf(root.providerData.codex, root.headlineMode, root.hiddenAccounts)
+
+    // File a payload under the provider IT names, never under the provider the
+    // fetch was launched for or the one currently selected.
+    // A monotonic stamp per filing, and the stamp each provider's entry carries.
+    // That is the only ordering evidence the failure path needs: whether the
+    // payload now filed for a provider arrived after the failing fetch launched.
+    property int fileSeq: 0
+    property var providerFiledAt: ({})
+
+    function storeHeadline(provider, data) {
+        const which = logic.normalizeProvider(provider);
+        if (which === "")
+            return;
+        // New objects, because a var property only notifies on assignment.
+        const next = { claude: root.providerData.claude, codex: root.providerData.codex };
+        const nextAt = { claude: root.providerFiledAt.claude, codex: root.providerFiledAt.codex };
+        root.fileSeq += 1;
+        next[which] = data;
+        nextAt[which] = root.fileSeq;
+        root.providerData = next;
+        root.providerFiledAt = nextAt;
+    }
+    function noteHeadline(data) {
+        root.storeHeadline(logic.payloadProvider(data), data);
     }
 
-    // Headline for each provider, kept side by side so the pill can show both
-    // without the popout having to be on that tab. {pct} or null when the
-    // provider has no signed-in accounts.
-    // The last payload per provider. Kept raw rather than reduced to a number,
-    // because the headline mode and the hidden-account list can change between
-    // polls and the pill has to follow them without waiting for a refetch.
-    property var claudeData: null
-    property var codexData: null
-
-    function computeHead(data) {
-        if (!data || data.ok !== true)
-            return null;
-        const agg = data.aggregate;
-        const local = root.headlineFor(data.accounts);
-        const pct = local !== null ? local
-            : (agg && agg.pct !== undefined && agg.pct !== null ? agg.pct
-            : (data.session ? data.session.pct : (data.weekly ? data.weekly.pct : 0)));
-        return { pct: pct };
-    }
-
-    readonly property var claudeHead: root.computeHead(root.claudeData)
-    readonly property var codexHead: root.computeHead(root.codexData)
-
-    function noteHeadline(provider, data) {
-        if (provider === "codex")
-            root.codexData = data;
-        else
-            root.claudeData = data;
+    // The providers with a fetch actually running, so a slot with no number yet
+    // can say "waiting" rather than "nothing".
+    readonly property var fetchingProviders: {
+        const out = [];
+        if (usageFetch.inFlight !== "")
+            out.push(usageFetch.inFlight);
+        if (otherFetch.inFlight !== "")
+            out.push(otherFetch.inFlight);
+        return out;
     }
 
     function pillHeads() {
-        const heads = [];
-        if (root.claudeHead)
-            heads.push({ pct: root.claudeHead.pct });
-        if (root.codexHead)
-            heads.push({ pct: root.codexHead.pct });
-        if (heads.length > 0)
-            return heads;
-        if (root.loading && !root.ok && root.errorText === "")
-            return [{ text: "…", pct: null, error: false }];
-        if (!root.ok)
-            return [{ text: "!", pct: null, error: true }];
-        return [{ pct: root.headlinePct }];
+        return logic.pillSlots({
+            selected: root.provider,
+            claudeHead: root.claudeHead,
+            claudeData: root.providerData.claude,
+            codexHead: root.codexHead,
+            codexData: root.providerData.codex,
+            fetching: root.fetchingProviders,
+            hidden: root.hiddenAccounts
+        });
     }
 
-    // The provider each fetch was LAUNCHED for, empty when nothing is in
-    // flight. A Process command is a binding on root.provider, but a fetch
-    // already running when the provider changes keeps its old argument — and
-    // without this tag its payload would be attributed to whichever provider
-    // happens to be selected when the output arrives. Every result is checked
-    // against the tag and dropped when it no longer matches.
-    property string usageInFlight: ""
-    property string otherInFlight: ""
+    readonly property string aiUsageCommand: Paths.vshellCli
+    // The provider the popout is NOT showing. Only its headline is kept, so the
+    // pill can show both without doubling the popout's state.
+    readonly property string otherProvider: root.provider === "codex" ? "claude" : "codex"
+    // Base spacing between retries, multiplied by the attempt number. One second
+    // is long enough to be a pause rather than a burst and short enough that a
+    // blip still resolves well inside a poll interval.
+    readonly property int retryDelayMs: 1000
+    // Cap on a failure reason before it reaches the popout and the shell log:
+    // the text comes from whichever backend is installed, and a log people paste
+    // into bug reports should not accumulate arbitrary backend output.
+    readonly property int maxIssueChars: 200
 
-    // A tag is only honoured while its process is actually running, so a fetch
-    // that somehow never reports an exit cannot wedge polling forever. And a
-    // tag is only KEPT when the launch actually took: assigning `running = true`
-    // to a Process that has not finished stopping is a no-op, and a tag left
-    // behind by a launch that never happened would block every later refresh
-    // while nothing was fetching.
-    function refresh() {
-        if (root.otherInFlight === "" || !otherProc.running) {
-            root.otherInFlight = root.otherProvider;
-            otherProc.running = true;
-            if (!otherProc.running)
-                root.otherInFlight = "";
+    // One record per fetch channel — and the channel OWNS its process, its
+    // collectors and the provider it wants. Threading that tuple by hand through
+    // every call site is how a cross-channel mix-up gets written by accident:
+    // one handler reaching for the other channel's stderr or process is a typo,
+    // not a design error, and nothing structural would have caught it. Here the
+    // pairing cannot be crossed, and every handler is written once.
+    component FetchChannel: QtObject {
+        id: chan
+
+        // The provider this channel fetches. A binding at the instantiation
+        // site, so the command follows the selection.
+        property string want: ""
+        // The channel whose payload the popout shows. The other one keeps only
+        // its provider's headline.
+        property bool primary: false
+
+        // The provider this channel's process was LAUNCHED for, empty when
+        // nothing is running. A running process keeps the argument it started
+        // with, so the tag says what it actually got — while the payload's own
+        // `provider` field is what decides where its data may be filed, because
+        // a tag can be reassigned while the process holding it is still running.
+        property string inFlight: ""
+        // The provider whose payload this channel last filed. The relaunch
+        // decision is "is this what is selected now?", never "did the selection
+        // move?".
+        property string loaded: ""
+        property int retries: 0
+        // Whether the launch now finishing produced a payload this channel could
+        // use, and why it did not. Per channel, so one channel's failure can
+        // never be shown as the other's cause.
+        property bool accepted: false
+        property string issue: ""
+        // Captured when the stream ends rather than read at exit time, which is
+        // the repo idiom (Common/settings/Processes.qml): StdioCollector only
+        // fills `text` once the stream has closed, and hanging the cause off an
+        // ordering assumption loses it silently when the assumption slips.
+        property string errorOut: ""
+        // A launch asked for while the previous process was still stopping, to
+        // be applied when it actually stops.
+        property bool pending: false
+        // Whether THIS launch produced a process — `started` is the signal for
+        // "exec succeeded", and a launch that never gets there is the only thing
+        // the watchdog is for. See AiUsageLogic.watchdogArms.
+        property bool sawProcess: false
+        // The filing stamp this launch started at, so its failure can tell a
+        // payload that predates it from one filed while it was running.
+        property int launchSeq: 0
+        // The two halves of a finished fetch. Nothing orders stdout closing
+        // against the exit, so a fetch settles only once BOTH have landed:
+        // settling on the exit alone cleared the tag acceptPayload decodes
+        // against, and a VALID payload arriving second was then discarded as a
+        // provider mismatch and refetched — the inverse of the rule this issue
+        // exists to enforce, and a retry spent on a fetch that succeeded.
+        property bool outDone: false
+        property bool exitDone: false
+
+        property Process proc: Process {
+            command: [root.aiUsageCommand, "ai-usage", chan.want]
+            running: false
+            stdout: StdioCollector {
+                id: outCollector
+                onStreamFinished: {
+                    chan.outDone = true;
+                    root.acceptPayload(chan, outCollector.text);
+                    root.completeFetch(chan);
+                }
+            }
+            stderr: StdioCollector {
+                id: errCollector
+                onStreamFinished: chan.errorOut = errCollector.text
+            }
+            onStarted: chan.sawProcess = true
+            onExited: (exitCode, exitStatus) => root.finishFetch(chan, exitCode, exitStatus)
+            onRunningChanged: {
+                if (running)
+                    return;
+                // THE INVARIANT, and why it is asked first: a stop with a tag
+                // still set must leave something that will settle this channel —
+                // an armed watchdog here, or the exit still coming for a process
+                // that did run. Draining `pending` ahead of it could swallow the
+                // arming, because launch() re-parks a request while the tag is
+                // owned: nothing started, nothing armed, and this handler never
+                // runs again once the process has stopped — so the channel would
+                // hold its tag with no settle path at all, the pill on the
+                // in-flight ellipsis and no fetch for it until a provider switch.
+                //
+                // Arming means the start itself failed: Qt starts a process
+                // asynchronously and reports nothing when the executable cannot be
+                // run. A launch that DID produce a process is not this timer's
+                // business, whichever of `exited` and `runningChanged` lands
+                // first. Deferred all the same, and failLaunch re-checks, because
+                // `started` is not ordered against this signal either.
+                if (logic.watchdogArms(chan.inFlight, chan.sawProcess)) {
+                    stallTimer.restart();
+                    return;
+                }
+                // A parked request runs only once the channel can actually take
+                // it. A tag that is still set is owned until the settle path
+                // clears it, and settleFetch drains `pending` when it does.
+                if (chan.inFlight === "" && chan.pending)
+                    root.launch(chan);
+            }
         }
-        if (root.usageInFlight !== "" && usageProc.running)
-            return;
-        root.usageInFlight = root.provider;
-        usageProc.running = true;
-        if (!usageProc.running)
-            root.usageInFlight = "";
+
+        // Long enough that a `started` arriving after the stop still wins, short
+        // enough that a broken command is reported rather than waited out. It is
+        // NOT sized against the exit: a launch that produced a process never arms
+        // it, so a slow helper cannot be reported as one that never ran.
+        property Timer stallTimer: Timer {
+            id: stallTimer
+            interval: 1000
+            onTriggered: root.failLaunch(chan)
+        }
+
+        // The grace an exit gives stdout to close, and the only reason waiting for
+        // both halves cannot hang: a helper can leave its stdout open in a child
+        // it spawned, so the payload half may never arrive at all. Long enough
+        // that an ordinary close always wins it, short enough that a fetch is not
+        // left sitting on one that never comes.
+        property Timer flushTimer: Timer {
+            id: flushTimer
+            interval: 1000
+            onTriggered: root.settleFetch(chan)
+        }
+
+        // A retry waits. Deferring it to the next event-loop turn spent the whole
+        // budget in consecutive turns — four calls to a provider usage API as
+        // fast as the loop turns, once per configured bar — which gives a
+        // transient failure no time to pass. settleFetch sets the interval from
+        // the retry count, so the attempts are spaced 1s, 2s, 3s.
+        property Timer retryTimer: Timer {
+            id: retryTimer
+            interval: root.retryDelayMs
+            onTriggered: root.launch(chan)
+        }
+
+        // What a provider switch invalidates. The switch is this branch's
+        // generation boundary, so nothing armed before it may act after it: both
+        // timers stop here, and a request parked for the previous selection goes
+        // with them, since clearProviderState refreshes anyway.
+        //
+        // The TAG is the deliberate part, and the question is whether ANYTHING
+        // can still settle this fetch — not whether a process was seen. A tag
+        // kept with nothing coming owns the channel for good: launchDecision
+        // answers "pend" for an owned tag with no running process, so every
+        // refresh and every poll parks, and a later switch takes this same
+        // branch again. Asking "was a process seen?" got the flush grace exactly
+        // wrong: mid-grace a process HAS run and exited, so that question kept
+        // the tag while this function stopped the grace — the last thing left
+        // that would have settled it.
+        //
+        // What is still owed is the whole of it, and it is one question:
+        // settleIsComing. A running process delivers an exit that must settle
+        // its own fetch, and its payload is attributed by the payload's own
+        // provider rather than by this channel's rebound `want`, so nothing it
+        // does can be read as the new provider's; a process that already ran
+        // still owes its exit until one arrives, and clearing the tag there
+        // would let that late exit settle whatever fetch is running by then.
+        // Everything else — a launch that never produced a process, and one
+        // whose exit landed while stdout never closed — was waiting on a timer
+        // this function just stopped, so the switch settles it.
+        function reset() {
+            loaded = "";
+            retries = 0;
+            accepted = false;
+            issue = "";
+            stallTimer.stop();
+            retryTimer.stop();
+            flushTimer.stop();
+            pending = false;
+            if (!logic.settleIsComing({ inFlight: inFlight, running: proc.running,
+                                        sawProcess: sawProcess, exitDone: exitDone }))
+                inFlight = "";
+        }
+    }
+
+    FetchChannel {
+        id: usageFetch
+        want: root.provider
+        primary: true
+    }
+    FetchChannel {
+        id: otherFetch
+        want: root.otherProvider
+    }
+
+    // Immediate relaunches allowed before a channel gives up and waits for the
+    // poll timer. Spent per channel; restored only by a payload that SATISFIES
+    // that channel and by a provider switch. When it is spent is
+    // AiUsageLogic.shouldRelaunch's to say, and only its comment says it — two
+    // copies of that rule is how this one drifted.
+    readonly property int maxFetchRetries: 3
+
+    // A provider switch makes every provider-scoped answer wrong at once: the
+    // payload, the failure text, and both channels' "what do we hold" state. One
+    // path clears all of it, so the popout shows a loading state rather than the
+    // previous provider's accounts, plan and errors. `providerData` is kept: it
+    // is keyed BY provider, so neither entry can be read as the other's.
+    function clearProviderState() {
+        root.current = null;
+        // The BARRIER, not zero: providerData survives a switch on purpose (the
+        // pill keeps both slots), so comparing against 0 promoted the previous
+        // session's payload for the newly selected provider — stale data on a
+        // switch, which is the symptom this issue exists to fix. Holding the
+        // stamp the switch happened at says "only what is filed from here on",
+        // and needs no second counter: the switch IS the generation boundary.
+        root.currentFiledAt = root.fileSeq;
+        root.fetchError = "";
+        root.loading = true;
+        root.expandedAccountId = "";
+        usageFetch.reset();
+        otherFetch.reset();
     }
 
     function setProvider(p) {
@@ -406,109 +471,213 @@ PluginComponent {
     // PREVIOUS provider's accounts and plan under the new provider's label
     // until its own poll timer fired, up to refreshSeconds later.
     onProviderChanged: {
-        root.loading = true;
+        root.clearProviderState();
         root.refresh();
     }
 
-    readonly property string aiUsageCommand: Paths.vshellCli
+    // Both channels, for the poll and for a provider switch. A retry relaunches
+    // its own channel directly — restarting both would spend one channel's
+    // budget on the other's process, and every launch shells out to a provider
+    // usage API once per configured bar.
+    function refresh() {
+        root.launch(otherFetch);
+        root.launch(usageFetch);
+    }
 
-    Process {
-        id: usageProc
-        command: [root.aiUsageCommand, "ai-usage", root.provider]
-        running: false
-        stdout: StdioCollector {
-            id: usageOut
-            onStreamFinished: {
-                if (root.usageInFlight !== root.provider)
-                    return;  // stale: launched for a provider no longer selected
-                root.parseOutput(usageOut.text);
-            }
+    // A tag is only set when a process actually starts. `running = true` on a
+    // Process that has not finished stopping is a no-op, so that case parks the
+    // request on the channel and onRunningChanged applies it — a tag set for a
+    // launch that never happened would show a fetch that does not exist and
+    // block every later refresh until the poll timer.
+    function launch(ch) {
+        const decision = logic.launchDecision(ch.inFlight, ch.proc.running);
+        if (decision === "skip")
+            return;
+        if (decision === "pend") {
+            ch.pending = true;
+            return;
         }
-        // Clearing the tag belongs here rather than in onStreamFinished: the
-        // stream closes before the process is reaped (the same ordering
-        // Common/settings/Processes.qml relies on), so by the time this runs
-        // the stale/fresh decision above has already been made, and a fetch
-        // that produced no output at all still releases the slot.
-        onExited: {
-            const launchedFor = root.usageInFlight;
-            root.usageInFlight = "";
-            // The selection moved while this was running, so its output was
-            // discarded above and nothing has fetched the current provider yet
-            // — refresh() was a no-op for as long as the tag was set.
-            //
-            // DEFERRED, because refresh() restarts by assigning `running = true`
-            // and that is a no-op while `running` still reads true. Quickshell
-            // 0.3.0 documents `running = false` as "send SIGTERM" and gives the
-            // restart idiom as `onRunningChanged: if (!running) running = true`
-            // — against runningChanged, not exited — and nowhere states that
-            // `running` has already flipped when `exited` fires. Assuming it has
-            // would silently drop the replacement fetch and leave the widget on
-            // loading = true until the poll timer. Next turn, both have settled.
-            if (launchedFor !== "" && launchedFor !== root.provider)
-                Qt.callLater(root.refresh);
+        ch.pending = false;
+        ch.inFlight = ch.want;
+        // Per-fetch, like the tag: the previous launch's process says nothing
+        // about whether this one gets off the ground.
+        ch.sawProcess = false;
+        // Everything filed after this point is newer than this fetch.
+        ch.launchSeq = root.fileSeq;
+        ch.accepted = false;
+        ch.issue = "";
+        ch.errorOut = "";
+        ch.outDone = false;
+        ch.exitDone = false;
+        ch.flushTimer.stop();
+        // The previous launch's watchdog is armed in exactly the state this one
+        // starts from — tag set, process not running — so leaving it running let
+        // it fire against THIS fetch: "could not run" for a healthy process,
+        // whose payload was then discarded as a mismatch and whose retry was
+        // spent. It is per-fetch state like everything above it.
+        ch.stallTimer.stop();
+        // This launch supersedes any retry that was still waiting to fire.
+        ch.retryTimer.stop();
+        ch.proc.running = true;
+    }
+
+    // The process stopped. `exitStatus` is Qt's: non-zero means the helper did
+    // not exit on its own terms (a signal, an OOM kill), which has to name
+    // itself — otherwise the reason left standing is the "parse error" recorded
+    // for the empty output it never wrote.
+    function finishFetch(ch, exitCode, exitStatus) {
+        // Symmetric with failLaunch: whichever path settles the fetch first owns
+        // it. Without this an exit arriving after the watchdog already settled
+        // reported a second time, and could overwrite the reason of — and settle
+        // — a relaunch that was by then running.
+        if (ch.inFlight === "")
+            return;
+        ch.exitDone = true;
+        if (!ch.accepted && (exitCode !== 0 || exitStatus !== 0)) {
+            const reason = logic.stderrReason(ch.errorOut, root.maxIssueChars);
+            ch.issue = (exitStatus !== 0 ? "helper killed" : "helper exited " + exitCode)
+                + (reason !== "" ? ": " + reason : "");
+            console.warn("aiUsage: " + ch.inFlight + " fetch " + ch.issue);
+        }
+        root.completeFetch(ch);
+    }
+
+    // Both halves of a finished fetch, in whichever order they land. The tag has
+    // to outlive the payload path, because that is what the payload is decoded
+    // against; settling on the exit alone made a valid payload look like another
+    // provider's. Whichever half lands last settles, and an exit that lands first
+    // gives stdout a bounded grace rather than an open-ended wait.
+    function completeFetch(ch) {
+        if (ch.inFlight === "")
+            return;
+        if (!ch.outDone || !ch.exitDone) {
+            if (ch.exitDone)
+                ch.flushTimer.restart();
+            return;
+        }
+        root.settleFetch(ch);
+    }
+
+    // A start that never produced a running process. Same failure path as an
+    // exit, so a missing or unrunnable CLI is reported and retried exactly like
+    // a helper that ran and failed, instead of leaving the widget waiting.
+    function failLaunch(ch) {
+        // The arming rule, asked again at the moment it would report: the fetch
+        // may have settled while the timer waited, or the process may have
+        // started after the stop. One function, two consumers — a second copy of
+        // the condition here is how it would drift.
+        if (!logic.watchdogArms(ch.inFlight, ch.sawProcess))
+            return;
+        ch.issue = "could not run " + root.aiUsageCommand;
+        console.warn("aiUsage: " + ch.inFlight + " fetch " + ch.issue);
+        root.settleFetch(ch);
+    }
+
+    // What a finished fetch means, however it finished.
+    function settleFetch(ch) {
+        if (ch.inFlight === "")
+            return;
+        ch.stallTimer.stop();
+        ch.flushTimer.stop();
+
+        // Relaunch whenever this channel is not holding the provider it should
+        // be, or this fetch delivered nothing — misattributed, arrived after the
+        // user switched away, never parsed, or the helper never ran. Comparing
+        // the launch tag to the selection instead dropped the replacement fetch
+        // on a claude -> codex -> claude toggle (VGS-118). Decided BEFORE the tag
+        // is cleared, since the tag is one of the fields the decision reads. The
+        // retry then WAITS: a `running = true` assigned while the process is
+        // still stopping is a no-op, and beyond that a transient failure needs
+        // time to pass rather than the next event-loop turn. launch() parks the
+        // attempt if the process is still stopping and onRunningChanged applies
+        // it then.
+        const relaunch = logic.shouldRelaunch(ch, root.maxFetchRetries);
+        ch.inFlight = "";
+        if (relaunch) {
+            ch.retries += 1;
+            ch.retryTimer.interval = root.retryDelayMs * ch.retries;
+            ch.retryTimer.restart();
+            return;
+        }
+        // A request parked while this launch was unsettled runs now that the tag
+        // is clear. Deferred: the process may still be stopping, in which case
+        // launch() parks it again and onRunningChanged applies it.
+        if (ch.pending)
+            Qt.callLater(() => root.launch(ch));
+
+        // Either there is still nothing for what this channel wants, or this
+        // fetch produced no payload and what is held is now stale — the same
+        // kind of failure: say so rather than sitting on "loading" or on numbers
+        // no fetch stands behind.
+        if (ch.loaded !== ch.want || !ch.accepted) {
+            const why = ch.issue !== "" ? ch.issue : "usage unavailable";
+            // ONE decision, consulted by every write below: a newer successful
+            // result for a provider always wins over an older failure. The other
+            // channel files by payload identity, so mid-switch it can land a good
+            // payload for the provider this one is failing at. Guarding only the
+            // headline write left the popout claiming an error over those
+            // numbers — two guard sites is what let that drift, so there is one.
+            const authoritative = logic.failureWins(
+                root.providerData[ch.want], root.providerFiledAt[ch.want], ch.launchSeq);
+            if (authoritative)
+                root.storeHeadline(ch.want, { ok: false, provider: ch.want, error: why });
+            if (ch.primary) {
+                // Loading ends either way: this fetch settled and none is coming
+                // before the poll, so leaving it set would keep the popout saying
+                // it is checking when nothing is. Only the failure TEXT is
+                // conditional — an unauthoritative failure reports nothing rather
+                // than contradicting the payload that beat it.
+                root.loading = false;
+                if (authoritative)
+                    root.fetchError = why;
+            }
         }
     }
 
-    // The provider the popout is NOT showing. Only its headline is kept, so the
-    // pill can read "claude / codex" without doubling the popout's state.
-    readonly property string otherProvider: root.provider === "codex" ? "claude" : "codex"
-
-    Process {
-        id: otherProc
-        command: [root.aiUsageCommand, "ai-usage", root.otherProvider]
-        running: false
-        stdout: StdioCollector {
-            id: otherOut
-            onStreamFinished: {
-                if (root.otherInFlight !== root.otherProvider)
-                    return;  // stale: the providers swapped mid-flight
-                try {
-                    root.noteHeadline(root.otherProvider, JSON.parse((otherOut.text || "").trim()));
-                } catch (e) {
-                    root.noteHeadline(root.otherProvider, null);
-                }
-            }
-        }
-        onExited: {
-            const launchedFor = root.otherInFlight;
-            root.otherInFlight = "";
-            // Deferred for the same reason as usageProc's relaunch above.
-            if (launchedFor !== "" && launchedFor !== root.otherProvider)
-                Qt.callLater(root.refresh);
-        }
+    // Both channels accept through one path: decode, record the reason on THIS
+    // channel, then apply the outcome AiUsageLogic decided. Filing a payload and
+    // satisfying a channel are separate answers — a result that lands after the
+    // user switched still updates its own provider's pill slot, but leaves the
+    // channel owing a fetch for what is selected now.
+    function acceptPayload(ch, txt) {
+        const got = logic.decodePayload(ch.inFlight, txt);
+        ch.issue = got.issue;
+        if (!got.data)
+            return;
+        ch.accepted = true;
+        const outcome = logic.acceptOutcome(logic.payloadProvider(got.data), ch.want);
+        if (outcome.file)
+            root.noteHeadline(got.data);
+        // The promotion path, third consumer of the newer-success rule: a good
+        // payload for the SELECTED provider belongs in the popout whichever
+        // channel fetched it. Gating on ch.primary left the popout empty after a
+        // switch, when the other channel files for what is now selected.
+        root.promoteSelected();
+        if (!outcome.satisfies)
+            return;
+        ch.loaded = ch.want;
+        ch.retries = 0;
     }
 
-    function parseOutput(txt) {
+    // The popout shows whatever is filed for the selected provider, promoted here
+    // rather than written by whichever channel happened to fetch it. Adding a
+    // lane later means adding it to the payload and to AiUsageFormat.flatMeters —
+    // never to a mirror here that a switch has to remember to clear.
+    function promoteSelected() {
+        const filed = root.providerData[root.provider];
+        const filedAt = root.providerFiledAt[root.provider];
+        // Any ACCEPTED payload, not only a successful one: an ok:false payload is
+        // the provider answering — signed out, backend missing — and the popout
+        // has an error path for it. Storing is an ordering question; `ok` only
+        // decides what is rendered. Success-only left a signed-out provider
+        // showing nothing at all, because settleFetch skips its failure branch
+        // for a channel that IS accepted and loaded.
+        if (!logic.newerAccepted(filed, filedAt, root.currentFiledAt))
+            return;
+        root.current = filed;
+        root.currentFiledAt = filedAt;
+        root.fetchError = "";
         root.loading = false;
-        try {
-            const d = JSON.parse((txt || "").trim());
-            root.ok = d.ok === true;
-            root.noteHeadline(root.provider, d);
-            root.accounts = d.accounts || [];
-            root.aggregate = d.aggregate || null;
-            if (!root.ok) {
-                root.errorText = d.error || "usage unavailable";
-                return;
-            }
-            root.errorText = "";
-            root.plan = d.plan || "";
-            root.hasSession = !!d.session;
-            root.sessionPct = (d.session && d.session.pct) || 0;
-            root.sessionReset = (d.session && d.session.reset) || "";
-            root.sessionResetAt = (d.session && d.session.resetAt) || 0;
-            root.hasWeekly = !!d.weekly;
-            root.weeklyPct = (d.weekly && d.weekly.pct) || 0;
-            root.weeklyReset = (d.weekly && d.weekly.reset) || "";
-            root.weeklyResetAt = (d.weekly && d.weekly.resetAt) || 0;
-            root.hasThird = !!d.third;
-            root.thirdLabel = (d.third && d.third.label) || "";
-            root.thirdPct = (d.third && d.third.pct) || 0;
-            root.thirdReset = (d.third && d.third.reset) || "";
-            root.thirdResetAt = (d.third && d.third.resetAt) || 0;
-        } catch (e) {
-            root.ok = false;
-            root.errorText = "parse error";
-        }
     }
 
     Timer {
@@ -523,45 +692,39 @@ PluginComponent {
         onTriggered: root.refresh()
     }
 
+    // One slot per provider, each carrying its own icon. The icon is what makes
+    // a slot readable on its own: with a single leading icon and a bare "x / y",
+    // a provider with no number dropped its slot entirely and the other value
+    // slid left, changing meaning with nothing on screen to say so.
     horizontalBarPill: Component {
         Row {
             spacing: Theme.spacingXS
 
-            VgsIcon {
-                name: root.providerIcon()
-                size: root.iconSize
-                color: Theme.surfaceText
-                anchors.verticalCenter: parent.verticalCenter
-            }
+            Repeater {
+                model: root.pillHeads()
 
-            Row {
-                spacing: 0
-                anchors.verticalCenter: parent.verticalCenter
+                Row {
+                    required property var modelData
+                    spacing: 2
+                    anchors.verticalCenter: parent.verticalCenter
 
-                Repeater {
-                    model: root.pillHeads()
+                    VgsIcon {
+                        name: modelData.icon
+                        size: root.iconSize
+                        // The selected provider — the one the popout and the
+                        // click target belong to — reads at full strength.
+                        color: modelData.selected ? Theme.surfaceText : Theme.surfaceVariantText
+                        anchors.verticalCenter: parent.verticalCenter
+                    }
 
-                    Row {
-                        required property var modelData
-                        required property int index
-                        spacing: 0
-
-                        StyledText {
-                            visible: index > 0
-                            text: " / "
-                            font.pixelSize: root.pillFontSize
-                            font.weight: Font.Medium
-                            color: Theme.surfaceVariantText
-                        }
-
-                        StyledText {
-                            text: modelData.text !== undefined ? modelData.text : (modelData.pct + "%")
-                            font.pixelSize: root.pillFontSize
-                            font.weight: Font.Medium
-                            color: modelData.error ? Theme.error
-                                : (modelData.pct === null ? Theme.surfaceVariantText
-                                                        : root.percentageColor(modelData.pct))
-                        }
+                    StyledText {
+                        text: modelData.text
+                        font.pixelSize: root.pillFontSize
+                        font.weight: Font.Medium
+                        color: modelData.error ? Theme.error
+                            : (modelData.pct === null ? Theme.surfaceVariantText
+                                                    : root.percentageColor(modelData.pct))
+                        anchors.verticalCenter: parent.verticalCenter
                     }
                 }
             }
@@ -573,17 +736,20 @@ PluginComponent {
             spacing: 2
 
             VgsIcon {
-                name: root.providerIcon()
+                name: root.selectedSlot.icon
                 size: root.iconSize
                 color: Theme.surfaceText
                 anchors.horizontalCenter: parent.horizontalCenter
             }
 
+            // The same slot the horizontal pill renders for this provider, so
+            // the two bar forms cannot say different things about one payload.
             StyledText {
-                text: root.ok ? (root.headlinePct + "%") : (root.loading ? "…" : "!")
+                text: root.selectedSlot.text
                 font.pixelSize: root.pillFontSize
-                color: root.ok ? root.percentageColor(root.headlinePct)
-                               : (root.loading ? Theme.surfaceVariantText : Theme.error)
+                color: root.selectedSlot.error ? Theme.error
+                    : (root.selectedSlot.pct === null ? Theme.surfaceVariantText
+                                                      : root.percentageColor(root.selectedSlot.pct))
                 anchors.horizontalCenter: parent.horizontalCenter
             }
         }
@@ -614,19 +780,22 @@ PluginComponent {
                 if (popout.onSettings)
                     return "How the bar number is chosen, and which accounts count.";
                 if (!root.ok)
-                    return root.errorText || "Unavailable";
+                    return root.pending ? "Checking usage…" : (root.errorText || "Unavailable");
+                // Every account hidden: a number over them is the leak this closes.
+                if (root.allHidden)
+                    return logic.accountCount(root.view.totalCount) + " hidden";
                 if (!root.multiAccount)
                     return root.plan || "";
                 // Counted over what is actually on screen — saying "5 accounts"
                 // beside a number derived from four of them is just wrong.
-                const shown = root.shownAccounts(root.accounts);
-                const live = shown.filter(a => a.ok).length;
-                const hidden = root.accounts.length - shown.length;
-                const unavailable = shown.length - live;
+                const unavailable = root.view.shownCount - root.view.liveCount;
                 let suffix = unavailable > 0 ? (" · " + unavailable + " unavailable") : "";
-                if (hidden > 0)
-                    suffix += " · " + hidden + " hidden";
-                return live + " accounts · " + root.aggregatePct + "% used" + suffix;
+                if (root.view.hiddenCount > 0)
+                    suffix += " · " + root.view.hiddenCount + " hidden";
+                // No headline means no number: several accounts on screen and not
+                // one of them ok. The pill already renders its placeholder there.
+                const used = root.hasHeadline ? (" · " + root.headlinePct + "% used") : "";
+                return logic.accountCount(root.view.liveCount) + used + suffix;
             }
             showCloseButton: true
 
@@ -713,22 +882,23 @@ PluginComponent {
                                 anchors.verticalCenter: parent.verticalCenter
                                 spacing: Theme.spacingS
 
-                            VgsButton {
-                                text: "Claude"
-                                iconName: "smart_toy"
-                                width: (providerRow.width - Theme.spacingS) / 2
-                                backgroundColor: root.provider === "claude" ? Theme.primary : Theme.surfaceContainerHigh
-                                textColor: root.provider === "claude" ? Theme.primaryText : Theme.surfaceText
-                                onClicked: root.setProvider("claude")
-                            }
+                            // Driven from the same identity source as the pill
+                            // slots, so a tab's label and icon cannot disagree
+                            // with the number the bar shows for that provider.
+                            Repeater {
+                                model: logic.providerOrder()
 
-                            VgsButton {
-                                text: "Codex"
-                                iconName: "terminal"
-                                width: (providerRow.width - Theme.spacingS) / 2
-                                backgroundColor: root.provider === "codex" ? Theme.primary : Theme.surfaceContainerHigh
-                                textColor: root.provider === "codex" ? Theme.primaryText : Theme.surfaceText
-                                onClicked: root.setProvider("codex")
+                                VgsButton {
+                                    required property string modelData
+
+                                    readonly property bool current: root.provider === modelData
+                                    text: logic.providerName(modelData)
+                                    iconName: logic.providerIcon(modelData)
+                                    width: (providerRow.width - Theme.spacingS) / 2
+                                    backgroundColor: current ? Theme.primary : Theme.surfaceContainerHigh
+                                    textColor: current ? Theme.primaryText : Theme.surfaceText
+                                    onClicked: root.setProvider(modelData)
+                                }
                             }
                             }
                         }
@@ -769,7 +939,7 @@ PluginComponent {
                                 required property var modelData
 
                                 readonly property bool expanded: root.expandedAccountId === modelData.id
-                                readonly property var meters: root.metersFor(modelData)
+                                readonly property var meters: fmt.metersFor(modelData)
                                 width: parent.width
                                 height: accountCol.implicitHeight + Theme.spacingM * 2
                                 radius: Theme.cornerRadius
@@ -871,7 +1041,7 @@ PluginComponent {
                         StyledText {
                             visible: !root.ok
                             width: parent.width
-                            text: root.errorText || "No data"
+                            text: root.errorText || (root.pending ? "Checking usage…" : "No data")
                             wrapMode: Text.WordWrap
                             font.pixelSize: Theme.fontSizeMedium
                             color: Theme.surfaceVariantText
@@ -950,7 +1120,7 @@ PluginComponent {
 
                                 Repeater {
                                     model: (root.accounts || []).length > 1
-                                        ? root.orderedAccounts(root.accounts) : []
+                                        ? logic.orderedAccounts(root.accounts) : []
 
                                     Item {
                                         required property var modelData

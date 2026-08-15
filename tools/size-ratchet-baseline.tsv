@@ -1,4 +1,4 @@
-.github/workflows/ci.yml	427
+.github/workflows/ci.yml	433
 .github/workflows/review-gate-writer.yml	656
 backend/internal/services/bluez/bluez.go	744
 backend/internal/services/clipboard/clipboard.go	635
@@ -23,7 +23,7 @@ bin/codexbar	1311
 bin/vshell	472
 bin/vshell-capture-screenrecording	593
 bin/vshell-capture-screenshot	741
-bin/vshell-helper	15917
+bin/vshell-helper	15933
 bin/vshell_niri.py	1110
 config/vshell/icons/Yaru/cursors/half-busy	10208
 config/vshell/icons/Yaru/cursors/half-busy.ani	3364
@@ -31,7 +31,7 @@ config/vshell/icons/Yaru/cursors/wait	5408
 config/vshell/icons/Yaru/cursors/wait.ani	4513
 config/vshell/icons/Yaru/index.theme	790
 config/vshell/nvim/vgs-theme-bridge.lua	429
-config/vshell/plugins/aiUsage/AiUsageWidget.qml	997
+config/vshell/plugins/aiUsage/AiUsageWidget.qml	1167
 config/vshell/plugins/cloudSync/CloudSyncWidget.qml	690
 config/vshell/plugins/remoteDesktop/RemoteDesktopWidget.qml	803
 config/vshell/plugins/sudoToggle/SudoToggleWidget.qml	515
@@ -211,5 +211,5 @@ scripts/test-remote-desktop-state.js	1243
 scripts/test-toast-actions.js	607
 scripts/test-validate.sh	514
 scripts/test-validation-inventory.sh	1281
-scripts/validate	954
+scripts/validate	960
 vstack.toml	479
