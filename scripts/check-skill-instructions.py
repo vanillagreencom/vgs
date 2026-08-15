@@ -54,6 +54,18 @@ TABLE = "skill-instructions"
 
 JQ_COMPILE_ERROR = 3
 
+# `jq -n PROGRAM` is the only way to reach the compiler, and it RUNS the program
+# once it compiles. A syntactically valid filter can loop forever (`while(true;
+# .)`), so an unbounded call would wedge this check, the `docs` area, and the CI
+# job it is wired into — on hostile content in the very file it exists to police.
+# Bounded instead, and a program that outlives the bound is a FAILURE, never a
+# pass. Five seconds is enormous for a runbook one-liner (these compile and run
+# in milliseconds) and short enough that a stall cannot matter; the fixture that
+# proves the path uses a far shorter bound, since a non-terminating program
+# trips any bound and there is no reason to spend five seconds proving it.
+JQ_TIMEOUT_SECONDS = 5.0
+JQ_FIXTURE_TIMEOUT_SECONDS = 0.5
+
 FENCE = re.compile(r"^```(?:bash|sh)?\n(.*?)^```", re.M | re.S)
 # A jq invocation with a single-quoted program, which is how every runbook here
 # writes one. Deliberately not a general shell parser: a program spelled some
@@ -89,7 +101,7 @@ def jq_available() -> bool:
     return shutil.which("jq") is not None
 
 
-def audit(text: str, *, source: str) -> list[str]:
+def audit(text: str, *, source: str, jq_timeout: float = JQ_TIMEOUT_SECONDS) -> list[str]:
     """Every problem in one `[skill-instructions]` table. Empty means clean."""
     problems: list[str] = []
     try:
@@ -121,12 +133,23 @@ def audit(text: str, *, source: str) -> list[str]:
         # --- arm 2: every jq program compiles -------------------------------
         for fenced in FENCE.findall(value):
             for program in JQ_PROGRAM.findall(fenced):
-                completed = subprocess.run(
-                    ["jq", "-n", program],
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.PIPE,
-                    text=True,
-                )
+                try:
+                    completed = subprocess.run(
+                        ["jq", "-n", program],
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.PIPE,
+                        text=True,
+                        timeout=jq_timeout,
+                    )
+                except subprocess.TimeoutExpired:
+                    problems.append(
+                        f"{source} [{TABLE}] {key}: a jq program did not terminate within "
+                        f"{jq_timeout:g}s and was killed. It compiles, so this is not a "
+                        f"syntax break — the program itself does not finish, which would "
+                        f"hang anyone who ran this runbook and would hang this check. "
+                        f"Program: {program}"
+                    )
+                    continue
                 if completed.returncode == JQ_COMPILE_ERROR:
                     detail = completed.stderr.strip().splitlines()
                     first = detail[0] if detail else "(no diagnostic)"
@@ -151,6 +174,18 @@ tool create --title "x" \\
 '''
 
 FIXED_FIXTURE = BROKEN_FIXTURE.replace('demo = """', "demo = '''").replace('"""\n', "'''\n", 1)
+
+# A block that is correct in every other respect — literal string, no
+# continuations to lose — carrying a jq program that COMPILES and then never
+# finishes. Isolated deliberately: if this fixture also tripped another arm, the
+# control could pass without the timeout path ever running.
+HANGING_FIXTURE = """[skill-instructions]
+demo = '''
+```bash
+jq -n 'while(true; .)'
+```
+'''
+"""
 
 
 def self_test() -> list[str]:
@@ -180,6 +215,22 @@ def self_test() -> list[str]:
         failures.append(
             "the post-fix literal-string fixture FAILED, so the check rejects the very "
             f"form it prescribes: {fixed}"
+        )
+
+    # `jq -n` RUNS what it compiles, so the bound is what stops a pathological
+    # program from wedging this check and the CI job. Reaching the handler is the
+    # assertion: a non-terminating program outlives any bound, so this cannot be
+    # flaky in the direction that matters.
+    hanging = audit(
+        HANGING_FIXTURE,
+        source="<fixture: non-terminating jq>",
+        jq_timeout=JQ_FIXTURE_TIMEOUT_SECONDS,
+    )
+    if not any("did not terminate" in problem for problem in hanging):
+        failures.append(
+            "a jq program that never finishes was not reported as a timeout, so the "
+            f"bound on the compile arm is not proven and a pathological runbook could "
+            f"hang this check: {hanging}"
         )
     return failures
 
@@ -211,7 +262,8 @@ def main() -> int:
     count = len(blocks(CONFIG.read_text(encoding="utf-8")))
     print(
         f"check-skill-instructions: ok ({count} [{TABLE}] block(s) render verbatim, "
-        f"self-test proved all three arms fail on the pre-fix form)"
+        f"self-test proved all three arms fail on the pre-fix form and that a "
+        f"non-terminating jq program is reported rather than hanging the check)"
     )
     return 0
 
