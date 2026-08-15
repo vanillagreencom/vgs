@@ -159,6 +159,20 @@ def scrub_checks(check) -> None:
         blanked_template("a = counter++ / total-- / 2;\n"),
         "a = counter++ / total-- / 2;\n",
     )
+    # A closing brace ENDS a value. Reading `{} / 2` as a regex opener blanked
+    # everything to the next slash on the line, and a rule prohibiting a
+    # construct then passed without ever seeing it — which is how a hard-coded
+    # argv sat in a file the paste guard called clean.
+    check(
+        "division after an object literal is division",
+        blanked_template('const x = {} / 2; run(["wtype"]); const y = a / b;\n'),
+        'const x = {} / 2; run(["     "]); const y = a / b;\n',
+    )
+    check(
+        "a brace does not swallow the code after it",
+        "danger(z)" in blanked_template("if (a) {} / 2; danger(z); b = c / d;\n"),
+        True,
+    )
     check(
         "a keyword still opens a regex",
         blanked_template("return /ab/.test(x);\n"),

@@ -22,12 +22,21 @@ Pinned, over the QML and JS under `quickshell/vshell/` and `config/vshell/`
      characters inside a log message name an argv rather than building one, and
      a rule that cried wolf over prose would be turned off, costing the real
      coverage. Inside a template interpolation is code, and is caught.
-  2. One injector. Only PasteService may call the resolver's command function:
-     another caller is a second injector, which is how the original Ctrl+V bug
-     came to exist in two places at once. Reading the resolver for anything else
-     — asking whether a target is a terminal, to show what a keystroke will be —
-     is not restricted. The two surfaces that paste must each call into
-     PasteService.
+  2. One injector. Only PasteService may call the resolver functions that BUILD
+     a wtype argv, and that set is READ OUT OF THE RESOLVER rather than listed
+     here: every `function` in `PasteTarget.js` whose body contains a literal
+     wtype argv. A hand-kept list is how `releaseModifiersCommand` stayed
+     callable from anywhere while `pasteCommand` was guarded — it builds the
+     release half of the same keystroke, and the seat's modifier state is only
+     safe while one component owns both halves. Deriving it means the next
+     builder added to the resolver is owner-only the moment it exists, and a
+     resolver that yields no builder at all FAILS rather than policing an empty
+     set. Another caller is a second injector, which is how the original Ctrl+V
+     bug came to exist in two places at once. Reading the resolver for anything
+     else — asking whether a target is a terminal, to show what a keystroke
+     will be — is not restricted, and that carve-out survives the derivation
+     because those functions build no argv. The two surfaces that paste must
+     each call into PasteService.
   3. The injector resolves a target rather than assuming one: it imports the
      resolver, and the resolved argv is assigned to the injector's `command`
      property — the call is matched as the right-hand side of that assignment,
@@ -151,6 +160,9 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent / "lib"))
 from paste_literals import (  # noqa: E402
     COMMAND_ASSIGN_RE,
+    OWNERSHIP_CONTROLS,
+    argv_builders,
+    builder_call_re,
     IMPORT_RE,
     LITERAL_ARGV_RE,
     literal_argv_is_code,
@@ -286,17 +298,58 @@ def check_no_literal_argv(files: list[tuple[str, str, str]]) -> bool:
     return True
 
 
-def check_single_injector(files: list[tuple[str, str, str]]) -> bool:
-    offenders = [
-        rel_path for rel_path, _, source in files
-        if rel_path not in (OWNER, RESOLVER_LIB) and COMMAND_CALL_RE.search(source)
-    ]
+def resolver_argv_builders() -> list[str] | None:
+    """The resolver's argv builders, or None when it declares none.
+
+    Reading the file and refusing an empty answer belong here, with the other
+    reporting; deriving the set from the two views is the matcher layer's job.
+    """
+    source = read_live_with_strings(RESOLVER_LIB)
+    blanked = read_live(RESOLVER_LIB)
+    if source is None or blanked is None:
+        return None
+    builders = argv_builders(source, blanked)
+    if not builders:
+        fail(
+            f"{RESOLVER_LIB} declares no function building a wtype argv, so the owner-only rule "
+            "would police nothing — the resolver's shape changed under this check"
+        )
+        return None
+    return builders
+
+
+def check_ownership_controls(builders: list[str]) -> bool:
+    call_re = builder_call_re(builders)
+    for label, fixture, expected in OWNERSHIP_CONTROLS:
+        if bool(call_re.search(live_code(fixture, blank_strings=True))) != expected:
+            return fail(
+                f"rule 2 reads {label} as {'owner-only' if not expected else 'allowed'}"
+            )
+    print(
+        "check-paste-injection: rule 2 covers every argv builder the resolver declares "
+        f"({', '.join(builders)}) and still allows the read-only calls"
+    )
+    return True
+
+
+def check_single_injector(files: list[tuple[str, str, str]], builders: list[str]) -> bool:
+    call_re = builder_call_re(builders)
+    offenders = []
+    for rel_path, _, source in files:
+        if rel_path in (OWNER, RESOLVER_LIB):
+            continue
+        found = call_re.search(source)
+        if found:
+            offenders.append(f"{rel_path} calls {found.group(0).rstrip('( ')}")
     if offenders:
         return fail(
             "a paste keystroke is built outside its owner, so a second injector exists: "
             + ", ".join(offenders)
         )
-    print(f"check-paste-injection: {OWNER} is the only file calling the resolver's command function")
+    print(
+        f"check-paste-injection: {OWNER} is the only file calling the resolver's argv builders "
+        f"({', '.join(builders)})"
+    )
     return True
 
 
@@ -765,9 +818,13 @@ def main() -> int:
         return 1
 
     # Deliberately not short-circuiting: report every violation in one run.
+    builders = resolver_argv_builders()
+    if builders is None or not check_ownership_controls(builders):
+        return 1
+
     results = [
         check_no_literal_argv(files),
-        check_single_injector(files),
+        check_single_injector(files, builders),
         check_owner(),
         check_focus_readiness(),
         check_focus_source(),

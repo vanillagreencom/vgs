@@ -28,15 +28,25 @@ Handled exactly, and pinned by `qml_scrub_selftest.py`:
 Approximated, with the direction it errs:
 
   - Regex versus division. Deciding between them needs a parser, so a `/` is
-    read as opening a regex wherever a value may begin. `}` sits in that set
-    though it equally closes an object literal in expression position, and the
-    misread only bites when a second `/` follows on the same line. This
-    heuristic was adopted from `scripts/check-settings-migration.js` rather
-    than re-derived. Direction is NOT uniformly safe: a `/` misread as a regex
-    blanks real code to the next `/`, so a rule requiring a construct reports
-    it missing (loud), while a rule PROHIBITING one can pass without ever
-    seeing it (silent). A prohibition over code that divides on the same line
-    as a later slash is the case to think twice about.
+    read as opening a regex wherever a value may begin. This heuristic was
+    adopted from `scripts/check-settings-migration.js` rather than re-derived,
+    and it remains approximate. What it now gets right, each pinned by a
+    control: a `/` after anything that ENDS a value — an identifier, a string,
+    `)`, `]`, `}`, or a postfix `++`/`--` — is division, and one after an
+    operator, an opening delimiter or a value keyword (`return /re/`) opens a
+    regex. `}` moved to the value-ending side because reading `{} / 2` as a
+    regex opener blanked live code to the next slash on the line, which let a
+    prohibition pass over a construct it never saw.
+
+    What it still gets wrong, and the direction: a regex that genuinely FOLLOWS
+    a closing brace at statement position (`function f() {}` then a line
+    starting `/re/`) is now read as division, so the regex body stays in the
+    view as code. That errs LOUD — a prohibition may report a match it found
+    inside a regex — which is the direction to prefer here, because the
+    opposite silently hides the thing a merge-blocking rule exists to catch.
+    Neither shape occurs in the scanned trees today: the `}` branch decided
+    "regex" zero times across every QML and JS file in them, measured before
+    the change.
 
 Not attempted at all:
 
@@ -55,12 +65,17 @@ _VALUE_KEYWORDS = frozenset({
     "return", "typeof", "instanceof", "in", "of", "new", "delete", "void",
     "throw", "case", "do", "else", "yield", "await",
 })
-# `}` is here with `{` and `;` because it usually closes a block — statement
-# position, where a `/` opens a regex — though it equally closes an object
-# literal in expression position (`{} / 2`), which only a parser could tell
-# apart. Misreading it is the cheaper error: an unterminated literal falls
-# through to division anyway.
-_VALUE_STARTERS = "(,=:[!&|?{};+-*%~^<>"
+# `}` was here once, with `{` and `;`, on the ported reasoning that it usually
+# closes a BLOCK — statement position, where a `/` does open a regex. It also
+# closes an object literal in EXPRESSION position (`{} / 2`), which only a
+# parser tells apart, and that reading is not the cheaper error: reading the
+# division as a regex blanks live code through to the next slash on the line,
+# and a rule that PROHIBITS a construct then passes without ever seeing it.
+# That is how a hard-coded `["wtype", ...]` sat in a file the paste guard
+# called clean. So `}` now ends a value, with `)` and `]`. Measured before
+# changing: across every QML and JS file in the scanned trees, the `}` branch
+# decided "regex" exactly ZERO times, so nothing real reads differently.
+_VALUE_STARTERS = "(,=:[!&|?{;+-*%~^<>"
 
 
 def _is_word_char(char: str) -> bool:
@@ -113,10 +128,10 @@ def live_code(text: str, blank_strings: bool = False) -> str:
                 return next(chars, "") != char
             if char in _VALUE_STARTERS:
                 return True
-            # A closing bracket or a string delimiter ends a value: `f(x) / 2`,
-            # `a[i] / 2`, `s / 2`. Blanked string bodies keep their quotes, so
-            # the delimiter is what is visible here.
-            if char in ")]\"'`" or not _is_word_char(char):
+            # A closing bracket, brace or string delimiter ends a value:
+            # `f(x) / 2`, `a[i] / 2`, `{} / 2`, `s / 2`. Blanked string bodies
+            # keep their quotes, so the delimiter is what is visible here.
+            if char in "})]\"'`" or not _is_word_char(char):
                 return False
             word = [char]
             for previous in chars:

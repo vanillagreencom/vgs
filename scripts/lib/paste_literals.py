@@ -23,6 +23,11 @@ positions between them.
 """
 
 import re
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from qml_source import enclosing_body  # noqa: E402
 
 # An array literal whose first element is wtype, in all three delimiters.
 # Matching the literal rather than a `command:` prefix covers the declarative
@@ -88,6 +93,13 @@ ARGV_CONTROLS = [
     ("a single-quoted argv", "proc.command = ['wtype', '-', '--'];\n", True),
     ("a template-literal argv", 'proc.command = [`wtype`, "-", "--"];\n', True),
     ("an argv inside a template interpolation", 'run(`${["wtype", "-"].join(" ")}`);\n', True),
+    # The CONSEQUENCE control for the scrubber's regex-versus-division call: a
+    # `/` after an object literal was read as a regex opener, blanking this
+    # argv out of the view this rule reads, so the guard reported clean while a
+    # target-blind keystroke sat in the file. Fixing the scrubber alone would
+    # not have proved this property; only a control at this level does.
+    ("an argv after an object-literal division",
+     'const x = {} / 2; proc.command = ["wtype", "-"]; const y = a / b;\n', True),
     ("prose naming an argv in a string", "log('argv is [\"wtype\", \"-\"] here');\n", False),
     ("prose naming a template-literal argv", "log('argv is [`wtype`, `-`] here');\n", False),
     ("prose naming an argv in a template", 'log(`argv is ["wtype", "-"] here`);\n', False),
@@ -136,3 +148,55 @@ def matcher_problems(live_code) -> list[str]:
         if bool(IMPORT_RE.search(fixture)) != expected:
             problems.append(f"the import matcher does not recognise {label}")
     return problems
+
+
+FUNCTION_DEF_RE = re.compile(r"\bfunction\s+([A-Za-z_$][\w$]*)\s*\(")
+
+
+def argv_builders(source: str, blanked: str) -> list[str]:
+    """Every resolver function that BUILDS a wtype argv, read from the resolver.
+
+    Derived, not hand-listed. The resolver is the one place those argv shapes
+    live, so a builder added there becomes owner-only the moment it exists,
+    rather than escaping a pair of names someone remembered to write down —
+    which is exactly how `releaseModifiersCommand` came to be callable from
+    anywhere while `pasteCommand` was guarded. It builds the release half of
+    the same keystroke, and the seat's modifier state is only safe while one
+    component owns both halves.
+
+    An EMPTY result is meaningful and is the caller's to refuse: it means the
+    resolver's shape changed under this rule, and enforcing an empty set would
+    be a guard that passes because it asks nothing.
+    """
+    names = []
+    for match in FUNCTION_DEF_RE.finditer(blanked):
+        opening = blanked.find("{", match.end())
+        if opening == -1:
+            continue
+        body = enclosing_body(blanked, opening)
+        if body is None:
+            continue
+        start, text = body
+        if any(
+            literal_argv_is_code(source, blanked, found.start())
+            for found in LITERAL_ARGV_RE.finditer(source, start, start + len(text))
+        ):
+            names.append(match.group(1))
+    return sorted(set(names))
+
+
+def builder_call_re(builders: list[str]) -> re.Pattern:
+    """A call to any of the resolver's argv builders."""
+    return re.compile(r"\b(?:" + "|".join(re.escape(name) for name in builders) + r")\s*\(")
+
+
+# Both directions of the ownership rule, checked on every run. The read-only
+# rows are not decoration: that carve-out exists so a settings surface can show
+# which keystroke a target will get, and a rule that swallowed it would push
+# those surfaces into copying argv shapes — the duplication rule 2 prevents.
+OWNERSHIP_CONTROLS = [
+    ("a second file building the paste argv", "PasteTarget.pasteCommand(id);\n", True),
+    ("a second file releasing modifiers", "PasteTarget.releaseModifiersCommand();\n", True),
+    ("a read-only terminal question", "const t = PasteTarget.isTerminalAppId(id);\n", False),
+    ("a read-only keystroke display", "label.text = PasteTarget.displayAppId(id);\n", False),
+]
