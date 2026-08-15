@@ -81,8 +81,13 @@ Thumbs.db
 # Local planning and research artifacts
 docs/plans/
 docs/research/
-# Session handoff (single file, never committed) — see AGENTS.md § Session handoff
+# Session handoff (single file, never committed) — see AGENTS.md § Conventions
 docs/handoff/
+
+# Machine-local companion to AGENTS.md: this workstation's expected symlinks and
+# service state. Never committed — it describes one machine, and a tracked copy
+# would rot on every other one.
+AGENTS.local.md
 
 # Local git worktrees (vstack worktree skill)
 /trees/

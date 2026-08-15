@@ -49,14 +49,15 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 # rationale is for the reviewer, so a raise without one is review feedback,
 # not something this script can enforce.
 CEILINGS: dict[str, int] = {
-    # 18,528 B after VGS-123 moved the validation manifest (`scripts/validate
-    # --list all` is the authority on its size) and the "What CI covers" tables
-    # into the instruction files. The 25,000 ceiling that survived VGS-107 left
-    # 6.5 KB of unexamined regrowth headroom here, which this ratchet
-    # exists to deny. 19,500 is measured + ~5%, DELIBERATELY tighter than the
-    # +10% adoption default: this file is loaded every session and has just been
-    # cut, so the next growth should be argued for rather than absorbed.
-    "AGENTS.md": 19_500,
+    # 4,416 B after the VGS-124 second diet cut this file to invariants only:
+    # the routing tables (§ Layout, § Architecture docs, § Project skills,
+    # § Documentation resources), the machine-specific § Live workstation
+    # wiring, the § Review gate narrative and the Linear mirroring runbook all
+    # left for the surface that owns each. Those registers are what regrew
+    # after VGS-107, so the ceiling is 4,500 — measured + ~2%, tighter than
+    # both the +10% adoption default and VGS-123's +5%. Anything that does not
+    # fit is a signal the content belongs in a per-area surface, not here.
+    "AGENTS.md": 4_500,
     # Adopted at 3,289 B. 2026-08-10: owner-approved risk-class +
     # regression-test policy sections plus the PR #120 review rounds
     # (coverage gaps, property-defined privileged class) earned the bytes;
@@ -75,7 +76,12 @@ CEILINGS: dict[str, int] = {
     # carry a rationale — so the tighter line wins over the rounder number.
     ".github/copilot-instructions.md": 3_850,
     "project-skills/vshell-dev/SKILL.md": 5_000,  # adopted at 4,497 B
-    ".github/instructions/agents-md.instructions.md": 500,  # adopted at 403 B
+    # Adopted at 403 B. VGS-124: the diet's own rewrap un-exempted a sanctioned
+    # `qs -c vshell` mention in check-validation-safety.sh (line-scoped spans)
+    # and came within one no-op substitution of silently disabling an arm of
+    # test-validation-inventory.sh. Naming both couplings where an AGENTS.md
+    # edit is reviewed earned the bytes; 1,000 keeps ~10% headroom at 860 B.
+    ".github/instructions/agents-md.instructions.md": 1_000,
     ".github/instructions/architecture-docs.instructions.md": 500,  # adopted at 393 B
     ".github/instructions/backend-go.instructions.md": 800,  # adopted at 671 B
     # Adopted at 962 B. VGS-123 moved AGENTS.md § "What CI covers, and what it

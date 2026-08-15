@@ -23,7 +23,7 @@ wins, and that is what this record settles.
 
 The first half answers VGS-92. Between 57d92829 (2026-08-02) and that commit,
 the sandbox copied host state with `cp -a`, which preserves symlinks. On the
-documented workstation wiring (AGENTS.md § Live workstation wiring)
+documented workstation wiring (`AGENTS.local.md`, untracked and machine-local)
 `~/.config/vshell/settings.json` is a *relative* symlink into `~/dotfiles`, so
 it dangled once copied into the sandbox's HOME. The sandboxed shell found no
 settings and fell back to SettingsData's defaults — silently, since the shell
@@ -101,7 +101,7 @@ host state" leaves no host state.
 |---------|----------------|--------------------------------|
 | Reproducible across machines | Yes — the same bytes on every checkout | No — the result depends on whose config it ran on |
 | Reproducible across runs | Yes | No — the operator edits their config between runs |
-| Forecloses running in CI | No | Yes — a runner has no `~/.config/vshell` at all. Neither column runs in CI *today*: per AGENTS.md § "What CI covers", only the static half of `qml-smoke.sh` runs there and `--nested` is local-only, needing Hyprland and `quickshell` on PATH |
+| Forecloses running in CI | No | Yes — a runner has no `~/.config/vshell` at all. Neither column runs in CI *today*: per `.github/instructions/validation-scripts.instructions.md` § "What CI covers, and what it cannot", only the static half of `qml-smoke.sh` runs there and `--nested` is local-only, needing Hyprland and `quickshell` on PATH |
 | Covers what VGS ships | Yes — the shipped defaults are what a new user gets | Only incidentally |
 | Catches "my config breaks the shell" | No | Yes, but only for one person's config, and it is not what this smoke is for |
 
@@ -186,7 +186,8 @@ both exercised on this branch:
 
 **This assertion is local-only by construction.** `--nested` needs Hyprland and
 `quickshell` on PATH, so CI runs only the static half of `qml-smoke.sh`
-(AGENTS.md § "What CI covers, and what it cannot"). Nothing in CI enforces
+(`.github/instructions/validation-scripts.instructions.md` § "What CI covers,
+and what it cannot"). Nothing in CI enforces
 D008; a green PR is not evidence the sandbox seeded correctly, and the command
 above has to be run locally before finishing QML work.
 
@@ -196,4 +197,5 @@ above has to be run locally before finishing QML work.
 - VGS-81 / PR #98 — introduced the deterministic seeding
 - `scripts/qml-smoke.sh` — `nested_check`'s seeding block, `await_sentinel` and `seeded_settings_check`
 - `bin/vshell-helper` — `compose_theme_files` and `list_themes`, the user-over-builtin precedence that ruled out a `themes/` allowlist
-- AGENTS.md § Live workstation wiring — the dotfiles symlink that started this
+- `AGENTS.local.md` (untracked, machine-local) — the dotfiles symlink that
+  started this

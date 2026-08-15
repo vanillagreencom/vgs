@@ -45,5 +45,6 @@ Bare `scripts/qml-smoke.sh` is a parse check only; `--nested` runs the real
 shell in an isolated nested compositor and catches runtime QML errors —
 `ReferenceError`, `TypeError`, failed process starts, missing binaries, import
 errors. Never launch the shell directly (`qs -c vshell`, `qs -p quickshell/vshell`);
-mode coverage, the sandbox recipe, and recovery live in AGENTS.md § Never
-launch a second shell into the live session.
+the rule and its recovery live in AGENTS.md § Never launch a second shell into
+the live session, mode coverage in `scripts/qml-smoke.sh`'s header, and the
+sandbox recipe in what that script prints when it cannot nest.

@@ -95,10 +95,11 @@ restated here, because a partial copy reads as complete. Its exit status is
 four-valued: `0` ran and passed, `77` passed but something did not run — report
 it as "passed, N skipped", naming them, never as a bare pass — `1` failed, `2` a
 broken invocation that ran nothing.
-Smoke-mode coverage, the sandbox recipe, and the second-shell rule
-(never `qs -c vshell` or `qs -p quickshell/vshell` against a live session,
-never `pkill quickshell`) are under AGENTS.md § Never launch a second shell
-into the live session.
+The second-shell rule (never `qs -c vshell` or `qs -p quickshell/vshell`
+against a live session, never `pkill quickshell`) and its recovery are under
+AGENTS.md § Never launch a second shell into the live session. Smoke-mode
+coverage is in `scripts/qml-smoke.sh`'s own header, and the sandbox recipe is
+what that script prints when it cannot nest.
 
 For theme changes (skill-unique; not part of the canonical list):
 

@@ -44,7 +44,12 @@ gh api repos/vanillagreencom/vgs/rulesets/20260238 \
   --jq '.rules[]|select(.type=="required_status_checks").parameters.required_status_checks[].context'
 ```
 
-The gate's own architecture and trust posture are in `AGENTS.md` § Review gate.
+The gate's own architecture is in `review-gate-writer.yml`'s header (the
+relay/converge shape and why the PR-attached legs run no engine) and its trust
+posture in `vstack.settings.toml`'s `REVIEW_GATE_*` comments. Because the writer
+always runs the DEFAULT-BRANCH engine, a PR that repairs the gate machinery can
+never open its own gate: merging one is the ruleset bypass actor's job, stated
+in the merge commit.
 
 ## The whitespace check is range-scoped here
 
