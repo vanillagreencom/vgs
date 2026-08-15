@@ -40,6 +40,8 @@ PluginComponent {
     property string folderCompletion: ""
     property bool sidebarVisible: true
     readonly property var selectedItem: visibleItems[selectedItemIndex] || null
+    // Hover drives selection only after the mouse has really moved (VGS-134).
+    readonly property HoverSelectionGate hoverGate: HoverSelectionGate {}
 
     readonly property var categories: mergeCategories(MenuCatalog.categories, overlayCategories)
     readonly property var allItems: mergeItems(MenuCatalog.items, overlayItems, webappItems)
@@ -120,6 +122,7 @@ PluginComponent {
 
     function resetLauncherState() {
         resettingState = true;
+        hoverGate.disarm();
         ++fileSearchGeneration;
         fileSearching = false;
         query = "";
@@ -872,6 +875,9 @@ PluginComponent {
     }
 
     function handleKey(event) {
+        // Every key press — navigation and typing alike — hands selection back
+        // to the keyboard and puts hover to sleep until the mouse moves again.
+        hoverGate.disarm();
         const hasCtrl = event.modifiers & Qt.ControlModifier;
         const hasShift = event.modifiers & Qt.ShiftModifier;
         if (hasCtrl && event.key === Qt.Key_B) {
@@ -2160,7 +2166,15 @@ PluginComponent {
             hoverEnabled: true
             cursorShape: Qt.PointingHandCursor
             acceptedButtons: Qt.LeftButton | Qt.RightButton
-            onEntered: resultCard.hovered()
+            onEntered: {
+                if (root.hoverGate.armed)
+                    resultCard.hovered();
+            }
+            onPositionChanged: mouse => {
+                const scenePos = mapToItem(null, mouse.x, mouse.y);
+                if (root.hoverGate.notePointer(scenePos.x, scenePos.y))
+                    resultCard.hovered();
+            }
             onClicked: mouse => {
                 if (mouse.button === Qt.RightButton)
                     resultCard.contextRequested(resultCard, mouse.x, mouse.y);
@@ -2294,7 +2308,15 @@ PluginComponent {
             hoverEnabled: true
             cursorShape: Qt.PointingHandCursor
             acceptedButtons: Qt.LeftButton | Qt.RightButton
-            onEntered: resultRow.hovered()
+            onEntered: {
+                if (root.hoverGate.armed)
+                    resultRow.hovered();
+            }
+            onPositionChanged: mouse => {
+                const scenePos = mapToItem(null, mouse.x, mouse.y);
+                if (root.hoverGate.notePointer(scenePos.x, scenePos.y))
+                    resultRow.hovered();
+            }
             onClicked: mouse => {
                 if (mouse.button === Qt.RightButton)
                     resultRow.contextRequested(resultRow, mouse.x, mouse.y);

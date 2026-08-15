@@ -207,6 +207,7 @@ go        | scripts/check-backend-inventory-tests.py
 -         | scripts/test-qml-smoke.sh
 -         | scripts/test-format-lint.sh
 -         | scripts/test-pill-hover-safety.js
+-         | scripts/test-launcher-hover-latch.js
 helper    | python3 -m py_compile bin/vshell-helper
 helper    | bash -n bin/vshell
 always    | git diff --check
