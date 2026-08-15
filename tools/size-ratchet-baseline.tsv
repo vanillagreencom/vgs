@@ -1,4 +1,4 @@
-.github/workflows/ci.yml	433
+.github/workflows/ci.yml	438
 .github/workflows/review-gate-writer.yml	656
 backend/internal/services/bluez/bluez.go	744
 backend/internal/services/clipboard/clipboard.go	635
@@ -162,7 +162,7 @@ quickshell/vshell/Modules/Settings/WidgetsTabSection.qml	493
 quickshell/vshell/Modules/Settings/WindowRulesTab.qml	1065
 quickshell/vshell/Modules/Toast.qml	506
 quickshell/vshell/Modules/WallpaperBackground.qml	1081
-quickshell/vshell/Modules/WorkspaceOverlays/OverviewSearch/Controller.qml	2054
+quickshell/vshell/Modules/WorkspaceOverlays/OverviewSearch/Controller.qml	2106
 quickshell/vshell/Modules/WorkspaceOverlays/OverviewSearch/OverviewSearchContent.qml	1199
 quickshell/vshell/Modules/WorkspaceOverlays/OverviewSearch/OverviewSearchContextMenu.qml	699
 quickshell/vshell/Modules/WorkspaceOverlays/OverviewSearch/ResultsList.qml	559
@@ -172,8 +172,9 @@ quickshell/vshell/Services/AudioService.qml	1085
 quickshell/vshell/Services/BatteryService.qml	422
 quickshell/vshell/Services/BluetoothService.qml	620
 quickshell/vshell/Services/CalendarBackend.qml	481
-quickshell/vshell/Services/ClipboardService.qml	530
+quickshell/vshell/Services/ClipboardService.qml	514
 quickshell/vshell/Services/CloudSyncService.qml	728
+quickshell/vshell/Services/CompositorService.qml	441
 quickshell/vshell/Services/CupsService.qml	868
 quickshell/vshell/Services/DgopService.qml	780
 quickshell/vshell/Services/DisplayService.qml	1453
@@ -181,9 +182,10 @@ quickshell/vshell/Services/IdleService.qml	798
 quickshell/vshell/Services/KeybindsService.qml	665
 quickshell/vshell/Services/LegacyNetworkService.qml	627
 quickshell/vshell/Services/NetworkBackendService.qml	1039
-quickshell/vshell/Services/NiriService.qml	620
+quickshell/vshell/Services/NiriService.qml	642
 quickshell/vshell/Services/NotepadStorageService.qml	522
 quickshell/vshell/Services/NotificationService.qml	2168
+quickshell/vshell/Services/PasteService.qml	473
 quickshell/vshell/Services/PluginService.qml	2296
 quickshell/vshell/Services/PopoutService.qml	800
 quickshell/vshell/Services/RemoteDesktopService.qml	672
@@ -207,10 +209,12 @@ scripts/check-vshell-niri.py	678
 scripts/gen-package-metadata.py	985
 scripts/lib/validation_manifest.py	749
 scripts/qml-smoke.sh	1258
+scripts/test-compositor-focus.js	674
+scripts/test-paste-lifecycle.js	1115
 scripts/test-pill-hover-safety.js	420
 scripts/test-remote-desktop-state.js	1243
 scripts/test-toast-actions.js	607
 scripts/test-validate.sh	514
 scripts/test-validation-inventory.sh	1281
-scripts/validate	960
+scripts/validate	967
 vstack.toml	479
