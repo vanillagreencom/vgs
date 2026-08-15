@@ -32,11 +32,7 @@ Item {
     readonly property bool _fileSearchDeclined: !!controller && _fileQuery.length >= 2
         && !DSearchService.canDispatch(controller.fileSearchKind(), _fileQuery)
     readonly property string _fileStateKey: fileEmptyStateKey(_fileBackendState, _missingBackendCommand, _fileQuery.length, _fileSearchDeclined)
-    // A file search is on screen in files mode, and outside it wherever
-    // fileSearchQuery — the one authority on that — hands back a query. Plugins
-    // mode is excluded there, so no file-search message can render over plugin
-    // results.
-    readonly property bool _fileLegActive: (controller?.searchMode ?? "") === "files" || _fileQuery.length >= 2
+    readonly property bool _fileLegActive: fileLegActive(controller?.searchMode ?? "", _fileQuery.length)
 
     signal itemRightClicked(int index, var item, real mouseX, real mouseY)
 
@@ -81,6 +77,14 @@ Item {
         if (probeState !== "pending" && probeState !== "ready")
             return "probe-failed";
         return "";
+    }
+
+    // A file search is on screen in files mode, and outside it wherever
+    // fileSearchQuery — the one authority on that — hands back a query long
+    // enough to dispatch. Plugins mode is excluded there, so no file-search
+    // message can render over plugin results.
+    function fileLegActive(searchMode, queryLength) {
+        return searchMode === "files" || queryLength >= 2;
     }
 
     function fileEmptyIcon(stateKey, fileType) {

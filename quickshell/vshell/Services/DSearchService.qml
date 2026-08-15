@@ -213,18 +213,38 @@ Singleton {
             return false;
         return !helperHasFallback(kind);
     }
-    // END SEARCH BACKEND DECISION
 
-    function backendState(kind, query) {
+    // Whether the SERVICE itself refuses the call, as opposed to a caller
+    // declining at its own gate: only a kind whose tool is proven missing AND
+    // which the helper cannot answer without it. Text search is the one such
+    // kind; a name search still reaches the helper's walk, which vgsMenu
+    // accepts.
+    function serviceRefuses(kind, state) {
+        return state === "missing" && !helperHasFallback(kind);
+    }
+
+    // The composition itself, so which property lands in which slot is
+    // executable rather than assumed. Reading the probe out of the singleton is
+    // then the only thing left outside the region, and it is one line long.
+    function backendStateFrom(kind, query, probeState, fdPresent, rgPresent) {
         return backendStateFor(kind, query, {
-            state: statusState,
-            fd: fdAvailable,
-            ripgrep: ripgrepAvailable
+            state: probeState,
+            fd: fdPresent,
+            ripgrep: rgPresent
         });
     }
 
+    function canDispatchFrom(kind, query, probeState, fdPresent, rgPresent) {
+        return dispatchAllowed(backendStateFrom(kind, query, probeState, fdPresent, rgPresent), kind);
+    }
+    // END SEARCH BACKEND DECISION
+
+    function backendState(kind, query) {
+        return backendStateFrom(kind, query, statusState, fdAvailable, ripgrepAvailable);
+    }
+
     function canDispatch(kind, query) {
-        return dispatchAllowed(backendState(kind, query), kind);
+        return canDispatchFrom(kind, query, statusState, fdAvailable, ripgrepAvailable);
     }
 
     function refreshFolderOpeners() {
@@ -266,7 +286,7 @@ Singleton {
         // "text" is the only kind that reaches this: it is the one without a
         // helper fallback, and ripgrep is its tool. A state short of "missing"
         // still dispatches, and the helper answers with the real cause.
-        if (backendState(kind, query) === "missing" && !helperHasFallback(kind)) {
+        if (serviceRefuses(kind, backendState(kind, query))) {
             callback?.({ error: I18n.tr("ripgrep is required for text search") });
             return;
         }

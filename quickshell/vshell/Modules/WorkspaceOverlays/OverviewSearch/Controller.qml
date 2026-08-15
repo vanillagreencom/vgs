@@ -145,9 +145,7 @@ Item {
     }
 
     function _retryFileSearchAfterProbe() {
-        if (!active)
-            return;
-        if (fileSearchQuery().length < 2)
+        if (!shouldRetryAfterProbe(active, fileSearchQuery()))
             return;
         fileSearchDebounce.restart();
     }
@@ -1133,17 +1131,35 @@ Item {
     // a query with no "/" prefix this function then hands that debounce an
     // empty query, so those two settings currently reach no search at all.
     // Unchanged behavior, tracked separately.
+    //
+    // The rule itself is in the marked region below, where
+    // scripts/test-launcher-search-gate.js runs it; this reads the properties
+    // and the parsed prefix, and decides nothing.
     function fileSearchQuery() {
-        if (searchMode === "plugins")
+        var prefixInfo = Utils.parseFileSearchPrefix(searchQuery);
+        return fileSearchQueryFrom(searchMode, searchQuery, prefixInfo ? prefixInfo.query : searchQuery.substring(1).trim());
+    }
+
+    // BEGIN FILE SEARCH DECISION
+    // `prefixQuery` is what parseFileSearchPrefix made of a "/"-led query — the
+    // prefix is the launcher's file-search trigger and is consumed there.
+    function fileSearchQueryFrom(mode, rawQuery, prefixQuery) {
+        if (mode === "plugins")
             return "";
-        if (searchQuery.startsWith("/")) {
-            var prefixInfo = Utils.parseFileSearchPrefix(searchQuery);
-            return prefixInfo ? prefixInfo.query : searchQuery.substring(1).trim();
-        }
-        if (searchMode === "files")
-            return searchQuery.trim();
+        if (String(rawQuery || "").startsWith("/"))
+            return String(prefixQuery || "");
+        if (mode === "files")
+            return String(rawQuery || "").trim();
         return "";
     }
+
+    // A search declined while the tools were unknown is re-run once they are
+    // known — but only for a surface still open, and only for a query long
+    // enough to have dispatched.
+    function shouldRetryAfterProbe(isActive, query) {
+        return !!isActive && String(query || "").length >= 2;
+    }
+    // END FILE SEARCH DECISION
 
     function performFileSearch() {
         var effectiveType = fileSearchType || "file";
