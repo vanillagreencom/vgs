@@ -57,9 +57,14 @@ new one the same way, or it becomes the next instance:
                                                               partial coverage is
                                                               not full coverage
 4. the CEILINGS table and each entry's   `ceiling_comments()` both anchors must
-   comment                                                    resolve, and every
-                                                              entry must yield
-                                                              comment text
+   recorded size                                              resolve, and every
+                                                              entry must yield a
+                                                              SIZE — prose whose
+                                                              number the patterns
+                                                              cannot find is the
+                                                              parser losing it,
+                                                              not an entry with
+                                                              none
 
 (The numbering continues check-skill-instructions.py's 1-2, so the four points
 the invariant governs are named once across both files. The apparatus that held
@@ -110,7 +115,7 @@ CEILINGS: dict[str, int] = {
     # only 4 of bin/'s 15 entries, so it read as complete while it was not.
     #
     # Those registers are what regrew after VGS-107, so 4,500 is a budget the
-    # issue set rather than a size plus headroom: the file is 4,498 B, so there
+    # issue set rather than a size plus headroom: the file is 4,489 B, so there
     # is almost none, and that is the point. The next addition displaces
     # something or moves to a per-area surface — the thing both diets had to do
     # by hand.
@@ -369,26 +374,34 @@ def recorded_size_problems(source: str, sizes: dict[str, int]) -> list[str]:
             f"everything."
         ]
     # COLLECTION POINT 4, the second half. The span parse is guarded by the
-    # anchors above; this guards the PER-ENTRY parse. An entry that yields no
-    # comment text at all is not "an entry with nothing to say" — every entry
-    # carries at least its adoption size by the rule at the top of this file —
-    # so it means the entry line was matched but its comment was not collected.
-    commented = {rel for rel in sizes if comments.get(rel, "").strip()}
+    # anchors above; this guards the PER-ENTRY parse — and it guards the SIZE,
+    # not merely the presence of a comment.
+    #
+    # Returning None from recorded_size() used to skip the comparison, so an
+    # entry whose measurement was reworded out of RECORDED_SIZE_PATTERNS passed
+    # unexamined — the parser losing its grip on the number, wearing the same
+    # face as an entry that had none to lose. Both are now failures, and
+    # deliberately the same failure: the adoption rule at the top of this file
+    # says every entry records its measured size, so "this entry records none"
+    # is not a legitimate state to exempt. All 29 record one; an exemption would
+    # be a hole in the rule rather than a case it allows.
+    sized = {rel for rel in sizes if recorded_size(comments.get(rel, "")) is not None}
     silent = members_missing(
-        commented,
+        sized,
         sizes,
-        what="CEILINGS comments",
+        what="CEILINGS recorded sizes",
         selector="the per-entry comment parse",
-        cause="every entry records at least its adoption size, so an entry with no "
-        "comment text is the parser failing to collect rather than an entry with "
-        "nothing to say — it cannot be checked",
+        cause="the comment yields no size this parser can find — either it records "
+        "none, which the adoption rule forbids, or its measurement was reworded "
+        "outside RECORDED_SIZE_PATTERNS and the parser lost the number. Restore the "
+        "figure in a recognised phrasing, or teach the parser the new one",
     )
     if silent:
         return [silent]
     problems = []
     for rel, size in sizes.items():
         stated = recorded_size(comments[rel])
-        if stated is not None and stated != size:
+        if stated != size:
             problems.append(
                 f"{rel}'s ceiling comment records {stated:,} bytes but the file is "
                 f"{size:,}. The rationale reasons from that number, so update it to "
@@ -532,17 +545,38 @@ def self_test() -> list[str]:
             f"coverage still reads as full coverage: {partial}"
         )
 
-    # COLLECTION POINT 4's control — an entry whose comment does not parse must be
-    # distinguishable from an entry with nothing to say.
-    commentless = 'CEILINGS: dict[str, int] = {\n    "fixture.md": 900,\n}\n'
+    # COLLECTION POINT 4's controls — an entry that yields NO SIZE must fail,
+    # whichever way it got there. The middle case is the one that used to slip:
+    # a comment full of prose whose measurement was reworded out of pattern range
+    # returned None, and None skipped the comparison.
+    for case, entry in (
+        ("no comment at all", '    "fixture.md": 900,\n'),
+        (
+            "a measurement reworded out of pattern range",
+            '    "fixture.md": 900,  # sized 800 bytes when adopted\n',
+        ),
+        ("prose that records no number", '    "fixture.md": 900,  # earned its bytes\n'),
+    ):
+        source = "CEILINGS: dict[str, int] = {\n" + entry + "}\n"
+        if not any(
+            "recorded sizes" in problem
+            for problem in recorded_size_problems(source, {"fixture.md": 800})
+        ):
+            failures.append(
+                f"a CEILINGS entry with {case} was accepted, so an entry this parser "
+                f"cannot read a size from passes unexamined — indistinguishable from "
+                f"one whose recorded size is correct."
+            )
+    # ...and the arm must still COMPARE when it can read one, or the guard above
+    # would satisfy every case by itself.
+    readable = 'CEILINGS: dict[str, int] = {\n    "fixture.md": 900,  # adopted at 800 B\n}\n'
     if not any(
-        "no comment text" in problem
-        for problem in recorded_size_problems(commentless, {"fixture.md": 800})
+        "records 800 bytes but the file is 850" in problem
+        for problem in recorded_size_problems(readable, {"fixture.md": 850})
     ):
         failures.append(
-            "a CEILINGS entry that parsed with no comment at all was accepted, so a "
-            "comment parser that collects nothing is indistinguishable from a table "
-            "with nothing to check."
+            "an entry whose recorded size is readable but WRONG was not reported, so "
+            "the arm now only checks that a number exists, not that it is right."
         )
 
     # ANCHOR DRIFT MUST BE A SENTENCE naming the RIGHT anchor — not a traceback,

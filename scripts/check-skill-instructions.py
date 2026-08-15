@@ -227,12 +227,15 @@ def audit(
 PRE_FIX_FIXTURE = f'[{TABLE}]\nlinear = """\njq -r \'sub("\\\\s+$"; "")\'\n"""\n'
 POST_FIX_FIXTURE = PRE_FIX_FIXTURE.replace('"""', "'''")
 
-# A basic string carrying an escaped delimiter, followed by another key. TOML
-# does not end the value at `\\"""`, so a scanner that stopped there would resume
-# inside the runbook: the violation still has to be named against `linear`, and
-# `after` must still be seen.
+# A basic string carrying an escaped delimiter, with an assignment-shaped line
+# BELOW it, then a real key. TOML does not end the value at `\\"""`, so a scanner
+# that stopped there would resume inside the runbook and take `phantom` for a
+# key — which is what makes this fixture discriminate rather than merely pass:
+# `phantom` is invisible to tomllib, so a scanner that reports it is reading the
+# body as source.
 ESCAPED_DELIMITER_FIXTURE = (
-    f'[{TABLE}]\nlinear = """\nsays \\""" inside\n"""\nafter = \'\'\'\ncontent\n\'\'\'\n'
+    f'[{TABLE}]\nlinear = """\nsays \\""" inside\nphantom = "x"\n"""\n'
+    "after = '''\ncontent\n'''\n"
 )
 
 
@@ -295,11 +298,18 @@ def self_test() -> list[str]:
             f"a basic string containing an escaped delimiter was not reported against "
             f"`linear`, so the scan ended early and named the wrong key: {escaped}"
         )
-    if "after" not in assignments(ESCAPED_DELIMITER_FIXTURE):
+    scanned = assignments(ESCAPED_DELIMITER_FIXTURE)
+    if "after" not in scanned:
         failures.append(
             "the key after a basic string containing an escaped delimiter was not "
             "found, so the scan resumed inside the value and every later key is "
             "invisible — DID NOT RUN for all of them."
+        )
+    if "phantom" in scanned:
+        failures.append(
+            "an assignment-shaped line INSIDE a basic string was taken for a key, so "
+            "the scan ended at an escaped delimiter and is reading runbook text as "
+            "source — every judgement below it is about the wrong thing."
         )
     return failures
 

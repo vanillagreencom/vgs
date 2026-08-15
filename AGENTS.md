@@ -47,7 +47,7 @@ second VGS instance** that fights the session shell for session-global resources
 and strands orphaned layer surfaces — the session ends up as cursors
 over black, recoverable only with `vshell ipc call lock forceReset`. Never
 `pkill quickshell` either: other Quickshell apps on the seat are legitimate.
-`scripts/qml-smoke.sh --nested` is the sanctioned smoke:
+`scripts/validate qml` is the sanctioned smoke:
 the mode that replaces what `qs -c vshell` used to cover.
 
 ## Conventions

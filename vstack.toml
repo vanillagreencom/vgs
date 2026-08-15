@@ -118,12 +118,14 @@ jq -r '(.body | sub("\\s+$"; "")) + "\n\n---\n\nMirrored from GitHub issue [" + 
 rm -f "$gh_json" "$gh_body"
 ```
 
+Run that block as a UNIT, in one shell — the `mktemp` paths live in variables,
+so a command run on its own would find them empty and redirect to nothing.
+
 `mktemp`, not `/tmp/gh-<n>.json`: that path is fully predictable from the issue
 number, so two lanes mirroring the same issue overwrite each other's file, and
-a pre-created symlink there would be followed by the redirect. The `rm` is
-explicit rather than a `trap ... EXIT`, because these are separate commands an
-agent runs one at a time: a trap would fire whenever the shell exits, not when
-the runbook finishes, so it would look like cleanup without being it.
+a pre-created symlink there would be followed by the redirect. The `rm` is a
+final line rather than a `trap ... EXIT` because the block is short and linear:
+a trap buys nothing here that the last line does not already do.
 
 The list query carries `url` so the triage table is actionable; `body` is
 fetched per issue rather than for all 50, and every field the description needs
