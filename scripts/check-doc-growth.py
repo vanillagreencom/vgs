@@ -48,6 +48,12 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 # HERE, in the same PR that grows the file, with a rationale comment — the
 # rationale is for the reviewer, so a raise without one is review feedback,
 # not something this script can enforce.
+#
+# Growth UNDER a ceiling is deliberately free, so nothing forces a recorded
+# size to be refreshed and three VGS-124 rounds found stale ones by hand. To
+# re-derive them all, compare each entry against a fresh stat:
+#   python3 -c 'import re,os;[print(f"{f} {os.path.getsize(f):,}") for f in
+#     re.findall(r"^    \"([^\"]+)\":", open("scripts/check-doc-growth.py").read(), re.M)]'
 CEILINGS: dict[str, int] = {
     # HARD BUDGET, not measured-plus-headroom — see HARD_BUDGETS below.
     #
