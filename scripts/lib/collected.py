@@ -31,6 +31,22 @@ clean result. Both return a diagnostic string or None, because the callers
 accumulate problems rather than raising — a check reports every problem it
 found, not just the first.
 
+CALL SITES, four collection points across two checks, each with its own
+must-fail control:
+
+  check-skill-instructions.py  1  the [skill-instructions] table, and the
+                                  pinned `linear` block within it
+                               2  each key's delimiter
+  check-doc-growth.py          3  the surfaces a watched glob finds, asserted
+                                  against the ceilinged files under each root
+                               4  each CEILINGS entry's comment
+
+A third helper, `unaccounted()`, covered a PARTITIONED collection — every member
+must land in exactly one bucket. Its only call site was the jq-occupancy
+accounting that moved to VGS-156 with the rest of that apparatus, so it left
+with it rather than sitting here unused; VGS-156 brings it back with the call
+site that needs it.
+
 No `__main__` and no executable bit: this is a library reached only by import,
 like `scripts/lib/validation_manifest.py`, so it carries no manifest row. Its
 behaviour is proven by the must-fail control each call site owns.
@@ -59,32 +75,6 @@ def nothing_collected(
     return (
         f"no {what} matched {selector} — {cause}. Nothing was examined, so this "
         f"is DID NOT RUN, not a clean result"
-    )
-
-
-def unaccounted(
-    seen: int,
-    buckets: dict[str, Collection[object]],
-    *,
-    what: str,
-    selector: str,
-) -> str | None:
-    """Diagnostic when `buckets` do not account for every one of `seen`.
-
-    The third shape. Where a collection is partitioned rather than filtered —
-    every occurrence must land in exactly one bucket, including a bucket for the
-    sanctioned exemptions — counting the parts against the whole is what makes a
-    dropped member impossible instead of merely unlikely. A branch that forgets
-    to record one fails here rather than going quiet.
-    """
-    total = sum(len(one) for one in buckets.values())
-    if total == seen:
-        return None
-    tally = ", ".join(f"{len(one)} {name}" for name, one in sorted(buckets.items()))
-    return (
-        f"{seen} {what} matched {selector} but only {total} were accounted for "
-        f"({tally}) — the rest were dropped without a word. Every one must land in "
-        f"a bucket, so this is not a clean result"
     )
 
 

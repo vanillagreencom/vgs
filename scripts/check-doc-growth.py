@@ -49,20 +49,21 @@ failure of the check, never a clean result — through `scripts/lib/collected.py
 Two steps here collect something, and each has its own must-fail control. Add a
 new one the same way, or it becomes the next instance:
 
-5. the surfaces a watched glob finds     `WATCHED_GLOBS`      recursive, and the
+3. the surfaces a watched glob finds     `WATCHED_GLOBS`      recursive, and the
                                                               discovered set is
                                                               asserted against
                                                               the ceilinged files
                                                               under each root —
                                                               partial coverage is
                                                               not full coverage
-6. the CEILINGS table and each entry's   `ceiling_comments()` both anchors must
+4. the CEILINGS table and each entry's   `ceiling_comments()` both anchors must
    comment                                                    resolve, and every
                                                               entry must yield
                                                               comment text
 
-(The numbering continues check-skill-instructions.py's 1-4, so the six points
-the invariant governs are named once across both files.)
+(The numbering continues check-skill-instructions.py's 1-2, so the four points
+the invariant governs are named once across both files. The apparatus that held
+points 3-4 of the old numbering moved to VGS-156 with the jq machinery.)
 """
 
 from __future__ import annotations
@@ -367,7 +368,7 @@ def recorded_size_problems(source: str, sizes: dict[str, int]) -> list[str]:
             f"parser rather than the table — an arm that reads nothing passes "
             f"everything."
         ]
-    # COLLECTION POINT 6, the second half. The span parse is guarded by the
+    # COLLECTION POINT 4, the second half. The span parse is guarded by the
     # anchors above; this guards the PER-ENTRY parse. An entry that yields no
     # comment text at all is not "an entry with nothing to say" — every entry
     # carries at least its adoption size by the rule at the top of this file —
@@ -424,7 +425,7 @@ def watched_glob_problems(root: Path, ceilinged: set[str]) -> list[str]:
         discovered = {
             path.relative_to(root).as_posix() for path in sorted(root.glob(pattern))
         }
-        # COLLECTION POINT 5, the PARTIAL half. "Did it match anything?" was
+        # COLLECTION POINT 3, the PARTIAL half. "Did it match anything?" was
         # satisfied by the top-level files while a nested surface was invisible,
         # so the expected set is named instead: every ceilinged file living under
         # this pattern's root must be rediscovered by it.
@@ -520,7 +521,7 @@ def self_test() -> list[str]:
             f"a comment recording 800 B for an 800-byte file was not accepted: {spurious}"
         )
 
-    # COLLECTION POINT 5's control, PARTIAL half. A root that still matches some
+    # COLLECTION POINT 3's control, PARTIAL half. A root that still matches some
     # files keeps the "did it match anything?" guard satisfied, which is exactly
     # how a nested surface stayed invisible. Ceilinged files that the glob no
     # longer reaches must be named.
@@ -531,7 +532,7 @@ def self_test() -> list[str]:
             f"coverage still reads as full coverage: {partial}"
         )
 
-    # COLLECTION POINT 6's control — an entry whose comment does not parse must be
+    # COLLECTION POINT 4's control — an entry whose comment does not parse must be
     # distinguishable from an entry with nothing to say.
     commentless = 'CEILINGS: dict[str, int] = {\n    "fixture.md": 900,\n}\n'
     if not any(
