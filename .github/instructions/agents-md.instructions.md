@@ -13,7 +13,7 @@ this file are executed literally by agents, so a stale command, path, or flag
 is a real defect.
 
 Two checks read this file by exact string, so a pure reflow can break the build —
-in checks the `docs` area does not run. `scripts/check-validation-safety.sh`
+in checks that the `docs` area does not run. `scripts/check-validation-safety.sh`
 matches its sanctioned direct-launch mentions per LINE: wrap one and it is no
 longer exempt. `scripts/test-validation-inventory.sh` substitutes the wrapped
 ``areas `go` …`` enumeration verbatim and asserts the guard then REFUSES, so a

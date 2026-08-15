@@ -49,20 +49,27 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 # rationale is for the reviewer, so a raise without one is review feedback,
 # not something this script can enforce.
 CEILINGS: dict[str, int] = {
+    # HARD BUDGET, not measured-plus-headroom — see HARD_BUDGETS below.
+    #
     # The VGS-124 second diet cut this file to invariants only. RELOCATED to
     # the surface that owns each: § Project skills (project-skills/README.md),
-    # § Documentation resources and the layout tree (the vshell-dev skill),
-    # § Review gate (review-gate-writer.yml's header and vstack.settings.toml),
-    # the Linear mirroring runbook (vstack.toml, D002) and § Live workstation
-    # wiring (the untracked AGENTS.local.md). DROPPED outright, with no
-    # successor: § Layout's path/purpose table and § Architecture docs'
-    # per-file "when to read" routing, both of which had measurably rotted —
-    # a pointer at docs/architecture/ replaces them. Those registers are what
-    # regrew after VGS-107, so 4,500 is a hard budget set by the issue rather
-    # than a measured size plus headroom: the file is 4,492 B, so there is
-    # almost none, and that is the point. The next addition has to displace
-    # something or move to a per-area surface, which is what the two diets
-    # kept having to do by hand.
+    # § Documentation resources and § Layout's path/purpose table (the
+    # vshell-dev skill's "## Repo layout" tree, which predates the diet and
+    # gained that table's three missing entries in the same PR), § Review gate
+    # (review-gate-writer.yml's header and vstack.settings.toml), the Linear
+    # mirroring runbook (vstack.toml, D002) and § Live workstation wiring (the
+    # untracked AGENTS.local.md). DROPPED outright, with no successor:
+    # § Architecture docs' per-file "when to read" routing, replaced by a
+    # pointer at docs/architecture/. Neither deleted table was STALE at
+    # removal — every path resolved and all 13 architecture docs were listed;
+    # they went because they duplicated a per-area surface and § Layout named
+    # only 4 of bin/'s 15 entries, so it read as complete while it was not.
+    #
+    # Those registers are what regrew after VGS-107, so 4,500 is a budget the
+    # issue set rather than a size plus headroom: the file is 4,489 B, so there
+    # is almost none, and that is the point. The next addition displaces
+    # something or moves to a per-area surface — the thing both diets had to do
+    # by hand.
     "AGENTS.md": 4_500,
     # Adopted at 3,289 B. 2026-08-10: owner-approved risk-class +
     # regression-test policy sections plus the PR #120 review rounds
@@ -80,6 +87,8 @@ CEILINGS: dict[str, int] = {
     # TIGHTER than the 4,000 the adoption formula rounds to, because the
     # rounding above is an adoption convention and a raise is only required to
     # carry a rationale — so the tighter line wins over the rounder number.
+    # Now 3,660 B: VGS-124 added AGENTS.local.md to the doc-surface set. The
+    # deliberately tight 3,850 still holds, with ~190 B left.
     ".github/copilot-instructions.md": 3_850,
     # Adopted at 4,497 B. VGS-124: "a green CI run does not prove the shell
     # starts — run the qml area, which forces --require-nested" left AGENTS.md
@@ -102,9 +111,13 @@ CEILINGS: dict[str, int] = {
     # cannot" out of the always-loaded surface; the required-checks and
     # whitespace-range halves landed here and the local-only/reached-indirectly
     # tables went to validation-scripts.instructions.md, whose `scripts/**`
-    # scope is where judging a check actually happens. 3,500 keeps ~10% headroom
-    # at the resulting 3,116 B.
-    ".github/instructions/ci.instructions.md": 3_500,
+    # scope is where judging a check actually happens. That 3,500 kept ~10%
+    # headroom at the resulting 3,116 B. VGS-124 then repointed the deleted
+    # AGENTS.md § Review gate citation here and added the rule it was the only
+    # home for — a gate-repair PR cannot open its own gate, so it merges via
+    # the ruleset bypass actor. At the resulting 3,448 B, 3,500 left 52 B and
+    # a comment still promising ~10%: 3,800 restores it.
+    ".github/instructions/ci.instructions.md": 3_800,
     ".github/instructions/harness-config.instructions.md": 900,  # adopted at 760 B
     ".github/instructions/helper-cli.instructions.md": 600,  # adopted at 517 B
     ".github/instructions/quickshell-qml.instructions.md": 1_700,  # adopted at 1,459 B
@@ -167,9 +180,25 @@ WATCHED_GLOBS = (
     "project-skills/*/SKILL.md",
 )
 
+# Surfaces whose ceiling is a BUDGET, not a measured size plus headroom. The
+# generic remedy below — "raise the ceiling, here, with a rationale" — is right
+# for every other entry, and exactly wrong for these: raising the number is the
+# outcome the budget exists to refuse. They get a remedy that says to displace
+# or relocate instead. Keep an entry here only while its comment above says the
+# same thing; a budget nobody chose is just a tight ceiling.
+HARD_BUDGETS = frozenset({"AGENTS.md"})
+
 
 def main() -> int:
     problems: list[str] = []
+
+    # A budget naming a path with no ceiling would never be consulted, so the
+    # entry would look like policy while enforcing nothing.
+    for rel in sorted(HARD_BUDGETS - CEILINGS.keys()):
+        problems.append(
+            f"{rel} is in HARD_BUDGETS but has no CEILINGS entry, so its budget "
+            f"is never consulted. Add the ceiling or drop the budget."
+        )
 
     for rel, ceiling in CEILINGS.items():
         path = REPO_ROOT / rel
@@ -182,6 +211,18 @@ def main() -> int:
             continue
         size = path.stat().st_size
         if size > ceiling:
+            if rel in HARD_BUDGETS:
+                problems.append(
+                    f"{rel} is {size:,} bytes, over its {ceiling:,}-byte BUDGET. "
+                    f"This one is not a measured size plus headroom, so raising "
+                    f"it is not the remedy: displace something already here, or "
+                    f"move the addition to the per-area surface that owns it "
+                    f"(the comment on its entry in scripts/check-doc-growth.py "
+                    f"records where each register went). Changing the number "
+                    f"takes an explicit decision to retire the budget, not a "
+                    f"rationale comment."
+                )
+                continue
             suggested = math.ceil(size * 1.10 / 100) * 100
             problems.append(
                 f"{rel} is {size:,} bytes, over its {ceiling:,}-byte ceiling. "

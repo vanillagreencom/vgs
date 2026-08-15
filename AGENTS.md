@@ -1,14 +1,14 @@
 # AGENTS.md
 
-Review-bot context lives in `review-bots.md`, not here.
+Review-bot context is `review-bots.md`, not here.
 
 VGS = VanillaGreen Shell. Runtime name stays `vshell`: `vgs` collides with LVM.
 
 ## Mission
 - VGS owns the shell runtime, widgets, clipboard history, capture/recording,
   wallpapers, palettes, blueprints, app theme generation, and settings UI.
-- `~/dotfiles` is a personal wiring/overlay layer; portable and default behavior
-  belongs in VGS.
+- `~/dotfiles` is a personal wiring/overlay layer, editable as needed; portable
+  and default behavior belongs in VGS.
 - Rollback means reinstalling another shell; VGS keeps no disabled rollback
   service.
 - Hyprland or Niri + Quickshell 0.3.0 only; Hyprland is the reference
@@ -25,12 +25,12 @@ VGS = VanillaGreen Shell. Runtime name stays `vshell`: `vgs` collides with LVM.
 
 ## Theme rules
 - Built-in packages live in `themes/<name>/`; `~/.config/vshell/themes/<name>/` overlays them per file (user wins); machine-local overlays live outside the repo in `~/.config/vshell-local/`.
-- Curated palettes (`source: curated`) pass through untouched; only generated palettes get contrast enforcement.
+- Curated palettes (`source: curated`) pass through untouched; only generated ones get contrast enforcement.
 - Heavy generation stays in `bin/vshell-helper`; QML shells out to `vshell theme ...`.
 - Generated targets must write to VGS-named paths.
 
 ## Backend rules
-- Every method maps to a documented capability in `docs/architecture/backend-methods.json`; `scripts/check-backend-inventory.py` enforces both sides.
+- Every method maps to a documented capability in `docs/architecture/backend-methods.json`; `scripts/check-backend-inventory.py` enforces it.
 - QML gates on advertised `capabilities`/`methods`, never raw `apiVersion` ordinals, and keeps a working fallback when one is absent.
 - One owner per resource: never add a second watcher/daemon/poller for something the helper or QML already owns.
 - Exec external tools with argv arrays; never log secrets or raw frame payloads.
@@ -61,7 +61,7 @@ the mode that replaces what `qs -c vshell` used to cover.
   maintained install channel; one that cannot be is named in the release notes,
   never silently skipped.
 - Session handoff is only `docs/handoff/HANDOFF.md` (gitignored), overwritten in
-  place; Linear stays the source of truth. Read or write on request only.
+  place; Linear stays the source of truth. Read or write on request.
 
 ## Do not
 - Do not introduce a `vgs` CLI binary, or call `vgs` from VGS runtime paths.

@@ -41,9 +41,12 @@ quickshell/vshell/        # QML runtime
 config/vshell/            # default settings and bundled plugins
 bin/vshell                # CLI wrapper
 bin/vshell-helper         # Python helper and theme engine
+bin/vshell_niri.py        # isolated Niri/KDL config subsystem (imported, not run)
+bin/vshell-upscale        # one-shot local AI wallpaper upscaler
 backend/                  # Go backend daemon (runner/supervisor, socket, system services)
 themes/<name>/            # built-in theme packages (theme.json, colors.toml, backgrounds/, apps/)
 themes/targets/           # generated app-theme target templates
+systemd/user/vshell.service  # user service template
 docs/architecture/        # short architecture docs
 ```
 

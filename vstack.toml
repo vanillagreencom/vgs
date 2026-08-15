@@ -109,12 +109,17 @@ to the GitHub issue — then create it in team vg-shell and work the Linear issu
 rather than the GitHub one:
 
 ```bash
-gh issue view <n> --json title,body,url > /tmp/gh-<n>.json
-jq -r '(.body | sub("\\s+$"; "")) + "\n\n---\n\nMirrored from GitHub issue [" + .url + "](<" + .url + ">) (intake-only tracker)."' /tmp/gh-<n>.json > /tmp/gh-<n>-body.md
+gh_json="$(mktemp)"; gh_body="$(mktemp)"
+gh issue view <n> --json title,body,url > "$gh_json"
+jq -r '(.body | sub("\\s+$"; "")) + "\n\n---\n\nMirrored from GitHub issue [" + .url + "](<" + .url + ">) (intake-only tracker)."' "$gh_json" > "$gh_body"
 
-.agents/skills/linear/scripts/linear.sh issues create --title "$(jq -r .title /tmp/gh-<n>.json)" \
-  --description-file /tmp/gh-<n>-body.md
+.agents/skills/linear/scripts/linear.sh issues create --title "$(jq -r .title "$gh_json")" \
+  --description-file "$gh_body"
 ```
+
+`mktemp`, not `/tmp/gh-<n>.json`: that path is fully predictable from the issue
+number, so two lanes mirroring the same issue overwrite each other's file, and
+a pre-created symlink there would be followed by the redirect.
 
 The list query carries `url` so the triage table is actionable; `body` is
 fetched per issue rather than for all 50, and every field the description needs
