@@ -114,7 +114,51 @@ JQ_TOKEN = re.compile(r"\bjq\b")
 # `"$VAR"`, `$VAR`, `"${VAR}"` — a program held in a shell variable, and the ONE
 # spelling that genuinely cannot be checked from the text: its value is not here.
 SHELL_VARIABLE = re.compile(r"^\$\{?[A-Za-z_][A-Za-z0-9_]*\}?$")
-EXPANSION = re.compile(r"[$`]")
+# An UNESCAPED expansion. `\$` inside double quotes is a literal dollar the shell
+# hands straight to jq, so treating it as an expansion would refuse a filter that
+# is perfectly readable.
+EXPANSION = re.compile(r"(?<!\\)[$`]")
+# What the shell strips from a "..."-quoted word: a backslash is special there
+# only before these. Everything else keeps its backslash, which matters because
+# jq's own regex escapes (`\\s`) travel through untouched.
+DOUBLE_QUOTE_ESCAPE = re.compile(r"\\([$`\"\\])")
+
+
+def closing_quote(text: str, start: int, quote: str) -> int:
+    """Index of the quote that closes a shell-quoted run, or -1.
+
+    The two quotes differ, and the difference is the whole point. Inside DOUBLE
+    quotes a backslash escapes the next character, so a naive search for the next
+    `"` stops at the first `\\"` and truncates the filter — which compiled the
+    wrong text and REJECTED a valid runbook. Inside SINGLE quotes POSIX defines
+    no escape at all: a single quote cannot appear in a single-quoted string by
+    any spelling, so the first one genuinely is the close and that path stays a
+    plain search.
+    """
+    if quote == "'":
+        return text.find(quote, start)
+    index = start
+    while index < len(text):
+        if text[index] == "\\":
+            index += 2
+            continue
+        if text[index] == quote:
+            return index
+        index += 1
+    return -1
+
+
+def as_jq_receives_it(program: str, quote: str) -> str:
+    """The program text the shell actually hands jq.
+
+    Only double quotes transform anything. Compiling the raw span instead was
+    the second half of the same false positive: `sub(\\"x\\"; \\"y\\")` does not
+    compile with its backslashes intact, but the shell removes them before jq
+    ever sees it, so the check must too or it fails valid content.
+    """
+    if quote != '"':
+        return program
+    return DOUBLE_QUOTE_ESCAPE.sub(r"\1", program)
 
 
 def jq_programs(fenced: str) -> tuple[list[str], list[str], list[str]]:
@@ -168,11 +212,12 @@ def jq_programs(fenced: str) -> tuple[list[str], list[str], list[str]]:
             continue
 
         quote = joined[cursor]
+        quoting = quote
         if quote in "'\"":
             # A quoted body may span real newlines — a shell quoted string keeps
             # them, and a TOML-mangled block is where they turn up — so the close
             # is searched past `command_end`.
-            closing = joined.find(quote, cursor + 1)
+            closing = closing_quote(joined, cursor + 1, quote)
             if closing == -1:
                 unreadable.append(joined[token.start() : command_end].strip())
                 break
@@ -198,7 +243,11 @@ def jq_programs(fenced: str) -> tuple[list[str], list[str], list[str]]:
                 else:
                     unreadable.append(occurrence)
                 continue
-        programs.append(program)
+            quoting = "unquoted"
+        # Compile what jq RECEIVES, not the bytes between the quotes: inside
+        # double quotes the shell strips the escapes first, and handing jq the
+        # raw span rejected valid filters.
+        programs.append(as_jq_receives_it(program, quoting))
     return programs, unreadable, exempt
 
 
@@ -680,6 +729,39 @@ def self_test() -> list[str]:
         failures.append(
             "an unpinned prose block was required to carry fences, which would fail "
             "project-management and reviewer in the real file."
+        )
+
+    # ESCAPED QUOTES, BOTH DIRECTIONS. This is the one defect class on this file
+    # that pointed the other way: every other was a silent skip, but truncating a
+    # double-quoted filter at its first `\"` REJECTED valid content, which is
+    # worse in a check that gates CI. So the pair matters — widening alone would
+    # trade a false positive for a silent miss.
+    escaped_ok = 'jq -r "sub(\\"x\\"; \\"y\\")" f.json'
+    reported = fixture_audit(literal_block(escaped_ok), source="<fixture: escaped quotes, valid>")
+    if reported:
+        failures.append(
+            f"a valid double-quoted jq filter containing escaped quotes was rejected — "
+            f"the closing-quote scan or the unescaping is truncating it: {reported}"
+        )
+    # ...and it must have been COMPILED, not quietly skipped: a blanket skip of
+    # the double-quoted case would also make the line above pass.
+    compiled, _, _ = jq_programs(escaped_ok + "\n")
+    if compiled != ['sub("x"; "y")']:
+        failures.append(
+            f"the escaped-quote filter was not handed to jq as the shell would hand "
+            f"it: got {compiled!r}, expected the unescaped ['sub(\"x\"; \"y\")']. "
+            f"Passing it clean by skipping it is not the fix."
+        )
+    escaped_bad = 'jq -r "sub(\\"x\\"; \\"y\\"" f.json'
+    if not any(
+        "does not compile" in problem
+        for problem in fixture_audit(
+            literal_block(escaped_bad), source="<fixture: escaped quotes, invalid>"
+        )
+    ):
+        failures.append(
+            "an INVALID double-quoted jq filter containing escaped quotes was not "
+            "caught, so honouring the escapes turned a false positive into a miss."
         )
 
     # COLLECTION POINT 3's control — every jq occurrence lands in exactly one of
