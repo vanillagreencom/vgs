@@ -269,17 +269,49 @@ def assignments(text: str) -> dict[str, tuple[str, str]]:
     return found
 
 
+# Blocks that must exist AND carry content. Small on purpose — each entry is a
+# runbook whose silent removal this check could not otherwise distinguish from a
+# clean table:
+#   linear — the GitHub-intake mirroring runbook, the block whose TOML mangling
+#            this whole check was written for.
+REQUIRED_BLOCKS = frozenset({"linear"})
+
+
 def jq_available() -> bool:
     return shutil.which("jq") is not None
 
 
-def audit(text: str, *, source: str, jq_timeout: float = JQ_TIMEOUT_SECONDS) -> list[str]:
+def audit(
+    text: str,
+    *,
+    source: str,
+    jq_timeout: float = JQ_TIMEOUT_SECONDS,
+    required: frozenset[str] = REQUIRED_BLOCKS,
+) -> list[str]:
     """Every problem in one `[skill-instructions]` table. Empty means clean."""
     problems: list[str] = []
     try:
         table = blocks(text)
     except tomllib.TOMLDecodeError as exc:
         return [f"{source} is not valid TOML: {exc}"]
+
+    # THIS FILE PUBLISHES THE RULE, SO IT OBEYS IT. Every arm below lives inside
+    # a loop over `table`; an empty one made all four assert nothing and the
+    # check printed "ok (0 blocks)" while the runbooks it guards had been renamed
+    # away or emptied. An empty collection is DID NOT RUN, never clean
+    # (.github/instructions/validation-scripts.instructions.md).
+    if not table:
+        return [
+            f"{source} has no non-empty [{TABLE}] block at all — the table is absent, "
+            f"renamed, or every value is empty. Nothing was examined, so this is DID "
+            f"NOT RUN, not a pass."
+        ]
+    for key in sorted(required - table.keys()):
+        problems.append(
+            f"{source} [{TABLE}] {key} is missing or empty. It is pinned because it "
+            f"ships a runbook agents paste and run, so its disappearance has to be "
+            f"louder than the rest of the table still being fine."
+        )
 
     written = assignments(text)
 
@@ -456,11 +488,40 @@ MULTILINE_JQ_FIXTURE = (
 )
 
 
+def fixture_audit(text: str, **kwargs) -> list[str]:
+    """`audit` with the pinned-block requirement waived.
+
+    Fixtures carry one `demo` key, so requiring `linear` would make every control
+    fail for a reason that has nothing to do with the arm it is proving. The
+    requirement itself gets its own controls below, driven through `audit`.
+    """
+    kwargs.setdefault("required", frozenset())
+    return audit(text, **kwargs)
+
+
 def self_test() -> list[str]:
     """The arms must be able to fail. Runs on every invocation, never optional."""
     failures: list[str] = []
 
-    broken = audit(BROKEN_FIXTURE, source="<fixture: pre-fix basic string>")
+    # THE RULE THIS FILE PUBLISHES, APPLIED TO ITSELF. Each of these returned
+    # clean before: the table renamed away, every value emptied, and the pinned
+    # block emptied while the rest of the table stayed fine.
+    for case, fixture in (
+        ("the table renamed away", "[other-table]\nx = 1\n"),
+        ("every value empty", f"[{TABLE}]\nlinear = \"\"\ndev = \"\"\n"),
+        (
+            "the pinned block emptied",
+            f"[{TABLE}]\nlinear = \"\"\nother = '''\ncontent\n'''\n",
+        ),
+    ):
+        if not audit(fixture, source=f"<fixture: {case}>"):
+            failures.append(
+                f"a [{TABLE}] table with {case} was reported CLEAN. Every arm lives in "
+                f"a loop over that table, so an empty one asserts nothing — DID NOT RUN, "
+                f"never clean, which is the rule this check publishes."
+            )
+
+    broken = fixture_audit(BROKEN_FIXTURE, source="<fixture: pre-fix basic string>")
     if not broken:
         failures.append(
             "the pre-fix basic-string fixture PASSED. Every arm is vacuous: the shape "
@@ -479,7 +540,7 @@ def self_test() -> list[str]:
                     f"not shown able to fail (looked for {needle!r})."
                 )
 
-    fixed = audit(FIXED_FIXTURE, source="<fixture: literal string>")
+    fixed = fixture_audit(FIXED_FIXTURE, source="<fixture: literal string>")
     if fixed:
         failures.append(
             "the post-fix literal-string fixture FAILED, so the check rejects the very "
@@ -495,7 +556,7 @@ def self_test() -> list[str]:
             "for: its parsed value is not a substring of its raw source, so it would "
             "have failed the old proxy too and proves nothing about the new arms."
         )
-    collapsed = audit(COLLAPSE_ONLY_FIXTURE, source="<fixture: backslash collapse only>")
+    collapsed = fixture_audit(COLLAPSE_ONLY_FIXTURE, source="<fixture: backslash collapse only>")
     for arm, needle in (
         ("delimiter", "written as a BASIC string"),
         ("identity", "not byte-identical"),
@@ -506,7 +567,7 @@ def self_test() -> list[str]:
                 f"`{arm}` arm, which is the exact case a whole-file substring test "
                 f"misses (looked for {needle!r}): {collapsed}"
             )
-    collapse_fixed = audit(COLLAPSE_ONLY_FIXED, source="<fixture: same bytes, literal>")
+    collapse_fixed = fixture_audit(COLLAPSE_ONLY_FIXED, source="<fixture: same bytes, literal>")
     if collapse_fixed:
         failures.append(
             "the same bytes written as a literal string were rejected, so those arms "
@@ -518,7 +579,7 @@ def self_test() -> list[str]:
     # check still claims every jq program compiles — which is how `jq -r .title`
     # went unchecked in this repo's own runbook.
     for spelling, command in INVALID_FILTER_FIXTURES:
-        reported = audit(
+        reported = fixture_audit(
             literal_block(command), source=f"<fixture: {spelling} invalid filter>"
         )
         if not any("does not compile" in problem for problem in reported):
@@ -529,7 +590,7 @@ def self_test() -> list[str]:
 
     # A program held in a shell variable is the ONE silent exemption, so it must
     # stay silent — otherwise every runbook using one fails for being unreadable.
-    variable_form = audit(
+    variable_form = fixture_audit(
         literal_block('jq -r "$PROGRAM" "$f"'), source="<fixture: shell variable>"
     )
     if variable_form:
@@ -547,7 +608,7 @@ def self_test() -> list[str]:
             f"{escaped[1]!r}, expected {ESCAPED_DELIMITER_SPAN!r}. Arms 2 and 4 would "
             f"then compare against a span this scanner invented."
         )
-    escaped_problems = audit(ESCAPED_DELIMITER_FIXTURE, source="<fixture: escaped delimiter>")
+    escaped_problems = fixture_audit(ESCAPED_DELIMITER_FIXTURE, source="<fixture: escaped delimiter>")
     if not any("written as a BASIC string" in problem for problem in escaped_problems):
         failures.append(
             f"a basic string containing an escaped delimiter was not reported as a "
@@ -556,7 +617,7 @@ def self_test() -> list[str]:
 
     # ARM 3'S READER, not jq. A continued invocation must actually be collected:
     # while it was not, this fixture passed with an invalid filter.
-    multiline = audit(MULTILINE_JQ_FIXTURE, source="<fixture: continued jq invocation>")
+    multiline = fixture_audit(MULTILINE_JQ_FIXTURE, source="<fixture: continued jq invocation>")
     if not any("does not compile" in problem for problem in multiline):
         failures.append(
             "a jq invocation split across a shell line continuation was not compiled, "
@@ -568,7 +629,7 @@ def self_test() -> list[str]:
     # program from wedging this check and the CI job. Reaching the handler is the
     # assertion: a non-terminating program outlives any bound, so this cannot be
     # flaky in the direction that matters.
-    hanging = audit(
+    hanging = fixture_audit(
         HANGING_FIXTURE,
         source="<fixture: non-terminating jq>",
         jq_timeout=JQ_FIXTURE_TIMEOUT_SECONDS,
@@ -599,7 +660,7 @@ def main() -> int:
             print(f"  - {problem}", file=sys.stderr)
         return 1
 
-    problems = audit(CONFIG.read_text(encoding="utf-8"), source="vstack.toml")
+    problems = fixture_audit(CONFIG.read_text(encoding="utf-8"), source="vstack.toml")
     if problems:
         print("check-skill-instructions: FAIL", file=sys.stderr)
         for problem in problems:

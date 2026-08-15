@@ -48,6 +48,7 @@ from __future__ import annotations
 import math
 import re
 import sys
+import tempfile
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -197,15 +198,21 @@ CEILINGS: dict[str, int] = {
     "docs/architecture/wallpaper-upscaling.md": 4_000,  # adopted at 3,625 B
 }
 
-# Every file matching these must carry a CEILINGS entry. Shallow on purpose:
-# the patterns match today's layout exactly, so a new nesting level appearing
-# is a conscious decision about whether it is an instruction surface — and a
-# glob that stops matching anything fails below rather than going quietly
-# inert.
+# Every file matching these must carry a CEILINGS entry. RECURSIVE, and that is
+# a correction: these were shallow, with a comment claiming a new nesting level
+# would be a conscious decision. It was not — `docs/architecture/lock/details.md`
+# simply never matched, so it got no ceiling and nothing said so. The stale-glob
+# guard below could not save it either, since the top-level files still matched
+# and kept `matched` true.
+#
+# If a recursive sweep ever pulls in something that genuinely should not be
+# ceilinged, exempt it by name here with a reason. Do NOT narrow the glob back:
+# an exemption is visible in review, a shallow glob is not. (Nothing needs one
+# today — the sweep found no unceilinged file when it was widened.)
 WATCHED_GLOBS = (
-    ".github/instructions/*.md",
-    "docs/architecture/*.md",
-    "project-skills/*/SKILL.md",
+    ".github/instructions/**/*.md",
+    "docs/architecture/**/*.md",
+    "project-skills/**/SKILL.md",
 )
 
 # Surfaces whose ceiling is a BUDGET, not a measured size plus headroom. The
@@ -363,9 +370,67 @@ RECORDED_SIZE_FIXTURES = (
 )
 
 
+def watched_glob_problems(root: Path, ceilinged: set[str]) -> list[str]:
+    """Watched surfaces under `root` with no ceiling, plus any stale glob.
+
+    Takes its root as an argument so the recursion can be proven against a
+    throwaway tree: asserting it against the repo alone would only show that
+    today's files still match, which the shallow globs did too.
+    """
+    problems: list[str] = []
+    for pattern in WATCHED_GLOBS:
+        matched = False
+        for path in sorted(root.glob(pattern)):
+            matched = True
+            rel = path.relative_to(root).as_posix()
+            if rel not in ceilinged:
+                size = path.stat().st_size
+                suggested = math.ceil(size * 1.10 / 100) * 100
+                problems.append(
+                    f"{rel} ({size:,} bytes) matches the watched glob `{pattern}` "
+                    f"but has no ceiling in scripts/check-doc-growth.py. A new "
+                    f"instruction surface needs a conscious ceiling, not a "
+                    f"grandfathered size: add an entry at its current size plus "
+                    f"~10% headroom rounded up to the next 100 bytes "
+                    f"({suggested:,} for this file today), with a comment "
+                    f"recording the measured size."
+                )
+        if not matched:
+            problems.append(
+                f"the watched glob `{pattern}` matches no files at all, so the "
+                f"new-file ratchet is silently disabled for it — the glob is "
+                f"stale. Update WATCHED_GLOBS in scripts/check-doc-growth.py in "
+                f"the same PR as the rename or removal that emptied it, or drop "
+                f"the glob if that surface class is genuinely gone."
+            )
+    return problems
+
+
 def self_test() -> list[str]:
     """The arm must be able to fail, and must not fire on correct records."""
     failures = []
+
+    # THE GLOBS REACH DOWN. Proven on a throwaway tree, because the repo's own
+    # files sit at the top level and match either way — which is exactly why the
+    # shallow globs passed every existing test while a nested surface was
+    # invisible.
+    with tempfile.TemporaryDirectory() as scratch:
+        root = Path(scratch)
+        for rel in (
+            ".github/instructions/nested/deep.md",
+            "docs/architecture/lock/details.md",
+            "project-skills/thing/nested/SKILL.md",
+        ):
+            probe = root / rel
+            probe.parent.mkdir(parents=True, exist_ok=True)
+            probe.write_text("x" * 100, encoding="utf-8")
+            reported = watched_glob_problems(root, set())
+            if not any(rel in problem for problem in reported):
+                failures.append(
+                    f"a nested instruction surface ({rel}) was not reported as "
+                    f"unceilinged, so the watched globs do not reach it and it would "
+                    f"be added with no ceiling and no complaint: {reported}"
+                )
     for comment, expected in RECORDED_SIZE_FIXTURES:
         actual = recorded_size(comment)
         if actual != expected:
@@ -497,31 +562,7 @@ def main() -> int:
     # above, and its comment says nothing about a file that is not there.
     problems.extend(recorded_size_problems(SELF.read_text(encoding="utf-8"), sizes))
 
-    for pattern in WATCHED_GLOBS:
-        matched = False
-        for path in sorted(REPO_ROOT.glob(pattern)):
-            matched = True
-            rel = path.relative_to(REPO_ROOT).as_posix()
-            if rel not in CEILINGS:
-                size = path.stat().st_size
-                suggested = math.ceil(size * 1.10 / 100) * 100
-                problems.append(
-                    f"{rel} ({size:,} bytes) matches the watched glob `{pattern}` "
-                    f"but has no ceiling in scripts/check-doc-growth.py. A new "
-                    f"instruction surface needs a conscious ceiling, not a "
-                    f"grandfathered size: add an entry at its current size plus "
-                    f"~10% headroom rounded up to the next 100 bytes "
-                    f"({suggested:,} for this file today), with a comment "
-                    f"recording the measured size."
-                )
-        if not matched:
-            problems.append(
-                f"the watched glob `{pattern}` matches no files at all, so the "
-                f"new-file ratchet is silently disabled for it — the glob is "
-                f"stale. Update WATCHED_GLOBS in scripts/check-doc-growth.py in "
-                f"the same PR as the rename or removal that emptied it, or drop "
-                f"the glob if that surface class is genuinely gone."
-            )
+    problems.extend(watched_glob_problems(REPO_ROOT, set(CEILINGS)))
 
     if problems:
         print("check-doc-growth: FAIL", file=sys.stderr)

@@ -202,11 +202,11 @@ quickshell/vshell/Widgets/KeybindItem.qml	1892
 quickshell/vshell/Widgets/VgsDropdown.qml	565
 quickshell/vshell/Widgets/VgsPopoutStandalone.qml	986
 scripts/check-aur-sync.py	410
-scripts/check-doc-growth.py	529
+scripts/check-doc-growth.py	570
 scripts/check-notification-takeover.js	454
 scripts/check-paste-injection.py	897
 scripts/check-settings-migration.js	952
-scripts/check-skill-instructions.py	621
+scripts/check-skill-instructions.py	682
 scripts/check-validation-inventory.py	411
 scripts/check-vshell-helper.py	5815
 scripts/check-vshell-niri.py	678
