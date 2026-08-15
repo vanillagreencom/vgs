@@ -76,12 +76,53 @@ JQ_TIMEOUT_SECONDS = 5.0
 JQ_FIXTURE_TIMEOUT_SECONDS = 0.5
 
 FENCE = re.compile(r"^```(?:bash|sh)?\n(.*?)^```", re.M | re.S)
-# A jq invocation with a single-quoted program, which is how every runbook here
-# writes one. Deliberately not a general shell parser: a program spelled some
-# other way is not silently skipped, it is simply not one of these, and arm 1
-# still covers the bytes.
-JQ_PROGRAM = re.compile(r"\bjq\b[^\n']*'([^']*)'")
 CONTINUATION = re.compile(r"(?<!\\)\\$", re.M)
+
+# Shell line continuations are JOINED before any jq invocation is looked for.
+# The previous pattern was anchored to a single line, so `jq -r \` + newline +
+# `'…'` collected NOTHING, the compile loop never ran, and arm 3 passed on an
+# invalid filter — the check written to prove a runbook renders, defeated by the
+# very continuations TOML basic strings ate. Normalising first removes the class
+# rather than widening one regex against it.
+CONTINUATION_JOIN = re.compile(r"\\\n\s*")
+JQ_TOKEN = re.compile(r"\bjq\b")
+QUOTED_PROGRAM = re.compile(r"'([^']*)'")
+
+
+def jq_programs(fenced: str) -> tuple[list[str], list[str]]:
+    """(compilable programs, jq lines this cannot read) from one fenced block.
+
+    The second half is why this returns a pair. An occurrence nothing could be
+    extracted from used to vanish, and a vanished occurrence is indistinguishable
+    from a clean one — the empty-collection-reads-as-clean shape that
+    `.github/instructions/validation-scripts.instructions.md` now names. So a jq
+    line that carries a quote but yields no program is REPORTED, not skipped.
+
+    A jq with an unquoted filter (`jq -r .title "$f"`) is not a miss: there is no
+    program text to hand the compiler. Arms 1 and 2 still cover its bytes.
+    """
+    programs: list[str] = []
+    unreadable: list[str] = []
+    joined = CONTINUATION_JOIN.sub(" ", fenced)
+    position = 0
+    while token := JQ_TOKEN.search(joined, position):
+        opening = joined.find("'", token.end())
+        newline = joined.find("\n", token.end())
+        # The quote must open on this jq's own logical command. Past a newline it
+        # belongs to some later command, and associating the two would compile a
+        # program this invocation never had.
+        if opening == -1 or (newline != -1 and newline < opening):
+            position = len(joined) if newline == -1 else newline + 1
+            continue
+        # The BODY may span newlines: a shell single-quoted string keeps real
+        # newlines, and a mangled block is exactly where they turn up.
+        closing = joined.find("'", opening + 1)
+        if closing == -1:
+            unreadable.append(joined[token.start():].split("\n", 1)[0].strip())
+            break
+        programs.append(joined[opening + 1 : closing])
+        position = closing + 1
+    return programs, unreadable
 
 
 def blocks(text: str) -> dict[str, str]:
@@ -213,7 +254,20 @@ def audit(text: str, *, source: str, jq_timeout: float = JQ_TIMEOUT_SECONDS) -> 
 
         # --- arm 3: every jq program compiles -------------------------------
         for fenced in FENCE.findall(value):
-            for program in JQ_PROGRAM.findall(fenced):
+            programs, unreadable = jq_programs(fenced)
+            # AN EMPTY COLLECTION IS "DID NOT RUN", NEVER "CLEAN". The loop below
+            # carries every assertion this arm makes, so if nothing is collected
+            # it asserts nothing and the block passes unexamined. Reported here
+            # rather than left implicit.
+            for line in unreadable:
+                problems.append(
+                    f"{source} [{TABLE}] {key}: this jq invocation carries a quoted "
+                    f"program that could not be extracted, so nothing was compiled for "
+                    f"it and the arm asserted nothing about it. Fix the reader in "
+                    f"jq_programs() rather than leaving the occurrence unchecked. "
+                    f"Line: {line}"
+                )
+            for program in programs:
                 try:
                     completed = subprocess.run(
                         ["jq", "-n", program],
@@ -284,6 +338,22 @@ COLLAPSE_ONLY_FIXED = COLLAPSE_ONLY_FIXTURE.replace('"""', "'''")
 # state the premise (`value in raw_file`) rather than assume it.
 COLLAPSE_ONLY_VALUE = tomllib.loads(COLLAPSE_ONLY_FIXTURE)[TABLE]["demo"]
 
+# A CORRECT block — literal string, continuations intact — whose jq invocation is
+# split across a shell line continuation and whose filter does not compile. The
+# line-anchored reader collected nothing here, so the compile loop never ran and
+# this fixture PASSED: a check that proves runbooks render, silently broken by
+# the same continuations the runbook fix was about. Nothing else can catch it,
+# which is what makes it the control for arm 3's reader rather than for jq.
+MULTILINE_JQ_FIXTURE = (
+    "[skill-instructions]\n"
+    "demo = '''\n"
+    "```bash\n"
+    "jq -r \\\n"
+    "  'sub(\"\\s\"; \"\")' \"$f\"\n"
+    "```\n"
+    "'''\n"
+)
+
 
 def self_test() -> list[str]:
     """The arms must be able to fail. Runs on every invocation, never optional."""
@@ -340,6 +410,16 @@ def self_test() -> list[str]:
         failures.append(
             "the same bytes written as a literal string were rejected, so those arms "
             f"fire on content rather than on the delimiter: {collapse_fixed}"
+        )
+
+    # ARM 3'S READER, not jq. A continued invocation must actually be collected:
+    # while it was not, this fixture passed with an invalid filter.
+    multiline = audit(MULTILINE_JQ_FIXTURE, source="<fixture: continued jq invocation>")
+    if not any("does not compile" in problem for problem in multiline):
+        failures.append(
+            "a jq invocation split across a shell line continuation was not compiled, "
+            "so arm 3 collected nothing and asserted nothing — the empty-collection-"
+            f"reads-as-clean shape, in the check that exists to catch it: {multiline}"
         )
 
     # `jq -n` RUNS what it compiles, so the bound is what stops a pathological

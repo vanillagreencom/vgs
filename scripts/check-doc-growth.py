@@ -150,14 +150,21 @@ CEILINGS: dict[str, int] = {
     # added the runner's four-valued exit status (77 is not a pass) here, where
     # whoever judges a check reads it; 5,500 keeps ~10% headroom at the
     # resulting 4,977 B, superseding the 4,900 figure measured at 4,388 B.
-    # VGS-144 bought the last raise: the validate area list became a machine-read
+    # VGS-144 bought the next raise: the validate area list became a machine-read
     # contract delimited by HTML comment markers, and a review found it
     # unnameable — three documents carried bare markers, and this one, the only
     # place that explains them, could not show the literal opener without
     # tripping the guard's own anchored-exactly-once refusal. The parser now
     # ignores fenced blocks and the contract is quoted here verbatim, which is
-    # what the bytes bought; 6,500 keeps ~10% headroom at the resulting 5,845 B.
-    ".github/instructions/validation-scripts.instructions.md": 6_500,
+    # what those bytes bought. That raise recorded 5,845 B and landed on a file
+    # already at 6,500 — exactly its own new ceiling, zero headroom — which is
+    # the stale-figure drift arm 4 below now refuses; re-derived rather than
+    # carried. VGS-124 then added the rule that a collection-based check must
+    # assert it collected something, after three checks in one night reported
+    # clean while asserting nothing: it belongs on the surface that already
+    # tells reviewers to reject an unreachable failure path. 7,600 keeps ~10%
+    # headroom at the resulting 6,873 B.
+    ".github/instructions/validation-scripts.instructions.md": 7_600,
     ".github/instructions/vendored-engine.instructions.md": 1_000,  # adopted at 854 B
     ".github/instructions/vendored-go.instructions.md": 500,  # adopted at 367 B
     # Adopted at 302 B. 2026-08-14: ATTRIBUTION.md carve-out (PR #132) — the
