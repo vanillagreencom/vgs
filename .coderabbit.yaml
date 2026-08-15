@@ -289,7 +289,7 @@ reviews:
         GitHub's default org-level setup, not from a workflow here, and its
         per-language lanes (rust, ruby, c-cpp) report "skipping" because the
         repo has little or no code in those languages — that is by design, not a
-        broken pipeline. The validation suite in AGENTS.md § Validation is run
+        broken pipeline. The validation suite in `scripts/validate` is run
         locally, so "this change has no CI coverage" is not a useful finding.
 
   tools:

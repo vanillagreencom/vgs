@@ -12,22 +12,23 @@ VGS CI is one suite job (`ci-ok`) plus the structurally separate review-gate
 selftest: no lanes, no change-detection gate, no nightly split, no Go build
 caching, the 2 vCPU runner tier, and a range-scoped (never whole-tree)
 whitespace check. Every one of those is an economics decision driven by
-measured timings. AGENTS.md § "What CI covers, and what it cannot" states the
-posture, `.github/workflows/ci.yml` implements it, and this record holds the
+measured timings. `.github/instructions/ci.instructions.md` (required checks,
+whitespace range) and `validation-scripts.instructions.md` § "What CI covers,
+and what it cannot" state the posture, `.github/workflows/ci.yml` implements it, and this record holds the
 numbers and the commands that re-derive them.
 
 ## Measurements (2026-08-09, this repo)
 
 | What | Figure |
 |------|--------|
-| Static suite (the § Validation list minus the Go block) | ~16s of work |
+| Static suite (the `scripts/validate` manifest minus the Go block) | ~16s of work |
 | Go block warm | ~6s |
 | Go block cold | ~16s (build 4.4s, vet 0.8s, `test -race` 11.0s) |
 | Total compute | ~30s |
 | Go module download (cold) | 13 MB |
 | `GOCACHE` left by one cold run | ~284 MB |
 
-Re-measure the timings by running each § Validation entry under `time` for the
+Re-measure the timings by running each `scripts/validate` entry under `time` for the
 static figure, and in `backend/` `time go build ./...`, `time go vet ./...`,
 `time go test -race ./...` for the Go block — warm as-is, cold by pointing
 `GOCACHE` at a throwaway directory. For the size figures, `go mod download`
@@ -79,6 +80,8 @@ block once with a throwaway `GOCACHE` and `du -sh` that for the cache figure.
 
 ## References
 
-- AGENTS.md § "What CI covers, and what it cannot" — the working posture.
+- `.github/instructions/ci.instructions.md` and
+  `.github/instructions/validation-scripts.instructions.md` — the working
+  posture.
 - `.github/workflows/ci.yml` — the implementation, with structural comments
   pointing back here for figures.

@@ -1,9 +1,9 @@
 name: CI
 
-# Runs AGENTS.md § Validation on every pull request. Before this workflow the
-# only checks on a VGS PR were CodeQL default-setup Analyze jobs, which say
-# nothing about VGS's own suite — which is how `check-validation-safety.sh` sat
-# red on clean `main` (VGS-18) with nothing surfacing it.
+# Runs the scripts/validate manifest on every pull request as individual named
+# steps, never by invoking the runner. Before this workflow the only checks on a
+# VGS PR were CodeQL default-setup Analyze jobs, which say nothing about VGS's
+# own suite — how `check-validation-safety.sh` sat red on clean main (VGS-18).
 #
 # ONE JOB, DELIBERATELY, on the 2 vCPU runner (shared CI_RUNNER_2V repository
 # variable; Blacksmith when set, `ubuntu-latest` when unset — that fallback is
@@ -140,8 +140,8 @@ jobs:
       - name: Naming guard
         run: scripts/check-naming.sh
 
-      # Asserts this workflow and AGENTS.md § Validation still name the same
-      # checks. Four checks under scripts/ were committed and invoked by nothing
+      # Asserts this workflow and the scripts/validate manifest still name the
+      # same checks. Four checks under scripts/ were committed and invoked by nothing
       # at all before this existed (VGS-50).
       - name: Validation inventory
         run: scripts/check-validation-inventory.py
@@ -175,7 +175,7 @@ jobs:
             bash "$t"
           done
 
-      # AGENTS.md lists a bare `git diff --check`, which is a working-tree
+      # scripts/validate lists a bare `git diff --check`, which is a working-tree
       # check: on a clean CI checkout it inspects nothing at all. The form that
       # means something is a range of what the event actually introduces.
       #
@@ -294,6 +294,11 @@ jobs:
           # stubs — a fake `qs` registry, a fabricated procfs, a stub `hyprctl`
           # — so the branch that decides skip-vs-fail IS checkable here.
           scripts/test-smoke-surfaces.sh
+          # The only thing in CI that runs scripts/validate: its area selection,
+          # fail-closed argument and manifest handling, and its skip channel.
+          scripts/test-validate.sh
+          scripts/test-validation-inventory.sh
+          scripts/test-qml-smoke.sh
 
       - name: Helper and CLI checks
         run: |
@@ -380,8 +385,13 @@ jobs:
       # because it needs setup-go's gofmt plus the shellcheck/ruff install
       # above. A missing tool or an empty file set FAILS the check rather than
       # skipping it — a silent skip is indistinguishable from a pass.
+      # test-format-lint.sh runs HERE rather than with the other test-*.sh
+      # entries: it drives a copy of the check, so it needs the pinned
+      # shellcheck and ruff installed two steps up.
       - name: First-party format and lint floor
-        run: scripts/check-format-lint.sh
+        run: |
+          scripts/check-format-lint.sh
+          scripts/test-format-lint.sh
 
       # CodeRabbit rejects an invalid .coderabbit.yaml and reviews with DEFAULT
       # settings, reporting nothing on the PR. VGS shipped a 376-character
@@ -411,7 +421,7 @@ jobs:
       # plus a Quickshell install inside the runner. The live-session half of
       # this guard degrades cleanly here (no compositor and no Quickshell CLI →
       # "nothing of that kind exists on this system"), which is correct: there is
-      # no live session in CI to disturb. AGENTS.md § "What CI covers, and what
-      # it cannot" records exactly what that leaves local-only.
+      # no live session in CI to disturb. The validation-scripts instruction
+      # file's "What CI covers" tables record what that leaves local-only.
       - name: Validation safety and QML static smoke
         run: scripts/check-validation-safety.sh --require-static
