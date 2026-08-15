@@ -45,7 +45,15 @@ LITERAL_ARG_RE = re.compile(r"\s*(['\"`])")
 # template literal is not valid there. This one is a positive requirement,
 # where an unknown delimiter cries wolf instead of passing silently — so
 # accepting both is the strictly safer spelling, not a loosening.
-IMPORT_RE = re.compile(r"^[ \t]*\.?import\s+(['\"])PasteTarget\.js\1\s+as\s+(\w+)", re.MULTILINE)
+# Recognised by the FILE it names, not by one literal spelling of the path:
+# `PasteTarget.js`, `./PasteTarget.js` and `../../../Services/PasteTarget.js`
+# are the same module, and the launcher imported it by exactly that relative
+# form before this PR centralised injection. Matching only the bare name made
+# `resolver_aliases` return nothing for such a file, which made rule 2 SKIP it
+# — a second injector passing a merge-blocking guard. The prefix must end in a
+# `/`, so `MyPasteTarget.js` and `dir/NotPasteTarget.js` still do not match.
+IMPORT_RE = re.compile(
+    r"^[ \t]*\.?import\s+(['\"])(?:[^'\"]*/)?PasteTarget\.js\1\s+as\s+(\w+)", re.MULTILINE)
 # The resolver call as the right-hand side of the injector's `command`
 # assignment. A bare call proves nothing: its result has to reach the Process,
 # and `command` is Quickshell's own property name, so this is insensitive to
@@ -116,7 +124,12 @@ ARGUMENT_CONTROLS = [
 IMPORT_CONTROLS = [
     ("a double-quoted import", 'import "PasteTarget.js" as Paste\n', True),
     ("a single-quoted import", "import 'PasteTarget.js' as Paste\n", True),
+    # The spellings that made rule 2 skip a file entirely.
+    ("a relative import", 'import "../../../Services/PasteTarget.js" as Paste\n', True),
+    ("a same-directory import", 'import "./PasteTarget.js" as Paste\n', True),
     ("an import of another module", 'import "Other.js" as Paste\n', False),
+    ("an import of a lookalike file", 'import "MyPasteTarget.js" as Paste\n', False),
+    ("an import of a lookalike under a path", 'import "dir/NotPasteTarget.js" as Paste\n', False),
 ]
 
 
@@ -161,6 +174,15 @@ def argv_builders(source: str, blanked: str) -> list[str]:
     An EMPTY result is meaningful and is the caller's to refuse: it means the
     resolver's shape changed under this rule, and enforcing an empty set would
     be a guard that passes because it asks nothing.
+
+    It reads `function NAME(...)` declarations returning a literal argv, and
+    that IS an exact-spelling assumption: a builder written as a function
+    expression or an arrow, or returning `[("wtype"), ...]`, is not seen. It is
+    not a silent narrowing, though — `OWNERSHIP_CONTROLS` names the builders
+    that must be derived, so a resolver rewritten into any of those shapes
+    fails the check loudly instead of quietly shrinking the owner-only set.
+    Verified by rewriting `releaseModifiersCommand` as a function expression
+    and watching the check exit non-zero.
     """
     names = []
     for match in FUNCTION_DEF_RE.finditer(blanked):

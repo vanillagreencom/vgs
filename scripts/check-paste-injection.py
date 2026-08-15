@@ -258,6 +258,13 @@ FOCUS_READY_RE = re.compile(r"(?<![\w.])(?:\w+\s*\.\s*)*focusReady\b")
 # catch: an unobservable condition treated as satisfied because nothing can see
 # it. A predicate derived from state never needs the literal.
 ASSERTED_READY_RE = re.compile(r"(?<![\w.])true\b")
+# The WHOLE test, anchored and NEGATED — the same shape as NONZERO_EXIT_TEST_RE
+# below and for the same reason. Matching a mention of `focusReady` accepted
+# `if (CompositorService.focusReady) return`, which injects only when focus is
+# UNAVAILABLE: the behaviour exactly inverted, with the guard green. Anchoring
+# also stops a further conjunct riding along, while the optional parens and
+# whitespace keep a reasonable reformat from false-failing.
+NOT_READY_TEST_RE = re.compile(r"^\s*\(*\s*!\s*\(*\s*(?:\w+\s*\.\s*)*focusReady\s*\)*\s*$")
 NIRI_SERVICE_RE = re.compile(r"\bNiriService\s*\.")
 PRIVATE_MEMBER_RE = re.compile(r"\b_[A-Za-z][A-Za-z0-9_]*\b")
 # Polarity matters, in both directions: a test on the ABSENCE of an active
@@ -439,12 +446,19 @@ def check_argv_assignment(source: str, call: re.Match) -> bool:
     # belong to this function, close before the argv is built, and return —
     # unconditionally, at its own brace depth and inside nothing that governs
     # whether it runs.
-    pending = [
-        (region_start, region_end) for test, region_start, region_end in if_regions(source)
+    ahead = [
+        (test, region_start, region_end) for test, region_start, region_end in if_regions(source)
         if body_start <= region_start and region_end <= call.start()
         and FOCUS_READY_RE.search(test)
         and in_function(source, region_start, body_start)
     ]
+    pending = [(start, end) for test, start, end in ahead if NOT_READY_TEST_RE.match(test)]
+    if ahead and not pending:
+        return fail(
+            f"{OWNER} branches on focusReady ahead of the argv but not on its NEGATION, so the "
+            "returning branch runs when the focus source CAN answer — injection would be allowed "
+            "only while it cannot, which is the behaviour inverted rather than guarded"
+        )
     if not pending:
         return fail(
             f"{OWNER} builds the argv with no branch ahead of it testing "
