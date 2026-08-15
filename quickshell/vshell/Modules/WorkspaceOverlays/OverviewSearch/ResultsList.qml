@@ -27,9 +27,15 @@ Item {
         ? DSearchService.backendState(controller.fileSearchKind(), _fileQuery) : "unknown"
     readonly property string _missingBackendCommand: controller && _fileBackendState === "missing"
         ? DSearchService.backendCommandFor(controller.fileSearchKind()) : ""
-    readonly property string _fileStateKey: fileEmptyStateKey(_fileBackendState, _missingBackendCommand, _fileQuery.length)
-    // A file search is on screen in files mode, and outside it whenever the
-    // controller has a query long enough to dispatch one (the "/" prefix form).
+    // A search the gate refused for want of an answer, rather than one that ran
+    // and found nothing.
+    readonly property bool _fileSearchDeclined: !!controller && _fileQuery.length >= 2
+        && !DSearchService.canDispatch(controller.fileSearchKind(), _fileQuery)
+    readonly property string _fileStateKey: fileEmptyStateKey(_fileBackendState, _missingBackendCommand, _fileQuery.length, _fileSearchDeclined)
+    // A file search is on screen in files mode, and outside it wherever
+    // fileSearchQuery — the one authority on that — hands back a query. Plugins
+    // mode is excluded there, so no file-search message can render over plugin
+    // results.
     readonly property bool _fileLegActive: (controller?.searchMode ?? "") === "files" || _fileQuery.length >= 2
 
     signal itemRightClicked(int index, var item, real mouseX, real mouseY)
@@ -38,15 +44,22 @@ Item {
     // is I18n's and cannot run outside Qt, while the CHOICE is what
     // scripts/test-launcher-search-gate.js pins.
     // BEGIN EMPTY STATE DECISION
-    function fileEmptyStateKey(backendState, missingCommand, queryLength) {
-        if (backendState === "checking")
-            return "checking";
+    // `declined` is a search the gate refused because the tools could not be
+    // checked — a different thing from one that ran and found nothing, and the
+    // only arm that may not say "No files found".
+    function fileEmptyStateKey(backendState, missingCommand, queryLength, declined) {
         if (backendState === "missing")
             return missingCommand === "rg" ? "missing-rg" : "missing-fd";
+        // Nothing is being checked on the user's behalf before a query that
+        // could dispatch: an empty field prompts, and one character is short.
         if (queryLength === 0)
             return "prompt";
         if (queryLength < 2)
             return "short";
+        if (backendState === "checking")
+            return "checking";
+        if (declined)
+            return "unchecked";
         return "empty";
     }
 
@@ -62,7 +75,10 @@ Item {
             return "";
         if (backendState === "missing")
             return missingCommand === "rg" ? "install-rg" : "install-fd";
-        if (probeState === "failed")
+        // Every probe state but the two settled answers is a probe that could
+        // not tell us, retries included — the reason is worth showing for all
+        // of them, not only after the last attempt.
+        if (probeState !== "pending" && probeState !== "ready")
             return "probe-failed";
         return "";
     }
@@ -70,7 +86,7 @@ Item {
     function fileEmptyIcon(stateKey, fileType) {
         if (stateKey === "checking")
             return "hourglass_empty";
-        if (stateKey === "missing-rg" || stateKey === "missing-fd")
+        if (stateKey === "missing-rg" || stateKey === "missing-fd" || stateKey === "unchecked")
             return "search_off";
         if (fileType === "text")
             return "article";
@@ -589,6 +605,8 @@ Item {
                             return I18n.tr("Text search needs ripgrep", "Overview search empty state when the ripgrep binary is missing");
                         case "missing-fd":
                             return I18n.tr("File search needs fd", "Overview search empty state when the fd binary is missing");
+                        case "unchecked":
+                            return I18n.tr("Search tools could not be checked", "Overview search empty state when the probe failed and the search was not attempted");
                         case "prompt":
                             return I18n.tr("Type to search files");
                         case "short":
@@ -632,7 +650,7 @@ Item {
                     case "install-fd":
                         return I18n.tr("Install the fd package (fd-find on Debian and Fedora) to search files and folders by name.", "Overview search hint when the fd binary is missing");
                     case "probe-failed":
-                        return I18n.tr("Could not check which search tools are installed: %1. Searches still run.", "Overview search hint when the launcher-search status probe failed").arg(DSearchService.statusError);
+                        return I18n.tr("Could not check which search tools are installed: %1. Reopen the launcher to try again.", "Overview search hint when the launcher-search status probe failed").arg(DSearchService.statusError);
                     }
                     return "";
                 }

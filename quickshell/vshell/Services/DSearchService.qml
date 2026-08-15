@@ -18,12 +18,17 @@ Singleton {
     property string backendName: "fd + ripgrep"
     property bool fdAvailable: false
     property bool ripgrepAvailable: false
-    // "pending" until the probe answers, then "ready", or "failed" once the
-    // retries are spent. The tool flags mean nothing outside "ready", so no
-    // caller may report a tool as missing on their strength alone.
+    // "pending" only while the FIRST probe is outstanding, then "ready", or
+    // "retrying" from the first failure until the attempts are spent, then
+    // "failed". The tool flags mean nothing outside "ready", so no caller may
+    // report a tool as missing on their strength alone — and everything past
+    // the first failure is honestly "nobody knows" rather than "checking",
+    // which is what lets dispatch resume instead of waiting out the retries.
     property string statusState: "pending"
     property string statusError: ""
     property int _statusAttempts: 0
+    property int _statusGeneration: 0
+    property bool _statusInFlight: false
     readonly property int _statusMaxAttempts: 3
     property var folderOpeners: [{ id: "default", label: I18n.tr("Preferred app"), icon: "open_in_new" }]
     property var _requestVersions: ({})
@@ -46,12 +51,18 @@ Singleton {
         onTriggered: root._probeStatus()
     }
 
+    // Single-flight. An episode owns the attempt budget from its first probe to
+    // its last: starting a second one beside it would reset that budget, and
+    // its callback would still be honoured after the first one answered — a
+    // late failure overwriting a good detection.
     function rediscover() {
+        if (_statusInFlight || statusRetryTimer.running)
+            return;
         _statusAttempts = 0;
         _probeStatus();
     }
 
-    // Re-probe only where a previous probe gave up. A surface that opens after
+    // Re-probe only where a previous episode gave up. A surface that opens after
     // the shell has been running for hours is the moment a transient failure
     // gets a second chance; re-probing a settled answer would spawn a process
     // per open for nothing.
@@ -63,7 +74,15 @@ Singleton {
     function _probeStatus() {
         statusRetryTimer.stop();
         _statusAttempts += 1;
+        _statusInFlight = true;
+        const generation = ++_statusGeneration;
         Proc.runCommand("launcher-search-status", [Paths.vshellCli, "launcher-search", "status"], (stdout, exitCode, stderr) => {
+            // A probe from a superseded episode answers for nobody: Proc keeps
+            // the callback each launch was given, so without this a stale
+            // failure lands on top of a fresh success.
+            if (generation !== root._statusGeneration)
+                return;
+            root._statusInFlight = false;
             if (exitCode !== 0) {
                 // Proc reports its own timeout as 124, which is the difference
                 // between "the CLI answered with a failure" and "the CLI never
@@ -92,9 +111,15 @@ Singleton {
         root.log.warn("launcher search status probe failed:", reason);
         root.statusError = reason;
         if (root._statusAttempts < root._statusMaxAttempts) {
-            // Bounded backoff. One failed probe used to leave search
-            // unanswerable for the life of the shell; retrying forever would
-            // spawn a process a second for the same lifetime.
+            // Bounded backoff, one budget per episode. One failed probe used to
+            // leave search unanswerable for the life of the shell; retrying
+            // forever would spawn a process a second for the same lifetime.
+            //
+            // The state leaves "pending" on the FIRST failure rather than at the
+            // end of the sequence: the answer is already unknown, and holding
+            // "checking" across the retries refused every search for the ~12s
+            // they take on a machine whose tools are fine.
+            root.statusState = "retrying";
             statusRetryTimer.interval = 1000 * root._statusAttempts;
             statusRetryTimer.start();
             return;
@@ -139,7 +164,10 @@ Singleton {
 
     // Folder queries that start at a path are answered by the helper's own
     // directory walk (bin/vshell-helper::_launcher_folder_path_hits), which runs
-    // before fd is consulted, so path completion must not be gated on fd.
+    // before fd is consulted, so path completion must not be gated on fd. The
+    // condition mirrors that branch, "~" and "/" alike; from the overview only
+    // the "~" form arrives, because a leading "/" is the launcher's own
+    // file-search trigger and parseFileSearchPrefix consumes it.
     function pathCompletion(kind, query) {
         return kind === "folders" && /^[~/]/.test(String(query || "").trim());
     }
@@ -162,19 +190,28 @@ Singleton {
         return (command === "rg" ? !!(probe || {}).ripgrep : !!(probe || {}).fd) ? "available" : "missing";
     }
 
-    // Only a proven-missing tool blocks a search. "unknown" dispatches: the
-    // search itself then fails loudly with a real cause, which beats a silent
-    // refusal built on an answer nobody has.
-    function dispatchAllowed(state) {
-        return state === "available" || state === "unknown";
+    // Whether the helper can answer this kind without its tool. Only fd-backed
+    // kinds can: name search falls back to the helper's own directory walk,
+    // while text search shells out to ripgrep and raises without it. Derived
+    // from the one table, so a kind cannot be fd-backed here and something else
+    // there.
+    function helperHasFallback(kind) {
+        return backendCommandFor(kind) === "fd";
     }
 
-    // Whether this service refuses the call outright. Text search shells out to
-    // ripgrep and fails with no fallback, while name search falls back to the
-    // helper's own directory walk — which vgsMenu accepts and the overview
-    // declines at its own gate.
-    function helperHasFallback(kind) {
-        return kind === "files" || kind === "folders" || kind === "all";
+    // Whether a caller that will not accept the helper's directory walk may
+    // dispatch. "available" always may. "unknown" may only where dispatching
+    // cannot silently buy that walk: ripgrep fails fast with a real cause, and
+    // a path completion is one iterdir. A name search in the unknown state is
+    // refused instead — a full walk of the roots per keystroke is the cost the
+    // fd gate exists to avoid, and taking it because a probe could not run
+    // would be taking it by accident.
+    function dispatchAllowed(state, kind) {
+        if (state === "available")
+            return true;
+        if (state !== "unknown")
+            return false;
+        return !helperHasFallback(kind);
     }
     // END SEARCH BACKEND DECISION
 
@@ -187,7 +224,7 @@ Singleton {
     }
 
     function canDispatch(kind, query) {
-        return dispatchAllowed(backendState(kind, query));
+        return dispatchAllowed(backendState(kind, query), kind);
     }
 
     function refreshFolderOpeners() {
@@ -235,7 +272,7 @@ Singleton {
         }
 
         const args = [
-            Paths.vshellCli, "launcher-search", "search", query.trim(),
+            Paths.vshellCli, "launcher-search", "search",
             "--kind", kind,
             "--limit", String(params?.limit || 80)
         ];
@@ -243,6 +280,9 @@ Singleton {
         _appendListArgs(args, "--ignore", params?.ignores || SettingsData.launcherSearchIgnored);
         if (params?.ignoreMounts ?? SettingsData.launcherSearchIgnoreMounts)
             args.push("--ignore-mounts");
+        // The query is the user's text and can start with "-", which argparse
+        // would read as an option and refuse. It goes last, behind "--".
+        args.push("--", query.trim());
 
         Proc.runCommand("launcher-search-" + kind, args, (stdout, exitCode, stderr) => {
             if ((_requestVersions[kind] || 0) !== version)
@@ -279,11 +319,13 @@ Singleton {
             callback?.({ ok: false, error: "" });
             return;
         }
-        const args = [Paths.vshellCli, "launcher-search", "preview", path, "--lines", "700"];
+        const args = [Paths.vshellCli, "launcher-search", "preview", "--lines", "700"];
         if (line)
             args.push("--line", String(line));
         if (query)
             args.push("--query", String(query));
+        // Same shape as search(): a path can begin with "-" too.
+        args.push("--", String(path));
         Proc.runCommand("launcher-file-preview", args, (stdout, exitCode, stderr) => {
             if (version !== _previewVersion)
                 return;

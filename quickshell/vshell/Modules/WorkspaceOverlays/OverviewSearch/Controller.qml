@@ -147,8 +147,6 @@ Item {
     function _retryFileSearchAfterProbe() {
         if (!active)
             return;
-        if (searchMode !== "files" && !searchQuery.startsWith("/"))
-            return;
         if (fileSearchQuery().length < 2)
             return;
         fileSearchDebounce.restart();
@@ -1121,10 +1119,23 @@ Item {
         return DSearchService.kindForType(fileSearchType || "file");
     }
 
-    // The query the file search actually sends: the "/" prefix form drops the
-    // prefix, files mode sends the trimmed query, and no other mode searches
-    // files at all.
+    // The ONE authority on whether a file search runs and with what query, so
+    // the gate, the dispatch, the probe retry and the empty state cannot
+    // disagree: empty means no file search, and every caller reads it.
+    //
+    // Plugins mode is excluded exactly as setSearchQuery excludes it — there a
+    // "/" is the plugin's own text, not the file-search trigger. Elsewhere the
+    // "/" form drops the prefix and files mode sends the trimmed query.
+    //
+    // Combined "all" mode is where this is narrower than its callers: setMode
+    // and setSearchQuery schedule a file-search debounce whenever
+    // launcherIncludeFilesInAll or launcherIncludeFoldersInAll is set, and for
+    // a query with no "/" prefix this function then hands that debounce an
+    // empty query, so those two settings currently reach no search at all.
+    // Unchanged behavior, tracked separately.
     function fileSearchQuery() {
+        if (searchMode === "plugins")
+            return "";
         if (searchQuery.startsWith("/")) {
             var prefixInfo = Utils.parseFileSearchPrefix(searchQuery);
             return prefixInfo ? prefixInfo.query : searchQuery.substring(1).trim();

@@ -13235,8 +13235,9 @@ def _launcher_search_name_hits(
     Otherwise fd does the walking when it is installed. The os.walk branch is
     the fallback for callers that accept a full walk of the roots: the
     `vshell launcher-search` CLI, and the vgsMenu plugin, which runs a search
-    per keystroke. The overview declines it and shows a dependency hint
-    instead -- a full walk per query, with nothing cached between them, cannot
+    per keystroke. The overview never dispatches a name search that could land
+    here -- it requires fd to be positively detected, and says why instead --
+    because a full walk per query, with nothing cached between them, cannot
     answer at typing speed.
     """
     if kind == "folders" and query.strip().startswith(("~", "/")):
