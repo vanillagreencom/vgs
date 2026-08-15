@@ -605,6 +605,20 @@ for (const state of ["available", "unknown", "checking"])
             "results nor attributes its error to them"]
     ]);
 
+    // BRANCH, not count: two supersedes in the declined block would satisfy the
+    // occurrence count above while the sub-threshold return abandons a search
+    // without superseding it — which is the defect, with the count still green.
+    for (const [landmark, what, why] of [
+        ["if (!DSearchService.queryIsDispatchable(fileQuery))", "the sub-threshold return",
+            "nothing dispatches for a query this short, so nothing else supersedes the last one"],
+        ["if (!DSearchService.canDispatch(kind, fileQuery))", "the declined gate",
+            "its answer would otherwise land on the empty state explaining the refusal"]
+    ]) {
+        const branch = stripComments(q.blockFrom(q.indexOf(landmark), what));
+        assert.ok(qmlSource.flat(branch).includes("_supersedeFileSearch();"),
+            `${what} must supersede inside its own branch — ${why}`);
+    }
+
     // POSITION, not presence: the guard below the error branch still reads
     // correctly and still captures a stale kind's failure into fileSearchError,
     // which is the defect the line was added for.
