@@ -227,8 +227,18 @@ Item {
         const pasteArgs = AppSearchService.getPluginPasteArgs(pluginId, selectedItem.data);
         if (!pasteArgs)
             return;
-        if (!startPluginCopy(pasteArgs))
+        if (!startPluginCopy(pasteArgs)) {
+            // A second Enter while the first entry is still being copied. The
+            // copy in flight will finish and paste the entry IT was started for,
+            // so this request is dropped rather than queued — and a keypress
+            // dropped with no outcome is the silent failure this path spent a
+            // round removing on the injector side: the launcher would just sit
+            // there. Reported and left open, like every other refusal here:
+            // closing would say the entry was pasted when it was not, and
+            // pressing Enter again once the first lands does work.
+            ToastService.showError(I18n.tr("Failed to copy entry"), I18n.tr("Another entry is still being copied"));
             return;
+        }
         itemExecuted();
     }
 

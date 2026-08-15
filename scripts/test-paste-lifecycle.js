@@ -124,6 +124,7 @@ const statements = {
 
 const launcherBodies = {
     startPluginCopy: extractBlock(launcherSource, "function startPluginCopy(pasteArgs)"),
+    pasteSelected: extractBlock(launcherSource, "function pasteSelected()"),
     reportCopyFailedToStart: extractBlock(launcherSource, "function reportCopyFailedToStart()"),
     copyStartTriggered: bodyAfter(launcherSource, "id: copyStartTimer", "onTriggered:"),
     copyStarted: bodyAfter(launcherSource, "id: copyProcess", "onStarted:"),
@@ -984,10 +985,28 @@ function makeLauncher() {
     const inFlight = compile(`return (${launcherBinding("_copyInFlight")});`);
     Object.defineProperty(scope, "_copyInFlight", { get: () => inFlight(scope), configurable: true });
     const start = compile(launcherBodies.startPluginCopy, "pasteArgs");
+    scope.startPluginCopy = args => start(scope, args);
+
+    // What Enter actually runs. The plugin-paste path is the one with the
+    // in-flight guard on it; the rest is stubbed to the shape pasteSelected
+    // reads, so the guard's outcome is what these cases observe.
+    const executed = [];
+    scope.itemExecuted = () => executed.push("closed");
+    scope.selectedItem = { type: "plugin", pluginId: "calc", data: "42" };
+    scope.SettingsData = { clipboardEnterToPaste: false };
+    scope.ClipboardService = { copyEntry: (_, done) => done(), pasteEntry: (_, done) => done() };
+    scope.SessionService = { wtypeAvailable: true };
+    scope.AppSearchService = { getPluginPasteArgs: () => ["wl-copy", "42"] };
+    const paste = compile(launcherBodies.pasteSelected);
     return {
         scope,
         toasts,
         pastes,
+        executed,
+        // Enter on the selected item, through the shipped function.
+        pasteSelected() {
+            paste(scope);
+        },
         // The shipped start, guard and all: pasteSelected() calls exactly this.
         request(args = ["wl-copy", "x"]) {
             return start(scope, args);
@@ -999,6 +1018,40 @@ function makeLauncher() {
     };
 }
 
+{
+    // Enter twice, quickly. The first copy is in flight, so the second request
+    // is refused — and a refusal the person cannot see is the silent failure
+    // this whole path exists to remove.
+    const h = makeLauncher();
+    h.pasteSelected();
+    assert.equal(h.scope.copyProcess.running, true, "the first Enter starts the copy");
+    assert.deepEqual(h.executed, ["closed"], "and closes the launcher");
+    assert.deepEqual(h.toasts, [], "with nothing to report");
+
+    const firstCommand = h.scope.copyProcess.command;
+    h.pasteSelected();
+    assert.equal(h.toasts.length, 1, "the second Enter is reported rather than swallowed");
+    assert.match(h.toasts[0], /Failed to copy entry/, "reusing the wording the other copy failures use");
+    assert.deepEqual(h.executed, ["closed"], "and does not close again, which would say it pasted");
+    assert.equal(h.scope.copyProcess.command, firstCommand, "the copy in flight keeps its own argv");
+}
+{
+    // Not over-applied: the happy path reports nothing. A toast on every paste
+    // would be its own defect.
+    const h = makeLauncher();
+    h.pasteSelected();
+    assert.deepEqual(h.toasts, [], "a paste with no copy in flight says nothing");
+    assert.deepEqual(h.executed, ["closed"], "and closes the launcher");
+
+    // And once the copy finishes, the next Enter works normally. Quickshell owns
+    // the running transition, so the model makes it here the way the compositor
+    // would rather than the handler pretending to.
+    h.run("copyExited", 0);
+    h.scope.copyProcess.running = false;
+    h.pasteSelected();
+    assert.deepEqual(h.toasts, [], "the next Enter after it lands is silent too");
+    assert.deepEqual(h.executed, ["closed", "closed"], "and closes as it should");
+}
 {
     // The start arms both detection paths, or neither can report anything.
     const h = makeLauncher();
