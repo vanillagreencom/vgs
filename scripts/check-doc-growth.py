@@ -66,7 +66,7 @@ CEILINGS: dict[str, int] = {
     # only 4 of bin/'s 15 entries, so it read as complete while it was not.
     #
     # Those registers are what regrew after VGS-107, so 4,500 is a budget the
-    # issue set rather than a size plus headroom: the file is 4,489 B, so there
+    # issue set rather than a size plus headroom: the file is 4,498 B, so there
     # is almost none, and that is the point. The next addition displaces
     # something or moves to a per-area surface — the thing both diets had to do
     # by hand.
@@ -75,7 +75,8 @@ CEILINGS: dict[str, int] = {
     # regression-test policy sections plus the PR #120 review rounds
     # (coverage gaps, property-defined privileged class) earned the bytes;
     # 7,200 keeps ~10% headroom at the final 6,490 B size, superseding the
-    # 6,500 figure measured mid-review at 5,865 B.
+    # 6,500 figure measured mid-review at 5,865 B. Now 6,569 B (~9.6% left):
+    # drift predating VGS-124, recorded here when that PR re-derived every size.
     "review-bots.md": 7_200,
     # Adopted at 2,909 B. 2026-08-14: the PR #132 review found the doc-surface
     # and vendored-tree rules were telling reviewers to suppress valid drift
@@ -95,15 +96,18 @@ CEILINGS: dict[str, int] = {
     # with the rest of the validation runbook, and its only remaining home was
     # validation-scripts.instructions.md, scoped to `scripts/**` — invisible to
     # a QML agent, which loads this skill. That is the VGS-69 class losing its
-    # last auto-loaded warning, so it moved here; 5,700 keeps ~10% headroom at
-    # the resulting 5,158 B.
+    # last auto-loaded warning, so it moved here. A later round also completed the
+    # "## Repo layout" tree with the three entries AGENTS.md § Layout had that
+    # it lacked. 5,700 is deliberately NOT re-raised at the resulting 5,359 B:
+    # that is ~6% headroom, not the adoption default's ~10%, and the tighter
+    # line wins over the rounder number.
     "project-skills/vshell-dev/SKILL.md": 5_700,
     # Adopted at 403 B. VGS-124: the diet's own rewrap un-exempted a sanctioned
     # direct-launch mention in check-validation-safety.sh (line-scoped spans),
     # and that check does not run in the `docs` area an AGENTS.md edit reaches
     # for. Naming both exact-string couplings, and the commands that actually
     # cover them, where an AGENTS.md edit is reviewed earned the bytes; 1,100
-    # keeps ~10% headroom at the resulting 994 B.
+    # keeps ~10% headroom at the resulting 999 B.
     ".github/instructions/agents-md.instructions.md": 1_100,
     ".github/instructions/architecture-docs.instructions.md": 500,  # adopted at 393 B
     ".github/instructions/backend-go.instructions.md": 800,  # adopted at 671 B
@@ -149,7 +153,7 @@ CEILINGS: dict[str, int] = {
     "docs/architecture/design-language.md": 19_700,  # adopted at 17,886 B
     "docs/architecture/display-brightness.md": 7_600,  # adopted at 6,852 B
     "docs/architecture/greeter-auto-login-keyring.md": 3_500,  # adopted at 3,151 B
-    "docs/architecture/idle-lock-screensaver.md": 20_300,  # adopted at 18,453 B
+    "docs/architecture/idle-lock-screensaver.md": 20_300,  # adopted at 18,453 B; 18,569 after VGS-124
     "docs/architecture/notification-ownership.md": 19_300,  # adopted at 17,530 B
     "docs/architecture/overlay-and-dependencies.md": 21_300,  # adopted at 19,354 B
     "docs/architecture/remote-desktop.md": 21_700,  # adopted at 19,653 B

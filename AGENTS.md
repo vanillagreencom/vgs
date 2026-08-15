@@ -30,7 +30,7 @@ VGS = VanillaGreen Shell. Runtime name stays `vshell`: `vgs` collides with LVM.
 - Generated targets must write to VGS-named paths.
 
 ## Backend rules
-- Every method maps to a documented capability in `docs/architecture/backend-methods.json`; `scripts/check-backend-inventory.py` enforces it.
+- Every method must map to a documented capability in `docs/architecture/backend-methods.json`; `scripts/check-backend-inventory.py` enforces it.
 - QML gates on advertised `capabilities`/`methods`, never raw `apiVersion` ordinals, and keeps a working fallback when one is absent.
 - One owner per resource: never add a second watcher/daemon/poller for something the helper or QML already owns.
 - Exec external tools with argv arrays; never log secrets or raw frame payloads.
@@ -61,7 +61,7 @@ the mode that replaces what `qs -c vshell` used to cover.
   maintained install channel; one that cannot be is named in the release notes,
   never silently skipped.
 - Session handoff is only `docs/handoff/HANDOFF.md` (gitignored), overwritten in
-  place; Linear stays the source of truth. Read or write on request.
+  place; Linear stays the source of truth. Read or write on request only.
 
 ## Do not
 - Do not introduce a `vgs` CLI binary, or call `vgs` from VGS runtime paths.
