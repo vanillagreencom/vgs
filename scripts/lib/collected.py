@@ -62,6 +62,32 @@ def nothing_collected(
     )
 
 
+def unaccounted(
+    seen: int,
+    buckets: dict[str, Collection[object]],
+    *,
+    what: str,
+    selector: str,
+) -> str | None:
+    """Diagnostic when `buckets` do not account for every one of `seen`.
+
+    The third shape. Where a collection is partitioned rather than filtered —
+    every occurrence must land in exactly one bucket, including a bucket for the
+    sanctioned exemptions — counting the parts against the whole is what makes a
+    dropped member impossible instead of merely unlikely. A branch that forgets
+    to record one fails here rather than going quiet.
+    """
+    total = sum(len(one) for one in buckets.values())
+    if total == seen:
+        return None
+    tally = ", ".join(f"{len(one)} {name}" for name, one in sorted(buckets.items()))
+    return (
+        f"{seen} {what} matched {selector} but only {total} were accounted for "
+        f"({tally}) — the rest were dropped without a word. Every one must land in "
+        f"a bucket, so this is not a clean result"
+    )
+
+
 def members_missing(
     found: Iterable[object],
     expected: Iterable[object],

@@ -41,6 +41,28 @@ docs/decisions/*.md are deliberately NOT watched: decision records are where
 content dieted out of AGENTS.md goes to live (VGS-105, VGS-107), so a ceiling
 there would penalize exactly the move the diet depends on. They are read on
 demand, not loaded ambiently.
+
+COLLECTION POINTS. This file implements the invariant stated in
+`.github/instructions/validation-scripts.instructions.md` — a collection step
+must assert it collected what it expected; a matcher that comes back empty is a
+failure of the check, never a clean result — through `scripts/lib/collected.py`.
+Two steps here collect something, and each has its own must-fail control. Add a
+new one the same way, or it becomes the next instance:
+
+5. the surfaces a watched glob finds     `WATCHED_GLOBS`      recursive, and the
+                                                              discovered set is
+                                                              asserted against
+                                                              the ceilinged files
+                                                              under each root —
+                                                              partial coverage is
+                                                              not full coverage
+6. the CEILINGS table and each entry's   `ceiling_comments()` both anchors must
+   comment                                                    resolve, and every
+                                                              entry must yield
+                                                              comment text
+
+(The numbering continues check-skill-instructions.py's 1-4, so the six points
+the invariant governs are named once across both files.)
 """
 
 from __future__ import annotations
@@ -350,15 +372,18 @@ def recorded_size_problems(source: str, sizes: dict[str, int]) -> list[str]:
     # comment text at all is not "an entry with nothing to say" — every entry
     # carries at least its adoption size by the rule at the top of this file —
     # so it means the entry line was matched but its comment was not collected.
-    silent = sorted(rel for rel in sizes if not comments.get(rel, "").strip())
+    commented = {rel for rel in sizes if comments.get(rel, "").strip()}
+    silent = members_missing(
+        commented,
+        sizes,
+        what="CEILINGS comments",
+        selector="the per-entry comment parse",
+        cause="every entry records at least its adoption size, so an entry with no "
+        "comment text is the parser failing to collect rather than an entry with "
+        "nothing to say — it cannot be checked",
+    )
     if silent:
-        problems = [
-            f"{len(silent)} CEILINGS entr(y/ies) parsed with no comment text at all "
-            f"({', '.join(silent[:3])}) — every entry records at least its adoption "
-            f"size, so this is the comment parser failing to collect, not an entry "
-            f"with nothing to say. It cannot be checked, which is DID NOT RUN."
-        ]
-        return problems
+        return [silent]
     problems = []
     for rel, size in sizes.items():
         stated = recorded_size(comments[rel])

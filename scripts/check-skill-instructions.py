@@ -44,6 +44,22 @@ can be skipped is the same defect one level up. Each fixture states which arm it
 proves, and the pre-fix basic-string form is exercised in full, so the arms are
 shown able to FAIL and not merely to pass.
 
+COLLECTION POINTS. This file implements the invariant stated in
+`.github/instructions/validation-scripts.instructions.md` — a collection step
+must assert it collected what it expected; a matcher that comes back empty is a
+failure of the check, never a clean result — through `scripts/lib/collected.py`.
+Four steps here collect something, and each has its own must-fail control. Add a
+new one the same way, or it becomes the fifth instance:
+
+1. the `[skill-instructions]` table          `blocks()`      + pinned members
+2. the fenced blocks inside a value          `FENCE`         + a pinned block's
+                                                               fences must exist
+3. the jq occurrences inside a fence         `jq_programs()` partitioned, and the
+                                                               parts are counted
+                                                               against the whole
+4. a key's raw span between its delimiters   `assignments()` unresolved is a
+                                                               named failure
+
 Offline and dependency-light: python3 (tomllib, 3.11+) and jq, both already
 required by this repo's other checks.
 """
@@ -58,7 +74,7 @@ import tomllib
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent / "lib"))
-from collected import members_missing, nothing_collected  # noqa: E402
+from collected import members_missing, nothing_collected, unaccounted  # noqa: E402
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 CONFIG = REPO_ROOT / "vstack.toml"
@@ -340,11 +356,18 @@ def audit(
 
     for key, value in sorted(table.items()):
         delimiter, raw = written.get(key, ("", ""))
+        # COLLECTION POINT 4 — this key's raw span. tomllib sees the key, so the
+        # source scanner must too; an unresolved span means neither the delimiter
+        # nor the identity arm can judge the block, which is DID NOT RUN for it.
         if not delimiter:
             problems.append(
-                f"{source} [{TABLE}] {key}: tomllib sees this key but the source scanner "
-                f"does not, so neither the delimiter nor the identity arm can judge it. "
-                f"Fix the scanner — an arm that cannot read an entry passes it."
+                nothing_collected(
+                    [],
+                    what="raw span",
+                    selector=f"{source} [{TABLE}] {key} in the source scanner",
+                    cause="tomllib sees this key but the scanner does not, so the "
+                    "delimiter and identity arms cannot judge it — fix the scanner",
+                )
             )
             continue
 
@@ -391,27 +414,44 @@ def audit(
         # means the pattern stopped matching, not that there is nothing to check.
         fences = FENCE.findall(value)
         openings = len(FENCE_OPENING.findall(value)) // 2
-        if openings and len(fences) != openings:
+        if openings:
+            unmatched = unaccounted(
+                openings,
+                {"collected": fences},
+                what="fenced block(s)",
+                selector=f"the fence pattern in {source} [{TABLE}] {key}",
+            )
+            if unmatched:
+                problems.append(unmatched)
+        elif key in required:
+            # ...and a pinned block with NO fences at all. `linear` ships a
+            # runbook, so a value that has lost its fences is DID NOT RUN, not
+            # nothing-to-do. Scoped to the pinned blocks on purpose:
+            # project-management and reviewer are prose and legitimately carry
+            # none, so requiring fences of every block would fail them.
             problems.append(
-                f"{source} [{TABLE}] {key}: {openings} fenced block(s) in the value but "
-                f"{len(fences)} collected — the fence pattern no longer matches them "
-                f"all, so the jq arm skips whatever it missed. That is DID NOT RUN for "
-                f"those blocks, not a clean result."
+                nothing_collected(
+                    fences,
+                    what="fenced block",
+                    selector=f"{source} [{TABLE}] {key}",
+                    cause="a pinned block ships a runbook, so losing its fences means "
+                    "the jq arm has nothing to examine rather than nothing to find",
+                )
             )
         for fenced in fences:
-            # COLLECTION POINT 3 — the jq occurrences inside one fence. Every
-            # token lands in exactly one of the three lists, and the accounting
-            # below is what makes a silently-dropped occurrence impossible: a
-            # branch that forgets to record one fails here instead of vanishing.
+            # COLLECTION POINT 3 — the jq occurrences inside one fence, PARTITIONED
+            # rather than filtered: every token lands in exactly one of the three,
+            # and counting the parts against the whole is what makes a dropped
+            # occurrence impossible instead of merely unlikely.
             programs, unreadable, exempt = jq_programs(fenced)
-            seen = len(JQ_TOKEN.findall(CONTINUATION_JOIN.sub(" ", fenced)))
-            if seen != len(programs) + len(unreadable) + len(exempt):
-                problems.append(
-                    f"{source} [{TABLE}] {key}: {seen} jq occurrence(s) in a fenced "
-                    f"block but {len(programs)} compiled, {len(unreadable)} reported "
-                    f"unreadable and {len(exempt)} exempt — the rest were dropped "
-                    f"without a word. Every occurrence must land in one of the three."
-                )
+            dropped = unaccounted(
+                len(JQ_TOKEN.findall(CONTINUATION_JOIN.sub(" ", fenced))),
+                {"compiled": programs, "unreadable": unreadable, "exempt": exempt},
+                what="jq occurrence(s)",
+                selector=f"a fenced block in {source} [{TABLE}] {key}",
+            )
+            if dropped:
+                problems.append(dropped)
             for line in unreadable:
                 problems.append(
                     f"{source} [{TABLE}] {key}: this jq invocation carries a quoted "
@@ -616,6 +656,31 @@ def self_test() -> list[str]:
                 f"a block fenced ```{tag} was not examined by the jq arm, so an "
                 f"unenumerated fence spelling removes a block from this check silently."
             )
+
+    # COLLECTION POINT 2's second control — a PINNED block that has lost its
+    # fences. Zero fences is did-not-run for a block that ships a runbook, and it
+    # audited clean until this was added.
+    fenceless = f"[{TABLE}]\nlinear = '''\nprose only\n'''\n"
+    if not any(
+        "no fenced block matched" in problem
+        for problem in audit(fenceless, source="<fixture: pinned block, no fences>")
+    ):
+        failures.append(
+            "a pinned block with no fenced block at all was accepted, so a runbook "
+            "value that lost its fences is indistinguishable from one with nothing "
+            "to check."
+        )
+    # ...and the same shape must NOT fire on the prose blocks that legitimately
+    # carry no fences, or the check fails the real file.
+    prose = f"[{TABLE}]\nlinear = '''\n```bash\njq -r .a f\n```\n'''\nreviewer = '''\nprose\n'''\n"
+    if any(
+        "no fenced block matched" in problem
+        for problem in audit(prose, source="<fixture: unpinned prose block>")
+    ):
+        failures.append(
+            "an unpinned prose block was required to carry fences, which would fail "
+            "project-management and reviewer in the real file."
+        )
 
     # COLLECTION POINT 3's control — every jq occurrence lands in exactly one of
     # the three lists. Driven on the reader itself, since that accounting is what
