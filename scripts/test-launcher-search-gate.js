@@ -119,6 +119,18 @@ for (const [label, source, marker] of [
 
 const ready = (fd, rg) => ({ state: "ready", fd: fd, ripgrep: rg });
 
+// One Python function's text, BOUNDED at the next top-level `def`. A slice that
+// only knows where it starts runs to EOF, and an assertion looking for a token
+// anywhere in it is then satisfied by an unrelated line hundreds of lines later:
+// that is how `raise RuntimeError(` stayed green with the raise it names
+// replaced by `pass`. Nested defs are indented, so they do not end the slice.
+function pythonFunction(source, name) {
+    const start = source.indexOf(`def ${name}(`);
+    assert.notEqual(start, -1, `bin/vshell-helper must define ${name}()`);
+    const end = source.indexOf("\ndef ", start + 1);
+    return source.slice(start, end === -1 ? source.length : end);
+}
+
 // --- 1. each kind names its own tool ----------------------------------------
 //
 // The whole defect in one table: text follows ripgrep, name search follows fd,
@@ -199,9 +211,7 @@ assert.equal(backend.backendStateFor("folders", "dev", ready(false, false)), "mi
 // helper stops answering path queries before it looks for fd, the QML above
 // starts promising a capability that is gone.
 {
-    const helperSource = fs.readFileSync(HELPER, "utf8");
-    const nameHits = helperSource.slice(helperSource.indexOf("def _launcher_search_name_hits("));
-    assert.ok(nameHits.startsWith("def _launcher_search_name_hits("), "the helper must define it");
+    const nameHits = pythonFunction(helperSource, "_launcher_search_name_hits");
     const pathBranch = nameHits.indexOf('if kind == "folders" and query.strip().startswith(("~", "/")):');
     const fdLookup = nameHits.indexOf('shutil.which("fd")');
     assert.notEqual(pathBranch, -1,
@@ -585,10 +595,32 @@ for (const state of ["available", "unknown", "checking"])
         ["var generation = ++_fileSearchGeneration;",
             "a controller-side generation, because DSearchService versions per KIND: a files " +
             "answer still lands after the chip switched to text"],
+        ["_fileSearchGeneration++;",
+            "and the DECLINED path supersedes what is in flight too, or an answer already on " +
+            "its way lands on top of the empty state explaining why this search was declined", 1],
         ["if (generation !== root._fileSearchGeneration) return;",
-            "checked at the TOP of the callback, so a stale answer neither overwrites the " +
-            "current kind's results nor attributes its error to them"]
+            "checked in the callback, so a stale answer neither overwrites the current kind's " +
+            "results nor attributes its error to them"]
     ]);
+
+    // POSITION, not presence: the guard below the error branch still reads
+    // correctly and still captures a stale kind's failure into fileSearchError,
+    // which is the defect the line was added for.
+    {
+        const body = q.body("performFileSearch");
+        const dispatched = body.indexOf("DSearchService.search(");
+        const guard = body.indexOf("if (generation !== root._fileSearchGeneration)", dispatched);
+        const spinnerCleared = body.indexOf("isFileSearching = false;", dispatched);
+        const errorBranch = body.indexOf("if (response.error)", dispatched);
+        assert.ok(guard !== -1 && spinnerCleared !== -1 && errorBranch !== -1,
+            "the callback must guard its generation, clear the spinner and handle an error");
+        assert.ok(guard < spinnerCleared,
+            "the guard comes before the spinner is cleared: a stale answer must not report that " +
+            "the CURRENT search finished");
+        assert.ok(guard < errorBranch,
+            "and before the error branch, or a superseded kind's failure is captured into " +
+            "fileSearchError and shown under the search now on screen");
+    }
 
     // ORDER, not presence: a `return` placed above the clear leaves both tokens
     // in the function and the stale results on screen.
@@ -606,8 +638,28 @@ for (const state of ["available", "unknown", "checking"])
 
     q.requires(q.body("performSearch"), "performSearch()", [
         ["DSearchService.canDispatch(fileSearchKind(), fileQuery)",
-            "the spinner is set from the same per-kind answer, not from a single flag"]
+            "the spinner is set from the same per-kind answer, not from a single flag"],
+        ["DSearchService.queryIsDispatchable(fileQuery)",
+            "and from the same threshold owner: identical behavior today, and exactly the drift " +
+            "that owner exists to prevent"]
     ]);
+
+    // The ban is scoped to the FILES BRANCH of performSearch, not its body: the
+    // same function carries the plugin-phase `searchQuery.length >= 2`, which
+    // gates a different question and is deliberately left alone.
+    {
+        // Located on the RAW source because the landmark carries a string
+        // literal, whose contents the structure view blanks; blankRanges keeps
+        // offsets, so the index still means the same place to blockFrom.
+        const branchAt = controllerSource.indexOf('if (searchMode === "files") {',
+            controllerSource.indexOf("function performSearch("));
+        const filesBranch = q.blockFrom(branchAt, "performSearch's files branch");
+        assert.ok(!/length\s*[<>]=?\s*2/.test(stripComments(filesBranch)),
+            "performSearch's files branch must not carry its own two-character literal — " +
+            "DSearchService.queryIsDispatchable owns that rule");
+        assert.ok(stripComments(filesBranch).includes("DSearchService.queryIsDispatchable(fileQuery)"),
+            "and must ask the owner instead");
+    }
 
     q.requires(q.body("fileSearchKind"), "fileSearchKind()", [
         ["DSearchService.kindForType", "the type-to-kind mapping stays in its owner"]
@@ -805,7 +857,7 @@ for (const [label, source, fns] of [
 // joined its flags, argparse accepted the value, and fd rejected it — silently,
 // because the run was not checked.
 {
-    const nameHits = helperSource.slice(helperSource.indexOf("def _launcher_search_name_hits("));
+    const nameHits = pythonFunction(helperSource, "_launcher_search_name_hits");
     const fdCall = nameHits.indexOf("subprocess.run(command");
     assert.ok(nameHits.includes('command.append("--exclude=" + value)'),
         "the helper must pass an ignore entry joined to its flag: separated, a value starting " +
@@ -857,6 +909,23 @@ for (const [label, source, fns] of [
             "the reason is published only where the rule says so, or a re-probe's failure " +
             "overwrites the reason belonging to an answer still on screen"],
         ["statusRetryTimer.start()", "the retry still runs whatever is published"]
+    ]);
+
+    // Restored ALONGSIDE the block above, not replaced by it. Dropping these
+    // three took real coverage with them: without the first, a timeout and a
+    // non-zero exit report the same text; without the second, a probe whose
+    // output cannot be read reports NOTHING and leaves the state at "pending"
+    // for the session, refusing every fd-backed search behind "Checking search
+    // tools" — the fail-closed dead end this whole change exists to remove.
+    q.requires(q.body("_probeStatus"), "_probeStatus()", [
+        ["exitCode === 124",
+            "a timeout is named as one: 'the CLI never answered' is a different diagnosis from " +
+            "'the CLI answered with a failure'"],
+        ["root._statusProbeFailed(",
+            "and EVERY failure path goes through the same handler — the exit path and the " +
+            "unreadable-output path alike", 2],
+        ['root.statusState = "ready"',
+            "success is the ONLY thing that publishes the tool flags"]
     ]);
 
     // ORDER inside the probe: the generation check is the FIRST thing its
