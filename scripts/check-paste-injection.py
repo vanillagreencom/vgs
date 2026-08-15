@@ -158,6 +158,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent / "lib"))
+from qml_scrub import ScrubError  # noqa: E402
 from paste_literals import (  # noqa: E402
     COMMAND_ASSIGN_RE,
     OWNERSHIP_CONTROLS,
@@ -252,7 +253,9 @@ def scanned_files() -> list[tuple[str, str, str]]:
         for suffix in SCAN_SUFFIXES:
             for path in (REPO / root).rglob(suffix):
                 text = path.read_text()
-                files.append((str(path.relative_to(REPO)), live_code(text), live_code(text, blank_strings=True)))
+                rel = str(path.relative_to(REPO))
+                files.append((rel, live_code(text, source_name=rel),
+                              live_code(text, blank_strings=True, source_name=rel)))
     return sorted(files)
 
 
@@ -261,7 +264,7 @@ def read_live(rel_path: str) -> str | None:
     if not path.is_file():
         fail(f"missing {rel_path}")
         return None
-    return live_code(path.read_text(), blank_strings=True)
+    return live_code(path.read_text(), blank_strings=True, source_name=rel_path)
 
 
 def read_live_with_strings(rel_path: str) -> str | None:
@@ -269,7 +272,7 @@ def read_live_with_strings(rel_path: str) -> str | None:
     if not path.is_file():
         fail(f"missing {rel_path}")
         return None
-    return live_code(path.read_text())
+    return live_code(path.read_text(), source_name=rel_path)
 
 
 def check_matchers() -> bool:
@@ -806,6 +809,17 @@ def check_launcher_copy_result() -> bool:
 
 
 def main() -> int:
+    try:
+        return run()
+    except ScrubError as error:
+        # Deliberately caught HERE and nowhere else: one place turns a refusal
+        # into a named failure, so no call site can quietly carry on with a
+        # view the scanner would not vouch for.
+        fail(f"the source scanner refused a file, so these rules were NOT checked: {error}")
+        return 1
+
+
+def run() -> int:
     files = scanned_files()
     if not files:
         return fail(

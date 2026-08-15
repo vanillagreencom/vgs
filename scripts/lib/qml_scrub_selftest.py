@@ -11,13 +11,21 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from qml_scrub import live_code  # noqa: E402
+from qml_scrub import ScrubError, live_code  # noqa: E402
 
 
 def scrub_checks(check) -> None:
     """Pin what `live_code` blanks and what it must leave standing."""
     def blanked_template(source: str) -> str:
         return live_code(source, blank_strings=True)
+
+    def refusal(source: str) -> str:
+        """The problem the scrubber refuses with, or a marker that it did not."""
+        try:
+            live_code(source, blank_strings=True)
+        except ScrubError as error:
+            return error.problem
+        return "RETURNED A VIEW"
 
     # --- live_code ---------------------------------------------------------
     commented = "a();\n// b();\nc();\n"
@@ -36,12 +44,15 @@ def scrub_checks(check) -> None:
         True,
     )
 
+    # A view of a file the scanner could not parse IS the silent pass this
+    # module exists to prevent — every containment bug here ended as a blanked
+    # remainder that every guard then read as clean. So these refuse.
+    check("an unterminated block comment is refused", refusal("/* x"), "unterminated block comment")
+    check("an unterminated string is refused", refusal('x = "abc'), "unterminated string literal")
+    check("an unbalanced paren is refused", refusal("f(a;\n"), "unbalanced parentheses: the scan ended inside an open `(`")
     # Offsets and line count are a contract, not a nicety: a caller may hold
     # both views of one file and compare positions between them, so a shape
-    # that shifts one view against the other silently mismatches every later
-    # offset. Both shapes below did exactly that.
-    unclosed_comment = "/* x"
-    check("an unterminated block comment preserves offsets", len(live_code(unclosed_comment)), len(unclosed_comment))
+    # that shifts one against the other mismatches every later offset.
     continuation = 'var a = "one\\\ntwo";\nb();\n'
     check(
         "a line continuation inside a string keeps its newline",
@@ -103,12 +114,12 @@ def scrub_checks(check) -> None:
         "gone" in blanked_template("`${/* gone */ danger(z)}`"),
         False,
     )
-    for unterminated in ("`text ${danger(z)", "`text ${", "`text "):
-        check(
-            f"an unterminated literal preserves offsets: {unterminated!r}",
-            len(blanked_template(unterminated)),
-            len(unterminated),
-        )
+    for unterminated, problem in (
+        ("`text ${danger(z)", "unterminated ${...} interpolation"),
+        ("`text ${", "unterminated ${...} interpolation"),
+        ("`text ", "unterminated template literal"),
+    ):
+        check(f"an unterminated literal is refused: {unterminated!r}", refusal(unterminated), problem)
     multiline = "`a\nb ${danger(z)}\nc`"
     check("line count survives a multi-line literal", blanked_template(multiline).count("\n"), multiline.count("\n"))
 
@@ -126,6 +137,21 @@ def scrub_checks(check) -> None:
         "danger(z)" in blanked_template("return /[;&|`\"']/.test(p);\ndanger(z);\n"),
         True,
     )
+    # A control condition's `)` is followed by a STATEMENT, so a `/` after it
+    # opens a regex. Reading it as division let the backtick inside the regex
+    # open a template literal that nothing closed, hiding the rest of the file
+    # — and with it a hard-coded argv the guard exists to forbid.
+    check(
+        "a regex after a control condition is a regex, not division",
+        blanked_template('function f(x) {\n  if (x) /a`b/.test(x);\n  const bad = ["wtype"];\n}\n'),
+        'function f(x) {\n  if (x) /   /.test(x);\n  const bad = ["     "];\n}\n',
+    )
+    for head in ("if", "while", "for", "switch", "catch"):
+        check(
+            f"a regex after `{head} (...)` is a regex",
+            blanked_template(f"{head} (x) /a`b/.test(x);\n"),
+            f"{head} (x) /   /.test(x);\n",
+        )
     check(
         "the regex body is text, blanked like a string's",
         blanked_template("m = /wtype/g;\n"),
