@@ -32,7 +32,6 @@ Item {
     readonly property bool effectiveHoverDismissSuspended: hoverDismissSuspended || (transientSurfaceTracker?.active ?? false)
     property bool backgroundInteractive: true
     property bool contentHandlesKeys: false
-    property bool fullHeightSurface: false
     property bool _primeContent: false
 
     property real storedBarThickness: Theme.barHeight - 4
@@ -253,7 +252,6 @@ Item {
         it.customKeyboardFocus = Qt.binding(() => root.customKeyboardFocus);
         it.backgroundInteractive = Qt.binding(() => root.backgroundInteractive);
         it.contentHandlesKeys = Qt.binding(() => root.contentHandlesKeys);
-        it.fullHeightSurface = Qt.binding(() => root.fullHeightSurface);
         it.storedBarThickness = Qt.binding(() => root.storedBarThickness);
         it.storedBarSpacing = Qt.binding(() => root.storedBarSpacing);
         it.storedBarConfig = Qt.binding(() => root.storedBarConfig);
