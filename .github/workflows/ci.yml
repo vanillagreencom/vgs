@@ -317,6 +317,7 @@ jobs:
           # runs off fixture repos, so that decision IS checkable here.
           scripts/test-vendor-drift.sh
           scripts/test-vendor-drift-evidence.sh
+          scripts/test-vendor-drift-contracts.sh
           # `scripts/test-validation-inventory.sh` belongs with these but runs in
           # its own step at the END OF THE JOB — see that step for why. Order
           # here is free: each script builds its own mktemp tree.

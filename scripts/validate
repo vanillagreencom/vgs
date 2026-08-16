@@ -225,6 +225,7 @@ always    | git diff --check
 -         | scripts/check-coderabbit-config.py
 -         | scripts/test-vendor-drift.sh
 -         | scripts/test-vendor-drift-evidence.sh
+-         | scripts/test-vendor-drift-contracts.sh
 -         | scripts/check-review-gate-vendor.sh
 -         | third_party/review-gate/scripts/review-predicate-selftest.sh
 -         | third_party/review-gate/tests/pr-watch.test.sh

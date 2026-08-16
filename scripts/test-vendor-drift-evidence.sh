@@ -132,19 +132,6 @@ expect_class "binary difference" yes \
 expect_class "a line kind that does not exist yet" yes "Some future diff remark"
 ok "every unrecognised shape counts as content the rsync would destroy"
 
-# ── the locale fix itself ─────────────────────────────────────────────────
-# Asserted on the source, not behaviourally: no translated locale is guaranteed
-# installed anywhere this suite runs, so a behavioural test would silently pass
-# on a C-only machine. What the default arm above already guarantees is that a
-# translated marker is SAFE; this pins that it is also CORRECT.
-# Comments stripped before matching, exactly as flag_carriers does and for the
-# same reason: with the whole file matched, the inverse control PASSED — leave a
-# comment naming `LC_ALL=C diff -r -u`, change the real call, and this stayed
-# green with the drift diff running under the ambient locale.
-diff_invocation="$(grep -n 'diff -r -u' "$repo_root/scripts/lib/vendor-drift.sh" |
-  grep -vE '^[0-9]+:[[:space:]]*#' || true)"
-expect_contains "$diff_invocation" "LC_ALL=C diff -r -u" "locale pin"
-ok "the drift diff runs under LC_ALL=C, so the markers stay in the parsed language"
 
 # ── evidence that cannot be READ ──────────────────────────────────────────
 # Each of these resolves to undetermined with its own cause named. Wrong-cause
@@ -192,7 +179,7 @@ printf 'shared line\nnew upstream line\n' \
   >"$root/.agents/skills/$ENGINE/references/settings.md"
 run_check "$root"
 expect_rc "$rc" 1 "no refresh marker"
-expect_contains "$err" "no .vstack-refreshed marker" "no refresh marker"
+expect_contains "$err" "yielded no usable time" "no refresh marker"
 expect_contains "$err" "last refreshed unknown" "no refresh marker"
 ok "a mirror with no refresh marker has no age, rather than borrowing the directory mtime"
 
@@ -310,7 +297,7 @@ usable|1700007200|1700003600|yes|tracked-ahead|
 usable|1700000000|1700003600|no|mirror-ahead|
 usable|1700000000|1700003600|yes|undetermined|PULLED IN after that refresh
 usable|1700003600|1700003600|no|undetermined|both timestamps are identical
-usable|1700000000|EMPTY|no|undetermined|no .vstack-refreshed marker
+usable|1700000000|EMPTY|no|undetermined|yielded no usable time
 dirty|EMPTY|1700003600|no|undetermined|has uncommitted changes
 git-unreadable|EMPTY|1700003600|no|undetermined|git could not be consulted
 no-history|EMPTY|1700003600|no|undetermined|no commit in this repository
@@ -322,6 +309,66 @@ usable|not-a-number|1700003600|no|undetermined|which is not a timestamp
 usable|1700000000|not-a-number|no|undetermined|which is not a timestamp
 TABLE
 ok "every row reads as written and reports the cause of that reading, not another"
+
+# ── the two decided readings are disjoint, so their order is immaterial ────
+# The prose claimed this; driving it is what makes it true. A `>=` in either
+# comparison would overlap them at equality and this fires.
+for pair in "100 100" "100 200" "200 100"; do
+  # shellcheck disable=SC2086 # the pair IS the argument list; splitting is the point
+  set -- $pair
+  decided="$(vendor_drift_direction usable "$1" "$2" no "$ENGINE")"
+  case "${decided%%$'\t'*}" in
+    tracked-ahead) (($1 > $2)) || fail "disjoint readings" "tracked-ahead at tracked=$1 refresh=$2" ;;
+    mirror-ahead) (($2 > $1)) || fail "disjoint readings" "mirror-ahead at tracked=$1 refresh=$2" ;;
+    *) (($1 == $2)) || fail "disjoint readings" "undetermined at a strict ordering: tracked=$1 refresh=$2" ;;
+  esac
+done
+ok "a decided reading implies its own strict ordering, so neither rule can shadow the other"
+
+# ── each unusable state carries its own cause ─────────────────────────────
+# Two functions once computed the state and the reason separately and diverged,
+# reporting an unreadable git while asserting a repository that did not exist.
+# One owner now, and no two states may report the same cause.
+seen_reasons=""
+for state in git-unreadable shallow no-history dirty; do
+  decided="$(vendor_drift_direction "$state" "" 1700003600 no "$ENGINE")"
+  reason="${decided#*$'\t'}"
+  [[ -n "$reason" ]] || fail "one cause per state" "state $state reports no cause at all"
+  case $'\n'"$seen_reasons" in
+    *$'\n'"$reason"$'\n'*) fail "one cause per state" "state $state reuses another state's cause: $reason" ;;
+  esac
+  seen_reasons+="$reason"$'\n'
+done
+ok "each unusable state reports a cause no other state reports"
+
+# ── an mtime that cannot be read answers undetermined ─────────────────────
+# GNU `stat` only, deliberately: an untested BSD fallback is the fail-open shape
+# this check exists to avoid. Where `stat` cannot answer, the age is unknown and
+# the reading is undetermined — asserted with a stub rather than assumed.
+root="$(new_fixture stat-fails)"
+printf 'shared line\nnew upstream line\n' \
+  >"$root/.agents/skills/$ENGINE/references/settings.md"
+commit_tracked "$root" "$COMMIT_OLD"
+set_refresh "$root" "$REFRESH"
+mkdir -p "$tmp/statstub"
+printf '#!/usr/bin/env bash\nexit 3\n' >"$tmp/statstub/stat"
+chmod +x "$tmp/statstub/stat"
+if PATH="$tmp/statstub:$PATH" stat -c %Y -- "$root" >/dev/null 2>&1; then
+  fail "unreadable mtime" "stub precondition unmet: stat still answered"
+else
+  saved_path="$PATH"
+  PATH="$tmp/statstub:$PATH"
+  run_check "$root"
+  PATH="$saved_path"
+  expect_rc "$rc" 1 "unreadable mtime"
+  expect_contains "$err" "which side is newer is NOT ESTABLISHED" "unreadable mtime"
+  expect_contains "$err" "yielded no usable time" "unreadable mtime"
+  # Nothing is at risk in this shape, so the rsync is correctly offered — but
+  # only behind its condition, never as a decided repair.
+  expect_contains "$err" "$RSYNC_CONDITION" "unreadable mtime"
+  expect_absent "$err" "$READING_TRACKED_AHEAD" "unreadable mtime"
+fi
+ok "an mtime that cannot be read yields no direction and no destructive command"
 
 if ((failures > 0)); then
   printf 'test-vendor-drift-evidence: FAIL (%d)\n' "$failures" >&2
