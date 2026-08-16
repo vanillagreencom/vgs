@@ -1,14 +1,11 @@
 #!/usr/bin/env bash
 # Assert the tracked review-gate engine matches the vstack-managed copy.
 #
-# Why two copies exist, why the printed repair depends on which side is newer,
-# and what each verdict means: scripts/lib/vendor-drift.sh, which holds the
-# whole check. This file only names the engine.
-#
-#   scripts/check-review-gate-vendor.sh
-#   scripts/check-review-gate-vendor.sh --allow-missing-source
-#   scripts/check-review-gate-vendor.sh --confirm-mirror-is-newer
-#   scripts/check-review-gate-vendor.sh --help
+# This file only names the engine. The check is split across two libraries:
+# scripts/lib/vendor-drift.sh holds the evidence, the decision, and why there
+# are two copies at all; scripts/lib/vendor-drift-report.sh holds what the
+# check may print and the rule governing the destructive repair. Run this
+# script with --help for the options.
 set -euo pipefail
 
 repo_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"

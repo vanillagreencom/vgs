@@ -25,7 +25,7 @@ ORCH_STATE_DIR = "tmp"
 # File-size ratchet (VGS-111, fleet ruling 2026-08-10: adopt size-ratchet,
 # never hand-roll a size gate). Threshold is the fleet's 400 lines; CI runs
 # the vendored engine at third_party/size-ratchet/ (see
-# scripts/check-size-ratchet-vendor.sh for why two copies exist). The engine
+# scripts/lib/vendor-drift.sh for why two copies exist). The engine
 # has one threshold, so the fleet's 800-line test allowance is not
 # expressible — oversized tests enter the baseline instead (noted in the
 # excludes file).

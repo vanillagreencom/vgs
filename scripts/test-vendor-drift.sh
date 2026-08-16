@@ -1,22 +1,21 @@
 #!/usr/bin/env bash
-# Must-fail controls for scripts/lib/vendor-drift.sh, the shared engine behind
+# End-to-end controls for the vendor drift check — scripts/lib/vendor-drift.sh
+# and scripts/lib/vendor-drift-report.sh, behind
 # scripts/check-review-gate-vendor.sh and scripts/check-size-ratchet-vendor.sh
-# (VGS-155).
+# (VGS-155). The parser and decision units live in
+# scripts/test-vendor-drift-classify.sh; this file drives whole runs.
 #
 # THE BUG THIS EXISTS FOR. The check used to print the mirror-to-tracked rsync
-# unconditionally, as a procedure. Immediately after a vendoring PR merged, the
-# tracked copy was the NEWER side, so running that command deleted the merged
-# engine change — and the check then passed, because the two copies agreed
-# again. Every case below is written so that reintroducing an unconditional
-# repair fails at least one of them: the destructive command must be absent
-# where it would lose content, present where it cannot, and the verdict must
-# name which side the evidence says is newer.
+# unconditionally, as a procedure. Immediately after a vendoring PR merged the
+# tracked copy was the NEWER side, so running it deleted the merged change — and
+# the check then passed, because the two copies agreed again. Every case below
+# is written so reintroducing an unconditional or unexplained repair fails one.
 #
-# Fixture-driven throughout: each case builds a throwaway repo with its own
-# third_party/<engine> and .agents/skills/<engine>, its own commit time and its
-# own refresh-marker mtime, so this runs anywhere — no vstack, no .agents mirror,
-# no network. The two real checks are covered by the static arm at the end,
-# which is what stops one of them from being wired to the other's engine.
+# Fixtures build a throwaway git repo per case, with its own commit time and its
+# own refresh-marker mtime, so this runs anywhere — no vstack, no .agents
+# mirror, no network. They use GNU `touch -d @epoch` and GNU `git`, matching the
+# GNU-only `stat`/`date` the libraries require; there is no BSD path here
+# because there is none there.
 set -euo pipefail
 
 repo_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -29,7 +28,7 @@ source "$repo_root/scripts/lib/vendor-drift.sh"
 PROG=check-demo-vendor
 ENGINE=demo-engine
 
-# Fixed epochs, so the verdicts depend on the ORDER this file states and never
+# Fixed epochs, so the readings depend on the ORDER this file states and never
 # on when it runs. REFRESH sits between the two commit times, which is what
 # makes "commit before the refresh" and "commit after the refresh" two cases
 # rather than a race.
@@ -53,7 +52,8 @@ for verdict in "${VERDICTS[@]}"; do
   expect_absent "$out$err" "$verdict" "in-sync"
 done
 expect_absent "$out$err" "$RSYNC_COMMAND" "in-sync"
-ok "matching copies pass, and print no verdict and no repair"
+expect_absent "$out$err" "$REPAIR_REFRESH_SOLE" "in-sync"
+ok "matching copies pass, and print no reading and no repair"
 
 # ── the VGS-155 incident: tracked copy ahead ──────────────────────────────
 # A vendoring PR merged after the last refresh. The old check printed the rsync
@@ -66,10 +66,14 @@ commit_tracked "$root" "$COMMIT_NEW"
 run_check "$root"
 expect_rc "$rc" 1 "tracked-ahead"
 expect_contains "$err" "the TRACKED copy is newer" "tracked-ahead"
-expect_contains "$err" "vstack refresh" "tracked-ahead"
+# The repair LINE, not the phrase: "vstack refresh" also appears in this
+# reading's own prose, so the phrase alone survives deleting the command.
+expect_contains "$err" "$REPAIR_REFRESH_SOLE" "tracked-ahead"
 expect_absent "$err" "$RSYNC_COMMAND" "tracked-ahead"
+# The refresh pulls from the LOCAL vstack catalog, so name the second step.
+expect_contains "$err" "the local vstack source catalog is older" "tracked-ahead"
 saw_verdict "the TRACKED copy is newer"
-ok "a commit after the last refresh routes to vstack refresh, with no rsync printed"
+ok "a commit after the last refresh names vstack refresh alone, and no rsync"
 
 # The diff sides are named rather than left as bare markers to decode.
 expect_contains "$err" "- lines are only in .agents/skills/$ENGINE/ (mirror)" "tracked-ahead labels"
@@ -89,8 +93,7 @@ ok "--confirm-mirror-is-newer prints the rsync but flags the contradicting evide
 # ── a merged commit that REMOVES engine content ───────────────────────────
 # The shape that defeats a content-only test. The mirror holds the removed line,
 # so it is the side with extra content and the rsync would delete nothing — yet
-# running it re-adds what the merge deleted. Only the timestamp evidence
-# separates this from an upstream addition, which is why it is read first.
+# running it re-adds what the merge deleted.
 root="$(new_fixture merged-deletion)"
 set_refresh "$root" "$REFRESH"
 printf 'shared line\nretired setting\n' \
@@ -99,45 +102,31 @@ commit_tracked "$root" "$COMMIT_NEW"
 run_check "$root"
 expect_rc "$rc" 1 "merged deletion"
 expect_contains "$err" "the TRACKED copy is newer" "merged deletion"
-expect_contains "$err" "vstack refresh" "merged deletion"
+expect_contains "$err" "$REPAIR_REFRESH_SOLE" "merged deletion"
 expect_absent "$err" "$RSYNC_COMMAND" "merged deletion"
-ok "a merged deletion routes to vstack refresh, though the rsync would delete nothing"
+ok "a merged deletion names vstack refresh alone, though the rsync would delete nothing"
 
 # ── a merged commit that REMOVES A FILE, read after a later refresh ───────
-# The reported P1 shape, at file granularity: the tracked copy dropped a file,
-# the mirror still carries it, and the refresh marker is newer. `diff -r` reports
-# it as `Only in <mirror>`, so NOTHING is tracked-only, the rsync would delete no
-# file — and running it restores the file the merge deleted, whereupon the two
-# copies agree and the check goes green on the reverted content.
-#
-# The old behavior named that rsync as the SOLE repair and called it lossless.
-# Both halves are asserted here: the repair set, and the absence of any safety
-# claim about it.
+# The same removal read where the vendoring commit predates the refresh — a
+# fresh clone, or a new worktree. `diff -r` reports it as `Only in <mirror>`, so
+# nothing is tracked-only and the rsync would delete no file; running it still
+# restores what the merge deleted, whereupon the copies agree and the check goes
+# green on the reverted content.
 root="$(new_fixture merged-file-deletion)"
 printf 'retired predicate fixture\n' >"$root/.agents/skills/$ENGINE/references/error-patterns.md"
 commit_tracked "$root" "$COMMIT_OLD"
 set_refresh "$root" "$REFRESH"
 run_check "$root"
 expect_rc "$rc" 1 "merged file deletion"
-# Not the sole repair: the non-destructive branch is present, and the rsync sits
-# behind its condition rather than being handed over as the answer.
-expect_contains "$err" "vstack refresh" "merged file deletion"
+expect_contains "$err" "$REPAIR_REFRESH_BOTH" "merged file deletion"
 expect_contains "$err" "$RSYNC_CONDITION" "merged file deletion"
 expect_contains "$err" "(1) If the TRACKED copy is newer" "merged file deletion"
-# And no claim that adopting the mirror costs nothing.
-for claim in "${SAFETY_CLAIMS[@]}"; do
-  expect_absent "$err" "$claim" "merged file deletion"
-done
 expect_contains "$err" "NOT THE SAME AS LOSING NOTHING" "merged file deletion"
 expect_contains "$err" "Only in .agents/skills/$ENGINE" "merged file deletion"
+saw_verdict "the evidence is CONSISTENT WITH the MIRROR being newer"
 ok "a merged file removal never yields the rsync as the sole repair, nor a claim it is lossless"
 
 # ── the ordinary case: mirror ahead ───────────────────────────────────────
-# THE INVERSION, and why this reading may not name a repair alone: byte for
-# byte this fixture is the case above, read where the vendoring commit predates
-# the last refresh — a fresh clone, or a new worktree. The timestamps now favour
-# the mirror and the rsync still deletes nothing, yet it could equally be the
-# merged deletion above. So both repairs, each conditioned.
 root="$(new_fixture mirror-ahead)"
 commit_tracked "$root" "$COMMIT_OLD"
 printf 'shared line\nnew upstream line\n' \
@@ -146,13 +135,9 @@ set_refresh "$root" "$REFRESH"
 run_check "$root"
 expect_rc "$rc" 1 "mirror-ahead"
 expect_contains "$err" "the evidence is CONSISTENT WITH the MIRROR being newer" "mirror-ahead"
-# Both repairs, and the destructive one only behind its condition. Asserting the
-# rsync alone would pass on the pre-VGS-155 behavior this file exists to forbid.
-expect_contains "$err" "vstack refresh" "mirror-ahead"
+expect_contains "$err" "$REPAIR_REFRESH_BOTH" "mirror-ahead"
 expect_contains "$err" "$RSYNC_CONDITION" "mirror-ahead"
 expect_contains "$err" "$RSYNC_COMMAND" "mirror-ahead"
-expect_contains "$err" ".agents/skills/$ENGINE/ third_party/$ENGINE/" "mirror-ahead"
-saw_verdict "the evidence is CONSISTENT WITH the MIRROR being newer"
 ok "favourable evidence still prints both repairs, the rsync only behind its condition"
 
 # ── refresh newer, but the tracked copy still holds content ───────────────
@@ -166,21 +151,22 @@ set_refresh "$root" "$REFRESH"
 run_check "$root"
 expect_rc "$rc" 1 "undetermined"
 expect_contains "$err" "which side is newer is NOT ESTABLISHED" "undetermined"
-expect_contains "$err" "vstack refresh" "undetermined"
+expect_contains "$err" "$REPAIR_REFRESH_BOTH" "undetermined"
 expect_absent "$err" "$RSYNC_COMMAND" "undetermined"
-expect_contains "$err" "third_party/$ENGINE/references/settings.md" "undetermined"
+expect_contains "$err" "$AT_RISK_PREFIX""third_party/$ENGINE/references/settings.md" "undetermined"
 expect_contains "$err" "--confirm-mirror-is-newer" "undetermined"
 saw_verdict "which side is newer is NOT ESTABLISHED"
 ok "timestamps and content disagreeing withholds the rsync and names what it would delete"
 
+# Asserting the direction releases the command — and must not hide its cost.
 run_check "$root" --confirm-mirror-is-newer
 expect_rc "$rc" 1 "undetermined confirmed"
 expect_contains "$err" "$RSYNC_COMMAND" "undetermined confirmed"
-ok "--confirm-mirror-is-newer releases the withheld rsync"
+expect_contains "$err" "It DELETES this" "undetermined confirmed"
+expect_contains "$err" "$AT_RISK_PREFIX""third_party/$ENGINE/references/settings.md" "undetermined confirmed"
+ok "--confirm-mirror-is-newer releases the rsync, still above the list of what it deletes"
 
 # ── a tracked-only FILE, not just a tracked-only line ─────────────────────
-# `diff -r` reports this as `Only in ...` rather than as `+` lines, so it is a
-# separate arm of the classifier; missing it would call a deleting rsync safe.
 root="$(new_fixture tracked-only-file)"
 printf 'new predicate fixture\n' >"$root/third_party/$ENGINE/references/error-patterns.md"
 commit_tracked "$root" "$COMMIT_OLD"
@@ -189,12 +175,47 @@ run_check "$root"
 expect_rc "$rc" 1 "tracked-only file"
 expect_contains "$err" "which side is newer is NOT ESTABLISHED" "tracked-only file"
 expect_absent "$err" "$RSYNC_COMMAND" "tracked-only file"
-expect_contains "$err" "third_party/$ENGINE/references/error-patterns.md" "tracked-only file"
+expect_contains "$err" "$AT_RISK_PREFIX""third_party/$ENGINE/references/error-patterns.md" "tracked-only file"
 ok "a file only the tracked copy has counts as content the rsync would delete"
 
-# ── uncommitted tracked changes ───────────────────────────────────────────
-# The commit time stops describing what is on disk, so the newest-commit
-# evidence is not usable and the check must not claim a direction from it.
+# ── a difference diff declines to show as content ─────────────────────────
+# Binary files yield only "Binary files A and B differ", which names no side.
+# That reaches the fail-closed default, and must withhold rather than release.
+root="$(new_fixture binary-drift)"
+printf '\x00\x01tracked\x00' >"$root/third_party/$ENGINE/references/fixture.bin"
+printf '\x00\x01mirror\x00' >"$root/.agents/skills/$ENGINE/references/fixture.bin"
+commit_tracked "$root" "$COMMIT_OLD"
+set_refresh "$root" "$REFRESH"
+run_check "$root"
+expect_rc "$rc" 1 "binary drift"
+expect_contains "$err" "which side is newer is NOT ESTABLISHED" "binary drift"
+expect_absent "$err" "$RSYNC_COMMAND" "binary drift"
+expect_contains "$err" "$AT_RISK_PREFIX""Binary files" "binary drift"
+expect_contains "$err" "third_party/$ENGINE/references/fixture.bin" "binary drift"
+ok "a binary difference names no side, so it is treated as content the rsync would delete"
+
+# ── a shape the parser has no arm for at all ──────────────────────────────
+# File on one side, directory on the other: GNU diff emits the SINGULAR "File A
+# is a regular file while file B is a directory", which matches no marker the
+# classifier knows. The default arm is what makes that safe.
+root="$(new_fixture file-vs-directory)"
+printf 'a plain file\n' >"$root/.agents/skills/$ENGINE/references/thing"
+mkdir -p "$root/third_party/$ENGINE/references/thing"
+printf 'inside\n' >"$root/third_party/$ENGINE/references/thing/inner"
+commit_tracked "$root" "$COMMIT_OLD"
+set_refresh "$root" "$REFRESH"
+run_check "$root"
+expect_rc "$rc" 1 "file vs directory"
+expect_contains "$err" "which side is newer is NOT ESTABLISHED" "file vs directory"
+expect_absent "$err" "$RSYNC_COMMAND" "file vs directory"
+expect_contains "$err" "$AT_RISK_PREFIX""File .agents/skills/$ENGINE" "file vs directory"
+expect_contains "$err" "is a regular file while file" "file vs directory"
+ok "an unrecognised diff line is treated as content at risk, not as nothing"
+
+# ── evidence that cannot be READ ──────────────────────────────────────────
+# Each of these resolves to undetermined with its own cause named. Wrong-cause
+# output is the failure being guarded: the reason must describe the decision
+# that was actually made.
 root="$(new_fixture dirty-tracked)"
 set_refresh "$root" "$REFRESH"
 commit_tracked "$root" "$COMMIT_NEW"
@@ -203,26 +224,48 @@ printf 'shared line\nedited in the working tree\n' \
 run_check "$root"
 expect_rc "$rc" 1 "dirty tracked"
 expect_contains "$err" "which side is newer is NOT ESTABLISHED" "dirty tracked"
-expect_contains "$err" "uncommitted changes" "dirty tracked"
+expect_contains "$err" "has uncommitted changes" "dirty tracked"
 expect_absent "$err" "$RSYNC_COMMAND" "dirty tracked"
 ok "uncommitted changes under third_party disqualify the commit-time evidence"
 
-# ── no history at all ─────────────────────────────────────────────────────
 root="$(new_fixture uncommitted)"
 printf 'shared line\ntracked-only line\n' \
   >"$root/third_party/$ENGINE/references/settings.md"
 set_refresh "$root" "$REFRESH"
 run_check "$root"
 expect_rc "$rc" 1 "no history"
-expect_contains "$err" "which side is newer is NOT ESTABLISHED" "no history"
 expect_contains "$err" "no commit in this repository touches third_party/$ENGINE" "no history"
 expect_absent "$err" "$RSYNC_COMMAND" "no history"
 ok "a tracked copy with no commit history yields no direction and no rsync"
 
+root="$(new_fixture_nogit no-repository)"
+printf 'shared line\nmirror-only line\n' \
+  >"$root/.agents/skills/$ENGINE/references/settings.md"
+set_refresh "$root" "$REFRESH"
+if git -C "$root" rev-parse --git-dir >/dev/null 2>&1; then
+  fail "no repository" "fixture precondition unmet: $root is inside a git repository"
+fi
+run_check "$root"
+expect_rc "$rc" 1 "no repository"
+expect_contains "$err" "git could not be consulted for third_party/$ENGINE" "no repository"
+expect_contains "$err" "commit state unreadable" "no repository"
+expect_absent "$err" "no commit in this repository" "no repository"
+ok "an absent repository is reported as unreadable git, not as a repository with no commit"
+
+root="$(new_fixture no-marker)"
+commit_tracked "$root" "$COMMIT_OLD"
+printf 'shared line\nnew upstream line\n' \
+  >"$root/.agents/skills/$ENGINE/references/settings.md"
+run_check "$root"
+expect_rc "$rc" 1 "no refresh marker"
+expect_contains "$err" "no .vstack-refreshed marker" "no refresh marker"
+expect_contains "$err" "last refreshed unknown" "no refresh marker"
+ok "a mirror with no refresh marker has no age, rather than borrowing the directory mtime"
+
 # ── preconditions ─────────────────────────────────────────────────────────
 root="$(new_fixture missing-mirror)"
 commit_tracked "$root" "$COMMIT_OLD"
-rm -rf "$root/.agents/skills/$ENGINE"
+rm -rf "${root:?}/.agents/skills/$ENGINE"
 run_check "$root"
 expect_rc "$rc" 1 "missing mirror"
 expect_contains "$err" "no vstack copy at .agents/skills/$ENGINE" "missing mirror"
@@ -232,7 +275,7 @@ expect_contains "$out" "drift was NOT checked" "missing mirror allowed"
 ok "a missing mirror fails, and --allow-missing-source says the comparison did not happen"
 
 root="$(new_fixture missing-tracked)"
-rm -rf "$root/third_party/$ENGINE"
+rm -rf "${root:?}/third_party/$ENGINE"
 run_check "$root"
 expect_rc "$rc" 1 "missing tracked"
 expect_contains "$err" "CI has nothing to run" "missing tracked"
@@ -245,66 +288,110 @@ commit_tracked "$root" "$COMMIT_OLD"
 run_check "$root" --not-an-option
 expect_rc "$rc" 2 "bad option"
 expect_contains "$err" "unknown option: --not-an-option" "bad option"
-ok "an unrecognised option is a usage error, not a verdict"
+ok "an unrecognised option is a usage error, not a reading"
 
-# ── the decision table, driven directly ───────────────────────────────────
-# The fixtures above cover the shapes that occur; this covers the rows they
-# cannot reach cheaply, above all the PURE DELETION: a commit that REMOVES
-# engine content leaves the mirror holding the only extra bytes, so the content
-# test alone reads it as "mirror ahead" and hands back the rsync that undoes the
-# deletion. Timestamp evidence is checked first precisely for this row.
-#              tracked_epoch  refresh_epoch  dirty    tracked_only  expected
-table=(
-  "$COMMIT_NEW $REFRESH    no      no       tracked-ahead"
-  "$COMMIT_NEW $REFRESH    no      yes      tracked-ahead"
-  "$COMMIT_OLD $REFRESH    no      no       mirror-ahead"
-  "$COMMIT_OLD $REFRESH    no      yes      undetermined"
-  "$COMMIT_OLD $REFRESH    yes     no       mirror-ahead"  # reading only; never a sole repair
-  "$COMMIT_NEW $REFRESH    yes     no       undetermined"
-  "$COMMIT_NEW $REFRESH    yes     yes      undetermined"
-  "$COMMIT_NEW $REFRESH    unknown yes      undetermined"
-  "$REFRESH    $REFRESH    no      no       undetermined"
-  "$REFRESH    $REFRESH    no      yes      undetermined"
-  "'' $REFRESH             no      no       undetermined"
-  "$COMMIT_OLD ''          no      no       undetermined"
-)
-for row in "${table[@]}"; do
-  # shellcheck disable=SC2086 # the row IS the argument list; splitting is the point
-  set -- $row
-  tracked_epoch="$1"
-  [[ "$tracked_epoch" == "''" ]] && tracked_epoch=""
-  refresh_epoch="$2"
-  [[ "$refresh_epoch" == "''" ]] && refresh_epoch=""
-  got="$(vendor_drift_direction "$tracked_epoch" "$refresh_epoch" "$3" "$4")"
-  [[ "$got" == "$5" ]] || fail "decision table" "($1 $2 $3 $4) expected $5, got $got"
-done
-ok "the direction table answers every row as written, deletions included"
-
-# ── the two real checks are wired to their own engines ────────────────────
-# One file was copied from the other, so the failure worth guarding is a
-# wrapper carrying the other's engine name: it would compare the wrong pair and
-# report ok on a real drift.
+# ── the two real checks, RUN rather than read ─────────────────────────────
+# Reading each wrapper's text proved only that the text was there: replacing the
+# call with `exit 0` left the arm green while the wrapper became a no-op
+# reporting success forever. Both probes below are hermetic — option parsing
+# precedes every directory check — so they exercise the real entry point.
 while IFS='|' read -r script prog engine; do
   [[ -n "$script" ]] || continue
-  text="$(cat "$repo_root/$script")"
-  expect_contains "$text" "source \"\$repo_root/scripts/lib/vendor-drift.sh\"" "wiring $script"
-  expect_contains "$text" "vendor_drift_main $prog $engine \"\$repo_root\" \"\$@\"" "wiring $script"
+  wrc=0
+  wout="$("$repo_root/$script" --not-an-option 2>&1)" || wrc=$?
+  expect_rc "$wrc" 2 "wiring $script"
+  expect_contains "$wout" "$prog: unknown option: --not-an-option" "wiring $script"
+
+  hrc=0
+  hout="$("$repo_root/$script" --help 2>&1)" || hrc=$?
+  expect_rc "$hrc" 0 "wiring $script"
+  expect_contains "$hout" "third_party/$engine" "wiring $script"
+  expect_contains "$hout" ".agents/skills/$engine" "wiring $script"
+  # --help describes the three readings, so it must name the three the check
+  # actually prints. It once described a superseded single-repair design, which
+  # is the VGS-155 defect class in the operator text rather than the output.
+  for verdict in "${VERDICTS[@]}"; do
+    expect_contains "$hout" "$verdict" "wiring $script"
+  done
   [[ -d "$repo_root/third_party/$engine" ]] ||
     fail "wiring $script" "names engine $engine, but third_party/$engine does not exist"
 done <<'WIRING'
 scripts/check-review-gate-vendor.sh|check-review-gate-vendor|review-gate
 scripts/check-size-ratchet-vendor.sh|check-size-ratchet-vendor|size-ratchet
 WIRING
-ok "both checks call the shared engine with their own name and their own vendored tree"
+ok "both wrappers run, reach the engine under their own name, and carry their own tree"
 
-# ── liveness: every verdict this file names was actually produced ─────────
+# ── diff itself could not compare the two copies ──────────────────────────
+# `rc > 1` is diff reporting trouble, not a difference. It must fail with that
+# named cause rather than classifying an empty diff and printing a repair
+# derived from nothing.
+root="$(new_fixture diff-error)"
+commit_tracked "$root" "$COMMIT_OLD"
+set_refresh "$root" "$REFRESH"
+printf 'mirror side\n' >"$root/.agents/skills/$ENGINE/references/locked.md"
+printf 'tracked side\n' >"$root/third_party/$ENGINE/references/locked.md"
+chmod 000 "$root/.agents/skills/$ENGINE/references/locked.md"
+# It must be a file diff OPENS: `diff -r` never descends into a directory that
+# exists on one side only, so an unreadable directory reports "Only in ..." and
+# exits 1 instead. And the fixture only proves something if the file really
+# became unreadable — it does not, for root — so that is checked rather than
+# assumed, and can never pass by silently testing nothing.
+if cat "$root/.agents/skills/$ENGINE/references/locked.md" >/dev/null 2>&1; then
+  fail "diff error" "fixture precondition unmet: the unreadable file is still readable"
+else
+  run_check "$root"
+  expect_rc "$rc" 1 "diff error"
+  expect_contains "$err" "diff could not compare the two copies" "diff error"
+  expect_absent "$err" "$DRIFT_BANNER" "diff error"
+  expect_absent "$err" "$RSYNC_COMMAND" "diff error"
+fi
+chmod 644 "$root/.agents/skills/$ENGINE/references/locked.md"
+ok "a diff that could not compare is reported as that, not as a drift with a repair"
+
+# ── the engine under a wrapper's own call shape ───────────────────────────
+# run_check invokes vendor_drift_main as `out="$(...)" || rc=$?`, and bash
+# SUSPENDS errexit for a call whose status is tested that way; the wrappers call
+# it bare, where errexit is live. A statement that legitimately evaluates false
+# can therefore abort the check in production and stay invisible here — which is
+# how the classifier's result-parsing line first behaved. So one drift runs as a
+# real wrapper PROCESS, on the shape whose at-risk list is empty.
+root="$(new_wrapper_fixture wrapper-process)"
+commit_tracked "$root" "$COMMIT_OLD"
+printf 'shared line\nnew upstream line\n' \
+  >"$root/.agents/skills/$ENGINE/references/settings.md"
+set_refresh "$root" "$REFRESH"
+prc=0
+pout="$("$root/scripts/check-demo-vendor.sh" 2>&1)" || prc=$?
+expect_rc "$prc" 1 "wrapper process"
+expect_contains "$pout" "the evidence is CONSISTENT WITH the MIRROR being newer" "wrapper process"
+expect_contains "$pout" "$REPAIR_REFRESH_BOTH" "wrapper process"
+expect_contains "$pout" "$RSYNC_CONDITION" "wrapper process"
+ok "a real wrapper process reports the whole drift, with errexit live throughout"
+
+# ── no automated caller may assert the direction ──────────────────────────
+# --confirm-mirror-is-newer is an operator assertion: a manifest row or CI step
+# carrying it would make the destructive command unconditional again, with every
+# case above still green.
+callers=("$repo_root/scripts/validate" "$repo_root"/scripts/check-*-vendor.sh)
+while IFS= read -r workflow; do callers+=("$workflow"); done \
+  < <(find "$repo_root/.github/workflows" -name '*.yml' 2>/dev/null)
+carriers="$(flag_carriers "${callers[@]}")"
+[[ -z "$carriers" ]] ||
+  fail "no automated caller" "these tracked callers pass $CONFIRM_FLAG: $carriers"
+# The control must be able to fail: planted, the same search finds it.
+printf 'scripts/check-review-gate-vendor.sh %s\n' "$CONFIRM_FLAG" >"$tmp/planted.yml"
+[[ -n "$(flag_carriers "$tmp/planted.yml")" ]] ||
+  fail "no automated caller" "the search found nothing in a file that carries the flag"
+ok "no tracked caller asserts the direction, and the search that says so can fail"
+
+# ── liveness: every reading this file names was actually produced ─────────
 for verdict in "${VERDICTS[@]}"; do
   case $'\n'"$verdicts_seen" in
     *$'\n'"$verdict"$'\n'*) ;;
-    *) fail "liveness" "no case reached the verdict \"$verdict\"; the control asserting it is absent is vacuous" ;;
+    *) fail "liveness" "no case reached the reading \"$verdict\"; the control asserting it is absent is vacuous" ;;
   esac
 done
-ok "all three verdicts are reached, so the in-sync control is not vacuous"
+ok "all three readings are reached, so the in-sync control is not vacuous"
 
 if ((failures > 0)); then
   printf 'test-vendor-drift: FAIL (%d)\n' "$failures" >&2

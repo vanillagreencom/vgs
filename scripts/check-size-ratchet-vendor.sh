@@ -1,14 +1,11 @@
 #!/usr/bin/env bash
 # Assert the tracked size-ratchet engine matches the vstack-managed copy.
 #
-# Same two-copy situation, same direction hazard, and the same implementation as
-# scripts/check-review-gate-vendor.sh: both are one call into
-# scripts/lib/vendor-drift.sh, which holds the reasoning and the check.
-#
-#   scripts/check-size-ratchet-vendor.sh
-#   scripts/check-size-ratchet-vendor.sh --allow-missing-source
-#   scripts/check-size-ratchet-vendor.sh --confirm-mirror-is-newer
-#   scripts/check-size-ratchet-vendor.sh --help
+# This file only names the engine. The check is split across two libraries:
+# scripts/lib/vendor-drift.sh holds the evidence, the decision, and why there
+# are two copies at all; scripts/lib/vendor-drift-report.sh holds what the
+# check may print and the rule governing the destructive repair. Run this
+# script with --help for the options.
 set -euo pipefail
 
 repo_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"

@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# The harness scripts/test-vendor-drift.sh runs its cases through: assertion
-# helpers, the fixture builder, and the two invariants that hold for EVERY case
-# rather than for the ones that remember to check.
+# The harness scripts/test-vendor-drift.sh and
+# scripts/test-vendor-drift-classify.sh run their cases through: assertion
+# helpers, the fixture builders, and the three invariants that hold for EVERY
+# case rather than for the ones that remember to check.
 #
 # Split out of that file when it crossed the size-ratchet threshold, at the seam
 # between the machinery and the cases. The invariants live here deliberately:
@@ -74,6 +75,26 @@ saw_verdict() { verdicts_seen+="$1"$'\n'; }
 
 RSYNC_COMMAND="rsync -a --delete --exclude=.vstack-refreshed"
 
+# The two repair LINES, with the prefix the check actually prints. Asserting the
+# bare words "vstack refresh" proves nothing: they also appear in the prose of
+# the tracked-ahead reading and of condition (2), so an assertion on the phrase
+# stayed green with both repair lines deleted and the check naming no runnable
+# command at all.
+REPAIR_REFRESH_SOLE="$PROG:   vstack refresh"
+REPAIR_REFRESH_BOTH="$PROG:       vstack refresh"
+
+# Scopes the "names a repair" invariant to runs that actually reported drift;
+# the precondition failures (missing mirror, missing vendored copy) carry their
+# own guidance instead.
+DRIFT_BANNER="has drifted from the vstack copy"
+
+# The prefix vendor_drift_print_at_risk gives every entry it lists. Assertions
+# about "what the rsync would delete" must use it: each of those paths also
+# appears in the diff printed above, so a bare path is satisfied by the diff and
+# stays green with the cost list removed.
+# shellcheck disable=SC2034 # read by the cases across the source seam.
+AT_RISK_PREFIX="$PROG:        "
+
 # ── fixtures ──────────────────────────────────────────────────────────────
 # One repo per case. `git init` and a real commit are the point: the direction
 # evidence is a commit time compared against a refresh mtime, so a fixture that
@@ -134,5 +155,56 @@ run_check() {
       fail "safety-claim invariant" "the output claims \"$claim\" about adopting the mirror"
     fi
   done
+
+  # A reported drift that names no runnable command leaves the operator with a
+  # diagnosis and no repair. Deleting both `vstack refresh` lines used to pass
+  # every case in the suite; this is what makes that impossible.
+  if [[ "$out$err" == *"$DRIFT_BANNER"* ]] &&
+    [[ "$out$err" != *"$REPAIR_REFRESH_SOLE"* ]] &&
+    [[ "$out$err" != *"$REPAIR_REFRESH_BOTH"* ]] &&
+    [[ "$out$err" != *"$RSYNC_COMMAND"* ]]; then
+    fail "repair invariant" "drift was reported but no runnable repair line was printed"
+  fi
 }
 
+# A fixture that is NOT a git repository, for the evidence-unreadable path.
+new_fixture_nogit() {
+  local root="$tmp/$1"
+  mkdir -p "$root/third_party/$ENGINE/references" "$root/.agents/skills/$ENGINE/references"
+  printf 'shared line\n' >"$root/third_party/$ENGINE/references/settings.md"
+  printf 'shared line\n' >"$root/.agents/skills/$ENGINE/references/settings.md"
+  printf '%s' "$root"
+}
+
+
+# A fixture repo laid out like this one, carrying copies of the two libraries
+# and a wrapper derived from the real one — same strict mode, same repo_root
+# computation, same source line — so a case can drive the engine as a PROCESS
+# under the call shape the wrappers use.
+new_wrapper_fixture() {
+  local root lib
+  root="$(new_fixture "$1")"
+  mkdir -p "$root/scripts/lib"
+  for lib in vendor-drift.sh vendor-drift-report.sh; do
+    cp "$repo_root/scripts/lib/$lib" "$root/scripts/lib/$lib"
+  done
+  sed "s|^vendor_drift_main .*|vendor_drift_main $PROG $ENGINE \"\$repo_root\" \"\$@\"|" \
+    "$repo_root/scripts/check-review-gate-vendor.sh" >"$root/scripts/check-demo-vendor.sh"
+  chmod +x "$root/scripts/check-demo-vendor.sh"
+  printf '%s' "$root"
+}
+
+CONFIRM_FLAG="--confirm-mirror-is-newer"
+
+# Which of the given files could RUN the flag. Comment lines are stripped first:
+# a synopsis that MENTIONS it is documentation. A trailing comment still counts
+# as a carrier, which errs toward reporting.
+flag_carriers() {
+  local file
+  for file in "$@"; do
+    [[ -f "$file" ]] || continue
+    grep -nF -- "$CONFIRM_FLAG" "$file" 2>/dev/null |
+      grep -vE '^[0-9]+:[[:space:]]*#' |
+      sed "s|^|$file:|" || true
+  done
+}
