@@ -1,4 +1,4 @@
-.github/workflows/ci.yml	440
+.github/workflows/ci.yml	464
 .github/workflows/review-gate-writer.yml	656
 backend/internal/services/bluez/bluez.go	744
 backend/internal/services/clipboard/clipboard.go	635
@@ -205,10 +205,11 @@ scripts/check-aur-sync.py	410
 scripts/check-notification-takeover.js	454
 scripts/check-paste-injection.py	897
 scripts/check-settings-migration.js	952
+scripts/check-validation-inventory.py	411
 scripts/check-vshell-helper.py	5815
 scripts/check-vshell-niri.py	678
 scripts/gen-package-metadata.py	985
-scripts/lib/validation_manifest.py	749
+scripts/lib/validation_manifest.py	1045
 scripts/qml-smoke.sh	1258
 scripts/test-compositor-focus.js	791
 scripts/test-launcher-hover-latch.js	492
@@ -217,7 +218,7 @@ scripts/test-paste-lifecycle.js	1168
 scripts/test-pill-hover-safety.js	420
 scripts/test-remote-desktop-state.js	1243
 scripts/test-toast-actions.js	607
-scripts/test-validate.sh	514
-scripts/test-validation-inventory.sh	1284
-scripts/validate	976
+scripts/test-validate.sh	547
+scripts/test-validation-inventory.sh	2262
+scripts/validate	1044
 vstack.toml	479

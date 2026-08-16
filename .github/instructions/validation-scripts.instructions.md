@@ -17,12 +17,35 @@ was reporting "passed", and a failed baseline snapshot was discarding damage
 the after-snapshot plainly showed.
 
 `scripts/validate [AREA]` is the suite's entry point: it carries the manifest of
-every check in this directory, selects the subset for one of the areas `go`,
-`qml`, `helper`, `packaging`, `docs`, `all`, and is what
-`scripts/check-validation-inventory.py` parses — including this sentence's area
-list, which is compared against the runner's own. Adding or renaming a check
-means editing that manifest, not a doc. `scripts/test-validate.sh` covers the
-runner itself.
+every check in this directory, selects the subset for one of the <!-- validate-areas -->areas `go`,
+`qml`, `helper`, `packaging`, `docs`, `all`<!-- /validate-areas -->, and is what
+`scripts/check-validation-inventory.py` parses. Adding or renaming a check means
+editing that manifest, not a doc. `scripts/test-validate.sh` covers the runner
+itself.
+
+**That area list is machine-read**, here and in `AGENTS.md` § Validation and
+`project-skills/vshell-dev/SKILL.md` § Validation, each wrapped in HTML comment
+markers that render as nothing:
+
+```markdown
+one of the <!-- validate-areas -->areas `go`, `qml`, `all`<!-- /validate-areas -->, and
+```
+
+`prose_areas` in `scripts/lib/validation_manifest.py` reads what lies between
+them, and `scripts/check-validation-inventory.py` compares it against the
+runner's own list. Reword inside freely, but every backticked lowercase word in
+there is read as an area name; exactly one marker pair per file, opener before
+closer (a reversed pair is refused as reversed, not as a missing closer); an
+empty region is refused; every unindented backtick fence must be closed by
+a run at least as long with nothing after it but whitespace — markdown's own
+rule, so a shorter nested fence is content, an info string closes nothing, and an
+unclosed fence is refused; an opener may carry an info string but no backtick in
+it, and a run that does is prose; markers inside such a fence are a picture,
+not the contract (a fence indented under a bullet, or a `~~~` one, is
+not a fence here, so its markers count as real), and a marker found only inside
+one is reported as fenced, not as absent. Getting any of those wrong FAILS the
+guard rather than turning the comparison off. Dropping the enumeration is a recorded decision — remove the file from
+`AREA_ENUMERATING_DOCS` in the same edit.
 
 Its exit status is four-valued, and **77 is not a pass**: `0` everything
 selected ran and passed; `77` what ran passed but something did not run (the
