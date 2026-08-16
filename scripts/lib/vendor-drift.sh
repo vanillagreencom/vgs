@@ -29,17 +29,17 @@
 # vstack ever records the source revision each skill was installed from, that
 # becomes exact and vendor_drift_direction should use it instead.
 #
-# SIZE EXCEPTION, BASELINED. This file carries a size-ratchet baseline row
-# above the 400-line threshold. It was argued and granted, not inherited: the
-# file is MAJORITY CODE — 253 code to 146 comment — and the growth is rounds of
+# SIZE EXCEPTION, BASELINED, AND RAISED ONCE. This file carries a size-ratchet
+# baseline row above the 400-line threshold, argued and granted rather than
+# inherited: it is MAJORITY CODE — 254 code to 152 comment — and the growth is
 # reviewer-demanded fixes, not padding. The prose-to-guard audit already ran
-# here and converted everything convertible, taking it 425 to 369 with code
-# unchanged, which REMOVED an earlier exception rather than arguing for one; the
-# comments left are the residue that cannot execute (the VGS-155 incident, why a
-# prefix test was tried and defeated, the limits of the evidence). The baseline
-# only ever moves DOWN, so this file cannot grow again without the same
-# argument. Reason also recorded in tools/size-ratchet-excludes and
-# vstack.settings.toml, since the baseline row itself cannot carry a comment.
+# here, taking it 425 to 369 with code unchanged, which REMOVED an earlier
+# exception rather than arguing for one; what is left cannot execute. The row
+# was then RAISED 422 → 429, with sign-off, for the double-quoted guard below:
+# without it the at-risk list named a file that does not exist as the target of
+# an `rsync --delete`. Raising a frozen row is what tighten-only exists to
+# forbid, so it costs an argument every time. Also recorded in
+# tools/size-ratchet-excludes and vstack.settings.toml.
 #
 # Entry point: vendor_drift_main <prog> <engine> <repo_root> [ARGS...], where
 # <engine> names both paths by convention — third_party/<engine> and
@@ -63,6 +63,12 @@ source "$(dirname -- "${BASH_SOURCE[0]}")/vendor-drift-report.sh"
 # whether to run a destructive command, so naming a file that is not the one at
 # risk is the whole of VGS-155 in one line. Unquoted is unambiguous by
 # construction: no space means no `: `, so the first one is the separator.
+#
+# AND WHY A DOUBLE-QUOTED COMPONENT IS REFUSED. A component holding an
+# apostrophe, a backslash or a control character comes back DOUBLE-quoted with
+# escapes inside; `Only in m: "'doomed.txt'"` once yielded `m/"'doomed.txt'"` —
+# not an unattributed raw line but a confident wrong path, the same failure as
+# the split above. Decoding is guessing, so it is refused as the headers are.
 vendor_drift_only_in_path() {
   local line="$1" root="$2" rest dir name
   rest="${line#Only in }"
@@ -87,9 +93,10 @@ vendor_drift_only_in_path() {
   # The name is quoted independently of the directory.
   name="${name#\'}"
   name="${name%\'}"
-  # Anchored: a parse that does not land inside the root diff was given is not a
-  # path this can vouch for, so it says nothing rather than guessing.
+  # Anchored, and never carrying diff's own quoting (see the header): a parse
+  # this cannot vouch for says nothing rather than guessing.
   [[ -n "$dir" && -n "$name" && "$dir" == "$root"* ]] || return 0
+  [[ "$dir" != '"'* && "$name" != '"'* ]] || return 0
   printf '%s/%s' "$dir" "$name"
 }
 

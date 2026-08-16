@@ -116,9 +116,9 @@ expect_class "file only the tracked copy has, quoted directory" yes \
 # A tracked-side `Only in` that does not parse must appear AS ITSELF. The parser
 # returning nothing was half the contract: the caller dropped it, leaving
 # tracked_only=yes with an EMPTY at-risk list.
-# The last is the version-dependent one: two separators are ambiguous.
+# The last two: ambiguous separators, and a DOUBLE-quoted component whose escapes once named a file that never existed.
 for bad in "Only in $TRACKED_REL: " "Only in $TRACKED_REL" "Only in '$TRACKED_REL/foo" \
-  "Only in $TRACKED_REL/foo: bar: doomed.txt"; do
+  "Only in $TRACKED_REL/foo: bar: doomed.txt" "Only in $TRACKED_REL: \"'doomed.txt'\""; do
   expect_class "tracked-side Only in that cannot be parsed" yes "$bad" "$bad"
 done
 expect_class "tracked-only file under a directory containing a colon-space" yes \
