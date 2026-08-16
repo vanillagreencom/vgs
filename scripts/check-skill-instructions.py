@@ -32,6 +32,19 @@ that ship COMMANDS — `REQUIRED_BLOCKS` — not every block generically.
 delimiter style. That is deliberate: generic coverage of prose is what bought ten
 findings and a silent miss, and prose has no escapes to lose.
 
+LIMITS — read these before the arms, because they are what the arms do NOT say.
+This check proves the shipped runbook's provenance program COMPILES, and that its
+escapes and its continuation survive decoding. It does not prove the runbook is
+CORRECT. It says nothing about whether a command reports its failure, whether
+cleanup swallows an exit status, whether the sequence is right, or whether any of
+it does what the surrounding prose claims.
+
+That is not hypothetical: a fail-open sat in the `issues create` step — an
+unconditional `rm -f` after it made the cleanup's status the block's, so a failed
+create reported success — and every assertion here passed until a reviewer read
+the block. The class is the actionable part: assertions about a script's TEXT
+cannot see its RUNTIME BEHAVIOUR.
+
 WHAT THE ASSERTIONS ARE, and each is bound to the CONSTRUCT it protects rather
 than to the block — "some `\\n` survives somewhere" was satisfied by an escape in
 a different sentence while the one inside the jq string was gone:

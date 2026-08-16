@@ -115,17 +115,28 @@ jq -r '(.body | sub("\\s+$"; "")) + "\n\n---\n\nMirrored from GitHub issue [" + 
 
 .agents/skills/linear/scripts/linear.sh issues create --title "$(jq -r .title "$gh_json")" \
   --description-file "$gh_body"
+created=$?
 rm -f "$gh_json" "$gh_body"
+( exit "$created" )
 ```
 
 Run that block as a UNIT, in one shell — the `mktemp` paths live in variables,
 so a command run on its own would find them empty and redirect to nothing.
 
-`mktemp`, not `/tmp/gh-<n>.json`: that path is fully predictable from the issue
-number, so two lanes mirroring the same issue overwrite each other's file, and
-a pre-created symlink there would be followed by the redirect. The `rm` is a
-final line rather than a `trap ... EXIT` because the block is short and linear:
-a trap buys nothing here that the last line does not already do.
+CLEANUP MUST NOT SWALLOW THE FAILURE, which is why the create's status is
+captured before the `rm` and re-raised after it. `rm -f` almost always succeeds,
+so leaving it last made ITS status the block's: a create that failed on
+credentials, validation or an API error reported success, and the agent believed
+the issue was filed. That is the worst possible direction here — this is the
+manual GitHub-to-Linear step, so a silent failure to create means work that was
+never filed and never will be.
+
+`( exit ... )` rather than a bare `exit`, which would close an operator's
+interactive shell, and rather than a `trap ... EXIT`, which would linger in that
+shell for the rest of the session. `mktemp`, not `/tmp/gh-<n>.json`: that path is
+fully predictable from the issue number, so two lanes mirroring the same issue
+overwrite each other's file, and a pre-created symlink there would be followed by
+the redirect.
 
 The list query carries `url` so the triage table is actionable; `body` is
 fetched per issue rather than for all 50, and every field the description needs
