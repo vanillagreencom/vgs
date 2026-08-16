@@ -40,6 +40,8 @@ PluginComponent {
     property string folderCompletion: ""
     property bool sidebarVisible: true
     readonly property var selectedItem: visibleItems[selectedItemIndex] || null
+    // Hover drives selection only after the mouse has really moved (VGS-134).
+    readonly property HoverSelectionGate hoverGate: HoverSelectionGate {}
 
     readonly property var categories: mergeCategories(MenuCatalog.categories, overlayCategories)
     readonly property var allItems: mergeItems(MenuCatalog.items, overlayItems, webappItems)
@@ -120,6 +122,7 @@ PluginComponent {
 
     function resetLauncherState() {
         resettingState = true;
+        hoverGate.disarm();
         ++fileSearchGeneration;
         fileSearching = false;
         query = "";
@@ -153,6 +156,10 @@ PluginComponent {
     function routeSearchText(text) {
         if (resettingState)
             return;
+        // Every change to the search text, however it arrived. handleKey does
+        // not see input-method composition (CJK commits through
+        // inputMethodEvent) or a paste, and both rebuild the result list.
+        hoverGate.disarm();
         let mode = "";
         let category = "";
         if (text.indexOf("a:") === 0)
@@ -872,6 +879,9 @@ PluginComponent {
     }
 
     function handleKey(event) {
+        // Every key press — navigation and typing alike — hands selection back
+        // to the keyboard and puts hover to sleep until the mouse moves again.
+        hoverGate.disarm();
         const hasCtrl = event.modifiers & Qt.ControlModifier;
         const hasShift = event.modifiers & Qt.ShiftModifier;
         if (hasCtrl && event.key === Qt.Key_B) {
@@ -963,6 +973,16 @@ PluginComponent {
         event.accepted = false;
     }
 
+    // EVERY repopulation hands selection back to the keyboard, on the one
+    // funnel each rebuild must pass through rather than beside each
+    // `visibleItems =` a later edit can forget. Keying the latch to key presses
+    // alone left the defect alive on the async path: a DSearchService reply
+    // lands hundreds of ms after the keystroke, the rebuilt row under the
+    // resting pointer fires its synthetic hover, and selection snaps to it.
+    // It fires per ASSIGNMENT, so every repopulation must assign a fresh array
+    // and must never write the current reference back — Qt raises no signal for
+    // that, and the rebuild would skip the disarm with nothing to notice.
+    onVisibleItemsChanged: hoverGate.disarm()
     onQueryChanged: {
         if (resettingState || routingPrefix)
             return;
@@ -2100,7 +2120,10 @@ PluginComponent {
         signal contextRequested(var sender, real localX, real localY)
 
         radius: Theme.controlRadius
-        color: selected ? Theme.surfaceSelected : cardArea.containsMouse ? Theme.surfaceHover : "transparent"
+        // Tint follows the latch: while hover is dormant, tinting the pointer's
+        // row would show two live rows, the tinted one not what Enter launches.
+        color: selected ? Theme.surfaceSelected
+            : (cardArea.containsMouse && root.hoverGate.armed) ? Theme.surfaceHover : "transparent"
         border.width: selected ? Theme.focusRingWidth : 1
         border.color: selected ? Theme.focusRing : Theme.borderColor
         clip: true
@@ -2160,7 +2183,14 @@ PluginComponent {
             hoverEnabled: true
             cursorShape: Qt.PointingHandCursor
             acceptedButtons: Qt.LeftButton | Qt.RightButton
-            onEntered: resultCard.hovered()
+            onEntered: {
+                if (root.hoverGate.armed)
+                    resultCard.hovered();
+            }
+            onPositionChanged: mouse => {
+                if (root.hoverGate.notePointer(cardArea, mouse))
+                    resultCard.hovered();
+            }
             onClicked: mouse => {
                 if (mouse.button === Qt.RightButton)
                     resultCard.contextRequested(resultCard, mouse.x, mouse.y);
@@ -2187,7 +2217,9 @@ PluginComponent {
         signal contextRequested(var sender, real localX, real localY)
 
         radius: Theme.cornerRadius
-        color: selected ? Theme.withAlpha(Theme.primary, 0.16) : rowArea.containsMouse ? Theme.surfaceHover : "transparent"
+        // Tint follows the latch, as in ResultCard above.
+        color: selected ? Theme.withAlpha(Theme.primary, 0.16)
+            : (rowArea.containsMouse && root.hoverGate.armed) ? Theme.surfaceHover : "transparent"
         clip: true
 
         Row {
@@ -2294,7 +2326,14 @@ PluginComponent {
             hoverEnabled: true
             cursorShape: Qt.PointingHandCursor
             acceptedButtons: Qt.LeftButton | Qt.RightButton
-            onEntered: resultRow.hovered()
+            onEntered: {
+                if (root.hoverGate.armed)
+                    resultRow.hovered();
+            }
+            onPositionChanged: mouse => {
+                if (root.hoverGate.notePointer(rowArea, mouse))
+                    resultRow.hovered();
+            }
             onClicked: mouse => {
                 if (mouse.button === Qt.RightButton)
                     resultRow.contextRequested(resultRow, mouse.x, mouse.y);

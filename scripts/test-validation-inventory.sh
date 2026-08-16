@@ -863,7 +863,10 @@ except mod.ManifestError as error:
 NOYAML
 )"
 expect_contains "$pyyaml_out" "IMPORTED" "PyYAML absent"
-expect_contains "$pyyaml_out" "ROWS 70" "PyYAML absent"
+# The literal is the point: a count derived from the manifest would agree with
+# a parser that returned nothing. Adding a manifest row therefore bumps it here
+# too — this failing with an off-by-one is that, not a broken parser.
+expect_contains "$pyyaml_out" "ROWS 71" "PyYAML absent"
 expect_contains "$pyyaml_out" "MANIFESTERROR PyYAML is not installed" "PyYAML absent"
 expect_absent "$pyyaml_out" "Traceback" "PyYAML absent"
 ok "without PyYAML the module imports, the other parsers work, and ci.yml fails with one line"
