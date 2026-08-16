@@ -87,7 +87,7 @@ docs/handoff/
 # Machine-local companion to AGENTS.md: this workstation's expected symlinks and
 # service state. Never committed — it describes one machine, and a tracked copy
 # would rot on every other one.
-AGENTS.local.md
+/AGENTS.local.md
 
 # Local git worktrees (vstack worktree skill)
 /trees/
