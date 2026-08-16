@@ -37,7 +37,7 @@ runner's own list. Reword inside freely, but every backticked lowercase word in
 there is read as an area name; exactly one marker pair per file, opener before
 closer (a reversed pair is refused as reversed, not as a missing closer); an
 empty region is refused; every unindented backtick fence must be closed by
-a run at least as long with nothing after it but spaces or tabs — markdown's own
+a run at least as long with nothing after it but whitespace — markdown's own
 rule, so a shorter nested fence is content, an info string (legal only on an
 opener) closes nothing, and an unclosed fence is refused; markers inside an
 unindented backtick fence are a picture, not the contract (a fence indented

@@ -283,7 +283,7 @@ def main() -> int:
         if doc.is_relative_to(REPO_ROOT):
             rel = doc.relative_to(REPO_ROOT).as_posix()
         try:
-            stated = prose_areas(doc)
+            stated = prose_areas(doc, rules)
         except ManifestError as exc:
             problems.append(str(exc))
             continue

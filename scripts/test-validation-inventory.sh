@@ -859,6 +859,22 @@ run_guard "AGENTS_PATH=$areas_probe"
 expect_clean_run "closing fence with trailing whitespace"
 ok "spaces and tabs after a closing run still close the fence"
 
+# ...AND THE PERMITTED SET IS THE RUNNER'S, NOT A PAIR SPELLED HERE. `_read`
+# opens with newline="" and the strip splits on \n, so on a CRLF checkout every
+# line — closing fences included — ends in a carriage return. A hand-written
+# `[ \t]` read that CR as content: no fence closed, and a page whose fences are
+# perfectly balanced was refused as unclosed. CR is only the first character the
+# two sets disagreed on, which is why the fix is the shared set and this fixture
+# is written in CRLF end to end.
+# shellcheck disable=SC2016  # backticks are markdown quoting in the fixture prose
+{
+  printf 'areas: <!-- validate-areas -->`go`, `qml`, `helper`, `packaging`, `docs`, `all`<!-- /validate-areas -->\r\n\r\n'
+  printf '```markdown\r\n<!-- validate-areas -->areas `go`<!-- /validate-areas -->\r\n```\r\n'
+} >"$areas_probe"
+run_guard "AGENTS_PATH=$areas_probe"
+expect_clean_run "CRLF checkout"
+ok "a CRLF page whose fences are balanced parses, because the permitted set is the runner's"
+
 # AN INDENTED FENCE IS NOT A FENCE HERE, and the contract paragraph in
 # .github/instructions/validation-scripts.instructions.md says so in those
 # words. Pinned rather than left incidental: markers demonstrated inside a
@@ -927,8 +943,9 @@ spec = importlib.util.spec_from_file_location(
 )
 mod = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(mod)
+rules = mod.grammar(root / "scripts" / "validate")
 for doc in mod.AREA_ENUMERATING_DOCS:
-    stated = mod.prose_areas(doc)
+    stated = mod.prose_areas(doc, rules)
     assert stated, doc
     print(f"  ok    {doc.name} states {len(stated)} areas")
 PROBE
@@ -1539,7 +1556,7 @@ def participate():
 
 for label, call in (
     ("ROWS", lambda: mod.manifest_rows(nowhere)),
-    ("PROSE", lambda: mod.prose_areas(nowhere)),
+    ("PROSE", lambda: mod.prose_areas(nowhere, mod.grammar(runner))),
     ("TABLE", lambda: mod.documented_table(nowhere, "**Local-only")),
     ("LOGIC", lambda: mod.runner_logic(nowhere)),
     ("CI", lambda: mod.ci_run_commands(nowhere)),

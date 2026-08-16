@@ -783,7 +783,7 @@ AREA_ANCHOR_CLOSE = "<!-- /validate-areas -->"
 # (two anchored regions) rather than quietly, and is the direction to keep.
 _FENCE_LINE = re.compile(r"(```+)(.*)$")
 
-def _strip_fenced_blocks(path: Path, text: str) -> str:
+def _strip_fenced_blocks(path: Path, text: str, spaces: re.Pattern[str]) -> str:
     """`text` with every unindented fenced block removed, PAIRED BY RUN LENGTH.
 
     A FENCED BLOCK IS NOT A MARKER, it is a picture of one. Without this the
@@ -808,8 +808,18 @@ def _strip_fenced_blocks(path: Path, text: str) -> str:
     as a closer was a false accept of the same family as the run-length one — a
     complete anchored list that renders INSIDE a fence was read as the live
     contract, so the page passed with no maintained list outside the example. A
-    closing line's remainder is therefore spaces and tabs only; an opener's
-    remainder is free, and must stay free, or no fence could carry a language.
+    closing line's remainder is therefore whitespace only; an opener's remainder
+    is free, and must stay free, or no fence could carry a language.
+
+    `spaces` IS THE RUNNER'S OWN SET, THE SAME ONE THE ROW READER APPLIES, and it
+    is a parameter for the reason C4 is: a whitespace list hand-spelled here is a
+    SECOND definition, and the first character the two disagreed on cost a real
+    answer — the pair `[ \\t]` read the trailing carriage return of a CRLF
+    checkout as content, so every genuine closer stopped closing and a balanced
+    page was refused as unclosed. Since the set is the runner's, `\\f` and `\\v`
+    after a closing run are tolerated where CommonMark would not tolerate them;
+    one shared set is worth more here than that margin, because divergence is
+    what fails silently and the margin cannot.
     """
     kept: list[str] = []
     open_run = 0
@@ -822,13 +832,13 @@ def _strip_fenced_blocks(path: Path, text: str) -> str:
                 open_run = run
             else:
                 kept.append(line)
-        elif run >= open_run and not rest.strip(" \t"):
+        elif run >= open_run and not spaces.sub("", rest):
             open_run = 0
     if open_run:
         raise ManifestError(
             f"{path.name} opens an unindented ``` code fence that is never closed by "
             f"a line of at least {open_run} backticks and nothing after them but "
-            f"spaces or tabs, so a code fence is opened and "
+            f"whitespace, so a code fence is opened and "
             f"never closed. Which markers are pictures and which are the contract is "
             f"decided by that pairing, so an unclosed fence moves the region this "
             f"guard reads."
@@ -851,8 +861,17 @@ def _fenced_marker_error(path: Path, marker: str) -> ManifestError:
     )
 
 
-def prose_areas(path: Path) -> set[str]:
+def prose_areas(path: Path, rules: Grammar) -> set[str]:
     """Backticked area names from between a document's validate-areas anchors.
+
+    TAKES THE GRAMMAR ONLY FOR ITS WHITESPACE SET, and takes it rather than
+    spelling one because C4 — the runner's set, dumped and read back — is what
+    keeps a character from being dropped on one side alone. The cost is real and
+    accepted: reading a document now needs a runner whose grammar parses, where
+    before it needed only the file. Every caller already holds one, and the
+    importing guard reads the grammar first and stops on a bad one, so the
+    dependency adds no reachable arm; a future caller that has no runner must
+    obtain a grammar rather than be handed a literal.
 
     ANCHORED, NOT WORDED. This used to key on the word `areas` followed by
     backticked names, which coupled the guard to a phrasing three documents
@@ -877,7 +896,7 @@ def prose_areas(path: Path) -> set[str]:
     # AN UNCLOSED FENCE IS REFUSED BY THE STRIP ITSELF, before any marker is
     # counted: one stray opener swallows every line below it, so a live region
     # becomes a picture and the misdirection lands on whichever arm reads next.
-    text = _strip_fenced_blocks(path, raw)
+    text = _strip_fenced_blocks(path, raw, rules.whitespace_pattern())
     opens = text.count(AREA_ANCHOR_OPEN)
     closes = text.count(AREA_ANCHOR_CLOSE)
     # A MARKER THAT EXISTS BUT IS FENCED IS ITS OWN DIAGNOSIS, AT EITHER END.
