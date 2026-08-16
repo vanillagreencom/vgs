@@ -160,11 +160,32 @@ ok "the drift diff runs under LC_ALL=C, so the markers stay in the parsed langua
 # ── no automated caller may assert the direction ──────────────────────────
 # --confirm-mirror-is-newer is an operator assertion: a manifest row or CI step
 # carrying it would make the destructive command unconditional again.
+# THE DISCOVERY'S STATUS IS READ, not just its output. `done < <(producer)`
+# discards the producer's exit status entirely, so a `git ls-files` pipeline
+# that died partway left a PARTIAL list — one that can still hold the three
+# known paths below while omitting a caller that passes the destructive flag —
+# and this whole section reported success on a set it never saw. An assertion
+# that cannot witness its subject is worse than none: it buys false confidence.
+# So the producer writes to a file whose status is checked before anything
+# reads it, and a failed enumeration is a FAILURE rather than a short list.
+callers_file="$tmp/discovery-out"
+discovery_ok=yes
+vendor_drift_caller_surfaces >"$callers_file" || discovery_ok=no
 callers=()
-while IFS= read -r caller; do callers+=("$caller"); done < <(vendor_drift_caller_surfaces)
+while IFS= read -r caller; do callers+=("$caller"); done <"$callers_file"
+[[ "$discovery_ok" == yes ]] ||
+  fail "no automated caller" "the caller enumeration exited non-zero; the swept set is partial and proves nothing"
 # A discovery that finds nothing must fail: a renamed directory would otherwise
 # leave a carrier outside the swept set with this green.
 ((${#callers[@]} > 0)) || fail "no automated caller" "the caller enumeration found no surfaces at all"
+# CONTROL for the check above, so it is not itself taken on trust. Enumerating a
+# directory that is not a git repository makes `git ls-files` exit non-zero: if
+# the function returned success there, the status this section now depends on
+# could never witness a failed discovery.
+if vendor_drift_caller_surfaces "$tmp" >/dev/null 2>&1; then
+  fail "no automated caller" "the enumeration reported success outside a repository, so its status cannot witness a failed discovery"
+fi
+ok "caller discovery reports a failed enumeration instead of yielding a partial list"
 for known in scripts/validate scripts/check-review-gate-vendor.sh .github/workflows/ci.yml; do
   printf '%s\n' "${callers[@]}" | grep -qxF "$repo_root/$known" ||
     fail "no automated caller" "the enumeration missed a known caller surface: $known"
@@ -184,9 +205,14 @@ for surface in scripts/planted-caller.sh .github/workflows/planted.yml .github/w
   # Guarded: a broken index must report, not abort the suite mid-run.
   git -C "$planted_root" add -N -- "$surface" >/dev/null 2>&1 ||
     fail "no automated caller" "could not stage a planted carrier at $surface"
+  # Same reason as above: read the status, so a failed enumeration reports its
+  # own cause instead of surfacing as "the sweep did not reach a planted
+  # carrier", which would send the next reader at the sweep rather than at git.
+  planted_file="$tmp/discovery-planted-out"
+  vendor_drift_caller_surfaces "$planted_root" >"$planted_file" ||
+    fail "no automated caller" "the caller enumeration failed against the planted fixture"
   planted_surfaces=()
-  while IFS= read -r one; do planted_surfaces+=("$one"); done \
-    < <(vendor_drift_caller_surfaces "$planted_root")
+  while IFS= read -r one; do planted_surfaces+=("$one"); done <"$planted_file"
   planted="$(flag_carriers "${planted_surfaces[@]}")"
   git -C "$planted_root" rm -q --cached -- "$surface" >/dev/null 2>&1 || true
   rm -f "$planted_root/$surface"

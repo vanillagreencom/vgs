@@ -215,12 +215,27 @@ vendor_drift_print_repairs() {
       if [[ "$confirm_mirror" == true ]]; then
         printf '%s:\n' "$prog"
         printf '%s: --confirm-mirror-is-newer CONTRADICTS that evidence. If you are sure,\n' "$prog"
-        printf '%s: this is the command. It DESTROYS:\n' "$prog"
+        printf '%s: this is the command. It REVERTS the commit above: the mirror still\n' "$prog"
+        printf '%s: holds what that commit changed or removed, so copying it across puts\n' "$prog"
+        printf '%s: that content back, and leaves this check GREEN on the reverted content.\n' "$prog"
+        # THE COST IS NAMED IN BOTH SHAPES, and the two shapes are different
+        # costs. Deletion-shaped drift — a merged commit REMOVED engine content,
+        # so the mirror is the side holding it and the rsync deletes nothing —
+        # used to print the heading below with an EMPTY list under it, because
+        # the list only exists when tracked_only=yes. A promise of a list
+        # delivering nothing reads as a cost of nothing, on the one shape that
+        # IS the VGS-155 incident: the operator is one paste away from restoring
+        # what a merge deleted and turning this check green on it. So the revert
+        # above is stated unconditionally — it is what tracked-ahead MEANS — and
+        # the deletion list is printed only when there is something in it.
+        #
         # The most dangerous invocation the tool has — the evidence says the
         # tracked copy is newer and the operator is overriding it — so this is
         # the LAST place the cost may be left implicit in a diff further up.
-        [[ "$tracked_only" != yes ]] ||
+        if [[ "$tracked_only" == yes ]]; then
+          printf '%s: It also DESTROYS:\n' "$prog"
           vendor_drift_print_at_risk "$prog" "$at_risk" "       " "  "
+        fi
         vendor_drift_print_rsync "$prog" "$engine" "$repo_root"
       else
         printf '%s:\n' "$prog"

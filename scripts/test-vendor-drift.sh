@@ -19,6 +19,18 @@
 # own refresh-marker mtime, so this runs anywhere — no vstack, no .agents
 # mirror, no network. The GNU-only tooling they assume is stated once, on the
 # harness that provides them.
+#
+# SIZE EXCEPTION, BASELINED. This file carries a size-ratchet baseline row above
+# the 400-line threshold, argued and granted rather than inherited: it is
+# MAJORITY CODE — 269 code to 123 comment — and it crossed at 399 lines, one
+# under the line, when a reviewer found a repair branch no case drove (the
+# overridden merged deletion below). The alternatives were splitting the suite,
+# which buys a new file, a manifest row and a CI change to avoid a 22-line
+# overage, or shipping that fix with nothing driving its branch — an assertion
+# that cannot witness its subject. The baseline only ever moves DOWN, so this
+# cannot grow again without the same argument. Reason also recorded in
+# tools/size-ratchet-excludes and vstack.settings.toml, since the baseline row
+# itself cannot carry a comment.
 set -euo pipefail
 
 repo_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -114,6 +126,29 @@ expect_contains "$err" "$READING_TRACKED_AHEAD" "merged deletion"
 expect_contains "$err" "$REPAIR_REFRESH_SOLE" "merged deletion"
 expect_absent "$err" "$RSYNC_COMMAND" "merged deletion"
 ok "a merged deletion names vstack refresh alone, though the rsync would delete nothing"
+
+# The same fixture with the operator OVERRIDING the direction — the branch no
+# case drove, and the one the incident actually walks: a merged commit removed
+# engine content, so the mirror is the side holding it, the rsync deletes
+# nothing, and running it restores what the merge removed. The cost is real and
+# it is not a deletion, so a report that can only describe deletions describes
+# this one as nothing.
+run_check "$root" --confirm-mirror-is-newer
+expect_rc "$rc" 1 "merged deletion confirmed"
+expect_contains "$err" "$RSYNC_COMMAND" "merged deletion confirmed"
+expect_contains "$err" "CONTRADICTS" "merged deletion confirmed"
+# What the command DOES here, named on the command's own screen rather than
+# inferable from the diff further up: it reverts, and the check then passes on
+# the reverted content — which is the whole failure mode this check exists for.
+expect_contains "$err" "It REVERTS the commit above" "merged deletion confirmed"
+expect_contains "$err" "GREEN on the reverted content" "merged deletion confirmed"
+# And the impact must sit ABOVE the command, for the same reason the cost list
+# does in the tracked-only case: below it, the paste has already happened.
+impact_line="$(printf '%s' "$err" | grep -nF -- "It REVERTS the commit above" | tail -1 | cut -d: -f1)"
+command_line="$(printf '%s' "$err" | grep -nF -- "$RSYNC_COMMAND" | tail -1 | cut -d: -f1)"
+((impact_line < command_line)) ||
+  fail "merged deletion confirmed" "the impact must print ABOVE the command, not below it"
+ok "an overridden merged deletion names the revert it performs, above the command"
 
 # ── a merged commit that REMOVES A FILE, read after a later refresh ───────
 # The same removal read where the vendoring commit predates the refresh — a

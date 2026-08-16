@@ -7,19 +7,36 @@
 # `scripts/test-*.js` harnesses simply enter the baseline instead — acceptable,
 # since a baselined test still cannot grow, and it needs no second gate.
 #
-# TWO BASELINED SIZE EXCEPTIONS, argued and granted (VGS-155, 2026-08-16), and
+# THREE BASELINED SIZE EXCEPTIONS, argued and granted (VGS-155, 2026-08-16), and
 # recorded here because a baseline row is `path<TAB>digits` and cannot carry a
 # comment — the engine rejects both a third field and a `#` line as malformed:
 #
 #   scripts/lib/vendor-drift.sh            422 lines, 253 of them code
 #   scripts/test-vendor-drift-evidence.sh  420 lines, 279 of them code
+#   scripts/test-vendor-drift.sh           434 lines, 269 of them code
 #
-# Both are MAJORITY CODE, and the growth is rounds of reviewer-demanded fixes
-# rather than padding. The prose-to-guard audit already ran on the library and
-# converted everything convertible — 425 to 369 with code unchanged — which
+# All three are MAJORITY CODE, and the growth is rounds of reviewer-demanded
+# fixes rather than padding. The prose-to-guard audit already ran on the library
+# and converted everything convertible — 425 to 369 with code unchanged — which
 # REMOVED an earlier exception rather than arguing for one; what remains is the
-# residue that cannot execute. Neither is excluded: they stay baselined, so the
+# residue that cannot execute. None is excluded: they stay baselined, so the
 # ratchet still holds them tighten-only and the number can only ever go DOWN.
+#
+# The third was granted last and separately. test-vendor-drift.sh sat at 399,
+# one line under the threshold, until a reviewer found a repair branch no case
+# drove — the overridden merged deletion. Pinning it is a case, and a case is
+# how a suite is supposed to grow. The alternatives were a split (a new file, a
+# manifest row and a CI change, to avoid a 22-line overage) or shipping the fix
+# with nothing driving its branch, which is the false confidence this whole
+# issue is about.
+#
+# OBSERVATION, not a change requested here: one 400-line cap bites a test suite
+# differently from a library. A suite grows by exactly the mechanism the process
+# wants — one more case per finding — so the cap converts each new finding into
+# a size argument, which is how all three of these arose. Worth deciding
+# deliberately (a separate test allowance, as the fleet's 800-line split had,
+# needs an engine that exposes more than one threshold) rather than discovering
+# it a fourth time.
 backend/vendor/*	vendored Go modules (go mod vendor for offline Nix builds), upstream-owned
 config/vshell/nvim/colorschemes/*	vendored upstream colorscheme plugins, upstream-owned
 third_party/*	byte-pinned vendored trees (review-gate, size-ratchet, coderabbit-schema, asdcontrol)

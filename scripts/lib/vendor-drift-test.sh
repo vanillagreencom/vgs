@@ -124,6 +124,13 @@ SAFETY_CLAIMS=(
   "costs nothing"
   "safe to run"
 )
+# A heading that PROMISES a list of what dies. Printing it without the list is
+# the same false reassurance the claims above are banned for, arrived at by
+# punctuation instead of by wording: a colon answered with nothing reads as a
+# cost of nothing. Deletion-shaped drift under --confirm-mirror-is-newer printed
+# exactly that, on the one shape that IS the incident this check exists for.
+COST_PROMISE="DESTROYS:"
+
 verdicts_seen=""
 saw_verdict() { verdicts_seen+="$1"$'\n'; }
 
@@ -238,6 +245,14 @@ run_check() {
     if [[ "${truth%%$'\n'*}" == yes && "$out$err" != *"$AT_RISK_HEADING"* ]]; then
       fail "cost-list invariant" "the rsync printed over tracked-side content with no list of what it destroys"
     fi
+  fi
+
+  # THE PROMISE AND THE LIST TRAVEL TOGETHER, on every run rather than in the
+  # branch that happened to get it right. Asserted as an invariant for the same
+  # reason as the cost list above: a point fix repairs one branch, and the
+  # branch that had this wrong was the one no case drove.
+  if [[ "$out$err" == *"$COST_PROMISE"* && "$out$err" != *"$AT_RISK_HEADING"* ]]; then
+    fail "cost-promise invariant" "the output promises \"$COST_PROMISE\" and then lists nothing, which reads as a cost of nothing"
   fi
 
   # A reported drift that names no runnable command leaves the operator with a
