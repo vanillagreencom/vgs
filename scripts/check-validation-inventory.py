@@ -207,11 +207,30 @@ def main() -> int:
     # and identifiers come from the same small pool of words, so that collision
     # recurs. The question the grammar already asks — does this token change
     # what a row SELECTS or how it EXITS — is the one worth answering.
+    # A PROBE THAT CANNOT RUN IS A PROBLEM TOO, collected like every other arm's.
+    # Unwrapped, the first raise from the probe machinery reached __main__ and
+    # discarded everything collected — including the manifest_rows finding above,
+    # which usually explains it. Caught per tag, so a tag-specific failure keeps
+    # its tag and a shared cause reports once per tag.
+    #
+    # ALL THREE TYPES THE PROBE PATH PRODUCES, not only the library's own. That
+    # path writes files, chmods them and executes the result while capturing in
+    # text mode, so it raises OSError (an occupied workdir, an unlaunchable
+    # probe) and UnicodeDecodeError (a probe whose output is not UTF-8) beside
+    # ManifestError — both verified reachable. Naming only ManifestError left the
+    # identical abort through the other two, which is this defect's second door.
     with tempfile.TemporaryDirectory() as workdir:
         for tag in sorted(rules.row_tags - rules.areas):
-            participates, why = token_participates(
-                RUNNER, rules, tag, Path(workdir)
-            )
+            try:
+                participates, why = token_participates(
+                    RUNNER, rules, tag, Path(workdir)
+                )
+            except (ManifestError, OSError, UnicodeDecodeError) as error:
+                problems.append(
+                    f"whether scripts/validate acts on token `{tag}` was NOT "
+                    f"determined: {error}"
+                )
+                continue
             if not participates:
                 problems.append(
                     f"the grammar declares token `{tag}` but scripts/validate does not "
@@ -264,7 +283,7 @@ def main() -> int:
         if doc.is_relative_to(REPO_ROOT):
             rel = doc.relative_to(REPO_ROOT).as_posix()
         try:
-            stated = prose_areas(doc)
+            stated = prose_areas(doc, rules)
         except ManifestError as exc:
             problems.append(str(exc))
             continue

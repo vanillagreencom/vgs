@@ -27,56 +27,122 @@ class ManifestError(Exception):
     """A surface this module reads does not say what it must say."""
 
 
-
-# ASCII whitespace only. Python's str.split()/strip() also eat Unicode
-# whitespace, which made a Unicode space normalise away on one side and survive
-# on the other: the same bytes then produced a valid tag for one reader and an
-# unknown one for the other.
-#
-# WHAT MAKES THE TWO SIDES MATCH is that the runner spells the same six
-# characters out — `ASCII_SPACE=$' \t\n\r\f\v'` in scripts/validate — NOT that
-# `[[:space:]]` happens to mean ASCII. This comment used to claim the two
-# matched "exactly" while the runner used `[[:space:]]`, whose meaning bash
-# resolves through the LOCALE: under this machine's en_US.UTF-8 it matches
-# U+2002 and U+3000, so the equivalence the comment asserted was false in the
-# ambient locale and the claim was worse than no comment. If the runner's
-# constant changes, this set changes with it; nothing else keeps them equal.
-_ASCII_SPACE = re.compile(r"[ \t\n\r\f\v]")
+# The manifest heredoc, spelled ONCE for every reader of it. `\r?\n` at both
+# delimiters because `_read` opens with `newline=""`: on a CRLF-lined runner a
+# pattern requiring a bare `\n` matches nothing, and every reader of this
+# delimiter is wrong without it — the inventory is empty, the runner's
+# executable shell still carries the manifest's DATA, and the participation
+# probe is built from the wrong rows. All three now refuse rather than
+# no-opping, so the CRLF spelling of that miss surfaces as a diagnostic naming
+# the delimiter instead of as a quietly wrong answer.
+_HEREDOC_OPEN = r"<<'MANIFEST_EOF'\r?\n"
+_HEREDOC_CLOSE = r"\r?\nMANIFEST_EOF\r?\n"
+_MANIFEST_HEREDOC = re.compile(
+    rf"({_HEREDOC_OPEN})(.*?)({_HEREDOC_CLOSE})", re.DOTALL
+)
 
 
+def _no_heredoc(consequence: str) -> ManifestError:
+    """A runner whose manifest delimiter could not be found, worded once.
+
+    Three readers look for that heredoc and all three are wrong without it, so
+    each states the same cause and its own consequence. Two of them used to state
+    NOTHING: they no-opped, and shipped no false green only because the third
+    refused the same file first.
+    """
+    return ManifestError(
+        f"scripts/validate has no MANIFEST_EOF heredoc — every reader here finds "
+        f"the manifest by that delimiter, {consequence}"
+    )
+
+
+def _read(path: Path, what: str) -> str:
+    """A surface's text, with an unreadable file as a DIAGNOSTIC not a traceback.
+
+    Every read in this module goes through here. A document that has become
+    unreadable — mode, a dangling symlink, a directory where a file was, bytes
+    that are not UTF-8 — used to escape as a traceback from inside whichever arm
+    happened to touch it first: fail-closed in direction, but the diagnostic
+    degraded to noise exactly when someone is debugging. Same class as the
+    PyYAML import and the unlaunchable bash next door, by a different mechanism.
+
+    UnicodeDecodeError is caught with OSError because it is the same event from
+    the caller's side — this path did not yield text — and it is a ValueError,
+    so an OSError-only catch let it through.
+
+    THE LINE BOUNDARY IS THE CALLER'S DECISION, NOT THE READ LAYER'S, which is
+    why this opens with `newline=""`. The convenience reader opens in
+    universal-newline mode and rewrites a lone \\r — and \\r\\n — to \\n before
+    any caller sees it, so a row tagged `qml\\r` arrived here already split in
+    two while the runner, whose whitespace set CONTAINS 0d, stripped it and ran
+    the row. That is the same divergence `str.splitlines()` produced on \\v and
+    \\f, reached one layer lower: the shared set says "strip it" and the read
+    said "end the row here". Spelled as `open(newline="")` rather than
+    `read_text(newline=...)` because the latter is 3.13+ only.
+    """
+    try:
+        with path.open(encoding="utf-8", newline="") as handle:
+            return handle.read()
+    except (OSError, UnicodeDecodeError) as exc:
+        raise ManifestError(
+            f"could not read {what} at {path}, so it was NOT checked: {exc}"
+        ) from exc
+
+
+# REVISIT(D009): collapse this into a `--dump-manifest` if the runner ever grows
+# one for a second consumer, or if the two readers diverge on a row the agreement
+# tests did not catch.
 def manifest_rows(runner: Path) -> list[tuple[str, str]]:
     """`(tags, command)` pairs from the scripts/validate manifest heredoc.
 
     Parsed statically, not via `scripts/validate --list`: this check must report
     a manifest the runner cannot even parse.
 
-    THE MANIFEST IS THE ONE THING STILL READ TWICE, and deliberately: this must
-    report a manifest with its PER-ROW TAGS, which `--list` does not carry, and
-    it must report one the runner refuses rather than relaying a refusal. The
-    grammar it applies is not a second copy — it comes from the runner's dump —
-    but the row loop is a second reader, and scripts/test-validate.sh's
-    parser-agreement case plus this file's reader-agreement cases are what hold
-    the two to one answer. Rows are refused in the same ORDER the runner refuses
+    THE MANIFEST IS THE ONE THING STILL READ TWICE, and deliberately — weighed
+    against collapsing it the way the grammar reader was collapsed, and kept.
+    The reason is what this reader is FOR: the importing guard is an INVENTORY
+    of the runner's own coverage, and an inventory taken from the audited party's
+    own report is not a cross-check. The grammar had no equivalent to lose, which
+    is why the same move was right one level up. Recorded as
+    docs/decisions/D009-manifest-second-reader.md, with the cost named there.
+
+    The grammar it applies is not a second copy — it comes from the runner's dump
+    — but the row loop is a second reader, and scripts/test-validate.sh's
+    parser-agreement case plus scripts/test-validation-inventory.sh's
+    reader-agreement cases are what hold the two to one answer. Rows are refused
+    in the same ORDER the runner refuses
     them (tag field, tag pattern, class rules, command) so one malformed line
     gets one diagnosis, not two readers naming different defects on it.
     """
-    text = runner.read_text(encoding="utf-8")
-    block = re.search(r"<<'MANIFEST_EOF'\n(.*?)\nMANIFEST_EOF\n", text, re.DOTALL)
+    text = _read(runner, "the manifest runner")
+    block = _MANIFEST_HEREDOC.search(text)
     if not block:
-        raise ManifestError(
-            "scripts/validate has no MANIFEST_EOF heredoc; "
-            "this check parses that block, so moving it silently empties the inventory"
-        )
+        raise _no_heredoc("so moving or renaming it would silently empty the inventory")
     rules = grammar(runner)
     pattern = rules.tag_pattern()
+    # C4's set, AS THE RUNNER SPELLS IT — C4 being the constraint in
+    # scripts/validate's manifest-grammar header that whitespace is ASCII and
+    # removed before matching. This used to be a regex written here
+    # under a comment claiming it changed with the runner's `ASCII_SPACE`;
+    # nothing enforced that, so an ASCII character dropped from one side alone
+    # would have divided the two readers exactly as a locale-resolved class once
+    # did. Read from the dump, the two cannot hold different sets.
+    spaces = rules.whitespace_pattern()
     rows: list[tuple[str, str]] = []
-    for line in block.group(1).splitlines():
-        if not _ASCII_SPACE.sub("", line):
+    # SPLIT ON `\n`, NEVER `str.splitlines()`, AND FOR THE SAME REASON THE SET
+    # ABOVE IS SHARED. splitlines() also breaks on \v and \f — two of the six
+    # characters in that very set — so a row tagged `qml\x0b` was ONE line the
+    # runner stripped to `qml` and accepted, and TWO lines here, the first of
+    # which has no `|` and was refused as a row with no separator. Verified end
+    # to end before this was written. Sharing the character set does not settle
+    # C4 on its own: the LINE BOUNDARY has to be the runner's too.
+    for line in block.group(2).split("\n"):
+        if not spaces.sub("", line):
             continue
         if "|" not in line:
             raise rules.row_error("row-no-separator", line)
         tags, command = line.split("|", 1)
-        tags = _ASCII_SPACE.sub("", tags)
+        tags = spaces.sub("", tags)
         if not tags:
             raise rules.row_error("row-empty-tags", line)
         if not pattern.match(tags):
@@ -95,7 +161,7 @@ def manifest_rows(runner: Path) -> list[tuple[str, str]]:
             raise rules.row_error("row-not-standalone", line, tags)
         if not (row_tags & rules.selectors):
             raise rules.row_error("row-no-selector", line, tags)
-        command = _ASCII_SPACE.sub(" ", command).strip(" ")
+        command = spaces.sub(" ", command).strip(" ")
         if not command:
             raise rules.row_error("row-empty-command", line)
         _check_shell_syntax(command, line, rules)
@@ -200,6 +266,7 @@ class Grammar:
         self.messages: dict[str, str] = {}
         self.source = GRAMMAR_FILE
         self.default = ""
+        self.whitespace = ""
         self._decode(self._dump())
 
     def _dump(self) -> str:
@@ -209,12 +276,17 @@ class Grammar:
         naming the runner's own wording — never a traceback, and never a silent
         skip that lets the arms below report something other than the real
         problem.
+
+        CAPTURED AS BYTES AND DECODED HERE, for the reason `_read` opens with
+        `newline=""`: `text=True` is universal-newline mode, so a \\r inside a
+        dumped message would arrive at `_decode` already turned into a line
+        break the runner never emitted, and the tail would be refused as an
+        unknown dump line kind. The decoder below owns the line boundary.
         """
         try:
             dumped = subprocess.run(
                 ["bash", str(self.runner), DUMP_FLAG],
                 capture_output=True,
-                text=True,
                 check=False,
             )
         except OSError as exc:
@@ -223,16 +295,22 @@ class Grammar:
                 f"NOT read: {exc}"
             ) from exc
         if dumped.returncode != 0:
+            # LOSSY ON PURPOSE, and only here: this is a diagnostic being
+            # relayed, so undecodable bytes in the runner's refusal must not
+            # replace that refusal with a decoding complaint.
             detail = (
-                dumped.stderr.strip()
-                or dumped.stdout.strip()
+                dumped.stderr.decode("utf-8", "replace").strip()
+                or dumped.stdout.decode("utf-8", "replace").strip()
                 or f"exit {dumped.returncode} with no diagnostic"
             )
             raise ManifestError(
                 f"{self.runner.name} refuses its own grammar, so nothing derived from "
                 f"it could be checked: {detail}"
             )
-        return dumped.stdout
+        try:
+            return dumped.stdout.decode("utf-8")
+        except UnicodeDecodeError as exc:
+            raise self._bad_dump(f"its output is not valid UTF-8: {exc}") from exc
 
     def _bad_dump(self, why: str) -> ManifestError:
         return ManifestError(
@@ -259,17 +337,25 @@ class Grammar:
         that is the only way any of them can be reached.
         """
         seen_kinds: set[str] = set()
-        for line in dump.splitlines():
+        # `\n` here too: this decodes text the RUNNER emitted, so its line
+        # boundary is the runner's. splitlines() would break a message carrying a
+        # \v or \f into two dump lines and report the tail as an unknown line
+        # kind — a refusal aimed at the wrong thing. Left alone deliberately:
+        # ci_run_commands (YAML text, and no reader compares its line set with
+        # the runner's) and runner_logic (compares no boundaries at all).
+        for line in dump.split("\n"):
             if not line.strip():
                 continue
             kind, _, rest = line.partition(" ")
-            if kind in ("source", "default"):
+            if kind in ("source", "default", "whitespace"):
                 if kind in seen_kinds:
                     raise self._bad_dump(f"more than one `{kind}` line")
                 seen_kinds.add(kind)
                 if not rest:
                     raise self._bad_dump(f"`{kind}` line is empty")
-                if kind == "source":
+                if kind == "whitespace":
+                    self.whitespace = self._decode_whitespace(rest)
+                elif kind == "source":
                     # A PATH, so it takes the rest of the line — the way
                     # `message` takes free text after its key. Requiring one
                     # whitespace-free word broke every checkout under a
@@ -356,7 +442,7 @@ class Grammar:
                 self.messages[key] = text
             else:
                 raise self._bad_dump(f"unknown dump line kind {kind!r}")
-        for required in ("source", "default"):
+        for required in ("source", "default", "whitespace"):
             if required not in seen_kinds:
                 raise self._bad_dump(f"no `{required}` line")
         if not self.classes or not self.token_class:
@@ -369,6 +455,44 @@ class Grammar:
             raise self._bad_dump(
                 f"the default area {self.default!r} is not a dumped token"
             )
+
+    def _decode_whitespace(self, rest: str) -> str:
+        """C4's whitespace set, decoded from the dump's hex codepoints.
+
+        VALIDATED, never coerced, like every other field: a codepoint outside
+        ASCII is refused here rather than accepted and then relied upon, because
+        C4 is exactly the claim that this set is ASCII — a transport can carry a
+        wider one, and the decoder is where that stops.
+        """
+        chars: list[str] = []
+        for field in rest.split():
+            if not re.fullmatch(r"[0-9a-f]{2}", field):
+                raise self._bad_dump(
+                    f"`whitespace {rest}`: `{field}` is not a two-digit lowercase "
+                    f"hex codepoint"
+                )
+            code = int(field, 16)
+            if code > 0x7F:
+                raise self._bad_dump(
+                    f"`whitespace {rest}`: U+{code:04X} is not ASCII, and C4 is the "
+                    f"claim that this set is"
+                )
+            char = chr(code)
+            if char in chars:
+                raise self._bad_dump(f"`whitespace {rest}` repeats `{field}`")
+            chars.append(char)
+        if not chars:
+            raise self._bad_dump("`whitespace` line names no codepoints")
+        return "".join(chars)
+
+    def whitespace_pattern(self) -> re.Pattern[str]:
+        """A character class over the runner's own whitespace set.
+
+        Built from codepoints rather than from `re.escape`, so the class the
+        readers apply is unambiguous even for the characters that carry a
+        backslash meaning of their own.
+        """
+        return re.compile("[" + "".join(rf"\x{ord(c):02x}" for c in self.whitespace) + "]")
 
     def say(self, key: str, fallback: str) -> str:
         """A shared diagnostic by key. The fallback keeps a grammar that is
@@ -526,7 +650,7 @@ def token_participates(runner: Path, rules: "Grammar", token: str, workdir: Path
     # actually read — rather than being re-derived here, which would be this
     # module deciding again where the grammar lives.
     (repo / "scripts" / "lib" / GRAMMAR_FILE.name).write_text(
-        rules.source.read_text(encoding="utf-8"), encoding="utf-8"
+        _read(rules.source, "the grammar the runner dumped"), encoding="utf-8"
     )
     for stub, body in (("stub-x", "true"), ("stub-go", "true"), ("stub-skip", "exit 77")):
         target = repo / "scripts" / stub
@@ -534,13 +658,19 @@ def token_participates(runner: Path, rules: "Grammar", token: str, workdir: Path
         target.chmod(0o755)
 
     def build(manifest: str) -> Path:
-        text = runner.read_text(encoding="utf-8")
-        text = re.sub(
-            r"(<<'MANIFEST_EOF'\n).*?(\nMANIFEST_EOF\n)",
-            lambda m: m.group(1) + manifest + m.group(2),
-            text,
-            flags=re.DOTALL,
+        # SUBSTITUTED OR REFUSED, never quietly zero times. A `sub` that matches
+        # nothing returns the text unchanged, so a renamed delimiter would have
+        # built a probe carrying the REAL manifest and answered the
+        # participation question about the wrong rows — a confident wrong answer
+        # in place of a diagnostic.
+        text, swapped = _MANIFEST_HEREDOC.subn(
+            lambda m: m.group(1) + manifest + m.group(3),
+            _read(runner, "the manifest runner"),
         )
+        if not swapped:
+            raise _no_heredoc(
+                f"so the participation probe for `{token}` could not be built"
+            )
         probe = repo / "scripts" / "validate"
         probe.write_text(text, encoding="utf-8")
         probe.chmod(0o755)
@@ -617,10 +747,17 @@ def runner_logic(runner: Path) -> str:
     being honoured, not a sufficient one — the behavioral proof that each branch
     does its job lives in scripts/test-validate.sh.
     """
-    text = runner.read_text(encoding="utf-8")
-    manifest = re.search(r"<<'MANIFEST_EOF'\n.*?\nMANIFEST_EOF\n", text, re.DOTALL)
-    if manifest:
-        text = text.replace(manifest.group(0), "")
+    text = _read(runner, "the manifest runner")
+    manifest = _MANIFEST_HEREDOC.search(text)
+    # A MISS IS REFUSED, NOT SHRUGGED AT. `if manifest:` with no else left the
+    # rows in the returned text on a renamed or removed delimiter — precisely the
+    # vacuity described above, since every attribute in real use appears in some
+    # row. It shipped no false green only because manifest_rows refuses the same
+    # file in a sibling arm, which is an implicit coupling between two readers
+    # that nothing asserted.
+    if not manifest:
+        raise _no_heredoc("so the runner's executable shell could not be isolated")
+    text = text.replace(manifest.group(0), "")
     lines = []
     for line in text.splitlines():
         stripped = line.strip()
@@ -632,34 +769,193 @@ def runner_logic(runner: Path) -> str:
     return "\n".join(lines)
 
 
-def prose_areas(path: Path) -> set[str]:
-    """Backticked area names from a prose surface's `areas ...` enumeration.
+# The markers that delimit a document's validate area list. HTML comments, so
+# every one of these surfaces is markdown and renders unchanged.
+AREA_ANCHOR_OPEN = "<!-- validate-areas -->"
+AREA_ANCHOR_CLOSE = "<!-- /validate-areas -->"
 
-    ABSENCE IS AN ERROR, never an empty answer. This returned None on a phrasing
-    miss and the caller skipped that document, so rewording a lead-in — with a
-    real, and possibly wrong, list still on the page — turned the comparison off
-    while the suite stayed green. "An empty result treated as a clean result" is
-    the standing rule this file's own instructions name.
+# A FENCE LINE, and its RUN LENGTH, which is what decides pairing below.
+#
+# ONLY AN UNINDENTED BACKTICK FENCE, and the contract paragraph in
+# .github/instructions/validation-scripts.instructions.md says so in those
+# words. A fence opened under a list bullet, and a `~~~` fence, are not matched
+# here, so markers inside one are read as the real thing — which fails LOUDLY
+# (two anchored regions) rather than quietly, and is the direction to keep.
+_FENCE_LINE = re.compile(r"(```+)(.*)$")
 
-    The wording coupling is the residual weakness: the parser keys on the word
-    `areas` followed by backticked names. A delimited anchor in each document
-    would remove it, and is the better long-term shape; making absence fatal is
-    what stops the coupling from failing OPEN in the meantime.
+def _strip_fenced_blocks(path: Path, text: str, spaces: re.Pattern[str]) -> str:
+    """`text` with every unindented fenced block removed, PAIRED BY RUN LENGTH.
+
+    A FENCED BLOCK IS NOT A MARKER, it is a picture of one. Without this the
+    document that DOCUMENTS the anchor could not show it: a second literal
+    `<!-- validate-areas -->` anywhere on the page — even inside a code fence
+    demonstrating the contract — trips the exactly-once refusal below, so the
+    mechanism was unnameable in the one place it is explained.
+
+    RUN LENGTH IS COMPARED, and this scanner exists because not comparing it was
+    a FALSE ACCEPT rather than the false refusal it was assumed to be. Pairing
+    each fence line with the next one regardless of length splits a four-backtick
+    block around the three-backtick example inside it, leaving the example's
+    middle live: the identical illustration that is correctly read as a picture
+    one nesting level up was silently honoured as the REAL anchor, so a page
+    could pass this guard on the strength of a list nobody maintains. Markdown's
+    rule — a fence closes on a run at least as long as the one that opened it —
+    is what makes the two levels agree, and a line scanner is enough for it.
+
+    THE TWO ENDS TAKE DIFFERENT REMAINDERS, and the asymmetry is CommonMark's,
+    not a convenience: an OPENER may carry an info string but that string may not
+    contain a backtick, while a CLOSER may carry no info string at all. Each rule
+    is stated again at the arm that enforces it, because reading one and assuming
+    the other is how both halves of this were wrong in turn.
+
+    Both halves were the same FALSE ACCEPT, one side each, and both inverted which
+    text is live. Closing on run length alone ended a block early, so a complete
+    anchored list rendering INSIDE a fence was read as the contract; opening on
+    run length alone started a block where a reader sees ordinary text, so a stale
+    live list was stripped and the fenced example accepted in its place. Either
+    way the page passed against a list nobody maintains.
+
+    `spaces` IS THE RUNNER'S OWN SET, THE SAME ONE THE ROW READER APPLIES, and it
+    is a parameter for the reason C4 is: a whitespace list hand-spelled here is a
+    SECOND definition, and the first character the two disagreed on cost a real
+    answer — the pair `[ \\t]` read the trailing carriage return of a CRLF
+    checkout as content, so every genuine closer stopped closing and a balanced
+    page was refused as unclosed. Since the set is the runner's, `\\f` and `\\v`
+    after a closing run are tolerated where CommonMark would not tolerate them;
+    one shared set is worth more here than that margin, because divergence is
+    what fails silently and the margin cannot.
     """
-    match = re.search(
-        r"areas\s+((?:`[a-z-]+`(?:,\s*|\s+and\s+|\s*)?)+)",
-        path.read_text(encoding="utf-8"),
-    )
-    if not match:
+    kept: list[str] = []
+    open_run = 0
+    for line in text.split("\n"):
+        match = _FENCE_LINE.match(line)
+        run = len(match.group(1)) if match else 0
+        rest = match.group(2) if match else ""
+        if not open_run:
+            # AN OPENER TAKES AN INFO STRING, BUT NOT A BACKTICK INSIDE IT: a
+            # backtick fence's info string may not contain one, so such a line is
+            # ordinary text and is KEPT. No whitespace question arises here — the
+            # info string is free-form — which is why this arm spells no set.
+            if run and "`" not in rest:
+                open_run = run
+            else:
+                kept.append(line)
+        # A CLOSER TAKES NO INFO STRING AT ALL, only whitespace, and that
+        # whitespace is the runner's dumped set rather than a pair written here.
+        elif run >= open_run and not spaces.sub("", rest):
+            open_run = 0
+    if open_run:
         raise ManifestError(
-            f"{path.name} no longer states the validate area list where this guard can "
-            f"read it (the word `areas` followed by backticked names). Restore that "
-            f"phrasing, or drop the enumeration entirely and remove the file from "
-            f"AREA_ENUMERATING_DOCS as a recorded decision."
+            f"{path.name} opens an unindented ``` code fence that is never closed by "
+            f"a line of at least {open_run} backticks and nothing after them but "
+            f"whitespace, so a code fence is opened and "
+            f"never closed. Which markers are pictures and which are the contract is "
+            f"decided by that pairing, so an unclosed fence moves the region this "
+            f"guard reads."
         )
-    stated = set(re.findall(r"`([a-z-]+)`", match.group(1)))
+    return "\n".join(kept)
+
+
+def _fenced_marker_error(path: Path, marker: str) -> ManifestError:
+    """The one wording for "this marker is present, but only as a picture".
+
+    Written once and taken by both ends: the opener and the closer fail the same
+    way, and spelling the diagnosis at one of them is how the wrong-cause report
+    survived at the other.
+    """
+    return ManifestError(
+        f"{path.name} carries {marker}, but only inside a code fence, where it is a "
+        f"picture of the contract rather than the contract. Move the real anchor "
+        f"outside the fence, or drop the enumeration entirely and remove the file "
+        f"from AREA_ENUMERATING_DOCS as a recorded decision."
+    )
+
+
+def prose_areas(path: Path, rules: Grammar) -> set[str]:
+    """Backticked area names from between a document's validate-areas anchors.
+
+    TAKES THE GRAMMAR ONLY FOR ITS WHITESPACE SET, and takes it rather than
+    spelling one because C4 — the runner's set, dumped and read back — is what
+    keeps a character from being dropped on one side alone. The cost is real and
+    accepted: reading a document now needs a runner whose grammar parses, where
+    before it needed only the file. Every caller already holds one, and the
+    importing guard reads the grammar first and stops on a bad one, so the
+    dependency adds no reachable arm; a future caller that has no runner must
+    obtain a grammar rather than be handed a literal.
+
+    ANCHORED, NOT WORDED. This used to key on the word `areas` followed by
+    backticked names, which coupled the guard to a phrasing three documents
+    happened to share: rewording a lead-in, or separating the names with
+    something the pattern could not follow, changed what the guard read. Absence
+    being fatal kept that from failing OPEN, but the coupling itself was the
+    defect.
+
+    WHAT THE ANCHOR DECOUPLES IS THE PROSE, NOT THE CODE SPANS. Every backticked
+    lowercase token between the markers is read as an area name, so a document
+    may reword the sentence however it likes but must put nothing else in
+    backticks in there — a stray "see `bin`" inside the region is reported as an
+    area the runner does not accept. Saying "whatever it likes" overstated the
+    contract by exactly that much.
+
+    ABSENCE IS STILL AN ERROR, never an empty answer, and so is a second anchor:
+    with two anchored regions the parser would read one and silently ignore the
+    other, which is "an empty result treated as a clean result" wearing the next
+    disguise.
+    """
+    raw = _read(path, "an area-enumerating document")
+    # AN UNCLOSED FENCE IS REFUSED BY THE STRIP ITSELF, before any marker is
+    # counted: one stray opener swallows every line below it, so a live region
+    # becomes a picture and the misdirection lands on whichever arm reads next.
+    text = _strip_fenced_blocks(path, raw, rules.whitespace_pattern())
+    opens = text.count(AREA_ANCHOR_OPEN)
+    closes = text.count(AREA_ANCHOR_CLOSE)
+    # A MARKER THAT EXISTS BUT IS FENCED IS ITS OWN DIAGNOSIS, AT EITHER END.
+    # Reporting it as "no anchor ... restore the anchor" sent the author to re-add
+    # something plainly on the page and never named the fence that swallowed it;
+    # keying the diagnosis on the opener alone left that identical wrong cause
+    # reachable through the closer, which then reported "never closes it" about a
+    # document whose closing marker is right there.
+    if opens == 0 and AREA_ANCHOR_OPEN in raw:
+        raise _fenced_marker_error(path, AREA_ANCHOR_OPEN)
+    if opens == 0:
+        raise ManifestError(
+            f"{path.name} has no {AREA_ANCHOR_OPEN} anchor around its validate area "
+            f"list. Restore the anchor, or drop the enumeration entirely and remove "
+            f"the file from AREA_ENUMERATING_DOCS as a recorded decision."
+        )
+    if closes == 0 and AREA_ANCHOR_CLOSE in raw:
+        raise _fenced_marker_error(path, AREA_ANCHOR_CLOSE)
+    # BOTH MARKERS ARE COUNTED. Counting only the opener left the identical hole
+    # through the other end: one opener and two closers reads open..close#1, and
+    # anything between close#1 and close#2 is a region no reader looks at — the
+    # very thing the open-count check exists to prevent.
+    if opens > 1 or closes > 1:
+        raise ManifestError(
+            f"{path.name} carries {opens} opening and {closes} closing validate area "
+            f"markers; the area list must be anchored exactly once, or one region is "
+            f"read and the rest are silently ignored."
+        )
+    start = text.index(AREA_ANCHOR_OPEN) + len(AREA_ANCHOR_OPEN)
+    end = text.find(AREA_ANCHOR_CLOSE, start)
+    if end == -1:
+        # A CLOSER THAT EXISTS BUT PRECEDES THE OPENER IS NOT A MISSING CLOSER.
+        # The region is read between the two, so a reversed pair anchors nothing
+        # — and telling the author to add a marker the page already carries is
+        # the same wrong cause the fenced arms above exist to avoid.
+        if closes:
+            raise ManifestError(
+                f"{path.name} carries {AREA_ANCHOR_CLOSE} BEFORE its "
+                f"{AREA_ANCHOR_OPEN}; the area list is read between the two, so a "
+                f"reversed pair anchors nothing. Put the closing marker after the "
+                f"opening one."
+            )
+        raise ManifestError(
+            f"{path.name} opens the validate area anchor but never closes it with "
+            f"{AREA_ANCHOR_CLOSE}"
+        )
+    stated = set(re.findall(r"`([a-z-]+)`", text[start:end]))
     if not stated:
-        raise ManifestError(f"{path.name} states an empty validate area list")
+        raise ManifestError(f"{path.name} anchors an empty validate area list")
     return stated
 
 
@@ -693,7 +989,7 @@ def ci_run_commands(ci: Path) -> str:
             "coverage was NOT checked (pacman -S python-yaml)"
         ) from exc
 
-    workflow = yaml.safe_load(ci.read_text(encoding="utf-8"))
+    workflow = yaml.safe_load(_read(ci, "the CI workflow"))
     runs: list[str] = []
 
     def walk(node) -> None:
@@ -722,7 +1018,7 @@ def ci_run_commands(ci: Path) -> str:
 
 def documented_table(doc: Path, lead_in: str) -> set[str]:
     """Script basenames named in the first column of the table after `lead_in`."""
-    text = doc.read_text(encoding="utf-8")
+    text = _read(doc, "a documented-table surface")
     start = text.find(lead_in)
     if start == -1:
         raise ManifestError(f"{doc.name} has no table introduced by {lead_in!r}")

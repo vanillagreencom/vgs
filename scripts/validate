@@ -108,10 +108,12 @@ cd "$repo_root" || exit 1
 #   C4  whitespace is ASCII, and removed before matching. Python's str.split()
 #       also eats Unicode whitespace; ASCII-only in both readers is what stops
 #       a Unicode space normalising away for one and not the other. Enforced by
-#       SPELLING THE SIX CHARACTERS OUT on both sides — `ASCII_SPACE` below, and
-#       `_ASCII_SPACE` there. `[[:space:]]` did NOT enforce it: bash resolves
-#       character classes through the LOCALE, so C4 was asserted here and true
-#       only incidentally, until a locale change made it false.
+#       ONE SET, `ASCII_SPACE` below, which `--dump-grammar` emits and the
+#       library builds its pattern from — the two sides used to spell six
+#       characters out separately under a comment claiming they moved together,
+#       which nothing checked. `[[:space:]]` did not enforce it either: bash
+#       resolves character classes through the LOCALE, so C4 was asserted here
+#       and true only incidentally, until a locale change made it false.
 #
 # ─── and the AREA DECLARATION, one level up ────────────────────────────────
 #
@@ -283,6 +285,14 @@ MANIFEST_EOF
 # Ranges were checked too, since `[a-z]` is collation-dependent in principle:
 # on this glibc `[[ "Q" =~ ^[a-z]+$ ]]` is false under C and under en_US.UTF-8
 # alike, so the token-name rule is not affected.
+#
+# THE SET BELOW IS THE ONLY ONE. `--dump-grammar` emits it as codepoints and
+# scripts/lib/validation_manifest.py builds its pattern from that, so the two
+# readers cannot hold different sets. They used to hold two spellings under a
+# comment asserting the two moved together — an ASCII character dropped from one
+# side alone would have divided them exactly as the locale-resolved class did,
+# and no locale control could have caught it, since a locale changes what a
+# CLASS means and never what a spelled-out set contains.
 ASCII_SPACE=$' \t\n\r\f\v'
 # ...minus the newline, for the line-oriented tools that cannot carry one.
 # Derived rather than written twice: two spellings of one set is how the readers
@@ -652,7 +662,7 @@ done
 sort_names() { printf '%s\n' "$@" | LC_ALL=C sort; }
 
 dump_grammar() {
-  local cls key token
+  local cls key token i code hex=""
   printf 'source %s\n' "$GRAMMAR_FILE"
   # THE RESOLVED DEFAULT, so a consumer reads the runner's verdict instead of
   # recomputing it. Recomputing was how the guard came to reject a grammar the
@@ -660,6 +670,23 @@ dump_grammar() {
   # it is a second place the rule is written, and that is the same thing wearing
   # a different name.
   printf 'default %s\n' "$default_area"
+  # THE WHITESPACE SET ITSELF, so C4 has one definition instead of two spellings
+  # that a comment merely asserted move together. The python side used to carry
+  # its own `[ \t\n\r\f\v]` regex under a note saying it changed with
+  # `ASCII_SPACE` here; nothing enforced that, and the locale control could only
+  # have caught a Unicode space, never an ASCII character dropped from one side.
+  # Now the set is derived from this variable and read from the dump, so the two
+  # readers cannot hold different sets at all.
+  #
+  # AS CODEPOINTS, because the set CONTAINS A NEWLINE and a line-oriented dump
+  # cannot carry one literally. Hex is the transport; the decoder validates it
+  # and refuses anything outside ASCII, which is the half of C4 a transport
+  # cannot state.
+  for ((i = 0; i < ${#ASCII_SPACE}; i++)); do
+    printf -v code '%d' "'${ASCII_SPACE:i:1}"
+    printf -v hex '%s%02x ' "$hex" "$code"
+  done
+  printf 'whitespace %s\n' "${hex% }"
   collect "the dumped class list" sort_names "${!CLASS_ROWTAG[@]}"
   while IFS= read -r cls; do
     [[ -n "$cls" ]] || continue
@@ -690,6 +717,47 @@ dump_grammar() {
 if [[ ${#default_candidates[@]} -ne 1 ]]; then
   grammar_fatal "${MSG[grammar-default-count]:-grammar must declare exactly one CLI default token}" \
     "cli=yes with rowtag=no: ${#default_candidates[@]} token(s)${default_candidates[*]:+ (${default_candidates[*]})}"
+fi
+
+# A SELECTOR THAT SELECTS NOTHING BUT THE DEFAULT AREA IS REFUSED, and it is C3
+# reached through a property instead of through a name. C3 keeps `all` out of the
+# tag vocabulary because as a tag it would match only an `all` run and behave
+# like `-` everywhere else — silent narrowing. A row tag that SELECTS, is not
+# exclusive, names no area (cli=no) and is not universal has exactly that
+# behaviour: it parses, it combines, and it selects nothing in any named area.
+#
+# The edit that reaches it is a single yes/no flip — `universal=no` on the selector
+# class — and it is SELF-CONCEALING: every `always` row vanishes from every
+# scoped run, including scripts/check-validation-inventory.py, which is the check
+# that would report the edit. `scripts/validate --list docs` then lists one
+# command and exits 0. Refused here, in the pre-flight beside the undecidable
+# default, so no consumer ever sees a dump of such a grammar and no scoped run is
+# quietly narrowed.
+#
+# ASKED OF THE DERIVED SETS, not of the class properties again. Those sets were
+# just computed from exactly these properties, and re-spelling five CLASS_*
+# lookups here would put "what makes a token a selector" in two places — the
+# shape this file's own notes reject everywhere else.
+in_list() { # $1 needle, then the haystack
+  local needle="$1" item
+  shift
+  for item in "$@"; do
+    [[ "$item" == "$needle" ]] && return 0
+  done
+  return 1
+}
+
+inert_selectors=()
+for token in "${selector_tags[@]}"; do
+  if ! in_list "$token" "${AREAS[@]}" &&
+    ! in_list "$token" "${universal_tags[@]}" &&
+    ! in_list "$token" "${exclusive_tags[@]}"; then
+    inert_selectors+=("$token")
+  fi
+done
+if [[ ${#inert_selectors[@]} -gt 0 ]]; then
+  grammar_fatal "${MSG[grammar-inert-selector]:-grammar row tag selects nothing in any named area}" \
+    "${inert_selectors[*]}: a selector that is neither an area (cli=yes) nor universal selects only the default area, which is what the exclusive tag already means"
 fi
 
 # Exit status a `may-skip` row uses for "precondition absent, nothing checked".
