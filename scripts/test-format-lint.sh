@@ -43,9 +43,10 @@ EXT_MSG="language extension but no shebang"
 # and bin/, and at any depth.
 #
 # `binary` writes NUL bytes and takes the executable bit: that is what git's
-# `--eol` calls `i/-text`, and it is the shape of the tracked ELF that actually
-# lives in bin/. It is deliberately EXECUTABLE, since a binary that is not would
-# pass the mode rule for the wrong reason.
+# `--eol` calls `w/-text` — the WORKTREE column, which is the one the exemption
+# arm reads (see the index/worktree swap case below) — and it is the shape of
+# the tracked ELF that actually lives in bin/. It is deliberately EXECUTABLE,
+# since a binary that is not would pass the mode rule for the wrong reason.
 # Split into three so a case can stage SEVERAL probes in one fixture: the
 # pathspec-magic case needs two files whose NAMES interact, which a one-probe
 # helper cannot express. probe_run keeps the single-probe shape every other case

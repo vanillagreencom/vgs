@@ -40,9 +40,20 @@ def _read(path: Path, what: str) -> str:
     UnicodeDecodeError is caught with OSError because it is the same event from
     the caller's side — this path did not yield text — and it is a ValueError,
     so an OSError-only catch let it through.
+
+    THE LINE BOUNDARY IS THE CALLER'S DECISION, NOT THE READ LAYER'S, which is
+    why this opens with `newline=""`. The convenience reader opens in
+    universal-newline mode and rewrites a lone \\r — and \\r\\n — to \\n before
+    any caller sees it, so a row tagged `qml\\r` arrived here already split in
+    two while the runner, whose whitespace set CONTAINS 0d, stripped it and ran
+    the row. That is the same divergence `str.splitlines()` produced on \\v and
+    \\f, reached one layer lower: the shared set says "strip it" and the read
+    said "end the row here". Spelled as `open(newline="")` rather than
+    `read_text(newline=...)` because the latter is 3.13+ only.
     """
     try:
-        return path.read_text(encoding="utf-8")
+        with path.open(encoding="utf-8", newline="") as handle:
+            return handle.read()
     except (OSError, UnicodeDecodeError) as exc:
         raise ManifestError(
             f"could not read {what} at {path}, so it was NOT checked: {exc}"
@@ -239,12 +250,17 @@ class Grammar:
         naming the runner's own wording — never a traceback, and never a silent
         skip that lets the arms below report something other than the real
         problem.
+
+        CAPTURED AS BYTES AND DECODED HERE, for the reason `_read` opens with
+        `newline=""`: `text=True` is universal-newline mode, so a \\r inside a
+        dumped message would arrive at `_decode` already turned into a line
+        break the runner never emitted, and the tail would be refused as an
+        unknown dump line kind. The decoder below owns the line boundary.
         """
         try:
             dumped = subprocess.run(
                 ["bash", str(self.runner), DUMP_FLAG],
                 capture_output=True,
-                text=True,
                 check=False,
             )
         except OSError as exc:
@@ -253,16 +269,22 @@ class Grammar:
                 f"NOT read: {exc}"
             ) from exc
         if dumped.returncode != 0:
+            # LOSSY ON PURPOSE, and only here: this is a diagnostic being
+            # relayed, so undecodable bytes in the runner's refusal must not
+            # replace that refusal with a decoding complaint.
             detail = (
-                dumped.stderr.strip()
-                or dumped.stdout.strip()
+                dumped.stderr.decode("utf-8", "replace").strip()
+                or dumped.stdout.decode("utf-8", "replace").strip()
                 or f"exit {dumped.returncode} with no diagnostic"
             )
             raise ManifestError(
                 f"{self.runner.name} refuses its own grammar, so nothing derived from "
                 f"it could be checked: {detail}"
             )
-        return dumped.stdout
+        try:
+            return dumped.stdout.decode("utf-8")
+        except UnicodeDecodeError as exc:
+            raise self._bad_dump(f"its output is not valid UTF-8: {exc}") from exc
 
     def _bad_dump(self, why: str) -> ManifestError:
         return ManifestError(
@@ -718,7 +740,29 @@ AREA_ANCHOR_CLOSE = "<!-- /validate-areas -->"
 # `<!-- validate-areas -->` anywhere on the page — even inside a code fence
 # demonstrating the contract — trips the exactly-once refusal below, so the
 # mechanism was unnameable in the one place it is explained.
+#
+# ONLY AN UNINDENTED BACKTICK FENCE, and the contract paragraph in
+# .github/instructions/validation-scripts.instructions.md says so in those
+# words. A fence opened under a list bullet, and a `~~~` fence, are not matched
+# here, so markers inside one are read as the real thing — which fails LOUDLY
+# (two anchored regions) rather than quietly, and is the direction to keep.
 _FENCED_BLOCK = re.compile(r"^```.*?^```", re.DOTALL | re.MULTILINE)
+
+# The same fence line the pairing above keys on, counted rather than paired.
+# PAIRING FROM THE TOP OF A DOCUMENT IS ONLY MEANINGFUL IF THE FENCES BALANCE:
+# one stray fence re-pairs every fence below it, so a block that was a picture
+# becomes live text and a live region becomes a picture — silently, and with
+# the strip running before the anchors are counted, the misdirection lands on
+# whichever arm reads next. So an odd count is refused as a malformed document
+# before anything is stripped.
+#
+# EXACTLY THE LINES THE PAIRING USES, deliberately: counting a line the strip
+# never pairs would refuse a page whose read region is perfectly intact, which is
+# the wrong-cause direction of the defect this exists to catch. Run length is not
+# compared — markdown's rule, where a longer opener may enclose a shorter fence,
+# would take a tokenizer this guard has no other use for. That cost is bounded to
+# nested fences, and an unbalanced one is still refused loudly.
+_FENCE_LINE = re.compile(r"^```", re.MULTILINE)
 
 
 def prose_areas(path: Path) -> set[str]:
@@ -743,9 +787,30 @@ def prose_areas(path: Path) -> set[str]:
     other, which is "an empty result treated as a clean result" wearing the next
     disguise.
     """
-    text = _FENCED_BLOCK.sub("", _read(path, "an area-enumerating document"))
+    raw = _read(path, "an area-enumerating document")
+    # BEFORE THE STRIP, because the strip is what an unbalanced fence corrupts.
+    fences = len(_FENCE_LINE.findall(raw))
+    if fences % 2:
+        raise ManifestError(
+            f"{path.name} carries an odd number of unindented ``` lines ({fences}), "
+            f"so a code fence is opened and never closed. Which markers are pictures "
+            f"and which are the contract is decided by pairing those lines from the "
+            f"top of the page, so one unbalanced fence re-pairs every fence below it "
+            f"and moves the region this guard reads."
+        )
+    text = _FENCED_BLOCK.sub("", raw)
     opens = text.count(AREA_ANCHOR_OPEN)
     closes = text.count(AREA_ANCHOR_CLOSE)
+    # A MARKER THAT EXISTS BUT IS FENCED IS ITS OWN DIAGNOSIS. Reporting it as
+    # "no anchor ... restore the anchor" sent the author to re-add something
+    # plainly on the page, and never named the fence that swallowed it.
+    if opens == 0 and AREA_ANCHOR_OPEN in raw:
+        raise ManifestError(
+            f"{path.name} carries {AREA_ANCHOR_OPEN}, but only inside a code fence, "
+            f"where it is a picture of the contract rather than the contract. Move "
+            f"the real anchor outside the fence, or drop the enumeration entirely "
+            f"and remove the file from AREA_ENUMERATING_DOCS as a recorded decision."
+        )
     if opens == 0:
         raise ManifestError(
             f"{path.name} has no {AREA_ANCHOR_OPEN} anchor around its validate area "

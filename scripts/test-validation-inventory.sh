@@ -57,6 +57,8 @@ GUARD_ONLY_MESSAGES=(
   "enumerates the validate areas but omits"
   "as a validate area, but scripts/validate does not"
   "anchor around its validate area list"
+  "but only inside a code fence"
+  "a code fence is opened and never closed"
   "opens the validate area anchor but never closes it"
   "must be anchored exactly once"
   "anchors an empty validate area list"
@@ -584,8 +586,12 @@ areas_probe="$tmp/areas-probe.md"
   printf '```markdown\n<!-- validate-areas -->areas `go`<!-- /validate-areas -->\n```\n'
 } >"$areas_probe"
 run_guard "AGENTS_PATH=$areas_probe"
-expect_refused "fenced marker" "anchor around its validate area list"
-ok "a marker inside a code fence is not an anchor"
+expect_refused "fenced marker" "but only inside a code fence"
+# ...and NOT as "restore the anchor", which is the wrong-cause diagnosis: the
+# marker is plainly on the page, so an author sent to re-add it has been told to
+# fix something that is not broken while the fence is never mentioned.
+expect_absent "$guard_out" "Restore the anchor" "fenced marker"
+ok "a marker inside a code fence is reported as fenced, not as missing"
 
 # ...and the accept side, which is the whole point: a real anchor plus a fenced
 # demonstration of one is exactly what the instructions file now carries, and it
@@ -598,6 +604,80 @@ ok "a marker inside a code fence is not an anchor"
 run_guard "AGENTS_PATH=$areas_probe"
 expect_clean_run "real anchor beside a fenced one"
 ok "a document may show the markers in a fence and still carry a real anchor"
+
+# AN UNBALANCED FENCE MOVES THE REGION THAT IS READ, which is why the count is
+# checked before anything is stripped. Fences are paired from the top of the
+# page, so ONE stray opener re-pairs every fence below it: the opener pairs with
+# the illustration's opener, the real anchor between them is stripped as if it
+# were the picture, and the illustration's markers become the live contract.
+# Both fixtures below passed or misdiagnosed before the count existed, and each
+# is the shape a reviewer reproduced.
+#
+# (i) THE SILENT PASS: with the fenced example carrying the COMPLETE list, the
+# swap leaves a document that answers correctly for the wrong reason — so a
+# later edit to the REAL list would never be compared against anything.
+# shellcheck disable=SC2016  # backticks are markdown quoting in the fixture prose
+{
+  printf '```bash\n'
+  printf 'areas: <!-- validate-areas -->`go`, `qml`, `helper`, `packaging`, `docs`, `all`<!-- /validate-areas -->\n\n'
+  printf '```markdown\n<!-- validate-areas -->areas `go`, `qml`, `helper`, `packaging`, `docs`, `all`<!-- /validate-areas -->\n```\n'
+} >"$areas_probe"
+run_guard "AGENTS_PATH=$areas_probe"
+expect_refused "unbalanced fence swallowing the anchor" "a code fence is opened and never closed"
+ok "a stray fence that relocates the read region is refused, not answered from the picture"
+
+# (ii) THE WRONG-CAUSE DIAGNOSIS: the same swap with an ordinary fenced block
+# carrying no markers leaves nothing anchored, and the report was "restore the
+# anchor" — pointing at a marker plainly present and never naming the fence.
+# shellcheck disable=SC2016  # backticks are markdown quoting in the fixture prose
+{
+  printf '```bash\n'
+  printf 'areas: <!-- validate-areas -->`go`, `qml`, `helper`, `packaging`, `docs`, `all`<!-- /validate-areas -->\n\n'
+  printf '```sh\nan ordinary illustration\n```\n'
+} >"$areas_probe"
+run_guard "AGENTS_PATH=$areas_probe"
+expect_refused "unbalanced fence above the anchor" "a code fence is opened and never closed"
+expect_absent "$guard_out" "anchor around its validate area list" "unbalanced fence above the anchor"
+ok "an unbalanced fence is named as the defect, not reported as a missing anchor"
+
+# ...and the ACCEPT side of the count, so the rule is not merely tight: a page
+# whose fences balance parses, however many of them there are. Without this the
+# check above would be satisfied by refusing every fenced document.
+# shellcheck disable=SC2016  # backticks are markdown quoting in the fixture prose
+{
+  printf 'areas: <!-- validate-areas -->`go`, `qml`, `helper`, `packaging`, `docs`, `all`<!-- /validate-areas -->\n\n'
+  printf '```sh\nfirst\n```\n\n```markdown\n<!-- validate-areas -->areas `go`<!-- /validate-areas -->\n```\n\n```sh\nthird\n```\n'
+} >"$areas_probe"
+run_guard "AGENTS_PATH=$areas_probe"
+expect_clean_run "balanced fences"
+ok "a page with several balanced fences still parses"
+
+# AN INDENTED FENCE IS NOT A FENCE HERE, and the contract paragraph in
+# .github/instructions/validation-scripts.instructions.md says so in those
+# words. Pinned rather than left incidental: markers demonstrated inside a
+# bullet-indented block are read as the real thing, which refuses LOUDLY — the
+# right direction, but only if the limit stays where the doc claims it is.
+# shellcheck disable=SC2016  # backticks are markdown quoting in the fixture prose
+{
+  printf 'areas: <!-- validate-areas -->`go`, `qml`, `helper`, `packaging`, `docs`, `all`<!-- /validate-areas -->\n\n'
+  printf -- '- demonstrated under a bullet:\n\n  ```markdown\n  <!-- validate-areas -->areas `go`<!-- /validate-areas -->\n  ```\n'
+} >"$areas_probe"
+run_guard "AGENTS_PATH=$areas_probe"
+expect_refused "indented fence" "must be anchored exactly once"
+ok "an indented fence does not hide its markers, exactly as the contract states"
+
+# ...and the COUNT keys on the same lines the pairing does. Counting a line the
+# strip never pairs would refuse a page whose read region is perfectly intact —
+# the wrong-cause direction of the very defect the count exists to catch — so an
+# indented ``` is no more counted than it is paired.
+# shellcheck disable=SC2016  # backticks are markdown quoting in the fixture prose
+{
+  printf 'areas: <!-- validate-areas -->`go`, `qml`, `helper`, `packaging`, `docs`, `all`<!-- /validate-areas -->\n\n'
+  printf -- '- a lone fence marker quoted in prose:\n\n  ```\n'
+} >"$areas_probe"
+run_guard "AGENTS_PATH=$areas_probe"
+expect_clean_run "indented fence is not counted"
+ok "the fence count reads exactly the lines the fence pairing reads"
 
 # ...and every named document must currently yield a non-empty list, so the
 # case above is catching the rewording rather than a doc that never stated one.
@@ -1220,15 +1300,23 @@ ok "an unreadable surface raises ManifestError naming the path, not a traceback"
 # stated rule is that they do not. So the rule is checked at the source: nothing
 # in the module reads a file except the helper that turns the failure into a
 # diagnostic. Same shape as the shared-diagnostic liveness block above.
-if ! python3 - "$repo_root" <<'READS'
-import pathlib, sys
-lines = (pathlib.Path(sys.argv[1]) / "scripts" / "lib" / "validation_manifest.py").read_text(
-    encoding="utf-8"
-).split("\n")
+#
+# EVERY SPELLING OF A READ, not the one the module happens to use today. This
+# keyed on `read_text(` alone, so the instrument built to REPLACE an enumeration
+# of call sites reported green on `open(p).read()`, `read_bytes()` and
+# `.readlines()` — the same enumeration, wearing a regex. Comment lines are
+# skipped because that module's own comments discuss `read_text(` by name, and a
+# scan that reports prose about the rule makes the rule unnameable where it is
+# explained.
+one_reader_scan() { # $1 = module to scan. Prints each stray read; non-zero if any.
+  python3 - "$1" <<'READS'
+import pathlib, re, sys
+module = pathlib.Path(sys.argv[1])
+lines = module.read_text(encoding="utf-8").split("\n")
 starts = [i for i, line in enumerate(lines) if line.startswith("def _read(")]
 if len(starts) != 1:
-    print(f"validation_manifest.py declares {len(starts)} `_read` helpers, so the "
-          f"one-reader rule below cannot be checked")
+    print(f"{module.name} declares {len(starts)} `_read` helpers, so the "
+          f"one-reader rule cannot be checked")
     sys.exit(1)
 start = starts[0]
 end = next(
@@ -1236,19 +1324,56 @@ end = next(
      if lines[i].startswith("def ") or lines[i].startswith("class ")),
     len(lines),
 )
-stray = [
-    (i + 1, line.strip())
-    for i, line in enumerate(lines)
-    if "read_text(" in line and not start <= i < end
-]
+READ_VERB = re.compile(r"\b(?:read_text|read_bytes|readlines|readline|open)\s*\(")
+stray = []
+for i, line in enumerate(lines):
+    if start <= i < end or line.strip().startswith("#"):
+        continue
+    if READ_VERB.search(line):
+        stray.append((i + 1, line.strip()))
 for number, line in stray:
-    print(f"validation_manifest.py:{number} reads a file outside _read(): {line}")
+    print(f"{module.name}:{number} reads a file outside _read(): {line}")
 sys.exit(1 if stray else 0)
 READS
-then
+}
+
+if ! one_reader_scan "$repo_root/scripts/lib/validation_manifest.py"; then
   fail "one reader per file" "the reads above bypass _read(), so they raise tracebacks instead of diagnostics"
 fi
 ok "every file read in the module goes through the helper that diagnoses failure"
+
+# ...and the SCAN ITSELF is proven, in both directions, against a copy of the
+# module: a widened pattern asserted rather than demonstrated is how the first
+# one shipped recognising a single verb.
+reads_probe="$tmp/reads-probe.py"
+while IFS= read -r planted; do
+  [[ -n "$planted" ]] || continue
+  {
+    cat "$repo_root/scripts/lib/validation_manifest.py"
+    printf '\n\ndef _planted(p):\n    %s\n' "$planted"
+  } >"$reads_probe"
+  if scan_out="$(one_reader_scan "$reads_probe")"; then
+    fail "one-reader scan control" "a planted \`$planted\` outside _read() was NOT reported"
+  else
+    expect_contains "$scan_out" "reads a file outside _read()" "one-reader scan control"
+  fi
+done <<'PLANTED'
+return p.read_text(encoding="utf-8")
+return p.read_bytes()
+return open(p, encoding="utf-8").read()
+return p.open(encoding="utf-8").readlines()
+PLANTED
+ok "every read spelling planted outside _read() is reported by the scan"
+
+# ...and the other direction, which is not hypothetical: a comment MENTIONING a
+# read must not be reported, or the rule cannot be written down beside itself.
+{
+  cat "$repo_root/scripts/lib/validation_manifest.py"
+  printf '\n# Prose about the rule: nothing may call path.read_text( or open( here.\n'
+} >"$reads_probe"
+one_reader_scan "$reads_probe" >/dev/null ||
+  fail "one-reader scan control" "a comment naming a read was reported as a read"
+ok "a comment naming a read is prose, not a breach of the one-reader rule"
 
 # A MISSING PREREQUISITE MUST NOT REPLACE A FIXTURE'S VERDICT. The CI parse used
 # to raise straight out of main, so on a python3 without PyYAML every fixture
@@ -1413,18 +1538,109 @@ notatoken
 ROWS
 ok "both readers classify every duplicate and malformed row identically"
 
-# THE LINE BOUNDARY IS PART OF C4, and this is the row that proves it. Sharing
+# AGREEMENT IS ONLY HALF OF WHAT THE CONTROL ROWS BELOW NEED. Two readers that
+# both REFUSED `qml\x0b` would agree perfectly while the shared whitespace set
+# was broken in exactly the direction those rows exist to catch, so the row must
+# also be TAKEN — and the command LISTED — by each reader.
+agree_accepts() {
+  local row_tags="$1" label="${2:-$1}" rc=0 listed library
+  agree_row "$row_tags" "$label" # ...which is what writes $agree_probe
+  listed="$("$agree_probe" --list qml 2>"$tmp/stderr")" || rc=$?
+  if [[ "$rc" != 0 ]]; then
+    fail "reader agreement" "row $label was refused by the runner (rc $rc): $(head -1 "$tmp/stderr")"
+  fi
+  expect_contains "$listed" "scripts/check-naming.sh" "reader agreement: runner lists $label"
+  library="$(AGREE_PROBE="$agree_probe" python3 - "$repo_root" <<'LIB'
+import importlib.util, os, pathlib, sys
+root = pathlib.Path(sys.argv[1])
+spec = importlib.util.spec_from_file_location(
+    "vm", root / "scripts" / "lib" / "validation_manifest.py"
+)
+mod = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mod)
+try:
+    rows = mod.manifest_rows(pathlib.Path(os.environ["AGREE_PROBE"]))
+except mod.ManifestError as error:
+    print(f"REFUSED {error}")
+else:
+    print("LISTED" if ("qml", "scripts/check-naming.sh") in rows else f"MISSING {rows[:3]}")
+LIB
+)" || true
+  expect_contains "$library" "LISTED" "reader agreement: library lists $label"
+}
+
+# THE LINE BOUNDARY IS PART OF C4, and these are the rows that prove it. Sharing
 # the whitespace set settled which characters are STRIPPED; it said nothing about
 # where a row ENDS. `str.splitlines()` breaks on \v and \f — two of the six
 # characters in that same set — so a row tagged `qml\x0b` was one line to the
 # runner, which stripped it to `qml` and RAN the command, and two lines to the
-# library, whose first had no `|` and was refused as a row with no separator. The
-# runner is the authority on both questions, so both readers must accept here.
-for control in '\v' '\f'; do
+# library, whose first had no `|` and was refused as a row with no separator.
+# \r is the third: `Path.read_text()` opens in universal-newline mode, so the
+# split never saw it — the row arrived here already broken in two, one layer
+# below the boundary the \v fix moved. The runner is the authority on both
+# questions, so both readers must take these rows.
+for control in '\v' '\f' '\r'; do
   printf -v control_tags 'qml%b' "$control"
-  agree_row "$control_tags" "qml followed by a literal $control"
+  agree_accepts "$control_tags" "qml followed by a literal $control"
 done
-ok "a row tagged with a \\v or \\f is one row to both readers, not two"
+ok "a row tagged with a \\v, \\f or \\r is one row to both readers, and taken by both"
+
+# THE DUMP IS THE SECOND CHANNEL WITH THE SAME BOUNDARY, and it had no control
+# at all: reverting `Grammar._decode`'s `dump.split("\n")` to splitlines() left
+# the whole suite green. A message text carrying one of these characters is ONE
+# dump line to the runner and TWO to a reader that ends a line there, whose tail
+# is refused as an unknown dump line kind — a refusal aimed at the wrong thing,
+# against a grammar the runner accepted.
+#
+# BOTH HALVES OF THE BOUNDARY ARE HERE, because they break at different layers:
+# splitlines() ends a line on \v, and `text=True` capture ends one on \r before
+# the decoder is ever reached. Driven through the real runner rather than a
+# hand-built dump, so the emission path is exercised too.
+dump_line_dir="$tmp/dump-line"
+mkdir -p "$dump_line_dir/scripts/lib"
+cp "$runner" "$dump_line_dir/scripts/validate"
+chmod +x "$dump_line_dir/scripts/validate"
+while IFS=';' read -r label escape; do
+  [[ -n "$label" ]] || continue
+  printf -v control_char '%b' "$escape"
+  MARK="$control_char" python3 - "$repo_root/scripts/lib/validation-grammar.conf" \
+    >"$dump_line_dir/scripts/lib/validation-grammar.conf" <<'MUT'
+import os, sys
+t = open(sys.argv[1], encoding="utf-8").read()
+old = [line for line in t.split("\n") if line.startswith("message row-empty-tags")]
+assert len(old) == 1, "the row-empty-tags message moved"
+print(t.replace(old[0], old[0] + f" ({os.environ['MARK']}marked)"), end="")
+MUT
+  dumped_line="$("$dump_line_dir/scripts/validate" --dump-grammar)" ||
+    fail "dump line boundary" "the runner refused a grammar whose message carries $label"
+  # The character must actually REACH the dump, or the decode below proves
+  # nothing about where the decoder ends a line.
+  [[ "$dumped_line" == *"$control_char"* ]] ||
+    fail "dump line boundary" "the runner dropped $label before dumping, so the case cannot fail"
+  dump_line_said="$(DUMP_PROBE="$dump_line_dir/scripts/validate" MARK="$control_char" \
+    python3 - "$repo_root" <<'LIB'
+import importlib.util, os, pathlib, sys
+root = pathlib.Path(sys.argv[1])
+spec = importlib.util.spec_from_file_location(
+    "vm", root / "scripts" / "lib" / "validation_manifest.py"
+)
+mod = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mod)
+try:
+    rules = mod.grammar(pathlib.Path(os.environ["DUMP_PROBE"]))
+except mod.ManifestError as error:
+    print(f"REFUSED {error}")
+else:
+    text = rules.messages["row-empty-tags"]
+    print("DECODED" if text.endswith(f"({os.environ['MARK']}marked)") else f"LOST {text!r}")
+LIB
+  )" || true
+  expect_contains "$dump_line_said" "DECODED" "dump line boundary ($label)"
+done <<'DUMPLINES'
+a vertical tab;\x0b
+a carriage return;\x0d
+DUMPLINES
+ok "a \\v or \\r inside a dumped message is one dump line to the decoder, as the runner emitted it"
 
 # C4 UNDER A NON-C LOCALE, which is the only place this can be tested. The
 # runner used `[[:space:]]`, whose meaning bash resolves through the LOCALE:

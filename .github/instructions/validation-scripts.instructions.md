@@ -31,12 +31,15 @@ markers that render as nothing:
 one of the <!-- validate-areas -->areas `go`, `qml`, `all`<!-- /validate-areas -->, and
 ```
 
-`prose_areas` in `scripts/lib/validation_manifest.py` compares what lies between
-them against the runner's own list. Reword inside freely, but every backticked
-lowercase word in there is read as an area name; exactly one marker pair per
-file; an empty region is refused; markers inside a code fence are a picture, not
-the contract. Each of those FAILS the guard rather than turning the comparison
-off. Dropping the enumeration is a recorded decision — remove the file from
+`prose_areas` in `scripts/lib/validation_manifest.py` reads what lies between
+them, and `scripts/check-validation-inventory.py` compares it against the
+runner's own list. Reword inside freely, but every backticked lowercase word in
+there is read as an area name; exactly one marker pair per file; an empty region
+is refused; the page's backtick fences must balance; markers inside an
+unindented backtick code fence are a picture, not the contract (a fence indented
+under a bullet, or a `~~~` one, is not read as a fence at all, so markers in it
+count as real). Getting any of those wrong FAILS the guard rather than turning
+the comparison off. Dropping the enumeration is a recorded decision — remove the file from
 `AREA_ENUMERATING_DOCS` in the same edit.
 
 Its exit status is four-valued, and **77 is not a pass**: `0` everything
