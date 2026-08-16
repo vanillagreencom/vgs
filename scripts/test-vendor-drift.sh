@@ -89,8 +89,12 @@ expect_contains "$err" "CONTRADICTS" "tracked-ahead confirmed"
 # command with the doomed file named nowhere after it.
 expect_contains "$err" "$AT_RISK_PREFIX""third_party/$ENGINE/references/settings.md" \
   "tracked-ahead confirmed"
-cost_line="$(printf '%s' "$err" | grep -n "third_party/$ENGINE/references/settings.md" | tail -1 | cut -d: -f1)"
-command_line="$(printf '%s' "$err" | grep -n -- "$RSYNC_COMMAND" | tail -1 | cut -d: -f1)"
+# -F on both: these patterns carry `.md` and `.vstack-refreshed`, whose dots
+# match any character in regex mode, so the lookup could select a different line
+# and make the ordering assertion silently wrong — in the control that pins the
+# promise three reviewers blocked on.
+cost_line="$(printf '%s' "$err" | grep -nF -- "third_party/$ENGINE/references/settings.md" | tail -1 | cut -d: -f1)"
+command_line="$(printf '%s' "$err" | grep -nF -- "$RSYNC_COMMAND" | tail -1 | cut -d: -f1)"
 ((cost_line < command_line)) ||
   fail "tracked-ahead confirmed" "the cost list must print ABOVE the command, not below it"
 ok "--confirm-mirror-is-newer names what dies above the command, and flags the contradiction"

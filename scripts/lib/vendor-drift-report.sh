@@ -115,7 +115,6 @@ vendor_drift_print_sides() {
   printf '%s:   "Only in DIR" names a whole file only that side has\n' "$prog"
 }
 
-# The destructive command. Printed only by the three routes named in the header.
 # The destructive command. Printed only by the three routes named in the header,
 # and always carrying the tree it belongs to: both its paths are repo-relative,
 # every VGS worktree has an .agents symlink and a third_party/ tree, so pasted

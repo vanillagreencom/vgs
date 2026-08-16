@@ -39,15 +39,36 @@ set -euo pipefail
 # shellcheck source=scripts/lib/vendor-drift-report.sh
 source "$(dirname -- "${BASH_SOURCE[0]}")/vendor-drift-report.sh"
 
-# Report `Only in DIR: NAME` as the path it refers to, unwrapping the shell
-# quoting GNU diff adds around DIR when it contains a space.
+# Report `Only in DIR: NAME` as the path it refers to, given the root that line
+# was matched against. Prints NOTHING when the line does not parse into that
+# root — the caller then records the raw line, which is the classifier's
+# documented "could not attribute a path" mode, and is the fail-closed answer.
+#
+# WHY THIS IS NOT A SPLIT AT THE FIRST `: `. GNU diff SHELL-QUOTES a name or a
+# directory containing a space, so `Only in 'm/foo: bar': doomed.txt` is a real
+# line — and splitting it at the first `: ` yielded `m/foo/bar': doomed.txt`, a
+# path that does not exist. An at-risk list is read by an operator deciding
+# whether to run a destructive command, so naming a file that is not the one at
+# risk is the whole of VGS-155 in one line. Unquoted is unambiguous by
+# construction: no space means no `: `, so the first one is the separator.
 vendor_drift_only_in_path() {
-  local line="$1" dir name
-  dir="${line#Only in }"
-  name="${dir#*: }"
-  dir="${dir%%: *}"
-  dir="${dir#\'}"
-  dir="${dir%\'}"
+  local line="$1" root="$2" rest dir name
+  rest="${line#Only in }"
+  if [[ "$rest" == \'* ]]; then
+    # Quoted: the directory ends at the closing quote, which `: ` follows.
+    dir="${rest%%\': *}"
+    dir="${dir#\'}"
+    name="${rest#*\': }"
+  else
+    dir="${rest%%: *}"
+    name="${rest#*: }"
+  fi
+  # The name is quoted independently of the directory.
+  name="${name#\'}"
+  name="${name%\'}"
+  # Anchored: a parse that does not land inside the root diff was given is not a
+  # path this can vouch for, so it says nothing rather than guessing.
+  [[ -n "$dir" && -n "$name" && "$dir" == "$root"* ]] || return 0
   printf '%s/%s' "$dir" "$name"
 }
 
@@ -113,7 +134,7 @@ vendor_drift_classify() {
       "Only in $mirror_rel"* | "Only in '$mirror_rel"*) ;;
       "Only in $tracked_rel"* | "Only in '$tracked_rel"*)
         tracked_only=yes
-        entry="$(vendor_drift_only_in_path "$line")"
+        entry="$(vendor_drift_only_in_path "$line" "$tracked_rel")"
         ;;
       '+'*)
         tracked_only=yes

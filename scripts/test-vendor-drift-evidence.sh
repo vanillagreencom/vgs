@@ -107,6 +107,11 @@ expect_class "file only the tracked copy has" yes \
 expect_class "file only the tracked copy has, quoted directory" yes \
   "Only in '$TRACKED_REL/sub dir': error-patterns.md" \
   "$TRACKED_REL/sub dir/error-patterns.md"
+# A directory containing `: `. Splitting at the first produced a path that does
+# not exist, in a list an operator reads before running a destructive command.
+expect_class "tracked-only file under a directory containing a colon-space" yes \
+  "Only in '$TRACKED_REL/foo: bar': doomed.txt" \
+  "$TRACKED_REL/foo: bar/doomed.txt"
 ok "tracked-only content and tracked-only files are both counted, and named"
 
 # ── the shapes that used to escape ────────────────────────────────────────
@@ -139,6 +144,8 @@ expect_class "binary difference" yes \
   "Binary files $MIRROR_REL/references/f.bin and $TRACKED_REL/references/f.bin differ" \
   "Binary files $MIRROR_REL/references/f.bin and $TRACKED_REL/references/f.bin differ"
 expect_class "a line kind that does not exist yet" yes "Some future diff remark"
+expect_class "Only in under a foreign root" yes \
+  "Only in somewhere/else: x.md" "Only in somewhere/else: x.md"
 ok "every unrecognised shape counts as content the rsync would destroy"
 
 
