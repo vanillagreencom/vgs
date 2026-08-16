@@ -41,9 +41,12 @@ quickshell/vshell/        # QML runtime
 config/vshell/            # default settings and bundled plugins
 bin/vshell                # CLI wrapper
 bin/vshell-helper         # Python helper and theme engine
+bin/vshell_niri.py        # isolated Niri/KDL config subsystem (imported, not run)
+bin/vshell-upscale        # one-shot local AI wallpaper upscaler
 backend/                  # Go backend daemon (runner/supervisor, socket, system services)
 themes/<name>/            # built-in theme packages (theme.json, colors.toml, backgrounds/, apps/)
 themes/targets/           # generated app-theme target templates
+systemd/user/vshell.service  # user service template
 docs/architecture/        # short architecture docs
 ```
 
@@ -95,10 +98,17 @@ restated here, because a partial copy reads as complete. Its exit status is
 four-valued: `0` ran and passed, `77` passed but something did not run — report
 it as "passed, N skipped", naming them, never as a bare pass — `1` failed, `2` a
 broken invocation that ran nothing.
-Smoke-mode coverage, the sandbox recipe, and the second-shell rule
-(never `qs -c vshell` or `qs -p quickshell/vshell` against a live session,
-never `pkill quickshell`) are under AGENTS.md § Never launch a second shell
-into the live session.
+
+**A green CI run does not prove the shell starts** — CI runs only the static
+half of the QML smoke. Run `scripts/validate qml` locally before finishing QML
+work: that area forces `--require-nested`, so a sandbox it cannot build fails
+instead of quietly downgrading to a parse check.
+
+The second-shell rule (never `qs -c vshell` or `qs -p quickshell/vshell`
+against a live session, never `pkill quickshell`) and its recovery are under
+AGENTS.md § Never launch a second shell into the live session. Smoke-mode
+coverage is in `scripts/qml-smoke.sh`'s own header, and the sandbox recipe is
+what that script prints when it cannot nest.
 
 For theme changes (skill-unique; not part of the canonical list):
 

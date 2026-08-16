@@ -62,7 +62,9 @@ Doc surfaces are distinct and deliberately non-overlapping: the product-facing
 set is exactly `README.md`, `packaging/README.md` (which owns per-channel
 packaging detail) and `packaging/ubuntu/README.md`. `docs/architecture/**` are
 agent reference docs, `AGENTS.md` and `project-skills/README.md` are agent
-process instruction. Do not request cross-posting between them.
+process instruction, and `AGENTS.local.md` is AGENTS.md's machine-local
+companion — untracked by design, so a PR never contains it. Do not request
+cross-posting between them.
 
 A README inside a vendored tree is not automatically vendored.
 `third_party/coderabbit-schema/README.md` and `third_party/asdcontrol/README.md`

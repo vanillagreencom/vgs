@@ -52,8 +52,9 @@ product/user-facing set is exactly `README.md`, `packaging/README.md` (which
 owns the per-channel packaging detail the architecture docs cite rather than
 repeat) and `packaging/ubuntu/README.md`. `docs/architecture/**` are agent
 reference docs; `AGENTS.md` and `project-skills/README.md` are agent process
-instruction. Do not ask for content to be mirrored between them or for
-changelog entries.
+instruction; `AGENTS.local.md` is AGENTS.md's machine-local companion,
+untracked by design, so a PR never contains it. Do not ask for content to be
+mirrored between them or for changelog entries.
 
 **Secrets live in one place.** `.env.local` is gitignored and holds every
 credential; `.env.local.example` carries the key names with empty values;

@@ -4,7 +4,7 @@
 # WHY THERE ARE TWO COPIES. The engine has to be IN the repository: CI runs the
 # predicate and the selftest from a plain checkout, which has no vstack and no
 # shared skills mirror. The sibling repos track it at `.agents/skills/`, but VGS
-# symlinks `.agents` wholesale into every worktree (AGENTS.md § Project skills),
+# symlinks `.agents` wholesale into every worktree (project-skills/README.md),
 # so a file tracked under that path reports as deleted in every worktree — git
 # cannot stat through the symlinked directory. Tracking it there would leave a
 # permanently dirty tree.
