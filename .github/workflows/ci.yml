@@ -309,8 +309,13 @@ jobs:
           # The only thing in CI that runs scripts/validate: its area selection,
           # fail-closed argument and manifest handling, and its skip channel.
           scripts/test-validate.sh
-          scripts/test-validation-inventory.sh
           scripts/test-qml-smoke.sh
+          # MUST STAY LAST: the only script here that can exit 77 (a control it
+          # could not create — no PyYAML, or a libc resolving no Unicode space).
+          # Under `bash -e` a 77 anywhere else stops the step and drops every
+          # command after it, so the step reddens while a check nobody notices
+          # never ran. Order is otherwise free: each builds its own mktemp tree.
+          scripts/test-validation-inventory.sh
 
       - name: Helper and CLI checks
         run: |
