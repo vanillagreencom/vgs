@@ -34,10 +34,9 @@ source "$repo_root/scripts/lib/vendor-drift-test.sh"
 TRACKED_REL="third_party/$ENGINE"
 MIRROR_REL=".agents/skills/$ENGINE"
 
-# What `diff -r -u` actually emits before a differing pair. Headers are
-# recognised by POSITION now, so a fixture feeding a bare `+++ ` line is not a
-# header — it is content, which is the whole point — and every fixture that
-# means "a header" has to say it the way diff does.
+# What `diff -r -u` emits before a differing pair. Headers are recognised by
+# POSITION, so a bare `+++ ` line is content — which is the point — and a
+# fixture meaning "a header" has to say it the way diff does.
 PAIR="diff -r -u -- $MIRROR_REL/references/settings.md $TRACKED_REL/references/settings.md"$'\n'"--- $MIRROR_REL/references/settings.md	2023-11-14"$'\n'"+++ $TRACKED_REL/references/settings.md	2023-11-14"
 
 class_tracked_only=""
@@ -47,10 +46,9 @@ classify() {
   result="$(vendor_drift_classify "$TRACKED_REL" "$MIRROR_REL" <<<"$1")"
   class_tracked_only="${result%%$'\n'*}"
   class_at_risk=""
-  # An `if`, not `[[ ]] && ...`: as the last statement of a function the latter
-  # returns 1 whenever the pattern does not match, which aborts the caller under
-  # errexit. That is a real trap, not a style point — it is how this helper
-  # first behaved.
+  # An `if`, not `[[ ]] && ...`: as a function's last statement the latter
+  # returns 1 on no match and aborts the caller under errexit. This helper did
+  # exactly that once; scripts/test-vendor-drift.sh pins the same trap.
   if [[ "$result" == *$'\n'* ]]; then
     class_at_risk="${result#*$'\n'}"
   fi
@@ -88,11 +86,9 @@ expect_class "mirror file header, quoted" yes \
   "$TRACKED_REL/with space.md"
 expect_class "tracked file header" no "$PAIR"
 expect_class "file only the mirror has" no "Only in $MIRROR_REL/references: retired.md"
-# GNU diff SHELL-quotes the directory when it contains a space — a different
-# quoting style from the double quotes it uses in the unified headers. Unquoted
-# anchors alone made a MIRROR-only file read as tracked-side, which withheld the
-# rsync permanently for any engine shipping such a directory and printed a
-# mirror path under a heading saying the tracked copy held it.
+# GNU diff SHELL-quotes a directory containing a space. Unquoted anchors alone
+# made a MIRROR-only file read as tracked-side, withholding the rsync
+# permanently for any engine shipping such a directory.
 expect_class "file only the mirror has, quoted directory" no \
   "Only in '$MIRROR_REL/sub dir': extra.md"
 ok "every ignore arm attributes its line to the mirror side or to structure"
@@ -107,8 +103,14 @@ expect_class "file only the tracked copy has" yes \
 expect_class "file only the tracked copy has, quoted directory" yes \
   "Only in '$TRACKED_REL/sub dir': error-patterns.md" \
   "$TRACKED_REL/sub dir/error-patterns.md"
-# A directory containing `: `. Splitting at the first produced a path that does
-# not exist, in a list an operator reads before running a destructive command.
+# A directory containing `: ` — splitting at the first produced a path that does
+# not exist.
+# A tracked-side `Only in` that does not parse must appear AS ITSELF. The parser
+# returning nothing was half the contract: the caller dropped it, leaving
+# tracked_only=yes with an EMPTY at-risk list.
+for bad in "Only in $TRACKED_REL: " "Only in $TRACKED_REL" "Only in '$TRACKED_REL/foo"; do
+  expect_class "tracked-side Only in that cannot be parsed" yes "$bad" "$bad"
+done
 expect_class "tracked-only file under a directory containing a colon-space" yes \
   "Only in '$TRACKED_REL/foo: bar': doomed.txt" \
   "$TRACKED_REL/foo: bar/doomed.txt"
@@ -147,7 +149,6 @@ expect_class "a line kind that does not exist yet" yes "Some future diff remark"
 expect_class "Only in under a foreign root" yes \
   "Only in somewhere/else: x.md" "Only in somewhere/else: x.md"
 ok "every unrecognised shape counts as content the rsync would destroy"
-
 
 # ── evidence that cannot be READ ──────────────────────────────────────────
 # Each of these resolves to undetermined with its own cause named. Wrong-cause

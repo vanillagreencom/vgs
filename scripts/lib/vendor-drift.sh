@@ -56,10 +56,15 @@ vendor_drift_only_in_path() {
   rest="${line#Only in }"
   if [[ "$rest" == \'* ]]; then
     # Quoted: the directory ends at the closing quote, which `: ` follows.
+    [[ "$rest" == *"': "* ]] || return 0
     dir="${rest%%\': *}"
     dir="${dir#\'}"
     name="${rest#*\': }"
   else
+    # The separator must EXIST before it can be split on: both expansions below
+    # return the WHOLE string when it does not, which fabricated `<root>/<root>`
+    # out of a line that had no separator at all.
+    [[ "$rest" == *': '* ]] || return 0
     dir="${rest%%: *}"
     name="${rest#*: }"
   fi
@@ -135,6 +140,7 @@ vendor_drift_classify() {
       "Only in $tracked_rel"* | "Only in '$tracked_rel"*)
         tracked_only=yes
         entry="$(vendor_drift_only_in_path "$line" "$tracked_rel")"
+        entry="${entry:-$line}"
         ;;
       '+'*)
         tracked_only=yes
