@@ -61,14 +61,11 @@ Item {
     property var customKeyboardFocus: null
     property bool backgroundInteractive: true
     property bool contentHandlesKeys: false
-    property bool fullHeightSurface: false
     property bool _primeContent: false
     property bool _contentWarm: false
     property bool _resizeActive: false
     property real _surfaceMarginLeft: 0
-    property real _surfaceMarginTop: 0
     property real _surfaceW: 0
-    property real _surfaceH: 0
     property real _surfaceBodyX: 0
     property real _surfaceBodyY: 0
     property real _surfaceBodyW: 0
@@ -88,7 +85,6 @@ Item {
     readonly property bool fluidStandaloneActive: Theme.isDirectionalEffect
     readonly property bool backgroundDismissWindowRequired: backgroundInteractive
     readonly property bool backgroundWindowRequired: backgroundDismissWindowRequired || root.overlayContent !== null
-    readonly property bool _fullHeight: fullHeightSurface
     readonly property var effectivePopoutLayer: LayerShell.fromEnv("VGS_POPOUT_LAYER", root.triggerUsesOverlayLayer ? WlrLayer.Overlay : WlrLayer.Top, {
         "allow": ["top", "overlay"],
         "invalidLayer": WlrLayer.Top,
@@ -231,9 +227,7 @@ Item {
         _surfaceBodyW = newW;
         _surfaceBodyH = newH;
         _surfaceMarginLeft = _surfaceBodyX - shadowBuffer;
-        _surfaceMarginTop = _surfaceBodyY - shadowBuffer;
         _surfaceW = _surfaceBodyW + shadowBuffer * 2;
-        _surfaceH = _surfaceBodyH + shadowBuffer * 2;
         if (changed && backgroundWindow.visible) {
             _bgCommitWindow = true;
             bgCommitSettleTimer.restart();
@@ -251,30 +245,16 @@ Item {
             contentWindow.update();
     }
 
+    // The layer surface spans the output top-to-bottom at all times, so this is
+    // the ONLY geometry it ever needs: the body rect it records drives the left
+    // margin, the surface width and the background window's dismiss carve-out,
+    // never the surface height. Height changes stay inside the surface, which is
+    // what makes a resize a pure in-surface animation instead of a per-frame
+    // wl_surface geometry commit (the visible flash — VGS-133).
     function _setSettledSurfaceGeometry() {
         if (shouldBeVisible) {
             _setSurfaceGeometry(alignedX, alignedY, alignedWidth, alignedHeight);
         }
-    }
-
-    function _setAnimatedSurfaceEnvelope() {
-        if (!shouldBeVisible)
-            return;
-        if (_fullHeight) {
-            _setSettledSurfaceGeometry();
-            return;
-        }
-
-        const currentY = renderedAlignedY;
-        const currentBottom = renderedAlignedY + renderedAlignedHeight;
-        const targetY = alignedY;
-        const targetBottom = alignedY + alignedHeight;
-        const existingY = _surfaceBodyH > 0 ? _surfaceBodyY : currentY;
-        const existingBottom = _surfaceBodyH > 0 ? _surfaceBodyY + _surfaceBodyH : currentBottom;
-        const envelopeY = Math.min(currentY, targetY, existingY);
-        const envelopeBottom = Math.max(currentBottom, targetBottom, existingBottom);
-        _setSurfaceGeometry(alignedX, envelopeY, alignedWidth, Math.max(0, envelopeBottom - envelopeY));
-        surfaceSettleTimer.restart();
     }
 
     function updateSurfacePosition() {
@@ -282,20 +262,17 @@ Item {
     }
 
     onAlignedXChanged: {
-        if (shouldBeVisible)
-            _setAnimatedSurfaceEnvelope();
+        _setSettledSurfaceGeometry();
         _kickBlurCommit();
     }
 
     onAlignedYChanged: {
-        if (shouldBeVisible)
-            _setAnimatedSurfaceEnvelope();
+        _setSettledSurfaceGeometry();
         _kickBlurCommit();
     }
 
     onAlignedWidthChanged: {
-        if (shouldBeVisible)
-            _setAnimatedSurfaceEnvelope();
+        _setSettledSurfaceGeometry();
         _kickBlurCommit();
     }
 
@@ -353,18 +330,15 @@ Item {
 
         animationsEnabled = true;
         shouldBeVisible = true;
-        // The surface size committed above is a snapshot of alignedHeight taken
-        // mid-open, and onAlignedHeightChanged drops every update that arrives
-        // while shouldBeVisible is still false — so any layout the primed content
+        // The body rect committed above is a snapshot taken mid-open, and the
+        // aligned-geometry handlers drop every update that arrives while
+        // shouldBeVisible is still false — so any layout the primed content
         // settles between that commit and here (wrapped text metrics, a Column
         // repositioning, a Repeater filling in from data that landed with the
-        // open) never reaches the wl_surface. The popout then renders taller than
-        // its surface and the bottom is cut off until the next open. Re-commit
-        // once this tick has drained; the envelope also covers a late shrink.
-        Qt.callLater(() => {
-            if (root.shouldBeVisible)
-                root._setAnimatedSurfaceEnvelope();
-        });
+        // open) leaves the background window's dismiss carve-out on the stale
+        // rect, and clicks in the newly-grown area dismiss the popout. Re-commit
+        // once this tick has drained.
+        Qt.callLater(() => root._setSettledSurfaceGeometry());
         if (screen) {
             PopoutManager.showPopout(popoutHandle);
             opened();
@@ -434,13 +408,13 @@ Item {
     // NOT a live comparison. A continuous `alignedHeight >= renderedAlignedHeight`
     // stays true for a whole grow but flips false→true at the *tail* of a shrink
     // (when renderedAlignedHeight reaches the target). That mid-flight flip
-    // re-evaluated the animation `duration`/`surfaceSettleTimer` bindings below,
-    // and changing a running NumberAnimation's duration recomputes its progress
-    // (currentTime / newDuration) — snapping the height back up for a frame. That
-    // was the shrink-only "flash" (grow never flips, so it never flashed).
+    // re-evaluated the animation `duration` bindings below, and changing a running
+    // NumberAnimation's duration recomputes its progress (currentTime /
+    // newDuration) — snapping the height back up for a frame. That was the
+    // shrink-only "flash" (grow never flips, so it never flashed).
     property bool renderedGeometryGrowing: true
     // Snap rendered geometry while the entrance morph runs so it doesn't ride a second animation.
-    readonly property bool _settlingToOpen: _fullHeight && shouldBeVisible && morphAnim.running
+    readonly property bool _settlingToOpen: shouldBeVisible && morphAnim.running
 
     Behavior on renderedAlignedY {
         enabled: root.animationsEnabled && contentWindow.visible && root.shouldBeVisible && !root._settlingToOpen
@@ -469,8 +443,7 @@ Item {
         // still holds the pre-animation value here, so this captures new-target vs
         // current-rendered once and holds it stable for the whole animation.
         renderedGeometryGrowing = alignedHeight >= renderedAlignedHeight;
-        if (shouldBeVisible)
-            _setAnimatedSurfaceEnvelope();
+        _setSettledSurfaceGeometry();
         _kickBlurCommit();
         if (!suspendShadowWhileResizing || !shouldBeVisible)
             return;
@@ -494,13 +467,6 @@ Item {
         interval: 80
         repeat: false
         onTriggered: root._resizeActive = false
-    }
-
-    Timer {
-        id: surfaceSettleTimer
-        interval: Math.max(0, Theme.variantDuration(root.animationDuration, root.renderedGeometryGrowing) + 32)
-        repeat: false
-        onTriggered: root._setSettledSurfaceGeometry()
     }
 
     readonly property real alignedX: Theme.snap((() => {
@@ -671,7 +637,6 @@ Item {
             // starts the dismiss countdown. Allow for that longer approach.
             graceInterval: root.zoneAnchored ? 600 : 150
             globalOffsetX: root._surfaceMarginLeft
-            globalOffsetY: root._fullHeight ? 0 : root._surfaceMarginTop
             onDismissRequested: root.closeFromHoverDismiss()
         }
 
@@ -699,19 +664,21 @@ Item {
         WlrLayershell.exclusiveZone: -1
         WlrLayershell.keyboardFocus: KeyboardFocus.keyboardFocus(shouldBeVisible, customKeyboardFocus)
 
+        // Anchored top AND bottom, so the compositor sizes the surface to the
+        // output height and content-height changes never reach it. implicitHeight
+        // is ignored while both edges are anchored; the popup body is positioned
+        // inside the surface by contentContainer below.
         anchors {
             left: true
             top: true
-            bottom: root._fullHeight
+            bottom: true
         }
 
         WlrLayershell.margins {
             left: root._surfaceMarginLeft
-            top: root._fullHeight ? 0 : root._surfaceMarginTop
         }
 
         implicitWidth: root._surfaceW
-        implicitHeight: root._fullHeight ? 0 : root._surfaceH
 
         mask: contentInputMask
 
@@ -732,7 +699,9 @@ Item {
         Item {
             id: contentContainer
             x: shadowBuffer + root.alignedX - root._surfaceBodyX
-            y: root._fullHeight ? root.renderedAlignedY : shadowBuffer + root.renderedAlignedY - root._surfaceBodyY
+            // The surface starts at the top of the output, so surface-local y is
+            // the screen y.
+            y: root.renderedAlignedY
             width: root.alignedWidth
             height: root.renderedAlignedHeight
 
@@ -882,7 +851,7 @@ Item {
                         direction: root.effectiveShadowDirection
                         fallbackOffset: root.shadowFallbackOffset
                         targetRadius: Theme.cornerRadius
-                        targetColor: Theme.popupSurfaceColor(Theme.surfaceContainer, !root._fullHeight)
+                        targetColor: Theme.popupSurfaceColor(Theme.surfaceContainer)
                         borderColor: "transparent"
                         borderWidth: 0
                         shadowOpacity: Theme.popupShadowOpacityScale
@@ -894,7 +863,6 @@ Item {
                         width: rollOutAdjuster.baseWidth
                         height: rollOutAdjuster.baseHeight
                         radius: Theme.cornerRadius
-                        blurAvailable: !root._fullHeight
 
                         // publishedOpacity tracks the content animation so consumers
                         // (WindowBlur, ElevationShadow, and chrome) see interpolated values.

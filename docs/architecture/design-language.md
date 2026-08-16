@@ -272,6 +272,33 @@ Reveal delays are owned by the caller and are **not** currently uniform —
 the convergence and is left alone deliberately: changing it is a behaviour
 change, not a design-language one.
 
+## Popout surfaces are screen-tall (and frosted)
+
+Every dropdown's layer surface is anchored **top and bottom**, so the
+compositor sizes it to the output and it never resizes; the popup body is
+positioned and animated inside it (`Widgets/VgsPopoutStandalone.qml`,
+`contentContainer`). That is the fix for the flash: a surface whose height tracks
+its content re-commits wl_surface geometry on every frame of a resize. Measured
+before VGS-133, one dropdown took five distinct surface heights across four
+in-place height changes; after, one. Never bind a popout window's
+`implicitHeight` to its content, and add no per-popout opt-out — two geometry
+paths is how the two behaviours drifted apart.
+
+- **Frosted survives it.** Hyprland's layer blur applies to what a surface
+  *paints*, not the rectangle it occupies. Measured on Hyprland 0.56.2 over a
+  noise wallpaper: with a screen-tall dropdown open, detail outside the popup body
+  was unchanged to within 0.0%, where blurring the whole frame drops it 98%. It
+  held with `ignore_alpha` forced to 0.
+- **The blur allowlist is by namespace**, in `bin/vshell-helper`
+  (`_hyprland_blur_script`); every popout namespace belongs there. What stays out
+  is anything that *paints* across the whole output: the wallpaper layer, overview
+  overlays, and the popouts' `:background` dismiss windows.
+- **`scripts/qml-smoke.sh` asserts it** (`popout_check`). Its degenerate-surface
+  heuristic is screen-width **and** screen-height together; screen height alone is
+  now correct, so do not split that test.
+- **Input and dismissal track the body rect, not the surface** — both the input
+  region and the background window's dismiss carve-out do.
+
 ## In-surface pager (settings behind a page, not below the content)
 
 A popout that grows a settings section downward pushes the thing you opened it
@@ -338,6 +365,7 @@ Worked example: `config/vshell/plugins/aiUsage/AiUsageWidget.qml` (`pager`,
 | Rounding / spacing / motion scales | `Common/Appearance.qml` |
 | Buttons, inputs, toggles, chips, tabs | `Widgets/Vgs*.qml` |
 | Tooltips | `Widgets/VgsTooltip.qml`, `Widgets/VgsInlineTooltip.qml`, shared body in `Widgets/Tooltip/` |
+| Popout surface geometry and frost | `Widgets/VgsPopoutStandalone.qml`, blur allowlist in `bin/vshell-helper` |
 | Settings shell + nav | `Modals/Settings/*` |
 | Shared launcher panels | `Widgets/Launcher/*` |
 | niri overview search | `Modules/WorkspaceOverlays/OverviewSearch/*` |

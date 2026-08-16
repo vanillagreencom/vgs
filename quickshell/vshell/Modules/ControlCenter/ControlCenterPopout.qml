@@ -12,7 +12,6 @@ VgsPopout {
     id: root
 
     layerNamespace: "vshell:control-center"
-    fullHeightSurface: true
 
     property string expandedSection: ""
     property var triggerScreen: null

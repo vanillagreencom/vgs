@@ -717,8 +717,6 @@ def test_hyprland_blur_script():
     for namespace in (
         "slideout",
         "vshell:background",
-        "control-center",
-        "notification-center-popout",
         "launcher-context-menu",
         "clipboard-context-menu",
         "dock-context-menu",
@@ -727,10 +725,10 @@ def test_hyprland_blur_script():
         "tray-overflow-menu",
     ):
         if namespace in script:
-            raise AssertionError("Hyprland blur namespace rule should exclude full-screen/screen-height surfaces")
-    for namespace in ("vgs-menu", "modal", "popout", "notification-popup"):
+            raise AssertionError(f"Hyprland blur namespace rule must not list {namespace}")
+    for namespace in ("vgs-menu", "modal", "popout", "notification-popup", "control-center", "notification-center-popout"):
         if namespace not in script:
-            raise AssertionError("Hyprland blur namespace rule should include content-sized surfaces")
+            raise AssertionError("Hyprland blur namespace rule should include every dropdown and modal surface")
     if "special = false" not in script:
         raise AssertionError("Hyprland blur script should not amplify special-workspace scratchpad blur")
     if "ignore_alpha = 0.034" not in script:
@@ -802,8 +800,10 @@ exit 0
         script = record_path.read_text()
         if "vgs-menu" not in script:
             raise AssertionError("blur CLI should route content-sized namespaces into hyprctl eval")
-        if "launcher-context-menu" in script or "control-center" in script:
-            raise AssertionError("blur CLI should not route full-screen namespaces into hyprctl eval")
+        if "control-center" not in script:
+            raise AssertionError("blur CLI should route screen-tall popouts into hyprctl eval")
+        if "launcher-context-menu" in script or "vshell:background" in script:
+            raise AssertionError("blur CLI must not route the wallpaper layer or context menus into hyprctl eval")
 
 
 def test_generated_theme_consumer_wiring():

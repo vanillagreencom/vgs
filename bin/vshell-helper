@@ -11505,11 +11505,8 @@ def _hyprland_blur_script(enabled: bool, strength: float, glass: bool, opacity: 
     opacity = _clamp_float(opacity, 0.08, 1.0)
     light = mode == "light"
     # Hyprland's layer blur uses global decoration.blur parameters, so the shell
-    # slider maps to a conservative global blur profile while targeting only
-    # content-sized VGS layer surfaces. Full-screen and screen-height shells must
-    # stay out of the blur rule because Hyprland blurs the whole layer surface,
-    # not the smaller QML WindowBlur rect inside it.
-    #
+    # slider maps to a conservative global blur profile, targeted by namespace.
+    # Which namespaces belong here: docs/architecture/design-language.md.
     # Strength only scales how much the backdrop is diffused; surface opacity is
     # owned by the shell's opacity slider / glass material and must not be
     # modulated here. Glass follows Apple's material recipe shape: strong
@@ -11546,6 +11543,7 @@ def _hyprland_blur_script(enabled: bool, strength: float, glass: bool, opacity: 
         "clipboard-popout",
         "color-picker",
         "confirm-modal",
+        "control-center",
         "dash",
         "filebrowser",
         "input-modal",
@@ -11557,6 +11555,7 @@ def _hyprland_blur_script(enabled: bool, strength: float, glass: bool, opacity: 
         "network-info-wired",
         "network-usage-popout",
         "notification-center-modal",
+        "notification-center-popout",
         "notification-popup",
         "polkit-auth-surface",
         "popout",

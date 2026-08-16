@@ -378,7 +378,9 @@ for monitor in data.values():
         layers.extend(level)
     # The screen, inferred from the largest surface on it - the same heuristic
     # scripts/smoke-surfaces.sh uses, and for the same reason: a popout that
-    # covers the whole screen is a layout failure, not an open popout.
+    # covers the whole screen is a layout failure, not an open popout. Screen
+    # HEIGHT alone is normal since VGS-133 (popout surfaces are anchored top and
+    # bottom), so the test below is an `and`; popout_check asserts on the rest.
     screen_w = max((int(layer.get("w") or 0) for layer in layers), default=0)
     screen_h = max((int(layer.get("h") or 0) for layer in layers), default=0)
     for layer in layers:
@@ -387,7 +389,7 @@ for monitor in data.values():
         found = True
         w = int(layer.get("w") or 0)
         h = int(layer.get("h") or 0)
-        print("%dx%d" % (w, h))
+        print("%dx%d %dx%d" % (w, h, screen_w, screen_h))
         if w <= 0 or h <= 0:
             raise SystemExit(2)
         if screen_w > 0 and screen_h > 0 and w >= screen_w and h >= screen_h:
@@ -424,10 +426,10 @@ wait_layer_state() {
 # is not evidence that it did. That was measured rather than assumed: a fixture
 # plugin was planted with three different content shapes (a bare `Item`, a
 # `Column`, a `Rectangle`) at two declared heights (140px and 340px), and all
-# six combinations settled to an identical 573px surface. Reading the height
-# earlier gives a smaller number, but that is a transient during the resize, not
-# the content's size. Any assertion of the form "the surface is content-sized"
-# would therefore be measuring the popout chrome, not the content.
+# six combinations settled to an identical 573px surface. Since VGS-133 the
+# surface is the output height for every popout, so "the surface is
+# content-sized" would now measure the OUTPUT and before that it measured the
+# popout chrome. Either way, not the content.
 #
 # Two things DO witness the content, and both are already load-bearing here:
 #
@@ -576,7 +578,7 @@ wait_widget_registered() {
 }
 
 popout_check() {
-  local reply state=0
+  local reply state=0 geometry surface_size screen_size
 
   wait_widget_registered "$popout_plugin" || {
     fail "the sandbox bar never registered '$popout_plugin', so its popout could not be opened - the seeded settings.default.json is supposed to host it"
@@ -606,6 +608,17 @@ popout_check() {
     else
       fail "'$popout_plugin' popout never produced a '$popout_namespace' surface"
     fi
+    return 1
+  fi
+
+  # VGS-133: the surface must span the OUTPUT height, not the content's, or a
+  # resize re-commits wl_surface geometry every frame - the flash. Nothing else
+  # here notices: a content-sized surface opens and closes the same way.
+  geometry="$(sandbox_layer_state "$popout_namespace")" || true
+  surface_size="${geometry%% *}"
+  screen_size="${geometry##* }"
+  if [[ -z "$geometry" || "${surface_size#*x}" != "${screen_size#*x}" ]]; then
+    fail "'$popout_plugin' popout surface is '${surface_size:-<unknown>}' on a '${screen_size:-<unknown>}' output - it must span the output height (VGS-133)"
     return 1
   fi
 

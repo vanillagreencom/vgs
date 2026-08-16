@@ -7,7 +7,6 @@ VgsPopout {
     id: root
 
     layerNamespace: "vshell:notification-center-popout"
-    fullHeightSurface: true
 
     property bool notificationHistoryVisible: false
     property var triggerScreen: null
