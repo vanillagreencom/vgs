@@ -218,6 +218,7 @@ go        | scripts/check-backend-inventory-tests.py
 -         | scripts/test-format-lint.sh
 -         | scripts/test-pill-hover-safety.js
 qml       | scripts/test-launcher-hover-latch.js
+qml       | scripts/test-popout-dismiss-envelope.js
 helper    | python3 -m py_compile bin/vshell-helper
 helper    | bash -n bin/vshell
 always    | git diff --check

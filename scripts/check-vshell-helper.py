@@ -9,6 +9,7 @@ import io
 import json
 import math
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -712,25 +713,75 @@ def test_hyprland_layout_payload():
     assert_equal(meta["resizeOnBorder"], True, "legacy resize_on_border false should be upgraded")
 
 
+# THE ALLOWLIST IS A REGEX, SO SUBSTRING CHECKS AGAINST THE SCRIPT ARE VACUOUS.
+# The generated Lua carries the whole allowlist as one grouped, $-anchored
+# alternation, so a "(" always sits between "vshell:" and the first entry and no
+# `vshell:<name>` literal can ever appear in the script — whatever is listed.
+# Proven by mutation: adding `blurwallpaper` (the real wallpaper layer), adding
+# `workspace-overview`, and swapping `control-center` for the real, distinct
+# `control-center-widget-library` all left the old substring assertions green.
+# Assert what the pattern MEANS instead: exact membership, then a match table.
+BLUR_ALLOWLIST = (
+    "battery bluetooth-pairing clipboard clipboard-popout color-picker confirm-modal "
+    "control-center dash filebrowser input-modal keybinds layout modal mux network-info "
+    "network-info-wired network-usage-popout notification-center-modal "
+    "notification-center-popout notification-popup polkit-auth-surface popout power-menu "
+    "power-profiles process-list-popout switch-user-modal system-update toast tooltip "
+    "vgs-menu vpn wifi-password wifi-qrcode"
+).split()
+# Every probe below is a namespace a live surface actually declares (grep
+# WlrLayershell.namespace / layerNamespace). A probe no surface declares cannot
+# witness anything when it fails to match.
+BLUR_MUST_MATCH = (
+    "vshell:control-center vshell:notification-center-popout vshell:dash "
+    "vshell:plugins:aiUsage vshell:tooltip"
+).split()
+# Whole-output painters; backdrop-less-by-design surfaces (they pass
+# blurAvailable: false, see design-language.md § Tooltips); a prefix collision;
+# bar chrome; and two `:background` dismiss windows, which the $ anchor and the
+# [^:]+ plugins arm are what keep out.
+BLUR_MUST_NOT_MATCH = (
+    "vshell:blurwallpaper vshell:workspace-overview vshell:screensaver vshell:fade-to-lock "
+    "vshell:launcher-context-menu vshell:notification-context-menu vshell:tray-overflow-menu "
+    "vshell:osd vshell:slideout vshell:control-center-widget-library vshell:bar "
+    "vshell:control-center:background vshell:plugins:aiUsage:background"
+).split()
+
+
+def assert_blur_namespace_rule(script, source):
+    # Anchored to the layer rule's own `match` stanza so a bare `namespace =`
+    # elsewhere in the payload cannot satisfy it, but tolerant WITHIN the stanza:
+    # whitespace is free and the stanza may carry further keys, so reformatting
+    # the emitted Lua or adding a match key does not break this. What it does
+    # still require is that the stanza exist and appear once.
+    patterns = re.findall(r'match\s*=\s*\{\s*namespace\s*=\s*"([^"]*)"', script)
+    if len(patterns) != 1:
+        raise AssertionError(f"{source}: expected one layer-rule match stanza, found {len(patterns)}")
+    pattern = patterns[0]
+    members = re.search(r"vshell:\(([^)]+)\)", pattern)
+    if not members:
+        raise AssertionError(f"{source}: could not read the allowlist out of {pattern!r}")
+    assert_equal(sorted(members.group(1).split("|")), sorted(BLUR_ALLOWLIST),
+                 f"{source}: blur allowlist membership")
+    # .search, not .fullmatch: the pattern's own ^ and $ have to do the work, so
+    # dropping either anchor (or loosening the plugins arm to .+) fails here.
+    rule = re.compile(pattern)
+    for namespace in BLUR_MUST_MATCH:
+        if not rule.search(namespace):
+            raise AssertionError(f"{source}: {namespace} must be blurred, but the rule misses it")
+    for namespace in BLUR_MUST_NOT_MATCH:
+        if rule.search(namespace):
+            raise AssertionError(
+                f"{source}: the rule matches {namespace}, which must not be blurred. A namespace "
+                "belongs in blurred_namespaces only when its whole surface rectangle is an "
+                "acceptable per-frame live-blur region — docs/architecture/design-language.md "
+                "§ Popout surfaces are screen-tall (and frosted)."
+            )
+
+
 def test_hyprland_blur_script():
     script = helper._hyprland_blur_script(True, 1.5, True, 0.01)
-    for namespace in (
-        "slideout",
-        "vshell:background",
-        "control-center",
-        "notification-center-popout",
-        "launcher-context-menu",
-        "clipboard-context-menu",
-        "dock-context-menu",
-        "dnd-duration-menu",
-        "tray-menu-window",
-        "tray-overflow-menu",
-    ):
-        if namespace in script:
-            raise AssertionError("Hyprland blur namespace rule should exclude full-screen/screen-height surfaces")
-    for namespace in ("vgs-menu", "modal", "popout", "notification-popup"):
-        if namespace not in script:
-            raise AssertionError("Hyprland blur namespace rule should include content-sized surfaces")
+    assert_blur_namespace_rule(script, "generated blur script")
     if "special = false" not in script:
         raise AssertionError("Hyprland blur script should not amplify special-workspace scratchpad blur")
     if "ignore_alpha = 0.034" not in script:
@@ -799,11 +850,9 @@ exit 0
         assert_equal(payload["strength"], 1.0, "blur CLI strength clamp")
         assert_equal(payload["opacity"], 0.08, "blur CLI opacity clamp")
 
-        script = record_path.read_text()
-        if "vgs-menu" not in script:
-            raise AssertionError("blur CLI should route content-sized namespaces into hyprctl eval")
-        if "launcher-context-menu" in script or "control-center" in script:
-            raise AssertionError("blur CLI should not route full-screen namespaces into hyprctl eval")
+        # Same table as the generator's own test: the CLI is the only path that
+        # reaches hyprctl, so the rule it ships has to be the rule we checked.
+        assert_blur_namespace_rule(record_path.read_text(), "blur CLI hyprctl eval payload")
 
 
 def test_generated_theme_consumer_wiring():

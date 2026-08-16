@@ -272,6 +272,83 @@ Reveal delays are owned by the caller and are **not** currently uniform —
 the convergence and is left alone deliberately: changing it is a behaviour
 change, not a design-language one.
 
+## Popout surfaces are screen-tall (and frosted)
+
+Every dropdown's layer surface is anchored **top and bottom**, so the compositor
+sizes its HEIGHT to the output and a content resize never reaches the
+compositor; the popup body is positioned and animated inside it
+(`Widgets/VgsPopoutStandalone.qml`, `contentContainer`). Only the height axis is
+pinned — `onAlignedWidthChanged` still commits `implicitWidth` and the left
+margin, harmless only because no popout animates its width.
+
+That is the fix for the **resize** flash specifically: a surface whose height
+tracks its content re-commits wl_surface geometry on every frame of a resize.
+Measured before VGS-133, one dropdown took five distinct surface heights across
+four in-place height changes; after, one. (`VgsPopoutStandalone.qml` records two
+other flashes this does not touch: a shrink whose running animation has its
+duration re-evaluated mid-flight, and an entrance overshoot that bounces before
+settling.) Never bind a popout window's `implicitHeight` to its content, and add
+no per-popout opt-out — two geometry paths is how the two behaviours drifted
+apart. Collapsing to one path also made the entrance-morph geometry snap
+(`_settlingToOpen`) apply to every popout rather than the two that used to opt
+in; that is intended, not an oversight to re-narrow.
+
+Input and dismissal track the body rect, not the surface — the content window's
+input region and the background window's dismiss carve-out both do.
+`scripts/qml-smoke.sh` (`popout_check`) asserts the height; its degenerate-surface
+heuristic is screen-width **and** screen-height together, since screen height
+alone is now correct, so do not split that test.
+
+### Frost survives it, but not for the reason the pixels suggest
+
+The blur PASS is not clipped to the painted body. In Hyprland 0.56.2,
+`LayerSurface.cpp::onCommit` damages the whole `geomFixed` on every commit, and
+`Pass.cpp` builds the blur region from the bounding boxes of live-blur elements
+intersected with damage and expanded by the blur radius. What clips the RESULT is
+`ignore_alpha`, which `OpenGL.cpp::renderTextureWithBlurInternal` turns into a
+`DISCARD_ALPHA` stencil discarding the already-blurred texture wherever the
+surface is transparent. A screen-tall dropdown therefore blurs its whole column
+and then throws most of it away.
+
+The pixels agree: measured over a noise wallpaper, detail outside the popup body
+was unchanged to within 0.0% where blurring the same frame end to end drops it
+98%, and it held with `ignore_alpha` forced to 0. The result is confined; the
+cost is not.
+
+So the allowlist criterion is about AREA, not paint: a namespace belongs in
+`blurred_namespaces` (`bin/vshell-helper::_hyprland_blur_script`) when its whole
+surface rectangle is an acceptable per-frame live-blur region. Three families
+stay out, and only the first is about size:
+
+- **Whole-output painters** — the wallpaper layer (`vshell:blurwallpaper`),
+  overview overlays (`vshell:workspace-overview`), `vshell:screensaver`.
+- **The popouts' own `:background` dismiss windows** — structurally unmatchable
+  rather than merely unlisted: the pattern is `$`-anchored, so
+  `vshell:control-center:background` cannot match, and the plugins arm is
+  `[^:]+` for the same reason.
+- **Backdrop-less by design** — context and tray menus, `VgsOSD`, `VgsSlideout`.
+  They pass `blurAvailable: false` and have no backdrop to blur (§ Tooltips
+  above). Adding them would restyle surfaces nobody asked to change.
+
+`scripts/check-vshell-helper.py::test_hyprland_blur_script` enforces this —
+exact allowlist membership plus a match/no-match table over namespaces real
+surfaces declare — so the list and this section cannot drift apart quietly.
+
+Two facts a reader cannot see from the QML:
+
+- The rule emits `xray = false`, which makes `Renderer.cpp` take the per-frame
+  LIVE dual-kawase path instead of the precomputed `m_blurFB`.
+- `BlurService.backgroundEffectEnabled` is false whenever the Hyprland layer
+  backend is present, so `WindowBlur`'s tight `blurX`/`blurY`/`blurWidth`/
+  `blurHeight` region never bounds cost there; the layer rule does all of it.
+
+Cost of going screen-tall, measured on this workstation (Ryzen 9 9950X, RTX 5090,
+6016x3384 + 5120x2880 at scale 2, Hyprland 0.56.2): per-commit damage for a
+formerly content-sized dropdown grew 6.70x (454x241 -> 454x1610) while opening and
+closing, with zero steady-state cost and no throughput regression (1038 vs 1043
+commits/s). That headroom is hardware-specific; re-measure before assuming it on
+weaker hardware.
+
 ## In-surface pager (settings behind a page, not below the content)
 
 A popout that grows a settings section downward pushes the thing you opened it
@@ -338,6 +415,7 @@ Worked example: `config/vshell/plugins/aiUsage/AiUsageWidget.qml` (`pager`,
 | Rounding / spacing / motion scales | `Common/Appearance.qml` |
 | Buttons, inputs, toggles, chips, tabs | `Widgets/Vgs*.qml` |
 | Tooltips | `Widgets/VgsTooltip.qml`, `Widgets/VgsInlineTooltip.qml`, shared body in `Widgets/Tooltip/` |
+| Popout surface geometry and frost | `Widgets/VgsPopoutStandalone.qml`, blur allowlist in `bin/vshell-helper` |
 | Settings shell + nav | `Modals/Settings/*` |
 | Shared launcher panels | `Widgets/Launcher/*` |
 | niri overview search | `Modules/WorkspaceOverlays/OverviewSearch/*` |

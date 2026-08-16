@@ -234,7 +234,7 @@ CEILINGS: dict[str, int] = {
     ".github/instructions/vendored-nvim.instructions.md": 600,
     "docs/architecture/backend-daemon.md": 7_800,  # adopted at 7,087 B
     "docs/architecture/cloud-sync.md": 15_400,  # adopted at 13,975 B
-    "docs/architecture/design-language.md": 19_700,  # adopted at 17,886 B
+    "docs/architecture/design-language.md": 24_900,  # adopted at 17,886 B; 22,565 after VGS-133
     "docs/architecture/display-brightness.md": 7_600,  # adopted at 6,852 B
     "docs/architecture/greeter-auto-login-keyring.md": 3_500,  # adopted at 3,151 B
     "docs/architecture/idle-lock-screensaver.md": 20_300,  # adopted at 18,453 B; 18,569 after VGS-124

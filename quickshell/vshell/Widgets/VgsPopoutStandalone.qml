@@ -61,14 +61,11 @@ Item {
     property var customKeyboardFocus: null
     property bool backgroundInteractive: true
     property bool contentHandlesKeys: false
-    property bool fullHeightSurface: false
     property bool _primeContent: false
     property bool _contentWarm: false
     property bool _resizeActive: false
     property real _surfaceMarginLeft: 0
-    property real _surfaceMarginTop: 0
     property real _surfaceW: 0
-    property real _surfaceH: 0
     property real _surfaceBodyX: 0
     property real _surfaceBodyY: 0
     property real _surfaceBodyW: 0
@@ -88,7 +85,6 @@ Item {
     readonly property bool fluidStandaloneActive: Theme.isDirectionalEffect
     readonly property bool backgroundDismissWindowRequired: backgroundInteractive
     readonly property bool backgroundWindowRequired: backgroundDismissWindowRequired || root.overlayContent !== null
-    readonly property bool _fullHeight: fullHeightSurface
     readonly property var effectivePopoutLayer: LayerShell.fromEnv("VGS_POPOUT_LAYER", root.triggerUsesOverlayLayer ? WlrLayer.Overlay : WlrLayer.Top, {
         "allow": ["top", "overlay"],
         "invalidLayer": WlrLayer.Top,
@@ -207,11 +203,13 @@ Item {
         setBarContext(pos, bottomGap);
     }
 
-    // Holds backgroundWindow.updatesEnabled true while the surface body is
-    // changing so the contentHoleRect mask carve-out tracks the popup body —
-    // otherwise clicks in newly-grown areas hit the bg window and dismiss.
-    // Debounced off ~250ms after the last change so a stable popup doesn't
-    // keep the bg window in active-update mode.
+    // Holds backgroundWindow.updatesEnabled true around a geometry change so
+    // the mask actually commits to the compositor. The carve-out itself is NOT
+    // derived from the rect this records — it comes from `bodyRectX/Y/W/H`,
+    // the geometry the body is DRAWN at — so this only has to cover the target
+    // change; `bodyRectAnimating` covers the frames in between. Debounced off
+    // ~250ms after the last change so a stable popup does not keep the bg
+    // window in active-update mode.
     property bool _bgCommitWindow: false
 
     Timer {
@@ -231,9 +229,7 @@ Item {
         _surfaceBodyW = newW;
         _surfaceBodyH = newH;
         _surfaceMarginLeft = _surfaceBodyX - shadowBuffer;
-        _surfaceMarginTop = _surfaceBodyY - shadowBuffer;
         _surfaceW = _surfaceBodyW + shadowBuffer * 2;
-        _surfaceH = _surfaceBodyH + shadowBuffer * 2;
         if (changed && backgroundWindow.visible) {
             _bgCommitWindow = true;
             bgCommitSettleTimer.restart();
@@ -251,51 +247,43 @@ Item {
             contentWindow.update();
     }
 
+    // The layer surface spans the output top-to-bottom at all times, so this is
+    // the ONLY geometry it ever needs: the body rect it records drives the left
+    // margin and the surface width, never the surface height. Height changes
+    // stay inside the surface, which is what makes a resize a pure in-surface
+    // animation instead of a per-frame wl_surface geometry commit (the visible
+    // flash — VGS-133).
+    //
+    // It does NOT feed the dismiss carve-out. That is the whole reason every
+    // "some settle path collapses the carve-out early" report below is closed by
+    // construction rather than per-path: the carve-out binds to `bodyRectX/Y/W/H`,
+    // the geometry the body is DRAWN at, so a settle call recording the target
+    // here cannot move it (see `bodyRectH` and the note above it).
     function _setSettledSurfaceGeometry() {
         if (shouldBeVisible) {
             _setSurfaceGeometry(alignedX, alignedY, alignedWidth, alignedHeight);
         }
     }
 
-    function _setAnimatedSurfaceEnvelope() {
-        if (!shouldBeVisible)
-            return;
-        if (_fullHeight) {
-            _setSettledSurfaceGeometry();
-            return;
-        }
-
-        const currentY = renderedAlignedY;
-        const currentBottom = renderedAlignedY + renderedAlignedHeight;
-        const targetY = alignedY;
-        const targetBottom = alignedY + alignedHeight;
-        const existingY = _surfaceBodyH > 0 ? _surfaceBodyY : currentY;
-        const existingBottom = _surfaceBodyH > 0 ? _surfaceBodyY + _surfaceBodyH : currentBottom;
-        const envelopeY = Math.min(currentY, targetY, existingY);
-        const envelopeBottom = Math.max(currentBottom, targetBottom, existingBottom);
-        _setSurfaceGeometry(alignedX, envelopeY, alignedWidth, Math.max(0, envelopeBottom - envelopeY));
-        surfaceSettleTimer.restart();
-    }
-
+    // Public: repositioning an already-open popout. Both VGSIPC and
+    // PopoutManager assign `currentTabIndex` on a visible Dash and then call
+    // this, so it lands mid-animation routinely — harmless, per the note above.
     function updateSurfacePosition() {
         _setSettledSurfaceGeometry();
     }
 
     onAlignedXChanged: {
-        if (shouldBeVisible)
-            _setAnimatedSurfaceEnvelope();
+        _setSettledSurfaceGeometry();
         _kickBlurCommit();
     }
 
     onAlignedYChanged: {
-        if (shouldBeVisible)
-            _setAnimatedSurfaceEnvelope();
+        _setSettledSurfaceGeometry();
         _kickBlurCommit();
     }
 
     onAlignedWidthChanged: {
-        if (shouldBeVisible)
-            _setAnimatedSurfaceEnvelope();
+        _setSettledSurfaceGeometry();
         _kickBlurCommit();
     }
 
@@ -338,33 +326,44 @@ Item {
             Qt.callLater(() => {
                 if (!root.shouldBeVisible)
                     return;
-                if (root.backgroundWindowRequired)
-                    backgroundWindow.visible = true;
+                backgroundWindow.visible = true;
                 contentWindow.visible = true;
                 popoutBlur.kick();
                 _bgCommitWindow = true;
                 bgCommitSettleTimer.restart();
             });
         } else {
-            if (backgroundWindowRequired)
-                backgroundWindow.visible = true;
+            // ORDER IS LOAD-BEARING, in both branches. Both windows sit on
+            // `effectivePopoutLayer`, so within that layer the compositor stacks
+            // whichever is mapped LAST on top — and the content window has to be
+            // the one on top. The two surfaces commit independently, so during a
+            // transition the dismiss hole and the content input region disagree
+            // for a frame; that is harmless only because content wins input where
+            // they overlap. Map the content window first and that frame becomes a
+            // click that dismisses instead of reaching content.
+            // Pinned by scripts/test-popout-dismiss-envelope.js.
+            //
+            // Mapped UNCONDITIONALLY, not `if (backgroundWindowRequired)`. A
+            // popout that opens while the requirement is false would otherwise
+            // map its background only when the requirement arrived — by which
+            // time the content window is already up, so the background would
+            // land on top. An unrequired background window is inert anyway:
+            // empty input region, nothing painted.
+            backgroundWindow.visible = true;
             contentWindow.visible = true;
         }
 
         animationsEnabled = true;
         shouldBeVisible = true;
-        // The surface size committed above is a snapshot of alignedHeight taken
-        // mid-open, and onAlignedHeightChanged drops every update that arrives
-        // while shouldBeVisible is still false — so any layout the primed content
+        // The body rect committed above is a snapshot taken mid-open, and the
+        // aligned-geometry handlers drop every update that arrives while
+        // shouldBeVisible is still false — so any layout the primed content
         // settles between that commit and here (wrapped text metrics, a Column
         // repositioning, a Repeater filling in from data that landed with the
-        // open) never reaches the wl_surface. The popout then renders taller than
-        // its surface and the bottom is cut off until the next open. Re-commit
-        // once this tick has drained; the envelope also covers a late shrink.
-        Qt.callLater(() => {
-            if (root.shouldBeVisible)
-                root._setAnimatedSurfaceEnvelope();
-        });
+        // open) leaves the background window's dismiss carve-out on the stale
+        // rect, and clicks in the newly-grown area dismiss the popout. Re-commit
+        // once this tick has drained.
+        Qt.callLater(() => root._setSettledSurfaceGeometry());
         if (screen) {
             PopoutManager.showPopout(popoutHandle);
             opened();
@@ -430,17 +429,60 @@ Item {
     readonly property real alignedHeight: Theme.px(popupHeight, dpr)
     property real renderedAlignedY: alignedY
     property real renderedAlignedHeight: alignedHeight
+
+    // ======================================================================
+    // THE BODY RECT AS DRAWN. The dismiss carve-out is derived from HERE and
+    // nowhere else, and this is the whole fix for a family of four reports.
+    //
+    // The carve-out used to be written imperatively from SETTLED geometry by
+    // every handler that changed anything - height, Y, X, width, reposition.
+    // The body, meanwhile, is drawn from ANIMATED geometry. So every path that
+    // moved geometry mid-animation got it wrong in its own way: a grow whose
+    // entry curve overshoots past its target Y, a shrink whose
+    // renderedAlignedHeight lags the new target, a reposition landing during a
+    // shrink, a width change landing during a shrink. Four reports, one defect:
+    // the hole described where the body was GOING, not where it IS.
+    //
+    // Deriving it once from the same values the body draws from makes all four
+    // correct by construction - there is no longer a site at which they can
+    // occur, which is why the imperative envelope, its settle timer and its
+    // per-handler calls are gone rather than repaired. These four expressions
+    // are exactly contentContainer's, and `contentHoleRect` binds to them:
+    //
+    //   x      alignedX             not animated
+    //   y      renderedAlignedY     ANIMATED - overshoots on expressive curves
+    //   width  alignedWidth         not animated
+    //   height renderedAlignedHeight ANIMATED - lags on a shrink
+    //
+    // Both windows span the output, so these are screen coordinates in both.
+    // NOTE the asymmetry is real, not an oversight: only Y and height animate,
+    // and those are precisely the two that were wrong.
+    readonly property real bodyRectX: alignedX
+    readonly property real bodyRectY: renderedAlignedY
+    readonly property real bodyRectW: alignedWidth
+    readonly property real bodyRectH: renderedAlignedHeight
+
+    // The background window skips buffer updates unless something asks for
+    // them, and a per-frame carve-out needs them for the whole transition -
+    // including the last frame, which a debounce started at the target change
+    // can expire before. Both edges of this flag reopen the window.
+    readonly property bool bodyRectAnimating: renderedAlignedY !== alignedY || renderedAlignedHeight !== alignedHeight
+    onBodyRectAnimatingChanged: {
+        _bgCommitWindow = true;
+        bgCommitSettleTimer.restart();
+    }
+    // ======================================================================
     // Latched at the START of each height transition (see onAlignedHeightChanged),
     // NOT a live comparison. A continuous `alignedHeight >= renderedAlignedHeight`
     // stays true for a whole grow but flips false→true at the *tail* of a shrink
     // (when renderedAlignedHeight reaches the target). That mid-flight flip
-    // re-evaluated the animation `duration`/`surfaceSettleTimer` bindings below,
-    // and changing a running NumberAnimation's duration recomputes its progress
-    // (currentTime / newDuration) — snapping the height back up for a frame. That
-    // was the shrink-only "flash" (grow never flips, so it never flashed).
+    // re-evaluated the animation `duration` bindings below, and changing a running
+    // NumberAnimation's duration recomputes its progress (currentTime /
+    // newDuration) — snapping the height back up for a frame. That was the
+    // shrink-only "flash" (grow never flips, so it never flashed).
     property bool renderedGeometryGrowing: true
     // Snap rendered geometry while the entrance morph runs so it doesn't ride a second animation.
-    readonly property bool _settlingToOpen: _fullHeight && shouldBeVisible && morphAnim.running
+    readonly property bool _settlingToOpen: shouldBeVisible && morphAnim.running
 
     Behavior on renderedAlignedY {
         enabled: root.animationsEnabled && contentWindow.visible && root.shouldBeVisible && !root._settlingToOpen
@@ -469,8 +511,7 @@ Item {
         // still holds the pre-animation value here, so this captures new-target vs
         // current-rendered once and holds it stable for the whole animation.
         renderedGeometryGrowing = alignedHeight >= renderedAlignedHeight;
-        if (shouldBeVisible)
-            _setAnimatedSurfaceEnvelope();
+        _setSettledSurfaceGeometry();
         _kickBlurCommit();
         if (!suspendShadowWhileResizing || !shouldBeVisible)
             return;
@@ -484,9 +525,47 @@ Item {
             resizeSettleTimer.stop();
         }
     }
+    // MAPS, NEVER UNMAPS, while the popout is open. Unmapping and later remapping
+    // would put the background surface ABOVE the content surface — both share
+    // `effectivePopoutLayer`, so the compositor stacks whichever maps LAST on top
+    // — which inverts the input routing the dismiss carve-out depends on. That is
+    // reachable, not theoretical: ControlCenterPopout binds `backgroundInteractive`
+    // to `!anyModalOpen`, so opening and closing its power menu is an unmap/remap
+    // pair while the content window stays mapped throughout.
+    //
+    // Staying mapped is safe ONLY because the collapsed mask is committed —
+    // see onBackgroundDismissWindowRequiredChanged directly below, which is not
+    // an optimisation but the other half of this change.
     onBackgroundWindowRequiredChanged: {
-        if (shouldBeVisible)
-            backgroundWindow.visible = backgroundWindowRequired;
+        if (shouldBeVisible && backgroundWindowRequired)
+            backgroundWindow.visible = true;
+    }
+
+    // THE COLLAPSED MASK HAS TO BE COMMITTED, and preserving the mapping above is
+    // exactly what made that load-bearing.
+    //
+    // `maskRect` collapsing to 0x0 is a QML property change. It reaches the
+    // compositor only when the surface COMMITS, and `updatesEnabled` above is
+    // `overlayContent !== null || _bgCommitWindow || bodyRectAnimating` — all
+    // three false for a settled popout with no overlay content, which is exactly
+    // Control Center. The handler that used to run on this edge UNMAPPED the
+    // window, and an unmap reaches the compositor whatever `updatesEnabled` says;
+    // that is the only reason the old code did not need this.
+    //
+    // Without it the surface stays mapped carrying its PREVIOUS, full-output
+    // input region: on an overlay-layer bar it then sits above the power menu's
+    // Top-layer catcher and eats clicks — the MouseArea is disabled, so nothing
+    // dismisses and nothing falls through either. The popout is not interactive
+    // and not out of the way.
+    //
+    // BOTH edges, deliberately. Losing the collapse leaves a dead surface eating
+    // clicks; losing the restore leaves the popout undismissable once the modal
+    // closes. Guarded on the surface being mapped, matching _setSurfaceGeometry.
+    onBackgroundDismissWindowRequiredChanged: {
+        if (!backgroundWindow.visible)
+            return;
+        _bgCommitWindow = true;
+        bgCommitSettleTimer.restart();
     }
 
     Timer {
@@ -494,13 +573,6 @@ Item {
         interval: 80
         repeat: false
         onTriggered: root._resizeActive = false
-    }
-
-    Timer {
-        id: surfaceSettleTimer
-        interval: Math.max(0, Theme.variantDuration(root.animationDuration, root.renderedGeometryGrowing) + 32)
-        repeat: false
-        onTriggered: root._setSettledSurfaceGeometry()
     }
 
     readonly property real alignedX: Theme.snap((() => {
@@ -590,10 +662,11 @@ Item {
         screen: root.screen
         visible: false
         color: "transparent"
-        // Skip buffer updates when there's nothing to render. Briefly flipped
-        // true via _bgCommitWindow when _surfaceBodyW/H changes so the
-        // contentHoleRect mask carve-out actually commits to the compositor.
-        updatesEnabled: root.overlayContent !== null || root._bgCommitWindow
+        // Skip buffer updates when there's nothing to render. Held open for the
+        // whole of a geometry transition, because contentHoleRect now tracks the
+        // ANIMATED body and every frame of it has to reach the compositor;
+        // _bgCommitWindow covers the target-change and settle edges around it.
+        updatesEnabled: root.overlayContent !== null || root._bgCommitWindow || root.bodyRectAnimating
 
         WlrLayershell.namespace: root.layerNamespace + ":background"
         WlrLayershell.layer: root.effectivePopoutLayer
@@ -629,10 +702,10 @@ Item {
             id: contentHoleRect
             visible: false
             color: "transparent"
-            x: root.backgroundDismissWindowRequired ? root._surfaceBodyX : 0
-            y: root.backgroundDismissWindowRequired ? root._surfaceBodyY : 0
-            width: (root.backgroundDismissWindowRequired && shouldBeVisible) ? root._surfaceBodyW : 0
-            height: (root.backgroundDismissWindowRequired && shouldBeVisible) ? root._surfaceBodyH : 0
+            x: root.backgroundDismissWindowRequired ? root.bodyRectX : 0
+            y: root.backgroundDismissWindowRequired ? root.bodyRectY : 0
+            width: (root.backgroundDismissWindowRequired && shouldBeVisible) ? root.bodyRectW : 0
+            height: (root.backgroundDismissWindowRequired && shouldBeVisible) ? root.bodyRectH : 0
         }
 
         MouseArea {
@@ -671,7 +744,6 @@ Item {
             // starts the dismiss countdown. Allow for that longer approach.
             graceInterval: root.zoneAnchored ? 600 : 150
             globalOffsetX: root._surfaceMarginLeft
-            globalOffsetY: root._fullHeight ? 0 : root._surfaceMarginTop
             onDismissRequested: root.closeFromHoverDismiss()
         }
 
@@ -699,19 +771,21 @@ Item {
         WlrLayershell.exclusiveZone: -1
         WlrLayershell.keyboardFocus: KeyboardFocus.keyboardFocus(shouldBeVisible, customKeyboardFocus)
 
+        // Anchored top AND bottom, so the compositor sizes the surface to the
+        // output height and content-height changes never reach it. implicitHeight
+        // is ignored while both edges are anchored; the popup body is positioned
+        // inside the surface by contentContainer below.
         anchors {
             left: true
             top: true
-            bottom: root._fullHeight
+            bottom: true
         }
 
         WlrLayershell.margins {
             left: root._surfaceMarginLeft
-            top: root._fullHeight ? 0 : root._surfaceMarginTop
         }
 
         implicitWidth: root._surfaceW
-        implicitHeight: root._fullHeight ? 0 : root._surfaceH
 
         mask: contentInputMask
 
@@ -732,7 +806,9 @@ Item {
         Item {
             id: contentContainer
             x: shadowBuffer + root.alignedX - root._surfaceBodyX
-            y: root._fullHeight ? root.renderedAlignedY : shadowBuffer + root.renderedAlignedY - root._surfaceBodyY
+            // The surface starts at the top of the output, so surface-local y is
+            // the screen y.
+            y: root.renderedAlignedY
             width: root.alignedWidth
             height: root.renderedAlignedHeight
 
@@ -882,7 +958,7 @@ Item {
                         direction: root.effectiveShadowDirection
                         fallbackOffset: root.shadowFallbackOffset
                         targetRadius: Theme.cornerRadius
-                        targetColor: Theme.popupSurfaceColor(Theme.surfaceContainer, !root._fullHeight)
+                        targetColor: Theme.popupSurfaceColor(Theme.surfaceContainer)
                         borderColor: "transparent"
                         borderWidth: 0
                         shadowOpacity: Theme.popupShadowOpacityScale
@@ -894,7 +970,6 @@ Item {
                         width: rollOutAdjuster.baseWidth
                         height: rollOutAdjuster.baseHeight
                         radius: Theme.cornerRadius
-                        blurAvailable: !root._fullHeight
 
                         // publishedOpacity tracks the content animation so consumers
                         // (WindowBlur, ElevationShadow, and chrome) see interpolated values.
