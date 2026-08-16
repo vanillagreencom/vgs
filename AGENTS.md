@@ -19,8 +19,7 @@ VGS = VanillaGreen Shell. Runtime name stays `vshell`: `vgs` collides with LVM.
 - `.github/instructions/*.instructions.md` — path-scoped rules (CI, scripts,
   vendored trees). `vstack.settings.toml` — review-gate trust,
   every key with its rationale. `docs/decisions/INDEX.md` — decisions.
-- `project-skills/README.md` — the skills, and why they are tracked outside the
-  harness mirrors.
+- `project-skills/README.md` — the skills.
 - `AGENTS.local.md` — this machine's wiring; untracked, absent on a fresh clone.
 
 ## Theme rules

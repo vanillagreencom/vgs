@@ -122,10 +122,28 @@ CEILINGS: dict[str, int] = {
     # only 4 of bin/'s 15 entries, so it read as complete while it was not.
     #
     # Those registers are what regrew after VGS-107, so 4,500 is a budget the
-    # issue set rather than a size plus headroom: the file is 4,489 B, so there
+    # issue set rather than a size plus headroom: the file is 4,480 B, so there
     # is almost none, and that is the point. The next addition displaces
     # something or moves to a per-area surface — the thing both diets had to do
     # by hand.
+    #
+    # ALREADY EXERCISED ONCE, on the PR that set it. VGS-144 landed a
+    # machine-read marker pair around the validate area list, 47 B the
+    # inventory guard requires in THIS file, so relocation was not available
+    # and the budget was 36 B short. It was paid by displacement, not a raise:
+    # § Where the rest lives' skills pointer dropped the clause explaining why
+    # skills sit outside the harness mirrors, which project-skills/README.md
+    # opens by explaining at length. The pointer survived; only the duplicate
+    # explanation moved. That is the mechanism working, not a near miss.
+    #
+    # Raising it instead was considered and rejected for two reasons. 4,500 is
+    # VGS-124's own acceptance criterion, and a ceiling that moves to fit its
+    # overage defines the diet by whatever size the diet reached. And it would
+    # contradict a rule this table states a few entries down, where 5,700 was
+    # deliberately NOT re-raised at 5,359 B because the tighter line wins over
+    # the rounder number. The trim is also the diet's method applied to itself:
+    # prose shrinks to a pointer, and the why survives on the surface the
+    # pointer already sends the reader to.
     "AGENTS.md": 4_500,
     # Adopted at 3,289 B. 2026-08-10: owner-approved risk-class +
     # regression-test policy sections plus the PR #120 review rounds
@@ -154,9 +172,12 @@ CEILINGS: dict[str, int] = {
     # a QML agent, which loads this skill. That is the VGS-69 class losing its
     # last auto-loaded warning, so it moved here. A later round also completed the
     # "## Repo layout" tree with the three entries AGENTS.md § Layout had that
-    # it lacked. 5,700 is deliberately NOT re-raised at the resulting 5,359 B:
-    # that is ~6% headroom, not the adoption default's ~10%, and the tighter
-    # line wins over the rounder number.
+    # it lacked. 5,700 was deliberately NOT re-raised at the resulting 5,359 B:
+    # ~6% headroom rather than the adoption default's ~10%, the tighter line
+    # winning over the rounder number. VGS-144 then anchored this file's area
+    # list in the same machine-read marker pair as AGENTS.md's and named the
+    # contract; now 5,552 B, ~2.7% left. The tighter line is tight enough that
+    # the next addition here needs a raise, not a shave.
     "project-skills/vshell-dev/SKILL.md": 5_700,
     # Adopted at 403 B. VGS-124: the diet's own rewrap un-exempted a sanctioned
     # direct-launch mention in check-validation-safety.sh (line-scoped spans),
