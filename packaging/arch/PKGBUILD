@@ -35,7 +35,7 @@ optdepends=(
   'desktop-file-utils: desktop-entry cache refresh after installing a web app'
   'dgop: system metrics for the CPU/GPU/memory widgets and the process list'
   'dolphin: file manager for the launcher folder opener'
-  'fd: faster launcher file search'
+  'fd: launcher file and folder search'
   'ffmpeg: screen recording'
   'ffmpegthumbnailer: file thumbnails'
   'fontconfig: font cache refresh after a font change'

@@ -93,7 +93,7 @@ pkg_postinst() {
 	optfeature "AI usage widget" net-misc/curl
 	optfeature "cloud file sync" net-misc/rclone
 	optfeature "Tailscale widget" net-vpn/tailscale
-	optfeature "faster launcher file search" sys-apps/fd
+	optfeature "launcher file and folder search" sys-apps/fd
 	optfeature "launcher text search" sys-apps/ripgrep
 	optfeature "fingerprint unlock" sys-auth/fprintd
 	optfeature "privileged actions run from the shell (user management, some system settings)" sys-auth/polkit

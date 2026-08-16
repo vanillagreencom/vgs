@@ -149,7 +149,7 @@
     "thumbnails": "file thumbnails",
     "launcher-zoxide": "launcher recent-directory search",
     "launcher-search": "launcher text search",
-    "launcher-search-fast": "faster launcher file search",
+    "launcher-search-fast": "launcher file and folder search",
     "trash": "trash instead of deleting files",
     "launcher-folder-open": "launcher default folder opener",
     "updates-arch": "repo update checks",

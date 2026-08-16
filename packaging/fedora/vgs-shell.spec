@@ -53,7 +53,7 @@ Suggests:       curl
 Suggests:       desktop-file-utils
 # file manager for the launcher folder opener
 Suggests:       dolphin
-# faster launcher file search
+# launcher file and folder search
 Suggests:       fd-find
 # screen recording
 Suggests:       ffmpeg-free
