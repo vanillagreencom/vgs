@@ -38,11 +38,11 @@ there is read as an area name; exactly one marker pair per file, opener before
 closer (a reversed pair is refused as reversed, not as a missing closer); an
 empty region is refused; every unindented backtick fence must be closed by
 a run at least as long with nothing after it but whitespace — markdown's own
-rule, so a shorter nested fence is content, an info string (legal only on an
-opener) closes nothing, and an unclosed fence is refused; markers inside an
-unindented backtick fence are a picture, not the contract (a fence indented
-under a bullet, or a `~~~` one, is
-not a fence here, so markers in it count as real), and a marker found only inside
+rule, so a shorter nested fence is content, an info string closes nothing, and an
+unclosed fence is refused; an opener may carry an info string but no backtick in
+it, and a run that does is prose; markers inside such a fence are a picture,
+not the contract (a fence indented under a bullet, or a `~~~` one, is
+not a fence here, so its markers count as real), and a marker found only inside
 one is reported as fenced, not as absent. Getting any of those wrong FAILS the
 guard rather than turning the comparison off. Dropping the enumeration is a recorded decision — remove the file from
 `AREA_ENUMERATING_DOCS` in the same edit.

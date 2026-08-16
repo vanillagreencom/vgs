@@ -875,6 +875,32 @@ run_guard "AGENTS_PATH=$areas_probe"
 expect_clean_run "CRLF checkout"
 ok "a CRLF page whose fences are balanced parses, because the permitted set is the runner's"
 
+# AN OPENER MAY NOT CARRY A BACKTICK IN ITS INFO STRING — the mirror of the case
+# above, and the same false accept from the other side. CommonMark forbids a
+# backtick in a backtick fence's info string, so such a line is ordinary text;
+# treating it as an opener INVERTS which text is live. The fixture is that
+# inversion, and it is balanced under BOTH readings so the difference is what is
+# read rather than a parse accident: opening on run length alone swallows the
+# stale live list on the second line, leaves the complete example live, and the
+# page passes on a list nobody renders as the contract. Read correctly the first
+# line is prose, the stale list is the live one, and the complete list is the
+# picture — so the drift is reported. The `all`-less list is what makes the two
+# answers distinguishable at all.
+# shellcheck disable=SC2016  # backticks are markdown quoting in the fixture prose
+{
+  printf '````markdown with a `tick` in the info string\n'
+  printf '<!-- validate-areas -->areas `go`, `qml`, `helper`, `packaging`, `all`<!-- /validate-areas -->\n'
+  printf '````\n'
+  printf '<!-- validate-areas -->areas `go`, `qml`, `helper`, `packaging`, `docs`, `all`<!-- /validate-areas -->\n'
+  printf '````markdown with a `tick` in the info string\n'
+  printf '````\n'
+} >"$areas_probe"
+run_guard "AGENTS_PATH=$areas_probe"
+# shellcheck disable=SC2016  # the backticks quote an area name in the guard's own message
+expect_refused "backtick in an opening info string" 'omits `docs`'
+expect_absent "$guard_out" "never closed" "backtick in an opening info string"
+ok "a run whose info string carries a backtick is prose, so the list it appears to fence stays live"
+
 # AN INDENTED FENCE IS NOT A FENCE HERE, and the contract paragraph in
 # .github/instructions/validation-scripts.instructions.md says so in those
 # words. Pinned rather than left incidental: markers demonstrated inside a

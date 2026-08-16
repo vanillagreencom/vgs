@@ -802,14 +802,18 @@ def _strip_fenced_blocks(path: Path, text: str, spaces: re.Pattern[str]) -> str:
     rule — a fence closes on a run at least as long as the one that opened it —
     is what makes the two levels agree, and a line scanner is enough for it.
 
-    AN INFO STRING CLOSES NOTHING, because CommonMark allows one only on an
-    OPENING fence: a long-enough run followed by any other character is ordinary
-    content, and everything after it still renders inside the block. Accepting it
-    as a closer was a false accept of the same family as the run-length one — a
-    complete anchored list that renders INSIDE a fence was read as the live
-    contract, so the page passed with no maintained list outside the example. A
-    closing line's remainder is therefore whitespace only; an opener's remainder
-    is free, and must stay free, or no fence could carry a language.
+    THE TWO ENDS TAKE DIFFERENT REMAINDERS, and the asymmetry is CommonMark's,
+    not a convenience: an OPENER may carry an info string but that string may not
+    contain a backtick, while a CLOSER may carry no info string at all. Each rule
+    is stated again at the arm that enforces it, because reading one and assuming
+    the other is how both halves of this were wrong in turn.
+
+    Both halves were the same FALSE ACCEPT, one side each, and both inverted which
+    text is live. Closing on run length alone ended a block early, so a complete
+    anchored list rendering INSIDE a fence was read as the contract; opening on
+    run length alone started a block where a reader sees ordinary text, so a stale
+    live list was stripped and the fenced example accepted in its place. Either
+    way the page passed against a list nobody maintains.
 
     `spaces` IS THE RUNNER'S OWN SET, THE SAME ONE THE ROW READER APPLIES, and it
     is a parameter for the reason C4 is: a whitespace list hand-spelled here is a
@@ -828,10 +832,16 @@ def _strip_fenced_blocks(path: Path, text: str, spaces: re.Pattern[str]) -> str:
         run = len(match.group(1)) if match else 0
         rest = match.group(2) if match else ""
         if not open_run:
-            if run:
+            # AN OPENER TAKES AN INFO STRING, BUT NOT A BACKTICK INSIDE IT: a
+            # backtick fence's info string may not contain one, so such a line is
+            # ordinary text and is KEPT. No whitespace question arises here — the
+            # info string is free-form — which is why this arm spells no set.
+            if run and "`" not in rest:
                 open_run = run
             else:
                 kept.append(line)
+        # A CLOSER TAKES NO INFO STRING AT ALL, only whitespace, and that
+        # whitespace is the runner's dumped set rather than a pair written here.
         elif run >= open_run and not spaces.sub("", rest):
             open_run = 0
     if open_run:
