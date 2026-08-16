@@ -299,8 +299,17 @@ Item {
         onTriggered: root._setSettledSurfaceGeometry()
     }
 
+    // Repositioning an OPEN popout must not collapse the carve-out either. This
+    // is a second settle path into the same rect, and it is reachable while a
+    // shrink is still animating: both VGSIPC and PopoutManager assign
+    // `currentTabIndex` on an already-visible Dash and then call this, so a tab
+    // whose content is shorter starts the height animation and this call would
+    // immediately replace the envelope with the smaller target - putting the
+    // still-visible lower band back inside the dismiss window. The envelope
+    // degenerates to the settled rect once rendered geometry has caught up, so
+    // routing through it costs nothing in the steady case.
     function updateSurfacePosition() {
-        _setSettledSurfaceGeometry();
+        _setDismissCarveOutEnvelope();
     }
 
     onAlignedXChanged: {

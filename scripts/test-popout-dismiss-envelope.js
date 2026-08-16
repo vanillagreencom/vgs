@@ -57,8 +57,34 @@ function sliceFunctionBody(src, name) {
   return src.slice(start + marker.length, i - 1);
 }
 
+// Same discipline for a QML signal handler. The first cut of this used
+// `indexOf("\n    }")` with the result unchecked: on -1, `slice(0, -1)` keeps
+// nearly the whole file, so the wiring assertion below would find
+// `_setDismissCarveOutEnvelope()` at SOME OTHER call site - open()'s
+// Qt.callLater, for one - and pass while the handler no longer called it at
+// all. A guard that cannot fail is the exact defect this PR exists to remove,
+// so the bounds are brace-matched and a miss is fatal.
+function sliceHandlerBody(src, name) {
+  const marker = `${name}: {`;
+  const start = src.indexOf(marker);
+  if (start === -1)
+    throw new Error(`could not find handler ${name} in ${POPOUT}`);
+  let i = start + marker.length;
+  let depth = 1;
+  while (i < src.length && depth > 0) {
+    const ch = src[i];
+    if (ch === "{") depth += 1;
+    else if (ch === "}") depth -= 1;
+    i += 1;
+  }
+  if (depth !== 0)
+    throw new Error(`unbalanced braces reading handler ${name} in ${POPOUT}`);
+  return src.slice(start + marker.length, i - 1);
+}
+
 const envelopeBody = sliceFunctionBody(source, "_setDismissCarveOutEnvelope");
 const settledBody = sliceFunctionBody(source, "_setSettledSurfaceGeometry");
+const repositionBody = sliceFunctionBody(source, "updateSurfacePosition");
 
 // `with` is what lets the sliced body keep its bare identifiers (`alignedY`,
 // `_surfaceBodyH`, ...) exactly as QML resolves them against the component
@@ -207,12 +233,47 @@ const settled = compile(settledBody);
 // The wiring: the envelope has to be what the height path actually calls, or
 // every assertion above is about a function nothing invokes.
 {
-  const heightHandler = source.slice(source.indexOf("onAlignedHeightChanged: {"));
-  const body = heightHandler.slice(0, heightHandler.indexOf("\n    }"));
+  const body = sliceHandlerBody(source, "onAlignedHeightChanged");
   if (!body.includes("_setDismissCarveOutEnvelope()"))
     fail("wiring", "onAlignedHeightChanged does not call _setDismissCarveOutEnvelope(), so the envelope is dead code");
+  else if (body.includes("Qt.callLater"))
+    fail("wiring", "the handler slice ran past its own closing brace and swallowed later call sites, so this assertion could pass on one of those");
   else
     ok("onAlignedHeightChanged routes through the envelope");
+}
+
+// The OTHER settle path. `updateSurfacePosition()` writes the same rect and is
+// reachable while a shrink animates - VGSIPC and PopoutManager both assign
+// `currentTabIndex` on a visible Dash and then call it - so if it bypasses the
+// envelope the carve-out collapses early and the bug is back through a door the
+// height handler never opens.
+{
+  const reposition = compile(repositionBody);
+  const c = makePopout();
+  envelope(c);
+  const startH = c.renderedAlignedHeight;
+  c.alignedHeight = 200;
+  envelope(c);            // the shrink starts
+  c.renderedAlignedHeight = (startH + 200) / 2;
+  c._setDismissCarveOutEnvelope = () => envelope(c);
+  c._setSettledSurfaceGeometry = () => settled(c);
+  reposition(c);          // ...and a reposition lands mid-animation
+  if (!carveCoversRendered(c))
+    fail("reposition", `repositioning mid-shrink collapsed the carve-out: rendered ${renderedBand(c)} vs carve-out ${carveBand(c)}`);
+  else
+    ok("repositioning mid-shrink keeps the carve-out over the visible body");
+
+  // ...and the control: the settled path alone is what must NOT hold it.
+  const d = makePopout();
+  envelope(d);
+  d.alignedHeight = 200;
+  envelope(d);
+  d.renderedAlignedHeight = (startH + 200) / 2;
+  settled(d);
+  if (carveCoversRendered(d))
+    fail("reposition control", "the settled path held the invariant on its own, so the reposition check above proves nothing");
+  else
+    ok("the settled path alone does not hold it (control)");
 }
 
 // And the carve-out has to be the thing sized from it.
