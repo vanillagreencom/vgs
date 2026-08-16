@@ -29,6 +29,12 @@
 // keep theirs, item-local coordinates handed to the latch behind a mapToItem
 // line kept for show. Controls that merely delete the matched text prove only
 // that a predicate runs; these prove it still says something.
+//
+// A lint that measures a spelling also has the opposite failure: rejecting a
+// rewrite that changed nothing, which teaches the next maintainer to edit the
+// test rather than trust it. The tint predicate therefore reads the STRUCTURE
+// of its condition, and section 4 proves that with EQUIVALENCE CONTROLS —
+// rewrites of the shipped binding that must still PASS.
 
 "use strict";
 
@@ -251,21 +257,57 @@ function resultDelegateBodies(src) {
 }
 
 // The tint reads the latch too, so a dormant hover cannot paint a row as active
-// while Enter would launch a different one. Anchored end to end like
-// GATED_ENTER and REARM: as a substring test, `armed || true` kept the match and
-// killed the gate. The selected arm is free — it differs per delegate and
-// carries no latch decision.
-const TINT = /^color: selected \? .+ : \(\w+Area\.containsMouse && root\.hoverGate\.armed\) \? Theme\.surfaceHover : "transparent"$/;
+// while Enter would launch a different one.
+//
+// Keyed on the STRUCTURE of the hover condition, not on its spelling. `armed ||
+// true` — the mutant that kept a substring match green while restoring the
+// defect in full — is a structural change: it introduces a disjunction. Putting
+// the same two operands in the other order, or parenthesizing them differently,
+// is not, and must keep the lint green (§4). So the condition guarding
+// `Theme.surfaceHover` must be a conjunction whose operand set is exactly the
+// delegate's own `containsMouse` and `root.hoverGate.armed` — nothing else, and
+// no disjunction anywhere. The selected arm is free: it differs per delegate
+// and carries no latch decision.
+const HOVER_ARM = ' ? Theme.surfaceHover : "transparent"';
+
+// The condition the hover tint is gated on, as written, or null when the
+// delegate does not tint through that ternary at all. Reads the delegate's own
+// `color:` binding — matched at the start of a line so `border.color:` cannot
+// stand in for it — and takes the last alternative before the hover arm.
+function tintCondition(delegateBody) {
+    const marker = /^\s*color:/m.exec(delegateBody);
+    if (!marker) return null;
+    const binding = squash(delegateBody.slice(marker.index + marker[0].length));
+    const arm = binding.indexOf(HOVER_ARM);
+    if (arm === -1) return null;
+    const head = binding.slice(0, arm);
+    const lastElse = head.lastIndexOf(" : ");
+    return (lastElse === -1 ? head : head.slice(lastElse + 3)).trim();
+}
+
+// `condition` read as a conjunction: its `&&`-separated operands, with
+// parentheses and whitespace — the two things a rewrite is free to change —
+// discarded. NOTHING ELSE is normalized away, which is what makes comparing the
+// result to the expected pair a structural test rather than a looser spelling
+// test. A disjunct survives into an operand (`root.hoverGate.armed||true`,
+// whether the `|| true` is written inside the conjunction or wrapped around
+// it), an extra conjunct is an extra operand, and a negation stays attached, so
+// each of those fails the comparison below while an equivalent rewrite does not.
+function conjunctionOperands(condition) {
+    return condition.split("&&").map(part => part.replace(/[()\s]/g, ""));
+}
 
 function hoverTintFollowsLatch(src) {
     const expected = hoverDelegateCount(src);
     const delegates = resultDelegateBodies(src);
     if (expected < 2 || delegates.length !== expected) return false;
     return delegates.every(body => {
-        const start = body.indexOf("color:");
-        const end = body.indexOf('"transparent"', start);
-        if (start === -1 || end === -1) return false;
-        return TINT.test(squash(body.slice(start, end + '"transparent"'.length)));
+        const condition = tintCondition(body);
+        if (condition === null) return false;
+        const operands = conjunctionOperands(condition);
+        return operands.length === 2
+            && operands.includes("root.hoverGate.armed")
+            && operands.some(operand => /^\w+Area\.containsMouse$/.test(operand));
     });
 }
 
@@ -374,6 +416,10 @@ const MUTANTS = [
         hoverTintFollowsLatch, menuSource, menuSource.replace(
             /\((\w+Area)\.containsMouse && root\.hoverGate\.armed\)/g,
             "($1.containsMouse && root.hoverGate.armed || true)")],
+    ["the hover tint is neutered by a disjunct wrapped around the whole condition",
+        hoverTintFollowsLatch, menuSource, menuSource.replace(
+            /\((\w+Area)\.containsMouse && root\.hoverGate\.armed\)/g,
+            "(($1.containsMouse && root.hoverGate.armed) || true)")],
 
     // The forwarder. Each of these left the suite printing "checks passed"
     // before this round, with VGS-134 restored in full.
@@ -402,4 +448,33 @@ for (const [name, check, source, mutant] of MUTANTS) {
     assert.equal(check(mutant), false, `this mutant must be caught: ${name}`);
 }
 
-console.log(`launcher hover latch checks passed (${MUTANTS.length} source mutants caught)`);
+// --- 4. Rewrites that changed nothing, each of which must still pass ---------
+//
+// The inverse of the mutants: the tint bindings rewritten into forms a
+// maintainer might reasonably prefer, all of them the same expression. Every
+// one of these was rejected by the exact-spelling form this predicate replaced,
+// which is what made that form a trap — it failed on refactors that could not
+// affect what the shell paints, while the `armed || true` mutant above, which
+// can, stays caught.
+const EQUIVALENTS = [
+    ["the tint condition's operands are written in the other order",
+        hoverTintFollowsLatch, menuSource, menuSource.replace(
+            /\((\w+Area)\.containsMouse && root\.hoverGate\.armed\)/g,
+            "(root.hoverGate.armed && $1.containsMouse)")],
+    ["the tint condition is parenthesized differently",
+        hoverTintFollowsLatch, menuSource, menuSource.replace(
+            /\((\w+Area)\.containsMouse && root\.hoverGate\.armed\)/g,
+            "$1.containsMouse && (root.hoverGate.armed)")],
+    ["the tint condition is reordered and rewrapped across lines",
+        hoverTintFollowsLatch, menuSource, menuSource.replace(
+            /\((\w+Area)\.containsMouse && root\.hoverGate\.armed\)/g,
+            "((root.hoverGate.armed)\n                && $1.containsMouse)")]
+];
+
+for (const [name, check, source, rewrite] of EQUIVALENTS) {
+    assert.notEqual(rewrite, source, `rewrite did not apply, so it proves nothing: ${name}`);
+    assert.equal(check(rewrite), true, `this rewrite changed nothing and must still pass: ${name}`);
+}
+
+console.log(`launcher hover latch checks passed (${MUTANTS.length} source mutants caught, `
+    + `${EQUIVALENTS.length} equivalent rewrites accepted)`);
