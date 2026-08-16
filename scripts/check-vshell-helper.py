@@ -749,9 +749,12 @@ BLUR_MUST_NOT_MATCH = (
 
 
 def assert_blur_namespace_rule(script, source):
-    patterns = re.findall(r'namespace = "([^"]*)"', script)
+    # The layer rule's own `match` stanza, not any `namespace =` in the payload:
+    # a bare assignment match also picks up future rules, so "expected one" would
+    # then fail on unrelated formatting rather than on what this checks.
+    patterns = re.findall(r'match = \{ namespace = "([^"]*)" \}', script)
     if len(patterns) != 1:
-        raise AssertionError(f"{source}: expected one namespace pattern, found {len(patterns)}")
+        raise AssertionError(f"{source}: expected one layer-rule match stanza, found {len(patterns)}")
     pattern = patterns[0]
     members = re.search(r"vshell:\(([^)]+)\)", pattern)
     if not members:

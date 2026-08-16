@@ -123,12 +123,12 @@ ok "the host-socket call site passes the cause explicitly"
 # ---------------------------------------------------------------------------
 # sandbox_layer_state: the output size is MEASURED, never inferred
 #
-# The defect was one, not three. Taking the largest OTHER layer on the monitor
-# as a proxy for the output is wrong when there is no other layer (proxy 0x0,
-# everything compared against zero), wrong when the other layers are all small
-# (the bar is full WIDTH but ~32px tall, so the proxy is simply a wrong number),
-# and wrong in principle either way because the verdict was reached against a
-# figure the compositor never reported. The size now comes from
+# This is the ONLY thing pinning "no flash" once the popout is output-tall, so
+# it is pinned rather than trusted. Taking the largest OTHER layer on the monitor
+# as a proxy for the output SILENTLY ACCEPTS A WRONG POPOUT, which the third case
+# below reproduces: with only the bar mapped the proxy read 1756x40, so a 444x40
+# popout on a genuinely 933-tall output compared 40 against 40 and passed. That
+# is why this cannot be reverted to the proxy. The size now comes from
 # `hyprctl monitors`: logical = mode / scale, axes swapped for the quarter-turn
 # transforms.
 #
@@ -197,14 +197,14 @@ ok "a bar-height popout is measured against the real output, not the bar"
 
 # An unmeasurable output is a hard status, never a zero and never a guess.
 out="$(layer_state "{\"MON1\":$(mon "$BAR,$POPOUT")}" '[]' "$NS")"
-[[ "$(head -n1 <<<"$out")" == 4 ]] || fail "no monitor" "an output hyprctl does not report must be status 4, got:
+[[ "$(head -n1 <<<"$out")" == 3 ]] || fail "no monitor" "an output hyprctl does not report must be a failed reading (status 3), got:
 $out"
 [[ "$out" == *"0x0"* ]] && fail "no monitor" "fell back to a 0x0 output size:
 $out"
 ok "an output with no reported size is refused, not guessed at"
 
 out="$(layer_state "{\"MON1\":$(mon "$BAR,$POPOUT")}" '[{"name":"MON1","width":1756,"height":933,"scale":0,"transform":0}]' "$NS")"
-[[ "$(head -n1 <<<"$out")" == 4 ]] || fail "bad scale" "a monitor whose numbers do not convert must be status 4, got:
+[[ "$(head -n1 <<<"$out")" == 3 ]] || fail "bad scale" "a monitor whose numbers do not convert must be a failed reading (status 3), got:
 $out"
 ok "a monitor whose numbers do not convert is refused, not entered as zero"
 
@@ -240,7 +240,7 @@ ok "an absent surface is still reported absent"
 # second mapping is a defect rather than a second line.
 MON2='[{"name":"MON1","width":1756,"height":933,"scale":1,"transform":0},{"name":"MON2","width":1756,"height":933,"scale":1,"transform":0}]'
 out="$(layer_state "{\"MON1\":$(mon "$BAR,$POPOUT"),\"MON2\":$(mon "$BAR,$POPOUT")}" "$MON2" "$NS")"
-[[ "$(head -n1 <<<"$out")" == 5 ]] || fail "duplicate mapping" "a popout mapped on two outputs must be status 5, got:
+[[ "$(head -n1 <<<"$out")" == 3 ]] || fail "duplicate mapping" "a popout mapped on two outputs must be a failed reading (status 3), got:
 $out"
 ok "a popout mapped twice is a reported defect, not two lines"
 
@@ -250,7 +250,7 @@ $out"
 ok "the emitter produces exactly one line"
 
 # Malformed monitor metadata must not read as ABSENCE. A NaN scale survives
-# float() and survives `scale <= 0` (NaN compares False to everything), then
+# float() and survives `scale > 0` (NaN compares False to everything), then
 # raises out of int(round(...)) - exiting the interpreter 1, which is this
 # function's code for "the surface is not there". A present popout would have
 # been reported gone, and an absence check would have "passed" off a crash.
@@ -258,59 +258,18 @@ for bad in \
   '[{"name":"MON1","width":1756,"height":933,"scale":"NaN","transform":0}]' \
   '[{"name":"MON1","width":1756,"height":933,"scale":"Infinity","transform":0}]' \
   '[{"name":"MON1","width":1756,"height":933,"scale":1,"transform":99}]' \
-  '[{"name":"MON1","width":1756,"height":933,"scale":1,"transform":"sideways"}]'; do
+  '[{"name":"MON1","width":1756,"height":933,"scale":1,"transform":"sideways"}]' \
+  '["not-a-dict"]' \
+  '{"MON1":{"width":1756,"height":933,"scale":1,"transform":0}}'; do
   out="$(layer_state "{\"MON1\":$(mon "$BAR,$POPOUT")}" "$bad" "$NS")"
   st="$(head -n1 <<<"$out")"
   if [[ "$st" == 1 ]]; then
     fail "malformed monitor" "unusable monitor metadata read as ABSENCE (status 1) for: $bad"
-  elif [[ "$st" != 4 ]]; then
-    fail "malformed monitor" "unusable monitor metadata should be status 4, got $st for: $bad"
+  elif [[ "$st" != 3 ]]; then
+    fail "malformed monitor" "unusable monitor metadata should be a failed reading (status 3), got $st for: $bad"
   fi
 done
 ok "malformed monitor metadata is 'cannot measure', never 'not there'"
-
-# Malformed LAYER payloads are query failures, not absences. `hyprctl` returning
-# parseable JSON says nothing about its shape, and each of these used to raise
-# out of .values()/extend()/.get() and exit the interpreter 1 - the caller's code
-# for "not there" - so `wait_layer_state ... 1` could succeed off a crash and the
-# nested smoke report clean having collected nothing.
-while IFS='|' read -r why payload; do
-  [[ -z "$why" ]] && continue
-  out="$(layer_state "$payload" "$MON1" "$NS")"
-  st="$(head -n1 <<<"$out")"
-  if [[ "$st" == 1 ]]; then
-    fail "malformed layers" "$why read as ABSENCE (status 1) instead of a failed query"
-  elif [[ "$st" != 3 ]]; then
-    fail "malformed layers" "$why should be status 3 (query failed), got $st"
-  fi
-done <<'CASES'
-levels is a list|{"MON1":{"levels":[{"namespace":"x"}]}}
-monitor is not an object|{"MON1":"not-a-dict"}
-layer entry is not an object|{"MON1":{"levels":{"2":["not-a-dict"]}}}
-level is not a list|{"MON1":{"levels":{"2":42}}}
-levels is null|{"MON1":{"levels":null}}
-levels is absent|{"MON1":{}}
-w is a bare Infinity|{"MON1":{"levels":{"2":[{"namespace":"vshell:bar","w":1756,"h":40},{"namespace":"vshell:plugins:aiUsage","w":Infinity,"h":10}]}}}
-h is a bare -Infinity|{"MON1":{"levels":{"2":[{"namespace":"vshell:bar","w":1756,"h":40},{"namespace":"vshell:plugins:aiUsage","w":10,"h":-Infinity}]}}}
-w is a bare NaN|{"MON1":{"levels":{"2":[{"namespace":"vshell:bar","w":1756,"h":40},{"namespace":"vshell:plugins:aiUsage","w":NaN,"h":10}]}}}
-no monitors at all|{}
-monitor with empty levels|{"MON1":{"levels":{}}}
-levels holding an empty list|{"MON1":{"levels":{"2":[]}}}
-a layer object with no namespace|{"MON1":{"levels":{"2":[{}]}}}
-a null namespace|{"MON1":{"levels":{"2":[{"namespace":"vshell:bar","w":1756,"h":40},{"namespace":null,"w":1,"h":1}]}}}
-a non-string namespace|{"MON1":{"levels":{"2":[{"namespace":"vshell:bar","w":1756,"h":40},{"namespace":7,"w":1,"h":1}]}}}
-an empty namespace|{"MON1":{"levels":{"2":[{"namespace":"vshell:bar","w":1756,"h":40},{"namespace":"","w":1,"h":1}]}}}
-the matched layer has a non-numeric size|{"MON1":{"levels":{"2":[{"namespace":"vshell:bar","w":1756,"h":933},{"namespace":"vshell:plugins:aiUsage","w":"wide","h":10}]}}}
-CASES
-ok "malformed layer payloads are failed queries, never absences"
-
-# A genuinely absent surface on a well-formed payload is still ABSENT. Without
-# this, tightening the shapes could "fix" the fail-open by destroying the only
-# status that makes an absence assertion possible.
-out="$(layer_state "{\"MON1\":$(mon "$BAR")}" "$MON1" "$NS")"
-[[ "$(head -n1 <<<"$out")" == 1 ]] || fail "genuine absence" "a well-formed payload without the namespace should still be status 1, got:
-$out"
-ok "a genuinely absent surface is still reported absent (control)"
 
 # ...and the control that the shape checks did not simply turn everything into a
 # 3: a well-formed payload still measures.

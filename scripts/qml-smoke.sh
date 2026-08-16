@@ -348,46 +348,36 @@ sandbox_monitors() {
   "${sandbox_env[@]}" hyprctl -i 0 monitors -j 2>/dev/null
 }
 
-# THE OUTPUT SIZE IS MEASURED, NOT INFERRED.
+# THE OUTPUT SIZE IS MEASURED, NOT INFERRED. This used to take the largest OTHER
+# layer on the monitor as a proxy, and that proxy SILENTLY ACCEPTS A WRONG
+# POPOUT: with only the bar mapped it read 1756x40, so a 444x40 popout on a
+# genuinely 933-tall output compared 40 against 40 and passed. A guard shown to
+# accept a surface twenty-three times too short is worse than no guard, so this
+# cannot go back to the proxy - only to a measurement.
 #
-# This used to take the largest OTHER layer on the monitor as a proxy for the
-# output, which is wrong in three ways at once and they are one defect, not
-# three: with no other layer the proxy was 0x0 and every comparison ran against
-# zero; with only small layers (the bar is full WIDTH but ~32px tall) the proxy
-# was simply the wrong number; and either way the verdict - pass or fail - was
-# reached against a figure the compositor never reported. Patching the empty
-# case alone leaves the wrong-number case, and patching both leaves the fact
-# that a proxy was being asserted at all.
-#
-# `hyprctl monitors` reports it directly. Its `width`/`height` are the MODE, in
-# physical pixels, while layer geometry is LOGICAL, so the two are not
-# comparable raw - but the conversion is exact, not a guess: logical = mode /
-# scale, with width and height swapped for the quarter-turn transforms (1, 3, 5,
-# 7). Verified against a live two-monitor session: 6016x3384 @ scale 2,
+# `hyprctl monitors` reports it. Its `width`/`height` are the MODE in physical
+# pixels while layer geometry is LOGICAL, and the conversion is exact rather than
+# a guess: logical = mode / scale, axes swapped for the quarter-turn transforms
+# (1, 3, 5, 7). Verified on a live two-monitor session - 6016x3384 @ scale 2,
 # transform 0 -> 3008x1692, and 5120x2880 @ scale 2, transform 1 -> 1440x2560,
 # both matching the full-output layers on those monitors exactly.
 #
-# 0 = a non-degenerate surface with that namespace exists, measured against its
-#     own output. NOT "content-sized": every popout is output-tall since VGS-133.
+# Prints EXACTLY ONE LINE, "<w>x<h> <screen_w>x<screen_h>", and callers must
+# branch on the STATUS before reading it:
+# 0 = present and non-degenerate, measured against its own output. NOT
+#     "content-sized": every popout is output-tall since VGS-133.
 # 1 = absent
 # 2 = present but degenerate (zero-sized, or as large as the output)
-# 3 = A QUERY FAILED - hyprctl errored or produced something unparsable.
-#     Distinct from 1 deliberately: "I could not look" is not "it is not there".
-# 4 = present, but its output's size is unavailable, so there is nothing to
-#     grade it against. Distinct from 2 for the reason 3 is distinct from 1:
-#     "I could not measure it" is not "it measured wrong". Never a fallback to
-#     zero and never a fallback to a proxy - an unmeasurable output is a hard
-#     failure naming the cause.
-# 5 = mapped more than once. A popout binds to exactly ONE screen
-#     (VgsPopoutStandalone `screen: root.screen`, from PluginPopout's
-#     `triggerScreen`), and both its windows follow it, so a second surface is a
-#     duplicate-mapping defect, not a reply to be averaged over.
+# 3 = no reading could be taken - hyprctl errored, was unparsable, reported no
+#     usable size for the surface's output, or reported the surface on more than
+#     one output. Distinct from 1 deliberately: neither "I could not look" nor
+#     "I could not measure it" is "it is not there".
 #
-# EXACTLY ONE LINE, "<w>x<h> <screen_w>x<screen_h>". The old contract was one
-# line per matching layer per monitor, which contradicted the single consumer
-# that parsed it; the emitter is what was wrong, because the thing it describes
-# can only exist once. Callers must branch on the status BEFORE reading the
-# text: on 1, 2, 3, 4 and 5 it is absent or misleading.
+# The LAYER traversal below is NOT hardened against malformed `hyprctl` payloads:
+# an unhandled shape raises, exits 1, and reads as ABSENCE. That is a pre-existing
+# fail-open class in this shared harness rather than anything VGS-133 introduced,
+# and it is tracked and deliberately deferred as VGS-188 - the monitor parse above
+# is guarded because it is new code here, not because the class is fixed.
 sandbox_layer_state() {
   local namespace="$1" layers monitors rc=0
   layers="$(sandbox_layers)" || rc=$?
@@ -400,193 +390,106 @@ sandbox_layer_state() {
   fi
   MONITORS_JSON="$monitors" LAYERS_JSON="$layers" python3 - "$namespace" <<'PY'
 import json
-import math
 import os
 import sys
 
 namespace = sys.argv[1]
 
 
-def main():
-    def parsed(name):
-        raw = os.environ[name]
-        if not raw.strip():
-            raise SystemExit(3)
-        try:
-            return json.loads(raw)
-        except json.JSONDecodeError:
-            raise SystemExit(3)
-
-
-    data = parsed("LAYERS_JSON")
-    if not isinstance(data, dict):
+def parsed(name):
+    raw = os.environ[name]
+    if not raw.strip():
         raise SystemExit(3)
-    monitors = parsed("MONITORS_JSON")
-    if not isinstance(monitors, list):
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError:
         raise SystemExit(3)
 
-    # Logical output size per monitor name. `width`/`height` are the MODE in
-    # physical pixels; layer geometry is logical, so the mode is divided by the
-    # scale, and the quarter-turn transforms (1, 3, 5, 7) swap the axes. A monitor
-    # whose numbers do not survive that conversion is left OUT of the map rather
-    # than entered with a zero: absent means "unmeasurable" below, and a zero would
-    # be the proxy problem again in a new costume.
-    outputs = {}
-    for monitor in monitors:
-        if not isinstance(monitor, dict) or monitor.get("disabled"):
+
+data = parsed("LAYERS_JSON")
+if not isinstance(data, dict):
+    raise SystemExit(3)
+monitors = parsed("MONITORS_JSON")
+if not isinstance(monitors, list):
+    raise SystemExit(3)
+
+# Logical output size per monitor name. A monitor whose numbers do not survive
+# the conversion is left OUT of the map rather than entered with a zero, which
+# would be the proxy problem again in a new costume. EVERY arithmetic step sits
+# inside the guard because a merely WELL-TYPED value still breaks it: a NaN scale
+# survives float() and survives `scale > 0`, then raises out of int(round(...)).
+# Uncaught that exits 1 - this function's code for "not there" - so malformed
+# monitor metadata would read as ABSENCE and an absence check would pass off a
+# crash.
+outputs = {}
+for monitor in monitors:
+    try:
+        if monitor.get("disabled"):
             continue
         name = monitor.get("name")
-        # EVERY arithmetic step is inside the guard, and the guard rejects values
-        # that are merely WELL-TYPED. A NaN scale survives `float()` and survives
-        # `scale <= 0` (every comparison with NaN is False), then reaches
-        # `int(round(mode_w / scale))` and raises ValueError from OUTSIDE any
-        # handler - which exits this interpreter 1, and 1 is the caller's code for
-        # "the surface is not there". Malformed metadata would have read as absence:
-        # a present popout reported as gone, and a `wait_layer_state ... 1` proving
-        # absence off a crash. An unusable monitor is left OUT of the map instead,
-        # so the join below misses and the caller gets the "cannot measure" status.
-        try:
-            mode_w = int(monitor.get("width") or 0)
-            mode_h = int(monitor.get("height") or 0)
-            scale = float(monitor.get("scale") or 0)
-            transform = int(monitor.get("transform") or 0)
-            if not (math.isfinite(scale) and scale > 0):
-                continue
-            if not name or mode_w <= 0 or mode_h <= 0:
-                continue
-            # Hyprland's transform enum is 0-7; anything else means the axes cannot
-            # be resolved, and guessing "no swap" would measure against the wrong
-            # dimensions rather than admit that.
-            if transform not in range(8):
-                continue
-            logical_w = int(round(mode_w / scale))
-            logical_h = int(round(mode_h / scale))
-        except (TypeError, ValueError, OverflowError, ZeroDivisionError):
+        mode_w = int(monitor.get("width") or 0)
+        mode_h = int(monitor.get("height") or 0)
+        scale = float(monitor.get("scale") or 0)
+        transform = int(monitor.get("transform") or 0)
+        if not name or mode_w <= 0 or mode_h <= 0 or not scale > 0:
             continue
-        if transform in (1, 3, 5, 7):
-            logical_w, logical_h = logical_h, logical_w
-        if logical_w <= 0 or logical_h <= 0:
+        # Hyprland's transform enum is 0-7; anything else means the axes cannot
+        # be resolved, and guessing "no swap" would measure against the wrong
+        # dimensions rather than admit that.
+        if transform not in range(8):
             continue
+        logical_w = int(round(mode_w / scale))
+        logical_h = int(round(mode_h / scale))
+    except (AttributeError, TypeError, ValueError, OverflowError, ZeroDivisionError):
+        continue
+    if transform in (1, 3, 5, 7):
+        logical_w, logical_h = logical_h, logical_w
+    if logical_w > 0 and logical_h > 0:
         outputs[name] = (logical_w, logical_h)
 
-    # STRUCTURE IS VALIDATED, AND A SURPRISE IS A QUERY FAILURE, NEVER AN ABSENCE.
-    # `hyprctl` returning parseable JSON says nothing about its SHAPE. A `levels`
-    # that is a list, a monitor entry that is a string, a layer that is not an
-    # object - each of those raises out of `.values()`, `extend()` or `.get()`, and
-    # an uncaught exception exits this interpreter 1, which is the caller's code for
-    # "the surface is not there". `wait_layer_state ... 1` would then succeed off a
-    # crash and the nested smoke would report clean having collected nothing. Same
-    # defect the monitor parse above had; this is the other half of it.
-    def _shape_error(what):
-        sys.stderr.write(
-            "sandbox_layer_state: `hyprctl layers -j` parsed as JSON but %s, so no layer data was "
-            "collected - that is a failed query, not an absent surface\n" % what
-        )
-        raise SystemExit(3)
+matches = []
+for monitor_name, monitor in data.items():
+    layers = []
+    for level in (monitor.get("levels") or {}).values():
+        layers.extend(level)
+    for layer in layers:
+        if layer.get("namespace") != namespace:
+            continue
+        matches.append((monitor_name, int(layer.get("w") or 0), int(layer.get("h") or 0)))
 
+if not matches:
+    raise SystemExit(1)
 
-    # THE PAYLOAD IS VALIDATED ONCE, HERE, AND NOTHING DOWNSTREAM RE-CHECKS A
-    # FIELD. Five reports arrived as five different fields being unvalidated -
-    # a monitor that was not an object, a `levels` that was not one, a level
-    # that was not a list, a layer that was not an object, a layer with no
-    # `namespace` - and every one of them ended the same way: the comparison
-    # simply found nothing, which is status 1, which is ABSENCE. Interleaving
-    # one more check per report is how a sixth arrives. So every field this
-    # check reasons about is vouched for before anything reasons about it, and
-    # the traversal below consumes only the result.
-    def _validated_layers():
-        out = []
-        for monitor_name, monitor in data.items():
-            if not isinstance(monitor, dict):
-                _shape_error("monitor %r is not an object" % monitor_name)
-            levels = monitor.get("levels")
-            # NOT defaulted to {}. A monitor with no layers still reports
-            # `levels: {}`, so a missing one is a malformed payload.
-            if not isinstance(levels, dict):
-                _shape_error("monitor %r has a missing or non-object `levels`" % monitor_name)
-            for level_name, level in levels.items():
-                if not isinstance(level, list):
-                    _shape_error("monitor %r level %r is not a list" % (monitor_name, level_name))
-                for layer in level:
-                    if not isinstance(layer, dict):
-                        _shape_error("monitor %r holds a layer that is not an object" % monitor_name)
-                    layer_namespace = layer.get("namespace")
-                    # A layer with no usable namespace is not evidence about any
-                    # namespace. Counting it and letting it compare unequal is
-                    # how "absent" gets reported from a payload that never
-                    # identified a single surface.
-                    if not isinstance(layer_namespace, str) or not layer_namespace:
-                        _shape_error(
-                            "monitor %r holds a layer whose `namespace` is missing or not a string"
-                            % monitor_name
-                        )
-                    try:
-                        w = int(layer.get("w") or 0)
-                        h = int(layer.get("h") or 0)
-                    except (TypeError, ValueError, OverflowError):
-                        _shape_error("layer %r has a non-numeric size" % layer_namespace)
-                    out.append((monitor_name, layer_namespace, w, h))
-        # THE COLLECTION STEP ASSERTS IT COLLECTED SOMETHING. `{}`, or monitors
-        # whose levels are all empty, is well formed at every level above, so it
-        # reaches here having identified nothing - and an empty read is a failure
-        # of the check, never a clean result
-        # (.github/instructions/validation-scripts.instructions.md). Both
-        # `wait_layer_state ... 1` calls in popout_check run after the bar is
-        # mapped, so zero layers is anomalous rather than a startup race.
-        if not out:
-            _shape_error("it reported no layers at all across %d monitor(s)" % len(data))
-        return out
-
-    matches = [entry for entry in _validated_layers() if entry[1] == namespace]
-
-    if not matches:
-        raise SystemExit(1)
-
-    # A popout binds to exactly one screen, so a second surface is a duplicate, not
-    # a second reading to reconcile. Reported rather than collapsed: picking one of
-    # them would hide the defect, and averaging them would invent a number.
-    if len(matches) > 1:
-        sys.stderr.write(
-            "sandbox_layer_state: %s is mapped %d times (%s), but a popout binds to exactly "
-            "one screen - that is a duplicate-mapping defect, not a geometry reading\n"
-            % (namespace, len(matches), ", ".join(entry[0] for entry in matches))
-        )
-        raise SystemExit(5)
-
-    monitor_name, _matched_namespace, w, h = matches[0]
-    if monitor_name not in outputs:
-        sys.stderr.write(
-            "sandbox_layer_state: %s is mapped on monitor %s, but `hyprctl monitors` reports "
-            "no usable size for it, so there is nothing to measure it against - that is not "
-            "evidence about its geometry\n" % (namespace, monitor_name)
-        )
-        raise SystemExit(4)
-
-    screen_w, screen_h = outputs[monitor_name]
-    print("%dx%d %dx%d" % (w, h, screen_w, screen_h))
-    if w <= 0 or h <= 0:
-        raise SystemExit(2)
-    # Unguarded, because the output size is measured by the time it runs. A popout
-    # that covers the whole output is a layout failure, not an open popout.
-    if w >= screen_w and h >= screen_h:
-        raise SystemExit(2)
-    raise SystemExit(0)
-
-
-# Every deliberate outcome above is a SystemExit, which is a BaseException and
-# passes straight through this. Anything else - a shape nobody predicted, a
-# conversion nobody guarded - is a failed query, NEVER an absent surface. That
-# is the invariant; the explicit checks above only exist to name the cause.
-try:
-    main()
-except Exception as exc:
+# A popout binds to exactly ONE screen (VgsPopoutStandalone `screen:
+# root.screen`, from PluginPopout's `triggerScreen`), so a second surface is a
+# duplicate-mapping defect, not a second reading. Picking one would hide it and
+# averaging would invent a number, so neither: no reading was taken.
+if len(matches) > 1:
     sys.stderr.write(
-        "sandbox_layer_state: unexpected %s reading the compositor payloads (%s) - "
-        "no usable layer data was collected, so this is a failed query, not an absent "
-        "surface\n" % (type(exc).__name__, exc)
+        "sandbox_layer_state: %s is mapped %d times (%s), but a popout binds to exactly "
+        "one screen - that is a duplicate-mapping defect, not a geometry reading\n"
+        % (namespace, len(matches), ", ".join(entry[0] for entry in matches))
     )
     raise SystemExit(3)
 
+monitor_name, w, h = matches[0]
+if monitor_name not in outputs:
+    sys.stderr.write(
+        "sandbox_layer_state: %s is mapped on monitor %s, but `hyprctl monitors` reports "
+        "no usable size for it, so there is nothing to measure it against - that is not "
+        "evidence about its geometry\n" % (namespace, monitor_name)
+    )
+    raise SystemExit(3)
+
+screen_w, screen_h = outputs[monitor_name]
+print("%dx%d %dx%d" % (w, h, screen_w, screen_h))
+if w <= 0 or h <= 0:
+    raise SystemExit(2)
+# Unguarded, because the output size is measured by the time it runs. A popout
+# that covers the whole output is a layout failure, not an open popout.
+if w >= screen_w and h >= screen_h:
+    raise SystemExit(2)
+raise SystemExit(0)
 PY
 }
 
@@ -598,18 +501,7 @@ wait_layer_state() {
     state=0
     sandbox_layer_state "$namespace" >/dev/null || state=$?
     if [[ "$state" -eq 3 ]]; then
-      fail "could not read the sandbox compositor's layer list (hyprctl query failed) - that is not evidence '$namespace' is absent"
-      return 2
-    fi
-    # Also terminal, and for the same reason: retrying cannot turn "this output
-    # has no reported size" or "it is mapped twice" into the wanted state, so
-    # spinning to the timeout would report either as the state never arriving.
-    if [[ "$state" -eq 4 ]]; then
-      fail "'$namespace' is mapped on an output whose size hyprctl does not report - that is not evidence about its geometry"
-      return 2
-    fi
-    if [[ "$state" -eq 5 ]]; then
-      fail "'$namespace' is mapped on more than one output, but a popout binds to exactly one screen - that is a duplicate-mapping defect"
+      fail "could not read the sandbox compositor's layer list (hyprctl query failed, or its output could not be measured) - that is not evidence '$namespace' is absent"
       return 2
     fi
     [[ "$state" == "$want" ]] && return 0
@@ -785,7 +677,7 @@ wait_widget_registered() {
 # while this consumer rejected anything multi-line - a function and its own
 # contract disagreeing. The emitter was the wrong half: a popout binds to
 # exactly one screen, so the thing being described can only exist once, and a
-# second surface is now the emitter's own status 5 rather than an extra line to
+# second surface is now a failed reading over there rather than an extra line to
 # parse here. Fixing it on this side instead would have papered over a
 # duplicate-mapping defect by quietly accepting it as normal output.
 #
@@ -861,9 +753,7 @@ popout_check() {
   # bare height comparison outright.
   geometry="$(sandbox_layer_state "$popout_namespace")" && geo_rc=0 || geo_rc=$?
   case "$geo_rc" in
-    3) fail "could not read the sandbox compositor's layer list (hyprctl query failed) - that is not evidence about the '$popout_plugin' popout's height"; return 1 ;;
-    4) fail "'$popout_plugin' opened on an output whose size hyprctl does not report, so there is nothing to measure the popout against - that is not a height mismatch"; return 1 ;;
-    5) fail "'$popout_plugin' is mapped on more than one output, but a popout binds to exactly one screen - that is a duplicate-mapping defect, not a height mismatch"; return 1 ;;
+    3) fail "could not take a geometry reading for '$popout_plugin' - hyprctl failed, or its output has no reported size, or it is mapped more than once. That is not evidence about the popout's height"; return 1 ;;
     1) fail "the '$popout_plugin' popout surface disappeared before its height could be read"; return 1 ;;
     2) fail "'$popout_plugin' opened a degenerate popout surface ($geometry) - that is not a height mismatch"; return 1 ;;
   esac

@@ -249,37 +249,29 @@ Item {
 
     // The layer surface spans the output top-to-bottom at all times, so this is
     // the ONLY geometry it ever needs: the body rect it records drives the left
-    // margin and the surface width, never the surface height — and no longer
-    // the dismiss carve-out, which tracks the drawn body instead. Height changes stay inside the surface, which is
-    // what makes a resize a pure in-surface animation instead of a per-frame
-    // wl_surface geometry commit (the visible flash — VGS-133).
+    // margin and the surface width, never the surface height. Height changes
+    // stay inside the surface, which is what makes a resize a pure in-surface
+    // animation instead of a per-frame wl_surface geometry commit (the visible
+    // flash — VGS-133).
+    //
+    // It does NOT feed the dismiss carve-out. That is the whole reason every
+    // "some settle path collapses the carve-out early" report below is closed by
+    // construction rather than per-path: the carve-out binds to `bodyRectX/Y/W/H`,
+    // the geometry the body is DRAWN at, so a settle call recording the target
+    // here cannot move it (see `bodyRectH` and the note above it).
     function _setSettledSurfaceGeometry() {
         if (shouldBeVisible) {
             _setSurfaceGeometry(alignedX, alignedY, alignedWidth, alignedHeight);
         }
     }
 
-
-
-
-    // Repositioning an OPEN popout must not collapse the carve-out either. This
-    // is a second settle path into the same rect, and it is reachable while a
-    // shrink is still animating: both VGSIPC and PopoutManager assign
-    // `currentTabIndex` on an already-visible Dash and then call this, so a tab
-    // whose content is shorter starts the height animation and this call would
-    // immediately replace the envelope with the smaller target - putting the
-    // still-visible lower band back inside the dismiss window. The envelope
-    // degenerates to the settled rect once rendered geometry has caught up, so
-    // routing through it costs nothing in the steady case.
+    // Public: repositioning an already-open popout. Both VGSIPC and
+    // PopoutManager assign `currentTabIndex` on a visible Dash and then call
+    // this, so it lands mid-animation routinely — harmless, per the note above.
     function updateSurfacePosition() {
         _setSettledSurfaceGeometry();
     }
 
-    // X and WIDTH go through the envelope too, even though neither moves the
-    // vertical band. `_setSurfaceGeometry` writes the whole rect at once, so a
-    // horizontal reflow arriving mid-shrink would rewrite Y/height from the
-    // TARGET as a side effect and collapse the carve-out under the still-taller
-    // body. The axis that changed is not the axis at risk.
     onAlignedXChanged: {
         _setSettledSurfaceGeometry();
         _kickBlurCommit();
