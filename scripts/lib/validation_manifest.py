@@ -27,6 +27,19 @@ class ManifestError(Exception):
     """A surface this module reads does not say what it must say."""
 
 
+# The manifest heredoc, spelled ONCE for every reader of it. `\r?\n` at both
+# delimiters because `_read` opens with `newline=""`: on a CRLF-lined runner a
+# pattern requiring a bare `\n` matches nothing, and the two readers that treat
+# a miss as "no manifest here" would then leave the manifest's DATA in the text
+# the token-participation check scans — the exact vacuity `runner_logic`
+# documents itself as preventing.
+_HEREDOC_OPEN = r"<<'MANIFEST_EOF'\r?\n"
+_HEREDOC_CLOSE = r"\r?\nMANIFEST_EOF\r?\n"
+_MANIFEST_HEREDOC = re.compile(
+    rf"({_HEREDOC_OPEN})(.*?)({_HEREDOC_CLOSE})", re.DOTALL
+)
+
+
 def _read(path: Path, what: str) -> str:
     """A surface's text, with an unreadable file as a DIAGNOSTIC not a traceback.
 
@@ -86,7 +99,7 @@ def manifest_rows(runner: Path) -> list[tuple[str, str]]:
     gets one diagnosis, not two readers naming different defects on it.
     """
     text = _read(runner, "the manifest runner")
-    block = re.search(r"<<'MANIFEST_EOF'\n(.*?)\nMANIFEST_EOF\n", text, re.DOTALL)
+    block = _MANIFEST_HEREDOC.search(text)
     if not block:
         raise ManifestError(
             "scripts/validate has no MANIFEST_EOF heredoc; "
@@ -110,7 +123,7 @@ def manifest_rows(runner: Path) -> list[tuple[str, str]]:
     # which has no `|` and was refused as a row with no separator. Verified end
     # to end before this was written. Sharing the character set does not settle
     # C4 on its own: the LINE BOUNDARY has to be the runner's too.
-    for line in block.group(1).split("\n"):
+    for line in block.group(2).split("\n"):
         if not spaces.sub("", line):
             continue
         if "|" not in line:
@@ -633,11 +646,8 @@ def token_participates(runner: Path, rules: "Grammar", token: str, workdir: Path
 
     def build(manifest: str) -> Path:
         text = _read(runner, "the manifest runner")
-        text = re.sub(
-            r"(<<'MANIFEST_EOF'\n).*?(\nMANIFEST_EOF\n)",
-            lambda m: m.group(1) + manifest + m.group(2),
-            text,
-            flags=re.DOTALL,
+        text = _MANIFEST_HEREDOC.sub(
+            lambda m: m.group(1) + manifest + m.group(3), text
         )
         probe = repo / "scripts" / "validate"
         probe.write_text(text, encoding="utf-8")
@@ -716,7 +726,7 @@ def runner_logic(runner: Path) -> str:
     does its job lives in scripts/test-validate.sh.
     """
     text = _read(runner, "the manifest runner")
-    manifest = re.search(r"<<'MANIFEST_EOF'\n.*?\nMANIFEST_EOF\n", text, re.DOTALL)
+    manifest = _MANIFEST_HEREDOC.search(text)
     if manifest:
         text = text.replace(manifest.group(0), "")
     lines = []
@@ -735,34 +745,51 @@ def runner_logic(runner: Path) -> str:
 AREA_ANCHOR_OPEN = "<!-- validate-areas -->"
 AREA_ANCHOR_CLOSE = "<!-- /validate-areas -->"
 
-# A FENCED BLOCK IS NOT A MARKER, it is a picture of one. Without this the
-# document that DOCUMENTS the anchor could not show it: a second literal
-# `<!-- validate-areas -->` anywhere on the page — even inside a code fence
-# demonstrating the contract — trips the exactly-once refusal below, so the
-# mechanism was unnameable in the one place it is explained.
+# A FENCE LINE, which is both what the pairing below keys on and what the
+# balance count counts.
 #
 # ONLY AN UNINDENTED BACKTICK FENCE, and the contract paragraph in
 # .github/instructions/validation-scripts.instructions.md says so in those
 # words. A fence opened under a list bullet, and a `~~~` fence, are not matched
 # here, so markers inside one are read as the real thing — which fails LOUDLY
 # (two anchored regions) rather than quietly, and is the direction to keep.
-_FENCED_BLOCK = re.compile(r"^```.*?^```", re.DOTALL | re.MULTILINE)
-
-# The same fence line the pairing above keys on, counted rather than paired.
-# PAIRING FROM THE TOP OF A DOCUMENT IS ONLY MEANINGFUL IF THE FENCES BALANCE:
-# one stray fence re-pairs every fence below it, so a block that was a picture
-# becomes live text and a live region becomes a picture — silently, and with
-# the strip running before the anchors are counted, the misdirection lands on
-# whichever arm reads next. So an odd count is refused as a malformed document
-# before anything is stripped.
 #
-# EXACTLY THE LINES THE PAIRING USES, deliberately: counting a line the strip
-# never pairs would refuse a page whose read region is perfectly intact, which is
-# the wrong-cause direction of the defect this exists to catch. Run length is not
-# compared — markdown's rule, where a longer opener may enclose a shorter fence,
-# would take a tokenizer this guard has no other use for. That cost is bounded to
-# nested fences, and an unbalanced one is still refused loudly.
+# Run length is not compared — markdown's rule, where a longer opener may
+# enclose a shorter fence, would take a tokenizer this guard has no other use
+# for. That cost is bounded to nested fences, which the odd-count refusal below
+# names as one of its two possible causes rather than leaving the author to
+# hunt for a fence that is not missing.
 _FENCE_LINE = re.compile(r"^```", re.MULTILINE)
+
+# A FENCED BLOCK IS NOT A MARKER, it is a picture of one. Without this the
+# document that DOCUMENTS the anchor could not show it: a second literal
+# `<!-- validate-areas -->` anywhere on the page — even inside a code fence
+# demonstrating the contract — trips the exactly-once refusal below, so the
+# mechanism was unnameable in the one place it is explained.
+#
+# BUILT FROM `_FENCE_LINE`, so the pairing and the count cannot key on different
+# lines. Spelling the fence literal twice made a coupling the balance check
+# depends on into a coupling a comment merely asked for — and a divergence
+# between counted and paired lines is precisely the wrong-cause refusal that
+# check exists to prevent.
+_FENCED_BLOCK = re.compile(
+    rf"{_FENCE_LINE.pattern}.*?{_FENCE_LINE.pattern}", re.DOTALL | re.MULTILINE
+)
+
+
+def _fenced_marker_error(path: Path, marker: str) -> ManifestError:
+    """The one wording for "this marker is present, but only as a picture".
+
+    Written once and taken by both ends: the opener and the closer fail the same
+    way, and spelling the diagnosis at one of them is how the wrong-cause report
+    survived at the other.
+    """
+    return ManifestError(
+        f"{path.name} carries {marker}, but only inside a code fence, where it is a "
+        f"picture of the contract rather than the contract. Move the real anchor "
+        f"outside the fence, or drop the enumeration entirely and remove the file "
+        f"from AREA_ENUMERATING_DOCS as a recorded decision."
+    )
 
 
 def prose_areas(path: Path) -> set[str]:
@@ -789,34 +816,40 @@ def prose_areas(path: Path) -> set[str]:
     """
     raw = _read(path, "an area-enumerating document")
     # BEFORE THE STRIP, because the strip is what an unbalanced fence corrupts.
+    # Which markers are pictures and which are the contract is decided by pairing
+    # fence lines from the top of the page, so one stray fence re-pairs every
+    # fence below it: a block that was a picture becomes live text and a live
+    # region becomes a picture, silently, and the misdirection lands on whichever
+    # arm reads next.
     fences = len(_FENCE_LINE.findall(raw))
     if fences % 2:
         raise ManifestError(
             f"{path.name} carries an odd number of unindented ``` lines ({fences}), "
-            f"so a code fence is opened and never closed. Which markers are pictures "
-            f"and which are the contract is decided by pairing those lines from the "
-            f"top of the page, so one unbalanced fence re-pairs every fence below it "
-            f"and moves the region this guard reads."
+            f"so either a code fence is opened and never closed, or a fence is nested "
+            f"inside a longer-run one — this guard pairs those lines without comparing "
+            f"run lengths, so markdown's nesting rule is not honoured here. Which "
+            f"markers are pictures and which are the contract is decided by that "
+            f"pairing, so an unpaired fence moves the region this guard reads."
         )
     text = _FENCED_BLOCK.sub("", raw)
     opens = text.count(AREA_ANCHOR_OPEN)
     closes = text.count(AREA_ANCHOR_CLOSE)
-    # A MARKER THAT EXISTS BUT IS FENCED IS ITS OWN DIAGNOSIS. Reporting it as
-    # "no anchor ... restore the anchor" sent the author to re-add something
-    # plainly on the page, and never named the fence that swallowed it.
+    # A MARKER THAT EXISTS BUT IS FENCED IS ITS OWN DIAGNOSIS, AT EITHER END.
+    # Reporting it as "no anchor ... restore the anchor" sent the author to re-add
+    # something plainly on the page and never named the fence that swallowed it;
+    # keying the diagnosis on the opener alone left that identical wrong cause
+    # reachable through the closer, which then reported "never closes it" about a
+    # document whose closing marker is right there.
     if opens == 0 and AREA_ANCHOR_OPEN in raw:
-        raise ManifestError(
-            f"{path.name} carries {AREA_ANCHOR_OPEN}, but only inside a code fence, "
-            f"where it is a picture of the contract rather than the contract. Move "
-            f"the real anchor outside the fence, or drop the enumeration entirely "
-            f"and remove the file from AREA_ENUMERATING_DOCS as a recorded decision."
-        )
+        raise _fenced_marker_error(path, AREA_ANCHOR_OPEN)
     if opens == 0:
         raise ManifestError(
             f"{path.name} has no {AREA_ANCHOR_OPEN} anchor around its validate area "
             f"list. Restore the anchor, or drop the enumeration entirely and remove "
             f"the file from AREA_ENUMERATING_DOCS as a recorded decision."
         )
+    if closes == 0 and AREA_ANCHOR_CLOSE in raw:
+        raise _fenced_marker_error(path, AREA_ANCHOR_CLOSE)
     # BOTH MARKERS ARE COUNTED. Counting only the opener left the identical hole
     # through the other end: one opener and two closers reads open..close#1, and
     # anything between close#1 and close#2 is a region no reader looks at — the
@@ -830,6 +863,17 @@ def prose_areas(path: Path) -> set[str]:
     start = text.index(AREA_ANCHOR_OPEN) + len(AREA_ANCHOR_OPEN)
     end = text.find(AREA_ANCHOR_CLOSE, start)
     if end == -1:
+        # A CLOSER THAT EXISTS BUT PRECEDES THE OPENER IS NOT A MISSING CLOSER.
+        # The region is read between the two, so a reversed pair anchors nothing
+        # — and telling the author to add a marker the page already carries is
+        # the same wrong cause the fenced arms above exist to avoid.
+        if closes:
+            raise ManifestError(
+                f"{path.name} carries {AREA_ANCHOR_CLOSE} BEFORE its "
+                f"{AREA_ANCHOR_OPEN}; the area list is read between the two, so a "
+                f"reversed pair anchors nothing. Put the closing marker after the "
+                f"opening one."
+            )
         raise ManifestError(
             f"{path.name} opens the validate area anchor but never closes it with "
             f"{AREA_ANCHOR_CLOSE}"

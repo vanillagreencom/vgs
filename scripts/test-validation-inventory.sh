@@ -59,7 +59,9 @@ GUARD_ONLY_MESSAGES=(
   "anchor around its validate area list"
   "but only inside a code fence"
   "a code fence is opened and never closed"
+  "a fence is nested inside a longer-run one"
   "opens the validate area anchor but never closes it"
+  "a reversed pair anchors nothing"
   "must be anchored exactly once"
   "anchors an empty validate area list"
   "could not read"
@@ -593,6 +595,31 @@ expect_refused "fenced marker" "but only inside a code fence"
 expect_absent "$guard_out" "Restore the anchor" "fenced marker"
 ok "a marker inside a code fence is reported as fenced, not as missing"
 
+# ...AT EITHER END. Keying the fenced diagnosis on the opener alone left the
+# identical wrong cause reachable through the closer: a page whose closing marker
+# sits only inside a fence was reported as one that "never closes it", sending
+# the author after a marker plainly on the page while the fence went unnamed.
+# shellcheck disable=SC2016  # backticks are markdown quoting in the fixture prose
+{
+  printf 'areas: <!-- validate-areas -->`go`, `qml`, `helper`, `packaging`, `docs`, `all`\n\n'
+  printf '```markdown\n<!-- /validate-areas -->\n```\n'
+} >"$areas_probe"
+run_guard "AGENTS_PATH=$areas_probe"
+expect_refused "fenced closing marker" "but only inside a code fence"
+expect_absent "$guard_out" "never closes it" "fenced closing marker"
+ok "a closing marker inside a code fence is reported as fenced, not as never closed"
+
+# ...and a pair in the WRONG ORDER is neither. Both markers are unfenced and
+# present exactly once, so every count above is satisfied; the region is read
+# between them, so a reversed pair anchors nothing — and "never closes it" would
+# again name a marker the page carries.
+# shellcheck disable=SC2016  # backticks are markdown quoting in the fixture prose
+printf '<!-- /validate-areas -->areas <!-- validate-areas -->`go`\n' >"$areas_probe"
+run_guard "AGENTS_PATH=$areas_probe"
+expect_refused "reversed anchor pair" "a reversed pair anchors nothing"
+expect_absent "$guard_out" "never closes it" "reversed anchor pair"
+ok "a closing marker that precedes the opening one is reported as reversed, not as never closed"
+
 # ...and the accept side, which is the whole point: a real anchor plus a fenced
 # demonstration of one is exactly what the instructions file now carries, and it
 # must parse. Without this case the strip above could delete the real region too.
@@ -678,6 +705,20 @@ ok "an indented fence does not hide its markers, exactly as the contract states"
 run_guard "AGENTS_PATH=$areas_probe"
 expect_clean_run "indented fence is not counted"
 ok "the fence count reads exactly the lines the fence pairing reads"
+
+# A NESTED FENCE IS A KNOWN BOUND, NAMED IN THE REFUSAL. Run lengths are not
+# compared, so a three-backtick fence shown inside a four-backtick one counts
+# three lines and is refused — on a document whose fences do balance under
+# markdown's rule. The refusal must offer nesting as the second cause, or the
+# author is sent hunting for a close marker that is not missing.
+# shellcheck disable=SC2016  # backticks are markdown quoting in the fixture prose
+{
+  printf 'areas: <!-- validate-areas -->`go`, `qml`, `helper`, `packaging`, `docs`, `all`<!-- /validate-areas -->\n\n'
+  printf '````markdown\nhow a fence line looks:\n```\n````\n'
+} >"$areas_probe"
+run_guard "AGENTS_PATH=$areas_probe"
+expect_refused "nested fence" "a fence is nested inside a longer-run one"
+ok "a nested fence is refused with nesting named as a cause, not as a missing close"
 
 # ...and every named document must currently yield a non-empty list, so the
 # case above is catching the rewording rather than a doc that never stated one.
@@ -1237,6 +1278,32 @@ LIB
 expect_contains "$ws_library_said" "malformed tag field" "whitespace is applied"
 ok "the whitespace set travels from the runner's constant to the pattern each reader applies"
 
+# THE MANIFEST HEREDOC IS FOUND ON A CRLF RUNNER TOO. `_read` opens with
+# `newline=""`, so CRLF reaches the patterns intact; a heredoc pattern requiring
+# a bare \n then matches nothing, and `runner_logic` — whose miss is silent —
+# leaves the manifest's rows in the text the token-participation check scans,
+# which is exactly what that function documents itself as preventing. Asserted
+# on a row that appears ONLY in the manifest, so a survivor is unambiguous.
+crlf_said="$(python3 - "$repo_root" "$tmp" <<'CRLF' 2>&1 || true
+import importlib.util, pathlib, sys
+root, tmp = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2])
+spec = importlib.util.spec_from_file_location(
+    "vm", root / "scripts" / "lib" / "validation_manifest.py"
+)
+mod = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mod)
+runner = root / "scripts" / "validate"
+crlf = tmp / "validate-crlf"
+crlf.write_bytes(runner.read_bytes().replace(b"\n", b"\r\n"))
+row = "scripts/check-doc-growth.py"
+assert row in runner.read_text(encoding="utf-8"), "the doc-growth manifest row moved"
+logic = mod.runner_logic(crlf)
+print("STRIPPED" if row not in logic and "MANIFEST_EOF" not in logic else "SURVIVED")
+CRLF
+)"
+expect_contains "$crlf_said" "STRIPPED" "CRLF manifest heredoc"
+ok "a CRLF-lined runner's manifest is still stripped from the logic the tag check scans"
+
 # UNREADABLE SURFACES ARE DIAGNOSED, NOT TRACEBACKS. Every read in the library
 # goes through one helper for this reason; before it, a document that had become
 # unreadable escaped as a traceback out of whichever arm touched it first —
@@ -1304,34 +1371,53 @@ ok "an unreadable surface raises ManifestError naming the path, not a traceback"
 # EVERY SPELLING OF A READ, not the one the module happens to use today. This
 # keyed on `read_text(` alone, so the instrument built to REPLACE an enumeration
 # of call sites reported green on `open(p).read()`, `read_bytes()` and
-# `.readlines()` — the same enumeration, wearing a regex. Comment lines are
-# skipped because that module's own comments discuss `read_text(` by name, and a
-# scan that reports prose about the rule makes the rule unnameable where it is
-# explained.
+# `.readlines()` — the same enumeration, wearing a regex.
+#
+# ASKED OF THE SYNTAX, NOT OF THE LINES. A text scan matches read verbs in PROSE
+# as readily as in code, so it needs a prose exemption — and the one it had
+# covered `#` comments only, while that module states nearly every rule it has in
+# a DOCSTRING. Nothing is misreported today: the module's only prose naming a
+# read verb is `_read`'s own docstring, which the `_read` line range already
+# skips. The hole is the next line written, not a line present — a docstring
+# anywhere else in the module explaining the one-reader rule is a false CI
+# failure on prose about the rule, in the file whose convention is to explain
+# rules exactly there. Only real call sites are nodes, so parsing needs no prose
+# exemption at all, and the docstring hole and the line arithmetic go with it.
 one_reader_scan() { # $1 = module to scan. Prints each stray read; non-zero if any.
   python3 - "$1" <<'READS'
-import pathlib, re, sys
+import ast, pathlib, sys
 module = pathlib.Path(sys.argv[1])
-lines = module.read_text(encoding="utf-8").split("\n")
-starts = [i for i, line in enumerate(lines) if line.startswith("def _read(")]
-if len(starts) != 1:
-    print(f"{module.name} declares {len(starts)} `_read` helpers, so the "
+source = module.read_text(encoding="utf-8")
+try:
+    tree = ast.parse(source)
+except SyntaxError as exc:
+    print(f"{module.name} does not parse, so the one-reader rule cannot be checked: {exc}")
+    sys.exit(1)
+readers = [
+    node for node in ast.walk(tree)
+    if isinstance(node, ast.FunctionDef) and node.name == "_read"
+]
+if len(readers) != 1:
+    print(f"{module.name} declares {len(readers)} `_read` helpers, so the "
           f"one-reader rule cannot be checked")
     sys.exit(1)
-start = starts[0]
-end = next(
-    (i for i in range(start + 1, len(lines))
-     if lines[i].startswith("def ") or lines[i].startswith("class ")),
-    len(lines),
-)
-READ_VERB = re.compile(r"\b(?:read_text|read_bytes|readlines|readline|open)\s*\(")
+low, high = readers[0].lineno, readers[0].end_lineno
+READ_VERBS = {"open", "read_text", "read_bytes", "readlines", "readline"}
+lines = source.split("\n")
 stray = []
-for i, line in enumerate(lines):
-    if start <= i < end or line.strip().startswith("#"):
+for node in ast.walk(tree):
+    if not isinstance(node, ast.Call):
         continue
-    if READ_VERB.search(line):
-        stray.append((i + 1, line.strip()))
-for number, line in stray:
+    func = node.func
+    if isinstance(func, ast.Name):
+        name = func.id
+    elif isinstance(func, ast.Attribute):
+        name = func.attr
+    else:
+        continue
+    if name in READ_VERBS and not (low <= node.lineno <= high):
+        stray.append((node.lineno, lines[node.lineno - 1].strip()))
+for number, line in sorted(set(stray)):
     print(f"{module.name}:{number} reads a file outside _read(): {line}")
 sys.exit(1 if stray else 0)
 READS
@@ -1365,15 +1451,24 @@ return p.open(encoding="utf-8").readlines()
 PLANTED
 ok "every read spelling planted outside _read() is reported by the scan"
 
-# ...and the other direction, which is not hypothetical: a comment MENTIONING a
-# read must not be reported, or the rule cannot be written down beside itself.
-{
-  cat "$repo_root/scripts/lib/validation_manifest.py"
-  printf '\n# Prose about the rule: nothing may call path.read_text( or open( here.\n'
-} >"$reads_probe"
-one_reader_scan "$reads_probe" >/dev/null ||
-  fail "one-reader scan control" "a comment naming a read was reported as a read"
-ok "a comment naming a read is prose, not a breach of the one-reader rule"
+# ...and the other direction, which is not hypothetical: PROSE mentioning a read
+# must not be reported, or the rule cannot be written down beside itself. Both
+# forms the module actually uses are here — a comment, and a docstring, which is
+# where that module states nearly every rule it has and where a line-shaped scan
+# reported a false breach.
+while IFS= read -r prose; do
+  [[ -n "$prose" ]] || continue
+  {
+    cat "$repo_root/scripts/lib/validation_manifest.py"
+    printf '\n\n%b\n' "$prose"
+  } >"$reads_probe"
+  one_reader_scan "$reads_probe" >/dev/null ||
+    fail "one-reader scan control" "prose naming a read was reported as a read: $prose"
+done <<'PROSE'
+# Prose about the rule: nothing may call path.read_text( or open( here.
+def _documented(p):\n    """Nothing here may call p.read_text( or open( directly."""\n    return p
+PROSE
+ok "a comment or docstring naming a read is prose, not a breach of the one-reader rule"
 
 # A MISSING PREREQUISITE MUST NOT REPLACE A FIXTURE'S VERDICT. The CI parse used
 # to raise straight out of main, so on a python3 without PyYAML every fixture

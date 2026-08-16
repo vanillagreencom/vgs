@@ -58,9 +58,13 @@ inventory of the runner's own coverage.
 **Verification**: `scripts/test-validate.sh` § parser agreement compares the two
 readers' COMMAND SEQUENCES on the shipped manifest — the tag half is what
 `--list` cannot carry, so it is checked separately;
-`scripts/test-validation-inventory.sh` § reader agreement drives ten malformed,
-duplicate and control-character rows through both readers, with their tags, and
-requires an identical classification.
+`scripts/test-validation-inventory.sh` § reader agreement drives eleven
+malformed, duplicate and control-character rows through both readers, with their
+tags, and requires an identical classification. The three control-character rows
+(`\v`, `\f`, `\r`) require more than agreement: each must be TAKEN by both
+readers and its command listed, since two readers that both refused the row
+would agree perfectly while the shared whitespace set was broken in the one
+direction those rows exist to catch.
 
 **References**: VGS-123 (one runner, one manifest), VGS-144 (deferred review
 findings). CI invokes the manifest's commands as individually named steps rather
