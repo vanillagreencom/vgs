@@ -1,4 +1,4 @@
-.github/workflows/ci.yml	439
+.github/workflows/ci.yml	440
 .github/workflows/review-gate-writer.yml	656
 backend/internal/services/bluez/bluez.go	744
 backend/internal/services/clipboard/clipboard.go	635
@@ -37,7 +37,7 @@ config/vshell/plugins/remoteDesktop/RemoteDesktopWidget.qml	803
 config/vshell/plugins/sudoToggle/SudoToggleWidget.qml	515
 config/vshell/plugins/sysUpdate/SysUpdateWidget.qml	712
 config/vshell/plugins/tailscale/TailscaleWidget.qml	804
-config/vshell/plugins/vgsMenu/VGSMenu.qml	2342
+config/vshell/plugins/vgsMenu/VGSMenu.qml	2349
 config/vshell/settings.default.json	757
 docs/architecture/scratchpads.md	410
 docs/media/vgs-demo-poster.jpg	1197
@@ -219,5 +219,5 @@ scripts/test-remote-desktop-state.js	1243
 scripts/test-toast-actions.js	607
 scripts/test-validate.sh	514
 scripts/test-validation-inventory.sh	1284
-scripts/validate	975
+scripts/validate	976
 vstack.toml	479
