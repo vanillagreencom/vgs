@@ -220,7 +220,7 @@ CEILINGS: dict[str, int] = {
     "docs/architecture/notification-ownership.md": 19_300,  # adopted at 17,530 B
     "docs/architecture/overlay-and-dependencies.md": 21_300,  # adopted at 19,354 B
     "docs/architecture/remote-desktop.md": 21_700,  # adopted at 19,653 B
-    "docs/architecture/scratchpads.md": 24_500,  # adopted at 22,271 B
+    "docs/architecture/scratchpads.md": 24_500,  # adopted at 22,255 B
     # Adopted at 20,248 B. 2026-08-15 (VGS-134): now 23,174 B, and the raise
     # absorbs two things, not one. VGS-121 and VGS-118 had already grown the
     # file 2,005 B under the old ceiling, to 22,253 B with 47 B of headroom
@@ -230,7 +230,8 @@ CEILINGS: dict[str, int] = {
     # 24,400 is measured + ~5%, DELIBERATELY tighter than the +10% adoption
     # default: this file is one of the per-area references agents load by name
     # and it has taken 2,926 B since adoption, so the next growth should be
-    # argued for rather than absorbed.
+    # argued for rather than absorbed. Now 23,229 B after VGS-124's repoint of the
+    # smoke-mode and post-run-assertion pointers out of AGENTS.md (+55 B).
     "docs/architecture/shell-architecture.md": 24_400,
     "docs/architecture/theme-architecture.md": 31_800,  # adopted at 28,861 B
     "docs/architecture/wallpaper-upscaling.md": 4_000,  # adopted at 3,625 B
