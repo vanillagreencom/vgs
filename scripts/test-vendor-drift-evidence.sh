@@ -33,6 +33,12 @@ source "$repo_root/scripts/lib/vendor-drift-test.sh"
 TRACKED_REL="third_party/$ENGINE"
 MIRROR_REL=".agents/skills/$ENGINE"
 
+# What `diff -r -u` actually emits before a differing pair. Headers are
+# recognised by POSITION now, so a fixture feeding a bare `+++ ` line is not a
+# header — it is content, which is the whole point — and every fixture that
+# means "a header" has to say it the way diff does.
+PAIR="diff -r -u -- $MIRROR_REL/references/settings.md $TRACKED_REL/references/settings.md"$'\n'"--- $MIRROR_REL/references/settings.md	2023-11-14"$'\n'"+++ $TRACKED_REL/references/settings.md	2023-11-14"
+
 class_tracked_only=""
 class_at_risk=""
 classify() {
@@ -71,17 +77,27 @@ expect_class "hunk header" no "@@ -1,2 +1 @@"
 expect_class "diff provenance line" no "diff -r -u -- $MIRROR_REL/a $TRACKED_REL/a"
 expect_class "no-newline marker" no '\ No newline at end of file'
 expect_class "mirror file header" no "--- $MIRROR_REL/references/settings.md	2023-11-14"
-expect_class "tracked file header" no "+++ $TRACKED_REL/references/settings.md	2023-11-14"
+expect_class "tracked file header" no "$PAIR"
 expect_class "file only the mirror has" no "Only in $MIRROR_REL/references: retired.md"
+# GNU diff SHELL-quotes the directory when it contains a space — a different
+# quoting style from the double quotes it uses in the unified headers. Unquoted
+# anchors alone made a MIRROR-only file read as tracked-side, which withheld the
+# rsync permanently for any engine shipping such a directory and printed a
+# mirror path under a heading saying the tracked copy held it.
+expect_class "file only the mirror has, quoted directory" no \
+  "Only in '$MIRROR_REL/sub dir': extra.md"
 ok "every ignore arm attributes its line to the mirror side or to structure"
 
 # ── lines that ARE tracked-side evidence ──────────────────────────────────
 expect_class "tracked-only content" yes \
-  "+++ $TRACKED_REL/references/settings.md"$'\n'"+a tracked-only row" \
+  "$PAIR"$'\n'"+a tracked-only row" \
   "$TRACKED_REL/references/settings.md"
 expect_class "file only the tracked copy has" yes \
   "Only in $TRACKED_REL/references: error-patterns.md" \
   "$TRACKED_REL/references/error-patterns.md"
+expect_class "file only the tracked copy has, quoted directory" yes \
+  "Only in '$TRACKED_REL/sub dir': error-patterns.md" \
+  "$TRACKED_REL/sub dir/error-patterns.md"
 ok "tracked-only content and tracked-only files are both counted, and named"
 
 # ── the shapes that used to escape ────────────────────────────────────────
@@ -89,12 +105,17 @@ ok "tracked-only content and tracked-only files are both counted, and named"
 # `+++ x`, which the old parser ate as a file header. The header arm is anchored
 # to the root diff was given, so this is content again.
 expect_class "content line that looks like a header" yes \
-  "+++ $TRACKED_REL/references/settings.md"$'\n'"+++ a line that itself begins with ++" \
+  "$PAIR"$'\n'"+++ a line that itself begins with ++" \
+  "$TRACKED_REL/references/settings.md"
+# The shape that defeated the anchored prefix test: content naming the tracked
+# root itself. Out of header position, so it is content.
+expect_class "content naming the tracked root" yes \
+  "$PAIR"$'\n'"+++ $TRACKED_REL/references/x.md is discussed here" \
   "$TRACKED_REL/references/settings.md"
 # GNU diff QUOTES a header whose path contains a space. Still a header, so the
 # content below it is attributed to that file rather than to the header line.
 expect_class "quoted tracked file header" yes \
-  "+++ \"$TRACKED_REL/references/with space.md\""$'\n'"+a tracked-only row" \
+  "diff -r -u -- \"$MIRROR_REL/references/with space.md\" \"$TRACKED_REL/references/with space.md\""$'\n'"--- \"$MIRROR_REL/references/with space.md\""$'\n'"+++ \"$TRACKED_REL/references/with space.md\""$'\n'"+a tracked-only row" \
   "$TRACKED_REL/references/with space.md"
 # A `+++ ` header naming neither root is not a header this run produced.
 expect_class "header for a foreign root" yes "+++ /somewhere/else/file.md"
@@ -116,7 +137,12 @@ ok "every unrecognised shape counts as content the rsync would destroy"
 # installed anywhere this suite runs, so a behavioural test would silently pass
 # on a C-only machine. What the default arm above already guarantees is that a
 # translated marker is SAFE; this pins that it is also CORRECT.
-diff_invocation="$(grep -n 'diff -r -u' "$repo_root/scripts/lib/vendor-drift.sh" || true)"
+# Comments stripped before matching, exactly as flag_carriers does and for the
+# same reason: with the whole file matched, the inverse control PASSED — leave a
+# comment naming `LC_ALL=C diff -r -u`, change the real call, and this stayed
+# green with the drift diff running under the ambient locale.
+diff_invocation="$(grep -n 'diff -r -u' "$repo_root/scripts/lib/vendor-drift.sh" |
+  grep -vE '^[0-9]+:[[:space:]]*#' || true)"
 expect_contains "$diff_invocation" "LC_ALL=C diff -r -u" "locale pin"
 ok "the drift diff runs under LC_ALL=C, so the markers stay in the parsed language"
 
@@ -225,6 +251,39 @@ else
 fi
 ok "a git that cannot answer the shallow question yields no direction"
 
+# ── a git log that fails, in a repository that has commits ───────────────
+# An empty result means no commit touches the path; a FAILURE means git could
+# not be consulted. Reporting the second as the first is the wrong-cause family
+# the previous round removed for the shallow case. Same stub technique: fail
+# only `log`, delegate the rest, so the fixture still has a real repository and
+# a real HEAD behind it.
+root="$(new_fixture git-log-fails)"
+printf 'shared line\nnew upstream line\n' \
+  >"$root/.agents/skills/$ENGINE/references/settings.md"
+commit_tracked "$root" "$COMMIT_OLD"
+set_refresh "$root" "$REFRESH"
+mkdir -p "$tmp/gitlogstub"
+{
+  printf '#!/usr/bin/env bash\n'
+  # shellcheck disable=SC2016 # the STUB's body: $@ and $a must reach it
+  # literally, not be expanded by the shell writing it.
+  printf 'for a in "$@"; do [[ "$a" == log ]] && exit 3; done\n'
+  printf 'exec %q "$@"\n' "$(command -v git)"
+} >"$tmp/gitlogstub/git"
+chmod +x "$tmp/gitlogstub/git"
+if PATH="$tmp/gitlogstub:$PATH" git -C "$root" log -1 >/dev/null 2>&1; then
+  fail "git log fails" "stub precondition unmet: log still answered"
+else
+  saved_path="$PATH"
+  PATH="$tmp/gitlogstub:$PATH"
+  run_check "$root"
+  PATH="$saved_path"
+  expect_rc "$rc" 1 "git log fails"
+  expect_contains "$err" "git could not be consulted" "git log fails"
+  expect_absent "$err" "no commit in this repository touches" "git log fails"
+fi
+ok "a git log that fails is unreadable git, not a repository with no such commit"
+
 # ── the reading, and the cause it reports ─────────────────────────────────
 # Every row asserts the REASON as well as the reading: an explanation that
 # describes a decision other than the one made is the defect this pins. The two
@@ -257,6 +316,10 @@ git-unreadable|EMPTY|1700003600|no|undetermined|git could not be consulted
 no-history|EMPTY|1700003600|no|undetermined|no commit in this repository
 shallow|EMPTY|1700003600|no|undetermined|this is a shallow clone
 shallow|EMPTY|EMPTY|no|undetermined|this is a shallow clone
+bogus-state|EMPTY|1700003600|no|undetermined|unrecognised state bogus-state
+usable|EMPTY|1700003600|no|undetermined|which is not a timestamp
+usable|not-a-number|1700003600|no|undetermined|which is not a timestamp
+usable|1700000000|not-a-number|no|undetermined|which is not a timestamp
 TABLE
 ok "every row reads as written and reports the cause of that reading, not another"
 

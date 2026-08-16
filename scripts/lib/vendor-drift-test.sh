@@ -105,7 +105,8 @@ READING_TRACKED_AHEAD="$PROG: the TRACKED copy is newer"
 SAFETY_CLAIMS=(
   "loses nothing"
   "would delete nothing"
-  "copying it across loses nothing"
+  "costs nothing"
+  "safe to run"
 )
 verdicts_seen=""
 saw_verdict() { verdicts_seen+="$1"$'\n'; }
@@ -131,6 +132,14 @@ DRIFT_BANNER="has drifted from the vstack copy"
 # stays green with the cost list removed.
 # shellcheck disable=SC2034 # read by the cases across the source seam.
 AT_RISK_PREFIX="$PROG:        "
+
+# The list's own heading, which vendor_drift_print_at_risk prints and nothing
+# else does. The invariant below keys on THIS, not on AT_RISK_PREFIX: the
+# rsync's continuation line carries the same eight-space indent, so a prefix
+# test could never observe the list missing — vacuous in exactly the way this
+# suite keeps catching elsewhere.
+# shellcheck disable=SC2034 # read by the cases across the source seam.
+AT_RISK_HEADING="content this check reads as tracked-side"
 
 # ── fixtures ──────────────────────────────────────────────────────────────
 # One repo per case. `git init` and a real commit are the point: the direction
@@ -193,6 +202,28 @@ run_check() {
     fi
   done
 
+  # THE COST LIST IS AN INVARIANT, not a property of the branch that happened to
+  # print it. The rule: the command printed, over a run whose tracked side holds
+  # content, means the list of that content is printed too. Ground truth comes
+  # from the classifier over the same diff the check just made, so this cannot
+  # drift with the report. A point fix repairs one branch; this stops any future
+  # branch diverging from the promise the header makes.
+  if [[ "$out$err" == *"$DRIFT_BANNER"* && "$out$err" == *"$RSYNC_COMMAND"* ]]; then
+    # Two statements, not a pipeline: `diff` exits 1 on differences, which under
+    # `pipefail` fails the whole substitution and aborts the caller — the same
+    # errexit trap this suite exists to keep catching.
+    local drift_text truth
+    drift_text="$(
+      cd -- "$root" &&
+        LC_ALL=C diff -r -u --exclude=.vstack-refreshed \
+          -- ".agents/skills/$ENGINE" "third_party/$ENGINE" 2>/dev/null
+    )" || true
+    truth="$(vendor_drift_classify "third_party/$ENGINE" ".agents/skills/$ENGINE" <<<"$drift_text")"
+    if [[ "${truth%%$'\n'*}" == yes && "$out$err" != *"$AT_RISK_HEADING"* ]]; then
+      fail "cost-list invariant" "the rsync printed over tracked-side content with no list of what it destroys"
+    fi
+  fi
+
   # A reported drift that names no runnable command leaves the operator with a
   # diagnosis and no repair. Deleting both `vstack refresh` lines used to pass
   # every case in the suite; this is what makes that impossible.
@@ -232,6 +263,23 @@ new_wrapper_fixture() {
 }
 
 CONFIRM_FLAG="--confirm-mirror-is-newer"
+
+# Every TRACKED automation surface that could invoke the check, from git rather
+# than from a find that silently returns nothing: a renamed workflows directory
+# left the old discovery printing ok with a carrier sitting outside it. The
+# caller asserts the result is non-empty and contains the known callers, so an
+# enumeration that stops finding things fails loudly instead of passing.
+# `:(glob)` so `*` does not cross `/`: a plain git pathspec would sweep
+# scripts/lib/ too, and those files DEFINE the flag — its option arm, its usage
+# text, its messages. A caller is something that could PASS it, which the
+# libraries and the suites themselves are not.
+vendor_drift_caller_surfaces() {
+  git -C "$repo_root" ls-files -- \
+    ':(glob)scripts/*.sh' 'scripts/validate' \
+    ':(glob).github/workflows/*.yml' ':(glob).github/workflows/*.yaml' |
+    grep -vE '^scripts/test-vendor-drift[^/]*\.sh$' |
+    sed "s|^|$repo_root/|"
+}
 
 # Which of the given files could RUN the flag. Comment lines are stripped first:
 # a synopsis that MENTIONS it is documentation. A trailing comment still counts

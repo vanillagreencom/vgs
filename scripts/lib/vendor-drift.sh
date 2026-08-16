@@ -2,63 +2,63 @@
 # Shared drift check for the vstack engines VGS vendors into third_party/.
 #
 # Sourced by scripts/check-review-gate-vendor.sh and
-# scripts/check-size-ratchet-vendor.sh so both judge drift, and both name the
-# repair, the same way. This half holds the EVIDENCE and the DECISION;
-# scripts/lib/vendor-drift-report.sh holds everything the operator reads, and
-# the rule governing the destructive repair. The dependency runs one way: this
-# file sources that one, and that one calls nothing back.
+# scripts/check-size-ratchet-vendor.sh. This half holds the EVIDENCE and the
+# DECISION and returns a status; scripts/lib/vendor-drift-report.sh holds every
+# string the operator reads, and the rule governing the destructive repair. The
+# dependency runs one way: this file sources that one, which calls nothing back.
 #
 # WHY THERE ARE TWO COPIES. An engine has to be IN the repository: CI runs it
 # from a plain checkout, which has no vstack and no shared skills mirror. The
 # sibling repos track theirs at `.agents/skills/`, but VGS symlinks `.agents`
 # wholesale into every worktree (AGENTS.md § Project skills), so a file tracked
 # under that path reports as deleted in every worktree — git cannot stat through
-# the symlinked directory. Tracking it there would leave a permanently dirty
-# tree. So the tracked, CI-facing copy lives at third_party/<engine>/,
-# `vstack refresh` keeps maintaining .agents/skills/<engine> for agent
-# discovery, and this check stops the two from drifting. Cite THIS paragraph for
-# the two-copy rationale; the wrappers only name their engine.
+# the symlinked directory, leaving a permanently dirty tree. So the tracked,
+# CI-facing copy lives at third_party/<engine>/, `vstack refresh` maintains
+# .agents/skills/<engine> for agent discovery, and this check stops the two from
+# drifting. Cite THIS paragraph for the two-copy rationale; the wrappers only
+# name their engine, and the report half only states what may be printed.
 #
 # WHY THE REPAIR IS NOT A CONSTANT (VGS-155). Drift happens in BOTH directions,
 # and this check once printed the mirror→tracked rsync unconditionally, as a
 # procedure — which, run right after a vendoring PR merged, DELETED the merged
-# engine change and then went green on the reverted content. What the check may
-# and may not print as a result is stated once, in vendor-drift-report.sh.
+# change and then went green on the reverted content.
 #
 # WHAT THE DIRECTION EVIDENCE IS, AND IS NOT. There is no per-skill source
 # revision to compare: `.vstack-refreshed` holds one value for every skill a
-# refresh wrote, so the strongest available signals are the commit time of the
-# tracked copy, the mtime of that marker, and which side holds content the other
-# lacks. They can disagree, and the check then says so rather than picking one —
-# `undetermined` is a real answer here, not a fallback. Every signal that cannot
-# be READ resolves to undetermined too: an absent marker, an absent repository,
-# an unparseable diff line. If vstack ever records the source revision each
-# skill was installed from, that becomes an exact comparison and
-# vendor_drift_direction should use it instead.
+# refresh wrote. So the signals are the tracked copy's commit time, that
+# marker's mtime, and which side holds content the other lacks. They can
+# disagree, and the check then says so rather than picking one — `undetermined`
+# is a real answer, not a fallback — and every signal that cannot be READ
+# resolves there too: an absent marker, an absent or shallow repository, an
+# unparseable diff line. If vstack ever records the source revision each skill
+# was installed from, that becomes exact and vendor_drift_direction should use
+# it instead.
 #
-# Entry point:
-#   vendor_drift_main <prog> <engine> <repo_root> [ARGS...]
-#
-# `<engine>` names both paths by convention — third_party/<engine> and
+# Entry point: vendor_drift_main <prog> <engine> <repo_root> [ARGS...], where
+# <engine> names both paths by convention — third_party/<engine> and
 # .agents/skills/<engine> — which is also what lets the tests drive the whole
 # check against a fixture repo root.
 
-# Sourced files inherit the caller's options, and every caller here already
-# sets these three. Setting them anyway is what makes that a guarantee rather
-# than a coincidence: the functions below read command output into variables and
-# branch on it, so an unset variable or a swallowed non-zero must abort rather
-# than be classified.
+# Sourced files inherit the caller's options; setting them makes that a
+# guarantee rather than a coincidence, and these functions read command output
+# into variables and branch on it, so an unset variable or a swallowed non-zero
+# must abort rather than be classified.
 set -euo pipefail
 
 # shellcheck source=scripts/lib/vendor-drift-report.sh
 source "$(dirname -- "${BASH_SOURCE[0]}")/vendor-drift-report.sh"
 
-# Report `Only in DIR: NAME` as the path it refers to.
+# Report `Only in DIR: NAME` as the path it refers to. GNU diff SHELL-quotes DIR
+# when it contains a space — `Only in '.agents/skills/x/sub dir': f.md` — which
+# is a different quoting style from the double quotes it uses in the unified
+# headers, so the two are stripped separately rather than by one helper.
 vendor_drift_only_in_path() {
   local line="$1" dir name
   dir="${line#Only in }"
   name="${dir#*: }"
   dir="${dir%%: *}"
+  dir="${dir#\'}"
+  dir="${dir%\'}"
   printf '%s/%s' "$dir" "$name"
 }
 
@@ -67,57 +67,72 @@ vendor_drift_only_in_path() {
 #   line 1      yes|no — does the TRACKED copy hold content the mirror does not,
 #                        i.e. would `rsync --delete` from the mirror DESTROY
 #                        something
-#   lines 2..n  the paths and raw lines behind a `yes`, deduplicated
+#   lines 2..n  the entries behind a `yes`, deduplicated: a path where this
+#                        could attribute one, the raw line where it could not
 #
-# Returned rather than left in globals so a caller that skips this step cannot
-# inherit a stale or absent "nothing is at risk" from a previous run.
+# Returned rather than left in globals, so a caller that skips this step cannot
+# inherit a stale or absent "nothing is at risk".
 #
-# FAILS CLOSED BY CONSTRUCTION, which is the property that matters and the one
-# this function did not have. Only lines PROVABLY not tracked-side evidence are
-# ignored, and each ignore arm is anchored to something structural:
+# HEADERS ARE RECOGNISED BY POSITION, NOT BY PREFIX. `diff -r -u` emits
+# `diff …`, `--- <mirror>`, `+++ <tracked>` in that order before every differing
+# pair, so a `+++ ` line is a header only where a header can occur, and content
+# can never be read as one whatever it starts with. Prefix tests were tried
+# twice and defeated twice: a tracked-only content line reading `++ x` prints as
+# `+++ x`, and anchoring to the roots only moved the goalposts to
+# `++ third_party/<engine>` — which these trees do discuss, being documentation
+# about diffs and vendored paths. A prefix test is a guess, and the destructive
+# question is the one thing here that may not be guessed.
 #
-#   `--- <mirror>`/`+++ <tracked>`  the unified file headers, anchored to the two
-#                                   roots diff was actually given — a bare `+++ `
-#                                   prefix is NOT a header, because a tracked-only
-#                                   content line reading `++ x` is printed as
-#                                   `+++ x` and was silently eaten as one
-#   `diff `, `@@ `                  diff's own provenance and hunk headers; a
-#                                   content line always carries a +/-/space
-#                                   prefix, so neither can be content
-#   ` `, empty                      context: present in BOTH copies
-#   `-`                             mirror-only content, or a `---` header: what
-#                                   the rsync would ADD, never what it destroys
-#   `\`                             the "No newline at end of file" marker, which
-#                                   annotates an adjacent +/- line rather than
-#                                   being evidence itself
-#   `Only in <mirror>`              a file only the mirror has
-#
-# EVERYTHING ELSE — including anything this parser does not recognise — counts
-# as tracked-only and is listed. `File A is a regular file while file B is a
-# directory`, a locale-translated `Only in`, a diff format that grows a new line
-# kind: each lands in the default arm and withholds the destructive command,
-# which is the safe direction to be wrong in.
+# FAILS CLOSED BY CONSTRUCTION. Only lines PROVABLY not tracked-side evidence
+# are ignored: the three header lines in header position; `@@ `, ` ` and empty
+# (hunk headers and context, present in BOTH copies); `-` (mirror-only content,
+# what the rsync would ADD); `\` (the no-newline marker annotating an adjacent
+# line); and `Only in <mirror>`, quoted or not. EVERYTHING else — a translated
+# marker, a new diff line kind, a header out of position — counts as
+# tracked-only and is listed, withholding the destructive command. The cost is
+# over-withholding, and the report names the list for what it is rather than
+# claiming every entry is tracked-side content.
 vendor_drift_classify() {
   local tracked_rel="$1" mirror_rel="$2"
-  local line entry current="" tracked_only=no at_risk=""
+  local line entry current="" tracked_only=no at_risk="" expect=file
 
   while IFS= read -r line; do
     entry=""
     case "$line" in
-      "+++ $tracked_rel"* | "+++ \"$tracked_rel"*)
-        # Names the tracked-side file the `+` lines below belong to; the
-        # trailing tab-separated mtime is not part of the path. GNU diff QUOTES
-        # the name when it contains a space, so both forms are anchored — a
-        # quoted header falling through would be counted as content, which is
-        # safe but names the header line instead of the file.
-        current="${line#+++ }"
-        current="${current%%$'\t'*}"
-        current="${current%\"}"
-        current="${current#\"}"
+      'diff '*)
+        # Emitted by `diff -r` before each differing pair, so it is the only
+        # place a header can begin.
+        expect=mirror_header
+        continue
         ;;
-      "--- $mirror_rel"* | 'diff '* | '@@ '* | ' '* | '' | '-'* | \\*) ;;
-      "Only in $mirror_rel"*) ;;
-      "Only in $tracked_rel"*)
+      "--- $mirror_rel"* | "--- \"$mirror_rel"*)
+        if [[ "$expect" == mirror_header ]]; then
+          expect=tracked_header
+          continue
+        fi
+        expect=body
+        continue
+        ;;
+      "+++ $tracked_rel"* | "+++ \"$tracked_rel"*)
+        if [[ "$expect" == tracked_header ]]; then
+          # Names the tracked-side file the `+` lines below belong to; the
+          # trailing tab-separated mtime is not part of the path, and GNU diff
+          # double-quotes the name when it contains a space.
+          current="${line#+++ }"
+          current="${current%%$'\t'*}"
+          current="${current%\"}"
+          current="${current#\"}"
+          expect=body
+          continue
+        fi
+        ;;
+    esac
+    expect=body
+
+    case "$line" in
+      '@@ '* | ' '* | '' | '-'* | \\*) ;;
+      "Only in $mirror_rel"* | "Only in '$mirror_rel"*) ;;
+      "Only in $tracked_rel"* | "Only in '$tracked_rel"*)
         tracked_only=yes
         entry="$(vendor_drift_only_in_path "$line")"
         ;;
@@ -144,30 +159,25 @@ vendor_drift_classify() {
 }
 
 # Decide which copy is newer, or refuse to decide, and say why in the same
-# breath. Prints "<reading><TAB><reason>" — exactly one of tracked-ahead,
-# mirror-ahead or undetermined, with a reason that is empty for the two decided
-# readings. One function owns both halves because when they were two, they
-# diverged: the header reported an unreadable git while the verdict asserted a
-# repository that did not exist.
+# breath. Prints "<reading><TAB><reason>": tracked-ahead, mirror-ahead or
+# undetermined, the reason empty for the two decided readings.
 #
-#   $1 age_state     from vendor_drift_tracked_age
-#   $2 tracked_epoch  its epoch, set only when the state is `usable`
-#   $3 refresh_epoch  mtime of the mirror's .vstack-refreshed, "" if absent
-#   $4 tracked_only   yes|no — from vendor_drift_classify
-#   $5 engine
+#   $1 age_state  $2 tracked_epoch  $3 refresh_epoch  $4 tracked_only  $5 engine
 #
-# THESE ARE READINGS OF THE EVIDENCE, NOT VERDICTS, and only `tracked-ahead` is
-# allowed to name a repair on its own — see vendor-drift-report.sh.
+# THESE ARE READINGS, NOT VERDICTS, and only `tracked-ahead` may name a repair
+# on its own — see vendor-drift-report.sh.
 #
 # The two decided readings are disjoint by construction: one needs the commit
-# strictly newer than the refresh, the other strictly older, so their order here
-# is immaterial and no ordering trick is load-bearing. What separates a merged
+# strictly newer than the refresh, the other strictly older, so their order is
+# immaterial and no ordering trick is load-bearing. What separates a merged
 # DELETION from an upstream addition is that `mirror-ahead` names no repair
-# alone — not that it is tested second.
+# alone, not that it is tested second.
 #
 # Unusable evidence is answered before either, and every way it can be unusable
-# disqualifies the commit time for BOTH rules rather than one: it is the commit
-# time itself that has stopped describing the tree.
+# disqualifies the commit time for BOTH rules: it is the commit time itself that
+# has stopped describing the tree. An unrecognised state, or a `usable` one
+# whose epoch is not a timestamp, is answered there too rather than falling
+# through to an arithmetic comparison that reads an empty value as 0.
 vendor_drift_direction() {
   local age_state="$1" tracked_epoch="$2" refresh_epoch="$3" tracked_only="$4" engine="$5"
 
@@ -188,7 +198,24 @@ vendor_drift_direction() {
       printf 'undetermined\tthird_party/%s has uncommitted changes, so its last commit time does not describe what is on disk' "$engine"
       return 0
       ;;
+    usable) ;;
+    *)
+      printf 'undetermined\tthe commit-age collector returned the unrecognised state %s, so nothing here can be compared' "$age_state"
+      return 0
+      ;;
   esac
+  # `usable` is a CLAIM about the epoch, enforced here rather than trusted: the
+  # two halves talk through a tab-delimited string across a function boundary,
+  # and bash arithmetic reads an empty or non-numeric value as 0, which makes
+  # the refresh look newer and lands on the one reading that favours the rsync.
+  if [[ -z "$tracked_epoch" || -n "${tracked_epoch//[0-9]/}" ]]; then
+    printf 'undetermined\tthe tracked commit time was reported as %q, which is not a timestamp' "$tracked_epoch"
+    return 0
+  fi
+  if [[ -n "${refresh_epoch//[0-9]/}" ]]; then
+    printf 'undetermined\tthe mirror refresh time was reported as %q, which is not a timestamp' "$refresh_epoch"
+    return 0
+  fi
   if [[ -z "$refresh_epoch" ]]; then
     printf 'undetermined\tthe mirror carries no .vstack-refreshed marker, so there is nothing to compare its age against'
     return 0
@@ -229,24 +256,25 @@ vendor_drift_refresh_epoch() {
   vendor_drift_mtime_epoch "$marker" || true
 }
 
-# Whether the tracked copy has a commit time that can be trusted, and if not,
-# WHICH way it is untrustworthy. Prints "<state><TAB><epoch>", the epoch being
-# empty for every state but `usable`:
+# Whether the tracked copy's commit time can be trusted, and if not, WHICH way
+# it cannot. Prints "<state><TAB><epoch>", the epoch empty for every state but
+# `usable`:
 #
 #   usable          a commit time that describes what is on disk
 #   git-unreadable  git could not answer at all
 #   shallow         a shallow clone, where `git log -1 -- <path>` reports the
-#                   TIP date for EVERY path, touched or not — measured at 3
-#                   hours off on this repository, which normally beats the
-#                   mirror's refresh mtime and turns a genuine mirror-ahead
-#                   drift into a confident `tracked-ahead`
+#                   TIP date for EVERY path, touched or not — normally newer
+#                   than the mirror's refresh mtime, so a genuine mirror-ahead
+#                   drift reads as a confident `tracked-ahead`. How far off
+#                   depends on the clone, so no figure is quoted here; the
+#                   fixture in the evidence suite reproduces the mechanism.
 #   no-history      no commit in this repository touches the path
 #   dirty           uncommitted changes, so the last commit time has stopped
 #                   describing the tree
 #
-# One collector rather than two signals because each state maps to exactly one
-# reason: when the state and the reason were computed separately they diverged,
-# reporting an unreadable git while asserting a repository that did not exist.
+# One collector rather than two signals: each state maps to exactly one reason,
+# and when the two were computed separately they diverged — reporting an
+# unreadable git while asserting a repository that did not exist.
 vendor_drift_tracked_age() {
   local repo_root="$1" path="$2" shallow porcelain epoch
 
@@ -266,7 +294,17 @@ vendor_drift_tracked_age() {
     printf 'shallow\t'
     return 0
   fi
-  epoch="$(git -C "$repo_root" log -1 --format=%ct -- "$path" 2>/dev/null || true)"
+  if ! epoch="$(git -C "$repo_root" log -1 --format=%ct -- "$path" 2>/dev/null)"; then
+    # A repository with no commits at all fails here rather than returning
+    # empty, and that IS "no history" — calling it unreadable git would be the
+    # same wrong-cause diagnostic one state over.
+    if git -C "$repo_root" rev-parse --verify HEAD >/dev/null 2>&1; then
+      printf 'git-unreadable\t'
+    else
+      printf 'no-history\t'
+    fi
+    return 0
+  fi
   if [[ -z "$epoch" ]]; then
     printf 'no-history\t'
     return 0
@@ -296,7 +334,7 @@ vendor_drift_main() {
         return 0
         ;;
       *)
-        printf '%s: unknown option: %s\n' "$prog" "$arg" >&2
+        vendor_drift_say_unknown_option "$prog" "$arg"
         return 2
         ;;
     esac
@@ -306,39 +344,31 @@ vendor_drift_main() {
   local tracked="$repo_root/$tracked_rel" mirror="$repo_root/$mirror_rel"
 
   if [[ ! -d "$tracked" ]]; then
-    printf '%s: FAIL: %s is missing; CI has nothing to run\n' "$prog" "$tracked" >&2
+    vendor_drift_say_missing_tracked "$prog" "$tracked"
     return 1
   fi
 
   if [[ ! -d "$mirror" ]]; then
-    if [[ "$allow_missing" == true ]]; then
-      printf '%s: skipped: no vstack copy at %s, so drift was NOT checked\n' "$prog" "$mirror_rel"
-      return 0
-    fi
-    printf '%s: FAIL: no vstack copy at %s\n' "$prog" "$mirror_rel" >&2
-    printf "%s: run 'vstack add --skill %s', or pass\n" "$prog" "$engine" >&2
-    printf '%s: --allow-missing-source to accept an unchecked vendor copy.\n' "$prog" >&2
+    vendor_drift_say_missing_mirror "$prog" "$engine" "$allow_missing"
+    [[ "$allow_missing" == true ]] && return 0
     return 1
   fi
 
-  # Unified, and against paths relative to the repo root, so every path in the
-  # output is one the reader can act on and each hunk carries the two file names
-  # rather than bare `<`/`>` markers. (`--label` would replace those per-file
-  # names with one constant pair, so it is not the way to label the sides.)
-  #
-  # LC_ALL=C on this command alone — the `LC_ALL=C sort` precedent in
-  # scripts/validate — because `Only in`, `Files` and `Binary files` are
-  # TRANSLATED under another locale, and the classifier matches them by text.
+  # Unified, against repo-relative paths, so every path in the output is one the
+  # reader can act on and each hunk carries both file names rather than bare
+  # `<`/`>` markers. (`--label` would replace those per-file names with one
+  # constant pair, so it is not the way to label the sides.) `LC_ALL=C` on this
+  # command alone — the `LC_ALL=C sort` precedent in scripts/validate — keeps
+  # the markers the classifier matches in the language it parses.
+  # `.vstack-refreshed` is vstack's own bookkeeping, not engine content.
   #
   # `cd` runs inside the substitution's subshell so the caller's cwd is never
-  # moved: this function is sourced into a long-lived shell by the tests. Exit 3
-  # is the sentinel for "cd failed" — diff itself uses 0, 1 and 2 only — so a
-  # dependency that never ran cannot be read as "no differences" or as a
-  # difference. That branch guards the window between the directory checks above
-  # and this command; it is deliberately not fixture-reachable, since a repo
-  # root that cannot be entered fails the `-d` checks first. The diff-trouble
-  # branch below IS reachable, and is pinned by a fixture.
-  # .vstack-refreshed is vstack's own bookkeeping, not engine content.
+  # moved: this is sourced into a long-lived shell by the tests. Exit 3 is the
+  # sentinel for "cd failed" — diff uses 0, 1 and 2 only — so a dependency that
+  # never ran cannot be read as a difference or as none. That branch guards the
+  # window after the directory checks and is deliberately not fixture-reachable
+  # (an unenterable root fails `-d` first); the diff-trouble branch below is
+  # reachable and is pinned by a fixture.
   local drift rc=0
   drift="$(
     cd -- "$repo_root" || exit 3
@@ -346,17 +376,16 @@ vendor_drift_main() {
   )" || rc=$?
   case "$rc" in
     0)
-      printf '%s: ok (%s matches the vstack copy)\n' "$prog" "$tracked_rel"
+      vendor_drift_say_ok "$prog" "$engine"
       return 0
       ;;
     1) ;;
     3)
-      printf '%s: FAIL: could not enter %s, so the two copies were NOT compared\n' "$prog" "$repo_root" >&2
+      vendor_drift_say_not_compared "$prog" no-cwd "$repo_root"
       return 1
       ;;
     *)
-      printf '%s: FAIL: diff could not compare the two copies (exit %d)\n' "$prog" "$rc" >&2
-      printf '%s\n' "$drift" >&2
+      vendor_drift_say_not_compared "$prog" "$rc" "$drift"
       return 1
       ;;
   esac
@@ -371,8 +400,7 @@ vendor_drift_main() {
   # is neither yes nor no is a parser defect, and the safe reading of a parser
   # defect is that content is at stake.
   if [[ "$tracked_only" != yes && "$tracked_only" != no ]]; then
-    printf '%s: WARNING: the drift classifier answered %q; treating the drift as\n' "$prog" "$tracked_only" >&2
-    printf '%s: destructive to overwrite.\n' "$prog" >&2
+    vendor_drift_say_classifier_broke "$prog" "$tracked_only"
     tracked_only=yes
     at_risk="$classified"
   fi
@@ -387,13 +415,11 @@ vendor_drift_main() {
   reading="${decided%%$'\t'*}"
   reason="${decided#*$'\t'}"
 
-  {
-    printf '%s: FAIL: %s has drifted from the vstack copy\n' "$prog" "$tracked_rel"
-    vendor_drift_print_sides "$prog" "$engine" \
-      "$tracked_epoch" "$refresh_epoch" "$age_state"
-  } >&2
-  printf '%s\n' "$drift" >&2
-  vendor_drift_print_repairs "$prog" "$engine" "$reading" "$reason" \
+  vendor_drift_say_drifted "$prog" "$engine"
+  vendor_drift_print_sides "$prog" "$engine" "$repo_root" \
+    "$tracked_epoch" "$refresh_epoch" "$age_state" >&2
+  vendor_drift_print_diff "$drift"
+  vendor_drift_print_repairs "$prog" "$engine" "$repo_root" "$reading" "$reason" \
     "$confirm_mirror" "$tracked_only" "$at_risk" >&2
   return 1
 }

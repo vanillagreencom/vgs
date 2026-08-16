@@ -81,7 +81,17 @@ run_check "$root" --confirm-mirror-is-newer
 expect_rc "$rc" 1 "tracked-ahead confirmed"
 expect_contains "$err" "$RSYNC_COMMAND" "tracked-ahead confirmed"
 expect_contains "$err" "CONTRADICTS" "tracked-ahead confirmed"
-ok "--confirm-mirror-is-newer prints the rsync but flags the contradicting evidence"
+# The most dangerous invocation the tool has: the evidence says the tracked copy
+# is newer and the operator is overriding it. What dies must be named HERE, not
+# left implicit in a diff further up the scrollback — this path once printed the
+# command with the doomed file named nowhere after it.
+expect_contains "$err" "$AT_RISK_PREFIX""third_party/$ENGINE/references/settings.md" \
+  "tracked-ahead confirmed"
+cost_line="$(printf '%s' "$err" | grep -n "third_party/$ENGINE/references/settings.md" | tail -1 | cut -d: -f1)"
+command_line="$(printf '%s' "$err" | grep -n -- "$RSYNC_COMMAND" | tail -1 | cut -d: -f1)"
+((cost_line < command_line)) ||
+  fail "tracked-ahead confirmed" "the cost list must print ABOVE the command, not below it"
+ok "--confirm-mirror-is-newer names what dies above the command, and flags the contradiction"
 
 # ── a merged commit that REMOVES engine content ───────────────────────────
 # The shape that defeats a content-only test. The mirror holds the removed line,
@@ -131,7 +141,11 @@ expect_contains "$err" "the evidence is CONSISTENT WITH the MIRROR being newer" 
 expect_contains "$err" "$REPAIR_REFRESH_BOTH" "mirror-ahead"
 expect_contains "$err" "$RSYNC_CONDITION" "mirror-ahead"
 expect_contains "$err" "$RSYNC_COMMAND" "mirror-ahead"
-ok "favourable evidence still prints both repairs, the rsync only behind its condition"
+# Both of the command's paths are repo-relative and every VGS worktree has an
+# .agents symlink and a third_party/ tree, so pasted into a different worktree
+# it would succeed THERE. It carries its own tree for that reason.
+expect_contains "$err" "cd -- $root" "mirror-ahead"
+ok "favourable evidence prints both repairs, the rsync conditioned and rooted in its own tree"
 
 # ── refresh newer, but the tracked copy still holds content ───────────────
 # The pull-after-refresh shape: the timestamps favour the mirror and the content
@@ -155,9 +169,9 @@ ok "timestamps and content disagreeing withholds the rsync and names what it wou
 run_check "$root" --confirm-mirror-is-newer
 expect_rc "$rc" 1 "undetermined confirmed"
 expect_contains "$err" "$RSYNC_COMMAND" "undetermined confirmed"
-expect_contains "$err" "It DELETES this" "undetermined confirmed"
+expect_contains "$err" "It DESTROYS:" "undetermined confirmed"
 expect_contains "$err" "$AT_RISK_PREFIX""third_party/$ENGINE/references/settings.md" "undetermined confirmed"
-ok "--confirm-mirror-is-newer releases the rsync, still above the list of what it deletes"
+ok "--confirm-mirror-is-newer releases the rsync, still under the list of what it destroys"
 
 # ── a tracked-only FILE, not just a tracked-only line ─────────────────────
 root="$(new_fixture tracked-only-file)"
@@ -311,20 +325,63 @@ expect_contains "$pout" "$REPAIR_REFRESH_BOTH" "wrapper process"
 expect_contains "$pout" "$RSYNC_CONDITION" "wrapper process"
 ok "a real wrapper process reports the whole drift, with errexit live throughout"
 
+# ── the classifier breaks its own contract ────────────────────────────────
+# vendor_drift_classify emits only yes or no today, so no real input reaches
+# this branch — it defends against a future change to that contract, which is
+# exactly the change most likely to break it unnoticed. Driven by shadowing the
+# function in the live shell the suite sources it into, the same technique the
+# evidence suite uses for its PATH git stub. The fixture is mirror-ahead shaped,
+# so WITHOUT the guard this input prints the runnable rsync.
+root="$(new_fixture classifier-contract)"
+commit_tracked "$root" "$COMMIT_OLD"
+printf 'shared line\nnew upstream line\n' \
+  >"$root/.agents/skills/$ENGINE/references/settings.md"
+set_refresh "$root" "$REFRESH"
+real_classify="$(declare -f vendor_drift_classify)"
+vendor_drift_classify() { printf 'maybe\nsome unparsed thing\n'; }
+run_check "$root"
+eval "$real_classify"
+expect_rc "$rc" 1 "classifier contract"
+expect_contains "$err" "WARNING: the drift classifier answered" "classifier contract"
+expect_absent "$err" "$RSYNC_COMMAND" "classifier contract"
+# And the restore worked, or every case after this one is testing a stub.
+classify_probe="$(vendor_drift_classify "third_party/$ENGINE" ".agents/skills/$ENGINE" <<<" context")"
+[[ "$classify_probe" == no ]] ||
+  fail "classifier contract" "the real classifier was not restored (probe: $classify_probe)"
+ok "an answer that is neither yes nor no is treated as destructive, not as nothing"
+
 # ── no automated caller may assert the direction ──────────────────────────
 # --confirm-mirror-is-newer is an operator assertion: a manifest row or CI step
 # carrying it would make the destructive command unconditional again, with every
 # case above still green.
-callers=("$repo_root/scripts/validate" "$repo_root"/scripts/check-*-vendor.sh)
-while IFS= read -r workflow; do callers+=("$workflow"); done \
-  < <(find "$repo_root/.github/workflows" -name '*.yml' 2>/dev/null)
+callers=()
+while IFS= read -r caller; do callers+=("$caller"); done < <(vendor_drift_caller_surfaces)
+# A discovery that finds nothing must fail, not pass quietly: that is how a
+# renamed directory leaves a carrier outside the swept set with the control green.
+((${#callers[@]} > 0)) || fail "no automated caller" "the caller enumeration found no surfaces at all"
+for known in scripts/validate scripts/check-review-gate-vendor.sh .github/workflows/ci.yml; do
+  printf '%s\n' "${callers[@]}" | grep -qxF "$repo_root/$known" ||
+    fail "no automated caller" "the enumeration missed a known caller surface: $known"
+done
 carriers="$(flag_carriers "${callers[@]}")"
 [[ -z "$carriers" ]] ||
   fail "no automated caller" "these tracked callers pass $CONFIRM_FLAG: $carriers"
-# The control must be able to fail: planted, the same search finds it.
-printf 'scripts/check-review-gate-vendor.sh %s\n' "$CONFIRM_FLAG" >"$tmp/planted.yml"
-[[ -n "$(flag_carriers "$tmp/planted.yml")" ]] ||
-  fail "no automated caller" "the search found nothing in a file that carries the flag"
+# The control must be able to fail on EVERY surface class it claims to cover.
+# Each is planted in turn as a real tracked file, swept by the real enumeration,
+# and removed again — proving the sweep reaches that class, not just that grep
+# can match a string in a temp file.
+for surface in scripts/planted-caller.sh .github/workflows/planted.yml .github/workflows/planted.yaml; do
+  printf '#!/usr/bin/env bash\nscripts/check-review-gate-vendor.sh %s\n' "$CONFIRM_FLAG" \
+    >"$repo_root/$surface"
+  git -C "$repo_root" add -N -- "$surface" >/dev/null 2>&1
+  planted_surfaces=()
+  while IFS= read -r one; do planted_surfaces+=("$one"); done < <(vendor_drift_caller_surfaces)
+  planted="$(flag_carriers "${planted_surfaces[@]}")"
+  git -C "$repo_root" rm -q --cached -- "$surface" >/dev/null 2>&1 || true
+  rm -f "$repo_root/$surface"
+  [[ "$planted" == *"$surface"* ]] ||
+    fail "no automated caller" "the sweep did not reach a planted carrier at $surface"
+done
 ok "no tracked caller asserts the direction, and the search that says so can fail"
 
 # ── liveness: every reading this file names was actually produced ─────────
