@@ -64,6 +64,8 @@ project-skills-dir = "project-skills"
 [skill-instructions]
 review-gate = ""
 
+growth-guards = ""
+
 code-quality = ""
 
 preflight = ""

@@ -227,4 +227,5 @@ scripts/test-validation-inventory.sh	2278
 scripts/test-vendor-drift-evidence.sh	420
 scripts/test-vendor-drift.sh	434
 scripts/validate	1049
-vstack.toml	551
+vstack.settings.toml	419
+vstack.toml	553
