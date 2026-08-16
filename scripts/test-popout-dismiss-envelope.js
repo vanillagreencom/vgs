@@ -90,6 +90,15 @@ function assertSafeExpression(expr, what) {
     // keep out; the tokens themselves are otherwise harmless.
     if (token === "(" && previous && /[A-Za-z0-9_$)]$/.test(previous))
       throw new Error(`refusing to evaluate ${what}: looks like a call at ${JSON.stringify(rest.slice(0, 24))}`);
+    // `++`/`--` tokenize as two allowed single-character tokens, so the whitelist
+    // admits them while the header promises "no assignment". They cannot reach
+    // anything the identifier guard does not already own, so this is not an
+    // execution surface - but `alignedX++` would MUTATE the model state the sweep
+    // is comparing against, and a harness that quietly rewrites its own fixture is
+    // the wrong kind of green. Adjacent same-sign operators are refused outright;
+    // no real geometry binding needs one.
+    if ((token === "+" || token === "-") && previous === token)
+      throw new Error(`refusing to evaluate ${what}: '${token}${token}' mutates state at ${JSON.stringify(rest.slice(0, 24))}`);
     previous = token;
     rest = rest.slice(token.length).replace(/^\s+/, "");
   }
@@ -273,6 +282,14 @@ const FRAMES = 8;
     'root.thing["key"]',
     "root.alignedX + `x`",
     'Math.max(root.alignedX, 0)',
+    // `++`/`--` tokenize as two allowed single-character tokens, so the token
+    // whitelist admitted them and the identifier guard has no objection - the
+    // head IS part of the model. They mutate the fixture the sweep compares
+    // against, which is why they are refused explicitly.
+    'root.alignedX++',
+    '++root.alignedX',
+    'root.alignedX--',
+    'root.renderedAlignedHeight - --root.alignedX',
   ];
   const probeState = makeState();
   for (const bad of rejected) {
