@@ -44,6 +44,17 @@ fail() {
 skips=0
 skipped_names=()
 skip() { # $1 = control name, remaining args = the reason, one line each
+  # ARITY CHECKED, because the alternative is this helper killing the run from
+  # inside the reporting path: `$1` after the shift is unbound under `set -u`, so
+  # a call passing only a name ended the suite with no verdict line at all —
+  # neither a skip nor a failure — in the one helper whose whole purpose is to
+  # make an absent control visible. A malformed call is a FAILURE, not a skip: it
+  # is a defect in the suite, and recording it as a skip would let the suite
+  # excuse itself with the mechanism it uses to excuse a control.
+  if [[ $# -lt 2 ]]; then
+    fail "skip helper" "skip was called with no reason for \`${1:-<no control name>}\`, so nothing could be reported about it"
+    return 0
+  fi
   local name="$1"
   shift
   skips=$((skips + 1))
@@ -64,6 +75,15 @@ expect_contains() {
 expect_absent() {
   [[ "$1" != *"$2"* ]] || fail "$3" "expected NOT to contain: $2 (got: $1)"
 }
+
+# ...and that guard is itself controlled, in a SUBSHELL so the malformed call is
+# observed without its failure being counted against this run. Without the arity
+# check the subshell dies on the unbound `$1` and prints bash's own message
+# instead, which is exactly the silence being prevented.
+skip_arity_said="$( (skip "a control with no reason") 2>&1 )" || true
+expect_contains "$skip_arity_said" "skip was called with no reason" "skip helper arity"
+case_failed=0 # the subshell's `fail` printed into the capture, not into this run
+ok "a skip call with no reason is reported as a malformed call, not a dead run"
 
 # Every arm-specific message this file drives a fixture to produce. Used two
 # ways: as the noise list for the unmutated control, and to assert that a
@@ -761,13 +781,12 @@ run_guard "AGENTS_PATH=$areas_probe"
 expect_clean_run "real anchor beside a fenced one"
 ok "a document may show the markers in a fence and still carry a real anchor"
 
-# AN UNBALANCED FENCE MOVES THE REGION THAT IS READ, which is why the count is
-# checked before anything is stripped. Fences are paired from the top of the
-# page, so ONE stray opener re-pairs every fence below it: the opener pairs with
-# the illustration's opener, the real anchor between them is stripped as if it
-# were the picture, and the illustration's markers become the live contract.
-# Both fixtures below passed or misdiagnosed before the count existed, and each
-# is the shape a reviewer reproduced.
+# AN UNCLOSED FENCE MOVES THE REGION THAT IS READ, which is why the strip refuses
+# one rather than returning what it managed to remove. Fences are paired from the
+# top of the page, so ONE stray opener swallows everything below it: the real
+# anchor is stripped as if it were the picture, and the illustration's markers
+# become the live contract. Both fixtures below passed or misdiagnosed before the
+# strip refused an unclosed fence, and each is the shape a reviewer reproduced.
 #
 # (i) THE SILENT PASS: with the fenced example carrying the COMPLETE list, the
 # swap leaves a document that answers correctly for the wrong reason — so a
@@ -779,7 +798,7 @@ ok "a document may show the markers in a fence and still carry a real anchor"
   printf '```markdown\n<!-- validate-areas -->areas `go`, `qml`, `helper`, `packaging`, `docs`, `all`<!-- /validate-areas -->\n```\n'
 } >"$areas_probe"
 run_guard "AGENTS_PATH=$areas_probe"
-expect_refused "unbalanced fence swallowing the anchor" "a code fence is opened and never closed"
+expect_refused "unclosed fence swallowing the anchor" "a code fence is opened and never closed"
 ok "a stray fence that relocates the read region is refused, not answered from the picture"
 
 # (ii) THE WRONG-CAUSE DIAGNOSIS: the same swap with an ordinary fenced block
@@ -792,13 +811,13 @@ ok "a stray fence that relocates the read region is refused, not answered from t
   printf '```sh\nan ordinary illustration\n```\n'
 } >"$areas_probe"
 run_guard "AGENTS_PATH=$areas_probe"
-expect_refused "unbalanced fence above the anchor" "a code fence is opened and never closed"
-expect_absent "$guard_out" "anchor around its validate area list" "unbalanced fence above the anchor"
-ok "an unbalanced fence is named as the defect, not reported as a missing anchor"
+expect_refused "unclosed fence above the anchor" "a code fence is opened and never closed"
+expect_absent "$guard_out" "anchor around its validate area list" "unclosed fence above the anchor"
+ok "an unclosed fence is named as the defect, not reported as a missing anchor"
 
-# ...and the ACCEPT side of the count, so the rule is not merely tight: a page
-# whose fences balance parses, however many of them there are. Without this the
-# check above would be satisfied by refusing every fenced document.
+# ...and the ACCEPT side, so the rule is not merely tight: a page whose fences
+# all close parses, however many of them there are. Without this the check above
+# would be satisfied by refusing every fenced document.
 # shellcheck disable=SC2016  # backticks are markdown quoting in the fixture prose
 {
   printf 'areas: <!-- validate-areas -->`go`, `qml`, `helper`, `packaging`, `docs`, `all`<!-- /validate-areas -->\n\n'
@@ -822,18 +841,18 @@ run_guard "AGENTS_PATH=$areas_probe"
 expect_refused "indented fence" "must be anchored exactly once"
 ok "an indented fence does not hide its markers, exactly as the contract states"
 
-# ...and the COUNT keys on the same lines the pairing does. Counting a line the
-# strip never pairs would refuse a page whose read region is perfectly intact —
-# the wrong-cause direction of the very defect the count exists to catch — so an
-# indented ``` is no more counted than it is paired.
+# ...and an indented fence does not leave a block OPEN either. Treating a line the
+# strip never pairs as an opener would refuse a page whose read region is
+# perfectly intact — the wrong-cause direction of the very defect the refusal
+# exists to catch — so an indented ``` neither opens nor closes.
 # shellcheck disable=SC2016  # backticks are markdown quoting in the fixture prose
 {
   printf 'areas: <!-- validate-areas -->`go`, `qml`, `helper`, `packaging`, `docs`, `all`<!-- /validate-areas -->\n\n'
   printf -- '- a lone fence marker quoted in prose:\n\n  ```\n'
 } >"$areas_probe"
 run_guard "AGENTS_PATH=$areas_probe"
-expect_clean_run "indented fence is not counted"
-ok "the fence count reads exactly the lines the fence pairing reads"
+expect_clean_run "indented fence never opens a block"
+ok "an indented fence neither opens nor closes a block, so it cannot move the region"
 
 # A NESTED FENCE PAIRS BY RUN LENGTH, and this is the FALSE ACCEPT that forced
 # the pairing to honour it. A four-backtick block containing a complete
@@ -1714,14 +1733,21 @@ ok "both readers word every shared diagnostic exactly as the grammar does"
 # used to call manifest_rows again, re-running `bash -n` over every command on
 # a clean run and leaving a reporting function that could fail.
 # Only a CLEAN run prints a success line, so without PyYAML there is no count to
-# check — the guard correctly fails on the missing prerequisite instead.
+# check — the guard correctly fails on the missing prerequisite instead. That
+# makes this control UNCREATABLE rather than passing, so the else arm is a skip
+# and not an `ok`: it reported one for as long as it existed, which is the same
+# false green the skip machinery above exists to close, reached through the
+# prerequisite instead of through a locale.
 if [[ $have_yaml -eq 1 ]]; then
   run_guard
   parsed_count="$("$runner" --list all | grep -c .)"
   expect_contains "$guard_out" "$parsed_count documented commands" "documented count"
   ok "the success line's count matches the rows actually parsed"
 else
-  ok "documented-count case skipped: no PyYAML, so the guard prints no success line"
+  skip "documented-count control" \
+    "PyYAML is absent, so the guard fails on that prerequisite and prints no" \
+    "success line at all. The count this control compares against is never" \
+    "produced, and no other case checks it, so it was NOT exercised here."
 fi
 
 # THE TWO READERS, COMPARED TO EACH OTHER on the same row — not each against

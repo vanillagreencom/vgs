@@ -783,12 +783,6 @@ AREA_ANCHOR_CLOSE = "<!-- /validate-areas -->"
 # (two anchored regions) rather than quietly, and is the direction to keep.
 _FENCE_LINE = re.compile(r"```+")
 
-# A FENCED BLOCK IS NOT A MARKER, it is a picture of one. Without this the
-# document that DOCUMENTS the anchor could not show it: a second literal
-# `<!-- validate-areas -->` anywhere on the page — even inside a code fence
-# demonstrating the contract — trips the exactly-once refusal below, so the
-# mechanism was unnameable in the one place it is explained.
-#
 def _strip_fenced_blocks(path: Path, text: str) -> str:
     """`text` with every unindented fenced block removed, PAIRED BY RUN LENGTH.
 
