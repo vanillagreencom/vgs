@@ -326,8 +326,7 @@ Item {
             Qt.callLater(() => {
                 if (!root.shouldBeVisible)
                     return;
-                if (root.backgroundWindowRequired)
-                    backgroundWindow.visible = true;
+                backgroundWindow.visible = true;
                 contentWindow.visible = true;
                 popoutBlur.kick();
                 _bgCommitWindow = true;
@@ -343,8 +342,14 @@ Item {
             // they overlap. Map the content window first and that frame becomes a
             // click that dismisses instead of reaching content.
             // Pinned by scripts/test-popout-dismiss-envelope.js.
-            if (backgroundWindowRequired)
-                backgroundWindow.visible = true;
+            //
+            // Mapped UNCONDITIONALLY, not `if (backgroundWindowRequired)`. A
+            // popout that opens while the requirement is false would otherwise
+            // map its background only when the requirement arrived — by which
+            // time the content window is already up, so the background would
+            // land on top. An unrequired background window is inert anyway:
+            // empty input region, nothing painted.
+            backgroundWindow.visible = true;
             contentWindow.visible = true;
         }
 
@@ -520,9 +525,23 @@ Item {
             resizeSettleTimer.stop();
         }
     }
+    // MAPS, NEVER UNMAPS, while the popout is open. Unmapping and later remapping
+    // would put the background surface ABOVE the content surface — both share
+    // `effectivePopoutLayer`, so the compositor stacks whichever maps LAST on top
+    // — which inverts the input routing the dismiss carve-out depends on. That is
+    // reachable, not theoretical: ControlCenterPopout binds `backgroundInteractive`
+    // to `!anyModalOpen`, so opening and closing its power menu is an unmap/remap
+    // pair while the content window stays mapped throughout.
+    //
+    // Staying mapped costs nothing, because dropping the requirement already
+    // disarms the window on its own: `maskRect` collapses to 0x0 and the
+    // MouseArea disables, so the surface accepts no input, and it paints nothing
+    // (transparent, with only invisible mask rects inside). The unmap happens at
+    // CLOSE, alongside the content window's, which is what re-establishes the
+    // order for the next open.
     onBackgroundWindowRequiredChanged: {
-        if (shouldBeVisible)
-            backgroundWindow.visible = backgroundWindowRequired;
+        if (shouldBeVisible && backgroundWindowRequired)
+            backgroundWindow.visible = true;
     }
 
     Timer {

@@ -360,7 +360,12 @@ const FRAMES = 8;
 // decided by stacking. But flip these two assignments and the first ordering
 // becomes a real dismiss-instead-of-click. Hence this check.
 {
-  const shows = [...source.matchAll(/(background|content)Window\.visible = true/g)].map(m => m[1]);
+  // Comments are stripped first: this file and the QML both DISCUSS
+  // `contentWindow.visible`, and a prose mention must not read as a show site.
+  // Whitespace is free around the assignment, so reformatting cannot break this.
+  const code = source.replace(/\/\/[^\n]*/g, "").replace(/\/\*[\s\S]*?\*\//g, "");
+  const SHOW = /(background|content)Window\.visible\s*=\s*true/g;
+  const shows = [...code.matchAll(SHOW)].map(m => m[1]);
   if (shows.length < 2)
     fail("stacking", "could not read the window show order; the input-routing argument above is unverified");
   else {
@@ -373,6 +378,25 @@ const FRAMES = 8;
       fail("stacking", "contentWindow is shown before backgroundWindow, so the dismiss mask can stack ABOVE the body - a click during a transition can then dismiss instead of reaching content");
     else
       ok("the background window is mapped before the content window, so content stacks on top");
+  }
+
+  // ...and the order has to SURVIVE the open session. Unmapping the background
+  // while the content window stays up and remapping it later puts it on top,
+  // which is the same defect arriving by a different route - and it is reachable,
+  // because ControlCenterPopout binds backgroundInteractive to !anyModalOpen.
+  const handler = /onBackgroundWindowRequiredChanged:\s*\{([\s\S]*?)\n    \}/.exec(code);
+  if (!handler)
+    fail("stacking", "could not read onBackgroundWindowRequiredChanged; the no-remap property is unverified");
+  else {
+    // The assigned VALUE is read out and compared, not lookahead-negated: a
+    // `(?!true)` after `\s*` passes by backtracking the whitespace to empty, so
+    // it reports a violation on the correct code. (It did.)
+    const assigned = [...handler[1].matchAll(/backgroundWindow\.visible\s*=\s*([A-Za-z0-9_.]+)/g)].map(m => m[1]);
+    const unmaps = assigned.filter(v => v !== "true");
+    if (unmaps.length)
+      fail("stacking", `onBackgroundWindowRequiredChanged can UNMAP the background window while the popout is open (assigns ${unmaps.join(", ")}); remapping it later stacks it above the content surface`);
+    else
+      ok("the background window is never unmapped mid-open, so the order survives a modal round trip");
   }
 }
 
