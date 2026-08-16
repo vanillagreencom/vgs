@@ -207,11 +207,23 @@ def main() -> int:
     # and identifiers come from the same small pool of words, so that collision
     # recurs. The question the grammar already asks — does this token change
     # what a row SELECTS or how it EXITS — is the one worth answering.
+    # A PROBE THAT CANNOT RUN IS A PROBLEM TOO, collected like every other arm's.
+    # Unwrapped, the first raise from the probe machinery reached __main__ and
+    # discarded everything collected — including the manifest_rows finding above,
+    # which usually explains it. Caught per tag, so a tag-specific failure keeps
+    # its tag and a shared cause reports once per tag.
     with tempfile.TemporaryDirectory() as workdir:
         for tag in sorted(rules.row_tags - rules.areas):
-            participates, why = token_participates(
-                RUNNER, rules, tag, Path(workdir)
-            )
+            try:
+                participates, why = token_participates(
+                    RUNNER, rules, tag, Path(workdir)
+                )
+            except ManifestError as error:
+                problems.append(
+                    f"whether scripts/validate acts on token `{tag}` was NOT "
+                    f"determined: {error}"
+                )
+                continue
             if not participates:
                 problems.append(
                     f"the grammar declares token `{tag}` but scripts/validate does not "

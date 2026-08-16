@@ -29,10 +29,12 @@ class ManifestError(Exception):
 
 # The manifest heredoc, spelled ONCE for every reader of it. `\r?\n` at both
 # delimiters because `_read` opens with `newline=""`: on a CRLF-lined runner a
-# pattern requiring a bare `\n` matches nothing, and the two readers that treat
-# a miss as "no manifest here" would then leave the manifest's DATA in the text
-# the token-participation check scans — the exact vacuity `runner_logic`
-# documents itself as preventing.
+# pattern requiring a bare `\n` matches nothing, and every reader of this
+# delimiter is wrong without it — the inventory is empty, the runner's
+# executable shell still carries the manifest's DATA, and the participation
+# probe is built from the wrong rows. All three now refuse rather than
+# no-opping, so the CRLF spelling of that miss surfaces as a diagnostic naming
+# the delimiter instead of as a quietly wrong answer.
 _HEREDOC_OPEN = r"<<'MANIFEST_EOF'\r?\n"
 _HEREDOC_CLOSE = r"\r?\nMANIFEST_EOF\r?\n"
 _MANIFEST_HEREDOC = re.compile(

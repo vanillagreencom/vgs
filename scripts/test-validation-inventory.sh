@@ -262,6 +262,15 @@ guard_case "missing MANIFEST_EOF heredoc is reported" \
   "${real_runner//MANIFEST_EOF/MANIFEST_END}" \
   "has no MANIFEST_EOF heredoc"
 
+# ...ALONGSIDE EVERY OTHER ARM'S VERDICT, which a fragment grep cannot tell from
+# an abort at the first raise. The probe machinery reads and executes the runner,
+# so it raises on this same fixture; unwrapped, that discarded the manifest_rows
+# finding collected moments earlier and printed one line. The guard collects, so
+# a LATER arm's message must still be there.
+expect_contains "$guard_out" "the per-area and CI-coverage arms did NOT run" \
+  "missing MANIFEST_EOF heredoc is reported"
+ok "a runner with no manifest delimiter still reports every arm, not just the first raise"
+
 # ...BY EVERY READER OF THAT DELIMITER, not just the one that happens to run
 # first. The case above enters through manifest_rows, which refuses loudly; the
 # other two used to no-op. `runner_logic` returned text with the manifest's rows
@@ -1326,11 +1335,12 @@ expect_contains "$ws_library_said" "malformed tag field" "whitespace is applied"
 ok "the whitespace set travels from the runner's constant to the pattern each reader applies"
 
 # THE MANIFEST HEREDOC IS FOUND ON A CRLF RUNNER TOO. `_read` opens with
-# `newline=""`, so CRLF reaches the patterns intact; a heredoc pattern requiring
-# a bare \n then matches nothing, and `runner_logic` — whose miss is silent —
-# leaves the manifest's rows in the text the token-participation check scans,
-# which is exactly what that function documents itself as preventing. Asserted
-# on a row that appears ONLY in the manifest, so a survivor is unambiguous.
+# `newline=""`, so CRLF reaches the patterns intact and a heredoc pattern
+# requiring a bare \n matches nothing. `runner_logic` now REFUSES such a miss, so
+# a CRLF regression reaches an author as a ManifestError naming the delimiter —
+# this case prints that error in place of STRIPPED rather than the SURVIVED it
+# was written to catch, and both are failures here. Asserted on a row that
+# appears ONLY in the manifest, so a survivor is unambiguous either way.
 crlf_said="$(python3 - "$repo_root" "$tmp" <<'CRLF' 2>&1 || true
 import importlib.util, pathlib, sys
 root, tmp = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2])
@@ -1344,8 +1354,15 @@ crlf = tmp / "validate-crlf"
 crlf.write_bytes(runner.read_bytes().replace(b"\n", b"\r\n"))
 row = "scripts/check-doc-growth.py"
 assert row in runner.read_text(encoding="utf-8"), "the doc-growth manifest row moved"
-logic = mod.runner_logic(crlf)
-print("STRIPPED" if row not in logic and "MANIFEST_EOF" not in logic else "SURVIVED")
+try:
+    logic = mod.runner_logic(crlf)
+except mod.ManifestError as error:
+    # The refusal, not a traceback: this is the shape a CRLF regression takes
+    # now that a missed delimiter raises, and it must read as the delimiter
+    # problem it is.
+    print(f"REFUSED {error}")
+else:
+    print("STRIPPED" if row not in logic and "MANIFEST_EOF" not in logic else "SURVIVED")
 CRLF
 )"
 expect_contains "$crlf_said" "STRIPPED" "CRLF manifest heredoc"
