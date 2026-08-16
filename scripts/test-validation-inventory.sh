@@ -30,6 +30,17 @@ fail() {
 # exit-77 rule, reached from inside a suite instead of from a refusing tool. Skips
 # are counted here so the status can carry them: AGENTS.md's four-valued
 # convention makes 77 "what ran passed, but something did NOT run".
+#
+# READ THIS BEFORE CHASING A RED CI HERE. scripts/validate will report that 77 as
+# a plain FAILURE, not as a named skip, and that is deliberate. The runner honours
+# 77 only from a row tagged `may-skip`; this suite's manifest row is tagged `-`,
+# and the grammar refuses `-,may-skip` — an exclusive tag cannot combine with
+# another. Making it combinable means relaxing the exclusive class's max=1 arity,
+# which would leave this row skippable for ANY reason thereafter: a permanent
+# widening of the vocabulary bought to improve one message in an environment this
+# project's CI does not run on. So the trade is deliberate — on a musl or older
+# libc, where no locale resolves a Unicode space through `[[:space:]]`, this suite
+# fails loudly instead of quietly claiming a control it never created.
 skips=0
 skipped_names=()
 skip() { # $1 = control name, remaining args = the reason, one line each
