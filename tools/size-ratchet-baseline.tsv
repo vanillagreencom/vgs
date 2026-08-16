@@ -1,4 +1,4 @@
-.github/workflows/ci.yml	464
+.github/workflows/ci.yml	469
 .github/workflows/review-gate-writer.yml	656
 backend/internal/services/bluez/bluez.go	744
 backend/internal/services/clipboard/clipboard.go	635
@@ -221,5 +221,5 @@ scripts/test-remote-desktop-state.js	1243
 scripts/test-toast-actions.js	607
 scripts/test-validate.sh	547
 scripts/test-validation-inventory.sh	2278
-scripts/validate	1044
+scripts/validate	1045
 vstack.toml	551

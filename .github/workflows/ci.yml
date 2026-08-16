@@ -311,6 +311,11 @@ jobs:
           # fail-closed argument and manifest handling, and its skip channel.
           scripts/test-validate.sh
           scripts/test-qml-smoke.sh
+          # Both vendor-drift checks are local-only (they need the .agents/
+          # mirror), but the engine deciding which side of a drift is newer —
+          # printing the wrong repair reverts a merged engine fix, VGS-155 —
+          # runs off fixture repos, so that decision IS checkable here.
+          scripts/test-vendor-drift.sh
           # `scripts/test-validation-inventory.sh` belongs with these but runs in
           # its own step at the END OF THE JOB — see that step for why. Order
           # here is free: each script builds its own mktemp tree.
