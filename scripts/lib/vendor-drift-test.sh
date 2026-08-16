@@ -242,17 +242,28 @@ run_check() {
           -- ".agents/skills/$ENGINE" "third_party/$ENGINE" 2>/dev/null
     )" || true
     truth="$(vendor_drift_classify "third_party/$ENGINE" ".agents/skills/$ENGINE" <<<"$drift_text")"
-    if [[ "${truth%%$'\n'*}" == yes && "$out$err" != *"$AT_RISK_HEADING"* ]]; then
-      fail "cost-list invariant" "the rsync printed over tracked-side content with no list of what it destroys"
+    if [[ "${truth%%$'\n'*}" == yes ]]; then
+      [[ "$out$err" == *"$AT_RISK_HEADING"* ]] ||
+        fail "cost-list invariant" "the rsync printed over tracked-side content with no list of what it destroys"
+      # THE ENTRIES, not just the heading: the heading prints BEFORE the loop
+      # that emits them, so a report that lost the entries keeps it, leaving the
+      # promise satisfied by a list of nothing. Ground truth is the classifier's
+      # own entries, matched WITH THE LIST'S PREFIX for the reason
+      # AT_RISK_PREFIX exists — a bare path also appears in the diff above, so
+      # the first version of this loop passed with the entries mutated away.
+      # Found by running that mutation, not by reading it.
+      local want
+      while IFS= read -r want; do
+        [[ -n "$want" ]] || continue
+        [[ "$out$err" == *"$AT_RISK_PREFIX$want"* ]] ||
+          fail "cost-list invariant" "the cost list omits an entry the classifier holds: $want"
+      done <<<"${truth#*$'\n'}"
     fi
-  fi
-
-  # THE PROMISE AND THE LIST TRAVEL TOGETHER, on every run rather than in the
-  # branch that happened to get it right. Asserted as an invariant for the same
-  # reason as the cost list above: a point fix repairs one branch, and the
-  # branch that had this wrong was the one no case drove.
-  if [[ "$out$err" == *"$COST_PROMISE"* && "$out$err" != *"$AT_RISK_HEADING"* ]]; then
-    fail "cost-promise invariant" "the output promises \"$COST_PROMISE\" and then lists nothing, which reads as a cost of nothing"
+    # THE PROMISE AND THE LIST TRAVEL TOGETHER. Same reason as above: a point fix
+    # repairs one branch, and the branch that had this wrong was the one no case
+    # drove. Reached only where the entries were just proven present.
+    [[ "$out$err" != *"$COST_PROMISE"* || "$out$err" == *"$AT_RISK_HEADING"* ]] ||
+      fail "cost-promise invariant" "the output promises \"$COST_PROMISE\" and then lists nothing, which reads as a cost of nothing"
   fi
 
   # A reported drift that names no runnable command leaves the operator with a
