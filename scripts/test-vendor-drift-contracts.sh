@@ -120,6 +120,11 @@ while IFS='|' read -r anchor suite marker; do
   [[ -n "$anchor" ]] || continue
   matched="$(printf '%s\n' "$pointer_lines" | grep -F -- "$anchor" || true)"
   [[ -n "$matched" ]] || fail "header pointers" "no library pointer matches the row anchored at: $anchor"
+  # EXACTLY one. With two pointers sharing an anchor the check below passes if
+  # EITHER names the suite, so a second pointer reusing an anchor verbatim while
+  # aiming somewhere else rode in on the first one's correctness.
+  (($(printf '%s\n' "$matched" | grep -c .) == 1)) ||
+    fail "header pointers" "the anchor '$anchor' matches more than one pointer, so none of them is individually checked: $matched"
   printf '%s' "$matched" | grep -qF -- "scripts/$suite" ||
     fail "header pointers" "the pointer anchored at '$anchor' does not name scripts/$suite, where its guard lives"
   grep -F -- "$marker" "$repo_root/scripts/$suite" | grep -qvE "$ROW_SHAPE" ||

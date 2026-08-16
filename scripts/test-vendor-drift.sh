@@ -164,6 +164,11 @@ expect_contains "$err" "$REPAIR_REFRESH_BOTH" "undetermined"
 expect_absent "$err" "$RSYNC_COMMAND" "undetermined"
 expect_contains "$err" "$AT_RISK_PREFIX""third_party/$ENGINE/references/settings.md" "undetermined"
 expect_contains "$err" "--confirm-mirror-is-newer" "undetermined"
+# The other half of the --help promise, asserted where this state is produced:
+# withheld only where the tracked copy holds content the command would destroy.
+help_text="$("$repo_root/scripts/check-review-gate-vendor.sh" --help)"
+expect_contains "$help_text" "The rsync is WITHHELD only" "undetermined"
+expect_contains "$help_text" "where the tracked copy holds content the command would destroy" "undetermined"
 saw_verdict "which side is newer is NOT ESTABLISHED"
 ok "timestamps and content disagreeing withholds the rsync and names what it would delete"
 
@@ -311,9 +316,9 @@ ok "a diff that could not compare is reported as that, not as a drift with a rep
 # run_check invokes vendor_drift_main as `out="$(...)" || rc=$?`, and bash
 # SUSPENDS errexit for a call whose status is tested that way; the wrappers call
 # it bare, where errexit is live. A statement that legitimately evaluates false
-# can therefore abort the check in production and stay invisible here — which is
-# how the classifier's result-parsing line first behaved. So one drift runs as a
-# real wrapper PROCESS, on the shape whose at-risk list is empty.
+# can abort the check in production and stay invisible here — which is how the
+# classifier's result-parsing line first behaved. So one drift runs as a real
+# wrapper PROCESS, on the shape whose at-risk list is empty.
 root="$(new_wrapper_fixture wrapper-process)"
 commit_tracked "$root" "$COMMIT_OLD"
 printf 'shared line\nnew upstream line\n' \
@@ -352,6 +357,27 @@ classify_probe="$(vendor_drift_classify "third_party/$ENGINE" ".agents/skills/$E
   fail "classifier contract" "the real classifier was not restored (probe: $classify_probe)"
 ok "an answer that is neither yes nor no is treated as destructive, not as nothing"
 
+
+# ── --help promises what the readings actually print ──────────────────────
+# The sentence describing the destructive command was wrong in three
+# consecutive cycles, because nothing executed it. This does, from both sides:
+# each state asserts what the RUN does AND the phrase --help uses to promise it,
+# so changing either one alone fails. The state that broke it three times is the
+# first — undetermined with nothing at risk, where the rsync prints and the old
+# text called it withheld.
+root="$(new_fixture help-nothing-at-risk)"
+commit_tracked "$root" "$REFRESH"
+printf 'shared line\nnew upstream line\n' >"$root/.agents/skills/$ENGINE/references/settings.md"
+set_refresh "$root" "$REFRESH"
+run_check "$root"
+expect_contains "$err" "which side is newer is NOT ESTABLISHED" "help vs readings"
+expect_contains "$err" "$RSYNC_CONDITION" "help vs readings"
+expect_absent "$err" "WITHHELD" "help vs readings"
+# Single-line fragments: a phrase spanning a wrap asserts the wrapping.
+expect_contains "$help_text" "the rsync prints under condition (2) with" "help vs readings"
+expect_contains "$help_text" "no flag required, because copying across would destroy nothing." "help vs readings"
+
+ok "--help promises what each reading prints, checked from both sides"
 
 # ── liveness: every reading this file names was actually produced ─────────
 for verdict in "${VERDICTS[@]}"; do

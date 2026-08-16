@@ -58,8 +58,12 @@ prints them, and each licenses a different repair:
       both repairs, each behind the numbered condition that selects it; the
       rsync is the one the evidence favours.
   "which side is newer is NOT ESTABLISHED"
-      both repairs on the same terms, and the rsync is WITHHELD — with what it
-      would destroy named — until you assert the direction with the flag.
+      both repairs print with their conditions. The rsync is WITHHELD only
+      where the tracked copy holds content the command would destroy, and then
+      that content is named. Where it holds none — which is every path that
+      got here through unusable evidence, a dirty tree or a shallow clone or
+      equal timestamps among them — the rsync prints under condition (2) with
+      no flag required, because copying across would destroy nothing.
 
 So the mirror-to-tracked rsync never appears as a default or an unconditioned
 repair, and no output claims that adopting the mirror costs nothing.
