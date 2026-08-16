@@ -94,8 +94,23 @@ REQUIRED_BLOCKS = frozenset({"linear"})
 # takes one away. Restricted to regex CLASS letters so a shell `\"` or a path
 # separator is not mistaken for one.
 COLLAPSED_REGEX_ESCAPE = re.compile(r"(?<!\\)\\[sdwSDWbB]")
-TWO_CHARACTER_NEWLINE = re.compile(r"\\n")
-CONTINUATION_LINE = re.compile(r"(?<!\\)\\$", re.M)
+DOUBLED_REGEX_ESCAPE = re.compile(r"\\\\[sdwSDWbB]")
+
+# THE ANCHORS, and the reason they are this small. Every assertion below is bound
+# to the CONSTRUCT it protects, because "the block contains a `\n` somewhere" was
+# satisfied by an escape in a different sentence: the decoded runbook carries four
+# of them, and turning the one INSIDE the jq string into a real newline left three
+# matches and the check reported clean while jq would reject it. Presence is not
+# provenance — the same shape as the delimiter once bound to another table's key,
+# one level in.
+#
+# Each anchor names what the construct DOES rather than the prose around it, so
+# ordinary edits do not trip it, and a construct that cannot be located is a LOUD
+# failure: an absent construct is precisely the breakage being guarded against.
+# `issues create` alone is NOT an anchor — the block also discusses it in prose —
+# so the invocation is identified by the script it invokes.
+PROVENANCE_PROGRAM = "sub("
+MIRROR_INVOCATION = ("linear.sh", "issues create")
 
 
 def table_of(text: str) -> object:
@@ -116,34 +131,75 @@ def blocks(text: str) -> dict[str, str]:
     return {k: v for k, v in parsed.items() if isinstance(v, str) and v.strip()}
 
 
+def lines_containing(value: str, *anchors: str) -> list[str]:
+    """Decoded lines carrying every anchor — the construct, not the block."""
+    return [line for line in value.split("\n") if all(one in line for one in anchors)]
+
+
 def survives_decoding(value: str) -> list[str]:
-    """Ways a command-bearing block's decoded text would no longer run."""
+    """Ways a command-bearing block's decoded text would no longer run.
+
+    Every assertion is scoped to the LINE the construct lives on, never to the
+    block: an escape or a continuation elsewhere must not satisfy a claim about
+    this construct. Each message names the property missing from the DECODED
+    value and asks for it back. The delimiter is offered as the likely CAUSE
+    only — this check's own self-test proves a mangled runbook fails while
+    written as a literal string, so prescribing a delimiter would send the reader
+    to change something that cannot fix the failure in front of them.
+    """
     problems: list[str] = []
-    collapsed = COLLAPSED_REGEX_ESCAPE.findall(value)
-    # Each message names the property missing from the DECODED value and asks for
-    # that property back. The delimiter is offered as the likely CAUSE only: this
-    # check's own self-test proves a mangled runbook fails while written as a
-    # literal string, so prescribing a delimiter would send the reader to change
-    # something that cannot fix the failure they are looking at.
-    if collapsed:
+
+    program_lines = lines_containing(value, PROVENANCE_PROGRAM)
+    if not program_lines:
         problems.append(
-            f"its decoded text lost the DOUBLED regex escape jq needs — "
-            f"{', '.join(sorted(set(collapsed)))} arrived single-backslashed, and jq "
-            f"exits 3 on 'Invalid escape'. Restore the doubled escape in the decoded "
-            f"value; a TOML basic string collapsing it is the usual cause"
+            f"the provenance jq program (a `{PROVENANCE_PROGRAM}` call) is not in its "
+            f"decoded text at all — the construct this check guards is gone, which is "
+            f"the breakage rather than the absence of one. Restore it, or retarget "
+            f"PROVENANCE_PROGRAM if the runbook genuinely stopped using it"
         )
-    if not TWO_CHARACTER_NEWLINE.search(value):
+    for line in program_lines:
+        collapsed = COLLAPSED_REGEX_ESCAPE.findall(line)
+        if collapsed:
+            problems.append(
+                f"the jq program that builds the mirrored body lost the DOUBLED regex "
+                f"escape — {', '.join(sorted(set(collapsed)))} arrived single-"
+                f"backslashed on that line, and jq exits 3 on 'Invalid escape'. Restore "
+                f"the doubled escape inside that program; a TOML basic string "
+                f"collapsing it is the usual cause"
+            )
+        elif not DOUBLED_REGEX_ESCAPE.search(line):
+            problems.append(
+                "the jq program that builds the mirrored body carries no doubled regex "
+                "escape — the trailing-whitespace trim it performs needs one. Restore "
+                "it inside that program, or retarget this assertion if the program "
+                "genuinely stopped needing a regex"
+            )
+        # An unbalanced quote means the program did not CLOSE on its own line, so a
+        # newline it needed as a two-character `\n` arrived real and jq is handed a
+        # literal newline inside a string. Checked on the construct's line rather
+        # than by counting escapes in the block, which an escape elsewhere satisfied.
+        if line.count("'") % 2:
+            problems.append(
+                "the jq program that builds the mirrored body does not close on its "
+                "own line — a newline inside it arrived REAL instead of as a two-"
+                "character `\\n`, and jq rejects a literal newline inside a string. "
+                "Restore the `\\n` escapes inside that program; a TOML basic string "
+                "turning each into a real newline is the usual cause"
+            )
+
+    invocation_lines = lines_containing(value, *MIRROR_INVOCATION)
+    if not invocation_lines:
         problems.append(
-            "its decoded text carries no two-character `\\n` escape — the provenance "
-            "line is built inside a jq string, so a real newline breaks the program "
-            "apart. Restore the `\\n` escapes in the decoded value; a TOML basic string "
-            "turning each into a real newline is the usual cause"
+            f"the mirroring invocation ({' … '.join(MIRROR_INVOCATION)}) is not in its "
+            f"decoded text at all — the construct this check guards is gone. Restore "
+            f"it, or retarget MIRROR_INVOCATION if the runbook genuinely stopped "
+            f"calling it"
         )
-    if not CONTINUATION_LINE.search(value):
+    elif not any(line.endswith("\\") for line in invocation_lines):
         problems.append(
-            "its decoded text has no line ending in a shell continuation — the "
-            "`issues create` invocation is written across two lines and would "
-            "otherwise join. Restore the trailing backslash in the decoded value; a "
+            "the mirroring invocation does not end its line with a shell continuation "
+            "— it is written across two lines, so without one the `--description-file` "
+            "argument joins onto it. Restore the trailing backslash on that line; a "
             "TOML basic string eating the newline after it is the usual cause"
         )
     return problems
@@ -207,7 +263,7 @@ def audit(
 RUNBOOK_PAYLOAD = (
     "```bash\n"
     'jq -r \'(.body | sub("\\\\s+$"; "")) + "\\n\\nprovenance"\' "$f" > "$b"\n'
-    'tool create --title "x" \\\n'
+    'linear.sh issues create --title "$(jq -r .title "$f")" \\\n'
     '  --description-file "$b"\n'
     "```\n"
 )
@@ -268,6 +324,43 @@ def self_test() -> list[str]:
                 f"the check no longer notices the thing that stopped it running "
                 f"(looked for {needle!r}): {mangled}"
             )
+    # THE DECOY, and the control that proves these assertions are bound to their
+    # constructs. The same damage, with a compensating escape, `\n` and
+    # continuation added in PROSE elsewhere in the block: a block-scoped check
+    # counted those and reported clean. Every failure above must survive it.
+    decoyed = audit(
+        MANGLED_RUNBOOK.replace(
+            "```\n'''", "```\nprose with \\\\s and a \\n escape and a continuation \\\n'''"
+        ),
+        source="<fixture: mangled runbook + decoy>",
+    )
+    for property_lost, needle in (
+        ("collapsed regex escape", "single-backslashed"),
+        ("newline escape turned real", "does not close on its own line"),
+        ("continuation swallowed", "does not end its line"),
+    ):
+        if not any(needle in problem for problem in decoyed):
+            failures.append(
+                f"a decoy elsewhere in the block rescued the {property_lost} failure, so "
+                f"the assertion is satisfied by a token in the WRONG PLACE rather than "
+                f"by the construct it protects: {decoyed}"
+            )
+
+    # An absent construct is the breakage, not the absence of one.
+    for construct, fixture in (
+        ("the jq program", INTACT_RUNBOOK.replace("sub(", "trim(", 1)),
+        ("the mirroring invocation", INTACT_RUNBOOK.replace("linear.sh", "other.sh", 1)),
+    ):
+        if not any(
+            "is not in its decoded text at all" in problem
+            for problem in audit(fixture, source=f"<fixture: {construct} absent>")
+        ):
+            failures.append(
+                f"{construct} being absent from the runbook was accepted, so a check "
+                f"bound to a construct passes when the construct is gone — which is the "
+                f"breakage rather than the absence of one."
+            )
+
     intact = audit(INTACT_RUNBOOK, source="<fixture: intact runbook>")
     if intact:
         failures.append(
