@@ -23,7 +23,7 @@ bin/codexbar	1311
 bin/vshell	472
 bin/vshell-capture-screenrecording	593
 bin/vshell-capture-screenshot	741
-bin/vshell-helper	15958
+bin/vshell-helper	15965
 bin/vshell_niri.py	1110
 config/vshell/icons/Yaru/cursors/half-busy	10208
 config/vshell/icons/Yaru/cursors/half-busy.ani	3364
@@ -39,6 +39,7 @@ config/vshell/plugins/sysUpdate/SysUpdateWidget.qml	712
 config/vshell/plugins/tailscale/TailscaleWidget.qml	804
 config/vshell/plugins/vgsMenu/VGSMenu.qml	2349
 config/vshell/settings.default.json	757
+docs/architecture/design-language.md	421
 docs/architecture/scratchpads.md	410
 docs/media/vgs-demo-poster.jpg	1197
 docs/media/vgs-demo.mp4	30319
@@ -207,12 +208,12 @@ scripts/check-notification-takeover.js	454
 scripts/check-paste-injection.py	897
 scripts/check-settings-migration.js	952
 scripts/check-validation-inventory.py	411
-scripts/check-vshell-helper.py	5815
+scripts/check-vshell-helper.py	5859
 scripts/check-vshell-niri.py	678
 scripts/gen-package-metadata.py	985
 scripts/lib/validation_manifest.py	1045
 scripts/lib/vendor-drift.sh	429
-scripts/qml-smoke.sh	1271
+scripts/qml-smoke.sh	1298
 scripts/test-compositor-focus.js	791
 scripts/test-launcher-hover-latch.js	492
 scripts/test-launcher-search-gate.js	1077

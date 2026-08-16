@@ -342,13 +342,16 @@ sandbox_layers() {
   "${sandbox_env[@]}" hyprctl -i 0 layers -j 2>/dev/null
 }
 
-# 0 = a content-sized surface with that namespace exists
+# 0 = a non-degenerate surface with that namespace exists. NOT "content-sized":
+#     every popout surface is output-tall since VGS-133.
 # 1 = absent
 # 2 = present but degenerate (zero-sized, or as large as the screen)
 # 3 = THE QUERY FAILED - hyprctl errored or produced something unparsable.
 #     Distinct from 1 deliberately: "I could not look" is not "it is not there".
 #
-# The geometry is printed too, so a caller can compare sizes across states.
+# One line per matching layer per monitor, "<w>x<h> <screen_w>x<screen_h>", so a
+# caller can compare the surface against its output. Callers must branch on the
+# status BEFORE reading that text: on 1, 2 and 3 it is absent or misleading.
 sandbox_layer_state() {
   local namespace="$1" layers rc=0
   layers="$(sandbox_layers)" || rc=$?
@@ -376,13 +379,18 @@ for monitor in data.values():
     layers = []
     for level in (monitor.get("levels") or {}).values():
         layers.extend(level)
-    # The screen, inferred from the largest surface on it - the same heuristic
-    # scripts/smoke-surfaces.sh uses, and for the same reason: a popout that
-    # covers the whole screen is a layout failure, not an open popout. Screen
-    # HEIGHT alone is normal since VGS-133 (popout surfaces are anchored top and
-    # bottom), so the test below is an `and`; popout_check asserts on the rest.
-    screen_w = max((int(layer.get("w") or 0) for layer in layers), default=0)
-    screen_h = max((int(layer.get("h") or 0) for layer in layers), default=0)
+    # The screen, inferred from the largest OTHER surface on it - the same
+    # heuristic scripts/smoke-surfaces.sh uses, and for the same reason: a popout
+    # that covers the whole screen is a layout failure, not an open popout.
+    # Screen HEIGHT alone is normal since VGS-133 (popout surfaces are anchored
+    # top and bottom), so the test below is an `and`; popout_check asserts on the
+    # rest. `!= namespace` is what keeps this from grading the surface under test
+    # against itself now that popouts are output-tall. It is not read from
+    # `hyprctl monitors` because that reports the mode in PHYSICAL pixels while
+    # layers are LOGICAL, so the two disagree by the scale factor.
+    others = [layer for layer in layers if layer.get("namespace") != namespace]
+    screen_w = max((int(layer.get("w") or 0) for layer in others), default=0)
+    screen_h = max((int(layer.get("h") or 0) for layer in others), default=0)
     for layer in layers:
         if layer.get("namespace") != namespace:
             continue
@@ -578,7 +586,7 @@ wait_widget_registered() {
 }
 
 popout_check() {
-  local reply state=0 geometry surface_size screen_size
+  local reply state=0 geometry geo_rc surface_size screen_size
 
   wait_widget_registered "$popout_plugin" || {
     fail "the sandbox bar never registered '$popout_plugin', so its popout could not be opened - the seeded settings.default.json is supposed to host it"
@@ -614,11 +622,30 @@ popout_check() {
   # VGS-133: the surface must span the OUTPUT height, not the content's, or a
   # resize re-commits wl_surface geometry every frame - the flash. Nothing else
   # here notices: a content-sized surface opens and closes the same way.
-  geometry="$(sandbox_layer_state "$popout_namespace")" || true
+  #
+  # The STATUS is the diagnosis, so it is captured, not discarded. Reporting a
+  # failed query or a vanished surface as "wrong height" sends the next reader
+  # after the wrong defect, and a degenerate 0x0 on a 0x0 output would pass a
+  # bare height comparison outright.
+  geometry="$(sandbox_layer_state "$popout_namespace")" && geo_rc=0 || geo_rc=$?
+  case "$geo_rc" in
+    3) fail "could not read the sandbox compositor's layer list (hyprctl query failed) - that is not evidence about the '$popout_plugin' popout's height"; return 1 ;;
+    1) fail "the '$popout_plugin' popout surface disappeared before its height could be read"; return 1 ;;
+    2) fail "'$popout_plugin' opened a degenerate popout surface ($geometry) - that is not a height mismatch"; return 1 ;;
+  esac
+  # Shape-guarded before splitting, because `${g%% *}` and `${g##* }` both return
+  # the WHOLE string when it holds no space: a single field would compare equal
+  # to itself and pass vacuously. The anchors also reject a multi-line reply,
+  # which is the second output case - otherwise the split would take the first
+  # token of monitor A's line and the last token of monitor B's.
+  if [[ ! "$geometry" =~ ^[0-9]+x[0-9]+\ [0-9]+x[0-9]+$ ]]; then
+    fail "could not parse the '$popout_namespace' layer geometry: '$geometry'"
+    return 1
+  fi
   surface_size="${geometry%% *}"
   screen_size="${geometry##* }"
-  if [[ -z "$geometry" || "${surface_size#*x}" != "${screen_size#*x}" ]]; then
-    fail "'$popout_plugin' popout surface is '${surface_size:-<unknown>}' on a '${screen_size:-<unknown>}' output - it must span the output height (VGS-133)"
+  if [[ "${surface_size#*x}" != "${screen_size#*x}" ]]; then
+    fail "'$popout_plugin' popout surface is '$surface_size' on a '$screen_size' output - it must span the output height (VGS-133)"
     return 1
   fi
 

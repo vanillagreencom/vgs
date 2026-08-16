@@ -11506,7 +11506,6 @@ def _hyprland_blur_script(enabled: bool, strength: float, glass: bool, opacity: 
     light = mode == "light"
     # Hyprland's layer blur uses global decoration.blur parameters, so the shell
     # slider maps to a conservative global blur profile, targeted by namespace.
-    # Which namespaces belong here: docs/architecture/design-language.md.
     # Strength only scales how much the backdrop is diffused; surface opacity is
     # owned by the shell's opacity slider / glass material and must not be
     # modulated here. Glass follows Apple's material recipe shape: strong
@@ -11536,6 +11535,14 @@ def _hyprland_blur_script(enabled: bool, strength: float, glass: bool, opacity: 
         vibrancy_darkness = 0.0 if light else 0.10
         noise = round(0.004 + strength * 0.005, 4)
     rule_enabled = "true" if enabled else "false"
+    # A namespace belongs here only when its WHOLE surface rectangle is an
+    # acceptable per-frame live-blur region. The blur pass runs over the
+    # rectangle (xray = false selects the live path); ignore_alpha only masks the
+    # result, so "it paints something small" is not the test. Whole-output
+    # painters, the popouts' `:background` dismiss windows and
+    # backdrop-less-by-design menus stay out: docs/architecture/design-language.md
+    # § Popout surfaces are screen-tall, enforced by
+    # scripts/check-vshell-helper.py::test_hyprland_blur_script.
     blurred_namespaces = [
         "battery",
         "bluetooth-pairing",
