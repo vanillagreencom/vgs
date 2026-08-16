@@ -468,12 +468,39 @@ for monitor in monitors:
         continue
     outputs[name] = (logical_w, logical_h)
 
+# STRUCTURE IS VALIDATED, AND A SURPRISE IS A QUERY FAILURE, NEVER AN ABSENCE.
+# `hyprctl` returning parseable JSON says nothing about its SHAPE. A `levels`
+# that is a list, a monitor entry that is a string, a layer that is not an
+# object - each of those raises out of `.values()`, `extend()` or `.get()`, and
+# an uncaught exception exits this interpreter 1, which is the caller's code for
+# "the surface is not there". `wait_layer_state ... 1` would then succeed off a
+# crash and the nested smoke would report clean having collected nothing. Same
+# defect the monitor parse above had; this is the other half of it.
+def _shape_error(what):
+    sys.stderr.write(
+        "sandbox_layer_state: `hyprctl layers -j` parsed as JSON but %s, so no layer data was "
+        "collected - that is a failed query, not an absent surface\n" % what
+    )
+    raise SystemExit(3)
+
+
 matches = []
 for monitor_name, monitor in data.items():
+    if not isinstance(monitor, dict):
+        _shape_error("monitor %r is not an object" % monitor_name)
+    levels = monitor.get("levels")
+    if levels is None:
+        levels = {}
+    if not isinstance(levels, dict):
+        _shape_error("monitor %r has a non-object `levels`" % monitor_name)
     layers = []
-    for level in (monitor.get("levels") or {}).values():
+    for level_name, level in levels.items():
+        if not isinstance(level, list):
+            _shape_error("monitor %r level %r is not a list" % (monitor_name, level_name))
         layers.extend(level)
     for layer in layers:
+        if not isinstance(layer, dict):
+            _shape_error("monitor %r holds a layer that is not an object" % monitor_name)
         if layer.get("namespace") == namespace:
             matches.append((monitor_name, layer))
 
@@ -501,8 +528,11 @@ if monitor_name not in outputs:
     raise SystemExit(4)
 
 screen_w, screen_h = outputs[monitor_name]
-w = int(layer.get("w") or 0)
-h = int(layer.get("h") or 0)
+try:
+    w = int(layer.get("w") or 0)
+    h = int(layer.get("h") or 0)
+except (TypeError, ValueError):
+    _shape_error("the matched layer has a non-numeric size")
 print("%dx%d %dx%d" % (w, h, screen_w, screen_h))
 if w <= 0 or h <= 0:
     raise SystemExit(2)

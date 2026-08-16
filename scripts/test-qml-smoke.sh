@@ -269,6 +269,36 @@ for bad in \
 done
 ok "malformed monitor metadata is 'cannot measure', never 'not there'"
 
+# Malformed LAYER payloads are query failures, not absences. `hyprctl` returning
+# parseable JSON says nothing about its shape, and each of these used to raise
+# out of .values()/extend()/.get() and exit the interpreter 1 - the caller's code
+# for "not there" - so `wait_layer_state ... 1` could succeed off a crash and the
+# nested smoke report clean having collected nothing.
+while IFS='|' read -r why payload; do
+  [[ -z "$why" ]] && continue
+  out="$(layer_state "$payload" "$MON1" "$NS")"
+  st="$(head -n1 <<<"$out")"
+  if [[ "$st" == 1 ]]; then
+    fail "malformed layers" "$why read as ABSENCE (status 1) instead of a failed query"
+  elif [[ "$st" != 3 ]]; then
+    fail "malformed layers" "$why should be status 3 (query failed), got $st"
+  fi
+done <<'CASES'
+levels is a list|{"MON1":{"levels":[{"namespace":"x"}]}}
+monitor is not an object|{"MON1":"not-a-dict"}
+layer entry is not an object|{"MON1":{"levels":{"2":["not-a-dict"]}}}
+level is not a list|{"MON1":{"levels":{"2":42}}}
+the matched layer has a non-numeric size|{"MON1":{"levels":{"2":[{"namespace":"vshell:bar","w":1756,"h":933},{"namespace":"vshell:plugins:aiUsage","w":"wide","h":10}]}}}
+CASES
+ok "malformed layer payloads are failed queries, never absences"
+
+# ...and the control that the shape checks did not simply turn everything into a
+# 3: a well-formed payload still measures.
+out="$(layer_state "{\"MON1\":$(mon "$BAR,$POPOUT")}" "$MON1" "$NS")"
+[[ "$(head -n1 <<<"$out")" == 0 ]] || fail "malformed control" "a well-formed payload should still be status 0, got:
+$out"
+ok "a well-formed payload still measures (control)"
+
 # ---------------------------------------------------------------------------
 # assert_popout_geometry: one line, and nothing passes on no evidence
 awk '/^assert_popout_geometry\(\) \{$/{f=1} f{print} f&&/^\}$/{exit}' \
