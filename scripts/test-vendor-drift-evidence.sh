@@ -78,9 +78,14 @@ expect_class "hunk header" no "@@ -1,2 +1 @@"
 expect_class "diff provenance line" no "diff -r -u -- $MIRROR_REL/a $TRACKED_REL/a"
 expect_class "no-newline marker" no '\ No newline at end of file'
 expect_class "mirror file header" no "--- $MIRROR_REL/references/settings.md	2023-11-14"
-# The quoted form, the one ignore arm that had no case of its own.
-expect_class "mirror file header, quoted" no \
-  "diff -r -u -- \"$MIRROR_REL/with space.md\" \"$TRACKED_REL/with space.md\""$'\n'"--- \"$MIRROR_REL/with space.md\""
+# The quoted form, the one ignore arm that had no case of its own. The input has
+# to run past the `---` line to bite: a line starting with `-` is swallowed by
+# the mirror-content arm anyway, so stopping there classifies the same with the
+# quoted arm present or gone. What the arm actually decides is whether the NEXT
+# line is in header position — so the entry is the FILE, not the header line.
+expect_class "mirror file header, quoted" yes \
+  "diff -r -u -- \"$MIRROR_REL/with space.md\" \"$TRACKED_REL/with space.md\""$'\n'"--- \"$MIRROR_REL/with space.md\""$'\n'"+++ \"$TRACKED_REL/with space.md\""$'\n'"+a tracked-only row" \
+  "$TRACKED_REL/with space.md"
 expect_class "tracked file header" no "$PAIR"
 expect_class "file only the mirror has" no "Only in $MIRROR_REL/references: retired.md"
 # GNU diff SHELL-quotes the directory when it contains a space — a different

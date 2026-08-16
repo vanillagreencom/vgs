@@ -74,44 +74,68 @@ for lib in vendor-drift.sh vendor-drift-report.sh vendor-drift-test.sh; do
 done
 ok "all three libraries declare strict mode rather than inheriting it by luck"
 
-# ── every pointer from a library header resolves, and resolves HERE ───────
-# The library headers stopped describing their rules and started pointing at the
-# suites that execute them, which trades one kind of rot for another: a pointer
-# is a claim too. One was wrong within minutes of being written — it named the
-# evidence suite for controls that live in this file — and a reader who follows
-# a bad pointer finds neither the description nor the control, concludes the
-# rule is unenforced, and restates it as prose. That is the round undone.
 SUITES=(test-vendor-drift.sh test-vendor-drift-evidence.sh test-vendor-drift-contracts.sh)
 
-# Every suite a library header names must exist.
-named="$(grep -ohE 'scripts/test-vendor-drift[a-z-]*\.sh' "$repo_root"/scripts/lib/vendor-drift*.sh | sort -u)"
-[[ -n "$named" ]] || fail "header pointers" "no library header names a suite at all"
+# ── every library pointer resolves, and every one of them is covered ──────
+# The library headers stopped describing their rules and started pointing at the
+# suites that execute them, which trades one kind of rot for another: a pointer
+# is a claim too, and one was wrong within minutes of being written.
+#
+# WHY THE ROWS ARE ENUMERATED AND NOT LISTED. The first version of this control
+# was a hand-maintained table, and it did not cover every pointer — because in
+# the SAME commit that added it I added a fourth pointer and never wrote its
+# row, while believing the class was closed. A reviewer found it by mutation,
+# not by reading. A table you must remember to extend is the prose problem
+# wearing a test's clothes, so the pointers are enumerated from source and a
+# pointer without a row FAILS here. Do not "simplify" this back into a list.
+POINTER_ANCHORS="the contract controls in|one fixture per ignore arm"
+POINTER_ANCHORS="$POINTER_ANCHORS|decision-table rows of|driven by stubs in"
+
+# Rows are `anchor|suite|marker`, and are excluded from every grep below by that
+# shape — the marker names itself here, so a file holding the table would
+# otherwise always match its own row. That self-match made one row inert once.
+ROW_SHAPE='\|test-vendor-drift[a-z-]*\.sh\|'
+
+pointer_lines="$(grep -hE 'scripts/test-vendor-drift[a-z-]*\.sh' \
+  "$repo_root/scripts/lib/vendor-drift.sh" "$repo_root/scripts/lib/vendor-drift-report.sh" || true)"
+[[ -n "$pointer_lines" ]] || fail "header pointers" "no library header names a suite at all"
+
+# Every suite a pointer names must exist.
 while IFS= read -r ref; do
   [[ -n "$ref" ]] || continue
   [[ -f "$repo_root/$ref" ]] || fail "header pointers" "a library header names $ref, which does not exist"
-done <<<"$named"
+done < <(printf '%s\n' "$pointer_lines" | grep -ohE 'scripts/test-vendor-drift[a-z-]*\.sh' | sort -u)
 
-# And the guard each pointer describes must be in the suite it names — not in a
-# sibling, which is the exact shape of the bug this replaces.
-while IFS='|' read -r library suite marker; do
-  [[ -n "$library" ]] || continue
-  grep -qF -- "scripts/$suite" "$repo_root/scripts/lib/$library" ||
-    fail "header pointers" "$library does not name scripts/$suite, where its guard lives"
-  grep -qF -- "$marker" "$repo_root/scripts/$suite" ||
-    fail "header pointers" "scripts/$suite does not hold the guard $library points at: $marker"
+# Every pointer must be covered by a row. This is the half that stops the next
+# pointer arriving uncovered.
+while IFS= read -r line; do
+  [[ -n "$line" ]] || continue
+  printf '%s' "$line" | grep -qE "$POINTER_ANCHORS" ||
+    fail "header pointers" "this library pointer has no row here, so nothing checks it: $line"
+done <<<"$pointer_lines"
+
+# And every row must describe a pointer that exists, name the suite that pointer
+# names, and that suite must hold the guard — and hold it alone.
+while IFS='|' read -r anchor suite marker; do
+  [[ -n "$anchor" ]] || continue
+  matched="$(printf '%s\n' "$pointer_lines" | grep -F -- "$anchor" || true)"
+  [[ -n "$matched" ]] || fail "header pointers" "no library pointer matches the row anchored at: $anchor"
+  printf '%s' "$matched" | grep -qF -- "scripts/$suite" ||
+    fail "header pointers" "the pointer anchored at '$anchor' does not name scripts/$suite, where its guard lives"
+  grep -F -- "$marker" "$repo_root/scripts/$suite" | grep -qvE "$ROW_SHAPE" ||
+    fail "header pointers" "scripts/$suite does not hold the guard that pointer describes: $marker"
   for other in "${SUITES[@]}"; do
     [[ "$other" == "$suite" ]] && continue
-    # The table below names every marker, so its own rows are excluded by their
-    # shape — otherwise this file reports itself as a duplicate holder.
-    grep -F -- "$marker" "$repo_root/scripts/$other" | grep -qvE '^[a-z-]+\.sh\|' &&
+    grep -F -- "$marker" "$repo_root/scripts/$other" | grep -qvE "$ROW_SHAPE" &&
       fail "header pointers" "the guard $marker is in scripts/$other too, so the pointer is ambiguous"
   done
 done <<TABLE
-vendor-drift.sh|test-vendor-drift-contracts.sh|the report half calls nothing the decision half defines
-vendor-drift.sh|test-vendor-drift-evidence.sh|every ignore arm attributes its line
-vendor-drift.sh|test-vendor-drift-evidence.sh|a decided reading implies its own strict ordering
+the contract controls in|test-vendor-drift-contracts.sh|the report half calls nothing the decision half defines
+one fixture per ignore arm|test-vendor-drift-evidence.sh|every ignore arm attributes its line
+decision-table rows of|test-vendor-drift-evidence.sh|a decided reading implies its own strict ordering
+driven by stubs in|test-vendor-drift-evidence.sh|a probe answering anything but false is read as shallow
 TABLE
-ok "every suite a library header names exists and holds the guard described, not a sibling"
+ok "every library pointer is covered by a row, names the suite holding its guard, and that suite holds it alone"
 
 # ── the locale fix itself ─────────────────────────────────────────────────
 # Asserted on the source, not behaviourally: no translated locale is guaranteed

@@ -146,8 +146,8 @@ vendor_drift_classify() {
 # THESE ARE READINGS, NOT VERDICTS: what a merged DELETION and an upstream
 # addition have in common is that neither can be told apart from the other here,
 # so `mirror-ahead` names no repair alone. That, the disjointness of the two
-# decided readings, and every unusable-evidence row are driven directly in
-# scripts/test-vendor-drift-evidence.sh.
+# decided readings, and every unusable-evidence row are driven directly in the
+# decision-table rows of scripts/test-vendor-drift-evidence.sh.
 vendor_drift_direction() {
   local age_state="$1" tracked_epoch="$2" refresh_epoch="$3" tracked_only="$4" engine="$5"
 

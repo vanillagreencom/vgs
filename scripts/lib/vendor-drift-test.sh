@@ -2,14 +2,20 @@
 # The harness the three suites run through. What each takes differs, and the
 # difference matters:
 #
-#   scripts/test-vendor-drift.sh           everything — the assertion helpers,
-#   scripts/test-vendor-drift-evidence.sh  the fixture builders, and run_check,
-#                                          whose three invariants therefore
-#                                          apply to every case in them
-#   scripts/test-vendor-drift-contracts.sh the assertion helpers and the
-#                                          failures counter ONLY: it reads
-#                                          source and never calls run_check, so
-#                                          those invariants do not apply to it
+#   scripts/test-vendor-drift.sh           the assertion helpers, the fixture
+#   scripts/test-vendor-drift-evidence.sh  builders and run_check — so the three
+#                                          invariants apply to every case in them
+#   scripts/test-vendor-drift-contracts.sh the assertion helpers, the failures
+#                                          counter, and the caller-sweep set
+#                                          (vendor_drift_caller_surfaces,
+#                                          flag_carriers, CONFIRM_FLAG,
+#                                          new_caller_fixture). It never calls
+#                                          run_check, so the three invariants do
+#                                          NOT apply to it — that is the
+#                                          load-bearing half of this table
+#
+# The lists are what each suite takes today, not a promise: the caller-sweep set
+# has one consumer and moved here with it.
 #
 # The invariants hold for EVERY case that goes through run_check, rather than
 # for the ones that remember to check.
@@ -279,6 +285,7 @@ CONFIRM_FLAG="--confirm-mirror-is-newer"
 # left the old discovery printing ok with a carrier sitting outside it. The
 # caller asserts the result is non-empty and contains the known callers, so an
 # enumeration that stops finding things fails loudly instead of passing.
+#   $1 the repository root to enumerate, defaulting to the live repo_root
 # `:(glob)` so `*` does not cross `/`: a plain git pathspec would sweep
 # scripts/lib/ too, and those files DEFINE the flag — its option arm, its usage
 # text, its messages. A caller is something that could PASS it, which the
