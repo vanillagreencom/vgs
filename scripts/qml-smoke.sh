@@ -486,6 +486,7 @@ def main():
 
 
     matches = []
+    collected = 0
     for monitor_name, monitor in data.items():
         if not isinstance(monitor, dict):
             _shape_error("monitor %r is not an object" % monitor_name)
@@ -504,8 +505,20 @@ def main():
         for layer in layers:
             if not isinstance(layer, dict):
                 _shape_error("monitor %r holds a layer that is not an object" % monitor_name)
+            collected += 1
             if layer.get("namespace") == namespace:
                 matches.append((monitor_name, layer))
+
+    # THE COLLECTION STEP ASSERTS IT COLLECTED SOMETHING.
+    # `{}`, or monitors whose levels are all empty, is well-formed at every level
+    # the shape checks look at - so it slid past them and left `matches` empty,
+    # which is status 1, ABSENCE. Both `wait_layer_state ... 1` calls in
+    # popout_check would then succeed having observed not one layer, INCLUDING
+    # the bar, which is always mapped by the time they run. An empty read is a
+    # failure of the check, never a clean result
+    # (.github/instructions/validation-scripts.instructions.md).
+    if collected == 0:
+        _shape_error("it reported no layers at all across %d monitor(s)" % len(data))
 
     if not matches:
         raise SystemExit(1)

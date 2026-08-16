@@ -293,6 +293,9 @@ levels is absent|{"MON1":{}}
 w is a bare Infinity|{"MON1":{"levels":{"2":[{"namespace":"vshell:bar","w":1756,"h":40},{"namespace":"vshell:plugins:aiUsage","w":Infinity,"h":10}]}}}
 h is a bare -Infinity|{"MON1":{"levels":{"2":[{"namespace":"vshell:bar","w":1756,"h":40},{"namespace":"vshell:plugins:aiUsage","w":10,"h":-Infinity}]}}}
 w is a bare NaN|{"MON1":{"levels":{"2":[{"namespace":"vshell:bar","w":1756,"h":40},{"namespace":"vshell:plugins:aiUsage","w":NaN,"h":10}]}}}
+no monitors at all|{}
+monitor with empty levels|{"MON1":{"levels":{}}}
+levels holding an empty list|{"MON1":{"levels":{"2":[]}}}
 the matched layer has a non-numeric size|{"MON1":{"levels":{"2":[{"namespace":"vshell:bar","w":1756,"h":933},{"namespace":"vshell:plugins:aiUsage","w":"wide","h":10}]}}}
 CASES
 ok "malformed layer payloads are failed queries, never absences"
