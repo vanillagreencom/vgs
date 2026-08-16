@@ -171,7 +171,7 @@ CEILINGS: dict[str, int] = {
     # validation-scripts.instructions.md, scoped to `scripts/**` — invisible to
     # a QML agent, which loads this skill. That is the VGS-69 class losing its
     # last auto-loaded warning, so it moved here. A later round also completed the
-    # "## Repo layout" tree with the three entries AGENTS.md § Layout had that
+    # "## Repo layout" tree with the three entries AGENTS.md § "Layout" had that
     # it lacked. 5,700 was deliberately NOT re-raised at the resulting 5,359 B:
     # ~6% headroom rather than the adoption default's ~10%, the tighter line
     # winning over the rounder number. VGS-144 then anchored this file's area
@@ -194,7 +194,7 @@ CEILINGS: dict[str, int] = {
     # tables went to validation-scripts.instructions.md, whose `scripts/**`
     # scope is where judging a check actually happens. That 3,500 kept ~10%
     # headroom at the resulting 3,116 B. VGS-124 then repointed the deleted
-    # AGENTS.md § Review gate citation here and added the rule it was the only
+    # AGENTS.md § "Review gate" citation here and added the rule it was the only
     # home for — a gate-repair PR cannot open its own gate, so it merges via
     # the ruleset bypass actor. At the resulting 3,448 B, 3,500 left 52 B and
     # a comment still promising ~10%: 3,800 restores it.

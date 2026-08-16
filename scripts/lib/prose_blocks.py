@@ -55,12 +55,38 @@ MD_BLOCK_START = re.compile(r"^(#{1,6}\s|\||>|[-*+]\s|\d+[.)]\s)")
 COMMENT_MARKER = re.compile(r"^(#+|//+|\*+)\s?")
 
 
+def fence_left_open(text: str) -> bool:
+    """Whether a fence opened in `text` and never closed before EOF.
+
+    A LOST FILE, NOT A CLEAN READ. Both readers below toggle a boolean on every
+    fence line and skip what lies inside, so an ODD number of fence lines hides
+    everything after the last one — every heading, every pointer — and returns
+    the same empty, untroubled result as a file that genuinely had none. Callers
+    report this rather than reading the remainder, because a reader that lost
+    half a file cannot say what the file contains.
+
+    Counted the same way both readers toggle, so the three cannot disagree about
+    what a fence line is.
+    """
+    return sum(
+        1
+        for line in text.splitlines()
+        if _uncommented(line.strip()).startswith(("```", "~~~"))
+    ) % 2 == 1
+
+
+def _uncommented(stripped: str) -> str:
+    """A line with one leading comment marker removed, for fence detection."""
+    marker = COMMENT_MARKER.match(stripped)
+    return stripped[marker.end() :] if marker else stripped
+
+
 def headings(text: str) -> list[list[str]]:
     """Every ATX heading, in comparison form. A fenced block holds none."""
     found, fenced = [], False
     for line in text.splitlines():
         stripped = line.strip()
-        if stripped.startswith(("```", "~~~")):
+        if _uncommented(stripped).startswith(("```", "~~~")):
             fenced = not fenced
             continue
         if fenced:
@@ -110,7 +136,7 @@ def blocks(text: str, is_markdown: bool) -> list[tuple[str, list[tuple[int, int]
     for number, line in enumerate(text.splitlines(), 1):
         stripped = line.strip()
         marker = COMMENT_MARKER.match(stripped)
-        if (stripped[marker.end() :] if marker else stripped).startswith(("```", "~~~")):
+        if _uncommented(stripped).startswith(("```", "~~~")):
             fenced = not fenced
             flush()
             continue

@@ -46,18 +46,36 @@ _SPEC.loader.exec_module(check)
 # citer carrying the pointers those entries exempt. Built from the check's own
 # tables, not from a second copy of them, so adding an anchor or a spelling
 # fails here until this tree covers it.
+DECISION = "docs/decisions/D001-fixture-record.md"
+
+
 def clean_tree(*, with_pointers: bool = True) -> dict[str, bytes | str]:
-    anchor, *others = check.SWEEP_ANCHORS
+    """A tree the guard must pass, derived from the check's OWN tables.
+
+    Every SWEEP_ANCHOR and TARGET_ANCHOR present with headings, every
+    GRAMMAR_SPELLINGS arm exercised, and the HISTORICAL_SECTIONS citer carrying
+    the pointers those entries exempt. Derived rather than copied, so adding an
+    anchor or a spelling fails here until this tree covers it.
+    """
+    anchor = check.SWEEP_ANCHORS[0]
+    documents = (*check.SWEEP_ANCHORS, *check.TARGET_ANCHORS, DECISION)
     tree: dict[str, bytes | str] = {
-        rel: f"# {rel}\n\n## Live section\n" for rel in check.SWEEP_ANCHORS
+        rel: f"# {rel}\n\n## Live section\n" for rel in documents
     }
     if with_pointers:
+        basename = check.SWEEP_ANCHORS[1].rsplit("/", 1)[-1]
+        reached = "".join(
+            f"and `{target}` {SECTION_MARK} Live section, by path\n\n"
+            for target in check.TARGET_ANCHORS
+        )
         tree["docs/upstream/note.md"] = (
             f"# Note\n\n## Own section\n\n"
             f"see [a](../../{anchor}) {SECTION_MARK} Live section — citer-relative\n\n"
             f"and `{anchor}` ({SECTION_MARK} Live section, {SECTION_MARK} Live section)\n\n"
             f"and see {SECTION_MARK} Own section, intra-document\n\n"
-            f"and `{others[0].rsplit('/', 1)[-1]}` {SECTION_MARK} Live section, by basename\n"
+            f"and `{basename}` {SECTION_MARK} Live section, by basename\n\n"
+            f"and D001 {SECTION_MARK} Live section, by decision id\n\n"
+            f"{reached}"
         )
     for (citer, target, name), _reason in check.HISTORICAL_SECTIONS.items():
         tree.setdefault(citer, "")
@@ -136,6 +154,46 @@ def end_to_end_controls() -> list[str]:
         status, output = run_guard(clean, **kwargs)
         if status != 0:
             failures.append(f"the guard {case}: {output}")
+
+    # SKIP_ROOTS FILTERS CITERS, NOT TARGETS. A vendored doc is not ours to
+    # EDIT, which says nothing about whether it can be NAMED — and blaming a
+    # correct pointer at one on its citer ("not a tracked markdown file. Repoint
+    # it") is wrong in every clause. Both halves are asserted: naming a vendored
+    # heading passes, and a dead pointer INSIDE that tree is not read at all.
+    vendored = check.SKIP_ROOTS[0]
+    anchor = check.SWEEP_ANCHORS[0]
+    for case, tree, want in (
+        (
+            "a pointer AT a vendored document",
+            dict(clean, **{
+                f"{vendored}vendor.md": "# Vendor\n\n## Upstream section\n",
+                "citer.md": f"# C\n\n`{vendored}vendor.md` {SECTION_MARK} Upstream section.\n",
+            }),
+            0,
+        ),
+        (
+            "a dead pointer INSIDE a vendored tree",
+            dict(clean, **{
+                f"{vendored}vendor.md": f"# Vendor\n\n`{anchor}` {SECTION_MARK} Gone section.\n",
+            }),
+            0,
+        ),
+        (
+            "a pointer at a vendored document that does NOT carry the section",
+            dict(clean, **{
+                f"{vendored}vendor.md": "# Vendor\n\n## Upstream section\n",
+                "citer.md": f"# C\n\n`{vendored}vendor.md` {SECTION_MARK} Gone section.\n",
+            }),
+            1,
+        ),
+    ):
+        status, output = run_guard(tree)
+        if status != want:
+            failures.append(
+                f"{case} exited {status}, expected {want}: SKIP_ROOTS is the citer "
+                f"filter, and using it as a target filter blames correct pointers on "
+                f"the wrong file — {output}"
+            )
     return failures
 
 

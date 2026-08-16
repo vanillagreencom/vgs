@@ -164,6 +164,7 @@ jobs:
         run: |
           scripts/test-section-pointers.py
           scripts/test-section-pointers-e2e.py
+          python3 scripts/lib/section_pointers_selftest.py
           python3 scripts/lib/prose_blocks_selftest.py
 
       # Tighten-only line-count gate over every tracked file: offenders are

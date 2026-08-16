@@ -20,8 +20,8 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from prose_blocks import headings  # noqa: E402
-from section_pointers import pointer_problems  # noqa: E402
+from prose_blocks import fence_left_open, headings  # noqa: E402
+from section_pointers import SECTION_MARK, pointer_problems  # noqa: E402
 
 DOC = "# Doc\n\n## Live section\n\n## Popout surfaces are screen-tall (and frosted)\n"
 
@@ -97,6 +97,31 @@ def selftest() -> int:
                 f"so the control above passes on a reader that joins nothing"
             )
 
+
+    # A FENCE THAT NEVER CLOSES loses the rest of the file, in both readers and
+    # in both file types. Each case is paired with the balanced form, or
+    # "reported" would prove only that the fixture had a dead pointer in it.
+    for case, unbalanced, balanced in (
+        (
+            "a markdown fence",
+            f"# C\n\n```\nexample\n\n`doc.md` {SECTION_MARK} Live section.\n",
+            f"# C\n\n```\nexample\n```\n\n`doc.md` {SECTION_MARK} Live section.\n",
+        ),
+        (
+            "a fence opened inside a comment block",
+            f"# ```\n# example\n\n# `doc.md` {SECTION_MARK} Live section.\n",
+            f"# ```\n# example\n# ```\n\n# `doc.md` {SECTION_MARK} Live section.\n",
+        ),
+    ):
+        if not fence_left_open(unbalanced):
+            failures.append(
+                f"{case} left open at EOF was not detected, so every pointer after it "
+                f"is skipped and the file reads as one that simply had none"
+            )
+        if fence_left_open(balanced):
+            failures.append(f"{case} that DOES close was reported as left open")
+        if headings(unbalanced) and not headings(balanced):
+            failures.append(f"{case}: the heading reader disagrees about what a fence is")
 
     for failure in failures:
         print(f"prose_blocks selftest: {failure}", file=sys.stderr)

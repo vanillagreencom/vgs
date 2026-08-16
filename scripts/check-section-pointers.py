@@ -3,17 +3,17 @@
 
 VGS-124 deleted six AGENTS.md sections and hand-fixed the pointers that died
 with them; two more dangling citations under `docs/architecture/` were caught
-only because a reviewer read files the PR did not touch. Nothing checked that a
-section pointer into AGENTS.md still resolved. VGS-125 merges
+only because a reviewer read files the PR did not touch. VGS-125 merges
 `docs/architecture/` from thirteen files into four, renaming or removing the
 target of every architecture-doc pointer in `bin/vshell-helper`,
-`quickshell/vshell/Widgets/`, `project-skills/`, `docs/decisions/` and
-AGENTS.md § Where the rest lives — that consolidation is the event this check
-exists to survive, and without it four PRs would again rely on a reviewer
-noticing across files they are not reading.
+`quickshell/vshell/Widgets/`, `project-skills/` and `docs/decisions/` — that
+consolidation is the event this check exists to survive, and without it four PRs
+again rely on a reviewer noticing across files they are not reading. Ordinary
+link checkers do not help: `#slug` links they resolve, and this shape is not one.
 
-WHY NOT AN ANCHOR CHECK. Ordinary link checkers already resolve `#slug` links.
-This shape is not a link, and it is the one this repo actually writes.
+IT JUDGES THE INDEX, not the working tree — `scripts/lib/tracked_blobs.py` says
+why. `git add` a pointer fix before re-running, or this reports on bytes you
+have not staged. What CI sees and what a commit would contain are then the same.
 
 The grammar, the wrap handling and the matching rule — including what the rule
 deliberately does not prove — are in `scripts/lib/section_pointers.py`. This
@@ -22,33 +22,22 @@ than claims, which removed sections are cited on purpose, and the collection
 points. Every exclusion is named one at a time, carries its reason, and fails
 when it stops naming something real.
 
-WHAT IS OUT OF SCOPE, and therefore what the count does NOT cover. A mark whose
-target names a code region, and a bare mark in a file that has no headings of
-its own, are DECLINED — the parser cannot resolve either, and both are counted
-by reason in the ok line rather than dropped silently. The second is the one
-worth knowing about: `scripts/check-doc-growth.py` names several deleted
-AGENTS.md sections in bare prose that nothing here judges, beside three in the
-same file that DO need HISTORICAL_SECTIONS entries purely because an `AGENTS.md`
-token happens to sit adjacent to the mark. That is the whole rule behind which
-lines need an entry, and without it the table looks arbitrary:
-HISTORICAL_SECTIONS covers pointers whose target is ADJACENT, because those are
-the only ones this parser owns.
+WHAT IS OUT OF SCOPE, and so what the count does NOT cover. A mark at a code
+region, and a bare mark in a file with no headings of its own, are DECLINED —
+unresolvable either way — and counted by reason in the ok line rather than
+dropped silently. `scripts/check-doc-growth.py` shows why that matters: it names
+several deleted AGENTS.md sections in bare prose that nothing here judges,
+beside three that DO need HISTORICAL_SECTIONS entries purely because an
+`AGENTS.md` token sits adjacent to the mark. That is the rule behind which lines
+need an entry, and without it the table looks arbitrary.
 
-COLLECTION POINTS (`scripts/lib/collected.py` — a matcher that comes back empty
-is a failure of the check, never a clean result):
-
-  1  the tracked text files swept     `git ls-files` minus the asset and vendor
-                                      trees, asserted against SWEEP_ANCHORS so a
-                                      whole surface class cannot drop out while
-                                      the count stays healthy
-  2  the pointers found               asserted to still reach AGENTS.md, which
-                                      every swept surface class cites, and to
-                                      still exercise every GRAMMAR_SPELLINGS arm
-  3  each target document's headings  nothing parsed anywhere, or an anchor that
-                                      stopped yielding headings, is the parser
-                                      having stopped matching
-  4  the marks declined               counted by reason and printed, so scope is
-                                      a visible contract rather than a gap
+ITS FOUR COLLECTION POINTS are enumerated once, in `scripts/lib/collected.py`'s
+CALL SITES registry — that module owns the invariant they implement (a matcher
+coming back empty is a failure of the check, never a clean result), and listing
+them here as well would make their identity a two-place fact. Three run through
+those helpers; the fourth, the marks this parser declines, is counted by reason
+and printed instead, because its question is not "did anything match" but "what
+did this refuse, and how much".
 
 Every rule here and in the parsers has a must-fail control, one file per
 subject: `scripts/test-section-pointers.py` drives each arm of this file,
@@ -77,13 +66,11 @@ from section_pointers import (  # noqa: E402
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
-# Sections that were REMOVED and are named in the past tense on purpose, keyed
-# by (citing file, target, section). Same idiom as check-validation-inventory.py's
+# Sections REMOVED and named in the past tense on purpose, keyed by (citing
+# file, target, section). Same idiom as check-validation-inventory.py's
 # NOT_A_SUITE_CHECK: each entry states why, because an unexplained one is how a
-# genuinely dead pointer gets parked here. An entry behaves exactly like a
-# heading that no longer exists — matched by the same rule — and BOTH directions
-# of staleness fail: an entry no pointer uses, and an entry whose section came
-# back and so exempts nothing.
+# genuinely dead pointer gets parked here. BOTH staleness directions fail — an
+# entry no pointer uses, and one whose section came back.
 HISTORICAL_SECTIONS = {
     ("scripts/check-doc-growth.py", "AGENTS.md", "Layout"): (
         "its ceilings rationale records that VGS-124 moved this section's "
@@ -104,25 +91,22 @@ HISTORICAL_SECTIONS = {
 }
 
 # Files whose pointers are FIXTURES rather than claims, each with the reason.
-# A fenced block covers an example written in prose (parser docstring), but a
-# fixture is a string literal in a data table — it cannot be fenced, and it is
-# meant to be unresolvable, since half of them exist to be reported. Named one
-# file at a time, never a glob: an unexplained entry is how a file with real
-# pointers stops being checked. Entries are asserted to still exist below.
+# A fence covers an example written in prose; a fixture is a string literal in a
+# data table, which cannot be fenced and is meant to be unresolvable. Named one
+# file at a time, never a glob, and asserted to still exist below.
 FIXTURE_FILES = {
     "scripts/test-section-pointers.py": (
         "its control tables are pointer fixtures citing a synthetic doc.md; that "
         "file's own findings are what prove this check reports"
     ),
-    "scripts/lib/prose_blocks_selftest.py": (
-        "same, for the wrap and block-boundary rules: its fixtures are deliberately "
-        "unresolvable, since half of them exist to be reported"
+    "scripts/lib/section_pointers_selftest.py": (
+        "same, for the grammar rules: its fixtures are deliberately unresolvable, "
+        "since half of them exist to be reported"
     ),
+    "scripts/lib/prose_blocks_selftest.py": "same, for the wrap and boundary rules",
 }
 
-# Vendored trees carry upstream docs that are not ours to repair — the nvim
-# colorschemes are 1,781 tracked files of them; themes/ and docs/media/ are
-# asset trees.
+# Whose pointers are READ. Not whose documents may be NAMED — see swept_tree.
 SKIP_ROOTS = (
     "third_party/",
     "config/vshell/nvim/colorschemes/",
@@ -131,38 +115,73 @@ SKIP_ROOTS = (
 )
 SELECTOR = "`git ls-files` minus " + ", ".join(SKIP_ROOTS)
 
-# Files whose absence from the sweep means the sweep narrowed rather than that
-# the repo changed: one per surface class the pointers span. They double as the
-# heading-parser anchors — each carries several `##` headings today, so a parser
-# that stopped matching cannot leave them looking merely heading-less.
+# Files whose absence means the sweep narrowed rather than that the repo
+# changed: one per surface class. They double as the heading-parser anchors,
+# each carrying several `##` headings, so a parser that stopped matching cannot
+# leave them looking merely heading-less.
 SWEEP_ANCHORS = (
     "AGENTS.md",
     "docs/architecture/shell-architecture.md",
     ".github/instructions/validation-scripts.instructions.md",
 )
 
-# Every way a pointer can name its target, each asserted to be exercised
-# somewhere in the tree. This is the pointer-side twin of SWEEP_ANCHORS, and it
-# exists because a headline count cannot see half a grammar go dark: a resolver
-# arm that stops matching moves its marks into the declined census instead of
-# failing, and the total drops by an amount nobody has a baseline for.
+# Every way a pointer can name its target, each asserted to be exercised in the
+# tree. The pointer-side twin of SWEEP_ANCHORS: a headline count cannot see half
+# a grammar go dark, because a resolver arm that stops matching moves its marks
+# into the declined census and the total drops by an amount nobody has a
+# baseline for. A spelling that falls out of use fails here, loudly, and the
+# remedy is to drop it from this tuple — not to leave it unasserted.
 GRAMMAR_SPELLINGS = (
     "repo-relative path",
     "citer-relative link",
     "unique basename",
+    "decision-record id",
     "intra-document",
     "inherited target",
 )
 
+# Documents a resolver regression must still reach. AGENTS.md alone was not
+# enough: it is cited by repo-relative path from markdown, while
+# docs/architecture/*.md is reached from the helper, from QML, from a python
+# check and by bare basename — so a regression confined to those paths left the
+# count healthy, AGENTS.md still reached, and the tree this guard was built for
+# unexamined. That is collected.py's partial-coverage half, the one its docstring
+# says hid longest.
+TARGET_ANCHORS = ("AGENTS.md", "docs/architecture/design-language.md")
+
+# The caller's half of the unresolved-heading remedy. It lives here, not in the
+# parser, because it names a table only this file has: a parser that knew it
+# would hand any second caller advice about a table that caller does not use.
+EXEMPTION_REMEDY = (
+    " Or — if the section is deliberately named in the past tense — quote the"
+    " section name and add it to HISTORICAL_SECTIONS in"
+    " scripts/check-section-pointers.py with the reason."
+)
+
 
 def exempt(citer: str, target: str, name: str, quoted: bool) -> list[tuple[str, str, str]]:
-    """HISTORICAL_SECTIONS keys a pointer the live headings do not cover may use."""
+    """HISTORICAL_SECTIONS keys a pointer the live headings do not cover may use.
+
+    MATCHED EXACTLY, never by the loose word-prefix rule live headings use. That
+    rule exists because a heading's name flows on into the sentence citing it; an
+    exemption has no such excuse, and under it one entry covered every pointer in
+    that file whose name merely BEGAN with the same word — both staleness arms
+    still satisfied, because the entry stayed "used". Fenced, as this file is
+    read by its own guard:
+
+    ```
+    AGENTS.md § Layout of the theme tree   covered by the entry for § Layout
+    ```
+
+    Exactness is why the seeded citations QUOTE their section names: a quoted
+    pointer is read whole, so an entry names its section and nothing else.
+    """
     return [
         key
         for key in HISTORICAL_SECTIONS
         if key[0] == citer
         and key[1] == target
-        and resolves(name, [normalized_words(key[2])], quoted)
+        and normalized_words(name) == normalized_words(key[2])
     ]
 
 
@@ -190,21 +209,31 @@ def exemption_problems(
 
 def swept_tree(
     entries: list[tuple[str, str, str]]
-) -> tuple[dict[str, str], dict[str, str]]:
-    """(text by path, undecodable path -> reason) for the tracked blobs in scope.
+) -> tuple[dict[str, str], dict[str, str], dict[str, str]]:
+    """(citer text, every markdown text, undecodable path -> reason).
 
-    The exclusions are applied HERE and the reading in `scripts/lib/tracked_blobs
-    .py`, because they answer different questions: what this check declines to
-    look at, versus how any check gets at what a repo actually contains.
+    TWO ROLES, TWO SETS, and conflating them was a defect. SKIP_ROOTS says whose
+    pointers are READ; it also decided what could be a TARGET, because the
+    heading table derived from the same dict. A pointer at any of the 88 tracked
+    `.md` files under a vendored or asset root was then reported as "not a
+    tracked markdown file. Repoint it" — wrong in every clause. Vendored docs are
+    not ours to EDIT, which says nothing about whether they can be NAMED.
+
+    So every tracked `.md` is read and may be a target; only citers are filtered.
     """
-    return blob_texts(
-        REPO_ROOT,
-        [
-            entry
-            for entry in entries
-            if not entry[2].startswith(SKIP_ROOTS) and entry[2] not in FIXTURE_FILES
-        ],
-    )
+    wanted = [
+        entry
+        for entry in entries
+        if entry[2].endswith(".md")
+        or (not entry[2].startswith(SKIP_ROOTS) and entry[2] not in FIXTURE_FILES)
+    ]
+    texts, undecodable = blob_texts(REPO_ROOT, wanted)
+    citers = {
+        rel: text
+        for rel, text in texts.items()
+        if not rel.startswith(SKIP_ROOTS) and rel not in FIXTURE_FILES
+    }
+    return citers, texts, undecodable
 
 
 def fixture_problems(tracked: list[str]) -> list[str]:
@@ -224,19 +253,20 @@ def fixture_problems(tracked: list[str]) -> list[str]:
 
 
 def unreadable_problems(undecodable: dict[str, str]) -> list[str]:
-    """A tracked `.md` blob that is not text, so no heading could be parsed.
+    """A first-party `.md` blob that is not text, so no heading could be parsed.
 
-    Reported rather than dropped. A cited document missing from the swept set is
-    otherwise blamed on the CITER — "not a tracked markdown file. Repoint it" —
-    which is the wrong cause and sends the reader to fix the wrong file. Any
-    other undecodable blob is a binary, which is the intended skip and silent.
+    Reported rather than dropped: a cited document absent from the heading table
+    is otherwise blamed on its CITER, which is the wrong file to send anyone to.
+    Any other undecodable blob is a binary — the intended skip, and silent. Under
+    a SKIP_ROOT it is silent too: a vendored document's encoding is not ours to
+    fix, and a pointer at one still names the real cause through `unreadable`.
     """
     return [
         f"{rel} is a tracked markdown file whose blob is {reason}, so none of its "
         f"headings could be parsed and every pointer into it is unresolvable. Fix "
         f"the file's encoding — this is not a pointer defect."
         for rel, reason in sorted(undecodable.items())
-        if rel.endswith(".md")
+        if rel.endswith(".md") and not rel.startswith(SKIP_ROOTS)
     ]
 
 
@@ -246,10 +276,10 @@ def heading_problems(
     """COLLECTION POINT 3: the headings every pointer is resolved against.
 
     Per-file emptiness is deliberately NOT a finding — LICENSE.md and issue
-    templates legitimately carry no `#` heading, and a CITED document with none
-    already fails in the pointer arm as "Headings there: (none)". What has to be
-    asserted is that the parser still parses: nothing at all across the tree, or
-    an anchor document that stopped yielding headings while the rest still do.
+    templates carry no `#` heading, and a CITED document with none already fails
+    in the pointer arm as "Headings there: (none)". What must be asserted is that
+    the parser still parses: nothing across the tree, or an anchor that stopped
+    yielding headings while the rest still do.
     """
     selector = "`#` heading lines outside fenced blocks"
     cause = "an ATX pattern that stopped matching, or a sweep that lost the docs"
@@ -275,16 +305,12 @@ def heading_problems(
 def sweep_problems(files: dict[str, str], judged: list[tuple[str, str]]) -> list[str]:
     """COLLECTION POINTS 1 and 2, each in both directions.
 
-    Empty is the obvious half. The other is a sweep that still returns thousands
-    of files while a whole surface class dropped out of it, and a pointer count
-    that stays healthy while half the GRAMMAR stopped being exercised. A bare
-    total cannot see either, which is why the spellings are asserted by name and
-    the AGENTS.md anchor by path: every swept surface class cites AGENTS.md —
-    markdown docs, decision records, the helper, QML, shell, CI, the skill and
-    this directory — so a result reaching none of them is a defect in this check
-    rather than a change in the repo. Stated as breadth and not as a count on
-    purpose: a number in prose here would be the first thing to go stale, which
-    is the failure this whole check exists to report.
+    Empty is the obvious half. The other is a sweep still returning thousands of
+    files while a whole surface class dropped out, and a pointer count staying
+    healthy while half the GRAMMAR stopped being exercised. A bare total sees
+    neither, so spellings are asserted by name and targets by path. TARGET_ANCHORS
+    is stated as breadth rather than a count on purpose: a number in prose here
+    would be the first thing to go stale, which is what this check reports.
     """
     pointer_shape = f"`<doc>.md {SECTION_MARK} <name>`"
     return [
@@ -311,7 +337,7 @@ def sweep_problems(files: dict[str, str], judged: list[tuple[str, str]]) -> list
             ),
             members_missing(
                 {target for target, _ in judged},
-                ["AGENTS.md"],
+                TARGET_ANCHORS,
                 what="the documents pointers reach",
                 selector=pointer_shape,
                 cause="a resolver that stopped resolving repo-relative paths",
@@ -328,10 +354,20 @@ def sweep_problems(files: dict[str, str], judged: list[tuple[str, str]]) -> list
     ]
 
 
-def audit(files: dict[str, str], unreadable: dict[str, str] | None = None) -> Judged:
-    """Every arm over an already-read tree, as one `Judged`."""
-    markdown = {rel: headings(files[rel]) for rel in files if rel.endswith(".md")}
-    found = pointer_problems(files, markdown, exempt, unreadable)
+def audit(
+    files: dict[str, str],
+    unreadable: dict[str, str] | None = None,
+    documents: dict[str, str] | None = None,
+) -> Judged:
+    """Every arm over an already-read tree, as one `Judged`.
+
+    `documents` is every tracked markdown text, which is a SUPERSET of `files`:
+    a vendored doc may be named as a target by a pointer this check reads, even
+    though its own pointers are not read.
+    """
+    texts = files if documents is None else documents
+    markdown = {rel: headings(texts[rel]) for rel in texts if rel.endswith(".md")}
+    found = pointer_problems(files, markdown, exempt, unreadable, EXEMPTION_REMEDY)
     problems = list(found.problems)
     problems.extend(exemption_problems(markdown, found.used))
     problems.extend(heading_problems(markdown, SWEEP_ANCHORS))
@@ -341,9 +377,9 @@ def audit(files: dict[str, str], unreadable: dict[str, str] | None = None) -> Ju
 def main() -> int:
     entries = tracked_entries(REPO_ROOT)
     tracked = [path for _mode, _sha, path in entries]
-    files, undecodable = swept_tree(entries)
+    files, documents, undecodable = swept_tree(entries)
 
-    found = audit(files, undecodable)
+    found = audit(files, undecodable, documents)
     problems = list(found.problems)
     problems.extend(sweep_problems(files, found.judged))
     problems.extend(fixture_problems(tracked))

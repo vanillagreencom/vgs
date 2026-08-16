@@ -61,7 +61,7 @@ from bisect import bisect_right
 from typing import NamedTuple
 from pathlib import PurePosixPath
 
-from prose_blocks import blocks, normalized_words
+from prose_blocks import blocks, fence_left_open, normalized_words
 
 SECTION_MARK = "§"
 # THE TARGET IS ADJACENT TO THE MARK. Only delimiters may sit between them —
@@ -94,13 +94,19 @@ INHERITANCE_STOPS = SEPARATORS.replace(",", "")
 # "…live session." yields the whole heading rather than one word less.
 TERMINATORS = set(".,;:!?()[]{}\"`|—–")
 
-# A token naming a file: a path, or a bare name carrying an extension. What it
-# separates is a pointer with a target (`bin/vshell-helper` § Scratchpads) from
-# a bare one, where the word before the mark is only the sentence running into
-# it ("see § Niri", "D006 § 4"). Getting that wrong in the permissive direction
-# would resolve a decision record's own prose against the wrong document.
+# A token naming a document: a path, a bare name carrying an extension, or a
+# decision-record id. What it separates is a pointer with a target from a bare
+# one, where the word before the mark is only the sentence running into it
+# ("see § Niri"). Getting that wrong in the permissive direction would resolve a
+# document's own prose against some other document.
 FILE_TOKEN = re.compile(r"^[\w.+-]+\.[A-Za-z0-9]+$")
-
+# `D008 § Scope` NAMES A DOCUMENT and was read as a sentence word until this
+# existed, so three live pointers in `scripts/qml-smoke.sh` went unchecked — in
+# `docs/decisions/`, one of the trees this guard exists for. The rule stays
+# directory-agnostic: it resolves against the tracked set by BASENAME PREFIX,
+# `D008` to the one document whose name begins `D008-`, so it carries no
+# knowledge of where decision records happen to live.
+DECISION_TOKEN = re.compile(r"^D\d{3}$")
 
 
 def target_token(before: str) -> str:
@@ -122,8 +128,20 @@ def target_token(before: str) -> str:
 
 
 def names_a_file(token: str) -> bool:
-    """Whether a token is a path or a filename rather than a sentence word."""
-    return bool(token) and ("/" in token or bool(FILE_TOKEN.match(token)))
+    """Whether a token names a document rather than being a sentence word."""
+    return bool(token) and (
+        "/" in token or bool(FILE_TOKEN.match(token)) or bool(DECISION_TOKEN.match(token))
+    )
+
+
+def names_a_document(token: str) -> bool:
+    """Whether a token is one this parser can resolve to a markdown file.
+
+    A path into a code region (`bin/vshell-helper`) names a file but not a
+    document: there are no headings to parse there, so it is out of scope rather
+    than unresolvable.
+    """
+    return token.endswith(".md") or bool(DECISION_TOKEN.match(token))
 
 
 def cited_name(after: str) -> tuple[str, bool, str | None]:
@@ -206,13 +224,18 @@ def resolve_target(
     """(path, spelling) for the tracked markdown file a token names.
 
     ("", "") when it names none. Repo-relative first, then relative to the citing
-    file (markdown links write `../decisions/D001-….md`), then a basename — but
-    only when exactly one tracked document carries it, since two would make the
-    pointer ambiguous rather than resolvable.
+    file (markdown links write `../decisions/D001-….md`), then a basename, then a
+    decision id by basename prefix — the last two only when exactly one tracked
+    document carries it, since two would make the pointer ambiguous rather than
+    resolvable, and an ambiguous pointer is reported rather than answered by
+    whichever path sorted first.
 
     The spelling is returned, not merely used: it is what lets the caller assert
     each half of the grammar is still exercised somewhere in the tree.
     """
+    if DECISION_TOKEN.match(token):
+        records = [rel for rel in markdown if rel.rsplit("/", 1)[-1].startswith(f"{token}-")]
+        return (records[0], "decision-record id") if len(records) == 1 else ("", "")
     if token in markdown:
         return token, "repo-relative path"
     parts: list[str] = []
@@ -227,6 +250,24 @@ def resolve_target(
         return relative, "citer-relative link"
     basenames = [rel for rel in markdown if rel.rsplit("/", 1)[-1] == token]
     return (basenames[0], "unique basename") if len(basenames) == 1 else ("", "")
+
+
+def unresolved(token: str, unreadable: dict[str, str]) -> str:
+    """Why a token naming a document resolved to nothing, in the caller's terms.
+
+    THREE DIFFERENT CAUSES, and only one of them is the citer's fault. Collapsing
+    them into "not a tracked markdown file. Repoint it" was wrong in every clause
+    for the other two: the file IS tracked, the path IS right, and repointing is
+    not the repair. `unreadable` carries the two the caller can distinguish —
+    a blob that is not text, and a document the caller excluded from parsing.
+    """
+    if token in unreadable:
+        return f"{unreadable[token]}, so its headings could not be parsed"
+    return (
+        "is not a tracked markdown file. Repoint it at the file that owns the "
+        "section now, or write the repo-relative path if the basename is "
+        "ambiguous or shared"
+    )
 
 
 class Judged(NamedTuple):
@@ -251,14 +292,17 @@ def pointer_problems(
     markdown: dict[str, list[list[str]]],
     exempt,
     unreadable: dict[str, str] | None = None,
+    remedy: str = "",
 ) -> Judged:
     """Resolve every mark in `files`; see `Judged` for what comes back.
 
     `exempt(citer, target, name, quoted)` returns the exemption keys a pointer
     the headings do not cover may fall back on — empty for none. The caller owns
-    that table, so this stays the grammar and nothing else. `unreadable` maps a
-    tracked path to why its blob is not text, so a cited document that exists but
-    could not be parsed is named as that rather than blamed on the citer.
+    that table, and `remedy` is the caller's sentence about it, appended to the
+    unresolved-heading finding: naming the table here made its identity a
+    two-place fact and handed any second caller advice about a table it does not
+    use. `unreadable` maps a tracked path to why its blob could not be parsed, so
+    a cited document that exists is named as that rather than blamed on its citer.
     """
     problems: list[str] = []
     judged: list[tuple[str, str]] = []
@@ -270,25 +314,29 @@ def pointer_problems(
         declined[reason] = declined.get(reason, 0) + 1
 
     for rel in sorted(files):
+        # A FENCE THAT NEVER CLOSES hides every mark after it, and the block
+        # reader returns the same untroubled emptiness as a file with none. The
+        # remainder is not read past this: a reader that lost half a file cannot
+        # report what the file contains.
+        if fence_left_open(files[rel]):
+            problems.append(
+                f"{rel} opens a ``` or ~~~ fence that never closes, so everything "
+                f"after it was skipped and no pointer there could be seen. Close the "
+                f"fence — an unbalanced one is a lost file, not an empty one."
+            )
+            continue
         for line, token, name, quoted, problem, inherited in pointers(rel, files[rel]):
             # SCOPE IS SETTLED BEFORE THE NAME IS JUDGED. A malformed name is
             # only this check's business once the pointer is one it owns: a code
             # region's pointer, or one in a file with no headings, is not made
             # ours by an unclosed backtick in it.
             where = f"{rel}:{line}"
-            if token.endswith(".md"):
+            if names_a_document(token):
                 target, spelling = resolve_target(token, rel, markdown)
                 if not target:
-                    why = (
-                        f"is tracked, but its blob is {unreadable[token]}, so no heading "
-                        f"could be parsed from it. Fix that file's encoding"
-                        if token in unreadable
-                        else "is not a tracked markdown file. Repoint it at the file "
-                        "that owns the section now, or write the repo-relative path if "
-                        "the basename is ambiguous or shared"
-                    )
                     problems.append(
-                        f"{where} cites `{token} {SECTION_MARK} {name}`, but {token} {why}."
+                        f"{where} cites `{token} {SECTION_MARK} {name}`, but {token} "
+                        f"{unresolved(token, unreadable)}."
                     )
                     continue
                 if inherited:
@@ -304,8 +352,18 @@ def pointer_problems(
             if problem:
                 problems.append(f"{where}: {problem}")
                 continue
+            # AN UNREADABLE NAME IS NOT A SKIP. This used to share the numbered-
+            # step branch, so `§ (Gone section)` and a mark ending a block both
+            # returned silently — the same silence the delimited-name rule above
+            # refuses a whole branch to avoid. A numbered step is a shape this
+            # parser knowingly does not own; an empty name is one it could not
+            # read, and only the first is a clean result.
             if not name:
-                decline("no name after the mark")
+                problems.append(
+                    f"{where} carries a `{SECTION_MARK}` whose section name could not be "
+                    f"read — the text after the mark begins with punctuation, or the mark "
+                    f"ends the block. Write the name as plain words, or in quotes."
+                )
                 continue
             if name[0].isdigit():
                 decline("a numbered workflow step")
@@ -329,9 +387,7 @@ def pointer_problems(
                 spelled += f", … {len(known) - 6} more"
             problems.append(
                 f"{where} cites `{target} {SECTION_MARK} {name}`, but {target} has no "
-                f"such heading. Repoint it at the heading that replaced it, or — if the "
-                f"section is deliberately named in the past tense — add it to "
-                f"HISTORICAL_SECTIONS in scripts/check-section-pointers.py with the "
-                f"reason. Headings there: {spelled}"
+                f"such heading. Repoint it at the heading that replaced it.{remedy} "
+                f"Headings there: {spelled}"
             )
     return Judged(problems, judged, declined, used)
