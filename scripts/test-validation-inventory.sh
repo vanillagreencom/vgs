@@ -24,6 +24,23 @@ fail() {
   failures=$((failures + 1))
   case_failed=1
 }
+# A CONTROL THAT COULD NOT BE CREATED IS NOT A CONTROL THAT PASSED. Printing a
+# SKIP notice and returning 0 made this suite report "all checks passed" while a
+# named mutation control had never run — the false green behind VGS-69 and the
+# exit-77 rule, reached from inside a suite instead of from a refusing tool. Skips
+# are counted here so the status can carry them: AGENTS.md's four-valued
+# convention makes 77 "what ran passed, but something did NOT run".
+skips=0
+skipped_names=()
+skip() { # $1 = control name, remaining args = the reason, one line each
+  local name="$1"
+  shift
+  skips=$((skips + 1))
+  skipped_names+=("$name")
+  printf '  SKIP  %s: %s\n' "$name" "$1" >&2
+  shift
+  printf '        %s\n' "$@" >&2
+}
 ok() {
   if [[ $case_failed -eq 0 ]]; then
     printf '  ok    %s\n' "$1"
@@ -59,7 +76,6 @@ GUARD_ONLY_MESSAGES=(
   "anchor around its validate area list"
   "but only inside a code fence"
   "a code fence is opened and never closed"
-  "a fence is nested inside a longer-run one"
   "opens the validate area anchor but never closes it"
   "a reversed pair anchors nothing"
   "must be anchored exactly once"
@@ -317,6 +333,52 @@ done
 expect_absent "$heredoc_said" "ACCEPTED" "heredoc miss is refused"
 expect_absent "$heredoc_said" "Traceback" "heredoc miss is refused"
 ok "a runner whose manifest delimiter is renamed is refused by runner_logic and by the probe builder"
+
+# ...AND THE AGGREGATION HOLDS FOR EVERY TYPE THAT PATH RAISES, not only the
+# library's own. token_participates writes files, chmods them and executes the
+# result under text-mode capture, so OSError (an occupied workdir) and
+# UnicodeDecodeError (a probe whose output is not UTF-8) reach the loop beside
+# ManifestError — both verified against the real function. Catching one type left
+# the identical abort through the other two. Driven by making the call raise each
+# type in turn, since what is under test is the guard's aggregation policy rather
+# than any particular way of provoking it.
+for etype in OSError UnicodeDecodeError ManifestError; do
+  raised_said="$(ETYPE="$etype" python3 - "$repo_root" <<'RAISED' 2>&1 || true
+import contextlib, importlib.util, io, os, pathlib, sys
+root = pathlib.Path(sys.argv[1])
+spec = importlib.util.spec_from_file_location(
+    "inv", root / "scripts" / "check-validation-inventory.py"
+)
+mod = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mod)
+kind = os.environ["ETYPE"]
+
+
+def boom(*_args, **_kwargs):
+    if kind == "OSError":
+        raise NotADirectoryError(20, "Not a directory")
+    if kind == "UnicodeDecodeError":
+        raise UnicodeDecodeError("utf-8", b"\xff", 0, 1, "invalid start byte")
+    raise mod.ManifestError("the probe could not be built")
+
+
+mod.token_participates = boom
+buf = io.StringIO()
+try:
+    with contextlib.redirect_stderr(buf):
+        mod.main()
+except BaseException as error:  # noqa: BLE001 - the abort is what is under test
+    print(f"ABORTED {type(error).__name__}: {error}")
+print(buf.getvalue())
+RAISED
+)"
+  expect_contains "$raised_said" "was NOT determined" "probe raises $etype"
+  expect_absent "$raised_said" "ABORTED" "probe raises $etype"
+  # ...and a LATER arm still reported, which is what separates collected from
+  # aborted — the same assertion the heredoc case above now makes.
+  expect_contains "$raised_said" "check-validation-inventory: FAIL" "probe raises $etype"
+done
+ok "a probe failing with ManifestError, OSError or UnicodeDecodeError is collected, not aborted on"
 
 guard_case "a row with no separator is reported" \
   "$(python3 - "$runner" <<'PY'
@@ -762,19 +824,36 @@ run_guard "AGENTS_PATH=$areas_probe"
 expect_clean_run "indented fence is not counted"
 ok "the fence count reads exactly the lines the fence pairing reads"
 
-# A NESTED FENCE IS A KNOWN BOUND, NAMED IN THE REFUSAL. Run lengths are not
-# compared, so a three-backtick fence shown inside a four-backtick one counts
-# three lines and is refused — on a document whose fences do balance under
-# markdown's rule. The refusal must offer nesting as the second cause, or the
-# author is sent hunting for a close marker that is not missing.
+# A NESTED FENCE PAIRS BY RUN LENGTH, and this is the FALSE ACCEPT that forced
+# the pairing to honour it. A four-backtick block containing a complete
+# three-backtick example passes any fence COUNT, but pairing each fence line with
+# the next one regardless of length splits the outer block around the inner one
+# and leaves the example's middle LIVE — so markers correctly read as a picture
+# at one nesting level were silently honoured as the real anchor one level down,
+# and a page could pass this guard on a list nobody maintains. The illustration
+# below is the only anchor on the page, so being read at all is the defect.
+# shellcheck disable=SC2016  # backticks are markdown quoting in the fixture prose
+{
+  printf 'how to write the anchor:\n\n'
+  printf '````markdown\n```md\n<!-- validate-areas -->areas `bogus-area`<!-- /validate-areas -->\n```\n````\n'
+} >"$areas_probe"
+run_guard "AGENTS_PATH=$areas_probe"
+expect_refused "nested fenced marker" "but only inside a code fence"
+expect_absent "$guard_out" "bogus-area" "nested fenced marker"
+ok "a marker nested two fences deep is a picture, not the contract"
+
+# ...and the same nesting BESIDE a real anchor parses, which is the accept side
+# and what a page documenting the contract actually looks like. Without this the
+# case above would be satisfied by refusing every nested document — the false
+# refusal the run-length rule also removes.
 # shellcheck disable=SC2016  # backticks are markdown quoting in the fixture prose
 {
   printf 'areas: <!-- validate-areas -->`go`, `qml`, `helper`, `packaging`, `docs`, `all`<!-- /validate-areas -->\n\n'
-  printf '````markdown\nhow a fence line looks:\n```\n````\n'
+  printf '````markdown\n```md\n<!-- validate-areas -->areas `bogus-area`<!-- /validate-areas -->\n```\n````\n'
 } >"$areas_probe"
 run_guard "AGENTS_PATH=$areas_probe"
-expect_refused "nested fence" "a fence is nested inside a longer-run one"
-ok "a nested fence is refused with nesting named as a cause, not as a missing close"
+expect_clean_run "nested fence beside a real anchor"
+ok "a page may nest a fenced illustration and still carry a real anchor"
 
 # ...and every named document must currently yield a non-empty list, so the
 # case above is catching the rewording rather than a doc that never stated one.
@@ -1881,9 +1960,10 @@ done
 if [[ ${#locales[@]} -eq 0 ]]; then
   # NAMED, not substituted. A weaker test passing here would assert that the
   # rule holds under a locale nobody exercised.
-  printf '  SKIP  C4 locale control: this system provides no UTF-8 locale (locale -a), so the\n' >&2
-  printf '        one condition that distinguishes an ASCII rule from a locale-resolved class\n' >&2
-  printf '        could not be created. The rule is NOT proven on this machine.\n' >&2
+  skip "C4 locale control" \
+    "this system provides no UTF-8 locale (locale -a), so the one condition that" \
+    "distinguishes an ASCII rule from a locale-resolved class could not be created." \
+    "The rule is NOT proven on this machine."
 else
   space_probe="$fixture_dir/scripts/space-probe"
   for codepoint in 00A0 2002 3000; do
@@ -1941,13 +2021,12 @@ $(printf '  %s\n' "${verdicts[@]}")"
       fail "C4 locale control" "U+$codepoint in a tag field is ACCEPTED ($first)"
   done
   if [[ $locale_sample_is_degenerate -eq 1 ]]; then
-    printf '  SKIP  C4 locale control: no locale this system provides (%s) resolves a Unicode\n' \
-      "${locales[*]}" >&2
     # shellcheck disable=SC2016  # the backticks quote a shell pattern in the notice
-    printf '        space through `[[:space:]]`, measured directly, so the one condition that\n' >&2
-    printf '        distinguishes an ASCII rule from a locale-resolved class could not be\n' >&2
-    printf '        created. Both readers agreed on every codepoint, but the rule is NOT\n' >&2
-    printf '        proven on this machine.\n' >&2
+    skip "C4 locale control" \
+      "no locale this system provides (${locales[*]}) resolves a Unicode space" \
+      'through `[[:space:]]`, measured directly, so the one condition that' \
+      "distinguishes an ASCII rule from a locale-resolved class could not be created." \
+      "Both readers agreed on every codepoint, but the rule is NOT proven here."
   else
     ok "C4 holds for both readers under C and ${locales[*]}"
   fi
@@ -2056,5 +2135,13 @@ ok "the unmutated runner triggers none of its arms"
 if [[ $failures -ne 0 ]]; then
   printf '\ntest-validation-inventory: %d failure(s)\n' "$failures" >&2
   exit 1
+fi
+# 77, NOT 0, when a control could not be created: what ran passed, but something
+# did NOT run, and the two must not report the same status. The names are
+# repeated here because the notice above scrolls past in a long run.
+if [[ $skips -ne 0 ]]; then
+  printf 'test-validation-inventory: passed, %d skipped: %s\n' \
+    "$skips" "$(IFS=', '; echo "${skipped_names[*]}")" >&2
+  exit 77
 fi
 echo "test-validation-inventory: all checks passed"

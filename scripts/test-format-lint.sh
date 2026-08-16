@@ -36,6 +36,15 @@ ok() {
 
 EXEC_MSG="is executable with no shebang"
 EXT_MSG="language extension but no shebang"
+# is_binary's unable-to-tell arms. EVERY BINARY-EXEMPTION CASE MUST ASSERT THIS
+# ABSENT as well as EXEC_MSG: those arms report a failure and then SUPPRESS the
+# shebang diagnostic, which is the same silence a correct exemption produces. On
+# the absence of EXEC_MSG alone, a probe the check could not classify at all
+# reads exactly like one it deliberately exempted — the control passing for the
+# opposite of the reason it claims. Naming both is what separates them, and the
+# fixture's exit status cannot: it is nonzero anyway on the surfaces a throwaway
+# repo has none of.
+UNDETERMINED_MSG="could not be determined"
 
 # probe_run <path under the fixture> <mode: exec|noexec|binary> [first line] —
 # stage one probe in a fresh fixture repo and return everything the check
@@ -185,6 +194,9 @@ out="$(probe_run bin/probe-binary binary)"
 [[ "$out" != *"$EXEC_MSG"* ]] ||
   fail "binary exemption" "a tracked binary under bin/ was reported as unlinted:
 $out"
+[[ "$out" != *"$UNDETERMINED_MSG"* ]] ||
+  fail "binary exemption" "the binary was not classified at all, so its silence is not an exemption:
+$out"
 ok "a tracked binary under bin/ is exempt from the executable-bit rule"
 
 # THE EXEMPTION MUST NOT BE STEERABLE BY A FILENAME. `git ls-files` reads its
@@ -202,6 +214,9 @@ out="$(probe_check)"
 $out"
 [[ "$out" != *"bin/probe1 $EXEC_MSG"* ]] ||
   fail "pathspec magic" "the binary bin/probe1 was reported:
+$out"
+[[ "$out" != *"$UNDETERMINED_MSG"* ]] ||
+  fail "pathspec magic" "a probe was not classified at all, so the exemption is not what was observed:
 $out"
 ok "a glob-shaped filename cannot borrow a neighbouring binary's exemption"
 
@@ -254,6 +269,9 @@ printf 'bin/** -text\n' >"$fixture/.gitattributes"
 out="$(probe_check)"
 [[ "$out" != *"bin/probe-binary $EXEC_MSG"* ]] ||
   fail "gitattributes -text" "a real binary under a -text attribute was reported as unlinted:
+$out"
+[[ "$out" != *"$UNDETERMINED_MSG"* ]] ||
+  fail "gitattributes -text" "the binary was not classified at all, so this proves nothing about the attribute:
 $out"
 ok "a real binary stays exempt whatever .gitattributes says"
 

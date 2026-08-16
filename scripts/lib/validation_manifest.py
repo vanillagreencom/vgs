@@ -774,21 +774,14 @@ def runner_logic(runner: Path) -> str:
 AREA_ANCHOR_OPEN = "<!-- validate-areas -->"
 AREA_ANCHOR_CLOSE = "<!-- /validate-areas -->"
 
-# A FENCE LINE, which is both what the pairing below keys on and what the
-# balance count counts.
+# A FENCE LINE, and its RUN LENGTH, which is what decides pairing below.
 #
 # ONLY AN UNINDENTED BACKTICK FENCE, and the contract paragraph in
 # .github/instructions/validation-scripts.instructions.md says so in those
 # words. A fence opened under a list bullet, and a `~~~` fence, are not matched
 # here, so markers inside one are read as the real thing — which fails LOUDLY
 # (two anchored regions) rather than quietly, and is the direction to keep.
-#
-# Run length is not compared — markdown's rule, where a longer opener may
-# enclose a shorter fence, would take a tokenizer this guard has no other use
-# for. That cost is bounded to nested fences, which the odd-count refusal below
-# names as one of its two possible causes rather than leaving the author to
-# hunt for a fence that is not missing.
-_FENCE_LINE = re.compile(r"^```", re.MULTILINE)
+_FENCE_LINE = re.compile(r"```+")
 
 # A FENCED BLOCK IS NOT A MARKER, it is a picture of one. Without this the
 # document that DOCUMENTS the anchor could not show it: a second literal
@@ -796,20 +789,51 @@ _FENCE_LINE = re.compile(r"^```", re.MULTILINE)
 # demonstrating the contract — trips the exactly-once refusal below, so the
 # mechanism was unnameable in the one place it is explained.
 #
-# BUILT FROM `_FENCE_LINE`, so the pairing and the count cannot key on different
-# lines. Spelling the fence literal twice made a coupling the balance check
-# depends on into a coupling a comment merely asked for — and a divergence
-# between counted and paired lines is precisely the wrong-cause refusal that
-# check exists to prevent.
-#
-# GROUPED ON INTERPOLATION, because a bare splice is only correct while the
-# pattern is a bare literal: give `_FENCE_LINE` an alternation or a trailing
-# quantifier and an ungrouped splice would rebind it across the `.*?` and change
-# this pattern's meaning silently rather than failing.
-_FENCED_BLOCK = re.compile(
-    rf"(?:{_FENCE_LINE.pattern}).*?(?:{_FENCE_LINE.pattern})",
-    re.DOTALL | re.MULTILINE,
-)
+def _strip_fenced_blocks(path: Path, text: str) -> str:
+    """`text` with every unindented fenced block removed, PAIRED BY RUN LENGTH.
+
+    A FENCED BLOCK IS NOT A MARKER, it is a picture of one. Without this the
+    document that DOCUMENTS the anchor could not show it: a second literal
+    `<!-- validate-areas -->` anywhere on the page — even inside a code fence
+    demonstrating the contract — trips the exactly-once refusal below, so the
+    mechanism was unnameable in the one place it is explained.
+
+    RUN LENGTH IS COMPARED, and this scanner exists because not comparing it was
+    a FALSE ACCEPT rather than the false refusal it was assumed to be. Pairing
+    each fence line with the next one regardless of length splits a four-backtick
+    block around the three-backtick example inside it, leaving the example's
+    middle live: the identical illustration that is correctly read as a picture
+    one nesting level up was silently honoured as the REAL anchor, so a page
+    could pass this guard on the strength of a list nobody maintains. Markdown's
+    rule — a fence closes on a run at least as long as the one that opened it —
+    is what makes the two levels agree, and a line scanner is enough for it.
+
+    An INFO STRING on a closing fence is not rejected the way CommonMark rejects
+    it; any long-enough fence line closes. The distinction cannot change which
+    text is live here, only which of two adjacent blocks a run belongs to, and
+    the guard's question is only ever "is this text inside a fence".
+    """
+    kept: list[str] = []
+    open_run = 0
+    for line in text.split("\n"):
+        match = _FENCE_LINE.match(line)
+        run = len(match.group(0)) if match else 0
+        if not open_run:
+            if run:
+                open_run = run
+            else:
+                kept.append(line)
+        elif run >= open_run:
+            open_run = 0
+    if open_run:
+        raise ManifestError(
+            f"{path.name} opens an unindented ``` code fence that is never closed by "
+            f"a run of at least {open_run} backticks, so a code fence is opened and "
+            f"never closed. Which markers are pictures and which are the contract is "
+            f"decided by that pairing, so an unclosed fence moves the region this "
+            f"guard reads."
+        )
+    return "\n".join(kept)
 
 
 def _fenced_marker_error(path: Path, marker: str) -> ManifestError:
@@ -850,23 +874,10 @@ def prose_areas(path: Path) -> set[str]:
     disguise.
     """
     raw = _read(path, "an area-enumerating document")
-    # BEFORE THE STRIP, because the strip is what an unbalanced fence corrupts.
-    # Which markers are pictures and which are the contract is decided by pairing
-    # fence lines from the top of the page, so one stray fence re-pairs every
-    # fence below it: a block that was a picture becomes live text and a live
-    # region becomes a picture, silently, and the misdirection lands on whichever
-    # arm reads next.
-    fences = len(_FENCE_LINE.findall(raw))
-    if fences % 2:
-        raise ManifestError(
-            f"{path.name} carries an odd number of unindented ``` lines ({fences}), "
-            f"so either a code fence is opened and never closed, or a fence is nested "
-            f"inside a longer-run one — this guard pairs those lines without comparing "
-            f"run lengths, so markdown's nesting rule is not honoured here. Which "
-            f"markers are pictures and which are the contract is decided by that "
-            f"pairing, so an unpaired fence moves the region this guard reads."
-        )
-    text = _FENCED_BLOCK.sub("", raw)
+    # AN UNCLOSED FENCE IS REFUSED BY THE STRIP ITSELF, before any marker is
+    # counted: one stray opener swallows every line below it, so a live region
+    # becomes a picture and the misdirection lands on whichever arm reads next.
+    text = _strip_fenced_blocks(path, raw)
     opens = text.count(AREA_ANCHOR_OPEN)
     closes = text.count(AREA_ANCHOR_CLOSE)
     # A MARKER THAT EXISTS BUT IS FENCED IS ITS OWN DIAGNOSIS, AT EITHER END.

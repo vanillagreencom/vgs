@@ -36,10 +36,9 @@ them, and `scripts/check-validation-inventory.py` compares it against the
 runner's own list. Reword inside freely, but every backticked lowercase word in
 there is read as an area name; exactly one marker pair per file, opener before
 closer (a reversed pair is refused as reversed, not as a missing closer); an
-empty region is refused; the page's unindented backtick fence lines must be even
-in number, counted without comparing run lengths — so a three-backtick fence
-nested in a four-backtick one balances under markdown's rule and is still
-refused, which that refusal names as its second cause; markers inside an
+empty region is refused; every unindented backtick fence the page opens must be
+closed by a run at least as long, markdown's own rule, so a shorter fence nested
+inside a longer one is content and an unclosed one is refused; markers inside an
 unindented backtick fence are a
 picture, not the contract (a fence indented under a bullet, or a `~~~` one, is
 not a fence here, so markers in it count as real), and a marker found only inside
