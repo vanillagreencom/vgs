@@ -457,9 +457,9 @@ PluginComponent {
         visibleItems = allImmediateItems;
         selectedItemIndex = 0;
         filePreviewRevealed = visibleItems.length > 0 && visibleItems[0]?.kind === "file";
-        fileSearching = trimmed.length >= 2;
+        fileSearching = DSearchService.queryIsDispatchable(trimmed);
         resetResultListPosition();
-        if (trimmed.length < 2)
+        if (!DSearchService.queryIsDispatchable(trimmed))
             return;
 
         DSearchService.search(trimmed, { kind: "all", limit: 80 }, response => {
@@ -533,6 +533,16 @@ PluginComponent {
         filePreviewRevealed = false;
     }
 
+    // Whether a file search actually runs for this query: the shared rule, which
+    // already covers a folder path the helper completes directly, plus the one
+    // leg that is this plugin's own — zoxide, which needs no query at all. The
+    // empty state reads this too, or it tells the user to type more about a
+    // search that ran and found nothing.
+    function fileSearchDispatches(trimmed) {
+        return DSearchService.queryIsSearchable(DSearchService.kindForType(fileSearchType), trimmed)
+            || fileSearchType === "zoxide";
+    }
+
     function refreshFileItems() {
         if (resettingState || routingPrefix)
             return;
@@ -542,16 +552,12 @@ PluginComponent {
         visibleItems = [];
         selectedItemIndex = 0;
         filePreviewRevealed = false;
-        const explicitFolderPath = fileSearchType === "dir"
-            && (trimmed.indexOf("~/") === 0 || trimmed.indexOf("/") === 0 || trimmed === "~");
-        if (trimmed.length < 2 && fileSearchType !== "zoxide" && !explicitFolderPath) {
+        if (!fileSearchDispatches(trimmed)) {
             fileSearching = false;
             return;
         }
         fileSearching = true;
-        const kind = fileSearchType === "dir" ? "folders"
-            : fileSearchType === "text" ? "text"
-            : fileSearchType === "zoxide" ? "zoxide" : "files";
+        const kind = DSearchService.kindForType(fileSearchType);
         DSearchService.search(trimmed, { kind: kind, limit: 120 }, response => {
             if (generation !== fileSearchGeneration
                     || categories[selectedCategoryIndex]?.id !== "files"
@@ -681,14 +687,15 @@ PluginComponent {
     }
 
     function openFolder(path, opener) {
-        const args = [Paths.vshellCli, "launcher-search", "open-folder", path];
+        const args = [Paths.vshellCli, "launcher-search", "open-folder"];
         if (!opener || opener === "default") {
             args.push("--opener", "default");
         } else {
             args.push("--opener", opener);
         }
         if ((!opener || opener === "default") && SettingsData.launcherFolderOpenCommand)
-            args.push("--command", SettingsData.launcherFolderOpenCommand);
+            args.push("--command=" + SettingsData.launcherFolderOpenCommand);
+        args.push("--", path);
         Quickshell.execDetached(args);
     }
 
@@ -1855,7 +1862,7 @@ PluginComponent {
                                 StyledText {
                                     width: 260
                                     text: root.fileSearching ? "Searching…"
-                                        : (root.categories[root.selectedCategoryIndex]?.id === "files" && root.query.trim().length < 2
+                                        : (root.categories[root.selectedCategoryIndex]?.id === "files" && !root.fileSearchDispatches(root.query.trim())
                                             ? "Type at least two characters"
                                             : "No matching results")
                                     font.pixelSize: Theme.fontSizeMedium

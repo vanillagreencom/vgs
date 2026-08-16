@@ -56,6 +56,12 @@ Item {
     }
 
     onActiveChanged: {
+        if (active) {
+            // A probe that gave up earlier gets its second chance when a surface
+            // that needs the answer opens, rather than leaving search refused
+            // for the life of the shell.
+            DSearchService.ensureStatus();
+        }
         if (!active) {
             SessionData.addLauncherHistory(searchQuery);
 
@@ -68,6 +74,11 @@ Item {
     }
 
     onSearchModeChanged: {
+        // Hooked on the CHANGE, not on setMode: restorePreviousMode assigns the
+        // mode directly, and a file response landing after the mode left files
+        // is appended rather than replaced by _applyFileSearchResults — Files
+        // and Folders sections in the middle of the apps list.
+        _supersedeFileSearch();
         if (searchMode === "apps") {
             _loadAppCategories();
         } else {
@@ -118,6 +129,30 @@ Item {
 
             searchDebounce.restart();
         }
+    }
+
+    Connections {
+        target: DSearchService
+
+        // The probe answers milliseconds after the launcher opens, so a query
+        // typed in that window is declined while the answer is unknown. Nothing
+        // else would re-run it: without this the results stay empty until the
+        // next keystroke.
+        function onStatusStateChanged() {
+            root._retryFileSearchAfterProbe();
+        }
+        function onFdAvailableChanged() {
+            root._retryFileSearchAfterProbe();
+        }
+        function onRipgrepAvailableChanged() {
+            root._retryFileSearchAfterProbe();
+        }
+    }
+
+    function _retryFileSearchAfterProbe() {
+        if (!shouldRetryAfterProbe(active, DSearchService.queryIsSearchable(fileSearchKind(), fileSearchQuery())))
+            return;
+        fileSearchDebounce.restart();
     }
 
     Connections {
@@ -335,6 +370,11 @@ Item {
         searchQueryRequested(targetText);
     }
 
+    // The last file search's own failure text, straight from the helper. The
+    // empty state shows it: the diagnosis was already produced and was being
+    // thrown away.
+    property string fileSearchError: ""
+    property int _fileSearchGeneration: 0
     property string fileSearchType: "file"
     property string fileSearchExt: ""
     property string fileSearchFolder: ""
@@ -471,6 +511,12 @@ Item {
 
     function setSearchQuery(query) {
         _searchVersion++;
+        // The query the in-flight file search was for no longer exists. This has
+        // to happen HERE rather than when the debounce fires: between the
+        // keystroke and the dispatch 200ms later, performSearch has already
+        // cleared the results, and a response landing in that window repaints
+        // hits for a query the user has left.
+        _supersedeFileSearch();
         _queryDrivenSearch = true;
         _pluginPhasePending = false;
         _phase1Items = [];
@@ -544,11 +590,16 @@ Item {
     }
 
     function reset() {
+        // Explicitly, because a reset that leaves the mode where it was fires no
+        // mode change: a response from the previous session must not repaint
+        // into the next one.
+        _supersedeFileSearch();
         searchQuery = "";
         searchMode = "apps";
         previousSearchMode = "apps";
         autoSwitchedToFiles = false;
         isFileSearching = false;
+        fileSearchError = "";
         fileSearchType = "file";
         fileSearchExt = "";
         fileSearchFolder = "";
@@ -796,9 +847,8 @@ Item {
         clearActivePluginViewPreference();
 
         if (searchMode === "files") {
-            var prefixInfo = Utils.parseFileSearchPrefix(searchQuery);
-            var fileQuery = prefixInfo ? prefixInfo.query : searchQuery.trim();
-            isFileSearching = fileQuery.length >= 2 && DSearchService.dsearchAvailable;
+            var fileQuery = fileSearchQuery();
+            isFileSearching = DSearchService.queryIsSearchable(fileSearchKind(), fileQuery) && DSearchService.canDispatch(fileSearchKind(), fileQuery);
             sections = [];
             flatModel = [];
             selectedFlatIndex = 0;
@@ -1078,35 +1128,130 @@ Item {
         searchCompleted();
     }
 
-    function performFileSearch() {
-        if (!DSearchService.dsearchAvailable)
-            return;
-        var fileQuery = "";
-        var effectiveType = fileSearchType || "file";
+    // The single reading of the current file-search type, so the gate, the
+    // dispatch and ResultsList's empty state cannot disagree about the kind.
+    // The overview deliberately narrows the "all" type to the "files" kind: the
+    // helper's "files" kind returns no directories, so _applyFileSearchResults'
+    // folders branch is dead for this path (the helper's own "all" kind, which
+    // does return both, is vgsMenu's).
+    function fileSearchKind() {
+        return DSearchService.kindForType(fileSearchType || "file");
+    }
 
-        if (searchQuery.startsWith("/")) {
-            var prefixInfo = Utils.parseFileSearchPrefix(searchQuery);
-            fileQuery = prefixInfo ? prefixInfo.query : searchQuery.substring(1).trim();
-        } else if (searchMode === "files") {
-            fileQuery = searchQuery.trim();
-        } else {
+    // The ONE authority on whether a file search runs and with what query, so
+    // the gate, the dispatch, the probe retry and the empty state cannot
+    // disagree: empty means no file search, and every caller reads it.
+    //
+    // Plugins mode is excluded exactly as setSearchQuery excludes it — there a
+    // "/" is the plugin's own text, not the file-search trigger. Elsewhere the
+    // "/" form drops the prefix and files mode sends the trimmed query.
+    //
+    // Combined "all" mode is where this is narrower than its callers: setMode
+    // and setSearchQuery schedule a file-search debounce whenever
+    // launcherIncludeFilesInAll or launcherIncludeFoldersInAll is set, and for
+    // a query with no "/" prefix this function then hands that debounce an
+    // empty query, so those two settings currently reach no search at all.
+    // Unchanged behavior, tracked separately.
+    //
+    // The rule itself is in the marked region below, where
+    // scripts/test-launcher-search-gate.js runs it; this reads the properties
+    // and the parsed prefix, and decides nothing.
+    function fileSearchQuery() {
+        return fileSearchQueryFrom(searchMode, searchQuery, Utils.parseFileSearchPrefix(searchQuery)?.query ?? "");
+    }
+
+    // BEGIN FILE SEARCH DECISION
+    // `prefixQuery` is what parseFileSearchPrefix made of a "/"-led query — the
+    // prefix is the launcher's file-search trigger and is consumed there.
+    function fileSearchQueryFrom(mode, rawQuery, prefixQuery) {
+        if (mode === "plugins")
+            return "";
+        if (String(rawQuery || "").startsWith("/"))
+            return String(prefixQuery || "");
+        if (mode === "files")
+            return String(rawQuery || "").trim();
+        return "";
+    }
+
+    // A search declined while the tools were unknown is re-run once they are
+    // known — but only for a surface still open, and only for a query that
+    // would have searched. Whether it would is
+    // DSearchService.queryIsSearchable's answer, read by the caller: the
+    // length rule OR a path the helper completes without fd.
+    function shouldRetryAfterProbe(isActive, searchable) {
+        return !!isActive && !!searchable;
+    }
+    // END FILE SEARCH DECISION
+
+    // Every path that abandons a file search calls this, so a response already in
+    // flight cannot repaint a query, kind or mode the user has left. The dispatch
+    // path captures the value it produces; the callback drops anything older.
+    //
+    // Clearing the in-flight flag is part of abandoning, not a separate step: the
+    // callback returns at the generation check BEFORE it would have cleared it,
+    // and outside files mode nothing else ever does — so a search abandoned by a
+    // mode change would leave the flag set for the life of the Controller, and
+    // ResultsList's empty state, which requires !isFileSearching, would never
+    // render again in ANY mode. The dispatch path is unaffected: it raises the
+    // flag and increments inline rather than through here.
+    function _supersedeFileSearch() {
+        _fileSearchGeneration++;
+        isFileSearching = false;
+    }
+
+    function performFileSearch() {
+        var effectiveType = fileSearchType || "file";
+        var kind = fileSearchKind();
+        var fileQuery = fileSearchQuery();
+
+        if (!DSearchService.queryIsSearchable(kind, fileQuery)) {
+            // Nothing will dispatch for this query, so nothing supersedes the
+            // last one: without this, deleting "docs" back to "d" leaves the
+            // "docs" response current and it repaints hits for a query that no
+            // longer exists.
+            _supersedeFileSearch();
+            isFileSearching = false;
             return;
         }
 
-        if (fileQuery.length < 2) {
+        // fd backs name search and ripgrep backs text search, so each kind waits
+        // on its own tool. Results are cleared before the return: the chips and
+        // the Tab cycle reach this without going through performSearch, and
+        // leaving the previous kind's hits on screen hides the very empty state
+        // that names the missing tool.
+        if (!DSearchService.canDispatch(kind, fileQuery)) {
             isFileSearching = false;
+            fileSearchError = "";
+            // Supersede anything already in flight, or its answer lands on top
+            // of the empty state that explains why this one was declined.
+            _supersedeFileSearch();
+            _applyFileSearchResults([], effectiveType);
             return;
         }
 
         isFileSearching = true;
+        fileSearchError = "";
 
-        var kind = effectiveType === "dir" ? "folders" : effectiveType === "text" ? "text" : "files";
+        // DSearchService versions its requests per KIND, so a superseded
+        // same-kind answer is dropped there — but a files answer still arrives
+        // after the chip switched to text, up to the 12s command timeout, which
+        // is exactly how long a slow failure takes. Its results would overwrite
+        // the current kind's, and its error would be attributed to a search that
+        // did not produce it.
+        var generation = ++_fileSearchGeneration;
+
         DSearchService.search(fileQuery, {
             kind: kind,
             limit: 100
         }, function (response) {
+            if (generation !== root._fileSearchGeneration)
+                return;
             isFileSearching = false;
             if (response.error) {
+                // The helper's own diagnosis — "ripgrep is required for text
+                // search" and the like. Dropping it left the empty state saying
+                // "No results found" for a search that never ran.
+                fileSearchError = response.error;
                 _applyFileSearchResults([], effectiveType);
                 return;
             }
@@ -2093,9 +2238,10 @@ Item {
         if (!path)
             return;
         var target = openDirectory ? path : path.substring(0, path.lastIndexOf("/"));
-        var args = [Paths.vshellCli, "launcher-search", "open-folder", target];
+        var args = [Paths.vshellCli, "launcher-search", "open-folder"];
         if (SettingsData.launcherFolderOpenCommand)
-            args.push("--command", SettingsData.launcherFolderOpenCommand);
+            args.push("--command=" + SettingsData.launcherFolderOpenCommand);
+        args.push("--", target);
         Quickshell.execDetached(args);
     }
 
