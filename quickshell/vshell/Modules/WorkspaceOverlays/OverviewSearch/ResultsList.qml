@@ -23,7 +23,8 @@ Item {
     // controller applied. The controller owns the kind and the effective query;
     // DSearchService owns which tool answers for them.
     readonly property string _fileQuery: controller ? controller.fileSearchQuery() : ""
-    readonly property bool _fileQueryDispatchable: DSearchService.queryIsDispatchable(_fileQuery)
+    readonly property bool _fileQueryDispatchable: !!controller
+        && DSearchService.queryIsSearchable(controller.fileSearchKind(), _fileQuery)
     readonly property string _fileBackendState: controller
         ? DSearchService.backendState(controller.fileSearchKind(), _fileQuery) : "unknown"
     readonly property string _missingBackendCommand: controller && _fileBackendState === "missing"

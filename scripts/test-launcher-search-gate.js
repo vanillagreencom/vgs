@@ -90,8 +90,8 @@ qmlSource.selfTest();
 
 const backend = evaluateMarked(serviceSource, "SEARCH BACKEND DECISION", [
     "backendCommandFor", "kindForType", "pathCompletion", "queryIsDispatchable",
-    "backendStateFor", "dispatchAllowed", "helperHasFallback", "serviceRefuses",
-    "canDispatchFor", "probeSettled", "probeFailureOutcome"
+    "queryIsSearchable", "backendStateFor", "dispatchAllowed", "helperHasFallback",
+    "serviceRefuses", "canDispatchFor", "probeSettled", "probeFailureOutcome"
 ], "DSearchService.qml");
 
 const view = evaluateMarked(resultsSource, "EMPTY STATE DECISION", [
@@ -422,6 +422,24 @@ assert.ok(backend.queryIsDispatchable("  ab  "), "after trimming");
 for (const query of ["a", " a ", "", " ", undefined, null])
     assert.ok(!backend.queryIsDispatchable(query), `${JSON.stringify(query)} does not`);
 
+// And the kind-aware companion every launcher gate actually reads. "~" and "/"
+// are one character AND the first keystroke of a path the helper completes
+// without fd, so the length rule alone refused the capability pathCompletion
+// exists to allow and the surface said "type at least two characters" for a
+// query the helper answers.
+for (const query of ["~", "/", "~/", "  ~  "])
+    assert.ok(backend.queryIsSearchable("folders", query),
+        `${JSON.stringify(query)} in folders mode is a path the helper completes, not a short query`);
+assert.ok(backend.queryIsSearchable("folders", "de"), "an ordinary folder query still qualifies");
+for (const [kind, query] of [["files", "~"], ["files", "/"], ["text", "~"], ["folders", "d"],
+    ["folders", ""], ["folders", " "]]) {
+    assert.ok(!backend.queryIsSearchable(kind, query),
+        `${kind}/${JSON.stringify(query)} is genuinely too short — the exemption is folders-only, ` +
+        "and only for a path");
+}
+assert.equal(backend.queryIsSearchable("folders", "~"), backend.pathCompletion("folders", "~"),
+    "the exemption IS pathCompletion, not a second copy of it");
+
 // --- 7c. the whole dispatch matrix, over the named snapshot -----------------
 //
 // One entry point per decision, each reading { state, fd, ripgrep } by name, so
@@ -596,8 +614,10 @@ for (const state of ["available", "unknown", "checking"])
     q.requires(q.body("performFileSearch"), "performFileSearch()", [
         ["var kind = fileSearchKind()", "the kind is decided once, by the shared accessor"],
         ["var fileQuery = fileSearchQuery()", "and the query comes from the one authority"],
-        ["if (!DSearchService.queryIsDispatchable(fileQuery))",
-            "and the length rule from the one threshold owner, not a sixth literal"],
+        ["if (!DSearchService.queryIsSearchable(kind, fileQuery))",
+            "and the searchable rule from the one owner, WITH the kind: the length rule alone " +
+            "returns before canDispatch is ever consulted, so a one-character path like ~ never " +
+            "reaches the fd-free completion the manifest advertises"],
         ["DSearchService.canDispatch(kind, fileQuery)",
             "and the gate asks about THAT kind, with the query the search will send"],
         ["_applyFileSearchResults([], effectiveType)",
@@ -628,7 +648,7 @@ for (const state of ["available", "unknown", "checking"])
     // occurrence count above while the sub-threshold return abandons a search
     // without superseding it — which is the defect, with the count still green.
     for (const [landmark, what, why] of [
-        ["if (!DSearchService.queryIsDispatchable(fileQuery))", "the sub-threshold return",
+        ["if (!DSearchService.queryIsSearchable(kind, fileQuery))", "the sub-threshold return",
             "nothing dispatches for a query this short, so nothing else supersedes the last one"],
         ["if (!DSearchService.canDispatch(kind, fileQuery))", "the declined gate",
             "its answer would otherwise land on the empty state explaining the refusal"]
@@ -674,9 +694,9 @@ for (const state of ["available", "unknown", "checking"])
     q.requires(q.body("performSearch"), "performSearch()", [
         ["DSearchService.canDispatch(fileSearchKind(), fileQuery)",
             "the spinner is set from the same per-kind answer, not from a single flag"],
-        ["DSearchService.queryIsDispatchable(fileQuery)",
-            "and from the same threshold owner: identical behavior today, and exactly the drift " +
-            "that owner exists to prevent"]
+        ["DSearchService.queryIsSearchable(fileSearchKind(), fileQuery)",
+            "and from the same owner, kind included, so the spinner agrees with the gate about " +
+            "which queries search at all"]
     ]);
 
     // The ban is scoped to the FILES BRANCH of performSearch, not its body: the
@@ -692,7 +712,7 @@ for (const state of ["available", "unknown", "checking"])
         assert.ok(!/length\s*[<>]=?\s*2/.test(stripComments(filesBranch)),
             "performSearch's files branch must not carry its own two-character literal — " +
             "DSearchService.queryIsDispatchable owns that rule");
-        assert.ok(stripComments(filesBranch).includes("DSearchService.queryIsDispatchable(fileQuery)"),
+        assert.ok(stripComments(filesBranch).includes("DSearchService.queryIsSearchable(fileSearchKind(), fileQuery)"),
             "and must ask the owner instead");
     }
 
@@ -738,7 +758,7 @@ for (const state of ["available", "unknown", "checking"])
         "that has not said what it is abandoning");
 
     q.requires(q.body("_retryFileSearchAfterProbe"), "_retryFileSearchAfterProbe()", [
-        ["if (!shouldRetryAfterProbe(active, DSearchService.queryIsDispatchable(fileSearchQuery())))",
+        ["if (!shouldRetryAfterProbe(active, DSearchService.queryIsSearchable(fileSearchKind(), fileSearchQuery())))",
             "the retry predicate is the executed one, reading the live active flag, the one " +
             "query authority and the one threshold — inverted or dropped, a query typed before " +
             "the answer never re-runs"],
@@ -778,8 +798,9 @@ for (const state of ["available", "unknown", "checking"])
     for (const [binding, why] of [
         ["readonly property string _fileQuery: controller ? controller.fileSearchQuery() : \"\"",
             "the query is the controller's one authority, not a re-derivation"],
-        ["readonly property bool _fileQueryDispatchable: DSearchService.queryIsDispatchable(_fileQuery)",
-            "and the threshold is the service's"],
+        ["readonly property bool _fileQueryDispatchable: !!controller && DSearchService.queryIsSearchable(controller.fileSearchKind(), _fileQuery)",
+            "and whether it searches at all is the service's answer for THIS kind — with the " +
+            "kindless form, folder-path completion is reported as a too-short query"],
         ["readonly property string _fileBackendState: controller ? DSearchService.backendState(controller.fileSearchKind(), _fileQuery) : \"unknown\"",
             "kind BEFORE query: swapped, backendCommandFor sees a query string, every state is " +
             "permanently unknown, and no missing tool is ever named again"],
@@ -873,7 +894,7 @@ for (const [label, source] of [["Controller.qml", controllerSource], ["ResultsLi
     for (const call of [
         "fileSearching = DSearchService.queryIsDispatchable(trimmed);",
         "if (!DSearchService.queryIsDispatchable(trimmed))",
-        "return DSearchService.queryIsDispatchable(trimmed) || fileSearchType === \"zoxide\" || explicitFolderPath;"
+        "return DSearchService.queryIsSearchable(DSearchService.kindForType(fileSearchType), trimmed) || fileSearchType === \"zoxide\";"
     ]) {
         assert.ok(code.includes(qmlSource.flat(call)),
             `VGSMenu must ask the one threshold owner: \`${call}\`. Its own literal would keep ` +

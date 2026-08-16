@@ -150,7 +150,7 @@ Item {
     }
 
     function _retryFileSearchAfterProbe() {
-        if (!shouldRetryAfterProbe(active, DSearchService.queryIsDispatchable(fileSearchQuery())))
+        if (!shouldRetryAfterProbe(active, DSearchService.queryIsSearchable(fileSearchKind(), fileSearchQuery())))
             return;
         fileSearchDebounce.restart();
     }
@@ -848,7 +848,7 @@ Item {
 
         if (searchMode === "files") {
             var fileQuery = fileSearchQuery();
-            isFileSearching = DSearchService.queryIsDispatchable(fileQuery) && DSearchService.canDispatch(fileSearchKind(), fileQuery);
+            isFileSearching = DSearchService.queryIsSearchable(fileSearchKind(), fileQuery) && DSearchService.canDispatch(fileSearchKind(), fileQuery);
             sections = [];
             flatModel = [];
             selectedFlatIndex = 0;
@@ -1203,7 +1203,7 @@ Item {
         var kind = fileSearchKind();
         var fileQuery = fileSearchQuery();
 
-        if (!DSearchService.queryIsDispatchable(fileQuery)) {
+        if (!DSearchService.queryIsSearchable(kind, fileQuery)) {
             // Nothing will dispatch for this query, so nothing supersedes the
             // last one: without this, deleting "docs" back to "d" leaves the
             // "docs" response current and it repaints hits for a query that no

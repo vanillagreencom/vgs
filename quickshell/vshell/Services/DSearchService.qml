@@ -198,6 +198,18 @@ Singleton {
         return String(query || "").trim().length >= 2;
     }
 
+    // The same question asked for a KIND, which is what every launcher gate
+    // actually wants: long enough, OR a path the helper completes without fd.
+    // "~" and "/" are one character and are the first keystroke of a path, so
+    // the length rule alone refuses the very capability pathCompletion exists to
+    // allow — the surface then reports "type at least two characters" for a
+    // query the helper can answer. Three predicates read this rather than
+    // composing their own, so the gate, the retry and the message cannot
+    // disagree about what a searchable query is.
+    function queryIsSearchable(kind, query) {
+        return queryIsDispatchable(query) || pathCompletion(kind, query);
+    }
+
     // "checking" | "available" | "missing" | "unknown". `probe` carries the
     // status answer as { state, fd, ripgrep }. Unknown is never collapsed into
     // missing: telling a user to install a tool they already have, because a
