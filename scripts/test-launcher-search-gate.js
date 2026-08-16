@@ -183,12 +183,31 @@ for (const probe of [{ state: "failed" }, {}, null, undefined, { state: "nonsens
 assert.equal(backend.backendStateFor("zoxide", "needle", ready(true, true)), "unknown",
     "a kind this service never probes stays unknown even with both tools present");
 
-// Only a proven-missing tool blocks a search; unknown dispatches so the search
-// itself fails with a real cause instead of being refused on nobody's answer.
-assert.ok(backend.dispatchAllowed("available"));
-assert.ok(backend.dispatchAllowed("unknown"), "an unanswerable probe must not block the search");
-assert.ok(!backend.dispatchAllowed("missing"), "a tool proven absent does block it");
-assert.ok(!backend.dispatchAllowed("checking"), "and a pending answer waits rather than guessing");
+// The rule at its own entry point, WITH the kind — dispatchAllowed answers
+// differently per kind, so calling it with a state alone leaves `kind`
+// undefined and every case falls through the no-fallback arm by accident.
+//
+// A proven-missing tool blocks. An unanswered probe blocks only where
+// dispatching would silently buy the helper's full directory walk: ripgrep
+// fails fast with a real cause, so text goes; an fd-backed name search does not,
+// because taking that walk on nobody's answer is exactly what the overview
+// declines.
+for (const kind of ["files", "text"]) {
+    assert.ok(backend.dispatchAllowed("available", kind),
+        `a tool proven present dispatches (${kind})`);
+    assert.ok(!backend.dispatchAllowed("missing", kind),
+        `a tool proven absent does block it (${kind})`);
+    assert.ok(!backend.dispatchAllowed("checking", kind),
+        `and a pending answer waits rather than guessing (${kind})`);
+}
+assert.ok(backend.dispatchAllowed("unknown", "text"),
+    "an unanswerable probe still dispatches text search: ripgrep fails fast with a real cause, " +
+    "so refusing it would be a silence built on nobody's answer");
+assert.ok(!backend.dispatchAllowed("unknown", "files"),
+    "and does NOT dispatch an fd-backed name search: that buys the helper's full walk of every " +
+    "root, which is the cost the fd gate exists to avoid and the recorded decision rejected");
+assert.ok(!backend.dispatchAllowed("unknown", "folders"),
+    "same for folders — a path completion reaches 'available' earlier, never this arm");
 
 // --- 4. folder path completion is not fd's ----------------------------------
 //
