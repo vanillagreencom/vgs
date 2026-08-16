@@ -65,6 +65,10 @@ vendor_drift_only_in_path() {
     # return the WHOLE string when it does not, which fabricated `<root>/<root>`
     # out of a line that had no separator at all.
     [[ "$rest" == *': '* ]] || return 0
+    # And UNAMBIGUOUS. That an unquoted directory cannot contain `: ` is a
+    # property of the local diffutils, not of the format, and no machine here is
+    # pinned to the version measured. Two separators make the split a guess.
+    [[ "${rest%%: *}" == "${rest%: *}" ]] || return 0
     dir="${rest%%: *}"
     name="${rest#*: }"
   fi
@@ -125,8 +129,17 @@ vendor_drift_classify() {
           # double-quotes the name when it contains a space.
           current="${line#+++ }"
           current="${current%%$'\t'*}"
-          current="${current%\"}"
-          current="${current#\"}"
+          if [[ "$current" == \"*\" ]]; then
+            # GNU diff C-QUOTES a header path containing a tab, quote,
+            # backslash or newline, and stripping the outer quotes leaves the
+            # ESCAPE in place — a name that does not exist, which every `+` line
+            # below would then be recorded against. Decoding C escapes exactly
+            # has its own ways to be subtly wrong, and a plausible wrong path is
+            # worse than an honest one, so an escaped header attributes NOTHING.
+            current="${current#\"}"
+            current="${current%\"}"
+            [[ "$current" != *\\* ]] || current=""
+          fi
           expect=body
           continue
         fi

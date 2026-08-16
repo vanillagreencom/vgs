@@ -108,7 +108,9 @@ expect_class "file only the tracked copy has, quoted directory" yes \
 # A tracked-side `Only in` that does not parse must appear AS ITSELF. The parser
 # returning nothing was half the contract: the caller dropped it, leaving
 # tracked_only=yes with an EMPTY at-risk list.
-for bad in "Only in $TRACKED_REL: " "Only in $TRACKED_REL" "Only in '$TRACKED_REL/foo"; do
+# The last is the version-dependent one: two separators are ambiguous.
+for bad in "Only in $TRACKED_REL: " "Only in $TRACKED_REL" "Only in '$TRACKED_REL/foo" \
+  "Only in $TRACKED_REL/foo: bar: doomed.txt"; do
   expect_class "tracked-side Only in that cannot be parsed" yes "$bad" "$bad"
 done
 expect_class "tracked-only file under a directory containing a colon-space" yes \
@@ -128,6 +130,16 @@ expect_class "content line that looks like a header" yes \
 expect_class "content naming the tracked root" yes \
   "$PAIR"$'\n'"+++ $TRACKED_REL/references/x.md is discussed here" \
   "$TRACKED_REL/references/settings.md"
+# An escaped header attributes NOTHING; the library says why. Fed as the full
+# triple deliberately: without the `diff` line the header is not in header
+# position and this passed without ever reaching the escape.
+esc_pair="diff -r -u -- \"$MIRROR_REL/q\\\"uote\" \"$TRACKED_REL/q\\\"uote\""$'\n'
+esc_pair+="--- \"$MIRROR_REL/q\\\"uote\""$'\n'"+++ \"$TRACKED_REL/q\\\"uote\""
+classify "$esc_pair"$'\n'"+a tracked-only row"
+[[ "$class_tracked_only" == yes ]] ||
+  fail "escaped header" "an escaped header left the drift looking safe to overwrite"
+expect_line_in "$class_at_risk" "+a tracked-only row" "escaped header"
+expect_absent "$class_at_risk" 'q\"uote' "escaped header"
 # GNU diff QUOTES a header whose path contains a space. Still a header, so the
 # content below it is attributed to that file rather than to the header line.
 expect_class "quoted tracked file header" yes \
