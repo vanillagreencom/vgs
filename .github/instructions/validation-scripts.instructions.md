@@ -16,6 +16,12 @@ Those exact bugs shipped here and had to be fixed; a linter that could not run
 was reporting "passed", and a failed baseline snapshot was discarding damage
 the after-snapshot plainly showed.
 
+**A collection-based check must assert it collected something before evaluating
+the collection.** An `all`/`any`/`.every()` over a filtered list, or a `for` loop
+whose body holds the assertions, is vacuously clean when the match finds
+nothing: empty means DID NOT RUN, never CLEAN. Three checks hit this in one
+night (VGS-123/124/134), so assert non-empty and fail on it.
+
 `scripts/validate [AREA]` is the suite's entry point: it carries the manifest of
 every check in this directory, selects the subset for one of the <!-- validate-areas -->areas `go`,
 `qml`, `helper`, `packaging`, `docs`, `all`<!-- /validate-areas -->, and is what

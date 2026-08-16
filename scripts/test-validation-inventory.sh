@@ -440,15 +440,26 @@ PY
 )" \
   "malformed tag field"
 
-guard_case "an area with no rows is reported" \
-  "$(python3 - "$runner" <<'PY'
+# This case proves the guard reports an AREA WITH NO ROWS, so the fixture has to
+# empty `docs` completely. It used to retag one named row, which silently stops
+# emptying the area the moment the manifest grows a second docs row — VGS-124
+# added one, watched this case go green while proving nothing, then cut that row
+# again, so the hole is latent rather than fixed. The substitution is global now
+# and the emptiness ASSERTED, so the next docs row cannot quietly disable it.
+docs_emptied="$(python3 - "$runner" <<'PY'
 import sys
 t = open(sys.argv[1], encoding="utf-8").read()
-print(t.replace("docs      | scripts/check-doc-growth.py",
-                "-         | scripts/check-doc-growth.py"), end="")
+print(t.replace("docs      | ", "-         | "), end="")
 PY
-)" \
-  "no manifest row is tagged with it"
+)"
+if printf '%s\n' "$docs_emptied" | grep -q '^docs '; then
+  fail "an area with no rows is reported" \
+    "the fixture left docs-tagged rows behind, so the docs area is not empty and this case cannot prove the guard reports an empty area. Widen the substitution to cover every docs row"
+else
+  guard_case "an area with no rows is reported" \
+    "$docs_emptied" \
+    "no manifest row is tagged with it"
+fi
 
 real_grammar="$(cat "$repo_root/scripts/lib/validation-grammar.conf")"
 
@@ -1734,13 +1745,18 @@ ok "a comment or docstring naming a read is prose, not a breach of the one-reade
 noyaml_probe="$tmp/noyaml-probe"
 noyaml_grammar="$tmp/noyaml-grammar.conf"
 
-# The runner fixture: an area that no row carries.
+# The runner fixture: an area that no row carries. Every docs row has to go, and
+# the mutator asserts the area really is empty afterwards — naming one row holds
+# only while `docs` has exactly one, and the second row VGS-124 briefly added is
+# what stopped this fixture and the one above from emptying anything.
 python3 - "$runner" >"$noyaml_probe" <<'MUT'
+import re
 import sys
 t = open(sys.argv[1], encoding="utf-8").read()
-old = "docs      | scripts/check-doc-growth.py"
-assert t.count(old) == 1, "the doc-growth manifest row moved"
-print(t.replace(old, "-         | scripts/check-doc-growth.py"), end="")
+out = t.replace("docs      | ", "-         | ")
+assert out != t, "no docs-tagged manifest row found; the tag column moved"
+assert not re.search(r"^docs\s*\|", out, re.M), "a docs-tagged row survived, so the area is not empty"
+print(out, end="")
 MUT
 chmod +x "$noyaml_probe"
 run_guard "RUNNER_PATH=$noyaml_probe" "PYTHONPATH=$noyaml_path"

@@ -245,7 +245,8 @@ for file in "${bin_files[@]}" "${script_files[@]}"; do
       # The two exemptions this arm needs are properties of the file, so it needs
       # no tree test either (see the arm above). bin/ deliberately holds
       # importable Python modules with no shebang (bin/vshell_niri.py and
-      # friends, documented in AGENTS.md) — they are NON-EXECUTABLE, so the mode
+      # friends, documented in scripts/validate's header) — they are
+      # NON-EXECUTABLE, so the mode
       # rule already leaves them alone and naming the tree was never what
       # protected them. Restricting the arm to scripts/ left an executable
       # shebang-less bin/ file — a working entry point through ENOEXEC — claimed

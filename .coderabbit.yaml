@@ -253,7 +253,9 @@ reviews:
         is exactly `README.md`, `packaging/README.md` (which owns per-channel
         packaging detail) and `packaging/ubuntu/README.md`.
         `docs/architecture/**` are agent reference docs; `AGENTS.md` and
-        `project-skills/README.md` are process.
+        `project-skills/README.md` are process; `AGENTS.local.md` is
+        AGENTS.md's machine-local companion, untracked by design, so a PR
+        never contains it.
 
         Do check that a claim added here matches the code it describes —
         instructions here are executed literally by agents, so a stale command
