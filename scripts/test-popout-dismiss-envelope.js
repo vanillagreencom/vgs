@@ -242,6 +242,22 @@ const settled = compile(settledBody);
     ok("onAlignedHeightChanged routes through the envelope");
 }
 
+// The X and WIDTH handlers write the SAME rect, so a horizontal reflow arriving
+// mid-shrink rewrites Y/height from the target as a side effect. The axis that
+// changed is not the axis at risk.
+{
+  const xBody = sliceHandlerBody(source, "onAlignedXChanged");
+  const wBody = sliceHandlerBody(source, "onAlignedWidthChanged");
+  for (const [name, body] of [["onAlignedXChanged", xBody], ["onAlignedWidthChanged", wBody]]) {
+    if (!body.includes("_setDismissCarveOutEnvelope()"))
+      fail("axis wiring", `${name} bypasses the envelope, so a reflow mid-shrink collapses the carve-out`);
+    else if (body.includes("Qt.callLater"))
+      fail("axis wiring", `${name}'s slice overran its closing brace`);
+    else
+      ok(`${name} routes through the envelope`);
+  }
+}
+
 // The OTHER settle path. `updateSurfacePosition()` writes the same rect and is
 // reachable while a shrink animates - VGSIPC and PopoutManager both assign
 // `currentTabIndex` on a visible Dash and then call it - so if it bypasses the

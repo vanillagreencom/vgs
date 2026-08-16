@@ -400,6 +400,7 @@ sandbox_layer_state() {
   fi
   MONITORS_JSON="$monitors" LAYERS_JSON="$layers" python3 - "$namespace" <<'PY'
 import json
+import math
 import os
 import sys
 
@@ -434,17 +435,33 @@ for monitor in monitors:
     if not isinstance(monitor, dict) or monitor.get("disabled"):
         continue
     name = monitor.get("name")
+    # EVERY arithmetic step is inside the guard, and the guard rejects values
+    # that are merely WELL-TYPED. A NaN scale survives `float()` and survives
+    # `scale <= 0` (every comparison with NaN is False), then reaches
+    # `int(round(mode_w / scale))` and raises ValueError from OUTSIDE any
+    # handler - which exits this interpreter 1, and 1 is the caller's code for
+    # "the surface is not there". Malformed metadata would have read as absence:
+    # a present popout reported as gone, and a `wait_layer_state ... 1` proving
+    # absence off a crash. An unusable monitor is left OUT of the map instead,
+    # so the join below misses and the caller gets the "cannot measure" status.
     try:
         mode_w = int(monitor.get("width") or 0)
         mode_h = int(monitor.get("height") or 0)
         scale = float(monitor.get("scale") or 0)
         transform = int(monitor.get("transform") or 0)
-    except (TypeError, ValueError):
+        if not (math.isfinite(scale) and scale > 0):
+            continue
+        if not name or mode_w <= 0 or mode_h <= 0:
+            continue
+        # Hyprland's transform enum is 0-7; anything else means the axes cannot
+        # be resolved, and guessing "no swap" would measure against the wrong
+        # dimensions rather than admit that.
+        if transform not in range(8):
+            continue
+        logical_w = int(round(mode_w / scale))
+        logical_h = int(round(mode_h / scale))
+    except (TypeError, ValueError, OverflowError, ZeroDivisionError):
         continue
-    if not name or mode_w <= 0 or mode_h <= 0 or scale <= 0:
-        continue
-    logical_w = int(round(mode_w / scale))
-    logical_h = int(round(mode_h / scale))
     if transform in (1, 3, 5, 7):
         logical_w, logical_h = logical_h, logical_w
     if logical_w <= 0 or logical_h <= 0:

@@ -249,6 +249,26 @@ out="$(layer_state "{\"MON1\":$(mon "$BAR,$POPOUT")}" "$MON1" "$NS")"
 $out"
 ok "the emitter produces exactly one line"
 
+# Malformed monitor metadata must not read as ABSENCE. A NaN scale survives
+# float() and survives `scale <= 0` (NaN compares False to everything), then
+# raises out of int(round(...)) - exiting the interpreter 1, which is this
+# function's code for "the surface is not there". A present popout would have
+# been reported gone, and an absence check would have "passed" off a crash.
+for bad in \
+  '[{"name":"MON1","width":1756,"height":933,"scale":"NaN","transform":0}]' \
+  '[{"name":"MON1","width":1756,"height":933,"scale":"Infinity","transform":0}]' \
+  '[{"name":"MON1","width":1756,"height":933,"scale":1,"transform":99}]' \
+  '[{"name":"MON1","width":1756,"height":933,"scale":1,"transform":"sideways"}]'; do
+  out="$(layer_state "{\"MON1\":$(mon "$BAR,$POPOUT")}" "$bad" "$NS")"
+  st="$(head -n1 <<<"$out")"
+  if [[ "$st" == 1 ]]; then
+    fail "malformed monitor" "unusable monitor metadata read as ABSENCE (status 1) for: $bad"
+  elif [[ "$st" != 4 ]]; then
+    fail "malformed monitor" "unusable monitor metadata should be status 4, got $st for: $bad"
+  fi
+done
+ok "malformed monitor metadata is 'cannot measure', never 'not there'"
+
 # ---------------------------------------------------------------------------
 # assert_popout_geometry: one line, and nothing passes on no evidence
 awk '/^assert_popout_geometry\(\) \{$/{f=1} f{print} f&&/^\}$/{exit}' \

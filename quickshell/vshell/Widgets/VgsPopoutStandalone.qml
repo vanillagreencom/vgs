@@ -312,8 +312,13 @@ Item {
         _setDismissCarveOutEnvelope();
     }
 
+    // X and WIDTH go through the envelope too, even though neither moves the
+    // vertical band. `_setSurfaceGeometry` writes the whole rect at once, so a
+    // horizontal reflow arriving mid-shrink would rewrite Y/height from the
+    // TARGET as a side effect and collapse the carve-out under the still-taller
+    // body. The axis that changed is not the axis at risk.
     onAlignedXChanged: {
-        _setSettledSurfaceGeometry();
+        _setDismissCarveOutEnvelope();
         _kickBlurCommit();
     }
 
@@ -323,7 +328,7 @@ Item {
     }
 
     onAlignedWidthChanged: {
-        _setSettledSurfaceGeometry();
+        _setDismissCarveOutEnvelope();
         _kickBlurCommit();
     }
 
