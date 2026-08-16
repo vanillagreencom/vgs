@@ -121,18 +121,20 @@ fi
 ok "the host-socket call site passes the cause explicitly"
 
 # ---------------------------------------------------------------------------
-# sandbox_layer_state: the output size is never inferred as 0x0 (VGS-133 review)
+# sandbox_layer_state: the output size is MEASURED, never inferred
 #
-# The defect: `others` (every layer on the monitor EXCEPT the one under test) is
-# empty when the popout is the only thing mapped on that output, so screen_w and
-# screen_h fell back to 0. The degenerate test `w >= screen_w and h >= screen_h`
-# is vacuously true against 0x0, so it was guarded off with `screen_w > 0 and
-# screen_h > 0` - disabling the check in exactly the case it could not evaluate
-# and handing the caller "0x0" to compare heights against. The status is now 4.
+# The defect was one, not three. Taking the largest OTHER layer on the monitor
+# as a proxy for the output is wrong when there is no other layer (proxy 0x0,
+# everything compared against zero), wrong when the other layers are all small
+# (the bar is full WIDTH but ~32px tall, so the proxy is simply a wrong number),
+# and wrong in principle either way because the verdict was reached against a
+# figure the compositor never reported. The size now comes from
+# `hyprctl monitors`: logical = mode / scale, axes swapped for the quarter-turn
+# transforms.
 #
-# Sliced and driven with a stubbed `sandbox_layers`, the same discipline as
-# nested_unavailable above: reaching it through the real script would need a
-# nested Hyprland.
+# Sliced and driven with stubbed `sandbox_layers` / `sandbox_monitors`, the same
+# discipline as nested_unavailable above: reaching it through the real script
+# would need a nested Hyprland.
 awk '/^sandbox_layer_state\(\) \{$/{f=1} f{print} f&&/^\}$/{exit}' \
   "$smoke" >"$tmp/layerfn.sh"
 if ! grep -q '^sandbox_layer_state() {$' "$tmp/layerfn.sh" || ! grep -q '^}$' "$tmp/layerfn.sh"; then
@@ -142,79 +144,113 @@ fi
 
 # Prints the status on the first line, then the function's stdout.
 layer_state() {
-  local json="$1" ns="$2"
+  local layers="$1" mons="$2" ns="$3"
   (
     set +e
-    export LAYERS_FIXTURE="$json"
+    export LAYERS_FIXTURE="$layers" MONITORS_FIXTURE="$mons"
     # shellcheck source=/dev/null
     . "$tmp/layerfn.sh"
     # shellcheck disable=SC2317,SC2329  # called by the sliced function, not from here
     sandbox_layers() { printf '%s' "$LAYERS_FIXTURE"; }
+    # shellcheck disable=SC2317,SC2329  # called by the sliced function, not from here
+    sandbox_monitors() { printf '%s' "$MONITORS_FIXTURE"; }
     out="$(sandbox_layer_state "$ns" 2>/dev/null)"
     printf '%s\n%s\n' "$?" "$out"
   )
 }
 
 NS="vshell:plugins:aiUsage"
-# The wallpaper is what actually establishes the output size: it is the only
-# always-present layer that spans the whole output. The bar is full WIDTH but
-# 40px tall, so a fixture carrying the bar alone would put screen_h at 40 - a
-# reminder that this heuristic reads the largest other surface, not the mode.
-WALLPAPER='{"namespace":"vshell:blurwallpaper","w":1756,"h":933}'
+# Mode 1756x933 at scale 1: the output is 1756x933 logical.
+MON1='[{"name":"MON1","width":1756,"height":933,"scale":1,"transform":0}]'
 BAR='{"namespace":"vshell:bar","w":1756,"h":40}'
 POPOUT='{"namespace":"'"$NS"'","w":444,"h":933}'
 mon() { printf '{"levels":{"2":[%s]}}' "$1"; }
 
-# THE MUST-FAIL CONTROL. Before the fix this returned 0 and printed
-# "444x933 0x0" - a healthy verdict reached by measuring against nothing.
-out="$(layer_state "{\"MON1\":$(mon "$POPOUT")}" "$NS")"
-if [[ "$(head -n1 <<<"$out")" != 4 ]]; then
-  fail "lone surface" "a popout that is the only layer on its output must be status 4 (output size indeterminate), got:
+# MUST-FAIL CONTROL 1: the surface is the ONLY layer on its output. The proxy
+# would have been 0x0; the measurement is unaffected by there being nothing else.
+out="$(layer_state "{\"MON1\":$(mon "$POPOUT")}" "$MON1" "$NS")"
+[[ "$(head -n1 <<<"$out")" == 0 ]] || fail "lone surface" "a lone popout must still be measured against its real output, got:
 $out"
-fi
-if [[ "$out" == *"0x0"* ]]; then
-  fail "lone surface" "reported a 0x0 output size instead of refusing to measure:
+[[ "$out" == *"444x933 1756x933"* ]] || fail "lone surface" "wrong geometry - the output size was not measured:
 $out"
-fi
-ok "a surface with nothing else on its output is refused, not measured against 0x0"
+[[ "$out" == *"0x0"* ]] && fail "lone surface" "fell back to a 0x0 output size:
+$out"
+ok "a surface alone on its output is measured, not compared against 0x0"
 
-# The control that proves the refusal above is not just "always fails".
-out="$(layer_state "{\"MON1\":$(mon "$WALLPAPER,$BAR,$POPOUT")}" "$NS")"
-[[ "$(head -n1 <<<"$out")" == 0 ]] || fail "normal case" "a normal bar+popout output should be status 0, got:
+# MUST-FAIL CONTROL 2: the other layers are all SMALLER than the output. The
+# proxy would have been the bar's 1756x40, so a correctly output-tall popout
+# would have been reported as a height mismatch.
+out="$(layer_state "{\"MON1\":$(mon "$BAR,$POPOUT")}" "$MON1" "$NS")"
+[[ "$(head -n1 <<<"$out")" == 0 ]] || fail "small others" "a correct popout must not fail because the only other layer is bar-height, got:
 $out"
-[[ "$out" == *"444x933 1756x933"* ]] || fail "normal case" "wrong geometry line:
+[[ "$out" == *"444x933 1756x933"* ]] || fail "small others" "inferred the output from the bar instead of measuring it:
 $out"
-ok "a normal output still measures and passes"
+ok "a bar-only output does not make a correct popout look wrong"
 
-# The degenerate test still fires, and now WITHOUT the > 0 guard that disabled it.
+# ...and the same shape must not SILENTLY ACCEPT a wrong one. Under the proxy
+# the output read as 1756x40, so a 40px-tall popout matched it and passed.
+SHORT='{"namespace":"'"$NS"'","w":444,"h":40}'
+out="$(layer_state "{\"MON1\":$(mon "$BAR,$SHORT")}" "$MON1" "$NS")"
+[[ "$out" == *"444x40 1756x933"* ]] || fail "small others accept" "a bar-height popout must be measured against the real 933-tall output, got:
+$out"
+ok "a bar-height popout is measured against the real output, not the bar"
+
+# An unmeasurable output is a hard status, never a zero and never a guess.
+out="$(layer_state "{\"MON1\":$(mon "$BAR,$POPOUT")}" '[]' "$NS")"
+[[ "$(head -n1 <<<"$out")" == 4 ]] || fail "no monitor" "an output hyprctl does not report must be status 4, got:
+$out"
+[[ "$out" == *"0x0"* ]] && fail "no monitor" "fell back to a 0x0 output size:
+$out"
+ok "an output with no reported size is refused, not guessed at"
+
+out="$(layer_state "{\"MON1\":$(mon "$BAR,$POPOUT")}" '[{"name":"MON1","width":1756,"height":933,"scale":0,"transform":0}]' "$NS")"
+[[ "$(head -n1 <<<"$out")" == 4 ]] || fail "bad scale" "a monitor whose numbers do not convert must be status 4, got:
+$out"
+ok "a monitor whose numbers do not convert is refused, not entered as zero"
+
+# The conversion itself: physical mode -> logical, with the quarter-turn swap.
+# These are the two real monitors this was verified against.
+ROT='[{"name":"MON1","width":5120,"height":2880,"scale":2,"transform":1}]'
+TALL='{"namespace":"'"$NS"'","w":444,"h":2560}'
+out="$(layer_state "{\"MON1\":$(mon "$TALL")}" "$ROT" "$NS")"
+[[ "$out" == *"444x2560 1440x2560"* ]] || fail "transform" "5120x2880 @ scale 2, transform 1 must read as 1440x2560, got:
+$out"
+ok "the mode is converted to logical size, including the quarter-turn swap"
+
+SCALED='[{"name":"MON1","width":6016,"height":3384,"scale":2,"transform":0}]'
+BIG='{"namespace":"'"$NS"'","w":444,"h":1692}'
+out="$(layer_state "{\"MON1\":$(mon "$BIG")}" "$SCALED" "$NS")"
+[[ "$out" == *"444x1692 3008x1692"* ]] || fail "scale" "6016x3384 @ scale 2 must read as 3008x1692, got:
+$out"
+ok "a scaled output is divided by its scale"
+
+# The degenerate test still fires, now against a measured output.
 FULL='{"namespace":"'"$NS"'","w":1756,"h":933}'
-WALL='{"namespace":"vshell:blurwallpaper","w":1756,"h":933}'
-out="$(layer_state "{\"MON1\":$(mon "$WALL,$FULL")}" "$NS")"
-[[ "$(head -n1 <<<"$out")" == 2 ]] || fail "degenerate" "a full-screen popout should be status 2, got:
+out="$(layer_state "{\"MON1\":$(mon "$BAR,$FULL")}" "$MON1" "$NS")"
+[[ "$(head -n1 <<<"$out")" == 2 ]] || fail "degenerate" "a popout as large as its output should be status 2, got:
 $out"
-ok "a popout as large as its output is still degenerate"
+ok "a popout as large as its measured output is still degenerate"
 
-# Absent stays 1, so the new status did not swallow the absence case.
-out="$(layer_state "{\"MON1\":$(mon "$WALLPAPER,$BAR")}" "$NS")"
+out="$(layer_state "{\"MON1\":$(mon "$BAR")}" "$MON1" "$NS")"
 [[ "$(head -n1 <<<"$out")" == 1 ]] || fail "absent" "an unmapped namespace should be status 1, got:
 $out"
 ok "an absent surface is still reported absent"
 
-# The emitter's documented contract: one line per mapped surface per monitor.
-# This is what assert_popout_geometry below has to consume.
-out="$(layer_state "{\"MON1\":$(mon "$WALLPAPER,$BAR,$POPOUT"),\"MON2\":$(mon "$WALLPAPER,$BAR,$POPOUT")}" "$NS")"
-[[ "$(head -n1 <<<"$out")" == 0 ]] || fail "multi-monitor" "two healthy outputs should be status 0, got:
+# The emitter's one-line contract: a popout binds to exactly one screen, so a
+# second mapping is a defect rather than a second line.
+MON2='[{"name":"MON1","width":1756,"height":933,"scale":1,"transform":0},{"name":"MON2","width":1756,"height":933,"scale":1,"transform":0}]'
+out="$(layer_state "{\"MON1\":$(mon "$BAR,$POPOUT"),\"MON2\":$(mon "$BAR,$POPOUT")}" "$MON2" "$NS")"
+[[ "$(head -n1 <<<"$out")" == 5 ]] || fail "duplicate mapping" "a popout mapped on two outputs must be status 5, got:
 $out"
-[[ "$(tail -n +2 <<<"$out" | grep -c .)" == 2 ]] || fail "multi-monitor" "expected one geometry line per monitor, got:
+ok "a popout mapped twice is a reported defect, not two lines"
+
+out="$(layer_state "{\"MON1\":$(mon "$BAR,$POPOUT")}" "$MON1" "$NS")"
+[[ "$(tail -n +2 <<<"$out" | grep -c .)" == 1 ]] || fail "one line" "the emitter must produce exactly one line, got:
 $out"
-ok "a popout mapped on two outputs emits one line per output"
+ok "the emitter produces exactly one line"
 
 # ---------------------------------------------------------------------------
-# assert_popout_geometry: every emitted line is checked, none is skipped
-#
-# popout_check used to hard-reject any multi-line reply, contradicting the
-# emitter's own contract. It now checks each line against the output THAT line
-# names.
+# assert_popout_geometry: one line, and nothing passes on no evidence
 awk '/^assert_popout_geometry\(\) \{$/{f=1} f{print} f&&/^\}$/{exit}' \
   "$smoke" >"$tmp/geomfn.sh"
 if ! grep -q '^assert_popout_geometry() {$' "$tmp/geomfn.sh" || ! grep -q '^}$' "$tmp/geomfn.sh"; then
@@ -236,29 +272,29 @@ geom() {
 
 out="$(geom '444x933 1756x933')"
 [[ "$out" == *"rc=0"* ]] || fail "single line" "a valid single line should pass, got: $out"
-ok "a single valid line passes"
+ok "a valid single line passes"
 
-out="$(geom '444x933 1756x933
-444x1080 1920x1080')"
-[[ "$out" == *"rc=0"* ]] || fail "multi-monitor accepted" "two valid lines should pass rather than be rejected as unparseable, got: $out"
-ok "two valid lines pass instead of being rejected for being multi-line"
-
-# THE MUST-FAIL CONTROL for the loop: the SECOND output violates the invariant.
-# A consumer that checked only the first line, or that split the whole blob,
-# would pass this.
-out="$(geom '444x933 1756x933
-444x206 1920x1080')"
-[[ "$out" == *"rc=1"* ]] || fail "second line violation" "a violation on the second output must fail, got: $out"
-[[ "$out" == *"444x206"* ]] || fail "second line violation" "the diagnostic must name the offending surface, got: $out"
-ok "a violation on the second output is caught, so no line is skipped"
+out="$(geom '444x206 1756x933')"
+[[ "$out" == *"rc=1"* ]] || fail "height mismatch" "a short popout must fail, got: $out"
+ok "a popout shorter than its output fails"
 
 out="$(geom '')"
 [[ "$out" == *"rc=1"* ]] || fail "empty" "an empty reply must fail rather than pass on no evidence, got: $out"
 ok "an empty reply refuses to pass on no evidence"
 
+out="$(geom '   ')"
+[[ "$out" == *"rc=1"* ]] || fail "blank" "a whitespace-only reply must fail, got: $out"
+ok "a whitespace-only reply refuses to pass on no evidence"
+
 out="$(geom '444x933')"
 [[ "$out" == *"rc=1"* ]] || fail "single field" "a single field must fail rather than compare equal to itself, got: $out"
 ok "a single field cannot pass by comparing equal to itself"
+
+# The emitter promises one line, so multi-line here means it broke its contract.
+out="$(geom '444x933 1756x933
+444x933 1756x933')"
+[[ "$out" == *"rc=1"* ]] || fail "multi-line" "a multi-line reply breaks the emitter contract and must fail, got: $out"
+ok "a multi-line reply is refused, since the emitter promises one"
 
 if [[ $failures -ne 0 ]]; then
   printf '\ntest-qml-smoke: %d failure(s)\n' "$failures" >&2

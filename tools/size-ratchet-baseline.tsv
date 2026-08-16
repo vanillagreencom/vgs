@@ -213,7 +213,7 @@ scripts/check-vshell-niri.py	678
 scripts/gen-package-metadata.py	985
 scripts/lib/validation_manifest.py	1045
 scripts/lib/vendor-drift.sh	429
-scripts/qml-smoke.sh	1357
+scripts/qml-smoke.sh	1425
 scripts/test-compositor-focus.js	791
 scripts/test-launcher-hover-latch.js	492
 scripts/test-launcher-search-gate.js	1077
