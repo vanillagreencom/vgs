@@ -296,6 +296,10 @@ w is a bare NaN|{"MON1":{"levels":{"2":[{"namespace":"vshell:bar","w":1756,"h":4
 no monitors at all|{}
 monitor with empty levels|{"MON1":{"levels":{}}}
 levels holding an empty list|{"MON1":{"levels":{"2":[]}}}
+a layer object with no namespace|{"MON1":{"levels":{"2":[{}]}}}
+a null namespace|{"MON1":{"levels":{"2":[{"namespace":"vshell:bar","w":1756,"h":40},{"namespace":null,"w":1,"h":1}]}}}
+a non-string namespace|{"MON1":{"levels":{"2":[{"namespace":"vshell:bar","w":1756,"h":40},{"namespace":7,"w":1,"h":1}]}}}
+an empty namespace|{"MON1":{"levels":{"2":[{"namespace":"vshell:bar","w":1756,"h":40},{"namespace":"","w":1,"h":1}]}}}
 the matched layer has a non-numeric size|{"MON1":{"levels":{"2":[{"namespace":"vshell:bar","w":1756,"h":933},{"namespace":"vshell:plugins:aiUsage","w":"wide","h":10}]}}}
 CASES
 ok "malformed layer payloads are failed queries, never absences"

@@ -485,40 +485,59 @@ def main():
         raise SystemExit(3)
 
 
-    matches = []
-    collected = 0
-    for monitor_name, monitor in data.items():
-        if not isinstance(monitor, dict):
-            _shape_error("monitor %r is not an object" % monitor_name)
-        levels = monitor.get("levels")
-        # NOT defaulted to {}. A monitor with no layers still reports `levels: {}`,
-        # so a missing or null one is a malformed payload - and defaulting it made
-        # the namespace "not found", which is status 1, which is ABSENCE. That is
-        # the same fail-open one layer up from the shapes below.
-        if not isinstance(levels, dict):
-            _shape_error("monitor %r has a missing or non-object `levels`" % monitor_name)
-        layers = []
-        for level_name, level in levels.items():
-            if not isinstance(level, list):
-                _shape_error("monitor %r level %r is not a list" % (monitor_name, level_name))
-            layers.extend(level)
-        for layer in layers:
-            if not isinstance(layer, dict):
-                _shape_error("monitor %r holds a layer that is not an object" % monitor_name)
-            collected += 1
-            if layer.get("namespace") == namespace:
-                matches.append((monitor_name, layer))
+    # THE PAYLOAD IS VALIDATED ONCE, HERE, AND NOTHING DOWNSTREAM RE-CHECKS A
+    # FIELD. Five reports arrived as five different fields being unvalidated -
+    # a monitor that was not an object, a `levels` that was not one, a level
+    # that was not a list, a layer that was not an object, a layer with no
+    # `namespace` - and every one of them ended the same way: the comparison
+    # simply found nothing, which is status 1, which is ABSENCE. Interleaving
+    # one more check per report is how a sixth arrives. So every field this
+    # check reasons about is vouched for before anything reasons about it, and
+    # the traversal below consumes only the result.
+    def _validated_layers():
+        out = []
+        for monitor_name, monitor in data.items():
+            if not isinstance(monitor, dict):
+                _shape_error("monitor %r is not an object" % monitor_name)
+            levels = monitor.get("levels")
+            # NOT defaulted to {}. A monitor with no layers still reports
+            # `levels: {}`, so a missing one is a malformed payload.
+            if not isinstance(levels, dict):
+                _shape_error("monitor %r has a missing or non-object `levels`" % monitor_name)
+            for level_name, level in levels.items():
+                if not isinstance(level, list):
+                    _shape_error("monitor %r level %r is not a list" % (monitor_name, level_name))
+                for layer in level:
+                    if not isinstance(layer, dict):
+                        _shape_error("monitor %r holds a layer that is not an object" % monitor_name)
+                    layer_namespace = layer.get("namespace")
+                    # A layer with no usable namespace is not evidence about any
+                    # namespace. Counting it and letting it compare unequal is
+                    # how "absent" gets reported from a payload that never
+                    # identified a single surface.
+                    if not isinstance(layer_namespace, str) or not layer_namespace:
+                        _shape_error(
+                            "monitor %r holds a layer whose `namespace` is missing or not a string"
+                            % monitor_name
+                        )
+                    try:
+                        w = int(layer.get("w") or 0)
+                        h = int(layer.get("h") or 0)
+                    except (TypeError, ValueError, OverflowError):
+                        _shape_error("layer %r has a non-numeric size" % layer_namespace)
+                    out.append((monitor_name, layer_namespace, w, h))
+        # THE COLLECTION STEP ASSERTS IT COLLECTED SOMETHING. `{}`, or monitors
+        # whose levels are all empty, is well formed at every level above, so it
+        # reaches here having identified nothing - and an empty read is a failure
+        # of the check, never a clean result
+        # (.github/instructions/validation-scripts.instructions.md). Both
+        # `wait_layer_state ... 1` calls in popout_check run after the bar is
+        # mapped, so zero layers is anomalous rather than a startup race.
+        if not out:
+            _shape_error("it reported no layers at all across %d monitor(s)" % len(data))
+        return out
 
-    # THE COLLECTION STEP ASSERTS IT COLLECTED SOMETHING.
-    # `{}`, or monitors whose levels are all empty, is well-formed at every level
-    # the shape checks look at - so it slid past them and left `matches` empty,
-    # which is status 1, ABSENCE. Both `wait_layer_state ... 1` calls in
-    # popout_check would then succeed having observed not one layer, INCLUDING
-    # the bar, which is always mapped by the time they run. An empty read is a
-    # failure of the check, never a clean result
-    # (.github/instructions/validation-scripts.instructions.md).
-    if collected == 0:
-        _shape_error("it reported no layers at all across %d monitor(s)" % len(data))
+    matches = [entry for entry in _validated_layers() if entry[1] == namespace]
 
     if not matches:
         raise SystemExit(1)
@@ -530,11 +549,11 @@ def main():
         sys.stderr.write(
             "sandbox_layer_state: %s is mapped %d times (%s), but a popout binds to exactly "
             "one screen - that is a duplicate-mapping defect, not a geometry reading\n"
-            % (namespace, len(matches), ", ".join(name for name, _ in matches))
+            % (namespace, len(matches), ", ".join(entry[0] for entry in matches))
         )
         raise SystemExit(5)
 
-    monitor_name, layer = matches[0]
+    monitor_name, _matched_namespace, w, h = matches[0]
     if monitor_name not in outputs:
         sys.stderr.write(
             "sandbox_layer_state: %s is mapped on monitor %s, but `hyprctl monitors` reports "
@@ -544,11 +563,6 @@ def main():
         raise SystemExit(4)
 
     screen_w, screen_h = outputs[monitor_name]
-    try:
-        w = int(layer.get("w") or 0)
-        h = int(layer.get("h") or 0)
-    except (TypeError, ValueError, OverflowError):
-        _shape_error("the matched layer has a non-numeric size")
     print("%dx%d %dx%d" % (w, h, screen_w, screen_h))
     if w <= 0 or h <= 0:
         raise SystemExit(2)
