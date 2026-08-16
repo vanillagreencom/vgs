@@ -1,4 +1,4 @@
-.github/workflows/ci.yml	464
+.github/workflows/ci.yml	471
 .github/workflows/review-gate-writer.yml	656
 backend/internal/services/bluez/bluez.go	744
 backend/internal/services/clipboard/clipboard.go	635
@@ -211,6 +211,7 @@ scripts/check-vshell-helper.py	5815
 scripts/check-vshell-niri.py	678
 scripts/gen-package-metadata.py	985
 scripts/lib/validation_manifest.py	1045
+scripts/lib/vendor-drift.sh	429
 scripts/qml-smoke.sh	1258
 scripts/test-compositor-focus.js	791
 scripts/test-launcher-hover-latch.js	492
@@ -221,5 +222,7 @@ scripts/test-remote-desktop-state.js	1243
 scripts/test-toast-actions.js	607
 scripts/test-validate.sh	547
 scripts/test-validation-inventory.sh	2278
-scripts/validate	1044
+scripts/test-vendor-drift-evidence.sh	420
+scripts/test-vendor-drift.sh	434
+scripts/validate	1048
 vstack.toml	551

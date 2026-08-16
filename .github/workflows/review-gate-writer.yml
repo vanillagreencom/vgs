@@ -8,7 +8,7 @@
 # .agents/skills/review-gate/) — VGS symlinks .agents wholesale into every
 # worktree, so the tracked CI-facing copy lives under third_party/ and
 # scripts/check-review-gate-vendor.sh pins it to the vstack-managed mirror
-# (see that script's header for the full rationale).
+# (rationale: scripts/lib/vendor-drift.sh, "WHY THERE ARE TWO COPIES").
 #
 # This one workflow replaces the old
 # four-workflow mesh (the PR-side gate pair, approval-rerun, approval-sweep,
