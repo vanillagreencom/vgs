@@ -441,11 +441,11 @@ PY
   "malformed tag field"
 
 # This case proves the guard reports an AREA WITH NO ROWS, so the fixture has to
-# empty `docs` completely. It used to retag one named row, which silently stopped
-# emptying the area the moment the manifest grew a second docs row — VGS-124 added
-# scripts/check-skill-instructions.py and the case went green while proving
-# nothing. The substitution is global now, and the emptiness is ASSERTED before
-# the case runs, so the next docs row cannot quietly disable it either.
+# empty `docs` completely. It used to retag one named row, which silently stops
+# emptying the area the moment the manifest grows a second docs row — VGS-124
+# added one, watched this case go green while proving nothing, then cut that row
+# again, so the hole is latent rather than fixed. The substitution is global now
+# and the emptiness ASSERTED, so the next docs row cannot quietly disable it.
 docs_emptied="$(python3 - "$runner" <<'PY'
 import sys
 t = open(sys.argv[1], encoding="utf-8").read()
@@ -1393,7 +1393,7 @@ expect_contains "$pyyaml_out" "IMPORTED" "PyYAML absent"
 # The literal is the point: a count derived from the manifest would agree with
 # a parser that returned nothing. Adding a manifest row therefore bumps it here
 # too — this failing with an off-by-one is that, not a broken parser.
-expect_contains "$pyyaml_out" "ROWS 72" "PyYAML absent"
+expect_contains "$pyyaml_out" "ROWS 71" "PyYAML absent"
 expect_contains "$pyyaml_out" "MANIFESTERROR PyYAML is not installed" "PyYAML absent"
 expect_absent "$pyyaml_out" "Traceback" "PyYAML absent"
 ok "without PyYAML the module imports, the other parsers work, and ci.yml fails with one line"
@@ -1746,9 +1746,9 @@ noyaml_probe="$tmp/noyaml-probe"
 noyaml_grammar="$tmp/noyaml-grammar.conf"
 
 # The runner fixture: an area that no row carries. Every docs row has to go, and
-# the mutator asserts the area really is empty afterwards — naming one row was
-# enough until the manifest grew a second (VGS-124), which is how this fixture
-# and the one above both stopped emptying anything.
+# the mutator asserts the area really is empty afterwards — naming one row holds
+# only while `docs` has exactly one, and the second row VGS-124 briefly added is
+# what stopped this fixture and the one above from emptying anything.
 python3 - "$runner" >"$noyaml_probe" <<'MUT'
 import re
 import sys

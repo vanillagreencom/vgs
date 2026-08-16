@@ -153,15 +153,6 @@ jobs:
       - name: Instruction-surface growth ratchet
         run: scripts/check-doc-growth.py
 
-      # vstack.toml's [skill-instructions] blocks ship runbooks that agents
-      # paste and run. They were TOML BASIC strings, so escape processing broke
-      # the jq program and ate the shell line continuations before the bytes
-      # ever reached a rendered skill — the file looked right and the runbook
-      # did not run (VGS-124). This pins the literal-string form; its must-fail
-      # fixtures run on every invocation rather than behind a flag.
-      - name: Skill-instruction runbooks render verbatim
-        run: scripts/check-skill-instructions.py
-
       # Tighten-only line-count gate over every tracked file: offenders are
       # frozen in tools/size-ratchet-baseline.tsv and may only shrink; new
       # files stay under SIZE_RATCHET_THRESHOLD (vstack.settings.toml). The

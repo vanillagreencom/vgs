@@ -55,14 +55,14 @@ failure of the check, never a clean result — through `scripts/lib/collected.py
 Two steps here collect something, and each has its own must-fail control. Add a
 new one the same way, or it becomes the next instance:
 
-2. the surfaces a watched glob finds     `WATCHED_GLOBS`      recursive, and the
+1. the surfaces a watched glob finds     `WATCHED_GLOBS`      recursive, and the
                                                               discovered set is
                                                               asserted against
                                                               the ceilinged files
                                                               under each root —
                                                               partial coverage is
                                                               not full coverage
-3. the CEILINGS table and each entry's   `ceiling_comments()` both anchors must
+2. the CEILINGS table and each entry's   `ceiling_comments()` both anchors must
    recorded size                                              resolve, and every
                                                               entry must yield a
                                                               SIZE — prose whose
@@ -72,10 +72,10 @@ new one the same way, or it becomes the next instance:
                                                               not an entry with
                                                               none
 
-(The numbering continues check-skill-instructions.py's point 1, so the three
-points the invariant governs are named once across both files. The delimiter
-locator that held two more was deleted when that check moved from asserting a
-proxy to asserting the decoded value.)
+(These are the invariant's only call sites in the tree today. VGS-124 wrote
+three more against a `[skill-instructions]` render checker; that checker moved
+to VGS-156 whole, so the numbering restarts here rather than leaving a gap
+pointing at a file that is not in the repo.)
 """
 
 from __future__ import annotations

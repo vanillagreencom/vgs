@@ -31,15 +31,18 @@ clean result. Both return a diagnostic string or None, because the callers
 accumulate problems rather than raising — a check reports every problem it
 found, not just the first.
 
-CALL SITES, four collection points across two checks, each with its own
-must-fail control:
+CALL SITES, two collection points in one check, each with its own must-fail
+control:
 
-  check-skill-instructions.py  1  the [skill-instructions] table, and the
-                                  pinned `linear` block within it
-                               2  each key's delimiter
-  check-doc-growth.py          3  the surfaces a watched glob finds, asserted
-                                  against the ceilinged files under each root
-                               4  each CEILINGS entry's comment
+  check-doc-growth.py  1  the surfaces a watched glob finds, asserted against
+                          the ceilinged files under each root
+                       2  each CEILINGS entry's comment
+
+The module stays separate from its one caller because it is the written form of
+a repo-wide rule rather than a doc-growth detail — it exists to be imported by
+the next check that collects something. Two further call sites, the
+`[skill-instructions]` table and its per-key delimiters, were written against a
+checker that moved to VGS-156 in full and return with it.
 
 A third helper, `unaccounted()`, covered a PARTITIONED collection — every member
 must land in exactly one bucket. Its only call site was the jq-occupancy
