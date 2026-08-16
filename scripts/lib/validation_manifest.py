@@ -781,7 +781,7 @@ AREA_ANCHOR_CLOSE = "<!-- /validate-areas -->"
 # words. A fence opened under a list bullet, and a `~~~` fence, are not matched
 # here, so markers inside one are read as the real thing — which fails LOUDLY
 # (two anchored regions) rather than quietly, and is the direction to keep.
-_FENCE_LINE = re.compile(r"```+")
+_FENCE_LINE = re.compile(r"(```+)(.*)$")
 
 def _strip_fenced_blocks(path: Path, text: str) -> str:
     """`text` with every unindented fenced block removed, PAIRED BY RUN LENGTH.
@@ -802,27 +802,33 @@ def _strip_fenced_blocks(path: Path, text: str) -> str:
     rule — a fence closes on a run at least as long as the one that opened it —
     is what makes the two levels agree, and a line scanner is enough for it.
 
-    An INFO STRING on a closing fence is not rejected the way CommonMark rejects
-    it; any long-enough fence line closes. The distinction cannot change which
-    text is live here, only which of two adjacent blocks a run belongs to, and
-    the guard's question is only ever "is this text inside a fence".
+    AN INFO STRING CLOSES NOTHING, because CommonMark allows one only on an
+    OPENING fence: a long-enough run followed by any other character is ordinary
+    content, and everything after it still renders inside the block. Accepting it
+    as a closer was a false accept of the same family as the run-length one — a
+    complete anchored list that renders INSIDE a fence was read as the live
+    contract, so the page passed with no maintained list outside the example. A
+    closing line's remainder is therefore spaces and tabs only; an opener's
+    remainder is free, and must stay free, or no fence could carry a language.
     """
     kept: list[str] = []
     open_run = 0
     for line in text.split("\n"):
         match = _FENCE_LINE.match(line)
-        run = len(match.group(0)) if match else 0
+        run = len(match.group(1)) if match else 0
+        rest = match.group(2) if match else ""
         if not open_run:
             if run:
                 open_run = run
             else:
                 kept.append(line)
-        elif run >= open_run:
+        elif run >= open_run and not rest.strip(" \t"):
             open_run = 0
     if open_run:
         raise ManifestError(
             f"{path.name} opens an unindented ``` code fence that is never closed by "
-            f"a run of at least {open_run} backticks, so a code fence is opened and "
+            f"a line of at least {open_run} backticks and nothing after them but "
+            f"spaces or tabs, so a code fence is opened and "
             f"never closed. Which markers are pictures and which are the contract is "
             f"decided by that pairing, so an unclosed fence moves the region this "
             f"guard reads."

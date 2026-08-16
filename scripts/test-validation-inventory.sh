@@ -787,13 +787,16 @@ ok "a document may show the markers in a fence and still carry a real anchor"
 # anchor is stripped as if it were the picture, and the illustration's markers
 # become the live contract. Both fixtures below passed or misdiagnosed before the
 # strip refused an unclosed fence, and each is the shape a reviewer reproduced.
+# The stray opener runs FOUR backticks in both, so the illustration's own
+# three-backtick fences cannot close it and the page is unclosed by the same rule
+# a reader applies — otherwise these would pin the fenced-marker arm instead.
 #
 # (i) THE SILENT PASS: with the fenced example carrying the COMPLETE list, the
 # swap leaves a document that answers correctly for the wrong reason — so a
 # later edit to the REAL list would never be compared against anything.
 # shellcheck disable=SC2016  # backticks are markdown quoting in the fixture prose
 {
-  printf '```bash\n'
+  printf '````bash\n'
   printf 'areas: <!-- validate-areas -->`go`, `qml`, `helper`, `packaging`, `docs`, `all`<!-- /validate-areas -->\n\n'
   printf '```markdown\n<!-- validate-areas -->areas `go`, `qml`, `helper`, `packaging`, `docs`, `all`<!-- /validate-areas -->\n```\n'
 } >"$areas_probe"
@@ -806,7 +809,7 @@ ok "a stray fence that relocates the read region is refused, not answered from t
 # anchor" — pointing at a marker plainly present and never naming the fence.
 # shellcheck disable=SC2016  # backticks are markdown quoting in the fixture prose
 {
-  printf '```bash\n'
+  printf '````bash\n'
   printf 'areas: <!-- validate-areas -->`go`, `qml`, `helper`, `packaging`, `docs`, `all`<!-- /validate-areas -->\n\n'
   printf '```sh\nan ordinary illustration\n```\n'
 } >"$areas_probe"
@@ -826,6 +829,35 @@ ok "an unclosed fence is named as the defect, not reported as a missing anchor"
 run_guard "AGENTS_PATH=$areas_probe"
 expect_clean_run "balanced fences"
 ok "a page with several balanced fences still parses"
+
+# AN INFO STRING CLOSES NOTHING. CommonMark allows one only on an OPENING fence,
+# so backticks followed by other text are ordinary content and the block runs on.
+# Closing on run length alone therefore ended the fence early and handed the text
+# BELOW the pseudo-closer to the parser as the live contract — a complete anchored
+# list that actually renders inside the fence, passing this guard with no
+# maintained list on the page. The fixture is that exact page: length-only pairing
+# answers it CLEAN, which is why the refusal is what pins the rule.
+# shellcheck disable=SC2016  # backticks are markdown quoting in the fixture prose
+{
+  printf '```markdown\nan illustration\n``` not-a-closing-fence\n'
+  printf 'areas: <!-- validate-areas -->`go`, `qml`, `helper`, `packaging`, `docs`, `all`<!-- /validate-areas -->\n'
+} >"$areas_probe"
+run_guard "AGENTS_PATH=$areas_probe"
+expect_refused "info string on a closing fence" "a code fence is opened and never closed"
+ok "a fence is not closed by a run carrying an info string, so the text below it stays fenced"
+
+# ...and the ACCEPT side of that same rule: what CommonMark DOES permit after a
+# closing run — spaces and tabs — still closes. Without this the refusal above
+# would be satisfied by a closer that tolerates nothing at all, which would refuse
+# ordinary pages over invisible trailing whitespace.
+# shellcheck disable=SC2016  # backticks are markdown quoting in the fixture prose
+{
+  printf 'areas: <!-- validate-areas -->`go`, `qml`, `helper`, `packaging`, `docs`, `all`<!-- /validate-areas -->\n\n'
+  printf '```sh\nfirst\n```  \t\n'
+} >"$areas_probe"
+run_guard "AGENTS_PATH=$areas_probe"
+expect_clean_run "closing fence with trailing whitespace"
+ok "spaces and tabs after a closing run still close the fence"
 
 # AN INDENTED FENCE IS NOT A FENCE HERE, and the contract paragraph in
 # .github/instructions/validation-scripts.instructions.md says so in those

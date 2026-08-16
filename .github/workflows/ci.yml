@@ -310,12 +310,9 @@ jobs:
           # fail-closed argument and manifest handling, and its skip channel.
           scripts/test-validate.sh
           scripts/test-qml-smoke.sh
-          # MUST STAY LAST: the only script here that can exit 77 (a control it
-          # could not create — no PyYAML, or a libc resolving no Unicode space).
-          # Under `bash -e` a 77 anywhere else stops the step and drops every
-          # command after it, so the step reddens while a check nobody notices
-          # never ran. Order is otherwise free: each builds its own mktemp tree.
-          scripts/test-validation-inventory.sh
+          # `scripts/test-validation-inventory.sh` belongs with these but runs in
+          # its own step at the END OF THE JOB — see that step for why. Order
+          # here is free: each script builds its own mktemp tree.
 
       - name: Helper and CLI checks
         run: |
@@ -442,3 +439,25 @@ jobs:
       # file's "What CI covers" tables record what that leaves local-only.
       - name: Validation safety and QML static smoke
         run: scripts/check-validation-safety.sh --require-static
+
+      # MUST STAY THE LAST STEP OF THIS JOB. It is the only script in the job
+      # that can exit 77 — the four-valued status scripts/validate defines, here
+      # meaning a control the suite could not create (no PyYAML, or a libc that
+      # resolves no Unicode space), so what ran passed but something did NOT run.
+      # 77 is not a pass and is not treated as one: it reddens this step and the
+      # job, exactly like a failure, and the summary names what was skipped.
+      #
+      # The step boundary is the whole containment, and it only works from LAST
+      # place. Inside a `run:` block, `bash -e` stops at the 77 and drops the
+      # commands after it; across the job, a red step makes GitHub's default
+      # `if: success()` skip every LATER step. Last in the job there is no later
+      # step to skip and nothing behind it in the block, so a 77 costs only the
+      # report of this one suite while every other check has already run. Move
+      # this step or add one after it and that containment is gone.
+      #
+      # Containment is placement only. Do NOT add `continue-on-error`, `set +e`,
+      # or per-command exit-code handling: those would convert the 77 into a
+      # green step, which is the false pass the four-valued exit exists to
+      # prevent.
+      - name: Validation inventory regressions
+        run: scripts/test-validation-inventory.sh
