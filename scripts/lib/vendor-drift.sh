@@ -9,7 +9,7 @@
 # WHY THERE ARE TWO COPIES. An engine has to be IN the repository: CI runs it
 # from a plain checkout, which has no vstack and no shared skills mirror. The
 # sibling repos track theirs at `.agents/skills/`, but VGS symlinks `.agents`
-# wholesale into every worktree (AGENTS.md § Project skills), so a file tracked
+# wholesale into every worktree (project-skills/README.md), so a file tracked
 # under that path reports as deleted in every worktree — git cannot stat through
 # the symlinked directory, leaving a permanently dirty tree. So the tracked,
 # CI-facing copy lives at third_party/<engine>/, `vstack refresh` maintains
