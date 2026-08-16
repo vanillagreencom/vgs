@@ -21,7 +21,7 @@ Four failure shapes:
    not get to skip the ratchet by being new — silence would grandfather every
    future doc in at whatever size it first merges. Add an entry at current
    size plus ~10% headroom. A glob that matches nothing at all fails the same
-   way: a renamed directory must update WATCHED_GLOBS in the same PR, or the
+   way: a renamed directory must update WATCHED_SURFACES in the same PR, or the
    new-file ratchet is silently disabled for that surface class.
 
 3. **A ceilings entry names a file that does not exist.** A rename or removal
@@ -55,7 +55,7 @@ failure of the check, never a clean result — through `scripts/lib/collected.py
 Two steps here collect something, and each has its own must-fail control. Add a
 new one the same way, or it becomes the next instance:
 
-1. the surfaces a watched glob finds     `WATCHED_GLOBS`      recursive, and the
+1. the surfaces a watched glob finds     `WATCHED_SURFACES`   recursive, and the
                                                               discovered set is
                                                               asserted against
                                                               the ceilinged files
@@ -269,10 +269,45 @@ CEILINGS: dict[str, int] = {
 # ceilinged, exempt it by name here with a reason. Do NOT narrow the glob back:
 # an exemption is visible in review, a shallow glob is not. (Nothing needs one
 # today — the sweep found no unceilinged file when it was widened.)
-WATCHED_GLOBS = (
-    ".github/instructions/**/*.md",
-    "docs/architecture/**/*.md",
-    "project-skills/**/SKILL.md",
+# EACH ROOT IS DECLARED, NEVER DERIVED FROM ITS PATTERN, and that separation is
+# the whole point of the pair. The partial-coverage guard below asks "does this
+# glob still reach every ceilinged file under its root?", so where the root
+# comes from decides whether the question can be answered. It used to be
+# `pattern.split("*", 1)[0]` — read off the pattern under test — which made the
+# guard derive its expectation from its own subject: narrowing
+# `docs/architecture/**/*.md` to `docs/architecture/shell*.md` also narrowed the
+# root to `docs/architecture/shell`, so the expected set shrank to exactly what
+# the narrowed glob still found and the check reported CLEAN while 12 ceilinged
+# architecture documents fell out of the ratchet. A guard that derives its
+# expectation from its subject can only ever agree with itself.
+#
+# Narrowing the ROOT instead does not work either: UNWATCHED_CEILINGS below is
+# the closing half, and a ceilinged file left under no declared root is a named
+# failure. So the two must be narrowed together AND the orphaned file exempted
+# by name — three edits, all visible in review, which is what "conscious
+# decision" is supposed to mean.
+WATCHED_SURFACES = (
+    (".github/instructions", ".github/instructions/**/*.md"),
+    ("docs/architecture", "docs/architecture/**/*.md"),
+    ("project-skills", "project-skills/**/SKILL.md"),
+)
+
+# Ceilinged files that live under no watched root, each because it is an
+# individually named surface rather than a member of a discovered class. This is
+# the independent cross-check on WATCHED_SURFACES: every ceilinged file must be
+# under some declared root or listed here, so a root cannot quietly stop
+# covering something it used to cover.
+#
+# PAIRS, NOT A DICT LITERAL, and that is load-bearing rather than style: this
+# file parses ITSELF for the CEILINGS table and finds its end by the first
+# "\n}\n", so a second mapping closing with a bare `}` at column 0 gives the
+# closing-anchor drift arm a decoy to land on — written as a dict, it made that
+# arm stop reporting drift and report a bogus size instead. Same self-referential
+# hazard the CEILINGS_OPEN comment names, one anchor over.
+UNWATCHED_CEILINGS = (
+    ("AGENTS.md", "the always-loaded brief itself, ceilinged by name (a budget)"),
+    ("review-bots.md", "the review-bot brief, ceilinged by name"),
+    (".github/copilot-instructions.md", "the Copilot entry point, ceilinged by name"),
 )
 
 # Surfaces whose ceiling is a BUDGET, not a measured size plus headroom. The
@@ -455,24 +490,55 @@ RECORDED_SIZE_FIXTURES = (
 )
 
 
-def watched_glob_problems(root: Path, ceilinged: set[str]) -> list[str]:
+def watched_glob_problems(
+    root: Path,
+    ceilinged: set[str],
+    surfaces: tuple[tuple[str, str], ...] = WATCHED_SURFACES,
+    exempt: tuple[tuple[str, str], ...] = UNWATCHED_CEILINGS,
+) -> list[str]:
     """Watched surfaces under `root` with no ceiling, plus any stale glob.
 
     Takes its root as an argument so the recursion can be proven against a
     throwaway tree: asserting it against the repo alone would only show that
     today's files still match, which the shallow globs did too.
+
+    Takes `surfaces` and `exempt` for the same reason one level up: the controls
+    below narrow a real glob and must watch THIS function refuse it. A control
+    that could only mutate the module constant would be asserting against a
+    global it had just rewritten.
     """
     problems: list[str] = []
-    for pattern in WATCHED_GLOBS:
+
+    # THE INDEPENDENT HALF, and it runs before any glob does. Every ceilinged
+    # file must sit under a DECLARED root or be exempted by name; without this,
+    # narrowing a root alongside its pattern would restore the self-agreement
+    # the declared root exists to break.
+    exempt_names = {rel for rel, _ in exempt}
+    orphans = sorted(
+        rel
+        for rel in ceilinged
+        if rel not in exempt_names
+        and not any(rel.startswith(f"{base}/") for base, _ in surfaces)
+    )
+    if orphans:
+        problems.append(
+            f"{len(orphans)} ceilinged file(s) are under no watched root and are "
+            f"not exempted by name ({', '.join(orphans)}) — a root in "
+            f"WATCHED_SURFACES stopped covering them, so nothing rediscovers "
+            f"them and the partial-coverage guard has nothing to compare "
+            f"against. Restore the root, or add each file to UNWATCHED_CEILINGS "
+            f"with the reason it is named rather than discovered"
+        )
+
+    for base, pattern in surfaces:
         discovered = {
             path.relative_to(root).as_posix() for path in sorted(root.glob(pattern))
         }
         # COLLECTION POINT 2, the PARTIAL half. "Did it match anything?" was
         # satisfied by the top-level files while a nested surface was invisible,
         # so the expected set is named instead: every ceilinged file living under
-        # this pattern's root must be rediscovered by it.
-        root_prefix = pattern.split("*", 1)[0]
-        expected = {rel for rel in ceilinged if rel.startswith(root_prefix)}
+        # this surface's DECLARED root must be rediscovered by its pattern.
+        expected = {rel for rel in ceilinged if rel.startswith(f"{base}/")}
         shortfall = members_missing(
             discovered,
             expected,
@@ -501,9 +567,9 @@ def watched_glob_problems(root: Path, ceilinged: set[str]) -> list[str]:
             discovered,
             what="watched surfaces",
             selector=f"the glob `{pattern}`",
-            cause="the glob is stale — update WATCHED_GLOBS in the same PR as the "
-            "rename or removal that emptied it, or drop it if that surface class "
-            "is genuinely gone",
+            cause="the glob is stale — update WATCHED_SURFACES in the same PR as "
+            "the rename or removal that emptied it, or drop it if that surface "
+            "class is genuinely gone",
         )
         if empty:
             problems.append(empty)
@@ -572,6 +638,75 @@ def self_test() -> list[str]:
         failures.append(
             "a ceilinged surface the globs do not reach was not reported, so partial "
             f"coverage still reads as full coverage: {partial}"
+        )
+
+    # THE INDEPENDENCE CONTROLS, both directions, and they are the reason the
+    # root is declared rather than read off the pattern. Codex found this on
+    # PR #139: `expected` came from `pattern.split("*", 1)[0]`, so narrowing a
+    # glob narrowed the detector with it and the check reported CLEAN while
+    # dropping 12 ceilinged architecture documents. A guard that derives its
+    # expectation from its subject can only ever agree with itself, so the fix
+    # had to be an independent source, not another assertion layered on the
+    # derived one — and these controls are what prove the source is independent.
+    #
+    # 1. NARROW THE PATTERN, leave the root. The old shape passed this.
+    # ONE VARIABLE. The real surfaces, with only the architecture PATTERN
+    # narrowed — passing the single narrowed surface alone would also orphan the
+    # other two roots, and the orphan message would satisfy an assertion meant to
+    # be about partial coverage.
+    narrowed = watched_glob_problems(
+        REPO_ROOT,
+        set(CEILINGS),
+        surfaces=tuple(
+            (base, "docs/architecture/shell*.md" if base == "docs/architecture" else pat)
+            for base, pat in WATCHED_SURFACES
+        ),
+    )
+    dropped = [
+        rel
+        for rel in CEILINGS
+        if rel.startswith("docs/architecture/")
+        and not Path(rel).name.startswith("shell")
+    ]
+    if not any(
+        all(rel in problem for rel in dropped) for problem in narrowed
+    ):
+        failures.append(
+            f"narrowing a watched glob to docs/architecture/shell*.md did not report "
+            f"the {len(dropped)} ceilinged documents it stops reaching, so the "
+            f"expected set is still derived from the pattern under test and the "
+            f"guard vouches for itself: {narrowed}"
+        )
+
+    # 2. NARROW THE ROOT TOO, which is the only way to silence control 1 — and
+    # it must then trip the orphan arm instead. Without this half, an editor
+    # could restore self-agreement by moving both in one edit.
+    both = watched_glob_problems(
+        REPO_ROOT,
+        set(CEILINGS),
+        surfaces=tuple(
+            ("docs/architecture/shell", "docs/architecture/shell*.md")
+            if base == "docs/architecture"
+            else (base, pat)
+            for base, pat in WATCHED_SURFACES
+        ),
+    )
+    if not any("under no watched root" in problem for problem in both):
+        failures.append(
+            f"narrowing a root alongside its pattern was accepted, so the ceilinged "
+            f"files it abandons are covered by nothing and reported by nothing — the "
+            f"self-agreement the declared root exists to break: {both}"
+        )
+
+    # ...and the orphan arm must not fire on the real table, or it would satisfy
+    # both controls above without distinguishing anything.
+    if any(
+        "under no watched root" in problem
+        for problem in watched_glob_problems(REPO_ROOT, set(CEILINGS))
+    ):
+        failures.append(
+            "the real WATCHED_SURFACES/UNWATCHED_CEILINGS pair reports an orphan, so "
+            "the two controls above prove nothing about narrowing."
         )
 
     # COLLECTION POINT 3's controls — an entry that yields NO SIZE must fail,

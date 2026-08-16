@@ -202,7 +202,7 @@ quickshell/vshell/Widgets/KeybindItem.qml	1892
 quickshell/vshell/Widgets/VgsDropdown.qml	565
 quickshell/vshell/Widgets/VgsPopoutStandalone.qml	986
 scripts/check-aur-sync.py	410
-scripts/check-doc-growth.py	727
+scripts/check-doc-growth.py	862
 scripts/check-notification-takeover.js	454
 scripts/check-paste-injection.py	897
 scripts/check-settings-migration.js	952
@@ -222,4 +222,4 @@ scripts/test-toast-actions.js	607
 scripts/test-validate.sh	547
 scripts/test-validation-inventory.sh	2278
 scripts/validate	1044
-vstack.toml	530
+vstack.toml	551

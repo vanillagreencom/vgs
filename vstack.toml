@@ -114,6 +114,7 @@ to the GitHub issue — then create it in team vg-shell and work the Linear issu
 rather than the GitHub one:
 
 ```bash
+gh_json= gh_body= &&
 gh_json="$(mktemp)" &&
 gh_body="$(mktemp)" &&
 gh issue view <n> --json title,body,url > "$gh_json" &&
@@ -123,8 +124,12 @@ title="$(jq -r .title "$gh_json")" &&
 .agents/skills/linear/scripts/linear.sh issues create --title "$title" \
   --description-file "$gh_body"
 created=$?
-rm -f "$gh_json" "$gh_body"
-( exit "$created" )
+cleaned=0
+for tmp in "$gh_json" "$gh_body"; do
+  [ -n "$tmp" ] || continue
+  rm -f -- "$tmp" || { cleaned=1; echo "mirror: could not remove $tmp, which still holds the issue JSON or body" >&2; }
+done
+( exit "$(( created ? created : cleaned ))" )
 ```
 
 Run that block as a UNIT, in one shell — the `mktemp` paths live in variables,
@@ -132,9 +137,9 @@ so a command run on its own would find them empty and redirect to nothing.
 
 NO STEP'S FAILURE MAY BE MASKED BY A LATER STEP'S SUCCESS. Every producing step
 is chained with `&&`, so the first failure short-circuits the rest and becomes
-the list's status; `created=$?` captures it, the `rm` runs on every path, and
-`( exit ... )` re-raises it. That direction is the worst one here — this is the
-manual GitHub-to-Linear step, so a masked failure means work never filed and
+the list's status; `created=$?` captures it, the cleanup loop runs on every path,
+and `( exit ... )` re-raises it. That direction is the worst one here — this is
+the manual GitHub-to-Linear step, so a masked failure means work never filed and
 never noticed. Each shape below was a real silent failure before it was written
 this way:
 
@@ -150,6 +155,22 @@ this way:
 * `[ -s "$gh_body" ]` because a status is a PROXY — what must be true is that
   the file has CONTENT — and it speaks when it refuses, since an
   empty-but-succeeded producer prints no diagnostic of its own.
+* the cleanup itself ran unchecked, so a `rm` that failed after a successful
+  create left the issue JSON and the rendered body on disk while the block
+  reported success. `cleaned` records it, the loop names the file that survived,
+  and the status is `created` when the create failed and `cleaned` otherwise —
+  the create's failure is the more important one and still wins, but a cleanup
+  failure can no longer vanish behind it.
+
+`gh_json= gh_body=` BEFORE the first `mktemp`, and this one is about the
+operator's own shell rather than about statuses. You paste this block into an
+interactive shell, where `set -u` is off and both names may already be in use.
+If the FIRST `mktemp` fails, the `&&` chain stops before `gh_body` is ever
+assigned — and the cleanup at the bottom still runs, expanding whatever
+`gh_body` happened to mean in your session and `rm`-ing a file this block never
+created. Initializing both to empty first is what makes that impossible, and the
+loop skips an empty path rather than passing it to `rm`. A runbook a person
+pastes into their own shell must not be able to delete a file they named.
 
 `( exit ... )` rather than a bare `exit`, which would close an operator's
 interactive shell, and rather than a `trap ... EXIT`, which would linger in that
