@@ -400,6 +400,69 @@ const FRAMES = 8;
   }
 }
 
+// PRESERVING THE MAPPING MADE THE MASK COMMIT LOAD-BEARING, so the round trip is
+// driven rather than asserted.
+//
+// The mask collapsing to 0x0 is a QML property change; it reaches the compositor
+// only on a surface COMMIT, gated by `updatesEnabled`. The handler that used to
+// run on this edge UNMAPPED the window, and an unmap commits regardless - which
+// is why this only became necessary once the mapping was preserved to fix the
+// stacking order. Control Center is the live case: no overlayContent, settled, so
+// every term of `updatesEnabled` is false unless something opens a commit window.
+{
+  const mask = bindingsOf("maskRect", ["width", "height"]);
+  const upd = /^\s*updatesEnabled:\s*(.+)$/m.exec(source);
+  const handler = /onBackgroundDismissWindowRequiredChanged:\s*\{([\s\S]*?)\n    \}/.exec(source);
+
+  if (!upd) fail("mask commit", "could not read backgroundWindow.updatesEnabled");
+  else if (!handler) fail("mask commit", "no onBackgroundDismissWindowRequiredChanged handler: the collapsed mask is never committed, so the mapped surface keeps its previous full-output input region");
+  else {
+    // The model below hard-codes the three terms of `updatesEnabled`. Pin that it
+    // still IS those three, or a fourth term would be silently unmodelled and this
+    // whole control would be reasoning about a binding that no longer exists.
+    const terms = (upd[1].match(/[A-Za-z_$][A-Za-z0-9_$]*/g) || []).filter(t => t !== "root" && t !== "null");
+    const expected = ["overlayContent", "_bgCommitWindow", "bodyRectAnimating"];
+    if (JSON.stringify(terms) !== JSON.stringify(expected))
+      fail("mask commit", `updatesEnabled is no longer the three terms this control models (got ${terms.join(", ")}); re-derive the model before trusting it`);
+
+    // A settled Control Center popout: no overlay content, nothing animating,
+    // commit window expired. `updatesEnabled` is then exactly `_bgCommitWindow`.
+    const opensCommit = /_bgCommitWindow\s*=\s*true/.test(handler[1]);
+    // ...and on BOTH edges. A handler that only commits when the requirement
+    // becomes true restores the mask but never collapses it, which is the
+    // click-eating direction. Detected as ANY mention of the requirement in the
+    // body, not as a leading `if (...)`: the first draft looked for the guard in
+    // first position and so missed `if (!backgroundWindow.visible ||
+    // !backgroundDismissWindowRequired)`. The correct body has no reason to read
+    // the requirement at all - it commits on the edge, whichever way it went.
+    const edgeGated = /backgroundDismissWindowRequired/.test(handler[1]);
+
+    let committedMask = null;
+    const sim = [];
+    const step = (label, interactive) => {
+      const st = makeState({ backgroundInteractive: interactive, backgroundDismissWindowRequired: interactive });
+      st._frozenMaskWidth = 1920;
+      st._frozenMaskHeight = 1080;
+      const live = { w: evalIn(mask.width, st), h: evalIn(mask.height, st) };
+      // The commit only lands if the handler opened a window on this edge.
+      if (opensCommit && !edgeGated) committedMask = live;
+      sim.push({ label, live, committed: committedMask });
+    };
+    committedMask = { w: 1920, h: 1080 }; // settled and interactive: full catcher
+    step("power menu opens (backgroundInteractive -> false)", false);
+    step("power menu closes (backgroundInteractive -> true)", true);
+
+    const duringModal = sim[0].committed;
+    const afterModal = sim[1].committed;
+    if (duringModal.w !== 0 || duringModal.h !== 0)
+      fail("mask commit", `with the power menu open the COMMITTED input mask is still ${duringModal.w}x${duringModal.h} - that surface is mapped above the modal's catcher and eats clicks without dismissing anything`);
+    else if (afterModal.w === 0 || afterModal.h === 0)
+      fail("mask commit", "after the modal closes the committed mask is still collapsed - the popout can no longer be dismissed by clicking outside it");
+    else
+      ok("the disabled mask is committed on both edges of a modal round trip");
+  }
+}
+
 // The surface must still settle from SETTLED geometry - deriving the hole from
 // the animation must not have dragged the surface along, which would be the
 // VGS-133 flash returning.

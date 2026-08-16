@@ -533,15 +533,39 @@ Item {
     // to `!anyModalOpen`, so opening and closing its power menu is an unmap/remap
     // pair while the content window stays mapped throughout.
     //
-    // Staying mapped costs nothing, because dropping the requirement already
-    // disarms the window on its own: `maskRect` collapses to 0x0 and the
-    // MouseArea disables, so the surface accepts no input, and it paints nothing
-    // (transparent, with only invisible mask rects inside). The unmap happens at
-    // CLOSE, alongside the content window's, which is what re-establishes the
-    // order for the next open.
+    // Staying mapped is safe ONLY because the collapsed mask is committed —
+    // see onBackgroundDismissWindowRequiredChanged directly below, which is not
+    // an optimisation but the other half of this change.
     onBackgroundWindowRequiredChanged: {
         if (shouldBeVisible && backgroundWindowRequired)
             backgroundWindow.visible = true;
+    }
+
+    // THE COLLAPSED MASK HAS TO BE COMMITTED, and preserving the mapping above is
+    // exactly what made that load-bearing.
+    //
+    // `maskRect` collapsing to 0x0 is a QML property change. It reaches the
+    // compositor only when the surface COMMITS, and `updatesEnabled` above is
+    // `overlayContent !== null || _bgCommitWindow || bodyRectAnimating` — all
+    // three false for a settled popout with no overlay content, which is exactly
+    // Control Center. The handler that used to run on this edge UNMAPPED the
+    // window, and an unmap reaches the compositor whatever `updatesEnabled` says;
+    // that is the only reason the old code did not need this.
+    //
+    // Without it the surface stays mapped carrying its PREVIOUS, full-output
+    // input region: on an overlay-layer bar it then sits above the power menu's
+    // Top-layer catcher and eats clicks — the MouseArea is disabled, so nothing
+    // dismisses and nothing falls through either. The popout is not interactive
+    // and not out of the way.
+    //
+    // BOTH edges, deliberately. Losing the collapse leaves a dead surface eating
+    // clicks; losing the restore leaves the popout undismissable once the modal
+    // closes. Guarded on the surface being mapped, matching _setSurfaceGeometry.
+    onBackgroundDismissWindowRequiredChanged: {
+        if (!backgroundWindow.visible)
+            return;
+        _bgCommitWindow = true;
+        bgCommitSettleTimer.restart();
     }
 
     Timer {
