@@ -266,7 +266,7 @@ for (const type of ["file", "all", "", undefined, "nonsense"])
 
 // EVERY combination below is one the program can actually produce. That is not
 // decoration: `declined` defaults false, and a missing or checking backend state
-// with a dispatchable query ALWAYS declines — so an assertion that leaves the
+// with a searchable query ALWAYS declines — so an assertion that leaves the
 // default there is satisfied by an input the shell cannot build, and stops
 // covering the arm it names. Each case sets declined explicitly where the state
 // implies it.
@@ -275,7 +275,7 @@ const facts = extra => Object.assign({
     missingCommand: "",
     probeState: "ready",
     queryLength: 5,
-    dispatchable: true,
+    searchable: true,
     declined: false,
     searchError: "",
     legActive: true
@@ -289,13 +289,13 @@ assert.equal(view.fileEmptyStateKey(declinedFacts({ backendState: "missing", mis
     "missing-rg");
 assert.equal(view.fileEmptyStateKey(declinedFacts({ backendState: "missing", missingCommand: "fd" })),
     "missing-fd");
-assert.equal(view.fileEmptyStateKey(facts({ queryLength: 0, dispatchable: false })), "prompt");
-assert.equal(view.fileEmptyStateKey(facts({ queryLength: 1, dispatchable: false })), "short");
+assert.equal(view.fileEmptyStateKey(facts({ queryLength: 0, searchable: false })), "prompt");
+assert.equal(view.fileEmptyStateKey(facts({ queryLength: 1, searchable: false })), "short");
 assert.equal(view.fileEmptyStateKey(facts({})), "empty");
 assert.equal(view.fileEmptyStateKey(facts({ backendState: "unknown" })), "empty",
     "an unanswerable probe does not rewrite the result message — the search still ran");
 assert.equal(view.fileEmptyStateKey(declinedFacts({
-    backendState: "missing", missingCommand: "fd", queryLength: 0, dispatchable: false
+    backendState: "missing", missingCommand: "fd", queryLength: 0, searchable: false
 })), "missing-fd", "and a missing tool is worth saying before a query is typed");
 assert.equal(view.fileEmptyStateKey(facts({ searchError: "ripgrep is required for text search" })),
     "error",
@@ -328,7 +328,7 @@ assert.equal(view.fileHintKey(declinedFacts({ backendState: "unknown", probeStat
 assert.equal(view.fileHintKey(facts({ backendState: "unknown", probeState: "failed" })), "",
     "no probe line beside a search that actually ran, whatever the probe did");
 // THE STARTUP WINDOW, as the program produces it: first probe outstanding, two
-// characters typed, so the query is dispatchable and therefore declined. The
+// characters typed, so the query is searchable and therefore declined. The
 // same case with declined:false is unreachable, and pinning that instead left
 // this silent — the hint rendered "Still checking ...: " with a dangling colon
 // and no reason, under a message already saying "Checking search tools".
@@ -356,10 +356,10 @@ assert.equal(view.fileEmptyIcon("empty", "text"), "article");
 // The prompt comes first: nothing is being checked on the user's behalf before a
 // query that could dispatch, and a query too short to dispatch is not declined.
 assert.equal(view.fileEmptyStateKey(facts({
-    backendState: "checking", queryLength: 0, dispatchable: false
+    backendState: "checking", queryLength: 0, searchable: false
 })), "prompt", "an empty field prompts even while the probe is outstanding");
 assert.equal(view.fileEmptyStateKey(facts({
-    backendState: "checking", queryLength: 1, dispatchable: false
+    backendState: "checking", queryLength: 1, searchable: false
 })), "short", "and a short query is short, not checking");
 
 // The helper's text, made safe to put on screen.
@@ -404,14 +404,14 @@ assert.equal(files.fileSearchQueryFrom("apps", "notes", ""), "");
 assert.equal(files.fileSearchQueryFrom("files", "", ""), "");
 
 assert.ok(files.shouldRetryAfterProbe(true, true),
-    "an open surface with a dispatchable query re-runs when the probe answers");
+    "an open surface with a searchable query re-runs when the probe answers");
 assert.ok(!files.shouldRetryAfterProbe(false, true),
     "a closed one does not — the retry must not search behind a dismissed launcher");
 assert.ok(!files.shouldRetryAfterProbe(true, false), "nor one whose query would not dispatch");
 
 assert.ok(view.fileLegActive("files", false),
     "files mode is a file surface even before a query is typed");
-assert.ok(view.fileLegActive("all", true), "and so is any mode holding a dispatchable file query");
+assert.ok(view.fileLegActive("all", true), "and so is any mode holding a searchable file query");
 assert.ok(!view.fileLegActive("plugins", false), "plugins mode is not");
 assert.ok(!view.fileLegActive("apps", false), "nor is a mode with a query too short to dispatch");
 
@@ -798,7 +798,7 @@ for (const state of ["available", "unknown", "checking"])
     for (const [binding, why] of [
         ["readonly property string _fileQuery: controller ? controller.fileSearchQuery() : \"\"",
             "the query is the controller's one authority, not a re-derivation"],
-        ["readonly property bool _fileQueryDispatchable: !!controller && DSearchService.queryIsSearchable(controller.fileSearchKind(), _fileQuery)",
+        ["readonly property bool _fileQuerySearchable: !!controller && DSearchService.queryIsSearchable(controller.fileSearchKind(), _fileQuery)",
             "and whether it searches at all is the service's answer for THIS kind — with the " +
             "kindless form, folder-path completion is reported as a too-short query"],
         ["readonly property string _fileBackendState: controller ? DSearchService.backendState(controller.fileSearchKind(), _fileQuery) : \"unknown\"",
@@ -807,7 +807,7 @@ for (const state of ["available", "unknown", "checking"])
         ["readonly property string _missingBackendCommand: controller && _fileBackendState === \"missing\" ? DSearchService.backendCommandFor(controller.fileSearchKind()) : \"\"",
             "the command comes from the kind behind the missing test; hardcoded, every missing " +
             "tool becomes fd and the ripgrep hint never renders"],
-        ["readonly property bool _fileSearchDeclined: !!controller && _fileQueryDispatchable && !DSearchService.canDispatch(controller.fileSearchKind(), _fileQuery)",
+        ["readonly property bool _fileSearchDeclined: !!controller && _fileQuerySearchable && !DSearchService.canDispatch(controller.fileSearchKind(), _fileQuery)",
             "INCLUDING the negation: dropped, every search that ran and found nothing claims the " +
             "tools could not be checked"]
     ]) {
@@ -819,7 +819,7 @@ for (const state of ["available", "unknown", "checking"])
     for (const field of [
         "backendState: _fileBackendState", "missingCommand: _missingBackendCommand",
         "probeState: DSearchService.statusState", "queryLength: _fileQuery.length",
-        "dispatchable: _fileQueryDispatchable", "declined: _fileSearchDeclined",
+        "searchable: _fileQuerySearchable", "declined: _fileSearchDeclined",
         "searchError: controller?.fileSearchError ?? \"\"", "legActive: _fileLegActive"
     ]) {
         assert.ok(code.includes(qmlSource.flat(field)),
@@ -830,7 +830,7 @@ for (const state of ["available", "unknown", "checking"])
     for (const [call, why] of [
         ["fileEmptyStateKey(_emptyStateFacts)", "the message reads the whole snapshot"],
         ["root.fileHintKey(root._emptyStateFacts)", "and so does the hint"],
-        ["fileLegActive(controller?.searchMode ?? \"\", _fileQueryDispatchable)",
+        ["fileLegActive(controller?.searchMode ?? \"\", _fileQuerySearchable)",
             "and whether a file search is on screen comes from the executed rule, not a constant"]
     ]) {
         assert.ok(code.includes(qmlSource.flat(call)),

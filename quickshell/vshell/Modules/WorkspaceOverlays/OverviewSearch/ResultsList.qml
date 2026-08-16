@@ -23,7 +23,7 @@ Item {
     // controller applied. The controller owns the kind and the effective query;
     // DSearchService owns which tool answers for them.
     readonly property string _fileQuery: controller ? controller.fileSearchQuery() : ""
-    readonly property bool _fileQueryDispatchable: !!controller
+    readonly property bool _fileQuerySearchable: !!controller
         && DSearchService.queryIsSearchable(controller.fileSearchKind(), _fileQuery)
     readonly property string _fileBackendState: controller
         ? DSearchService.backendState(controller.fileSearchKind(), _fileQuery) : "unknown"
@@ -31,7 +31,7 @@ Item {
         ? DSearchService.backendCommandFor(controller.fileSearchKind()) : ""
     // A search the gate refused for want of an answer, rather than one that ran
     // and found nothing.
-    readonly property bool _fileSearchDeclined: !!controller && _fileQueryDispatchable
+    readonly property bool _fileSearchDeclined: !!controller && _fileQuerySearchable
         && !DSearchService.canDispatch(controller.fileSearchKind(), _fileQuery)
     // One named snapshot for the whole empty state. Named rather than
     // positional so a transposed pair is legible here instead of silent: the
@@ -41,13 +41,13 @@ Item {
         missingCommand: _missingBackendCommand,
         probeState: DSearchService.statusState,
         queryLength: _fileQuery.length,
-        dispatchable: _fileQueryDispatchable,
+        searchable: _fileQuerySearchable,
         declined: _fileSearchDeclined,
         searchError: controller?.fileSearchError ?? "",
         legActive: _fileLegActive
     })
     readonly property string _fileStateKey: fileEmptyStateKey(_emptyStateFacts)
-    readonly property bool _fileLegActive: fileLegActive(controller?.searchMode ?? "", _fileQueryDispatchable)
+    readonly property bool _fileLegActive: fileLegActive(controller?.searchMode ?? "", _fileQuerySearchable)
 
     signal itemRightClicked(int index, var item, real mouseX, real mouseY)
 
@@ -64,10 +64,12 @@ Item {
         if (f.backendState === "missing")
             return f.missingCommand === "rg" ? "missing-rg" : "missing-fd";
         // Nothing is being checked on the user's behalf before a query that
-        // could dispatch: an empty field prompts, and a short one is short.
+        // would search at all: an empty field prompts, and a query too short
+        // to search — one that is not a path the helper completes either — is
+        // short.
         if (f.queryLength === 0)
             return "prompt";
-        if (!f.dispatchable)
+        if (!f.searchable)
             return "short";
         if (f.backendState === "checking")
             return "checking";
@@ -108,8 +110,8 @@ Item {
     // fileSearchQuery — the one authority on that — hands back a query long
     // enough to dispatch. Plugins mode is excluded there, so no file-search
     // message can render over plugin results.
-    function fileLegActive(searchMode, dispatchable) {
-        return searchMode === "files" || !!dispatchable;
+    function fileLegActive(searchMode, searchable) {
+        return searchMode === "files" || !!searchable;
     }
 
     // The helper's diagnosis, made safe to render: first line only, control and

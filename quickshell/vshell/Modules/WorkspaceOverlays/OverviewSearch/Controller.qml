@@ -1175,10 +1175,11 @@ Item {
 
     // A search declined while the tools were unknown is re-run once they are
     // known — but only for a surface still open, and only for a query that
-    // would have dispatched. The length rule itself is
-    // DSearchService.queryIsDispatchable's, read by the caller.
-    function shouldRetryAfterProbe(isActive, dispatchable) {
-        return !!isActive && !!dispatchable;
+    // would have searched. Whether it would is
+    // DSearchService.queryIsSearchable's answer, read by the caller: the
+    // length rule OR a path the helper completes without fd.
+    function shouldRetryAfterProbe(isActive, searchable) {
+        return !!isActive && !!searchable;
     }
     // END FILE SEARCH DECISION
 
