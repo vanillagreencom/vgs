@@ -228,6 +228,35 @@ out="$( (cd "$fixture" && ./scripts/check-format-lint.sh) 2>&1 || true)"
 $out"
 ok "the binary exemption reads the worktree, not the index"
 
+# THE `w/` COLUMN IS CONTENT, NOT ATTRIBUTE, and that had been an unstated
+# assumption rather than a wrong one. A `-text` in .gitattributes is a DECLARED
+# eol policy; `--eol` surfaces it in its own `attr/` column and leaves `i/` and
+# `w/` reporting what the bytes actually are. This repo declares it —
+# `backend/vendor/** -text -whitespace` — and all 200 sampled vendor files still
+# report `w/lf`. So the attribute cannot buy a text file the binary exemption,
+# and a reader who assumed otherwise would read this arm as a fail-open. Pinned
+# in both directions, because the assumption is what an implementation change or
+# a future git could break, not the code as written.
+probe_init
+probe_add bin/attributed exec
+printf 'bin/** -text\n' >"$fixture/.gitattributes"
+out="$(probe_check)"
+[[ "$out" == *"bin/attributed $EXEC_MSG"* ]] ||
+  fail "gitattributes -text" "an executable shebang-less text file under a -text attribute was exempted:
+$out"
+ok "a -text attribute cannot buy a text file the binary exemption"
+
+# ...and the ELF stays exempt under that same attribute, so the case above pins
+# the content test rather than a rule that stopped exempting anything at all.
+probe_init
+probe_add bin/probe-binary binary
+printf 'bin/** -text\n' >"$fixture/.gitattributes"
+out="$(probe_check)"
+[[ "$out" != *"bin/probe-binary $EXEC_MSG"* ]] ||
+  fail "gitattributes -text" "a real binary under a -text attribute was reported as unlinted:
+$out"
+ok "a real binary stays exempt whatever .gitattributes says"
+
 # The unable-to-tell branches (`git ls-files --eol` failing, or returning other
 # than one entry) are deliberately uncovered: every path reaching is_binary comes
 # from `git ls-files` itself, so a tracked file always yields exactly one entry

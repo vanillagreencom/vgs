@@ -90,6 +90,14 @@ list_files() {
 # considers binary — rather than sniffed here, because git is already the tool
 # that discovers every file this check looks at.
 #
+# `w/` IS DETECTED CONTENT, NOT A DECLARED ATTRIBUTE, and saying so is the point:
+# a `-text` in .gitattributes declares an eol policy, and `--eol` reports that in
+# a separate `attr/` column while `i/` and `w/` keep reporting what the bytes
+# are. This repo declares it — `backend/vendor/** -text -whitespace` — and those
+# files report `w/lf`. So no .gitattributes line can hand a text file the
+# exemption below; left unstated, this arm reads like a fail-open that one such
+# line would open. scripts/test-format-lint.sh pins it in both directions.
+#
 # It exists for one arm: the executable-bit rule below says "something runs it,
 # so something must lint it", and a compiled binary is the case where nothing
 # here could ever lint it and nothing should. bin/vshell-asdcontrol is a tracked
