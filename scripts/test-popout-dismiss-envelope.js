@@ -230,6 +230,39 @@ const settled = compile(settledBody);
     ok("a second shrink mid-flight does not narrow the hole under the visible body");
 }
 
+// The expressive entry curves overshoot (y control points of 1.21 and 1.5), so
+// renderedAlignedY moves past its target before settling. A union of the two
+// ENDPOINTS does not contain that strip; only re-unioning on rendered frames
+// does.
+{
+  const c = makePopout();
+  envelope(c);
+  const targetY = 40;
+  c.alignedY = targetY;                 // a move upward starts
+  envelope(c);
+  // ...and the curve carries the body ABOVE both the start and the target.
+  const overshootY = targetY - 30;
+  c.renderedAlignedY = overshootY;
+  const beforeTop = carveBand(c)[0];
+  if (beforeTop <= overshootY)
+    fail("overshoot setup", "endpoint union already covered the overshoot, so this case cannot witness the fix");
+  envelope(c);                          // the rendered-frame handler re-unions
+  if (carveBand(c)[0] > overshootY)
+    fail("overshoot", `the overshoot strip is outside the carve-out: rendered top ${overshootY} vs carve-out top ${carveBand(c)[0]}`);
+  else
+    ok("an overshooting entry curve stays inside the carve-out");
+
+  // The wiring for it: endpoints alone cannot cover an overshoot, so the
+  // rendered-frame handlers have to exist and call the envelope.
+  for (const h of ["onRenderedAlignedYChanged", "onRenderedAlignedHeightChanged"]) {
+    const re = new RegExp(`${h}\\s*:\\s*_setDismissCarveOutEnvelope\\(\\)`);
+    if (!re.test(source))
+      fail("overshoot wiring", `${h} does not re-union the envelope, so overshoot frames are never covered`);
+    else
+      ok(`${h} re-unions the envelope`);
+  }
+}
+
 // The wiring: the envelope has to be what the height path actually calls, or
 // every assertion above is about a function nothing invokes.
 {
@@ -273,6 +306,14 @@ const settled = compile(settledBody);
   c.renderedAlignedHeight = (startH + 200) / 2;
   c._setDismissCarveOutEnvelope = () => envelope(c);
   c._setSettledSurfaceGeometry = () => settled(c);
+  // COLLAPSE IT FIRST. Without this the carve-out is already correct when
+  // reposition() is called, so a `updateSurfacePosition` that became a NO-OP
+  // would pass this assertion - the check would be measuring the state it
+  // inherited rather than anything the call did. Starting from a collapsed
+  // rect means only a call that actually re-unions can satisfy it.
+  settled(c);
+  if (carveCoversRendered(c))
+    fail("reposition setup", "the pre-state was supposed to be collapsed, so this case cannot witness a no-op");
   reposition(c);          // ...and a reposition lands mid-animation
   if (!carveCoversRendered(c))
     fail("reposition", `repositioning mid-shrink collapsed the carve-out: rendered ${renderedBand(c)} vs carve-out ${carveBand(c)}`);

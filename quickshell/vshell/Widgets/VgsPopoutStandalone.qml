@@ -292,6 +292,25 @@ Item {
         carveOutSettleTimer.restart();
     }
 
+    // THE ENVELOPE HAS TO FOLLOW THE ANIMATION, NOT JUST ITS ENDPOINTS.
+    //
+    // Unioning start and target covers a monotone tween and nothing else, and
+    // these are not monotone: the expressive entry curves overshoot by
+    // construction - `Anims.expressiveDefaultSpatial` carries a y control point
+    // of 1.21 and `expressiveFastSpatial` 1.5 (1.67 in Appearance) - so
+    // `renderedAlignedY` travels PAST its target before settling back. That
+    // strip is outside a union of the endpoints, and since VGS-133 made the
+    // content surface output-tall it is drawn rather than clipped, so it was
+    // visible popout sitting inside the dismiss window.
+    //
+    // Re-unioning on each rendered frame is what covers it, and it terminates:
+    // the envelope only ever grows, so the rect stops changing as soon as the
+    // overshoot peaks, and the settle timer - restarted here, so it measures
+    // from the last MOVEMENT rather than from the last target change - collapses
+    // it once the motion is actually over.
+    onRenderedAlignedYChanged: _setDismissCarveOutEnvelope()
+    onRenderedAlignedHeightChanged: _setDismissCarveOutEnvelope()
+
     Timer {
         id: carveOutSettleTimer
         interval: Math.max(0, Theme.variantDuration(root.animationDuration, root.renderedGeometryGrowing) + 32)
