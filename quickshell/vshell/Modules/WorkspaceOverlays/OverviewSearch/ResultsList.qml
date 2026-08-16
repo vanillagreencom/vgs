@@ -18,7 +18,125 @@ Item {
     property var transientSurfaceTracker: null
     readonly property bool _bottomSectionHeaderActive: leadingSectionHeaderAtBottom && (controller?.sections?.length ?? 0) > 0
 
+    // One reading of the search backend for the whole empty state, so the
+    // message, the hint and the icon cannot disagree with the gate the
+    // controller applied. The controller owns the kind and the effective query;
+    // DSearchService owns which tool answers for them.
+    readonly property string _fileQuery: controller ? controller.fileSearchQuery() : ""
+    readonly property bool _fileQuerySearchable: !!controller
+        && DSearchService.queryIsSearchable(controller.fileSearchKind(), _fileQuery)
+    readonly property string _fileBackendState: controller
+        ? DSearchService.backendState(controller.fileSearchKind(), _fileQuery) : "unknown"
+    readonly property string _missingBackendCommand: controller && _fileBackendState === "missing"
+        ? DSearchService.backendCommandFor(controller.fileSearchKind()) : ""
+    // A search the gate refused for want of an answer, rather than one that ran
+    // and found nothing.
+    readonly property bool _fileSearchDeclined: !!controller && _fileQuerySearchable
+        && !DSearchService.canDispatch(controller.fileSearchKind(), _fileQuery)
+    // One named snapshot for the whole empty state. Named rather than
+    // positional so a transposed pair is legible here instead of silent: the
+    // decision functions below read fields, never argument order.
+    readonly property var _emptyStateFacts: ({
+        backendState: _fileBackendState,
+        missingCommand: _missingBackendCommand,
+        probeState: DSearchService.statusState,
+        queryLength: _fileQuery.length,
+        searchable: _fileQuerySearchable,
+        declined: _fileSearchDeclined,
+        searchError: controller?.fileSearchError ?? "",
+        legActive: _fileLegActive
+    })
+    readonly property string _fileStateKey: fileEmptyStateKey(_emptyStateFacts)
+    readonly property bool _fileLegActive: fileLegActive(controller?.searchMode ?? "", _fileQuerySearchable)
+
     signal itemRightClicked(int index, var item, real mouseX, real mouseY)
+
+    // What the files-mode empty state says, as keys rather than copy: the copy
+    // is I18n's and cannot run outside Qt, while the CHOICE is what
+    // scripts/test-launcher-search-gate.js pins.
+    // BEGIN EMPTY STATE DECISION
+    // `facts.declined` is a search the gate refused because the tools could not
+    // be checked — a different thing from one that ran and found nothing, and
+    // the only arm that may not say "No files found". `facts.searchError` is the
+    // helper's own diagnosis for a search that ran and failed.
+    function fileEmptyStateKey(facts) {
+        const f = facts || {};
+        if (f.backendState === "missing")
+            return f.missingCommand === "rg" ? "missing-rg" : "missing-fd";
+        // Nothing is being checked on the user's behalf before a query that
+        // would search at all: an empty field prompts, and a query too short
+        // to search — one that is not a path the helper completes either — is
+        // short.
+        if (f.queryLength === 0)
+            return "prompt";
+        if (!f.searchable)
+            return "short";
+        if (f.backendState === "checking")
+            return "checking";
+        if (f.declined)
+            return "unchecked";
+        if (f.searchError)
+            return "error";
+        return "empty";
+    }
+
+    // The second line: an install step for a tool that is genuinely missing, the
+    // probe's own failure where that is why nothing ran, and nothing otherwise.
+    // Never an install step on the strength of an answer nobody has.
+    //
+    // `legActive` is what makes it honest outside files mode: the hint may only
+    // appear where a file search would actually have run, or it promises that
+    // installing fd fixes a mode that never searched files at all. `declined` is
+    // what keeps the probe line off a search that ran fine.
+    function fileHintKey(facts) {
+        const f = facts || {};
+        if (!f.legActive)
+            return "";
+        if (f.backendState === "missing")
+            return f.missingCommand === "rg" ? "install-rg" : "install-fd";
+        if (!f.declined)
+            return "";
+        // The first probe declines every kind, so "declined" alone would put a
+        // second line under "Checking search tools" on the first open of every
+        // machine — reporting a reason nobody has yet.
+        if (f.probeState === "pending")
+            return "";
+        // A probe still retrying will answer on its own; only a spent one is
+        // worth asking the user to do something about.
+        return f.probeState === "failed" ? "probe-failed" : "probe-retrying";
+    }
+
+    // A file search is on screen in files mode, and outside it wherever
+    // fileSearchQuery — the one authority on that — hands back a query long
+    // enough to dispatch. Plugins mode is excluded there, so no file-search
+    // message can render over plugin results.
+    function fileLegActive(searchMode, searchable) {
+        return searchMode === "files" || !!searchable;
+    }
+
+    // The helper's diagnosis, made safe to render: first line only, control and
+    // bidi characters dropped, length bounded. The text can quote a filename
+    // from the search roots or a whole argv, and this label is one line in a
+    // centered column. The full text stays in the log.
+    function errorLine(text) {
+        const first = String(text || "").split("\n")[0];
+        const clean = first.replace(/[\u0000-\u001f\u007f-\u009f\u200e\u200f\u202a-\u202e\u2066-\u2069]/g, " ").trim();
+        return clean.length > 160 ? clean.slice(0, 159) + "…" : clean;
+    }
+
+    function fileEmptyIcon(stateKey, fileType) {
+        if (stateKey === "checking")
+            return "hourglass_empty";
+        if (stateKey === "missing-rg" || stateKey === "missing-fd"
+                || stateKey === "unchecked" || stateKey === "error")
+            return "search_off";
+        if (fileType === "text")
+            return "article";
+        if (fileType === "file")
+            return "insert_drive_file";
+        return "folder_open";
+    }
+    // END EMPTY STATE DECISION
 
     function _rebuildVisualModel() {
         var sections = root.controller?.sections ?? [];
@@ -498,15 +616,7 @@ Item {
                     var mode = root.controller?.searchMode ?? "all";
                     switch (mode) {
                     case "files":
-                        var fileType = root.controller?.fileSearchType ?? "all";
-                        switch (fileType) {
-                        case "dir":
-                            return "folder_open";
-                        case "file":
-                            return "insert_drive_file";
-                        default:
-                            return "folder_open";
-                        }
+                        return root.fileEmptyIcon(root._fileStateKey, root.controller?.fileSearchType ?? "all");
                     case "plugins":
                         return "extension";
                     case "apps":
@@ -519,10 +629,18 @@ Item {
 
             StyledText {
                 anchors.horizontalCenter: parent.horizontalCenter
+                // Bounded like the hint below: the error arm renders text from
+                // the helper, which can carry a whole argv or a filename out of
+                // the search roots, and this column is centered inside the
+                // results panel.
+                width: Math.min(360, Math.max(160, root.width - Theme.spacingXL * 2))
                 text: getEmptyText()
                 font.pixelSize: Theme.fontSizeMedium
                 color: Theme.surfaceVariantText
                 horizontalAlignment: Text.AlignHCenter
+                wrapMode: Text.WordWrap
+                maximumLineCount: 3
+                elide: Text.ElideRight
 
                 function getEmptyText() {
                     var mode = root.controller?.searchMode ?? "all";
@@ -530,14 +648,23 @@ Item {
 
                     switch (mode) {
                     case "files":
-                        if (!DSearchService.dsearchAvailable)
-                            return I18n.tr("Launcher search is unavailable");
-                        if (!hasQuery)
+                        switch (root._fileStateKey) {
+                        case "checking":
+                            return I18n.tr("Checking search tools", "Overview search empty state while the search-tool probe has not answered");
+                        case "missing-rg":
+                            return I18n.tr("Text search needs ripgrep", "Overview search empty state when the ripgrep binary is missing");
+                        case "missing-fd":
+                            return I18n.tr("File search needs fd", "Overview search empty state when the fd binary is missing");
+                        case "unchecked":
+                            return I18n.tr("Search tools could not be checked", "Overview search empty state when the probe failed and the search was not attempted");
+                        case "error":
+                            return root.errorLine(root.controller?.fileSearchError) || I18n.tr("Search failed");
+                        case "prompt":
                             return I18n.tr("Type to search files");
-                        if (root.controller.searchQuery.length < 2)
+                        case "short":
                             return I18n.tr("Type at least 2 characters");
-                        var fileType = root.controller?.fileSearchType ?? "all";
-                        switch (fileType) {
+                        }
+                        switch (root.controller?.fileSearchType ?? "all") {
                         case "dir":
                             return I18n.tr("No folders found");
                         case "file":
@@ -552,6 +679,34 @@ Item {
                     default:
                         return I18n.tr("No results found");
                     }
+                }
+            }
+
+            StyledText {
+                anchors.horizontalCenter: parent.horizontalCenter
+                width: Math.min(320, Math.max(160, root.width - Theme.spacingXL * 2))
+                visible: text.length > 0
+                text: getDependencyHint()
+                font.pixelSize: Theme.fontSizeSmall
+                color: Theme.surfaceVariantText
+                horizontalAlignment: Text.AlignHCenter
+                wrapMode: Text.WordWrap
+
+                // Named so a missing search backend reads as an install step
+                // rather than as a query that matched nothing — and so a probe
+                // that could not run says that instead of blaming a tool.
+                function getDependencyHint() {
+                    switch (root.fileHintKey(root._emptyStateFacts)) {
+                    case "install-rg":
+                        return I18n.tr("Install the ripgrep package to search inside file contents.", "Overview search hint when the ripgrep binary is missing");
+                    case "install-fd":
+                        return I18n.tr("Install the fd package (fd-find on Debian and Fedora) to search files and folders by name.", "Overview search hint when the fd binary is missing");
+                    case "probe-retrying":
+                        return I18n.tr("Still checking which search tools are installed: %1", "Overview search hint while the launcher-search status probe is being retried").arg(DSearchService.statusError);
+                    case "probe-failed":
+                        return I18n.tr("Could not check which search tools are installed: %1. Reopen the launcher to try again.", "Overview search hint when the launcher-search status probe failed").arg(DSearchService.statusError);
+                    }
+                    return "";
                 }
             }
         }
