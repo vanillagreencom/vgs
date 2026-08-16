@@ -203,11 +203,13 @@ Item {
         setBarContext(pos, bottomGap);
     }
 
-    // Holds backgroundWindow.updatesEnabled true while the surface body is
-    // changing so the contentHoleRect mask carve-out tracks the popup body —
-    // otherwise clicks in newly-grown areas hit the bg window and dismiss.
-    // Debounced off ~250ms after the last change so a stable popup doesn't
-    // keep the bg window in active-update mode.
+    // Holds backgroundWindow.updatesEnabled true around a geometry change so
+    // the mask actually commits to the compositor. The carve-out itself is NOT
+    // derived from the rect this records — it comes from `bodyRectX/Y/W/H`,
+    // the geometry the body is DRAWN at — so this only has to cover the target
+    // change; `bodyRectAnimating` covers the frames in between. Debounced off
+    // ~250ms after the last change so a stable popup does not keep the bg
+    // window in active-update mode.
     property bool _bgCommitWindow: false
 
     Timer {
@@ -247,8 +249,8 @@ Item {
 
     // The layer surface spans the output top-to-bottom at all times, so this is
     // the ONLY geometry it ever needs: the body rect it records drives the left
-    // margin, the surface width and the background window's dismiss carve-out,
-    // never the surface height. Height changes stay inside the surface, which is
+    // margin and the surface width, never the surface height — and no longer
+    // the dismiss carve-out, which tracks the drawn body instead. Height changes stay inside the surface, which is
     // what makes a resize a pure in-surface animation instead of a per-frame
     // wl_surface geometry commit (the visible flash — VGS-133).
     function _setSettledSurfaceGeometry() {
@@ -257,66 +259,8 @@ Item {
         }
     }
 
-    // THE CARVE-OUT MUST COVER WHAT IS ON SCREEN, NOT WHAT IS BEING AIMED AT.
-    //
-    // `alignedHeight` is the TARGET; `renderedAlignedHeight` is what the body
-    // currently draws, and on a shrink it animates down to meet it. Recording
-    // the target immediately shrinks contentHoleRect straight away, so for the
-    // length of the animation the still-visible lower band of the popout sits
-    // outside the hole and inside the background dismiss window — clicking
-    // there dismisses the popout instead of activating the content under the
-    // cursor. The envelope (rendered ∪ target ∪ what is already recorded) keeps
-    // the hole over both until the resize settles.
-    //
-    // This does NOT reintroduce the VGS-133 flash. The body rect no longer sizes
-    // the layer surface at all: only `_surfaceMarginLeft` and `_surfaceW` are
-    // derived from it, both from the X axis, while the surface height comes from
-    // being anchored top and bottom. Widening the envelope moves the carve-out
-    // and nothing else, so no wl_surface geometry is committed by it.
-    function _setDismissCarveOutEnvelope() {
-        if (!shouldBeVisible)
-            return;
-        const currentY = renderedAlignedY;
-        const currentBottom = renderedAlignedY + renderedAlignedHeight;
-        const targetY = alignedY;
-        const targetBottom = alignedY + alignedHeight;
-        // The recorded rect is folded in so a second shrink arriving mid-flight
-        // cannot narrow the hole below what the previous one was still covering.
-        const existingY = _surfaceBodyH > 0 ? _surfaceBodyY : currentY;
-        const existingBottom = _surfaceBodyH > 0 ? _surfaceBodyY + _surfaceBodyH : currentBottom;
-        const envelopeY = Math.min(currentY, targetY, existingY);
-        const envelopeBottom = Math.max(currentBottom, targetBottom, existingBottom);
-        _setSurfaceGeometry(alignedX, envelopeY, alignedWidth, Math.max(0, envelopeBottom - envelopeY));
-        // Monotonic by construction, so something has to collapse it back to the
-        // settled rect or the hole would never shrink again.
-        carveOutSettleTimer.restart();
-    }
 
-    // THE ENVELOPE HAS TO FOLLOW THE ANIMATION, NOT JUST ITS ENDPOINTS.
-    //
-    // Unioning start and target covers a monotone tween and nothing else, and
-    // these are not monotone: the expressive entry curves overshoot by
-    // construction - `Anims.expressiveDefaultSpatial` carries a y control point
-    // of 1.21 and `expressiveFastSpatial` 1.5 (1.67 in Appearance) - so
-    // `renderedAlignedY` travels PAST its target before settling back. That
-    // strip is outside a union of the endpoints, and since VGS-133 made the
-    // content surface output-tall it is drawn rather than clipped, so it was
-    // visible popout sitting inside the dismiss window.
-    //
-    // Re-unioning on each rendered frame is what covers it, and it terminates:
-    // the envelope only ever grows, so the rect stops changing as soon as the
-    // overshoot peaks, and the settle timer - restarted here, so it measures
-    // from the last MOVEMENT rather than from the last target change - collapses
-    // it once the motion is actually over.
-    onRenderedAlignedYChanged: _setDismissCarveOutEnvelope()
-    onRenderedAlignedHeightChanged: _setDismissCarveOutEnvelope()
 
-    Timer {
-        id: carveOutSettleTimer
-        interval: Math.max(0, Theme.variantDuration(root.animationDuration, root.renderedGeometryGrowing) + 32)
-        repeat: false
-        onTriggered: root._setSettledSurfaceGeometry()
-    }
 
     // Repositioning an OPEN popout must not collapse the carve-out either. This
     // is a second settle path into the same rect, and it is reachable while a
@@ -328,7 +272,7 @@ Item {
     // degenerates to the settled rect once rendered geometry has caught up, so
     // routing through it costs nothing in the steady case.
     function updateSurfacePosition() {
-        _setDismissCarveOutEnvelope();
+        _setSettledSurfaceGeometry();
     }
 
     // X and WIDTH go through the envelope too, even though neither moves the
@@ -337,17 +281,17 @@ Item {
     // TARGET as a side effect and collapse the carve-out under the still-taller
     // body. The axis that changed is not the axis at risk.
     onAlignedXChanged: {
-        _setDismissCarveOutEnvelope();
+        _setSettledSurfaceGeometry();
         _kickBlurCommit();
     }
 
     onAlignedYChanged: {
-        _setDismissCarveOutEnvelope();
+        _setSettledSurfaceGeometry();
         _kickBlurCommit();
     }
 
     onAlignedWidthChanged: {
-        _setDismissCarveOutEnvelope();
+        _setSettledSurfaceGeometry();
         _kickBlurCommit();
     }
 
@@ -413,7 +357,7 @@ Item {
         // open) leaves the background window's dismiss carve-out on the stale
         // rect, and clicks in the newly-grown area dismiss the popout. Re-commit
         // once this tick has drained.
-        Qt.callLater(() => root._setDismissCarveOutEnvelope());
+        Qt.callLater(() => root._setSettledSurfaceGeometry());
         if (screen) {
             PopoutManager.showPopout(popoutHandle);
             opened();
@@ -479,6 +423,49 @@ Item {
     readonly property real alignedHeight: Theme.px(popupHeight, dpr)
     property real renderedAlignedY: alignedY
     property real renderedAlignedHeight: alignedHeight
+
+    // ======================================================================
+    // THE BODY RECT AS DRAWN. The dismiss carve-out is derived from HERE and
+    // nowhere else, and this is the whole fix for a family of four reports.
+    //
+    // The carve-out used to be written imperatively from SETTLED geometry by
+    // every handler that changed anything - height, Y, X, width, reposition.
+    // The body, meanwhile, is drawn from ANIMATED geometry. So every path that
+    // moved geometry mid-animation got it wrong in its own way: a grow whose
+    // entry curve overshoots past its target Y, a shrink whose
+    // renderedAlignedHeight lags the new target, a reposition landing during a
+    // shrink, a width change landing during a shrink. Four reports, one defect:
+    // the hole described where the body was GOING, not where it IS.
+    //
+    // Deriving it once from the same values the body draws from makes all four
+    // correct by construction - there is no longer a site at which they can
+    // occur, which is why the imperative envelope, its settle timer and its
+    // per-handler calls are gone rather than repaired. These four expressions
+    // are exactly contentContainer's, and `contentHoleRect` binds to them:
+    //
+    //   x      alignedX             not animated
+    //   y      renderedAlignedY     ANIMATED - overshoots on expressive curves
+    //   width  alignedWidth         not animated
+    //   height renderedAlignedHeight ANIMATED - lags on a shrink
+    //
+    // Both windows span the output, so these are screen coordinates in both.
+    // NOTE the asymmetry is real, not an oversight: only Y and height animate,
+    // and those are precisely the two that were wrong.
+    readonly property real bodyRectX: alignedX
+    readonly property real bodyRectY: renderedAlignedY
+    readonly property real bodyRectW: alignedWidth
+    readonly property real bodyRectH: renderedAlignedHeight
+
+    // The background window skips buffer updates unless something asks for
+    // them, and a per-frame carve-out needs them for the whole transition -
+    // including the last frame, which a debounce started at the target change
+    // can expire before. Both edges of this flag reopen the window.
+    readonly property bool bodyRectAnimating: renderedAlignedY !== alignedY || renderedAlignedHeight !== alignedHeight
+    onBodyRectAnimatingChanged: {
+        _bgCommitWindow = true;
+        bgCommitSettleTimer.restart();
+    }
+    // ======================================================================
     // Latched at the START of each height transition (see onAlignedHeightChanged),
     // NOT a live comparison. A continuous `alignedHeight >= renderedAlignedHeight`
     // stays true for a whole grow but flips false→true at the *tail* of a shrink
@@ -518,7 +505,7 @@ Item {
         // still holds the pre-animation value here, so this captures new-target vs
         // current-rendered once and holds it stable for the whole animation.
         renderedGeometryGrowing = alignedHeight >= renderedAlignedHeight;
-        _setDismissCarveOutEnvelope();
+        _setSettledSurfaceGeometry();
         _kickBlurCommit();
         if (!suspendShadowWhileResizing || !shouldBeVisible)
             return;
@@ -631,10 +618,11 @@ Item {
         screen: root.screen
         visible: false
         color: "transparent"
-        // Skip buffer updates when there's nothing to render. Briefly flipped
-        // true via _bgCommitWindow when _surfaceBodyW/H changes so the
-        // contentHoleRect mask carve-out actually commits to the compositor.
-        updatesEnabled: root.overlayContent !== null || root._bgCommitWindow
+        // Skip buffer updates when there's nothing to render. Held open for the
+        // whole of a geometry transition, because contentHoleRect now tracks the
+        // ANIMATED body and every frame of it has to reach the compositor;
+        // _bgCommitWindow covers the target-change and settle edges around it.
+        updatesEnabled: root.overlayContent !== null || root._bgCommitWindow || root.bodyRectAnimating
 
         WlrLayershell.namespace: root.layerNamespace + ":background"
         WlrLayershell.layer: root.effectivePopoutLayer
@@ -670,10 +658,10 @@ Item {
             id: contentHoleRect
             visible: false
             color: "transparent"
-            x: root.backgroundDismissWindowRequired ? root._surfaceBodyX : 0
-            y: root.backgroundDismissWindowRequired ? root._surfaceBodyY : 0
-            width: (root.backgroundDismissWindowRequired && shouldBeVisible) ? root._surfaceBodyW : 0
-            height: (root.backgroundDismissWindowRequired && shouldBeVisible) ? root._surfaceBodyH : 0
+            x: root.backgroundDismissWindowRequired ? root.bodyRectX : 0
+            y: root.backgroundDismissWindowRequired ? root.bodyRectY : 0
+            width: (root.backgroundDismissWindowRequired && shouldBeVisible) ? root.bodyRectW : 0
+            height: (root.backgroundDismissWindowRequired && shouldBeVisible) ? root.bodyRectH : 0
         }
 
         MouseArea {

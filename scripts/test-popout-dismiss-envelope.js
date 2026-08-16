@@ -1,24 +1,27 @@
 #!/usr/bin/env node
 
-// Guards the rule that a popout's dismiss carve-out covers what is ON SCREEN,
-// not what the animation is aiming at (VGS-133 review, Codex P2).
+// Guards the rule that a popout's dismiss carve-out is the body AS DRAWN, at
+// every frame of every transition (VGS-133 review).
 //
 // The background dismiss window is a full-output surface whose input mask is
-// `maskRect` MINUS `contentHoleRect`, and `contentHoleRect` is sized from
-// `_surfaceBodyY` / `_surfaceBodyH`. `alignedHeight` is the TARGET height;
-// `renderedAlignedHeight` is what the body actually draws and, on a shrink,
-// animates down to meet it. Recording the target immediately shrinks the hole
-// at once, so for the length of the animation the still-visible lower band of
-// the popout lies OUTSIDE the hole and INSIDE the dismiss window: a click there
-// dismisses the popout instead of reaching the content under the cursor.
+// `maskRect` MINUS `contentHoleRect`. If that hole is not exactly the popup
+// body currently on screen, one of two things is wrong for a real user, during
+// the very animation this PR added: a click on the visible popout dismisses it
+// instead of reaching its content, or a click just outside it fails to dismiss.
 //
-// The envelope is the fix, and this file is what keeps it. The predicate is not
-// "the function exists" but "at every frame of a shrink, the carve-out contains
-// the rendered body" — checked by stepping an animation.
+// WHY THIS FILE IS SHAPED THE WAY IT IS. The carve-out used to be written
+// imperatively from SETTLED geometry by every handler that changed anything,
+// while the body draws from ANIMATED geometry. That produced four separate
+// reports - a grow whose entry curve overshoots past its target Y, a shrink
+// whose rendered height lags, a reposition mid-shrink, a width change
+// mid-shrink - which were one defect at four call sites. The fix derives the
+// hole once from the drawn geometry, so this file does not test four handlers.
+// It evaluates the SHIPPED BINDINGS and asserts one invariant across all four
+// paths: hole == drawn body, on every frame.
 //
-// THE FUNCTION IS SLICED OUT OF THE SHIPPED QML AND RUN, not transcribed. A
-// transcription would keep passing after the QML changed, which is the failure
-// mode this whole PR is about. Extraction fails loudly if its shape moves.
+// The bindings are extracted from the QML and evaluated, never transcribed. A
+// transcription keeps passing after the QML moves on, which is the failure mode
+// this whole review was about. Extraction fails loudly if the shapes move.
 
 "use strict";
 
@@ -30,315 +33,232 @@ const POPOUT = path.join(ROOT, "quickshell/vshell/Widgets/VgsPopoutStandalone.qm
 const source = fs.readFileSync(POPOUT, "utf8");
 
 let failures = 0;
-function fail(name, detail) {
-  console.error(`FAIL [${name}]: ${detail}`);
-  failures += 1;
-}
-function ok(name) {
-  console.log(`  ok    ${name}`);
-}
+const fail = (name, detail) => { console.error(`FAIL [${name}]: ${detail}`); failures += 1; };
+const ok = (name) => console.log(`  ok    ${name}`);
 
-// --- slice the function body out of the QML -------------------------------
-function sliceFunctionBody(src, name) {
-  const marker = `function ${name}() {`;
-  const start = src.indexOf(marker);
-  if (start === -1)
-    throw new Error(`could not find ${name}() in ${POPOUT}`);
-  let i = start + marker.length;
-  let depth = 1;
-  while (i < src.length && depth > 0) {
-    const ch = src[i];
-    if (ch === "{") depth += 1;
-    else if (ch === "}") depth -= 1;
-    i += 1;
+// --- extraction ------------------------------------------------------------
+// Deliberately NOT a brace counter: these are single-line property bindings, so
+// the block is bounded by its `id:` and the first line that closes it. A miss
+// throws rather than returning something partial (VGS-187 covers the brace
+// counter that used to live here).
+function bindingsOf(id, names) {
+  const at = source.indexOf(`id: ${id}`);
+  if (at === -1) throw new Error(`could not find ${id} in ${POPOUT}`);
+  const block = source.slice(at, at + 1200);
+  const out = {};
+  for (const name of names) {
+    const m = new RegExp(`^\\s*${name}:\\s*(.+)$`, "m").exec(block);
+    if (!m) throw new Error(`could not read ${id}.${name} from ${POPOUT}`);
+    out[name] = m[1].trim();
   }
-  if (depth !== 0)
-    throw new Error(`unbalanced braces reading ${name}() in ${POPOUT}`);
-  return src.slice(start + marker.length, i - 1);
+  return out;
 }
 
-// Same discipline for a QML signal handler. The first cut of this used
-// `indexOf("\n    }")` with the result unchecked: on -1, `slice(0, -1)` keeps
-// nearly the whole file, so the wiring assertion below would find
-// `_setDismissCarveOutEnvelope()` at SOME OTHER call site - open()'s
-// Qt.callLater, for one - and pass while the handler no longer called it at
-// all. A guard that cannot fail is the exact defect this PR exists to remove,
-// so the bounds are brace-matched and a miss is fatal.
-function sliceHandlerBody(src, name) {
-  const marker = `${name}: {`;
-  const start = src.indexOf(marker);
-  if (start === -1)
-    throw new Error(`could not find handler ${name} in ${POPOUT}`);
-  let i = start + marker.length;
-  let depth = 1;
-  while (i < src.length && depth > 0) {
-    const ch = src[i];
-    if (ch === "{") depth += 1;
-    else if (ch === "}") depth -= 1;
-    i += 1;
-  }
-  if (depth !== 0)
-    throw new Error(`unbalanced braces reading handler ${name} in ${POPOUT}`);
-  return src.slice(start + marker.length, i - 1);
+function propertyBinding(name) {
+  const m = new RegExp(`readonly property real ${name}:\\s*(.+)`).exec(source);
+  if (!m) throw new Error(`could not read property ${name} from ${POPOUT}`);
+  return m[1].trim();
 }
 
-const envelopeBody = sliceFunctionBody(source, "_setDismissCarveOutEnvelope");
-const settledBody = sliceFunctionBody(source, "_setSettledSurfaceGeometry");
-const repositionBody = sliceFunctionBody(source, "updateSurfacePosition");
+const hole = bindingsOf("contentHoleRect", ["x", "y", "width", "height"]);
+const container = bindingsOf("contentContainer", ["x", "y", "width", "height"]);
+const bodyRect = {
+  x: propertyBinding("bodyRectX"),
+  y: propertyBinding("bodyRectY"),
+  w: propertyBinding("bodyRectW"),
+  h: propertyBinding("bodyRectH"),
+};
 
-// `with` is what lets the sliced body keep its bare identifiers (`alignedY`,
-// `_surfaceBodyH`, ...) exactly as QML resolves them against the component
-// scope. Deliberate, and confined to this harness.
-function compile(body) {
+// `root.` and bare names both resolve against the same state here.
+const evalIn = (expr, ctx) => {
+  const src = expr.replace(/\broot\./g, "");
   // eslint-disable-next-line no-new-func
-  return new Function("ctx", `with (ctx) { ${body} }`);
-}
+  return new Function("ctx", `with (ctx) { return (${src}); }`)(ctx);
+};
 
-// --- a popout, and the two rects that matter ------------------------------
-function makePopout() {
-  const ctx = {
+// --- the model -------------------------------------------------------------
+function makeState(over = {}) {
+  const st = {
     shouldBeVisible: true,
+    backgroundDismissWindowRequired: true,
+    backgroundInteractive: true,
+    shadowBuffer: 32,
     alignedX: 40,
-    alignedWidth: 400,
     alignedY: 100,
+    alignedWidth: 400,
     alignedHeight: 600,
     renderedAlignedY: 100,
     renderedAlignedHeight: 600,
-    _surfaceBodyX: 0,
-    _surfaceBodyY: 0,
-    _surfaceBodyW: 0,
-    _surfaceBodyH: 0,
-    _surfaceMarginLeft: 0,
-    _surfaceW: 0,
-    shadowBuffer: 32,
-    carveOutSettleTimer: { restart() {} },
-    Math,
-    // Snapping is identity here: this file is about which RECT is recorded,
-    // and a device-pixel round would only blur the comparison.
-    _setSurfaceGeometry(bodyX, bodyY, bodyW, bodyH) {
-      ctx._surfaceBodyX = bodyX;
-      ctx._surfaceBodyY = bodyY;
-      ctx._surfaceBodyW = bodyW;
-      ctx._surfaceBodyH = bodyH;
-    },
+    ...over,
   };
-  return ctx;
+  // What the settle path records for the SURFACE. Deliberately settled: the
+  // surface must not resize per frame (that is the VGS-133 flash). If the hole
+  // were still derived from this, every assertion below would fail.
+  st._surfaceBodyX = st.alignedX;
+  st._surfaceBodyY = st.alignedY;
+  st._surfaceBodyW = st.alignedWidth;
+  st._surfaceBodyH = st.alignedHeight;
+  st._surfaceMarginLeft = st._surfaceBodyX - st.shadowBuffer;
+  // Both `bodyRect*` and the contentContainer bindings are evaluated from the
+  // same state, so the comparison is between two shipped expressions.
+  for (const [k, expr] of Object.entries(bodyRect)) st[`bodyRect${k.toUpperCase()}`] = evalIn(expr, st);
+  return st;
 }
 
-// The band the user can see: what the body actually draws this frame.
-const renderedBand = (c) => [c.renderedAlignedY, c.renderedAlignedY + c.renderedAlignedHeight];
-// The band the dismiss window does NOT swallow.
-const carveBand = (c) => [c._surfaceBodyY, c._surfaceBodyY + c._surfaceBodyH];
+// The body's screen rect, from contentContainer's own bindings. Its x is
+// SURFACE-LOCAL, so the surface's left margin is added back to reach screen
+// coordinates - the same arithmetic the compositor does.
+const drawnBody = (st) => ({
+  x: st._surfaceMarginLeft + evalIn(container.x, st),
+  y: evalIn(container.y, st),
+  w: evalIn(container.width, st),
+  h: evalIn(container.height, st),
+});
 
-function carveCoversRendered(c) {
-  const [rTop, rBottom] = renderedBand(c);
-  const [cTop, cBottom] = carveBand(c);
-  return cTop <= rTop && cBottom >= rBottom;
+const carveOut = (st) => ({
+  x: evalIn(hole.x, st),
+  y: evalIn(hole.y, st),
+  w: evalIn(hole.width, st),
+  h: evalIn(hole.height, st),
+});
+
+const mismatch = (st) => {
+  const b = drawnBody(st), c = carveOut(st);
+  const bad = ["x", "y", "w", "h"].filter((k) => b[k] !== c[k]);
+  return bad.length ? `body ${JSON.stringify(b)} vs carve-out ${JSON.stringify(c)} (differs on ${bad.join(",")})` : null;
+};
+
+// Steps a transition and checks the invariant on EVERY frame, not just the ends.
+function sweep(label, frames) {
+  const bad = [];
+  frames.forEach((st, i) => {
+    const m = mismatch(st);
+    if (m) bad.push(`frame ${i}: ${m}`);
+  });
+  if (bad.length) fail(label, `the carve-out did not track the drawn body:\n    ${bad.join("\n    ")}`);
+  else ok(`${label}: the carve-out is the drawn body on every frame`);
+  return bad.length;
 }
 
-// Drives a shrink through the same sequence QML does: the target changes first,
-// then renderedAlignedHeight animates toward it over several frames.
-function runShrink(commit, frames = 6) {
-  const c = makePopout();
-  commit(c); // settle at the open size
-  const startH = c.renderedAlignedHeight;
-  const endH = 200;
-  c.alignedHeight = endH; // the target lands immediately...
-  commit(c); // ...and onAlignedHeightChanged fires here
-  const exposed = [];
-  for (let step = 1; step <= frames; step += 1) {
-    // ...while the rendered body catches up over the animation.
-    c.renderedAlignedHeight = startH + ((endH - startH) * step) / frames;
-    if (!carveCoversRendered(c)) {
-      const [rTop, rBottom] = renderedBand(c);
-      const [cTop, cBottom] = carveBand(c);
-      exposed.push(`frame ${step}: rendered ${rTop}..${rBottom} vs carve-out ${cTop}..${cBottom}`);
-    }
+const lerp = (a, b, t) => a + (b - a) * t;
+const FRAMES = 8;
+
+// --- the four paths, all against ANIMATED geometry -------------------------
+
+// 1. GROW WITH OVERSHOOT. The expressive entry curves carry y control points of
+//    1.21 (expressiveDefaultSpatial) and 1.5/1.67 (expressiveFastSpatial), so
+//    renderedAlignedY travels PAST its target before settling. A model that
+//    interpolated between endpoints would never produce these frames.
+{
+  const startY = 300, targetY = 100;
+  const frames = [];
+  for (let i = 0; i <= FRAMES; i += 1) {
+    const t = i / FRAMES;
+    // Overshoot above the target, then settle back onto it.
+    const y = t < 0.75 ? lerp(startY, targetY - 40, t / 0.75) : lerp(targetY - 40, targetY, (t - 0.75) / 0.25);
+    frames.push(makeState({ alignedY: targetY, renderedAlignedY: y, alignedHeight: 600, renderedAlignedHeight: lerp(200, 600, t) }));
   }
-  return { ctx: c, exposed };
+  const overshot = frames.some((f) => f.renderedAlignedY < Math.min(startY, targetY));
+  if (!overshot) fail("grow setup", "no frame overshot the target, so this path cannot witness the defect");
+  sweep("grow with Y overshoot", frames);
 }
 
-const envelope = compile(envelopeBody);
-const settled = compile(settledBody);
-
-// --- the guard ------------------------------------------------------------
+// 2. SHRINK WHERE THE RENDERED HEIGHT LAGS.
 {
-  const { exposed } = runShrink(envelope);
-  if (exposed.length)
-    fail("shrink", `the dismiss window swallowed visible popout during a shrink:\n    ${exposed.join("\n    ")}`);
-  else
-    ok("a shrinking popout keeps its dismiss carve-out over the visible body");
+  const frames = [];
+  for (let i = 0; i <= FRAMES; i += 1)
+    frames.push(makeState({ alignedHeight: 200, renderedAlignedHeight: lerp(600, 200, i / FRAMES) }));
+  if (!frames.some((f) => f.renderedAlignedHeight > f.alignedHeight))
+    fail("shrink setup", "no frame lagged the target, so this path cannot witness the defect");
+  sweep("shrink with lagging height", frames);
 }
 
-// THE MUST-FAIL CONTROL. `_setSettledSurfaceGeometry` is the pre-fix behaviour
-// and is still the shipped settle path, so this is not a straw man: it is the
-// real function, and it must NOT be able to hold the invariant mid-shrink. If
-// this ever stops reporting exposure, the check above has stopped measuring.
+// 3. REPOSITION DURING A SHRINK. X and Y targets move while the height is still
+//    animating - the Dash tab-switch path, where currentTabIndex is assigned and
+//    updateSurfacePosition() called on an already-visible popout.
 {
-  const { exposed } = runShrink(settled);
-  if (!exposed.length)
-    fail("control", "recording the settled target alone did NOT expose the body, so the shrink check above proves nothing");
-  else
-    ok(`recording the target alone exposes the body (control: ${exposed.length} frame(s))`);
-}
-
-// A grow must not be narrowed either: the newly-grown area has to be inside the
-// hole the moment it can be clicked.
-{
-  const c = makePopout();
-  envelope(c);
-  c.alignedHeight = 900;
-  envelope(c);
-  const [, cBottom] = carveBand(c);
-  if (cBottom < c.alignedY + c.alignedHeight)
-    fail("grow", `carve-out bottom ${cBottom} does not reach the grown target ${c.alignedY + c.alignedHeight}`);
-  else
-    ok("a growing popout's carve-out reaches the new target immediately");
-}
-
-// The envelope is monotonic, so something must collapse it or the hole would
-// never shrink again. The settle path is that something.
-{
-  const c = makePopout();
-  envelope(c);
-  c.alignedHeight = 200;
-  envelope(c);
-  c.renderedAlignedHeight = 200;
-  const beforeH = c._surfaceBodyH;
-  settled(c);
-  if (!(c._surfaceBodyH < beforeH))
-    fail("settle", `the settle path did not collapse the envelope (${beforeH} -> ${c._surfaceBodyH})`);
-  else if (c._surfaceBodyH !== c.alignedHeight)
-    fail("settle", `the settle path left ${c._surfaceBodyH}, not the target ${c.alignedHeight}`);
-  else
-    ok("the settle path collapses the envelope back to the target");
-}
-
-// A second shrink arriving mid-flight must not narrow the hole below what the
-// first one was still covering.
-{
-  const c = makePopout();
-  envelope(c);
-  c.alignedHeight = 400;
-  envelope(c);
-  c.renderedAlignedHeight = 500;
-  c.alignedHeight = 300;
-  envelope(c);
-  if (!carveCoversRendered(c))
-    fail("restacked shrink", `a second shrink narrowed the hole under the visible body: rendered ${renderedBand(c)} vs carve-out ${carveBand(c)}`);
-  else
-    ok("a second shrink mid-flight does not narrow the hole under the visible body");
-}
-
-// The expressive entry curves overshoot (y control points of 1.21 and 1.5), so
-// renderedAlignedY moves past its target before settling. A union of the two
-// ENDPOINTS does not contain that strip; only re-unioning on rendered frames
-// does.
-{
-  const c = makePopout();
-  envelope(c);
-  const targetY = 40;
-  c.alignedY = targetY;                 // a move upward starts
-  envelope(c);
-  // ...and the curve carries the body ABOVE both the start and the target.
-  const overshootY = targetY - 30;
-  c.renderedAlignedY = overshootY;
-  const beforeTop = carveBand(c)[0];
-  if (beforeTop <= overshootY)
-    fail("overshoot setup", "endpoint union already covered the overshoot, so this case cannot witness the fix");
-  envelope(c);                          // the rendered-frame handler re-unions
-  if (carveBand(c)[0] > overshootY)
-    fail("overshoot", `the overshoot strip is outside the carve-out: rendered top ${overshootY} vs carve-out top ${carveBand(c)[0]}`);
-  else
-    ok("an overshooting entry curve stays inside the carve-out");
-
-  // The wiring for it: endpoints alone cannot cover an overshoot, so the
-  // rendered-frame handlers have to exist and call the envelope.
-  for (const h of ["onRenderedAlignedYChanged", "onRenderedAlignedHeightChanged"]) {
-    const re = new RegExp(`${h}\\s*:\\s*_setDismissCarveOutEnvelope\\(\\)`);
-    if (!re.test(source))
-      fail("overshoot wiring", `${h} does not re-union the envelope, so overshoot frames are never covered`);
-    else
-      ok(`${h} re-unions the envelope`);
+  const frames = [];
+  for (let i = 0; i <= FRAMES; i += 1) {
+    const t = i / FRAMES;
+    frames.push(makeState({
+      alignedX: lerp(40, 500, t), alignedY: 120,
+      alignedHeight: 200, renderedAlignedHeight: lerp(600, 200, t),
+      renderedAlignedY: lerp(100, 120, t),
+    }));
   }
+  sweep("reposition during a shrink", frames);
 }
 
-// The wiring: the envelope has to be what the height path actually calls, or
-// every assertion above is about a function nothing invokes.
+// 4. WIDTH CHANGE DURING A SHRINK. The Dash binds popupWidth to
+//    SettingsData.showWeekNumber, so a settings reload can land mid-transition.
 {
-  const body = sliceHandlerBody(source, "onAlignedHeightChanged");
-  if (!body.includes("_setDismissCarveOutEnvelope()"))
-    fail("wiring", "onAlignedHeightChanged does not call _setDismissCarveOutEnvelope(), so the envelope is dead code");
-  else if (body.includes("Qt.callLater"))
-    fail("wiring", "the handler slice ran past its own closing brace and swallowed later call sites, so this assertion could pass on one of those");
-  else
-    ok("onAlignedHeightChanged routes through the envelope");
-}
-
-// The X and WIDTH handlers write the SAME rect, so a horizontal reflow arriving
-// mid-shrink rewrites Y/height from the target as a side effect. The axis that
-// changed is not the axis at risk.
-{
-  const xBody = sliceHandlerBody(source, "onAlignedXChanged");
-  const wBody = sliceHandlerBody(source, "onAlignedWidthChanged");
-  for (const [name, body] of [["onAlignedXChanged", xBody], ["onAlignedWidthChanged", wBody]]) {
-    if (!body.includes("_setDismissCarveOutEnvelope()"))
-      fail("axis wiring", `${name} bypasses the envelope, so a reflow mid-shrink collapses the carve-out`);
-    else if (body.includes("Qt.callLater"))
-      fail("axis wiring", `${name}'s slice overran its closing brace`);
-    else
-      ok(`${name} routes through the envelope`);
+  const frames = [];
+  for (let i = 0; i <= FRAMES; i += 1) {
+    const t = i / FRAMES;
+    frames.push(makeState({
+      alignedWidth: t < 0.5 ? 400 : 560,
+      alignedHeight: 200, renderedAlignedHeight: lerp(600, 200, t),
+    }));
   }
+  if (!frames.some((f) => f.alignedWidth !== 400)) fail("width setup", "width never changed");
+  sweep("width change during a shrink", frames);
 }
 
-// The OTHER settle path. `updateSurfacePosition()` writes the same rect and is
-// reachable while a shrink animates - VGSIPC and PopoutManager both assign
-// `currentTabIndex` on a visible Dash and then call it - so if it bypasses the
-// envelope the carve-out collapses early and the bug is back through a door the
-// height handler never opens.
+// --- the must-fail control -------------------------------------------------
+// The settled rect is what the carve-out used to come from, and it is still
+// recorded for the surface - so this is the real pre-fix expression, not a straw
+// man. If deriving the hole from it does NOT break the invariant, then none of
+// the sweeps above are measuring anything.
 {
-  const reposition = compile(repositionBody);
-  const c = makePopout();
-  envelope(c);
-  const startH = c.renderedAlignedHeight;
-  c.alignedHeight = 200;
-  envelope(c);            // the shrink starts
-  c.renderedAlignedHeight = (startH + 200) / 2;
-  c._setDismissCarveOutEnvelope = () => envelope(c);
-  c._setSettledSurfaceGeometry = () => settled(c);
-  // COLLAPSE IT FIRST. Without this the carve-out is already correct when
-  // reposition() is called, so a `updateSurfacePosition` that became a NO-OP
-  // would pass this assertion - the check would be measuring the state it
-  // inherited rather than anything the call did. Starting from a collapsed
-  // rect means only a call that actually re-unions can satisfy it.
-  settled(c);
-  if (carveCoversRendered(c))
-    fail("reposition setup", "the pre-state was supposed to be collapsed, so this case cannot witness a no-op");
-  reposition(c);          // ...and a reposition lands mid-animation
-  if (!carveCoversRendered(c))
-    fail("reposition", `repositioning mid-shrink collapsed the carve-out: rendered ${renderedBand(c)} vs carve-out ${carveBand(c)}`);
-  else
-    ok("repositioning mid-shrink keeps the carve-out over the visible body");
-
-  // ...and the control: the settled path alone is what must NOT hold it.
-  const d = makePopout();
-  envelope(d);
-  d.alignedHeight = 200;
-  envelope(d);
-  d.renderedAlignedHeight = (startH + 200) / 2;
-  settled(d);
-  if (carveCoversRendered(d))
-    fail("reposition control", "the settled path held the invariant on its own, so the reposition check above proves nothing");
-  else
-    ok("the settled path alone does not hold it (control)");
+  const settledHole = { x: "_surfaceBodyX", y: "_surfaceBodyY", width: "_surfaceBodyW", height: "_surfaceBodyH" };
+  const saved = { ...hole };
+  Object.assign(hole, settledHole);
+  const st = makeState({ alignedHeight: 200, renderedAlignedHeight: 450, alignedY: 100, renderedAlignedY: 60 });
+  const m = mismatch(st);
+  Object.assign(hole, saved);
+  if (!m) fail("control", "deriving the carve-out from the SETTLED rect did not break the invariant, so the sweeps prove nothing");
+  else ok("deriving it from the settled rect breaks the invariant (control)");
 }
 
-// And the carve-out has to be the thing sized from it.
+// --- wiring ----------------------------------------------------------------
+// The invariant above is only meaningful if the hole is bound to the derived
+// rect rather than to a settled value that happens to agree in the steady state.
 {
-  if (!/id:\s*contentHoleRect[\s\S]{0,400}root\._surfaceBodyH/.test(source))
-    fail("wiring", "contentHoleRect is no longer sized from _surfaceBodyH, so this file is measuring the wrong rect");
+  for (const [k, expr] of Object.entries(hole)) {
+    if (/_surfaceBody/.test(expr))
+      fail("wiring", `contentHoleRect.${k} still reads the settled surface rect: ${expr}`);
+  }
+  if (!/bodyRectY/.test(hole.y) || !/bodyRectH/.test(hole.height))
+    fail("wiring", "contentHoleRect's animated axes are not bound to bodyRectY/bodyRectH");
   else
-    ok("contentHoleRect is still sized from the recorded body rect");
+    ok("contentHoleRect is bound to the drawn body rect");
+
+  if (!/renderedAlignedY/.test(bodyRect.y) || !/renderedAlignedHeight/.test(bodyRect.h))
+    fail("wiring", "bodyRectY/bodyRectH are not the ANIMATED values, so the hole cannot track the animation");
+  else
+    ok("bodyRectY/bodyRectH are the animated values");
+}
+
+// The imperative envelope is what produced four call sites to get wrong. If it
+// comes back, this file's single-invariant premise is gone with it.
+{
+  for (const gone of ["_setDismissCarveOutEnvelope", "carveOutSettleTimer"]) {
+    if (source.includes(gone))
+      fail("no call sites", `${gone} is back: the carve-out is being written imperatively again, so per-path defects have somewhere to occur`);
+  }
+  if (!failures) ok("no imperative carve-out writer remains");
+}
+
+// The surface must still settle from SETTLED geometry - deriving the hole from
+// the animation must not have dragged the surface along, which would be the
+// VGS-133 flash returning.
+{
+  const m = /function _setSettledSurfaceGeometry\(\)[\s\S]{0,300}?_setSurfaceGeometry\(([^)]*)\)/.exec(source);
+  if (!m) fail("surface", "could not read the settle path's _setSurfaceGeometry call");
+  else if (/rendered/.test(m[1]))
+    fail("surface", `the layer surface is being sized from ANIMATED geometry (${m[1].trim()}) - that is the resize flash`);
+  else
+    ok("the layer surface is still sized from settled geometry");
 }
 
 if (failures) {
