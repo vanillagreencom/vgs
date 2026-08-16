@@ -104,11 +104,16 @@ vendor_drift_classify() {
   while IFS= read -r line; do
     entry=""
     case "$line" in
-      "+++ $tracked_rel"*)
+      "+++ $tracked_rel"* | "+++ \"$tracked_rel"*)
         # Names the tracked-side file the `+` lines below belong to; the
-        # trailing tab-separated mtime is not part of the path.
+        # trailing tab-separated mtime is not part of the path. GNU diff QUOTES
+        # the name when it contains a space, so both forms are anchored — a
+        # quoted header falling through would be counted as content, which is
+        # safe but names the header line instead of the file.
         current="${line#+++ }"
         current="${current%%$'\t'*}"
+        current="${current%\"}"
+        current="${current#\"}"
         ;;
       "--- $mirror_rel"* | 'diff '* | '@@ '* | ' '* | '' | '-'* | \\*) ;;
       "Only in $mirror_rel"*) ;;
@@ -145,9 +150,9 @@ vendor_drift_classify() {
 # diverged: the header reported an unreadable git while the verdict asserted a
 # repository that did not exist.
 #
-#   $1 tracked_epoch  last commit touching third_party/<engine>, "" if unknown
-#   $2 refresh_epoch  mtime of the mirror's .vstack-refreshed, "" if absent
-#   $3 tracked_dirty  yes|no|unknown — uncommitted changes under third_party/
+#   $1 age_state     from vendor_drift_tracked_age
+#   $2 tracked_epoch  its epoch, set only when the state is `usable`
+#   $3 refresh_epoch  mtime of the mirror's .vstack-refreshed, "" if absent
 #   $4 tracked_only   yes|no — from vendor_drift_classify
 #   $5 engine
 #
@@ -160,28 +165,32 @@ vendor_drift_classify() {
 # DELETION from an upstream addition is that `mirror-ahead` names no repair
 # alone — not that it is tested second.
 #
-# Unreadable evidence is answered before either: no repository, no commit, no
-# refresh marker, or a tracked tree whose uncommitted changes mean its commit
-# time does not describe what is on disk. `tracked_dirty` disqualifies the
-# commit time for BOTH rules, not one, because it is the commit time itself that
-# has stopped describing the tree.
+# Unusable evidence is answered before either, and every way it can be unusable
+# disqualifies the commit time for BOTH rules rather than one: it is the commit
+# time itself that has stopped describing the tree.
 vendor_drift_direction() {
-  local tracked_epoch="$1" refresh_epoch="$2" tracked_dirty="$3" tracked_only="$4" engine="$5"
+  local age_state="$1" tracked_epoch="$2" refresh_epoch="$3" tracked_only="$4" engine="$5"
 
-  if [[ "$tracked_dirty" == unknown ]]; then
-    printf 'undetermined\tgit could not be consulted for third_party/%s, so the tracked copy has no verifiable age' "$engine"
-    return 0
-  fi
-  if [[ -z "$tracked_epoch" ]]; then
-    printf 'undetermined\tno commit in this repository touches third_party/%s, so the tracked copy has no age to compare' "$engine"
-    return 0
-  fi
+  case "$age_state" in
+    git-unreadable)
+      printf 'undetermined\tgit could not be consulted for third_party/%s, so the tracked copy has no verifiable age' "$engine"
+      return 0
+      ;;
+    shallow)
+      printf 'undetermined\tthis is a shallow clone, where git reports the tip commit date for every path whether or not that commit touched it, so third_party/%s has no usable age' "$engine"
+      return 0
+      ;;
+    no-history)
+      printf 'undetermined\tno commit in this repository touches third_party/%s, so the tracked copy has no age to compare' "$engine"
+      return 0
+      ;;
+    dirty)
+      printf 'undetermined\tthird_party/%s has uncommitted changes, so its last commit time does not describe what is on disk' "$engine"
+      return 0
+      ;;
+  esac
   if [[ -z "$refresh_epoch" ]]; then
     printf 'undetermined\tthe mirror carries no .vstack-refreshed marker, so there is nothing to compare its age against'
-    return 0
-  fi
-  if [[ "$tracked_dirty" == yes ]]; then
-    printf 'undetermined\tthird_party/%s has uncommitted changes, so its last commit time does not describe what is on disk' "$engine"
     return 0
   fi
   if ((tracked_epoch > refresh_epoch)); then
@@ -220,21 +229,57 @@ vendor_drift_refresh_epoch() {
   vendor_drift_mtime_epoch "$marker" || true
 }
 
-# Commit time of the last commit touching the tracked copy, or nothing when the
-# path has no history (or this is not a repository).
-vendor_drift_last_commit_epoch() {
-  git -C "$1" log -1 --format=%ct -- "$2" 2>/dev/null || true
-}
+# Whether the tracked copy has a commit time that can be trusted, and if not,
+# WHICH way it is untrustworthy. Prints "<state><TAB><epoch>", the epoch being
+# empty for every state but `usable`:
+#
+#   usable          a commit time that describes what is on disk
+#   git-unreadable  git could not answer at all
+#   shallow         a shallow clone, where `git log -1 -- <path>` reports the
+#                   TIP date for EVERY path, touched or not — measured at 3
+#                   hours off on this repository, which normally beats the
+#                   mirror's refresh mtime and turns a genuine mirror-ahead
+#                   drift into a confident `tracked-ahead`
+#   no-history      no commit in this repository touches the path
+#   dirty           uncommitted changes, so the last commit time has stopped
+#                   describing the tree
+#
+# One collector rather than two signals because each state maps to exactly one
+# reason: when the state and the reason were computed separately they diverged,
+# reporting an unreadable git while asserting a repository that did not exist.
+vendor_drift_tracked_age() {
+  local repo_root="$1" path="$2" shallow porcelain epoch
 
-# yes|no|unknown — `unknown` when git could not answer at all, which is a
-# different thing from a clean tree and is read as such.
-vendor_drift_tracked_dirty() {
-  local porcelain
-  if ! porcelain="$(git -C "$1" status --porcelain -- "$2" 2>/dev/null)"; then
-    printf 'unknown'
+  if ! git -C "$repo_root" rev-parse --git-dir >/dev/null 2>&1; then
+    printf 'git-unreadable\t'
     return 0
   fi
-  if [[ -n "$porcelain" ]]; then printf 'yes'; else printf 'no'; fi
+  # A probe that cannot answer says so, rather than being read as `false`: the
+  # failure mode of assuming a full repository is a confident wrong direction.
+  # An answer that is neither `true` nor `false` is read as shallow for the same
+  # reason — every route out of here is undetermined.
+  if ! shallow="$(git -C "$repo_root" rev-parse --is-shallow-repository 2>/dev/null)"; then
+    printf 'git-unreadable\t'
+    return 0
+  fi
+  if [[ "$shallow" != false ]]; then
+    printf 'shallow\t'
+    return 0
+  fi
+  epoch="$(git -C "$repo_root" log -1 --format=%ct -- "$path" 2>/dev/null || true)"
+  if [[ -z "$epoch" ]]; then
+    printf 'no-history\t'
+    return 0
+  fi
+  if ! porcelain="$(git -C "$repo_root" status --porcelain -- "$path" 2>/dev/null)"; then
+    printf 'git-unreadable\t'
+    return 0
+  fi
+  if [[ -n "$porcelain" ]]; then
+    printf 'dirty\t'
+    return 0
+  fi
+  printf 'usable\t%s' "$epoch"
 }
 
 vendor_drift_main() {
@@ -332,19 +377,20 @@ vendor_drift_main() {
     at_risk="$classified"
   fi
 
-  local tracked_epoch refresh_epoch tracked_dirty decided reading reason
-  tracked_epoch="$(vendor_drift_last_commit_epoch "$repo_root" "$tracked_rel")"
+  local age age_state tracked_epoch refresh_epoch decided reading reason
+  age="$(vendor_drift_tracked_age "$repo_root" "$tracked_rel")"
+  age_state="${age%%$'\t'*}"
+  tracked_epoch="${age#*$'\t'}"
   refresh_epoch="$(vendor_drift_refresh_epoch "$mirror")"
-  tracked_dirty="$(vendor_drift_tracked_dirty "$repo_root" "$tracked_rel")"
   decided="$(vendor_drift_direction \
-    "$tracked_epoch" "$refresh_epoch" "$tracked_dirty" "$tracked_only" "$engine")"
+    "$age_state" "$tracked_epoch" "$refresh_epoch" "$tracked_only" "$engine")"
   reading="${decided%%$'\t'*}"
   reason="${decided#*$'\t'}"
 
   {
     printf '%s: FAIL: %s has drifted from the vstack copy\n' "$prog" "$tracked_rel"
     vendor_drift_print_sides "$prog" "$engine" \
-      "$tracked_epoch" "$refresh_epoch" "$tracked_dirty"
+      "$tracked_epoch" "$refresh_epoch" "$age_state"
   } >&2
   printf '%s\n' "$drift" >&2
   vendor_drift_print_repairs "$prog" "$engine" "$reading" "$reason" \

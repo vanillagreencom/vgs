@@ -2,8 +2,10 @@
 # End-to-end controls for the vendor drift check — scripts/lib/vendor-drift.sh
 # and scripts/lib/vendor-drift-report.sh, behind
 # scripts/check-review-gate-vendor.sh and scripts/check-size-ratchet-vendor.sh
-# (VGS-155). The parser and decision units live in
-# scripts/test-vendor-drift-classify.sh; this file drives whole runs.
+# (VGS-155). This file covers what the check REPORTS: readings, repairs,
+# preconditions and the wrappers. What it may BELIEVE — how a diff line is
+# attributed and when a commit time can be trusted — is
+# scripts/test-vendor-drift-evidence.sh.
 #
 # THE BUG THIS EXISTS FOR. The check used to print the mirror-to-tracked rsync
 # unconditionally, as a procedure. Immediately after a vendoring PR merged the
@@ -13,9 +15,8 @@
 #
 # Fixtures build a throwaway git repo per case, with its own commit time and its
 # own refresh-marker mtime, so this runs anywhere — no vstack, no .agents
-# mirror, no network. They use GNU `touch -d @epoch` and GNU `git`, matching the
-# GNU-only `stat`/`date` the libraries require; there is no BSD path here
-# because there is none there.
+# mirror, no network. The GNU-only tooling they assume is stated once, on the
+# harness that provides them.
 set -euo pipefail
 
 repo_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -27,14 +28,6 @@ source "$repo_root/scripts/lib/vendor-drift.sh"
 
 PROG=check-demo-vendor
 ENGINE=demo-engine
-
-# Fixed epochs, so the readings depend on the ORDER this file states and never
-# on when it runs. REFRESH sits between the two commit times, which is what
-# makes "commit before the refresh" and "commit after the refresh" two cases
-# rather than a race.
-COMMIT_OLD=1700000000 # 2023-11-14T22:13:20Z
-REFRESH=1700003600
-COMMIT_NEW=1700007200
 
 # shellcheck source=scripts/lib/vendor-drift-test.sh
 source "$repo_root/scripts/lib/vendor-drift-test.sh"
@@ -65,7 +58,7 @@ printf 'shared line\nREVIEW_GATE_REVIEW_OBJECT_ERROR_PATTERNS\n' \
 commit_tracked "$root" "$COMMIT_NEW"
 run_check "$root"
 expect_rc "$rc" 1 "tracked-ahead"
-expect_contains "$err" "the TRACKED copy is newer" "tracked-ahead"
+expect_contains "$err" "$READING_TRACKED_AHEAD" "tracked-ahead"
 # The repair LINE, not the phrase: "vstack refresh" also appears in this
 # reading's own prose, so the phrase alone survives deleting the command.
 expect_contains "$err" "$REPAIR_REFRESH_SOLE" "tracked-ahead"
@@ -101,7 +94,7 @@ printf 'shared line\nretired setting\n' \
 commit_tracked "$root" "$COMMIT_NEW"
 run_check "$root"
 expect_rc "$rc" 1 "merged deletion"
-expect_contains "$err" "the TRACKED copy is newer" "merged deletion"
+expect_contains "$err" "$READING_TRACKED_AHEAD" "merged deletion"
 expect_contains "$err" "$REPAIR_REFRESH_SOLE" "merged deletion"
 expect_absent "$err" "$RSYNC_COMMAND" "merged deletion"
 ok "a merged deletion names vstack refresh alone, though the rsync would delete nothing"
@@ -211,56 +204,6 @@ expect_absent "$err" "$RSYNC_COMMAND" "file vs directory"
 expect_contains "$err" "$AT_RISK_PREFIX""File .agents/skills/$ENGINE" "file vs directory"
 expect_contains "$err" "is a regular file while file" "file vs directory"
 ok "an unrecognised diff line is treated as content at risk, not as nothing"
-
-# ── evidence that cannot be READ ──────────────────────────────────────────
-# Each of these resolves to undetermined with its own cause named. Wrong-cause
-# output is the failure being guarded: the reason must describe the decision
-# that was actually made.
-root="$(new_fixture dirty-tracked)"
-set_refresh "$root" "$REFRESH"
-commit_tracked "$root" "$COMMIT_NEW"
-printf 'shared line\nedited in the working tree\n' \
-  >"$root/third_party/$ENGINE/references/settings.md"
-run_check "$root"
-expect_rc "$rc" 1 "dirty tracked"
-expect_contains "$err" "which side is newer is NOT ESTABLISHED" "dirty tracked"
-expect_contains "$err" "has uncommitted changes" "dirty tracked"
-expect_absent "$err" "$RSYNC_COMMAND" "dirty tracked"
-ok "uncommitted changes under third_party disqualify the commit-time evidence"
-
-root="$(new_fixture uncommitted)"
-printf 'shared line\ntracked-only line\n' \
-  >"$root/third_party/$ENGINE/references/settings.md"
-set_refresh "$root" "$REFRESH"
-run_check "$root"
-expect_rc "$rc" 1 "no history"
-expect_contains "$err" "no commit in this repository touches third_party/$ENGINE" "no history"
-expect_absent "$err" "$RSYNC_COMMAND" "no history"
-ok "a tracked copy with no commit history yields no direction and no rsync"
-
-root="$(new_fixture_nogit no-repository)"
-printf 'shared line\nmirror-only line\n' \
-  >"$root/.agents/skills/$ENGINE/references/settings.md"
-set_refresh "$root" "$REFRESH"
-if git -C "$root" rev-parse --git-dir >/dev/null 2>&1; then
-  fail "no repository" "fixture precondition unmet: $root is inside a git repository"
-fi
-run_check "$root"
-expect_rc "$rc" 1 "no repository"
-expect_contains "$err" "git could not be consulted for third_party/$ENGINE" "no repository"
-expect_contains "$err" "commit state unreadable" "no repository"
-expect_absent "$err" "no commit in this repository" "no repository"
-ok "an absent repository is reported as unreadable git, not as a repository with no commit"
-
-root="$(new_fixture no-marker)"
-commit_tracked "$root" "$COMMIT_OLD"
-printf 'shared line\nnew upstream line\n' \
-  >"$root/.agents/skills/$ENGINE/references/settings.md"
-run_check "$root"
-expect_rc "$rc" 1 "no refresh marker"
-expect_contains "$err" "no .vstack-refreshed marker" "no refresh marker"
-expect_contains "$err" "last refreshed unknown" "no refresh marker"
-ok "a mirror with no refresh marker has no age, rather than borrowing the directory mtime"
 
 # ── preconditions ─────────────────────────────────────────────────────────
 root="$(new_fixture missing-mirror)"

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # The harness scripts/test-vendor-drift.sh and
-# scripts/test-vendor-drift-classify.sh run their cases through: assertion
+# scripts/test-vendor-drift-evidence.sh run their cases through: assertion
 # helpers, the fixture builders, and the three invariants that hold for EVERY
 # case rather than for the ones that remember to check.
 #
@@ -10,6 +10,12 @@
 # case can be written without them applying.
 #
 # Requires, from the sourcing script: repo_root, tmp, PROG, ENGINE.
+#
+# GNU-ONLY, DELIBERATELY. The fixtures below use `touch -d @epoch` and GNU
+# `git`, matching the GNU-only `stat` and `date` the libraries require. There is
+# no BSD path in the fixtures because there is none in the code they exercise;
+# the libraries return nothing rather than guessing where those tools differ,
+# which reads as unknown and answers undetermined.
 #
 # Same reason as the other two libs state them: sourced files inherit the
 # caller's options, and setting them here keeps that a guarantee.
@@ -21,6 +27,19 @@ repo_root="${repo_root:?scripts/lib/vendor-drift-test.sh: sourcing script must s
 tmp="${tmp:?scripts/lib/vendor-drift-test.sh: sourcing script must set tmp first}"
 PROG="${PROG:?scripts/lib/vendor-drift-test.sh: sourcing script must set PROG first}"
 ENGINE="${ENGINE:?scripts/lib/vendor-drift-test.sh: sourcing script must set ENGINE first}"
+
+# Fixed epochs, so the readings depend on the ORDER the cases state and never on
+# when they run. REFRESH sits between the two commit times, which is what makes
+# "commit before the refresh" and "commit after the refresh" two cases rather
+# than a race. Defined here so both suites use one set.
+# Each carries its own directive: a disable applies to the next command only,
+# and all three are read by the suites across the source seam.
+# shellcheck disable=SC2034
+COMMIT_OLD=1700000000 # 2023-11-14T22:13:20Z
+# shellcheck disable=SC2034
+REFRESH=1700003600
+# shellcheck disable=SC2034
+COMMIT_NEW=1700007200
 
 failures=0
 case_failed=0
@@ -41,6 +60,18 @@ expect_contains() {
 expect_absent() {
   [[ "$1" != *"$2"* ]] || fail "$3" "expected NOT to contain: $2"$'\n'"--- got ---"$'\n'"$1"
 }
+# Whole-line membership in a newline-separated list. A `contains` check is not
+# enough for at-risk entries: the raw diff line that produced one also contains
+# the path, so a substring assertion stays green when the classifier records the
+# line instead of the file.
+expect_line_in() {
+  # Both ends padded: command substitution strips the list's trailing newline,
+  # so the last entry has none to match against.
+  case $'\n'"$1"$'\n' in
+    *$'\n'"$2"$'\n'*) ;;
+    *) fail "$3" "expected a line exactly: $2"$'\n'"--- got ---"$'\n'"$1" ;;
+  esac
+}
 expect_rc() {
   [[ "$1" == "$2" ]] || fail "$3" "expected exit $2, got $1"
 }
@@ -60,6 +91,12 @@ VERDICTS=(
 # the destructive half is never the default or an unconditioned repair, so
 # "the rsync appeared" is only ever asserted together with this.
 RSYNC_CONDITION="(2) If the MIRROR is newer"
+
+# The tracked-ahead READING, with its prefix. The bare phrase also appears in
+# condition (1) of the both-repairs block, so an assertion that a run did NOT
+# reach this reading has to name the line.
+# shellcheck disable=SC2034 # read by the cases across the source seam.
+READING_TRACKED_AHEAD="$PROG: the TRACKED copy is newer"
 
 # Safety claims the check must never make about the mirror-to-tracked rsync. In
 # a deletion-shaped drift the rsync genuinely deletes nothing and still reverts
@@ -207,4 +244,25 @@ flag_carriers() {
       grep -vE '^[0-9]+:[[:space:]]*#' |
       sed "s|^|$file:|" || true
   done
+}
+
+# A DEPTH-1 CLONE of a fixture whose vendoring commit is not the tip. Echoes the
+# clone root. This is the one fixture that must be a real clone: the defect is
+# that `git log -1 -- <path>` reports the TIP date in a shallow repository for
+# every path, touched or not, so a stub could only restate the assumption.
+#
+#   commit A ($2)  both copies identical
+#   commit B ($3)  touches the MIRROR only — so the tracked copy's true age is
+#                  A, while a shallow clone reports B
+new_shallow_fixture() {
+  local name="$1" old_epoch="$2" new_epoch="$3" src root
+  src="$(new_fixture "$name-src")"
+  printf '0000000\n' >"$src/.agents/skills/$ENGINE/.vstack-refreshed"
+  commit_tracked "$src" "$old_epoch"
+  printf 'shared line\nnew upstream line\n' \
+    >"$src/.agents/skills/$ENGINE/references/settings.md"
+  commit_tracked "$src" "$new_epoch"
+  root="$tmp/$name"
+  git clone -q --depth 1 "file://$src" "$root"
+  printf '%s' "$root"
 }

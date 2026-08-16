@@ -75,14 +75,19 @@ vendor_drift_stamp() {
 }
 
 # The provenance of each side, then how to read the diff that follows.
-#   $1 prog  $2 engine  $3 tracked_epoch  $4 refresh_epoch  $5 tracked_dirty
+#   $1 prog  $2 engine  $3 tracked_epoch  $4 refresh_epoch  $5 age_state
 vendor_drift_print_sides() {
-  local prog="$1" engine="$2" tracked_epoch="$3" refresh_epoch="$4" tracked_dirty="$5"
+  local prog="$1" engine="$2" tracked_epoch="$3" refresh_epoch="$4" age_state="$5"
   local tracked_rel="third_party/$engine" mirror_rel=".agents/skills/$engine"
 
+  # Why the commit time is missing belongs beside the missing commit time.
   local dirty_note=""
-  [[ "$tracked_dirty" == yes ]] && dirty_note=", plus uncommitted changes"
-  [[ "$tracked_dirty" == unknown ]] && dirty_note=", commit state unreadable"
+  case "$age_state" in
+    dirty) dirty_note=", plus uncommitted changes" ;;
+    git-unreadable) dirty_note=", commit state unreadable" ;;
+    shallow) dirty_note=" (shallow clone: no usable age)" ;;
+    no-history) dirty_note=", no commit touches it here" ;;
+  esac
 
   printf '%s:\n' "$prog"
   printf '%s: tracked  %s/ — CI runs this; last commit %s%s\n' \
@@ -160,14 +165,17 @@ vendor_drift_print_repairs() {
   printf '%s:\n' "$prog"
   case "$reading" in
     tracked-ahead)
-      # The ONLY reading that names a single repair. Two things earn it that:
-      # the evidence is a commit that landed after the mirror was last written,
-      # which a fresh clone, a new worktree, an unreadable or absent repository,
-      # an uncommitted tracked tree and a mirror carrying no refresh marker all
-      # fail to produce — each is answered as undetermined before this rule is
-      # reached, rather than inverting it; and the repair it names is the
-      # non-destructive half, so being wrong costs a no-op refresh and a second
-      # failing run, never content.
+      # The ONLY reading that names a single repair, and it is earned rather
+      # than assumed. The evidence is a commit that landed after the mirror was
+      # last written. A full fresh clone or a new worktree cannot fabricate
+      # that, since a commit time is a property of history; an unreadable or
+      # absent repository, an uncommitted tracked tree and a mirror with no
+      # refresh marker are each answered as undetermined BEFORE this rule is
+      # reached; and a SHALLOW clone — which genuinely can fabricate it, because
+      # git reports the tip date for every path there — is answered the same
+      # way, by vendor_drift_tracked_age, rather than being impossible. What
+      # this rule names is also the non-destructive half, so being wrong costs a
+      # no-op refresh and a second failing run, never content.
       printf '%s: the TRACKED copy is newer — it changed after the last vstack refresh.\n' "$prog"
       printf '%s: The mirror is the stale side, so refresh it:\n' "$prog"
       printf '%s:   vstack refresh\n' "$prog"
