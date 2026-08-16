@@ -211,7 +211,7 @@ scripts/gen-package-metadata.py	985
 scripts/lib/validation_manifest.py	749
 scripts/qml-smoke.sh	1258
 scripts/test-compositor-focus.js	791
-scripts/test-launcher-hover-latch.js	405
+scripts/test-launcher-hover-latch.js	492
 scripts/test-launcher-search-gate.js	1077
 scripts/test-paste-lifecycle.js	1168
 scripts/test-pill-hover-safety.js	420

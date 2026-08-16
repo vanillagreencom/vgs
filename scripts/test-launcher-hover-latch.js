@@ -35,6 +35,18 @@
 // test rather than trust it. The tint predicate therefore reads the STRUCTURE
 // of its condition, and section 4 proves that with EQUIVALENCE CONTROLS —
 // rewrites of the shipped binding that must still PASS.
+//
+// WHY THIS FILE SITS OVER THE SIZE RATCHET. Its baseline row in
+// tools/size-ratchet-baseline.tsv has been hand-raised TWICE in one PR: to 405
+// when the guard first crossed the 400-line threshold, and again when the tint
+// predicate moved from exact spelling to structure — that round added the
+// EQUIVALENTS table and took MUTANTS to 21 entries. Sections 3 and 4 are what
+// make sections 1 and 2 mean anything, so trimming them buys line count by
+// selling the coverage. The one real seam is section 1, which touches no QML
+// and shares nothing with the rest; splitting there moves ~80 lines out and
+// leaves this file still over 400, still baselined, in exchange for a second
+// validation-manifest row and a second CI entry. Grow this file again only
+// with the same trade stated.
 
 "use strict";
 
