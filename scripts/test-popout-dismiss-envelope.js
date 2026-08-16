@@ -69,8 +69,51 @@ const bodyRect = {
   h: propertyBinding("bodyRectH"),
 };
 
+// EVALUATING THE SHIPPED BINDING IS THE POINT - a transcription keeps passing
+// after the QML moves on - but evaluating raw source from a repo file is a CI
+// execution surface: a binding rewritten to `require("child_process")...` would
+// run here. So an expression is REFUSED unless it is made only of what a
+// geometry binding needs: dotted identifiers, integers, `? :`, `&&`, `+`, `-`
+// and parentheses. No calls, no indexing, no strings, no assignment. The check
+// is a whitelist, so anything unanticipated is rejected rather than permitted,
+// and it throws rather than skipping - a binding this cannot read is a reason to
+// stop, not to quietly test less.
+const EXPR_TOKEN = /^(?:[A-Za-z_$][A-Za-z0-9_$]*(?:\s*\.\s*[A-Za-z_$][A-Za-z0-9_$]*)*|[0-9]+|\?|:|&&|\+|-|\(|\))/;
+function assertSafeExpression(expr, what) {
+  let rest = expr.trim();
+  let previous = null;
+  while (rest.length) {
+    const m = EXPR_TOKEN.exec(rest);
+    if (!m) throw new Error(`refusing to evaluate ${what}: unsupported syntax at ${JSON.stringify(rest.slice(0, 24))}`);
+    const token = m[0];
+    // An identifier followed by `(` is a CALL, which is the shape this exists to
+    // keep out; the tokens themselves are otherwise harmless.
+    if (token === "(" && previous && /[A-Za-z0-9_$)]$/.test(previous))
+      throw new Error(`refusing to evaluate ${what}: looks like a call at ${JSON.stringify(rest.slice(0, 24))}`);
+    previous = token;
+    rest = rest.slice(token.length).replace(/^\s+/, "");
+  }
+  return expr;
+}
+
+// Syntax alone is not enough: `process.env.HOME` is a dotted read, not a call,
+// so a token whitelist admits it and `with (ctx)` resolves it against the Node
+// globals. Every identifier ROOT must therefore be a property of the state
+// object as well - which is also self-maintaining, because the allowed set is
+// whatever the model actually provides rather than a list to keep in step.
+function assertKnownIdentifiers(expr, ctx, what) {
+  const heads = expr.replace(/\broot\./g, "").match(/[A-Za-z_$][A-Za-z0-9_$]*(?=\s*\.)|[A-Za-z_$][A-Za-z0-9_$]*/g) || [];
+  for (const head of heads) {
+    if (!Object.prototype.hasOwnProperty.call(ctx, head))
+      throw new Error(`refusing to evaluate ${what}: '${head}' is not part of the popout state`);
+  }
+  return expr;
+}
+
 // `root.` and bare names both resolve against the same state here.
 const evalIn = (expr, ctx) => {
+  assertSafeExpression(expr, "a QML binding");
+  assertKnownIdentifiers(expr, ctx, "a QML binding");
   const src = expr.replace(/\broot\./g, "");
   // eslint-disable-next-line no-new-func
   return new Function("ctx", `with (ctx) { return (${src}); }`)(ctx);
@@ -218,6 +261,35 @@ const FRAMES = 8;
   Object.assign(hole, saved);
   if (!m) fail("control", "deriving the carve-out from the SETTLED rect did not break the invariant, so the sweeps prove nothing");
   else ok("deriving it from the settled rect breaks the invariant (control)");
+}
+
+// The evaluator's own guard: a binding is data from a repo file, and this file
+// must not become a way to run it.
+{
+  const rejected = [
+    'require("child_process").execSync("id")',
+    'root.alignedX + process.env.HOME',
+    'root.alignedX; global.x = 1',
+    'root.thing["key"]',
+    "root.alignedX + `x`",
+    'Math.max(root.alignedX, 0)',
+  ];
+  const probeState = makeState();
+  for (const bad of rejected) {
+    let threw = false;
+    try {
+      assertSafeExpression(bad, "control");
+      assertKnownIdentifiers(bad, probeState, "control");
+    } catch { threw = true; }
+    if (!threw) fail("expression guard", `accepted an expression it must refuse: ${bad}`);
+  }
+  // ...and it must still accept every shape the real bindings use, or the
+  // guard would be "safe" by testing nothing.
+  for (const [what, expr] of [...Object.entries(hole), ...Object.entries(container), ...Object.entries(bodyRect)]) {
+    try { assertSafeExpression(expr, what); assertKnownIdentifiers(expr, probeState, what); }
+    catch (e) { fail("expression guard", `refused a real shipped binding (${what}): ${e.message}`); }
+  }
+  ok("the evaluator refuses anything but a geometry expression, and accepts every real one");
 }
 
 // --- wiring ----------------------------------------------------------------
