@@ -155,9 +155,16 @@ cd "$repo_root" || exit 1
 #
 # The per-area sets are the scoping AGENTS.md used to state in prose:
 # go = the backend capability inventory guard plus the Go block; qml = naming,
-# the QML smoke, the safety guard, surfaces; helper = the helper checks plus the
+# the QML smoke, the safety guard, surfaces, plus the QML source lints carrying
+# the tag (today the launcher hover latch); helper = the helper checks plus the
 # py_compile/bash -n syntax pass; packaging = the three packaging checks;
 # docs = the instruction-surface growth ratchet.
+#
+# The older QML source lints are still `-`, so only `all` reaches them, and the
+# family is bigger than it looks: 23 of today's `-` rows read .qml source, from
+# pill-hover to the six ai-usage checks. `qml` is the better tag for a new one —
+# it runs the guard in the area AGENTS.md tells agents to run before finishing
+# QML work — but retagging two dozen rows is its own change, not a drive-by.
 # shellcheck disable=SC2329  # invoked indirectly, as an argument to collect()
 manifest() {
   cat <<'MANIFEST_EOF'
@@ -209,6 +216,7 @@ go        | scripts/check-backend-inventory-tests.py
 -         | scripts/test-qml-smoke.sh
 -         | scripts/test-format-lint.sh
 -         | scripts/test-pill-hover-safety.js
+qml       | scripts/test-launcher-hover-latch.js
 helper    | python3 -m py_compile bin/vshell-helper
 helper    | bash -n bin/vshell
 always    | git diff --check
