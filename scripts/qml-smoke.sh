@@ -407,140 +407,159 @@ import sys
 namespace = sys.argv[1]
 
 
-def parsed(name):
-    raw = os.environ[name]
-    if not raw.strip():
+def main():
+    def parsed(name):
+        raw = os.environ[name]
+        if not raw.strip():
+            raise SystemExit(3)
+        try:
+            return json.loads(raw)
+        except json.JSONDecodeError:
+            raise SystemExit(3)
+
+
+    data = parsed("LAYERS_JSON")
+    if not isinstance(data, dict):
         raise SystemExit(3)
-    try:
-        return json.loads(raw)
-    except json.JSONDecodeError:
+    monitors = parsed("MONITORS_JSON")
+    if not isinstance(monitors, list):
+        raise SystemExit(3)
+
+    # Logical output size per monitor name. `width`/`height` are the MODE in
+    # physical pixels; layer geometry is logical, so the mode is divided by the
+    # scale, and the quarter-turn transforms (1, 3, 5, 7) swap the axes. A monitor
+    # whose numbers do not survive that conversion is left OUT of the map rather
+    # than entered with a zero: absent means "unmeasurable" below, and a zero would
+    # be the proxy problem again in a new costume.
+    outputs = {}
+    for monitor in monitors:
+        if not isinstance(monitor, dict) or monitor.get("disabled"):
+            continue
+        name = monitor.get("name")
+        # EVERY arithmetic step is inside the guard, and the guard rejects values
+        # that are merely WELL-TYPED. A NaN scale survives `float()` and survives
+        # `scale <= 0` (every comparison with NaN is False), then reaches
+        # `int(round(mode_w / scale))` and raises ValueError from OUTSIDE any
+        # handler - which exits this interpreter 1, and 1 is the caller's code for
+        # "the surface is not there". Malformed metadata would have read as absence:
+        # a present popout reported as gone, and a `wait_layer_state ... 1` proving
+        # absence off a crash. An unusable monitor is left OUT of the map instead,
+        # so the join below misses and the caller gets the "cannot measure" status.
+        try:
+            mode_w = int(monitor.get("width") or 0)
+            mode_h = int(monitor.get("height") or 0)
+            scale = float(monitor.get("scale") or 0)
+            transform = int(monitor.get("transform") or 0)
+            if not (math.isfinite(scale) and scale > 0):
+                continue
+            if not name or mode_w <= 0 or mode_h <= 0:
+                continue
+            # Hyprland's transform enum is 0-7; anything else means the axes cannot
+            # be resolved, and guessing "no swap" would measure against the wrong
+            # dimensions rather than admit that.
+            if transform not in range(8):
+                continue
+            logical_w = int(round(mode_w / scale))
+            logical_h = int(round(mode_h / scale))
+        except (TypeError, ValueError, OverflowError, ZeroDivisionError):
+            continue
+        if transform in (1, 3, 5, 7):
+            logical_w, logical_h = logical_h, logical_w
+        if logical_w <= 0 or logical_h <= 0:
+            continue
+        outputs[name] = (logical_w, logical_h)
+
+    # STRUCTURE IS VALIDATED, AND A SURPRISE IS A QUERY FAILURE, NEVER AN ABSENCE.
+    # `hyprctl` returning parseable JSON says nothing about its SHAPE. A `levels`
+    # that is a list, a monitor entry that is a string, a layer that is not an
+    # object - each of those raises out of `.values()`, `extend()` or `.get()`, and
+    # an uncaught exception exits this interpreter 1, which is the caller's code for
+    # "the surface is not there". `wait_layer_state ... 1` would then succeed off a
+    # crash and the nested smoke would report clean having collected nothing. Same
+    # defect the monitor parse above had; this is the other half of it.
+    def _shape_error(what):
+        sys.stderr.write(
+            "sandbox_layer_state: `hyprctl layers -j` parsed as JSON but %s, so no layer data was "
+            "collected - that is a failed query, not an absent surface\n" % what
+        )
         raise SystemExit(3)
 
 
-data = parsed("LAYERS_JSON")
-if not isinstance(data, dict):
-    raise SystemExit(3)
-monitors = parsed("MONITORS_JSON")
-if not isinstance(monitors, list):
-    raise SystemExit(3)
+    matches = []
+    for monitor_name, monitor in data.items():
+        if not isinstance(monitor, dict):
+            _shape_error("monitor %r is not an object" % monitor_name)
+        levels = monitor.get("levels")
+        # NOT defaulted to {}. A monitor with no layers still reports `levels: {}`,
+        # so a missing or null one is a malformed payload - and defaulting it made
+        # the namespace "not found", which is status 1, which is ABSENCE. That is
+        # the same fail-open one layer up from the shapes below.
+        if not isinstance(levels, dict):
+            _shape_error("monitor %r has a missing or non-object `levels`" % monitor_name)
+        layers = []
+        for level_name, level in levels.items():
+            if not isinstance(level, list):
+                _shape_error("monitor %r level %r is not a list" % (monitor_name, level_name))
+            layers.extend(level)
+        for layer in layers:
+            if not isinstance(layer, dict):
+                _shape_error("monitor %r holds a layer that is not an object" % monitor_name)
+            if layer.get("namespace") == namespace:
+                matches.append((monitor_name, layer))
 
-# Logical output size per monitor name. `width`/`height` are the MODE in
-# physical pixels; layer geometry is logical, so the mode is divided by the
-# scale, and the quarter-turn transforms (1, 3, 5, 7) swap the axes. A monitor
-# whose numbers do not survive that conversion is left OUT of the map rather
-# than entered with a zero: absent means "unmeasurable" below, and a zero would
-# be the proxy problem again in a new costume.
-outputs = {}
-for monitor in monitors:
-    if not isinstance(monitor, dict) or monitor.get("disabled"):
-        continue
-    name = monitor.get("name")
-    # EVERY arithmetic step is inside the guard, and the guard rejects values
-    # that are merely WELL-TYPED. A NaN scale survives `float()` and survives
-    # `scale <= 0` (every comparison with NaN is False), then reaches
-    # `int(round(mode_w / scale))` and raises ValueError from OUTSIDE any
-    # handler - which exits this interpreter 1, and 1 is the caller's code for
-    # "the surface is not there". Malformed metadata would have read as absence:
-    # a present popout reported as gone, and a `wait_layer_state ... 1` proving
-    # absence off a crash. An unusable monitor is left OUT of the map instead,
-    # so the join below misses and the caller gets the "cannot measure" status.
+    if not matches:
+        raise SystemExit(1)
+
+    # A popout binds to exactly one screen, so a second surface is a duplicate, not
+    # a second reading to reconcile. Reported rather than collapsed: picking one of
+    # them would hide the defect, and averaging them would invent a number.
+    if len(matches) > 1:
+        sys.stderr.write(
+            "sandbox_layer_state: %s is mapped %d times (%s), but a popout binds to exactly "
+            "one screen - that is a duplicate-mapping defect, not a geometry reading\n"
+            % (namespace, len(matches), ", ".join(name for name, _ in matches))
+        )
+        raise SystemExit(5)
+
+    monitor_name, layer = matches[0]
+    if monitor_name not in outputs:
+        sys.stderr.write(
+            "sandbox_layer_state: %s is mapped on monitor %s, but `hyprctl monitors` reports "
+            "no usable size for it, so there is nothing to measure it against - that is not "
+            "evidence about its geometry\n" % (namespace, monitor_name)
+        )
+        raise SystemExit(4)
+
+    screen_w, screen_h = outputs[monitor_name]
     try:
-        mode_w = int(monitor.get("width") or 0)
-        mode_h = int(monitor.get("height") or 0)
-        scale = float(monitor.get("scale") or 0)
-        transform = int(monitor.get("transform") or 0)
-        if not (math.isfinite(scale) and scale > 0):
-            continue
-        if not name or mode_w <= 0 or mode_h <= 0:
-            continue
-        # Hyprland's transform enum is 0-7; anything else means the axes cannot
-        # be resolved, and guessing "no swap" would measure against the wrong
-        # dimensions rather than admit that.
-        if transform not in range(8):
-            continue
-        logical_w = int(round(mode_w / scale))
-        logical_h = int(round(mode_h / scale))
-    except (TypeError, ValueError, OverflowError, ZeroDivisionError):
-        continue
-    if transform in (1, 3, 5, 7):
-        logical_w, logical_h = logical_h, logical_w
-    if logical_w <= 0 or logical_h <= 0:
-        continue
-    outputs[name] = (logical_w, logical_h)
-
-# STRUCTURE IS VALIDATED, AND A SURPRISE IS A QUERY FAILURE, NEVER AN ABSENCE.
-# `hyprctl` returning parseable JSON says nothing about its SHAPE. A `levels`
-# that is a list, a monitor entry that is a string, a layer that is not an
-# object - each of those raises out of `.values()`, `extend()` or `.get()`, and
-# an uncaught exception exits this interpreter 1, which is the caller's code for
-# "the surface is not there". `wait_layer_state ... 1` would then succeed off a
-# crash and the nested smoke would report clean having collected nothing. Same
-# defect the monitor parse above had; this is the other half of it.
-def _shape_error(what):
-    sys.stderr.write(
-        "sandbox_layer_state: `hyprctl layers -j` parsed as JSON but %s, so no layer data was "
-        "collected - that is a failed query, not an absent surface\n" % what
-    )
-    raise SystemExit(3)
+        w = int(layer.get("w") or 0)
+        h = int(layer.get("h") or 0)
+    except (TypeError, ValueError, OverflowError):
+        _shape_error("the matched layer has a non-numeric size")
+    print("%dx%d %dx%d" % (w, h, screen_w, screen_h))
+    if w <= 0 or h <= 0:
+        raise SystemExit(2)
+    # Unguarded, because the output size is measured by the time it runs. A popout
+    # that covers the whole output is a layout failure, not an open popout.
+    if w >= screen_w and h >= screen_h:
+        raise SystemExit(2)
+    raise SystemExit(0)
 
 
-matches = []
-for monitor_name, monitor in data.items():
-    if not isinstance(monitor, dict):
-        _shape_error("monitor %r is not an object" % monitor_name)
-    levels = monitor.get("levels")
-    if levels is None:
-        levels = {}
-    if not isinstance(levels, dict):
-        _shape_error("monitor %r has a non-object `levels`" % monitor_name)
-    layers = []
-    for level_name, level in levels.items():
-        if not isinstance(level, list):
-            _shape_error("monitor %r level %r is not a list" % (monitor_name, level_name))
-        layers.extend(level)
-    for layer in layers:
-        if not isinstance(layer, dict):
-            _shape_error("monitor %r holds a layer that is not an object" % monitor_name)
-        if layer.get("namespace") == namespace:
-            matches.append((monitor_name, layer))
-
-if not matches:
-    raise SystemExit(1)
-
-# A popout binds to exactly one screen, so a second surface is a duplicate, not
-# a second reading to reconcile. Reported rather than collapsed: picking one of
-# them would hide the defect, and averaging them would invent a number.
-if len(matches) > 1:
-    sys.stderr.write(
-        "sandbox_layer_state: %s is mapped %d times (%s), but a popout binds to exactly "
-        "one screen - that is a duplicate-mapping defect, not a geometry reading\n"
-        % (namespace, len(matches), ", ".join(name for name, _ in matches))
-    )
-    raise SystemExit(5)
-
-monitor_name, layer = matches[0]
-if monitor_name not in outputs:
-    sys.stderr.write(
-        "sandbox_layer_state: %s is mapped on monitor %s, but `hyprctl monitors` reports "
-        "no usable size for it, so there is nothing to measure it against - that is not "
-        "evidence about its geometry\n" % (namespace, monitor_name)
-    )
-    raise SystemExit(4)
-
-screen_w, screen_h = outputs[monitor_name]
+# Every deliberate outcome above is a SystemExit, which is a BaseException and
+# passes straight through this. Anything else - a shape nobody predicted, a
+# conversion nobody guarded - is a failed query, NEVER an absent surface. That
+# is the invariant; the explicit checks above only exist to name the cause.
 try:
-    w = int(layer.get("w") or 0)
-    h = int(layer.get("h") or 0)
-except (TypeError, ValueError):
-    _shape_error("the matched layer has a non-numeric size")
-print("%dx%d %dx%d" % (w, h, screen_w, screen_h))
-if w <= 0 or h <= 0:
-    raise SystemExit(2)
-# Unguarded, because the output size is measured by the time it runs. A popout
-# that covers the whole output is a layout failure, not an open popout.
-if w >= screen_w and h >= screen_h:
-    raise SystemExit(2)
-raise SystemExit(0)
+    main()
+except Exception as exc:
+    sys.stderr.write(
+        "sandbox_layer_state: unexpected %s reading the compositor payloads (%s) - "
+        "no usable layer data was collected, so this is a failed query, not an absent "
+        "surface\n" % (type(exc).__name__, exc)
+    )
+    raise SystemExit(3)
+
 PY
 }
 
