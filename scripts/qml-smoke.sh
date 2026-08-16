@@ -348,10 +348,16 @@ sandbox_layers() {
 # 2 = present but degenerate (zero-sized, or as large as the screen)
 # 3 = THE QUERY FAILED - hyprctl errored or produced something unparsable.
 #     Distinct from 1 deliberately: "I could not look" is not "it is not there".
+# 4 = present, but the OUTPUT SIZE could not be determined, so there is nothing
+#     to grade it against. Distinct from 2 for the reason 3 is distinct from 1:
+#     "I could not measure it" is not "it measured wrong".
 #
 # One line per matching layer per monitor, "<w>x<h> <screen_w>x<screen_h>", so a
-# caller can compare the surface against its output. Callers must branch on the
-# status BEFORE reading that text: on 1, 2 and 3 it is absent or misleading.
+# caller can compare each surface against the output IT is on. A popout mapped
+# on two outputs therefore yields two lines, and a caller's invariant has to
+# hold on every one of them - see assert_popout_geometry. Callers must branch on
+# the status BEFORE reading that text: on 1, 2, 3 and 4 it is absent or
+# misleading.
 sandbox_layer_state() {
   local namespace="$1" layers rc=0
   layers="$(sandbox_layers)" || rc=$?
@@ -375,10 +381,13 @@ if not isinstance(data, dict):
     raise SystemExit(3)
 
 found = False
-for monitor in data.values():
+for monitor_name, monitor in data.items():
     layers = []
     for level in (monitor.get("levels") or {}).values():
         layers.extend(level)
+    mine = [layer for layer in layers if layer.get("namespace") == namespace]
+    if not mine:
+        continue
     # The screen, inferred from the largest OTHER surface on it - the same
     # heuristic scripts/smoke-surfaces.sh uses, and for the same reason: a popout
     # that covers the whole screen is a layout failure, not an open popout.
@@ -391,16 +400,32 @@ for monitor in data.values():
     others = [layer for layer in layers if layer.get("namespace") != namespace]
     screen_w = max((int(layer.get("w") or 0) for layer in others), default=0)
     screen_h = max((int(layer.get("h") or 0) for layer in others), default=0)
-    for layer in layers:
-        if layer.get("namespace") != namespace:
-            continue
+    # NO ZERO FALLBACK. With nothing on the output to infer its size from, the
+    # old code carried 0x0 forward as if it were a measurement: the degenerate
+    # test below is `w >= screen_w and h >= screen_h`, which 0x0 makes vacuously
+    # TRUE for every surface, so it was guarded off with `screen_w > 0 and
+    # screen_h > 0` - and that guard is the bug. It disabled the check in
+    # exactly the case it could not evaluate, and handed the caller "0x0" to
+    # compare heights against, which reads as a real output. A guard that
+    # reports a result precisely when it has nothing to measure against is the
+    # vacuous-pass shape this file exists to refuse (VGS-154). It is a distinct
+    # hard status instead, and the degenerate test below is now unguarded
+    # because screen_w/screen_h are known good by the time it runs.
+    if not others or screen_w <= 0 or screen_h <= 0:
+        sys.stderr.write(
+            "sandbox_layer_state: %s is mapped on monitor %s, but no other layer on "
+            "that output gives its size, so there is nothing to compare it against - "
+            "that is not evidence about its geometry\n" % (namespace, monitor_name)
+        )
+        raise SystemExit(4)
+    for layer in mine:
         found = True
         w = int(layer.get("w") or 0)
         h = int(layer.get("h") or 0)
         print("%dx%d %dx%d" % (w, h, screen_w, screen_h))
         if w <= 0 or h <= 0:
             raise SystemExit(2)
-        if screen_w > 0 and screen_h > 0 and w >= screen_w and h >= screen_h:
+        if w >= screen_w and h >= screen_h:
             raise SystemExit(2)
 raise SystemExit(0 if found else 1)
 PY
@@ -415,6 +440,13 @@ wait_layer_state() {
     sandbox_layer_state "$namespace" >/dev/null || state=$?
     if [[ "$state" -eq 3 ]]; then
       fail "could not read the sandbox compositor's layer list (hyprctl query failed) - that is not evidence '$namespace' is absent"
+      return 2
+    fi
+    # Also terminal, and for the same reason: retrying cannot turn "there is
+    # nothing on this output to measure against" into an answer, so spinning to
+    # the timeout would report it as the wanted state never arriving.
+    if [[ "$state" -eq 4 ]]; then
+      fail "could not determine the size of the output '$namespace' is on (no other layer there to infer it from) - that is not evidence about its geometry"
       return 2
     fi
     [[ "$state" == "$want" ]] && return 0
@@ -585,8 +617,48 @@ wait_widget_registered() {
   return 1
 }
 
+# Asserts the VGS-133 height invariant over EVERY line sandbox_layer_state
+# emitted, because its contract is one line per mapped surface: a popout mapped
+# on two outputs yields two lines, and the invariant is per-output - each
+# surface spans the output IT is on. Rejecting a multi-line reply would be this
+# consumer contradicting its own emitter; taking `${g%% *}` and `${g##* }` of
+# the whole blob would be worse, silently pairing the first token of one
+# monitor's line with the last token of another's and comparing two different
+# outputs to each other.
+#
+# Every line is checked and none is skipped, so a second output that violates
+# the invariant cannot hide behind a first one that satisfies it. An empty reply
+# is a FAILURE, not a pass: the caller reached here only because the surface was
+# reported present, so no geometry to check means the evidence went missing, and
+# passing on no evidence is the shape this file exists to refuse (VGS-154).
+assert_popout_geometry() {
+  local geometry="$1" label="$2" checked=0 line surface_size screen_size
+  while IFS= read -r line; do
+    [[ -z "$line" ]] && continue
+    # Shape-guarded before splitting, because `${line%% *}` and `${line##* }`
+    # both return the WHOLE string when it holds no space: a single field would
+    # compare equal to itself and pass vacuously.
+    if [[ ! "$line" =~ ^[0-9]+x[0-9]+\ [0-9]+x[0-9]+$ ]]; then
+      fail "could not parse the '$label' layer geometry: '$line'"
+      return 1
+    fi
+    surface_size="${line%% *}"
+    screen_size="${line##* }"
+    if [[ "${surface_size#*x}" != "${screen_size#*x}" ]]; then
+      fail "'$label' popout surface is '$surface_size' on a '$screen_size' output - it must span the output height (VGS-133)"
+      return 1
+    fi
+    checked=$((checked + 1))
+  done <<<"$geometry"
+  if [[ "$checked" -eq 0 ]]; then
+    fail "no layer geometry to check for '$label', though its surface was reported present - refusing to pass on no evidence"
+    return 1
+  fi
+  return 0
+}
+
 popout_check() {
-  local reply state=0 geometry geo_rc surface_size screen_size
+  local reply state=0 geometry geo_rc
 
   wait_widget_registered "$popout_plugin" || {
     fail "the sandbox bar never registered '$popout_plugin', so its popout could not be opened - the seeded settings.default.json is supposed to host it"
@@ -630,24 +702,11 @@ popout_check() {
   geometry="$(sandbox_layer_state "$popout_namespace")" && geo_rc=0 || geo_rc=$?
   case "$geo_rc" in
     3) fail "could not read the sandbox compositor's layer list (hyprctl query failed) - that is not evidence about the '$popout_plugin' popout's height"; return 1 ;;
+    4) fail "could not determine the size of the output '$popout_plugin' opened on - nothing else is mapped there to infer it from, so there is nothing to compare the popout against. That is not a height mismatch"; return 1 ;;
     1) fail "the '$popout_plugin' popout surface disappeared before its height could be read"; return 1 ;;
     2) fail "'$popout_plugin' opened a degenerate popout surface ($geometry) - that is not a height mismatch"; return 1 ;;
   esac
-  # Shape-guarded before splitting, because `${g%% *}` and `${g##* }` both return
-  # the WHOLE string when it holds no space: a single field would compare equal
-  # to itself and pass vacuously. The anchors also reject a multi-line reply,
-  # which is the second output case - otherwise the split would take the first
-  # token of monitor A's line and the last token of monitor B's.
-  if [[ ! "$geometry" =~ ^[0-9]+x[0-9]+\ [0-9]+x[0-9]+$ ]]; then
-    fail "could not parse the '$popout_namespace' layer geometry: '$geometry'"
-    return 1
-  fi
-  surface_size="${geometry%% *}"
-  screen_size="${geometry##* }"
-  if [[ "${surface_size#*x}" != "${screen_size#*x}" ]]; then
-    fail "'$popout_plugin' popout surface is '$surface_size' on a '$screen_size' output - it must span the output height (VGS-133)"
-    return 1
-  fi
+  assert_popout_geometry "$geometry" "$popout_plugin" || return 1
 
   # Escape, through the virtual-keyboard protocol. `hyprctl dispatch
   # sendshortcut` targets a WINDOW and answers "window not found" for a layer
