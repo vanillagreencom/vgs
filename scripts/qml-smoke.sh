@@ -431,7 +431,13 @@ for monitor in monitors:
         mode_h = int(monitor.get("height") or 0)
         scale = float(monitor.get("scale") or 0)
         transform = int(monitor.get("transform") or 0)
-        if not name or mode_w <= 0 or mode_h <= 0 or not scale > 0:
+        # `name` is type-checked, not merely truthiness-checked. A list or dict
+        # name is TRUTHY and converts nothing, so it would reach the
+        # `outputs[name]` assignment below - which is outside this guard - and
+        # raise TypeError there, exiting 1: absence, off a crash, again.
+        if not isinstance(name, str) or not name:
+            continue
+        if mode_w <= 0 or mode_h <= 0 or not scale > 0:
             continue
         # Hyprland's transform enum is 0-7; anything else means the axes cannot
         # be resolved, and guessing "no swap" would measure against the wrong

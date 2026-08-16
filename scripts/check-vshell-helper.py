@@ -749,10 +749,12 @@ BLUR_MUST_NOT_MATCH = (
 
 
 def assert_blur_namespace_rule(script, source):
-    # The layer rule's own `match` stanza, not any `namespace =` in the payload:
-    # a bare assignment match also picks up future rules, so "expected one" would
-    # then fail on unrelated formatting rather than on what this checks.
-    patterns = re.findall(r'match = \{ namespace = "([^"]*)" \}', script)
+    # Anchored to the layer rule's own `match` stanza so a bare `namespace =`
+    # elsewhere in the payload cannot satisfy it, but tolerant WITHIN the stanza:
+    # whitespace is free and the stanza may carry further keys, so reformatting
+    # the emitted Lua or adding a match key does not break this. What it does
+    # still require is that the stanza exist and appear once.
+    patterns = re.findall(r'match\s*=\s*\{\s*namespace\s*=\s*"([^"]*)"', script)
     if len(patterns) != 1:
         raise AssertionError(f"{source}: expected one layer-rule match stanza, found {len(patterns)}")
     pattern = patterns[0]

@@ -260,7 +260,10 @@ for bad in \
   '[{"name":"MON1","width":1756,"height":933,"scale":1,"transform":99}]' \
   '[{"name":"MON1","width":1756,"height":933,"scale":1,"transform":"sideways"}]' \
   '["not-a-dict"]' \
-  '{"MON1":{"width":1756,"height":933,"scale":1,"transform":0}}'; do
+  '{"MON1":{"width":1756,"height":933,"scale":1,"transform":0}}' \
+  '[{"name":["MON1"],"width":1756,"height":933,"scale":1,"transform":0}]' \
+  '[{"name":{"a":1},"width":1756,"height":933,"scale":1,"transform":0}]' \
+  '[{"name":7,"width":1756,"height":933,"scale":1,"transform":0}]'; do
   out="$(layer_state "{\"MON1\":$(mon "$BAR,$POPOUT")}" "$bad" "$NS")"
   st="$(head -n1 <<<"$out")"
   if [[ "$st" == 1 ]]; then
