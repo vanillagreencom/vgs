@@ -32,22 +32,31 @@ that ship COMMANDS — `REQUIRED_BLOCKS` — not every block generically.
 delimiter style. That is deliberate: generic coverage of prose is what bought ten
 findings and a silent miss, and prose has no escapes to lose.
 
-WHAT THE ASSERTIONS ARE DERIVED FROM — what the runbook needs to RUN, not a
-byte-for-byte snapshot of its prose, so ordinary edits do not trip them:
+WHAT THE ASSERTIONS ARE, and each is bound to the CONSTRUCT it protects rather
+than to the block — "some `\\n` survives somewhere" was satisfied by an escape in
+a different sentence while the one inside the jq string was gone:
 
-  * a regex escape handed to jq must be DOUBLE-backslashed. `sub("\\\\s+$"; "")`
-    reaches jq as `\\s` only if the file carries `\\\\s`; a basic string collapses
-    it and jq exits 3 on "Invalid escape".
-  * `\\n` must still be a two-character ESCAPE. The provenance line is built
-    inside a jq string, so a real newline there breaks the program apart.
-  * a shell line continuation must still end a line. The `issues create`
-    invocation is written across two lines, and a basic string ate the newline
-    after the backslash, joining them.
+  * THE PROVENANCE PROGRAM COMPILES. It is extracted and handed to jq itself.
+    Binary and complete: it fails for ANY escape TOML collapsed, not the subset
+    someone enumerated, and it tests what the regression actually did — jq
+    exiting 3 on "Invalid escape". Judged on the COMPILE status alone, since
+    running a filter against no input exits 5 by design.
+  * that program contains no REAL newline. Measured, not assumed: jq 1.8.2
+    ACCEPTS a literal newline inside a string (`jq -n '\"a<LF>b\"'` exits 0), so
+    compiling provably does not catch this and a compile-only check would lose
+    it. A real newline here means TOML processed the `\\n` escapes, which is the
+    mangling itself.
+  * the mirroring invocation still ends a line with a shell continuation. That
+    is shell, not jq, so no compile covers it.
 
-Measured on the two revisions, which is why these three and not others — decoded
-`linear` at c40835b7 versus now: doubled `\\\\s` 0 vs 1, bare `\\s` 1 vs 0,
-two-character `\\n` 0 vs 4, continuation lines 0 vs 2. The decoded value alone
-distinguishes the regression.
+jq is a declared hard dependency for arch, debian and fedora
+(packaging/optional-packages.json), so there is no fallback path — its absence is
+reported as a sentence rather than raised, which is this file's standing rule for
+a check that cannot run.
+
+Measured on the two revisions — decoded `linear` at c40835b7 versus now: the
+provenance program does not compile vs does, real newlines inside it 1 vs 0,
+continuation lines 0 vs 2. The decoded value alone distinguishes the regression.
 
 COLLECTION POINTS. This file implements the invariant stated in
 `.github/instructions/validation-scripts.instructions.md` — a collection step
@@ -65,12 +74,13 @@ The must-fail fixtures run on EVERY invocation rather than behind a flag: this
 file exists because a silent degradation shipped, and a control that can be
 skipped is the same defect one level up.
 
-Offline and dependency-light: python3 (tomllib, 3.11+) only.
+Offline: python3 (tomllib, 3.11+) and jq, both already required by this repo.
 """
 
 from __future__ import annotations
 
 import re
+import subprocess
 import sys
 import tomllib
 from pathlib import Path
@@ -89,20 +99,12 @@ TABLE = "skill-instructions"
 #   linear — the GitHub-intake mirroring runbook.
 REQUIRED_BLOCKS = frozenset({"linear"})
 
-# A regex escape that reached the reader with ONE backslash: `\s` not preceded by
-# another backslash. jq needs the doubled form, and a TOML basic string is what
-# takes one away. Restricted to regex CLASS letters so a shell `\"` or a path
-# separator is not mistaken for one.
-COLLAPSED_REGEX_ESCAPE = re.compile(r"(?<!\\)\\[sdwSDWbB]")
-DOUBLED_REGEX_ESCAPE = re.compile(r"\\\\[sdwSDWbB]")
-
 # THE ANCHORS, and the reason they are this small. Every assertion below is bound
 # to the CONSTRUCT it protects, because "the block contains a `\n` somewhere" was
 # satisfied by an escape in a different sentence: the decoded runbook carries four
-# of them, and turning the one INSIDE the jq string into a real newline left three
-# matches and the check reported clean while jq would reject it. Presence is not
-# provenance — the same shape as the delimiter once bound to another table's key,
-# one level in.
+# of them, and collapsing the one INSIDE the jq string left three matches and the
+# check reported clean. Presence is not provenance — the same shape as the
+# delimiter once bound to another table's key, one level in.
 #
 # Each anchor names what the construct DOES rather than the prose around it, so
 # ordinary edits do not trip it, and a construct that cannot be located is a LOUD
@@ -111,6 +113,19 @@ DOUBLED_REGEX_ESCAPE = re.compile(r"\\\\[sdwSDWbB]")
 # so the invocation is identified by the script it invokes.
 PROVENANCE_PROGRAM = "sub("
 MIRROR_INVOCATION = ("linear.sh", "issues create")
+
+# EXTRACTION, deliberately bounded to ONE shell-quoting form. A POSIX
+# single-quoted string cannot contain a single quote by any spelling, so the span
+# from the quote after `jq` to the next quote is exact and sound — no parser, no
+# escape handling, no ambiguity. Double-quoted, unquoted and variable-held
+# programs are NOT handled: that is the unbounded extraction which produced five
+# findings and was split to VGS-156, and widening this is how it comes back.
+JQ_INVOCATION = re.compile(r"\bjq\b[^'\n]*'")
+JQ_COMPILE_ERROR = 3
+# jq compiles and RUNS what it is given, so a filter could loop forever; the bound
+# keeps a pathological program from wedging CI. Generous — these compile in
+# milliseconds.
+JQ_TIMEOUT_SECONDS = 5.0
 
 
 def table_of(text: str) -> object:
@@ -136,6 +151,62 @@ def lines_containing(value: str, *anchors: str) -> list[str]:
     return [line for line in value.split("\n") if all(one in line for one in anchors)]
 
 
+def single_quoted_jq_programs(value: str) -> list[str]:
+    """Every single-quoted jq program in the decoded text, spans exact.
+
+    Bounded on purpose — see JQ_INVOCATION. The opening quote is the first one
+    after `jq` on that line, and the close is the next single quote ANYWHERE,
+    because a shell single-quoted string legitimately spans newlines and a
+    mangled one is exactly where they turn up.
+    """
+    programs: list[str] = []
+    for opening in JQ_INVOCATION.finditer(value):
+        closing = value.find("'", opening.end())
+        if closing != -1:
+            programs.append(value[opening.end() : closing])
+    return programs
+
+
+def compiles(program: str) -> list[str]:
+    """Whether jq accepts `program`, judged on its COMPILE status alone.
+
+    Exit 3 is a compile error; exit 5 is a runtime error, which running a filter
+    against no input reaches on purpose and which says nothing about syntax.
+    jq is a declared hard dependency for arch, debian and fedora
+    (packaging/optional-packages.json), so there is no fallback path — but its
+    absence is reported as a sentence rather than raised as a traceback, which is
+    this file's standing rule for a check that cannot run.
+    """
+    try:
+        done = subprocess.run(
+            ["jq", "-n", program],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=JQ_TIMEOUT_SECONDS,
+        )
+    except FileNotFoundError:
+        return [
+            "jq is not installed, so the provenance program could not be compiled — "
+            "it is a declared hard dependency, and this is DID NOT RUN, not a pass"
+        ]
+    except subprocess.TimeoutExpired:
+        return [
+            f"the provenance jq program did not terminate within {JQ_TIMEOUT_SECONDS:g}s "
+            f"and was killed — it compiles, but it does not finish, which would hang "
+            f"anyone running this runbook"
+        ]
+    if done.returncode != JQ_COMPILE_ERROR:
+        return []
+    detail = done.stderr.strip().splitlines()
+    return [
+        f"the jq program that builds the mirrored body DOES NOT COMPILE — "
+        f"{detail[0] if detail else '(no diagnostic)'}. Restore whatever escape was "
+        f"collapsed inside that program; a TOML basic string taking a backslash away "
+        f"is the usual cause"
+    ]
+
+
 def survives_decoding(value: str) -> list[str]:
     """Ways a command-bearing block's decoded text would no longer run.
 
@@ -149,42 +220,38 @@ def survives_decoding(value: str) -> list[str]:
     """
     problems: list[str] = []
 
-    program_lines = lines_containing(value, PROVENANCE_PROGRAM)
-    if not program_lines:
+    provenance = [
+        program
+        for program in single_quoted_jq_programs(value)
+        if PROVENANCE_PROGRAM in program
+    ]
+    if not provenance:
         problems.append(
-            f"the provenance jq program (a `{PROVENANCE_PROGRAM}` call) is not in its "
-            f"decoded text at all — the construct this check guards is gone, which is "
-            f"the breakage rather than the absence of one. Restore it, or retarget "
-            f"PROVENANCE_PROGRAM if the runbook genuinely stopped using it"
+            f"the provenance jq program (a single-quoted jq filter containing "
+            f"`{PROVENANCE_PROGRAM}`) is not in its decoded text at all — the construct "
+            f"this check guards is gone, which is the breakage rather than the absence "
+            f"of one. Restore it, or retarget PROVENANCE_PROGRAM if the runbook "
+            f"genuinely stopped using it"
         )
-    for line in program_lines:
-        collapsed = COLLAPSED_REGEX_ESCAPE.findall(line)
-        if collapsed:
+    for program in provenance:
+        # COMPILE IT. Binary and complete: this fails for ANY escape TOML collapsed,
+        # not the subset someone thought to enumerate, and it tests the property the
+        # regression actually had — jq refusing the program.
+        for problem in compiles(program):
+            problems.append(problem)
+        # ...and separately, no LITERAL newline inside it. Measured rather than
+        # assumed: jq 1.8.2 ACCEPTS a real newline in a string (`jq -n '"a<LF>b"'`
+        # exits 0), so the compile above provably does not catch this, and a
+        # compile-only check would have lost the case it was added for. What a real
+        # newline here does mean is that TOML processed the `\n` escapes — the
+        # mangling this file exists to catch — so it is asserted directly.
+        if "\n" in program:
             problems.append(
-                f"the jq program that builds the mirrored body lost the DOUBLED regex "
-                f"escape — {', '.join(sorted(set(collapsed)))} arrived single-"
-                f"backslashed on that line, and jq exits 3 on 'Invalid escape'. Restore "
-                f"the doubled escape inside that program; a TOML basic string "
-                f"collapsing it is the usual cause"
-            )
-        elif not DOUBLED_REGEX_ESCAPE.search(line):
-            problems.append(
-                "the jq program that builds the mirrored body carries no doubled regex "
-                "escape — the trailing-whitespace trim it performs needs one. Restore "
-                "it inside that program, or retarget this assertion if the program "
-                "genuinely stopped needing a regex"
-            )
-        # An unbalanced quote means the program did not CLOSE on its own line, so a
-        # newline it needed as a two-character `\n` arrived real and jq is handed a
-        # literal newline inside a string. Checked on the construct's line rather
-        # than by counting escapes in the block, which an escape elsewhere satisfied.
-        if line.count("'") % 2:
-            problems.append(
-                "the jq program that builds the mirrored body does not close on its "
-                "own line — a newline inside it arrived REAL instead of as a two-"
-                "character `\\n`, and jq rejects a literal newline inside a string. "
-                "Restore the `\\n` escapes inside that program; a TOML basic string "
-                "turning each into a real newline is the usual cause"
+                "the jq program that builds the mirrored body contains a REAL newline "
+                "where it needs a two-character `\\n` — jq tolerates it, but its "
+                "presence means TOML processed the escapes on the way through, which "
+                "is the mangling itself. Restore the `\\n` escapes inside that program; "
+                "a TOML basic string turning each into a real newline is the usual cause"
             )
 
     invocation_lines = lines_containing(value, *MIRROR_INVOCATION)
@@ -314,8 +381,8 @@ def self_test() -> list[str]:
     # lost property is asserted separately so one of them cannot carry the others.
     mangled = audit(MANGLED_RUNBOOK, source="<fixture: mangled runbook>")
     for property_lost, needle in (
-        ("collapsed regex escape", "single-backslashed"),
-        ("newline escape turned real", "two-character"),
+        ("collapsed regex escape", "DOES NOT COMPILE"),
+        ("newline escape turned real", "REAL newline"),
         ("continuation swallowed", "continuation"),
     ):
         if not any(needle in problem for problem in mangled):
@@ -335,8 +402,8 @@ def self_test() -> list[str]:
         source="<fixture: mangled runbook + decoy>",
     )
     for property_lost, needle in (
-        ("collapsed regex escape", "single-backslashed"),
-        ("newline escape turned real", "does not close on its own line"),
+        ("collapsed regex escape", "DOES NOT COMPILE"),
+        ("newline escape turned real", "REAL newline"),
         ("continuation swallowed", "does not end its line"),
     ):
         if not any(needle in problem for problem in decoyed):
