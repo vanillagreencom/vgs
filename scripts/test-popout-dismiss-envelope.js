@@ -321,6 +321,44 @@ const FRAMES = 8;
   if (!failures) ok("no imperative carve-out writer remains");
 }
 
+// THE STACKING ORDER IS LOAD-BEARING, so it is pinned rather than left implicit.
+//
+// The body and the dismiss mask are committed by two separate PanelWindows, and
+// those commits are NOT atomic - so for a frame during a transition the hole and
+// the content input region can disagree. That interval is harmless only because
+// the content window is stacked ABOVE the background window, which it is because
+// both share `effectivePopoutLayer` and the background is mapped FIRST:
+//
+//   bg commits first  -> hole is the new (smaller) rect, content input region is
+//                        still the old (larger) one. Content is on top and
+//                        accepts, so the click REACHES CONTENT.
+//   content commits first -> hole is the old (larger) rect, content input region
+//                        is the new (smaller) one. The point is inside the hole,
+//                        so the background does not accept it either: the click
+//                        falls through. Not a dismiss.
+//
+// Neither ordering dismisses, which is why the imperative envelope is not needed
+// to cover this and why a union of previous/current/target would change nothing -
+// it only ever ENLARGES the hole, and in both orderings the outcome is already
+// decided by stacking. But flip these two assignments and the first ordering
+// becomes a real dismiss-instead-of-click. Hence this check.
+{
+  const shows = [...source.matchAll(/(background|content)Window\.visible = true/g)].map(m => m[1]);
+  if (shows.length < 2)
+    fail("stacking", "could not read the window show order; the input-routing argument above is unverified");
+  else {
+    // Every content show must be preceded by a background show in the same branch
+    // sequence: the background surface has to be mapped first to sit underneath.
+    let bad = false;
+    for (let i = 0; i < shows.length; i++)
+      if (shows[i] === "content" && shows[i - 1] !== "background") bad = true;
+    if (bad)
+      fail("stacking", "contentWindow is shown before backgroundWindow, so the dismiss mask can stack ABOVE the body - a click during a transition can then dismiss instead of reaching content");
+    else
+      ok("the background window is mapped before the content window, so content stacks on top");
+  }
+}
+
 // The surface must still settle from SETTLED geometry - deriving the hole from
 // the animation must not have dragged the surface along, which would be the
 // VGS-133 flash returning.

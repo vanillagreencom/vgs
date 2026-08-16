@@ -334,6 +334,15 @@ Item {
                 bgCommitSettleTimer.restart();
             });
         } else {
+            // ORDER IS LOAD-BEARING, in both branches. Both windows sit on
+            // `effectivePopoutLayer`, so within that layer the compositor stacks
+            // whichever is mapped LAST on top — and the content window has to be
+            // the one on top. The two surfaces commit independently, so during a
+            // transition the dismiss hole and the content input region disagree
+            // for a frame; that is harmless only because content wins input where
+            // they overlap. Map the content window first and that frame becomes a
+            // click that dismisses instead of reaching content.
+            // Pinned by scripts/test-popout-dismiss-envelope.js.
             if (backgroundWindowRequired)
                 backgroundWindow.visible = true;
             contentWindow.visible = true;
