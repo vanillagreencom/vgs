@@ -257,6 +257,48 @@ Item {
         }
     }
 
+    // THE CARVE-OUT MUST COVER WHAT IS ON SCREEN, NOT WHAT IS BEING AIMED AT.
+    //
+    // `alignedHeight` is the TARGET; `renderedAlignedHeight` is what the body
+    // currently draws, and on a shrink it animates down to meet it. Recording
+    // the target immediately shrinks contentHoleRect straight away, so for the
+    // length of the animation the still-visible lower band of the popout sits
+    // outside the hole and inside the background dismiss window — clicking
+    // there dismisses the popout instead of activating the content under the
+    // cursor. The envelope (rendered ∪ target ∪ what is already recorded) keeps
+    // the hole over both until the resize settles.
+    //
+    // This does NOT reintroduce the VGS-133 flash. The body rect no longer sizes
+    // the layer surface at all: only `_surfaceMarginLeft` and `_surfaceW` are
+    // derived from it, both from the X axis, while the surface height comes from
+    // being anchored top and bottom. Widening the envelope moves the carve-out
+    // and nothing else, so no wl_surface geometry is committed by it.
+    function _setDismissCarveOutEnvelope() {
+        if (!shouldBeVisible)
+            return;
+        const currentY = renderedAlignedY;
+        const currentBottom = renderedAlignedY + renderedAlignedHeight;
+        const targetY = alignedY;
+        const targetBottom = alignedY + alignedHeight;
+        // The recorded rect is folded in so a second shrink arriving mid-flight
+        // cannot narrow the hole below what the previous one was still covering.
+        const existingY = _surfaceBodyH > 0 ? _surfaceBodyY : currentY;
+        const existingBottom = _surfaceBodyH > 0 ? _surfaceBodyY + _surfaceBodyH : currentBottom;
+        const envelopeY = Math.min(currentY, targetY, existingY);
+        const envelopeBottom = Math.max(currentBottom, targetBottom, existingBottom);
+        _setSurfaceGeometry(alignedX, envelopeY, alignedWidth, Math.max(0, envelopeBottom - envelopeY));
+        // Monotonic by construction, so something has to collapse it back to the
+        // settled rect or the hole would never shrink again.
+        carveOutSettleTimer.restart();
+    }
+
+    Timer {
+        id: carveOutSettleTimer
+        interval: Math.max(0, Theme.variantDuration(root.animationDuration, root.renderedGeometryGrowing) + 32)
+        repeat: false
+        onTriggered: root._setSettledSurfaceGeometry()
+    }
+
     function updateSurfacePosition() {
         _setSettledSurfaceGeometry();
     }
@@ -267,7 +309,7 @@ Item {
     }
 
     onAlignedYChanged: {
-        _setSettledSurfaceGeometry();
+        _setDismissCarveOutEnvelope();
         _kickBlurCommit();
     }
 
@@ -338,7 +380,7 @@ Item {
         // open) leaves the background window's dismiss carve-out on the stale
         // rect, and clicks in the newly-grown area dismiss the popout. Re-commit
         // once this tick has drained.
-        Qt.callLater(() => root._setSettledSurfaceGeometry());
+        Qt.callLater(() => root._setDismissCarveOutEnvelope());
         if (screen) {
             PopoutManager.showPopout(popoutHandle);
             opened();
@@ -443,7 +485,7 @@ Item {
         // still holds the pre-animation value here, so this captures new-target vs
         // current-rendered once and holds it stable for the whole animation.
         renderedGeometryGrowing = alignedHeight >= renderedAlignedHeight;
-        _setSettledSurfaceGeometry();
+        _setDismissCarveOutEnvelope();
         _kickBlurCommit();
         if (!suspendShadowWhileResizing || !shouldBeVisible)
             return;
