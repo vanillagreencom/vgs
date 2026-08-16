@@ -338,12 +338,6 @@ REVIEW_GATE_API_ATTEMPTS = "1"
 
 REVIEW_GATE_API_RETRY_DELAY_SECONDS = "2"
 
-# Used by: second-opinion (review mode). Space- or comma-separated review lanes;
-# every AVAILABLE lane runs on the same diff and findings are unioned, deduped
-# by location. Adding a third local model CLI is one entry here plus its
-# SECOND_OPINION_<NAME>_CMD (name uppercased, hyphens as underscores).
-SECOND_OPINION_REVIEW_TARGETS = "codex claude"
-
 # Used by: second-opinion (review mode). Glob list of repo instruction files
 # appended to the review prompt (repo-rule adherence lens). Globs resolve
 # inside the reviewed repo (--cwd). Set empty to disable.
@@ -398,3 +392,28 @@ REVIEW_GATE_REVIEW_OBJECT_ERROR_PATTERNS = "encountered an error and was unable 
 # Empty = off. The wait deadline and PR_REVIEW_ON_TIMEOUT still bound a
 # dead reviewer.
 PR_REVIEW_QUORUM = ""
+
+# SECOND OPINION
+#
+# One reviewer by default: the highest-priority entry in SECOND_OPINION_MODELS
+# that is available and is NOT the model this session runs (a Claude Code
+# session gets codex, a Codex session gets claude). Every mode enforces that;
+# a run with no eligible cross-model target refuses and says why.
+
+# Used by: second-opinion. Priority-ordered roster, space/comma separated. Per
+# entry: SECOND_OPINION_<NAME>_CMD (full command; claude and codex have defaults)
+# and SECOND_OPINION_<NAME>_MODEL (identity, when the CLI fronts another model).
+# An entry without a command still names a KNOWN identity, so a session running
+# that model is recognized and excluded.
+SECOND_OPINION_MODELS = "claude codex"
+
+# Used by: second-opinion (review mode). Opinions to collect; 2+ unions up to
+# that many distinct models on the same diff (a shortfall is reported and
+# stamped as degraded coverage).
+SECOND_OPINION_COUNT = "1"
+
+# Used by: second-opinion. Home for review/audit records written without
+# --output, relative to --cwd ("~/..." and absolute paths are taken as given).
+# The default is inside the reviewed checkout; the script seeds the directory
+# with a "*" .gitignore on creation so records never dirty the working tree.
+SECOND_OPINION_ARTIFACT_DIR = "tmp/second-opinion"
