@@ -120,24 +120,31 @@ def survives_decoding(value: str) -> list[str]:
     """Ways a command-bearing block's decoded text would no longer run."""
     problems: list[str] = []
     collapsed = COLLAPSED_REGEX_ESCAPE.findall(value)
+    # Each message names the property missing from the DECODED value and asks for
+    # that property back. The delimiter is offered as the likely CAUSE only: this
+    # check's own self-test proves a mangled runbook fails while written as a
+    # literal string, so prescribing a delimiter would send the reader to change
+    # something that cannot fix the failure they are looking at.
     if collapsed:
         problems.append(
-            f"its regex escapes reached the reader single-backslashed "
-            f"({', '.join(sorted(set(collapsed)))}) — jq needs the DOUBLED form and "
-            f"exits 3 on 'Invalid escape'. A TOML basic string is what takes the "
-            f"backslash away; write the block as a literal string (''' or ')"
+            f"its decoded text lost the DOUBLED regex escape jq needs — "
+            f"{', '.join(sorted(set(collapsed)))} arrived single-backslashed, and jq "
+            f"exits 3 on 'Invalid escape'. Restore the doubled escape in the decoded "
+            f"value; a TOML basic string collapsing it is the usual cause"
         )
     if not TWO_CHARACTER_NEWLINE.search(value):
         problems.append(
-            "it carries no two-character `\\n` escape — the provenance line is built "
-            "inside a jq string, so a real newline there breaks the program apart. A "
-            "TOML basic string turns each `\\n` into a real newline"
+            "its decoded text carries no two-character `\\n` escape — the provenance "
+            "line is built inside a jq string, so a real newline breaks the program "
+            "apart. Restore the `\\n` escapes in the decoded value; a TOML basic string "
+            "turning each into a real newline is the usual cause"
         )
     if not CONTINUATION_LINE.search(value):
         problems.append(
-            "no line ends with a shell continuation — the `issues create` invocation "
-            "is written across two lines, and a TOML basic string eats the newline "
-            "after the backslash and joins them"
+            "its decoded text has no line ending in a shell continuation — the "
+            "`issues create` invocation is written across two lines and would "
+            "otherwise join. Restore the trailing backslash in the decoded value; a "
+            "TOML basic string eating the newline after it is the usual cause"
         )
     return problems
 
