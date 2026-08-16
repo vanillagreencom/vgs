@@ -315,6 +315,20 @@ enabled the bar's hover controller reaches every `PluginComponent` through
   rather than trusting that it can only have been reached by a click —
   `config/vshell/plugins/screenRecord/` is the worked example.
 
+### Launcher hover must not follow a still cursor
+The launcher's result list rebuilds under the pointer — on every keystroke, and
+again when an async `DSearchService` reply lands — so `MouseArea.onEntered`
+fires for whichever row arrives beneath a mouse that never moved. Binding
+selection to it made Enter launch the row under the cursor instead of the
+keyboard's (VGS-134). Hover therefore drives selection only while
+`HoverSelectionGate` is armed, and the keyboard takes it back on launcher open,
+on every key, on every change to the search text (input-method composition and
+paste never reach `handleKey`), and on every repopulation of `visibleItems`.
+Only selection and the hover tint follow the latch; cursor shape, click and the
+right-click menu never do. The decision is
+`config/vshell/plugins/vgsMenu/HoverSelectionGate.js`, and
+`scripts/test-launcher-hover-latch.js` runs it and lints the delegate wiring.
+
 ## External commands
 QML may use `Process` for small calls.
 Use `Paths.vshellCli` for VGS helper calls.
