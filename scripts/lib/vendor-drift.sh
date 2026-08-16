@@ -29,6 +29,18 @@
 # vstack ever records the source revision each skill was installed from, that
 # becomes exact and vendor_drift_direction should use it instead.
 #
+# SIZE EXCEPTION, BASELINED. This file carries a size-ratchet baseline row
+# above the 400-line threshold. It was argued and granted, not inherited: the
+# file is MAJORITY CODE — 253 code to 146 comment — and the growth is rounds of
+# reviewer-demanded fixes, not padding. The prose-to-guard audit already ran
+# here and converted everything convertible, taking it 425 to 369 with code
+# unchanged, which REMOVED an earlier exception rather than arguing for one; the
+# comments left are the residue that cannot execute (the VGS-155 incident, why a
+# prefix test was tried and defeated, the limits of the evidence). The baseline
+# only ever moves DOWN, so this file cannot grow again without the same
+# argument. Reason also recorded in tools/size-ratchet-excludes and
+# vstack.settings.toml, since the baseline row itself cannot carry a comment.
+#
 # Entry point: vendor_drift_main <prog> <engine> <repo_root> [ARGS...], where
 # <engine> names both paths by convention — third_party/<engine> and
 # .agents/skills/<engine> — which is also what lets the tests drive the whole

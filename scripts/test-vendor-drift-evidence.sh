@@ -16,6 +16,14 @@
 # reached the destructive command. The property under test is therefore not
 # "the known shapes are classified", it is "an UNKNOWN shape is treated as
 # content at risk".
+# SIZE EXCEPTION, BASELINED. This file carries a size-ratchet baseline row
+# above the 400-line threshold, argued and granted rather than inherited: it is
+# MAJORITY CODE — 279 code to 116 comment — and every addition is a control a
+# reviewer asked for, each proven to fail without the behaviour it guards. The
+# baseline only ever moves DOWN, so it cannot grow again without the same
+# argument. Reason also recorded in tools/size-ratchet-excludes and
+# vstack.settings.toml, since the baseline row itself cannot carry a comment.
+
 set -euo pipefail
 
 repo_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"

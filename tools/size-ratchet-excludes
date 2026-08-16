@@ -6,6 +6,20 @@
 # cannot be expressed here. Oversized Go `_test.go` files and the
 # `scripts/test-*.js` harnesses simply enter the baseline instead — acceptable,
 # since a baselined test still cannot grow, and it needs no second gate.
+#
+# TWO BASELINED SIZE EXCEPTIONS, argued and granted (VGS-155, 2026-08-16), and
+# recorded here because a baseline row is `path<TAB>digits` and cannot carry a
+# comment — the engine rejects both a third field and a `#` line as malformed:
+#
+#   scripts/lib/vendor-drift.sh            422 lines, 253 of them code
+#   scripts/test-vendor-drift-evidence.sh  420 lines, 279 of them code
+#
+# Both are MAJORITY CODE, and the growth is rounds of reviewer-demanded fixes
+# rather than padding. The prose-to-guard audit already ran on the library and
+# converted everything convertible — 425 to 369 with code unchanged — which
+# REMOVED an earlier exception rather than arguing for one; what remains is the
+# residue that cannot execute. Neither is excluded: they stay baselined, so the
+# ratchet still holds them tighten-only and the number can only ever go DOWN.
 backend/vendor/*	vendored Go modules (go mod vendor for offline Nix builds), upstream-owned
 config/vshell/nvim/colorschemes/*	vendored upstream colorscheme plugins, upstream-owned
 third_party/*	byte-pinned vendored trees (review-gate, size-ratchet, coderabbit-schema, asdcontrol)

@@ -28,7 +28,9 @@ ORCH_STATE_DIR = "tmp"
 # scripts/lib/vendor-drift.sh for why two copies exist). The engine
 # has one threshold, so the fleet's 800-line test allowance is not
 # expressible — oversized tests enter the baseline instead (noted in the
-# excludes file).
+# excludes file). vendor-drift.sh and test-vendor-drift-evidence.sh under
+# scripts/ carry argued exceptions as BASELINE rows, so still tighten-only;
+# reasons live in each file's header and in the excludes file (VGS-155).
 SIZE_RATCHET_THRESHOLD = "400"
 SIZE_RATCHET_BASELINE = "tools/size-ratchet-baseline.tsv"
 SIZE_RATCHET_EXCLUDES = "tools/size-ratchet-excludes"
