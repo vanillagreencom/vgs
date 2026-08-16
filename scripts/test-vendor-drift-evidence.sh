@@ -3,9 +3,10 @@
 # (scripts/lib/vendor-drift.sh, VGS-155): how a diff line is attributed to a
 # side, when a commit time can be trusted, and how the two are read together.
 # What the check reports on top of that — repairs, preconditions, wrappers — is
-# scripts/test-vendor-drift.sh. The parser and the reading are driven directly
-# here, so a shape can be pinned without a fixture that produces it; the age
-# states need real repositories and get them.
+# scripts/test-vendor-drift.sh, and what the libraries promise about their own
+# shape is scripts/test-vendor-drift-contracts.sh. The parser and the reading
+# are driven directly here, so a shape can be pinned without a fixture that
+# produces it; the age states need real repositories and get them.
 #
 # WHY THIS FILE EXISTS. The classifier decides whether the mirror-to-tracked
 # rsync can destroy content, by matching human-readable diff text. It used to
@@ -77,6 +78,9 @@ expect_class "hunk header" no "@@ -1,2 +1 @@"
 expect_class "diff provenance line" no "diff -r -u -- $MIRROR_REL/a $TRACKED_REL/a"
 expect_class "no-newline marker" no '\ No newline at end of file'
 expect_class "mirror file header" no "--- $MIRROR_REL/references/settings.md	2023-11-14"
+# The quoted form, the one ignore arm that had no case of its own.
+expect_class "mirror file header, quoted" no \
+  "diff -r -u -- \"$MIRROR_REL/with space.md\" \"$TRACKED_REL/with space.md\""$'\n'"--- \"$MIRROR_REL/with space.md\""
 expect_class "tracked file header" no "$PAIR"
 expect_class "file only the mirror has" no "Only in $MIRROR_REL/references: retired.md"
 # GNU diff SHELL-quotes the directory when it contains a space — a different
@@ -203,6 +207,30 @@ expect_absent "$err" "$READING_TRACKED_AHEAD" "shallow clone"
 expect_absent "$err" "Do NOT copy the mirror over" "shallow clone"
 ok "a shallow clone has no usable commit age, rather than a confident tracked-ahead"
 
+# ── a git that answers the shallow question with something else ──────────
+# Only the first half of "anything but `false` is read as shallow" was executed:
+# a probe that FAILS was covered, one that SUCCEEDS oddly was not, so `!= false`
+# could become `== true` and kill nothing. A wrapper or a noisy alias is how
+# that arrives.
+root="$(new_fixture git-probe-odd)"
+printf 'shared line\nnew upstream line\n' \
+  >"$root/.agents/skills/$ENGINE/references/settings.md"
+commit_tracked "$root" "$COMMIT_NEW"
+set_refresh "$root" "$REFRESH"
+stub="$(new_git_stub shallow-odd --is-shallow-repository 'echo maybe; exit 0')"
+if [[ "$(PATH="$stub:$PATH" git -C "$root" rev-parse --is-shallow-repository)" != maybe ]]; then
+  fail "odd shallow answer" "stub precondition unmet: the probe did not answer maybe"
+else
+  saved_path="$PATH"
+  PATH="$stub:$PATH"
+  run_check "$root"
+  PATH="$saved_path"
+  expect_rc "$rc" 1 "odd shallow answer"
+  expect_contains "$err" "this is a shallow clone" "odd shallow answer"
+  expect_absent "$err" "$READING_TRACKED_AHEAD" "odd shallow answer"
+fi
+ok "a probe answering anything but false is read as shallow, not as a full repository"
+
 # ── a git that cannot answer the shallow question ─────────────────────────
 # The probe is the only thing standing between a shallow clone and a confident
 # wrong direction, so a git that cannot answer it must not be read as "full".
@@ -214,21 +242,13 @@ printf 'shared line\nnew upstream line\n' \
   >"$root/.agents/skills/$ENGINE/references/settings.md"
 commit_tracked "$root" "$COMMIT_NEW"
 set_refresh "$root" "$REFRESH"
-mkdir -p "$tmp/gitstub"
-{
-  printf '#!/usr/bin/env bash\n'
-  # shellcheck disable=SC2016 # this is the STUB's body: $@ and $a must reach it
-  # literally, not be expanded by the shell writing it.
-  printf 'for a in "$@"; do [[ "$a" == --is-shallow-repository ]] && exit 3; done\n'
-  printf 'exec %q "$@"\n' "$(command -v git)"
-} >"$tmp/gitstub/git"
-chmod +x "$tmp/gitstub/git"
+stub="$(new_git_stub shallow-fails --is-shallow-repository 'exit 3')"
 # The stub only proves something if it really intercepts.
-if PATH="$tmp/gitstub:$PATH" git -C "$root" rev-parse --is-shallow-repository >/dev/null 2>&1; then
+if PATH="$stub:$PATH" git -C "$root" rev-parse --is-shallow-repository >/dev/null 2>&1; then
   fail "git probe fails" "stub precondition unmet: the probe still answered"
 else
   saved_path="$PATH"
-  PATH="$tmp/gitstub:$PATH"
+  PATH="$stub:$PATH"
   run_check "$root"
   PATH="$saved_path"
   expect_rc "$rc" 1 "git probe fails"
@@ -240,29 +260,19 @@ ok "a git that cannot answer the shallow question yields no direction"
 
 # ── a git log that fails, in a repository that has commits ───────────────
 # An empty result means no commit touches the path; a FAILURE means git could
-# not be consulted. Reporting the second as the first is the wrong-cause family
-# the previous round removed for the shallow case. Same stub technique: fail
-# only `log`, delegate the rest, so the fixture still has a real repository and
-# a real HEAD behind it.
+# not be consulted, and reporting the second as the first is the wrong-cause
+# family. Same stub technique: fail only `log`, delegate the rest.
 root="$(new_fixture git-log-fails)"
 printf 'shared line\nnew upstream line\n' \
   >"$root/.agents/skills/$ENGINE/references/settings.md"
 commit_tracked "$root" "$COMMIT_OLD"
 set_refresh "$root" "$REFRESH"
-mkdir -p "$tmp/gitlogstub"
-{
-  printf '#!/usr/bin/env bash\n'
-  # shellcheck disable=SC2016 # the STUB's body: $@ and $a must reach it
-  # literally, not be expanded by the shell writing it.
-  printf 'for a in "$@"; do [[ "$a" == log ]] && exit 3; done\n'
-  printf 'exec %q "$@"\n' "$(command -v git)"
-} >"$tmp/gitlogstub/git"
-chmod +x "$tmp/gitlogstub/git"
-if PATH="$tmp/gitlogstub:$PATH" git -C "$root" log -1 >/dev/null 2>&1; then
+stub="$(new_git_stub log-fails log 'exit 3')"
+if PATH="$stub:$PATH" git -C "$root" log -1 >/dev/null 2>&1; then
   fail "git log fails" "stub precondition unmet: log still answered"
 else
   saved_path="$PATH"
-  PATH="$tmp/gitlogstub:$PATH"
+  PATH="$stub:$PATH"
   run_check "$root"
   PATH="$saved_path"
   expect_rc "$rc" 1 "git log fails"

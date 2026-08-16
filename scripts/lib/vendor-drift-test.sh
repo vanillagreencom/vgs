@@ -1,8 +1,18 @@
 #!/usr/bin/env bash
-# The harness scripts/test-vendor-drift.sh and
-# scripts/test-vendor-drift-evidence.sh run their cases through: assertion
-# helpers, the fixture builders, and the three invariants that hold for EVERY
-# case rather than for the ones that remember to check.
+# The harness the three suites run through. What each takes differs, and the
+# difference matters:
+#
+#   scripts/test-vendor-drift.sh           everything — the assertion helpers,
+#   scripts/test-vendor-drift-evidence.sh  the fixture builders, and run_check,
+#                                          whose three invariants therefore
+#                                          apply to every case in them
+#   scripts/test-vendor-drift-contracts.sh the assertion helpers and the
+#                                          failures counter ONLY: it reads
+#                                          source and never calls run_check, so
+#                                          those invariants do not apply to it
+#
+# The invariants hold for EVERY case that goes through run_check, rather than
+# for the ones that remember to check.
 #
 # Split out of that file when it crossed the size-ratchet threshold, at the seam
 # between the machinery and the cases. The invariants live here deliberately:
@@ -274,11 +284,34 @@ CONFIRM_FLAG="--confirm-mirror-is-newer"
 # text, its messages. A caller is something that could PASS it, which the
 # libraries and the suites themselves are not.
 vendor_drift_caller_surfaces() {
-  git -C "$repo_root" ls-files -- \
+  local root="${1:-$repo_root}"
+  git -C "$root" ls-files -- \
     ':(glob)scripts/*.sh' 'scripts/validate' \
     ':(glob).github/workflows/*.yml' ':(glob).github/workflows/*.yaml' |
     grep -vE '^scripts/test-vendor-drift[^/]*\.sh$' |
-    sed "s|^|$repo_root/|"
+    sed "s|^|$root/|"
+}
+
+# A throwaway repository laid out like this one, for planting carriers into.
+# The sweep used to plant into the LIVE repo: concurrent runs fought over one
+# index, an unguarded `git add -N` aborted the whole suite under errexit with
+# neither an ok marker nor a FAIL line, and because the abort preceded the
+# cleanup it could leave a file containing the destructive flag at a
+# tracked-looking path. A test that writes that flag into the repository it is
+# testing is not a shape to patch; this is the shape instead.
+new_caller_fixture() {
+  local root="$tmp/$1"
+  mkdir -p "$root/scripts" "$root/.github/workflows"
+  printf '#!/usr/bin/env bash\n# stand-in for the manifest\n' >"$root/scripts/validate"
+  printf '#!/usr/bin/env bash\n# stand-in for a wrapper\n' >"$root/scripts/check-review-gate-vendor.sh"
+  printf 'name: ci\non: [push]\n' >"$root/.github/workflows/ci.yml"
+  git -C "$root" init -q -b main
+  git -C "$root" config user.email test@example.invalid
+  git -C "$root" config user.name "vendor drift test"
+  git -C "$root" config commit.gpgsign false
+  git -C "$root" add -A
+  git -C "$root" commit -q -m "caller surfaces"
+  printf '%s' "$root"
 }
 
 # Which of the given files could RUN the flag. Comment lines are stripped first:
@@ -313,4 +346,21 @@ new_shallow_fixture() {
   root="$tmp/$name"
   git clone -q --depth 1 "file://$src" "$root"
   printf '%s' "$root"
+}
+
+# A `git` first on PATH that intercepts ONE subcommand or flag and delegates
+# everything else to the real one, so the fixture keeps a real repository behind
+# it. Echoes the directory to prepend; the caller checks the interception took.
+#   $1 name  $2 the argument to match  $3 the shell body to run on a match
+new_git_stub() {
+  local dir="$tmp/gitstub-$1"
+  mkdir -p "$dir"
+  {
+    printf '#!/usr/bin/env bash\n'
+    # shellcheck disable=SC2016 # the STUB's body: $@ and $a stay literal
+    printf 'for a in "$@"; do [[ "$a" == %q ]] && { %s; }; done\n' "$2" "$3"
+    printf 'exec %q "$@"\n' "$(command -v git)"
+  } >"$dir/git"
+  chmod +x "$dir/git"
+  printf '%s' "$dir"
 }

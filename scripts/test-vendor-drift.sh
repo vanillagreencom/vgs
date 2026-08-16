@@ -2,10 +2,12 @@
 # End-to-end controls for the vendor drift check — scripts/lib/vendor-drift.sh
 # and scripts/lib/vendor-drift-report.sh, behind
 # scripts/check-review-gate-vendor.sh and scripts/check-size-ratchet-vendor.sh
-# (VGS-155). This file covers what the check REPORTS: readings, repairs,
-# preconditions and the wrappers. What it may BELIEVE — how a diff line is
-# attributed and when a commit time can be trusted — is
-# scripts/test-vendor-drift-evidence.sh.
+# (VGS-155). Three suites split by what each one reads. This file covers what
+# the check REPORTS: readings, repairs, preconditions and the wrappers. What it
+# may BELIEVE — how a diff line is attributed and when a commit time can be
+# trusted — is scripts/test-vendor-drift-evidence.sh. What the libraries promise
+# about their own shape, asserted against source and driving nothing, is
+# scripts/test-vendor-drift-contracts.sh.
 #
 # THE BUG THIS EXISTS FOR. The check used to print the mirror-to-tracked rsync
 # unconditionally, as a procedure. Immediately after a vendoring PR merged the
@@ -350,39 +352,6 @@ classify_probe="$(vendor_drift_classify "third_party/$ENGINE" ".agents/skills/$E
   fail "classifier contract" "the real classifier was not restored (probe: $classify_probe)"
 ok "an answer that is neither yes nor no is treated as destructive, not as nothing"
 
-# ── no automated caller may assert the direction ──────────────────────────
-# --confirm-mirror-is-newer is an operator assertion: a manifest row or CI step
-# carrying it would make the destructive command unconditional again, with every
-# case above still green.
-callers=()
-while IFS= read -r caller; do callers+=("$caller"); done < <(vendor_drift_caller_surfaces)
-# A discovery that finds nothing must fail, not pass quietly: that is how a
-# renamed directory leaves a carrier outside the swept set with the control green.
-((${#callers[@]} > 0)) || fail "no automated caller" "the caller enumeration found no surfaces at all"
-for known in scripts/validate scripts/check-review-gate-vendor.sh .github/workflows/ci.yml; do
-  printf '%s\n' "${callers[@]}" | grep -qxF "$repo_root/$known" ||
-    fail "no automated caller" "the enumeration missed a known caller surface: $known"
-done
-carriers="$(flag_carriers "${callers[@]}")"
-[[ -z "$carriers" ]] ||
-  fail "no automated caller" "these tracked callers pass $CONFIRM_FLAG: $carriers"
-# The control must be able to fail on EVERY surface class it claims to cover.
-# Each is planted in turn as a real tracked file, swept by the real enumeration,
-# and removed again — proving the sweep reaches that class, not just that grep
-# can match a string in a temp file.
-for surface in scripts/planted-caller.sh .github/workflows/planted.yml .github/workflows/planted.yaml; do
-  printf '#!/usr/bin/env bash\nscripts/check-review-gate-vendor.sh %s\n' "$CONFIRM_FLAG" \
-    >"$repo_root/$surface"
-  git -C "$repo_root" add -N -- "$surface" >/dev/null 2>&1
-  planted_surfaces=()
-  while IFS= read -r one; do planted_surfaces+=("$one"); done < <(vendor_drift_caller_surfaces)
-  planted="$(flag_carriers "${planted_surfaces[@]}")"
-  git -C "$repo_root" rm -q --cached -- "$surface" >/dev/null 2>&1 || true
-  rm -f "$repo_root/$surface"
-  [[ "$planted" == *"$surface"* ]] ||
-    fail "no automated caller" "the sweep did not reach a planted carrier at $surface"
-done
-ok "no tracked caller asserts the direction, and the search that says so can fail"
 
 # ── liveness: every reading this file names was actually produced ─────────
 for verdict in "${VERDICTS[@]}"; do

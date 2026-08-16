@@ -3,7 +3,7 @@
 # Sourced by scripts/check-review-gate-vendor.sh and
 # scripts/check-size-ratchet-vendor.sh; scripts/lib/vendor-drift-report.sh is
 # the other half. Which half holds what, and that the dependency runs one way,
-# are asserted by the contract controls in scripts/test-vendor-drift-evidence.sh
+# are asserted by the contract controls in scripts/test-vendor-drift-contracts.sh
 # rather than described here.
 #
 # WHY THERE ARE TWO COPIES. An engine has to be IN the repository: CI runs it
@@ -238,6 +238,7 @@ vendor_drift_tracked_age() {
     return 0
   fi
   # A probe that cannot answer says so; anything but `false` is read as shallow.
+  # Both halves are driven by stubs in scripts/test-vendor-drift-evidence.sh.
   if ! shallow="$(git -C "$repo_root" rev-parse --is-shallow-repository 2>/dev/null)"; then
     printf 'git-unreadable\t'
     return 0
