@@ -219,7 +219,7 @@ scripts/test-launcher-hover-latch.js	492
 scripts/test-launcher-search-gate.js	1077
 scripts/test-paste-lifecycle.js	1168
 scripts/test-pill-hover-safety.js	420
-scripts/test-popout-dismiss-envelope.js	482
+scripts/test-popout-dismiss-envelope.js	489
 scripts/test-remote-desktop-state.js	1243
 scripts/test-toast-actions.js	607
 scripts/test-validate.sh	547

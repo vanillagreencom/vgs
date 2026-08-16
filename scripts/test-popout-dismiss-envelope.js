@@ -31,6 +31,14 @@ const path = require("path");
 const ROOT = path.resolve(__dirname, "..");
 const POPOUT = path.join(ROOT, "quickshell/vshell/Widgets/VgsPopoutStandalone.qml");
 const source = fs.readFileSync(POPOUT, "utf8");
+// COMMENT-FREE VIEW, used by every check that infers BEHAVIOUR from the QML text.
+// Reading raw source for that lets prose flip a verdict: this file's checks look
+// for `_bgCommitWindow = true` and for mentions of `backgroundDismissWindowRequired`,
+// and the handlers they read are heavily commented precisely because these
+// invariants are subtle. A comment must never be able to satisfy or trip a guard.
+// `source` stays available for the checks that legitimately search prose-free
+// constructs (property bindings, banned identifiers).
+const code = source.replace(/\/\/[^\n]*/g, "").replace(/\/\*[\s\S]*?\*\//g, "");
 
 let failures = 0;
 const fail = (name, detail) => { console.error(`FAIL [${name}]: ${detail}`); failures += 1; };
@@ -360,10 +368,9 @@ const FRAMES = 8;
 // decided by stacking. But flip these two assignments and the first ordering
 // becomes a real dismiss-instead-of-click. Hence this check.
 {
-  // Comments are stripped first: this file and the QML both DISCUSS
+  // `code` is the comment-free view: this file and the QML both DISCUSS
   // `contentWindow.visible`, and a prose mention must not read as a show site.
   // Whitespace is free around the assignment, so reformatting cannot break this.
-  const code = source.replace(/\/\/[^\n]*/g, "").replace(/\/\*[\s\S]*?\*\//g, "");
   const SHOW = /(background|content)Window\.visible\s*=\s*true/g;
   const shows = [...code.matchAll(SHOW)].map(m => m[1]);
   if (shows.length < 2)
@@ -411,8 +418,8 @@ const FRAMES = 8;
 // every term of `updatesEnabled` is false unless something opens a commit window.
 {
   const mask = bindingsOf("maskRect", ["width", "height"]);
-  const upd = /^\s*updatesEnabled:\s*(.+)$/m.exec(source);
-  const handler = /onBackgroundDismissWindowRequiredChanged:\s*\{([\s\S]*?)\n    \}/.exec(source);
+  const upd = /^\s*updatesEnabled:\s*(.+)$/m.exec(code);
+  const handler = /onBackgroundDismissWindowRequiredChanged:\s*\{([\s\S]*?)\n    \}/.exec(code);
 
   if (!upd) fail("mask commit", "could not read backgroundWindow.updatesEnabled");
   else if (!handler) fail("mask commit", "no onBackgroundDismissWindowRequiredChanged handler: the collapsed mask is never committed, so the mapped surface keeps its previous full-output input region");
