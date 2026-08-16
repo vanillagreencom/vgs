@@ -37,81 +37,8 @@ COMMIT_OLD=1700000000 # 2023-11-14T22:13:20Z
 REFRESH=1700003600
 COMMIT_NEW=1700007200
 
-failures=0
-case_failed=0
-fail() {
-  printf 'FAIL [%s]: %s\n' "$1" "$2" >&2
-  failures=$((failures + 1))
-  case_failed=1
-}
-ok() {
-  if [[ $case_failed -eq 0 ]]; then
-    printf '  ok    %s\n' "$1"
-  fi
-  case_failed=0
-}
-expect_contains() {
-  [[ "$1" == *"$2"* ]] || fail "$3" "expected to contain: $2"$'\n'"--- got ---"$'\n'"$1"
-}
-expect_absent() {
-  [[ "$1" != *"$2"* ]] || fail "$3" "expected NOT to contain: $2"$'\n'"--- got ---"$'\n'"$1"
-}
-expect_rc() {
-  [[ "$1" == "$2" ]] || fail "$3" "expected exit $2, got $1"
-}
-
-# Every verdict this file drives the engine to produce. Used twice: as the
-# noise list the in-sync control asserts is ABSENT, and as a liveness list —
-# a verdict no case reaches is a case that stopped testing what it names.
-VERDICTS=(
-  "the TRACKED copy is newer"
-  "the MIRROR is newer"
-  "which side is newer is UNDETERMINED"
-)
-verdicts_seen=""
-saw_verdict() { verdicts_seen+="$1"$'\n'; }
-
-RSYNC_COMMAND="rsync -a --delete --exclude=.vstack-refreshed"
-
-# ── fixtures ──────────────────────────────────────────────────────────────
-# One repo per case. `git init` and a real commit are the point: the direction
-# evidence is a commit time compared against a refresh mtime, so a fixture that
-# faked either would prove nothing about the comparison that runs for real.
-new_fixture() {
-  local root="$tmp/$1"
-  mkdir -p "$root/third_party/$ENGINE/references" "$root/.agents/skills/$ENGINE/references"
-  git -C "$root" init -q -b main
-  git -C "$root" config user.email test@example.invalid
-  git -C "$root" config user.name "vendor drift test"
-  git -C "$root" config commit.gpgsign false
-  printf 'shared line\n' >"$root/third_party/$ENGINE/references/settings.md"
-  printf 'shared line\n' >"$root/.agents/skills/$ENGINE/references/settings.md"
-  printf '%s' "$root"
-}
-
-commit_tracked() {
-  local root="$1" epoch="$2"
-  git -C "$root" add -A
-  GIT_AUTHOR_DATE="@$epoch +0000" GIT_COMMITTER_DATE="@$epoch +0000" \
-    git -C "$root" commit -q -m "vendor $ENGINE"
-}
-
-set_refresh() {
-  local root="$1" epoch="$2"
-  printf '0000000\n' >"$root/.agents/skills/$ENGINE/.vstack-refreshed"
-  touch -d "@$epoch" "$root/.agents/skills/$ENGINE/.vstack-refreshed"
-}
-
-rc=0
-out=""
-err=""
-run_check() {
-  local root="$1"
-  shift
-  rc=0
-  out="$(vendor_drift_main "$PROG" "$ENGINE" "$root" "$@" 2>"$tmp/err")" || rc=$?
-  err="$(cat "$tmp/err")"
-}
+# shellcheck source=scripts/lib/vendor-drift-test.sh
+source "$repo_root/scripts/lib/vendor-drift-test.sh"
 
 # ── control: the two copies agree ─────────────────────────────────────────
 # Without this, every "expected absent" assertion below would also pass on an
@@ -145,8 +72,8 @@ saw_verdict "the TRACKED copy is newer"
 ok "a commit after the last refresh routes to vstack refresh, with no rsync printed"
 
 # The diff sides are named rather than left as bare markers to decode.
-expect_contains "$err" "lines starting with - exist only in the MIRROR" "tracked-ahead labels"
-expect_contains "$err" "lines starting with + exist only in the TRACKED copy" "tracked-ahead labels"
+expect_contains "$err" "- lines are only in .agents/skills/$ENGINE/ (mirror)" "tracked-ahead labels"
+expect_contains "$err" "+ lines are only in third_party/$ENGINE/ (tracked)" "tracked-ahead labels"
 expect_contains "$err" "third_party/$ENGINE/references/settings.md" "tracked-ahead labels"
 expect_contains "$err" ".agents/skills/$ENGINE/references/settings.md" "tracked-ahead labels"
 ok "the diff carries both side labels and both real paths"
@@ -159,7 +86,58 @@ expect_contains "$err" "$RSYNC_COMMAND" "tracked-ahead confirmed"
 expect_contains "$err" "CONTRADICTS" "tracked-ahead confirmed"
 ok "--confirm-mirror-is-newer prints the rsync but flags the contradicting evidence"
 
+# ── a merged commit that REMOVES engine content ───────────────────────────
+# The shape that defeats a content-only test. The mirror holds the removed line,
+# so it is the side with extra content and the rsync would delete nothing — yet
+# running it re-adds what the merge deleted. Only the timestamp evidence
+# separates this from an upstream addition, which is why it is read first.
+root="$(new_fixture merged-deletion)"
+set_refresh "$root" "$REFRESH"
+printf 'shared line\nretired setting\n' \
+  >"$root/.agents/skills/$ENGINE/references/settings.md"
+commit_tracked "$root" "$COMMIT_NEW"
+run_check "$root"
+expect_rc "$rc" 1 "merged deletion"
+expect_contains "$err" "the TRACKED copy is newer" "merged deletion"
+expect_contains "$err" "vstack refresh" "merged deletion"
+expect_absent "$err" "$RSYNC_COMMAND" "merged deletion"
+ok "a merged deletion routes to vstack refresh, though the rsync would delete nothing"
+
+# ── a merged commit that REMOVES A FILE, read after a later refresh ───────
+# The reported P1 shape, at file granularity: the tracked copy dropped a file,
+# the mirror still carries it, and the refresh marker is newer. `diff -r` reports
+# it as `Only in <mirror>`, so NOTHING is tracked-only, the rsync would delete no
+# file — and running it restores the file the merge deleted, whereupon the two
+# copies agree and the check goes green on the reverted content.
+#
+# The old behavior named that rsync as the SOLE repair and called it lossless.
+# Both halves are asserted here: the repair set, and the absence of any safety
+# claim about it.
+root="$(new_fixture merged-file-deletion)"
+printf 'retired predicate fixture\n' >"$root/.agents/skills/$ENGINE/references/error-patterns.md"
+commit_tracked "$root" "$COMMIT_OLD"
+set_refresh "$root" "$REFRESH"
+run_check "$root"
+expect_rc "$rc" 1 "merged file deletion"
+# Not the sole repair: the non-destructive branch is present, and the rsync sits
+# behind its condition rather than being handed over as the answer.
+expect_contains "$err" "vstack refresh" "merged file deletion"
+expect_contains "$err" "$RSYNC_CONDITION" "merged file deletion"
+expect_contains "$err" "(1) If the TRACKED copy is newer" "merged file deletion"
+# And no claim that adopting the mirror costs nothing.
+for claim in "${SAFETY_CLAIMS[@]}"; do
+  expect_absent "$err" "$claim" "merged file deletion"
+done
+expect_contains "$err" "NOT THE SAME AS LOSING NOTHING" "merged file deletion"
+expect_contains "$err" "Only in .agents/skills/$ENGINE" "merged file deletion"
+ok "a merged file removal never yields the rsync as the sole repair, nor a claim it is lossless"
+
 # ── the ordinary case: mirror ahead ───────────────────────────────────────
+# THE INVERSION, and why this reading may not name a repair alone: byte for
+# byte this fixture is the case above, read where the vendoring commit predates
+# the last refresh — a fresh clone, or a new worktree. The timestamps now favour
+# the mirror and the rsync still deletes nothing, yet it could equally be the
+# merged deletion above. So both repairs, each conditioned.
 root="$(new_fixture mirror-ahead)"
 commit_tracked "$root" "$COMMIT_OLD"
 printf 'shared line\nnew upstream line\n' \
@@ -167,11 +145,15 @@ printf 'shared line\nnew upstream line\n' \
 set_refresh "$root" "$REFRESH"
 run_check "$root"
 expect_rc "$rc" 1 "mirror-ahead"
-expect_contains "$err" "the MIRROR is newer" "mirror-ahead"
+expect_contains "$err" "the evidence is CONSISTENT WITH the MIRROR being newer" "mirror-ahead"
+# Both repairs, and the destructive one only behind its condition. Asserting the
+# rsync alone would pass on the pre-VGS-155 behavior this file exists to forbid.
+expect_contains "$err" "vstack refresh" "mirror-ahead"
+expect_contains "$err" "$RSYNC_CONDITION" "mirror-ahead"
 expect_contains "$err" "$RSYNC_COMMAND" "mirror-ahead"
 expect_contains "$err" ".agents/skills/$ENGINE/ third_party/$ENGINE/" "mirror-ahead"
-saw_verdict "the MIRROR is newer"
-ok "a refresh after the last vendor commit, losing nothing, prints the rsync"
+saw_verdict "the evidence is CONSISTENT WITH the MIRROR being newer"
+ok "favourable evidence still prints both repairs, the rsync only behind its condition"
 
 # ── refresh newer, but the tracked copy still holds content ───────────────
 # The pull-after-refresh shape: the timestamps favour the mirror and the content
@@ -183,12 +165,12 @@ commit_tracked "$root" "$COMMIT_OLD"
 set_refresh "$root" "$REFRESH"
 run_check "$root"
 expect_rc "$rc" 1 "undetermined"
-expect_contains "$err" "which side is newer is UNDETERMINED" "undetermined"
+expect_contains "$err" "which side is newer is NOT ESTABLISHED" "undetermined"
 expect_contains "$err" "vstack refresh" "undetermined"
 expect_absent "$err" "$RSYNC_COMMAND" "undetermined"
 expect_contains "$err" "third_party/$ENGINE/references/settings.md" "undetermined"
 expect_contains "$err" "--confirm-mirror-is-newer" "undetermined"
-saw_verdict "which side is newer is UNDETERMINED"
+saw_verdict "which side is newer is NOT ESTABLISHED"
 ok "timestamps and content disagreeing withholds the rsync and names what it would delete"
 
 run_check "$root" --confirm-mirror-is-newer
@@ -205,7 +187,7 @@ commit_tracked "$root" "$COMMIT_OLD"
 set_refresh "$root" "$REFRESH"
 run_check "$root"
 expect_rc "$rc" 1 "tracked-only file"
-expect_contains "$err" "which side is newer is UNDETERMINED" "tracked-only file"
+expect_contains "$err" "which side is newer is NOT ESTABLISHED" "tracked-only file"
 expect_absent "$err" "$RSYNC_COMMAND" "tracked-only file"
 expect_contains "$err" "third_party/$ENGINE/references/error-patterns.md" "tracked-only file"
 ok "a file only the tracked copy has counts as content the rsync would delete"
@@ -220,7 +202,7 @@ printf 'shared line\nedited in the working tree\n' \
   >"$root/third_party/$ENGINE/references/settings.md"
 run_check "$root"
 expect_rc "$rc" 1 "dirty tracked"
-expect_contains "$err" "which side is newer is UNDETERMINED" "dirty tracked"
+expect_contains "$err" "which side is newer is NOT ESTABLISHED" "dirty tracked"
 expect_contains "$err" "uncommitted changes" "dirty tracked"
 expect_absent "$err" "$RSYNC_COMMAND" "dirty tracked"
 ok "uncommitted changes under third_party disqualify the commit-time evidence"
@@ -232,7 +214,7 @@ printf 'shared line\ntracked-only line\n' \
 set_refresh "$root" "$REFRESH"
 run_check "$root"
 expect_rc "$rc" 1 "no history"
-expect_contains "$err" "which side is newer is UNDETERMINED" "no history"
+expect_contains "$err" "which side is newer is NOT ESTABLISHED" "no history"
 expect_contains "$err" "no commit in this repository touches third_party/$ENGINE" "no history"
 expect_absent "$err" "$RSYNC_COMMAND" "no history"
 ok "a tracked copy with no commit history yields no direction and no rsync"
@@ -277,7 +259,7 @@ table=(
   "$COMMIT_NEW $REFRESH    no      yes      tracked-ahead"
   "$COMMIT_OLD $REFRESH    no      no       mirror-ahead"
   "$COMMIT_OLD $REFRESH    no      yes      undetermined"
-  "$COMMIT_OLD $REFRESH    yes     no       mirror-ahead"
+  "$COMMIT_OLD $REFRESH    yes     no       mirror-ahead"  # reading only; never a sole repair
   "$COMMIT_NEW $REFRESH    yes     no       undetermined"
   "$COMMIT_NEW $REFRESH    yes     yes      undetermined"
   "$COMMIT_NEW $REFRESH    unknown yes      undetermined"

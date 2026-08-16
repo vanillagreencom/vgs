@@ -49,6 +49,9 @@
 # than be classified.
 set -euo pipefail
 
+# shellcheck source=scripts/lib/vendor-drift-report.sh
+source "$(dirname -- "${BASH_SOURCE[0]}")/vendor-drift-report.sh"
+
 # Report `Only in DIR: NAME` as the path it refers to.
 vendor_drift_only_in_path() {
   local line="$1" dir name
@@ -125,13 +128,21 @@ vendor_drift_classify() {
 #
 # Prints exactly one of: tracked-ahead | mirror-ahead | undetermined
 #
-# Order matters. `tracked-ahead` is tested FIRST because a commit that lands
-# after a refresh can also be a pure deletion, which leaves the mirror holding
-# the only extra content while the tracked copy is still the newer side — the
-# content test alone would call that `mirror-ahead` and hand back the rsync that
-# reverts the deletion. And `mirror-ahead` requires BOTH halves: positive
-# timestamp evidence, and that copying across loses nothing. Either alone has
-# been wrong.
+# THESE ARE READINGS OF THE EVIDENCE, NOT VERDICTS, and only one of them is
+# allowed to name a repair on its own — see vendor_drift_report.
+#
+# `tracked-ahead` is tested FIRST because a commit that lands after a refresh
+# can also be a pure DELETION, which leaves the mirror holding the only extra
+# content while the tracked copy is still the newer side. The content test alone
+# reads that as `mirror-ahead` and hands back the rsync that undoes the
+# deletion.
+#
+# `mirror-ahead` needs both halves — the refresh is newer AND copying across
+# would delete nothing — and is STILL not proof. Take that same merged deletion
+# and read it in a fresh clone or a new worktree, where the vendoring commit
+# predates the last refresh: the timestamps favour the mirror, nothing would be
+# deleted, and the rsync still reverts the deletion. An ordinary state inverts
+# it, so it never names a repair alone.
 vendor_drift_direction() {
   local tracked_epoch="$1" refresh_epoch="$2" tracked_dirty="$3" tracked_only="$4"
 
@@ -223,41 +234,6 @@ vendor_drift_stamp() {
   printf '%s' "$epoch"
 }
 
-vendor_drift_usage() {
-  local prog="$1" engine="$2"
-  cat <<USAGE
-$prog — assert third_party/$engine matches the vstack-managed
-copy at .agents/skills/$engine.
-
-  scripts/$prog.sh
-  scripts/$prog.sh --allow-missing-source
-      accept that the vstack copy is absent and the comparison did not happen
-  scripts/$prog.sh --confirm-mirror-is-newer
-      assert that the mirror is the newer side, so the mirror-to-tracked rsync
-      is printed even when it would delete content the tracked copy holds
-
-On drift the check reports which side the evidence says is newer and prints
-only the repair for that direction. Why that matters, and why the rsync is
-withheld by default: scripts/lib/vendor-drift.sh (VGS-155).
-USAGE
-}
-
-# The rsync that adopts the mirror. Printed only where the caller has
-# established it is the right direction — it is the destructive half.
-vendor_drift_print_rsync() {
-  local prog="$1" engine="$2"
-  printf '%s:   rsync -a --delete --exclude=.vstack-refreshed \\\n' "$prog"
-  printf '%s:     .agents/skills/%s/ third_party/%s/\n' "$prog" "$engine" "$engine"
-}
-
-vendor_drift_print_at_risk() {
-  local prog="$1" entry
-  while IFS= read -r entry; do
-    [[ -n "$entry" ]] || continue
-    printf '%s:     %s\n' "$prog" "$entry"
-  done <<<"$vendor_drift_at_risk"
-}
-
 vendor_drift_main() {
   local prog="$1" engine="$2" repo_root="$3"
   shift 3
@@ -322,67 +298,7 @@ vendor_drift_main() {
   direction="$(vendor_drift_direction \
     "$tracked_epoch" "$refresh_epoch" "$tracked_dirty" "$vendor_drift_tracked_only")"
 
-  local dirty_note=""
-  [[ "$tracked_dirty" == yes ]] && dirty_note=", plus uncommitted changes"
-  [[ "$tracked_dirty" == unknown ]] && dirty_note=", commit state unknown"
-
-  {
-    printf '%s: FAIL: %s has drifted from the vstack copy\n' "$prog" "$tracked_rel"
-    printf '%s:\n' "$prog"
-    printf '%s: tracked  %s/ — CI runs this; last commit %s%s\n' \
-      "$prog" "$tracked_rel" "$(vendor_drift_stamp "$tracked_epoch")" "$dirty_note"
-    printf '%s: mirror   %s/ — vstack refresh writes this; last refreshed %s\n' \
-      "$prog" "$mirror_rel" "$(vendor_drift_stamp "$refresh_epoch")"
-    printf '%s:\n' "$prog"
-    printf '%s: In the diff below, lines starting with - exist only in the MIRROR,\n' "$prog"
-    printf '%s: and lines starting with + exist only in the TRACKED copy.\n' "$prog"
-  } >&2
-  printf '%s\n' "$drift" >&2
-
-  {
-    printf '%s:\n' "$prog"
-    case "$direction" in
-      tracked-ahead)
-        printf '%s: the TRACKED copy is newer — it changed after the last vstack refresh.\n' "$prog"
-        printf '%s: The mirror is the stale side, so refresh it:\n' "$prog"
-        printf '%s:   vstack refresh\n' "$prog"
-        if [[ "$confirm_mirror" == true ]]; then
-          printf '%s:\n' "$prog"
-          printf '%s: --confirm-mirror-is-newer CONTRADICTS that evidence. If you are sure,\n' "$prog"
-          printf '%s: this is the command, and it discards the tracked change above:\n' "$prog"
-          vendor_drift_print_rsync "$prog" "$engine"
-        else
-          printf '%s: Do NOT copy the mirror over %s/ here: that reverts the\n' "$prog" "$tracked_rel"
-          printf '%s: commit above, and leaves this check GREEN on the reverted content.\n' "$prog"
-        fi
-        ;;
-      mirror-ahead)
-        printf '%s: the MIRROR is newer — vstack refresh wrote it after the last commit\n' "$prog"
-        printf '%s: that touched the tracked copy, and the tracked copy holds nothing the\n' "$prog"
-        printf '%s: mirror lacks, so copying it across loses nothing. Copy it and commit:\n' "$prog"
-        vendor_drift_print_rsync "$prog" "$engine"
-        ;;
-      *)
-        printf '%s: which side is newer is UNDETERMINED: %s.\n' "$prog" \
-          "$(vendor_drift_undetermined_reason \
-            "$tracked_epoch" "$refresh_epoch" "$tracked_dirty" "$engine")"
-        printf '%s:\n' "$prog"
-        printf '%s: If the TRACKED copy is newer — the usual case right after a vendoring\n' "$prog"
-        printf '%s: PR merges — the repair is:\n' "$prog"
-        printf '%s:   vstack refresh\n' "$prog"
-        printf '%s:\n' "$prog"
-        if [[ "$vendor_drift_tracked_only" == yes && "$confirm_mirror" != true ]]; then
-          printf '%s: If the MIRROR is newer, the repair is an rsync — WITHHELD here, because\n' "$prog"
-          printf '%s: it would delete content that only the tracked copy holds:\n' "$prog"
-          vendor_drift_print_at_risk "$prog"
-          printf '%s: Establish the direction first, then re-run with\n' "$prog"
-          printf '%s: --confirm-mirror-is-newer to print that command.\n' "$prog"
-        else
-          printf '%s: If the MIRROR is newer, copy it across and commit:\n' "$prog"
-          vendor_drift_print_rsync "$prog" "$engine"
-        fi
-        ;;
-    esac
-  } >&2
+  vendor_drift_report "$prog" "$engine" "$confirm_mirror" \
+    "$tracked_epoch" "$refresh_epoch" "$tracked_dirty" "$direction" "$drift"
   return 1
 }
