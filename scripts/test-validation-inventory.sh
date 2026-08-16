@@ -262,6 +262,53 @@ guard_case "missing MANIFEST_EOF heredoc is reported" \
   "${real_runner//MANIFEST_EOF/MANIFEST_END}" \
   "has no MANIFEST_EOF heredoc"
 
+# ...BY EVERY READER OF THAT DELIMITER, not just the one that happens to run
+# first. The case above enters through manifest_rows, which refuses loudly; the
+# other two used to no-op. `runner_logic` returned text with the manifest's rows
+# still in it — the vacuity it documents itself as preventing, since every
+# attribute in real use appears in some row — and `build` returned a probe
+# carrying the REAL manifest, answering the participation question about the
+# wrong rows. Neither shipped a false green, but only because a sibling arm
+# refused the same file, which is an implicit coupling nothing asserted. Called
+# DIRECTLY here, so the reliance is a checked property rather than an assumption.
+heredoc_said="$(python3 - "$repo_root" "$tmp" <<'HEREDOC' 2>&1 || true
+import importlib.util, pathlib, sys
+root, tmp = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2])
+spec = importlib.util.spec_from_file_location(
+    "vm", root / "scripts" / "lib" / "validation_manifest.py"
+)
+mod = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mod)
+runner = root / "scripts" / "validate"
+# The grammar is read from the REAL runner: a mangled delimiter must be refused
+# for the delimiter, not for a grammar the probe could not dump.
+rules = mod.grammar(runner)
+mangled = tmp / "no-heredoc-runner"
+mangled.write_text(
+    runner.read_text(encoding="utf-8").replace("MANIFEST_EOF", "MANIFEST_END"),
+    encoding="utf-8",
+)
+mangled.chmod(0o755)
+work = tmp / "no-heredoc-work"
+for label, call in (
+    ("LOGIC", lambda: mod.runner_logic(mangled)),
+    ("BUILD", lambda: mod.token_participates(mangled, rules, "always", work)),
+):
+    try:
+        call()
+        print(f"{label} ACCEPTED")
+    except mod.ManifestError as error:
+        print(f"{label} {error}")
+HEREDOC
+)"
+for label in LOGIC BUILD; do
+  expect_contains "$heredoc_said" "$label scripts/validate has no MANIFEST_EOF heredoc" \
+    "heredoc miss is refused"
+done
+expect_absent "$heredoc_said" "ACCEPTED" "heredoc miss is refused"
+expect_absent "$heredoc_said" "Traceback" "heredoc miss is refused"
+ok "a runner whose manifest delimiter is renamed is refused by runner_logic and by the probe builder"
+
 guard_case "a row with no separator is reported" \
   "$(python3 - "$runner" <<'PY'
 import re, sys

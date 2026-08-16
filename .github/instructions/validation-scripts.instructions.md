@@ -34,12 +34,17 @@ one of the <!-- validate-areas -->areas `go`, `qml`, `all`<!-- /validate-areas -
 `prose_areas` in `scripts/lib/validation_manifest.py` reads what lies between
 them, and `scripts/check-validation-inventory.py` compares it against the
 runner's own list. Reword inside freely, but every backticked lowercase word in
-there is read as an area name; exactly one marker pair per file; an empty region
-is refused; the page's backtick fences must balance; markers inside an
-unindented backtick code fence are a picture, not the contract (a fence indented
-under a bullet, or a `~~~` one, is not read as a fence at all, so markers in it
-count as real). Getting any of those wrong FAILS the guard rather than turning
-the comparison off. Dropping the enumeration is a recorded decision — remove the file from
+there is read as an area name; exactly one marker pair per file, opener before
+closer (a reversed pair is refused as reversed, not as a missing closer); an
+empty region is refused; the page's unindented backtick fence lines must be even
+in number, counted without comparing run lengths — so a three-backtick fence
+nested in a four-backtick one balances under markdown's rule and is still
+refused, which that refusal names as its second cause; markers inside an
+unindented backtick fence are a
+picture, not the contract (a fence indented under a bullet, or a `~~~` one, is
+not a fence here, so markers in it count as real), and a marker found only inside
+one is reported as fenced, not as absent. Getting any of those wrong FAILS the
+guard rather than turning the comparison off. Dropping the enumeration is a recorded decision — remove the file from
 `AREA_ENUMERATING_DOCS` in the same edit.
 
 Its exit status is four-valued, and **77 is not a pass**: `0` everything

@@ -40,6 +40,20 @@ _MANIFEST_HEREDOC = re.compile(
 )
 
 
+def _no_heredoc(consequence: str) -> ManifestError:
+    """A runner whose manifest delimiter could not be found, worded once.
+
+    Three readers look for that heredoc and all three are wrong without it, so
+    each states the same cause and its own consequence. Two of them used to state
+    NOTHING: they no-opped, and shipped no false green only because the third
+    refused the same file first.
+    """
+    return ManifestError(
+        f"scripts/validate has no MANIFEST_EOF heredoc — every reader here finds "
+        f"the manifest by that delimiter, {consequence}"
+    )
+
+
 def _read(path: Path, what: str) -> str:
     """A surface's text, with an unreadable file as a DIAGNOSTIC not a traceback.
 
@@ -101,10 +115,7 @@ def manifest_rows(runner: Path) -> list[tuple[str, str]]:
     text = _read(runner, "the manifest runner")
     block = _MANIFEST_HEREDOC.search(text)
     if not block:
-        raise ManifestError(
-            "scripts/validate has no MANIFEST_EOF heredoc; "
-            "this check parses that block, so moving it silently empties the inventory"
-        )
+        raise _no_heredoc("so moving or renaming it would silently empty the inventory")
     rules = grammar(runner)
     pattern = rules.tag_pattern()
     # C4's set, AS THE RUNNER SPELLS IT — C4 being the constraint in
@@ -645,10 +656,19 @@ def token_participates(runner: Path, rules: "Grammar", token: str, workdir: Path
         target.chmod(0o755)
 
     def build(manifest: str) -> Path:
-        text = _read(runner, "the manifest runner")
-        text = _MANIFEST_HEREDOC.sub(
-            lambda m: m.group(1) + manifest + m.group(3), text
+        # SUBSTITUTED OR REFUSED, never quietly zero times. A `sub` that matches
+        # nothing returns the text unchanged, so a renamed delimiter would have
+        # built a probe carrying the REAL manifest and answered the
+        # participation question about the wrong rows — a confident wrong answer
+        # in place of a diagnostic.
+        text, swapped = _MANIFEST_HEREDOC.subn(
+            lambda m: m.group(1) + manifest + m.group(3),
+            _read(runner, "the manifest runner"),
         )
+        if not swapped:
+            raise _no_heredoc(
+                f"so the participation probe for `{token}` could not be built"
+            )
         probe = repo / "scripts" / "validate"
         probe.write_text(text, encoding="utf-8")
         probe.chmod(0o755)
@@ -727,8 +747,15 @@ def runner_logic(runner: Path) -> str:
     """
     text = _read(runner, "the manifest runner")
     manifest = _MANIFEST_HEREDOC.search(text)
-    if manifest:
-        text = text.replace(manifest.group(0), "")
+    # A MISS IS REFUSED, NOT SHRUGGED AT. `if manifest:` with no else left the
+    # rows in the returned text on a renamed or removed delimiter — precisely the
+    # vacuity described above, since every attribute in real use appears in some
+    # row. It shipped no false green only because manifest_rows refuses the same
+    # file in a sibling arm, which is an implicit coupling between two readers
+    # that nothing asserted.
+    if not manifest:
+        raise _no_heredoc("so the runner's executable shell could not be isolated")
+    text = text.replace(manifest.group(0), "")
     lines = []
     for line in text.splitlines():
         stripped = line.strip()
@@ -772,8 +799,14 @@ _FENCE_LINE = re.compile(r"^```", re.MULTILINE)
 # depends on into a coupling a comment merely asked for — and a divergence
 # between counted and paired lines is precisely the wrong-cause refusal that
 # check exists to prevent.
+#
+# GROUPED ON INTERPOLATION, because a bare splice is only correct while the
+# pattern is a bare literal: give `_FENCE_LINE` an alternation or a trailing
+# quantifier and an ungrouped splice would rebind it across the `.*?` and change
+# this pattern's meaning silently rather than failing.
 _FENCED_BLOCK = re.compile(
-    rf"{_FENCE_LINE.pattern}.*?{_FENCE_LINE.pattern}", re.DOTALL | re.MULTILINE
+    rf"(?:{_FENCE_LINE.pattern}).*?(?:{_FENCE_LINE.pattern})",
+    re.DOTALL | re.MULTILINE,
 )
 
 

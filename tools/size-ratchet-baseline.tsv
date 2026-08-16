@@ -207,7 +207,7 @@ scripts/check-settings-migration.js	952
 scripts/check-vshell-helper.py	5815
 scripts/check-vshell-niri.py	678
 scripts/gen-package-metadata.py	985
-scripts/lib/validation_manifest.py	970
+scripts/lib/validation_manifest.py	1003
 scripts/qml-smoke.sh	1258
 scripts/test-compositor-focus.js	791
 scripts/test-paste-lifecycle.js	1168
@@ -215,6 +215,6 @@ scripts/test-pill-hover-safety.js	420
 scripts/test-remote-desktop-state.js	1243
 scripts/test-toast-actions.js	607
 scripts/test-validate.sh	547
-scripts/test-validation-inventory.sh	1996
+scripts/test-validation-inventory.sh	2043
 scripts/validate	1035
 vstack.toml	479
