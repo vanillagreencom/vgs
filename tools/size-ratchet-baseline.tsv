@@ -1,4 +1,4 @@
-.github/workflows/ci.yml	482
+.github/workflows/ci.yml	485
 .github/workflows/review-gate-writer.yml	656
 backend/internal/services/bluez/bluez.go	744
 backend/internal/services/clipboard/clipboard.go	635
@@ -226,6 +226,6 @@ scripts/test-validate.sh	547
 scripts/test-validation-inventory.sh	2278
 scripts/test-vendor-drift-evidence.sh	420
 scripts/test-vendor-drift.sh	434
-scripts/validate	1055
+scripts/validate	1061
 vstack.settings.toml	419
 vstack.toml	553

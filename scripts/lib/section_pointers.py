@@ -58,7 +58,10 @@ from __future__ import annotations
 
 import re
 from bisect import bisect_right
+from typing import NamedTuple
 from pathlib import PurePosixPath
+
+from prose_blocks import blocks, normalized_words
 
 SECTION_MARK = "§"
 # THE TARGET IS ADJACENT TO THE MARK. Only delimiters may sit between them —
@@ -72,18 +75,25 @@ CROSSABLE = "`\"'*_([{)]}"
 SEPARATORS = ",;:.!?—–"
 OPENERS = "`\"'*_([{"
 CLOSERS = "`\"'*_)]}"
+# Where target INHERITANCE stops (`pointers`). DERIVED from SEPARATORS rather
+# than spelled a second time: the two rules genuinely differ by one character,
+# and writing that character out twice is how they came to disagree — the stop
+# was a bare `"."` while SEPARATORS already listed six, so a bare pointer after
+# `!`, `?`, `;` or an em dash inherited a target it does not name.
+#
+# THE COMMA IS THE DIFFERENCE, and it is the whole reason inheritance exists:
+# `AGENTS.md` (§ Mission, § Do not) is one enumeration, and the second mark
+# names AGENTS.md as plainly as the first. Everything else in SEPARATORS ends
+# the clause. `;` and `:` are included deliberately though neither ends a
+# sentence: they separate independent statements, and the two errors are not
+# symmetric — inheriting too far resolves a dead pointer against the wrong
+# document and reports nothing, while stopping too early reports a pointer the
+# author then rewords. A visible false report beats a silent miss.
+INHERITANCE_STOPS = SEPARATORS.replace(",", "")
 # Where a cited name stops. The text BEFORE the punctuation is kept, so
 # "…live session." yields the whole heading rather than one word less.
 TERMINATORS = set(".,;:!?()[]{}\"`|—–")
-# Removed from headings AND names before comparison, so `covers,` and `covers`
-# are the same word and `(and frosted)` needs no spelling rule of its own.
-PUNCTUATION = set(".,;:!?()[]{}\"`'*_—–")
 
-ATX_HEADING = re.compile(r"^(#{1,6})\s+(.*?)\s*#*\s*$")
-# A markdown line that is self-contained: a heading, table row, quote or list
-# item. Each starts a block rather than continuing the one above it.
-MD_BLOCK_START = re.compile(r"^(#{1,6}\s|\||>|[-*+]\s|\d+[.)]\s)")
-COMMENT_MARKER = re.compile(r"^(#+|//+|\*+)\s?")
 # A token naming a file: a path, or a bare name carrying an extension. What it
 # separates is a pointer with a target (`bin/vshell-helper` § Scratchpads) from
 # a bare one, where the word before the mark is only the sentence running into
@@ -91,94 +101,6 @@ COMMENT_MARKER = re.compile(r"^(#+|//+|\*+)\s?")
 # would resolve a decision record's own prose against the wrong document.
 FILE_TOKEN = re.compile(r"^[\w.+-]+\.[A-Za-z0-9]+$")
 
-
-def normalized_words(text: str) -> list[str]:
-    """Comparison form: punctuation dropped, whitespace collapsed, case kept."""
-    return "".join(" " if ch in PUNCTUATION else ch for ch in text).split()
-
-
-def headings(text: str) -> list[list[str]]:
-    """Every ATX heading, in comparison form. A fenced block holds none."""
-    found, fenced = [], False
-    for line in text.splitlines():
-        stripped = line.strip()
-        if stripped.startswith(("```", "~~~")):
-            fenced = not fenced
-            continue
-        if fenced:
-            continue
-        match = ATX_HEADING.match(stripped)
-        if match and match.group(2):
-            found.append(normalized_words(match.group(2)))
-    return found
-
-
-def blocks(text: str, is_markdown: bool) -> list[tuple[str, list[tuple[int, int]]]]:
-    """Contiguous prose joined, each with an offset-to-line index.
-
-    A pointer wraps freely: the target can end one line and the name begin the
-    next (`project-skills/vshell-dev/references/theme-engine.md`), or the mark
-    can end a line and a quoted name begin the next
-    (`config/vshell/plugins/vgsMenu/HoverSelectionGate.qml`). Reading a pointer
-    one line at a time sees neither, so lines are joined first.
-
-    A block ends at a blank line; in markdown also at a structural line, and
-    everywhere else wherever comment lines meet code lines — the pointer in
-    `.gitignore`'s handoff comment must not absorb the path on the line below it.
-
-    A FENCED REGION IS NOT PROSE, in any file type. Markdown fences an example;
-    a source file documenting this syntax fences one inside a docstring or a
-    comment block, and both mean the same thing — an illustration, not a claim
-    that some heading exists. Skipping it in markdown alone would leave every
-    file that explains the syntax (this one, its check, a conventions doc)
-    unable to show an example without asserting it.
-    """
-    out: list[tuple[str, list[tuple[int, int]]]] = []
-    current: list[tuple[int, str]] = []
-    fenced = False
-    previous_is_comment: bool | None = None
-
-    def flush() -> None:
-        nonlocal current
-        if not current:
-            return
-        joined, index = "", []
-        for number, prose in current:
-            index.append((len(joined), number))
-            joined += prose + " "
-        out.append((joined, index))
-        current = []
-
-    for number, line in enumerate(text.splitlines(), 1):
-        stripped = line.strip()
-        marker = COMMENT_MARKER.match(stripped)
-        if (stripped[marker.end() :] if marker else stripped).startswith(("```", "~~~")):
-            fenced = not fenced
-            flush()
-            continue
-        if fenced:
-            continue
-        if not stripped:
-            flush()
-            previous_is_comment = None
-            continue
-        if is_markdown:
-            prose, is_comment = stripped, False
-            if MD_BLOCK_START.match(stripped):
-                flush()
-        else:
-            is_comment = marker is not None
-            prose = stripped[marker.end() :] if marker else stripped
-            if previous_is_comment is not None and is_comment != previous_is_comment:
-                flush()
-        if not prose:
-            flush()
-            previous_is_comment = None
-            continue
-        current.append((number, prose))
-        previous_is_comment = is_comment
-    flush()
-    return out
 
 
 def target_token(before: str) -> str:
@@ -248,14 +170,15 @@ def resolves(name: str, known: list[list[str]], quoted: bool) -> bool:
     )
 
 
-def pointers(path: str, text: str) -> list[tuple[int, str, str, bool, str | None]]:
-    """(line, target, name, quoted, problem) for every mark in a file.
+def pointers(path: str, text: str) -> list[tuple[int, str, str, bool, str | None, bool]]:
+    """(line, target, name, quoted, problem, inherited) for every mark in a file.
 
     A SECOND MARK IN THE SAME CLAUSE INHERITS the first's target:
     `project-skills/vshell-dev/SKILL.md` writes "canonical in `AGENTS.md`
     (§ Mission, § Do not)", where the second pointer names AGENTS.md as plainly
-    as the first. Inheritance stops at a sentence end, so a later paragraph-style
-    "see § Niri" is read as intra-document, which is what it is.
+    as the first. Inheritance stops at any INHERITANCE_STOPS character — every
+    separator but the comma — so a later "see § Niri" is read as intra-document,
+    which is what it is.
     """
     found = []
     for joined, index in blocks(text, path.endswith(".md")):
@@ -266,23 +189,32 @@ def pointers(path: str, text: str) -> list[tuple[int, str, str, bool, str | None
             name, quoted, problem = cited_name(joined[match.end() :])
             token = target_token(joined[: match.start()])
             target = token if names_a_file(token) else ""
-            if not target and previous_target and "." not in joined[previous_end : match.start()]:
+            gap = joined[previous_end : match.start()]
+            inherited = bool(
+                not target and previous_target and not set(gap) & set(INHERITANCE_STOPS)
+            )
+            if inherited:
                 target = previous_target
-            found.append((line, target, name, quoted, problem))
+            found.append((line, target, name, quoted, problem, inherited))
             previous_target, previous_end = target, match.end()
     return found
 
 
-def resolve_target(token: str, citer: str, markdown: dict[str, object]) -> str:
-    """The tracked markdown path a token names, or "" when it names none.
+def resolve_target(
+    token: str, citer: str, markdown: dict[str, object]
+) -> tuple[str, str]:
+    """(path, spelling) for the tracked markdown file a token names.
 
-    Repo-relative first, then relative to the citing file (markdown links write
-    `../decisions/D001-….md`), then a basename — but only when exactly one
-    tracked document carries it, since two would make the pointer ambiguous
-    rather than resolvable.
+    ("", "") when it names none. Repo-relative first, then relative to the citing
+    file (markdown links write `../decisions/D001-….md`), then a basename — but
+    only when exactly one tracked document carries it, since two would make the
+    pointer ambiguous rather than resolvable.
+
+    The spelling is returned, not merely used: it is what lets the caller assert
+    each half of the grammar is still exercised somewhere in the tree.
     """
     if token in markdown:
-        return token
+        return token, "repo-relative path"
     parts: list[str] = []
     for part in (PurePosixPath(citer).parent / token).parts:
         if part == "..":
@@ -292,56 +224,93 @@ def resolve_target(token: str, citer: str, markdown: dict[str, object]) -> str:
             parts.append(part)
     relative = "/".join(parts)
     if relative in markdown:
-        return relative
+        return relative, "citer-relative link"
     basenames = [rel for rel in markdown if rel.rsplit("/", 1)[-1] == token]
-    return basenames[0] if len(basenames) == 1 else ""
+    return (basenames[0], "unique basename") if len(basenames) == 1 else ("", "")
+
+
+class Judged(NamedTuple):
+    """What `pointer_problems` found, including the marks it declined to own.
+
+    `judged` carries one (target, spelling) per mark actually resolved, so the
+    caller can assert that every grammar SPELLING is still exercised rather than
+    watching a total that says nothing about which half of the grammar stopped
+    working. `declined` is the fourth collection point: the marks this parser
+    decides are not its business, counted by reason instead of vanishing into a
+    bare `continue` under a headline count that reads as full coverage.
+    """
+
+    problems: list[str]
+    judged: list[tuple[str, str]]
+    declined: dict[str, int]
+    used: set[tuple[str, str, str]]
 
 
 def pointer_problems(
     files: dict[str, str],
     markdown: dict[str, list[list[str]]],
     exempt,
-) -> tuple[list[str], int, set[str], set[tuple[str, str, str]]]:
-    """(problems, pointers checked, targets cited, exemptions used).
+    unreadable: dict[str, str] | None = None,
+) -> Judged:
+    """Resolve every mark in `files`; see `Judged` for what comes back.
 
     `exempt(citer, target, name, quoted)` returns the exemption keys a pointer
     the headings do not cover may fall back on — empty for none. The caller owns
-    that table, so this stays the grammar and nothing else.
+    that table, so this stays the grammar and nothing else. `unreadable` maps a
+    tracked path to why its blob is not text, so a cited document that exists but
+    could not be parsed is named as that rather than blamed on the citer.
     """
     problems: list[str] = []
-    checked, cited_targets = 0, set()
+    judged: list[tuple[str, str]] = []
+    declined: dict[str, int] = {}
     used: set[tuple[str, str, str]] = set()
+    unreadable = unreadable or {}
+
+    def decline(reason: str) -> None:
+        declined[reason] = declined.get(reason, 0) + 1
 
     for rel in sorted(files):
-        for line, token, name, quoted, problem in pointers(rel, files[rel]):
+        for line, token, name, quoted, problem, inherited in pointers(rel, files[rel]):
             # SCOPE IS SETTLED BEFORE THE NAME IS JUDGED. A malformed name is
             # only this check's business once the pointer is one it owns: a code
             # region's pointer, or one in a file with no headings, is not made
             # ours by an unclosed backtick in it.
             where = f"{rel}:{line}"
             if token.endswith(".md"):
-                target = resolve_target(token, rel, markdown)
+                target, spelling = resolve_target(token, rel, markdown)
                 if not target:
+                    why = (
+                        f"is tracked, but its blob is {unreadable[token]}, so no heading "
+                        f"could be parsed from it. Fix that file's encoding"
+                        if token in unreadable
+                        else "is not a tracked markdown file. Repoint it at the file "
+                        "that owns the section now, or write the repo-relative path if "
+                        "the basename is ambiguous or shared"
+                    )
                     problems.append(
-                        f"{where} cites `{token} {SECTION_MARK} {name}`, but {token} is "
-                        f"not a tracked markdown file. Repoint it at the file that owns "
-                        f"the section now, or write the repo-relative path if the "
-                        f"basename is ambiguous or shared."
+                        f"{where} cites `{token} {SECTION_MARK} {name}`, but {token} {why}."
                     )
                     continue
+                if inherited:
+                    spelling = "inherited target"
             elif token:
-                continue  # a pointer into code, which has no headings to parse
+                decline("at a code region")
+                continue  # no heading syntax to parse
             elif rel.endswith(".md"):
-                target = rel  # bare, so intra-document: "see § Niri"
+                target, spelling = rel, "intra-document"  # bare: "see § Niri"
             else:
-                continue  # bare, in a file that has no headings of its own
+                decline("bare in a non-markdown file")
+                continue  # nothing with headings of its own to resolve against
             if problem:
                 problems.append(f"{where}: {problem}")
                 continue
-            if not name or name[0].isdigit():
-                continue  # a numbered workflow step, not a heading
-            checked += 1
-            cited_targets.add(target)
+            if not name:
+                decline("no name after the mark")
+                continue
+            if name[0].isdigit():
+                decline("a numbered workflow step")
+                continue
+            judged.append((target, spelling))
             known = markdown[target]
             if resolves(name, known, quoted):
                 continue
@@ -365,4 +334,4 @@ def pointer_problems(
                 f"HISTORICAL_SECTIONS in scripts/check-section-pointers.py with the "
                 f"reason. Headings there: {spelled}"
             )
-    return problems, checked, cited_targets, used
+    return Judged(problems, judged, declined, used)

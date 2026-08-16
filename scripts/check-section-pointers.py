@@ -18,9 +18,21 @@ This shape is not a link, and it is the one this repo actually writes.
 The grammar, the wrap handling and the matching rule — including what the rule
 deliberately does not prove — are in `scripts/lib/section_pointers.py`. This
 file holds the policy: which trees are swept, which files hold fixtures rather
-than claims, which removed sections are cited on purpose, and the three
-collection points. Every exclusion is named one at a time, carries its reason,
-and fails when it stops naming something real.
+than claims, which removed sections are cited on purpose, and the collection
+points. Every exclusion is named one at a time, carries its reason, and fails
+when it stops naming something real.
+
+WHAT IS OUT OF SCOPE, and therefore what the count does NOT cover. A mark whose
+target names a code region, and a bare mark in a file that has no headings of
+its own, are DECLINED — the parser cannot resolve either, and both are counted
+by reason in the ok line rather than dropped silently. The second is the one
+worth knowing about: `scripts/check-doc-growth.py` names several deleted
+AGENTS.md sections in bare prose that nothing here judges, beside three in the
+same file that DO need HISTORICAL_SECTIONS entries purely because an `AGENTS.md`
+token happens to sit adjacent to the mark. That is the whole rule behind which
+lines need an entry, and without it the table looks arbitrary:
+HISTORICAL_SECTIONS covers pointers whose target is ADJACENT, because those are
+the only ones this parser owns.
 
 COLLECTION POINTS (`scripts/lib/collected.py` — a matcher that comes back empty
 is a failure of the check, never a clean result):
@@ -30,27 +42,34 @@ is a failure of the check, never a clean result):
                                       whole surface class cannot drop out while
                                       the count stays healthy
   2  the pointers found               asserted to still reach AGENTS.md, which
-                                      eleven files cite
+                                      every swept surface class cites, and to
+                                      still exercise every GRAMMAR_SPELLINGS arm
   3  each target document's headings  nothing parsed anywhere, or an anchor that
                                       stopped yielding headings, is the parser
                                       having stopped matching
+  4  the marks declined               counted by reason and printed, so scope is
+                                      a visible contract rather than a gap
 
-Every rule here and in the parser has a must-fail control in
-`scripts/test-section-pointers.py`, which drives each arm directly.
+Every rule here and in the parsers has a must-fail control, one file per
+subject: `scripts/test-section-pointers.py` drives each arm of this file,
+`scripts/lib/prose_blocks_selftest.py` the wrap and block-boundary rules beside
+the library that owns them, and `scripts/test-section-pointers-e2e.py` the
+wiring that turns arms into a verdict, by running this guard as a process.
 """
 
 from __future__ import annotations
 
-import subprocess
 import sys
 from collections.abc import Sequence
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent / "lib"))
 from collected import members_missing, nothing_collected  # noqa: E402
+from prose_blocks import headings  # noqa: E402
+from tracked_blobs import blob_texts, tracked_entries  # noqa: E402
 from section_pointers import (  # noqa: E402
     SECTION_MARK,
-    headings,
+    Judged,
     normalized_words,
     pointer_problems,
     resolves,
@@ -95,6 +114,10 @@ FIXTURE_FILES = {
         "its control tables are pointer fixtures citing a synthetic doc.md; that "
         "file's own findings are what prove this check reports"
     ),
+    "scripts/lib/prose_blocks_selftest.py": (
+        "same, for the wrap and block-boundary rules: its fixtures are deliberately "
+        "unresolvable, since half of them exist to be reported"
+    ),
 }
 
 # Vendored trees carry upstream docs that are not ours to repair — the nvim
@@ -116,6 +139,19 @@ SWEEP_ANCHORS = (
     "AGENTS.md",
     "docs/architecture/shell-architecture.md",
     ".github/instructions/validation-scripts.instructions.md",
+)
+
+# Every way a pointer can name its target, each asserted to be exercised
+# somewhere in the tree. This is the pointer-side twin of SWEEP_ANCHORS, and it
+# exists because a headline count cannot see half a grammar go dark: a resolver
+# arm that stops matching moves its marks into the declined census instead of
+# failing, and the total drops by an amount nobody has a baseline for.
+GRAMMAR_SPELLINGS = (
+    "repo-relative path",
+    "citer-relative link",
+    "unique basename",
+    "intra-document",
+    "inherited target",
 )
 
 
@@ -152,33 +188,23 @@ def exemption_problems(
     return problems
 
 
-def tracked_files() -> list[str]:
-    """Every tracked path, with git's own exit status checked (VGS-110)."""
-    result = subprocess.run(
-        ["git", "-C", str(REPO_ROOT), "ls-files", "-z"],
-        capture_output=True,
-        check=False,
+def swept_tree(
+    entries: list[tuple[str, str, str]]
+) -> tuple[dict[str, str], dict[str, str]]:
+    """(text by path, undecodable path -> reason) for the tracked blobs in scope.
+
+    The exclusions are applied HERE and the reading in `scripts/lib/tracked_blobs
+    .py`, because they answer different questions: what this check declines to
+    look at, versus how any check gets at what a repo actually contains.
+    """
+    return blob_texts(
+        REPO_ROOT,
+        [
+            entry
+            for entry in entries
+            if not entry[2].startswith(SKIP_ROOTS) and entry[2] not in FIXTURE_FILES
+        ],
     )
-    if result.returncode != 0:
-        detail = result.stderr.decode("utf-8", "replace").strip()
-        raise SystemExit(
-            f"check-section-pointers: `git ls-files` failed ({result.returncode}): "
-            f"{detail}. NOTHING was swept, so this is not a clean result"
-        )
-    return [name for name in result.stdout.decode().split("\0") if name]
-
-
-def swept_tree(tracked: list[str]) -> dict[str, str]:
-    """The text of every tracked file in scope; binaries decode-fail and drop out."""
-    files = {}
-    for rel in tracked:
-        if rel.startswith(SKIP_ROOTS) or rel in FIXTURE_FILES:
-            continue
-        try:
-            files[rel] = (REPO_ROOT / rel).read_text(encoding="utf-8")
-        except (OSError, UnicodeDecodeError):
-            continue
-    return files
 
 
 def fixture_problems(tracked: list[str]) -> list[str]:
@@ -194,6 +220,23 @@ def fixture_problems(tracked: list[str]) -> list[str]:
         f"there next."
         for rel, reason in sorted(FIXTURE_FILES.items())
         if rel not in set(tracked)
+    ]
+
+
+def unreadable_problems(undecodable: dict[str, str]) -> list[str]:
+    """A tracked `.md` blob that is not text, so no heading could be parsed.
+
+    Reported rather than dropped. A cited document missing from the swept set is
+    otherwise blamed on the CITER — "not a tracked markdown file. Repoint it" —
+    which is the wrong cause and sends the reader to fix the wrong file. Any
+    other undecodable blob is a binary, which is the intended skip and silent.
+    """
+    return [
+        f"{rel} is a tracked markdown file whose blob is {reason}, so none of its "
+        f"headings could be parsed and every pointer into it is unresolvable. Fix "
+        f"the file's encoding — this is not a pointer defect."
+        for rel, reason in sorted(undecodable.items())
+        if rel.endswith(".md")
     ]
 
 
@@ -229,15 +272,19 @@ def heading_problems(
     ]
 
 
-def sweep_problems(
-    files: dict[str, str], checked: int, cited_targets: set[str]
-) -> list[str]:
+def sweep_problems(files: dict[str, str], judged: list[tuple[str, str]]) -> list[str]:
     """COLLECTION POINTS 1 and 2, each in both directions.
 
     Empty is the obvious half. The other is a sweep that still returns thousands
     of files while a whole surface class dropped out of it, and a pointer count
-    that stays healthy while the resolver stopped reaching AGENTS.md — eleven
-    files cite it, so its absence is a defect and never a repo change.
+    that stays healthy while half the GRAMMAR stopped being exercised. A bare
+    total cannot see either, which is why the spellings are asserted by name and
+    the AGENTS.md anchor by path: every swept surface class cites AGENTS.md —
+    markdown docs, decision records, the helper, QML, shell, CI, the skill and
+    this directory — so a result reaching none of them is a defect in this check
+    rather than a change in the repo. Stated as breadth and not as a count on
+    purpose: a number in prose here would be the first thing to go stale, which
+    is the failure this whole check exists to report.
     """
     pointer_shape = f"`<doc>.md {SECTION_MARK} <name>`"
     return [
@@ -257,38 +304,50 @@ def sweep_problems(
                 cause="a renamed surface, or a skip list that now covers one",
             ),
             nothing_collected(
-                range(checked),
+                judged,
                 what="section pointers",
                 selector=pointer_shape,
                 cause="a changed citation style, or a reader that stopped joining lines",
             ),
             members_missing(
-                cited_targets,
+                {target for target, _ in judged},
                 ["AGENTS.md"],
                 what="the documents pointers reach",
                 selector=pointer_shape,
                 cause="a resolver that stopped resolving repo-relative paths",
+            ),
+            members_missing(
+                {spelling for _, spelling in judged},
+                GRAMMAR_SPELLINGS,
+                what="the grammar spellings still exercised",
+                selector=pointer_shape,
+                cause="a resolver arm that stopped matching, which a total cannot show",
             ),
         )
         if diagnostic
     ]
 
 
-def audit(files: dict[str, str]) -> tuple[list[str], int, set[str]]:
-    """Every arm over an already-read tree: (problems, checked, targets cited)."""
+def audit(files: dict[str, str], unreadable: dict[str, str] | None = None) -> Judged:
+    """Every arm over an already-read tree, as one `Judged`."""
     markdown = {rel: headings(files[rel]) for rel in files if rel.endswith(".md")}
-    problems, checked, targets, used = pointer_problems(files, markdown, exempt)
-    problems.extend(exemption_problems(markdown, used))
+    found = pointer_problems(files, markdown, exempt, unreadable)
+    problems = list(found.problems)
+    problems.extend(exemption_problems(markdown, found.used))
     problems.extend(heading_problems(markdown, SWEEP_ANCHORS))
-    return problems, checked, targets
+    return found._replace(problems=problems)
 
 
 def main() -> int:
-    tracked = tracked_files()
-    files = swept_tree(tracked)
-    problems, checked, cited_targets = audit(files)
-    problems.extend(sweep_problems(files, checked, cited_targets))
+    entries = tracked_entries(REPO_ROOT)
+    tracked = [path for _mode, _sha, path in entries]
+    files, undecodable = swept_tree(entries)
+
+    found = audit(files, undecodable)
+    problems = list(found.problems)
+    problems.extend(sweep_problems(files, found.judged))
     problems.extend(fixture_problems(tracked))
+    problems.extend(unreadable_problems(undecodable))
 
     if problems:
         print("check-section-pointers: FAIL", file=sys.stderr)
@@ -296,9 +355,18 @@ def main() -> int:
             print(f"  - {problem}", file=sys.stderr)
         return 1
 
+    # THE DECLINED MARKS ARE PART OF THE RESULT. A bare "N pointers resolve"
+    # reads as full coverage while a quarter of the marks in the tree are
+    # dropped by rules nobody can see; naming them by reason makes the parser's
+    # actual scope the visible contract, and a shift in these numbers is the
+    # first sign a grammar change moved marks between "ours" and "not ours".
+    declined = ", ".join(
+        f"{count} {reason}" for reason, count in sorted(found.declined.items())
+    )
     print(
-        f"check-section-pointers: ok ({checked} pointers across {len(files)} tracked "
-        f"files resolve to a heading)"
+        f"check-section-pointers: ok ({len(found.judged)} pointers across {len(files)} "
+        f"tracked blobs resolve to a heading; {sum(found.declined.values())} marks "
+        f"declined — {declined or 'none'})"
     )
     return 0
 

@@ -4,16 +4,19 @@
 Same pairing as scripts/test-validation-inventory.sh beside
 scripts/check-validation-inventory.py: the check states the rules, this drives
 one control per rule and asserts each is REPORTED, so a rule that silently
-stopped firing shows up here instead of as a quiet green.
+stopped firing shows up here rather than as a quiet green.
 
 Each control has been run red once, by mutating the rule it guards. Two shapes
-are deliberate:
+are deliberate: a rule is driven through the arm that OWNS it, never the whole
+audit, since every fixture tree also trips the exemption and heading arms and a
+control would pass on their output; and the healthy input is asserted SILENT
+beside each failing one, or an arm that complains about everything satisfies it.
 
-  * a rule is driven through the arm that owns it, never through the whole
-    audit — run whole, every fixture tree trips the exemption and heading arms
-    too, and a pointer control passes on their output rather than its own;
-  * the healthy input is asserted SILENT beside each failing one, or a control
-    is satisfied by an arm that complains about everything.
+Two neighbours carry the rest, one file per subject: the wrap and block-boundary
+rules are pinned in `scripts/lib/prose_blocks_selftest.py`, beside the library
+that owns them, and the WIRING that assembles these arms into a verdict is
+guarded by `scripts/test-section-pointers-e2e.py`, which runs the guard as a
+process.
 """
 
 from __future__ import annotations
@@ -24,11 +27,9 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE / "lib"))
-from section_pointers import (  # noqa: E402
-    SECTION_MARK,
-    headings,
-    pointer_problems,
-)
+import section_pointers as check_lib  # noqa: E402
+from prose_blocks import headings  # noqa: E402
+from section_pointers import SECTION_MARK, pointer_problems  # noqa: E402
 
 # The check's filename is not an importable module name, so it is loaded by
 # path. Importing it rather than re-declaring its tables is the point: a control
@@ -49,7 +50,7 @@ def cited_in(path: str, citer: str) -> list[str]:
     """The pointer arm's findings for one fixture file citing DOC."""
     files = {"doc.md": DOC, path: citer}
     markdown = {rel: headings(files[rel]) for rel in files if rel.endswith(".md")}
-    return pointer_problems(files, markdown, check.exempt)[0]
+    return pointer_problems(files, markdown, check.exempt).problems
 
 
 def cited(citer: str) -> list[str]:
@@ -63,12 +64,33 @@ def pointer_controls() -> list[str]:
         ("a renamed target", "See `moved.md` § Live section.\n"),
         ("a quoted name that only prefixes a heading", '`doc.md` § "Live"\n'),
         ("a dead intra-document pointer", "# C\n\nSee § Gone section.\n"),
-        ("a target that wraps to the next line", "the rules are in `doc.md`\n§ Gone.\n"),
         ("a dead second pointer in one clause", "`doc.md` (§ Live section, § Gone)\n"),
         ("a dead backticked name", "`doc.md` § `gonePropertyName`, which\n"),
     ):
         if not cited(citer):
             failures.append(f"{case} was accepted, so the pointer arm reports nothing")
+
+    # THE DECLINED CENSUS, the fourth collection point: a count nobody asserts
+    # can go to zero while the marks keep being dropped. Driven per reason.
+    declined = pointer_problems(
+        {
+            "doc.md": DOC,
+            "citer.py": f"# `bin/helper` {SECTION_MARK} Gone.\n# see {SECTION_MARK} Gone.\n",
+            "citer.md": f"# C\n\n`doc.md` {SECTION_MARK} 4 covers it.\n",
+        },
+        {"doc.md": headings(DOC), "citer.md": headings("# C\n")},
+        check.exempt,
+    ).declined
+    expected = {
+        "at a code region": 1,
+        "bare in a non-markdown file": 1,
+        "a numbered workflow step": 1,
+    }
+    if declined != expected:
+        failures.append(
+            f"the declined census reported {declined}, not {expected} — dropped marks "
+            f"are going uncounted, so the ok line reads as full coverage"
+        )
 
     for case, citer in (
         ("an exact heading", "`doc.md` § Live section, which says\n"),
@@ -77,8 +99,6 @@ def pointer_controls() -> list[str]:
         ("a quoted exact name", '`doc.md` § "Live section"\n'),
         ("a pointer into code", "`bin/helper` § Gone section.\n"),
         ("a numbered step", "`doc.md` § 4 covers it.\n"),
-        ("a name wrapping to the next line", "`doc.md` § Popout surfaces\nare\n"),
-        ("a wrapped quoted name", 'see `doc.md` §\n"Live section").\n'),
         ("an intra-document pointer", "# C\n\n## Live section\n\nsee § Live section.\n"),
         ("a fenced example", "# C\n\n```\n`doc.md` § Gone section.\n```\n"),
         ("a second pointer in one clause", "`doc.md` (§ Live section, § Live section)\n"),
@@ -88,23 +108,50 @@ def pointer_controls() -> list[str]:
         if reported:
             failures.append(f"{case} was reported as dead: {reported}")
 
-    # A path that belongs to the PRECEDING pointer's parenthetical is not this
-    # pointer's target, and inheritance does not reach past a sentence end. Each
-    # fixture is a bare pointer that a slipped rule would either resolve against
-    # doc.md or drop as a path-shaped token, so each is asserted to be REPORTED
-    # against citer.md — the intra-document reading, which is what it is.
+    # A path in the PRECEDING pointer's parenthetical is not this one's target.
+    # A slipped rule would resolve it against doc.md or drop it as path-shaped,
+    # so it is asserted REPORTED against citer.md — the intra-document reading.
     for case, citer in (
         (
             "a path in the previous pointer's parenthetical",
             "# C\n\n## Live section\n\n§ Live section (sub/doc.md), § Gone section\n",
         ),
-        ("inheritance across a sentence end", "`doc.md` § Live section. See § Live\n"),
     ):
         if not any(problem.startswith("citer.md:") for problem in cited(citer)):
             failures.append(
                 f"{case} was answered by doc.md or skipped outright, either way by a "
                 f"document the pointer does not name"
             )
+
+    # THE DECLARED SET ITSELF, before the behaviour derived from it: the loop
+    # below iterates INHERITANCE_STOPS, so shrinking that constant shrinks the
+    # test with it. The invariant is the relationship, so that is what is
+    # asserted, and it catches both drift directions at once.
+    if set(check_lib.INHERITANCE_STOPS) != set(check_lib.SEPARATORS) - {","}:
+        failures.append(
+            f"INHERITANCE_STOPS is {check_lib.INHERITANCE_STOPS!r}, which is not "
+            f"SEPARATORS ({check_lib.SEPARATORS!r}) minus the comma. The two halves of "
+            f"the grammar have drifted, and the loop below only tests what is declared"
+        )
+
+    # EVERY INHERITANCE_STOPS CHARACTER, one control each: the stop was once a
+    # bare "." while six separators were declared, so a mark after `!`, `?`, `;`
+    # or a dash silently inherited a target it does not name. Each is asserted
+    # REPORTED against citer.md; the comma, the one separator inheritance
+    # crosses, is asserted silent beside them, or all of these would pass on a
+    # parser that never inherits at all.
+    for stop in check_lib.INHERITANCE_STOPS:
+        citer = f"`doc.md` {SECTION_MARK} Live section{stop} Also {SECTION_MARK} Live\n"
+        if not any(problem.startswith("citer.md:") for problem in cited(citer)):
+            failures.append(
+                f"inheritance crossed {stop!r}, so a bare mark after it was judged "
+                f"against doc.md — a document the pointer does not name"
+            )
+    if cited(f"`doc.md` {SECTION_MARK} Live section, also {SECTION_MARK} Live section\n"):
+        failures.append(
+            "inheritance did NOT cross the comma, so the enumeration it exists for "
+            "— `AGENTS.md` (§ Mission, § Do not) — no longer resolves"
+        )
 
     # A `.md` target that resolves to nothing must FAIL, never be skipped: that
     # is the fail-open the check exists to close.
@@ -141,7 +188,7 @@ def pointer_controls() -> list[str]:
     unique = {"a/dup.md": DOC, "citer.md": "`dup.md` § Live section\n"}
     for case, files, want in (("ambiguous", shared, True), ("unique", unique, False)):
         markdown = {rel: headings(files[rel]) for rel in files if rel.endswith(".md")}
-        if bool(pointer_problems(files, markdown, check.exempt)[0]) is not want:
+        if bool(pointer_problems(files, markdown, check.exempt).problems) is not want:
             failures.append(
                 f"the {case} basename case came out wrong: an ambiguous pointer must be "
                 f"reported, never answered by whichever path sorted first"
@@ -154,7 +201,9 @@ def pointer_controls() -> list[str]:
         "doc.md": "".join(f"## Heading {n}\n\n" for n in range(9)),
         "citer.md": "`doc.md` § Gone section.\n",
     }
-    capped = pointer_problems(wide, {rel: headings(wide[rel]) for rel in wide}, check.exempt)[0]
+    capped = pointer_problems(
+        wide, {rel: headings(wide[rel]) for rel in wide}, check.exempt
+    ).problems
     if not any("… 3 more" in problem for problem in capped):
         failures.append(
             f"a target with nine headings did not report a capped list with the "
@@ -179,52 +228,82 @@ def pointer_controls() -> list[str]:
 
 
 def collection_controls() -> list[str]:
-    """COLLECTION POINTS 1, 2 and 3, each in both directions."""
+    """COLLECTION POINTS 1-3, each direction asserted by ITS OWN diagnostic.
+
+    Truthiness was a real hole: a fixture that empties a collection also empties
+    the anchor set, so `members_missing` fires on the same input and satisfies a
+    non-empty assertion — the empty control could then be deleted with the suite
+    still green. Each control requires the wording of the direction it names.
+    """
     failures: list[str] = []
+
+    def wants(diagnostics: list[str], phrase: str, case: str, arm: str) -> None:
+        if not any(phrase in diagnostic for diagnostic in diagnostics):
+            failures.append(
+                f"{case} did not produce the {arm} diagnostic ({phrase!r}), so that "
+                f"direction is unguarded — the other arm's wording satisfied it, or "
+                f"nothing did: {diagnostics}"
+            )
+
+    empty, partial = "Nothing was examined", "expected member(s) are absent"
     anchors = {
         rel: headings((check.REPO_ROOT / rel).read_text(encoding="utf-8"))
         for rel in check.SWEEP_ANCHORS
     }
     first = check.SWEEP_ANCHORS[0]
-    if not check.heading_problems(dict.fromkeys(check.SWEEP_ANCHORS, []), check.SWEEP_ANCHORS):
-        failures.append(
-            "a tree from which NO heading parsed was accepted, so a heading parser that "
-            "stopped matching reads as a clean result"
-        )
-    if not check.heading_problems(dict(anchors, **{first: []}), check.SWEEP_ANCHORS):
-        failures.append(
-            f"{first} yielding no heading while the others still do was accepted, so "
-            f"partial coverage passes as full"
-        )
-    if check.heading_problems(anchors, check.SWEEP_ANCHORS):
-        failures.append("the real anchor documents were reported as heading-less")
+    whole = dict.fromkeys(check.SWEEP_ANCHORS, "")
+    narrowed = {rel: "" for rel in check.SWEEP_ANCHORS if rel != first}
+    healthy = [("AGENTS.md", spelling) for spelling in check.GRAMMAR_SPELLINGS]
 
-    # FIXTURE_FILES, both directions, driven through the real table.
-    if check.fixture_problems(list(check.FIXTURE_FILES)):
-        failures.append(
-            "a FIXTURE_FILES entry naming a file that IS tracked was reported stale"
-        )
+    # The healthy call of each arm is asserted SILENT first, or every control
+    # below passes on an arm that complains about everything.
+    for arm_name, quiet in (
+        ("heading", check.heading_problems(anchors, check.SWEEP_ANCHORS)),
+        ("sweep", check.sweep_problems(whole, healthy)),
+        ("fixture-exclusion", check.fixture_problems(list(check.FIXTURE_FILES))),
+    ):
+        if quiet:
+            failures.append(f"the {arm_name} arm reported a healthy input: {quiet}")
     if not check.fixture_problems([]):
         failures.append(
             "a FIXTURE_FILES entry naming no tracked file was accepted, so an "
             "exclusion outlives its file and exempts whatever takes that path next"
         )
 
-    whole = dict.fromkeys(check.SWEEP_ANCHORS, "")
-    narrowed = {rel: "" for rel in check.SWEEP_ANCHORS if rel != first}
-    if check.sweep_problems(whole, 1, {"AGENTS.md"}):
-        failures.append("a healthy sweep was reported as a collection failure")
-    for case, args in (
-        ("an empty sweep", ({}, 1, {"AGENTS.md"})),
-        ("a sweep missing a surface class", (narrowed, 1, {"AGENTS.md"})),
-        ("a sweep that found no pointer", (whole, 0, {"AGENTS.md"})),
-        ("pointers that no longer reach AGENTS.md", (whole, 1, {"other.md"})),
+    for case, arm, phrase, args in (
+        (
+            "a tree from which NO heading parsed",
+            "nothing-collected",
+            empty,
+            (dict.fromkeys(check.SWEEP_ANCHORS, []), check.SWEEP_ANCHORS),
+        ),
+        (
+            f"{first} alone yielding no heading",
+            "members-missing",
+            partial,
+            (dict(anchors, **{first: []}), check.SWEEP_ANCHORS),
+        ),
     ):
-        if not check.sweep_problems(*args):
-            failures.append(
-                f"{case} was accepted, so a matcher that came back empty reads as a "
-                f"clean result"
-            )
+        wants(check.heading_problems(*args), phrase, case, arm)
+
+    for case, arm, phrase, args in (
+        ("an empty sweep", "nothing-collected", empty, ({}, healthy)),
+        ("a sweep missing a surface class", "members-missing", partial, (narrowed, healthy)),
+        ("a sweep that found no pointer", "nothing-collected", empty, (whole, [])),
+        (
+            "pointers that no longer reach AGENTS.md",
+            "members-missing",
+            partial,
+            (whole, [("other.md", spelling) for spelling in check.GRAMMAR_SPELLINGS]),
+        ),
+        (
+            "a grammar spelling that stopped being exercised",
+            "members-missing",
+            partial,
+            (whole, [("AGENTS.md", check.GRAMMAR_SPELLINGS[0])]),
+        ),
+    ):
+        wants(check.sweep_problems(*args), phrase, case, arm)
     return failures
 
 

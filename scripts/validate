@@ -45,9 +45,11 @@
 # carries a `__main__` only for that; `session-snapshot.sh`,
 # `vendor-drift.sh`, `vendor-drift-report.sh` and `vendor-drift-test.sh` are
 # sourced, `validation_manifest.py` is imported by the inventory guard,
-# `collected.py` and `section_pointers.py` by the checks that collect and by the
-# pointer guard, and `qml_scrub_selftest.py` and `shell_scan_selftest.py` by the
-# two self-test entry points above, none of them run). `bin/vshell_niri.py`,
+# `collected.py`, `section_pointers.py`, `prose_blocks.py` and `tracked_blobs.py`
+# by the checks that collect and by the pointer guard, and `qml_scrub_selftest.py`
+# and `shell_scan_selftest.py` by the two self-test entry points above, none of
+# them run; `prose_blocks_selftest.py` joins that list of libraries carrying a
+# `__main__` only for their own self-test). `bin/vshell_niri.py`,
 # `bin/vshell_niri_kdl.py` and `bin/vshell_theme_color.py` likewise stay
 # importable modules with no shebang and no `__main__`.
 #
@@ -161,9 +163,11 @@ cd "$repo_root" || exit 1
 # the tag (today the launcher hover latch); helper = the helper checks plus the
 # py_compile/bash -n syntax pass; packaging = the three packaging checks;
 # docs = the instruction-surface growth ratchet, the section-pointer guard, and
-# that guard's must-fail controls — which carry `docs` rather than the `-` their
-# `test-` siblings use, because the guard has no inline self-test and a `docs`
-# run would otherwise exercise it while proving nothing about whether it guards.
+# that guard's three control scripts — one per subject: its arms, the wiring
+# that turns them into a verdict, and the prose-block library underneath. They
+# carry `docs` rather than the `-` their `test-` siblings use, because the guard
+# has no inline self-test and a `docs` run would otherwise exercise it while
+# proving nothing about whether it still guards.
 #
 # The older QML source lints are still `-`, so only `all` reaches them, and the
 # family is bigger than it looks: 23 of today's `-` rows read .qml source, from
@@ -181,6 +185,8 @@ always    | scripts/check-validation-inventory.py
 docs      | scripts/check-doc-growth.py
 docs      | scripts/check-section-pointers.py
 docs      | scripts/test-section-pointers.py
+docs      | scripts/test-section-pointers-e2e.py
+docs      | python3 scripts/lib/prose_blocks_selftest.py
 packaging | scripts/gen-package-metadata.py
 packaging | scripts/check-package-assets.sh
 packaging | scripts/check-aur-sync.py
