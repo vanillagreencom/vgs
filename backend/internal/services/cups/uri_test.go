@@ -42,6 +42,9 @@ func TestValidateDeviceURIRejectsUnsafeValues(t *testing.T) {
 		"usb no host":       "usb://",
 		"parallel bare":     "parallel:dev/lp0",
 		"serial creds path": "serial:/dev/ttyS0@host",
+		"bare ipv6":         "ipp://2001:db8::1:631/ipp/print",
+		"bare ipv6 no port": "ipp://2001:db8::1/ipp/print",
+		"nonnumeric port":   "ipp://printer.local:queue/ipp",
 	}
 	for name, uri := range cases {
 		if err := validateDeviceURI(uri); err == nil {

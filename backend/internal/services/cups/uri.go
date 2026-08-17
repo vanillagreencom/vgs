@@ -119,7 +119,17 @@ func splitHostPort(authority string) (host, port string, err error) {
 		}
 		return host, rest[1:], nil
 	}
-	if i := strings.LastIndexByte(authority, ':'); i >= 0 && isAllDigits(authority[i+1:]) {
+	// An unbracketed authority holding more than one colon is a bare IPv6
+	// literal, which RFC 3986 does not allow: splitting on the last colon would
+	// carve a host that parses as a valid address out of a malformed URI and
+	// hand CUPS a different target than the one written.
+	if strings.Count(authority, ":") > 1 {
+		return "", "", fmt.Errorf("invalid host")
+	}
+	if i := strings.LastIndexByte(authority, ':'); i >= 0 {
+		if !isAllDigits(authority[i+1:]) {
+			return "", "", fmt.Errorf("invalid host")
+		}
 		return authority[:i], authority[i+1:], nil
 	}
 	return authority, "", nil
