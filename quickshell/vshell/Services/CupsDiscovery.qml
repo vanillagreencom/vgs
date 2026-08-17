@@ -73,11 +73,14 @@ Singleton {
             return serial ? model + " " + serial : model;
         }
         const serial = root.usbSerial(uri);
+        const path = uri.replace(/^[^:]+:\/\/[^/]*/, "");
+        let pathModel = "";
+        if (path && path !== "/" && !path.startsWith("?"))
+            pathModel = root.decodeUri(path.replace(/^\//, "").split("?")[0]);
+        if (pathModel)
+            return serial ? pathModel + " " + serial : pathModel;
         if (serial)
             return serial;
-        const path = uri.replace(/^[^:]+:\/\/[^/]*/, "");
-        if (path && path !== "/" && !path.startsWith("?"))
-            return root.decodeUri(path.replace(/^\//, "").split("?")[0]);
         return uri;
     }
 
@@ -152,7 +155,7 @@ Singleton {
     function groupDevices(devices) {
         if (!devices || devices.length === 0)
             return [];
-        const buckets = {};
+        const buckets = Object.create(null);
         for (const device of devices) {
             if (!device || !device.uri || root.isBareProtocol(device.uri) || root.isVirtualBackend(device))
                 continue;
@@ -168,7 +171,7 @@ Singleton {
             const candidates = buckets[key];
             const recommended = root.pickRecommended(candidates);
             const name = root.instanceName(recommended);
-            const usedLabels = {};
+            const usedLabels = Object.create(null);
             const alts = candidates.filter(d => d.uri !== recommended.uri).map(d => {
                 let label = root.transportLabel(root.deviceScheme(d.uri));
                 if (usedLabels[label]) {

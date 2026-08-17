@@ -19,16 +19,15 @@ Item {
         border.color: Theme.outlineStrong
         border.width: 1
         radius: 2
-        visible: false
+        visible: hoverArea.containsMouse
+    }
 
-        MouseArea {
-            anchors.fill: parent
-            hoverEnabled: true
-            acceptedButtons: Qt.NoButton
-            propagateComposedEvents: true
-            cursorShape: Qt.ArrowCursor
-            onEntered: parent.visible = true
-            onExited: parent.visible = false
-        }
+    MouseArea {
+        id: hoverArea
+        anchors.fill: parent
+        hoverEnabled: true
+        acceptedButtons: Qt.NoButton
+        propagateComposedEvents: true
+        cursorShape: Qt.ArrowCursor
     }
 }

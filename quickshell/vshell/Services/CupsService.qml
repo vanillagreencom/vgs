@@ -227,7 +227,7 @@ Singleton {
     }
 
     function getTotalJobsNum() {
-        return allJobs.length;
+        return cupsAvailable ? allJobs.length : 0;
     }
 
     function getCurrentPrinterState() {
@@ -357,8 +357,8 @@ Singleton {
             loadingDevices = false;
             if (response.error) {
                 devices = [];
-                devicesError = response.error;
-                ToastService.showError(I18n.tr("Failed to scan for printers"), response.error);
+                devicesError = String(response.error);
+                ToastService.showError(I18n.tr("Failed to scan for printers"), devicesError);
                 return;
             }
             devices = response.result || [];
