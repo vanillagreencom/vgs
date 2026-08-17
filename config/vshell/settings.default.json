@@ -612,7 +612,8 @@
         {
           "id": "cloudSync",
           "enabled": true
-        }, "printer",
+        },
+        "printer",
         "notificationButton",
         "controlCenterButton"
       ],
