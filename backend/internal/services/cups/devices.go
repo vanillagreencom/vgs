@@ -14,11 +14,16 @@ func parseDevices(out []byte) []Device {
 		if line == "" {
 			continue
 		}
-		class, uri, ok := strings.Cut(line, " ")
-		if !ok {
+		// class + URI only: a device URI never contains a space, so any further
+		// tokens are a human-readable description. Folding them into the URI
+		// would fail deviceURI validation later with a confusing complaint
+		// about the address rather than about the parse.
+		fields := strings.Fields(line)
+		if len(fields) < 2 {
 			continue
 		}
-		safeURI := sanitizeURI(uri)
+		class := fields[0]
+		safeURI := sanitizeURI(fields[1])
 		info := deviceInstanceName(safeURI)
 		devices = append(devices, Device{Class: class, URI: safeURI, Info: info, IP: extractHost(safeURI)})
 	}
