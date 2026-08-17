@@ -612,7 +612,7 @@
         {
           "id": "cloudSync",
           "enabled": true
-        },
+        }, "printer",
         "notificationButton",
         "controlCenterButton"
       ],

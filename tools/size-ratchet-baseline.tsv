@@ -8,7 +8,7 @@ backend/internal/services/cloudsync/jobs.go	644
 backend/internal/services/cloudsync/remotes.go	1101
 backend/internal/services/cloudsync/state.go	635
 backend/internal/services/cloudsync/watch.go	404
-backend/internal/services/cups/cups.go	987
+backend/internal/services/cups/cups.go	884
 backend/internal/services/freedesktop/screensaver.go	745
 backend/internal/services/gamma/gamma.go	693
 backend/internal/services/loginctl/loginctl.go	824
@@ -73,7 +73,7 @@ quickshell/vshell/Modals/VgsColorPickerModal.qml	766
 quickshell/vshell/Modals/WifiPasswordModal.qml	747
 quickshell/vshell/Modals/WindowRuleModal.qml	1906
 quickshell/vshell/Modules/Bar/BarCanvas.qml	694
-quickshell/vshell/Modules/Bar/BarContent.qml	1455
+quickshell/vshell/Modules/Bar/BarContent.qml	1443
 quickshell/vshell/Modules/Bar/BarHoverController.qml	963
 quickshell/vshell/Modules/Bar/BarWindow.qml	1217
 quickshell/vshell/Modules/Bar/Popouts/BatteryPopout.qml	632
@@ -122,7 +122,7 @@ quickshell/vshell/Modules/Settings/AboutTab.qml	576
 quickshell/vshell/Modules/Settings/AudioTab.qml	516
 quickshell/vshell/Modules/Settings/AutoStartTab.qml	822
 quickshell/vshell/Modules/Settings/BarTab.qml	1867
-quickshell/vshell/Modules/Settings/BarWidgetOptions.qml	571
+quickshell/vshell/Modules/Settings/BarWidgetOptions.qml	549
 quickshell/vshell/Modules/Settings/ClipboardTab.qml	527
 quickshell/vshell/Modules/Settings/ColorsTab.qml	555
 quickshell/vshell/Modules/Settings/CompositorLayoutTab.qml	562
@@ -149,7 +149,7 @@ quickshell/vshell/Modules/Settings/PluginBrowser.qml	1536
 quickshell/vshell/Modules/Settings/PluginListItem.qml	522
 quickshell/vshell/Modules/Settings/PluginsTab.qml	490
 quickshell/vshell/Modules/Settings/PowerSleepTab.qml	584
-quickshell/vshell/Modules/Settings/PrinterTab.qml	1692
+quickshell/vshell/Modules/Settings/PrinterTab.qml	1191
 quickshell/vshell/Modules/Settings/ScratchpadRow.qml	520
 quickshell/vshell/Modules/Settings/ScratchpadsTab.qml	712
 quickshell/vshell/Modules/Settings/ThemeCatalogBrowser.qml	486
@@ -158,7 +158,7 @@ quickshell/vshell/Modules/Settings/TimeWeatherTab.qml	1159
 quickshell/vshell/Modules/Settings/TypographyTab.qml	542
 quickshell/vshell/Modules/Settings/UsersTab.qml	505
 quickshell/vshell/Modules/Settings/WidgetSelectionPopup.qml	410
-quickshell/vshell/Modules/Settings/WidgetsTab.qml	1643
+quickshell/vshell/Modules/Settings/WidgetsTab.qml	1433
 quickshell/vshell/Modules/Settings/WidgetsTabSection.qml	493
 quickshell/vshell/Modules/Settings/WindowRulesTab.qml	1065
 quickshell/vshell/Modules/Toast.qml	506
@@ -176,7 +176,7 @@ quickshell/vshell/Services/CalendarBackend.qml	481
 quickshell/vshell/Services/ClipboardService.qml	514
 quickshell/vshell/Services/CloudSyncService.qml	728
 quickshell/vshell/Services/CompositorService.qml	447
-quickshell/vshell/Services/CupsService.qml	868
+quickshell/vshell/Services/CupsService.qml	762
 quickshell/vshell/Services/DSearchService.qml	427
 quickshell/vshell/Services/DgopService.qml	780
 quickshell/vshell/Services/DisplayService.qml	1453

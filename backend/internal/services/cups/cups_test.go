@@ -63,9 +63,12 @@ func TestParsePrinterDisabledAndRejecting(t *testing.T) {
 }
 
 func TestParsePPDsAndClasses(t *testing.T) {
-	ppds := parsePPDs([]byte("everywhere IPP Everywhere\nsample.ppd Sample Printer\n"))
-	if len(ppds) != 2 || ppds[1].Name != "sample.ppd" || ppds[1].MakeModel != "Sample Printer" {
+	ppds := parsePPDs([]byte("everywhere IPP Everywhere\nsample.ppd Sample Printer\ndriverless:ipps://Brother%20HL-L2460DW._ipps._tcp.local/ Brother HL-L2460DW, driverless\n"))
+	if len(ppds) != 3 || ppds[1].Name != "sample.ppd" || ppds[1].MakeModel != "Sample Printer" {
 		t.Fatalf("unexpected ppds: %#v", ppds)
+	}
+	if ppds[2].Name != "driverless:ipps://Brother%20HL-L2460DW._ipps._tcp.local/" {
+		t.Fatalf("unexpected driverless ppd: %#v", ppds[2])
 	}
 	classes := parseClasses([]byte("members of class Lab: Office Shipping\n"))
 	if len(classes) != 1 || classes[0].Name != "Lab" || strings.Join(classes[0].Members, ",") != "Office,Shipping" {
@@ -196,6 +199,38 @@ func TestCupsWriteHandlersRejectInvalidInput(t *testing.T) {
 	}
 }
 
+func TestCreatePrinterAcceptsBonjourDeviceURI(t *testing.T) {
+	m, logPath := fakeManager(t)
+	if _, err := m.handleCreatePrinter(mustJSON(t, createParams{
+		Name:      "Brother",
+		DeviceURI: "dnssd://Brother%20HL-L2460DW._ipp._tcp.local/?uuid=e3248000-80ce-11db-8000-94ddf8e120ec",
+		PPD:       "everywhere",
+	})); err != nil {
+		t.Fatal(err)
+	}
+	log := readLog(t, logPath)
+	if !strings.Contains(log, "lpadmin -p Brother -E -v dnssd://Brother%20HL-L2460DW._ipp._tcp.local/?uuid=e3248000-80ce-11db-8000-94ddf8e120ec -m everywhere") {
+		t.Fatalf("bonjour create missing lpadmin:\n%s", log)
+	}
+}
+
+func TestCreatePrinterAcceptsDriverlessPPD(t *testing.T) {
+	m, logPath := fakeManager(t)
+	ppd := "driverless:ipps://Brother%20HL-L2460DW._ipps._tcp.local/"
+	if _, err := m.handleCreatePrinter(mustJSON(t, createParams{
+		Name:      "Brother",
+		DeviceURI: "ipps://Brother%20HL-L2460DW._ipps._tcp.local/",
+		PPD:       ppd,
+	})); err != nil {
+		t.Fatal(err)
+	}
+	log := readLog(t, logPath)
+	want := "lpadmin -p Brother -E -v ipps://Brother%20HL-L2460DW._ipps._tcp.local/ -m " + ppd
+	if !strings.Contains(log, want) {
+		t.Fatalf("driverless create missing lpadmin:\n%s", log)
+	}
+}
+
 func TestCreatePrinterRejectsUnavailablePPDWithoutMutation(t *testing.T) {
 	m, logPath := fakeManager(t)
 	_, err := m.handleCreatePrinter(mustJSON(t, createParams{Name: "Office", DeviceURI: "ipp://printer.local/ipp", PPD: "missing.ppd"}))
@@ -242,7 +277,7 @@ func fakeCupsCommand(t *testing.T, dir, name, logPath string) string {
 		"printf '%s' \"" + name + "\" >> " + shellQuote(logPath) + "\n" +
 		"for arg in \"$@\"; do printf ' %s' \"$arg\" >> " + shellQuote(logPath) + "; done\n" +
 		"printf '\\n' >> " + shellQuote(logPath) + "\n" +
-		"if [ \"" + name + "\" = lpinfo ] && [ \"$1\" = -m ]; then printf 'everywhere IPP Everywhere\\nsample.ppd Sample Printer\\n'; fi\n" +
+		"if [ \"" + name + "\" = lpinfo ] && [ \"$1\" = -m ]; then printf '%s\\n' 'everywhere IPP Everywhere' 'sample.ppd Sample Printer'; fi\n" +
 		"exit 0\n"
 	if err := os.WriteFile(path, []byte(body), 0o755); err != nil {
 		t.Fatal(err)

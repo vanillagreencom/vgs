@@ -47,133 +47,27 @@ Singleton {
     property var ppds: []
     property var printerClasses: []
 
-    readonly property var filteredDevices: {
-        if (!devices || devices.length === 0)
-            return [];
-        const bareProtocols = ["ipp", "ipps", "http", "https", "lpd", "socket", "beh", "dnssd", "mdns", "smb", "file", "cups-brf"];
-
-        // First pass: filter out invalid/bare protocol entries
-        const validDevices = devices.filter(d => {
-            if (!d.uri)
-                return false;
-            const uriLower = d.uri.toLowerCase();
-            for (let proto of bareProtocols) {
-                if (uriLower === proto || uriLower === proto + ":")
-                    return false;
-            }
-            if (d.class === "network" && d.info === "Backend Error Handler")
-                return false;
-            return true;
-        });
-
-        // Second pass: prefer IPP over LPD for the same printer
-        // _printer._tcp (LPD) doesn't work well with driverless printing
-        // _ipp._tcp or _ipps._tcp (IPP) should be preferred
-        const ippDeviceHosts = new Set();
-        for (const d of validDevices) {
-            if (!d.uri)
-                continue;
-            // Extract hostname from dnssd URIs like dnssd://Name%20[mac]._ipp._tcp.local
-            const ippMatch = d.uri.match(/dnssd:\/\/[^/]*\._ipps?\._tcp/);
-            if (ippMatch) {
-                // Extract the unique identifier (usually MAC address in brackets)
-                const macMatch = d.uri.match(/\[([a-f0-9]+)\]/i);
-                if (macMatch)
-                    ippDeviceHosts.add(macMatch[1].toLowerCase());
-            }
-        }
-
-        // Filter out _printer._tcp devices when we have _ipp._tcp for the same printer
-        return validDevices.filter(d => {
-            if (!d.uri)
-                return true;
-            // If this is an LPD device, check if we have an IPP alternative
-            if (d.uri.includes("._printer._tcp")) {
-                const macMatch = d.uri.match(/\[([a-f0-9]+)\]/i);
-                if (macMatch && ippDeviceHosts.has(macMatch[1].toLowerCase())) {
-                    return false; // Skip LPD device, we have IPP
-                }
-            }
-            return true;
-        });
-    }
+    readonly property var discoveredPrinters: CupsDiscovery.groupDevices(devices)
+    readonly property var filteredDevices: discoveredPrinters.map(g => g.device)
 
     function decodeUri(str) {
-        if (!str)
-            return "";
-        try {
-            return decodeURIComponent(str.replace(/\+/g, " "));
-        } catch (e) {
-            return str;
-        }
+        return CupsDiscovery.decodeUri(str);
     }
 
     function getDeviceDisplayName(device) {
-        if (!device)
-            return "";
-        let name = "";
-        if (device.info && device.info.length > 0) {
-            name = decodeUri(device.info);
-        } else if (device.makeModel && device.makeModel.length > 0) {
-            name = decodeUri(device.makeModel);
-        } else {
-            return decodeUri(device.uri);
-        }
-        if (device.ip)
-            return name + " (" + device.ip + ")";
-        return name;
+        return CupsDiscovery.getDeviceDisplayName(device);
     }
 
     function getDeviceSubtitle(device) {
-        if (!device)
-            return "";
-        const parts = [];
-        switch (device.class) {
-        case "direct":
-            parts.push(I18n.tr("Local"));
-            break;
-        case "network":
-            parts.push(I18n.tr("Network"));
-            break;
-        case "file":
-            parts.push(I18n.tr("File"));
-            break;
-        default:
-            if (device.class)
-                parts.push(device.class);
-        }
-        if (device.location)
-            parts.push(decodeUri(device.location));
-        return parts.join(" • ");
+        return CupsDiscovery.getDeviceSubtitle(device);
     }
 
     function suggestPrinterName(device) {
-        if (!device)
-            return "";
-        let name = device.info || device.makeModel || "";
-        name = name.replace(/[^a-zA-Z0-9_-]/g, "-").replace(/-+/g, "-").replace(/^-|-$/g, "");
-        return name.substring(0, 32) || "Printer";
+        return CupsDiscovery.suggestPrinterName(device);
     }
 
     function getMatchingPPDs(device) {
-        if (!device || !ppds || ppds.length === 0)
-            return [];
-        const isDnssd = device.uri && (device.uri.startsWith("dnssd://") || device.uri.startsWith("ipp://") || device.uri.startsWith("ipps://"));
-        if (isDnssd) {
-            const driverless = ppds.filter(p => p.name === "driverless" || p.name === "everywhere" || (p.makeModel && p.makeModel.toLowerCase().includes("driverless")));
-            if (driverless.length > 0)
-                return driverless;
-        }
-        if (!device.makeModel)
-            return [];
-        const makeModelLower = device.makeModel.toLowerCase();
-        const words = makeModelLower.split(/[\s_-]+/).filter(w => w.length > 2);
-        return ppds.filter(p => {
-            if (!p.makeModel)
-                return false;
-            const ppdLower = p.makeModel.toLowerCase();
-            return words.some(w => ppdLower.includes(w));
-        }).slice(0, 10);
+        return CupsDiscovery.getMatchingPPDs(device, ppds);
     }
 
     property bool loadingDevices: false

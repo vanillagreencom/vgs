@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
-	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -296,12 +295,16 @@ func (m *Manager) handleTestConnection(params json.RawMessage) (any, error) {
 	if p.Port <= 0 || p.Port > 65535 {
 		return nil, fmt.Errorf("port out of range")
 	}
+	uri, err := buildManualDeviceURI(p.Protocol, p.Host, p.Port)
+	if err != nil {
+		return nil, err
+	}
 	conn, err := net.DialTimeout("tcp", net.JoinHostPort(p.Host, strconv.Itoa(p.Port)), 3*time.Second)
 	if err != nil {
-		return map[string]any{"ok": false, "host": p.Host, "port": p.Port, "error": err.Error()}, nil
+		return map[string]any{"ok": false, "reachable": false, "host": p.Host, "port": p.Port, "uri": uri, "error": err.Error()}, nil
 	}
 	_ = conn.Close()
-	return map[string]any{"ok": true, "host": p.Host, "port": p.Port}, nil
+	return map[string]any{"ok": true, "reachable": true, "host": p.Host, "port": p.Port, "uri": uri}, nil
 }
 
 func (m *Manager) handleCreatePrinter(params json.RawMessage) (any, error) {
@@ -748,27 +751,6 @@ func parseJobs(out []byte) []Job {
 	return jobs
 }
 
-func parseDevices(out []byte) []Device {
-	var devices []Device
-	scanner := bufio.NewScanner(bytes.NewReader(out))
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if line == "" {
-			continue
-		}
-		class, uri, ok := strings.Cut(line, " ")
-		if !ok {
-			continue
-		}
-		safeURI := sanitizeURI(uri)
-		devices = append(devices, Device{Class: class, URI: safeURI, Info: safeURI, IP: extractHost(safeURI)})
-	}
-	if devices == nil {
-		return []Device{}
-	}
-	return devices
-}
-
 func parsePPDs(out []byte) []PPD {
 	var ppds []PPD
 	scanner := bufio.NewScanner(bytes.NewReader(out))
@@ -827,16 +809,8 @@ func validateJobID(value string) error {
 	return nil
 }
 
-func validatePPDName(value string) error {
-	value = strings.TrimSpace(value)
-	if !ppdRe.MatchString(value) || strings.Contains(value, "..") {
-		return fmt.Errorf("invalid ppd")
-	}
-	return nil
-}
-
 func (m *Manager) validatePPDAvailable(name string) error {
-	if name == "everywhere" {
+	if name == "everywhere" || strings.HasPrefix(name, "driverless:") {
 		return nil
 	}
 	out, err := m.outputAllowEmpty("lpinfo", "-m")
@@ -851,35 +825,6 @@ func (m *Manager) validatePPDAvailable(name string) error {
 	return fmt.Errorf("ppd not available")
 }
 
-func validateDeviceURI(raw string) error {
-	parsed, err := url.Parse(raw)
-	if err != nil || parsed.Scheme == "" {
-		return fmt.Errorf("invalid deviceURI")
-	}
-	if parsed.User != nil {
-		return fmt.Errorf("deviceURI must not include credentials")
-	}
-	switch strings.ToLower(parsed.Scheme) {
-	case "ipp", "ipps", "lpd", "socket", "http", "https":
-		if err := validateHost(parsed.Hostname()); err != nil {
-			return fmt.Errorf("invalid deviceURI host")
-		}
-		if port := parsed.Port(); port != "" {
-			n, err := strconv.Atoi(port)
-			if err != nil || n <= 0 || n > 65535 {
-				return fmt.Errorf("invalid deviceURI port")
-			}
-		}
-	case "dnssd", "usb", "parallel", "serial":
-		if raw == "" || strings.ContainsAny(raw, "\r\n\t") {
-			return fmt.Errorf("invalid deviceURI")
-		}
-	default:
-		return fmt.Errorf("unsupported deviceURI scheme")
-	}
-	return nil
-}
-
 func validateProtocol(protocol string) error {
 	switch strings.ToLower(strings.TrimSpace(protocol)) {
 	case "", "ipp", "ipps", "socket", "jetdirect", "lpd", "http", "https":
@@ -889,49 +834,11 @@ func validateProtocol(protocol string) error {
 	}
 }
 
-func validateHost(host string) error {
-	host = strings.TrimSpace(host)
-	if host == "" || len(host) > 253 || strings.ContainsAny(host, "/@ \r\n\t") {
-		return fmt.Errorf("invalid host")
-	}
-	if ip := net.ParseIP(host); ip != nil {
-		return nil
-	}
-	if strings.Contains(host, "_") {
-		return fmt.Errorf("invalid host")
-	}
-	trimmed := strings.TrimSuffix(host, ".")
-	if trimmed == "" {
-		return fmt.Errorf("invalid host")
-	}
-	for _, label := range strings.Split(trimmed, ".") {
-		if label == "" || len(label) > 63 || strings.HasPrefix(label, "-") || strings.HasSuffix(label, "-") {
-			return fmt.Errorf("invalid host")
-		}
-		for _, r := range label {
-			if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '-' {
-				continue
-			}
-			return fmt.Errorf("invalid host")
-		}
-	}
-	return nil
-}
-
 func validateText(field, value string, maxLen int) error {
 	if len(value) > maxLen || strings.ContainsAny(value, "\r\n\t") {
 		return fmt.Errorf("invalid %s", field)
 	}
 	return nil
-}
-
-func sanitizeURI(raw string) string {
-	parsed, err := url.Parse(raw)
-	if err != nil || parsed.User == nil {
-		return raw
-	}
-	parsed.User = nil
-	return parsed.String()
 }
 
 func splitJobID(raw string) (string, string) {
@@ -940,16 +847,6 @@ func splitJobID(raw string) (string, string) {
 		return "", raw
 	}
 	return raw[:idx], raw[idx+1:]
-}
-
-func extractHost(uri string) string {
-	if strings.Contains(uri, "://") {
-		after := strings.SplitN(uri, "://", 2)[1]
-		host := strings.Split(after, "/")[0]
-		host = strings.Split(host, ":")[0]
-		return strings.Trim(host, "[]")
-	}
-	return ""
 }
 
 func defaultPort(protocol string) int {
