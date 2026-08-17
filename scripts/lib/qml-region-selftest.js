@@ -1,11 +1,18 @@
 // The self-test for the BOUND scripts/lib/qml-region.js enforces: that a region
 // which does not finish is stopped, by the supervisor or by the child itself,
-// and that the stopping is legible afterwards. The plumbing around it — exit
-// status, the argv marker, spawn classification, env parsing, extraction — is
+// and that the stopping is legible afterwards. The plumbing around it — how the
+// two bounds are derived and ordered, exit status, the argv marker, spawn
+// classification, env parsing, extraction — is
 // scripts/lib/qml-region-wiring-selftest.js, which this file runs last.
 //
-// Loaded lazily through `require("./qml-region.js").selfTest()`; nothing else
-// should require it.
+// This IS the entry point: it is a row in the scripts/validate manifest and a
+// line in CI, run as `node scripts/lib/qml-region-selftest.js`. It is deliberately
+// not called from a guarded suite — see the note where it runs itself, at the
+// bottom of this file.
+//
+// It lives apart from the guard, in three files rather than one, because the
+// 400-line size ratchet is the binding constraint: guard and checks together, and
+// then the checks alone, each crossed it.
 
 "use strict";
 
@@ -16,7 +23,8 @@ const os = require("node:os");
 const path = require("node:path");
 
 const { armChildDeadline, CHILD_ARGV_MARKER } = require("./qml-region.js").internals;
-const { withGuardedSuite, hangingRegion, modulePath } = require("./qml-region-testkit.js");
+const { withGuardedSuite, hangingRegion, fixtureEnv, plantSuite } =
+    require("./qml-region-testkit.js");
 
 // --- waiting on another PROCESS, from synchronous test code ---
 //
@@ -42,14 +50,68 @@ function waitFor(read, limitMs) {
     }
 }
 
-// The command line the kernel holds for a pid, argv-split. Empty when the pid is
-// gone or /proc is unreadable — so a caller asserting on its contents fails
-// rather than passing on an empty answer.
+// The command line the kernel holds for a pid, argv-split — or NULL when it could
+// not be read at all. The two answers must not collapse: "this pid is provably
+// not ours" and "we could not look" lead to opposite actions, and folding them
+// into one empty array is how the cleanup below would decline to kill a spinning
+// child precisely when the attribution it relies on had regressed.
 function cmdlineOf(pid) {
     try {
         return fs.readFileSync(`/proc/${pid}/cmdline`, "utf8").split("\0").filter(Boolean);
+    } catch (err) {
+        // ENOENT is a READABLE answer — there is no such process — and folding it
+        // in with "could not look" is what made the reaper below cry wolf on every
+        // child that had already exited exactly as intended.
+        return err.code === "ENOENT" ? [] : null;
+    }
+}
+
+// What a still-running orphan looks like from outside, for a failure message that
+// would otherwise name no cause. The thread count is the interesting one: it says
+// whether the deadline Worker ever existed.
+function orphanDiagnostics(pid, errLog) {
+    const read = file => {
+        try {
+            return fs.readFileSync(file, "utf8").trim();
+        } catch (err) {
+            return `<unreadable: ${err.code || err.message}>`;
+        }
+    };
+    const stat = read(`/proc/${pid}/stat`);
+    // The comm field is parenthesised and may itself contain spaces and parens,
+    // so the fields after it are found from the LAST ") ", never by splitting.
+    const after = stat.slice(stat.lastIndexOf(") ") + 2).split(" ");
+    const threads = /^Threads:\s*(\d+)/m.exec(read(`/proc/${pid}/status`));
+    // Ordered by what a reader acts on: state R is the definitive "still running",
+    // and the thread count is the hint next to it — Node carries a pool of its
+    // own, so the number is read against a healthy child's, not against 1.
+    return `pid ${pid} state ${after[0] || "<unknown>"}, threads ` +
+        `${threads ? threads[1] : "<unknown>"}; supervisor stderr ` +
+        `${JSON.stringify(read(errLog))}; raw stat ${JSON.stringify(stat)}`;
+}
+
+// Take the runaway down before leaving, but never shoot a stranger: a pid freed
+// seconds ago can already belong to one, and the marker is what makes ours
+// checkable. The third answer is the one that must not be silent — if /proc could
+// not be read, nothing here knows whether a full core is still spinning, and
+// saying so is the difference between a clean exit and the 70-hour orphan.
+function reapOrphanedChild(pid, errLog) {
+    if (pid <= 0 || !pidRunning(pid))
+        return;
+    const argv = cmdlineOf(pid);
+    if (argv === null) {
+        process.stderr.write(
+            `qml-region selftest: could not read /proc/${pid}/cmdline, so pid ${pid} was left ` +
+            "alive rather than signalled on a guess. Check it by hand: an orphaned region child " +
+            `spins at 100%. ${orphanDiagnostics(pid, errLog)}\n`);
+        return;
+    }
+    if (!argv.includes(CHILD_ARGV_MARKER))
+        return;  // readable and provably not ours
+    try {
+        process.kill(pid, "SIGKILL");
     } catch {
-        return [];
+        // already gone
     }
 }
 
@@ -244,30 +306,39 @@ module.exports = function regionGuardSelfTest() {
     // the interesting output arrives AFTER its supervisor is gone, and this check
     // has no event loop free to drain a pipe.
     {
+        const DEADLINE_MS = 1000;
+        // The same 15x the sibling hang check runs at, and for the same reason:
+        // this is a HANG DETECTOR, not a precision bound. Measured kill latency is
+        // ~1030ms; an 8x window failed once on a loaded box during review and said
+        // nothing about why, which is a red CI job with no cause attached.
+        const WAIT_MS = DEADLINE_MS * 15;
         const dir = fs.mkdtempSync(path.join(os.tmpdir(), "vgs-region-orphan-"));
         let supervisor = null;
         let childPid = 0;
         let errFd = -1;
+        const errLog = path.join(dir, "stderr.log");
         try {
-            const suite = path.join(dir, "suite.js");
             const pidFile = path.join(dir, "child.pid");
-            const errLog = path.join(dir, "stderr.log");
-            fs.writeFileSync(suite, [
-                `const fs = require("node:fs");`,
-                `const { evaluateMarked, guardChild } = require(${JSON.stringify(modulePath)});`,
+            const suite = plantSuite(dir, () => [
                 "guardChild();",
+                // A no-op SIGTERM listener, so the self-kill has to be a signal the
+                // child cannot catch. Without it, downgrading SIGKILL to SIGTERM
+                // reads as equivalent — a process with no listener dies either way
+                // — and the one property that matters here, that a blocked main
+                // loop cannot refuse the kill, goes untested.
+                "process.on('SIGTERM', function () {});",
                 // Written then renamed, so the reader never sees a half-written pid.
                 `fs.writeFileSync(${JSON.stringify(pidFile)} + ".part", String(process.pid));`,
                 `fs.renameSync(${JSON.stringify(pidFile)} + ".part", ${JSON.stringify(pidFile)});`,
                 ...hangingRegion("guard-orphan-test")
-            ].join("\n"));
+            ]);
 
             errFd = fs.openSync(errLog, "w");
             supervisor = spawn(process.execPath, [suite], {
                 stdio: ["ignore", "ignore", errFd],
-                env: Object.assign({}, process.env, {
+                env: fixtureEnv({
                     VGS_REGION_CHILD_TIMEOUT_MS: "600000",
-                    VGS_REGION_CHILD_DEADLINE_MS: "1000"
+                    VGS_REGION_CHILD_DEADLINE_MS: String(DEADLINE_MS)
                 })
             });
 
@@ -287,31 +358,28 @@ module.exports = function regionGuardSelfTest() {
             // Attribution, asserted on a process that is genuinely about to be
             // orphaned: this is the command line `ps` would have shown for the
             // one that burned a core for 70 hours.
-            assert.ok(cmdlineOf(childPid).includes(CHILD_ARGV_MARKER),
+            assert.ok((cmdlineOf(childPid) || []).includes(CHILD_ARGV_MARKER),
                 "an orphaned worker must name this harness in ps; its command line was " +
-                JSON.stringify(cmdlineOf(childPid).join(" ")));
+                JSON.stringify((cmdlineOf(childPid) || []).join(" ")));
 
             supervisor.kill("SIGKILL");
-            assert.ok(waitFor(() => !pidRunning(childPid), 8000),
-                "the child was still spinning 8s after its supervisor was killed, with a 1000ms " +
-                "deadline of its own — that is the 100%-CPU orphan this bound exists to prevent");
+            assert.ok(waitFor(() => !pidRunning(childPid), WAIT_MS),
+                `the child was still running ${WAIT_MS}ms after its supervisor was killed, with ` +
+                `a ${DEADLINE_MS}ms deadline of its own — that is the 100%-CPU orphan this bound ` +
+                `exists to prevent. ${orphanDiagnostics(childPid, errLog)}`);
 
             // With no supervisor left to report anything, the child's own line is
             // the ONLY evidence that it died of its bound rather than vanishing.
             // It is written with fs.writeSync for that reason: process.stderr in a
             // Worker is proxied through the main thread, which is spinning.
             const said = fs.readFileSync(errLog, "utf8");
-            assert.ok(said.includes(`${suite}: self-killed after 1000ms`),
+            assert.ok(said.includes(`${suite}: self-killed after ${DEADLINE_MS}ms`),
                 "an orphan must say what stopped it and which suite it was; the captured stderr " +
                 `was ${JSON.stringify(said)}`);
         } finally {
             if (supervisor)
                 try { supervisor.kill("SIGKILL"); } catch { /* already gone */ }
-            // A failing check must not leave behind the runaway it was about — but
-            // it must not shoot a stranger either, and a pid freed seconds ago can
-            // already belong to one. The marker is what makes that checkable.
-            if (childPid > 0 && cmdlineOf(childPid).includes(CHILD_ARGV_MARKER))
-                try { process.kill(childPid, "SIGKILL"); } catch { /* already gone */ }
+            reapOrphanedChild(childPid, errLog);
             if (errFd !== -1)
                 fs.closeSync(errFd);
             fs.rmSync(dir, { recursive: true, force: true });

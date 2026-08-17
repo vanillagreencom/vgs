@@ -30,6 +30,11 @@ const { spawnSync } = require("node:child_process");
 const fs = require("node:fs");
 const { Worker } = require("node:worker_threads");
 
+// The largest delay a timer holds. Node's setTimeout clamps anything above this
+// to 1ms — silently inside a Worker, whose stdio is proxied through a main thread
+// this guard assumes is blocked, so the TimeoutOverflowWarning need never surface.
+const MAX_TIMER_MS = 2 ** 31 - 1;
+
 // The wall clock the PARENT enforces on a suite that evaluates a region. Long
 // enough that an ordinary run (well under a second) never approaches it, short
 // enough that a hang is a fast red rather than a job timeout.
@@ -71,13 +76,39 @@ const ARM_CONFIRM_MS = msFromEnv(
 function msFromEnv(value, name, fallback, warn) {
     if (value === undefined || value === "")
         return fallback;
+    const say = warn || (text => process.stderr.write(text));
     const parsed = Number(value);
-    if (Number.isFinite(parsed) && parsed > 0)
+    if (Number.isFinite(parsed) && parsed > 0 && parsed <= MAX_TIMER_MS)
         return parsed;
-    (warn || (text => process.stderr.write(text)))(
-        `${name}=${JSON.stringify(value)} is not a positive number; ` +
-        `using ${fallback}ms.\n`);
+    // Above the timer ceiling the two bounds stop degrading together: a Worker's
+    // setTimeout silently clamps to 1ms, so the child would self-kill at once
+    // while reporting the huge deadline it was handed, and spawnSync's timeout
+    // has no such clamp. That is an INVERTED bound, the same shape as the NaN it
+    // sits beside, so it falls back loudly rather than being honoured.
+    say(`${name}=${JSON.stringify(value)} is not a positive number of ms at or below ` +
+        `${MAX_TIMER_MS} (the largest a timer holds); using ${fallback}ms.\n`);
     return fallback;
+}
+
+// The child's deadline, derived from the supervisor's limit and sitting
+// CHILD_DEADLINE_GRACE_MS above it so the supervisor wins the race while it is
+// alive — only it can name the suite and the limit it enforced. The child's bound
+// is what remains when it is not alive.
+//
+// An override is honoured as given, INCLUDING below the limit: that inversion is
+// the only way to make the child's own bound observable, and since a supervisor
+// now reports a SIGKILL it did not send as one rather than claiming its own
+// limit, an inverted pair costs the better message and not the bound. It says so
+// once, naming both numbers, because a developer who exported the variable across
+// a whole run otherwise sees only that their reports changed shape.
+function childDeadlineFor(limit, override, warn) {
+    const deadline = msFromEnv(
+        override, "VGS_REGION_CHILD_DEADLINE_MS", limit + CHILD_DEADLINE_GRACE_MS, warn);
+    if (deadline <= limit)
+        (warn || (text => process.stderr.write(text)))(
+            `the child deadline (${deadline}ms) is at or below this supervisor's ${limit}ms ` +
+            "limit, so the CHILD will win the race and no report will name an enforced limit.\n");
+    return deadline;
 }
 
 // What a finished spawnSync says happened. A child that never STARTED is not a
@@ -196,23 +227,29 @@ function killReport(script, run, limit, elapsed) {
 }
 
 // Re-exec the calling suite as a child process under a wall clock, and return
-// only in that child — with its own deadline armed and confirmed, and the marker
-// that named it a child spliced back out of its argv. The FIRST statement of any
-// suite that evaluates a region calls this.
+// only in that child. It takes no arguments on purpose: the three bounds are
+// VGS_REGION_CHILD_TIMEOUT_MS, VGS_REGION_CHILD_DEADLINE_MS and
+// VGS_REGION_ARM_CONFIRM_MS, and a per-call override nothing passed was an
+// untested branch on the one entry point every guarded suite goes through.
+//
+// In the SUPERVISOR it spawns, waits, reports and exits with the child's status.
+// In the CHILD it arms the self-deadline and refuses to return until that Worker
+// confirms, splices the ps marker back out of process.argv, and returns. The
+// FIRST statement of any suite that evaluates a region calls this.
 //
 // A process is the bound that holds, and an in-process timeout is not: it covers
 // the synchronous call and nothing else, so a region function that schedules
 // `Promise.resolve().then(() => { while (true) {} })` and returns normally
 // finishes inside every such timeout and then hangs Node from the microtask
 // queue. One kill closes that, an infinite loop and runaway allocation together.
-function guardChild(bounds) {
+function guardChild() {
     const script = process.argv[1];
-    const limit = (bounds && bounds.timeout) || CHILD_TIMEOUT_MS;
+    const limit = CHILD_TIMEOUT_MS;
     const marker = process.argv.indexOf(CHILD_ARGV_MARKER);
     if (marker !== -1) {
         process.argv.splice(marker, 1);
-        armChildDeadline(msFromEnv(process.env.VGS_REGION_CHILD_DEADLINE_MS,
-            "VGS_REGION_CHILD_DEADLINE_MS", limit + CHILD_DEADLINE_GRACE_MS));
+        armChildDeadline(childDeadlineFor(limit, process.env.VGS_REGION_CHILD_DEADLINE_MS,
+            text => process.stderr.write(`${script}: ${text}`)));
         return;
     }
     const started = Date.now();
@@ -258,15 +295,18 @@ function evaluateMarked(source, marker, names, label) {
 
 module.exports = { regionOf, evaluateMarked, guardChild };
 
-// Reached only by the self-test — scripts/lib/qml-region-selftest.js for the
-// bound and scripts/lib/qml-region-wiring-selftest.js for the plumbing, both
-// building their fixtures from scripts/lib/qml-region-testkit.js. That self-test
-// is its own row in the scripts/validate manifest rather than a call from a
-// guarded suite: its verdict travels through guardChild()'s exit status, so run
-// under the guard it could never report a broken guard. These are the guard's own moving parts, and a
-// check that cannot see them can only re-observe the guard from outside, which
-// is how the NaN bound and the unattributable orphan both got through.
+// Reached only by the self-test. These are the guard's own moving parts, and a
+// check that cannot see them can only re-observe the guard from outside — which
+// is how the NaN bound, the unattributable orphan, and a deadline ordering
+// nothing ever evaluated all got through.
+//
+// That self-test is scripts/lib/qml-region-selftest.js for the bound and
+// scripts/lib/qml-region-wiring-selftest.js for the plumbing, both building their
+// fixtures from scripts/lib/qml-region-testkit.js. It runs as its own row in the
+// scripts/validate manifest and in CI, NOT from a guarded suite: its verdict
+// would otherwise travel through guardChild()'s own exit status, and a self-test
+// that reports through the line it tests cannot report that line broken.
 module.exports.internals = {
-    CHILD_ARGV_MARKER, CHILD_TIMEOUT_DEFAULT_MS, armChildDeadline, msFromEnv, spawnOutcome,
-    modulePath: __filename
+    ARM_CONFIRM_DEFAULT_MS, CHILD_ARGV_MARKER, CHILD_DEADLINE_GRACE_MS, CHILD_TIMEOUT_DEFAULT_MS,
+    MAX_TIMER_MS, armChildDeadline, childDeadlineFor, msFromEnv, spawnOutcome
 };

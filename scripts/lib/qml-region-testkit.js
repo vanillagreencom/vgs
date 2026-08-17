@@ -1,7 +1,9 @@
-// The fixture the region-guard self-tests are all built from. Its own file
-// because both halves of that self-test — scripts/lib/qml-region-selftest.js for
-// the bound, scripts/lib/qml-region-wiring-selftest.js for the plumbing around
-// it — run the same experiment and only the verdict differs.
+// The fixture the region-guard self-tests are all built from: plant a suite, run
+// it, read the verdict off exit status and stderr. Its own file because both
+// halves of that self-test — scripts/lib/qml-region-selftest.js for the bound,
+// scripts/lib/qml-region-wiring-selftest.js for the plumbing around it — run the
+// same experiment and only the verdict differs, and because hand-rolling the
+// scaffold per block is how one of them ends up without the cleanup.
 
 "use strict";
 
@@ -10,7 +12,39 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 
-const { CHILD_ARGV_MARKER, modulePath } = require("./qml-region.js").internals;
+const { CHILD_ARGV_MARKER } = require("./qml-region.js").internals;
+
+// The path a planted suite requires to reach the guard. Resolved rather than
+// exported by the guard itself: the fixtures sit in its directory, so asking is
+// free and the guard keeps one less thing on its public surface.
+const guardPath = require.resolve("./qml-region.js");
+
+// The environment a fixture runs in, and NOTHING the environment brought with it.
+// Every bound this guard has is an env override, so an ambient
+// VGS_REGION_CHILD_DEADLINE_MS or VGS_REGION_ARM_CONFIRM_MS silently re-tunes
+// checks that never asked for it: with a 300ms deadline exported, the hang checks
+// died of the CHILD's bound at 300ms instead of the supervisor's kill at 1000ms
+// and still passed, and a 1ms arm budget broke the suite outright. Stripping the
+// whole prefix rather than pinning the knobs one by one is what keeps that true
+// for the next bound anyone adds.
+function fixtureEnv(overrides) {
+    const base = {};
+    for (const [key, value] of Object.entries(process.env))
+        if (!key.startsWith("VGS_REGION_"))
+            base[key] = value;
+    return Object.assign(base, overrides || {});
+}
+
+// Write a one-off suite that can reach the guard, and answer its path.
+function plantSuite(dir, body) {
+    const suite = path.join(dir, "suite.js");
+    fs.writeFileSync(suite, [
+        `const fs = require("node:fs");`,
+        `const { evaluateMarked, guardChild } = require(${JSON.stringify(guardPath)});`,
+        ...body(dir, suite)
+    ].join("\n"));
+    return suite;
+}
 
 // Plant a one-off suite, run it as a supervisor, and hand `check` what happened:
 // a planted body, an environment, and a verdict read off exit status and stderr.
@@ -24,19 +58,13 @@ const { CHILD_ARGV_MARKER, modulePath } = require("./qml-region.js").internals;
 function withGuardedSuite(options, check) {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), options.prefix));
     try {
-        const suite = path.join(dir, "suite.js");
-        fs.writeFileSync(suite, [
-            `const fs = require("node:fs");`,
-            `const { evaluateMarked, guardChild } = require(${JSON.stringify(modulePath)});`,
-            ...options.body(dir, suite)
-        ].join("\n"));
-
+        const suite = plantSuite(dir, options.body);
         const started = Date.now();
         const run = spawnSync(process.execPath, [suite, ...(options.args || [])], {
             encoding: "utf8",
             timeout: options.timeout || 20000,
             killSignal: "SIGKILL",
-            env: Object.assign({}, process.env, options.env || {})
+            env: fixtureEnv(options.env)
         });
         check({
             run,
@@ -92,4 +120,4 @@ function hangingRegion(label) {
     ];
 }
 
-module.exports = { withGuardedSuite, hangingRegion, modulePath };
+module.exports = { withGuardedSuite, hangingRegion, fixtureEnv, plantSuite, guardPath };
