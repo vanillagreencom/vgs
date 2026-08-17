@@ -291,6 +291,7 @@ jobs:
           scripts/test-bundled-override.js
           scripts/test-plugin-requirement-report.js
           scripts/test-toast-actions.js
+          node scripts/lib/qml-region-selftest.js
           scripts/test-ai-usage-provider.js
           scripts/test-ai-usage-entrypoint.js
           scripts/test-ai-usage-wiring.js

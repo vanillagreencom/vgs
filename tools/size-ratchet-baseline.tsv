@@ -1,4 +1,4 @@
-.github/workflows/ci.yml	487
+.github/workflows/ci.yml	488
 .github/workflows/review-gate-writer.yml	656
 backend/internal/services/bluez/bluez.go	744
 backend/internal/services/clipboard/clipboard.go	635
@@ -218,7 +218,7 @@ scripts/lib/vendor-drift.sh	429
 scripts/qml-smoke.sh	1414
 scripts/test-compositor-focus.js	791
 scripts/test-launcher-hover-latch.js	492
-scripts/test-launcher-search-gate.js	1077
+scripts/test-launcher-search-gate.js	1076
 scripts/test-paste-lifecycle.js	1168
 scripts/test-pill-hover-safety.js	420
 scripts/test-popout-dismiss-envelope.js	489
@@ -230,5 +230,5 @@ scripts/test-validate.sh	547
 scripts/test-validation-inventory.sh	2278
 scripts/test-vendor-drift-evidence.sh	420
 scripts/test-vendor-drift.sh	434
-scripts/validate	1064
+scripts/validate	1065
 vstack.toml	553

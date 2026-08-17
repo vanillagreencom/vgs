@@ -9,7 +9,8 @@
 //
 // The clock is enforced twice, from opposite sides, because one side is not
 // enough. The supervisor kills the child; the child also kills itself from a
-// Worker thread. A supervisor-only bound leaks whenever the supervisor dies
+// Worker thread, and refuses to evaluate anything if that Worker cannot be
+// confirmed armed. A supervisor-only bound leaks whenever the supervisor dies
 // first, and a runaway region is precisely a process that cannot stop itself, so
 // the leak is a full core spinning until someone notices (VGS-198: 70 hours).
 //
@@ -26,6 +27,7 @@
 
 const assert = require("node:assert/strict");
 const { spawnSync } = require("node:child_process");
+const fs = require("node:fs");
 const { Worker } = require("node:worker_threads");
 
 // The wall clock the PARENT enforces on a suite that evaluates a region. Long
@@ -42,17 +44,29 @@ const CHILD_TIMEOUT_MS = msFromEnv(
 // jitter around the supervisor's timer never lets the child win the race.
 const CHILD_DEADLINE_GRACE_MS = 1000;
 
-// Passed to the re-exec'd child purely so `ps` tells the two roles apart. They
-// run the same script under the same interpreter and differed only by an env
-// var, so an orphaned worker could not be attributed to this harness without
-// reading /proc/<pid>/environ — which is how one spun for 70 hours unnoticed.
+// The ONE thing that says which role this process is, and the reason `ps` can
+// name an orphan. It used to be an env var deciding the role and this marker
+// only decorating the command line, which is two signals that can disagree: env
+// is inherited by every descendant, so a guarded suite that itself spawned a
+// node script calling guardChild() gave that grandchild the child branch — no
+// supervisor, no marker, and an orphan of it as unattributable as the one that
+// spun for 70 hours. argv is not inherited, so one signal answers both.
 // guardChild() splices it back out of process.argv, so a suite's own argument
 // handling never sees it; the kernel's copy of the command line keeps it.
 const CHILD_ARGV_MARKER = "--vgs-region-guard-child";
 
+// How long arming the child's deadline may take before the child refuses to run
+// the region at all. Worker startup is tens of milliseconds; this is far above
+// that and far below any bound it protects. VGS_REGION_ARM_CONFIRM_MS widens it
+// for a box where thread creation is genuinely slow, and narrows it to prove the
+// refusal fires.
+const ARM_CONFIRM_DEFAULT_MS = 2000;
+const ARM_CONFIRM_MS = msFromEnv(
+    process.env.VGS_REGION_ARM_CONFIRM_MS, "VGS_REGION_ARM_CONFIRM_MS", ARM_CONFIRM_DEFAULT_MS);
+
 // A bad override must not silently become NaN: that is an UNDEFINED bound in the
 // one situation the guard has to hold, and it printed "killed after NaNms". The
-// variable's name is a parameter because both bounds parse through here, and a
+// variable's name is a parameter because all three bounds parse through here, and a
 // fallback message naming the wrong variable sends triage to the wrong knob.
 function msFromEnv(value, name, fallback, warn) {
     if (value === undefined || value === "")
@@ -87,36 +101,104 @@ function spawnOutcome(run) {
 // nothing on the child's own event loop can ever fire against it. A Worker runs
 // on its own thread, so its timer fires while the main thread spins.
 //
-// Two details are load-bearing and neither has an obvious alternative:
-// `process.exit()` inside a Worker ends only that thread, so the process must be
-// signalled, and the signal must be SIGKILL because anything JS could handle
-// would queue behind the blocked main loop. Likewise the message goes out
-// through fs.writeSync, not process.stderr: a Worker's stdio is proxied through
-// the main thread, which is exactly what is stuck.
+// Three details are load-bearing and none has an obvious alternative:
+//
+//   - `process.exit()` inside a Worker ends only that thread, so the process must
+//     be SIGNALLED, and with SIGKILL, because anything JS could handle would
+//     queue behind the blocked main loop.
+//   - the note goes out through fs.writeSync, not process.stderr: a Worker's
+//     stdio is proxied through the main thread, which is exactly what is stuck.
+//   - that write is BEST EFFORT and the kill is not. fd 2 can be a closed pipe by
+//     the time the deadline lands, and letting the EPIPE out ends the Worker
+//     before it signals — which makes the entire bound conditional on a
+//     diagnostic succeeding. It is a note about a kill, never its precondition.
+//
+// The flag is stored and notified after the timer is scheduled, not before: it
+// answers "this worker is armed", and a worker that has not reached its
+// setTimeout is not.
 const CHILD_DEADLINE_SOURCE = `
 "use strict";
-const fs = require("node:fs");
 const { workerData } = require("node:worker_threads");
 setTimeout(function () {
-    fs.writeSync(2, workerData.script + ": self-killed after " + workerData.deadline +
-        "ms - the extracted region did not finish and no supervisor stopped it.\\n");
+    try {
+        require("node:fs").writeSync(2, workerData.script + ": self-killed after " +
+            workerData.deadline + "ms - the extracted region did not finish.\\n");
+    } catch (noteFailed) {
+        // Deliberately swallowed. See "BEST EFFORT" above: the kill below is the
+        // bound, and it must not depend on stderr still being writable.
+    }
     process.kill(process.pid, "SIGKILL");
 }, workerData.deadline);
+Atomics.store(workerData.armed, 0, 1);
+Atomics.notify(workerData.armed, 0);
 `;
 
-function armChildDeadline(deadline) {
-    const worker = new Worker(CHILD_DEADLINE_SOURCE, {
+// Arm it, and do not return until it is armed. A Worker starts ASYNCHRONOUSLY
+// and reports a startup failure — ERR_WORKER_INIT_FAILED under a thread or
+// memory cap, a syntax error in the source, a future edit that only fails at eval
+// time — as an `error` event on the main thread's event loop. That is the very
+// loop this guard exists because the region blocks, so a discarded handle is
+// fail-open in the exact case that matters: the child believes it is bounded, is
+// not, and spins a full core silently. Blocking here is free — nothing from the
+// region has run yet — and turns a silent unbounded run into a loud refusal.
+//
+// `overrides` is for the self-test alone, and only for the half it cannot reach
+// otherwise: source that cannot arm stands in for every way a Worker fails to
+// start. The other half needs no hook — VGS_REGION_ARM_CONFIRM_MS narrowed below
+// thread-creation time makes a real child refuse, which is how the refusal is
+// proven to travel out of guardChild() rather than be swallowed on the way.
+function armChildDeadline(deadline, overrides) {
+    const script = process.argv[1];
+    const armed = new Int32Array(new SharedArrayBuffer(4));
+    const budget = (overrides && overrides.confirmMs) || ARM_CONFIRM_MS;
+    const worker = new Worker((overrides && overrides.source) || CHILD_DEADLINE_SOURCE, {
         eval: true,
-        workerData: { deadline, script: process.argv[1] }
+        workerData: { armed, deadline, script }
     });
+    // Legible for a failure that arrives while the loop still turns; the flag
+    // below is what covers the failure that arrives after it stops.
+    worker.on("error", err => {
+        try {
+            fs.writeSync(2, `${script}: the region deadline worker failed — ${err.message}\n`);
+        } catch (noteFailed) {
+            // Same rule as inside the worker: a note, never a precondition.
+        }
+    });
+    // "not-equal" rather than "ok" just means the worker won the race; the load is
+    // what decides, so both answers are read the same way.
+    Atomics.wait(armed, 0, 0, budget);
+    if (Atomics.load(armed, 0) !== 1) {
+        worker.terminate();
+        throw new Error(
+            `${script}: the region deadline worker did not arm within ${budget}ms. Refusing to ` +
+            "evaluate the region unbounded — that is how a guarded child becomes a 100%-CPU " +
+            "orphan nothing can stop.");
+    }
     // A healthy run must never wait on the deadline it did not need.
     worker.unref();
     return worker;
 }
 
-// Re-exec the calling suite as a child process the parent can kill on a wall
-// clock, and return only in that child. The FIRST statement of any suite that
-// evaluates a region calls this.
+// Which SIGKILL this was. spawnSync flags its OWN timeout kill with ETIMEDOUT; a
+// bare SIGKILL came from somewhere else — the child's own deadline, the OOM
+// killer, an operator — and naming this supervisor's limit as the cause reports a
+// bound that never elapsed, the exact mis-report spawnOutcome() exists to
+// prevent one layer down.
+function killReport(script, run, limit, elapsed) {
+    if (run.error && run.error.code === "ETIMEDOUT")
+        return `${script}: killed after ${limit}ms — the extracted region did not finish.\n` +
+            "A hang is the failure mode a passing suite cannot be told from a slow one, " +
+            "so it is a hard kill rather than an in-process timeout.\n";
+    return `${script}: the child was SIGKILLed after ${elapsed}ms and this supervisor is not ` +
+        `what stopped it — its ${limit}ms limit did not fire. Its own deadline ` +
+        "(VGS_REGION_CHILD_DEADLINE_MS), the OOM killer, and an operator all look like this from " +
+        "here. Any line above this one is the child's own account.\n";
+}
+
+// Re-exec the calling suite as a child process under a wall clock, and return
+// only in that child — with its own deadline armed and confirmed, and the marker
+// that named it a child spliced back out of its argv. The FIRST statement of any
+// suite that evaluates a region calls this.
 //
 // A process is the bound that holds, and an in-process timeout is not: it covers
 // the synchronous call and nothing else, so a region function that schedules
@@ -126,25 +208,21 @@ function armChildDeadline(deadline) {
 function guardChild(bounds) {
     const script = process.argv[1];
     const limit = (bounds && bounds.timeout) || CHILD_TIMEOUT_MS;
-    if (process.env.VGS_REGION_CHILD === "1") {
+    const marker = process.argv.indexOf(CHILD_ARGV_MARKER);
+    if (marker !== -1) {
+        process.argv.splice(marker, 1);
         armChildDeadline(msFromEnv(process.env.VGS_REGION_CHILD_DEADLINE_MS,
             "VGS_REGION_CHILD_DEADLINE_MS", limit + CHILD_DEADLINE_GRACE_MS));
-        const marker = process.argv.indexOf(CHILD_ARGV_MARKER);
-        if (marker !== -1)
-            process.argv.splice(marker, 1);
         return;
     }
+    const started = Date.now();
     const run = spawnSync(process.execPath, [script, CHILD_ARGV_MARKER, ...process.argv.slice(2)], {
         stdio: "inherit",
         timeout: limit,
-        killSignal: "SIGKILL",
-        env: Object.assign({}, process.env, { VGS_REGION_CHILD: "1" })
+        killSignal: "SIGKILL"
     });
     if (spawnOutcome(run) === "killed") {
-        process.stderr.write(
-            `${script}: killed after ${limit}ms — the extracted region did not finish.\n` +
-            "A hang is the failure mode a passing suite cannot be told from a slow one, " +
-            "so it is a hard kill rather than an in-process timeout.\n");
+        process.stderr.write(killReport(script, run, limit, Date.now() - started));
         process.exit(1);
     }
     if (spawnOutcome(run) === "spawn-failed") {
@@ -180,17 +258,15 @@ function evaluateMarked(source, marker, names, label) {
 
 module.exports = { regionOf, evaluateMarked, guardChild };
 
-// The self-test, in its own file: it is several times the size of the guard it
-// checks, and lives behind a lazy require so requiring the guard does not pay
-// for it. scripts/test-ai-usage-provider.js runs it before it evaluates anything.
-module.exports.selfTest = function selfTest() {
-    require("./qml-region-selftest.js")();
-};
-
-// Reached only by that self-test. These are the guard's own moving parts, and a
+// Reached only by the self-test — scripts/lib/qml-region-selftest.js for the
+// bound and scripts/lib/qml-region-wiring-selftest.js for the plumbing, both
+// building their fixtures from scripts/lib/qml-region-testkit.js. That self-test
+// is its own row in the scripts/validate manifest rather than a call from a
+// guarded suite: its verdict travels through guardChild()'s exit status, so run
+// under the guard it could never report a broken guard. These are the guard's own moving parts, and a
 // check that cannot see them can only re-observe the guard from outside, which
 // is how the NaN bound and the unattributable orphan both got through.
 module.exports.internals = {
-    CHILD_ARGV_MARKER, CHILD_TIMEOUT_DEFAULT_MS, msFromEnv, spawnOutcome,
+    CHILD_ARGV_MARKER, CHILD_TIMEOUT_DEFAULT_MS, armChildDeadline, msFromEnv, spawnOutcome,
     modulePath: __filename
 };

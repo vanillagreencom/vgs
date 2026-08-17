@@ -41,9 +41,6 @@ const { evaluateMarked, regionOf, guardChild } = require("./lib/qml-region.js");
 // this line runs in the parent.
 guardChild();
 
-// Prove the evaluator before it evaluates anything: that a region which does not
-// finish becomes a fast, named red rather than a hung job.
-require("./lib/qml-region.js").selfTest();
 const {
     normalizeProvider, providerIcon, payloadProvider, payloadIsFor, shouldRelaunch,
     decodePayload, acceptOutcome, stderrReason, headOf, failureWins, newerSuccess, pillSlot
