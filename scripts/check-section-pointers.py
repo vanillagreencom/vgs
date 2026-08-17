@@ -60,7 +60,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent / "lib"))
 from collected import members_missing, nothing_collected  # noqa: E402
 from prose_blocks import fence_left_open, headings, normalized_words  # noqa: E402
-from tracked_blobs import REGULAR_MODES, blob_texts, tracked_entries  # noqa: E402
+from tracked_blobs import REGULAR_MODES, Entry, blob_texts, tracked_entries  # noqa: E402
 from section_pointers import (  # noqa: E402
     SECTION_MARK,
     Judged,
@@ -112,6 +112,9 @@ FIXTURE_FILES = {
 }
 
 # Whose pointers are READ. Not whose documents may be NAMED — see swept_tree.
+# It also decides whose DEFECTS are reported: a vendored document with a broken
+# fence is named as the cause when someone points at it, not failed over, since
+# it is no more ours to repair than its prose is (declined_fences).
 SKIP_ROOTS = (
     "third_party/",
     "config/vshell/nvim/colorschemes/",
@@ -230,9 +233,7 @@ def is_citer(rel: str) -> bool:
     return not rel.startswith(SKIP_ROOTS) and rel not in FIXTURE_FILES
 
 
-def swept_tree(
-    entries: list[tuple[str, str, str]]
-) -> tuple[dict[str, str], dict[str, str], dict[str, str]]:
+def swept_tree(entries: list[Entry]) -> tuple[dict[str, str], dict[str, str], dict[str, str]]:
     """(citer text, every markdown text, undecodable path -> reason).
 
     TWO ROLES, TWO SETS, and conflating them was a defect. SKIP_ROOTS says whose
@@ -264,26 +265,25 @@ def fixture_problems(tracked: list[str]) -> list[str]:
     ]
 
 
-def target_fence_problems(documents: dict[str, str], citers: dict[str, str]) -> list[str]:
-    """A TARGET-ONLY document whose fence never closes, so its headings are cut.
+def declined_fences(documents: dict[str, str]) -> dict[str, str]:
+    """A SKIP_ROOTS document whose fence never closes, as a CAUSE not a finding.
 
-    `pointer_problems` checks the files whose pointers it reads and reports them
-    there. Headings, though, are parsed over a SUPERSET — 88 markdown files are
-    targets and not citers — and an unbalanced fence in one truncates its heading
-    list silently. Every pointer into it is then reported as "has no such
-    heading. Repoint it", which is loud but blames the citer for a defect in the
-    target: the wrong-cause shape this check removed everywhere else.
+    Same decision as the symlink map, for the same reason: a vendored document
+    is not ours to repair, which is the whole rationale for SKIP_ROOTS on the
+    citer side, so failing the build over its punctuation asks a maintainer for
+    a fix they cannot make. But its heading list IS truncated, so a pointer at
+    it must be told that rather than "has no such heading" — which would blame
+    the citer for the target's state. Reported for first-party documents, named
+    as a cause for excluded ones.
     """
-    return [
-        f"{rel} opens a ``` or ~~~ fence that never closes, so its heading list is "
-        f"truncated and no pointer into it can be judged. Close the fence — this is "
-        f"the target's defect, not its citers'."
-        for rel in sorted(documents)
-        if rel.endswith(".md") and rel not in citers and fence_left_open(documents[rel])
-    ]
+    return {
+        rel: "opens a fence that never closes, so its heading list is truncated"
+        for rel, text in documents.items()
+        if rel.endswith(".md") and not is_citer(rel) and fence_left_open(text)
+    }
 
 
-def declined_markdown(entries: list[tuple[str, str, str]]) -> dict[str, str]:
+def declined_markdown(entries: list[Entry]) -> dict[str, str]:
     """Tracked `.md` the mode filter refused, as CAUSES rather than as findings.
 
     `.claude/CLAUDE.md` is a symlink: its blob is a link target, so no heading
@@ -293,9 +293,9 @@ def declined_markdown(entries: list[tuple[str, str, str]]) -> dict[str, str]:
     of `unreadable_problems`. The two maps are separate for exactly that reason.
     """
     return {
-        path: "tracked as a symlink, whose blob is a link target rather than prose"
-        for mode, _sha, path in entries
-        if path.endswith(".md") and mode not in REGULAR_MODES
+        entry.path: "tracked as a symlink, whose blob is a link target rather than prose"
+        for entry in entries
+        if entry.path.endswith(".md") and entry.mode not in REGULAR_MODES
     }
 
 
@@ -437,16 +437,16 @@ def audit(
     problems = list(found.problems)
     problems.extend(exemption_problems(markdown, found.used))
     problems.extend(heading_problems(markdown))
-    problems.extend(target_fence_problems(texts, files))
     return found._replace(problems=problems)
 
 
 def main() -> int:
     entries = tracked_entries(REPO_ROOT)
-    tracked = [path for _mode, _sha, path in entries]
+    tracked = [entry.path for entry in entries]
     files, documents, undecodable = swept_tree(entries)
 
-    found = audit(files, {**undecodable, **declined_markdown(entries)}, documents)
+    causes = {**undecodable, **declined_markdown(entries), **declined_fences(documents)}
+    found = audit(files, causes, documents)
     problems = list(found.problems)
     problems.extend(sweep_problems(files, found.judged))
     problems.extend(fixture_problems(tracked))

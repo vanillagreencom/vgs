@@ -246,8 +246,9 @@ def pointer_problems(
         if fence_left_open(files[rel]):
             problems.append(
                 f"{rel} opens a ``` or ~~~ fence that never closes, so everything "
-                f"after it was skipped and no pointer there could be seen. Close the "
-                f"fence — an unbalanced one is a lost file, not an empty one."
+                f"after it was skipped: no pointer there was seen, and if anything "
+                f"cites this file its heading list is short too. Close the fence — an "
+                f"unbalanced one is a lost file, not an empty one."
             )
             continue
         for line, token, name, quoted, problem, inherited in pointers(rel, files[rel]):
@@ -283,6 +284,17 @@ def pointer_problems(
             # refuses a whole branch to avoid. A numbered step is a shape this
             # parser knowingly does not own; an empty name is one it could not
             # read, and only the first is a clean result.
+            # A TARGET WITH A KNOWN CAUSE IS NOT JUDGED against its headings.
+            # A document whose fence never closes still RESOLVES, and its
+            # heading list is simply short — matching against it would report
+            # "has no such heading" and send the reader to the citer for the
+            # target's state. Reported once per pointer, in the target's terms.
+            if target in unreadable:
+                problems.append(
+                    f"{where} cites `{target} {SECTION_MARK} {name}`, but {target} "
+                    f"{unreadable[target]}, so this pointer cannot be judged."
+                )
+                continue
             if not name:
                 problems.append(
                     f"{where} carries a `{SECTION_MARK}` whose section name could not be "

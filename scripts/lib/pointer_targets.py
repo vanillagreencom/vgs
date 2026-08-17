@@ -70,6 +70,25 @@ def citer_relative(token: str, citer: str) -> str:
     return "/".join(parts)
 
 
+def _matches(token: str, known) -> list[str]:
+    """Tracked documents whose BASENAME the token names, sorted.
+
+    One definition, called by the resolver, the ambiguity report and the cause
+    lookup alike. It was written three times in three shapes — two branches in
+    `resolve_target`, one combined predicate twice over — which is the hazard
+    `citer_relative`'s docstring names: that lesson was applied to the `..` loop
+    and not to the matcher beside it, so a fifth spelling added to the resolver
+    would silently not reach the other two.
+    """
+    prefix = f"{token}-" if DECISION_TOKEN.match(token) else None
+    return sorted(
+        rel
+        for rel in known
+        if rel.rsplit("/", 1)[-1] == token
+        or (prefix and rel.rsplit("/", 1)[-1].startswith(prefix))
+    )
+
+
 def names_a_file(token: str) -> bool:
     """Whether a token names a document rather than being a sentence word."""
     return bool(token) and (
@@ -103,18 +122,18 @@ def resolve_target(
     each half of the grammar is still exercised somewhere in the tree.
     """
     if DECISION_TOKEN.match(token):
-        records = [rel for rel in markdown if rel.rsplit("/", 1)[-1].startswith(f"{token}-")]
+        records = _matches(token, markdown)
         return (records[0], "decision-record id") if len(records) == 1 else ("", "")
     if token in markdown:
         return token, "repo-relative path"
     relative = citer_relative(token, citer)
     if relative and relative in markdown:
         return relative, "citer-relative link"
-    basenames = [rel for rel in markdown if rel.rsplit("/", 1)[-1] == token]
+    basenames = _matches(token, markdown)
     return (basenames[0], "unique basename") if len(basenames) == 1 else ("", "")
 
 
-def ambiguous(token: str, citer: str, markdown) -> list[str]:
+def ambiguous(token: str, markdown) -> list[str]:
     """Tracked documents a basename or decision id could equally name.
 
     Empty unless there are TWO or more, which is the only case worth reporting
@@ -129,15 +148,7 @@ def ambiguous(token: str, citer: str, markdown) -> list[str]:
     That fails closed, but the reader was told the file did not exist when in
     truth several do.
     """
-    if citer_relative(token, citer) in markdown or token in markdown:
-        return []
-    prefix = f"{token}-" if DECISION_TOKEN.match(token) else None
-    matches = sorted(
-        rel
-        for rel in markdown
-        if rel.rsplit("/", 1)[-1] == token
-        or (prefix and rel.rsplit("/", 1)[-1].startswith(prefix))
-    )
+    matches = _matches(token, markdown)
     return matches if len(matches) > 1 else []
 
 
@@ -159,7 +170,7 @@ def unresolved(token: str, citer: str, unreadable: dict[str, str], markdown=()) 
     for candidate in _candidates(token, citer, unreadable):
         if candidate in unreadable:
             return f"{unreadable[candidate]}, so its headings could not be parsed"
-    shared = ambiguous(token, citer, markdown)
+    shared = ambiguous(token, markdown)
     if shared:
         return (
             f"is a name {len(shared)} tracked documents share ({', '.join(shared)}), so "
@@ -174,14 +185,4 @@ def unresolved(token: str, citer: str, unreadable: dict[str, str], markdown=()) 
 
 def _candidates(token: str, citer: str, known) -> list[str]:
     """Every path `token` could name, in the order `resolve_target` tries them."""
-    prefix = f"{token}-" if DECISION_TOKEN.match(token) else None
-    return [
-        token,
-        citer_relative(token, citer),
-        *sorted(
-            rel
-            for rel in known
-            if rel.rsplit("/", 1)[-1] == token
-            or (prefix and rel.rsplit("/", 1)[-1].startswith(prefix))
-        ),
-    ]
+    return [token, citer_relative(token, citer), *_matches(token, known)]

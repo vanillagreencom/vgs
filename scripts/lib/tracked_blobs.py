@@ -57,15 +57,32 @@ GIT_REDIRECTS = (
     "GIT_CEILING_DIRECTORIES",
 )
 
+# CONFIG injection, not repo location — a separate channel with its own reason
+# to be here. `-C` does not override it and neither does GIT_CONFIG_GLOBAL or
+# GIT_CONFIG_SYSTEM, so `GIT_CONFIG_PARAMETERS="'core.excludesFile'='/x'"` makes
+# `git add -A` stage nothing while every other precaution holds. Git exports it
+# into every hook and alias subprocess whenever `-c` is in play, which is the
+# same reachability as the index escape above. Prefix names are matched rather
+# than listed, because GIT_CONFIG_KEY_n/VALUE_n are unbounded in n.
+GIT_CONFIG_INJECTORS = ("GIT_CONFIG_PARAMETERS", "GIT_CONFIG_COUNT")
+GIT_CONFIG_PREFIXES = ("GIT_CONFIG_KEY_", "GIT_CONFIG_VALUE_")
+
 
 def git_env(hermetic: bool = False) -> dict[str, str]:
     """The ambient environment with every repo-redirecting variable removed.
 
-    `hermetic` also silences user and system config, so a fixture repository
-    cannot inherit a `core.excludesFile` that quietly declines to add its own
-    fixtures.
+    `hermetic` also silences user and system config. That alone did NOT stop a
+    fixture inheriting a `core.excludesFile` that quietly declines to add its own
+    fixtures — `GIT_CONFIG_PARAMETERS` says the same thing through a channel
+    those two do not cover, which is why it is scrubbed above.
     """
-    env = {name: value for name, value in os.environ.items() if name not in GIT_REDIRECTS}
+    env = {
+        name: value
+        for name, value in os.environ.items()
+        if name not in GIT_REDIRECTS
+        and name not in GIT_CONFIG_INJECTORS
+        and not name.startswith(GIT_CONFIG_PREFIXES)
+    }
     if hermetic:
         env["GIT_CONFIG_GLOBAL"] = os.devnull
         env["GIT_CONFIG_SYSTEM"] = os.devnull
@@ -192,6 +209,20 @@ def blob_texts(
     wanted_all = [(e.sha, e.path) for e in entries if e.mode in REGULAR_MODES]
     for start in range(0, len(wanted_all), CHUNK):
         _read_chunk(root, wanted_all[start : start + CHUNK], files, undecodable)
+    # EVERY BLOB ASKED FOR LANDS IN EXACTLY ONE BUCKET — the partitioned-
+    # collection shape collected.py calls `unaccounted`. The per-chunk checks
+    # below are internally consistent by construction: ask git for 199 shas and
+    # it answers 199 records, so a loop that slices one short per round is
+    # invisible to all of them. Fifteen files then vanish from the sweep and the
+    # count in the ok line is simply smaller, which nothing else can tell from a
+    # repo that has fifteen fewer files. Only a per-SWEEP total sees it.
+    if len(files) + len(undecodable) != len(wanted_all):
+        raise GitError(
+            f"{len(wanted_all)} blobs were asked for and "
+            f"{len(files) + len(undecodable)} came back accounted for. The chunk loop "
+            f"lost some between rounds, so the sweep is short by an amount no per-chunk "
+            f"check can see — NOTHING can be concluded from it"
+        )
     return files, undecodable
 
 

@@ -1,27 +1,24 @@
 #!/usr/bin/env python3
 """End-to-end controls: scripts/check-section-pointers.py run as a PROGRAM.
 
-Its sibling `scripts/test-section-pointers.py` drives each arm as a function.
-That leaves the wiring between them — `audit`, `main`, and the four
-`problems.extend` calls that assemble a verdict — guarded by nothing, and eight
-mutants of exactly that shape survived with both the suite and the guard green.
-The worst was `if problems:` -> `if False:`, which makes the CI step permanently
-green while the suite still prints "all reporting". Only a real exit status can
-see that one, so this file builds throwaway git repos and runs the guard against
-them.
+Its sibling `scripts/test-section-pointers.py` drives each arm as a function,
+which leaves the wiring between them — `audit`, `main`, and the `problems.extend`
+calls that assemble a verdict — guarded by nothing: eight mutants of that shape
+once survived with both the suite and the guard green. The worst,
+`if problems:` -> `if False:`, makes the CI step permanently green while the
+suite still prints "all reporting". Only a real exit status sees it, so this
+file builds throwaway git repos and runs the guard against them. That is a
+different kind of test rather than a longer one — it writes trees, creates
+symlinks, runs `git init` and reads process statuses — which is why it is a peer
+script, in the shape of the three `test-vendor-drift-*.sh`.
 
-The mutation set is recorded in `scripts/test-section-pointers.py`; run all
-four scripts against each, or a mutant survives in the one nobody drove.
-
-Split from the unit controls because it is a different kind of test, not a
-longer one: it writes trees, creates symlinks, runs `git init`, and reads
-process statuses. Same peer-script shape as the three `test-vendor-drift-*.sh`.
-
-ONE TREE PER ARM the guard assembles, each isolating that arm, because a dropped
-`problems.extend` is invisible when some other arm reports anyway. And two trees
-for the rule underneath them all — that the guard judges TRACKED BLOBS, never
-the working tree — one via a symlink pointing out of the repo, one via a file
-that is clean in the index and dead on disk.
+ONE TREE PER ARM, each isolating its arm AND asserting the diagnostic it
+expects, because a dropped `problems.extend` is invisible when another arm
+reports anyway. The arms are enumerated by the trees below rather than counted
+here; that count went stale twice. Two further trees pin the rule underneath
+them all — the guard judges TRACKED BLOBS, never the working tree — one through
+a symlink out of the repo, one through a file clean in the index and dead on
+disk. The mutation set is recorded in `scripts/test-section-pointers.py`.
 """
 
 from __future__ import annotations
@@ -94,7 +91,7 @@ def end_to_end_controls() -> list[str]:
     """The wiring that assembles the arms into a verdict, which no arm observes.
 
     Every other control drives one function. That left `audit`, `main` and the
-    five `problems.extend` calls between them unguarded, and eight wiring
+    `problems.extend` calls between them unguarded, and eight wiring
     mutants survived with both the suite and the guard green — worst among them
     `if problems:` -> `if False:`, which makes the CI step permanently green
     while this file still prints "all reporting". Only a real exit status sees
@@ -121,12 +118,10 @@ def end_to_end_controls() -> list[str]:
     fixture_untracked = {
         rel: text for rel, text in clean.items() if rel not in check.FIXTURE_FILES
     }
-    # #2's pair, one per arm `audit` assembles. The exemption tree replaces each
-    # HISTORICAL_SECTIONS citer's body with prose citing nothing, so the entry
-    # goes unused. The heading tree makes headless the one SWEEP_ANCHOR that
-    # clean_tree does not cite — a CITED anchor does not isolate, because the
-    # pointer arm fires first with "has no such heading" and the tree then stays
-    # rc=1 under the heading arm's own mutant.
+    # One tree per `audit` arm. The exemption tree leaves each
+    # HISTORICAL_SECTIONS citer citing nothing; the heading tree makes headless
+    # the one SWEEP_ANCHOR clean_tree does not cite — a CITED anchor does not
+    # isolate, since the pointer arm answers first with "has no such heading".
     exemption_unused = dict(clean)
     for citer, _target, _name in check.HISTORICAL_SECTIONS:
         exemption_unused[citer] = "# nothing is cited here\n"
@@ -145,10 +140,8 @@ def end_to_end_controls() -> list[str]:
         if rel not in prose and rel.rsplit("/", 1)[-1] not in prose
     )
     heading_gone = dict(clean, **{uncited: "no heading in this file\n"})
-    # EACH ROW NAMES THE FINDING IT EXPECTS, not just an exit status. rc alone
-    # let a tree that trips a DIFFERENT arm pass as if it had proved its own —
-    # the heading fixture is the worked example, since a headless CITED anchor
-    # reports through the pointer arm instead.
+    # EACH ROW NAMES THE FINDING IT EXPECTS, not just an exit status: rc alone
+    # let a tree tripping a DIFFERENT arm pass as if it had proved its own.
     for case, tree, want, expect in (
         ("clean", clean, 0, ""),
         ("with a dead pointer", dirty, 1, "has no such heading"),
@@ -174,17 +167,51 @@ def end_to_end_controls() -> list[str]:
             heading_gone, 1, "expected member(s) are absent",
         ),
         (
-            "with a target-only document whose fence never closes",
+            # Without the cause map a pointer at a tracked symlinked .md gets
+            # "not a tracked markdown file", which is false — it IS tracked. The
+            # other symlink fixture cannot see this: nothing in it CITES a link.
+            "with a citer naming a tracked markdown symlink",
+            dict(clean, **{
+                "citer.md": f"# C\n\n`link.md` {SECTION_MARK} Live section.\n",
+            }),
+            1,
+            "tracked as a symlink",
+        ),
+        (
+            # FIRST-PARTY: the repo owns it, so a broken fence is a finding —
+            # and such a document is always a citer, so that arm owns the message.
+            "with a first-party document whose fence never closes",
+            dict(clean, **{
+                "docs/architecture/owned.md": "# O\n\n```\n## Upstream section\n",
+                "citer.md": f"# C\n\n`docs/architecture/owned.md` "
+                            f"{SECTION_MARK} Upstream section.\n",
+            }),
+            1,
+            "its heading list is short too",
+        ),
+        (
+            # VENDORED: not ours to repair, so the fence is a CAUSE when someone
+            # points at it rather than a failure on its own.
+            "with a citer naming a vendored document whose fence never closes",
             dict(clean, **{
                 f"{check.SKIP_ROOTS[0]}vendor.md": "# V\n\n```\n## Upstream section\n",
                 "citer.md": f"# C\n\n`{check.SKIP_ROOTS[0]}vendor.md` "
                             f"{SECTION_MARK} Upstream section.\n",
             }),
             1,
-            "this is the target's defect, not its citers'",
+            "so this pointer cannot be judged",
+        ),
+        (
+            "with a vendored broken fence nobody cites",
+            dict(clean, **{
+                f"{check.SKIP_ROOTS[0]}vendor.md": "# V\n\n```\n## Upstream section\n",
+            }),
+            0,
+            "",
         ),
     ):
-        status, output = run_guard(tree)
+        links = {"link.md": "AGENTS.md"} if "symlink" in case else None
+        status, output = run_guard(tree, symlinks=links)
         if status != want:
             failures.append(
                 f"the guard exited {status} on a throwaway repo {case}, expected {want} "
@@ -234,11 +261,23 @@ def end_to_end_controls() -> list[str]:
         subprocess.run(["git", "-C", str(victim), "add", "-A"], check=True, env=env)
         index = victim / ".git" / "index"
         before = index.read_bytes()
+        prior = os.environ.get("GIT_INDEX_FILE")
         os.environ["GIT_INDEX_FILE"] = str(index)
         try:
-            run_guard(clean)
+            status, output = run_guard(clean)
         finally:
-            del os.environ["GIT_INDEX_FILE"]
+            # RESTORED, not deleted: the ambient value is the exact condition
+            # this control exists for, and dropping it would leave every later
+            # control in this process running without it.
+            if prior is None:
+                os.environ.pop("GIT_INDEX_FILE", None)
+            else:
+                os.environ["GIT_INDEX_FILE"] = prior
+        # The status is BOUND, because run_guard exits early without running the
+        # guard when a fixture never staged — and an index is trivially unchanged
+        # by a run that never happened.
+        if status != 0:
+            failures.append(f"the containment fixture never ran the guard: {output}")
         if index.read_bytes() != before:
             failures.append(
                 "an absolute GIT_INDEX_FILE in the environment reached the fixture's "
@@ -278,7 +317,8 @@ def end_to_end_controls() -> list[str]:
             1,
         ),
     ):
-        status, output = run_guard(tree)
+        links = {"link.md": "AGENTS.md"} if "symlink" in case else None
+        status, output = run_guard(tree, symlinks=links)
         if status != want:
             failures.append(
                 f"{case} exited {status}, expected {want}: SKIP_ROOTS is the citer "

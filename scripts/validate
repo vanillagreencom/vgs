@@ -164,8 +164,8 @@ cd "$repo_root" || exit 1
 # the tag: the launcher hover latch and the popout dismiss envelope; helper =
 # the helper checks plus the py_compile/bash -n pass; packaging = its three;
 # docs = the instruction-surface growth ratchet, the section-pointer guard, and
-# that guard's five control scripts — one per subject: its policy arms, the
-# wiring that turns them into a verdict, and the two parser libraries. An area
+# that guard's five control scripts, one per subject and enumerated by the rows
+# above rather than by a count here. An area
 # tag on a `test-` row is not new (the two qml rows above); what earns it here
 # is that the guard has no inline self-test, so a `docs` run without the
 # controls would exercise it while proving nothing about whether it guards.

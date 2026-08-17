@@ -22,10 +22,12 @@ policy: its collection points and its self-policing exclusion tables.
 
 THE MUTATION SET, recorded because "each control has been run red once" is an
 assertion nothing re-checks, and review found three classes where it was not
-true. Run ALL FOUR control scripts against each mutation: three of these were
-invisible while only one script was driven, which is how they survived. Each
-line is one edit to the named file; every one must turn at least one control
-red, and the ones marked (+) were added by review after surviving unnoticed.
+true. RUN EVERY CONTROL SCRIPT AGAINST EACH MUTATION, and take the list from
+`scripts/validate --list docs` rather than from a number here: this sentence
+carried a count twice, went stale both times, and each time the script it omitted
+was the one a mutant then survived in. Each line below is one edit to the named
+file; every one must turn at least one control red, and the ones marked (+) were
+added by review after surviving unnoticed.
 
   section_pointers.py   resolves() returns True unconditionally
                         quoted match falls through to the loose rule
@@ -47,15 +49,21 @@ red, and the ones marked (+) were added by review after surviving unnoticed.
                         the markdown-structural and comment/code flushes
                         fences honoured only in markdown
                         the fence counter can never be odd   (+)
-  tracked_blobs.py      git()'s non-zero exit returns normally   (+)
+  tracked_blobs.py      the chunk loop slicing one short per round, and the
+                        per-sweep accounting that is the only thing which sees
+                        it   (+)
+                        git()'s own env=git_env() dropped — distinct from the
+                        git_env line below, and the production path   (+)
+                        GIT_CONFIG_PARAMETERS left unscrubbed   (+)
+                        git()'s non-zero exit returns normally   (+)
                         cat-file's record shape goes unchecked   (+)
                         content read from the working tree instead of the blob
                         conflict stages 1/2/3 kept instead of refused   (+)
                         the echoed sha/type, record-length or end-of-stream
                         check dropped; the chunk loop losing its last record   (+)
-  check-...pointers.py  each `problems.extend` call, dropped — FIVE of them, two
-                        in audit and three in main; the e2e has one isolating
-                        tree per arm, so use those cases rather than a count   (+)
+  check-...pointers.py  each `problems.extend` call, dropped — the e2e has one
+                        isolating tree per arm, so drive those cases rather than
+                        counting the calls   (+)
                         `if problems:` -> `if False:`   (+)
                         exemptions match loosely again   (+)
                         both HISTORICAL_SECTIONS staleness arms
@@ -66,13 +74,16 @@ red, and the ones marked (+) were added by review after surviving unnoticed.
                         SKIP_ROOTS filters targets again   (+)
                         TARGET_ANCHOR_ROOTS emptied   (+)
                         GRAMMAR_SPELLINGS replaced with []   (+)
-                        the symlink cause map not merged in   (+)
+                        the symlink cause map not merged in, and
+                        declined_markdown or declined_fences returning {}   (+)
   tracked_blobs.py      the echoed sha/type check dropped   (+)
                         the record-length check dropped   (+)
                         the end-of-stream check dropped   (+)
                         git_env stops removing GIT_REDIRECTS   (+)
   prose_blocks.py       headings() stops honouring fences   (+)
-  section_pointers.py   an escaping `..` clamped back to the root   (+)
+  section_pointers.py   a target with a known cause judged against its headings
+                        anyway   (+)
+                        an escaping `..` clamped back to the root   (+)
                         the unreadable cause keyed on the raw token only   (+)
                         an ambiguous basename reported as merely absent   (+)
                         is_citer's two spellings diverging   (+)

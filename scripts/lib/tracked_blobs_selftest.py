@@ -16,6 +16,7 @@ answer out of order. The mutation set they were run red against is recorded in
 `scripts/test-section-pointers.py`.
 """
 
+import os
 import subprocess
 import sys
 import tempfile
@@ -36,18 +37,34 @@ def blob_controls() -> list[str]:
     caller might treat as an empty, clean answer.
     """
     failures: list[str] = []
-    absent = Path(tempfile.gettempdir()) / "vgs-150-not-a-repo"
-    absent.mkdir(exist_ok=True)
-    try:
-        tracked_blobs.git(absent, "ls-files", "-s", "-z")
-    except SystemExit as error:
-        if "NOTHING was read" not in str(error):
-            failures.append(f"git failing did not say nothing was read: {error}")
-    else:
-        failures.append(
-            "git exiting non-zero returned normally, so a listing that never happened "
-            "is indistinguishable from a tree with no files in it"
+    # A THROWAWAY directory, like the rest of this file. A fixed name under the
+    # shared temp dir leaked on every run and, worse, made the fixture's validity
+    # depend on TMPDIR sitting outside any checkout — with it inside one, git
+    # walks UP and succeeds, and the arm accuses this module of the fixture's
+    # fault. `git_env` strips GIT_CEILING_DIRECTORIES, so that upward walk is not
+    # otherwise stopped: the fixture is asserted repo-less before it is trusted.
+    with tempfile.TemporaryDirectory() as absent:
+        outside = subprocess.run(
+            ["git", "-C", absent, "rev-parse", "--show-toplevel"],
+            capture_output=True, env=tracked_blobs.git_env(),
         )
+        if outside.returncode == 0:
+            failures.append(
+                f"the not-a-repository fixture is inside a repository "
+                f"({outside.stdout.decode().strip()}), so the arm below would accuse "
+                f"tracked_blobs of what the fixture did. Point TMPDIR outside a checkout"
+            )
+        else:
+            try:
+                tracked_blobs.git(Path(absent), "ls-files", "-s", "-z")
+            except SystemExit as error:
+                if "NOTHING was read" not in str(error):
+                    failures.append(f"git failing did not say nothing was read: {error}")
+            else:
+                failures.append(
+                    "git exiting non-zero returned normally, so a listing that never "
+                    "happened is indistinguishable from a tree with no files in it"
+                )
 
     # `cat-file --batch` answers "<sha> missing" for an object that is not
     # there, which is two fields where a blob record has three. Reading on would
@@ -110,6 +127,104 @@ def blob_controls() -> list[str]:
             failures.append(
                 "a conflicted index was read as if resolved, so the guard judges one "
                 "side of an unfinished merge — bytes in no commit and not on disk"
+            )
+
+    # EVERY BLOB ASKED FOR IS ACCOUNTED FOR. A chunk loop that slices one short
+    # per round is invisible to every per-chunk check — git is asked for N-1 and
+    # answers N-1 — so only the per-sweep total sees it. Driven by asking for two
+    # blobs through a stub that answers for one.
+    # The chunk reader is stubbed to drop its last entry, which is what a slice
+    # off by one does. Stubbing the STREAM instead would trip the per-chunk
+    # truncation check first and prove nothing about this arm.
+    real_chunk = tracked_blobs._read_chunk
+    tracked_blobs._read_chunk = lambda root, wanted, files, undec: real_chunk(
+        root, wanted[:-1], files, undec
+    )
+    entries = [
+        tracked_blobs.Entry(mode, sha, path)
+        for mode, sha, path in tracked_blobs.tracked_entries(REPO_ROOT)[:4]
+    ]
+    try:
+        tracked_blobs.blob_texts(REPO_ROOT, entries)
+    except SystemExit as error:
+        if "accounted for" not in str(error):
+            failures.append(f"a short sweep was reported as something else: {error}")
+    except Exception as error:  # noqa: BLE001 - a reader defect must read as one
+        failures.append(f"a short sweep escaped as {type(error).__name__}: {error}")
+    else:
+        failures.append(
+            "a sweep that read fewer blobs than it asked for was accepted, so files "
+            "vanish from it and the count in the ok line is simply smaller — which "
+            "nothing else can tell from a repo that has fewer files"
+        )
+    finally:
+        tracked_blobs._read_chunk = real_chunk
+
+    # THE LIBRARY'S OWN ENVIRONMENT HYGIENE, which is the production path: the
+    # guard inherits whatever CI or a shell hands it. Asserting the LISTING is
+    # what kills a missing `env=git_env()` — a redirected READ does not write, so
+    # an index-unchanged assertion alone passes. The config-injection channel is
+    # driven in the same block, since `-C` and GIT_CONFIG_GLOBAL do not cover it.
+    with tempfile.TemporaryDirectory() as workdir:
+        victim, fixture = Path(workdir) / "victim", Path(workdir) / "fixture"
+        env = tracked_blobs.git_env(hermetic=True)
+        for repo, name in ((victim, "kept.md"), (fixture, "a.md")):
+            repo.mkdir()
+            (repo / name).write_text("# x\n", encoding="utf-8")
+            subprocess.run(["git", "-C", str(repo), "init", "-q"], check=True, env=env)
+            subprocess.run(["git", "-C", str(repo), "add", "-A"], check=True, env=env)
+        index = victim / ".git" / "index"
+        before = index.read_bytes()
+        prior = {
+            name: os.environ.get(name)
+            for name in ("GIT_INDEX_FILE", "GIT_CONFIG_PARAMETERS")
+        }
+        os.environ["GIT_INDEX_FILE"] = str(index)
+        os.environ["GIT_CONFIG_PARAMETERS"] = "'core.excludesFile'='/dev/null'"
+        try:
+            listed = [entry.path for entry in tracked_blobs.tracked_entries(fixture)]
+        finally:
+            for name, value in prior.items():
+                if value is None:
+                    os.environ.pop(name, None)
+                else:
+                    os.environ[name] = value
+        if listed != ["a.md"]:
+            failures.append(
+                f"tracked_entries listed {listed} for the fixture, so an absolute "
+                f"GIT_INDEX_FILE in the environment reached the library and it swept a "
+                f"repository nobody asked about"
+            )
+        if index.read_bytes() != before:
+            failures.append("reading through the library rewrote another repo's index")
+
+    # THE CONFIG-INJECTION CHANNEL bites on a WRITE, so it needs its own fixture:
+    # `GIT_CONFIG_PARAMETERS` survives `-C` and GIT_CONFIG_GLOBAL alike, and an
+    # injected `core.excludesFile` makes `git add -A` stage nothing at all.
+    with tempfile.TemporaryDirectory() as workdir:
+        repo = Path(workdir) / "repo"
+        repo.mkdir()
+        (repo / "kept.md").write_text("# x\n", encoding="utf-8")
+        (Path(workdir) / "ignore-all").write_text("*\n", encoding="utf-8")
+        prior = os.environ.get("GIT_CONFIG_PARAMETERS")
+        os.environ["GIT_CONFIG_PARAMETERS"] = (
+            f"'core.excludesFile'='{Path(workdir) / 'ignore-all'}'"
+        )
+        try:
+            env = tracked_blobs.git_env(hermetic=True)
+            subprocess.run(["git", "-C", str(repo), "init", "-q"], check=True, env=env)
+            subprocess.run(["git", "-C", str(repo), "add", "-A"], check=True, env=env)
+            staged = [entry.path for entry in tracked_blobs.tracked_entries(repo)]
+        finally:
+            if prior is None:
+                os.environ.pop("GIT_CONFIG_PARAMETERS", None)
+            else:
+                os.environ["GIT_CONFIG_PARAMETERS"] = prior
+        if staged != ["kept.md"]:
+            failures.append(
+                f"an injected core.excludesFile reached the fixture and it staged "
+                f"{staged}, so a control can pass on a tree that never held its fixture "
+                f"— GIT_CONFIG_PARAMETERS is not covered by -C or GIT_CONFIG_GLOBAL"
             )
 
     # A DESYNCED STREAM must fail rather than pair each path with another file's
