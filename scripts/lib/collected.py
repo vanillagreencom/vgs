@@ -31,15 +31,40 @@ clean result. Both return a diagnostic string or None, because the callers
 accumulate problems rather than raising — a check reports every problem it
 found, not just the first.
 
-CALL SITES, two collection points in one check, each with its own must-fail
-control:
+CALL SITES, each collection point with its own must-fail control. The registry
+is this module's record of who depends on the invariant, so a check that names
+`collected.py` in its own docstring and is absent here has turned a two-way
+relationship into a one-way pointer:
 
   check-doc-growth.py  1  the surfaces a watched glob finds, asserted against
                           the ceilinged files under each root
                        2  each CEILINGS entry's comment
+                          — controls inline, in that file's self_test()
 
-The module stays separate from its one caller because it is the written form of
-a repo-wide rule rather than a doc-growth detail — it exists to be imported by
+  check-section-pointers.py
+                       1  the tracked text files swept, asserted against
+                          SWEEP_ANCHORS so one surface class cannot drop out
+                          while the count stays healthy   (sweep_problems)
+                       2  the pointers resolved, asserted against TARGET_ANCHORS
+                          and against every GRAMMAR_SPELLINGS arm, so half a
+                          grammar cannot go dark behind a healthy total
+                       3  the headings every pointer resolves against, asserted
+                          against the same anchors        (heading_problems)
+                          — controls in scripts/test-section-pointers.py's
+                            collection_controls, each direction asserting ITS
+                            OWN diagnostic: a fixture that empties a collection
+                            also empties the anchor set, so asserting mere
+                            non-emptiness let the empty half be satisfied by the
+                            partial half's message.
+
+  A FOURTH collection point in that check does NOT use these helpers, and is
+  recorded here so the omission reads as a decision: the marks the parser
+  declines to own are counted by reason and printed, because the answer there is
+  not "did anything match" but "what did this refuse, and how much".
+
+The module stays separate from the checks that use it because it is the written
+form of a repo-wide rule rather than any one check's detail — the CALL SITES
+registry above is the accurate statement of who depends on it — it exists to be imported by
 the next check that collects something. Two further call sites, the
 `[skill-instructions]` table and its per-key delimiters, were written against a
 checker that moved to VGS-156 in full and return with it.

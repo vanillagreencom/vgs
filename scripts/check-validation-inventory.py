@@ -60,9 +60,9 @@ NOT_A_SUITE_CHECK = {
 }
 
 # Checks the suite runs but CI cannot, with the reason CI cannot run them.
-# validation-scripts.instructions.md § What CI covers documents these at
-# length; this is the machine-readable half, so the two cannot disagree
-# silently.
+# validation-scripts.instructions.md § "What CI covers, and what it cannot"
+# documents these at length; this is the machine-readable half, so the two
+# cannot disagree silently.
 LOCAL_ONLY = {
     "smoke-surfaces.sh": "needs a live Hyprland VGS session and reads `hyprctl layers`",
     "check-label-taxonomy.py": "reads live Linear label inventory; CI has no Linear credentials and no local cache",
