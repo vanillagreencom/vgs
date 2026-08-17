@@ -16,6 +16,27 @@ Column {
 
     property bool showAdvanced: false
 
+    // Two printers can derive the same display name (identical USB models with
+    // no serial), so the dropdown is keyed on entries carrying their group
+    // rather than on the name alone — resolving by name would make every
+    // duplicate row select the first group.
+    readonly property var deviceOptions: {
+        const seen = ({});
+        return CupsService.discoveredPrinters.map(group => {
+            let label = group.name;
+            if (seen[label] !== undefined) {
+                seen[label] += 1;
+                label = label + " (" + seen[label] + ")";
+            } else {
+                seen[label] = 1;
+            }
+            return {
+                label: label,
+                group: group
+            };
+        });
+    }
+
     function selectGroup(group) {
         if (!group)
             return;
@@ -85,6 +106,12 @@ Column {
                     tab.manualEntryMode = false;
                     tab.testConnectionResult = null;
                     tab.testingConnection = false;
+                    // A completed manual test leaves the endpoint selected; the
+                    // discovery picker cannot show it as an option, so leaving it
+                    // armed would create the old manual address from a screen
+                    // that never names it.
+                    tab.selectedDevice = null;
+                    tab.selectedDeviceUri = "";
                 }
             }
         }
@@ -158,15 +185,17 @@ Column {
                         return I18n.tr("Scanning…");
                     if (CupsService.devicesError)
                         return I18n.tr("Scan failed");
-                    if (tab.selectedDevice)
-                        return CupsService.getDeviceDisplayName(tab.selectedDevice);
+                    if (tab.selectedDevice) {
+                        const selected = root.deviceOptions.find(o => o.group.uri === tab.selectedDeviceUri || o.group.device === tab.selectedDevice);
+                        return selected ? selected.label : CupsService.getDeviceDisplayName(tab.selectedDevice);
+                    }
                     return I18n.tr("Select printer…");
                 }
-                options: CupsService.discoveredPrinters.map(g => g.name)
+                options: root.deviceOptions.map(o => o.label)
                 onValueChanged: value => {
-                    const group = CupsService.discoveredPrinters.find(g => g.name === value);
-                    if (group) {
-                        root.selectGroup(group);
+                    const option = root.deviceOptions.find(o => o.label === value);
+                    if (option) {
+                        root.selectGroup(option.group);
                         root.applyRecommendedDriver();
                     }
                 }
