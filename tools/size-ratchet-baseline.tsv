@@ -212,7 +212,7 @@ scripts/check-validation-inventory.py	411
 scripts/check-vshell-helper.py	5864
 scripts/check-vshell-niri.py	678
 scripts/gen-package-metadata.py	985
-scripts/lib/section_pointers_selftest.py	455
+scripts/lib/section_pointers_selftest.py	486
 scripts/lib/validation_manifest.py	1045
 scripts/lib/vendor-drift.sh	429
 scripts/qml-smoke.sh	1414
@@ -223,7 +223,7 @@ scripts/test-paste-lifecycle.js	1168
 scripts/test-pill-hover-safety.js	420
 scripts/test-popout-dismiss-envelope.js	489
 scripts/test-remote-desktop-state.js	1243
-scripts/test-section-pointers-e2e.py	427
+scripts/test-section-pointers-e2e.py	430
 scripts/test-toast-actions.js	607
 scripts/test-validate.sh	547
 scripts/test-validation-inventory.sh	2278

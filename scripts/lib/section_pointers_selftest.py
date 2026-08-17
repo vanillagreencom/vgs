@@ -284,6 +284,37 @@ def pointer_controls() -> list[str]:
             f"ambiguity first swallowed the one-candidate case: {lone}"
         )
 
+    # A QUALIFIER BETWEEN THE TARGET AND THE MARK IS CROSSED, driven with the
+    # REAL citation this recovered — `vstack.toml` names review-bots.md and then
+    # says where it lives before citing two of its headings, and it WRAPS
+    # mid-pointer, so the joining has to hold for it too. Paired with the shape
+    # that must stay bare: a parenthetical carrying a path OF ITS OWN belongs to
+    # the pointer before it, and crossing that would name a document the second
+    # pointer does not cite.
+    qualified = (
+        "Risk-classed review depth and the regression-test expectation live in\n"
+        f"`doc.md` (repo root, {SECTION_MARK} Live section and {SECTION_MARK} Gone\n"
+        "section) — that file is the source; apply both.\n"
+    )
+    reported = cited_in("citer.toml", qualified)
+    if not any("cites `doc.md" in problem and "Gone section" in problem for problem in reported):
+        failures.append(
+            f"a pointer whose target sits behind a parenthetical qualifier was counted "
+            f"as bare, so renaming the heading it names leaves this check green — the "
+            f"class it exists for: {reported or 'nothing was reported'}"
+        )
+    if any(f"{SECTION_MARK} Live section`" in problem for problem in reported):
+        failures.append(
+            "the live heading in the same citation was reported too, so the control "
+            "above passes on a reader that reports everything"
+        )
+    own_path = f"{SECTION_MARK} Live section (a/dup.md), {SECTION_MARK} Gone section\n"
+    if cited_in("citer.toml", own_path):
+        failures.append(
+            "a parenthetical carrying its own path was crossed, so the second pointer "
+            "was answered by a document the first one cited"
+        )
+
     # THE DECLINED CENSUS, the fourth collection point: a count nobody asserts
     # can go to zero while the marks keep being dropped. Driven per reason.
     declined = pointer_problems(

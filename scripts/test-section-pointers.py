@@ -125,6 +125,12 @@ added by review after surviving unnoticed.
   section_pointers.py   a target with a known cause judged against its headings
                         anyway   (+)
                         an escaping `..` clamped back to the root   (+)
+                        a parenthetical qualifier between the target and the
+                        mark not crossed, so a real citation counts as bare;
+                        and crossed even when it carries a path of its own,
+                        which answers one pointer with another's target   (+)
+                        the section mark dropped as a name terminator, so one
+                        cited name runs into the next pointer   (+)
                         the unreadable cause keyed on the raw token only   (+)
                         an ambiguous basename reported as merely absent   (+)
                         is_citer's two spellings diverging   (+)

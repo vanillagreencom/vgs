@@ -73,7 +73,10 @@ def clean_tree(*, with_pointers: bool = True) -> dict[str, bytes | str]:
         tree["docs/upstream/note.md"] = (
             f"# Note\n\n## Own section\n\n"
             f"see [a](../../{anchor}) {SECTION_MARK} Live section — citer-relative\n\n"
-            f"and `{anchor}` ({SECTION_MARK} Live section, {SECTION_MARK} Live section)\n\n"
+            # No parenthesis: a qualifier around these would be CROSSED, and the
+            # second mark would take its target that way rather than by
+            # inheriting, leaving that spelling unexercised.
+            f"and `{anchor}` {SECTION_MARK} Live section, {SECTION_MARK} Live section\n\n"
             f"and see {SECTION_MARK} Own section, intra-document\n\n"
             f"and `{basename}` {SECTION_MARK} Live section, by basename\n\n"
             f"and D001 {SECTION_MARK} Live section, by decision id\n\n"

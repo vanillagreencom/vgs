@@ -101,7 +101,13 @@ CLOSERS = "`\"'*_)]}"
 INHERITANCE_STOPS = SEPARATORS.replace(",", "")
 # Where a cited name stops. The text BEFORE the punctuation is kept, so
 # "…live session." yields the whole heading rather than one word less.
-TERMINATORS = set(".,;:!?()[]{}\"`|—–")
+TERMINATORS = set(".,;:!?()[]{}\"`|—–") | {SECTION_MARK}
+# A bare name ending in a JOINER is an enumeration of pointers, not a heading
+# whose last word happens to be "and": where `vstack.toml` cites two of
+# review-bots.md's headings in one sentence, the conjunction between them belongs
+# to the sentence rather than to either name. Only ever stripped from the END of
+# a bare name, and only these two words.
+JOINERS = ("and", "or")
 
 def target_token(before: str) -> str:
     """The token a pointer cites, or "" when the pointer is bare.
@@ -113,12 +119,56 @@ def target_token(before: str) -> str:
     leading `.` is kept: `.github/instructions/…` is a path, not a decorated one.
     """
     text = before.rstrip()
-    while text and text[-1] in CROSSABLE:
-        text = text[:-1].rstrip()
-    if not text or text[-1] in SEPARATORS:
-        return ""
-    token = text.split()[-1].lstrip(OPENERS).rstrip(CLOSERS)
-    return token.rsplit("](", 1)[1] if "](" in token else token
+    for _ in range(2):  # the target, or the target behind one qualifier
+        while text and text[-1] in CROSSABLE:
+            text = text[:-1].rstrip()
+        if text and text[-1] not in SEPARATORS:
+            token = text.split()[-1].lstrip(OPENERS).rstrip(CLOSERS)
+            return token.rsplit("](", 1)[1] if "](" in token else token
+        text = _without_open_qualifier(text)
+        if not text:
+            return ""
+    return ""
+
+
+def _without_open_qualifier(text: str) -> str:
+    """`text` with a trailing UNCLOSED parenthetical removed, or "" if none may be.
+
+    A QUALIFIER IS NOT A SEPARATOR. `vstack.toml` writes the shape below: the
+    parenthetical says where the file lives, and the mark inside it cites that
+    file as plainly as if it stood alone. Refusing to cross it left two pointers
+    at real headings — the ones review bots route by — counted as bare and never
+    judged, which is the class this check exists for. Fenced, since this parser
+    reads its own source:
+
+    ```
+    `review-bots.md` (repo root, § Risk classes and § Regression-test
+    expectation) — that file is the source
+    ```
+
+    Two conditions keep it narrow, and both are load-bearing. The parenthetical
+    must be UNCLOSED at the mark, so the mark is inside it rather than after it;
+    and it must carry no path OF ITS OWN, because `check-doc-growth.py` cites one
+    section, names a path parenthetically, then cites another — the path belongs
+    to the FIRST pointer, and reading it as the second's target names a document
+    that pointer does not cite. Crossing commas
+    generally would do that, and would also reopen the same-clause inheritance
+    rule, which depends on the comma meaning what it says.
+    """
+    depth = 0
+    for index in range(len(text) - 1, -1, -1):
+        character = text[index]
+        if character == ")":
+            depth += 1
+        elif character == "(":
+            if depth:
+                depth -= 1
+                continue
+            inside = text[index + 1 :]
+            if any(names_a_file(word.strip(OPENERS + CLOSERS + SEPARATORS)) for word in inside.split()):
+                return ""
+            return text[:index].rstrip()
+    return ""
 
 
 def cited_name(after: str) -> tuple[str, bool, str | None]:
@@ -149,6 +199,8 @@ def cited_name(after: str) -> tuple[str, bool, str | None]:
             words.append(head)
         if head != word:
             break
+    while words and words[-1] in JOINERS:
+        words.pop()
     return " ".join(words), False, None
 
 
