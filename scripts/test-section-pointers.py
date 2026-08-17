@@ -45,7 +45,12 @@ added by review after surviving unnoticed.
                         the heading-list cap loses its remainder count
                         the caller's remedy clause is dropped   (+)
                         the declined census stops counting   (+)
-  prose_blocks.py       blocks() flushes after every line   (+)
+  prose_blocks.py       a heading inside an indented code block read as real,
+                        a longer fence closed by a shorter one, and a ~~~ line
+                        closing a ``` fence — each lets an example satisfy a
+                        pointer   (+)
+                        the structural-line flush made one-sided again   (+)
+                        blocks() flushes after every line   (+)
                         the markdown-structural and comment/code flushes
                         fences honoured only in markdown
                         the fence counter can never be odd   (+)

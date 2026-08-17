@@ -159,6 +159,59 @@ def selftest() -> int:
             "accepted, so an illustration can stand in for a section that is gone"
         )
 
+    # A HEADING THAT EXISTS ONLY IN AN EXAMPLE CANNOT SATISFY A POINTER. Three
+    # shapes, each paired with the same heading written for real and asserted to
+    # resolve — otherwise every one of these passes on a reader that stopped
+    # finding headings at all. The stakes are section_pointers.py's four
+    # deliberately unfenced illustrations: they are safe only if this is right.
+    for case, doc in (
+        ("inside a four-space indented code block", "# D\n\n    ## Live section\n"),
+        (
+            "inside a longer fence that wraps a shorter one",
+            "# D\n\n`````\n```\n## Live section\n```\n`````\n",
+        ),
+        ("after a ~~~ line that cannot close a ``` fence", "# D\n\n```\n~~~\n## Live section\n"),
+    ):
+        example = {"doc.md": doc, "citer.md": f"# C\n\n`doc.md` {SECTION_MARK} Live section.\n"}
+        markdown = {rel: headings(example[rel]) for rel in example}
+        if not pointer_problems(example, markdown, lambda *_: []).problems:
+            failures.append(
+                f"a heading {case} satisfied a pointer, so an illustration stands in "
+                f"for a section that is gone — which is what fencing is relied on to "
+                f"prevent: {headings(doc)}"
+            )
+        real = dict(example, **{"doc.md": "# D\n\n## Live section\n"})
+        if pointer_problems(
+            real, {rel: headings(real[rel]) for rel in real}, lambda *_: []
+        ).problems:
+            failures.append(
+                f"the same heading written for real did not resolve either, so the "
+                f"{case} control passes on a reader that finds no headings"
+            )
+
+    # A STRUCTURAL MARKDOWN LINE ENDS A BLOCK ON BOTH SIDES. Flushing only before
+    # it let a bare mark on the next line inherit the structural line's target.
+    # Each is paired with the same two marks on ONE line, where inheritance is
+    # legitimate and must still happen.
+    for case, structural in (
+        ("a heading", f"## `doc.md` {SECTION_MARK} Live section"),
+        ("a table row", f"| `doc.md` {SECTION_MARK} Live section |"),
+        ("a list item", f"- `doc.md` {SECTION_MARK} Live section"),
+        ("a block quote", f"> `doc.md` {SECTION_MARK} Live section"),
+    ):
+        split = f"# C\n\n{structural}\nsee {SECTION_MARK} Live section\n"
+        if not any(problem.startswith("citer.md:") for problem in cited(split)):
+            failures.append(
+                f"a bare mark on the line after {case} inherited that line's target, so "
+                f"it was judged against a document the citing file never named"
+            )
+        joined = f"# C\n\n`doc.md` {SECTION_MARK} Live section, and {SECTION_MARK} Live section\n"
+        if cited(joined):
+            failures.append(
+                f"inheritance within one clause stopped working, so the {case} control "
+                f"above proves only that the reader joins nothing"
+            )
+
     for failure in failures:
         print(f"prose_blocks selftest: {failure}", file=sys.stderr)
     if failures:

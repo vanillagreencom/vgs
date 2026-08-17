@@ -85,8 +85,11 @@
 # control scripts — one per subject, each beside what it pins.
 #
 # What is left in check-section-pointers.py is one concept that does not divide:
-# a check's own policy — its exclusion tables, the collection points that assert
-# them, and the run that turns those into a verdict. Splitting policy from the
+# a check's own policy. Three tables say what it declines to look at
+# (HISTORICAL_SECTIONS, FIXTURE_FILES, SKIP_ROOTS) and four say what its result
+# must still reach (SWEEP_ANCHORS, TARGET_ANCHORS, TARGET_ANCHOR_ROOTS,
+# GRAMMAR_SPELLINGS); the four collection points assert them, and the run turns
+# those into a verdict. Splitting policy from the
 # check that applies it would put the tables a reader needs in a second file.
 # section_pointers_selftest.py and test-section-pointers-e2e.py are suites, and
 # the argument above for a suite applies unchanged: they grow by one case per

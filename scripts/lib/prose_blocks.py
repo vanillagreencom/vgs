@@ -50,51 +50,101 @@ def normalized_words(text: str) -> list[str]:
 
 ATX_HEADING = re.compile(r"^(#{1,6})\s+(.*?)\s*#*\s*$")
 # A markdown line that is self-contained: a heading, table row, quote or list
-# item. Each starts a block rather than continuing the one above it.
+# item. Each is a block of its own — a boundary on BOTH sides, because the line
+# after one continues the document rather than that line's subject.
 MD_BLOCK_START = re.compile(r"^(#{1,6}\s|\||>|[-*+]\s|\d+[.)]\s)")
 COMMENT_MARKER = re.compile(r"^(#+|//+|\*+)\s?")
+# A FENCE, read from the raw line, because all three of its parts matter and the
+# reader honoured none of them: the opener's CHARACTER, its RUN LENGTH and its
+# INDENT. CommonMark closes a fence only on the same character, at least as long,
+# indented no more than three spaces — so a longer fence wrapping a shorter one
+# (the standard way to show a fenced example inside one) was closed early, and a
+# `~~~` line closed a ``` fence. Both let a heading that exists only inside an
+# example be recorded as real, which is the one thing this file must not do.
+FENCE = re.compile(r"^( {0,3})(`{3,}|~{3,})(.*)$")
+# Four spaces or more is an INDENTED CODE BLOCK in markdown, so `    ## Example`
+# is not a heading there. Markdown only: in a source file that indent is the
+# language's, and the fenced examples this repo writes inside function docstrings
+# sit at four spaces by construction.
+INDENTED_CODE = re.compile(r"^ {4,}\S")
+
+
+def _fence_marker(line: str) -> tuple[str, int, str] | None:
+    """(character, run length, info string) if the line could open or close one."""
+    match = FENCE.match(line)
+    if not match:
+        return None
+    return match.group(2)[0], len(match.group(2)), match.group(3).strip()
+
+
+def _logical(raw: str, is_markdown: bool) -> str:
+    """The line as this reader judges it: markdown keeps its indent, code does not.
+
+    A source file's indentation is the language's, not markdown's, so it goes
+    before anything is decided — otherwise a fenced example inside a function
+    docstring, indented four spaces, would neither open a fence nor be prose.
+    """
+    if is_markdown:
+        return raw
+    stripped = raw.lstrip()
+    marker = COMMENT_MARKER.match(stripped)
+    return stripped[marker.end() :] if marker else stripped
+
+
+def scan(text: str, is_markdown: bool) -> tuple[list[tuple[int, str, bool, bool]], bool]:
+    """((line, logical text, is prose, is comment) per line, fence still open).
+
+    THE ONE FENCE READER. `headings`, `blocks` and `fence_left_open` all go
+    through it, so they cannot disagree about what a fence is — they held three
+    separate toggles before, and a rule fixed in one would have been fixed only
+    there. A line is prose unless it is a fence marker, sits inside a fence, or
+    is an indented code block.
+    """
+    lines: list[tuple[int, str, bool, bool]] = []
+    opener: tuple[str, int] | None = None
+    for number, raw in enumerate(text.splitlines(), 1):
+        logical = _logical(raw, is_markdown)
+        is_comment = not is_markdown and bool(COMMENT_MARKER.match(raw.lstrip()))
+        marker = _fence_marker(logical)
+        if opener is not None:
+            # Only the same character, at least as long, and carrying no info
+            # string closes it. Everything else is content, fence-shaped or not.
+            if marker and marker[0] == opener[0] and marker[1] >= opener[1] and not marker[2]:
+                opener = None
+            lines.append((number, logical, False, is_comment))
+        elif marker:
+            opener = (marker[0], marker[1])
+            lines.append((number, logical, False, is_comment))
+        elif is_markdown and INDENTED_CODE.match(logical):
+            lines.append((number, logical, False, is_comment))
+        else:
+            lines.append((number, logical, True, is_comment))
+    return lines, opener is not None
 
 
 def fence_left_open(text: str) -> bool:
     """Whether a fence opened in `text` and never closed before EOF.
 
-    A LOST FILE, NOT A CLEAN READ. Both readers below toggle a boolean on every
-    fence line and skip what lies inside, so an ODD number of fence lines hides
-    everything after the last one — every heading, every pointer — and returns
-    the same empty, untroubled result as a file that genuinely had none. Callers
-    report this rather than reading the remainder, because a reader that lost
-    half a file cannot say what the file contains.
+    A LOST FILE, NOT A CLEAN READ. The readers skip what lies inside a fence, so
+    an unclosed one hides everything after it — every heading, every pointer —
+    and returns the same empty, untroubled result as a file that genuinely had
+    none. Callers report this rather than reading the remainder.
 
-    Counted the same way both readers toggle, so the three cannot disagree about
-    what a fence line is.
+    Asked of BOTH readings, because a caller may hold either kind of file and an
+    unbalanced fence is a lost file in each.
     """
-    return sum(
-        1
-        for line in text.splitlines()
-        if _uncommented(line.strip()).startswith(("```", "~~~"))
-    ) % 2 == 1
-
-
-def _uncommented(stripped: str) -> str:
-    """A line with one leading comment marker removed, for fence detection."""
-    marker = COMMENT_MARKER.match(stripped)
-    return stripped[marker.end() :] if marker else stripped
+    return scan(text, is_markdown=True)[1] or scan(text, is_markdown=False)[1]
 
 
 def headings(text: str) -> list[list[str]]:
-    """Every ATX heading, in comparison form. A fenced block holds none."""
-    found, fenced = [], False
-    for line in text.splitlines():
-        stripped = line.strip()
-        if _uncommented(stripped).startswith(("```", "~~~")):
-            fenced = not fenced
-            continue
-        if fenced:
-            continue
-        match = ATX_HEADING.match(stripped)
-        if match and match.group(2):
-            found.append(normalized_words(match.group(2)))
-    return found
+    """Every ATX heading, in comparison form. A fence or indented block holds none."""
+    return [
+        normalized_words(match.group(2))
+        for _number, logical, is_prose, _is_comment in scan(text, is_markdown=True)[0]
+        if is_prose
+        for match in [ATX_HEADING.match(logical.strip())]
+        if match and match.group(2)
+    ]
 
 
 def blocks(text: str, is_markdown: bool) -> list[tuple[str, list[tuple[int, int]]]]:
@@ -119,7 +169,6 @@ def blocks(text: str, is_markdown: bool) -> list[tuple[str, list[tuple[int, int]
     """
     out: list[tuple[str, list[tuple[int, int]]]] = []
     current: list[tuple[int, str]] = []
-    fenced = False
     previous_is_comment: bool | None = None
 
     def flush() -> None:
@@ -133,33 +182,32 @@ def blocks(text: str, is_markdown: bool) -> list[tuple[str, list[tuple[int, int]
         out.append((joined, index))
         current = []
 
-    for number, line in enumerate(text.splitlines(), 1):
-        stripped = line.strip()
-        marker = COMMENT_MARKER.match(stripped)
-        if _uncommented(stripped).startswith(("```", "~~~")):
-            fenced = not fenced
-            flush()
-            continue
-        if fenced:
-            continue
-        if not stripped:
+    for number, logical, is_prose, is_comment in scan(text, is_markdown)[0]:
+        if not is_prose:
             flush()
             previous_is_comment = None
             continue
-        if is_markdown:
-            prose, is_comment = stripped, False
-            if MD_BLOCK_START.match(stripped):
-                flush()
-        else:
-            is_comment = marker is not None
-            prose = stripped[marker.end() :] if marker else stripped
-            if previous_is_comment is not None and is_comment != previous_is_comment:
-                flush()
+        prose = logical.strip()
         if not prose:
             flush()
             previous_is_comment = None
             continue
+        structural = bool(is_markdown and MD_BLOCK_START.match(prose))
+        if structural or (
+            not is_markdown
+            and previous_is_comment is not None
+            and is_comment != previous_is_comment
+        ):
+            flush()
         current.append((number, prose))
         previous_is_comment = is_comment
+        # A STRUCTURAL LINE IS A BOUNDARY ON BOTH SIDES. Flushing only before it
+        # left a heading joined to the line beneath, so a bare mark there
+        # inherited the heading's target and was judged against a document the
+        # citing file never named — the same fail-open as inheritance crossing a
+        # sentence end, on the other side of the same flush.
+        if structural:
+            flush()
+            previous_is_comment = None
     flush()
     return out

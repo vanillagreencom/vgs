@@ -99,8 +99,8 @@ REGULAR_MODES = {"100644", "100755"}
 
 # Blobs per `cat-file --batch` round. Bounds the bytes held at once without
 # giving up batching, and 200 is where the curve flattens — measured over this
-# repo's 9,747 blobs, identical results at every size (2,585 citers, 7,075
-# undecodable):
+# repo's 9,748 blobs, identical results at every size (2,673 decoded, of which
+# 2,585 are citers, and 7,075 undecodable):
 #
 #     whole stream   214 MB   0.182 s      100   107 MB   0.266 s
 #              1000  127 MB   0.201 s      200   109 MB   0.244 s
@@ -193,7 +193,7 @@ def blob_texts(
     The caller filters `entries` first; everything reaching here is read.
 
     ASKED IN CHUNKS, and the chunk size is the whole of the memory story. One
-    `cat-file --batch` for all 9,747 blobs is correct in shape — per-blob forks
+    `cat-file --batch` for all 9,748 blobs is correct in shape — per-blob forks
     would be thousands of processes — but capturing its 90.5 MB answer whole
     peaked at 215 MB RSS to keep 23.5 MB of text, because 74% of the stream is
     binary assets that decode-fail and are dropped. Chunking bounds the captured
