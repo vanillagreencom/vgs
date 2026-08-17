@@ -30,6 +30,7 @@ def NO_EXEMPTIONS(*_args) -> list:  # noqa: N802 - reads as the constant it is
     """No pointer here is exempt; the exemption table is another file's subject."""
     return []
 
+# The SAME fixture in every control file; test-section-pointers.py says why.
 DOC = (
     "# Doc\n\n## Live section\n\n## Popout surfaces are screen-tall (and frosted)\n\n"
     "## `dismissOnFocusLoss`, and who owns focus\n"
@@ -201,9 +202,8 @@ def pointer_controls() -> list[str]:
         )
         if reported is not want:
             failures.append(
-                f"a citer-relative link {case} came out wrong: a path that leaves the "
-                f"repository cannot be what the author meant, and clamping it back to "
-                f"the root makes a malformed pointer read as a correct one"
+                f"a citer-relative link {case} came out wrong: clamping a path that "
+                f"leaves the repository makes a malformed pointer read as a correct one"
             )
 
     # THE UNREADABLE CAUSE REACHES EVERY SPELLING. Keying the map by the raw

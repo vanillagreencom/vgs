@@ -24,9 +24,9 @@ whether a given non-text file is a binary to ignore or a defect to report.
 
 No `__main__` and no executable bit: a library reached only by import, like
 `scripts/lib/collected.py`, so it carries no manifest row. Its behaviour is
-proven by the must-fail controls its caller owns — `scripts/test-section-
-pointers-e2e.py` tracks a clean file, rewrites it on disk, and asserts the guard
-still judges the tracked bytes.
+proven by `scripts/lib/tracked_blobs_selftest.py`, beside it, which drives every
+failure this module must REFUSE rather than answer: a failed git call, an index
+mid-merge, and a `cat-file` stream that desyncs, truncates or runs long.
 """
 
 from __future__ import annotations

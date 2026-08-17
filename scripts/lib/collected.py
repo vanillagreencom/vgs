@@ -62,8 +62,9 @@ relationship into a one-way pointer:
   declines to own are counted by reason and printed, because the answer there is
   not "did anything match" but "what did this refuse, and how much".
 
-The module stays separate from its one caller because it is the written form of
-a repo-wide rule rather than a doc-growth detail — it exists to be imported by
+The module stays separate from the checks that use it because it is the written
+form of a repo-wide rule rather than any one check's detail — the CALL SITES
+registry above is the accurate statement of who depends on it — it exists to be imported by
 the next check that collects something. Two further call sites, the
 `[skill-instructions]` table and its per-key delimiters, were written against a
 checker that moved to VGS-156 in full and return with it.

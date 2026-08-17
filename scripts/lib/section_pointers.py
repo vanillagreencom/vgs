@@ -12,22 +12,20 @@ the guard checks them like any other. If one is reported dead, the comment is
 stale too — it names an instance that no longer exists — and both want fixing.
 
 WHAT A POINTER IS. `TARGET § NAME`, where TARGET is the token immediately before
-the section mark, in any of three spellings:
+the section mark. WHICH DOCUMENT that token names — and there are four spellings
+of it, including the decision-record id — is `scripts/lib/pointer_targets.py`'s
+subject, enumerated in its docstring and returned by `resolve_target` so the
+check can assert each is still exercised. Not repeated here: this file had three
+of the four, which is how a reader learned that `D008 § Scope` was not a pointer.
 
-```
-`docs/architecture/design-language.md` § Tooltips       repo-relative path
-[D001](../decisions/D001-x.md) § References             link, citer-relative
-validation-scripts.instructions.md § What CI covers     unique basename
-```
-
-TARGET must end in `.md`. A pointer into a non-markdown file — the helper's
+A pointer into a non-markdown file — the helper's
 `§ Scratchpads` regions, a test's `§ parser agreement` — names a code region,
 which has no heading syntax to parse, so it is out of scope. A pointer with NO
 target is intra-document and resolved against the citing file when that file is
 markdown; `docs/architecture/scratchpads.md` writes "see § Niri" about itself. A
 NAME beginning with a digit is a numbered workflow step, not a heading.
 
-A TARGET that ends in `.md` and resolves to no tracked file FAILS rather than
+A TARGET that names a document and resolves to no tracked file FAILS rather than
 being skipped. "The target could not be resolved, so nothing was checked" is
 precisely how this check would fail open through the rename it exists to catch.
 
@@ -55,7 +53,9 @@ silent fall back to the looser bare rule.
 
 No `__main__` and no executable bit: a library reached only by import, like
 `scripts/lib/collected.py`, so it carries no manifest row. Its behaviour is
-proven by the must-fail controls its one caller owns.
+proven by `scripts/lib/section_pointers_selftest.py`, beside it. It has five
+importers, not one, and the layers below it — `prose_blocks` for what counts as
+prose, `pointer_targets` for which document a token names — carry their own.
 """
 
 from __future__ import annotations

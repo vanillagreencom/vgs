@@ -24,7 +24,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from prose_blocks import fence_left_open, headings  # noqa: E402
 from section_pointers import SECTION_MARK, pointer_problems  # noqa: E402
 
-DOC = "# Doc\n\n## Live section\n\n## Popout surfaces are screen-tall (and frosted)\n"
+# The SAME fixture in every control file; test-section-pointers.py says why.
+DOC = (
+    "# Doc\n\n## Live section\n\n## Popout surfaces are screen-tall (and frosted)\n\n"
+    "## `dismissOnFocusLoss`, and who owns focus\n"
+)
 
 
 def cited_in(path: str, citer: str) -> list[str]:

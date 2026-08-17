@@ -59,12 +59,11 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent / "lib"))
 from collected import members_missing, nothing_collected  # noqa: E402
-from prose_blocks import fence_left_open, headings  # noqa: E402
+from prose_blocks import fence_left_open, headings, normalized_words  # noqa: E402
 from tracked_blobs import REGULAR_MODES, blob_texts, tracked_entries  # noqa: E402
 from section_pointers import (  # noqa: E402
     SECTION_MARK,
     Judged,
-    normalized_words,
     pointer_problems,
     resolves,
 )

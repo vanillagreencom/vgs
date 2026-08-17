@@ -90,7 +90,18 @@ sys.path.insert(0, str(HERE / "lib"))
 from prose_blocks import headings  # noqa: E402
 from section_pointers import SECTION_MARK, pointer_problems  # noqa: E402
 
-DOC = "# Doc\n\n## Live section\n"
+# THE SAME FIXTURE DOCUMENT IN EVERY CONTROL FILE. Three bodies had drifted
+# apart — one heading here, two in prose_blocks_selftest.py, three in
+# section_pointers_selftest.py — so a control moved between files silently
+# changed which headings it resolved against. Converged on the superset, and
+# each heading earns its place: a plain one, one whose parenthetical exercises
+# the abbreviated-name rule, and a backticked identifier one. A shared helper
+# module was considered and refused: it is eight lines, and a test-support
+# package is a heavier thing to own than one repeated literal.
+DOC = (
+    "# Doc\n\n## Live section\n\n## Popout surfaces are screen-tall (and frosted)\n\n"
+    "## `dismissOnFocusLoss`, and who owns focus\n"
+)
 
 # The check's filename is not an importable module name, so it is loaded by
 # path. Importing it rather than re-declaring its tables is the point: a control

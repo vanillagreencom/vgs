@@ -55,6 +55,35 @@
 # exposes one threshold, so it is not expressible.
 #
 # That is a deliberate decision to take, not a fifth argument to win.
+#
+# A FOURTH EXCEPTION, granted on the same terms (VGS-150, 2026-08-16), recorded
+# here so the paragraph above can be read against one more data point rather
+# than three:
+#
+#   scripts/check-section-pointers.py      478 lines, 377 of them code
+#
+# The `<doc>.md § <section>` pointer guard. It is majority code, and the growth
+# is five review rounds — 23 findings, then 12, then 6 — each of which asked for
+# another rule, another arm, or another reason written down. Its subsystem is
+# ten files and 2,827 lines, and every seam anyone has named is already taken:
+# three parser libraries (prose_blocks for what counts as prose, pointer_targets
+# for which document a token names, section_pointers for where a name ends and
+# whether a heading matches), one VCS-access library (tracked_blobs), and five
+# control scripts — one per subject, each beside what it pins.
+#
+# What is left in this file is one concept that does not divide: a check's own
+# policy. Its five exclusion tables, the four collection points that assert them,
+# and the run that turns those into a verdict. Splitting policy from the check
+# that applies it would put the tables a reader needs in a second file, and the
+# only remaining candidate — the scope layer — was offered and not taken for
+# that reason.
+#
+# It also demonstrates the SECOND mechanism the paragraph above names, from the
+# other side. Each new control script costs two lines in scripts/validate and one
+# in ci.yml, and this round's split pushed those two files over their own rows.
+# Past a certain size, splitting to satisfy the cap grows the files that wire the
+# splits together. That is the same single-threshold problem, met by a check
+# rather than a suite.
 backend/vendor/*	vendored Go modules (go mod vendor for offline Nix builds), upstream-owned
 config/vshell/nvim/colorschemes/*	vendored upstream colorscheme plugins, upstream-owned
 third_party/*	byte-pinned vendored trees (review-gate, size-ratchet, coderabbit-schema, asdcontrol)

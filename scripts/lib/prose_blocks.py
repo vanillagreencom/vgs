@@ -31,8 +31,8 @@ reading a file's own structure rather than its meaning.
 
 No `__main__` and no executable bit: a library reached only by import, like
 `scripts/lib/collected.py`, so it carries no manifest row. Its behaviour is
-proven by the must-fail controls in `scripts/test-section-pointers.py`, which
-pairs each boundary rule silent-where-it-holds against reported-where-it-is-not.
+proven by `scripts/lib/prose_blocks_selftest.py`, beside it, which pairs each
+boundary rule silent-where-it-holds against reported-where-it-is-not.
 """
 
 from __future__ import annotations
@@ -100,15 +100,15 @@ def headings(text: str) -> list[list[str]]:
 def blocks(text: str, is_markdown: bool) -> list[tuple[str, list[tuple[int, int]]]]:
     """Contiguous prose joined, each with an offset-to-line index.
 
-    A pointer wraps freely: the target can end one line and the name begin the
-    next (`project-skills/vshell-dev/references/theme-engine.md`), or the mark
-    can end a line and a quoted name begin the next
-    (`config/vshell/plugins/vgsMenu/HoverSelectionGate.qml`). Reading a pointer
-    one line at a time sees neither, so lines are joined first.
+    PROSE WRAPS, and a thing worth reading may straddle the break in either
+    direction — its subject ending one line with what is said about it beginning
+    the next, or the reverse. Reading a file one line at a time sees neither, so
+    a run of prose is joined first and carries an index back to the line each
+    part came from.
 
     A block ends at a blank line; in markdown also at a structural line, and
-    everywhere else wherever comment lines meet code lines — the pointer in
-    `.gitignore`'s handoff comment must not absorb the path on the line below it.
+    everywhere else wherever comment lines meet code lines — a trailing comment
+    must not absorb the code beneath it, as `.gitignore`'s last comment would.
 
     A FENCED REGION IS NOT PROSE, in any file type. Markdown fences an example;
     a source file documenting this syntax fences one inside a docstring or a
