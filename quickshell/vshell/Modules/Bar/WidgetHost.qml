@@ -272,7 +272,8 @@ Loader {
             "colorPicker": components.colorPickerComponent,
             "layout": components.layoutComponent,
             "powerMenuButton": components.powerMenuButtonComponent,
-            "appsDock": components.appsDockComponent
+            "appsDock": components.appsDockComponent,
+            "printer": components.printerComponent
         };
 
         if (componentMap[widgetId]) {

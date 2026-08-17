@@ -548,7 +548,8 @@ Item {
             "vpn": vpnComponent,
             "notepadButton": notepadButtonComponent,
             "colorPicker": colorPickerComponent,
-            "powerMenuButton": powerMenuButtonComponent
+            "powerMenuButton": powerMenuButtonComponent,
+            "printer": printerComponent
         };
 
         let pluginMap = PluginService.getWidgetComponents();
@@ -589,7 +590,8 @@ Item {
             "vpnComponent": vpnComponent,
             "notepadButtonComponent": notepadButtonComponent,
             "colorPickerComponent": colorPickerComponent,
-            "powerMenuButtonComponent": powerMenuButtonComponent
+            "powerMenuButtonComponent": powerMenuButtonComponent,
+            "printerComponent": printerComponent
         })
 
     Item {
@@ -1374,49 +1376,35 @@ Item {
     Component {
         id: spacerComponent
 
-        Item {
-            width: _barIsVertical ? barWindow.widgetThickness : (parent.spacerSize || 20)
-            height: _barIsVertical ? (parent.spacerSize || 20) : barWindow.widgetThickness
-            implicitWidth: width
-            implicitHeight: height
-
-            Rectangle {
-                anchors.fill: parent
-                color: "transparent"
-                border.color: Theme.outlineStrong
-                border.width: 1
-                radius: 2
-                visible: false
-
-                MouseArea {
-                    anchors.fill: parent
-                    hoverEnabled: true
-                    acceptedButtons: Qt.NoButton
-                    propagateComposedEvents: true
-                    cursorShape: Qt.ArrowCursor
-                    onEntered: parent.visible = true
-                    onExited: parent.visible = false
-                }
-            }
+        BarSpacer {
+            barIsVertical: _barIsVertical
+            widgetThickness: barWindow.widgetThickness
+            spacerSize: parent.spacerSize || 20
         }
     }
 
     Component {
         id: separatorComponent
 
-        Item {
-            width: _barIsVertical ? parent.barThickness : 1
-            height: _barIsVertical ? 1 : parent.barThickness
-            implicitWidth: width
-            implicitHeight: height
+        BarSeparator {
+            barIsVertical: _barIsVertical
+            barThickness: parent.barThickness
+        }
+    }
 
-            Rectangle {
-                width: _barIsVertical ? parent.width * 0.6 : 1
-                height: _barIsVertical ? 1 : parent.height * 0.6
-                anchors.centerIn: parent
-                color: Theme.outline
-                opacity: 0.3
-            }
+    Component {
+        id: printerComponent
+
+        PrinterButton {
+            widgetThickness: barWindow.widgetThickness
+            barThickness: barWindow.effectiveBarThickness
+            axis: barWindow.axis
+            section: topBarContent.getWidgetSection(parent) || "right"
+            parentScreen: barWindow.screen
+            barSpacing: barConfig?.spacing ?? 4
+            barConfig: topBarContent.barConfig
+            blurBarWindow: topBarContent.blurBarWindow
+            widgetData: parent.widgetData
         }
     }
 

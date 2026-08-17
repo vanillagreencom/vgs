@@ -73,7 +73,7 @@ Column {
             "appsDock", "battery", "clock", "controlCenterButton", "cpuTemp",
             "cpuUsage", "diskUsage", "focusedWindow", "gpuTemp",
             "keyboard_layout_name", "memUsage", "music", "privacyIndicator",
-            "runningApps", "spacer", "systemTray"
+            "printer", "runningApps", "spacer", "systemTray"
         ].includes(item.id);
     }
 
