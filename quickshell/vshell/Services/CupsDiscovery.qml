@@ -52,6 +52,16 @@ Singleton {
         return lower.includes("._ipp._tcp") || lower.includes("._ipps._tcp") || lower.includes("._printer._tcp") || lower.includes("._pdl-datastream._tcp");
     }
 
+    function isIppUri(uri) {
+        const scheme = root.deviceScheme(uri);
+        if (scheme === "ipp" || scheme === "ipps")
+            return true;
+        if (scheme !== "dnssd" && scheme !== "mdns")
+            return false;
+        const lower = root.decodeUri(uri).toLowerCase();
+        return lower.includes("._ipp._tcp") || lower.includes("._ipps._tcp");
+    }
+
     function usbSerial(uri) {
         const match = (uri || "").match(/[?&]serial=([^&]+)/i);
         return match ? root.decodeUri(match[1]) : "";

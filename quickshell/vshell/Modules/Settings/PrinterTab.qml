@@ -64,7 +64,7 @@ Item {
             newPrinterName = CupsService.suggestPrinterName(device);
         if (device.location && !newPrinterLocation)
             newPrinterLocation = CupsService.decodeUri(device.location);
-        selectedPpd = "everywhere";
+        selectedPpd = CupsDiscovery.isIppUri(device.uri) ? "everywhere" : "";
     }
 
     Ref {
@@ -879,7 +879,7 @@ Item {
                                                                     width: parent.width - 18 - Theme.spacingS
 
                                                                     StyledText {
-                                                                        text: "[" + modelData.id + "] " + CupsService.getJobStateTranslation(modelData.state)
+                                                                        text: "[" + modelData.id + "] " + (CupsService.isJobHeld(modelData) ? I18n.tr("Held") : CupsService.getJobStateTranslation(modelData.state))
                                                                         font.pixelSize: Theme.fontSizeSmall
                                                                         color: Theme.surfaceText
                                                                         elide: Text.ElideRight
@@ -912,7 +912,7 @@ Item {
                                                                     height: 24
                                                                     radius: 12
                                                                     color: holdJobBtn.containsMouse ? Theme.surfacePressed : Theme.withAlpha(Theme.surfacePressed, 0)
-                                                                    visible: modelData.state === "pending"
+                                                                    visible: !CupsService.isJobHeld(modelData)
 
                                                                     VgsIcon {
                                                                         anchors.centerIn: parent
@@ -926,7 +926,7 @@ Item {
                                                                         anchors.fill: parent
                                                                         hoverEnabled: true
                                                                         cursorShape: Qt.PointingHandCursor
-                                                                        onClicked: CupsService.holdJob(modelData.id)
+                                                                        onClicked: CupsService.holdJob(modelData.id, "hold")
                                                                     }
                                                                 }
 
@@ -935,11 +935,11 @@ Item {
                                                                     height: 24
                                                                     radius: 12
                                                                     color: restartJobBtn.containsMouse ? Theme.surfacePressed : Theme.withAlpha(Theme.surfacePressed, 0)
-                                                                    visible: modelData.state === "pending-held" || modelData.state === "completed" || modelData.state === "aborted"
+                                                                    visible: CupsService.isJobHeld(modelData) || modelData.state === "completed" || modelData.state === "aborted"
 
                                                                     VgsIcon {
                                                                         anchors.centerIn: parent
-                                                                        name: "replay"
+                                                                        name: CupsService.isJobHeld(modelData) ? "play_arrow" : "replay"
                                                                         size: 14
                                                                         color: Theme.surfaceVariantText
                                                                     }
@@ -949,7 +949,7 @@ Item {
                                                                         anchors.fill: parent
                                                                         hoverEnabled: true
                                                                         cursorShape: Qt.PointingHandCursor
-                                                                        onClicked: CupsService.restartJob(modelData.id)
+                                                                        onClicked: CupsService.isJobHeld(modelData) ? CupsService.holdJob(modelData.id, "resume") : CupsService.restartJob(modelData.id)
                                                                     }
                                                                 }
 

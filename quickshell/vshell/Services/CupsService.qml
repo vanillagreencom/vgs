@@ -49,6 +49,42 @@ Singleton {
 
     readonly property var discoveredPrinters: CupsDiscovery.groupDevices(devices)
     readonly property var allJobs: CupsDiscovery.collectJobs(printers, printerNames)
+    // lpstat -o reports every queued job as "pending", so held state is
+    // tracked client-side from successful hold/resume calls.
+    property var heldJobIds: Object.create(null)
+
+    onAllJobsChanged: {
+        const next = Object.create(null);
+        for (var i = 0; i < allJobs.length; i++) {
+            if (heldJobIds[allJobs[i].id])
+                next[allJobs[i].id] = true;
+        }
+        for (const id in heldJobIds) {
+            if (!next[id]) {
+                heldJobIds = next;
+                return;
+            }
+        }
+    }
+
+    function setJobHeld(jobID, held) {
+        const next = Object.create(null);
+        for (const id in heldJobIds)
+            next[id] = true;
+        if (held)
+            next[jobID] = true;
+        else
+            delete next[jobID];
+        heldJobIds = next;
+    }
+
+    function isJobHeld(job) {
+        if (!job)
+            return false;
+        if (job.state === "pending-held" || job.state === "held")
+            return true;
+        return heldJobIds[job.id] === true;
+    }
 
     function decodeUri(str) {
         return CupsDiscovery.decodeUri(str);
@@ -597,11 +633,13 @@ Singleton {
         if (holdUntil) {
             params.holdUntil = holdUntil;
         }
+        const resuming = holdUntil === "resume" || holdUntil === "no-hold" || holdUntil === "immediate";
 
         VGSBackendService.sendRequest("cups.holdJob", params, response => {
             if (response.error) {
-                ToastService.showError(I18n.tr("Failed to hold job"), response.error);
+                ToastService.showError(resuming ? I18n.tr("Failed to resume job") : I18n.tr("Failed to hold job"), response.error);
             } else {
+                setJobHeld(jobID, !resuming);
                 fetchAllJobs();
             }
         });

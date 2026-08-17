@@ -61,7 +61,7 @@ PluginComponent {
     function toggleJobHold(job) {
         if (!job)
             return;
-        if (job.state === "pending-held" || job.state === "held")
+        if (CupsService.isJobHeld(job))
             CupsService.holdJob(job.id, "resume");
         else
             CupsService.holdJob(job.id, "hold");
@@ -252,7 +252,7 @@ PluginComponent {
                                 }
 
                                 StyledText {
-                                    text: (modelData.printer || root.connectedName) + " · " + CupsService.getJobStateTranslation(modelData.state)
+                                    text: (modelData.printer || root.connectedName) + " · " + (CupsService.isJobHeld(modelData) ? I18n.tr("Held") : CupsService.getJobStateTranslation(modelData.state))
                                     font.pixelSize: Theme.fontSizeSmall
                                     color: Theme.surfaceVariantText
                                     width: parent.width
@@ -262,7 +262,7 @@ PluginComponent {
 
                             VgsActionButton {
                                 buttonSize: 28
-                                iconName: (modelData.state === "pending-held" || modelData.state === "held") ? "play_arrow" : "pause"
+                                iconName: CupsService.isJobHeld(modelData) ? "play_arrow" : "pause"
                                 anchors.verticalCenter: parent.verticalCenter
                                 onClicked: root.toggleJobHold(modelData)
                             }

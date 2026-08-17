@@ -25,7 +25,20 @@ Column {
     }
 
     function applyRecommendedDriver() {
-        tab.selectedPpd = "everywhere";
+        if (CupsDiscovery.isIppUri(tab.selectedDeviceUri)) {
+            if (!tab.selectedPpd)
+                tab.selectedPpd = "everywhere";
+            return;
+        }
+        // lpadmin -m everywhere probes the URI over IPP, so non-IPP transports
+        // (usb, socket, lpd) need a model driver picked from the catalog.
+        if (tab.selectedPpd === "everywhere")
+            tab.selectedPpd = "";
+        if (!tab.selectedPpd) {
+            showAdvanced = true;
+            if (CupsService.ppds.length === 0)
+                CupsService.getPPDs();
+        }
     }
 
     readonly property var selectedGroup: {
@@ -242,12 +255,14 @@ Column {
                         if (value === I18n.tr("Recommended")) {
                             tab.selectedDevice = group.device;
                             tab.selectedDeviceUri = group.uri;
+                            root.applyRecommendedDriver();
                             return;
                         }
                         const alt = (group.alternatives || []).find(a => a.label === value);
                         if (alt) {
                             tab.selectedDeviceUri = alt.uri;
                             tab.selectedDevice = alt.device;
+                            root.applyRecommendedDriver();
                         }
                     }
                 }

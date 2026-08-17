@@ -51,7 +51,15 @@ Column {
 
         StyledText {
             visible: !root.showAdvanced
-            text: I18n.tr("Recommended — IPP Everywhere")
+            text: {
+                if (tab.selectedPpd === "everywhere")
+                    return I18n.tr("Recommended — IPP Everywhere");
+                if (tab.selectedPpd) {
+                    const ppd = CupsService.ppds.find(p => p.name === tab.selectedPpd);
+                    return ppd ? (ppd.makeModel || ppd.name) : tab.selectedPpd;
+                }
+                return I18n.tr("No driver selected");
+            }
             font.pixelSize: Theme.fontSizeMedium
             color: Theme.surfaceText
             anchors.verticalCenter: parent.verticalCenter
@@ -71,7 +79,7 @@ Column {
                 const ppd = CupsService.ppds.find(p => p.name === tab.selectedPpd);
                 return ppd ? (ppd.makeModel || ppd.name) : (tab.selectedPpd || I18n.tr("Select driver…"));
             }
-            options: [I18n.tr("Recommended — IPP Everywhere")].concat(CupsService.ppds.filter(p => p.name !== "everywhere").map(p => p.makeModel || p.name))
+            options: (CupsDiscovery.isIppUri(tab.selectedDeviceUri) ? [I18n.tr("Recommended — IPP Everywhere")] : []).concat(CupsService.ppds.filter(p => p.name !== "everywhere").map(p => p.makeModel || p.name))
             onValueChanged: value => {
                 if (value === I18n.tr("Recommended — IPP Everywhere")) {
                     tab.selectedPpd = "everywhere";
@@ -88,9 +96,10 @@ Column {
         visible: root.showAdvanced
         width: parent.width
         leftPadding: 80
-        text: I18n.tr("Use this only if the recommended driver fails")
+        text: !tab.selectedDeviceUri || CupsDiscovery.isIppUri(tab.selectedDeviceUri) ? I18n.tr("Use this only if the recommended driver fails") : I18n.tr("This printer can't use IPP Everywhere — select your printer model")
         font.pixelSize: Theme.fontSizeSmall
         color: Theme.surfaceVariantText
+        wrapMode: Text.WordWrap
     }
 
     Row {
