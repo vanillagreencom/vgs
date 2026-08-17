@@ -67,7 +67,12 @@ Item {
         selectedPpd = "everywhere";
     }
 
+    Ref {
+        service: CupsService
+    }
+
     Component.onCompleted: {
+        CupsService.getState();
         CupsService.getClasses();
     }
 
@@ -370,7 +375,7 @@ Item {
                             }
 
                             StyledText {
-                                text: I18n.tr("No printers found — add one from the Add Printer section above")
+                                text: CupsService.printersError.length > 0 ? I18n.tr("Couldn't read printers from the print service") + " — " + CupsService.printersError : I18n.tr("No printers found — add one from the Add Printer section above")
                                 font.pixelSize: Theme.fontSizeMedium
                                 color: Theme.surfaceVariantText
                                 anchors.horizontalCenter: parent.horizontalCenter

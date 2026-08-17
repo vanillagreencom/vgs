@@ -24,15 +24,12 @@ PluginComponent {
     readonly property var visibleJobs: CupsService.allJobs
     readonly property int jobCount: visibleJobs.length
     readonly property bool hasPrinters: CupsService.cupsAvailable && CupsService.getPrintersNum() > 0
-    readonly property bool isBusy: jobCount > 0 || CupsService.getCurrentPrinterState() === "processing"
+    readonly property string printerState: CupsService.getCurrentPrinterState()
+    readonly property bool isBusy: jobCount > 0 || printerState === "printing" || printerState === "processing"
     readonly property string connectedName: CupsService.getSelectedPrinter() || (CupsService.printerNames.length > 0 ? CupsService.printerNames[0] : "")
 
     _visibilityOverride: true
     _visibilityOverrideValue: root.pillRevealed
-
-    onPillRevealedChanged: CupsService.jobsWanted = root.pillRevealed || root.popoutOpen
-    onPopoutOpenChanged: CupsService.jobsWanted = root.pillRevealed || root.popoutOpen
-    Component.onCompleted: CupsService.jobsWanted = root.pillRevealed || root.popoutOpen
 
     popoutWidth: 360
 

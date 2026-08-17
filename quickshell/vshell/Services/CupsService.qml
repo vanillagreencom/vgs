@@ -71,8 +71,7 @@ Singleton {
     property bool loadingClasses: false
     property bool creatingPrinter: false
     property string devicesError: ""
-    property bool jobsWanted: false
-    onJobsWantedChanged: if (jobsWanted) fetchAllJobs()
+    property string printersError: ""
 
     signal cupsStateUpdate
 
@@ -123,19 +122,34 @@ Singleton {
     }
 
     function applyPrinterSnapshot(data) {
-        if (!data || !data.printers)
+        if (!data)
             return;
+        if (data.error) {
+            // Failed snapshot ({printers: [], error}): keep the last good list.
+            printersError = String(data.error);
+            log.warn("CUPS snapshot failed:", printersError);
+            return;
+        }
+        if (!data.printers) {
+            // Mutation broadcasts carry {changed: true} with no printer list.
+            getState();
+            return;
+        }
+        printersError = "";
         updatePrinters(data.printers);
-        if (jobsWanted)
-            fetchAllJobs();
+        fetchAllJobs();
     }
 
     function getState() {
         if (!cupsAvailable)
             return;
         VGSBackendService.sendRequest("cups.getPrinters", null, response => {
-            if (response.result)
-                applyPrinterSnapshot({ printers: response.result });
+            if (response.error) {
+                printersError = String(response.error);
+                log.warn("cups.getPrinters failed:", printersError);
+                return;
+            }
+            applyPrinterSnapshot({ printers: response.result || [] });
         });
     }
 
@@ -672,6 +686,7 @@ Singleton {
 
     readonly property var states: ({
             "idle": I18n.tr("Idle"),
+            "printing": I18n.tr("Printing"),
             "processing": I18n.tr("Processing"),
             "stopped": I18n.tr("Stopped")
         })
