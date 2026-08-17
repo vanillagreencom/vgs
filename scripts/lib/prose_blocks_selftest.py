@@ -247,6 +247,35 @@ def selftest() -> int:
                 f"control above passes on a reader that reports everything"
             )
 
+    # INDENT IS MEASURED IN COLUMNS, so a TAB reaches four as surely as four
+    # spaces do. The rule was written for spaces and CommonMark advances a tab to
+    # the next four-column stop, so every one of these hid the heading from the
+    # space form and showed it from the tab forms. Each is paired with the
+    # unindented twin asserted FOUND.
+    for case, indent in (
+        ("four spaces", "    "), ("one tab", "\t"),
+        ("a space then a tab", " \t"), ("two spaces then a tab", "  \t"),
+    ):
+        doc = f"# D\n\nprose\n\n{indent}## Live section\n"
+        if headings(doc) != [["D"]]:
+            failures.append(
+                f"a heading indented by {case} was read as real, so a heading that "
+                f"exists only inside a code block satisfies a pointer: {headings(doc)}"
+            )
+        if headings(doc.replace(indent + "## ", "## ")) != [["D"], ["Live", "section"]]:
+            failures.append(
+                f"the same heading UNINDENTED was not found either, so the {case} "
+                f"control passes on a reader that finds no headings"
+            )
+
+    # THE FENCE INDENT BOUND IS THE SAME MEASUREMENT: a tab-indented fence line
+    # reaches column four, so it is code rather than a fence.
+    tabbed_fence = "# D\n\nprose\n\n\t```\n\n## Live section\n"
+    if fence_left_open(tabbed_fence, is_markdown=True):
+        failures.append("a tab-indented ``` opened a fence, so the rest of the file was lost")
+    if not fence_left_open("# D\n\n```\n", is_markdown=True):
+        failures.append("an unindented unclosed fence stopped being detected")
+
     # THE FOUR FENCE AND FLUSH FIELDS THAT NO CONTROL COULD FAIL. Each sits
     # beside a sibling that IS pinned, which is how they were missed.
     #

@@ -167,6 +167,19 @@ def end_to_end_controls() -> list[str]:
             heading_gone, 1, "expected member(s) are absent",
         ),
         (
+            # The ambiguity check asked only the PARSED documents, so a duplicate
+            # basename whose twin is a symlink was invisible to it and the
+            # readable one answered for the name. Only the guard's own
+            # construction of the target set can be seen from out here.
+            "with a duplicate basename whose twin is a tracked symlink",
+            dict(clean, **{
+                "a/dup.md": "# A\n\n## Live section\n",
+                "citer.md": f"# C\n\n`dup.md` {SECTION_MARK} Live section.\n",
+            }),
+            1,
+            "tracked documents share",
+        ),
+        (
             # Without the cause map a pointer at a tracked symlinked .md gets
             # "not a tracked markdown file", which is false — it IS tracked. The
             # other symlink fixture cannot see this: nothing in it CITES a link.
@@ -210,7 +223,11 @@ def end_to_end_controls() -> list[str]:
             "",
         ),
     ):
-        links = {"link.md": "AGENTS.md"} if "symlink" in case else None
+        links = None
+        if "duplicate basename" in case:
+            links = {"b/dup.md": "../a/dup.md"}
+        elif "symlink" in case:
+            links = {"link.md": "AGENTS.md"}
         status, output = run_guard(tree, symlinks=links)
         if status != want:
             failures.append(

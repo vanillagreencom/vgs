@@ -433,6 +433,13 @@ def audit(
     """
     texts = files if documents is None else documents
     markdown = {rel: headings(texts[rel]) for rel in texts if rel.endswith(".md")}
+    # EVERY TRACKED MARKDOWN PATH IS A TARGET, readable or not, carrying no
+    # headings when it could not be parsed. Resolution asked only the parsed
+    # ones, so a duplicate basename whose twin is a symlink or is not UTF-8 was
+    # invisible to the ambiguity check and the readable one answered for the
+    # name. This is the only change needed: everything downstream goes through
+    # `_matches`, and a lone unreadable match is caught by the cause arm above.
+    markdown.update({rel: [] for rel in (unreadable or {}) if rel.endswith(".md")})
     found = pointer_problems(files, markdown, exempt, unreadable, EXEMPTION_REMEDY)
     problems = list(found.problems)
     problems.extend(exemption_problems(markdown, found.used))

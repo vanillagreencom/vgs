@@ -61,11 +61,16 @@
 # against three. Measured against origin/main, which is what a reader diffing
 # this branch sees; the rows churned more than this within it.
 #
-#   GRANTED   scripts/check-section-pointers.py        478 lines, 377 of them code
-#   GRANTED   scripts/lib/section_pointers_selftest.py 420 lines
-#   GRANTED   scripts/test-section-pointers-e2e.py     410 lines
+#   GRANTED   scripts/check-section-pointers.py        485 lines, 375 of them code
+#   GRANTED   scripts/lib/section_pointers_selftest.py 455 lines
+#   GRANTED   scripts/test-section-pointers-e2e.py     427 lines
 #   RAISED    .github/workflows/ci.yml                 472 -> 487
 #   RAISED    scripts/validate                        1049 -> 1064
+#
+# The three granted rows were each raised again by the last review round, which
+# is the mechanism rather than an exception to it: two more fail-opens were
+# found, and closing each cost a fix plus the paired controls that pin it. The
+# numbers above are the final ones.
 #
 # The two raises are the stronger act, by this header's own distinction, and
 # they are not growth of the thing being built: they are the WIRING. Each

@@ -59,6 +59,8 @@ added by review after surviving unnoticed.
                         — and INDENTED_CODE's continuation guard dropped, which
                         makes the mark vanish entirely   (+)
                         INDENTED_CODE applied outside markdown   (+)
+                        indent counted in CHARACTERS rather than columns, so a
+                        tab-indented heading reads as real   (+)
                         fence_left_open ORing both readings again   (+)
                         blocks() flushes after every line   (+)
 
@@ -110,6 +112,11 @@ added by review after surviving unnoticed.
                         the end-of-stream check dropped   (+)
                         git_env stops removing GIT_REDIRECTS   (+)
   prose_blocks.py       headings() stops honouring fences   (+)
+  check-...pointers.py  the unreadable `.md` paths dropped from the target set,
+                        so a duplicate basename whose twin cannot be read is
+                        invisible to the ambiguity check   (+)
+  pointer_targets.py    the cause lookup asked BEFORE ambiguity, so two
+                        candidates are answered with one candidate's cause   (+)
   section_pointers.py   a target with a known cause judged against its headings
                         anyway   (+)
                         an escaping `..` clamped back to the root   (+)

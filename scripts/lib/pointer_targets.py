@@ -167,15 +167,20 @@ def unresolved(token: str, citer: str, unreadable: dict[str, str], markdown=()) 
     all fell back to the retired message. The token is resolved the same three
     ways `resolve_target` resolves it before the map is consulted.
     """
-    for candidate in _candidates(token, citer, unreadable):
-        if candidate in unreadable:
-            return f"{unreadable[candidate]}, so its headings could not be parsed"
+    # AMBIGUITY IS ASKED FIRST, because it is the stronger statement: if two
+    # tracked documents carry the name, the pointer names NEITHER, and whether
+    # one of them also happens to be unreadable is a smaller fact about a
+    # candidate. Answering with a candidate's cause named one document as though
+    # it had been chosen.
     shared = ambiguous(token, markdown)
     if shared:
         return (
             f"is a name {len(shared)} tracked documents share ({', '.join(shared)}), so "
             f"it names none of them. Write the repo-relative path of the one you mean"
         )
+    for candidate in _candidates(token, citer, unreadable):
+        if candidate in unreadable:
+            return f"{unreadable[candidate]}, so its headings could not be parsed"
     return (
         "is not a tracked markdown file. Repoint it at the file that owns the "
         "section now, or write the repo-relative path if the basename is "

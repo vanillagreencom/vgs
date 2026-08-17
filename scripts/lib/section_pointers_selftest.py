@@ -249,6 +249,41 @@ def pointer_controls() -> list[str]:
     ):
         failures.append("a genuinely absent target was reported as ambiguous")
 
+    # AN UNREADABLE DUPLICATE IS STILL A DUPLICATE. Resolution asked only the
+    # PARSED documents, so a twin that is a symlink or is not UTF-8 was invisible
+    # to the ambiguity check and the readable one answered for the name. The
+    # caller passes every tracked `.md`, unreadable ones carrying no headings.
+    for case, reason in (
+        ("a tracked symlink", "tracked as a symlink, whose blob is a link target"),
+        ("not UTF-8 text", "not UTF-8 text"),
+    ):
+        found = pointer_problems(
+            {"a/dup.md": DOC, "citer.md": f"# C\n\n`dup.md` {SECTION_MARK} Live section.\n"},
+            {"a/dup.md": headings(DOC), "b/dup.md": []},
+            NO_EXEMPTIONS,
+            {"b/dup.md": reason},
+        ).problems
+        if not any("a/dup.md, b/dup.md" in problem for problem in found):
+            failures.append(
+                f"a duplicate basename whose twin is {case} resolved to the readable "
+                f"one and passed, so the guard answered confidently about a token whose "
+                f"target it cannot determine: {found}"
+            )
+    # ...and a LONE unreadable match still reports its own cause, not ambiguity.
+    lone = pointer_problems(
+        {"citer.md": f"# C\n\n`solo.md` {SECTION_MARK} Live section.\n"},
+        {"a/solo.md": []},
+        NO_EXEMPTIONS,
+        {"a/solo.md": "not UTF-8 text"},
+    ).problems
+    if not any("not UTF-8 text" in problem for problem in lone) or any(
+        "documents share" in problem for problem in lone
+    ):
+        failures.append(
+            f"a lone unreadable match was not named by its own cause, so asking "
+            f"ambiguity first swallowed the one-candidate case: {lone}"
+        )
+
     # THE DECLINED CENSUS, the fourth collection point: a count nobody asserts
     # can go to zero while the marks keep being dropped. Driven per reason.
     declined = pointer_problems(

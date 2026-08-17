@@ -61,20 +61,45 @@ COMMENT_MARKER = re.compile(r"^(#+|//+|\*+)\s?")
 # (the standard way to show a fenced example inside one) was closed early, and a
 # `~~~` line closed a ``` fence. Both let a heading that exists only inside an
 # example be recorded as real, which is the one thing this file must not do.
-FENCE = re.compile(r"^( {0,3})(`{3,}|~{3,})(.*)$")
-# Four spaces or more is an INDENTED CODE BLOCK in markdown, so `    ## Example`
-# is not a heading there. Markdown only: in a source file that indent is the
-# language's, and the fenced examples this repo writes inside function docstrings
-# sit at four spaces by construction.
-INDENTED_CODE = re.compile(r"^ {4,}\S")
+FENCE = re.compile(r"^[ \t]*(`{3,}|~{3,})(.*)$")
+# Four COLUMNS or more of indent is an INDENTED CODE BLOCK in markdown, so
+# `    ## Example` is not a heading there. Markdown only: in a source file that
+# indent is the language's, and the fenced examples this repo writes inside
+# function docstrings sit at four spaces by construction.
+#
+# COLUMNS, NOT CHARACTERS. The rule was written for spaces, and CommonMark counts
+# a tab as advancing to the next four-column stop — so one tab, or any mix that
+# reaches column four, is code. Matching ` {4,}` let a tab-indented heading count
+# as real, which is the same fail-open as the space case with one character
+# changed. Everything that measures indent here goes through `indent_columns` for
+# that reason: FENCE's 0-3 bound is the same measurement, one line up.
+INDENT_CODE_COLUMNS = 4
+TAB_STOP = 4
+
+
+def indent_columns(line: str) -> int:
+    """Leading indent in COLUMNS, a tab advancing to the next four-column stop."""
+    columns = 0
+    for character in line:
+        if character == " ":
+            columns += 1
+        elif character == "\t":
+            columns += TAB_STOP - (columns % TAB_STOP)
+        else:
+            break
+    return columns
 
 
 def _fence_marker(line: str) -> tuple[str, int, str] | None:
-    """(character, run length, info string) if the line could open or close one."""
+    """(character, run length, info string) if the line could open or close one.
+
+    None past three columns of indent: at four it is code, not a fence, and that
+    bound is measured in columns like every other indent here.
+    """
     match = FENCE.match(line)
-    if not match:
+    if not match or indent_columns(line) >= INDENT_CODE_COLUMNS:
         return None
-    return match.group(2)[0], len(match.group(2)), match.group(3).strip()
+    return match.group(1)[0], len(match.group(1)), match.group(2).strip()
 
 
 def _logical(raw: str, is_markdown: bool) -> str:
@@ -116,7 +141,12 @@ def scan(text: str, is_markdown: bool) -> tuple[list[tuple[int, str, bool, bool]
         elif marker:
             opener = (marker[0], marker[1])
             is_prose = False
-        elif is_markdown and INDENTED_CODE.match(logical) and not previous_was_prose:
+        elif (
+            is_markdown
+            and logical.strip()
+            and indent_columns(logical) >= INDENT_CODE_COLUMNS
+            and not previous_was_prose
+        ):
             # AN INDENTED CODE BLOCK ONLY WHERE COMMONMARK HAS ONE. An indented
             # line that CONTINUES a paragraph or a list item is continuation
             # text, not code — four spaces is the ordinary indent for content
