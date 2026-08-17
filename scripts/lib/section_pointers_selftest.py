@@ -6,8 +6,9 @@ a name ends, what resolves, what this parser declines to own — while the polic
 arms built on top of it (collection points, exclusion tables) are pinned by
 `scripts/test-section-pointers.py` beside the check that owns them.
 
-Each control has been run red once, by mutating the rule it guards, and two
-shapes are deliberate: the healthy input is asserted SILENT beside each failing
+The mutation set these were run red against is recorded in
+`scripts/test-section-pointers.py`, once, so a parser change has a stated list
+to re-run rather than a bare assertion. Two shapes are deliberate: the healthy input is asserted SILENT beside each failing
 one, or a rule that reports everything satisfies both; and a control that could
 be answered by a different rule asserts what the finding SAYS, not merely that
 one exists.
@@ -155,6 +156,36 @@ def pointer_controls() -> list[str]:
                 f"a fence {case} came out wrong: an unbalanced fence hides every mark "
                 f"after it, and must be reported rather than read as a file with none"
             )
+
+    # A BARE MARK IN A NON-MARKDOWN FILE has nothing to resolve against, so it
+    # is declined. Paired with the same text in a markdown citer, asserted
+    # REPORTED, or "silent" would pass on a parser that stopped finding the mark
+    # at all. The nearest existing control carries a target and leaves through
+    # the code-region branch instead, so neither half was exercised.
+    bare = f"# see {SECTION_MARK} Gone section.\n"
+    if cited_in("citer.py", bare):
+        failures.append(
+            "a bare mark in a non-markdown file was judged, but there is no document "
+            "for it to name and nothing with headings of its own to resolve against"
+        )
+    if not cited_in("citer.md", f"# C\n\n{bare}"):
+        failures.append(
+            "the same bare mark in a MARKDOWN citer was not reported either, so the "
+            "control above passes on a parser that finds no mark at all"
+        )
+
+    # THE NUMBERED-STEP GUARD IS `isdigit`, NOT `not isalpha`. Widening it skips
+    # strictly more pointers with everything still green, so a name starting with
+    # some other non-letter is asserted STILL CHECKED — reported when its heading
+    # is absent — beside the numbered step asserted still declined.
+    if not any(
+        "Gone section" in problem
+        for problem in cited(f"`doc.md` {SECTION_MARK} &Gone section, which\n")
+    ):
+        failures.append(
+            "a name beginning with a non-letter that is not a digit went unchecked, so "
+            "the numbered-step skip has widened into pointers it was never meant to own"
+        )
 
     # THE DECLINED CENSUS, the fourth collection point: a count nobody asserts
     # can go to zero while the marks keep being dropped. Driven per reason.

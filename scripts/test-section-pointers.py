@@ -6,11 +6,11 @@ scripts/check-validation-inventory.py: the check states the rules, this drives
 one control per rule and asserts each is REPORTED, so a rule that silently
 stopped firing shows up here rather than as a quiet green.
 
-Each control has been run red once, by mutating the rule it guards. Two shapes
-are deliberate: a rule is driven through the arm that OWNS it, never the whole
-audit, since every fixture tree also trips the exemption and heading arms and a
-control would pass on their output; and the healthy input is asserted SILENT
-beside each failing one, or an arm that complains about everything satisfies it.
+Two shapes are deliberate: a rule is driven through the arm that OWNS it, never
+the whole audit, since every fixture tree also trips the exemption and heading
+arms and a control would pass on their output; and the healthy input is asserted
+SILENT beside each failing one, or an arm that complains about everything
+satisfies it.
 
 Three neighbours carry the rest, one file per subject, each beside what it
 pins: `scripts/lib/section_pointers_selftest.py` holds the grammar rules,
@@ -18,16 +18,58 @@ pins: `scripts/lib/section_pointers_selftest.py` holds the grammar rules,
 `scripts/test-section-pointers-e2e.py` the wiring that assembles arms into a
 verdict, by running the guard as a process. What stays here is this check's own
 policy: its collection points and its self-policing exclusion tables.
+
+THE MUTATION SET, recorded because "each control has been run red once" is an
+assertion nothing re-checks, and review found three classes where it was not
+true. Run ALL FOUR control scripts against each mutation: three of these were
+invisible while only one script was driven, which is how they survived. Each
+line is one edit to the named file; every one must turn at least one control
+red, and the ones marked (+) were added by review after surviving unnoticed.
+
+  section_pointers.py   resolves() returns True unconditionally
+                        quoted match falls through to the loose rule
+                        an unresolvable .md target `continue`s instead of reporting
+                        target_token stops crossing SEPARATORS
+                        INHERITANCE_STOPS narrowed to "."   (+)
+                        the code-region branch stops declining
+                        the bare-in-non-markdown branch resolves anyway   (+)
+                        name[0].isdigit() widened to not name[0].isalpha()   (+)
+                        the empty-name report becomes a decline   (+)
+                        delimited names truncate at their closer again
+                        the ambiguous-basename and ambiguous-decision-id guards
+                        DECISION_TOKEN stops matching   (+)
+                        the fence report is dropped   (+)
+                        the heading-list cap loses its remainder count
+                        the caller's remedy clause is dropped   (+)
+                        the declined census stops counting   (+)
+  prose_blocks.py       blocks() flushes after every line   (+)
+                        the markdown-structural and comment/code flushes
+                        fences honoured only in markdown
+                        the fence counter can never be odd   (+)
+  tracked_blobs.py      git()'s non-zero exit returns normally   (+)
+                        cat-file's record shape goes unchecked   (+)
+                        content read from the working tree instead of the blob
+  check-...pointers.py  each of the four `problems.extend` calls, dropped   (+)
+                        `if problems:` -> `if False:`   (+)
+                        exemptions match loosely again   (+)
+                        both HISTORICAL_SECTIONS staleness arms
+                        the FIXTURE_FILES staleness arm
+                        nothing_collected dropped from the heading arm
+                        the GRAMMAR_SPELLINGS anchor dropped
+                        TARGET_ANCHORS reduced to one member   (+)
+                        SKIP_ROOTS filters targets again   (+)
 """
 
 from __future__ import annotations
 
 import importlib.util
 import sys
+import tempfile
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE / "lib"))
+import tracked_blobs  # noqa: E402
 from prose_blocks import headings  # noqa: E402
 from section_pointers import SECTION_MARK, pointer_problems  # noqa: E402
 
@@ -84,7 +126,7 @@ def collection_controls() -> list[str]:
     # The healthy call of each arm is asserted SILENT first, or every control
     # below passes on an arm that complains about everything.
     for arm_name, quiet in (
-        ("heading", check.heading_problems(anchors, check.SWEEP_ANCHORS)),
+        ("heading", check.heading_problems(anchors)),
         ("sweep", check.sweep_problems(whole, healthy)),
         ("fixture-exclusion", check.fixture_problems(list(check.FIXTURE_FILES))),
     ):
@@ -101,13 +143,13 @@ def collection_controls() -> list[str]:
             "a tree from which NO heading parsed",
             "nothing-collected",
             empty,
-            (dict.fromkeys(check.SWEEP_ANCHORS, []), check.SWEEP_ANCHORS),
+            (dict.fromkeys(check.SWEEP_ANCHORS, []),),
         ),
         (
             f"{first} alone yielding no heading",
             "members-missing",
             partial,
-            (dict(anchors, **{first: []}), check.SWEEP_ANCHORS),
+            (dict(anchors, **{first: []}),),
         ),
     ):
         wants(check.heading_problems(*args), phrase, case, arm)
@@ -209,8 +251,51 @@ def exemption_controls() -> list[str]:
     return failures
 
 
+def blob_controls() -> list[str]:
+    """The VCS-access arms: git failing, and a blob that cannot be produced.
+
+    These were the two rules the "every rule has a control" claim did not cover.
+    Both fail LOUDLY by design — a check that cannot read the tree has nothing to
+    report — so each is asserted to raise rather than to return something a
+    caller might treat as an empty, clean answer.
+    """
+    failures: list[str] = []
+    absent = Path(tempfile.gettempdir()) / "vgs-150-not-a-repo"
+    absent.mkdir(exist_ok=True)
+    try:
+        tracked_blobs.git(absent, "ls-files", "-s", "-z")
+    except SystemExit as error:
+        if "NOTHING was read" not in str(error):
+            failures.append(f"git failing did not say nothing was read: {error}")
+    else:
+        failures.append(
+            "git exiting non-zero returned normally, so a listing that never happened "
+            "is indistinguishable from a tree with no files in it"
+        )
+
+    # `cat-file --batch` answers "<sha> missing" for an object that is not
+    # there, which is two fields where a blob record has three. Reading on would
+    # take the next file's bytes as this one's content.
+    try:
+        tracked_blobs.blob_texts(check.REPO_ROOT, [("100644", "0" * 40, "ghost.md")])
+    except SystemExit as error:
+        if "not a blob record" not in str(error):
+            failures.append(f"a missing object was not named as such: {error}")
+    except Exception as error:  # noqa: BLE001 - a reader defect must still read as one
+        failures.append(
+            f"a missing object escaped as {type(error).__name__}: {error}. The record "
+            f"is checked so the operator gets a sentence, not a traceback"
+        )
+    else:
+        failures.append(
+            "a sha with no object behind it was accepted, so cat-file's answer is "
+            "parsed as content and every file after it shifts"
+        )
+    return failures
+
+
 def main() -> int:
-    arms = (collection_controls, exemption_controls)
+    arms = (collection_controls, exemption_controls, blob_controls)
     failures = [problem for arm in arms for problem in arm()]
     if failures:
         print("test-section-pointers: FAIL", file=sys.stderr)

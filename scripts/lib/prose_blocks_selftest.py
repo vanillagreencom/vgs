@@ -4,7 +4,8 @@ Kept beside the library, in the same shape as `qml_source_selftest.py`: these
 shapes change when the reading of wrapped prose is wrong, the helpers change
 when a caller needs a new distinction, and only one of the two is imported.
 
-Every control here is a PAIR, because "silent" alone proves nothing about why:
+The mutation set is recorded in `scripts/test-section-pointers.py`. Every
+control here is a PAIR, because "silent" alone proves nothing about why:
 each boundary rule is asserted silent where the boundary holds AND reported
 where the same text has none. The wrap controls are asserted on what the finding
 SAYS rather than that one exists — asserting mere existence let all three

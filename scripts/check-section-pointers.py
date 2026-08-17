@@ -11,6 +11,9 @@ consolidation is the event this check exists to survive, and without it four PRs
 again rely on a reviewer noticing across files they are not reading. Ordinary
 link checkers do not help: `#slug` links they resolve, and this shape is not one.
 
+AGENTS.md is NOT in that list: it names the `docs/architecture/` DIRECTORY, and
+a bare directory reference is not a pointer — still a reviewer's job.
+
 IT JUDGES THE INDEX, not the working tree — `scripts/lib/tracked_blobs.py` says
 why. `git add` a pointer fix before re-running, or this reports on bytes you
 have not staged. What CI sees and what a commit would contain are then the same.
@@ -39,17 +42,18 @@ those helpers; the fourth, the marks this parser declines, is counted by reason
 and printed instead, because its question is not "did anything match" but "what
 did this refuse, and how much".
 
-Every rule here and in the parsers has a must-fail control, one file per
-subject: `scripts/test-section-pointers.py` drives each arm of this file,
-`scripts/lib/prose_blocks_selftest.py` the wrap and block-boundary rules beside
-the library that owns them, and `scripts/test-section-pointers-e2e.py` the
-wiring that turns arms into a verdict, by running this guard as a process.
+Every rule here and in the parsers has a must-fail control, and the mutation set
+proving it is recorded in `scripts/test-section-pointers.py` — the claim was
+untrue twice before it was written down. Four scripts, one per subject: that one
+drives this file's arms and the VCS access beneath them, `section_pointers_
+selftest.py` the grammar, `prose_blocks_selftest.py` the wrap and boundary
+rules, and `test-section-pointers-e2e.py` the wiring that turns arms into a
+verdict, by running this guard as a process.
 """
 
 from __future__ import annotations
 
 import sys
-from collections.abc import Sequence
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent / "lib"))
@@ -214,12 +218,11 @@ def swept_tree(
 
     TWO ROLES, TWO SETS, and conflating them was a defect. SKIP_ROOTS says whose
     pointers are READ; it also decided what could be a TARGET, because the
-    heading table derived from the same dict. A pointer at any of the 88 tracked
-    `.md` files under a vendored or asset root was then reported as "not a
-    tracked markdown file. Repoint it" — wrong in every clause. Vendored docs are
-    not ours to EDIT, which says nothing about whether they can be NAMED.
-
-    So every tracked `.md` is read and may be a target; only citers are filtered.
+    heading table derived from the same dict, so a pointer at any of the 88
+    tracked `.md` files under a vendored or asset root was reported as "not a
+    tracked markdown file. Repoint it" — wrong in every clause. Vendored docs
+    are not ours to EDIT, which says nothing about whether they can be NAMED, so
+    every tracked `.md` is read and may be a target; only citers are filtered.
     """
     wanted = [
         entry
@@ -256,10 +259,9 @@ def unreadable_problems(undecodable: dict[str, str]) -> list[str]:
     """A first-party `.md` blob that is not text, so no heading could be parsed.
 
     Reported rather than dropped: a cited document absent from the heading table
-    is otherwise blamed on its CITER, which is the wrong file to send anyone to.
-    Any other undecodable blob is a binary — the intended skip, and silent. Under
-    a SKIP_ROOT it is silent too: a vendored document's encoding is not ours to
-    fix, and a pointer at one still names the real cause through `unreadable`.
+    is otherwise blamed on its CITER, the wrong file to send anyone to. Any other
+    undecodable blob is a binary, the intended skip — and so is one under a
+    SKIP_ROOT, a vendored encoding not being ours to fix.
     """
     return [
         f"{rel} is a tracked markdown file whose blob is {reason}, so none of its "
@@ -270,9 +272,7 @@ def unreadable_problems(undecodable: dict[str, str]) -> list[str]:
     ]
 
 
-def heading_problems(
-    markdown: dict[str, list[list[str]]], anchors: Sequence[str]
-) -> list[str]:
+def heading_problems(markdown: dict[str, list[list[str]]]) -> list[str]:
     """COLLECTION POINT 3: the headings every pointer is resolved against.
 
     Per-file emptiness is deliberately NOT a finding — LICENSE.md and issue
@@ -292,7 +292,7 @@ def heading_problems(
             ),
             members_missing(
                 parsed,
-                anchors,
+                SWEEP_ANCHORS,
                 what="the documents headings were parsed from",
                 selector=selector,
                 cause=cause,
@@ -370,7 +370,7 @@ def audit(
     found = pointer_problems(files, markdown, exempt, unreadable, EXEMPTION_REMEDY)
     problems = list(found.problems)
     problems.extend(exemption_problems(markdown, found.used))
-    problems.extend(heading_problems(markdown, SWEEP_ANCHORS))
+    problems.extend(heading_problems(markdown))
     return found._replace(problems=problems)
 
 

@@ -10,6 +10,9 @@ green while the suite still prints "all reporting". Only a real exit status can
 see that one, so this file builds throwaway git repos and runs the guard against
 them.
 
+The mutation set is recorded in `scripts/test-section-pointers.py`; run all
+four scripts against each, or a mutant survives in the one nobody drove.
+
 Split from the unit controls because it is a different kind of test, not a
 longer one: it writes trees, creates symlinks, runs `git init`, and reads
 process statuses. Same peer-script shape as the three `test-vendor-drift-*.sh`.

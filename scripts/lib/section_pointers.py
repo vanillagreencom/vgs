@@ -4,8 +4,12 @@ The parser half of `scripts/check-section-pointers.py`; that file holds the
 policy — which trees are swept, which removed sections are cited deliberately —
 and this holds the grammar, so the rules are stated once where they are applied.
 
-Every example below is FENCED, because this parser reads its own source: an
-illustration must not read as a claim that some heading exists.
+EXAMPLES IN THIS DOCSTRING ARE FENCED, because this parser reads its own source
+and a synthetic illustration must not read as a claim that some heading exists.
+The examples in the CODE COMMENTS below are the opposite and deliberately so:
+each cites the real pointer in this repo that motivated the rule beside it, so
+the guard checks them like any other. If one is reported dead, the comment is
+stale too — it names an instance that no longer exists — and both want fixing.
 
 WHAT A POINTER IS. `TARGET § NAME`, where TARGET is the token immediately before
 the section mark, in any of three spellings:
