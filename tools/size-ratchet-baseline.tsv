@@ -176,7 +176,7 @@ quickshell/vshell/Services/CalendarBackend.qml	481
 quickshell/vshell/Services/ClipboardService.qml	514
 quickshell/vshell/Services/CloudSyncService.qml	728
 quickshell/vshell/Services/CompositorService.qml	447
-quickshell/vshell/Services/CupsService.qml	813
+quickshell/vshell/Services/CupsService.qml	827
 quickshell/vshell/Services/DSearchService.qml	427
 quickshell/vshell/Services/DgopService.qml	780
 quickshell/vshell/Services/DisplayService.qml	1453

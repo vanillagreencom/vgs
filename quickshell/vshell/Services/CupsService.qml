@@ -52,8 +52,18 @@ Singleton {
     // lpstat -o reports every queued job as "pending", so held state is
     // tracked client-side from successful hold/resume calls.
     property var heldJobIds: Object.create(null)
+    // A printer refresh blanks every queue's jobs before the per-printer fetch
+    // replies, so allJobs is transiently empty on every refresh. Pruning held
+    // ids from that empty window would drop a job's held marker seconds after
+    // it was set; ids are only pruned once the outstanding fetches have all
+    // answered and the queue is known.
+    property int pendingJobFetches: 0
 
-    onAllJobsChanged: {
+    onAllJobsChanged: root.pruneHeldJobIds()
+
+    function pruneHeldJobIds() {
+        if (pendingJobFetches > 0)
+            return;
         const next = Object.create(null);
         for (var i = 0; i < allJobs.length; i++) {
             if (heldJobIds[allJobs[i].id])
@@ -231,12 +241,16 @@ Singleton {
             "printerName": printerName
         };
 
+        pendingJobFetches = pendingJobFetches + 1;
         VGSBackendService.sendRequest("cups.getJobs", params, response => {
             if (response.result && printers[printerName]) {
                 let updatedPrinters = Object.assign({}, printers);
                 updatedPrinters[printerName].jobs = response.result;
                 printers = updatedPrinters;
             }
+            pendingJobFetches = Math.max(0, pendingJobFetches - 1);
+            if (pendingJobFetches === 0)
+                root.pruneHeldJobIds();
         });
     }
 
