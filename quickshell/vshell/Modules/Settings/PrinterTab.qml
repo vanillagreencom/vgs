@@ -19,6 +19,7 @@ Item {
     property string manualHost: ""
     property string manualPort: "631"
     property string manualProtocol: "ipp"
+    property string manualQueue: ""
     property bool testingConnection: false
     property var testConnectionResult: null
     property string newPrinterName: ""
@@ -27,7 +28,6 @@ Item {
     property string selectedPpd: ""
     property string newPrinterLocation: ""
     property string newPrinterInfo: ""
-    property var suggestedPPDs: []
 
     function toggleAddPrinter() {
         showAddPrinter = !showAddPrinter;
@@ -46,6 +46,7 @@ Item {
         manualHost = "";
         manualPort = "631";
         manualProtocol = "ipp";
+        manualQueue = "";
         testingConnection = false;
         testConnectionResult = null;
         newPrinterName = "";
@@ -54,46 +55,6 @@ Item {
         selectedPpd = "";
         newPrinterLocation = "";
         newPrinterInfo = "";
-        suggestedPPDs = [];
-    }
-
-    Connections {
-        target: CupsService
-        function onPpdsChanged() {
-            if (printerTab.manualEntryMode && printerTab.testConnectionResult?.success)
-                printerTab.selectDriverlessPPD();
-        }
-    }
-
-    function selectDriverlessPPD() {
-        if (printerTab.selectedPpd || CupsService.ppds.length === 0)
-            return;
-
-        const probeModel = printerTab.testConnectionResult?.data?.makeModel || "";
-        let suggested = [];
-
-        // Try to find a model-specific PPD match
-        if (probeModel) {
-            const normalizedModel = probeModel.toLowerCase().replace(/[^a-z0-9]/g, "");
-            const modelMatches = CupsService.ppds.filter(p => {
-                const normalizedPPD = (p.makeModel || "").toLowerCase().replace(/[^a-z0-9]/g, "");
-                return normalizedPPD.includes(normalizedModel) || normalizedModel.includes(normalizedPPD);
-            });
-            if (modelMatches.length > 0)
-                suggested = suggested.concat(modelMatches);
-        }
-
-        // Always include driverless as an option
-        const driverless = CupsService.ppds.filter(p => p.name === "driverless" || p.name === "everywhere");
-        for (const d of driverless) {
-            if (!suggested.find(s => s.name === d.name))
-                suggested.push(d);
-        }
-
-        if (suggested.length > 0) {
-            printerTab.selectedPpd = suggested[0].name;
-            printerTab.suggestedPPDs = suggested;
-        }
     }
 
     function selectDevice(device) {
@@ -101,19 +62,19 @@ Item {
             return;
         selectedDevice = device;
         selectedDeviceUri = device.uri;
-        if (!newPrinterName) {
+        if (!newPrinterName)
             newPrinterName = CupsService.suggestPrinterName(device);
-        }
-        if (device.location && !newPrinterLocation) {
+        if (device.location && !newPrinterLocation)
             newPrinterLocation = CupsService.decodeUri(device.location);
-        }
-        suggestedPPDs = CupsService.getMatchingPPDs(device);
-        if (suggestedPPDs.length > 0 && !selectedPpd) {
-            selectedPpd = suggestedPPDs[0].name;
-        }
+        selectedPpd = CupsDiscovery.isIppUri(device.uri) ? "everywhere" : "";
+    }
+
+    Ref {
+        service: CupsService
     }
 
     Component.onCompleted: {
+        CupsService.getState();
         CupsService.getClasses();
     }
 
@@ -328,509 +289,8 @@ Item {
 
                         SettingsDivider {}
 
-                        Row {
-                            width: parent.width
-                            spacing: Theme.spacingS
-
-                            Rectangle {
-                                width: discoverRow.width + Theme.spacingM * 2
-                                height: 32
-                                radius: Theme.cornerRadius
-                                color: !printerTab.manualEntryMode ? Theme.primary : (discoverArea.containsMouse ? Theme.primaryHoverLight : Theme.surfaceLight)
-
-                                Row {
-                                    id: discoverRow
-                                    anchors.centerIn: parent
-                                    spacing: Theme.spacingXS
-
-                                    VgsIcon {
-                                        name: "search"
-                                        size: 16
-                                        color: !printerTab.manualEntryMode ? Theme.onPrimary : Theme.surfaceText
-                                    }
-
-                                    StyledText {
-                                        text: I18n.tr("Discover Devices", "Toggle button to scan for printers via mDNS/Avahi")
-                                        font.pixelSize: Theme.fontSizeSmall
-                                        color: !printerTab.manualEntryMode ? Theme.onPrimary : Theme.surfaceText
-                                        font.weight: Font.Medium
-                                    }
-                                }
-
-                                MouseArea {
-                                    id: discoverArea
-                                    anchors.fill: parent
-                                    hoverEnabled: true
-                                    cursorShape: Qt.PointingHandCursor
-                                    onClicked: {
-                                        printerTab.manualEntryMode = false;
-                                        printerTab.testConnectionResult = null;
-                                        printerTab.testingConnection = false;
-                                    }
-                                }
-                            }
-
-                            Rectangle {
-                                width: manualRow.width + Theme.spacingM * 2
-                                height: 32
-                                radius: Theme.cornerRadius
-                                color: printerTab.manualEntryMode ? Theme.primary : (manualArea.containsMouse ? Theme.primaryHoverLight : Theme.surfaceLight)
-
-                                Row {
-                                    id: manualRow
-                                    anchors.centerIn: parent
-                                    spacing: Theme.spacingXS
-
-                                    VgsIcon {
-                                        name: "edit"
-                                        size: 16
-                                        color: printerTab.manualEntryMode ? Theme.onPrimary : Theme.surfaceText
-                                    }
-
-                                    StyledText {
-                                        text: I18n.tr("Add by Address", "Toggle button to manually add a printer by IP or hostname")
-                                        font.pixelSize: Theme.fontSizeSmall
-                                        color: printerTab.manualEntryMode ? Theme.onPrimary : Theme.surfaceText
-                                        font.weight: Font.Medium
-                                    }
-                                }
-
-                                MouseArea {
-                                    id: manualArea
-                                    anchors.fill: parent
-                                    hoverEnabled: true
-                                    cursorShape: Qt.PointingHandCursor
-                                    onClicked: {
-                                        printerTab.manualEntryMode = true;
-                                        printerTab.selectedDevice = null;
-                                        printerTab.selectedDeviceUri = "";
-                                        if (CupsService.ppds.length === 0)
-                                            CupsService.getPPDs();
-                                    }
-                                }
-                            }
-                        }
-
-                        Column {
-                            width: parent.width
-                            spacing: Theme.spacingS
-                            visible: !printerTab.manualEntryMode
-
-                            Row {
-                                width: parent.width
-                                spacing: Theme.spacingS
-
-                                StyledText {
-                                    text: I18n.tr("Device")
-                                    font.pixelSize: Theme.fontSizeMedium
-                                    font.weight: Font.Medium
-                                    color: Theme.surfaceText
-                                    width: 80
-                                    anchors.verticalCenter: parent.verticalCenter
-                                }
-
-                                VgsDropdown {
-                                    id: deviceDropdown
-                                    dropdownWidth: parent.width - 80 - scanDevicesBtn.width - Theme.spacingS * 2
-                                    popupWidth: parent.width - 80 - scanDevicesBtn.width - Theme.spacingS * 2
-                                    enableFuzzySearch: true
-                                    emptyText: I18n.tr("No devices found")
-                                    currentValue: {
-                                        if (CupsService.loadingDevices)
-                                            return I18n.tr("Scanning…");
-                                        if (printerTab.selectedDevice)
-                                            return CupsService.getDeviceDisplayName(printerTab.selectedDevice);
-                                        return I18n.tr("Select device…");
-                                    }
-                                    options: CupsService.filteredDevices.map(d => CupsService.getDeviceDisplayName(d))
-                                    onValueChanged: value => {
-                                        const filtered = CupsService.filteredDevices;
-                                        const device = filtered.find(d => CupsService.getDeviceDisplayName(d) === value);
-                                        if (device)
-                                            printerTab.selectDevice(device);
-                                    }
-                                }
-
-                                VgsActionButton {
-                                    id: scanDevicesBtn
-                                    iconName: "refresh"
-                                    buttonSize: 32
-                                    anchors.verticalCenter: parent.verticalCenter
-                                    enabled: !CupsService.loadingDevices
-                                    onClicked: CupsService.getDevices()
-
-                                    RotationAnimator on rotation {
-                                        running: CupsService.loadingDevices
-                                        loops: Animation.Infinite
-                                        from: 0
-                                        to: 360
-                                        duration: 1000
-                                    }
-                                }
-                            }
-
-                            Row {
-                                width: parent.width
-                                spacing: Theme.spacingS
-                                visible: printerTab.selectedDevice !== null
-
-                                Item {
-                                    width: 80
-                                    height: 1
-                                }
-
-                                StyledText {
-                                    text: CupsService.getDeviceSubtitle(printerTab.selectedDevice)
-                                    font.pixelSize: Theme.fontSizeSmall
-                                    color: Theme.surfaceVariantText
-                                    width: parent.width - 80 - Theme.spacingS
-                                    elide: Text.ElideRight
-                                }
-                            }
-                        }
-
-                        Column {
-                            width: parent.width
-                            spacing: Theme.spacingS
-                            visible: printerTab.manualEntryMode
-
-                            Row {
-                                width: parent.width
-                                spacing: Theme.spacingS
-
-                                StyledText {
-                                    text: I18n.tr("Host", "Label for printer IP address or hostname input field")
-                                    font.pixelSize: Theme.fontSizeMedium
-                                    font.weight: Font.Medium
-                                    color: Theme.surfaceText
-                                    width: 80
-                                    anchors.verticalCenter: parent.verticalCenter
-                                }
-
-                                VgsTextField {
-                                    width: parent.width - 80 - Theme.spacingS
-                                    placeholderText: I18n.tr("IP address or hostname", "Placeholder text for manual printer address input")
-                                    text: printerTab.manualHost
-                                    onTextEdited: {
-                                        printerTab.manualHost = text;
-                                        printerTab.testConnectionResult = null;
-                                    }
-                                }
-                            }
-
-                            Row {
-                                width: parent.width
-                                spacing: Theme.spacingS
-
-                                StyledText {
-                                    text: I18n.tr("Port", "Label for printer port number input field")
-                                    font.pixelSize: Theme.fontSizeMedium
-                                    font.weight: Font.Medium
-                                    color: Theme.surfaceText
-                                    width: 80
-                                    anchors.verticalCenter: parent.verticalCenter
-                                }
-
-                                VgsTextField {
-                                    width: 80
-                                    placeholderText: "631"
-                                    text: printerTab.manualPort
-                                    onTextEdited: {
-                                        printerTab.manualPort = text;
-                                        printerTab.testConnectionResult = null;
-                                    }
-                                }
-                            }
-
-                            Row {
-                                width: parent.width
-                                spacing: Theme.spacingS
-
-                                StyledText {
-                                    text: I18n.tr("Protocol", "Label for printer protocol selector, e.g. ipp, ipps, lpd, socket")
-                                    font.pixelSize: Theme.fontSizeMedium
-                                    font.weight: Font.Medium
-                                    color: Theme.surfaceText
-                                    width: 80
-                                    anchors.verticalCenter: parent.verticalCenter
-                                }
-
-                                VgsDropdown {
-                                    id: protocolDropdown
-                                    dropdownWidth: 120
-                                    popupWidth: 120
-                                    currentValue: printerTab.manualProtocol
-                                    options: ["ipp", "ipps", "lpd", "socket"]
-                                    onValueChanged: value => {
-                                        printerTab.manualProtocol = value;
-                                        printerTab.testConnectionResult = null;
-                                    }
-                                }
-                            }
-
-                            Row {
-                                width: parent.width
-                                spacing: Theme.spacingS
-
-                                Item {
-                                    width: 80
-                                    height: 1
-                                }
-
-                                VgsButton {
-                                    text: printerTab.testingConnection ? I18n.tr("Testing…", "Button state while testing printer connection") : I18n.tr("Test Connection", "Button to test connection to a printer by IP address")
-                                    iconName: printerTab.testingConnection ? "sync" : "lan"
-                                    buttonHeight: 36
-                                    enabled: printerTab.manualHost.length > 0 && !printerTab.testingConnection
-                                    onClicked: {
-                                        printerTab.testingConnection = true;
-                                        printerTab.testConnectionResult = null;
-                                        const port = parseInt(printerTab.manualPort) || 631;
-                                        CupsService.testConnection(printerTab.manualHost, port, printerTab.manualProtocol, response => {
-                                            printerTab.testingConnection = false;
-                                            if (response.error) {
-                                                printerTab.testConnectionResult = {
-                                                    "success": false,
-                                                    "error": response.error
-                                                };
-                                            } else if (response.result) {
-                                                printerTab.testConnectionResult = {
-                                                    "success": response.result.reachable === true,
-                                                    "data": response.result
-                                                };
-                                                if (response.result.reachable) {
-                                                    if (response.result.uri)
-                                                        printerTab.selectedDeviceUri = response.result.uri;
-                                                    if (response.result.name && !printerTab.newPrinterName)
-                                                        printerTab.newPrinterName = response.result.name.replace(/[^a-zA-Z0-9_-]/g, "-").replace(/-+/g, "-").replace(/^-|-$/g, "").substring(0, 32) || "Printer";
-                                                    // Load PPDs if not loaded yet, then select driverless
-                                                    if (CupsService.ppds.length === 0) {
-                                                        CupsService.getPPDs();
-                                                    }
-                                                    selectDriverlessPPD();
-                                                }
-                                            }
-                                        });
-                                    }
-                                }
-                            }
-
-                            Column {
-                                width: parent.width
-                                spacing: Theme.spacingXS
-                                visible: printerTab.testConnectionResult !== null
-
-                                Row {
-                                    spacing: Theme.spacingS
-
-                                    Item {
-                                        width: 80
-                                        height: 1
-                                    }
-
-                                    Rectangle {
-                                        width: 8
-                                        height: 8
-                                        radius: 4
-                                        anchors.verticalCenter: parent.verticalCenter
-                                        color: printerTab.testConnectionResult?.success ? Theme.success : Theme.error
-                                    }
-
-                                    StyledText {
-                                        text: printerTab.testConnectionResult?.success ? I18n.tr("Printer reachable", "Status message when test connection to printer succeeds") : I18n.tr("Connection failed", "Status message when test connection to printer fails")
-                                        font.pixelSize: Theme.fontSizeMedium
-                                        font.weight: Font.Medium
-                                        color: printerTab.testConnectionResult?.success ? Theme.success : Theme.error
-                                    }
-                                }
-
-                                Row {
-                                    spacing: Theme.spacingS
-                                    visible: printerTab.testConnectionResult?.success && (printerTab.testConnectionResult?.data?.makeModel || printerTab.testConnectionResult?.data?.info)
-
-                                    Item {
-                                        width: 80
-                                        height: 1
-                                    }
-
-                                    StyledText {
-                                        text: printerTab.testConnectionResult?.data?.makeModel || printerTab.testConnectionResult?.data?.info || ""
-                                        font.pixelSize: Theme.fontSizeSmall
-                                        color: Theme.surfaceVariantText
-                                    }
-                                }
-
-                                Row {
-                                    spacing: Theme.spacingS
-                                    visible: !printerTab.testConnectionResult?.success && printerTab.testConnectionResult?.data?.error
-
-                                    Item {
-                                        width: 80
-                                        height: 1
-                                    }
-
-                                    StyledText {
-                                        text: printerTab.testConnectionResult?.data?.error || printerTab.testConnectionResult?.error || ""
-                                        font.pixelSize: Theme.fontSizeSmall
-                                        color: Theme.surfaceVariantText
-                                        width: parent.parent.width - 80 - Theme.spacingS
-                                        wrapMode: Text.WordWrap
-                                    }
-                                }
-                            }
-                        }
-
-                        Column {
-                            width: parent.width
-                            spacing: Theme.spacingS
-
-                            Row {
-                                width: parent.width
-                                spacing: Theme.spacingS
-
-                                StyledText {
-                                    text: I18n.tr("Driver")
-                                    font.pixelSize: Theme.fontSizeMedium
-                                    font.weight: Font.Medium
-                                    color: Theme.surfaceText
-                                    width: 80
-                                    anchors.verticalCenter: parent.verticalCenter
-                                }
-
-                                VgsDropdown {
-                                    id: ppdDropdown
-                                    dropdownWidth: parent.width - 80 - refreshPpdsBtn.width - Theme.spacingS * 2
-                                    popupWidth: parent.width - 80 - refreshPpdsBtn.width - Theme.spacingS * 2
-                                    enableFuzzySearch: true
-                                    emptyText: I18n.tr("No drivers found")
-                                    currentValue: {
-                                        if (CupsService.loadingPPDs)
-                                            return I18n.tr("Loading…");
-                                        if (printerTab.selectedPpd) {
-                                            const ppd = CupsService.ppds.find(p => p.name === printerTab.selectedPpd);
-                                            if (ppd) {
-                                                const isSuggested = printerTab.suggestedPPDs.some(s => s.name === ppd.name);
-                                                return (isSuggested ? "★ " : "") + (ppd.makeModel || ppd.name);
-                                            }
-                                            return printerTab.selectedPpd;
-                                        }
-                                        return printerTab.suggestedPPDs.length > 0 ? I18n.tr("Recommended available") : I18n.tr("Select driver…");
-                                    }
-                                    options: {
-                                        const suggested = printerTab.suggestedPPDs.map(p => "★ " + (p.makeModel || p.name));
-                                        const others = CupsService.ppds.filter(p => !printerTab.suggestedPPDs.some(s => s.name === p.name)).map(p => p.makeModel || p.name);
-                                        return suggested.concat(others);
-                                    }
-                                    onValueChanged: value => {
-                                        const cleanValue = value.replace(/^★ /, "");
-                                        const ppd = CupsService.ppds.find(p => (p.makeModel || p.name) === cleanValue);
-                                        if (ppd)
-                                            printerTab.selectedPpd = ppd.name;
-                                    }
-                                }
-
-                                VgsActionButton {
-                                    id: refreshPpdsBtn
-                                    iconName: "refresh"
-                                    buttonSize: 32
-                                    anchors.verticalCenter: parent.verticalCenter
-                                    enabled: !CupsService.loadingPPDs
-                                    onClicked: CupsService.getPPDs()
-
-                                    RotationAnimator on rotation {
-                                        running: CupsService.loadingPPDs
-                                        loops: Animation.Infinite
-                                        from: 0
-                                        to: 360
-                                        duration: 1000
-                                    }
-                                }
-                            }
-
-                            Row {
-                                width: parent.width
-                                spacing: Theme.spacingS
-
-                                StyledText {
-                                    text: I18n.tr("Name")
-                                    font.pixelSize: Theme.fontSizeMedium
-                                    font.weight: Font.Medium
-                                    color: Theme.surfaceText
-                                    width: 80
-                                    anchors.verticalCenter: parent.verticalCenter
-                                }
-
-                                VgsTextField {
-                                    width: parent.width - 80 - Theme.spacingS
-                                    placeholderText: I18n.tr("Printer name (no spaces)")
-                                    text: printerTab.newPrinterName
-                                    onTextEdited: printerTab.newPrinterName = text.replace(/\s/g, "-")
-                                }
-                            }
-
-                            Row {
-                                width: parent.width
-                                spacing: Theme.spacingS
-
-                                StyledText {
-                                    text: I18n.tr("Location")
-                                    font.pixelSize: Theme.fontSizeMedium
-                                    font.weight: Font.Medium
-                                    color: Theme.surfaceText
-                                    width: 80
-                                    anchors.verticalCenter: parent.verticalCenter
-                                }
-
-                                VgsTextField {
-                                    width: parent.width - 80 - Theme.spacingS
-                                    placeholderText: I18n.tr("Optional location")
-                                    text: printerTab.newPrinterLocation
-                                    onTextEdited: printerTab.newPrinterLocation = text
-                                }
-                            }
-
-                            Row {
-                                width: parent.width
-                                spacing: Theme.spacingS
-
-                                StyledText {
-                                    text: I18n.tr("Description")
-                                    font.pixelSize: Theme.fontSizeMedium
-                                    font.weight: Font.Medium
-                                    color: Theme.surfaceText
-                                    width: 80
-                                    anchors.verticalCenter: parent.verticalCenter
-                                }
-
-                                VgsTextField {
-                                    width: parent.width - 80 - Theme.spacingS
-                                    placeholderText: I18n.tr("Optional description")
-                                    text: printerTab.newPrinterInfo
-                                    onTextEdited: printerTab.newPrinterInfo = text
-                                }
-                            }
-                        }
-
-                        Row {
-                            LayoutMirroring.enabled: false
-                            width: parent.width
-                            spacing: Theme.spacingS
-                            layoutDirection: Qt.RightToLeft
-
-                            VgsButton {
-                                text: CupsService.creatingPrinter ? I18n.tr("Creating…") : I18n.tr("Create Printer")
-                                iconName: CupsService.creatingPrinter ? "sync" : "add"
-                                buttonHeight: 36
-                                enabled: printerTab.newPrinterName.length > 0 && printerTab.selectedDeviceUri.length > 0 && printerTab.selectedPpd.length > 0 && !CupsService.creatingPrinter
-                                onClicked: {
-                                    CupsService.createPrinter(printerTab.newPrinterName, printerTab.selectedDeviceUri, printerTab.selectedPpd, {
-                                        location: printerTab.newPrinterLocation,
-                                        information: printerTab.newPrinterInfo
-                                    });
-                                    printerTab.resetAddPrinterForm();
-                                    printerTab.showAddPrinter = false;
-                                }
-                            }
+                        PrinterAddForm {
+                            tab: printerTab
                         }
                     }
                 }
@@ -917,7 +377,7 @@ Item {
                             }
 
                             StyledText {
-                                text: I18n.tr("No printers found — add one from the Add Printer section above")
+                                text: CupsService.printersError.length > 0 ? I18n.tr("Couldn't read printers from the print service") + " — " + CupsService.printersError : I18n.tr("No printers found — add one from the Add Printer section above")
                                 font.pixelSize: Theme.fontSizeMedium
                                 color: Theme.surfaceVariantText
                                 anchors.horizontalCenter: parent.horizontalCenter
@@ -1421,7 +881,7 @@ Item {
                                                                     width: parent.width - 18 - Theme.spacingS
 
                                                                     StyledText {
-                                                                        text: "[" + modelData.id + "] " + CupsService.getJobStateTranslation(modelData.state)
+                                                                        text: "[" + modelData.id + "] " + (CupsService.isJobHeld(modelData) ? I18n.tr("Held") : CupsService.getJobStateTranslation(modelData.state))
                                                                         font.pixelSize: Theme.fontSizeSmall
                                                                         color: Theme.surfaceText
                                                                         elide: Text.ElideRight
@@ -1454,7 +914,7 @@ Item {
                                                                     height: 24
                                                                     radius: 12
                                                                     color: holdJobBtn.containsMouse ? Theme.surfacePressed : Theme.withAlpha(Theme.surfacePressed, 0)
-                                                                    visible: modelData.state === "pending"
+                                                                    visible: !CupsService.isJobHeld(modelData)
 
                                                                     VgsIcon {
                                                                         anchors.centerIn: parent
@@ -1468,7 +928,7 @@ Item {
                                                                         anchors.fill: parent
                                                                         hoverEnabled: true
                                                                         cursorShape: Qt.PointingHandCursor
-                                                                        onClicked: CupsService.holdJob(modelData.id)
+                                                                        onClicked: CupsService.holdJob(modelData.id, "hold")
                                                                     }
                                                                 }
 
@@ -1477,11 +937,11 @@ Item {
                                                                     height: 24
                                                                     radius: 12
                                                                     color: restartJobBtn.containsMouse ? Theme.surfacePressed : Theme.withAlpha(Theme.surfacePressed, 0)
-                                                                    visible: modelData.state === "pending-held" || modelData.state === "completed" || modelData.state === "aborted"
+                                                                    visible: CupsService.isJobHeld(modelData) || modelData.state === "completed" || modelData.state === "aborted"
 
                                                                     VgsIcon {
                                                                         anchors.centerIn: parent
-                                                                        name: "replay"
+                                                                        name: CupsService.isJobHeld(modelData) ? "play_arrow" : "replay"
                                                                         size: 14
                                                                         color: Theme.surfaceVariantText
                                                                     }
@@ -1491,7 +951,7 @@ Item {
                                                                         anchors.fill: parent
                                                                         hoverEnabled: true
                                                                         cursorShape: Qt.PointingHandCursor
-                                                                        onClicked: CupsService.restartJob(modelData.id)
+                                                                        onClicked: CupsService.isJobHeld(modelData) ? CupsService.holdJob(modelData.id, "resume") : CupsService.restartJob(modelData.id)
                                                                     }
                                                                 }
 

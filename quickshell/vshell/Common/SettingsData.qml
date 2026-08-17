@@ -959,7 +959,7 @@ Singleton {
             "showOnLastDisplay": true,
             "leftWidgets": ["launcherButton", "workspaceSwitcher", "focusedWindow"],
             "centerWidgets": ["music", "clock", "weather"],
-            "rightWidgets": ["systemTray", "clipboard", "cpuUsage", "memUsage", "notificationButton", "battery", "controlCenterButton"],
+            "rightWidgets": ["systemTray", "clipboard", "cpuUsage", "memUsage", "printer", "notificationButton", "battery", "controlCenterButton"],
             "spacing": 4,
             "innerPadding": 4,
             "barInsetPadding": -1,

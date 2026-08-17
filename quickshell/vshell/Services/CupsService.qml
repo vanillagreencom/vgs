@@ -47,139 +47,77 @@ Singleton {
     property var ppds: []
     property var printerClasses: []
 
-    readonly property var filteredDevices: {
-        if (!devices || devices.length === 0)
-            return [];
-        const bareProtocols = ["ipp", "ipps", "http", "https", "lpd", "socket", "beh", "dnssd", "mdns", "smb", "file", "cups-brf"];
+    readonly property var discoveredPrinters: CupsDiscovery.groupDevices(devices)
+    readonly property var allJobs: CupsDiscovery.collectJobs(printers, printerNames)
+    // lpstat -o reports every queued job as "pending", so held state is
+    // tracked client-side from successful hold/resume calls.
+    property var heldJobIds: Object.create(null)
+    // A printer refresh blanks every queue's jobs before the per-printer fetch
+    // replies, so allJobs is transiently empty on every refresh. Pruning held
+    // ids from that empty window would drop a job's held marker seconds after
+    // it was set; ids are only pruned once the outstanding fetches have all
+    // answered and the queue is known.
+    property int pendingJobFetches: 0
 
-        // First pass: filter out invalid/bare protocol entries
-        const validDevices = devices.filter(d => {
-            if (!d.uri)
-                return false;
-            const uriLower = d.uri.toLowerCase();
-            for (let proto of bareProtocols) {
-                if (uriLower === proto || uriLower === proto + ":")
-                    return false;
-            }
-            if (d.class === "network" && d.info === "Backend Error Handler")
-                return false;
-            return true;
-        });
+    onAllJobsChanged: root.pruneHeldJobIds()
 
-        // Second pass: prefer IPP over LPD for the same printer
-        // _printer._tcp (LPD) doesn't work well with driverless printing
-        // _ipp._tcp or _ipps._tcp (IPP) should be preferred
-        const ippDeviceHosts = new Set();
-        for (const d of validDevices) {
-            if (!d.uri)
-                continue;
-            // Extract hostname from dnssd URIs like dnssd://Name%20[mac]._ipp._tcp.local
-            const ippMatch = d.uri.match(/dnssd:\/\/[^/]*\._ipps?\._tcp/);
-            if (ippMatch) {
-                // Extract the unique identifier (usually MAC address in brackets)
-                const macMatch = d.uri.match(/\[([a-f0-9]+)\]/i);
-                if (macMatch)
-                    ippDeviceHosts.add(macMatch[1].toLowerCase());
+    function pruneHeldJobIds() {
+        if (pendingJobFetches > 0)
+            return;
+        const next = Object.create(null);
+        for (var i = 0; i < allJobs.length; i++) {
+            if (heldJobIds[allJobs[i].id])
+                next[allJobs[i].id] = true;
+        }
+        for (const id in heldJobIds) {
+            if (!next[id]) {
+                heldJobIds = next;
+                return;
             }
         }
+    }
 
-        // Filter out _printer._tcp devices when we have _ipp._tcp for the same printer
-        return validDevices.filter(d => {
-            if (!d.uri)
-                return true;
-            // If this is an LPD device, check if we have an IPP alternative
-            if (d.uri.includes("._printer._tcp")) {
-                const macMatch = d.uri.match(/\[([a-f0-9]+)\]/i);
-                if (macMatch && ippDeviceHosts.has(macMatch[1].toLowerCase())) {
-                    return false; // Skip LPD device, we have IPP
-                }
-            }
+    function setJobHeld(jobID, held) {
+        const next = Object.create(null);
+        for (const id in heldJobIds)
+            next[id] = true;
+        if (held)
+            next[jobID] = true;
+        else
+            delete next[jobID];
+        heldJobIds = next;
+    }
+
+    function isJobHeld(job) {
+        if (!job)
+            return false;
+        if (job.state === "pending-held" || job.state === "held")
             return true;
-        });
+        return heldJobIds[job.id] === true;
     }
 
     function decodeUri(str) {
-        if (!str)
-            return "";
-        try {
-            return decodeURIComponent(str.replace(/\+/g, " "));
-        } catch (e) {
-            return str;
-        }
+        return CupsDiscovery.decodeUri(str);
     }
 
     function getDeviceDisplayName(device) {
-        if (!device)
-            return "";
-        let name = "";
-        if (device.info && device.info.length > 0) {
-            name = decodeUri(device.info);
-        } else if (device.makeModel && device.makeModel.length > 0) {
-            name = decodeUri(device.makeModel);
-        } else {
-            return decodeUri(device.uri);
-        }
-        if (device.ip)
-            return name + " (" + device.ip + ")";
-        return name;
+        return CupsDiscovery.getDeviceDisplayName(device);
     }
 
     function getDeviceSubtitle(device) {
-        if (!device)
-            return "";
-        const parts = [];
-        switch (device.class) {
-        case "direct":
-            parts.push(I18n.tr("Local"));
-            break;
-        case "network":
-            parts.push(I18n.tr("Network"));
-            break;
-        case "file":
-            parts.push(I18n.tr("File"));
-            break;
-        default:
-            if (device.class)
-                parts.push(device.class);
-        }
-        if (device.location)
-            parts.push(decodeUri(device.location));
-        return parts.join(" • ");
+        return CupsDiscovery.getDeviceSubtitle(device);
     }
 
     function suggestPrinterName(device) {
-        if (!device)
-            return "";
-        let name = device.info || device.makeModel || "";
-        name = name.replace(/[^a-zA-Z0-9_-]/g, "-").replace(/-+/g, "-").replace(/^-|-$/g, "");
-        return name.substring(0, 32) || "Printer";
-    }
-
-    function getMatchingPPDs(device) {
-        if (!device || !ppds || ppds.length === 0)
-            return [];
-        const isDnssd = device.uri && (device.uri.startsWith("dnssd://") || device.uri.startsWith("ipp://") || device.uri.startsWith("ipps://"));
-        if (isDnssd) {
-            const driverless = ppds.filter(p => p.name === "driverless" || p.name === "everywhere" || (p.makeModel && p.makeModel.toLowerCase().includes("driverless")));
-            if (driverless.length > 0)
-                return driverless;
-        }
-        if (!device.makeModel)
-            return [];
-        const makeModelLower = device.makeModel.toLowerCase();
-        const words = makeModelLower.split(/[\s_-]+/).filter(w => w.length > 2);
-        return ppds.filter(p => {
-            if (!p.makeModel)
-                return false;
-            const ppdLower = p.makeModel.toLowerCase();
-            return words.some(w => ppdLower.includes(w));
-        }).slice(0, 10);
+        return CupsDiscovery.suggestPrinterName(device);
     }
 
     property bool loadingDevices: false
     property bool loadingPPDs: false
     property bool loadingClasses: false
     property bool creatingPrinter: false
+    property string devicesError: ""
+    property string printersError: ""
 
     signal cupsStateUpdate
 
@@ -208,7 +146,7 @@ Singleton {
 
         function onCupsStateUpdate(data) {
             log.debug("Subscription update received");
-            getState();
+            applyPrinterSnapshot(data);
         }
 
         function onCapabilitiesChanged() {
@@ -229,14 +167,45 @@ Singleton {
         }
     }
 
+    function applyPrinterSnapshot(data) {
+        if (!data)
+            return;
+        if (data.error) {
+            // Failed snapshot ({printers: [], error}): keep the last good list.
+            printersError = String(data.error);
+            log.warn("CUPS snapshot failed:", printersError);
+            return;
+        }
+        if (!data.printers) {
+            // Mutation broadcasts carry {changed: true} with no printer list.
+            getState();
+            return;
+        }
+        printersError = "";
+        // Claim the refresh BEFORE the reset. updatePrinters blanks every
+        // queue's jobs, and that allJobs change would otherwise prune held ids
+        // in the window before fetchAllJobs raises the count. The claim is
+        // released once the per-printer fetches are outstanding; with no
+        // printers to fetch it lands at zero here and prunes immediately,
+        // which is correct for an empty queue set.
+        pendingJobFetches = pendingJobFetches + 1;
+        updatePrinters(data.printers);
+        fetchAllJobs();
+        pendingJobFetches = Math.max(0, pendingJobFetches - 1);
+        if (pendingJobFetches === 0)
+            root.pruneHeldJobIds();
+    }
+
     function getState() {
         if (!cupsAvailable)
             return;
         VGSBackendService.sendRequest("cups.getPrinters", null, response => {
-            if (response.result) {
-                updatePrinters(response.result);
-                fetchAllJobs();
+            if (response.error) {
+                printersError = String(response.error);
+                log.warn("cups.getPrinters failed:", printersError);
+                return;
             }
+            applyPrinterSnapshot({ printers: response.result || [] });
         });
     }
 
@@ -282,12 +251,16 @@ Singleton {
             "printerName": printerName
         };
 
+        pendingJobFetches = pendingJobFetches + 1;
         VGSBackendService.sendRequest("cups.getJobs", params, response => {
             if (response.result && printers[printerName]) {
                 let updatedPrinters = Object.assign({}, printers);
                 updatedPrinters[printerName].jobs = response.result;
                 printers = updatedPrinters;
             }
+            pendingJobFetches = Math.max(0, pendingJobFetches - 1);
+            if (pendingJobFetches === 0)
+                root.pruneHeldJobIds();
         });
     }
 
@@ -306,31 +279,15 @@ Singleton {
     }
 
     function getPrintersNum() {
-        if (!cupsAvailable)
-            return 0;
-
-        return printerNames.length;
+        return cupsAvailable ? printerNames.length : 0;
     }
 
     function getPrintersNames() {
-        if (!cupsAvailable)
-            return [];
-
-        return printerNames;
+        return cupsAvailable ? printerNames : [];
     }
 
     function getTotalJobsNum() {
-        if (!cupsAvailable)
-            return 0;
-
-        var result = 0;
-        for (var i = 0; i < printerNames.length; i++) {
-            var printerName = printerNames[i];
-            if (printers[printerName] && printers[printerName].jobs) {
-                result += printers[printerName].jobs.length;
-            }
-        }
-        return result;
+        return cupsAvailable ? allJobs.length : 0;
     }
 
     function getCurrentPrinterState() {
@@ -455,11 +412,16 @@ Singleton {
         if (!cupsAvailable)
             return;
         loadingDevices = true;
+        devicesError = "";
         VGSBackendService.sendRequest("cups.getDevices", null, response => {
             loadingDevices = false;
-            if (response.result) {
-                devices = response.result;
+            if (response.error) {
+                devices = [];
+                devicesError = String(response.error);
+                ToastService.showError(I18n.tr("Failed to scan for printers"), devicesError);
+                return;
             }
+            devices = response.result || [];
         });
     }
 
@@ -487,7 +449,7 @@ Singleton {
         });
     }
 
-    function testConnection(host, port, protocol, callback) {
+    function testConnection(host, port, protocol, queue, callback) {
         if (!cupsAvailable)
             return;
         const params = {
@@ -495,6 +457,8 @@ Singleton {
             "port": port,
             "protocol": protocol
         };
+        if (queue)
+            params.queue = queue;
 
         VGSBackendService.sendRequest("cups.testConnection", params, response => {
             if (callback)
@@ -502,7 +466,7 @@ Singleton {
         });
     }
 
-    function createPrinter(name, deviceURI, ppd, options) {
+    function createPrinter(name, deviceURI, ppd, options, callback) {
         if (!cupsAvailable)
             return;
         creatingPrinter = true;
@@ -530,6 +494,8 @@ Singleton {
                 ToastService.showInfo(I18n.tr("Printer created successfully"));
                 getState();
             }
+            if (callback)
+                callback(response);
         });
     }
 
@@ -695,11 +661,13 @@ Singleton {
         if (holdUntil) {
             params.holdUntil = holdUntil;
         }
+        const resuming = holdUntil === "resume" || holdUntil === "no-hold" || holdUntil === "immediate";
 
         VGSBackendService.sendRequest("cups.holdJob", params, response => {
             if (response.error) {
-                ToastService.showError(I18n.tr("Failed to hold job"), response.error);
+                ToastService.showError(resuming ? I18n.tr("Failed to resume job") : I18n.tr("Failed to hold job"), response.error);
             } else {
+                setJobHeld(jobID, !resuming);
                 fetchAllJobs();
             }
         });
@@ -784,6 +752,7 @@ Singleton {
 
     readonly property var states: ({
             "idle": I18n.tr("Idle"),
+            "printing": I18n.tr("Printing"),
             "processing": I18n.tr("Processing"),
             "stopped": I18n.tr("Stopped")
         })

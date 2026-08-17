@@ -2,6 +2,7 @@ package cups
 
 import (
 	"encoding/json"
+	"net"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -37,13 +38,50 @@ func TestParseJobs(t *testing.T) {
 	}
 }
 
-func TestParseDevices(t *testing.T) {
-	devices := parseDevices([]byte("network ipp://user:secret@printer.local/ipp/print\n"))
-	if len(devices) != 1 {
-		t.Fatalf("len(devices) = %d, want 1", len(devices))
+func TestHandleTestConnectionReturnsURI(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
 	}
-	if devices[0].Class != "network" || devices[0].IP != "printer.local" || strings.Contains(devices[0].URI, "secret") {
-		t.Fatalf("unexpected device: %#v", devices[0])
+	port := ln.Addr().(*net.TCPAddr).Port
+	m, _ := fakeManager(t)
+	got, err := m.handleTestConnection(mustJSON(t, testParams{Host: "127.0.0.1", Port: port, Protocol: "ipp"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, ok := got.(map[string]any)
+	if !ok {
+		t.Fatalf("result type %T", got)
+	}
+	wantURI, err := buildManualDeviceURI("ipp", "127.0.0.1", port, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out["reachable"] != true || out["uri"] != wantURI {
+		t.Fatalf("reachable result = %#v, want uri %q", out, wantURI)
+	}
+	got, err = m.handleTestConnection(mustJSON(t, testParams{Host: "127.0.0.1", Port: port, Protocol: "lpd", Queue: "rawq"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, ok = got.(map[string]any)
+	if !ok {
+		t.Fatalf("lpd result type %T", got)
+	}
+	if out["reachable"] != true || out["uri"] != "lpd://127.0.0.1:"+strconv.Itoa(port)+"/rawq" {
+		t.Fatalf("lpd queue result = %#v", out)
+	}
+	_ = ln.Close()
+	got, err = m.handleTestConnection(mustJSON(t, testParams{Host: "127.0.0.1", Port: port, Protocol: "ipp"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, ok = got.(map[string]any)
+	if !ok {
+		t.Fatalf("closed result type %T", got)
+	}
+	if out["reachable"] != false || out["uri"] != wantURI {
+		t.Fatalf("closed result = %#v, want uri %q", out, wantURI)
 	}
 }
 
@@ -63,9 +101,12 @@ func TestParsePrinterDisabledAndRejecting(t *testing.T) {
 }
 
 func TestParsePPDsAndClasses(t *testing.T) {
-	ppds := parsePPDs([]byte("everywhere IPP Everywhere\nsample.ppd Sample Printer\n"))
-	if len(ppds) != 2 || ppds[1].Name != "sample.ppd" || ppds[1].MakeModel != "Sample Printer" {
+	ppds := parsePPDs([]byte("everywhere IPP Everywhere\nsample.ppd Sample Printer\ndriverless:ipps://Brother%20HL-L2460DW._ipps._tcp.local/ Brother HL-L2460DW, driverless\n"))
+	if len(ppds) != 3 || ppds[1].Name != "sample.ppd" || ppds[1].MakeModel != "Sample Printer" {
 		t.Fatalf("unexpected ppds: %#v", ppds)
+	}
+	if ppds[2].Name != "driverless:ipps://Brother%20HL-L2460DW._ipps._tcp.local/" {
+		t.Fatalf("unexpected driverless ppd: %#v", ppds[2])
 	}
 	classes := parseClasses([]byte("members of class Lab: Office Shipping\n"))
 	if len(classes) != 1 || classes[0].Name != "Lab" || strings.Join(classes[0].Members, ",") != "Office,Shipping" {
@@ -185,6 +226,9 @@ func TestCupsWriteHandlersRejectInvalidInput(t *testing.T) {
 		{"bad host", func() (any, error) {
 			return m.handleTestConnection(mustJSON(t, testParams{Host: "bad host", Port: 631}))
 		}},
+		{"bad lpd queue", func() (any, error) {
+			return m.handleTestConnection(mustJSON(t, testParams{Host: "printer.local", Protocol: "lpd", Queue: "raw/q"}))
+		}},
 	}
 	for _, tc := range cases {
 		if _, err := tc.call(); err == nil {
@@ -193,6 +237,38 @@ func TestCupsWriteHandlersRejectInvalidInput(t *testing.T) {
 	}
 	if log := readLog(t, logPath); log != "" {
 		t.Fatalf("invalid inputs ran commands:\n%s", log)
+	}
+}
+
+func TestCreatePrinterAcceptsBonjourDeviceURI(t *testing.T) {
+	m, logPath := fakeManager(t)
+	if _, err := m.handleCreatePrinter(mustJSON(t, createParams{
+		Name:      "Brother",
+		DeviceURI: "dnssd://Brother%20HL-L2460DW._ipp._tcp.local/?uuid=e3248000-80ce-11db-8000-94ddf8e120ec",
+		PPD:       "everywhere",
+	})); err != nil {
+		t.Fatal(err)
+	}
+	log := readLog(t, logPath)
+	if !strings.Contains(log, "lpadmin -p Brother -E -v dnssd://Brother%20HL-L2460DW._ipp._tcp.local/?uuid=e3248000-80ce-11db-8000-94ddf8e120ec -m everywhere") {
+		t.Fatalf("bonjour create missing lpadmin:\n%s", log)
+	}
+}
+
+func TestCreatePrinterAcceptsDriverlessPPD(t *testing.T) {
+	m, logPath := fakeManager(t)
+	ppd := "driverless:ipps://Brother%20HL-L2460DW._ipps._tcp.local/"
+	if _, err := m.handleCreatePrinter(mustJSON(t, createParams{
+		Name:      "Brother",
+		DeviceURI: "ipps://Brother%20HL-L2460DW._ipps._tcp.local/",
+		PPD:       ppd,
+	})); err != nil {
+		t.Fatal(err)
+	}
+	log := readLog(t, logPath)
+	want := "lpadmin -p Brother -E -v ipps://Brother%20HL-L2460DW._ipps._tcp.local/ -m " + ppd
+	if !strings.Contains(log, want) {
+		t.Fatalf("driverless create missing lpadmin:\n%s", log)
 	}
 }
 
@@ -242,7 +318,7 @@ func fakeCupsCommand(t *testing.T, dir, name, logPath string) string {
 		"printf '%s' \"" + name + "\" >> " + shellQuote(logPath) + "\n" +
 		"for arg in \"$@\"; do printf ' %s' \"$arg\" >> " + shellQuote(logPath) + "; done\n" +
 		"printf '\\n' >> " + shellQuote(logPath) + "\n" +
-		"if [ \"" + name + "\" = lpinfo ] && [ \"$1\" = -m ]; then printf 'everywhere IPP Everywhere\\nsample.ppd Sample Printer\\n'; fi\n" +
+		"if [ \"" + name + "\" = lpinfo ] && [ \"$1\" = -m ]; then printf '%s\\n' 'everywhere IPP Everywhere' 'sample.ppd Sample Printer'; fi\n" +
 		"exit 0\n"
 	if err := os.WriteFile(path, []byte(body), 0o755); err != nil {
 		t.Fatal(err)
