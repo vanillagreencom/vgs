@@ -182,8 +182,18 @@ Singleton {
             return;
         }
         printersError = "";
+        // Claim the refresh BEFORE the reset. updatePrinters blanks every
+        // queue's jobs, and that allJobs change would otherwise prune held ids
+        // in the window before fetchAllJobs raises the count. The claim is
+        // released once the per-printer fetches are outstanding; with no
+        // printers to fetch it lands at zero here and prunes immediately,
+        // which is correct for an empty queue set.
+        pendingJobFetches = pendingJobFetches + 1;
         updatePrinters(data.printers);
         fetchAllJobs();
+        pendingJobFetches = Math.max(0, pendingJobFetches - 1);
+        if (pendingJobFetches === 0)
+            root.pruneHeldJobIds();
     }
 
     function getState() {
