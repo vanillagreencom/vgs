@@ -24,9 +24,28 @@ PluginComponent {
     readonly property var visibleJobs: CupsService.allJobs
     readonly property int jobCount: visibleJobs.length
     readonly property bool hasPrinters: CupsService.cupsAvailable && CupsService.getPrintersNum() > 0
-    readonly property string printerState: CupsService.getCurrentPrinterState()
+
+    // The pill aggregates jobs across every queue, so the header has to name the
+    // queue the work is on. Naming the Settings selection instead lets the
+    // popout call one printer idle while listing another one's job.
+    readonly property string connectedName: {
+        const job = root.visibleJobs.length > 0 ? root.visibleJobs[0] : null;
+        if (job && job.printer)
+            return job.printer;
+        for (const name of CupsService.printerNames) {
+            const printer = CupsService.printers[name];
+            if (printer && (printer.state === "printing" || printer.state === "processing"))
+                return name;
+        }
+        return CupsService.getSelectedPrinter() || (CupsService.printerNames.length > 0 ? CupsService.printerNames[0] : "");
+    }
+    readonly property string printerState: {
+        if (!CupsService.cupsAvailable || !root.connectedName)
+            return "";
+        const printer = CupsService.printers[root.connectedName];
+        return printer ? printer.state : "";
+    }
     readonly property bool isBusy: jobCount > 0 || printerState === "printing" || printerState === "processing"
-    readonly property string connectedName: CupsService.getSelectedPrinter() || (CupsService.printerNames.length > 0 ? CupsService.printerNames[0] : "")
 
     _visibilityOverride: true
     _visibilityOverrideValue: root.pillRevealed
@@ -40,7 +59,10 @@ PluginComponent {
             return I18n.tr("No printers");
         if (!root.isBusy)
             return I18n.tr("Idle");
-        return CupsService.getCurrentPrinterStatePrettyShort() || I18n.tr("Printing");
+        const printer = CupsService.printers[root.connectedName];
+        if (!printer)
+            return I18n.tr("Printing");
+        return CupsService.getPrinterStateTranslation(printer.state) + " (" + CupsService.getPrinterStateReasonTranslation(printer.stateReason) + ")";
     }
 
     function openPrinterSettings() {

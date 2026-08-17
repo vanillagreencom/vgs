@@ -119,6 +119,23 @@ Singleton {
         return device.uri || "";
     }
 
+    // Rank on what the candidate actually offers, not just its URI scheme: two
+    // Bonjour records for one printer share the dnssd scheme, so ranking by
+    // scheme alone leaves the tie-break to string order and recommends the
+    // plaintext _ipp record over the _ipps one.
+    function candidateRank(uri) {
+        const scheme = root.deviceScheme(uri);
+        if (scheme === "dnssd" || scheme === "mdns") {
+            const lower = root.decodeUri(uri).toLowerCase();
+            if (lower.includes("._ipps._tcp"))
+                return 0;
+            if (lower.includes("._ipp._tcp"))
+                return 1;
+            return 2;
+        }
+        return root.schemeRank(scheme) + 2;
+    }
+
     function schemeRank(scheme) {
         switch (scheme) {
         case "dnssd":
@@ -155,7 +172,7 @@ Singleton {
 
     function pickRecommended(candidates) {
         return candidates.slice().sort((a, b) => {
-            const rank = root.schemeRank(root.deviceScheme(a.uri)) - root.schemeRank(root.deviceScheme(b.uri));
+            const rank = root.candidateRank(a.uri) - root.candidateRank(b.uri);
             if (rank !== 0)
                 return rank;
             return (a.uri || "").localeCompare(b.uri || "");

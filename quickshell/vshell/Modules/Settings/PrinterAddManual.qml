@@ -162,7 +162,12 @@ Column {
                     tab.testingConnection = false;
                     // Inputs edited while the test was in flight: the response
                     // describes an address the form no longer shows, so drop it
-                    // and leave the form untested.
+                    // and leave the form untested. Switching to Discover leaves
+                    // all four inputs untouched, so mode is checked separately —
+                    // otherwise a late manual result arms Create with the old
+                    // address while the discovery picker is on screen.
+                    if (!tab.manualEntryMode)
+                        return;
                     const currentPort = parseInt(tab.manualPort) || parseInt(root.defaultPortFor(tab.manualProtocol));
                     const currentQueue = tab.manualProtocol === "lpd" ? tab.manualQueue : "";
                     if (tested.host !== tab.manualHost || tested.port !== currentPort || tested.protocol !== tab.manualProtocol || tested.queue !== currentQueue)
