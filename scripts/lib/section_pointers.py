@@ -63,8 +63,13 @@ from __future__ import annotations
 import re
 from bisect import bisect_right
 from typing import NamedTuple
-from pathlib import PurePosixPath
 
+from pointer_targets import (
+    names_a_document,
+    names_a_file,
+    resolve_target,
+    unresolved,
+)
 from prose_blocks import blocks, fence_left_open, normalized_words
 
 SECTION_MARK = "§"
@@ -98,21 +103,6 @@ INHERITANCE_STOPS = SEPARATORS.replace(",", "")
 # "…live session." yields the whole heading rather than one word less.
 TERMINATORS = set(".,;:!?()[]{}\"`|—–")
 
-# A token naming a document: a path, a bare name carrying an extension, or a
-# decision-record id. What it separates is a pointer with a target from a bare
-# one, where the word before the mark is only the sentence running into it
-# ("see § Niri"). Getting that wrong in the permissive direction would resolve a
-# document's own prose against some other document.
-FILE_TOKEN = re.compile(r"^[\w.+-]+\.[A-Za-z0-9]+$")
-# `D008 § Scope` NAMES A DOCUMENT and was read as a sentence word until this
-# existed, so three live pointers in `scripts/qml-smoke.sh` went unchecked — in
-# `docs/decisions/`, one of the trees this guard exists for. The rule stays
-# directory-agnostic: it resolves against the tracked set by BASENAME PREFIX,
-# `D008` to the one document whose name begins `D008-`, so it carries no
-# knowledge of where decision records happen to live.
-DECISION_TOKEN = re.compile(r"^D\d{3}$")
-
-
 def target_token(before: str) -> str:
     """The token a pointer cites, or "" when the pointer is bare.
 
@@ -129,23 +119,6 @@ def target_token(before: str) -> str:
         return ""
     token = text.split()[-1].lstrip(OPENERS).rstrip(CLOSERS)
     return token.rsplit("](", 1)[1] if "](" in token else token
-
-
-def names_a_file(token: str) -> bool:
-    """Whether a token names a document rather than being a sentence word."""
-    return bool(token) and (
-        "/" in token or bool(FILE_TOKEN.match(token)) or bool(DECISION_TOKEN.match(token))
-    )
-
-
-def names_a_document(token: str) -> bool:
-    """Whether a token is one this parser can resolve to a markdown file.
-
-    A path into a code region (`bin/vshell-helper`) names a file but not a
-    document: there are no headings to parse there, so it is out of scope rather
-    than unresolvable.
-    """
-    return token.endswith(".md") or bool(DECISION_TOKEN.match(token))
 
 
 def cited_name(after: str) -> tuple[str, bool, str | None]:
@@ -222,58 +195,6 @@ def pointers(path: str, text: str) -> list[tuple[int, str, str, bool, str | None
     return found
 
 
-def resolve_target(
-    token: str, citer: str, markdown: dict[str, object]
-) -> tuple[str, str]:
-    """(path, spelling) for the tracked markdown file a token names.
-
-    ("", "") when it names none. Repo-relative first, then relative to the citing
-    file (markdown links write `../decisions/D001-….md`), then a basename, then a
-    decision id by basename prefix — the last two only when exactly one tracked
-    document carries it, since two would make the pointer ambiguous rather than
-    resolvable, and an ambiguous pointer is reported rather than answered by
-    whichever path sorted first.
-
-    The spelling is returned, not merely used: it is what lets the caller assert
-    each half of the grammar is still exercised somewhere in the tree.
-    """
-    if DECISION_TOKEN.match(token):
-        records = [rel for rel in markdown if rel.rsplit("/", 1)[-1].startswith(f"{token}-")]
-        return (records[0], "decision-record id") if len(records) == 1 else ("", "")
-    if token in markdown:
-        return token, "repo-relative path"
-    parts: list[str] = []
-    for part in (PurePosixPath(citer).parent / token).parts:
-        if part == "..":
-            if parts:
-                parts.pop()
-        elif part != ".":
-            parts.append(part)
-    relative = "/".join(parts)
-    if relative in markdown:
-        return relative, "citer-relative link"
-    basenames = [rel for rel in markdown if rel.rsplit("/", 1)[-1] == token]
-    return (basenames[0], "unique basename") if len(basenames) == 1 else ("", "")
-
-
-def unresolved(token: str, unreadable: dict[str, str]) -> str:
-    """Why a token naming a document resolved to nothing, in the caller's terms.
-
-    THREE DIFFERENT CAUSES, and only one of them is the citer's fault. Collapsing
-    them into "not a tracked markdown file. Repoint it" was wrong in every clause
-    for the other two: the file IS tracked, the path IS right, and repointing is
-    not the repair. `unreadable` carries the two the caller can distinguish —
-    a blob that is not text, and a document the caller excluded from parsing.
-    """
-    if token in unreadable:
-        return f"{unreadable[token]}, so its headings could not be parsed"
-    return (
-        "is not a tracked markdown file. Repoint it at the file that owns the "
-        "section now, or write the repo-relative path if the basename is "
-        "ambiguous or shared"
-    )
-
-
 class Judged(NamedTuple):
     """What `pointer_problems` found, including the marks it declined to own.
 
@@ -340,7 +261,7 @@ def pointer_problems(
                 if not target:
                     problems.append(
                         f"{where} cites `{token} {SECTION_MARK} {name}`, but {token} "
-                        f"{unresolved(token, unreadable)}."
+                        f"{unresolved(token, rel, unreadable)}."
                     )
                     continue
                 if inherited:

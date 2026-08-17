@@ -31,8 +31,44 @@ still judges the tracked bytes.
 
 from __future__ import annotations
 
+import os
 import subprocess
 from pathlib import Path
+
+# Environment variables that RE-AIM git at another repository. Every one is
+# deleted before any git call here, because `-C <path>` does NOT override them:
+# an absolute `GIT_INDEX_FILE` pointed elsewhere makes `git -C fixture add -A`
+# write the fixture's paths into THAT repository's index, leaving it referencing
+# blobs that live in the fixture's object store — `git status` there then answers
+# `fatal: unable to read <sha>`. Verified both directions before this was
+# written: the RELATIVE `GIT_INDEX_FILE=.git/index` that git exports to hooks is
+# re-resolved by `-C` and is harmless, and git exports neither GIT_DIR nor
+# GIT_WORK_TREE to hooks at all. So the trigger is an ABSOLUTE variable — the
+# shape of tooling that drives a checkout other than its own, which is the
+# pattern this repo's `.worktrees/` layout uses.
+GIT_REDIRECTS = (
+    "GIT_DIR",
+    "GIT_WORK_TREE",
+    "GIT_INDEX_FILE",
+    "GIT_OBJECT_DIRECTORY",
+    "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+    "GIT_COMMON_DIR",
+    "GIT_CEILING_DIRECTORIES",
+)
+
+
+def git_env(hermetic: bool = False) -> dict[str, str]:
+    """The ambient environment with every repo-redirecting variable removed.
+
+    `hermetic` also silences user and system config, so a fixture repository
+    cannot inherit a `core.excludesFile` that quietly declines to add its own
+    fixtures.
+    """
+    env = {name: value for name, value in os.environ.items() if name not in GIT_REDIRECTS}
+    if hermetic:
+        env["GIT_CONFIG_GLOBAL"] = os.devnull
+        env["GIT_CONFIG_SYSTEM"] = os.devnull
+    return env
 
 # Index modes worth reading. 120000 is a SYMLINK, whose blob is the link target
 # — a path, not prose — and 160000 a submodule gitlink, which has no blob here.
@@ -63,6 +99,7 @@ def git(root: Path, *arguments: str, stdin: bytes | None = None) -> bytes:
         input=stdin,
         capture_output=True,
         check=False,
+        env=git_env(),
     )
     if result.returncode != 0:
         detail = result.stderr.decode("utf-8", "replace").strip()
@@ -118,16 +155,42 @@ def blob_texts(
                 f"concluded from a truncated read"
             )
         header = stream[offset:end].decode("utf-8", "replace").split()
+        # EVERY FIELD GIT ECHOES IS CHECKED, because the pairing is positional.
+        # Records are zipped against `wanted` by ORDER — keying by sha would
+        # collapse two identical files into one entry — so the echoed sha, type
+        # and length are the only evidence the order actually held. Without them
+        # a desynced stream pairs each path with a DIFFERENT file's text, and
+        # the guard reports findings against paths that never carried them.
         if len(header) != 3:
             raise GitError(
                 f"`git cat-file --batch` answered '{' '.join(header)}' for {path} "
                 f"({sha}), which is not a blob record"
             )
+        if header[0] != sha or header[1] != "blob":
+            raise GitError(
+                f"`git cat-file --batch` answered for {header[0]} ({header[1]}) where "
+                f"{sha} (blob) was asked, at {path}. The stream has desynced, so every "
+                f"path after this one would carry another file's text"
+            )
         size = int(header[2])
         blob = stream[end + 1 : end + 1 + size]
+        # Slicing past the end CANNOT raise, so a truncated final record would
+        # otherwise arrive as a short but complete-looking string; the `end == -1`
+        # guard above only fires for a record that has a successor.
+        if len(blob) != size:
+            raise GitError(
+                f"`git cat-file --batch` declared {size} bytes for {path} and sent "
+                f"{len(blob)}. NOTHING can be concluded from a truncated read"
+            )
         offset = end + 1 + size + 1
         try:
             files[path] = blob.decode("utf-8")
         except UnicodeDecodeError as error:
             undecodable[path] = f"not UTF-8 text ({error.reason} at byte {error.start})"
+    if offset != len(stream):
+        raise GitError(
+            f"`git cat-file --batch` sent {len(stream) - offset} bytes beyond the "
+            f"{len(wanted)} records asked for, so the stream and the request do not "
+            f"describe the same thing"
+        )
     return files, undecodable

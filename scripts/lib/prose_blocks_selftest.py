@@ -124,6 +124,37 @@ def selftest() -> int:
         if headings(unbalanced) and not headings(balanced):
             failures.append(f"{case}: the heading reader disagrees about what a fence is")
 
+    # A HEADING INSIDE A FENCE IS NOT A HEADING, pinned on `headings()` directly
+    # and with NO heading outside the fence — the earlier pair began with one, so
+    # both sides were truthy and the assertion above could not fire either way.
+    # The fail-open direction is the one that matters: a fenced illustration
+    # would otherwise satisfy a pointer whose real heading had been deleted.
+    fenced_only = "```\n## Fenced only\n```\n"
+    if headings(fenced_only):
+        failures.append(
+            f"a heading inside a fence was parsed as a real one: "
+            f"{headings(fenced_only)}. A fenced illustration would then satisfy a "
+            f"pointer whose actual heading was deleted"
+        )
+    if not headings(fenced_only.replace("```\n", "", 2)):
+        failures.append(
+            "the same heading UNFENCED was not parsed either, so the control above "
+            "passes on a reader that finds no headings at all"
+        )
+
+    # And one layer up, where it decides a verdict: a pointer at a heading that
+    # exists only inside a fence must be REPORTED.
+    doc_fenced = {"doc.md": "# D\n\n```\n## Live section\n```\n"}
+    if not pointer_problems(
+        dict(doc_fenced, **{"citer.md": f"# C\n\n`doc.md` {SECTION_MARK} Live section.\n"}),
+        {"doc.md": headings(doc_fenced["doc.md"]), "citer.md": headings("# C\n")},
+        lambda *_: [],
+    ).problems:
+        failures.append(
+            "a pointer at a heading that exists only inside a fenced example was "
+            "accepted, so an illustration can stand in for a section that is gone"
+        )
+
     for failure in failures:
         print(f"prose_blocks selftest: {failure}", file=sys.stderr)
     if failures:

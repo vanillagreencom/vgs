@@ -13,25 +13,22 @@ one, or a rule that reports everything satisfies both; and a control that could
 be answered by a different rule asserts what the finding SAYS, not merely that
 one exists.
 
-`check.exempt` is imported rather than stubbed for the exemption paths, so a
+`NO_EXEMPTIONS` is imported rather than stubbed for the exemption paths, so a
 control cannot pass against a table the check does not actually use.
 """
 
-import importlib.util
 import sys
 from pathlib import Path
 
-HERE = Path(__file__).resolve().parent
-sys.path.insert(0, str(HERE))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 import section_pointers as check_lib  # noqa: E402
 from prose_blocks import headings  # noqa: E402
 from section_pointers import SECTION_MARK, pointer_problems  # noqa: E402
 
-_SPEC = importlib.util.spec_from_file_location(
-    "check_section_pointers", HERE.parent / "check-section-pointers.py"
-)
-check = importlib.util.module_from_spec(_SPEC)
-_SPEC.loader.exec_module(check)
+
+def NO_EXEMPTIONS(*_args) -> list:  # noqa: N802 - reads as the constant it is
+    """No pointer here is exempt; the exemption table is another file's subject."""
+    return []
 
 DOC = (
     "# Doc\n\n## Live section\n\n## Popout surfaces are screen-tall (and frosted)\n\n"
@@ -43,7 +40,7 @@ def cited_in(path: str, citer: str) -> list[str]:
     """The pointer arm's findings for one fixture file citing DOC."""
     files = {"doc.md": DOC, path: citer}
     markdown = {rel: headings(files[rel]) for rel in files if rel.endswith(".md")}
-    return pointer_problems(files, markdown, check.exempt).problems
+    return pointer_problems(files, markdown, NO_EXEMPTIONS).problems
 
 
 def cited(citer: str) -> list[str]:
@@ -72,18 +69,18 @@ def pointer_controls() -> list[str]:
         "citer.py": f"# out of scope (D008 {SECTION_MARK} Gone section).\n",
     }
     md = {"docs/decisions/D008-nested-sandbox.md": headings(DOC)}
-    if not pointer_problems(records, md, check.exempt).problems:
+    if not pointer_problems(records, md, NO_EXEMPTIONS).problems:
         failures.append(
             "a decision-record id resolved to nothing or was declined as a sentence "
             "word, so pointers into docs/decisions/ go unchecked"
         )
     live = dict(records, **{"citer.py": f"# see D008 {SECTION_MARK} Live section.\n"})
-    if pointer_problems(live, md, check.exempt).problems:
+    if pointer_problems(live, md, NO_EXEMPTIONS).problems:
         failures.append("a decision-record id naming a real heading was reported")
     two = dict(md, **{"other/D008-duplicate.md": headings(DOC)})
     if not any(
         "not a tracked markdown file" in problem
-        for problem in pointer_problems(live, two, check.exempt).problems
+        for problem in pointer_problems(live, two, NO_EXEMPTIONS).problems
     ):
         failures.append(
             "a decision id carried by TWO records resolved anyway, so an ambiguous "
@@ -113,7 +110,7 @@ def pointer_controls() -> list[str]:
     unreadable = pointer_problems(
         {"citer.md": f"# C\n\n`odd/doc.md` {SECTION_MARK} Live section.\n"},
         {},
-        check.exempt,
+        NO_EXEMPTIONS,
         {"odd/doc.md": "not UTF-8 text (invalid start byte at byte 2)"},
     ).problems
     if not any("headings could not be parsed" in problem for problem in unreadable):
@@ -132,7 +129,7 @@ def pointer_controls() -> list[str]:
     handed = pointer_problems(
         {"doc.md": DOC, "citer.md": f"# C\n\n`doc.md` {SECTION_MARK} Gone section.\n"},
         {"doc.md": headings(DOC), "citer.md": headings("# C\n")},
-        check.exempt,
+        NO_EXEMPTIONS,
         remedy=" SENTINEL.",
     ).problems
     if not any("SENTINEL." in problem for problem in handed):
@@ -187,6 +184,51 @@ def pointer_controls() -> list[str]:
             "the numbered-step skip has widened into pointers it was never meant to own"
         )
 
+    # A `..` THAT CLIMBS PAST THE ROOT is refused, not clamped, which made a link
+    # naming something outside the repo resolve to a tracked file. Paired with
+    # the same link one directory down, where it legitimately resolves.
+    docs = {"AGENTS.md": DOC, "sub/deep.md": DOC}
+    md = {rel: headings(text) for rel, text in docs.items()}
+    for case, citer, link, want in (
+        ("climbing past the root", "README.md", "../AGENTS.md", True),
+        ("staying inside it", "sub/note.md", "../AGENTS.md", False),
+    ):
+        reported = bool(
+            pointer_problems(
+                dict(docs, **{citer: f"# C\n\n[bad]({link}) {SECTION_MARK} Live section.\n"}),
+                md,
+                NO_EXEMPTIONS,
+            ).problems
+        )
+        if reported is not want:
+            failures.append(
+                f"a citer-relative link {case} came out wrong: a path that leaves the "
+                f"repository cannot be what the author meant, and clamping it back to "
+                f"the root makes a malformed pointer read as a correct one"
+            )
+
+    # THE UNREADABLE CAUSE REACHES EVERY SPELLING. Keying the map by the raw
+    # token left the other three falling back to the message this round retired.
+    broken = {"docs/architecture/design.md": "not UTF-8 text", "docs/decisions/D001-x.md": "not UTF-8 text"}
+    for spelling, citer, token in (
+        ("repo-relative path", "citer.md", "docs/architecture/design.md"),
+        ("unique basename", "citer.md", "design.md"),
+        ("citer-relative link", "docs/upstream/n.md", "../architecture/design.md"),
+        ("decision-record id", "citer.md", "D001"),
+    ):
+        found = pointer_problems(
+            {citer: f"# C\n\n`{token}` {SECTION_MARK} Live section.\n"},
+            {},
+            NO_EXEMPTIONS,
+            broken,
+        ).problems
+        if not any("could not be parsed" in problem for problem in found):
+            failures.append(
+                f"a target cited by {spelling} fell back to the retired 'not a tracked "
+                f"markdown file' message, which sends the reader to fix a correct path: "
+                f"{found}"
+            )
+
     # THE DECLINED CENSUS, the fourth collection point: a count nobody asserts
     # can go to zero while the marks keep being dropped. Driven per reason.
     declined = pointer_problems(
@@ -196,7 +238,7 @@ def pointer_controls() -> list[str]:
             "citer.md": f"# C\n\n`doc.md` {SECTION_MARK} 4 covers it.\n",
         },
         {"doc.md": headings(DOC), "citer.md": headings("# C\n")},
-        check.exempt,
+        NO_EXEMPTIONS,
     ).declined
     expected = {
         "at a code region": 1,
@@ -305,7 +347,7 @@ def pointer_controls() -> list[str]:
     unique = {"a/dup.md": DOC, "citer.md": "`dup.md` § Live section\n"}
     for case, files, want in (("ambiguous", shared, True), ("unique", unique, False)):
         markdown = {rel: headings(files[rel]) for rel in files if rel.endswith(".md")}
-        if bool(pointer_problems(files, markdown, check.exempt).problems) is not want:
+        if bool(pointer_problems(files, markdown, NO_EXEMPTIONS).problems) is not want:
             failures.append(
                 f"the {case} basename case came out wrong: an ambiguous pointer must be "
                 f"reported, never answered by whichever path sorted first"
@@ -319,7 +361,7 @@ def pointer_controls() -> list[str]:
         "citer.md": "`doc.md` § Gone section.\n",
     }
     capped = pointer_problems(
-        wide, {rel: headings(wide[rel]) for rel in wide}, check.exempt
+        wide, {rel: headings(wide[rel]) for rel in wide}, NO_EXEMPTIONS
     ).problems
     if not any("… 3 more" in problem for problem in capped):
         failures.append(

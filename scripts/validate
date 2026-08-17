@@ -45,9 +45,9 @@
 # carries a `__main__` only for that; `session-snapshot.sh`,
 # `vendor-drift.sh`, `vendor-drift-report.sh` and `vendor-drift-test.sh` are
 # sourced, `validation_manifest.py` is imported by the inventory guard,
-# `collected.py`, `section_pointers.py`, `prose_blocks.py` and `tracked_blobs.py`
-# by the checks that collect and by the pointer guard, and `qml_scrub_selftest.py`
-# and `shell_scan_selftest.py` by the two self-test entry points above, none of
+# `collected.py`, `section_pointers.py`, `pointer_targets.py`, `prose_blocks.py`
+# and `tracked_blobs.py` by the checks that collect and by the pointer guard, and
+# `qml_scrub_selftest.py` and `shell_scan_selftest.py` by the entry points above, none of
 # them run; `section_pointers_selftest.py` and `prose_blocks_selftest.py` join
 # that list of libraries carrying a `__main__` only for their own self-test).
 # `bin/vshell_niri.py`,

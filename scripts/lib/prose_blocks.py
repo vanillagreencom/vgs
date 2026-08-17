@@ -163,4 +163,3 @@ def blocks(text: str, is_markdown: bool) -> list[tuple[str, list[tuple[int, int]
         previous_is_comment = is_comment
     flush()
     return out
-

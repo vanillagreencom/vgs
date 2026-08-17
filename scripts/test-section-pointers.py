@@ -49,7 +49,9 @@ red, and the ones marked (+) were added by review after surviving unnoticed.
   tracked_blobs.py      git()'s non-zero exit returns normally   (+)
                         cat-file's record shape goes unchecked   (+)
                         content read from the working tree instead of the blob
-  check-...pointers.py  each of the four `problems.extend` calls, dropped   (+)
+  check-...pointers.py  each `problems.extend` call, dropped — FIVE of them, two
+                        in audit and three in main; the e2e has one isolating
+                        tree per arm, so use those cases rather than a count   (+)
                         `if problems:` -> `if False:`   (+)
                         exemptions match loosely again   (+)
                         both HISTORICAL_SECTIONS staleness arms
@@ -58,6 +60,16 @@ red, and the ones marked (+) were added by review after surviving unnoticed.
                         the GRAMMAR_SPELLINGS anchor dropped
                         TARGET_ANCHORS reduced to one member   (+)
                         SKIP_ROOTS filters targets again   (+)
+                        TARGET_ANCHOR_ROOTS emptied   (+)
+                        GRAMMAR_SPELLINGS replaced with []   (+)
+                        the symlink cause map not merged in   (+)
+  tracked_blobs.py      the echoed sha/type check dropped   (+)
+                        the record-length check dropped   (+)
+                        the end-of-stream check dropped   (+)
+                        git_env stops removing GIT_REDIRECTS   (+)
+  prose_blocks.py       headings() stops honouring fences   (+)
+  section_pointers.py   an escaping `..` clamped back to the root   (+)
+                        the unreadable cause keyed on the raw token only   (+)
 """
 
 from __future__ import annotations
@@ -103,12 +115,20 @@ def collection_controls() -> list[str]:
                 f"nothing did: {diagnostics}"
             )
 
-    empty, partial = "Nothing was examined", "expected member(s) are absent"
-    if len(check.TARGET_ANCHORS) < 2:
+    # EACH ARM IS ASSERTED BY ITS OWN `what` PHRASE, not by the shared tail every
+    # members_missing call ends with. Matching the tail let one arm satisfy
+    # another's control: the grammar-spelling fixture was also short a target
+    # anchor, so the TARGET_ANCHORS arm fired on the same input and the control
+    # accepted its message. That is cycle-1's truthiness hole, one level down.
+    empty = "Nothing was examined"
+    reach = "the documents pointers reach"
+    spellings = "the grammar spellings still exercised"
+    swept = "the swept tree"
+    parsed_from = "the documents headings were parsed from"
+    if len(check.TARGET_ANCHORS) + len(check.TARGET_ANCHOR_ROOTS) < 2:
         failures.append(
-            "TARGET_ANCHORS names fewer than two documents, so collection point 2 is "
-            "back to a single anchor and a resolver regression confined to any other "
-            "surface leaves it satisfied"
+            "collection point 2 anchors fewer than two surfaces, so a resolver "
+            "regression confined to any other one leaves it satisfied"
         )
     anchors = {
         rel: headings((check.REPO_ROOT / rel).read_text(encoding="utf-8"))
@@ -117,10 +137,9 @@ def collection_controls() -> list[str]:
     first = check.SWEEP_ANCHORS[0]
     whole = dict.fromkeys(check.SWEEP_ANCHORS, "")
     narrowed = {rel: "" for rel in check.SWEEP_ANCHORS if rel != first}
+    reached = (*check.TARGET_ANCHORS, *(f"{root}doc.md" for root in check.TARGET_ANCHOR_ROOTS))
     healthy = [
-        (target, spelling)
-        for spelling in check.GRAMMAR_SPELLINGS
-        for target in check.TARGET_ANCHORS
+        (target, spelling) for spelling in check.GRAMMAR_SPELLINGS for target in reached
     ]
 
     # The healthy call of each arm is asserted SILENT first, or every control
@@ -148,20 +167,29 @@ def collection_controls() -> list[str]:
         (
             f"{first} alone yielding no heading",
             "members-missing",
-            partial,
+            parsed_from,
             (dict(anchors, **{first: []}),),
         ),
     ):
         wants(check.heading_problems(*args), phrase, case, arm)
 
     for case, arm, phrase, args in (
-        ("an empty sweep", "nothing-collected", empty, ({}, healthy)),
-        ("a sweep missing a surface class", "members-missing", partial, (narrowed, healthy)),
+        ("an empty sweep", "nothing-collected", swept, ({}, healthy)),
+        ("a sweep missing a surface class", "members-missing", swept, (narrowed, healthy)),
         ("a sweep that found no pointer", "nothing-collected", empty, (whole, [])),
+        (
+            # ONE SPELLING SHORT and every anchor reached, so exactly one arm can
+            # answer. The old fixture was short a target anchor too, and the
+            # TARGET_ANCHORS arm answered for it.
+            "one grammar spelling that stopped being exercised",
+            "members-missing",
+            spellings,
+            (whole, [(t, sp) for t in reached for sp in check.GRAMMAR_SPELLINGS[:-1]]),
+        ),
         (
             "pointers that reach no anchor document at all",
             "members-missing",
-            partial,
+            reach,
             (whole, [("other.md", spelling) for spelling in check.GRAMMAR_SPELLINGS]),
         ),
         *(
@@ -169,20 +197,19 @@ def collection_controls() -> list[str]:
             # assertion and a resolver regression confined to the architecture
             # docs left it satisfied. Driven over the table rather than by
             # index, so shrinking the table cannot shrink the test silently.
+            # Reaching ONLY the named document leaves the OTHER anchor arm to
+            # answer, so the expected phrase is that arm's, not this one's.
             (
                 f"pointers that reach only {only}",
-                "members-missing",
-                partial,
+                "nothing-collected" if only in check.TARGET_ANCHORS else "members-missing",
+                f"pointers reaching {check.TARGET_ANCHOR_ROOTS[0]}"
+                if only in check.TARGET_ANCHORS
+                else reach,
                 (whole, [(only, sp) for sp in check.GRAMMAR_SPELLINGS]),
             )
-            for only in check.TARGET_ANCHORS
+            for only in reached
         ),
-        (
-            "a grammar spelling that stopped being exercised",
-            "members-missing",
-            partial,
-            (whole, [("AGENTS.md", check.GRAMMAR_SPELLINGS[0])]),
-        ),
+
     ):
         wants(check.sweep_problems(*args), phrase, case, arm)
     return failures
@@ -291,6 +318,33 @@ def blob_controls() -> list[str]:
             "a sha with no object behind it was accepted, so cat-file's answer is "
             "parsed as content and every file after it shifts"
         )
+    # A DESYNCED STREAM must fail rather than pair each path with another file's
+    # text. Driven through a stubbed git, because a real one cannot be made to
+    # answer out of order; each case is one field of the record git echoes back.
+    real = tracked_blobs.git
+    for case, reply, wanted in (
+        ("a record for a sha nobody asked for", b"%s blob 2\nhi\n", "desynced"),
+        ("a tree where a blob was asked", b"%(sha)s tree 2\nhi\n", "desynced"),
+        ("a record shorter than it declared", b"%(sha)s blob 9\nhi\n", "truncated"),
+        ("bytes beyond the last record", b"%(sha)s blob 2\nhi\nextra\n", "beyond"),
+    ):
+        sha = "a" * 40
+        payload = reply % ({b"sha": sha.encode()} if b"%(sha)s" in reply else b"b" * 40)
+        tracked_blobs.git = lambda *_a, **_k: payload
+        try:
+            tracked_blobs.blob_texts(check.REPO_ROOT, [("100644", sha, "one.md")])
+        except SystemExit as error:
+            if wanted not in str(error):
+                failures.append(f"{case} was reported as something else: {error}")
+        except Exception as error:  # noqa: BLE001 - a reader defect must read as one
+            failures.append(f"{case} escaped as {type(error).__name__}: {error}")
+        else:
+            failures.append(
+                f"{case} was accepted, so paths are paired with text the stream never "
+                f"said belonged to them and every finding after it names the wrong file"
+            )
+        finally:
+            tracked_blobs.git = real
     return failures
 
 

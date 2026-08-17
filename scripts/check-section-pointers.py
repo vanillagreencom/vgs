@@ -59,7 +59,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent / "lib"))
 from collected import members_missing, nothing_collected  # noqa: E402
 from prose_blocks import headings  # noqa: E402
-from tracked_blobs import blob_texts, tracked_entries  # noqa: E402
+from tracked_blobs import REGULAR_MODES, blob_texts, tracked_entries  # noqa: E402
 from section_pointers import (  # noqa: E402
     SECTION_MARK,
     Judged,
@@ -151,7 +151,14 @@ GRAMMAR_SPELLINGS = (
 # count healthy, AGENTS.md still reached, and the tree this guard was built for
 # unexamined. That is collected.py's partial-coverage half, the one its docstring
 # says hid longest.
-TARGET_ANCHORS = ("AGENTS.md", "docs/architecture/design-language.md")
+#
+# THE SECOND ANCHOR IS A DIRECTORY, not a file, and that is the durable choice
+# rather than the convenient one. VGS-125 merges all thirteen documents under
+# docs/architecture/ into four, so ANY file named here is one that PR renames —
+# the guard would fail on the consolidation it was built to protect. The
+# directory survives the merge; a file cannot be picked that does.
+TARGET_ANCHORS = ("AGENTS.md",)
+TARGET_ANCHOR_ROOTS = ("docs/architecture/",)
 
 # The caller's half of the unresolved-heading remedy. It lives here, not in the
 # parser, because it names a table only this file has: a parser that knew it
@@ -255,6 +262,22 @@ def fixture_problems(tracked: list[str]) -> list[str]:
     ]
 
 
+def declined_markdown(entries: list[tuple[str, str, str]]) -> dict[str, str]:
+    """Tracked `.md` the mode filter refused, as CAUSES rather than as findings.
+
+    `.claude/CLAUDE.md` is a symlink: its blob is a link target, so no heading
+    comes out of it and a pointer at it cannot resolve. That is worth SAYING when
+    someone points at it — without this the message was "not a tracked markdown
+    file", which is simply false — but it is not a defect to fix, so it stays out
+    of `unreadable_problems`. The two maps are separate for exactly that reason.
+    """
+    return {
+        path: "tracked as a symlink, whose blob is a link target rather than prose"
+        for mode, _sha, path in entries
+        if path.endswith(".md") and mode not in REGULAR_MODES
+    }
+
+
 def unreadable_problems(undecodable: dict[str, str]) -> list[str]:
     """A first-party `.md` blob that is not text, so no heading could be parsed.
 
@@ -340,14 +363,36 @@ def sweep_problems(files: dict[str, str], judged: list[tuple[str, str]]) -> list
                 TARGET_ANCHORS,
                 what="the documents pointers reach",
                 selector=pointer_shape,
-                cause="a resolver that stopped resolving repo-relative paths",
+                cause=(
+                    "a resolver that stopped resolving repo-relative paths, or the "
+                    "last pointer at this document being edited away — in which case "
+                    "move the anchor to one that is still cited"
+                ),
+            ),
+            *(
+                nothing_collected(
+                    [target for target, _ in judged if target.startswith(root)],
+                    what=f"pointers reaching {root}",
+                    selector=pointer_shape,
+                    cause=(
+                        "a resolver regression confined to that tree, which leaves the "
+                        "total healthy and AGENTS.md still reached"
+                    ),
+                )
+                for root in TARGET_ANCHOR_ROOTS
             ),
             members_missing(
                 {spelling for _, spelling in judged},
                 GRAMMAR_SPELLINGS,
                 what="the grammar spellings still exercised",
                 selector=pointer_shape,
-                cause="a resolver arm that stopped matching, which a total cannot show",
+                cause=(
+                    "a resolver arm that stopped matching, which a total cannot show — "
+                    "or the last pointer using that spelling being edited away, which "
+                    "is one edit away for the citer-relative link (a single pointer "
+                    "carries it), and then the remedy is to drop it from "
+                    "GRAMMAR_SPELLINGS rather than to restore the pointer"
+                ),
             ),
         )
         if diagnostic
@@ -379,7 +424,7 @@ def main() -> int:
     tracked = [path for _mode, _sha, path in entries]
     files, documents, undecodable = swept_tree(entries)
 
-    found = audit(files, undecodable, documents)
+    found = audit(files, {**undecodable, **declined_markdown(entries)}, documents)
     problems = list(found.problems)
     problems.extend(sweep_problems(files, found.judged))
     problems.extend(fixture_problems(tracked))
