@@ -70,6 +70,14 @@ COMMENT_MARKER = re.compile(r"^(#+|//+|\*+)\s?")
 # `~~~` line closed a ``` fence. Both let a heading that exists only inside an
 # example be recorded as real, which is the one thing this file must not do.
 FENCE = re.compile(r"^[ \t]*(`{3,}|~{3,})(.*)$")
+# AN HTML COMMENT IS THE OTHER UNRENDERED REGION, and it takes the same state a
+# fence does rather than a second mechanism: CommonMark's HTML block type 2
+# begins on a line that STARTS with `<!--` — mid-paragraph it is inline HTML and
+# opens nothing — and ends on the line carrying `-->`, which may be the same one.
+# Without it a `## Removed` parked inside a comment was recorded as a real
+# heading, so deleting the section it names left every pointer at it green.
+HTML_COMMENT_OPEN = "<!--"
+HTML_COMMENT_CLOSE = "-->"
 # Four COLUMNS or more of indent is an INDENTED CODE BLOCK in markdown, so
 # `    ## Example` is not a heading there. Markdown only: in a source file that
 # indent is the language's, and the fenced examples this repo writes inside
@@ -101,10 +109,8 @@ def indent_columns(line: str) -> int:
 def _unquoted(prose: str) -> str:
     """A blockquote line's CONTENT: its `>` markers are markup, not prose.
 
-    Joining two quote lines is not enough on its own — the marker would sit
-    BETWEEN the target and the mark, and a token adjacent to neither is exactly
-    what the join was meant to repair. CommonMark strips the marker before
-    reading what is inside, and so does this.
+    Joining two quote lines is not enough alone — the marker would then sit
+    BETWEEN the target and the mark, which is what the join had to repair.
     """
     return QUOTE_PREFIX.sub("", prose).strip()
 
@@ -171,6 +177,14 @@ def _fence_marker(line: str) -> tuple[str, int, str] | None:
     return match.group(1)[0], len(match.group(1)), match.group(2).strip()
 
 
+def _opens_html_comment(logical: str) -> bool:
+    """Whether this line begins an HTML comment BLOCK, within a fence's indent bound."""
+    return (
+        indent_columns(logical) < INDENT_CODE_COLUMNS
+        and logical.lstrip().startswith(HTML_COMMENT_OPEN)
+    )
+
+
 def _logical(raw: str, is_markdown: bool) -> str:
     """The line as this reader judges it: markdown keeps its indent, code does not.
 
@@ -191,17 +205,26 @@ def scan(text: str, is_markdown: bool) -> tuple[list[tuple[int, str, bool, bool]
     THE ONE FENCE READER. `headings`, `blocks` and `fence_left_open` all go
     through it, so they cannot disagree about what a fence is — they held three
     separate toggles before, and a rule fixed in one would have been fixed only
-    there. A line is prose unless it is a fence marker, sits inside a fence, or
-    is an indented code block.
+    there. A line is prose unless it is a fence marker, sits inside a fence, sits
+    inside an HTML comment, or is an indented code block.
+
+    THE HTML COMMENT IS HELD HERE FOR THAT REASON and not in `headings` alone: a
+    second place deciding what is unrendered is how the three fence toggles came
+    to disagree. Its state is asked FIRST, like the fence's — a ``` inside a
+    comment opens nothing, and a `<!--` inside a fence is content.
     """
     lines: list[tuple[int, str, bool, bool]] = []
     opener: tuple[str, int] | None = None
+    commented = False
     previous_was_prose = False
     for number, raw in enumerate(text.splitlines(), 1):
         logical = _logical(raw, is_markdown)
         is_comment = not is_markdown and bool(COMMENT_MARKER.match(raw.lstrip()))
         marker = _fence_marker(logical)
-        if opener is not None:
+        if commented:
+            commented = HTML_COMMENT_CLOSE not in logical
+            is_prose = False
+        elif opener is not None:
             # Only the same character, at least as long, and carrying no info
             # string closes it. Everything else is content, fence-shaped or not.
             if marker and marker[0] == opener[0] and marker[1] >= opener[1] and not marker[2]:
@@ -209,6 +232,9 @@ def scan(text: str, is_markdown: bool) -> tuple[list[tuple[int, str, bool, bool]
             is_prose = False
         elif marker:
             opener = (marker[0], marker[1])
+            is_prose = False
+        elif is_markdown and _opens_html_comment(logical):
+            commented = HTML_COMMENT_CLOSE not in logical
             is_prose = False
         elif (
             is_markdown
@@ -256,11 +282,19 @@ def fence_left_open(text: str, is_markdown: bool) -> bool:
 
 
 def headings(text: str) -> list[list[str]]:
-    """Every ATX heading, in comparison form. A fence or indented block holds none."""
+    """Every ATX heading, in comparison form. A fence, comment or indent holds none.
+
+    PROSE IS NOT ENOUGH, and the gap is deliberate. `scan` calls a four-space
+    line that CONTINUES a paragraph prose on purpose, so a pointer written on it
+    is still judged; CommonMark renders it as a lazy continuation, never a
+    heading. An ATX heading takes three columns of indent at most, so the strip
+    below — what let `    ## Removed` match — is bounded by the same
+    `indent_columns` the fence and code-block rules use.
+    """
     return [
         normalized_words(match.group(2))
         for _number, logical, is_prose, _is_comment in scan(text, is_markdown=True)[0]
-        if is_prose
+        if is_prose and indent_columns(logical) < INDENT_CODE_COLUMNS
         for match in [ATX_HEADING.match(logical.strip())]
         if match and match.group(2)
     ]

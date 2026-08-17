@@ -40,23 +40,21 @@ added by review after surviving unnoticed.
                         the empty-name report becomes a decline   (+)
                         delimited names truncate at their closer again
                         the ambiguous-basename and ambiguous-decision-id guards
-                        DECISION_TOKEN stops matching   (+)
-                        the fence report is dropped   (+)
+                        DECISION_TOKEN stops matching, and the fence report is
+                        dropped   (+)
                         the heading-list cap loses its remainder count
                         the caller's remedy clause is dropped   (+)
                         the declined census stops counting   (+)
-  prose_blocks.py       a heading inside an indented code block read as real,
-                        a longer fence closed by a shorter one, and a ~~~ line
-                        closing a ``` fence — each lets an example satisfy a
-                        pointer   (+)
+  prose_blocks.py       a heading inside an indented code block read as real, a
+                        longer fence closed by a shorter one, a ~~~ line closing
+                        a ``` fence — each lets an example satisfy a pointer  (+)
                         the CLOSE rule losing its info-string field, so
                         ```python inside a fence closes it   (+)
                         FENCE's 0-3 space indent bound widened   (+)
                         the structural PRE-flush dropped (the after-flush alone
-                        leaves it green)   (+)
-                        the after-flush widened from headings to every
-                        structural line, which loses a wrapped pointer's target
-                        — and INDENTED_CODE's continuation guard dropped, which
+                        leaves it green); the after-flush widened from headings
+                        to every structural line, losing a wrapped pointer's
+                        target; INDENTED_CODE's continuation guard dropped, which
                         makes the mark vanish entirely   (+)
                         INDENTED_CODE applied outside markdown   (+)
                         indent counted in CHARACTERS rather than columns, so a
@@ -66,10 +64,12 @@ added by review after surviving unnoticed.
                         CONTINUING emptied, so a wrapped blockquote's two `>`
                         lines flush apart and the pointer loses its target — the
                         shape the after-flush repair left open; CONTINUING
-                        widened to the list item, so two bullets join; the quote
-                        DEPTH ignored, so `>>` continues its parent; the `>`
-                        marker left in the joined prose, or not peeled before
+                        widened to the list item; the quote DEPTH ignored; the
+                        `>` marker left in the joined prose, or not peeled before
                         classifying; the heading's after-flush dropped   (+)
+                        headings() losing its indent bound, so a `##` line that
+                        CONTINUES a paragraph counts as one; the HTML-comment state
+                        never opening, never ending, or surviving a one-liner   (+)
 
   EQUIVALENT MUTANTS, recorded so the next run does not read them as gaps:
 

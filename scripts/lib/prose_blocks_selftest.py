@@ -102,7 +102,6 @@ def selftest() -> int:
                 f"so the control above passes on a reader that joins nothing"
             )
 
-
     # A FENCE THAT NEVER CLOSES loses the rest of the file, in both readers and
     # in both file types. Each case is paired with the balanced form, or
     # "reported" would prove only that the fixture had a dead pointer in it.
@@ -147,39 +146,33 @@ def selftest() -> int:
             "passes on a reader that finds no headings at all"
         )
 
-    # And one layer up, where it decides a verdict: a pointer at a heading that
-    # exists only inside a fence must be REPORTED.
-    doc_fenced = {"doc.md": "# D\n\n```\n## Live section\n```\n"}
-    if not pointer_problems(
-        dict(doc_fenced, **{"citer.md": f"# C\n\n`doc.md` {SECTION_MARK} Live section.\n"}),
-        {"doc.md": headings(doc_fenced["doc.md"]), "citer.md": headings("# C\n")},
-        lambda *_: [],
-    ).problems:
-        failures.append(
-            "a pointer at a heading that exists only inside a fenced example was "
-            "accepted, so an illustration can stand in for a section that is gone"
-        )
-
-    # A HEADING THAT EXISTS ONLY IN AN EXAMPLE CANNOT SATISFY A POINTER. Three
-    # shapes, each paired with the same heading written for real and asserted to
-    # resolve — otherwise every one of these passes on a reader that stopped
-    # finding headings at all. The stakes are section_pointers.py's four
-    # deliberately unfenced illustrations: they are safe only if this is right.
+    # A HEADING THAT IS NOT RENDERED CANNOT SATISFY A POINTER — every way this
+    # reader has been caught calling one real, each PAIRED with the same heading
+    # written for real and asserted to resolve, or all of them pass on a reader
+    # that finds no headings at all. The stakes are section_pointers.py's four
+    # deliberately unfenced illustrations: safe only if this is right.
     for case, doc in (
+        ("inside a fence", "# D\n\n```\n## Live section\n```\n"),
         ("inside a four-space indented code block", "# D\n\n    ## Live section\n"),
         (
             "inside a longer fence that wraps a shorter one",
             "# D\n\n`````\n```\n## Live section\n```\n`````\n",
         ),
         ("after a ~~~ line that cannot close a ``` fence", "# D\n\n```\n~~~\n## Live section\n"),
+        # FOUR COLUMNS, YET THE LINE IS PROSE on purpose: `scan` keeps a
+        # paragraph's continuation prose so a pointer on it is judged, and only
+        # the bound in `headings` stops it also being read as a heading. Distinct
+        # from the code-block row above, caught before this could reach it.
+        ("on a four-space CONTINUATION line", "# D\n\nprose\n    ## Live section\n"),
+        ("on a tab-indented CONTINUATION line", "# D\n\nprose\n\t## Live section\n"),
+        ("inside a multiline HTML comment", "# D\n\n<!--\n## Live section\n-->\n"),
     ):
         example = {"doc.md": doc, "citer.md": f"# C\n\n`doc.md` {SECTION_MARK} Live section.\n"}
         markdown = {rel: headings(example[rel]) for rel in example}
         if not pointer_problems(example, markdown, lambda *_: []).problems:
             failures.append(
-                f"a heading {case} satisfied a pointer, so an illustration stands in "
-                f"for a section that is gone — which is what fencing is relied on to "
-                f"prevent: {headings(doc)}"
+                f"a heading {case} satisfied a pointer, so text that renders as no "
+                f"heading at all stands in for a section that is gone: {headings(doc)}"
             )
         real = dict(example, **{"doc.md": "# D\n\n## Live section\n"})
         if pointer_problems(
@@ -190,18 +183,31 @@ def selftest() -> int:
                 f"{case} control passes on a reader that finds no headings"
             )
 
-    # ONE PAIR PER STRUCTURAL KIND, which is the only shape that could have
-    # caught either half of this rule's history. `_structure` names which marker
-    # can repeat inside ONE piece of prose (the blockquote's, alone) and which
-    # marks a sibling; both earlier spellings were right for one kind and wrong
-    # for its neighbours, and a control on one kind proved nothing about the
-    # rest. CONTINUED asserts the wrapped pointer still names doc.md; SIBLING
-    # asserts the bare mark does NOT inherit and is judged against the citer.
+    # THE COMMENT MUST ALSO CLOSE, the half its own fixture cannot show: a state
+    # machine that opens on `<!--` and never closes swallows the rest of the
+    # document and reports the same untroubled emptiness.
+    for case, doc in (
+        ("closed on a later line", "# D\n\n<!--\nx\n-->\n\n## Live section\n"),
+        ("opened and closed on one line", "# D\n\n<!-- x -->\n\n## Live section\n"),
+        ("written inside a fence, where it is content", "# D\n\n```\n<!--\n```\n\n## Live section\n"),
+    ):
+        if [["D"], ["Live", "section"]] != headings(doc):
+            failures.append(
+                f"an HTML comment {case} hid the heading after it, so the rest of "
+                f"the document reads as one that had none: {headings(doc)}"
+            )
+
+    # ONE PAIR PER STRUCTURAL KIND, the only shape that could have caught either
+    # half of this rule's history: `_structure` names which marker can repeat
+    # inside ONE piece of prose (the blockquote's, alone), both earlier spellings
+    # were right for one kind and wrong for its neighbours, and a control on one
+    # kind proved nothing about the rest. CONTINUED asserts the wrapped pointer
+    # still names doc.md; SIBLING asserts the bare mark does NOT inherit.
     # EVERY CONTINUED ARM CARRIES THE TRAP: the citer holds `## Gone section`
-    # itself, so a lost target does not merely misname the finding — the pointer
-    # resolves intra-document and DISAPPEARS. That is the shape that shipped
+    # itself, so a lost target does not misname the finding — the pointer
+    # resolves intra-document and DISAPPEARS, which is the shape that shipped
     # twice. Each is paired with the same wrap naming a LIVE heading, asserted
-    # silent, so none of them passes on a reader that reports everything.
+    # silent, so none passes on a reader that reports everything.
     live, gone = f"{SECTION_MARK} Live section", f"{SECTION_MARK} Gone section"
     trap = "# C\n\n## Gone section\n\n"
     for kind, continued, sibling in (
@@ -225,9 +231,9 @@ def selftest() -> int:
         ),
         (
             # THE REGRESSION, and the one kind whose marker repeats inside one
-            # sentence: a wrapped quote carries `>` on every line, so the target
-            # line and the mark line are consecutive STRUCTURAL lines and were
-            # flushed apart. Its sibling needs a blank line, never a marker.
+            # sentence: a wrapped quote carries `>` on every line, so both lines
+            # were structural and were flushed apart. Its sibling needs a blank
+            # line, never a marker.
             "a block quote",
             f"{trap}> see `doc.md`\n> {gone}.\n",
             f"# C\n\n> `doc.md` {live}\n\n> see {live}\n",
@@ -244,9 +250,8 @@ def selftest() -> int:
         ),
         (
             # A table row is not a structural KIND — `_structure` says why — so
-            # its sibling arm is held by the pipe SEPARATOR rather than by a
-            # block boundary, and its continued arm is an unmarked line, a cell
-            # having no way to wrap onto the line below.
+            # its sibling arm is held by the pipe SEPARATOR, not a block
+            # boundary, and its continued arm is an unmarked line.
             "a table row",
             f"{trap}| a | see `doc.md`\n  {gone}. |\n",
             f"# C\n\n| `doc.md` {live} |\n| see {live} |\n",
@@ -278,9 +283,8 @@ def selftest() -> int:
             )
 
     # THE PIPE IS A CLAUSE BOUNDARY, which is what makes the sibling row above a
-    # boundary in the reader's terms and not only in the block reader's. Paired
-    # with the same enumeration inside ONE cell, which must still inherit — or
-    # this passes on a rule that stopped inheriting anywhere.
+    # boundary in the reader's terms. Paired with the same enumeration inside ONE
+    # cell, which must still inherit, or this passes on a rule inheriting nowhere.
     if not any(
         "cites `citer.md" in problem
         for problem in cited(f"# C\n\n| `doc.md` {live} | {live} |\n")
