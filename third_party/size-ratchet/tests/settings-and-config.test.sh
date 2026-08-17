@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Pins for configuration resolution (env > vstack.settings.toml > default
-# 1000) and for the fail-loud config errors: malformed excludes (reason is
+# 400) and for the fail-loud config errors: malformed excludes (reason is
 # mandatory), malformed/unsorted/duplicated baseline, bad threshold. Config
 # problems are exit 2, never a silent pass or a silent default.
 set -euo pipefail
@@ -11,7 +11,7 @@ SR="$SKILL_DIR/scripts/size-ratchet"
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 
-unset SIZE_RATCHET_THRESHOLD SIZE_RATCHET_BASELINE SIZE_RATCHET_EXCLUDES SIZE_RATCHET_SETTINGS_FILE 2>/dev/null || true
+unset SIZE_RATCHET_THRESHOLD SIZE_RATCHET_CLASSES SIZE_RATCHET_BASELINE SIZE_RATCHET_EXCLUDES SIZE_RATCHET_SETTINGS_FILE 2>/dev/null || true
 
 PASS=0
 FAIL=0
@@ -49,29 +49,36 @@ run_raw() { # [VAR=val ...] [-- script-args...] — run $SR in $R; sets OUT, RC
   OUT="$(cd "$R" && env ${envs[@]+"${envs[@]}"} "$SR" ${args[@]+"${args[@]}"} 2>&1)" || RC=$?
 }
 
-echo "=== threshold resolution: env > settings > default 1000 ==="
+echo "=== threshold resolution: env > settings > default 400 ==="
 new_repo thr
 mkfile f.txt 20
 git -C "$R" add -A
 
 run_raw
-[ "$RC" -eq 0 ] && case "$OUT" in *"threshold 1000"*) true ;; *) false ;; esac \
-  && ok "no env, no settings: 20 lines passes under the built-in default 1000" \
-  || bad "built-in default is 1000" "rc=$RC out=$OUT"
+[ "$RC" -eq 0 ] && case "$OUT" in *"threshold 400"*) true ;; *) false ;; esac \
+  && ok "no env, no settings: 20 lines passes under the built-in default 400" \
+  || bad "built-in default is 400" "rc=$RC out=$OUT"
 
-mkfile huge.txt 1005
+# The default's exact boundary, both sides: at 400 is under it, 401 is over.
+mkfile edge.txt 400
 git -C "$R" add -A
 run_raw
-[ "$RC" -eq 1 ] && case "$OUT" in *"huge.txt — 1005 lines > threshold 1000"*) true ;; *) false ;; esac \
-  && ok "default 1000 can fail (1005-line file) — the default is real, not vacuous" \
-  || bad "default 1000 can fail" "rc=$RC out=$OUT"
-rm "$R/huge.txt"
+[ "$RC" -eq 0 ] && ok "a 400-line file passes the default (at the threshold is not over it)" \
+  || bad "400 lines passes the default" "rc=$RC out=$OUT"
+
+mkfile edge.txt 401
+git -C "$R" add -A
+run_raw
+[ "$RC" -eq 1 ] && case "$OUT" in *"edge.txt — 401 lines > threshold 400 (default)"*) true ;; *) false ;; esac \
+  && ok "a 401-line file is a new offender under the default — 400 is real, not vacuous" \
+  || bad "401 lines fails the default" "rc=$RC out=$OUT"
+rm "$R/edge.txt"
 git -C "$R" add -A
 
 printf '[env]\nSIZE_RATCHET_THRESHOLD = "15"\n' >"$R/vstack.settings.toml"
 run_raw
 [ "$RC" -eq 1 ] && case "$OUT" in *"threshold 15"*) true ;; *) false ;; esac \
-  && ok "settings file overrides the default (20 > 15 fails; 1000 would have passed)" \
+  && ok "settings file overrides the default (20 > 15 fails; 400 would have passed)" \
   || bad "settings file overrides the default" "rc=$RC out=$OUT"
 
 run_raw SIZE_RATCHET_THRESHOLD=25
@@ -179,6 +186,141 @@ printf 'SIZE_RATCHET_THRESHOLD="17"#note\n' > "$R/.env"
 run_raw || true
 if [ "$RC" -ne 0 ] && case "$OUT" in *"unsupported syntax"*) true ;; *) false ;; esac; then ok "adjacent # after a quoted value is a segment, not a comment — fails loud"; else bad "adjacent-hash dotenv (.env)" "rc=$RC out=$OUT"; fi
 rm -f "$R/.env"
+
+echo "=== an EXISTING non-regular settings path never falls back to defaults ==="
+# A directory (FIFO/socket/device are the same shape) fails -f exactly like
+# an absent file, so the configured settings would be skipped with nothing
+# said and the built-in 400 would decide.
+new_repo nonregular
+mkfile f.txt 20
+git -C "$R" add -A
+mkdir -p "$R/nonregular.dir"
+run_raw SIZE_RATCHET_SETTINGS_FILE=nonregular.dir || true
+[ "$RC" -eq 2 ] && case "$OUT" in *"not a regular file"*) true ;; *) false ;; esac \
+  && ok "a DIRECTORY settings path is exit 2, not a silent built-in default" \
+  || bad "a DIRECTORY settings path is exit 2" "rc=$RC out=$OUT"
+
+if mkfifo "$R/nonregular.fifo" 2>/dev/null; then
+  run_raw SIZE_RATCHET_SETTINGS_FILE=nonregular.fifo || true
+  [ "$RC" -eq 2 ] && case "$OUT" in *"not a regular file"*) true ;; *) false ;; esac \
+    && ok "a FIFO settings path is exit 2, not a silent built-in default" \
+    || bad "a FIFO settings path is exit 2" "rc=$RC out=$OUT"
+  rm -f "$R/nonregular.fifo"
+else
+  echo "  skip  mkfifo unavailable — FIFO shape not exercised"
+fi
+
+# A symlink that does not resolve fails -e as well as -f, so an existence
+# test alone never sees it — the same silent-defaults trap one shape over.
+ln -s missing.toml "$R/dangling.settings.toml"
+run_raw SIZE_RATCHET_SETTINGS_FILE=dangling.settings.toml || true
+[ "$RC" -eq 2 ] && case "$OUT" in *"does not resolve"*) true ;; *) false ;; esac \
+  && ok "a DANGLING symlink settings path is exit 2, not a silent built-in default" \
+  || bad "a DANGLING symlink settings path is exit 2" "rc=$RC out=$OUT"
+
+ln -s cycle-b.settings.toml "$R/cycle-a.settings.toml"
+ln -s cycle-a.settings.toml "$R/cycle-b.settings.toml"
+run_raw SIZE_RATCHET_SETTINGS_FILE=cycle-a.settings.toml || true
+[ "$RC" -eq 2 ] && case "$OUT" in *"does not resolve"*) true ;; *) false ;; esac \
+  && ok "a CYCLIC symlink settings path is exit 2, not a silent built-in default" \
+  || bad "a CYCLIC symlink settings path is exit 2" "rc=$RC out=$OUT"
+
+# A RESOLVING symlink is an ordinary install shape and must still read.
+printf '[env]\nSIZE_RATCHET_THRESHOLD = "15"\n' >"$R/link-target.settings.toml"
+ln -s link-target.settings.toml "$R/link.settings.toml"
+run_raw SIZE_RATCHET_SETTINGS_FILE=link.settings.toml || true
+[ "$RC" -eq 1 ] && case "$OUT" in *"threshold 15"*) true ;; *) false ;; esac \
+  && ok "a RESOLVING symlink reads its target (control: 20 > 15 fails; 400 would have passed)" \
+  || bad "a RESOLVING symlink reads its target (control)" "rc=$RC out=$OUT"
+
+# Controls: the two shapes that MUST still resolve to the built-in default.
+run_raw SIZE_RATCHET_SETTINGS_FILE=/dev/null || true
+[ "$RC" -eq 0 ] && case "$OUT" in *"threshold 400"*) true ;; *) false ;; esac \
+  && ok "/dev/null still forces the built-in default (control)" \
+  || bad "/dev/null still forces the built-in default (control)" "rc=$RC out=$OUT"
+
+run_raw SIZE_RATCHET_SETTINGS_FILE=absent.settings.toml || true
+[ "$RC" -eq 0 ] && case "$OUT" in *"threshold 400"*) true ;; *) false ;; esac \
+  && ok "an ABSENT plain file still falls back to the built-in default (control)" \
+  || bad "an ABSENT plain file still falls back to the built-in default (control)" "rc=$RC out=$OUT"
+
+echo "=== an EXISTING non-regular ENV-FILE source never falls through ==="
+# .env.local and .env are probed with -f like the settings file, so a
+# directory or an unresolvable symlink there is skipped exactly like an
+# absent one and a lower-precedence value silently decides.
+new_repo nonregularenv
+mkfile f.txt 20
+git -C "$R" add -A
+printf '[env]\nSIZE_RATCHET_THRESHOLD = "30"\n' >"$R/vstack.settings.toml"
+
+mkdir -p "$R/.env.local"
+run_raw || true
+[ "$RC" -eq 2 ] && case "$OUT" in *".env.local: settings source exists but is not a regular file"*) true ;; *) false ;; esac \
+  && ok "a DIRECTORY at .env.local is exit 2 (falling through would have read 30 and passed)" \
+  || bad "a DIRECTORY at .env.local is exit 2" "rc=$RC out=$OUT"
+rmdir "$R/.env.local"
+
+ln -s missing.env "$R/.env"
+run_raw || true
+[ "$RC" -eq 2 ] && case "$OUT" in *".env: settings source is a symlink that does not resolve"*) true ;; *) false ;; esac \
+  && ok "a DANGLING .env symlink is exit 2, not a silent skip" \
+  || bad "a DANGLING .env symlink is exit 2" "rc=$RC out=$OUT"
+rm -f "$R/.env"
+
+run_raw || true
+[ "$RC" -eq 0 ] && case "$OUT" in *"threshold 30"*) true ;; *) false ;; esac \
+  && ok "control: with both env files absent the settings file still supplies 30" \
+  || bad "control: absent env files fall through to the settings file" "rc=$RC out=$OUT"
+
+echo "=== an UNREADABLE settings source fails loud, never falls through ==="
+# grep exits 0/1 are measurements; anything else means the source could not
+# be read, and continuing to a lower-precedence layer would silently
+# resolve a different value. Every layer carries the same discipline.
+if [ "$(id -u)" -eq 0 ]; then
+  printf '  skip  unreadable-source pins need a non-root reader (chmod 000 cannot deny root)\n'
+else
+  new_repo unreadable
+  mkfile f.txt 20
+  git -C "$R" add -A
+
+  printf '[env]\nSIZE_RATCHET_THRESHOLD = "30"\n' >"$R/vstack.settings.toml"
+  printf 'SIZE_RATCHET_THRESHOLD=15\n' >"$R/.env.local"
+  chmod 000 "$R/.env.local"
+  run_raw || true
+  [ "$RC" -eq 2 ] && case "$OUT" in *".env.local: unreadable while resolving a setting"*) true ;; *) false ;; esac \
+    && ok "an unreadable .env.local is exit 2 (falling through would have read 30 and passed)" \
+    || bad "an unreadable .env.local is exit 2" "rc=$RC out=$OUT"
+  chmod 600 "$R/.env.local"
+  run_raw || true
+  [ "$RC" -eq 1 ] && case "$OUT" in *"threshold 15"*) true ;; *) false ;; esac \
+    && ok "control: the same .env.local, readable, supplies 15 and the 20-line file fails" \
+    || bad "control: readable .env.local supplies the value" "rc=$RC out=$OUT"
+  rm -f "$R/.env.local"
+
+  chmod 000 "$R/vstack.settings.toml"
+  run_raw || true
+  [ "$RC" -eq 2 ] && case "$OUT" in *"vstack.settings.toml: unreadable while resolving a setting"*) true ;; *) false ;; esac \
+    && ok "an unreadable settings file is exit 2 (falling through would have read the built-in 1000)" \
+    || bad "an unreadable settings file is exit 2" "rc=$RC out=$OUT"
+  chmod 600 "$R/vstack.settings.toml"
+  run_raw || true
+  [ "$RC" -eq 0 ] && case "$OUT" in *"threshold 30"*) true ;; *) false ;; esac \
+    && ok "control: the same settings file, readable, supplies 30" \
+    || bad "control: readable settings file supplies the value" "rc=$RC out=$OUT"
+  rm -f "$R/vstack.settings.toml"
+
+  printf 'SIZE_RATCHET_THRESHOLD=12\n' >"$R/.env"
+  chmod 000 "$R/.env"
+  run_raw || true
+  [ "$RC" -eq 2 ] && case "$OUT" in *".env: unreadable while resolving a setting"*) true ;; *) false ;; esac \
+    && ok "an unreadable .env is exit 2 (falling through would have read the built-in 1000)" \
+    || bad "an unreadable .env is exit 2" "rc=$RC out=$OUT"
+  chmod 600 "$R/.env"
+  run_raw || true
+  [ "$RC" -eq 1 ] && case "$OUT" in *"threshold 12"*) true ;; *) false ;; esac \
+    && ok "control: the same .env, readable, supplies 12 and the 20-line file fails" \
+    || bad "control: readable .env supplies the value" "rc=$RC out=$OUT"
+fi
 
 echo "=== option-like configured paths ==="
 new_repo optpath

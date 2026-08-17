@@ -352,7 +352,9 @@ ORCH_TMUX_VERIFY_SECS = "15"
 # exact glob text). The selftest fails an exclusion glob that matches
 # nothing — a typo'd anchor is dead config in the same way a leading-'/'
 # one is — unless it is declared here as deliberately guarding paths that
-# do not exist yet. Inert while REVIEW_GATE_CARRY_FORWARD_EXCLUDE is empty.
+# do not exist yet. A declaration that is not an entry of
+# REVIEW_GATE_CARRY_FORWARD_EXCLUDE is an orphan and FAILS the selftest;
+# an EMPTY exclusion list makes every declaration one.
 REVIEW_GATE_CARRY_FORWARD_EXCLUDE_PROPHYLACTIC = ""
 
 # Used by: orch (`start-worktree` § 5.5). "auto" merges without asking once
@@ -417,3 +419,18 @@ SECOND_OPINION_COUNT = "1"
 # The default is inside the reviewed checkout; the script seeds the directory
 # with a "*" .gitignore on creation so records never dirty the working tree.
 SECOND_OPINION_ARTIFACT_DIR = "tmp/second-opinion"
+
+# GROWTH GUARDS — repo growth checks (growth-guards skill).
+# Project-scope `vstack add` / `vstack refresh` merge these defaults into
+# <project>/vstack.settings.toml (never overwriting existing keys). Every
+# other GROWTH_GUARDS_* key ships a working default; the full list is in the
+# skill's SKILL.md.
+
+# Repo-local check the pre-commit shim runs LAST, after size-ratchet and the
+# growth-guards batch: a repo-root-relative executable, taking no arguments.
+# It follows the family exit contract — 0 clean, 1 violations, anything else
+# "could not complete" — and any nonzero blocks the commit. A value naming a
+# path that is missing or not executable blocks too, rather than passing a
+# commit the repo expected to be checked. Empty (the default) means the shim
+# runs no repo-local check.
+GROWTH_GUARDS_PRE_COMMIT_LOCAL = ""
