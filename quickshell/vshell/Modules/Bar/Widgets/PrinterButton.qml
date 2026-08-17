@@ -29,14 +29,17 @@ PluginComponent {
     // queue the work is on. Naming the Settings selection instead lets the
     // popout call one printer idle while listing another one's job.
     readonly property string connectedName: {
-        const job = root.visibleJobs.length > 0 ? root.visibleJobs[0] : null;
-        if (job && job.printer)
-            return job.printer;
+        // A printing queue wins over a queued job: lpstat reports every queued
+        // job as pending and allJobs follows printerNames order, so the first
+        // job can belong to an idle queue while another printer is working.
         for (const name of CupsService.printerNames) {
             const printer = CupsService.printers[name];
             if (printer && (printer.state === "printing" || printer.state === "processing"))
                 return name;
         }
+        const job = root.visibleJobs.length > 0 ? root.visibleJobs[0] : null;
+        if (job && job.printer)
+            return job.printer;
         return CupsService.getSelectedPrinter() || (CupsService.printerNames.length > 0 ? CupsService.printerNames[0] : "");
     }
     readonly property string printerState: {
