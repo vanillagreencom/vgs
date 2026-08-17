@@ -1,0 +1,5 @@
+.agents/*	vendored vstack install, upstream-owned
+third_party/*	byte-pinned vendored trees, upstream-owned
+backend/vendor/*	vendored Go modules, upstream-owned
+config/vshell/nvim/colorschemes/*	vendored upstream colorscheme plugins, upstream-owned
+quickshell/vshell/Modals/WifiQRCodeModal.qml	pre-adoption marker, loading-UI question parked
