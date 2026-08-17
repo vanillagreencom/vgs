@@ -15,6 +15,30 @@ Column {
     width: parent ? parent.width : 0
     spacing: Theme.spacingS
 
+    // lpinfo -m repeats makeModel across driver variants, so labels carry the
+    // unique ppd name for duplicates and selections resolve by label, not by
+    // the first makeModel match.
+    readonly property var driverOptions: {
+        const counts = Object.create(null);
+        for (const p of CupsService.ppds) {
+            if (p.name === "everywhere")
+                continue;
+            const base = p.makeModel || p.name;
+            counts[base] = (counts[base] || 0) + 1;
+        }
+        const opts = [];
+        for (const p of CupsService.ppds) {
+            if (p.name === "everywhere")
+                continue;
+            const base = p.makeModel || p.name;
+            opts.push({
+                label: counts[base] > 1 && base !== p.name ? base + " (" + p.name + ")" : base,
+                name: p.name
+            });
+        }
+        return opts;
+    }
+
     Row {
         width: parent.width
         spacing: Theme.spacingS
@@ -55,8 +79,8 @@ Column {
                 if (tab.selectedPpd === "everywhere")
                     return I18n.tr("Recommended — IPP Everywhere");
                 if (tab.selectedPpd) {
-                    const ppd = CupsService.ppds.find(p => p.name === tab.selectedPpd);
-                    return ppd ? (ppd.makeModel || ppd.name) : tab.selectedPpd;
+                    const opt = root.driverOptions.find(o => o.name === tab.selectedPpd);
+                    return opt ? opt.label : tab.selectedPpd;
                 }
                 return I18n.tr("No driver selected");
             }
@@ -76,18 +100,18 @@ Column {
                     return I18n.tr("Loading…");
                 if (tab.selectedPpd === "everywhere")
                     return I18n.tr("Recommended — IPP Everywhere");
-                const ppd = CupsService.ppds.find(p => p.name === tab.selectedPpd);
-                return ppd ? (ppd.makeModel || ppd.name) : (tab.selectedPpd || I18n.tr("Select driver…"));
+                const opt = root.driverOptions.find(o => o.name === tab.selectedPpd);
+                return opt ? opt.label : (tab.selectedPpd || I18n.tr("Select driver…"));
             }
-            options: (CupsDiscovery.isIppUri(tab.selectedDeviceUri) ? [I18n.tr("Recommended — IPP Everywhere")] : []).concat(CupsService.ppds.filter(p => p.name !== "everywhere").map(p => p.makeModel || p.name))
+            options: (CupsDiscovery.isIppUri(tab.selectedDeviceUri) ? [I18n.tr("Recommended — IPP Everywhere")] : []).concat(root.driverOptions.map(o => o.label))
             onValueChanged: value => {
                 if (value === I18n.tr("Recommended — IPP Everywhere")) {
                     tab.selectedPpd = "everywhere";
                     return;
                 }
-                const ppd = CupsService.ppds.find(p => (p.makeModel || p.name) === value);
-                if (ppd)
-                    tab.selectedPpd = ppd.name;
+                const opt = root.driverOptions.find(o => o.label === value);
+                if (opt)
+                    tab.selectedPpd = opt.name;
             }
         }
     }
@@ -182,9 +206,14 @@ Column {
                 CupsService.createPrinter(tab.newPrinterName, tab.selectedDeviceUri, tab.selectedPpd, {
                     location: tab.newPrinterLocation,
                     information: tab.newPrinterInfo
+                }, response => {
+                    // Keep the form populated on failure so the user can
+                    // correct and retry; the service already toasts the error.
+                    if (response.error)
+                        return;
+                    tab.resetAddPrinterForm();
+                    tab.showAddPrinter = false;
                 });
-                tab.resetAddPrinterForm();
-                tab.showAddPrinter = false;
             }
         }
     }

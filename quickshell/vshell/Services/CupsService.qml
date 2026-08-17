@@ -442,7 +442,7 @@ Singleton {
         });
     }
 
-    function createPrinter(name, deviceURI, ppd, options) {
+    function createPrinter(name, deviceURI, ppd, options, callback) {
         if (!cupsAvailable)
             return;
         creatingPrinter = true;
@@ -470,6 +470,8 @@ Singleton {
                 ToastService.showInfo(I18n.tr("Printer created successfully"));
                 getState();
             }
+            if (callback)
+                callback(response);
         });
     }
 

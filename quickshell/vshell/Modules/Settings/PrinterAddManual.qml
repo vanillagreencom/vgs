@@ -152,8 +152,21 @@ Column {
                 tab.testingConnection = true;
                 tab.testConnectionResult = null;
                 const port = parseInt(tab.manualPort) || parseInt(root.defaultPortFor(tab.manualProtocol));
-                CupsService.testConnection(tab.manualHost, port, tab.manualProtocol, tab.manualProtocol === "lpd" ? tab.manualQueue : "", response => {
+                const tested = {
+                    host: tab.manualHost,
+                    port: port,
+                    protocol: tab.manualProtocol,
+                    queue: tab.manualProtocol === "lpd" ? tab.manualQueue : ""
+                };
+                CupsService.testConnection(tested.host, tested.port, tested.protocol, tested.queue, response => {
                     tab.testingConnection = false;
+                    // Inputs edited while the test was in flight: the response
+                    // describes an address the form no longer shows, so drop it
+                    // and leave the form untested.
+                    const currentPort = parseInt(tab.manualPort) || parseInt(root.defaultPortFor(tab.manualProtocol));
+                    const currentQueue = tab.manualProtocol === "lpd" ? tab.manualQueue : "";
+                    if (tested.host !== tab.manualHost || tested.port !== currentPort || tested.protocol !== tab.manualProtocol || tested.queue !== currentQueue)
+                        return;
                     if (response.error) {
                         tab.testConnectionResult = {
                             "success": false,
