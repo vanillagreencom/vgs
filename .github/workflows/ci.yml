@@ -153,6 +153,21 @@ jobs:
       - name: Instruction-surface growth ratchet
         run: scripts/check-doc-growth.py
 
+      # Every `<doc>.md § <section>` pointer must name a heading that exists.
+      # VGS-124's dead pointers were found by hand; VGS-125 merges
+      # docs/architecture/ 13 files into 4, invalidating pointers across bin/,
+      # quickshell/, project-skills/ and docs/decisions/ at once (VGS-150). The
+      # controls run beside the guard, which has no inline self-test.
+      - name: Doc section pointers
+        run: scripts/check-section-pointers.py
+      - name: Doc section pointer controls
+        run: |
+          scripts/test-section-pointers.py
+          scripts/test-section-pointers-e2e.py
+          python3 scripts/lib/section_pointers_selftest.py
+          python3 scripts/lib/tracked_blobs_selftest.py
+          python3 scripts/lib/prose_blocks_selftest.py
+
       # Tighten-only line-count gate over every tracked file: offenders are
       # frozen in tools/size-ratchet-baseline.tsv and may only shrink; new
       # files stay under SIZE_RATCHET_THRESHOLD (vstack.settings.toml). The

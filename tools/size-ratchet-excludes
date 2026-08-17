@@ -55,6 +55,70 @@
 # exposes one threshold, so it is not expressible.
 #
 # That is a deliberate decision to take, not a fifth argument to win.
+#
+# SIX MORE ACCOMMODATIONS, taken by one branch (VGS-150, 2026-08-16), recorded
+# here so the paragraph above reads against the real arithmetic rather than
+# against three. Measured against origin/main, which is what a reader diffing
+# this branch sees; the rows churned more than this within it.
+#
+#   GRANTED   scripts/check-section-pointers.py        556 lines, 420 of them code
+#   GRANTED   scripts/lib/section_pointers_selftest.py 486 -> 515
+#   GRANTED   scripts/test-section-pointers-e2e.py     434 lines
+#   GRANTED   scripts/test-section-pointers.py         444 -> 458
+#   RAISED    .github/workflows/ci.yml                 472 -> 487
+#   RAISED    scripts/validate                        1049 -> 1064
+#
+# THE LAST TWO RAISES bought the blockquote. A reviewer found that the repair
+# for "a wrapped pointer must keep its target" had been made twice and been
+# wrong twice — too broad, then too narrow — and that the shape which motivated
+# the finding was still failing: a wrapped quote repeats its `>`, so the target
+# line and the mark line read as two structures and the pointer resolved
+# against the citing file instead. The fix is small; what it cost is one PAIRED
+# control per structural kind, continued-and-joined beside sibling-and-separate,
+# because a control on one kind is exactly what let this be wrong twice. Those
+# pairs and the paired link/bare-path control are the 43 lines, and the second
+# row is their durable record — nine mutants, each run red once.
+#
+# The granted rows were each raised again by the last review rounds, which
+# is the mechanism rather than an exception to it: each round found another
+# fail-open, and closing one costs a fix plus the paired controls that pin it.
+# Two late raises are worth naming because they are the shape this header
+# argues about: one measured a category the guard had been dropping silently
+# (8,509 tracked symlinks), and one replaced a file anchor with a directory
+# anchor asserted at three depths, because naming a file in a tree the repo is
+# about to consolidate made this guard block that consolidation. Both are
+# correctness landing as lines.
+#
+# The two raises are the stronger act, by this header's own distinction, and
+# they are not growth of the thing being built: they are the WIRING. Each
+# control script costs two manifest rows in scripts/validate and one step in
+# ci.yml. That is this branch's contribution to the paragraph above, from a
+# direction it had not seen — past a certain size, splitting a file to satisfy
+# the cap grows the files that wire the splits together, so the cap stops
+# rewarding the split it asked for.
+#
+# The three grants are majority code and the growth is five review rounds — 23
+# findings, then 12, then 6, then 12 — each asking for another rule, another
+# arm, or another reason written down. The `<doc>.md § <section>` pointer guard's
+# subsystem is ten files, and every seam anyone has named is already taken:
+# three parser libraries (prose_blocks for what counts as prose, pointer_targets
+# for which document a token names, section_pointers for where a name ends and
+# whether a heading matches), one VCS-access library (tracked_blobs), and five
+# control scripts — one per subject, each beside what it pins.
+#
+# What is left in check-section-pointers.py is one concept that does not divide:
+# a check's own policy. Three tables say what it declines to look at
+# (HISTORICAL_SECTIONS, FIXTURE_FILES, SKIP_ROOTS) and four say what its result
+# must still reach (SWEEP_ANCHORS, TARGET_ANCHORS, ANCHOR_ROOTS,
+# GRAMMAR_SPELLINGS); the four collection points assert them, and the run turns
+# those into a verdict. Splitting policy from the
+# check that applies it would put the tables a reader needs in a second file.
+# section_pointers_selftest.py and test-section-pointers-e2e.py are suites, and
+# the argument above for a suite applies unchanged: they grow by one case per
+# finding, which is the process working. The e2e one is where that is sharpest —
+# every case in it is a whole throwaway repository, so a finding costs ten lines
+# there rather than two.
+#
 backend/vendor/*	vendored Go modules (go mod vendor for offline Nix builds), upstream-owned
 config/vshell/nvim/colorschemes/*	vendored upstream colorscheme plugins, upstream-owned
 third_party/*	byte-pinned vendored trees (review-gate, size-ratchet, coderabbit-schema, asdcontrol)
