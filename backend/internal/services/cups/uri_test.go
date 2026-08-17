@@ -12,6 +12,7 @@ func TestValidateDeviceURIAcceptsCUPSBonjourHosts(t *testing.T) {
 		"usb://Brother/HL-L2460DW%20series?serial=ABC",
 		"socket://192.168.1.20:9100",
 		"parallel:/dev/lp0",
+		"serial:/dev/ttyS0?baud=9600",
 	} {
 		if err := validateDeviceURI(uri); err != nil {
 			t.Fatalf("validateDeviceURI(%q) = %v", uri, err)
@@ -21,21 +22,26 @@ func TestValidateDeviceURIAcceptsCUPSBonjourHosts(t *testing.T) {
 
 func TestValidateDeviceURIRejectsUnsafeValues(t *testing.T) {
 	cases := map[string]string{
-		"empty":          "",
-		"no scheme":      "printer.local/ipp",
-		"space":          "dnssd://Brother HL-L2460DW._ipp._tcp.local/",
-		"credentials":    "ipp://u:p@printer.local/ipp",
-		"scheme":         "ftp://printer.local/ipp",
-		"port":           "ipp://printer.local:70000/ipp",
-		"control":        "ipp://printer.local/ipp\n",
-		"encoded nl":     "ipp://printer%0A.local/ipp",
-		"bad escape":     "ipp://Brother%ZZ._ipp._tcp.local/",
-		"encoded slash":  "ipp://printer%2Flocal/ipp",
-		"missing host":   "ipp://",
-		"usb creds":      "USB://u:p@host/",
-		"dnssd creds":    "DNSSD://u:p@host/",
-		"parallel creds": "parallel://u:p@host/",
-		"serial creds":   "serial://u:p@host/",
+		"empty":             "",
+		"no scheme":         "printer.local/ipp",
+		"space":             "dnssd://Brother HL-L2460DW._ipp._tcp.local/",
+		"credentials":       "ipp://u:p@printer.local/ipp",
+		"scheme":            "ftp://printer.local/ipp",
+		"port":              "ipp://printer.local:70000/ipp",
+		"control":           "ipp://printer.local/ipp\n",
+		"encoded nl":        "ipp://printer%0A.local/ipp",
+		"bad escape":        "ipp://Brother%ZZ._ipp._tcp.local/",
+		"encoded slash":     "ipp://printer%2Flocal/ipp",
+		"missing host":      "ipp://",
+		"usb creds":         "USB://u:p@host/",
+		"dnssd creds":       "DNSSD://u:p@host/",
+		"parallel creds":    "parallel://u:p@host/",
+		"serial creds":      "serial://u:p@host/",
+		"usb path form":     "usb:/Brother/HL-L2460DW",
+		"dnssd path":        "dnssd:/Brother._ipp._tcp.local",
+		"usb no host":       "usb://",
+		"parallel bare":     "parallel:dev/lp0",
+		"serial creds path": "serial:/dev/ttyS0@host",
 	}
 	for name, uri := range cases {
 		if err := validateDeviceURI(uri); err == nil {

@@ -32,8 +32,10 @@ func validateDeviceURI(raw string) error {
 	switch strings.ToLower(scheme) {
 	case "ipp", "ipps", "lpd", "socket", "http", "https":
 		return validateNetworkDeviceURI(rest)
-	case "dnssd", "usb", "parallel", "serial":
-		return validateOpaqueDeviceURI(rest)
+	case "dnssd", "usb":
+		return validateAuthorityDeviceURI(rest)
+	case "parallel", "serial":
+		return validateDevicePathURI(rest)
 	default:
 		return fmt.Errorf("unsupported deviceURI scheme")
 	}
@@ -53,15 +55,31 @@ func validateNetworkDeviceURI(rest string) error {
 	return validateDeviceHost(host)
 }
 
-func validateOpaqueDeviceURI(rest string) error {
-	if !strings.HasPrefix(rest, "//") {
-		return nil
-	}
+// dnssd and usb always name their device through an authority, so a path-form
+// value for them is malformed rather than a shorthand — accepting it would let
+// the URI reach CUPS tooling with no host ever validated.
+func validateAuthorityDeviceURI(rest string) error {
 	host, _, err := splitDeviceAuthority(rest)
 	if err != nil {
 		return err
 	}
 	return validateDeviceHost(host)
+}
+
+// parallel and serial address a local device node (parallel:/dev/lp0) and carry
+// no authority; an authority form for them is validated as a host.
+func validateDevicePathURI(rest string) error {
+	if strings.HasPrefix(rest, "//") {
+		host, _, err := splitDeviceAuthority(rest)
+		if err != nil {
+			return err
+		}
+		return validateDeviceHost(host)
+	}
+	if !strings.HasPrefix(rest, "/") || strings.Contains(rest, "@") {
+		return fmt.Errorf("invalid deviceURI")
+	}
+	return nil
 }
 
 func splitDeviceAuthority(rest string) (host, port string, err error) {
