@@ -201,15 +201,26 @@ def exempt(citer: str, target: str, name: str, quoted: bool) -> list[tuple[str, 
 
     ```
     AGENTS.md § Layout of the theme tree   covered by the entry for § Layout
+    AGENTS.md § Layout.                    plain prose, exempted like the record
     ```
 
-    Exactness is why the seeded citations QUOTE their section names: a quoted
-    pointer is read whole, so an entry names its section and nothing else.
+    AND QUOTED, which this docstring argued while the code ignored the argument
+    it was handed. Exactness alone let an ordinary unquoted pointer whose name
+    happens to equal a key — the second line above — be exempted exactly as the
+    deliberate past-tense citation is, so a genuinely
+    dead pointer read clean and `exemption_problems` could not see it, the key
+    having been used. Quoting is what makes a past-tense citation deliberate:
+    a quoted name is read whole and written on purpose, and a bare one is just
+    a sentence that happens to land on the same words.
+
+    Verified before the argument was required, rather than trusted: all three
+    keys are reached only by quoted pointers, so this turns nothing red.
     """
     return [
         key
         for key in HISTORICAL_SECTIONS
-        if key[0] == citer
+        if quoted
+        and key[0] == citer
         and key[1] == target
         and normalized_words(name) == normalized_words(key[2])
     ]

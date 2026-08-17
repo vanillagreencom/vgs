@@ -102,6 +102,9 @@ added by review after surviving unnoticed.
                         counting the calls   (+)
                         `if problems:` -> `if False:`   (+)
                         exemptions match loosely again   (+)
+                        the `quoted` argument dropped from exempt(), so an
+                        unquoted pointer landing on a key's words is exempted
+                        like the deliberate citation   (+)
                         both HISTORICAL_SECTIONS staleness arms
                         the FIXTURE_FILES staleness arm
                         nothing_collected dropped from the heading arm
@@ -389,6 +392,28 @@ def exemption_controls() -> list[str]:
                     f"`{target} {SECTION_MARK} {name}`: an entry must cover the section "
                     f"it names and nothing else, or a future dead pointer is covered "
                     f"by an entry written for another"
+                )
+
+        # QUOTING IS WHAT MAKES A PAST-TENSE CITATION DELIBERATE. An ordinary
+        # unquoted pointer whose name happens to equal a key must NOT be
+        # exempted: it is a sentence landing on the same words, not a record
+        # that the section is gone. Paired with the quoted form asserted
+        # exempt, so this cannot pass on a table that exempts nothing.
+        for label, cited_as, want_exempt in (
+            ("quoted, as the seeded citations are", f'"{name}"', True),
+            ("the same name unquoted", f"{name}.", False),
+        ):
+            reported = pointer_problems(
+                dict(files, **{citer: f"# `{target}` {SECTION_MARK} {cited_as}\n"}),
+                markdown,
+                check.exempt,
+            ).problems
+            if bool(reported) is want_exempt:
+                failures.append(
+                    f"{label} came out wrong for the HISTORICAL_SECTIONS entry "
+                    f"`{target} {SECTION_MARK} {name}`: an unquoted pointer that merely "
+                    f"lands on a key's words is a dead pointer, and exempting it hides "
+                    f"one while leaving the key looking used"
                 )
 
         revived = {target: headings(f"# T\n\n## {name}\n")}

@@ -61,10 +61,10 @@
 # against three. Measured against origin/main, which is what a reader diffing
 # this branch sees; the rows churned more than this within it.
 #
-#   GRANTED   scripts/check-section-pointers.py        545 lines, 410 of them code
+#   GRANTED   scripts/check-section-pointers.py        556 lines, 420 of them code
 #   GRANTED   scripts/lib/section_pointers_selftest.py 486 lines
 #   GRANTED   scripts/test-section-pointers-e2e.py     434 lines
-#   GRANTED   scripts/test-section-pointers.py         419 lines
+#   GRANTED   scripts/test-section-pointers.py         444 lines
 #   RAISED    .github/workflows/ci.yml                 472 -> 487
 #   RAISED    scripts/validate                        1049 -> 1064
 #

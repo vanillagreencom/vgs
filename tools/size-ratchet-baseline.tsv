@@ -206,7 +206,7 @@ scripts/check-aur-sync.py	410
 scripts/check-doc-growth.py	862
 scripts/check-notification-takeover.js	454
 scripts/check-paste-injection.py	897
-scripts/check-section-pointers.py	545
+scripts/check-section-pointers.py	556
 scripts/check-settings-migration.js	952
 scripts/check-validation-inventory.py	411
 scripts/check-vshell-helper.py	5864
@@ -224,7 +224,7 @@ scripts/test-pill-hover-safety.js	420
 scripts/test-popout-dismiss-envelope.js	489
 scripts/test-remote-desktop-state.js	1243
 scripts/test-section-pointers-e2e.py	434
-scripts/test-section-pointers.py	419
+scripts/test-section-pointers.py	444
 scripts/test-toast-actions.js	607
 scripts/test-validate.sh	547
 scripts/test-validation-inventory.sh	2278
