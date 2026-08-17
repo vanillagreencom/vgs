@@ -19,6 +19,7 @@ Item {
     property string manualHost: ""
     property string manualPort: "631"
     property string manualProtocol: "ipp"
+    property string manualQueue: ""
     property bool testingConnection: false
     property var testConnectionResult: null
     property string newPrinterName: ""
@@ -45,6 +46,7 @@ Item {
         manualHost = "";
         manualPort = "631";
         manualProtocol = "ipp";
+        manualQueue = "";
         testingConnection = false;
         testConnectionResult = null;
         newPrinterName = "";

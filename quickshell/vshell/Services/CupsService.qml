@@ -425,7 +425,7 @@ Singleton {
         });
     }
 
-    function testConnection(host, port, protocol, callback) {
+    function testConnection(host, port, protocol, queue, callback) {
         if (!cupsAvailable)
             return;
         const params = {
@@ -433,6 +433,8 @@ Singleton {
             "port": port,
             "protocol": protocol
         };
+        if (queue)
+            params.queue = queue;
 
         VGSBackendService.sendRequest("cups.testConnection", params, response => {
             if (callback)

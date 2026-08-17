@@ -271,7 +271,7 @@ PluginComponent {
                                 buttonSize: 28
                                 iconName: "close"
                                 anchors.verticalCenter: parent.verticalCenter
-                                onClicked: CupsService.cancelJob(CupsService.getSelectedPrinter() || modelData.printer, modelData.id)
+                                onClicked: CupsService.cancelJob(modelData.printer || CupsService.getSelectedPrinter(), modelData.id)
                             }
                         }
                     }

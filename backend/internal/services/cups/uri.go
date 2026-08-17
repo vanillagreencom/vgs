@@ -239,7 +239,7 @@ func deviceInstanceName(raw string) string {
 	return ""
 }
 
-func buildManualDeviceURI(protocol, host string, port int) (string, error) {
+func buildManualDeviceURI(protocol, host string, port int, queue string) (string, error) {
 	proto := strings.ToLower(strings.TrimSpace(protocol))
 	if proto == "" {
 		proto = "ipp"
@@ -252,6 +252,12 @@ func buildManualDeviceURI(protocol, host string, port int) (string, error) {
 	}
 	if err := validateProtocol(proto); err != nil {
 		return "", err
+	}
+	queue = strings.TrimSpace(queue)
+	if queue != "" {
+		if err := validateName("queue", queue); err != nil {
+			return "", err
+		}
 	}
 	if port <= 0 {
 		port = defaultPort(proto)
@@ -268,7 +274,12 @@ func buildManualDeviceURI(protocol, host string, port int) (string, error) {
 	case "socket":
 		return "socket://" + hostport, nil
 	case "lpd":
-		return "lpd://" + hostport + "/passthru", nil
+		// CUPS reads the final path component as the LPD queue name;
+		// passthru preserves raw-server behavior when none is given.
+		if queue == "" {
+			queue = "passthru"
+		}
+		return "lpd://" + hostport + "/" + queue, nil
 	default:
 		return proto + "://" + hostport, nil
 	}

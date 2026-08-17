@@ -127,6 +127,7 @@ type testParams struct {
 	Host     string `json:"host"`
 	Port     int    `json:"port"`
 	Protocol string `json:"protocol"`
+	Queue    string `json:"queue"`
 }
 
 type sharedParams struct {
@@ -295,7 +296,7 @@ func (m *Manager) handleTestConnection(params json.RawMessage) (any, error) {
 	if p.Port <= 0 || p.Port > 65535 {
 		return nil, fmt.Errorf("port out of range")
 	}
-	uri, err := buildManualDeviceURI(p.Protocol, p.Host, p.Port)
+	uri, err := buildManualDeviceURI(p.Protocol, p.Host, p.Port, p.Queue)
 	if err != nil {
 		return nil, err
 	}

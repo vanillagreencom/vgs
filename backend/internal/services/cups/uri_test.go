@@ -114,21 +114,37 @@ func TestBuildManualDeviceURI(t *testing.T) {
 	cases := []struct {
 		proto, host string
 		port        int
+		queue       string
 		want        string
 	}{
-		{"ipp", "printer.local", 631, "ipp://printer.local:631/ipp/print"},
-		{"socket", "192.168.1.20", 0, "socket://192.168.1.20:9100"},
-		{"lpd", "printer.local", 0, "lpd://printer.local:515/passthru"},
-		{"ipp", "printer.local", 6631, "ipp://printer.local:6631/ipp/print"},
-		{"ipp", "2001:db8::1", 631, "ipp://[2001:db8::1]:631/ipp/print"},
+		{"ipp", "printer.local", 631, "", "ipp://printer.local:631/ipp/print"},
+		{"socket", "192.168.1.20", 0, "", "socket://192.168.1.20:9100"},
+		{"lpd", "printer.local", 0, "", "lpd://printer.local:515/passthru"},
+		{"lpd", "printer.local", 0, "rawq", "lpd://printer.local:515/rawq"},
+		{"lpd", "printer.local", 0, "  rawq  ", "lpd://printer.local:515/rawq"},
+		{"ipp", "printer.local", 6631, "", "ipp://printer.local:6631/ipp/print"},
+		{"ipp", "2001:db8::1", 631, "", "ipp://[2001:db8::1]:631/ipp/print"},
 	}
 	for _, tc := range cases {
-		got, err := buildManualDeviceURI(tc.proto, tc.host, tc.port)
+		got, err := buildManualDeviceURI(tc.proto, tc.host, tc.port, tc.queue)
 		if err != nil {
-			t.Fatalf("buildManualDeviceURI(%q,%q,%d) = %v", tc.proto, tc.host, tc.port, err)
+			t.Fatalf("buildManualDeviceURI(%q,%q,%d,%q) = %v", tc.proto, tc.host, tc.port, tc.queue, err)
 		}
 		if got != tc.want {
-			t.Fatalf("buildManualDeviceURI(%q,%q,%d) = %q, want %q", tc.proto, tc.host, tc.port, got, tc.want)
+			t.Fatalf("buildManualDeviceURI(%q,%q,%d,%q) = %q, want %q", tc.proto, tc.host, tc.port, tc.queue, got, tc.want)
+		}
+	}
+}
+
+func TestBuildManualDeviceURIRejectsMalformedQueue(t *testing.T) {
+	for name, queue := range map[string]string{
+		"slash":        "raw/q",
+		"space":        "raw q",
+		"control":      "raw\nq",
+		"leading dash": "-rawq",
+	} {
+		if _, err := buildManualDeviceURI("lpd", "printer.local", 0, queue); err == nil {
+			t.Fatalf("%s: buildManualDeviceURI accepted queue %q", name, queue)
 		}
 	}
 }

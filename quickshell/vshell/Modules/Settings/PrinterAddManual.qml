@@ -111,6 +111,32 @@ Column {
     Row {
         width: parent.width
         spacing: Theme.spacingS
+        visible: tab.manualProtocol === "lpd"
+
+        StyledText {
+            text: I18n.tr("Queue", "Label for the LPD queue name input field")
+            font.pixelSize: Theme.fontSizeMedium
+            font.weight: Font.Medium
+            color: Theme.surfaceText
+            width: 80
+            anchors.verticalCenter: parent.verticalCenter
+        }
+
+        VgsTextField {
+            width: parent.width - 80 - Theme.spacingS
+            placeholderText: "passthru"
+            text: tab.manualQueue
+            onTextEdited: {
+                tab.manualQueue = text;
+                tab.testConnectionResult = null;
+                tab.selectedDeviceUri = "";
+            }
+        }
+    }
+
+    Row {
+        width: parent.width
+        spacing: Theme.spacingS
 
         Item {
             width: 80
@@ -126,7 +152,7 @@ Column {
                 tab.testingConnection = true;
                 tab.testConnectionResult = null;
                 const port = parseInt(tab.manualPort) || parseInt(root.defaultPortFor(tab.manualProtocol));
-                CupsService.testConnection(tab.manualHost, port, tab.manualProtocol, response => {
+                CupsService.testConnection(tab.manualHost, port, tab.manualProtocol, tab.manualProtocol === "lpd" ? tab.manualQueue : "", response => {
                     tab.testingConnection = false;
                     if (response.error) {
                         tab.testConnectionResult = {

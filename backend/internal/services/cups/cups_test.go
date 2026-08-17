@@ -63,12 +63,23 @@ func TestHandleTestConnectionReturnsURI(t *testing.T) {
 	if !ok {
 		t.Fatalf("result type %T", got)
 	}
-	wantURI, err := buildManualDeviceURI("ipp", "127.0.0.1", port)
+	wantURI, err := buildManualDeviceURI("ipp", "127.0.0.1", port, "")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if out["reachable"] != true || out["uri"] != wantURI {
 		t.Fatalf("reachable result = %#v, want uri %q", out, wantURI)
+	}
+	got, err = m.handleTestConnection(mustJSON(t, testParams{Host: "127.0.0.1", Port: port, Protocol: "lpd", Queue: "rawq"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, ok = got.(map[string]any)
+	if !ok {
+		t.Fatalf("lpd result type %T", got)
+	}
+	if out["reachable"] != true || out["uri"] != "lpd://127.0.0.1:"+strconv.Itoa(port)+"/rawq" {
+		t.Fatalf("lpd queue result = %#v", out)
 	}
 	_ = ln.Close()
 	got, err = m.handleTestConnection(mustJSON(t, testParams{Host: "127.0.0.1", Port: port, Protocol: "ipp"}))
@@ -240,6 +251,9 @@ func TestCupsWriteHandlersRejectInvalidInput(t *testing.T) {
 		}},
 		{"bad host", func() (any, error) {
 			return m.handleTestConnection(mustJSON(t, testParams{Host: "bad host", Port: 631}))
+		}},
+		{"bad lpd queue", func() (any, error) {
+			return m.handleTestConnection(mustJSON(t, testParams{Host: "printer.local", Protocol: "lpd", Queue: "raw/q"}))
 		}},
 	}
 	for _, tc := range cases {
