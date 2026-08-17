@@ -118,12 +118,13 @@ def selftest() -> int:
             f"# ```\n# example\n# ```\n\n# `doc.md` {SECTION_MARK} Live section.\n",
         ),
     ):
-        if not fence_left_open(unbalanced):
+        markdown = "fence opened inside a comment block" not in case
+        if not fence_left_open(unbalanced, is_markdown=markdown):
             failures.append(
                 f"{case} left open at EOF was not detected, so every pointer after it "
                 f"is skipped and the file reads as one that simply had none"
             )
-        if fence_left_open(balanced):
+        if fence_left_open(balanced, is_markdown=markdown):
             failures.append(f"{case} that DOES close was reported as left open")
         if headings(unbalanced) and not headings(balanced):
             failures.append(f"{case}: the heading reader disagrees about what a fence is")
@@ -189,28 +190,109 @@ def selftest() -> int:
                 f"{case} control passes on a reader that finds no headings"
             )
 
-    # A STRUCTURAL MARKDOWN LINE ENDS A BLOCK ON BOTH SIDES. Flushing only before
-    # it let a bare mark on the next line inherit the structural line's target.
-    # Each is paired with the same two marks on ONE line, where inheritance is
-    # legitimate and must still happen.
-    for case, structural in (
-        ("a heading", f"## `doc.md` {SECTION_MARK} Live section"),
-        ("a table row", f"| `doc.md` {SECTION_MARK} Live section |"),
-        ("a list item", f"- `doc.md` {SECTION_MARK} Live section"),
-        ("a block quote", f"> `doc.md` {SECTION_MARK} Live section"),
+    # WHERE A STRUCTURAL LINE IS A BOUNDARY, AND WHERE IT IS NOT. Two rules that
+    # look alike and are not: a heading ends its block on both sides because an
+    # ATX heading is one line by definition, and SIBLING structural lines are
+    # kept apart because one bullet's subject is not the next bullet's. Neither
+    # says a list item may not absorb its OWN continuation, and asserting that it
+    # may not is what broke the wrap this module exists to handle.
+    for case, body in (
+        (
+            "a heading",
+            f"# C\n\n## `doc.md` {SECTION_MARK} Live section\nsee {SECTION_MARK} Live section\n",
+        ),
+        (
+            "two sibling list items",
+            f"# C\n\n- `doc.md` {SECTION_MARK} Live section\n- see {SECTION_MARK} Live section\n",
+        ),
     ):
-        split = f"# C\n\n{structural}\nsee {SECTION_MARK} Live section\n"
-        if not any(problem.startswith("citer.md:") for problem in cited(split)):
+        if not any(problem.startswith("citer.md:") for problem in cited(body)):
             failures.append(
-                f"a bare mark on the line after {case} inherited that line's target, so "
-                f"it was judged against a document the citing file never named"
+                f"a bare mark after {case} inherited that line's target, so it was "
+                f"judged against a document the citing file never named"
             )
-        joined = f"# C\n\n`doc.md` {SECTION_MARK} Live section, and {SECTION_MARK} Live section\n"
-        if cited(joined):
+
+    # THE CONTINUATION SIDE, as a PAIRED SET. The plain paragraph wrap sits
+    # beside four structural wraps that must behave identically, because a fix
+    # correct for the paragraph and wrong for the bullet is exactly the shape
+    # that shipped: the target was lost, the citing file blamed, and in one case
+    # a dead pointer resolved silently against the citer's own heading.
+    for case, body in (
+        ("a plain paragraph", f"# C\n\nsee `doc.md`\n{SECTION_MARK} Gone section.\n"),
+        ("a list item", f"# C\n\n- see `doc.md`\n  {SECTION_MARK} Gone section.\n"),
+        (
+            "a list item with a four-space continuation",
+            f"# C\n\n- see `doc.md`\n    {SECTION_MARK} Gone section.\n",
+        ),
+        ("a block quote", f"# C\n\n> see `doc.md`\n  {SECTION_MARK} Gone section.\n"),
+        ("a numbered item", f"# C\n\n1. see `doc.md`\n   {SECTION_MARK} Gone section.\n"),
+        (
+            # The shape that resolved silently: the citer carries a heading of
+            # the cited name, so losing the target does not merely misname the
+            # finding — it makes the dead pointer disappear.
+            "a list item in a citer carrying a heading of the cited name",
+            f"# C\n\n## Gone section\n\n- see `doc.md`\n  {SECTION_MARK} Gone section.\n",
+        ),
+    ):
+        reported = cited(body)
+        if not any("cites `doc.md" in problem for problem in reported):
             failures.append(
-                f"inheritance within one clause stopped working, so the {case} control "
-                f"above proves only that the reader joins nothing"
+                f"a pointer wrapped across {case} lost its target: the mark must still "
+                f"be judged against doc.md, not against the citing file and not "
+                f"dropped — {reported or 'nothing was reported at all'}"
             )
+        if any("Live section" in problem for problem in cited(body.replace("Gone", "Live"))):
+            failures.append(
+                f"the same wrap across {case} naming a LIVE heading was reported, so the "
+                f"control above passes on a reader that reports everything"
+            )
+
+    # THE FOUR FENCE AND FLUSH FIELDS THAT NO CONTROL COULD FAIL. Each sits
+    # beside a sibling that IS pinned, which is how they were missed.
+    #
+    # (1) A closing fence carries no INFO STRING: ```python inside a ``` block is
+    #     content, so a heading after it stays hidden.
+    info = "# D\n\n```\n```python\n## Live section\n```\n"
+    if headings(info) != [["D"]]:
+        failures.append(
+            f"a fence line carrying an info string closed the fence, so a heading "
+            f"inside an example was recorded as real: {headings(info)}"
+        )
+    if headings(info.replace("```python", "text")) != [["D"]]:
+        failures.append("the same document without the info string changed meaning")
+
+    # (2) A FOUR-SPACE-INDENTED fence line does not open one in markdown.
+    indented_fence = "# D\n\nprose\n\n    ```\n\n## Live section\n"
+    if [["D"], ["Live", "section"]] != headings(indented_fence):
+        failures.append(
+            f"a four-space-indented ``` opened a fence, so everything after it was "
+            f"skipped: {headings(indented_fence)}"
+        )
+    if fence_left_open(indented_fence, is_markdown=True):
+        failures.append("an indented ``` was reported as an unclosed fence")
+
+    # (3) The PRE-flush: a paragraph line must not join the structural line under
+    #     it, or a mark on that line inherits the paragraph's target.
+    pre = f"# C\n\nsee `doc.md` {SECTION_MARK} Live section\n## {SECTION_MARK} Gone section\n"
+    if not any(problem.startswith("citer.md:") for problem in cited(pre)):
+        failures.append(
+            "a structural line joined the paragraph above it, so a mark on it "
+            "inherited that paragraph's target"
+        )
+
+    # (4) INDENTED_CODE is markdown-only: an indented comment continuation in a
+    #     source file is prose, and a mark there must still be judged.
+    # The indented comment STARTS its block, so the continuation rule cannot
+    # cover it and only the is_markdown guard keeps it prose.
+    py = f"#     `doc.md` {SECTION_MARK} Gone section.\n"
+    if not any("cites `doc.md" in problem for problem in cited_in("citer.py", py)):
+        failures.append(
+            f"a mark on an indented comment continuation in a .py file vanished — "
+            f"markdown's indented-code rule does not apply there: "
+            f"{cited_in('citer.py', py) or 'nothing was reported'}"
+        )
+    if cited_in("citer.py", py.replace("Gone", "Live")):
+        failures.append("the same indented continuation naming a LIVE heading was reported")
 
     for failure in failures:
         print(f"prose_blocks selftest: {failure}", file=sys.stderr)

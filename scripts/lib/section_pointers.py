@@ -243,7 +243,7 @@ def pointer_problems(
         # reader returns the same untroubled emptiness as a file with none. The
         # remainder is not read past this: a reader that lost half a file cannot
         # report what the file contains.
-        if fence_left_open(files[rel]):
+        if fence_left_open(files[rel], rel.endswith(".md")):
             problems.append(
                 f"{rel} opens a ``` or ~~~ fence that never closes, so everything "
                 f"after it was skipped: no pointer there was seen, and if anything "

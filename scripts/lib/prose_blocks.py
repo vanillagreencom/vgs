@@ -102,6 +102,7 @@ def scan(text: str, is_markdown: bool) -> tuple[list[tuple[int, str, bool, bool]
     """
     lines: list[tuple[int, str, bool, bool]] = []
     opener: tuple[str, int] | None = None
+    previous_was_prose = False
     for number, raw in enumerate(text.splitlines(), 1):
         logical = _logical(raw, is_markdown)
         is_comment = not is_markdown and bool(COMMENT_MARKER.match(raw.lstrip()))
@@ -111,18 +112,33 @@ def scan(text: str, is_markdown: bool) -> tuple[list[tuple[int, str, bool, bool]
             # string closes it. Everything else is content, fence-shaped or not.
             if marker and marker[0] == opener[0] and marker[1] >= opener[1] and not marker[2]:
                 opener = None
-            lines.append((number, logical, False, is_comment))
+            is_prose = False
         elif marker:
             opener = (marker[0], marker[1])
-            lines.append((number, logical, False, is_comment))
-        elif is_markdown and INDENTED_CODE.match(logical):
-            lines.append((number, logical, False, is_comment))
+            is_prose = False
+        elif is_markdown and INDENTED_CODE.match(logical) and not previous_was_prose:
+            # AN INDENTED CODE BLOCK ONLY WHERE COMMONMARK HAS ONE. An indented
+            # line that CONTINUES a paragraph or a list item is continuation
+            # text, not code — four spaces is the ordinary indent for content
+            # under a bullet — and treating it as code made the mark on it
+            # vanish beneath the declined census: no finding, no refusal, no
+            # count. The condition is the previous line, which is what separates
+            # "starts a block" from "continues one".
+            #
+            # NOT MODELLED: CommonMark measures the indent from the enclosing
+            # list item's content column, so deeper nesting can start a code
+            # block at more than four spaces. Nothing here needs that, and the
+            # cost of guessing it wrong is a heading missed, so the narrow rule
+            # is the one written.
+            is_prose = False
         else:
-            lines.append((number, logical, True, is_comment))
+            is_prose = True
+        lines.append((number, logical, is_prose, is_comment))
+        previous_was_prose = is_prose and bool(logical.strip())
     return lines, opener is not None
 
 
-def fence_left_open(text: str) -> bool:
+def fence_left_open(text: str, is_markdown: bool) -> bool:
     """Whether a fence opened in `text` and never closed before EOF.
 
     A LOST FILE, NOT A CLEAN READ. The readers skip what lies inside a fence, so
@@ -130,10 +146,14 @@ def fence_left_open(text: str) -> bool:
     and returns the same empty, untroubled result as a file that genuinely had
     none. Callers report this rather than reading the remainder.
 
-    Asked of BOTH readings, because a caller may hold either kind of file and an
-    unbalanced fence is a lost file in each.
+    ASKED OF ONE READING, the caller's own. Asking both and failing on either
+    judged a file by semantics its actual reader never uses: the code reading
+    strips indent and a comment marker first, so valid markdown — an indented
+    example whose body holds a ```bash line, a heading whose text begins a fence
+    — was reported unbalanced and its whole file skipped. Every caller holds
+    exactly one kind of file and knows which.
     """
-    return scan(text, is_markdown=True)[1] or scan(text, is_markdown=False)[1]
+    return scan(text, is_markdown)[1]
 
 
 def headings(text: str) -> list[list[str]]:
@@ -201,12 +221,19 @@ def blocks(text: str, is_markdown: bool) -> list[tuple[str, list[tuple[int, int]
             flush()
         current.append((number, prose))
         previous_is_comment = is_comment
-        # A STRUCTURAL LINE IS A BOUNDARY ON BOTH SIDES. Flushing only before it
-        # left a heading joined to the line beneath, so a bare mark there
-        # inherited the heading's target and was judged against a document the
-        # citing file never named — the same fail-open as inheritance crossing a
-        # sentence end, on the other side of the same flush.
-        if structural:
+        # A HEADING ENDS ITS BLOCK ON BOTH SIDES; A LIST ITEM DOES NOT. Flushing
+        # before every structural line keeps siblings apart — one bullet's
+        # subject is not the next bullet's — and that is the whole of the
+        # rationale. Flushing AFTER every one of them went further than the
+        # rationale reaches and broke the wrap this module exists to handle: a
+        # list item, table row or blockquote must still absorb its own
+        # CONTINUATION, or a pointer whose target ends one line and whose mark
+        # begins the next loses its target and blames the citing file.
+        #
+        # A heading is the exception because an ATX heading is one line by
+        # definition — it has no continuation to absorb, so the line beneath it
+        # starts something new, which is the leak this rule was added for.
+        if structural and prose.startswith("#"):
             flush()
             previous_is_comment = None
     flush()

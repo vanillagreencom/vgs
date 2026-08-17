@@ -279,7 +279,7 @@ def declined_fences(documents: dict[str, str]) -> dict[str, str]:
     return {
         rel: "opens a fence that never closes, so its heading list is truncated"
         for rel, text in documents.items()
-        if rel.endswith(".md") and not is_citer(rel) and fence_left_open(text)
+        if rel.endswith(".md") and not is_citer(rel) and fence_left_open(text, True)
     }
 
 

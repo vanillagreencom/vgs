@@ -49,8 +49,32 @@ added by review after surviving unnoticed.
                         a longer fence closed by a shorter one, and a ~~~ line
                         closing a ``` fence — each lets an example satisfy a
                         pointer   (+)
-                        the structural-line flush made one-sided again   (+)
+                        the CLOSE rule losing its info-string field, so
+                        ```python inside a fence closes it   (+)
+                        FENCE's 0-3 space indent bound widened   (+)
+                        the structural PRE-flush dropped (the after-flush alone
+                        leaves it green)   (+)
+                        the after-flush widened from headings to every
+                        structural line, which loses a wrapped pointer's target
+                        — and INDENTED_CODE's continuation guard dropped, which
+                        makes the mark vanish entirely   (+)
+                        INDENTED_CODE applied outside markdown   (+)
+                        fence_left_open ORing both readings again   (+)
                         blocks() flushes after every line   (+)
+
+  EQUIVALENT MUTANTS, recorded so the next run does not read them as gaps:
+
+  tracked_blobs.py      git_env dropping GIT_CONFIG_PREFIXES is INERT — git
+                        ignores GIT_CONFIG_KEY_n/VALUE_n unless
+                        GIT_CONFIG_COUNT is set, and COUNT is scrubbed by the
+                        other half; the prefix scrub is defence in depth, so a
+                        control could only assert the environment, not a
+                        behaviour.
+                        Slicing the chunk loop one short survives the CONTROLS
+                        but fails the real guard through the accounting arm; a
+                        literal slice bug needs more than CHUNK blobs to show,
+                        so its control reproduces the effect through a stubbed
+                        _read_chunk instead.
                         the markdown-structural and comment/code flushes
                         fences honoured only in markdown
                         the fence counter can never be odd   (+)
