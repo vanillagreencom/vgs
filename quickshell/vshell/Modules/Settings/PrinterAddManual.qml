@@ -10,10 +10,23 @@ Column {
 
     required property var tab
     property var onRecommended: null
+    property string lastAutoPort: "631"
 
     width: parent ? parent.width : 0
     spacing: Theme.spacingS
     visible: tab.manualEntryMode
+
+    function defaultPortFor(protocol) {
+        switch (protocol) {
+        case "socket":
+        case "jetdirect":
+            return "9100";
+        case "lpd":
+            return "515";
+        default:
+            return "631";
+        }
+    }
 
     Row {
         width: parent.width
@@ -55,7 +68,7 @@ Column {
 
         VgsTextField {
             width: 80
-            placeholderText: "631"
+            placeholderText: root.defaultPortFor(tab.manualProtocol)
             text: tab.manualPort
             onTextEdited: {
                 tab.manualPort = text;
@@ -84,6 +97,10 @@ Column {
             currentValue: tab.manualProtocol
             options: ["ipp", "ipps", "lpd", "socket"]
             onValueChanged: value => {
+                const nextPort = root.defaultPortFor(value);
+                if (!tab.manualPort || tab.manualPort === root.lastAutoPort)
+                    tab.manualPort = nextPort;
+                root.lastAutoPort = nextPort;
                 tab.manualProtocol = value;
                 tab.testConnectionResult = null;
                 tab.selectedDeviceUri = "";
@@ -108,7 +125,7 @@ Column {
             onClicked: {
                 tab.testingConnection = true;
                 tab.testConnectionResult = null;
-                const port = parseInt(tab.manualPort) || 631;
+                const port = parseInt(tab.manualPort) || parseInt(root.defaultPortFor(tab.manualProtocol));
                 CupsService.testConnection(tab.manualHost, port, tab.manualProtocol, response => {
                     tab.testingConnection = false;
                     if (response.error) {

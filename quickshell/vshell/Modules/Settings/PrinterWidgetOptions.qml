@@ -13,24 +13,36 @@ Column {
     spacing: Theme.spacingS
     visible: options.widgetId === "printer"
 
-    OptionToggle {
+    VgsToggle {
+        width: parent.width
+        horizontalPadding: 0
+        rowHoverHighlight: false
         text: I18n.tr("Hide unless queue or printing")
         checked: options.valueFor("hideWhenIdle", true)
-        onChanged: value => options.settingChanged("hideWhenIdle", value)
+        onToggled: value => options.settingChanged("hideWhenIdle", value)
     }
-    OptionToggle {
+    VgsToggle {
+        width: parent.width
+        horizontalPadding: 0
+        rowHoverHighlight: false
         text: I18n.tr("Show jobs in dropdown")
         checked: options.valueFor("showJobs", true)
-        onChanged: value => options.settingChanged("showJobs", value)
+        onToggled: value => options.settingChanged("showJobs", value)
     }
-    OptionToggle {
+    VgsToggle {
+        width: parent.width
+        horizontalPadding: 0
+        rowHoverHighlight: false
         text: I18n.tr("Show connected printer")
         checked: options.valueFor("showConnected", true)
-        onChanged: value => options.settingChanged("showConnected", value)
+        onToggled: value => options.settingChanged("showConnected", value)
     }
-    OptionToggle {
+    VgsToggle {
+        width: parent.width
+        horizontalPadding: 0
+        rowHoverHighlight: false
         text: I18n.tr("Show job-count badge")
         checked: options.valueFor("showJobBadge", true)
-        onChanged: value => options.settingChanged("showJobBadge", value)
+        onToggled: value => options.settingChanged("showJobBadge", value)
     }
 }

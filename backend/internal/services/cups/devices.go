@@ -20,9 +20,6 @@ func parseDevices(out []byte) []Device {
 		}
 		safeURI := sanitizeURI(uri)
 		info := deviceInstanceName(safeURI)
-		if info == "" || info == extractHost(safeURI) {
-			info = safeURI
-		}
 		devices = append(devices, Device{Class: class, URI: safeURI, Info: info, IP: extractHost(safeURI)})
 	}
 	if devices == nil {

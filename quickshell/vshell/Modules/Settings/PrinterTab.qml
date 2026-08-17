@@ -27,7 +27,6 @@ Item {
     property string selectedPpd: ""
     property string newPrinterLocation: ""
     property string newPrinterInfo: ""
-    property var suggestedPPDs: []
 
     function toggleAddPrinter() {
         showAddPrinter = !showAddPrinter;
@@ -54,42 +53,6 @@ Item {
         selectedPpd = "";
         newPrinterLocation = "";
         newPrinterInfo = "";
-        suggestedPPDs = [];
-    }
-
-    Connections {
-        target: CupsService
-        function onPpdsChanged() {
-            if (printerTab.manualEntryMode && printerTab.testConnectionResult?.success)
-                printerTab.selectDriverlessPPD();
-        }
-    }
-
-    function selectDriverlessPPD() {
-        if (printerTab.selectedPpd || CupsService.ppds.length === 0)
-            return;
-
-        const probeModel = printerTab.testConnectionResult?.data?.makeModel || "";
-        let suggested = [];
-
-        // Try to find a model-specific PPD match
-        if (probeModel) {
-            const normalizedModel = probeModel.toLowerCase().replace(/[^a-z0-9]/g, "");
-            const modelMatches = CupsService.ppds.filter(p => {
-                const normalizedPPD = (p.makeModel || "").toLowerCase().replace(/[^a-z0-9]/g, "");
-                return normalizedPPD.includes(normalizedModel) || normalizedModel.includes(normalizedPPD);
-            });
-            if (modelMatches.length > 0)
-                suggested = suggested.concat(modelMatches);
-        }
-
-        const everywhere = CupsService.ppds.filter(p => p.name === "everywhere");
-        const driverless = CupsService.ppds.filter(p => p.name === "driverless");
-        suggested = everywhere.concat(driverless, suggested.filter(s => s.name !== "everywhere" && s.name !== "driverless"));
-        if (suggested.length > 0) {
-            printerTab.selectedPpd = suggested[0].name;
-            printerTab.suggestedPPDs = suggested;
-        }
     }
 
     function selectDevice(device) {
@@ -97,20 +60,11 @@ Item {
             return;
         selectedDevice = device;
         selectedDeviceUri = device.uri;
-        if (!newPrinterName) {
+        if (!newPrinterName)
             newPrinterName = CupsService.suggestPrinterName(device);
-        }
-        if (device.location && !newPrinterLocation) {
+        if (device.location && !newPrinterLocation)
             newPrinterLocation = CupsService.decodeUri(device.location);
-        }
-        suggestedPPDs = CupsService.getMatchingPPDs(device);
         selectedPpd = "everywhere";
-        if (suggestedPPDs.length === 0 || suggestedPPDs[0].name !== "everywhere") {
-            suggestedPPDs = [{
-                    "name": "everywhere",
-                    "makeModel": I18n.tr("Recommended — IPP Everywhere")
-                }].concat(suggestedPPDs);
-        }
     }
 
     Component.onCompleted: {

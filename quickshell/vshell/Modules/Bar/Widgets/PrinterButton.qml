@@ -14,17 +14,25 @@ PluginComponent {
     readonly property bool showConnected: widgetData?.showConnected !== false
     readonly property bool showJobBadge: widgetData?.showJobBadge !== false
 
+    property bool popoutOpen: false
+    readonly property bool pillRevealed: !root.hideWhenIdle || root.isBusy || root.popoutOpen
+
     Ref {
         service: CupsService
     }
 
-    readonly property int jobCount: CupsService.getTotalJobsNum()
+    readonly property var visibleJobs: CupsService.allJobs
+    readonly property int jobCount: visibleJobs.length
     readonly property bool hasPrinters: CupsService.cupsAvailable && CupsService.getPrintersNum() > 0
     readonly property bool isBusy: jobCount > 0 || CupsService.getCurrentPrinterState() === "processing"
     readonly property string connectedName: CupsService.getSelectedPrinter() || (CupsService.printerNames.length > 0 ? CupsService.printerNames[0] : "")
 
     _visibilityOverride: true
-    _visibilityOverrideValue: !root.hideWhenIdle || root.isBusy
+    _visibilityOverrideValue: root.pillRevealed
+
+    onPillRevealedChanged: CupsService.jobsWanted = root.pillRevealed || root.popoutOpen
+    onPopoutOpenChanged: CupsService.jobsWanted = root.pillRevealed || root.popoutOpen
+    Component.onCompleted: CupsService.jobsWanted = root.pillRevealed || root.popoutOpen
 
     popoutWidth: 360
 
@@ -131,6 +139,15 @@ PluginComponent {
             headerText: I18n.tr("Printer")
             detailsText: root.statusLabel()
             showCloseButton: true
+
+            Connections {
+                target: popout.parentPopout
+                function onShouldBeVisibleChanged() {
+                    root.popoutOpen = popout.parentPopout && popout.parentPopout.shouldBeVisible;
+                }
+            }
+            Component.onCompleted: root.popoutOpen = popout.parentPopout && popout.parentPopout.shouldBeVisible
+            Component.onDestruction: root.popoutOpen = false
             headerActions: Component {
                 Rectangle {
                     width: 32
@@ -210,7 +227,7 @@ PluginComponent {
                 }
 
                 Repeater {
-                    model: root.showJobs ? CupsService.getCurrentPrinterJobs() : []
+                    model: root.showJobs ? root.visibleJobs : []
 
                     delegate: Rectangle {
                         required property var modelData

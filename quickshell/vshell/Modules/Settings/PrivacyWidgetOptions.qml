@@ -21,19 +21,28 @@ Column {
         color: Theme.surfaceText
     }
 
-    OptionToggle {
+    VgsToggle {
+        width: parent.width
+        horizontalPadding: 0
+        rowHoverHighlight: false
         text: I18n.tr("Microphone")
         checked: SettingsData.privacyShowMicIcon
-        onChanged: value => SettingsData.set("privacyShowMicIcon", value)
+        onToggled: value => SettingsData.set("privacyShowMicIcon", value)
     }
-    OptionToggle {
+    VgsToggle {
+        width: parent.width
+        horizontalPadding: 0
+        rowHoverHighlight: false
         text: I18n.tr("Camera")
         checked: SettingsData.privacyShowCameraIcon
-        onChanged: value => SettingsData.set("privacyShowCameraIcon", value)
+        onToggled: value => SettingsData.set("privacyShowCameraIcon", value)
     }
-    OptionToggle {
+    VgsToggle {
+        width: parent.width
+        horizontalPadding: 0
+        rowHoverHighlight: false
         text: I18n.tr("Screen Sharing")
         checked: SettingsData.privacyShowScreenShareIcon
-        onChanged: value => SettingsData.set("privacyShowScreenShareIcon", value)
+        onToggled: value => SettingsData.set("privacyShowScreenShareIcon", value)
     }
 }

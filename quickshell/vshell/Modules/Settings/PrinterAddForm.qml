@@ -26,8 +26,12 @@ Column {
 
     function applyRecommendedDriver() {
         tab.selectedPpd = "everywhere";
-        const everywhere = CupsService.ppds.find(p => p.name === "everywhere");
-        tab.suggestedPPDs = everywhere ? [everywhere] : [{ "name": "everywhere", "makeModel": I18n.tr("Recommended — IPP Everywhere") }];
+    }
+
+    readonly property var selectedGroup: {
+        if (!tab.selectedDevice)
+            return null;
+        return CupsService.discoveredPrinters.find(g => g.uri === tab.selectedDevice.uri || (g.alternatives || []).some(a => a.uri === tab.selectedDeviceUri)) || null;
     }
 
     Row {
@@ -52,7 +56,7 @@ Column {
                 }
 
                 StyledText {
-                    text: I18n.tr("Discover Devices", "Toggle button to scan for printers via mDNS/Avahi")
+                    text: I18n.tr("Discover Devices", "Toggle button to scan CUPS for local and network printers")
                     font.pixelSize: Theme.fontSizeSmall
                     color: !tab.manualEntryMode ? Theme.onPrimary : Theme.surfaceText
                     font.weight: Font.Medium
@@ -135,10 +139,12 @@ Column {
                 dropdownWidth: parent.width - 80 - scanDevicesBtn.width - Theme.spacingS * 2
                 popupWidth: parent.width - 80 - scanDevicesBtn.width - Theme.spacingS * 2
                 enableFuzzySearch: true
-                emptyText: I18n.tr("No printers found")
+                emptyText: CupsService.devicesError ? I18n.tr("Scan failed") : I18n.tr("No printers found")
                 currentValue: {
                     if (CupsService.loadingDevices)
                         return I18n.tr("Scanning…");
+                    if (CupsService.devicesError)
+                        return I18n.tr("Scan failed");
                     if (tab.selectedDevice)
                         return CupsService.getDeviceDisplayName(tab.selectedDevice);
                     return I18n.tr("Select printer…");
@@ -190,17 +196,20 @@ Column {
             }
         }
 
+        StyledText {
+            visible: CupsService.devicesError.length > 0
+            width: parent.width
+            leftPadding: 80
+            text: CupsService.devicesError
+            font.pixelSize: Theme.fontSizeSmall
+            color: Theme.error
+            wrapMode: Text.WordWrap
+        }
+
         Column {
             width: parent.width
             spacing: Theme.spacingXS
-            visible: root.showAdvanced && tab.selectedDevice !== null && root.selectedAlternatives.length > 0
-
-            readonly property var selectedAlternatives: {
-                if (!tab.selectedDevice)
-                    return [];
-                const group = CupsService.discoveredPrinters.find(g => g.uri === tab.selectedDeviceUri || (g.device && g.device.uri === tab.selectedDevice.uri));
-                return group ? group.alternatives : [];
-            }
+            visible: root.showAdvanced && root.selectedGroup && root.selectedGroup.alternatives.length > 0
 
             Row {
                 width: parent.width
@@ -218,12 +227,24 @@ Column {
                 VgsDropdown {
                     dropdownWidth: parent.width - 80 - Theme.spacingS
                     popupWidth: parent.width - 80 - Theme.spacingS
-                    currentValue: I18n.tr("Recommended")
-                    options: [I18n.tr("Recommended")].concat(parent.parent.selectedAlternatives.map(a => a.label))
+                    currentValue: {
+                        const group = root.selectedGroup;
+                        if (!group || tab.selectedDeviceUri === group.uri)
+                            return I18n.tr("Recommended");
+                        const alt = (group.alternatives || []).find(a => a.uri === tab.selectedDeviceUri);
+                        return alt ? alt.label : I18n.tr("Recommended");
+                    }
+                    options: [I18n.tr("Recommended")].concat((root.selectedGroup?.alternatives || []).map(a => a.label))
                     onValueChanged: value => {
-                        if (value === I18n.tr("Recommended"))
+                        const group = root.selectedGroup;
+                        if (!group)
                             return;
-                        const alt = parent.parent.selectedAlternatives.find(a => a.label === value);
+                        if (value === I18n.tr("Recommended")) {
+                            tab.selectedDevice = group.device;
+                            tab.selectedDeviceUri = group.uri;
+                            return;
+                        }
+                        const alt = (group.alternatives || []).find(a => a.label === value);
                         if (alt) {
                             tab.selectedDeviceUri = alt.uri;
                             tab.selectedDevice = alt.device;

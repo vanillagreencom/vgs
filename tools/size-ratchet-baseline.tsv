@@ -149,7 +149,7 @@ quickshell/vshell/Modules/Settings/PluginBrowser.qml	1536
 quickshell/vshell/Modules/Settings/PluginListItem.qml	522
 quickshell/vshell/Modules/Settings/PluginsTab.qml	490
 quickshell/vshell/Modules/Settings/PowerSleepTab.qml	584
-quickshell/vshell/Modules/Settings/PrinterTab.qml	1191
+quickshell/vshell/Modules/Settings/PrinterTab.qml	1145
 quickshell/vshell/Modules/Settings/ScratchpadRow.qml	520
 quickshell/vshell/Modules/Settings/ScratchpadsTab.qml	712
 quickshell/vshell/Modules/Settings/ThemeCatalogBrowser.qml	486
@@ -176,7 +176,7 @@ quickshell/vshell/Services/CalendarBackend.qml	481
 quickshell/vshell/Services/ClipboardService.qml	514
 quickshell/vshell/Services/CloudSyncService.qml	728
 quickshell/vshell/Services/CompositorService.qml	447
-quickshell/vshell/Services/CupsService.qml	762
+quickshell/vshell/Services/CupsService.qml	756
 quickshell/vshell/Services/DSearchService.qml	427
 quickshell/vshell/Services/DgopService.qml	780
 quickshell/vshell/Services/DisplayService.qml	1453

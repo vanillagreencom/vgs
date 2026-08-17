@@ -2,6 +2,7 @@ package cups
 
 import (
 	"encoding/json"
+	"net"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -44,6 +45,58 @@ func TestParseDevices(t *testing.T) {
 	}
 	if devices[0].Class != "network" || devices[0].IP != "printer.local" || strings.Contains(devices[0].URI, "secret") {
 		t.Fatalf("unexpected device: %#v", devices[0])
+	}
+}
+
+func TestHandleTestConnectionReturnsURI(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	port := ln.Addr().(*net.TCPAddr).Port
+	m, _ := fakeManager(t)
+	got, err := m.handleTestConnection(mustJSON(t, testParams{Host: "127.0.0.1", Port: port, Protocol: "ipp"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, ok := got.(map[string]any)
+	if !ok {
+		t.Fatalf("result type %T", got)
+	}
+	wantURI, err := buildManualDeviceURI("ipp", "127.0.0.1", port)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out["reachable"] != true || out["uri"] != wantURI {
+		t.Fatalf("reachable result = %#v, want uri %q", out, wantURI)
+	}
+	_ = ln.Close()
+	got, err = m.handleTestConnection(mustJSON(t, testParams{Host: "127.0.0.1", Port: port, Protocol: "ipp"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, ok = got.(map[string]any)
+	if !ok {
+		t.Fatalf("closed result type %T", got)
+	}
+	if out["reachable"] != false || out["uri"] != wantURI {
+		t.Fatalf("closed result = %#v, want uri %q", out, wantURI)
+	}
+}
+
+func TestParseDevicesInfoUsesBonjourInstanceNotUSBHost(t *testing.T) {
+	devices := parseDevices([]byte(
+		"network dnssd://Brother%20HL-L2460DW._ipp._tcp.local/?uuid=abc\n" +
+			"direct usb://Brother/HL-L2460DW%20series?serial=ABC\n",
+	))
+	if len(devices) != 2 {
+		t.Fatalf("len(devices) = %d, want 2", len(devices))
+	}
+	if devices[0].Info != "Brother HL-L2460DW" {
+		t.Fatalf("bonjour Info = %q", devices[0].Info)
+	}
+	if devices[1].Info == "Brother" || devices[1].Info == devices[1].IP {
+		t.Fatalf("usb Info collapsed to manufacturer host: %#v", devices[1])
 	}
 }
 

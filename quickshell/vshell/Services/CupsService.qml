@@ -48,7 +48,7 @@ Singleton {
     property var printerClasses: []
 
     readonly property var discoveredPrinters: CupsDiscovery.groupDevices(devices)
-    readonly property var filteredDevices: discoveredPrinters.map(g => g.device)
+    readonly property var allJobs: CupsDiscovery.collectJobs(printers, printerNames)
 
     function decodeUri(str) {
         return CupsDiscovery.decodeUri(str);
@@ -66,14 +66,13 @@ Singleton {
         return CupsDiscovery.suggestPrinterName(device);
     }
 
-    function getMatchingPPDs(device) {
-        return CupsDiscovery.getMatchingPPDs(device, ppds);
-    }
-
     property bool loadingDevices: false
     property bool loadingPPDs: false
     property bool loadingClasses: false
     property bool creatingPrinter: false
+    property string devicesError: ""
+    property bool jobsWanted: false
+    onJobsWantedChanged: if (jobsWanted) fetchAllJobs()
 
     signal cupsStateUpdate
 
@@ -102,7 +101,7 @@ Singleton {
 
         function onCupsStateUpdate(data) {
             log.debug("Subscription update received");
-            getState();
+            applyPrinterSnapshot(data);
         }
 
         function onCapabilitiesChanged() {
@@ -123,14 +122,20 @@ Singleton {
         }
     }
 
+    function applyPrinterSnapshot(data) {
+        if (!data || !data.printers)
+            return;
+        updatePrinters(data.printers);
+        if (jobsWanted)
+            fetchAllJobs();
+    }
+
     function getState() {
         if (!cupsAvailable)
             return;
         VGSBackendService.sendRequest("cups.getPrinters", null, response => {
-            if (response.result) {
-                updatePrinters(response.result);
-                fetchAllJobs();
-            }
+            if (response.result)
+                applyPrinterSnapshot({ printers: response.result });
         });
     }
 
@@ -200,31 +205,15 @@ Singleton {
     }
 
     function getPrintersNum() {
-        if (!cupsAvailable)
-            return 0;
-
-        return printerNames.length;
+        return cupsAvailable ? printerNames.length : 0;
     }
 
     function getPrintersNames() {
-        if (!cupsAvailable)
-            return [];
-
-        return printerNames;
+        return cupsAvailable ? printerNames : [];
     }
 
     function getTotalJobsNum() {
-        if (!cupsAvailable)
-            return 0;
-
-        var result = 0;
-        for (var i = 0; i < printerNames.length; i++) {
-            var printerName = printerNames[i];
-            if (printers[printerName] && printers[printerName].jobs) {
-                result += printers[printerName].jobs.length;
-            }
-        }
-        return result;
+        return allJobs.length;
     }
 
     function getCurrentPrinterState() {
@@ -349,11 +338,16 @@ Singleton {
         if (!cupsAvailable)
             return;
         loadingDevices = true;
+        devicesError = "";
         VGSBackendService.sendRequest("cups.getDevices", null, response => {
             loadingDevices = false;
-            if (response.result) {
-                devices = response.result;
+            if (response.error) {
+                devices = [];
+                devicesError = response.error;
+                ToastService.showError(I18n.tr("Failed to scan for printers"), response.error);
+                return;
             }
+            devices = response.result || [];
         });
     }
 

@@ -33,7 +33,7 @@ func validateDeviceURI(raw string) error {
 	case "ipp", "ipps", "lpd", "socket", "http", "https":
 		return validateNetworkDeviceURI(rest)
 	case "dnssd", "usb", "parallel", "serial":
-		return validateOpaqueDeviceURI(scheme, rest)
+		return validateOpaqueDeviceURI(rest)
 	default:
 		return fmt.Errorf("unsupported deviceURI scheme")
 	}
@@ -53,17 +53,15 @@ func validateNetworkDeviceURI(rest string) error {
 	return validateDeviceHost(host)
 }
 
-func validateOpaqueDeviceURI(scheme, rest string) error {
-	switch scheme {
-	case "dnssd", "usb":
-		host, _, err := splitDeviceAuthority(rest)
-		if err != nil {
-			return err
-		}
-		return validateDeviceHost(host)
-	default:
+func validateOpaqueDeviceURI(rest string) error {
+	if !strings.HasPrefix(rest, "//") {
 		return nil
 	}
+	host, _, err := splitDeviceAuthority(rest)
+	if err != nil {
+		return err
+	}
+	return validateDeviceHost(host)
 }
 
 func splitDeviceAuthority(rest string) (host, port string, err error) {
@@ -121,7 +119,7 @@ func isAllDigits(value string) bool {
 	return true
 }
 
-// CUPS Bonjour/USB instance names percent-encode spaces in the host. Go's
+// CUPS Bonjour/dnssd instance names percent-encode spaces in the host. Go's
 // url.Parse rejects that as an invalid host escape, so device hosts are
 // unescaped and checked without RFC hostname rules.
 func validateDeviceHost(host string) error {
@@ -216,17 +214,14 @@ func extractHost(uri string) string {
 	return host
 }
 
-func deviceScheme(raw string) string {
-	scheme, _, ok := strings.Cut(raw, ":")
-	if !ok {
-		return ""
-	}
-	return strings.ToLower(scheme)
+func hasBonjourServiceSuffix(host string) bool {
+	lower := strings.ToLower(host)
+	return strings.Contains(lower, "._ipp._tcp") || strings.Contains(lower, "._ipps._tcp") || strings.Contains(lower, "._printer._tcp") || strings.Contains(lower, "._pdl-datastream._tcp")
 }
 
 func deviceInstanceName(raw string) string {
 	host := extractHost(raw)
-	if host == "" {
+	if host == "" || !hasBonjourServiceSuffix(host) {
 		return ""
 	}
 	lower := strings.ToLower(host)
@@ -238,64 +233,10 @@ func deviceInstanceName(raw string) string {
 			return strings.TrimSpace(host[:len(host)-len(suffix)])
 		}
 	}
-	if i := strings.Index(host, "."); i > 0 && strings.Contains(lower, "._") {
+	if i := strings.Index(host, "."); i > 0 {
 		return strings.TrimSpace(host[:i])
 	}
-	return host
-}
-
-func isBareProtocolURI(raw string) bool {
-	trimmed := strings.TrimSpace(raw)
-	if trimmed == "" {
-		return true
-	}
-	scheme, rest, ok := strings.Cut(trimmed, ":")
-	if !ok {
-		switch strings.ToLower(trimmed) {
-		case "ipp", "ipps", "http", "https", "lpd", "socket", "beh", "dnssd", "mdns", "smb", "file":
-			return true
-		}
-		return false
-	}
-	switch strings.ToLower(scheme) {
-	case "ipp", "ipps", "http", "https", "lpd", "socket", "beh", "dnssd", "mdns", "smb", "file":
-		return rest == "" || rest == "/" || rest == "//"
-	}
-	return false
-}
-
-func isVirtualBackendURI(class, raw string) bool {
-	uri := strings.ToLower(strings.TrimSpace(raw))
-	if strings.Contains(uri, "cups-pdf") || strings.HasPrefix(uri, "cups-brf") {
-		return true
-	}
-	return strings.EqualFold(class, "file") && (uri == "file" || strings.HasPrefix(uri, "file:"))
-}
-
-func schemeTransportLabel(scheme string) string {
-	switch strings.ToLower(scheme) {
-	case "dnssd":
-		return "Bonjour"
-	case "ipps":
-		return "Secure IPP"
-	case "ipp":
-		return "Network IPP"
-	case "socket", "jetdirect":
-		return "AppSocket"
-	case "lpd":
-		return "LPD"
-	case "http":
-		return "HTTP"
-	case "https":
-		return "HTTPS"
-	case "usb":
-		return "USB"
-	default:
-		if scheme == "" {
-			return "Network"
-		}
-		return scheme
-	}
+	return ""
 }
 
 func buildManualDeviceURI(protocol, host string, port int) (string, error) {

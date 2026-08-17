@@ -21,17 +21,21 @@ func TestValidateDeviceURIAcceptsCUPSBonjourHosts(t *testing.T) {
 
 func TestValidateDeviceURIRejectsUnsafeValues(t *testing.T) {
 	cases := map[string]string{
-		"empty":        "",
-		"no scheme":    "printer.local/ipp",
-		"space":        "dnssd://Brother HL-L2460DW._ipp._tcp.local/",
-		"credentials":  "ipp://u:p@printer.local/ipp",
-		"scheme":       "ftp://printer.local/ipp",
-		"port":         "ipp://printer.local:70000/ipp",
-		"control":       "ipp://printer.local/ipp\n",
-		"encoded nl":    "ipp://printer%0A.local/ipp",
-		"bad escape":    "ipp://Brother%ZZ._ipp._tcp.local/",
-		"encoded slash": "ipp://printer%2Flocal/ipp",
-		"missing host":  "ipp://",
+		"empty":          "",
+		"no scheme":      "printer.local/ipp",
+		"space":          "dnssd://Brother HL-L2460DW._ipp._tcp.local/",
+		"credentials":    "ipp://u:p@printer.local/ipp",
+		"scheme":         "ftp://printer.local/ipp",
+		"port":           "ipp://printer.local:70000/ipp",
+		"control":        "ipp://printer.local/ipp\n",
+		"encoded nl":     "ipp://printer%0A.local/ipp",
+		"bad escape":     "ipp://Brother%ZZ._ipp._tcp.local/",
+		"encoded slash":  "ipp://printer%2Flocal/ipp",
+		"missing host":   "ipp://",
+		"usb creds":      "USB://u:p@host/",
+		"dnssd creds":    "DNSSD://u:p@host/",
+		"parallel creds": "parallel://u:p@host/",
+		"serial creds":   "serial://u:p@host/",
 	}
 	for name, uri := range cases {
 		if err := validateDeviceURI(uri); err == nil {
@@ -67,14 +71,14 @@ func TestValidatePPDNameAcceptsCatalogAndDriverless(t *testing.T) {
 
 func TestValidatePPDNameRejectsUnsafeValues(t *testing.T) {
 	cases := map[string]string{
-		"empty":        "",
-		"dotdot":       "../sample.ppd",
-		"space":        "sample ppd",
-		"newline":      "sample.ppd\n",
-		"credentials":  "driverless:ipp://u:p@printer.local/ipp",
-		"scheme":       "driverless:ftp://printer.local/ipp",
+		"empty":         "",
+		"dotdot":        "../sample.ppd",
+		"space":         "sample ppd",
+		"newline":       "sample.ppd\n",
+		"credentials":   "driverless:ipp://u:p@printer.local/ipp",
+		"scheme":        "driverless:ftp://printer.local/ipp",
 		"encoded slash": "driverless:ipp://printer%2Flocal/ipp",
-		"missing host": "driverless:ipp://",
+		"missing host":  "driverless:ipp://",
 	}
 	for name, ppd := range cases {
 		if err := validatePPDName(ppd); err == nil {
@@ -101,50 +105,30 @@ func TestDeviceInstanceNameStripsBonjourService(t *testing.T) {
 	if got := deviceInstanceName("ipps://Brother%20HL-L2460DW._ipps._tcp.local/"); got != "Brother HL-L2460DW" {
 		t.Fatalf("deviceInstanceName ipps = %q", got)
 	}
-}
-
-func TestIsBareProtocolURI(t *testing.T) {
-	for _, uri := range []string{"ipp", "ipp:", "ipps://", "socket", "dnssd://"} {
-		if !isBareProtocolURI(uri) {
-			t.Fatalf("isBareProtocolURI(%q) = false", uri)
-		}
-	}
-	if isBareProtocolURI("ipp://printer.local/ipp/print") {
-		t.Fatal("full ipp URI treated as bare")
-	}
-}
-
-func TestIsVirtualBackendURI(t *testing.T) {
-	if !isVirtualBackendURI("file", "cups-pdf:/") {
-		t.Fatal("cups-pdf not treated as virtual")
-	}
-	if isVirtualBackendURI("network", "dnssd://Brother%20HL-L2460DW._ipp._tcp.local/") {
-		t.Fatal("bonjour treated as virtual")
+	if got := deviceInstanceName("usb://Brother/HL-L2460DW%20series?serial=ABC"); got != "" {
+		t.Fatalf("usb instance name = %q", got)
 	}
 }
 
 func TestBuildManualDeviceURI(t *testing.T) {
-	got, err := buildManualDeviceURI("ipp", "printer.local", 631)
-	if err != nil {
-		t.Fatal(err)
+	cases := []struct {
+		proto, host string
+		port        int
+		want        string
+	}{
+		{"ipp", "printer.local", 631, "ipp://printer.local:631/ipp/print"},
+		{"socket", "192.168.1.20", 0, "socket://192.168.1.20:9100"},
+		{"lpd", "printer.local", 0, "lpd://printer.local:515/passthru"},
+		{"ipp", "printer.local", 6631, "ipp://printer.local:6631/ipp/print"},
+		{"ipp", "2001:db8::1", 631, "ipp://[2001:db8::1]:631/ipp/print"},
 	}
-	if got != "ipp://printer.local:631/ipp/print" {
-		t.Fatalf("buildManualDeviceURI = %q", got)
-	}
-	got, err = buildManualDeviceURI("socket", "192.168.1.20", 0)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got != "socket://192.168.1.20:9100" {
-		t.Fatalf("socket default port = %q", got)
-	}
-}
-
-func TestSchemeTransportLabel(t *testing.T) {
-	if got := schemeTransportLabel("ipps"); got != "Secure IPP" {
-		t.Fatalf("schemeTransportLabel(ipps) = %q", got)
-	}
-	if got := schemeTransportLabel("ipp"); got != "Network IPP" {
-		t.Fatalf("schemeTransportLabel(ipp) = %q", got)
+	for _, tc := range cases {
+		got, err := buildManualDeviceURI(tc.proto, tc.host, tc.port)
+		if err != nil {
+			t.Fatalf("buildManualDeviceURI(%q,%q,%d) = %v", tc.proto, tc.host, tc.port, err)
+		}
+		if got != tc.want {
+			t.Fatalf("buildManualDeviceURI(%q,%q,%d) = %q, want %q", tc.proto, tc.host, tc.port, got, tc.want)
+		}
 	}
 }

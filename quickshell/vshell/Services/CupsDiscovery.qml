@@ -47,21 +47,37 @@ Singleton {
         return device.class === "file" && (uri === "file" || uri.startsWith("file:"));
     }
 
+    function hasBonjourSuffix(host) {
+        const lower = (host || "").toLowerCase();
+        return lower.includes("._ipp._tcp") || lower.includes("._ipps._tcp") || lower.includes("._printer._tcp") || lower.includes("._pdl-datastream._tcp");
+    }
+
+    function usbSerial(uri) {
+        const match = (uri || "").match(/[?&]serial=([^&]+)/i);
+        return match ? root.decodeUri(match[1]) : "";
+    }
+
     function instanceName(device) {
         if (!device)
             return "";
-        const info = root.decodeUri(device.info || "");
-        const host = root.decodeUri(device.ip || "");
         const uri = device.uri || "";
-        const fromHost = root.stripServiceSuffix(host);
-        if (fromHost && fromHost !== host && !fromHost.includes("://"))
-            return fromHost;
+        const host = root.decodeUri(device.ip || "");
+        if (root.hasBonjourSuffix(host))
+            return root.stripServiceSuffix(host);
+        const info = root.decodeUri(device.info || "");
         if (info && info !== uri && !info.includes("://") && info !== host)
             return info;
-        if (fromHost && !fromHost.includes("://"))
-            return fromHost;
-        if (device.makeModel)
-            return root.decodeUri(device.makeModel);
+        if (device.makeModel) {
+            const model = root.decodeUri(device.makeModel);
+            const serial = root.usbSerial(uri);
+            return serial ? model + " " + serial : model;
+        }
+        const serial = root.usbSerial(uri);
+        if (serial)
+            return serial;
+        const path = uri.replace(/^[^:]+:\/\/[^/]*/, "");
+        if (path && path !== "/" && !path.startsWith("?"))
+            return root.decodeUri(path.replace(/^\//, "").split("?")[0]);
         return uri;
     }
 
@@ -84,11 +100,10 @@ Singleton {
     }
 
     function groupKey(device) {
-        const name = root.instanceName(device).toLowerCase();
-        if (name)
-            return name;
-        const host = root.stripServiceSuffix(root.decodeUri(device.ip || "")).toLowerCase();
-        return host || (device.uri || "");
+        const host = root.decodeUri(device.ip || "");
+        if (root.hasBonjourSuffix(host))
+            return root.stripServiceSuffix(host).toLowerCase();
+        return device.uri || "";
     }
 
     function schemeRank(scheme) {
@@ -153,11 +168,21 @@ Singleton {
             const candidates = buckets[key];
             const recommended = root.pickRecommended(candidates);
             const name = root.instanceName(recommended);
-            const alts = candidates.filter(d => d.uri !== recommended.uri).map(d => ({
-                uri: d.uri,
-                label: root.transportLabel(root.deviceScheme(d.uri)),
-                device: d
-            }));
+            const usedLabels = {};
+            const alts = candidates.filter(d => d.uri !== recommended.uri).map(d => {
+                let label = root.transportLabel(root.deviceScheme(d.uri));
+                if (usedLabels[label]) {
+                    usedLabels[label] += 1;
+                    label = label + " " + usedLabels[label];
+                } else {
+                    usedLabels[label] = 1;
+                }
+                return {
+                    uri: d.uri,
+                    label: label,
+                    device: d
+                };
+            });
             grouped.push({
                 id: key,
                 name: name,
@@ -205,25 +230,15 @@ Singleton {
         return name.substring(0, 32) || "Printer";
     }
 
-    function getMatchingPPDs(device, ppds) {
-        if (!device || !ppds || ppds.length === 0)
-            return [];
-        const uri = device.uri || "";
-        const isNetwork = uri.startsWith("dnssd://") || uri.startsWith("ipp://") || uri.startsWith("ipps://");
-        if (isNetwork) {
-            const suggested = ppds.filter(p => p.name === "everywhere" || p.name === "driverless" || p.name.startsWith("driverless:")).sort((a, b) => (a.name !== "everywhere") - (b.name !== "everywhere"));
-            if (suggested.length > 0)
-                return suggested;
+    function collectJobs(printers, names) {
+        const jobs = [];
+        const list = names || [];
+        for (var i = 0; i < list.length; i++) {
+            const printer = printers ? printers[list[i]] : null;
+            const queued = printer && printer.jobs ? printer.jobs : [];
+            for (var j = 0; j < queued.length; j++)
+                jobs.push(queued[j]);
         }
-        if (!device.makeModel)
-            return [];
-        const makeModelLower = device.makeModel.toLowerCase();
-        const words = makeModelLower.split(/[\s_-]+/).filter(w => w.length > 2);
-        return ppds.filter(p => {
-            if (!p.makeModel)
-                return false;
-            const ppdLower = p.makeModel.toLowerCase();
-            return words.some(w => ppdLower.includes(w));
-        }).slice(0, 10);
+        return jobs;
     }
 }
