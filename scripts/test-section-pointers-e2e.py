@@ -101,10 +101,10 @@ def end_to_end_controls() -> list[str]:
     clean = clean_tree()
     dirty = dict(clean, **{"citer.md": f"# C\n\n`AGENTS.md` {SECTION_MARK} Gone.\n"})
 
-    if check.audit(clean).problems:
+    on_clean = check.audit(clean).problems
+    if on_clean:
         failures.append(
-            f"audit() reported problems on a tree built to satisfy every arm: "
-            f"{check.audit(clean).problems}"
+            f"audit() reported problems on a tree built to satisfy every arm: {on_clean}"
         )
     if not any("has no such heading" in problem for problem in check.audit(dirty).problems):
         failures.append(

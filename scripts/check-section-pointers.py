@@ -56,6 +56,7 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
+from typing import NamedTuple
 
 sys.path.insert(0, str(Path(__file__).resolve().parent / "lib"))
 from collected import members_missing, nothing_collected  # noqa: E402
@@ -233,7 +234,21 @@ def is_citer(rel: str) -> bool:
     return not rel.startswith(SKIP_ROOTS) and rel not in FIXTURE_FILES
 
 
-def swept_tree(entries: list[Entry]) -> tuple[dict[str, str], dict[str, str], dict[str, str]]:
+class Sweep(NamedTuple):
+    """What the sweep read, and how many paths it refused to read.
+
+    `refused` counts tracked paths in scope that are not regular files — their
+    blob is a path, not prose — carried rather than dropped so the ok line can
+    say how big the category is.
+    """
+
+    citers: dict[str, str]
+    documents: dict[str, str]
+    undecodable: dict[str, str]
+    refused: int
+
+
+def swept_tree(entries: list[Entry]) -> Sweep:
     """(citer text, every markdown text, undecodable path -> reason).
 
     TWO ROLES, TWO SETS, and conflating them was a defect. SKIP_ROOTS says whose
@@ -245,8 +260,20 @@ def swept_tree(entries: list[Entry]) -> tuple[dict[str, str], dict[str, str], di
     every tracked `.md` is read and may be a target; only citers are filtered.
     """
     wanted = [entry for entry in entries if entry.path.endswith(".md") or is_citer(entry.path)]
-    texts, undecodable = blob_texts(REPO_ROOT, wanted)
-    return {rel: text for rel, text in texts.items() if is_citer(rel)}, texts, undecodable
+    # THE MODE FILTER BELONGS HERE, where scope is decided, and what it refuses
+    # is COUNTED. Inside blob_texts it dropped 8,509 symlinks invisibly, since
+    # that function can only account for what it was asked to read. Nothing is
+    # lost by not reading them — a symlink's blob is a path, and the one that is
+    # markdown gets its own cause — but an unmeasured category is the shape this
+    # check exists to report, so the ok line names it.
+    regular = [entry for entry in wanted if entry.mode in REGULAR_MODES]
+    texts, undecodable = blob_texts(REPO_ROOT, regular)
+    return Sweep(
+        {rel: text for rel, text in texts.items() if is_citer(rel)},
+        texts,
+        undecodable,
+        len(wanted) - len(regular),
+    )
 
 
 def fixture_problems(tracked: list[str]) -> list[str]:
@@ -450,7 +477,7 @@ def audit(
 def main() -> int:
     entries = tracked_entries(REPO_ROOT)
     tracked = [entry.path for entry in entries]
-    files, documents, undecodable = swept_tree(entries)
+    files, documents, undecodable, refused = swept_tree(entries)
 
     causes = {**undecodable, **declined_markdown(entries), **declined_fences(documents)}
     found = audit(files, causes, documents)
@@ -475,7 +502,8 @@ def main() -> int:
     )
     print(
         f"check-section-pointers: ok ({len(found.judged)} pointers across {len(files)} "
-        f"tracked blobs resolve to a heading; {sum(found.declined.values())} marks "
+        f"tracked blobs resolve to a heading; {refused} tracked paths not read "
+        f"(symlinks and gitlinks); {sum(found.declined.values())} marks "
         f"declined — {declined or 'none'})"
     )
     return 0

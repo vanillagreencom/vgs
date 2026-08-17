@@ -190,7 +190,14 @@ def blob_texts(
 ) -> tuple[dict[str, str], dict[str, str]]:
     """(text by path, undecodable path -> reason) for the regular files in `entries`.
 
-    The caller filters `entries` first; everything reaching here is read.
+    The caller filters `entries` first, and that is now ENFORCED rather than
+    stated: a non-regular mode raises. The sentence was false at the only call
+    site — 8,509 symlinks were handed over and quietly dropped by a mode test
+    HERE, where the per-sweep accounting could not see them because it counts
+    what this function decided to ask for. Nothing was lost behaviourally, a
+    symlink's blob being a path rather than prose, but an unmeasured category is
+    the defect this whole check exists to name, so it is measured at the call
+    site and refused here.
 
     ASKED IN CHUNKS, and the chunk size is the whole of the memory story. One
     `cat-file --batch` for all 9,748 blobs is correct in shape — per-blob forks
@@ -206,7 +213,14 @@ def blob_texts(
     """
     files: dict[str, str] = {}
     undecodable: dict[str, str] = {}
-    wanted_all = [(e.sha, e.path) for e in entries if e.mode in REGULAR_MODES]
+    irregular = [e for e in entries if e.mode not in REGULAR_MODES]
+    if irregular:
+        raise GitError(
+            f"{len(irregular)} of {len(entries)} entries are not regular files "
+            f"(first: {irregular[0].path}, mode {irregular[0].mode}). Deciding what to "
+            f"read is the caller's, and dropping them here would hide the category"
+        )
+    wanted_all = [(e.sha, e.path) for e in entries]
     for start in range(0, len(wanted_all), CHUNK):
         _read_chunk(root, wanted_all[start : start + CHUNK], files, undecodable)
     # EVERY BLOB ASKED FOR LANDS IN EXACTLY ONE BUCKET — the partitioned-
@@ -257,7 +271,14 @@ def _read_chunk(root, wanted, files: dict[str, str], undecodable: dict[str, str]
                 f"{sha} (blob) was asked, at {path}. The stream has desynced, so every "
                 f"path after this one would carry another file's text"
             )
-        size = int(header[2])
+        try:
+            size = int(header[2])
+        except ValueError:
+            raise GitError(
+                f"`git cat-file --batch` gave a size of '{header[2]}' for {path} "
+                f"({sha}), which is not a number. NOTHING can be read past a record "
+                f"whose length cannot be known"
+            ) from None
         blob = stream[end + 1 : end + 1 + size]
         # Slicing past the end CANNOT raise, so a truncated final record would
         # otherwise arrive as a short but complete-looking string; the `end == -1`

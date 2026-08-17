@@ -141,9 +141,9 @@ def blob_controls() -> list[str]:
         root, wanted[:-1], files, undec
     )
     entries = [
-        tracked_blobs.Entry(mode, sha, path)
-        for mode, sha, path in tracked_blobs.tracked_entries(REPO_ROOT)[:4]
-    ]
+        entry for entry in tracked_blobs.tracked_entries(REPO_ROOT)
+        if entry.mode in tracked_blobs.REGULAR_MODES
+    ][:4]
     try:
         tracked_blobs.blob_texts(REPO_ROOT, entries)
     except SystemExit as error:
@@ -227,6 +227,25 @@ def blob_controls() -> list[str]:
                 f"— GIT_CONFIG_PARAMETERS is not covered by -C or GIT_CONFIG_GLOBAL"
             )
 
+    # THE MODE FILTER IS THE CALLER'S, and handing a non-regular entry here is
+    # refused rather than silently dropped — dropping it is what hid 8,509
+    # symlinks from the accounting, since this function can only count what it
+    # was asked to read. Paired with the regular entry, which must still read.
+    link = tracked_blobs.Entry("120000", "0" * 40, "link.md")
+    try:
+        tracked_blobs.blob_texts(REPO_ROOT, [link])
+    except SystemExit as error:
+        if "not regular files" not in str(error):
+            failures.append(f"a non-regular entry was refused for the wrong reason: {error}")
+    else:
+        failures.append(
+            "a non-regular entry was accepted and dropped, so the caller's scope "
+            "decision is made here where nothing can count what it removed"
+        )
+    regular = [e for e in tracked_blobs.tracked_entries(REPO_ROOT) if e.mode == "100644"][:1]
+    if regular and not tracked_blobs.blob_texts(REPO_ROOT, regular)[0]:
+        failures.append("a regular entry stopped being read, so the refusal above proves nothing")
+
     # A DESYNCED STREAM must fail rather than pair each path with another file's
     # text. Driven through a stubbed git, because a real one cannot be made to
     # answer out of order; each case is one field of the record git echoes back.
@@ -236,6 +255,7 @@ def blob_controls() -> list[str]:
         ("a tree where a blob was asked", b"%(sha)s tree 2\nhi\n", "desynced"),
         ("a record shorter than it declared", b"%(sha)s blob 9\nhi\n", "truncated"),
         ("bytes beyond the last record", b"%(sha)s blob 2\nhi\nextra\n", "beyond"),
+        ("a size that is not a number", b"%(sha)s blob xx\nhi\n", "not a number"),
     ):
         sha = "a" * 40
         payload = reply % ({b"sha": sha.encode()} if b"%(sha)s" in reply else b"b" * 40)

@@ -314,11 +314,12 @@ def selftest() -> int:
     # The indented comment STARTS its block, so the continuation rule cannot
     # cover it and only the is_markdown guard keeps it prose.
     py = f"#     `doc.md` {SECTION_MARK} Gone section.\n"
-    if not any("cites `doc.md" in problem for problem in cited_in("citer.py", py)):
+    indented = cited_in("citer.py", py)
+    if not any("cites `doc.md" in problem for problem in indented):
         failures.append(
             f"a mark on an indented comment continuation in a .py file vanished — "
             f"markdown's indented-code rule does not apply there: "
-            f"{cited_in('citer.py', py) or 'nothing was reported'}"
+            f"{indented or 'nothing was reported'}"
         )
     if cited_in("citer.py", py.replace("Gone", "Live")):
         failures.append("the same indented continuation naming a LIVE heading was reported")

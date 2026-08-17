@@ -87,6 +87,11 @@ added by review after surviving unnoticed.
                         git_env line below, and the production path   (+)
                         GIT_CONFIG_PARAMETERS left unscrubbed   (+)
                         git()'s non-zero exit returns normally   (+)
+                        the size conversion's guard dropped, so a non-numeric
+                        header escapes as a bare ValueError   (+)
+                        blob_texts accepting a non-regular mode instead of
+                        refusing it, which hides the category from the sweep
+                        accounting that can only count what it asked for   (+)
                         cat-file's record shape goes unchecked   (+)
                         content read from the working tree instead of the blob
                         conflict stages 1/2/3 kept instead of refused   (+)
