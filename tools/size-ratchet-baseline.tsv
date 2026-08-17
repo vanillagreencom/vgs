@@ -1,4 +1,4 @@
-.github/workflows/ci.yml	486
+.github/workflows/ci.yml	487
 .github/workflows/review-gate-writer.yml	656
 backend/internal/services/bluez/bluez.go	744
 backend/internal/services/clipboard/clipboard.go	635
@@ -206,12 +206,13 @@ scripts/check-aur-sync.py	410
 scripts/check-doc-growth.py	862
 scripts/check-notification-takeover.js	454
 scripts/check-paste-injection.py	897
-scripts/check-section-pointers.py	456
+scripts/check-section-pointers.py	479
 scripts/check-settings-migration.js	952
 scripts/check-validation-inventory.py	411
 scripts/check-vshell-helper.py	5864
 scripts/check-vshell-niri.py	678
 scripts/gen-package-metadata.py	985
+scripts/lib/section_pointers_selftest.py	420
 scripts/lib/validation_manifest.py	1045
 scripts/lib/vendor-drift.sh	429
 scripts/qml-smoke.sh	1414
@@ -227,6 +228,6 @@ scripts/test-validate.sh	547
 scripts/test-validation-inventory.sh	2278
 scripts/test-vendor-drift-evidence.sh	420
 scripts/test-vendor-drift.sh	434
-scripts/validate	1063
+scripts/validate	1064
 vstack.settings.toml	419
 vstack.toml	553

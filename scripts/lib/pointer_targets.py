@@ -114,7 +114,34 @@ def resolve_target(
     return (basenames[0], "unique basename") if len(basenames) == 1 else ("", "")
 
 
-def unresolved(token: str, citer: str, unreadable: dict[str, str]) -> str:
+def ambiguous(token: str, citer: str, markdown) -> list[str]:
+    """Tracked documents a basename or decision id could equally name.
+
+    Empty unless there are TWO or more, which is the only case worth reporting
+    as ambiguity. Reading every tracked `.md` as a possible target — the right
+    fix for the SKIP_ROOTS defect — grew this namespace from 56 documents to
+    144, and three first-party docs are now shadowed by vendored copies:
+
+    ```
+    SKILL.md § Validation   three tracked documents carry that basename
+    ```
+
+    That fails closed, but the reader was told the file did not exist when in
+    truth several do.
+    """
+    if citer_relative(token, citer) in markdown or token in markdown:
+        return []
+    prefix = f"{token}-" if DECISION_TOKEN.match(token) else None
+    matches = sorted(
+        rel
+        for rel in markdown
+        if rel.rsplit("/", 1)[-1] == token
+        or (prefix and rel.rsplit("/", 1)[-1].startswith(prefix))
+    )
+    return matches if len(matches) > 1 else []
+
+
+def unresolved(token: str, citer: str, unreadable: dict[str, str], markdown=()) -> str:
     """Why a token naming a document resolved to nothing, in the caller's terms.
 
     THREE DIFFERENT CAUSES, and only one of them is the citer's fault. Collapsing
@@ -132,6 +159,12 @@ def unresolved(token: str, citer: str, unreadable: dict[str, str]) -> str:
     for candidate in _candidates(token, citer, unreadable):
         if candidate in unreadable:
             return f"{unreadable[candidate]}, so its headings could not be parsed"
+    shared = ambiguous(token, citer, markdown)
+    if shared:
+        return (
+            f"is a name {len(shared)} tracked documents share ({', '.join(shared)}), so "
+            f"it names none of them. Write the repo-relative path of the one you mean"
+        )
     return (
         "is not a tracked markdown file. Repoint it at the file that owns the "
         "section now, or write the repo-relative path if the basename is "

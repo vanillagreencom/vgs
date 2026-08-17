@@ -12,9 +12,10 @@ arms and a control would pass on their output; and the healthy input is asserted
 SILENT beside each failing one, or an arm that complains about everything
 satisfies it.
 
-Three neighbours carry the rest, one file per subject, each beside what it
+Four neighbours carry the rest, one file per subject, each beside what it
 pins: `scripts/lib/section_pointers_selftest.py` holds the grammar rules,
-`scripts/lib/prose_blocks_selftest.py` the wrap and block-boundary rules, and
+`scripts/lib/prose_blocks_selftest.py` the wrap and block-boundary rules,
+`scripts/lib/tracked_blobs_selftest.py` the VCS-access rules, and
 `scripts/test-section-pointers-e2e.py` the wiring that assembles arms into a
 verdict, by running the guard as a process. What stays here is this check's own
 policy: its collection points and its self-policing exclusion tables.
@@ -49,6 +50,9 @@ red, and the ones marked (+) were added by review after surviving unnoticed.
   tracked_blobs.py      git()'s non-zero exit returns normally   (+)
                         cat-file's record shape goes unchecked   (+)
                         content read from the working tree instead of the blob
+                        conflict stages 1/2/3 kept instead of refused   (+)
+                        the echoed sha/type, record-length or end-of-stream
+                        check dropped; the chunk loop losing its last record   (+)
   check-...pointers.py  each `problems.extend` call, dropped — FIVE of them, two
                         in audit and three in main; the e2e has one isolating
                         tree per arm, so use those cases rather than a count   (+)
@@ -70,18 +74,19 @@ red, and the ones marked (+) were added by review after surviving unnoticed.
   prose_blocks.py       headings() stops honouring fences   (+)
   section_pointers.py   an escaping `..` clamped back to the root   (+)
                         the unreadable cause keyed on the raw token only   (+)
+                        an ambiguous basename reported as merely absent   (+)
+                        is_citer's two spellings diverging   (+)
+                        target_fence_problems dropped from audit   (+)
 """
 
 from __future__ import annotations
 
 import importlib.util
 import sys
-import tempfile
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE / "lib"))
-import tracked_blobs  # noqa: E402
 from prose_blocks import headings  # noqa: E402
 from section_pointers import SECTION_MARK, pointer_problems  # noqa: E402
 
@@ -278,78 +283,8 @@ def exemption_controls() -> list[str]:
     return failures
 
 
-def blob_controls() -> list[str]:
-    """The VCS-access arms: git failing, and a blob that cannot be produced.
-
-    These were the two rules the "every rule has a control" claim did not cover.
-    Both fail LOUDLY by design — a check that cannot read the tree has nothing to
-    report — so each is asserted to raise rather than to return something a
-    caller might treat as an empty, clean answer.
-    """
-    failures: list[str] = []
-    absent = Path(tempfile.gettempdir()) / "vgs-150-not-a-repo"
-    absent.mkdir(exist_ok=True)
-    try:
-        tracked_blobs.git(absent, "ls-files", "-s", "-z")
-    except SystemExit as error:
-        if "NOTHING was read" not in str(error):
-            failures.append(f"git failing did not say nothing was read: {error}")
-    else:
-        failures.append(
-            "git exiting non-zero returned normally, so a listing that never happened "
-            "is indistinguishable from a tree with no files in it"
-        )
-
-    # `cat-file --batch` answers "<sha> missing" for an object that is not
-    # there, which is two fields where a blob record has three. Reading on would
-    # take the next file's bytes as this one's content.
-    try:
-        tracked_blobs.blob_texts(check.REPO_ROOT, [("100644", "0" * 40, "ghost.md")])
-    except SystemExit as error:
-        if "not a blob record" not in str(error):
-            failures.append(f"a missing object was not named as such: {error}")
-    except Exception as error:  # noqa: BLE001 - a reader defect must still read as one
-        failures.append(
-            f"a missing object escaped as {type(error).__name__}: {error}. The record "
-            f"is checked so the operator gets a sentence, not a traceback"
-        )
-    else:
-        failures.append(
-            "a sha with no object behind it was accepted, so cat-file's answer is "
-            "parsed as content and every file after it shifts"
-        )
-    # A DESYNCED STREAM must fail rather than pair each path with another file's
-    # text. Driven through a stubbed git, because a real one cannot be made to
-    # answer out of order; each case is one field of the record git echoes back.
-    real = tracked_blobs.git
-    for case, reply, wanted in (
-        ("a record for a sha nobody asked for", b"%s blob 2\nhi\n", "desynced"),
-        ("a tree where a blob was asked", b"%(sha)s tree 2\nhi\n", "desynced"),
-        ("a record shorter than it declared", b"%(sha)s blob 9\nhi\n", "truncated"),
-        ("bytes beyond the last record", b"%(sha)s blob 2\nhi\nextra\n", "beyond"),
-    ):
-        sha = "a" * 40
-        payload = reply % ({b"sha": sha.encode()} if b"%(sha)s" in reply else b"b" * 40)
-        tracked_blobs.git = lambda *_a, **_k: payload
-        try:
-            tracked_blobs.blob_texts(check.REPO_ROOT, [("100644", sha, "one.md")])
-        except SystemExit as error:
-            if wanted not in str(error):
-                failures.append(f"{case} was reported as something else: {error}")
-        except Exception as error:  # noqa: BLE001 - a reader defect must read as one
-            failures.append(f"{case} escaped as {type(error).__name__}: {error}")
-        else:
-            failures.append(
-                f"{case} was accepted, so paths are paired with text the stream never "
-                f"said belonged to them and every finding after it names the wrong file"
-            )
-        finally:
-            tracked_blobs.git = real
-    return failures
-
-
 def main() -> int:
-    arms = (collection_controls, exemption_controls, blob_controls)
+    arms = (collection_controls, exemption_controls)
     failures = [problem for arm in arms for problem in arm()]
     if failures:
         print("test-section-pointers: FAIL", file=sys.stderr)

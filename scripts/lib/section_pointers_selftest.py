@@ -79,12 +79,13 @@ def pointer_controls() -> list[str]:
         failures.append("a decision-record id naming a real heading was reported")
     two = dict(md, **{"other/D008-duplicate.md": headings(DOC)})
     if not any(
-        "not a tracked markdown file" in problem
+        "documents share" in problem
         for problem in pointer_problems(live, two, NO_EXEMPTIONS).problems
     ):
         failures.append(
-            "a decision id carried by TWO records resolved anyway, so an ambiguous "
-            "pointer is answered by whichever record sorted first"
+            "a decision id carried by TWO records resolved anyway, or was reported as "
+            "missing rather than as a name two records share — either way an ambiguous "
+            "pointer is not told what made it ambiguous"
         )
 
     # AN UNREADABLE NAME IS REPORTED, not folded into the numbered-step skip.
@@ -154,11 +155,9 @@ def pointer_controls() -> list[str]:
                 f"after it, and must be reported rather than read as a file with none"
             )
 
-    # A BARE MARK IN A NON-MARKDOWN FILE has nothing to resolve against, so it
-    # is declined. Paired with the same text in a markdown citer, asserted
-    # REPORTED, or "silent" would pass on a parser that stopped finding the mark
-    # at all. The nearest existing control carries a target and leaves through
-    # the code-region branch instead, so neither half was exercised.
+    # A BARE MARK IN A NON-MARKDOWN FILE has nothing to resolve against, so it is
+    # declined. Paired with the same text in a markdown citer asserted REPORTED,
+    # or "silent" would pass on a parser that finds no mark at all.
     bare = f"# see {SECTION_MARK} Gone section.\n"
     if cited_in("citer.py", bare):
         failures.append(
@@ -228,6 +227,27 @@ def pointer_controls() -> list[str]:
                 f"markdown file' message, which sends the reader to fix a correct path: "
                 f"{found}"
             )
+
+    # AN AMBIGUOUS BASENAME IS REPORTED AS AMBIGUOUS, candidates named — the
+    # message three first-party docs' citers now get, since widening the target
+    # set to every tracked .md left them shadowed by vendored copies.
+    shared = {"a/SKILL.md": DOC, "b/SKILL.md": DOC}
+    found = pointer_problems(
+        dict(shared, **{"citer.md": f"# C\n\n`SKILL.md` {SECTION_MARK} Live section.\n"}),
+        {rel: headings(text) for rel, text in shared.items()},
+        NO_EXEMPTIONS,
+    ).problems
+    if not any("a/SKILL.md, b/SKILL.md" in problem for problem in found):
+        failures.append(
+            f"an ambiguous basename was reported as a missing file rather than as a "
+            f"name several documents share, so the reader is told nothing exists when "
+            f"in truth two do: {found}"
+        )
+    if any(
+        "documents share" in problem
+        for problem in cited(f"`vanished.md` {SECTION_MARK} Live section.\n")
+    ):
+        failures.append("a genuinely absent target was reported as ambiguous")
 
     # THE DECLINED CENSUS, the fourth collection point: a count nobody asserts
     # can go to zero while the marks keep being dropped. Driven per reason.

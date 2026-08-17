@@ -261,7 +261,7 @@ def pointer_problems(
                 if not target:
                     problems.append(
                         f"{where} cites `{token} {SECTION_MARK} {name}`, but {token} "
-                        f"{unresolved(token, rel, unreadable)}."
+                        f"{unresolved(token, rel, unreadable, markdown)}."
                     )
                     continue
                 if inherited:

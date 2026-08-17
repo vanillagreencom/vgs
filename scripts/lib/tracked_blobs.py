@@ -34,6 +34,7 @@ from __future__ import annotations
 import os
 import subprocess
 from pathlib import Path
+from typing import NamedTuple
 
 # Environment variables that RE-AIM git at another repository. Every one is
 # deleted before any git call here, because `-C <path>` does NOT override them:
@@ -79,6 +80,20 @@ def git_env(hermetic: bool = False) -> dict[str, str]:
 # reintroduce the hazard, so nothing here pretends to guard one.
 REGULAR_MODES = {"100644", "100755"}
 
+# Blobs per `cat-file --batch` round. Bounds the bytes held at once without
+# giving up batching, and 200 is where the curve flattens — measured over this
+# repo's 9,747 blobs, identical results at every size (2,585 citers, 7,075
+# undecodable):
+#
+#     whole stream   214 MB   0.182 s      100   107 MB   0.266 s
+#              1000  127 MB   0.201 s      200   109 MB   0.244 s
+#               500  124 MB   0.215 s
+#
+# The fork count stays in the tens rather than the thousands, and records are
+# still zipped by ORDER within each round, so every integrity check below
+# applies per chunk exactly as it did per sweep.
+CHUNK = 200
+
 
 class GitError(SystemExit):
     """A git call that failed, or answered something no caller can act on."""
@@ -110,42 +125,81 @@ def git(root: Path, *arguments: str, stdin: bytes | None = None) -> bytes:
     return result.stdout
 
 
-def tracked_entries(root: Path) -> list[tuple[str, str, str]]:
-    """(mode, blob sha, path) for every tracked path, symlinks and all.
+class Entry(NamedTuple):
+    """One tracked path as `git ls-files -s` describes it."""
 
-    The full listing, unfiltered: a caller's exclusion tables index on files, not
-    on blobs, so a path excluded from READING must still be visible as TRACKED.
+    mode: str
+    sha: str
+    path: str
+
+
+def tracked_entries(root: Path) -> list[Entry]:
+    """Every tracked path, symlinks and all, at index stage 0.
+
+    The full listing, unfiltered by mode: a caller's exclusion tables index on
+    files, not on blobs, so a path excluded from READING must still be visible
+    as TRACKED.
+
+    A MID-MERGE INDEX IS REFUSED. During an unresolved merge `ls-files -s` emits
+    the same path three times, at stages 1, 2 and 3 — base, ours, theirs — all
+    with mode 100644. Reading them all left the last write standing, so the
+    caller judged the THEIRS side: bytes that are in no commit, in no PR, and
+    not on disk either, with no diagnostic and a blob count inflated by the
+    duplicates. Refusing is the same posture this module takes for a failed git
+    call: say why nothing can be concluded rather than answer about one side.
     """
-    entries = []
+    entries, conflicted = [], []
     for entry in git(root, "ls-files", "-s", "-z").decode("utf-8", "surrogateescape").split("\0"):
         if not entry:
             continue
         fields, path = entry.split("\t", 1)
-        mode, sha, _stage = fields.split(" ")
-        entries.append((mode, sha, path))
+        mode, sha, stage = fields.split(" ")
+        if stage != "0":
+            conflicted.append(path)
+        else:
+            entries.append(Entry(mode, sha, path))
+    if conflicted:
+        named = ", ".join(sorted(set(conflicted))[:5])
+        raise GitError(
+            f"the index is mid-merge: {len(set(conflicted))} path(s) are at a conflict "
+            f"stage ({named}). Nothing here can be concluded from one side of an "
+            f"unresolved merge — finish or abort it, then re-run"
+        )
     return entries
 
 
 def blob_texts(
-    root: Path, entries: list[tuple[str, str, str]]
+    root: Path, entries: list[Entry]
 ) -> tuple[dict[str, str], dict[str, str]]:
     """(text by path, undecodable path -> reason) for the regular files in `entries`.
 
     The caller filters `entries` first; everything reaching here is read.
-    """
-    wanted = [(sha, path) for mode, sha, path in entries if mode in REGULAR_MODES]
-    if not wanted:
-        return {}, {}
 
-    # One `cat-file --batch` for the whole sweep: per-blob processes would be
-    # thousands of forks. Records come back in the order the shas went in, so
-    # they are zipped against `wanted` rather than keyed by sha — two identical
-    # files share one sha and would otherwise collapse into a single entry.
+    ASKED IN CHUNKS, and the chunk size is the whole of the memory story. One
+    `cat-file --batch` for all 9,747 blobs is correct in shape — per-blob forks
+    would be thousands of processes — but capturing its 90.5 MB answer whole
+    peaked at 215 MB RSS to keep 23.5 MB of text, because 74% of the stream is
+    binary assets that decode-fail and are dropped. Chunking bounds the captured
+    bytes to one round — 214 MB down to 109 — without giving up batching, and
+    without the writer thread an incremental reader would need:
+    `subprocess.run(input=...)` pumps stdin and stdout concurrently, so it cannot
+    deadlock the way a hand-rolled close-stdin-then-read loop does. An
+    incremental reader measured 83 MB; the remaining 26 is not worth a thread in
+    a validation script.
+    """
+    files: dict[str, str] = {}
+    undecodable: dict[str, str] = {}
+    wanted_all = [(e.sha, e.path) for e in entries if e.mode in REGULAR_MODES]
+    for start in range(0, len(wanted_all), CHUNK):
+        _read_chunk(root, wanted_all[start : start + CHUNK], files, undecodable)
+    return files, undecodable
+
+
+def _read_chunk(root, wanted, files: dict[str, str], undecodable: dict[str, str]) -> None:
+    """One `cat-file --batch` round, appending into the caller's two maps."""
     stream = git(
         root, "cat-file", "--batch", stdin="".join(f"{sha}\n" for sha, _ in wanted).encode()
     )
-    files: dict[str, str] = {}
-    undecodable: dict[str, str] = {}
     offset = 0
     for sha, path in wanted:
         end = stream.find(b"\n", offset)
@@ -193,4 +247,3 @@ def blob_texts(
             f"{len(wanted)} records asked for, so the stream and the request do not "
             f"describe the same thing"
         )
-    return files, undecodable

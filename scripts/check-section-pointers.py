@@ -45,10 +45,11 @@ did this refuse, and how much".
 Every rule here and in the parsers has a must-fail control, and the mutation set
 proving it is recorded in `scripts/test-section-pointers.py` — the claim was
 untrue twice before it was written down. Four scripts, one per subject: that one
-drives this file's arms and the VCS access beneath them, `section_pointers_
-selftest.py` the grammar, `prose_blocks_selftest.py` the wrap and boundary
-rules, and `test-section-pointers-e2e.py` the wiring that turns arms into a
-verdict, by running this guard as a process.
+drives this file's arms, `section_pointers_selftest.py` the grammar,
+`prose_blocks_selftest.py` the wrap and boundary rules,
+`tracked_blobs_selftest.py` the VCS access beneath them, and
+`test-section-pointers-e2e.py` the wiring that turns arms into a verdict, by
+running this guard as a process.
 """
 
 from __future__ import annotations
@@ -58,7 +59,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent / "lib"))
 from collected import members_missing, nothing_collected  # noqa: E402
-from prose_blocks import headings  # noqa: E402
+from prose_blocks import fence_left_open, headings  # noqa: E402
 from tracked_blobs import REGULAR_MODES, blob_texts, tracked_entries  # noqa: E402
 from section_pointers import (  # noqa: E402
     SECTION_MARK,
@@ -108,6 +109,7 @@ FIXTURE_FILES = {
         "since half of them exist to be reported"
     ),
     "scripts/lib/prose_blocks_selftest.py": "same, for the wrap and boundary rules",
+    "scripts/lib/tracked_blobs_selftest.py": "same, for the VCS-access rules",
 }
 
 # Whose pointers are READ. Not whose documents may be NAMED — see swept_tree.
@@ -218,6 +220,17 @@ def exemption_problems(
     return problems
 
 
+def is_citer(rel: str) -> bool:
+    """Whether this guard reads the POINTERS in a file.
+
+    Stated once because `swept_tree` asks it twice — once to decide what to read
+    at all, once to split citers from targets — and a rule added to one and not
+    the other silently drops a file from the sweep. The contrast the docstring
+    below draws only holds if each half is named in one place.
+    """
+    return not rel.startswith(SKIP_ROOTS) and rel not in FIXTURE_FILES
+
+
 def swept_tree(
     entries: list[tuple[str, str, str]]
 ) -> tuple[dict[str, str], dict[str, str], dict[str, str]]:
@@ -231,19 +244,9 @@ def swept_tree(
     are not ours to EDIT, which says nothing about whether they can be NAMED, so
     every tracked `.md` is read and may be a target; only citers are filtered.
     """
-    wanted = [
-        entry
-        for entry in entries
-        if entry[2].endswith(".md")
-        or (not entry[2].startswith(SKIP_ROOTS) and entry[2] not in FIXTURE_FILES)
-    ]
+    wanted = [entry for entry in entries if entry.path.endswith(".md") or is_citer(entry.path)]
     texts, undecodable = blob_texts(REPO_ROOT, wanted)
-    citers = {
-        rel: text
-        for rel, text in texts.items()
-        if not rel.startswith(SKIP_ROOTS) and rel not in FIXTURE_FILES
-    }
-    return citers, texts, undecodable
+    return {rel: text for rel, text in texts.items() if is_citer(rel)}, texts, undecodable
 
 
 def fixture_problems(tracked: list[str]) -> list[str]:
@@ -259,6 +262,25 @@ def fixture_problems(tracked: list[str]) -> list[str]:
         f"there next."
         for rel, reason in sorted(FIXTURE_FILES.items())
         if rel not in set(tracked)
+    ]
+
+
+def target_fence_problems(documents: dict[str, str], citers: dict[str, str]) -> list[str]:
+    """A TARGET-ONLY document whose fence never closes, so its headings are cut.
+
+    `pointer_problems` checks the files whose pointers it reads and reports them
+    there. Headings, though, are parsed over a SUPERSET — 88 markdown files are
+    targets and not citers — and an unbalanced fence in one truncates its heading
+    list silently. Every pointer into it is then reported as "has no such
+    heading. Repoint it", which is loud but blames the citer for a defect in the
+    target: the wrong-cause shape this check removed everywhere else.
+    """
+    return [
+        f"{rel} opens a ``` or ~~~ fence that never closes, so its heading list is "
+        f"truncated and no pointer into it can be judged. Close the fence — this is "
+        f"the target's defect, not its citers'."
+        for rel in sorted(documents)
+        if rel.endswith(".md") and rel not in citers and fence_left_open(documents[rel])
     ]
 
 
@@ -416,6 +438,7 @@ def audit(
     problems = list(found.problems)
     problems.extend(exemption_problems(markdown, found.used))
     problems.extend(heading_problems(markdown))
+    problems.extend(target_fence_problems(texts, files))
     return found._replace(problems=problems)
 
 

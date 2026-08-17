@@ -145,21 +145,55 @@ def end_to_end_controls() -> list[str]:
         if rel not in prose and rel.rsplit("/", 1)[-1] not in prose
     )
     heading_gone = dict(clean, **{uncited: "no heading in this file\n"})
-    for case, tree, want in (
-        ("clean", clean, 0),
-        ("with a dead pointer", dirty, 1),
-        ("with a grammar spelling unexercised", clean_tree(with_pointers=False), 1),
-        ("with its fixture-file exclusion untracked", fixture_untracked, 1),
-        ("with a markdown blob that is not text", dict(clean, **{"x.md": b"# \xff\n"}), 1),
-        ("with a binary blob that is not markdown", dict(clean, **{"x.png": b"\x89\xff"}), 0),
-        ("with a HISTORICAL_SECTIONS entry no pointer needs", exemption_unused, 1),
-        ("with an uncited anchor that yields no heading", heading_gone, 1),
+    # EACH ROW NAMES THE FINDING IT EXPECTS, not just an exit status. rc alone
+    # let a tree that trips a DIFFERENT arm pass as if it had proved its own —
+    # the heading fixture is the worked example, since a headless CITED anchor
+    # reports through the pointer arm instead.
+    for case, tree, want, expect in (
+        ("clean", clean, 0, ""),
+        ("with a dead pointer", dirty, 1, "has no such heading"),
+        (
+            "with a grammar spelling unexercised",
+            clean_tree(with_pointers=False), 1, "grammar spellings still exercised",
+        ),
+        (
+            "with its fixture-file exclusion untracked",
+            fixture_untracked, 1, "is exempted here",
+        ),
+        (
+            "with a markdown blob that is not text",
+            dict(clean, **{"x.md": b"# \xff\n"}), 1, "none of its headings could be parsed",
+        ),
+        ("with a binary blob that is not markdown", dict(clean, **{"x.png": b"\x89\xff"}), 0, ""),
+        (
+            "with a HISTORICAL_SECTIONS entry no pointer needs",
+            exemption_unused, 1, "no pointer there needs it",
+        ),
+        (
+            "with an uncited anchor that yields no heading",
+            heading_gone, 1, "expected member(s) are absent",
+        ),
+        (
+            "with a target-only document whose fence never closes",
+            dict(clean, **{
+                f"{check.SKIP_ROOTS[0]}vendor.md": "# V\n\n```\n## Upstream section\n",
+                "citer.md": f"# C\n\n`{check.SKIP_ROOTS[0]}vendor.md` "
+                            f"{SECTION_MARK} Upstream section.\n",
+            }),
+            1,
+            "this is the target's defect, not its citers'",
+        ),
     ):
         status, output = run_guard(tree)
         if status != want:
             failures.append(
                 f"the guard exited {status} on a throwaway repo {case}, expected {want} "
                 f"— the verdict does not follow the findings: {output}"
+            )
+        elif expect and expect not in output:
+            failures.append(
+                f"the tree {case} exited 1 without reporting {expect!r}, so it tripped "
+                f"some other arm and proves nothing about the one it names: {output}"
             )
 
     # THE GUARD JUDGES TRACKED BLOBS, NOT THE WORKING TREE, and each half of
