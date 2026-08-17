@@ -60,15 +60,19 @@ def clean_tree(*, with_pointers: bool = True) -> dict[str, bytes | str]:
     anchor or a spelling fails here until this tree covers it.
     """
     anchor = check.SWEEP_ANCHORS[0]
-    documents = (*check.SWEEP_ANCHORS, *check.TARGET_ANCHORS, DECISION)
+    # One document under each anchor ROOT, derived rather than named: the roots
+    # exist precisely because no filename under them survives VGS-125, so a
+    # fixture that named one would carry the defect this closed.
+    under_roots = tuple(f"{root}anchored.md" for root in check.ANCHOR_ROOTS)
+    documents = (*check.SWEEP_ANCHORS, *check.TARGET_ANCHORS, *under_roots, DECISION)
     tree: dict[str, bytes | str] = {
         rel: f"# {rel}\n\n## Live section\n" for rel in documents
     }
     if with_pointers:
-        basename = check.SWEEP_ANCHORS[1].rsplit("/", 1)[-1]
+        basename = under_roots[0].rsplit("/", 1)[-1]
         reached = "".join(
             f"and `{target}` {SECTION_MARK} Live section, by path\n\n"
-            for target in check.TARGET_ANCHORS
+            for target in (*check.TARGET_ANCHORS, *under_roots)
         )
         tree["docs/upstream/note.md"] = (
             f"# Note\n\n## Own section\n\n"

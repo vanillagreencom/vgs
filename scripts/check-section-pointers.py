@@ -130,7 +130,6 @@ SELECTOR = "`git ls-files` minus " + ", ".join(SKIP_ROOTS)
 # leave them looking merely heading-less.
 SWEEP_ANCHORS = (
     "AGENTS.md",
-    "docs/architecture/shell-architecture.md",
     ".github/instructions/validation-scripts.instructions.md",
 )
 
@@ -157,13 +156,28 @@ GRAMMAR_SPELLINGS = (
 # unexamined. That is collected.py's partial-coverage half, the one its docstring
 # says hid longest.
 #
-# THE SECOND ANCHOR IS A DIRECTORY, not a file, and that is the durable choice
-# rather than the convenient one. VGS-125 merges all thirteen documents under
-# docs/architecture/ into four, so ANY file named here is one that PR renames —
-# the guard would fail on the consolidation it was built to protect. The
-# directory survives the merge; a file cannot be picked that does.
 TARGET_ANCHORS = ("AGENTS.md",)
-TARGET_ANCHOR_ROOTS = ("docs/architecture/",)
+
+# THE ARCHITECTURE ANCHOR IS A DIRECTORY, not a file, and that is the durable
+# choice rather than the convenient one. VGS-125 merges all thirteen documents
+# under docs/architecture/ into four, so ANY file named here is one that PR
+# renames — the guard would fail on the consolidation it was built to protect,
+# with every citation correctly repaired. The directory survives the merge; no
+# filename does.
+#
+# ONE CONSTANT, THREE ASSERTIONS, because the tree has to be reached at three
+# different depths and a directory that merely EXISTS proves none of them: at
+# least one document under it is SWEPT, at least one is PARSED, and at least one
+# is REACHED by a pointer. Anything weaker trades a false failure for a false
+# pass, which is the wrong direction here — this anchor exists because a
+# resolver regression confined to that tree leaves every other count healthy.
+#
+# Learned twice: TARGET_ANCHORS named a file here and was fixed, and the same
+# rationale was not carried to SWEEP_ANCHORS, which kept naming
+# shell-architecture.md until the connector found it. The two file anchors that
+# remain — AGENTS.md and the instructions entry — both survive, and they are
+# what proves the sweep still reaches those surface classes.
+ANCHOR_ROOTS = ("docs/architecture/",)
 
 # The caller's half of the unresolved-heading remedy. It lives here, not in the
 # parser, because it names a table only this file has: a parser that knew it
@@ -368,6 +382,15 @@ def heading_problems(markdown: dict[str, list[list[str]]]) -> list[str]:
                 selector=selector,
                 cause=cause,
             ),
+            *(
+                nothing_collected(
+                    [rel for rel in parsed if rel.startswith(root)],
+                    what=f"parsed documents under {root}",
+                    selector=selector,
+                    cause=cause,
+                )
+                for root in ANCHOR_ROOTS
+            ),
         )
         if diagnostic
     ]
@@ -400,6 +423,15 @@ def sweep_problems(files: dict[str, str], judged: list[tuple[str, str]]) -> list
                 selector=SELECTOR,
                 cause="a renamed surface, or a skip list that now covers one",
             ),
+            *(
+                nothing_collected(
+                    [rel for rel in files if rel.startswith(root)],
+                    what=f"swept files under {root}",
+                    selector=SELECTOR,
+                    cause="a renamed tree, or a skip list that now covers it",
+                )
+                for root in ANCHOR_ROOTS
+            ),
             nothing_collected(
                 judged,
                 what="section pointers",
@@ -427,7 +459,7 @@ def sweep_problems(files: dict[str, str], judged: list[tuple[str, str]]) -> list
                         "total healthy and AGENTS.md still reached"
                     ),
                 )
-                for root in TARGET_ANCHOR_ROOTS
+                for root in ANCHOR_ROOTS
             ),
             members_missing(
                 {spelling for _, spelling in judged},

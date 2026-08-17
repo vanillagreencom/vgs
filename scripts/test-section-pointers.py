@@ -107,6 +107,11 @@ added by review after surviving unnoticed.
                         nothing_collected dropped from the heading arm
                         the GRAMMAR_SPELLINGS anchor dropped
                         TARGET_ANCHORS reduced to one member   (+)
+                        ANCHOR_ROOTS naming a file instead of a directory, or a
+                        file anchor put back under that tree — the shape that
+                        blocks the consolidation this guard protects   (+)
+                        either root-depth arm dropped: no file SWEPT under an
+                        anchor root, no document PARSED under one   (+)
                         SKIP_ROOTS filters targets again   (+)
                         TARGET_ANCHOR_ROOTS emptied   (+)
                         GRAMMAR_SPELLINGS replaced with []   (+)
@@ -199,19 +204,25 @@ def collection_controls() -> list[str]:
     spellings = "the grammar spellings still exercised"
     swept = "the swept tree"
     parsed_from = "the documents headings were parsed from"
-    if len(check.TARGET_ANCHORS) + len(check.TARGET_ANCHOR_ROOTS) < 2:
+    if len(check.TARGET_ANCHORS) + len(check.ANCHOR_ROOTS) < 2:
         failures.append(
             "collection point 2 anchors fewer than two surfaces, so a resolver "
             "regression confined to any other one leaves it satisfied"
         )
+    # The healthy fixtures carry a document under each anchor ROOT as well as
+    # the file anchors, because the arms assert the tree is reached at three
+    # depths — swept, parsed, and cited — and a directory that merely exists
+    # proves none of them.
+    under_roots = [f"{root}anchored.md" for root in check.ANCHOR_ROOTS]
     anchors = {
         rel: headings((check.REPO_ROOT / rel).read_text(encoding="utf-8"))
         for rel in check.SWEEP_ANCHORS
     }
+    anchors.update({rel: [["Anchored"]] for rel in under_roots})
     first = check.SWEEP_ANCHORS[0]
-    whole = dict.fromkeys(check.SWEEP_ANCHORS, "")
-    narrowed = {rel: "" for rel in check.SWEEP_ANCHORS if rel != first}
-    reached = (*check.TARGET_ANCHORS, *(f"{root}doc.md" for root in check.TARGET_ANCHOR_ROOTS))
+    whole = dict.fromkeys([*check.SWEEP_ANCHORS, *under_roots], "")
+    narrowed = {rel: "" for rel in whole if rel != first}
+    reached = (*check.TARGET_ANCHORS, *(f"{root}doc.md" for root in check.ANCHOR_ROOTS))
     healthy = [
         (target, spelling) for spelling in check.GRAMMAR_SPELLINGS for target in reached
     ]
@@ -230,6 +241,46 @@ def collection_controls() -> list[str]:
             "a FIXTURE_FILES entry naming no tracked file was accepted, so an "
             "exclusion outlives its file and exempts whatever takes that path next"
         )
+
+    # THE ROOT ANCHOR AT EACH DEPTH. A file anchor cannot stand in for these:
+    # every filename under that tree is one VGS-125 renames, which is why the
+    # anchor is a directory — and a directory assertion is only worth having if
+    # it fails when the tree stops being swept, parsed or cited.
+    # THE SHAPE OF THE ANCHORS THEMSELVES, which is the class rather than the
+    # line. A file anchor under a consolidating tree is the defect that shipped
+    # twice: TARGET_ANCHORS named design-language.md, and SWEEP_ANCHORS kept
+    # naming shell-architecture.md after the first was fixed. Both would block
+    # the very consolidation this guard protects, with every citation correct.
+    for entry in check.ANCHOR_ROOTS:
+        if not entry.endswith("/"):
+            failures.append(
+                f"ANCHOR_ROOTS names {entry!r}, which is not a directory prefix. A file "
+                f"there is a file VGS-125 renames, and the guard then fails on the "
+                f"consolidation it exists to protect"
+            )
+    for table in ("SWEEP_ANCHORS", "TARGET_ANCHORS"):
+        for entry in getattr(check, table):
+            if any(entry.startswith(root) for root in check.ANCHOR_ROOTS):
+                failures.append(
+                    f"{table} names {entry!r}, which lives under an anchor root. Files in "
+                    f"a tree the repo is consolidating cannot be anchors — that is what "
+                    f"the roots are for; anchor the tree, not a filename inside it"
+                )
+
+    root = check.ANCHOR_ROOTS[0]
+    wants(
+        check.heading_problems({rel: known for rel, known in anchors.items()
+                                if not rel.startswith(root)}),
+        f"parsed documents under {root}",
+        "an anchor tree with no PARSED document",
+        "nothing-collected",
+    )
+    wants(
+        check.sweep_problems({rel: "" for rel in whole if not rel.startswith(root)}, healthy),
+        f"swept files under {root}",
+        "an anchor tree with no SWEPT file",
+        "nothing-collected",
+    )
 
     for case, arm, phrase, args in (
         (
@@ -276,7 +327,7 @@ def collection_controls() -> list[str]:
             (
                 f"pointers that reach only {only}",
                 "nothing-collected" if only in check.TARGET_ANCHORS else "members-missing",
-                f"pointers reaching {check.TARGET_ANCHOR_ROOTS[0]}"
+                f"pointers reaching {check.ANCHOR_ROOTS[0]}"
                 if only in check.TARGET_ANCHORS
                 else reach,
                 (whole, [(only, sp) for sp in check.GRAMMAR_SPELLINGS]),
