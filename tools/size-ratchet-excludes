@@ -62,11 +62,22 @@
 # this branch sees; the rows churned more than this within it.
 #
 #   GRANTED   scripts/check-section-pointers.py        556 lines, 420 of them code
-#   GRANTED   scripts/lib/section_pointers_selftest.py 486 lines
+#   GRANTED   scripts/lib/section_pointers_selftest.py 486 -> 515
 #   GRANTED   scripts/test-section-pointers-e2e.py     434 lines
-#   GRANTED   scripts/test-section-pointers.py         444 lines
+#   GRANTED   scripts/test-section-pointers.py         444 -> 458
 #   RAISED    .github/workflows/ci.yml                 472 -> 487
 #   RAISED    scripts/validate                        1049 -> 1064
+#
+# THE LAST TWO RAISES bought the blockquote. A reviewer found that the repair
+# for "a wrapped pointer must keep its target" had been made twice and been
+# wrong twice — too broad, then too narrow — and that the shape which motivated
+# the finding was still failing: a wrapped quote repeats its `>`, so the target
+# line and the mark line read as two structures and the pointer resolved
+# against the citing file instead. The fix is small; what it cost is one PAIRED
+# control per structural kind, continued-and-joined beside sibling-and-separate,
+# because a control on one kind is exactly what let this be wrong twice. Those
+# pairs and the paired link/bare-path control are the 43 lines, and the second
+# row is their durable record — nine mutants, each run red once.
 #
 # The granted rows were each raised again by the last review rounds, which
 # is the mechanism rather than an exception to it: each round found another
@@ -98,7 +109,7 @@
 # What is left in check-section-pointers.py is one concept that does not divide:
 # a check's own policy. Three tables say what it declines to look at
 # (HISTORICAL_SECTIONS, FIXTURE_FILES, SKIP_ROOTS) and four say what its result
-# must still reach (SWEEP_ANCHORS, TARGET_ANCHORS, TARGET_ANCHOR_ROOTS,
+# must still reach (SWEEP_ANCHORS, TARGET_ANCHORS, ANCHOR_ROOTS,
 # GRAMMAR_SPELLINGS); the four collection points assert them, and the run turns
 # those into a verdict. Splitting policy from the
 # check that applies it would put the tables a reader needs in a second file.

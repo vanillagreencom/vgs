@@ -107,16 +107,25 @@ def names_a_document(token: str) -> bool:
 
 
 def resolve_target(
-    token: str, citer: str, markdown: dict[str, object]
+    token: str, citer: str, markdown: dict[str, object], linked: bool = False
 ) -> tuple[str, str]:
     """(path, spelling) for the tracked markdown file a token names.
 
     ("", "") when it names none. Repo-relative first, then relative to the citing
-    file (markdown links write `../decisions/D001-….md`), then a basename, then a
-    decision id by basename prefix — the last two only when exactly one tracked
-    document carries it, since two would make the pointer ambiguous rather than
-    resolvable, and an ambiguous pointer is reported rather than answered by
-    whichever path sorted first.
+    file, then a basename, then a decision id by basename prefix — the last two
+    only when exactly one tracked document carries it, since two would make the
+    pointer ambiguous rather than resolvable, and an ambiguous pointer is
+    reported rather than answered by whichever path sorted first.
+
+    A MARKDOWN LINK REVERSES THE FIRST TWO, and the link syntax is the only thing
+    that says so — not the shape of the path. A CommonMark link destination is
+    relative to the document containing it, so `sub/notes.md` writing
+    `[label](a/doc.md)` names `sub/a/doc.md`; trying the repo-relative
+    reading first answered with a root-level `a/doc.md` the author never
+    named, and a heading deleted from the file they DID name passed while it
+    survived at the root. A bare path in this tree's prose is conventionally
+    repo-relative and keeps the original order, so the two spellings differ
+    exactly where the syntax does.
 
     The spelling is returned, not merely used: it is what lets the caller assert
     each half of the grammar is still exercised somewhere in the tree.
@@ -124,9 +133,11 @@ def resolve_target(
     if DECISION_TOKEN.match(token):
         records = _matches(token, markdown)
         return (records[0], "decision-record id") if len(records) == 1 else ("", "")
+    relative = citer_relative(token, citer)
+    if linked and relative and relative in markdown:
+        return relative, "citer-relative link"
     if token in markdown:
         return token, "repo-relative path"
-    relative = citer_relative(token, citer)
     if relative and relative in markdown:
         return relative, "citer-relative link"
     basenames = _matches(token, markdown)
@@ -152,7 +163,9 @@ def ambiguous(token: str, markdown) -> list[str]:
     return matches if len(matches) > 1 else []
 
 
-def unresolved(token: str, citer: str, unreadable: dict[str, str], markdown=()) -> str:
+def unresolved(
+    token: str, citer: str, unreadable: dict[str, str], markdown=(), linked: bool = False
+) -> str:
     """Why a token naming a document resolved to nothing, in the caller's terms.
 
     THREE DIFFERENT CAUSES, and only one of them is the citer's fault. Collapsing
@@ -178,7 +191,7 @@ def unresolved(token: str, citer: str, unreadable: dict[str, str], markdown=()) 
             f"is a name {len(shared)} tracked documents share ({', '.join(shared)}), so "
             f"it names none of them. Write the repo-relative path of the one you mean"
         )
-    for candidate in _candidates(token, citer, unreadable):
+    for candidate in _candidates(token, citer, unreadable, linked):
         if candidate in unreadable:
             return f"{unreadable[candidate]}, so its headings could not be parsed"
     return (
@@ -188,6 +201,13 @@ def unresolved(token: str, citer: str, unreadable: dict[str, str], markdown=()) 
     )
 
 
-def _candidates(token: str, citer: str, known) -> list[str]:
-    """Every path `token` could name, in the order `resolve_target` tries them."""
-    return [token, citer_relative(token, citer), *_matches(token, known)]
+def _candidates(token: str, citer: str, known, linked: bool = False) -> list[str]:
+    """Every path `token` could name, in the order `resolve_target` tries them.
+
+    Including the link reversal: the first candidate has to be the one the
+    resolver would have answered with, or a token with two unreadable candidates
+    is explained by the file the author did not name.
+    """
+    relative = citer_relative(token, citer)
+    order = [relative, token] if linked else [token, relative]
+    return [*order, *_matches(token, known)]

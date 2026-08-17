@@ -63,6 +63,13 @@ added by review after surviving unnoticed.
                         tab-indented heading reads as real   (+)
                         fence_left_open ORing both readings again   (+)
                         blocks() flushes after every line   (+)
+                        CONTINUING emptied, so a wrapped blockquote's two `>`
+                        lines flush apart and the pointer loses its target — the
+                        shape the after-flush repair left open; CONTINUING
+                        widened to the list item, so two bullets join; the quote
+                        DEPTH ignored, so `>>` continues its parent; the `>`
+                        marker left in the joined prose, or not peeled before
+                        classifying; the heading's after-flush dropped   (+)
 
   EQUIVALENT MUTANTS, recorded so the next run does not read them as gaps:
 
@@ -116,7 +123,7 @@ added by review after surviving unnoticed.
                         either root-depth arm dropped: no file SWEPT under an
                         anchor root, no document PARSED under one   (+)
                         SKIP_ROOTS filters targets again   (+)
-                        TARGET_ANCHOR_ROOTS emptied   (+)
+                        ANCHOR_ROOTS emptied   (+)
                         GRAMMAR_SPELLINGS replaced with []   (+)
                         the symlink cause map not merged in, and
                         declined_markdown or declined_fences returning {}   (+)
@@ -143,6 +150,13 @@ added by review after surviving unnoticed.
                         an ambiguous basename reported as merely absent   (+)
                         is_citer's two spellings diverging   (+)
                         target_fence_problems dropped from audit   (+)
+                        the pipe dropped from SEPARATORS, so a bare mark
+                        inherits the target named in the cell before it; and
+                        target_token dropping the LINK FLAG   (+)
+  pointer_targets.py    resolve_target's link reversal dropped — with the flag
+                        mutant above, either resolves a link destination as a
+                        bare repo-relative path and answers with a file the
+                        citing document never named   (+)
 """
 
 from __future__ import annotations

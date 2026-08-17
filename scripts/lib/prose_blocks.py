@@ -15,9 +15,8 @@ offset-to-line index, so a finding still names the line a reader will open.
 WHERE A BLOCK ENDS, which is the whole content of this module:
 
   * a blank line, everywhere;
-  * in markdown, a structural line — a heading, table row, quote or list item —
-    because each is self-contained, and one bullet's subject is not the next
-    bullet's;
+  * in markdown, a structural line that starts a NEW structure — see `_structure`
+    for which markers repeat inside one structure and which mean a sibling;
   * elsewhere, wherever comment lines meet code lines: a trailing comment must
     not absorb the code beneath it;
   * a FENCED region, in ANY file type, is skipped entirely. Markdown fences an
@@ -49,10 +48,19 @@ def normalized_words(text: str) -> list[str]:
     return "".join(" " if ch in PUNCTUATION else ch for ch in text).split()
 
 ATX_HEADING = re.compile(r"^(#{1,6})\s+(.*?)\s*#*\s*$")
-# A markdown line that is self-contained: a heading, table row, quote or list
-# item. Each is a block of its own — a boundary on BOTH sides, because the line
-# after one continues the document rather than that line's subject.
-MD_BLOCK_START = re.compile(r"^(#{1,6}\s|\||>|[-*+]\s|\d+[.)]\s)")
+# The markdown structures, each recognised by the marker its line starts with.
+# `_structure` says which of them a REPEATED marker continues and which it makes
+# a sibling of; the quote prefix is peeled first, so what is asked of `> - one`
+# is what kind of thing sits INSIDE the quote.
+QUOTE_PREFIX = re.compile(r"^(?:>[ \t]?)+")
+HEADING_START = re.compile(r"^#{1,6}\s")
+LIST_START = re.compile(r"^([-*+]\s|\d+[.)]\s)")
+# The one kind whose marker repeats on every line of ONE PIECE OF PROSE: quoted
+# text carrying no inner structure of its own CONTINUES whatever that quote
+# already holds at the same DEPTH — its own earlier line, or the list item it
+# wrapped out of. Everything else is a sibling and a boundary; `_structure` says
+# why the blockquote is alone here.
+CONTINUING = ("quote",)
 COMMENT_MARKER = re.compile(r"^(#+|//+|\*+)\s?")
 # A FENCE, read from the raw line, because all three of its parts matter and the
 # reader honoured none of them: the opener's CHARACTER, its RUN LENGTH and its
@@ -88,6 +96,67 @@ def indent_columns(line: str) -> int:
         else:
             break
     return columns
+
+
+def _unquoted(prose: str) -> str:
+    """A blockquote line's CONTENT: its `>` markers are markup, not prose.
+
+    Joining two quote lines is not enough on its own — the marker would sit
+    BETWEEN the target and the mark, and a token adjacent to neither is exactly
+    what the join was meant to repair. CommonMark strips the marker before
+    reading what is inside, and so does this.
+    """
+    return QUOTE_PREFIX.sub("", prose).strip()
+
+
+def _structure(prose: str) -> tuple[str, int] | None:
+    """(kind, quote depth) for a markdown line that starts a structure, else None.
+
+    WHICH MARKER CAN REPEAT INSIDE ONE PIECE OF PROSE, AND WHICH CANNOT — the
+    whole reason this function exists, and a distinction two earlier rules each
+    got half right. Flushing AFTER every structural line stopped a list item
+    absorbing its own continuation; flushing BEFORE every one of them broke the
+    blockquote, because the marker that makes a quote line structural is the same
+    marker its continuation carries. A second line carrying the same marker, by
+    kind:
+
+      quote (`>`)      CONTINUES what is open at the same DEPTH — a wrapped
+                       sentence inside a quote repeats the marker on every line,
+                       and two separate quotes are divided by a blank line
+                       instead. The only kind that joins, and it joins whatever
+                       the quote holds: `> - item` wrapping onto `>   more` is
+                       still that item.
+      item (`-`, `1.`) a SIBLING item. A list item's own continuation is
+                       INDENTED and carries NO marker, so it is not structural
+                       here at all and joins by the ordinary rule.
+      heading (`#`)    always a sibling: an ATX heading is one line by
+                       definition, so it has no continuation to absorb.
+
+    THE QUOTE PREFIX IS PEELED FIRST and the DEPTH kept, so `> - one` / `> - two`
+    are read as the sibling items they are rather than as one quote, and a nested
+    `>>` starts a structure of its own rather than continuing its parent.
+
+    A TABLE ROW IS DELIBERATELY NOT A KIND HERE, though its pipe repeats exactly
+    as the quote's marker does. The rows are one table, but the pipe both opens
+    the row and divides the CELLS, and a cell cannot wrap onto the line below —
+    so two rows have no sentence to join, and a block boundary between them would
+    be inert. The pipe is a SEPARATOR instead (`section_pointers.SEPARATORS`),
+    which is the stronger rule: it stops a target crossing into the next cell as
+    well as the next row, and a boundary here would have stopped neither. Adding
+    the kind back is a branch no control can fail.
+
+    NOT MODELLED: a lazy continuation line that carries no `>` leaves the depth
+    unchanged rather than ending the quote, so the quote line after it still
+    joins. That is the safe direction — losing the join is what drops a target.
+    """
+    quoted = QUOTE_PREFIX.match(prose)
+    depth = prose.count(">", 0, quoted.end()) if quoted else 0
+    rest = _unquoted(prose) if quoted else prose
+    if HEADING_START.match(rest):
+        return "heading", depth
+    if LIST_START.match(rest):
+        return "item", depth
+    return ("quote", depth) if depth else None
 
 
 def _fence_marker(line: str) -> tuple[str, int, str] | None:
@@ -206,7 +275,9 @@ def blocks(text: str, is_markdown: bool) -> list[tuple[str, list[tuple[int, int]
     a run of prose is joined first and carries an index back to the line each
     part came from.
 
-    A block ends at a blank line; in markdown also at a structural line, and
+    A block ends at a blank line; in markdown also where a structural line
+    starts a NEW structure rather than continuing the one above it (`_structure`
+    holds that distinction, which is the whole of the boundary rule); and
     everywhere else wherever comment lines meet code lines — a trailing comment
     must not absorb the code beneath it, as `.gitignore`'s last comment would.
 
@@ -220,9 +291,14 @@ def blocks(text: str, is_markdown: bool) -> list[tuple[str, list[tuple[int, int]
     out: list[tuple[str, list[tuple[int, int]]]] = []
     current: list[tuple[int, str]] = []
     previous_is_comment: bool | None = None
+    # The last STRUCTURE seen in this block, kept across the unmarked lines
+    # between: a lazy continuation does not end the quote it continues, so the
+    # next `>` line still has a quote to continue.
+    open_structure: tuple[str, int] | None = None
 
     def flush() -> None:
-        nonlocal current
+        nonlocal current, open_structure
+        open_structure = None
         if not current:
             return
         joined, index = "", []
@@ -242,8 +318,31 @@ def blocks(text: str, is_markdown: bool) -> list[tuple[str, list[tuple[int, int]
             flush()
             previous_is_comment = None
             continue
-        structural = bool(is_markdown and MD_BLOCK_START.match(prose))
-        if structural or (
+        structure = _structure(prose) if is_markdown else None
+        if structure is not None and structure[1]:
+            prose = _unquoted(prose)
+            if not prose:
+                # A bare `>` is a blank line INSIDE the quote, and ends the
+                # paragraph there exactly as a blank line ends one outside it.
+                flush()
+                previous_is_comment = None
+                continue
+        # A REPEATED MARKER IS NOT AUTOMATICALLY A NEW STRUCTURE, which is where
+        # both earlier spellings of this rule went wrong in opposite directions.
+        # Flushing AFTER every structural line stopped a list item or a
+        # blockquote absorbing its own CONTINUATION. Flushing BEFORE every one of
+        # them left the blockquote broken by a different route: a wrapped quote
+        # repeats its `>`, so the target line and the mark line were flushed
+        # apart, the mark read as intra-document, and a citer that happened to
+        # carry a heading of that name passed on a dead pointer. `_structure`
+        # names which markers repeat within one structure.
+        continues = (
+            structure is not None
+            and structure[0] in CONTINUING
+            and open_structure is not None
+            and structure[1] == open_structure[1]
+        )
+        if (structure is not None and not continues) or (
             not is_markdown
             and previous_is_comment is not None
             and is_comment != previous_is_comment
@@ -251,19 +350,13 @@ def blocks(text: str, is_markdown: bool) -> list[tuple[str, list[tuple[int, int]
             flush()
         current.append((number, prose))
         previous_is_comment = is_comment
-        # A HEADING ENDS ITS BLOCK ON BOTH SIDES; A LIST ITEM DOES NOT. Flushing
-        # before every structural line keeps siblings apart — one bullet's
-        # subject is not the next bullet's — and that is the whole of the
-        # rationale. Flushing AFTER every one of them went further than the
-        # rationale reaches and broke the wrap this module exists to handle: a
-        # list item, table row or blockquote must still absorb its own
-        # CONTINUATION, or a pointer whose target ends one line and whose mark
-        # begins the next loses its target and blames the citing file.
-        #
-        # A heading is the exception because an ATX heading is one line by
-        # definition — it has no continuation to absorb, so the line beneath it
-        # starts something new, which is the leak this rule was added for.
-        if structural and prose.startswith("#"):
+        if structure is not None:
+            open_structure = structure
+        # A HEADING ENDS ITS BLOCK ON BOTH SIDES, alone among the kinds: it is one
+        # line by definition, so it has no continuation to absorb and the line
+        # beneath it starts something new. That is the leak this half was added
+        # for, and it is the only kind the flush-after rule ever fitted.
+        if structure is not None and structure[0] == "heading":
             flush()
             previous_is_comment = None
     flush()

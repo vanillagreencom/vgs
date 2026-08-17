@@ -190,62 +190,121 @@ def selftest() -> int:
                 f"{case} control passes on a reader that finds no headings"
             )
 
-    # WHERE A STRUCTURAL LINE IS A BOUNDARY, AND WHERE IT IS NOT. Two rules that
-    # look alike and are not: a heading ends its block on both sides because an
-    # ATX heading is one line by definition, and SIBLING structural lines are
-    # kept apart because one bullet's subject is not the next bullet's. Neither
-    # says a list item may not absorb its OWN continuation, and asserting that it
-    # may not is what broke the wrap this module exists to handle.
-    for case, body in (
+    # ONE PAIR PER STRUCTURAL KIND, which is the only shape that could have
+    # caught either half of this rule's history. `_structure` names which marker
+    # can repeat inside ONE piece of prose (the blockquote's, alone) and which
+    # marks a sibling; both earlier spellings were right for one kind and wrong
+    # for its neighbours, and a control on one kind proved nothing about the
+    # rest. CONTINUED asserts the wrapped pointer still names doc.md; SIBLING
+    # asserts the bare mark does NOT inherit and is judged against the citer.
+    # EVERY CONTINUED ARM CARRIES THE TRAP: the citer holds `## Gone section`
+    # itself, so a lost target does not merely misname the finding — the pointer
+    # resolves intra-document and DISAPPEARS. That is the shape that shipped
+    # twice. Each is paired with the same wrap naming a LIVE heading, asserted
+    # silent, so none of them passes on a reader that reports everything.
+    live, gone = f"{SECTION_MARK} Live section", f"{SECTION_MARK} Gone section"
+    trap = "# C\n\n## Gone section\n\n"
+    for kind, continued, sibling in (
+        ("a plain paragraph", f"{trap}see `doc.md`\n{gone}.\n", None),
         (
-            "a heading",
-            f"# C\n\n## `doc.md` {SECTION_MARK} Live section\nsee {SECTION_MARK} Live section\n",
+            # A list item's continuation carries NO marker — it is INDENTED — so
+            # a repeated bullet can only be a sibling.
+            "a list item",
+            f"{trap}- see `doc.md`\n  {gone}.\n",
+            f"# C\n\n- `doc.md` {live}\n- see {live}\n",
         ),
-        (
-            "two sibling list items",
-            f"# C\n\n- `doc.md` {SECTION_MARK} Live section\n- see {SECTION_MARK} Live section\n",
-        ),
-    ):
-        if not any(problem.startswith("citer.md:") for problem in cited(body)):
-            failures.append(
-                f"a bare mark after {case} inherited that line's target, so it was "
-                f"judged against a document the citing file never named"
-            )
-
-    # THE CONTINUATION SIDE, as a PAIRED SET. The plain paragraph wrap sits
-    # beside four structural wraps that must behave identically, because a fix
-    # correct for the paragraph and wrong for the bullet is exactly the shape
-    # that shipped: the target was lost, the citing file blamed, and in one case
-    # a dead pointer resolved silently against the citer's own heading.
-    for case, body in (
-        ("a plain paragraph", f"# C\n\nsee `doc.md`\n{SECTION_MARK} Gone section.\n"),
-        ("a list item", f"# C\n\n- see `doc.md`\n  {SECTION_MARK} Gone section.\n"),
         (
             "a list item with a four-space continuation",
-            f"# C\n\n- see `doc.md`\n    {SECTION_MARK} Gone section.\n",
+            f"{trap}- see `doc.md`\n    {gone}.\n",
+            None,
         ),
-        ("a block quote", f"# C\n\n> see `doc.md`\n  {SECTION_MARK} Gone section.\n"),
-        ("a numbered item", f"# C\n\n1. see `doc.md`\n   {SECTION_MARK} Gone section.\n"),
         (
-            # The shape that resolved silently: the citer carries a heading of
-            # the cited name, so losing the target does not merely misname the
-            # finding — it makes the dead pointer disappear.
-            "a list item in a citer carrying a heading of the cited name",
-            f"# C\n\n## Gone section\n\n- see `doc.md`\n  {SECTION_MARK} Gone section.\n",
+            "a numbered item",
+            f"{trap}1. see `doc.md`\n   {gone}.\n",
+            f"# C\n\n1. `doc.md` {live}\n2. see {live}\n",
+        ),
+        (
+            # THE REGRESSION, and the one kind whose marker repeats inside one
+            # sentence: a wrapped quote carries `>` on every line, so the target
+            # line and the mark line are consecutive STRUCTURAL lines and were
+            # flushed apart. Its sibling needs a blank line, never a marker.
+            "a block quote",
+            f"{trap}> see `doc.md`\n> {gone}.\n",
+            f"# C\n\n> `doc.md` {live}\n\n> see {live}\n",
+        ),
+        (
+            "a block quote nested inside another",
+            f"{trap}>> see `doc.md`\n>> {gone}.\n",
+            f"# C\n\n> `doc.md` {live}\n>> see {live}\n",
+        ),
+        (
+            "a list item inside a block quote",
+            f"{trap}> - see `doc.md`\n>   {gone}.\n",
+            f"# C\n\n> - `doc.md` {live}\n> - see {live}\n",
+        ),
+        (
+            # A table row is not a structural KIND — `_structure` says why — so
+            # its sibling arm is held by the pipe SEPARATOR rather than by a
+            # block boundary, and its continued arm is an unmarked line, a cell
+            # having no way to wrap onto the line below.
+            "a table row",
+            f"{trap}| a | see `doc.md`\n  {gone}. |\n",
+            f"# C\n\n| `doc.md` {live} |\n| see {live} |\n",
+        ),
+        (
+            # A heading is one line by definition, so it has nothing to absorb:
+            # the paragraph beneath it joins itself and not the heading.
+            "a heading",
+            f"# C\n\n## Gone section\nsee `doc.md`\n{gone}.\n",
+            f"# C\n\n## `doc.md` {live}\nsee {live}\n",
         ),
     ):
-        reported = cited(body)
+        reported = cited(continued)
         if not any("cites `doc.md" in problem for problem in reported):
             failures.append(
-                f"a pointer wrapped across {case} lost its target: the mark must still "
+                f"a pointer wrapped inside {kind} lost its target: the mark must still "
                 f"be judged against doc.md, not against the citing file and not "
                 f"dropped — {reported or 'nothing was reported at all'}"
             )
-        if any("Live section" in problem for problem in cited(body.replace("Gone", "Live"))):
+        if any("Live section" in problem for problem in cited(continued.replace("Gone", "Live"))):
             failures.append(
-                f"the same wrap across {case} naming a LIVE heading was reported, so the "
+                f"the same wrap inside {kind} naming a LIVE heading was reported, so the "
                 f"control above passes on a reader that reports everything"
             )
+        if sibling and not any("cites `citer.md" in problem for problem in cited(sibling)):
+            failures.append(
+                f"a bare mark in the sibling {kind} inherited the previous one's target, "
+                f"so it was judged against a document the citing file never named"
+            )
+
+    # THE PIPE IS A CLAUSE BOUNDARY, which is what makes the sibling row above a
+    # boundary in the reader's terms and not only in the block reader's. Paired
+    # with the same enumeration inside ONE cell, which must still inherit — or
+    # this passes on a rule that stopped inheriting anywhere.
+    if not any(
+        "cites `citer.md" in problem
+        for problem in cited(f"# C\n\n| `doc.md` {live} | {live} |\n")
+    ):
+        failures.append(
+            "a bare mark in the NEXT CELL inherited the target named in the one "
+            "before it, so a table row's pointer answers for its neighbour"
+        )
+    if cited(f"# C\n\n| `doc.md` {live}, {live} |\n"):
+        failures.append(
+            "an enumeration inside ONE cell stopped inheriting, so the control above "
+            "passes on a reader that inherits nothing"
+        )
+
+    # A LAZY CONTINUATION carries no `>` at all, and must not end the quote it
+    # continues — the paired sibling above proves the marker is what divides.
+    if not any(
+        "cites `doc.md" in problem
+        for problem in cited(f"{trap}> see `doc.md`\n{gone}.\n")
+    ):
+        failures.append(
+            "a quote's lazy continuation was read as a new block, so the wrapped "
+            "pointer lost its target"
+        )
 
     # INDENT IS MEASURED IN COLUMNS, so a TAB reaches four as surely as four
     # spaces do. The rule was written for spaces and CommonMark advances a tab to

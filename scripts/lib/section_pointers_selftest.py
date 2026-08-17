@@ -206,6 +206,35 @@ def pointer_controls() -> list[str]:
                 f"leaves the repository makes a malformed pointer read as a correct one"
             )
 
+    # A LINK DESTINATION IS RELATIVE TO ITS DOCUMENT; A BARE PATH IS NOT, and
+    # only the SYNTAX says which — never the shape of the path, which is
+    # identical here. Both spellings name `a/doc.md` from `sub/notes.md` while
+    # two such files exist, and the heading lives in only one of them, so each
+    # arm is silent for its own file and reported for the other. Written as a
+    # PAIR because a resolver that simply preferred the citer-relative file would
+    # satisfy the link arm alone.
+    twins = {"a/doc.md": "# R\n\n## Root only\n", "sub/a/doc.md": "# S\n\n## Sub only\n"}
+    known = {rel: headings(text) for rel, text in twins.items()}
+    for spelling, token, resolved, other in (
+        ("a markdown link", "[label](a/doc.md)", "Sub only", "Root only"),
+        ("a bare prose path", "`a/doc.md`", "Root only", "Sub only"),
+    ):
+        for name, want in ((resolved, False), (other, True)):
+            citer = f"# N\n\nsee {token} {SECTION_MARK} {name}.\n"
+            reported = bool(
+                pointer_problems(
+                    dict(twins, **{"sub/notes.md": citer}), known, NO_EXEMPTIONS
+                ).problems
+            )
+            if reported is not want:
+                failures.append(
+                    f"{spelling} naming a/doc.md from sub/notes.md resolved to the "
+                    f"wrong twin: `{SECTION_MARK} {name}` should have been "
+                    f"{'reported' if want else 'silent'}. A link is relative to its "
+                    f"document and a bare path is repo-relative, and confusing the two "
+                    f"leaves a dead pointer green because the heading survives elsewhere"
+                )
+
     # THE UNREADABLE CAUSE REACHES EVERY SPELLING. Keying the map by the raw
     # token left the other three falling back to the message this round retired.
     broken = {"docs/architecture/design.md": "not UTF-8 text", "docs/decisions/D001-x.md": "not UTF-8 text"}

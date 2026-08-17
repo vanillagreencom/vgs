@@ -81,14 +81,20 @@ SECTION_MARK = "§"
 # path is the FIRST pointer's parenthetical, and reading it as the second's
 # target would resolve a pointer against a document it does not name.
 CROSSABLE = "`\"'*_([{)]}"
-SEPARATORS = ",;:.!?—–"
+# THE PIPE IS ONE OF THEM because a table CELL is a clause, not decoration.
+# `docs/architecture/overlay-and-dependencies.md` writes one pointer per row with
+# its target in the cell beside the mark; a bare mark in the NEXT cell names
+# something else entirely, and without this it inherited across the divider.
+# Within a single cell an enumeration still inherits, no pipe lying between the
+# two marks — which is the same comma rule as everywhere else.
+SEPARATORS = ",;:.!?—–|"
 OPENERS = "`\"'*_([{"
 CLOSERS = "`\"'*_)]}"
 # Where target INHERITANCE stops (`pointers`). DERIVED from SEPARATORS rather
 # than spelled a second time: the two rules genuinely differ by one character,
 # and writing that character out twice is how they came to disagree — the stop
-# was a bare `"."` while SEPARATORS already listed six, so a bare pointer after
-# `!`, `?`, `;` or an em dash inherited a target it does not name.
+# was a bare `"."` while SEPARATORS already listed the rest, so a bare pointer
+# after `!`, `?`, `;` or an em dash inherited a target it does not name.
 #
 # THE COMMA IS THE DIFFERENCE, and it is the whole reason inheritance exists:
 # `AGENTS.md` (§ Mission, § Do not) is one enumeration, and the second mark
@@ -109,14 +115,22 @@ TERMINATORS = set(".,;:!?()[]{}\"`|—–") | {SECTION_MARK}
 # a bare name, and only these two words.
 JOINERS = ("and", "or")
 
-def target_token(before: str) -> str:
-    """The token a pointer cites, or "" when the pointer is bare.
+def target_token(before: str) -> tuple[str, bool]:
+    """(token a pointer cites, whether it came from a markdown LINK).
 
     Delimiters are crossed until stable, so a mark the join reaches through a
     closing quote — a Python string literal wrapped mid-pointer, as
     `scripts/check-vshell-helper.py` writes one — or through an opening paren
     still yields the path. A markdown link keeps only its destination, and a
     leading `.` is kept: `.github/instructions/…` is a path, not a decorated one.
+
+    WHETHER IT WAS A LINK IS CARRIED, not discarded once the destination is cut
+    out. A CommonMark link destination is relative to the document containing it,
+    while a bare path written in this tree's prose is conventionally
+    repo-relative, so the two spellings must resolve in different orders and only
+    the syntax tells them apart. Dropping the flag here made a subdirectory
+    citer's `[label](a/doc.md)` resolve to a root-level file the author never
+    named — green while the file they did name lost the heading.
     """
     text = before.rstrip()
     for _ in range(2):  # the target, or the target behind one qualifier
@@ -124,11 +138,12 @@ def target_token(before: str) -> str:
             text = text[:-1].rstrip()
         if text and text[-1] not in SEPARATORS:
             token = text.split()[-1].lstrip(OPENERS).rstrip(CLOSERS)
-            return token.rsplit("](", 1)[1] if "](" in token else token
+            linked = "](" in token
+            return (token.rsplit("](", 1)[1] if linked else token), linked
         text = _without_open_qualifier(text)
         if not text:
-            return ""
-    return ""
+            return "", False
+    return "", False
 
 
 def _without_open_qualifier(text: str) -> str:
@@ -217,33 +232,35 @@ def resolves(name: str, known: list[list[str]], quoted: bool) -> bool:
     )
 
 
-def pointers(path: str, text: str) -> list[tuple[int, str, str, bool, str | None, bool]]:
-    """(line, target, name, quoted, problem, inherited) for every mark in a file.
+def pointers(path: str, text: str) -> list[tuple[int, str, str, bool, str | None, bool, bool]]:
+    """(line, target, name, quoted, problem, inherited, linked) for every mark.
 
     A SECOND MARK IN THE SAME CLAUSE INHERITS the first's target:
     `project-skills/vshell-dev/SKILL.md` writes "canonical in `AGENTS.md`
     (§ Mission, § Do not)", where the second pointer names AGENTS.md as plainly
     as the first. Inheritance stops at any INHERITANCE_STOPS character — every
     separator but the comma — so a later "see § Niri" is read as intra-document,
-    which is what it is.
+    which is what it is. An inherited target carries the first pointer's LINK
+    flag with it: it is the same token, so it must resolve the same way.
     """
     found = []
     for joined, index in blocks(text, path.endswith(".md")):
         offsets = [offset for offset, _ in index]
-        previous_target, previous_end = "", 0
+        previous_target, previous_linked, previous_end = "", False, 0
         for match in re.finditer(SECTION_MARK, joined):
             line = index[bisect_right(offsets, match.start()) - 1][1]
             name, quoted, problem = cited_name(joined[match.end() :])
-            token = target_token(joined[: match.start()])
+            token, linked = target_token(joined[: match.start()])
             target = token if names_a_file(token) else ""
             gap = joined[previous_end : match.start()]
             inherited = bool(
                 not target and previous_target and not set(gap) & set(INHERITANCE_STOPS)
             )
             if inherited:
-                target = previous_target
-            found.append((line, target, name, quoted, problem, inherited))
-            previous_target, previous_end = target, match.end()
+                target, linked = previous_target, previous_linked
+            found.append((line, target, name, quoted, problem, inherited, linked))
+            previous_target, previous_linked = target, linked
+            previous_end = match.end()
     return found
 
 
@@ -303,18 +320,18 @@ def pointer_problems(
                 f"unbalanced one is a lost file, not an empty one."
             )
             continue
-        for line, token, name, quoted, problem, inherited in pointers(rel, files[rel]):
+        for line, token, name, quoted, problem, inherited, linked in pointers(rel, files[rel]):
             # SCOPE IS SETTLED BEFORE THE NAME IS JUDGED. A malformed name is
             # only this check's business once the pointer is one it owns: a code
             # region's pointer, or one in a file with no headings, is not made
             # ours by an unclosed backtick in it.
             where = f"{rel}:{line}"
             if names_a_document(token):
-                target, spelling = resolve_target(token, rel, markdown)
+                target, spelling = resolve_target(token, rel, markdown, linked)
                 if not target:
                     problems.append(
                         f"{where} cites `{token} {SECTION_MARK} {name}`, but {token} "
-                        f"{unresolved(token, rel, unreadable, markdown)}."
+                        f"{unresolved(token, rel, unreadable, markdown, linked)}."
                     )
                     continue
                 if inherited:
