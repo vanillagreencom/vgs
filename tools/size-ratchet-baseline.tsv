@@ -16,7 +16,7 @@ backend/internal/services/mimeapps/mimeapps.go	408
 backend/internal/services/networkmanager/networkmanager.go	1463
 backend/internal/services/sysupdate/sysupdate.go	714
 backend/internal/services/tailscale/tailscale.go	445
-backend/internal/services/tailscale/watch_test.go	457
+backend/internal/services/tailscale/watch_test.go	489
 backend/internal/services/wallpaper/wallpaper.go	459
 bin/claudebar	1212
 bin/codexbar	1311

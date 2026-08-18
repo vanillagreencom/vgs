@@ -178,6 +178,38 @@ func TestRunWatchTerminatesChildOnParseError(t *testing.T) {
 	}
 }
 
+// TestRunWatchFoldsChildStderrIntoError proves the stderr-folding path added
+// alongside the flag fix: a give-up log line is only as useful as the text it
+// carries, and nothing else exercises the `stderr.Len() > 0` guard or proves
+// the wrap keeps the child's own words rather than swallowing them.
+func TestRunWatchFoldsChildStderrIntoError(t *testing.T) {
+	dir := t.TempDir()
+	statusPath := filepath.Join(dir, "status.json")
+	writeFile(t, statusPath, statusFixture)
+
+	stub := filepath.Join(dir, "tailscale")
+	writeStub(t, stub, statusPath,
+		"  printf 'flag provided but not defined: -bogus\\n' >&2\n"+
+			"  exit 2\n")
+
+	m := newWatchManager(t, server.New(0, nil), stub)
+
+	done := make(chan error, 1)
+	go func() { done <- m.runWatch(m.watchCtx) }()
+
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("runWatch returned nil for a child that exited non-zero")
+		}
+		if !strings.Contains(err.Error(), "flag provided but not defined: -bogus") {
+			t.Fatalf("runWatch error %q does not contain the child's stderr", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("runWatch blocked on a child that already exited")
+	}
+}
+
 // TestRunWatchInvokesWatchIpnWithNoFlags is the regression control for
 // VGS-202: tailscale 1.102.2 rejects `--netmap=true` on `debug watch-ipn`
 // ("flag provided but not defined: -netmap") because the flag was removed
