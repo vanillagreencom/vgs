@@ -208,21 +208,31 @@ function regionGuardTestkitSelfTest() {
         // A /proc that cannot be LISTED is the other way a pass finds nothing, and
         // the loop has to tell it apart from a clean sweep. It returned undefined
         // here, which is not 0, so the loop re-listed a /proc that would never list
-        // — 12 repeats at a 500ms budget, ~160 at the real one, ending with "still
-        // appearing", which is not what happened. The existing unlistable check
-        // calls reapGuardChildren directly and so could not see this; the fixtures
-        // call reapUntilQuiet.
+        // — measured at 12 repeats against a 500ms budget, ~160 against the real
+        // one, ending with "still appearing", which is not what happened. The
+        // existing unlistable check calls reapGuardChildren directly and so could
+        // not see this; the fixtures call reapUntilQuiet.
+        //
+        // The budget is WIDE and the assertion is tight, which is the way round
+        // that costs nothing: a correct sweep returns in ~0ms and never touches the
+        // budget, while the regression spins the whole of it. At 500ms only 100ms
+        // separated a pass from the failure it detects, and the one thing that
+        // could close that gap is a scheduling stall — which would redden CI
+        // blaming the reaper for something it did not do, the exact wrong-cause
+        // this file keeps arguing against. 5000ms leaves ~4.6s of daylight on a
+        // 2 vCPU tier under contention. The warn count beside it reads no clock at
+        // all and is the real discriminator: a regression turns 1 into ~100.
         const blind = [];
         const denied = new Error("EACCES: permission denied, scandir '/proc'");
         denied.code = "EACCES";
         const started = Date.now();
         reapUntilQuiet("/tmp/whatever", "unlistable", {
-            deadlineMs: 500,
+            deadlineMs: 5000,
             list: () => { throw denied; },
             warn: text => blind.push(text)
         });
         assert.ok(Date.now() - started < 400,
-            "a sweep that cannot look must return at once, not spin out its deadline");
+            "a sweep that cannot look must return at once, not spin out its 5000ms budget");
         assert.equal(blind.length, 1,
             "and must say so exactly once; it said " + JSON.stringify(blind.join("")));
         assert.ok(blind[0].includes("could not list /proc"),
