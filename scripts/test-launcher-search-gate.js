@@ -73,7 +73,7 @@ const menuSource = fs.readFileSync(MENU, "utf8");
 const helperSource = fs.readFileSync(HELPER, "utf8");
 
 // This text comes from repo files and is EXECUTED here, so it runs inside a
-// child the parent kills on a wall clock — scripts/lib/qml-region.js says what
+// child bounded by a wall clock — scripts/lib/qml-region.js says what
 // that bounds and what it does not.
 const { evaluateMarked, regionOf, guardChild } = require("./lib/qml-region.js");
 const qmlSource = require("./lib/qml-source.js");
@@ -82,10 +82,9 @@ const { stripComments } = qmlSource;
 // Returns only in the child; the parent exits with its status.
 guardChild();
 
-// Prove the tools before they prove anything: that a region which does not
-// finish becomes a fast, named red, and that a token surviving only in a comment
-// pins nothing.
-require("./lib/qml-region.js").selfTest();
+// Prove the reader before it reads anything: that a token surviving only in a
+// comment pins nothing. The guard's own self-test is a separate manifest row —
+// it cannot run inside a guarded suite and still report a broken guard.
 qmlSource.selfTest();
 
 const backend = evaluateMarked(serviceSource, "SEARCH BACKEND DECISION", [
