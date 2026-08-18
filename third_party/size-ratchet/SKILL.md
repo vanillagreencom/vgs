@@ -32,7 +32,7 @@ human editing the row in a reviewed diff.
 ```
 
 `--staged` judges the commit's snapshot: index blobs, and index policy.
-Details in [README.md](README.md).
+Details in [DEVELOPMENT.md](DEVELOPMENT.md).
 
 ## Verdicts
 
@@ -76,8 +76,9 @@ offenders remain.
 `--seed` writes the FIRST baseline from the gate's own collector: every
 tracked, non-excluded file over its deciding threshold enters at its
 current count, sorted, with a self-row when the baseline outgrows its own
-threshold. A baseline that already has rows refuses — the ratchet is live
-there, and growth stays a reviewed hand-edit. Commit the seeded file.
+threshold. A baseline that already has rows in the worktree, the index or
+`HEAD` refuses — the ratchet is live there, and growth stays a reviewed
+hand-edit. Commit the seeded file.
 
 ## Configuration
 
@@ -87,7 +88,9 @@ Resolution order for every key: explicit environment > `.env.local`
 built-in default. Only an ABSENT source is skipped: a source that exists
 but is unusable — unreadable, a directory, FIFO, socket or device, or a
 symlink that does not resolve — is a config error (exit 2), never a
-fall-through to the next layer. `/dev/null` forces the built-in defaults.
+fall-through to the next layer. `SIZE_RATCHET_SETTINGS_FILE=/dev/null`
+selects no settings source at all (`.env.local`, the settings file and
+`.env` are all skipped), leaving environment variables and the defaults.
 
 | Key | Default | Meaning |
 |---|---|---|
@@ -119,5 +122,6 @@ blank lines and `#` comments are ignored, and a pattern without a reason is
 a config error — every exclusion carries its justification (generated,
 vendored, fixtures, lockfiles).
 
-Formats, seeding a first baseline, and the migration note for repos already
-using this format: [README.md](README.md).
+Formats, path classes, and seeding a first baseline: [README.md](README.md).
+Collection internals and the migration note for repos already using this
+format: [DEVELOPMENT.md](DEVELOPMENT.md).

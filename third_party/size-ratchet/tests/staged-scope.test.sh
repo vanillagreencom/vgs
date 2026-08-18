@@ -114,7 +114,7 @@ mkdir -p "$R/tools"
 mkfile big.txt 30
 printf '# nothing excluded\n' >"$R/tools/size-ratchet-excludes"
 git -C "$R" add -A
-git -C "$R" commit -q -m seed 2>/dev/null || true
+git -C "$R" commit -q -m seed
 printf 'big.txt\tunstaged exclusion\n' >"$R/tools/size-ratchet-excludes"
 run_sr --staged
 [ "$RC" -eq 1 ] && ok "an unstaged exclusion does not silence the staged blob" \
@@ -163,6 +163,80 @@ OUT="$(cd "$R" && "$SR" --staged 2>&1)" || RC=$?
 OUT=""; RC=0
 OUT="$(cd "$R" && SIZE_RATCHET_THRESHOLD=10 "$SR" --staged 2>&1)" || RC=$?
 [ "$RC" -eq 0 ] && ok "an explicit environment override still wins" || bad "env override wins" "rc=$RC out=$OUT"
+
+new_repo settings-probe-failure
+mkfile big.txt 200
+printf '[env]\nSIZE_RATCHET_THRESHOLD = "100"\n' >"$R/vstack.settings.toml"
+git -C "$R" add -A
+git -C "$R" commit -q -m seed
+OUT=""; RC=0
+OUT="$(cd "$R" && "$SR" --staged 2>&1)" || RC=$?
+[ "$RC" -eq 1 ] && case "$OUT" in *"threshold 100"*) true ;; *) false ;; esac \
+  && ok "control: the committed threshold of 100 rejects the 200-line blob" \
+  || bad "committed threshold rejects (probe control)" "rc=$RC out=$OUT"
+# The staged-source probe asks the index whether a settings file is tracked.
+# `--error-unmatch` reserves exit 1 for "no such path"; reading EVERY nonzero
+# status as "untracked" let a broken git drop the committed threshold back to
+# the built-in 400 and pass the 200-line offender.
+REAL_GIT="$(command -v git)"
+GIT_TRACKED_SHIM="$TMP/git-tracked-shim"
+mkdir -p "$GIT_TRACKED_SHIM"
+cat >"$GIT_TRACKED_SHIM/git" <<EOF
+#!/usr/bin/env bash
+if [ "\${1:-}" = "ls-files" ] && [ "\${2:-}" = "--error-unmatch" ]; then
+  echo "fatal: simulated index-probe failure" >&2
+  exit 71
+fi
+exec "$REAL_GIT" "\$@"
+EOF
+chmod +x "$GIT_TRACKED_SHIM/git"
+OUT=""; RC=0
+OUT="$(cd "$R" && PATH="$GIT_TRACKED_SHIM:$PATH" "$SR" --staged 2>&1)" || RC=$?
+[ "$RC" -eq 2 ] && case "$OUT" in *"could not query the index while resolving a setting"*) true ;; *) false ;; esac \
+  && ok "a failing tracked-source probe is exit 2, never a silent fall back to the built-in threshold" \
+  || bad "settings probe failure" "rc=$RC out=$OUT"
+# A settings source that cannot be an index entry — absolute, or escaping the
+# root — draws git's "outside repository" refusal, which carries the same 128
+# an operational failure does. It is answered before the probe, so such a
+# source still reads from the worktree instead of failing the run.
+printf '[env]\nSIZE_RATCHET_THRESHOLD = "5"\n' >"$TMP/outside-settings.toml"
+for path in "$TMP/outside-settings.toml" "../outside-settings.toml"; do
+  OUT=""; RC=0
+  OUT="$(cd "$R" && SIZE_RATCHET_SETTINGS_FILE="$path" "$SR" --staged 2>&1)" || RC=$?
+  [ "$RC" -eq 1 ] && case "$OUT" in *"threshold 5"*) true ;; *) false ;; esac \
+    && ok "an out-of-repo settings source still reads under --staged ($path)" \
+    || bad "out-of-repo settings source" "path=$path rc=$RC out=$OUT"
+done
+
+# …but a `..` that NORMALIZES back inside is an ordinary index entry, and the
+# answer-before-probe shortcut must not swallow it: sub/../vstack.settings.toml
+# IS the committed settings file, so reading the worktree copy there handed
+# the unstaged threshold bump exactly the authority --staged removes.
+new_repo settings-dotdot
+mkdir -p "$R/sub"
+mkfile big.txt 200
+mkfile sub/keep.txt 1
+printf '[env]\nSIZE_RATCHET_THRESHOLD = "100"\n' >"$R/vstack.settings.toml"
+git -C "$R" add -A
+git -C "$R" commit -q -m seed
+# Raised on disk only: the commit still carries 100, so the 200-line blob
+# fails however the settings path is spelled.
+printf '[env]\nSIZE_RATCHET_THRESHOLD = "300"\n' >"$R/vstack.settings.toml"
+for path in "vstack.settings.toml" "sub/../vstack.settings.toml" "./vstack.settings.toml" "a/b/../../vstack.settings.toml"; do
+  OUT=""; RC=0
+  OUT="$(cd "$R" && SIZE_RATCHET_SETTINGS_FILE="$path" "$SR" --staged 2>&1)" || RC=$?
+  [ "$RC" -eq 1 ] && case "$OUT" in *"threshold 100"*) true ;; *) false ;; esac \
+    && ok "the committed threshold governs a path spelled '$path'" \
+    || bad "dot-dot settings path resolves to the index" "path=$path rc=$RC out=$OUT"
+done
+# Control: a path that STILL escapes once normalized keeps the worktree lane
+# — it reads the out-of-repo file ($TMP/outside-settings.toml, threshold 5,
+# written above) rather than resolving to anything in the index.
+OUT=""; RC=0
+OUT="$(cd "$R" && SIZE_RATCHET_SETTINGS_FILE="sub/../../outside-settings.toml" "$SR" --staged 2>&1)" || RC=$?
+[ "$RC" -eq 1 ] && case "$OUT" in *"threshold 5"*) true ;; *) false ;; esac \
+  && ok "control: a path that still escapes once normalized reads the out-of-repo file" \
+  || bad "normalized escape stays out-of-repo" "rc=$RC out=$OUT"
 
 new_repo settings-deleted
 mkfile big.txt 8
@@ -262,6 +336,88 @@ case "$OUT" in
   *--staged*) ok "--help documents --staged" ;;
   *) bad "--help documents --staged" "out=$OUT" ;;
 esac
+
+echo "=== a failing HEAD probe cannot hand authority to a recreated source ==="
+# Staged deletion + worktree recreation: the commit carries threshold 100,
+# the deletion is staged, and a recreated worktree copy says 300. The HEAD
+# probe is what proves the commit once carried the source; a broken git
+# there must fail closed, never read as "never tracked" and let the
+# recreated copy authorize the staged 200-line blob.
+new_repo settings-recreated
+mkfile big.txt 200
+printf '[env]\nSIZE_RATCHET_THRESHOLD = "100"\n' >"$R/vstack.settings.toml"
+git -C "$R" add -A
+git -C "$R" commit -q -m seed
+git -C "$R" rm -q --cached vstack.settings.toml
+printf '[env]\nSIZE_RATCHET_THRESHOLD = "300"\n' >"$R/vstack.settings.toml"
+OUT=""; RC=0
+OUT="$(cd "$R" && "$SR" --staged 2>&1)" || RC=$?
+[ "$RC" -eq 0 ] \
+  && ok "control: a staged settings deletion governs as absent (built-in 400 passes the 200-line blob)" \
+  || bad "staged-deletion control" "rc=$RC out=$OUT"
+REAL_GIT="$(command -v git)"
+GIT_HEAD_SHIM="$TMP/git-head-shim"
+mkdir -p "$GIT_HEAD_SHIM"
+{
+  printf '#!/usr/bin/env bash\n'
+  printf 'if [ "${1:-}" = "ls-tree" ]; then\n'
+  printf '  echo "fatal: simulated HEAD-tree failure" >&2\n'
+  printf '  exit 71\n'
+  printf 'fi\n'
+  printf 'exec %s "$@"\n' "$REAL_GIT"
+} >"$GIT_HEAD_SHIM/git"
+chmod +x "$GIT_HEAD_SHIM/git"
+OUT=""; RC=0
+OUT="$(cd "$R" && PATH="$GIT_HEAD_SHIM:$PATH" "$SR" --staged 2>&1)" || RC=$?
+[ "$RC" -eq 2 ] && case "$OUT" in *"could not probe HEAD while resolving a setting (git ls-tree"*) true ;; *) false ;; esac \
+  && ok "a failing settings HEAD probe is exit 2, never authority for the recreated copy" \
+  || bad "settings HEAD-probe failure" "rc=$RC out=$OUT"
+
+echo "=== the policy HEAD leg fails closed too ==="
+# Same shape for the baseline: staged deletion + recreated worktree copy.
+# The classified probe (ls-tree) failing must be exit 2; the old bare
+# cat-file read a broken git as "never tracked" and let the recreated
+# baseline absorb staged growth.
+new_repo baseline-recreated
+mkfile big.txt 30
+mkdir -p "$R/tools"
+printf 'big.txt\t15\n' >"$R/tools/size-ratchet-baseline.tsv"
+git -C "$R" add -A
+git -C "$R" commit -q -m seed
+git -C "$R" rm -q --cached tools/size-ratchet-baseline.tsv
+printf 'big.txt\t30\n' >"$R/tools/size-ratchet-baseline.tsv"
+OUT=""; RC=0
+GIT_CATFILE_SHIM="$TMP/git-catfile-shim"
+mkdir -p "$GIT_CATFILE_SHIM"
+{
+  printf '#!/usr/bin/env bash\n'
+  printf 'if [ "${1:-}" = "cat-file" ]; then\n'
+  printf '  echo "fatal: simulated HEAD-probe failure" >&2\n'
+  printf '  exit 71\n'
+  printf 'fi\n'
+  printf 'exec %s "$@"\n' "$REAL_GIT"
+} >"$GIT_CATFILE_SHIM/git"
+chmod +x "$GIT_CATFILE_SHIM/git"
+OUT="$(cd "$R" && PATH="$GIT_CATFILE_SHIM:$PATH" SIZE_RATCHET_THRESHOLD=10 "$SR" --staged 2>&1)" || RC=$?
+[ "$RC" -eq 1 ] \
+  && ok "a broken cat-file no longer hands authority to the recreated baseline (the staged snapshot judges without it)" \
+  || bad "recreated baseline under cat-file failure" "rc=$RC out=$OUT"
+GIT_TREE_SHIM="$TMP/git-tree-shim"
+mkdir -p "$GIT_TREE_SHIM"
+{
+  printf '#!/usr/bin/env bash\n'
+  printf 'if [ "${1:-}" = "ls-tree" ]; then\n'
+  printf '  echo "fatal: simulated HEAD-tree failure" >&2\n'
+  printf '  exit 71\n'
+  printf 'fi\n'
+  printf 'exec %s "$@"\n' "$REAL_GIT"
+} >"$GIT_TREE_SHIM/git"
+chmod +x "$GIT_TREE_SHIM/git"
+OUT=""; RC=0
+OUT="$(cd "$R" && PATH="$GIT_TREE_SHIM:$PATH" SIZE_RATCHET_THRESHOLD=10 "$SR" --staged 2>&1)" || RC=$?
+[ "$RC" -eq 2 ] && case "$OUT" in *"(git ls-tree exit 71)"*) true ;; *) false ;; esac \
+  && ok "a failing HEAD-tree query is exit 2, never \"never tracked\"" \
+  || bad "policy HEAD-probe failure" "rc=$RC out=$OUT"
 
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
