@@ -197,6 +197,114 @@ run_sr --seed
   && ok "--seed refuses while the index copy carries rows" \
   || bad "index-rows refusal" "rc=$RC out=$OUT"
 
+echo "=== a committed ratchet refuses reseeding when its deletion or truncation is STAGED ==="
+# The index probe above cannot see this: staging the baseline's deletion drops
+# it from the index, so an index-only look read a live ratchet as "no baseline
+# yet" and reseeded every row at today's size — laundering growth into a fresh
+# freeze at exit 0.
+R="$TMP/staged-delete"
+mkdir -p "$R/tools"
+git -C "$R" -c init.defaultBranch=main init -q
+git -C "$R" config user.email test@example.com
+git -C "$R" config user.name test
+mkfile big.txt 15
+printf 'big.txt\t15\n' >"$R/tools/size-ratchet-baseline.tsv"
+git -C "$R" add -A
+git -C "$R" commit -qm base
+mkfile big.txt 30 # the growth a reseed would freeze at its new size
+git -C "$R" add big.txt
+git -C "$R" rm -q --cached tools/size-ratchet-baseline.tsv
+rm "$R/tools/size-ratchet-baseline.tsv"
+run_sr --seed
+[ "$RC" -eq 2 ] && case "$OUT" in *"COMMITTED copy"*) true ;; *) false ;; esac \
+  && ok "--seed refuses while HEAD carries rows the staged deletion hid" \
+  || bad "staged-deletion refusal" "rc=$RC out=$OUT"
+[ ! -e "$R/tools/size-ratchet-baseline.tsv" ] && ok "and no baseline was written" \
+  || bad "staged-deletion wrote a baseline" "$(cat "$R/tools/size-ratchet-baseline.tsv")"
+
+# Same bypass one shape over: an emptied baseline staged as the new content.
+R="$TMP/staged-truncate"
+mkdir -p "$R/tools"
+git -C "$R" -c init.defaultBranch=main init -q
+git -C "$R" config user.email test@example.com
+git -C "$R" config user.name test
+mkfile big.txt 15
+printf 'big.txt\t15\n' >"$R/tools/size-ratchet-baseline.tsv"
+git -C "$R" add -A
+git -C "$R" commit -qm base
+mkfile big.txt 30
+: >"$R/tools/size-ratchet-baseline.tsv"
+git -C "$R" add -A
+run_sr --seed
+[ "$RC" -eq 2 ] && case "$OUT" in *"COMMITTED copy"*) true ;; *) false ;; esac \
+  && ok "--seed refuses while HEAD carries rows a staged truncation hid" \
+  || bad "staged-truncation refusal" "rc=$RC out=$OUT"
+[ ! -s "$R/tools/size-ratchet-baseline.tsv" ] && ok "and the emptied file stays empty" \
+  || bad "staged-truncation wrote rows" "$(cat "$R/tools/size-ratchet-baseline.tsv")"
+
+# Control: with the deletion COMMITTED there is no live ratchet anywhere, and
+# the bootstrap this mode exists for must still run.
+R="$TMP/committed-delete"
+mkdir -p "$R/tools"
+git -C "$R" -c init.defaultBranch=main init -q
+git -C "$R" config user.email test@example.com
+git -C "$R" config user.name test
+mkfile big.txt 15
+printf 'big.txt\t15\n' >"$R/tools/size-ratchet-baseline.tsv"
+git -C "$R" add -A
+git -C "$R" commit -qm base
+git -C "$R" rm -q tools/size-ratchet-baseline.tsv
+git -C "$R" commit -qm drop
+run_sr --seed
+[ "$RC" -eq 0 ] && [ "$(cat "$R/tools/size-ratchet-baseline.tsv")" = "$(printf 'big.txt\t15')" ] \
+  && ok "control: a committed deletion leaves nothing live and --seed writes the first baseline" \
+  || bad "committed-deletion control" "rc=$RC out=$OUT"
+
+echo "=== a failing index probe never clears the way for a reseed ==="
+# The probe that decides whether the index carries a baseline must fail LOUD:
+# a nonzero status read as "no such path" let an operational failure pass for
+# "no baseline yet" and the mode reseeded over live rows. Only the BASELINE's
+# own index query is shimmed, so the refusal has to come from this probe
+# rather than from another fail-closed read on the way in.
+REAL_GIT="$(command -v git)"
+GIT_PROBE_SHIM="$TMP/git-probe-shim"
+mkdir -p "$GIT_PROBE_SHIM"
+cat >"$GIT_PROBE_SHIM/git" <<EOF
+#!/usr/bin/env bash
+if [ "\${1:-}" = "ls-files" ]; then
+  for a in "\$@"; do
+    case "\$a" in
+      *tools/size-ratchet-baseline.tsv)
+        echo "fatal: simulated index-probe failure" >&2
+        exit 71
+        ;;
+    esac
+  done
+fi
+exec "$REAL_GIT" "\$@"
+EOF
+chmod +x "$GIT_PROBE_SHIM/git"
+R="$TMP/probe-failure"
+mkdir -p "$R/tools"
+git -C "$R" -c init.defaultBranch=main init -q
+git -C "$R" config user.email test@example.com
+git -C "$R" config user.name test
+mkfile big.txt 30
+printf 'big.txt\t15\n' >"$R/tools/size-ratchet-baseline.tsv"
+git -C "$R" add -A
+: >"$R/tools/size-ratchet-baseline.tsv" # rows live in the index only
+OUT=""; RC=0
+OUT="$(cd "$R" && PATH="$GIT_PROBE_SHIM:$PATH" SIZE_RATCHET_THRESHOLD=10 "$SR" --seed 2>&1)" || RC=$?
+[ "$RC" -eq 2 ] && case "$OUT" in *"refusing to treat it as absent"*) true ;; *) false ;; esac \
+  && ok "a nonzero index probe is exit 2, not a green light to reseed" \
+  || bad "index probe failure" "rc=$RC out=$OUT"
+[ ! -s "$R/tools/size-ratchet-baseline.tsv" ] && ok "and nothing was written over the baseline" \
+  || bad "probe failure wrote rows" "$(cat "$R/tools/size-ratchet-baseline.tsv")"
+run_sr --seed
+[ "$RC" -eq 2 ] && case "$OUT" in *"INDEX copy"*) true ;; *) false ;; esac \
+  && ok "control: unshimmed, the same tree refuses on the index rows it can read" \
+  || bad "index probe control" "rc=$RC out=$OUT"
+
 echo "=== an exclusion list hard-linked to the baseline refuses ==="
 R="$TMP/hardlink-alias"
 mkdir -p "$R/tools"
@@ -216,6 +324,81 @@ OUT="$(cd "$R" && SIZE_RATCHET_THRESHOLD=10 "$SR" --seed --excludes tools/alias-
 echo "=== mode exclusivity ==="
 run_sr --seed --update
 [ "$RC" -eq 2 ] && ok "--seed with --update is a config error" || bad "exclusivity" "rc=$RC out=$OUT"
+
+
+echo "=== --seed stages its baseline beside the destination, atomically ==="
+MKTEMP_SHIM="$TMP/mktemp-shim"
+mkdir -p "$MKTEMP_SHIM"
+REAL_MKTEMP="$(command -v mktemp)"
+MKTEMP_LOG="$TMP/seed-mktemp-templates.log"
+: >"$MKTEMP_LOG"
+cat >"$MKTEMP_SHIM/mktemp" <<SHIM
+#!/usr/bin/env bash
+# Record the template of every FILE mktemp (never the -d scratch dir), then
+# defer to the real mktemp so the run behaves normally.
+for arg in "\$@"; do
+  [ "\$arg" = "-d" ] && exec "$REAL_MKTEMP" "\$@"
+done
+for arg in "\$@"; do
+  case "\$arg" in
+    -*) ;;
+    *) printf '%s\n' "\$arg" >>"$MKTEMP_LOG" ;;
+  esac
+done
+exec "$REAL_MKTEMP" "\$@"
+SHIM
+chmod +x "$MKTEMP_SHIM/mktemp"
+
+R="$TMP/seed-staging"
+mkdir -p "$R"
+git -C "$R" -c init.defaultBranch=main init -q
+git -C "$R" config user.email test@example.com
+git -C "$R" config user.name test
+mkfile big.txt 15
+mkdir -p "$R/tools"
+git -C "$R" add -A
+
+OUT=""
+RC=0
+OUT="$(cd "$R" && umask 022 && PATH="$MKTEMP_SHIM:$PATH" SIZE_RATCHET_THRESHOLD=10 "$SR" --seed 2>&1)" || RC=$?
+[ "$RC" -eq 0 ] && grep -q "^big.txt" "$R/tools/size-ratchet-baseline.tsv" \
+  && ok "control: the shimmed --seed really wrote the baseline" \
+  || bad "control: shimmed --seed writes" "rc=$RC out=$OUT"
+
+# Vacuity anchor: an empty log would satisfy every "no template outside
+# tools/" phrasing of the assertion below.
+templates="$(cat "$MKTEMP_LOG")"
+[ -n "$templates" ] \
+  && ok "control: the mktemp shim recorded a file template, so the location assertion has something to read" \
+  || bad "the mktemp shim recorded nothing" "log is empty"
+
+# The property: every staging template sits in the baseline's OWN directory.
+outside="$(printf '%s\n' "$templates" | grep -v '^tools/' || true)"
+[ -z "$outside" ] \
+  && ok "--seed stages the baseline inside tools/, its own directory (rename is same-filesystem)" \
+  || bad "--seed stages outside the baseline's directory" "templates outside tools/: $outside"
+
+# rename(2) carries the SOURCE's mode, and mktemp creates at 0600 — so the
+# seeded baseline must not come out private.
+mode="$(ls -l "$R/tools/size-ratchet-baseline.tsv" | cut -c1-10)"
+[ "$mode" = "-rw-r--r--" ] \
+  && ok "the seeded baseline carries the umask-implied mode (0644), not mktemp's 0600" \
+  || bad "the seeded baseline's mode" "got $mode, want -rw-r--r--"
+
+# Globbed, not `ls | grep`: the staging file is a DOTFILE, so the dot glob is
+# load-bearing — a plain `*` would report "clean" while debris sat there.
+leftovers=""
+for entry in "$R"/tools/* "$R"/tools/.*; do
+  [ -e "$entry" ] || continue # unmatched glob expands to itself
+  base="${entry##*/}"
+  case "$base" in
+    . | .. | size-ratchet-baseline.tsv) ;;
+    *) leftovers="$leftovers $base" ;;
+  esac
+done
+[ -z "$leftovers" ] \
+  && ok "--seed leaves no staging debris in tools/" \
+  || bad "--seed staging debris" "leftover:$leftovers"
 
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

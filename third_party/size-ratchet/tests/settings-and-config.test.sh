@@ -244,6 +244,38 @@ run_raw SIZE_RATCHET_SETTINGS_FILE=absent.settings.toml || true
   && ok "an ABSENT plain file still falls back to the built-in default (control)" \
   || bad "an ABSENT plain file still falls back to the built-in default (control)" "rc=$RC out=$OUT"
 
+echo "=== the /dev/null sentinel selects NO settings source, dotenv layers included ==="
+# It named only the settings file, so .env.local (read before it) and .env
+# (read after it) kept deciding: a caller asking for built-in defaults got
+# whatever the repository's env files said.
+new_repo devnull
+mkfile f.txt 10
+git -C "$R" add -A
+printf 'SIZE_RATCHET_THRESHOLD=5\n' >"$R/.env"
+run_raw || true
+[ "$RC" -eq 1 ] && case "$OUT" in *"threshold 5"*) true ;; *) false ;; esac \
+  && ok "control: without the sentinel .env supplies 5 and the 10-line file fails" \
+  || bad "devnull control (.env)" "rc=$RC out=$OUT"
+run_raw SIZE_RATCHET_SETTINGS_FILE=/dev/null || true
+[ "$RC" -eq 0 ] && case "$OUT" in *"threshold 400"*) true ;; *) false ;; esac \
+  && ok "the sentinel skips .env (read AFTER the settings file) and the built-in 400 decides" \
+  || bad "sentinel skips .env" "rc=$RC out=$OUT"
+
+printf 'SIZE_RATCHET_THRESHOLD=6\n' >"$R/.env.local"
+run_raw || true
+[ "$RC" -eq 1 ] && case "$OUT" in *"threshold 6"*) true ;; *) false ;; esac \
+  && ok "control: without the sentinel .env.local supplies 6" \
+  || bad "devnull control (.env.local)" "rc=$RC out=$OUT"
+run_raw SIZE_RATCHET_SETTINGS_FILE=/dev/null || true
+[ "$RC" -eq 0 ] && case "$OUT" in *"threshold 400"*) true ;; *) false ;; esac \
+  && ok "the sentinel skips .env.local (read BEFORE the settings file) too" \
+  || bad "sentinel skips .env.local" "rc=$RC out=$OUT"
+
+run_raw SIZE_RATCHET_SETTINGS_FILE=/dev/null SIZE_RATCHET_THRESHOLD=5 || true
+[ "$RC" -eq 1 ] && case "$OUT" in *"threshold 5"*) true ;; *) false ;; esac \
+  && ok "an explicit environment variable still wins over the sentinel" \
+  || bad "sentinel vs environment" "rc=$RC out=$OUT"
+
 echo "=== an EXISTING non-regular ENV-FILE source never falls through ==="
 # .env.local and .env are probed with -f like the settings file, so a
 # directory or an unresolvable symlink there is skipped exactly like an
@@ -328,6 +360,37 @@ mkfile f.txt 20
 git -C "$R" add -A
 run_raw SIZE_RATCHET_BASELINE=-b || true
 if [ "$RC" -eq 2 ]; then ok "option-like baseline path refuses as config (no cut/sort option injection)"; else bad "option-like baseline path" "rc=$RC out=$OUT"; fi
+
+echo "=== a supplied-but-empty path flag is an error, not the default ==="
+# Testing the flag's VALUE alone made `--baseline=` and `--baseline ""`
+# indistinguishable from an absent flag, so automation whose path came out of a
+# bad substitution silently checked the repository's default baseline and
+# passed. Whether the flag was supplied is now tracked apart from its value.
+new_repo emptyflag
+mkfile f.txt 20
+mkfile huge.txt 405
+mkdir -p "$R/tools"
+# The DEFAULT baseline freezes huge.txt, so falling back to it exits 0 — the
+# false pass this case exists to catch. A correct refusal is exit 2.
+printf 'huge.txt\t405\n' >"$R/tools/size-ratchet-baseline.tsv"
+git -C "$R" add -A
+
+run_raw
+[ "$RC" -eq 0 ] \
+  && ok "control: the default baseline is present and passes, so a silent fallback would read as success" \
+  || bad "control: default baseline passes" "rc=$RC out=$OUT"
+
+for flag in --baseline --excludes; do
+  run_raw -- "$flag" "" || true
+  [ "$RC" -eq 2 ] && case "$OUT" in *"was given an empty path"*) true ;; *) false ;; esac \
+    && ok "split form '$flag \"\"' exits 2 instead of falling back to the default" \
+    || bad "split form '$flag \"\"' refuses" "rc=$RC out=$OUT"
+
+  run_raw -- "$flag=" || true
+  [ "$RC" -eq 2 ] && case "$OUT" in *"was given an empty path"*) true ;; *) false ;; esac \
+    && ok "equals form '$flag=' exits 2 instead of falling back to the default" \
+    || bad "equals form '$flag=' refuses" "rc=$RC out=$OUT"
+done
 
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
