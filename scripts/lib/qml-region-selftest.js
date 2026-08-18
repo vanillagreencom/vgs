@@ -1,21 +1,12 @@
 // The self-test for the BOUND scripts/lib/qml-region.js enforces: that a region
 // which does not finish is stopped, by the supervisor or by the child itself,
-// and that the stopping is legible afterwards. The plumbing around it — how the
-// two bounds are derived and ordered, exit status, the argv marker, spawn
-// classification, env parsing, extraction — is
-// scripts/lib/qml-region-wiring-selftest.js, its own manifest row rather than a
-// call from here: a check reached through one line in another file is a check
-// that can be deleted without anything going red.
+// and that the stopping is legible afterwards. It is deliberately not called from
+// a guarded suite — see the note where it runs itself, at the bottom of this file.
 //
-// This IS the entry point: it is a row in the scripts/validate manifest and a
-// line in CI, run as `node scripts/lib/qml-region-selftest.js`. It is deliberately
-// not called from a guarded suite — see the note where it runs itself, at the
-// bottom of this file.
-//
-// The three files split on what they DO, not on a line count: this one and the
-// wiring file spawn processes and read verdicts off them, and everything that
-// plants, runs, attributes and cleans up such a fixture is
-// scripts/lib/qml-region-testkit.js.
+// Its entry point is this file, run directly, as
+// `node scripts/lib/qml-region-selftest.js | grep -qxF '<its success line>'`. The
+// map of the subsystem — which files exist and which are manifest rows — is in
+// scripts/lib/qml-region.js.
 
 "use strict";
 
@@ -27,7 +18,7 @@ const path = require("node:path");
 
 const { armChildDeadline, CHILD_ARGV_MARKER } = require("./qml-region.js").internals;
 const { withGuardedSuite, hangingRegion, fixtureEnv, plantSuite, cmdlineOf, orphanDiagnostics,
-    reapGuardChildren, pidRunning, waitFor } = require("./qml-region-testkit.js");
+    reapUntilQuiet, pidRunning, waitFor } = require("./qml-region-testkit.js");
 
 function regionGuardSelfTest() {
     // --- the bound: a region that does not finish becomes a fast, named red ---
@@ -298,7 +289,7 @@ function regionGuardSelfTest() {
             // may already have been recycled — concurrent runs are normal here,
             // and four unrelated marker-carrying children were alive at once
             // during review.
-            reapGuardChildren(dir, suite);
+            reapUntilQuiet(dir, suite);
             if (errFd !== -1)
                 fs.closeSync(errFd);
             fs.rmSync(dir, { recursive: true, force: true });

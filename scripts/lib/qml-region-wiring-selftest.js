@@ -160,8 +160,14 @@ function regionGuardWiringSelfTest() {
         }, ({ run, stdout, stderr, elapsed }) => {
             assert.equal(run.status, 3,
                 "a second guardChild() must be a no-op — a re-exec chain never reaches the exit " +
-                `at all; it exited ${run.status} after ${elapsed}ms saying ` +
-                JSON.stringify(stderr));
+                `at all; it exited ${run.status} after ${elapsed}ms. stdout ` +
+                `${JSON.stringify(stdout)}, stderr ${JSON.stringify(stderr)}` +
+                // The depth cap that bounds the failure path exits 9 and says so on
+                // STDOUT. Quoting stderr alone left the real regression reading as
+                // an unexplained 9, since the run stops here and the assertion that
+                // would have explained it is never reached.
+                (run.status === 9 ? " — status 9 is this fixture's own depth cap, which is the " +
+                    "regression: every level re-exec'd until the cap stopped it" : ""));
             assert.ok(stdout.includes("census 2"),
                 "exactly two processes may run the suite, the supervisor and its one child; the " +
                 `child counted ${JSON.stringify(stdout)}`);

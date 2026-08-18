@@ -23,6 +23,8 @@ const path = require("node:path");
 
 const { CHILD_ARGV_MARKER } = require("./qml-region.js").internals;
 
+// ================= planting and running a fixture =================
+
 // The path a planted suite requires to reach the guard. Resolved rather than
 // exported by the guard itself: the fixtures sit in its directory, so asking is
 // free and the guard keeps one less thing on its public surface.
@@ -54,8 +56,6 @@ function plantSuite(dir, body) {
     ].join("\n"));
     return suite;
 }
-
-// ================= planting and running a fixture =================
 
 // Plant a one-off suite, run it as a supervisor, and hand `check` what happened:
 // a planted body, an environment, and a verdict read off exit status and stderr.
@@ -90,6 +90,16 @@ function withGuardedSuite(options, check) {
         reapUntilQuiet(dir, suite);
         fs.rmSync(dir, { recursive: true, force: true });
     }
+}
+
+// A planted region that never returns, in the shape guardChild() is built for.
+function hangingRegion(label) {
+    return [
+        "const region = ['// BEGIN T', 'function boom() { while (true) {} return 1; }',",
+        "    '// END T'].join('\\n');",
+        `const { boom } = evaluateMarked(region, 'T', ['boom'], ${JSON.stringify(label)});`,
+        "console.log('call returned', boom());"
+    ];
 }
 
 // ========== /proc forensics, and taking a fixture's children down ==========
@@ -197,6 +207,12 @@ function orphanDiagnostics(pid, errLog) {
 // It answers three ways per pid, never two: matched (kill), readable and not ours
 // (skip), unreadable (count, and say so at the end). A stray that could not be
 // attributed must not look identical to a clean exit.
+//
+// RETURN CONTRACT, because reapUntilQuiet has to tell two zeroes apart: the count
+// of pids SELECTED, or null when /proc could not be listed at all. Falling off the
+// end here returned undefined, and `undefined === 0` is false, so the caller's
+// loop re-listed a /proc that would never list — 160 repeats of a warning it had
+// already made, ending with "still appearing", which was never what happened.
 // `io` is a seam for scripts/lib/qml-region-testkit-selftest.js, and only that.
 // This function SIGKILLs processes off a /proc scan, so its three answers have to
 // be checkable directly; two of them — an unlistable /proc and an unreadable
@@ -215,7 +231,7 @@ function reapGuardChildren(dir, label, io) {
         // assertion failure with an unrelated errno AND skip the cleanup below it.
         warn(`qml-region testkit: could not list /proc (${err.code || err.message}), so a guard ` +
             `child of ${label || dir} may still be running. An orphaned one spins at 100%.\n`);
-        return;
+        return null;
     }
     let unreadable = 0;
     let selected = 0;
@@ -261,7 +277,11 @@ function reapUntilQuiet(dir, label, io) {
     const budget = (io && io.deadlineMs) || REAP_DEADLINE_MS;
     const until = Date.now() + budget;
     for (;;) {
-        if (reapGuardChildren(dir, label, io) === 0)
+        // Stop on anything that is not a POSITIVE count. 0 is a clean sweep; null
+        // is "could not look", which has already reported its own cause once and
+        // which re-listing cannot improve. Only a sweep that actually took
+        // something is evidence there may be more.
+        if (!(reapGuardChildren(dir, label, io) > 0))
             return;
         if (Date.now() >= until) {
             ((io && io.warn) || (text => process.stderr.write(text)))(
@@ -271,16 +291,6 @@ function reapUntilQuiet(dir, label, io) {
         }
         sleepSync(50);
     }
-}
-
-// A planted region that never returns, in the shape guardChild() is built for.
-function hangingRegion(label) {
-    return [
-        "const region = ['// BEGIN T', 'function boom() { while (true) {} return 1; }',",
-        "    '// END T'].join('\\n');",
-        `const { boom } = evaluateMarked(region, 'T', ['boom'], ${JSON.stringify(label)});`,
-        "console.log('call returned', boom());"
-    ];
 }
 
 module.exports = {

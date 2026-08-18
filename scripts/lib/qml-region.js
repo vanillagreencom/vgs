@@ -294,7 +294,9 @@ function killReport(script, run, limit, elapsed) {
 // In the SUPERVISOR it spawns, waits, reports and exits with the child's status.
 // In the CHILD it splices the ps marker back out of process.argv, then arms the
 // self-deadline and refuses to return until that Worker confirms — that order,
-// which is the body's. Calling it again in the same process is a no-op. The FIRST
+// which is the body's. Calling it again in the same process returns without doing
+// anything — unless the first call's arming never completed, in which case it
+// THROWS rather than answer as if this process were bounded. The FIRST
 // statement of any suite that evaluates a region calls this.
 //
 // A process is the bound that holds, and an in-process timeout is not: it covers

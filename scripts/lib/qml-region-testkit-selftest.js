@@ -204,6 +204,46 @@ function regionGuardTestkitSelfTest() {
         assert.ok(gaveUp.join("").includes("still appearing"),
             "a chain that never stops must end the sweep with a report, not a hang; it said " +
             JSON.stringify(gaveUp.join("")));
+
+        // A /proc that cannot be LISTED is the other way a pass finds nothing, and
+        // the loop has to tell it apart from a clean sweep. It returned undefined
+        // here, which is not 0, so the loop re-listed a /proc that would never list
+        // — 12 repeats at a 500ms budget, ~160 at the real one, ending with "still
+        // appearing", which is not what happened. The existing unlistable check
+        // calls reapGuardChildren directly and so could not see this; the fixtures
+        // call reapUntilQuiet.
+        const blind = [];
+        const denied = new Error("EACCES: permission denied, scandir '/proc'");
+        denied.code = "EACCES";
+        const started = Date.now();
+        reapUntilQuiet("/tmp/whatever", "unlistable", {
+            deadlineMs: 500,
+            list: () => { throw denied; },
+            warn: text => blind.push(text)
+        });
+        assert.ok(Date.now() - started < 400,
+            "a sweep that cannot look must return at once, not spin out its deadline");
+        assert.equal(blind.length, 1,
+            "and must say so exactly once; it said " + JSON.stringify(blind.join("")));
+        assert.ok(blind[0].includes("could not list /proc"),
+            "naming the cause it observed; it said " + JSON.stringify(blind[0]));
+        assert.ok(!blind.join("").includes("still appearing"),
+            "and never the one it did not — nothing was appearing, /proc could not be read");
+
+        // The loop condition above is what makes that true, but the RETURN
+        // CONTRACT is what lets any caller tell the two zeroes apart, so it is
+        // pinned on its own rather than only through the loop that reads it.
+        assert.equal(reapGuardChildren("/tmp/whatever", "clean", {
+            list: () => ["1"], read: () => [], kill: () => {}, warn: () => {}
+        }), 0, "a sweep that looked and found nothing answers 0");
+        assert.equal(reapGuardChildren("/tmp/whatever", "unlistable", {
+            list: () => { throw denied; }, warn: () => {}
+        }), null, "and one that could not look answers null — never undefined, which is neither");
+        assert.equal(reapGuardChildren("/tmp/whatever", "one", {
+            list: () => ["7"],
+            read: () => ["/tmp/whatever/suite.js", CHILD_ARGV_MARKER],
+            kill: () => {}, warn: () => {}
+        }), 1, "and one that took something answers how many");
     }
 
     // --- a sweep that could not look says so, and still lets cleanup run ---

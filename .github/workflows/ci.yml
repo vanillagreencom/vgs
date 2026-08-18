@@ -285,6 +285,11 @@ jobs:
 
       - name: Queue, theme-request and plugin-policy regressions
         run: |
+          # LOAD-BEARING, not boilerplate: three rows below pipe a self-test into
+          # `grep -qxF`, and a `run:` block is `bash -e {0}` with no pipefail, so
+          # without this the pipeline's status is grep's alone and node's — the
+          # entire verdict — is discarded.
+          set -euo pipefail
           scripts/test-restyle-queue.js
           scripts/test-theme-requests.js
           scripts/test-latest-transaction-queue.js
