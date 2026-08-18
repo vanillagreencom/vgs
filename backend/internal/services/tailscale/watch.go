@@ -2,11 +2,14 @@ package tailscale
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os/exec"
+	"strings"
 	"time"
 )
 
@@ -60,7 +63,54 @@ const (
 	// when the installed tailscale has no `debug watch-ipn` at all; spinning on
 	// that forever would just be a log flood.
 	watchMaxFastFailures = 5
+	// Ceiling on how much of a watcher child's stderr runWatch retains for its
+	// exit error. A crash-looping or unexpectedly chatty child must not be able
+	// to grow this buffer without bound — capacity, not the child's output
+	// volume, decides how much error text ever exists in memory.
+	watchStderrCap = 4 * 1024
 )
+
+// boundedBuffer accumulates up to a fixed number of bytes and silently drops
+// the rest, so a Writer built on it can never grow past that cap regardless
+// of how much the source writes.
+type boundedBuffer struct {
+	buf       bytes.Buffer
+	max       int
+	truncated bool
+}
+
+// Write always reports success for the full input — dropping the overflow is
+// deliberate truncation, not a failure the caller (cmd.Wait, here) should see
+// as one.
+func (b *boundedBuffer) Write(p []byte) (int, error) {
+	if room := b.max - b.buf.Len(); room > 0 {
+		if len(p) > room {
+			b.buf.Write(p[:room])
+			b.truncated = true
+		} else {
+			b.buf.Write(p)
+		}
+	} else if len(p) > 0 {
+		b.truncated = true
+	}
+	return len(p), nil
+}
+
+// Len reports how many bytes were retained (not how many the source wrote).
+func (b *boundedBuffer) Len() int { return b.buf.Len() }
+
+// String returns what was captured, trimmed, with a marker appended when the
+// source wrote more than fit.
+func (b *boundedBuffer) String() string {
+	s := strings.TrimSpace(b.buf.String())
+	if b.truncated {
+		if s != "" {
+			s += " "
+		}
+		s += "…[truncated]"
+	}
+	return s
+}
 
 // startWatch launches the supervised ipn bus watcher.
 func (m *Manager) startWatch() {
@@ -117,8 +167,13 @@ func (m *Manager) superviseWatch() {
 		// is told it is on its own for the whole backoff, not just after the
 		// give-up below.
 		if fastFailures >= watchMaxFastFailures {
+			// Name what was actually observed — the child's exit status and any
+			// stderr runWatch folded in — rather than asserting a specific
+			// cause. A message that guesses wrong (e.g. "does this build have
+			// `debug watch-ipn`?" when it does and only a flag was rejected)
+			// sends whoever is triaging looking in the wrong place.
 			m.log.Error("tailscale ipn bus watcher keeps failing immediately; giving up "+
-				"(status will only update on demand — does this tailscale build have `debug watch-ipn`?)",
+				"(status will only update on demand)",
 				"err", err, "attempts", fastFailures)
 			return
 		}
@@ -139,10 +194,16 @@ func (m *Manager) superviseWatch() {
 
 // runWatch reads one watcher process to completion.
 func (m *Manager) runWatch(ctx context.Context) error {
-	// --netmap=true is already the CLI default, but stated explicitly: peer
-	// online/offline transitions reach the bus through the netmap, and those
-	// are what the widget's peer list shows.
-	cmd := exec.CommandContext(ctx, m.tailscale, "debug", "watch-ipn", "--netmap=true")
+	// No flags: `--netmap=true` was already the CLI default and has since been
+	// removed from the flag set entirely (`flag provided but not defined:
+	// -netmap` on tailscale 1.102.2). Passing it made every watcher restart
+	// fail immediately and burn the whole retry budget within seconds — do not
+	// reintroduce it or any other flag without re-verifying it against a
+	// current `tailscale debug watch-ipn --help`. Netmap-carried peer
+	// online/offline transitions still reach the bus with no flag at all.
+	stderr := &boundedBuffer{max: watchStderrCap}
+	cmd := exec.CommandContext(ctx, m.tailscale, "debug", "watch-ipn")
+	cmd.Stderr = stderr
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		return err
@@ -171,6 +232,12 @@ func (m *Manager) runWatch(ctx context.Context) error {
 	waitErr := cmd.Wait()
 	if readErr != nil {
 		return readErr
+	}
+	// Fold stderr into the returned error so a supervisor give-up names what
+	// the child actually said, instead of the caller having to guess a cause
+	// from a bare exit status.
+	if waitErr != nil && stderr.Len() > 0 {
+		return fmt.Errorf("%w: %s", waitErr, stderr.String())
 	}
 	return waitErr
 }
