@@ -13,8 +13,8 @@
 // test-ai-usage-filing.js the ordering between two results, test-ai-usage-view.js
 // what a payload SHOWS. None of this can be driven through a QML runtime — these
 // are questions about a fetch's exit, not about what is on screen. The suite
-// EXECUTES the extracted region, so it runs inside a child the parent kills on a
-// wall clock; scripts/lib/qml-region.js says what that bounds and what it does not.
+// EXECUTES the extracted region, so it runs inside a child bounded by a wall
+// clock; scripts/lib/qml-region.js says what that bounds and what it does not.
 
 "use strict";
 
