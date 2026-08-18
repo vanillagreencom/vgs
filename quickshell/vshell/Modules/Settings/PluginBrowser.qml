@@ -1236,6 +1236,8 @@ FloatingWindow {
                                 color: Theme.outline
                                 width: parent.width
                                 wrapMode: Text.WordWrap
+                                maximumLineCount: 2
+                                elide: Text.ElideRight
                                 visible: (modelData.description || "").length > 0
                             }
 

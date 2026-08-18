@@ -424,6 +424,8 @@ StyledRect {
             font.pixelSize: Theme.fontSizeSmall
             color: Theme.surfaceVariantText
             wrapMode: Text.WordWrap
+            maximumLineCount: 2
+            elide: Text.ElideRight
             visible: root.pluginDescription !== ""
             horizontalAlignment: Text.AlignLeft
         }

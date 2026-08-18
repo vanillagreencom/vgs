@@ -1,7 +1,7 @@
 {
     "id": "aiUsage",
     "name": "AI Usage",
-    "description": "Claude and Codex subscription usage in the bar, one labelled slot per provider, backed by an optional local ai-usage compatible command.",
+    "description": "Shows Claude and Codex plan usage in the bar.",
     "version": "1.0.0",
     "license": "MIT",
     "author": "VanillaGreen",
