@@ -145,8 +145,8 @@ quickshell/vshell/Modules/Settings/NetworkEthernetTab.qml	487
 quickshell/vshell/Modules/Settings/NetworkVpnTab.qml	514
 quickshell/vshell/Modules/Settings/NetworkWifiTab.qml	1294
 quickshell/vshell/Modules/Settings/NotificationsTab.qml	1042
-quickshell/vshell/Modules/Settings/PluginBrowser.qml	1536
-quickshell/vshell/Modules/Settings/PluginListItem.qml	522
+quickshell/vshell/Modules/Settings/PluginBrowser.qml	1538
+quickshell/vshell/Modules/Settings/PluginListItem.qml	524
 quickshell/vshell/Modules/Settings/PluginsTab.qml	490
 quickshell/vshell/Modules/Settings/PowerSleepTab.qml	584
 quickshell/vshell/Modules/Settings/PrinterTab.qml	1152
