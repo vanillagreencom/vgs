@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -204,6 +205,44 @@ func TestRunWatchFoldsChildStderrIntoError(t *testing.T) {
 		}
 		if !strings.Contains(err.Error(), "flag provided but not defined: -bogus") {
 			t.Fatalf("runWatch error %q does not contain the child's stderr", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("runWatch blocked on a child that already exited")
+	}
+}
+
+// TestRunWatchCapsStderr proves a crash-looping or unexpectedly chatty child
+// cannot grow the stderr folded into the returned error without bound: a
+// child that writes well past watchStderrCap must still produce an error of
+// bounded size, carrying a truncation marker rather than every byte it wrote.
+func TestRunWatchCapsStderr(t *testing.T) {
+	dir := t.TempDir()
+	statusPath := filepath.Join(dir, "status.json")
+	writeFile(t, statusPath, statusFixture)
+
+	// Twice the cap, so a bug that retains everything is unambiguous.
+	written := watchStderrCap * 2
+	stub := filepath.Join(dir, "tailscale")
+	writeStub(t, stub, statusPath,
+		"  head -c "+strconv.Itoa(written)+" /dev/zero | tr '\\0' 'x' >&2\n"+
+			"  exit 2\n")
+
+	m := newWatchManager(t, server.New(0, nil), stub)
+
+	done := make(chan error, 1)
+	go func() { done <- m.runWatch(m.watchCtx) }()
+
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("runWatch returned nil for a child that exited non-zero")
+		}
+		msg := err.Error()
+		if len(msg) > watchStderrCap+128 {
+			t.Fatalf("runWatch error is %d bytes for a %d-byte write; stderr capture is not bounded", len(msg), written)
+		}
+		if !strings.Contains(msg, "truncated") {
+			t.Fatalf("runWatch error %q lacks a truncation marker for an over-cap write", msg)
 		}
 	case <-time.After(10 * time.Second):
 		t.Fatal("runWatch blocked on a child that already exited")
