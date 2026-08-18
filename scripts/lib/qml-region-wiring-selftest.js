@@ -216,6 +216,42 @@ function regionGuardWiringSelfTest() {
         });
     }
 
+    // --- the marker is read at ONE position, not searched for ---
+    //
+    // Honouring the marker anywhere in argv let a suite's own
+    // `--vgs-region-guard-child` argument change this process's role: no
+    // supervisor, the argument eaten by the splice, and exit 137 from the child's
+    // own deadline rather than the supervised named kill and exit 1. It sits
+    // SECOND here, where a suite's own flag would land; a marker AT argv[2] stays
+    // honoured, since nothing can tell it from the supervisor's own insertion.
+    {
+        withGuardedSuite({
+            prefix: "vgs-region-argv-pos-",
+            timeout: 9000,
+            args: ["--first", CHILD_ARGV_MARKER],
+            env: { VGS_REGION_CHILD_TIMEOUT_MS: "1000" },
+            body: () => [
+                "guardChild();",
+                "console.log('argv ' + JSON.stringify(process.argv.slice(2)));",
+                ...hangingRegion("guard-argv-position-test")
+            ]
+        }, ({ run, suite, stdout, stderr }) => {
+            assert.equal(run.status, 1,
+                "the run must stay SUPERVISED and end with the supervisor's status — 137 is the " +
+                `child dying on its own deadline with no supervisor above it; it exited ${run.status}` +
+                ` saying ${JSON.stringify(stderr)}`);
+            assert.ok(stderr.includes(`${suite}: killed after 1000ms`),
+                "and the supervisor must be the one reporting; stderr was " +
+                JSON.stringify(stderr));
+            assert.ok(!stderr.includes("self-killed"),
+                "the child's own deadline must not be what stopped it; stderr was " +
+                JSON.stringify(stderr));
+            assert.ok(stdout.includes(`argv ["--first","${CHILD_ARGV_MARKER}"]`),
+                "and the suite must still SEE its own argument — a splice that hunts for the " +
+                `marker eats it and changes the suite's CLI; it reported ${JSON.stringify(stdout)}`);
+        });
+    }
+
     // --- the role is not inherited ---
     //
     // It used to be, through an env var, and a guarded suite that spawned another

@@ -16,12 +16,11 @@
 //
 // It is deliberately only that. In-process isolation was tried and removed: a
 // `node:vm` context with code generation off and JSON-only marshalling looked
-// like a boundary, was not one (vm isolates globals, not the process), and the
+// like a boundary and was not one (vm isolates globals, not the process), and the
 // machinery around it — per-call timeouts, argument marshalling, kill
 // classification, timeout parsing — produced a finding in three consecutive
-// review rounds while the ten-line process bound produced none. The kill is
-// kept because it holds; the layer that only looked like a boundary is gone,
-// along with the controls that tested that layer rather than this one.
+// review rounds while the ten-line process bound produced none. The layer that
+// only looked like a boundary is gone, with the controls that tested it.
 
 "use strict";
 
@@ -60,6 +59,17 @@ const CHILD_DEADLINE_GRACE_MS = 1000;
 // handling never sees it; the kernel's copy of the command line keeps it.
 const CHILD_ARGV_MARKER = "--vgs-region-guard-child";
 
+// Read at exactly ONE position, not searched for. The supervisor re-execs as
+// [script, marker, ...originalArgs], so a genuine child sees it here. Honouring
+// it anywhere in argv let a suite's OWN `--vgs-region-guard-child` argument
+// change this process's role: the supervisor branch was skipped, the splice ate
+// the argument, and the run died at its own deadline with exit 137 rather than
+// the supervised named kill and exit 1. The bound held throughout — hardening,
+// not a fail-open — but the supervisor's report and exit status were lost. A
+// marker AT this position stays honoured; nothing can tell it from the
+// supervisor's own insertion.
+const CHILD_ARGV_MARKER_INDEX = 2;
+
 // Whether this process has already answered "which role am I", and the reason the
 // answer is remembered rather than re-read. The marker is spliced out of argv the
 // instant it is read — that splice is what stops the signal descending — but it
@@ -79,16 +89,15 @@ const CHILD_ARGV_MARKER = "--vgs-region-guard-child";
 // instance: a duplicate load (--preserve-symlinks, or a second realpath to this
 // file) carries its own pair of flags.
 //
-// TWO flags, not one, because they answer different questions. `roleAnswered`
-// records that the role was decided and is set BEFORE arming — deliberately, and
-// not to be "tidied" below armChildDeadline(): the marker is already spliced out
-// by then, so a retry after a failed arm would take the SUPERVISOR branch and
-// restart the very chain the flag exists to stop. But arming is the one call on
-// that path that can fail, so the role being answered does not mean the process
-// is BOUNDED. `childArmed` says that, and a later call finding the role answered
-// with arming incomplete throws rather than returning: without it, a caller who
-// swallowed the refusal could turn it into a quiet pass by calling again, and the
-// suite would run in the child with no deadline and no supervisor above it.
+// TWO flags, because they answer different questions. `roleAnswered` records that
+// the role was decided and is set BEFORE arming — deliberately, not to be
+// "tidied" below armChildDeadline(): the marker is already spliced out by then,
+// so a retry after a failed arm would take the SUPERVISOR branch and restart the
+// very chain the flag exists to stop. But arming is the one call there that can
+// fail, so an answered role does not mean a BOUNDED process. `childArmed` says
+// that, and a later call finding the role answered with arming incomplete throws
+// rather than returning — otherwise a caller who swallowed the refusal turns it
+// into a quiet pass by calling again, the suite then running unbounded.
 let roleAnswered = false;
 let childArmed = false;
 
@@ -295,9 +304,9 @@ function killReport(script, run, limit, elapsed) {
 // In the CHILD it splices the ps marker back out of process.argv, then arms the
 // self-deadline and refuses to return until that Worker confirms — that order,
 // which is the body's. Calling it again in the same process returns without doing
-// anything — unless the first call's arming never completed, in which case it
-// THROWS rather than answer as if this process were bounded. The FIRST
-// statement of any suite that evaluates a region calls this.
+// anything, unless the first call's arming never completed: then it THROWS rather
+// than answer as if this process were bounded. The FIRST statement of any suite
+// that evaluates a region calls this.
 //
 // A process is the bound that holds, and an in-process timeout is not: it covers
 // the synchronous call and nothing else, so a region function that schedules
@@ -315,10 +324,9 @@ function guardChild() {
     }
     const script = process.argv[1];
     const limit = CHILD_TIMEOUT_MS;
-    const marker = process.argv.indexOf(CHILD_ARGV_MARKER);
-    if (marker !== -1) {
+    if (process.argv[CHILD_ARGV_MARKER_INDEX] === CHILD_ARGV_MARKER) {
         roleAnswered = true;
-        process.argv.splice(marker, 1);
+        process.argv.splice(CHILD_ARGV_MARKER_INDEX, 1);
         armChildDeadline(childDeadlineFor(limit, process.env.VGS_REGION_CHILD_DEADLINE_MS,
             text => process.stderr.write(`${script}: ${text}`)));
         childArmed = true;
@@ -382,10 +390,9 @@ module.exports = { regionOf, evaluateMarked, guardChild };
 //   scripts/lib/qml-region-testkit.js           that machinery itself (no row; required by the three)
 //
 // The three rows are scripts/validate and .github/workflows/ci.yml, one line each.
-// None of them runs from a guarded suite, and none runs another: a self-test whose
-// verdict travelled through guardChild()'s own exit status could not report that
-// line broken, and one reached through a call in a sibling could be deleted
-// without anything going red. Both happened.
+// None runs from a guarded suite and none runs another: a self-test reporting
+// through guardChild()'s own exit status could not report that line broken, and
+// one reached through a sibling's call could be deleted silently. Both happened.
 module.exports.internals = {
     CHILD_ARGV_MARKER, CHILD_DEADLINE_GRACE_MS, CHILD_TIMEOUT_DEFAULT_MS, MAX_TIMER_MS,
     armChildDeadline, childDeadlineFor, msFromEnv, spawnOutcome
