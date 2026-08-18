@@ -5,8 +5,11 @@
 // defects that no other check could show, because the reaper's behaviour is only
 // observable when some OTHER check is already failing.
 //
-// The bound itself is scripts/lib/qml-region-selftest.js and the plumbing around
-// it is scripts/lib/qml-region-wiring-selftest.js; each is its own manifest row.
+// It also owns the fixture-environment checks: keeping a fixture out of reach of
+// the environment it runs in is this module's job, not the guard's.
+//
+// Its entry point is this file, run directly. The map of the subsystem — which
+// files exist and which are manifest rows — is in scripts/lib/qml-region.js.
 
 "use strict";
 
@@ -17,28 +20,36 @@ const os = require("node:os");
 const path = require("node:path");
 
 const { CHILD_ARGV_MARKER } = require("./qml-region.js").internals;
-const { cmdlineOf, fixtureEnv, reapGuardChildren, withGuardedSuite, pidRunning, waitFor } =
-    require("./qml-region-testkit.js");
+const { cmdlineOf, fixtureEnv, reapGuardChildren, reapUntilQuiet, withGuardedSuite, pidRunning,
+    waitFor } = require("./qml-region-testkit.js");
 
-// A process shaped exactly like a guard child — a script under `dir`, carrying
-// the marker — without needing the guard to make one. It sleeps rather than
-// spins: what is under test is the reaper's aim, not anything's CPU.
-function plantMarkedChild(dir, name) {
+// A process shaped like a guard child — a script under `dir`, carrying the marker
+// unless `marked` is false — without needing the guard to make one. It sleeps
+// rather than spins: what is under test is the reaper's aim, not anything's CPU.
+function plantMarkedChild(dir, name, marked) {
     const script = path.join(dir, name);
     fs.writeFileSync(script, "setTimeout(function () {}, 60000);\n");
-    const child = spawn(process.execPath, [script, CHILD_ARGV_MARKER], { stdio: "ignore" });
+    const spawnArgv = marked === false ? [script] : [script, CHILD_ARGV_MARKER];
+    const child = spawn(process.execPath, spawnArgv, { stdio: "ignore" });
     // spawn returns before exec, so the kernel's command line is not the one the
     // reaper matches on yet. Waiting for it is the difference between testing the
     // reaper's aim and testing this race.
     const ready = waitFor(() => {
-        const argv = cmdlineOf(child.pid);
-        return argv && argv.includes(script) && argv.includes(CHILD_ARGV_MARKER);
+        const seen = cmdlineOf(child.pid);
+        return seen && seen.includes(script) &&
+            (marked === false || seen.includes(CHILD_ARGV_MARKER));
     }, 10000);
-    assert.ok(ready, `the planted child never showed ${script} in its command line`);
+    if (!ready) {
+        // Take it down before throwing. A readiness timeout on a loaded box is the
+        // realistic trigger, and this file's whole premise is that a self-test for
+        // an orphan does not leave one behind — including from its own scaffolding.
+        try { process.kill(child.pid, "SIGKILL"); } catch { /* already gone */ }
+        assert.fail(`the planted child never showed ${script} in its command line`);
+    }
     return { child, script };
 }
 
-module.exports = function regionGuardTestkitSelfTest() {
+function regionGuardTestkitSelfTest() {
     // --- no fixture is steerable by the environment it runs in ---
     //
     // Every bound this guard has is an env override, so an ambient one silently
@@ -82,47 +93,117 @@ module.exports = function regionGuardTestkitSelfTest() {
     //
     // Attribution is the fixture's mkdtemp DIRECTORY, not one filename: a body
     // plants other scripts too (the descendant probe writes its own inner.js), and
-    // a guard child of THAT is the exact shape the reaper exists for. Matching on
-    // a directory is also what makes the reaper safe to run at all — a directory
-    // belongs to one fixture, so no pid is ever signalled on the strength of a
-    // number that may already have been recycled into someone else's run.
+    // a guard child of THAT is the exact shape the reaper exists for. It is also
+    // what makes the reaper safe to run at all — a directory belongs to one
+    // fixture, so no pid is ever signalled on the strength of a number that may
+    // already have been recycled into someone else's run.
+    //
+    // Four planted processes, because the match rule has three ways to be wrong:
+    // narrowing to one filename, dropping the marker term, and testing a lexical
+    // PREFIX rather than a path boundary. Everything is created inside the try, so
+    // a readiness failure cannot leak a process or a directory.
     {
-        const mine = fs.mkdtempSync(path.join(os.tmpdir(), "vgs-region-reap-mine-"));
-        const theirs = fs.mkdtempSync(path.join(os.tmpdir(), "vgs-region-reap-theirs-"));
-        // Named for the descendant probe's script, not suite.js, so this fails if
-        // attribution ever narrows back to a single filename.
-        const ours = plantMarkedChild(mine, "inner.js");
-        const stranger = plantMarkedChild(theirs, "inner.js");
+        let mine;
+        let theirs;
+        let sibling;
+        const planted = [];
         try {
-            assert.ok(pidRunning(ours.child.pid) && pidRunning(stranger.child.pid),
-                "both fixtures must be running, or this proves nothing about which one is hit");
+            mine = fs.mkdtempSync(path.join(os.tmpdir(), "vgs-region-reap-mine-"));
+            theirs = fs.mkdtempSync(path.join(os.tmpdir(), "vgs-region-reap-theirs-"));
+            // A NAME-EXTENSION of `mine`, which mkdtemp can never produce (its
+            // suffix is fixed width) but a hand-built fixture path could.
+            // startsWith(dir) matched it; a path boundary does not.
+            sibling = mine + "-extended";
+            fs.mkdirSync(sibling);
+
+            // Named for the descendant probe's script, not suite.js, so this fails
+            // if attribution ever narrows back to a single filename.
+            const ours = plantMarkedChild(mine, "inner.js");
+            planted.push(ours);
+            const stranger = plantMarkedChild(theirs, "inner.js");
+            planted.push(stranger);
+            const neighbour = plantMarkedChild(sibling, "inner.js");
+            planted.push(neighbour);
+            // Under the swept directory but NOT a guard child. Without the marker
+            // term in the rule the sweep would also SIGKILL a fixture's supervisor
+            // and any helper a body plants beside its suite.
+            const unmarked = plantMarkedChild(mine, "helper.js", false);
+            planted.push(unmarked);
+
+            for (const one of planted)
+                assert.ok(pidRunning(one.child.pid),
+                    `${one.script} must be running, or this proves nothing about which is hit`);
 
             // Which pids it SELECTS, recorded rather than inferred from who died:
-            // the answer is then exact, and says as much about the stranger it left
-            // alone as about the child it took.
+            // the answer is then exact, and says as much about the three it left
+            // alone as about the one it took.
             const targeted = [];
+            reapGuardChildren(mine, "reaper check", { kill: pid => targeted.push(pid) });
+            assert.deepEqual(targeted, [ours.child.pid],
+                "the sweep must select this fixture's marked child whatever its script is named " +
+                "— and NOT another fixture's, NOT one under a directory whose name merely " +
+                "extends this one's, and NOT an unmarked process under this one; it selected " +
+                JSON.stringify(targeted));
+
+            // Silence goes through the seam, not the real /proc: a host with
+            // hidepid or ProtectProc has unreadable entries this reaper is right to
+            // report, and asserting against them would make an unrelated check red.
             const said = [];
             reapGuardChildren(mine, "reaper check",
-                { kill: pid => targeted.push(pid), warn: text => said.push(text) });
-            assert.deepEqual(targeted, [ours.child.pid],
-                "the sweep must select this fixture's child whatever its script is named, and " +
-                "no one else's — concurrent runs are normal here, so killing a stranger surfaces " +
-                `as an unattributable red in an innocent run; it selected ${JSON.stringify(targeted)}`);
+                { list: () => ["1", "2"], read: () => [], kill: () => {}, warn: t => said.push(t) });
             assert.deepEqual(said, [],
-                "a clean sweep says nothing; it said " + JSON.stringify(said.join("")));
+                "a sweep that read every entry says nothing; it said " +
+                JSON.stringify(said.join("")));
 
             // And once for real, through the default kill.
-            reapGuardChildren(mine, "reaper check");
+            reapUntilQuiet(mine, "reaper check");
             assert.ok(waitFor(() => !pidRunning(ours.child.pid), 5000),
                 "the selected child must actually be gone afterwards");
-            assert.ok(pidRunning(stranger.child.pid),
-                "and the stranger must still be running");
+            for (const spared of [stranger, neighbour, unmarked])
+                assert.ok(pidRunning(spared.child.pid),
+                    `${spared.script} must still be running after the sweep`);
         } finally {
-            for (const planted of [ours, stranger])
-                try { process.kill(planted.child.pid, "SIGKILL"); } catch { /* already gone */ }
-            fs.rmSync(mine, { recursive: true, force: true });
-            fs.rmSync(theirs, { recursive: true, force: true });
+            for (const one of planted)
+                try { process.kill(one.child.pid, "SIGKILL"); } catch { /* already gone */ }
+            for (const dir of [mine, theirs, sibling])
+                if (dir)
+                    fs.rmSync(dir, { recursive: true, force: true });
         }
+    }
+
+    // --- the sweep converges instead of racing a chain that is still spawning ---
+    //
+    // One pass was not enough: a regressed idempotence flag re-execs at every
+    // level, and the single pass in withGuardedSuite's finally raced it — one run
+    // cleared all 260 processes, another left ~130 alive that drained a minute
+    // later on their own. The seam is what makes "keeps going until a sweep finds
+    // nothing" checkable without building a real fork bomb to sweep.
+    {
+        let remaining = 3;
+        const sweeps = [];
+        reapUntilQuiet("/tmp/whatever", "converging", {
+            list: () => (remaining > 0 ? ["101"] : []),
+            read: () => ["/tmp/whatever/suite.js", CHILD_ARGV_MARKER],
+            kill: pid => { sweeps.push(pid); remaining -= 1; },
+            warn: () => {}
+        });
+        assert.deepEqual(sweeps, [101, 101, 101],
+            "the sweep must keep going while it is still finding children, and stop on the pass " +
+            `that finds none; it swept ${JSON.stringify(sweeps)}`);
+
+        // And it must give up rather than loop forever against something that
+        // never stops appearing.
+        const gaveUp = [];
+        reapUntilQuiet("/tmp/whatever", "endless", {
+            deadlineMs: 200,
+            list: () => ["101"],
+            read: () => ["/tmp/whatever/suite.js", CHILD_ARGV_MARKER],
+            kill: () => {},
+            warn: text => gaveUp.push(text)
+        });
+        assert.ok(gaveUp.join("").includes("still appearing"),
+            "a chain that never stops must end the sweep with a report, not a hang; it said " +
+            JSON.stringify(gaveUp.join("")));
     }
 
     // --- a sweep that could not look says so, and still lets cleanup run ---
@@ -174,9 +255,15 @@ module.exports = function regionGuardTestkitSelfTest() {
         assert.deepEqual(cmdlineOf(0x7ffffffe), [],
             "a pid that does not exist answers empty, not null");
     }
-};
 
-if (require.main === module) {
-    module.exports();
     console.log("qml-region testkit selftest: all checks passed");
 }
+
+// A SCRIPT, not a module: nothing in the repo requires this file, so there is no
+// export and no `require.main` guard to flip. It is a manifest row and a CI line,
+// and that row pipes the completion line through grep — so a run that asserted
+// nothing prints nothing and the row goes red. The line is printed by the LAST
+// statement INSIDE the function for that reason: printed from out here it would
+// still appear after someone deleted the call, which is the vacuous pass the
+// grep exists to catch.
+regionGuardTestkitSelfTest();

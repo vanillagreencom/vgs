@@ -29,7 +29,7 @@ const { armChildDeadline, CHILD_ARGV_MARKER } = require("./qml-region.js").inter
 const { withGuardedSuite, hangingRegion, fixtureEnv, plantSuite, cmdlineOf, orphanDiagnostics,
     reapGuardChildren, pidRunning, waitFor } = require("./qml-region-testkit.js");
 
-module.exports = function regionGuardSelfTest() {
+function regionGuardSelfTest() {
     // --- the bound: a region that does not finish becomes a fast, named red ---
     //
     // Both shapes, because they hang differently and only one of them was ever
@@ -87,7 +87,7 @@ module.exports = function regionGuardSelfTest() {
     {
         // This one deliberately trips worker.on("error"), which writes to fd 2 by
         // design. Saying so keeps a passing run from reading like a failing one.
-        process.stdout.write(
+        process.stderr.write(
             "region guard: the stderr line below about a worker that could not arm is this " +
             "check working.\n");
         assert.throws(
@@ -305,14 +305,14 @@ module.exports = function regionGuardSelfTest() {
         }
     }
 
-};
-
-// Run as its own process, and NOT from inside a guarded suite. Every assertion
-// here reaches CI through guardChild()'s exit status, so a self-test that runs
-// under the guard cannot report a broken guard: with `process.exit(0)` spliced
-// into the supervisor, the status check below fails and the suite still exits 0.
-// Unguarded, node's own exit status carries the verdict.
-if (require.main === module) {
-    module.exports();
     console.log("qml-region guard selftest: all checks passed");
 }
+
+// A SCRIPT, not a module: nothing in the repo requires this file, so there is no
+// export and no `require.main` guard to flip. It is a manifest row and a CI line,
+// and that row pipes the completion line through grep — so a run that asserted
+// nothing prints nothing and the row goes red. The line is printed by the LAST
+// statement INSIDE the function for that reason: printed from out here it would
+// still appear after someone deleted the call, which is the vacuous pass the
+// grep exists to catch.
+regionGuardSelfTest();

@@ -75,8 +75,22 @@ const CHILD_ARGV_MARKER = "--vgs-region-guard-child";
 // recursion was per-process. Only the child branch sets it; the supervisor branch
 // never returns, so a second call there is unreachable, and a flag set on that
 // path would turn an impossible call into a suite running unguarded IN the
-// supervisor.
+// supervisor. The invariant is per-process and holds while there is ONE module
+// instance: a duplicate load (--preserve-symlinks, or a second realpath to this
+// file) carries its own pair of flags.
+//
+// TWO flags, not one, because they answer different questions. `roleAnswered`
+// records that the role was decided and is set BEFORE arming — deliberately, and
+// not to be "tidied" below armChildDeadline(): the marker is already spliced out
+// by then, so a retry after a failed arm would take the SUPERVISOR branch and
+// restart the very chain the flag exists to stop. But arming is the one call on
+// that path that can fail, so the role being answered does not mean the process
+// is BOUNDED. `childArmed` says that, and a later call finding the role answered
+// with arming incomplete throws rather than returning: without it, a caller who
+// swallowed the refusal could turn it into a quiet pass by calling again, and the
+// suite would run in the child with no deadline and no supervisor above it.
 let roleAnswered = false;
+let childArmed = false;
 
 // How long arming the child's deadline may take before the child refuses to run
 // the region at all. Worker startup is tens of milliseconds; this is far above
@@ -172,9 +186,11 @@ function spawnOutcome(run) {
 // The flag is stored and notified after the timer is scheduled, not before,
 // because it answers "this worker is armed" and a worker that has not reached its
 // setTimeout is not. Today that ordering is DEFENSIVE rather than load-bearing:
-// both statements sit in one synchronous block and the MAX_TIMER_MS ceiling keeps
-// setTimeout from throwing, so nothing observable separates them. It is written
-// this way for the edit that puts something fallible between them.
+// the two statements are straight-line code with nothing fallible between them,
+// and setTimeout does not fail for a numeric delay in any case — an out-of-range
+// one warns and CLAMPS, which is exactly what MAX_TIMER_MS above exists to
+// prevent. It is written this way for the edit that puts something fallible in
+// the gap.
 const CHILD_DEADLINE_SOURCE = `
 "use strict";
 const { workerData } = require("node:worker_threads");
@@ -287,8 +303,14 @@ function killReport(script, run, limit, elapsed) {
 // finishes inside every such timeout and then hangs Node from the microtask
 // queue. One kill closes that, an infinite loop and runaway allocation together.
 function guardChild() {
-    if (roleAnswered)
+    if (roleAnswered) {
+        if (!childArmed)
+            throw new Error(
+                `${process.argv[1]}: guardChild() already ran in this process and its deadline ` +
+                "never armed, so this process is NOT bounded. Refusing to answer a second call " +
+                "as if it were — a swallowed arming refusal must not become a quiet pass.");
         return;
+    }
     const script = process.argv[1];
     const limit = CHILD_TIMEOUT_MS;
     const marker = process.argv.indexOf(CHILD_ARGV_MARKER);
@@ -297,6 +319,7 @@ function guardChild() {
         process.argv.splice(marker, 1);
         armChildDeadline(childDeadlineFor(limit, process.env.VGS_REGION_CHILD_DEADLINE_MS,
             text => process.stderr.write(`${script}: ${text}`)));
+        childArmed = true;
         return;
     }
     const started = Date.now();
@@ -347,12 +370,20 @@ module.exports = { regionOf, evaluateMarked, guardChild };
 // is how the NaN bound, the unattributable orphan, and a deadline ordering
 // nothing ever evaluated all got through.
 //
-// That self-test is scripts/lib/qml-region-selftest.js for the bound and
-// scripts/lib/qml-region-wiring-selftest.js for the plumbing, both building their
-// fixtures from scripts/lib/qml-region-testkit.js. It runs as its own row in the
-// scripts/validate manifest and in CI, NOT from a guarded suite: its verdict
-// would otherwise travel through guardChild()'s own exit status, and a self-test
-// that reports through the line it tests cannot report that line broken.
+// THE MAP OF THIS SUBSYSTEM, stated here and nowhere else — four test-side files
+// and three manifest rows, which the other four headers point at rather than
+// re-count:
+//
+//   scripts/lib/qml-region-selftest.js          the BOUND            (manifest row)
+//   scripts/lib/qml-region-wiring-selftest.js   the PLUMBING         (manifest row)
+//   scripts/lib/qml-region-testkit-selftest.js  the FIXTURE MACHINERY (manifest row)
+//   scripts/lib/qml-region-testkit.js           that machinery itself (no row; required by the three)
+//
+// The three rows are scripts/validate and .github/workflows/ci.yml, one line each.
+// None of them runs from a guarded suite, and none runs another: a self-test whose
+// verdict travelled through guardChild()'s own exit status could not report that
+// line broken, and one reached through a call in a sibling could be deleted
+// without anything going red. Both happened.
 module.exports.internals = {
     CHILD_ARGV_MARKER, CHILD_DEADLINE_GRACE_MS, CHILD_TIMEOUT_DEFAULT_MS, MAX_TIMER_MS,
     armChildDeadline, childDeadlineFor, msFromEnv, spawnOutcome

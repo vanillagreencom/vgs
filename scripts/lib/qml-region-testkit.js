@@ -1,9 +1,18 @@
-// The fixture the region-guard self-tests are all built from: plant a suite, run
-// it, read the verdict off exit status and stderr. Its own file because both
-// halves of that self-test — scripts/lib/qml-region-selftest.js for the bound,
-// scripts/lib/qml-region-wiring-selftest.js for the plumbing around it — run the
-// same experiment and only the verdict differs, and because hand-rolling the
-// scaffold per block is how one of them ends up without the cleanup.
+// The fixture machinery the region-guard self-tests are built from. TWO jobs, and
+// the second is not a detail of the first:
+//
+//   PLANTING AND RUNNING a fixture — plantSuite, withGuardedSuite, fixtureEnv,
+//   hangingRegion, guardPath. Hand-rolling this per block is how one block ends
+//   up without the cleanup.
+//
+//   /proc FORENSICS AND KILLING — cmdlineOf, pidRunning, orphanDiagnostics,
+//   reapGuardChildren, reapUntilQuiet, plus sleepSync and waitFor. This half
+//   decides which processes on this box belong to a fixture and SIGKILLs them. It
+//   belongs here because this module created them, but it is named up front
+//   rather than left to be inferred from the export list.
+//
+// Its own checks are scripts/lib/qml-region-testkit-selftest.js. The map of the
+// whole subsystem is in scripts/lib/qml-region.js, beside module.exports.
 
 "use strict";
 
@@ -46,6 +55,8 @@ function plantSuite(dir, body) {
     return suite;
 }
 
+// ================= planting and running a fixture =================
+
 // Plant a one-off suite, run it as a supervisor, and hand `check` what happened:
 // a planted body, an environment, and a verdict read off exit status and stderr.
 //
@@ -76,14 +87,16 @@ function withGuardedSuite(options, check) {
             stderr: run.stderr || ""
         });
     } finally {
-        reapGuardChildren(dir, suite);
+        reapUntilQuiet(dir, suite);
         fs.rmSync(dir, { recursive: true, force: true });
     }
 }
 
+// ========== /proc forensics, and taking a fixture's children down ==========
+
 // --- waiting on another PROCESS, from synchronous test code ---
 //
-// regionGuardSelfTest() below is synchronous and what it waits on runs in a
+// The self-tests that call this are synchronous, and what they wait on runs in a
 // different PROCESS, so parking this thread costs nothing that matters: the thing
 // being waited for makes progress regardless of this event loop.
 function sleepSync(ms) {
@@ -205,6 +218,7 @@ function reapGuardChildren(dir, label, io) {
         return;
     }
     let unreadable = 0;
+    let selected = 0;
     for (const entry of entries) {
         if (!/^\d+$/.test(entry))
             continue;
@@ -213,8 +227,15 @@ function reapGuardChildren(dir, label, io) {
             unreadable += 1;
             continue;
         }
-        if (!argv.includes(CHILD_ARGV_MARKER) || !argv.some(arg => arg.startsWith(dir)))
+        // A path BOUNDARY, not a prefix. `startsWith(dir)` also matched a sibling
+        // whose name merely extends this one's, which is not what the comment
+        // above claims and not what may authorise a SIGKILL. mkdtemp's fixed-width
+        // suffix makes that unreachable today; the next fixture to build a
+        // directory name by hand reopens it.
+        if (!argv.includes(CHILD_ARGV_MARKER) ||
+                !argv.some(arg => arg === dir || arg.startsWith(dir + path.sep)))
             continue;
+        selected += 1;
         try {
             kill(Number(entry));
         } catch {
@@ -224,6 +245,32 @@ function reapGuardChildren(dir, label, io) {
     if (unreadable > 0)
         warn(`qml-region testkit: ${unreadable} /proc entries were unreadable, so a guard child ` +
             `of ${label || dir} may have been missed. An orphaned one spins at 100%.\n`);
+    return selected;
+}
+
+// How long the converging sweep keeps trying before it gives up and says so.
+const REAP_DEADLINE_MS = 8000;
+
+// Sweep until a sweep finds nothing. One pass is not enough against a chain that
+// is still SPAWNING: a regressed idempotence flag re-execs at every level, and a
+// single pass in a finally raced it — one run cleared all 260 processes, another
+// left ~130 alive that drained a minute later on their own. Each fixture also
+// pins a short child timeout so a chain unwinds from the top, and this closes the
+// window between the last kill and the last birth.
+function reapUntilQuiet(dir, label, io) {
+    const budget = (io && io.deadlineMs) || REAP_DEADLINE_MS;
+    const until = Date.now() + budget;
+    for (;;) {
+        if (reapGuardChildren(dir, label, io) === 0)
+            return;
+        if (Date.now() >= until) {
+            ((io && io.warn) || (text => process.stderr.write(text)))(
+                `qml-region testkit: guard children of ${label || dir} were still appearing ` +
+                `after ${budget}ms of sweeping, so some may still be running.\n`);
+            return;
+        }
+        sleepSync(50);
+    }
 }
 
 // A planted region that never returns, in the shape guardChild() is built for.
@@ -238,5 +285,6 @@ function hangingRegion(label) {
 
 module.exports = {
     withGuardedSuite, hangingRegion, fixtureEnv, plantSuite, guardPath,
-    cmdlineOf, orphanDiagnostics, reapGuardChildren, sleepSync, waitFor, pidRunning
+    cmdlineOf, orphanDiagnostics, reapGuardChildren, reapUntilQuiet, sleepSync, waitFor,
+    pidRunning
 };

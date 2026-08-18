@@ -1,10 +1,12 @@
 // The self-test for the plumbing AROUND scripts/lib/qml-region.js's bound: how the
 // child's deadline is derived from the supervisor's limit and ordered against it,
-// how a fixture is kept out of reach of the environment it runs in, how a guarded
-// suite's exit status reaches CI, how the argv marker names the child's role
-// without reaching the suite's arguments, how a finished spawn is classified, how
-// a bad override falls back, and what evaluateMarked() hands back. The bound
-// itself is scripts/lib/qml-region-selftest.js, which runs this.
+// how a second guardChild() in one process answers, how a guarded suite's exit
+// status reaches CI, how the argv marker names the child's role without reaching
+// the suite's arguments, how a finished spawn is classified, how a bad override
+// falls back, and what evaluateMarked() hands back.
+//
+// Its entry point is this file, run directly. The map of the subsystem — which
+// files exist and which are manifest rows — is in scripts/lib/qml-region.js.
 
 "use strict";
 
@@ -18,9 +20,9 @@ const regionGuard = require("./qml-region.js");
 const { evaluateMarked } = regionGuard;
 const { CHILD_ARGV_MARKER, CHILD_DEADLINE_GRACE_MS, CHILD_TIMEOUT_DEFAULT_MS, MAX_TIMER_MS,
     childDeadlineFor, msFromEnv, spawnOutcome } = regionGuard.internals;
-const { withGuardedSuite, guardPath } = require("./qml-region-testkit.js");
+const { withGuardedSuite, hangingRegion, guardPath } = require("./qml-region-testkit.js");
 
-module.exports = function regionGuardWiringSelfTest() {
+function regionGuardWiringSelfTest() {
     // --- the ordering of the two bounds is derived, not asserted in prose ---
     //
     // The child's deadline sits above the supervisor's limit so the supervisor
@@ -122,7 +124,25 @@ module.exports = function regionGuardWiringSelfTest() {
         withGuardedSuite({
             prefix: "vgs-region-twice-",
             timeout: 9000,
+            // Pinned like every sibling that can hang, and here it bounds the
+            // FAILURE path: on the 20s default a regressed flag re-exec'd for the
+            // whole fixture window — 3 processes at 3s, 86 at 6s, 260 at 12s, each
+            // arming a Worker. A chain of depth three proves the regression
+            // exactly as well, and on a 2 vCPU runner the deep one is an OOM event
+            // rather than the named red this check is written to produce.
+            env: { VGS_REGION_CHILD_TIMEOUT_MS: "1500" },
             body: (dir, suite) => [
+                // A DEPTH cap, so the failure path is bounded by structure and not
+                // only by the clock. Pinning the timeout alone still let the chain
+                // reach ~45 live processes before it unwound, each arming a Worker;
+                // on a 2 vCPU runner that is a memory event rather than the named
+                // red this check is written to produce. Depth three proves the
+                // regression exactly as well as depth 260. The env name is outside
+                // the VGS_REGION_ prefix on purpose, so fixtureEnv does not strip
+                // it and it descends the way the chain does.
+                `const depth = Number(process.env.VGSTEST_TWICE_DEPTH || "0");`,
+                `if (depth > 3) { console.log("depth cap " + depth); process.exit(9); }`,
+                "process.env.VGSTEST_TWICE_DEPTH = String(depth + 1);",
                 "guardChild();",
                 "guardChild();",
                 // Counted from inside, because a synchronous fixture cannot sample
@@ -145,6 +165,48 @@ module.exports = function regionGuardWiringSelfTest() {
             assert.ok(stdout.includes("census 2"),
                 "exactly two processes may run the suite, the supervisor and its one child; the " +
                 `child counted ${JSON.stringify(stdout)}`);
+            assert.ok(!stdout.includes("depth cap"),
+                "a healthy run must never re-exec at all, so the cap that bounds the failure " +
+                `path must go untouched; stdout was ${JSON.stringify(stdout)}`);
+        });
+    }
+
+    // --- a swallowed arming refusal cannot be converted into a quiet pass ---
+    //
+    // roleAnswered is set BEFORE arming, and must stay there: the marker is
+    // already spliced out by then, so a retry after a failed arm would take the
+    // SUPERVISOR branch and restart the chain the flag exists to stop. The cost is
+    // that the role being answered does not mean the process is BOUNDED, so a
+    // caller who swallowed the refusal could call again and get a quiet return —
+    // the suite then running in the child with no deadline, and a 100%-CPU orphan
+    // if the supervisor dies first. No shipped suite catches around guardChild();
+    // this pins the second flag that makes the difference reportable.
+    {
+        withGuardedSuite({
+            prefix: "vgs-region-unarmed-twice-",
+            timeout: 9000,
+            env: {
+                VGS_REGION_ARM_CONFIRM_MS: "1",
+                VGS_REGION_CHILD_TIMEOUT_MS: "1500",
+                VGS_REGION_CHILD_DEADLINE_MS: "600"
+            },
+            body: () => [
+                "try { guardChild(); } catch (refused) { console.log('swallowed'); }",
+                "guardChild();",
+                "console.log('reached the region');",
+                ...hangingRegion("guard-unarmed-twice-test")
+            ]
+        }, ({ run, stdout, stderr }) => {
+            assert.notEqual(run.status, 0, "the suite must still fail");
+            assert.ok(stdout.includes("swallowed"),
+                "the fixture must genuinely swallow the first refusal, or it proves nothing " +
+                `about the second call; stdout was ${JSON.stringify(stdout)}`);
+            assert.ok(!stdout.includes("reached the region"),
+                "the second call must THROW, not return: the role was answered but arming never " +
+                `completed, so this process is not bounded; stdout was ${JSON.stringify(stdout)}`);
+            assert.ok(stderr.includes("its deadline never armed"),
+                "and it must say why it refused the second call; stderr was " +
+                JSON.stringify(stderr));
         });
     }
 
@@ -281,15 +343,15 @@ module.exports = function regionGuardWiringSelfTest() {
             /must carry the NO SUCH MARKER markers/,
             "a missing region must fail loudly rather than evaluate whatever it found");
     }
-};
 
-// Its own entry point, like its sibling. Without this the file asserted nothing
-// when run directly and reached CI only through one call at the bottom of
-// qml-region-selftest.js — deleting that line left the whole self-test green.
-// Two near-identically named files, one of them a manifest row, is exactly the
-// pair where wiring the wrong one produces a silently vacuous check rather than
-// an error.
-if (require.main === module) {
-    module.exports();
     console.log("qml-region wiring selftest: all checks passed");
 }
+
+// A SCRIPT, not a module: nothing in the repo requires this file, so there is no
+// export and no `require.main` guard to flip. It is a manifest row and a CI line,
+// and that row pipes the completion line through grep — so a run that asserted
+// nothing prints nothing and the row goes red. The line is printed by the LAST
+// statement INSIDE the function for that reason: printed from out here it would
+// still appear after someone deleted the call, which is the vacuous pass the
+// grep exists to catch.
+regionGuardWiringSelfTest();
