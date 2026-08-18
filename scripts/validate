@@ -183,6 +183,8 @@ always    | scripts/check-format-lint.sh
 -         | python3 scripts/lib/shell_scan.py
 -         | python3 scripts/lib/qml_source_selftest.py
 -         | node scripts/lib/qml-region-selftest.js
+-         | node scripts/lib/qml-region-wiring-selftest.js
+-         | node scripts/lib/qml-region-testkit-selftest.js
 always    | scripts/check-validation-inventory.py
 docs      | scripts/check-doc-growth.py
 docs      | scripts/check-section-pointers.py

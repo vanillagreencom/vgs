@@ -9,7 +9,7 @@
 // payload into the popout. All three ask one function; these cases drive it.
 //
 // This suite EXECUTES the extracted decision region, so it runs inside a child
-// the parent kills on a wall clock — scripts/lib/qml-region.js says what that
+// bounded by a wall clock — scripts/lib/qml-region.js says what that
 // bounds and what it does not.
 
 "use strict";

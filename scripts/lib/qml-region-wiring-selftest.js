@@ -18,7 +18,7 @@ const regionGuard = require("./qml-region.js");
 const { evaluateMarked } = regionGuard;
 const { CHILD_ARGV_MARKER, CHILD_DEADLINE_GRACE_MS, CHILD_TIMEOUT_DEFAULT_MS, MAX_TIMER_MS,
     childDeadlineFor, msFromEnv, spawnOutcome } = regionGuard.internals;
-const { withGuardedSuite, fixtureEnv, guardPath } = require("./qml-region-testkit.js");
+const { withGuardedSuite, guardPath } = require("./qml-region-testkit.js");
 
 module.exports = function regionGuardWiringSelfTest() {
     // --- the ordering of the two bounds is derived, not asserted in prose ---
@@ -36,6 +36,13 @@ module.exports = function regionGuardWiringSelfTest() {
         assert.ok(childDeadlineFor(1000, undefined, () => {}) > 1000,
             "and it must sit ABOVE that limit, or the supervisor never gets to report the bound " +
             "it enforced");
+        // The derived default does not pass through msFromEnv's ceiling, so a limit
+        // that was itself accepted used to push it over: at MAX_TIMER_MS the
+        // deadline came out 1000ms above, Node clamped the Worker's setTimeout to
+        // 1ms, and the child self-killed in 59ms reporting a 24-day bound.
+        assert.ok(childDeadlineFor(MAX_TIMER_MS, undefined, () => {}) <= MAX_TIMER_MS,
+            "the derived deadline must clear the same ceiling the parser enforces, or the two " +
+            "bounds invert at the top of the range instead of degrading together");
         assert.equal(childDeadlineFor(1000, "300", () => {}), 300,
             "an override is honoured as given, including below the limit — that inversion is the " +
             "only way to make the child's own bound observable");
@@ -50,45 +57,6 @@ module.exports = function regionGuardWiringSelfTest() {
         const quiet = [];
         childDeadlineFor(1000, undefined, text => quiet.push(text));
         assert.deepEqual(quiet, [], "and an ordered pair must say nothing at all");
-    }
-
-    // --- no fixture is steerable by the environment it runs in ---
-    //
-    // Every bound this guard has is an env override, so an ambient one silently
-    // re-tunes checks that never asked for it. Measured: with
-    // VGS_REGION_CHILD_DEADLINE_MS=300 exported, the hang checks died of the
-    // CHILD's bound rather than the supervisor's kill and still passed, and
-    // VGS_REGION_ARM_CONFIRM_MS=1 broke the suite outright. The fixture env strips
-    // the whole VGS_REGION_ prefix rather than pinning today's three knobs, so
-    // this holds for the next bound anyone adds — which is what is checked here.
-    {
-        process.env.VGS_REGION_NOT_A_REAL_KNOB = "leaked";
-        try {
-            assert.equal(fixtureEnv().VGS_REGION_NOT_A_REAL_KNOB, undefined,
-                "an ambient VGS_REGION_* must not reach a fixture, whatever it is named");
-            assert.equal(fixtureEnv({ VGS_REGION_NOT_A_REAL_KNOB: "asked" })
-                .VGS_REGION_NOT_A_REAL_KNOB, "asked",
-                "but what the fixture asks for must arrive");
-            assert.equal(fixtureEnv().PATH, process.env.PATH,
-                "and everything else must survive, or the fixture cannot find node");
-        } finally {
-            delete process.env.VGS_REGION_NOT_A_REAL_KNOB;
-        }
-
-        withGuardedSuite({
-            prefix: "vgs-region-env-",
-            body: () => [
-                "guardChild();",
-                "console.log('knobs ' + JSON.stringify(",
-                "    Object.keys(process.env).filter(k => k.startsWith('VGS_REGION_')).sort()));"
-            ]
-        }, ({ run, stdout, stderr }) => {
-            assert.equal(run.status, 0,
-                `the env probe must complete; stderr was ${JSON.stringify(stderr)}`);
-            assert.ok(stdout.includes("knobs []"),
-                "a fixture that pins nothing must see nothing, so a knob exported around this " +
-                `run cannot steer it; the child reported ${JSON.stringify(stdout)}`);
-        });
     }
 
     // --- a guarded suite's exit status is its child's, exactly ---
@@ -134,6 +102,49 @@ module.exports = function regionGuardWiringSelfTest() {
             assert.ok(stdout.includes('argv ["--suite-own-flag"]'),
                 "the marker must be spliced back out of process.argv, or every suite's own " +
                 `argument handling sees it; the child reported ${JSON.stringify(stdout)}`);
+        });
+    }
+
+    // --- calling it twice in one process is a no-op, not a re-exec ---
+    //
+    // The neighbouring check covers a DESCENDANT guarding itself, which is correct
+    // and passes. This is the case the splice created: the marker is removed the
+    // instant it is read, so a second guardChild() in the SAME process found no
+    // marker, took the supervisor branch, and re-exec'd — unbounded, every level
+    // restarting its own spawnSync clock, 82 live processes measured from a
+    // two-line suite with nothing reported. Reachable from two modules that each
+    // defensively guard themselves.
+    //
+    // The exit status is the detector: a chain never reaches the exit at all, so
+    // it can only end at the fixture timeout. The census is the second one, and
+    // catches a chain short enough to still exit.
+    {
+        withGuardedSuite({
+            prefix: "vgs-region-twice-",
+            timeout: 9000,
+            body: (dir, suite) => [
+                "guardChild();",
+                "guardChild();",
+                // Counted from inside, because a synchronous fixture cannot sample
+                // the process table while its own spawnSync is blocked.
+                `const mine = fs.readdirSync("/proc").filter(function (entry) {`,
+                "    if (!/^[0-9]+$/.test(entry)) return false;",
+                "    try {",
+                `        return fs.readFileSync("/proc/" + entry + "/cmdline", "utf8")`,
+                `            .split("\\0").includes(${JSON.stringify(suite)});`,
+                "    } catch (gone) { return false; }",
+                "});",
+                "console.log('census ' + mine.length);",
+                "process.exit(3);"
+            ]
+        }, ({ run, stdout, stderr, elapsed }) => {
+            assert.equal(run.status, 3,
+                "a second guardChild() must be a no-op — a re-exec chain never reaches the exit " +
+                `at all; it exited ${run.status} after ${elapsed}ms saying ` +
+                JSON.stringify(stderr));
+            assert.ok(stdout.includes("census 2"),
+                "exactly two processes may run the suite, the supervisor and its one child; the " +
+                `child counted ${JSON.stringify(stdout)}`);
         });
     }
 
@@ -271,3 +282,14 @@ module.exports = function regionGuardWiringSelfTest() {
             "a missing region must fail loudly rather than evaluate whatever it found");
     }
 };
+
+// Its own entry point, like its sibling. Without this the file asserted nothing
+// when run directly and reached CI only through one call at the bottom of
+// qml-region-selftest.js — deleting that line left the whole self-test green.
+// Two near-identically named files, one of them a manifest row, is exactly the
+// pair where wiring the wrong one produces a silently vacuous check rather than
+// an error.
+if (require.main === module) {
+    module.exports();
+    console.log("qml-region wiring selftest: all checks passed");
+}

@@ -3,16 +3,19 @@
 // and that the stopping is legible afterwards. The plumbing around it — how the
 // two bounds are derived and ordered, exit status, the argv marker, spawn
 // classification, env parsing, extraction — is
-// scripts/lib/qml-region-wiring-selftest.js, which this file runs last.
+// scripts/lib/qml-region-wiring-selftest.js, its own manifest row rather than a
+// call from here: a check reached through one line in another file is a check
+// that can be deleted without anything going red.
 //
 // This IS the entry point: it is a row in the scripts/validate manifest and a
 // line in CI, run as `node scripts/lib/qml-region-selftest.js`. It is deliberately
 // not called from a guarded suite — see the note where it runs itself, at the
 // bottom of this file.
 //
-// It lives apart from the guard, in three files rather than one, because the
-// 400-line size ratchet is the binding constraint: guard and checks together, and
-// then the checks alone, each crossed it.
+// The three files split on what they DO, not on a line count: this one and the
+// wiring file spawn processes and read verdicts off them, and everything that
+// plants, runs, attributes and cleans up such a fixture is
+// scripts/lib/qml-region-testkit.js.
 
 "use strict";
 
@@ -23,118 +26,8 @@ const os = require("node:os");
 const path = require("node:path");
 
 const { armChildDeadline, CHILD_ARGV_MARKER } = require("./qml-region.js").internals;
-const { withGuardedSuite, hangingRegion, fixtureEnv, plantSuite } =
-    require("./qml-region-testkit.js");
-
-// --- waiting on another PROCESS, from synchronous test code ---
-//
-// selfTest() is synchronous and what it waits on runs in a different process, so
-// parking this thread costs nothing that matters: the thing being waited for
-// makes progress regardless of this event loop.
-function sleepSync(ms) {
-    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
-}
-
-// Poll until `read` answers truthily, or give up and answer undefined. Giving up
-// has to be visible to the caller — a waiter that returns quietly when the thing
-// never happened is how a test passes on nothing.
-function waitFor(read, limitMs) {
-    const until = Date.now() + limitMs;
-    for (;;) {
-        const answer = read();
-        if (answer)
-            return answer;
-        if (Date.now() >= until)
-            return undefined;
-        sleepSync(25);
-    }
-}
-
-// The command line the kernel holds for a pid, argv-split — or NULL when it could
-// not be read at all. The two answers must not collapse: "this pid is provably
-// not ours" and "we could not look" lead to opposite actions, and folding them
-// into one empty array is how the cleanup below would decline to kill a spinning
-// child precisely when the attribution it relies on had regressed.
-function cmdlineOf(pid) {
-    try {
-        return fs.readFileSync(`/proc/${pid}/cmdline`, "utf8").split("\0").filter(Boolean);
-    } catch (err) {
-        // ENOENT is a READABLE answer — there is no such process — and folding it
-        // in with "could not look" is what made the reaper below cry wolf on every
-        // child that had already exited exactly as intended.
-        return err.code === "ENOENT" ? [] : null;
-    }
-}
-
-// What a still-running orphan looks like from outside, for a failure message that
-// would otherwise name no cause. The thread count is the interesting one: it says
-// whether the deadline Worker ever existed.
-function orphanDiagnostics(pid, errLog) {
-    const read = file => {
-        try {
-            return fs.readFileSync(file, "utf8").trim();
-        } catch (err) {
-            return `<unreadable: ${err.code || err.message}>`;
-        }
-    };
-    const stat = read(`/proc/${pid}/stat`);
-    // The comm field is parenthesised and may itself contain spaces and parens,
-    // so the fields after it are found from the LAST ") ", never by splitting.
-    const after = stat.slice(stat.lastIndexOf(") ") + 2).split(" ");
-    const threads = /^Threads:\s*(\d+)/m.exec(read(`/proc/${pid}/status`));
-    // Ordered by what a reader acts on: state R is the definitive "still running",
-    // and the thread count is the hint next to it — Node carries a pool of its
-    // own, so the number is read against a healthy child's, not against 1.
-    return `pid ${pid} state ${after[0] || "<unknown>"}, threads ` +
-        `${threads ? threads[1] : "<unknown>"}; supervisor stderr ` +
-        `${JSON.stringify(read(errLog))}; raw stat ${JSON.stringify(stat)}`;
-}
-
-// Take the runaway down before leaving, but never shoot a stranger: a pid freed
-// seconds ago can already belong to one, and the marker is what makes ours
-// checkable. The third answer is the one that must not be silent — if /proc could
-// not be read, nothing here knows whether a full core is still spinning, and
-// saying so is the difference between a clean exit and the 70-hour orphan.
-function reapOrphanedChild(pid, errLog) {
-    if (pid <= 0 || !pidRunning(pid))
-        return;
-    const argv = cmdlineOf(pid);
-    if (argv === null) {
-        process.stderr.write(
-            `qml-region selftest: could not read /proc/${pid}/cmdline, so pid ${pid} was left ` +
-            "alive rather than signalled on a guess. Check it by hand: an orphaned region child " +
-            `spins at 100%. ${orphanDiagnostics(pid, errLog)}\n`);
-        return;
-    }
-    if (!argv.includes(CHILD_ARGV_MARKER))
-        return;  // readable and provably not ours
-    try {
-        process.kill(pid, "SIGKILL");
-    } catch {
-        // already gone
-    }
-}
-
-// Whether a pid is a process that is still RUNNING. kill(pid, 0) alone cannot
-// answer that: a SIGKILLed process stays visible as a zombie until something
-// reaps it, and on a box whose pid 1 does not reap an orphan, a zombie would read
-// as a child that ignored its deadline. Linux can tell them apart; where /proc is
-// not readable, kill(pid, 0) is all there is and the answer stays conservative.
-function pidRunning(pid) {
-    try {
-        process.kill(pid, 0);
-    } catch (err) {
-        if (err.code === "ESRCH")
-            return false;
-        if (err.code !== "EPERM")
-            throw err;
-    }
-    try {
-        return !/\)\s+Z\s/.test(fs.readFileSync(`/proc/${pid}/stat`, "utf8"));
-    } catch {
-        return true;
-    }
-}
+const { withGuardedSuite, hangingRegion, fixtureEnv, plantSuite, cmdlineOf, orphanDiagnostics,
+    reapGuardChildren, pidRunning, waitFor } = require("./qml-region-testkit.js");
 
 module.exports = function regionGuardSelfTest() {
     // --- the bound: a region that does not finish becomes a fast, named red ---
@@ -202,7 +95,7 @@ module.exports = function regionGuardSelfTest() {
                 source: "throw new Error('deliberately unable to arm');",
                 confirmMs: 300
             }),
-            /did not arm within 300ms/,
+            /did not confirm within 300ms/,
             "a worker that never armed must throw before the region runs, not be discarded");
 
         const armedWorker = armChildDeadline(60000, { confirmMs: 5000 });
@@ -211,18 +104,34 @@ module.exports = function regionGuardSelfTest() {
 
         withGuardedSuite({
             prefix: "vgs-region-unarmed-",
-            env: { VGS_REGION_ARM_CONFIRM_MS: "1" },
+            // A short clock on both sides, like every sibling that plants a hanging
+            // region: if the worker DID arm, the region runs and this has to be a
+            // fast named red rather than a 20s one with no cause attached.
+            timeout: 9000,
+            env: {
+                VGS_REGION_ARM_CONFIRM_MS: "1",
+                VGS_REGION_CHILD_TIMEOUT_MS: "2000",
+                VGS_REGION_CHILD_DEADLINE_MS: "600"
+            },
             body: () => ["guardChild();", ...hangingRegion("guard-unarmed-test")]
         }, ({ run, stdout, stderr, elapsed }) => {
             assert.notEqual(run.status, 0,
                 "a child that could not arm its deadline must fail loudly; it exited " +
                 `${run.status} saying ${JSON.stringify(stderr)}`);
-            assert.ok(stderr.includes("did not arm within 1ms"),
+            assert.ok(stderr.includes("did not confirm within 1ms"),
                 `the refusal must say what it refused and why; stderr was ${JSON.stringify(stderr)}`);
+            // The handler that would name a startup failure cannot run: the wait
+            // blocks the loop that delivers its event. So the refusal itself has to
+            // name that cause, or every real startup failure reads as an expired
+            // budget and sends the operator to widen a knob that cannot help.
+            assert.ok(stderr.includes("FAILED to start") &&
+                stderr.includes("thread or memory cap"),
+                "the refusal must name the cause it cannot quote, not just the budget; stderr " +
+                `was ${JSON.stringify(stderr)}`);
             assert.ok(!stdout.includes("call returned"),
                 "and it must refuse BEFORE evaluating the region, or the refusal is a report on " +
                 `a core that is already spinning; stdout was ${JSON.stringify(stdout)}`);
-            assert.ok(elapsed < 15000,
+            assert.ok(elapsed < 6000,
                 `refusing has to be fast; it took ${elapsed}ms`);
         });
     }
@@ -316,10 +225,14 @@ module.exports = function regionGuardSelfTest() {
         let supervisor = null;
         let childPid = 0;
         let errFd = -1;
+        // Hoisted for the same reason withGuardedSuite hoists its own: the reaper
+        // in the finally is handed the value plantSuite returned, never a filename
+        // re-derived by hand that could drift away from it in silence.
+        let suite;
         const errLog = path.join(dir, "stderr.log");
         try {
             const pidFile = path.join(dir, "child.pid");
-            const suite = plantSuite(dir, () => [
+            suite = plantSuite(dir, () => [
                 "guardChild();",
                 // A no-op SIGTERM listener, so the self-kill has to be a signal the
                 // child cannot catch. Without it, downgrading SIGKILL to SIGTERM
@@ -358,9 +271,10 @@ module.exports = function regionGuardSelfTest() {
             // Attribution, asserted on a process that is genuinely about to be
             // orphaned: this is the command line `ps` would have shown for the
             // one that burned a core for 70 hours.
-            assert.ok((cmdlineOf(childPid) || []).includes(CHILD_ARGV_MARKER),
+            const childArgv = cmdlineOf(childPid);
+            assert.ok(childArgv && childArgv.includes(CHILD_ARGV_MARKER),
                 "an orphaned worker must name this harness in ps; its command line was " +
-                JSON.stringify((cmdlineOf(childPid) || []).join(" ")));
+                JSON.stringify(childArgv === null ? "<unreadable>" : childArgv.join(" ")));
 
             supervisor.kill("SIGKILL");
             assert.ok(waitFor(() => !pidRunning(childPid), WAIT_MS),
@@ -379,14 +293,18 @@ module.exports = function regionGuardSelfTest() {
         } finally {
             if (supervisor)
                 try { supervisor.kill("SIGKILL"); } catch { /* already gone */ }
-            reapOrphanedChild(childPid, errLog);
+            // Attributed on this fixture's own mkdtemp dir, so the runaway is taken
+            // down without ever signalling a pid on the strength of a number that
+            // may already have been recycled — concurrent runs are normal here,
+            // and four unrelated marker-carrying children were alive at once
+            // during review.
+            reapGuardChildren(dir, suite);
             if (errFd !== -1)
                 fs.closeSync(errFd);
             fs.rmSync(dir, { recursive: true, force: true });
         }
     }
 
-    require("./qml-region-wiring-selftest.js")();
 };
 
 // Run as its own process, and NOT from inside a guarded suite. Every assertion

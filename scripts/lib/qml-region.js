@@ -60,6 +60,24 @@ const CHILD_DEADLINE_GRACE_MS = 1000;
 // handling never sees it; the kernel's copy of the command line keeps it.
 const CHILD_ARGV_MARKER = "--vgs-region-guard-child";
 
+// Whether this process has already answered "which role am I", and the reason the
+// answer is remembered rather than re-read. The marker is spliced out of argv the
+// instant it is read — that splice is what stops the signal descending — but it
+// also erases the only record that this process IS the child. So a second
+// guardChild() found no marker, took the supervisor branch, and re-exec'd the
+// suite; that child's second call did the same, unbounded, every level restarting
+// its own spawnSync clock so no timeout ever unwound the chain. Measured: 82 live
+// processes from a two-line suite, still climbing, silently — the same runaway
+// class this file exists to prevent, reached from nothing worse than two modules
+// that each defensively guard themselves.
+//
+// Module scope is the right scope: the module loads once per process and the
+// recursion was per-process. Only the child branch sets it; the supervisor branch
+// never returns, so a second call there is unreachable, and a flag set on that
+// path would turn an impossible call into a suite running unguarded IN the
+// supervisor.
+let roleAnswered = false;
+
 // How long arming the child's deadline may take before the child refuses to run
 // the region at all. Worker startup is tens of milliseconds; this is far above
 // that and far below any bound it protects. VGS_REGION_ARM_CONFIRM_MS widens it
@@ -102,8 +120,15 @@ function msFromEnv(value, name, fallback, warn) {
 // once, naming both numbers, because a developer who exported the variable across
 // a whole run otherwise sees only that their reports changed shape.
 function childDeadlineFor(limit, override, warn) {
-    const deadline = msFromEnv(
-        override, "VGS_REGION_CHILD_DEADLINE_MS", limit + CHILD_DEADLINE_GRACE_MS, warn);
+    // Clamped, because the derived default does not pass through msFromEnv's
+    // ceiling and a limit that was itself accepted can push it over: at
+    // VGS_REGION_CHILD_TIMEOUT_MS=2147483647 the derived deadline was
+    // 2147484647, Node clamped the Worker's setTimeout to 1ms, and the child
+    // self-killed after 59ms while reporting a 24-day bound that plainly had not
+    // elapsed. Landing on the ceiling makes deadline === limit, which the
+    // inversion note below then reports for what it is.
+    const derived = Math.min(limit + CHILD_DEADLINE_GRACE_MS, MAX_TIMER_MS);
+    const deadline = msFromEnv(override, "VGS_REGION_CHILD_DEADLINE_MS", derived, warn);
     if (deadline <= limit)
         (warn || (text => process.stderr.write(text)))(
             `the child deadline (${deadline}ms) is at or below this supervisor's ${limit}ms ` +
@@ -144,9 +169,12 @@ function spawnOutcome(run) {
 //     before it signals — which makes the entire bound conditional on a
 //     diagnostic succeeding. It is a note about a kill, never its precondition.
 //
-// The flag is stored and notified after the timer is scheduled, not before: it
-// answers "this worker is armed", and a worker that has not reached its
-// setTimeout is not.
+// The flag is stored and notified after the timer is scheduled, not before,
+// because it answers "this worker is armed" and a worker that has not reached its
+// setTimeout is not. Today that ordering is DEFENSIVE rather than load-bearing:
+// both statements sit in one synchronous block and the MAX_TIMER_MS ceiling keeps
+// setTimeout from throwing, so nothing observable separates them. It is written
+// this way for the edit that puts something fallible between them.
 const CHILD_DEADLINE_SOURCE = `
 "use strict";
 const { workerData } = require("node:worker_threads");
@@ -173,11 +201,14 @@ Atomics.notify(workerData.armed, 0);
 // not, and spins a full core silently. Blocking here is free — nothing from the
 // region has run yet — and turns a silent unbounded run into a loud refusal.
 //
-// `overrides` is for the self-test alone, and only for the half it cannot reach
-// otherwise: source that cannot arm stands in for every way a Worker fails to
-// start. The other half needs no hook — VGS_REGION_ARM_CONFIRM_MS narrowed below
-// thread-creation time makes a real child refuse, which is how the refusal is
-// proven to travel out of guardChild() rather than be swallowed on the way.
+// `overrides` is for the self-test alone and carries BOTH of its fields. `source`
+// stands in for every way a Worker can fail to start, which are indistinguishable
+// from here; `confirmMs` pins the budget for an in-process call, and two live
+// assertions depend on it — trimming the parameter to just `source` would delete
+// a hook they need. There is no third field because none is needed:
+// VGS_REGION_ARM_CONFIRM_MS narrowed below thread-creation time makes a real
+// child refuse, which is how the refusal is proven to travel out of guardChild()
+// rather than be swallowed on the way.
 function armChildDeadline(deadline, overrides) {
     const script = process.argv[1];
     const armed = new Int32Array(new SharedArrayBuffer(4));
@@ -186,9 +217,17 @@ function armChildDeadline(deadline, overrides) {
         eval: true,
         workerData: { armed, deadline, script }
     });
-    // Legible for a failure that arrives while the loop still turns; the flag
-    // below is what covers the failure that arrives after it stops.
+    // A Worker reports a startup failure as an `error` EVENT, and the wait below
+    // blocks the loop that would deliver it — so on the failing path this handler
+    // does not run before the throw, and cannot. It is kept for the callers that
+    // do keep turning (the self-test calls this directly), and it stashes the
+    // cause so the throw can quote it on the rare occasion one did arrive. What
+    // covers the ordinary case is the throw's own wording: it must not imply the
+    // budget was the finding, because the operator's obvious next move — widen
+    // VGS_REGION_ARM_CONFIRM_MS — cannot help a worker that failed instantly.
+    let startupError = null;
     worker.on("error", err => {
+        startupError = err;
         try {
             fs.writeSync(2, `${script}: the region deadline worker failed — ${err.message}\n`);
         } catch (noteFailed) {
@@ -201,9 +240,13 @@ function armChildDeadline(deadline, overrides) {
     if (Atomics.load(armed, 0) !== 1) {
         worker.terminate();
         throw new Error(
-            `${script}: the region deadline worker did not arm within ${budget}ms. Refusing to ` +
-            "evaluate the region unbounded — that is how a guarded child becomes a 100%-CPU " +
-            "orphan nothing can stop.");
+            `${script}: the region deadline worker did not confirm within ${budget}ms` +
+            (startupError ? ` — it failed to start: ${startupError.message}` : "") +
+            ". Refusing to evaluate the region unbounded — that is how a guarded child becomes " +
+            "a 100%-CPU orphan nothing can stop. A worker that FAILED to start reports this the " +
+            "same way and is the likelier cause (a thread or memory cap, or broken worker " +
+            "source): its error event cannot be delivered while this wait blocks the loop, so " +
+            "widening VGS_REGION_ARM_CONFIRM_MS only helps if arming was merely slow.");
     }
     // A healthy run must never wait on the deadline it did not need.
     worker.unref();
@@ -233,9 +276,10 @@ function killReport(script, run, limit, elapsed) {
 // untested branch on the one entry point every guarded suite goes through.
 //
 // In the SUPERVISOR it spawns, waits, reports and exits with the child's status.
-// In the CHILD it arms the self-deadline and refuses to return until that Worker
-// confirms, splices the ps marker back out of process.argv, and returns. The
-// FIRST statement of any suite that evaluates a region calls this.
+// In the CHILD it splices the ps marker back out of process.argv, then arms the
+// self-deadline and refuses to return until that Worker confirms — that order,
+// which is the body's. Calling it again in the same process is a no-op. The FIRST
+// statement of any suite that evaluates a region calls this.
 //
 // A process is the bound that holds, and an in-process timeout is not: it covers
 // the synchronous call and nothing else, so a region function that schedules
@@ -243,10 +287,13 @@ function killReport(script, run, limit, elapsed) {
 // finishes inside every such timeout and then hangs Node from the microtask
 // queue. One kill closes that, an infinite loop and runaway allocation together.
 function guardChild() {
+    if (roleAnswered)
+        return;
     const script = process.argv[1];
     const limit = CHILD_TIMEOUT_MS;
     const marker = process.argv.indexOf(CHILD_ARGV_MARKER);
     if (marker !== -1) {
+        roleAnswered = true;
         process.argv.splice(marker, 1);
         armChildDeadline(childDeadlineFor(limit, process.env.VGS_REGION_CHILD_DEADLINE_MS,
             text => process.stderr.write(`${script}: ${text}`)));
@@ -307,6 +354,6 @@ module.exports = { regionOf, evaluateMarked, guardChild };
 // would otherwise travel through guardChild()'s own exit status, and a self-test
 // that reports through the line it tests cannot report that line broken.
 module.exports.internals = {
-    ARM_CONFIRM_DEFAULT_MS, CHILD_ARGV_MARKER, CHILD_DEADLINE_GRACE_MS, CHILD_TIMEOUT_DEFAULT_MS,
-    MAX_TIMER_MS, armChildDeadline, childDeadlineFor, msFromEnv, spawnOutcome
+    CHILD_ARGV_MARKER, CHILD_DEADLINE_GRACE_MS, CHILD_TIMEOUT_DEFAULT_MS, MAX_TIMER_MS,
+    armChildDeadline, childDeadlineFor, msFromEnv, spawnOutcome
 };

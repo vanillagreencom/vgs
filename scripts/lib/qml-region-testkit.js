@@ -57,8 +57,9 @@ function plantSuite(dir, body) {
 // The child inherits the supervisor's stdio, so one pipe captures both accounts.
 function withGuardedSuite(options, check) {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), options.prefix));
+    let suite;
     try {
-        const suite = plantSuite(dir, options.body);
+        suite = plantSuite(dir, options.body);
         const started = Date.now();
         const run = spawnSync(process.execPath, [suite, ...(options.args || [])], {
             encoding: "utf8",
@@ -75,11 +76,95 @@ function withGuardedSuite(options, check) {
             stderr: run.stderr || ""
         });
     } finally {
-        killStrayChildren(path.join(dir, "suite.js"));
+        reapGuardChildren(dir, suite);
         fs.rmSync(dir, { recursive: true, force: true });
     }
 }
 
+// --- waiting on another PROCESS, from synchronous test code ---
+//
+// regionGuardSelfTest() below is synchronous and what it waits on runs in a
+// different PROCESS, so parking this thread costs nothing that matters: the thing
+// being waited for makes progress regardless of this event loop.
+function sleepSync(ms) {
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
+// Poll until `read` answers truthily, or give up and answer undefined. Giving up
+// has to be visible to the caller — a waiter that returns quietly when the thing
+// never happened is how a test passes on nothing.
+function waitFor(read, limitMs) {
+    const until = Date.now() + limitMs;
+    for (;;) {
+        const answer = read();
+        if (answer)
+            return answer;
+        if (Date.now() >= until)
+            return undefined;
+        sleepSync(25);
+    }
+}
+
+// Whether a pid is a process that is still RUNNING. kill(pid, 0) alone cannot
+// answer that: a SIGKILLed process stays visible as a zombie until something
+// reaps it, and on a box whose pid 1 does not reap an orphan, a zombie would read
+// as a child that ignored its deadline. Linux can tell them apart; where /proc is
+// not readable, kill(pid, 0) is all there is and the answer stays conservative.
+function pidRunning(pid) {
+    try {
+        process.kill(pid, 0);
+    } catch (err) {
+        if (err.code === "ESRCH")
+            return false;
+        if (err.code !== "EPERM")
+            throw err;
+    }
+    try {
+        return !/\)\s+Z\s/.test(fs.readFileSync(`/proc/${pid}/stat`, "utf8"));
+    } catch {
+        return true;
+    }
+}
+
+// The command line the kernel holds for a pid, argv-split — [] when there is no
+// such process, and NULL when it could not be read at all. Those last two must
+// not collapse: "provably not ours" and "we could not look" lead to opposite
+// actions, and folding them into one silent skip is how a reaper stops reaping
+// without anything going red. ENOENT is a readable answer, not a failure to look.
+function cmdlineOf(pid) {
+    try {
+        return fs.readFileSync(`/proc/${pid}/cmdline`, "utf8").split("\0").filter(Boolean);
+    } catch (err) {
+        return err.code === "ENOENT" ? [] : null;
+    }
+}
+
+// What a still-running orphan looks like from outside, for a failure message that
+// would otherwise name no cause. Ordered by what a reader acts on: state R is the
+// definitive "still running", and the thread count is the hint next to it — Node
+// carries a pool of its own, so the number is read against a healthy child's, not
+// against 1.
+function orphanDiagnostics(pid, errLog) {
+    const read = file => {
+        try {
+            return fs.readFileSync(file, "utf8").trim();
+        } catch (err) {
+            return `<unreadable: ${err.code || err.message}>`;
+        }
+    };
+    const stat = read(`/proc/${pid}/stat`);
+    // The comm field is parenthesised and may itself contain spaces and parens,
+    // so the fields after it are found from the LAST ") ", never by splitting.
+    const after = stat.slice(stat.lastIndexOf(") ") + 2).split(" ");
+    const threads = /^Threads:\s*(\d+)/m.exec(read(`/proc/${pid}/status`));
+    return `pid ${pid} state ${after[0] || "<unknown>"}, threads ` +
+        `${threads ? threads[1] : "<unknown>"}` +
+        (errLog ? `; supervisor stderr ${JSON.stringify(read(errLog))}` : "") +
+        `; raw stat ${JSON.stringify(stat)}`;
+}
+
+// The ONE reaper, used by every fixture here and by the orphan check next door.
+//
 // spawnSync's timeout kills the SUPERVISOR; the guard child under it is
 // reparented and keeps running. In production its own deadline ends it — but a
 // check that is failing is exactly the case where that deadline may be the thing
@@ -88,26 +173,57 @@ function withGuardedSuite(options, check) {
 // stranded a node process at 100% for seven minutes, on a deleted script, with
 // systemd as its parent — the VGS-198 signature exactly.
 //
-// The suite path is a mkdtemp path, so it names this fixture's children and
-// nothing else; the marker confirms the role before anything is signalled.
-function killStrayChildren(suite) {
-    for (const entry of fs.readdirSync("/proc")) {
+// Attribution is the fixture's own mkdtemp DIRECTORY, not one filename. That
+// covers every script a body plants — the descendant probe writes its own
+// inner.js, and a guard child of THAT is exactly the shape this exists for — it
+// cannot drift from plantSuite's naming, and because a directory is unique to one
+// fixture it can never match another run's child, so no pid is signalled on the
+// strength of a number that may already have been recycled. The marker is
+// required as well, so nothing but a guard child is ever signalled.
+//
+// It answers three ways per pid, never two: matched (kill), readable and not ours
+// (skip), unreadable (count, and say so at the end). A stray that could not be
+// attributed must not look identical to a clean exit.
+// `io` is a seam for scripts/lib/qml-region-testkit-selftest.js, and only that.
+// This function SIGKILLs processes off a /proc scan, so its three answers have to
+// be checkable directly; two of them — an unlistable /proc and an unreadable
+// entry — cannot be provoked on a healthy box, and a reaper whose failure modes
+// are only reachable through another check failing is not tested at all.
+function reapGuardChildren(dir, label, io) {
+    const list = (io && io.list) || (() => fs.readdirSync("/proc"));
+    const read = (io && io.read) || cmdlineOf;
+    const kill = (io && io.kill) || (pid => process.kill(pid, "SIGKILL"));
+    const warn = (io && io.warn) || (text => process.stderr.write(text));
+    let entries;
+    try {
+        entries = list();
+    } catch (err) {
+        // Must not throw: this runs in a finally, where it would replace the real
+        // assertion failure with an unrelated errno AND skip the cleanup below it.
+        warn(`qml-region testkit: could not list /proc (${err.code || err.message}), so a guard ` +
+            `child of ${label || dir} may still be running. An orphaned one spins at 100%.\n`);
+        return;
+    }
+    let unreadable = 0;
+    for (const entry of entries) {
         if (!/^\d+$/.test(entry))
             continue;
-        let argv;
-        try {
-            argv = fs.readFileSync(`/proc/${entry}/cmdline`, "utf8").split("\0");
-        } catch {
-            continue;  // exited between the listing and the read
+        const argv = read(Number(entry));
+        if (argv === null) {
+            unreadable += 1;
+            continue;
         }
-        if (!argv.includes(suite) || !argv.includes(CHILD_ARGV_MARKER))
+        if (!argv.includes(CHILD_ARGV_MARKER) || !argv.some(arg => arg.startsWith(dir)))
             continue;
         try {
-            process.kill(Number(entry), "SIGKILL");
+            kill(Number(entry));
         } catch {
             // already gone
         }
     }
+    if (unreadable > 0)
+        warn(`qml-region testkit: ${unreadable} /proc entries were unreadable, so a guard child ` +
+            `of ${label || dir} may have been missed. An orphaned one spins at 100%.\n`);
 }
 
 // A planted region that never returns, in the shape guardChild() is built for.
@@ -120,4 +236,7 @@ function hangingRegion(label) {
     ];
 }
 
-module.exports = { withGuardedSuite, hangingRegion, fixtureEnv, plantSuite, guardPath };
+module.exports = {
+    withGuardedSuite, hangingRegion, fixtureEnv, plantSuite, guardPath,
+    cmdlineOf, orphanDiagnostics, reapGuardChildren, sleepSync, waitFor, pidRunning
+};

@@ -34,7 +34,7 @@ const LOGIC = path.join(PLUGIN, "AiUsageLogic.qml");
 const logicSource = fs.readFileSync(LOGIC, "utf8");
 
 // This text comes from a repo file and a fork PR runs this suite on the runner,
-// so it is executed inside a child the parent kills on a wall clock — see
+// so it is executed inside a child bounded by a wall clock — see
 // scripts/lib/qml-region.js for what that bounds and what it does not.
 const { evaluateMarked, regionOf, guardChild } = require("./lib/qml-region.js");
 
