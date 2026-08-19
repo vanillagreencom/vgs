@@ -1,7 +1,7 @@
 %global debug_package %{nil}
 
 Name:           vgs-shell
-Version:        0.1.0
+Version:        0.2.0
 Release:        1%{?dist}
 Summary:        VanillaGreen desktop shell for Hyprland and Niri
 AutoReqProv:     no
@@ -182,5 +182,11 @@ EOF
 %exclude /usr/lib/vshell/themes/THEMES-ATTRIBUTION.md
 
 %changelog
+* Wed Aug 19 2026 Brad <brad@vanillagreen> - 0.2.0-1
+- Widget, launcher, greeter and theming fixes across the shell
+- Declare the full runtime and optional dependency set
+- Split optional themes, wallpapers and icon themes into vgs-shell-assets
+- Take over org.freedesktop.Notifications so the notification centre works
+
 * Sun Jul 26 2026 Brad <brad@vanillagreen> - 0.1.0-1
 - Initial package

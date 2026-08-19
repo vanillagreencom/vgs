@@ -19,7 +19,7 @@ systemctl --user enable --now vshell.service
 | Arch | `arch/vgs-shell.install`, `arch/vgs-shell-git/vgs-shell-git.install` (declared by `install=` inside the `package_vgs-shell*` functions) |
 | Debian | `debian/vgs-shell.postinst` |
 | Fedora / openSUSE / OBS | `%post` in `fedora/vgs-shell.spec` |
-| Gentoo | `pkg_postinst` in `gentoo/vgs-shell-0.1.0.ebuild` |
+| Gentoo | `pkg_postinst` in `gentoo/vgs-shell-<version>.ebuild` |
 | Void | `void/INSTALL.msg`, installed alongside `void/template` in `srcpkgs/vgs-shell/` |
 | Nix / Home Manager | the Home Manager module owns the unit |
 | `install.sh` | enables and starts the unit unless `--no-start` is passed |

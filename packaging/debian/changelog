@@ -1,3 +1,12 @@
+vgs-shell (0.2.0-1) unstable; urgency=medium
+
+  * Widget, launcher, greeter and theming fixes across the shell.
+  * Declare the full runtime and optional dependency set.
+  * Split the optional themes, wallpapers and icon themes into vgs-shell-assets.
+  * Take over org.freedesktop.Notifications so the notification centre works.
+
+ -- Brad <brad@vanillagreen>  Wed, 19 Aug 2026 00:00:00 +0000
+
 vgs-shell (0.1.0-1) unstable; urgency=medium
 
   * Initial package.
