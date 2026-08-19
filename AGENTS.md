@@ -56,7 +56,7 @@ the mode that replaces what `qs -c vshell` used to cover.
   `docs/decisions/D002-github-linear-intake-sync.md`.
 - Branch `vgs-<n>-<slug>` — attaches the PR to Linear; `GH_ISSUE_PATTERN` reads it.
 - Commits `area: imperative summary`, lowercase; `area(VGS-12): ...` with an issue.
-- Releases follow `.agents/skills/vgs-release/SKILL.md` and verify every
+- Releases follow `project-skills/vgs-release/SKILL.md` and verify every
   maintained install channel; one that cannot be is named in the release notes,
   never silently skipped.
 - Session handoff is only `docs/handoff/HANDOFF.md` (gitignored), overwritten in
