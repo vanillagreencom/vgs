@@ -163,10 +163,23 @@ scripts/publish-gentoo.sh             # publish (needs overlay commit rights)
 ```
 
 `.github/workflows/publish-gentoo.yml` runs it on `packaging/gentoo/` changes, again
-after a tag, and weekly for drift. Publishing needs `GENTOO_OVERLAY_SSH_KEY`, a
-secret holding a key with commit rights on the overlay, and the workflow **fails**
-rather than skipping when it is absent — the AUR spent six weeks proving that a
-skipped publish is indistinguishable from a successful one.
+after a tag, and weekly for drift. Publishing authenticates as a GitHub App
+installed on the overlay alone: `GENTOO_OVERLAY_APP_ID` (a variable) and
+`GENTOO_OVERLAY_APP_PRIVATE_KEY` (a secret). The workflow **fails** rather than
+skipping when either is absent — the AUR spent six weeks proving that a skipped
+publish is indistinguishable from a successful one.
+
+An App rather than the deploy key this would otherwise use, for two reasons. Deploy
+keys are disabled for this organisation by an **enterprise** policy, so the narrowest
+per-repository credential is unavailable. And the App is the better answer anyway:
+the token it mints lasts an hour and reaches only `gentoo-overlay`, so the repository
+stores nothing that is useful to whoever reads it. The token is fed to git through a
+credential store rather than embedded in the remote URL, because `publish-gentoo.sh`
+prints that URL in its diagnostics and a URL-embedded token would reach the run log
+the first time a clone failed.
+
+A manual `scripts/publish-gentoo.sh` still uses SSH as its own account, which needs no
+App.
 
 The `Manifest` pins the release archive by size, BLAKE2B and SHA512, so the publisher
 downloads the archive to compute them rather than inventing them. That is why the job

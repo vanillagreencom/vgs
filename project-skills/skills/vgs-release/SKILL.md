@@ -22,7 +22,8 @@ description: Cut and publish a VGS release across GitHub and every maintained in
 9. Verify README commands against public URLs.
 
 The Gentoo overlay is published by `.github/workflows/publish-gentoo.yml`, which
-needs the `GENTOO_OVERLAY_SSH_KEY` secret and fails rather than skipping without it.
+authenticates as a GitHub App scoped to the overlay (`GENTOO_OVERLAY_APP_ID`,
+`GENTOO_OVERLAY_APP_PRIVATE_KEY`) and fails rather than skipping without it.
 `scripts/publish-gentoo.sh` is the manual path.
 
 The AUR is published by `.github/workflows/publish-aur.yml`, which needs the

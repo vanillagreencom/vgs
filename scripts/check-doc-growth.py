@@ -179,7 +179,7 @@ CEILINGS: dict[str, int] = {
     # contract; now 5,552 B, ~2.7% left. The tighter line is tight enough that
     # the next addition here needs a raise, not a shave.
     "project-skills/skills/vshell-dev/SKILL.md": 5_700,
-    # Adopted at 1,906 B on moving here from gitignored .agents/; now 2,121 B
+    # Adopted at 1,906 B on moving here from gitignored .agents/; now 2,191 B
     # after VGS-204 added the Gentoo overlay's publisher and its credential,
     # which a release cannot be run correctly without knowing about. A numbered
     # checklist: growth means a new release step, worth a deliberate raise.

@@ -50,39 +50,49 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Configure the overlay SSH key
+      # A GitHub App rather than a stored key, and not only because deploy keys
+      # are disabled by enterprise policy here: the token this mints expires in
+      # an hour and is scoped to the overlay alone, so the repository stores no
+      # credential that is useful to anyone who reads it.
+      - name: Mint an overlay token
+        if: ${{ inputs.dry_run != true }}
+        id: overlay-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ vars.GENTOO_OVERLAY_APP_ID }}
+          private-key: ${{ secrets.GENTOO_OVERLAY_APP_PRIVATE_KEY }}
+          owner: vanillagreencom
+          repositories: gentoo-overlay
+
+      - name: Configure git to use the overlay token
         if: ${{ inputs.dry_run != true }}
         env:
-          GENTOO_OVERLAY_SSH_KEY: ${{ secrets.GENTOO_OVERLAY_SSH_KEY }}
+          OVERLAY_TOKEN: ${{ steps.overlay-token.outputs.token }}
         run: |
           set -euo pipefail
-          if [ -z "$GENTOO_OVERLAY_SSH_KEY" ]; then
-            # FAIL rather than skip. A skipped publish is the silent
-            # non-delivery this workflow exists to end: the run would be green
-            # while the overlay kept serving the previous release. This is
-            # exactly how publish-aur.yml surfaced its own missing credential.
-            echo "::error::GENTOO_OVERLAY_SSH_KEY is not set, so nothing can be published. Add the secret, or publish by hand with scripts/publish-gentoo.sh and say so in the release notes."
+          if [ -z "$OVERLAY_TOKEN" ]; then
+            # FAIL, do not skip. A skipped publish is the silent non-delivery
+            # this workflow exists to end: the run would be green while the
+            # overlay kept serving the previous release.
+            echo "::error::No overlay token was minted. Set the GENTOO_OVERLAY_APP_ID variable and the GENTOO_OVERLAY_APP_PRIVATE_KEY secret, or publish by hand with scripts/publish-gentoo.sh and say so in the release notes."
             exit 1
           fi
-          mkdir -p ~/.ssh
-          chmod 700 ~/.ssh
-          printf '%s\n' "$GENTOO_OVERLAY_SSH_KEY" > ~/.ssh/gentoo
-          chmod 600 ~/.ssh/gentoo
-          # github.com's host keys are published by GitHub over HTTPS and are
-          # what the API itself is authenticated with, so fetching them here is
-          # not the blind ssh-keyscan that publish-aur.yml refuses to do.
-          curl -fsSL https://api.github.com/meta \
-            | python3 -c 'import json,sys; [print(f"github.com {k}") for k in json.load(sys.stdin)["ssh_keys"]]' \
-            > ~/.ssh/known_hosts
-          printf 'Host github.com\n  User git\n  IdentityFile ~/.ssh/gentoo\n  IdentitiesOnly yes\n' > ~/.ssh/config
-          chmod 600 ~/.ssh/config ~/.ssh/known_hosts
-          ssh-keygen -lf ~/.ssh/known_hosts
+          # A credential store, NOT a token embedded in the remote URL: the
+          # publisher prints that URL in its diagnostics, and a URL-embedded
+          # token would land in the run log the first time a clone failed.
+          git config --global credential.helper store
+          printf 'https://x-access-token:%s@github.com\n' "$OVERLAY_TOKEN" > ~/.git-credentials
+          chmod 600 ~/.git-credentials
 
       - name: Publish packaging/gentoo to the overlay
         env:
           GENTOO_COMMIT_NAME: ${{ vars.AUR_COMMIT_NAME }}
           GENTOO_COMMIT_EMAIL: ${{ vars.AUR_COMMIT_EMAIL }}
           DRY_RUN: ${{ inputs.dry_run }}
+          # HTTPS, so the minted token authenticates through the credential
+          # store above. The default remote is SSH, which this repo cannot use:
+          # deploy keys are disabled by enterprise policy.
+          VGS_GENTOO_OVERLAY_URL: https://github.com/vanillagreencom/gentoo-overlay.git
         run: |
           set -euo pipefail
           if [ "${DRY_RUN:-false}" = "true" ]; then
