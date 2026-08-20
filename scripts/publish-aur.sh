@@ -4,7 +4,7 @@
 # The AUR keeps a git repository per package and pulls nothing from here, so
 # `packaging/arch/` only reaches users when something pushes it. That something
 # is this script — used by .github/workflows/publish-aur.yml and by the release
-# procedure in .agents/skills/vgs-release/SKILL.md. The AUR side is never edited
+# procedure in project-skills/skills/vgs-release/SKILL.md. The AUR side is never edited
 # by hand: a change made there is drift the next run overwrites, and
 # scripts/check-aur-sync.py --remote reports in the meantime.
 #
