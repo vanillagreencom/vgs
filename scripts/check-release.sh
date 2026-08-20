@@ -5,6 +5,10 @@ root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 version="$(cat "$root/VERSION")"
 
 grep -q "pkgver=$version" "$root/packaging/arch/PKGBUILD"
+# The assets recipe is release-backed too, and was not covered: a release could
+# pass every check here while this recipe still pointed at the previous assets
+# archive, and the post-tag publish would push that stale version.
+grep -q "pkgver=$version" "$root/packaging/arch/vgs-shell-assets/PKGBUILD"
 grep -q "Version:        $version" "$root/packaging/fedora/vgs-shell.spec"
 grep -q "vgs-shell ($version-1)" "$root/packaging/debian/changelog"
 grep -q "version=$version" "$root/packaging/void/template"
@@ -77,7 +81,26 @@ fi
 # Screenshots for the themes the core bundle does not install. Without them the
 # download browser lists themes it cannot show, and nothing else would notice:
 # the installer falls back to scanning a theme tree this bundle no longer has.
-grep -q "/themes/catalog-previews/.*\.png$" "$tmp/archive.list"
+#
+# The EXACT set, not merely "at least one": a generation loop that dropped most
+# previews would still satisfy an existence check, and the themes it dropped
+# would have blank thumbnails in the browser with nothing failing.
+sed -n 's|.*/themes/catalog-previews/\(.*\)\.png$|\1|p' "$tmp/archive.list" | sort > "$tmp/previews.have"
+for theme in "$root"/themes/*/; do
+  name="$(basename "$theme")"
+  [[ -f "$theme/theme.json" ]] || continue
+  [[ "$name" == "coppernight" ]] && continue
+  [[ -f "$theme/preview.png" ]] || continue
+  echo "$name"
+done | sort > "$tmp/previews.want"
+# One diff, its output captured, and ANY non-zero status fails: `|| true` on a
+# second diff would swallow exit 2 — an unreadable file or a broken invocation —
+# and report a mismatch as though the comparison had been made.
+if ! preview_diff="$(diff "$tmp/previews.want" "$tmp/previews.have")"; then
+  echo "check-release: the core bundle's catalog previews do not match the themes that have one:" >&2
+  printf '%s\n' "$preview_diff" >&2
+  exit 1
+fi
 tar -xzf "$archive" -C "$tmp"
 bundle="$tmp/vgs-$version-linux-$(uname -m)"
 test "$("$bundle/bin/vshell" --version)" = "$version"

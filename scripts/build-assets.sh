@@ -38,11 +38,23 @@ cp -a "$root/config/vshell/icons" "$bundle/config/vshell/"
 cp "$root/packaging/install-system.sh" "$bundle/packaging/"
 cp "$root/LICENSE" "$root/VERSION" "$bundle/"
 
-# A bundle with no themes in it would tar and upload cleanly and leave every
-# assets package empty, so refuse rather than ship one.
-count="$(find "$bundle/themes" -mindepth 1 -maxdepth 1 -type d | wc -l)"
-if [[ "$count" -lt 2 ]]; then
-  echo "build-assets: only $count theme(s) staged; the extras bundle would be empty" >&2
+# An incomplete bundle tars and uploads exactly like a complete one, so the
+# staged count must equal the eligible source count rather than merely being
+# non-empty: a loop that silently dropped 70 of 78 themes would otherwise ship,
+# and the only symptom would be themes missing from a user's install.
+staged="$(find "$bundle/themes" -mindepth 1 -maxdepth 1 -type d | wc -l)"
+eligible=0
+for theme in "$root"/themes/*/; do
+  [[ -f "$theme/theme.json" ]] || continue
+  [[ "$(basename "$theme")" == "coppernight" ]] && continue
+  eligible=$((eligible + 1))
+done
+if [[ "$staged" -ne "$eligible" ]]; then
+  echo "build-assets: staged $staged theme(s) but $eligible are eligible in themes/" >&2
+  exit 1
+fi
+if [[ "$eligible" -eq 0 ]]; then
+  echo "build-assets: no eligible themes found; the extras bundle would be empty" >&2
   exit 1
 fi
 

@@ -210,7 +210,8 @@ manifest describes content no declared ref can serve.
 
 | System | Channel | Status |
 |---|---|---|
-| Arch | [AUR `vgs-shell`](https://aur.archlinux.org/packages/vgs-shell), [`vgs-shell-assets`](https://aur.archlinux.org/packages/vgs-shell-assets), [`vgs-shell-git`](https://aur.archlinux.org/packages/vgs-shell-git) | Published |
+| Arch | [AUR `vgs-shell`](https://aur.archlinux.org/packages/vgs-shell), [`vgs-shell-git`](https://aur.archlinux.org/packages/vgs-shell-git) | Published |
+| Arch (assets) | AUR `vgs-shell-assets` | Pending: publishes with the first release that carries an assets bundle |
 | Fedora 43/44 | [COPR `vanillagreen/vgs-shell`](https://copr.fedorainfracloud.org/coprs/vanillagreen/vgs-shell/) | Published |
 | openSUSE Tumbleweed/Slowroll | [OBS `home:vanillagreen`](https://build.opensuse.org/package/show/home:vanillagreen/vgs-shell) | Published |
 | Debian 13 | [OBS `home:vanillagreen`](https://build.opensuse.org/package/show/home:vanillagreen/vgs-shell) | Published |
@@ -232,6 +233,10 @@ theme, wallpaper, and vendored Yaru icon theme:
 ```bash
 yay -S vgs-shell-assets
 ```
+
+`vgs-shell-assets` is published by the first release that carries an assets bundle;
+until then `publish-aur.sh` defers it on a 404 rather than pushing a recipe whose
+source does not exist. Check the AUR before pointing a user at that command.
 
 For development builds, use `vgs-shell-assets-git` with `vgs-shell-git`.
 
