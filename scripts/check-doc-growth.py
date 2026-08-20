@@ -203,7 +203,7 @@ CEILINGS: dict[str, int] = {
     # the ruleset bypass actor. At the resulting 3,448 B, 3,500 left 52 B and
     # a comment still promising ~10%: 3,800 restores it.
     ".github/instructions/ci.instructions.md": 3_800,
-    ".github/instructions/harness-config.instructions.md": 900,  # adopted at 760 B
+    ".github/instructions/harness-config.instructions.md": 900,  # adopted at 769 B
     ".github/instructions/helper-cli.instructions.md": 600,  # adopted at 517 B
     ".github/instructions/quickshell-qml.instructions.md": 1_700,  # adopted at 1,459 B
     ".github/instructions/themes.instructions.md": 700,  # adopted at 577 B
