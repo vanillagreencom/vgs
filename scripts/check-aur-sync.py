@@ -331,6 +331,37 @@ def remote_sources(directory: Path) -> list[str]:
     return urls
 
 
+def remote_source_checksums(directory: Path) -> list[tuple[str, str]]:
+    """Each http(s) source paired with the sha256 the recipe declares for it.
+
+    A recipe can name a release that exists and still be unusable: between a
+    version bump and the checksum pin, `source_x86_64` points at the new
+    tarball while `sha256sums_x86_64` still holds the previous release's digest,
+    and `makepkg` fails validity checking for every user. Existence and
+    correctness are different questions, so the caller gets to ask both.
+
+    makepkg pairs the two arrays by INDEX within an architecture suffix, which
+    is why this cannot just zip the flattened lists: a recipe with two x86_64
+    sources and one aarch64 source would silently pair the wrong digests.
+    """
+    fields, _ = parse_pkgbuild(directory / "PKGBUILD")
+    paired = []
+    for key, values in fields.items():
+        if key != "source" and not key.startswith("source_"):
+            continue
+        sums = fields.get("sha256sums" + key[len("source"):], [])
+        for index, value in enumerate(values):
+            url = value.split("::", 1)[-1]
+            if not url.startswith(("http://", "https://")):
+                continue
+            if index >= len(sums):
+                raise CheckError(
+                    f"{directory.name}/PKGBUILD declares {key}[{index}] with no matching sha256sum"
+                )
+            paired.append((url, sums[index]))
+    return paired
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -344,6 +375,11 @@ def main() -> int:
         help="print the http(s) source URLs of the selected packages and exit",
     )
     parser.add_argument(
+        "--print-source-checksums",
+        action="store_true",
+        help="print each http(s) source URL and the sha256 the recipe declares for it",
+    )
+    parser.add_argument(
         "packages",
         nargs="*",
         choices=[*PACKAGES, []],
@@ -351,6 +387,16 @@ def main() -> int:
     )
     args = parser.parse_args()
     selected = {name: PACKAGES[name] for name in (args.packages or PACKAGES)}
+
+    if args.print_source_checksums:
+        try:
+            for _, (relative, _) in selected.items():
+                for url, digest in remote_source_checksums(ROOT / relative):
+                    print(f"{url}\t{digest}")
+        except CheckError as error:
+            print(f"check-aur-sync: {error}", file=sys.stderr)
+            return 2
+        return 0
 
     if args.print_sources:
         try:
