@@ -4,6 +4,10 @@ schema = 5
 repo = "vanillagreencom/kendex"
 enabled = true
 
+[sources.project-skills]
+path = "project-skills"
+enabled = true
+
 [install]
 harnesses = [
     "claude",
@@ -123,6 +127,14 @@ enabled = true
 
 [skills.size-ratchet]
 source = "kendex"
+enabled = true
+
+[skills.vgs-release]
+source = "project-skills"
+enabled = true
+
+[skills.vshell-dev]
+source = "project-skills"
 enabled = true
 
 [skills.worktree]
