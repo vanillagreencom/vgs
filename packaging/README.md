@@ -301,10 +301,19 @@ install succeeds. With the danklinux repository present, the real `quickshell` p
 wins on a name match, which is what VGS is built and tested against. This mirrors
 Ubuntu, where `ppa:avengemedia/danklinux` supplies Quickshell for the same reason.
 
-The `zypper ar` URLs above are Tumbleweed-specific. The same OBS project also
-publishes a Slowroll build; take its repository URL from the
-[OBS package page](https://build.opensuse.org/package/show/home:vanillagreen/vgs-shell)
-rather than editing the Tumbleweed one by hand.
+openSUSE Slowroll — the same two repositories, at their Slowroll URLs:
+
+```bash
+sudo zypper ar -f https://download.opensuse.org/repositories/home:/AvengeMedia:/danklinux/openSUSE_Slowroll/ danklinux
+sudo zypper ar -f https://download.opensuse.org/repositories/home:/vanillagreen/openSUSE_Slowroll/ vanillagreen-vgs
+sudo zypper --gpg-auto-import-keys refresh
+sudo zypper install vgs-shell
+```
+
+Both are spelled out rather than left as "take the URL from the OBS page", because
+the failure mode this section exists to prevent is silent: a Slowroll user who
+adds only the VGS repository gets a working-looking install backed by the wrong
+Quickshell, exactly as a Tumbleweed user would.
 
 Debian 13:
 
