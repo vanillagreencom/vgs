@@ -1,7 +1,7 @@
 %global debug_package %{nil}
 
 Name:           vgs-shell
-Version:        0.2.0
+Version:        0.3.0
 Release:        1%{?dist}
 Summary:        VanillaGreen desktop shell for Hyprland and Niri
 AutoReqProv:     no
@@ -182,6 +182,11 @@ EOF
 %exclude /usr/lib/vshell/themes/THEMES-ATTRIBUTION.md
 
 %changelog
+* Thu Aug 20 2026 Brad <brad@vanillagreen> - 0.3.0-1
+- Split the extras into their own release bundle; the shell download drops from
+  ~1.1 GiB to ~71 MiB, with themes fetched on demand from the catalog
+- vgs-shell-assets carries every other bundled theme, wallpaper and icon theme
+
 * Wed Aug 19 2026 Brad <brad@vanillagreen> - 0.2.0-1
 - Widget, launcher, greeter and theming fixes across the shell
 - Declare the full runtime and optional dependency set
