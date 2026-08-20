@@ -4,14 +4,19 @@ applyTo: ".github/workflows/**"
 
 # CI
 
-Four workflows live here. `ci.yml` runs the `scripts/validate` manifest as
+Five workflows live here. `ci.yml` runs the `scripts/validate` manifest as
 individual named steps on every pull request targeting `main`, every
 merge-queue entry, and every `main` push; its one suite job is deliberate — see
 the workflow's own header. It never invokes the runner itself; the runner's own
 behavior is covered by `scripts/test-validate.sh`, which CI does run.
 `review-gate-writer.yml` is the
 only writer of the `Review gate` commit status. `publish-aur.yml` pushes
-`packaging/arch/` to the AUR and re-checks the published result.
+`packaging/arch/` to the AUR and re-checks the published result;
+`publish-gentoo.yml` does the same for `packaging/gentoo/` and the VanillaGreen
+overlay. Both publish on packaging changes, again after a tag, and run a weekly
+drift check, because a stale package builds and installs perfectly well — the
+failure is silent by construction, so something has to look. Both FAIL rather
+than skip when their credential is absent.
 `release.yml` builds releases on version tags. CodeQL runs from GitHub's
 default org-level setup rather than a workflow here, and its per-language
 lanes (rust, ruby, c-cpp) report "skipping" because the repo has little or no
