@@ -28,13 +28,14 @@ for argument in "$@"; do
   esac
 done
 if [[ ${#packages[@]} -eq 0 ]]; then
-  packages=(vgs-shell vgs-shell-git)
+  packages=(vgs-shell vgs-shell-assets vgs-shell-git)
 fi
 
 directory_for() {
   case "$1" in
     vgs-shell) echo "packaging/arch" ;;
     vgs-shell-git) echo "packaging/arch/vgs-shell-git" ;;
+    vgs-shell-assets) echo "packaging/arch/vgs-shell-assets" ;;
     *) echo "publish-aur: no in-repo recipe for '$1'" >&2; return 1 ;;
   esac
 }
@@ -43,6 +44,7 @@ files_for() {
   case "$1" in
     vgs-shell) echo "PKGBUILD .SRCINFO vgs-shell.install" ;;
     vgs-shell-git) echo "PKGBUILD .SRCINFO vgs-shell-git.install" ;;
+    vgs-shell-assets) echo "PKGBUILD .SRCINFO" ;;
   esac
 }
 

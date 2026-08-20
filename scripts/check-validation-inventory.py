@@ -53,6 +53,7 @@ SCRIPTS = REPO_ROOT / "scripts"
 NOT_A_SUITE_CHECK = {
     "validate": "the suite runner itself: it invokes the checks below rather than being one",
     "build-release.sh": "release tooling, driven by .github/workflows/release.yml",
+    "build-assets.sh": "release tooling: builds the extras bundle, driven by .github/workflows/release.yml",
     "check-release.sh": "release preflight, driven by the release path and packaging/README.md",
     "check-vshell-niri.py": "the Niri half of the helper suite; invoked by scripts/check-vshell-helper.py",
     "publish-aur.sh": "release tooling: pushes packaging/arch to the AUR, driven by the release path",

@@ -5,6 +5,10 @@ root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 version="$(cat "$root/VERSION")"
 
 grep -q "pkgver=$version" "$root/packaging/arch/PKGBUILD"
+# The assets recipe is release-backed too, and was not covered: a release could
+# pass every check here while this recipe still pointed at the previous assets
+# archive, and the post-tag publish would push that stale version.
+grep -q "pkgver=$version" "$root/packaging/arch/vgs-shell-assets/PKGBUILD"
 grep -q "Version:        $version" "$root/packaging/fedora/vgs-shell.spec"
 grep -q "vgs-shell ($version-1)" "$root/packaging/debian/changelog"
 grep -q "version=$version" "$root/packaging/void/template"
@@ -50,17 +54,53 @@ test -f "$root/packaging/arch/vgs-shell-git/vgs-shell-git.install"
 # The AUR serves .SRCINFO to paru and yay; a release that publishes one which
 # disagrees with its PKGBUILD advertises dependencies the package does not have.
 "$root/scripts/check-aur-sync.py"
-bash -n "$root/install.sh" "$root/uninstall.sh" "$root/scripts/build-release.sh" "$root/packaging/install-system.sh" "$root/scripts/check-package-assets.sh"
+bash -n "$root/install.sh" "$root/uninstall.sh" "$root/scripts/build-release.sh" "$root/scripts/build-assets.sh" "$root/packaging/install-system.sh" "$root/scripts/check-package-assets.sh"
 bash "$root/scripts/check-package-assets.sh"
 git diff --check
 
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 "$root/scripts/build-release.sh" "$version" "$(uname -m)" "$tmp" >/dev/null
+# The extras bundle is the other half of the release: an assets package built
+# from a bundle that never got made would install nothing, and the failure would
+# only show up in a user's theme browser.
+"$root/scripts/build-assets.sh" "$version" "$tmp" >/dev/null
+tar -tzf "$tmp/vgs-$version-assets.tar.gz" > "$tmp/assets.list"
+grep -q "/packaging/install-system.sh$" "$tmp/assets.list"
+grep -q "/config/vshell/icons/" "$tmp/assets.list"
+# The core bundle must NOT carry what the extras bundle exists to hold, or the
+# split silently stops saving anything.
 archive="$tmp/vgs-$version-linux-$(uname -m).tar.gz"
 tar -tzf "$archive" > "$tmp/archive.list"
 grep -q "/bin/vshell-backend$" "$tmp/archive.list"
 grep -q "/quickshell/vshell/shell.qml$" "$tmp/archive.list"
+if grep -q "/config/vshell/icons/" "$tmp/archive.list"; then
+  echo "check-release: the core bundle carries config/vshell/icons, which belongs to the extras bundle" >&2
+  exit 1
+fi
+# Screenshots for the themes the core bundle does not install. Without them the
+# download browser lists themes it cannot show, and nothing else would notice:
+# the installer falls back to scanning a theme tree this bundle no longer has.
+#
+# The EXACT set, not merely "at least one": a generation loop that dropped most
+# previews would still satisfy an existence check, and the themes it dropped
+# would have blank thumbnails in the browser with nothing failing.
+sed -n 's|.*/themes/catalog-previews/\(.*\)\.png$|\1|p' "$tmp/archive.list" | sort > "$tmp/previews.have"
+for theme in "$root"/themes/*/; do
+  name="$(basename "$theme")"
+  [[ -f "$theme/theme.json" ]] || continue
+  [[ "$name" == "coppernight" ]] && continue
+  [[ -f "$theme/preview.png" ]] || continue
+  echo "$name"
+done | sort > "$tmp/previews.want"
+# One diff, its output captured, and ANY non-zero status fails: `|| true` on a
+# second diff would swallow exit 2 — an unreadable file or a broken invocation —
+# and report a mismatch as though the comparison had been made.
+if ! preview_diff="$(diff "$tmp/previews.want" "$tmp/previews.have")"; then
+  echo "check-release: the core bundle's catalog previews do not match the themes that have one:" >&2
+  printf '%s\n' "$preview_diff" >&2
+  exit 1
+fi
 tar -xzf "$archive" -C "$tmp"
 bundle="$tmp/vgs-$version-linux-$(uname -m)"
 test "$("$bundle/bin/vshell" --version)" = "$version"

@@ -19,20 +19,26 @@ homepage="https://github.com/vanillagreencom/vgs"
 case "$XBPS_TARGET_MACHINE" in
 	x86_64*)
 		_arch=x86_64
-		checksum=317aaa5aa2421504cc7e510b2b033c3d84dda5731d23e7c32ce191b5593c8b7e
+		checksum="317aaa5aa2421504cc7e510b2b033c3d84dda5731d23e7c32ce191b5593c8b7e
+		 9def37efaf06914bc36c8d2bac12725d1cc50e1db127999a21b102f93b441b4c"
 		;;
 	aarch64*)
 		_arch=aarch64
-		checksum=eeeb7ee23c73794f993dcdcb36e97bd21c153eb309e07f3f67407f8deae108ed
+		checksum="eeeb7ee23c73794f993dcdcb36e97bd21c153eb309e07f3f67407f8deae108ed
+		 9def37efaf06914bc36c8d2bac12725d1cc50e1db127999a21b102f93b441b4c"
 		;;
 	*) broken="unsupported architecture: $XBPS_TARGET_MACHINE" ;;
 esac
-distfiles="https://github.com/vanillagreencom/vgs/releases/download/v${version}/vgs-${version}-linux-${_arch}.tar.gz"
+# Two distfiles: the per-architecture shell, and the architecture-independent
+# extras the assets subpackage installs. xbps unpacks both into $wrksrc's parent,
+# so do_install reaches the extras tree by name.
+distfiles="https://github.com/vanillagreencom/vgs/releases/download/v${version}/vgs-${version}-linux-${_arch}.tar.gz
+ https://github.com/vanillagreencom/vgs/releases/download/v${version}/vgs-${version}-assets.tar.gz"
 wrksrc="vgs-${version}-linux-${_arch}"
 
 do_install() {
 	DESTDIR="$DESTDIR" PREFIX=/usr VGS_THEME_BUNDLE=core VGS_BACKEND_BINARY="$wrksrc/bin/vshell-backend" packaging/install-system.sh
-	DESTDIR="$DESTDIR" PREFIX=/usr VGS_THEME_BUNDLE=extras packaging/install-system.sh
+	DESTDIR="$DESTDIR" PREFIX=/usr VGS_THEME_BUNDLE=extras ../vgs-${version}-assets/packaging/install-system.sh
 }
 
 vgs-shell-assets_package() {

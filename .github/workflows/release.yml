@@ -32,8 +32,26 @@ jobs:
           name: vgs-${{ matrix.arch }}
           path: dist/*.tar.gz
 
+  # The extras are architecture-independent and ~1.0 GiB, so they are built once
+  # rather than once per architecture — which is the whole point of splitting
+  # them out of the per-architecture bundles.
+  assets:
+    permissions:
+      contents: read
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          persist-credentials: false
+      - run: test "v$(cat VERSION)" = "$GITHUB_REF_NAME"
+      - run: scripts/build-assets.sh "$(cat VERSION)" dist
+      - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4
+        with:
+          name: vgs-assets
+          path: dist/*.tar.gz
+
   publish:
-    needs: bundle
+    needs: [bundle, assets]
     runs-on: ubuntu-latest
     permissions:
       contents: write
