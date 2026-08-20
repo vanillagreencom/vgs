@@ -1,6 +1,6 @@
 pkgname=('vgs-shell' 'vgs-shell-assets')
-pkgver=0.1.0
-pkgrel=4
+pkgver=0.2.0
+pkgrel=1
 pkgdesc='VanillaGreen desktop shell for Hyprland and Niri'
 arch=('x86_64' 'aarch64')
 url='https://github.com/vanillagreencom/vgs'
