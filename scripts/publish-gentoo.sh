@@ -15,7 +15,6 @@
 set -euo pipefail
 
 root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
-overlay_url="${VGS_GENTOO_OVERLAY_URL:-git@github.com:vanillagreencom/gentoo-overlay.git}"
 category=gui-apps
 package=vgs-shell
 
@@ -33,6 +32,18 @@ for argument in "$@"; do
   esac
 done
 
+# A read-only run must not need a key. --dry-run and --check clone over public
+# HTTPS unless the caller names a remote, so they work on a fresh runner — the
+# workflow deliberately skips SSH setup for them, and an SSH clone there would
+# fail host-key verification before it could show anything. Publishing keeps SSH.
+if [[ -n "${VGS_GENTOO_OVERLAY_URL:-}" ]]; then
+  overlay_url="$VGS_GENTOO_OVERLAY_URL"
+elif [[ "$dry_run" -eq 1 ]]; then
+  overlay_url="https://github.com/vanillagreencom/gentoo-overlay.git"
+else
+  overlay_url="git@github.com:vanillagreencom/gentoo-overlay.git"
+fi
+
 version="$(cat "$root/VERSION")"
 ebuild="$root/packaging/gentoo/$package-$version.ebuild"
 if [[ ! -f "$ebuild" ]]; then
@@ -46,7 +57,13 @@ url="https://github.com/vanillagreencom/vgs/releases/download/v$version/$archive
 # Same three outcomes as publish-aur.sh, and for the same reason: an ebuild
 # whose SRC_URI does not exist yet must DEFER without failing the run, while a
 # check that could not be made must FAIL rather than pass as "not released".
-#   0 published   1 deferred, release absent   2 could not tell
+#   0 published   3 deferred, release absent   1/2 failed
+#
+# The defer code is DISTINCT (3) rather than 1. Sharing 1 with clone, commit and
+# push failures is what lets a publish that delivered nothing report success:
+# the caller cannot tell "the release is not out yet" from "the push failed",
+# and it will forgive both. That is the silent non-delivery this script exists
+# to prevent, so its own exit codes must not reintroduce it.
 rc=0
 code="$(curl -sSL --head --max-time 30 --retry 2 -o /dev/null -w '%{http_code}' "$url")" || rc=$?
 if [[ "$rc" -ne 0 ]]; then
@@ -58,7 +75,7 @@ case "$code" in
   2??) ;;
   404|410)
     echo "publish-gentoo: v$version is not released yet ($url returned $code); nothing published." >&2
-    exit 1
+    exit 3
     ;;
   *)
     echo "publish-gentoo: $url returned $code, which is neither a working source nor a missing one." >&2

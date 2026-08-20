@@ -88,12 +88,14 @@ jobs:
           if [ "${DRY_RUN:-false}" = "true" ]; then
             scripts/publish-gentoo.sh --dry-run
           else
-            # Exit 1 is "the release does not exist yet", which is expected
-            # between a version bump and its tag; release.yml calls this
-            # workflow again once the archive is up. Exit 2 is a check that
-            # could not be made, and must stay red.
+            # Exit 3, and ONLY 3, is "the release does not exist yet" — expected
+            # between a version bump and its tag, and release.yml calls this
+            # workflow again once the archive is up. Every other non-zero status
+            # is a publish that delivered nothing and must stay red: a clone,
+            # commit or push failure exits 1, and forgiving that here would be
+            # the silent non-delivery this workflow exists to end.
             scripts/publish-gentoo.sh || case "$?" in
-              1) echo "publish-gentoo: deferred until the release exists" ;;
+              3) echo "publish-gentoo: deferred until the release exists" ;;
               *) exit 1 ;;
             esac
           fi

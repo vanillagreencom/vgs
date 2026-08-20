@@ -202,8 +202,12 @@ CEILINGS: dict[str, int] = {
     # AGENTS.md § "Review gate" citation here and added the rule it was the only
     # home for — a gate-repair PR cannot open its own gate, so it merges via
     # the ruleset bypass actor. At the resulting 3,448 B, 3,500 left 52 B and
-    # a comment still promising ~10%: 3,800 restores it.
-    ".github/instructions/ci.instructions.md": 3_800,
+    # a comment still promising ~10%: 3,800 restored it. VGS-204 then added the
+    # fifth workflow — the Gentoo publisher and its drift check — and the shared
+    # rule both publishers follow: fail rather than skip when the credential is
+    # missing. A reader deciding whether external publishing is covered must not
+    # be told there are four. Now 3,809 B; 4,200 restores the ~10%.
+    ".github/instructions/ci.instructions.md": 4_200,
     ".github/instructions/harness-config.instructions.md": 900,  # adopted at 760 B
     ".github/instructions/helper-cli.instructions.md": 600,  # adopted at 517 B
     ".github/instructions/quickshell-qml.instructions.md": 1_700,  # adopted at 1,459 B
