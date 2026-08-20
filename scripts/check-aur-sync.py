@@ -46,6 +46,11 @@ PACKAGES = {
         "packaging/arch/vgs-shell-git",
         ("PKGBUILD", ".SRCINFO", "vgs-shell-git.install"),
     ),
+    # Its own pkgbase rather than a split package of vgs-shell: makepkg fetches a
+    # pkgbase's sources before it knows which split package was requested, so the
+    # base install would otherwise download the ~1.0 GiB of extras it does not
+    # install. No .install scriptlet — it activates nothing.
+    "vgs-shell-assets": ("packaging/arch/vgs-shell-assets", ("PKGBUILD", ".SRCINFO")),
 }
 
 # pkgbase fields compared between PKGBUILD and .SRCINFO. Anything makepkg would
@@ -137,6 +142,16 @@ def parse_pkgbuild(path: Path) -> tuple[dict[str, list[str]], dict[str, dict[str
                 continue
             overrides[key] = [expand(value, scoped) for value in raw]
         splits[name] = overrides
+
+    # A NON-split PKGBUILD has a plain `package()` and one `pkgname`, so the loop
+    # above finds nothing while .SRCINFO still carries its single pkgname stanza.
+    # Comparing those directly would report drift on every such recipe. makepkg
+    # treats that stanza as the pkgbase's own fields, and so does this: one
+    # stanza, no overrides.
+    if not splits and re.search(r"^package\(\)\s*\{", text, re.MULTILINE):
+        only = scalars.get("pkgname")
+        if only:
+            splits[only] = {}
 
     return fields, splits
 

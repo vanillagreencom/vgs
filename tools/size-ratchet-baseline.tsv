@@ -202,13 +202,13 @@ quickshell/vshell/VGSIPC.qml	2128
 quickshell/vshell/Widgets/KeybindItem.qml	1892
 quickshell/vshell/Widgets/VgsDropdown.qml	565
 quickshell/vshell/Widgets/VgsPopoutStandalone.qml	1061
-scripts/check-aur-sync.py	456
+scripts/check-aur-sync.py	471
 scripts/check-doc-growth.py	866
 scripts/check-notification-takeover.js	454
 scripts/check-paste-injection.py	897
 scripts/check-section-pointers.py	556
 scripts/check-settings-migration.js	952
-scripts/check-validation-inventory.py	411
+scripts/check-validation-inventory.py	412
 scripts/check-vshell-helper.py	5864
 scripts/check-vshell-niri.py	678
 scripts/gen-package-metadata.py	993

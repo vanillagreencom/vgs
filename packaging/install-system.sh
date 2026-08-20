@@ -23,6 +23,15 @@ esac
 # catalog` can show them before they are downloaded. `all` needs none of this:
 # every theme ships its own preview.png.
 install_catalog_previews() {
+  # The release bundle ships these already generated, because it deliberately
+  # does not carry the themes they are screenshots OF — scripts/build-release.sh
+  # renders them from the full tree at build time. A source checkout still has
+  # that tree, so it derives them below. Copying when they exist is what lets one
+  # installer serve both.
+  if [[ -d "$root/themes/catalog-previews" ]]; then
+    cp -a "$root/themes/catalog-previews" "$lib/themes/"
+    return
+  fi
   install -d "$lib/themes/catalog-previews"
   shopt -s nullglob
   local theme name
