@@ -87,3 +87,12 @@ jobs:
       contents: read
     uses: ./.github/workflows/publish-aur.yml
     secrets: inherit
+
+  # Same reason as the AUR job: the ebuild's SRC_URI and Manifest describe the
+  # release archive, so the overlay can only be published once it exists.
+  gentoo:
+    needs: publish
+    permissions:
+      contents: read
+    uses: ./.github/workflows/publish-gentoo.yml
+    secrets: inherit

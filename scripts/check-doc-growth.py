@@ -179,10 +179,11 @@ CEILINGS: dict[str, int] = {
     # contract; now 5,552 B, ~2.7% left. The tighter line is tight enough that
     # the next addition here needs a raise, not a shave.
     "project-skills/vshell-dev/SKILL.md": 5_700,
-    # Adopted at 1,906 B on moving here from gitignored .agents/, plus the
-    # ~10% adoption headroom. A numbered checklist: growth means a new release
-    # step, which is worth a deliberate raise.
-    "project-skills/vgs-release/SKILL.md": 2_100,
+    # Adopted at 1,906 B on moving here from gitignored .agents/; now 2,121 B
+    # after VGS-204 added the Gentoo overlay's publisher and its credential,
+    # which a release cannot be run correctly without knowing about. A numbered
+    # checklist: growth means a new release step, worth a deliberate raise.
+    "project-skills/vgs-release/SKILL.md": 2_400,
     # Adopted at 403 B. VGS-124: the diet's own rewrap un-exempted a sanctioned
     # direct-launch mention in check-validation-safety.sh (line-scoped spans),
     # and that check does not run in the `docs` area an AGENTS.md edit reaches
@@ -201,8 +202,12 @@ CEILINGS: dict[str, int] = {
     # AGENTS.md § "Review gate" citation here and added the rule it was the only
     # home for — a gate-repair PR cannot open its own gate, so it merges via
     # the ruleset bypass actor. At the resulting 3,448 B, 3,500 left 52 B and
-    # a comment still promising ~10%: 3,800 restores it.
-    ".github/instructions/ci.instructions.md": 3_800,
+    # a comment still promising ~10%: 3,800 restored it. VGS-204 then added the
+    # fifth workflow — the Gentoo publisher and its drift check — and the shared
+    # rule both publishers follow: fail rather than skip when the credential is
+    # missing. A reader deciding whether external publishing is covered must not
+    # be told there are four. Now 3,809 B; 4,200 restores the ~10%.
+    ".github/instructions/ci.instructions.md": 4_200,
     ".github/instructions/harness-config.instructions.md": 900,  # adopted at 769 B
     ".github/instructions/helper-cli.instructions.md": 600,  # adopted at 517 B
     ".github/instructions/quickshell-qml.instructions.md": 1_700,  # adopted at 1,459 B
