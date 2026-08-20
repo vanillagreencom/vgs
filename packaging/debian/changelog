@@ -1,3 +1,11 @@
+vgs-shell (0.3.0-1) unstable; urgency=medium
+
+  * Split the extras into their own release bundle: the shell download drops
+    from ~1.1 GiB to ~71 MiB, with themes fetched on demand from the catalog.
+  * vgs-shell-assets carries every other bundled theme, wallpaper and icon theme.
+
+ -- Brad <brad@vanillagreen>  Thu, 20 Aug 2026 00:00:00 +0000
+
 vgs-shell (0.2.0-1) unstable; urgency=medium
 
   * Widget, launcher, greeter and theming fixes across the shell.
