@@ -7,6 +7,6 @@ pkgbase = vgs-shell-assets
 	license = MIT
 	depends = vgs-shell
 	source = https://github.com/vanillagreencom/vgs/releases/download/v0.3.0/vgs-0.3.0-assets.tar.gz
-	sha256sums = 9def37efaf06914bc36c8d2bac12725d1cc50e1db127999a21b102f93b441b4c
+	sha256sums = cab6238a8217bbe08407403efba57cf9681f50202adcf7366111a4071f2ce448
 
 pkgname = vgs-shell-assets
