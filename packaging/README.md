@@ -240,7 +240,7 @@ manifest describes content no declared ref can serve.
 | Arch | [AUR `vgs-shell`](https://aur.archlinux.org/packages/vgs-shell), [`vgs-shell-git`](https://aur.archlinux.org/packages/vgs-shell-git) | Published |
 | Arch (assets) | AUR `vgs-shell-assets` | Pending: publishes with the first release that carries an assets bundle |
 | Fedora 43/44 | [COPR `vanillagreen/vgs-shell`](https://copr.fedorainfracloud.org/coprs/vanillagreen/vgs-shell/) | Published |
-| openSUSE Tumbleweed/Slowroll | [OBS `home:vanillagreen`](https://build.opensuse.org/package/show/home:vanillagreen/vgs-shell) | Published |
+| openSUSE Tumbleweed/Slowroll | [OBS `home:vanillagreen`](https://build.opensuse.org/package/show/home:vanillagreen/vgs-shell) | Published; Quickshell from `home:AvengeMedia:danklinux` |
 | Debian 13 | [OBS `home:vanillagreen`](https://build.opensuse.org/package/show/home:vanillagreen/vgs-shell) | Published |
 | Ubuntu 26.04 | [Launchpad PPA `vanillagreen/vgs-shell`](https://launchpad.net/~vanillagreen/+archive/ubuntu/vgs-shell) | Published; Quickshell from `ppa:avengemedia/danklinux` |
 | Gentoo | [VanillaGreen overlay](https://github.com/vanillagreencom/gentoo-overlay) | Published; Quickshell from GURU; [GURU PR #530](https://github.com/gentoo/guru/pull/530) pending |
@@ -283,15 +283,25 @@ sudo dnf install vgs-shell
 Debian and Fedora split the same way as Arch: `vgs-shell-assets` carries the
 themes, wallpapers, and icon themes that `vgs-shell` leaves out.
 
-openSUSE Tumbleweed:
+openSUSE Tumbleweed — both repositories are required, since Quickshell comes from
+`home:AvengeMedia:danklinux`:
 
 ```bash
+sudo zypper ar -f https://download.opensuse.org/repositories/home:/AvengeMedia:/danklinux/openSUSE_Tumbleweed/ danklinux
 sudo zypper ar -f https://download.opensuse.org/repositories/home:/vanillagreen/openSUSE_Tumbleweed/ vanillagreen-vgs
 sudo zypper --gpg-auto-import-keys refresh
 sudo zypper install vgs-shell
 ```
 
-The `zypper ar` URL above is Tumbleweed-specific. The same OBS project also
+Adding the first repository is not optional, and leaving it out fails QUIETLY rather
+than loudly. `openSUSE:Factory` ships no `quickshell` package, but it does ship
+`noctalia-qs`, which owns `/usr/bin/quickshell` and carries `Provides: quickshell` —
+so `Requires: quickshell` resolves against another shell's rebundled copy and the
+install succeeds. With the danklinux repository present, the real `quickshell` package
+wins on a name match, which is what VGS is built and tested against. This mirrors
+Ubuntu, where `ppa:avengemedia/danklinux` supplies Quickshell for the same reason.
+
+The `zypper ar` URLs above are Tumbleweed-specific. The same OBS project also
 publishes a Slowroll build; take its repository URL from the
 [OBS package page](https://build.opensuse.org/package/show/home:vanillagreen/vgs-shell)
 rather than editing the Tumbleweed one by hand.
