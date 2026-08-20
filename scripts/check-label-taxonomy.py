@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Diff live Linear label inventory against vstack.toml's taxonomy.
+"""Diff live Linear label inventory against kendex.toml's taxonomy.
 
 The project-management skill runs a label preflight before every issue create or
 label update, and that preflight STOPS on an unknown label. The taxonomy in
-`vstack.toml` is the allow-list, so a label that is live but undocumented makes
+`kendex.toml` is the allow-list, so a label that is live but undocumented makes
 a strictly-followed workflow either halt or silently omit a valid label. A
 2026-08-04 sweep found ten such labels, including an entire parent group
 (VGS-49). It drifted silently because nothing compared the two.
@@ -26,10 +26,10 @@ import sys
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-VSTACK = REPO_ROOT / "vstack.toml"
+MANIFEST = REPO_ROOT / "kendex.toml"
 LINEAR_CLI = REPO_ROOT / ".agents" / "skills" / "linear" / "scripts" / "linear.sh"
 
-# The taxonomy lives inside a prompt string in vstack.toml and names its labels
+# The taxonomy lives inside a prompt string in kendex.toml and names its labels
 # in `backtick` spans inside markdown tables. Parsing those spans is what keeps
 # this check reading the same text a human reads, rather than a parallel list
 # that could itself drift.
@@ -38,15 +38,15 @@ NEVER_USE_HEADING = "### Never-use labels"
 LABEL_SPAN = re.compile(r"`([A-Za-z][A-Za-z0-9:._-]*)`")
 
 # Prose inside the taxonomy also uses backticks for non-label text.
-NOT_A_LABEL = re.compile(r"^(issues|vstack|linear|docs/|quickshell/|\.github/|\.agents/)")
+NOT_A_LABEL = re.compile(r"^(issues|kendex|vstack|linear|docs/|quickshell/|\.github/|\.agents/)")
 
 
 def taxonomy_sections() -> tuple[set[str], set[str]]:
-    """(usable labels, never-use labels) as named in vstack.toml."""
-    text = VSTACK.read_text(encoding="utf-8")
+    """(usable labels, never-use labels) as named in kendex.toml."""
+    text = MANIFEST.read_text(encoding="utf-8")
     start = text.find(TAXONOMY_START)
     if start == -1:
-        raise SystemExit(f"check-label-taxonomy: vstack.toml has no '{TAXONOMY_START}' section")
+        raise SystemExit(f"check-label-taxonomy: kendex.toml has no '{TAXONOMY_START}' section")
     body = text[start:]
     end = body.find('\n"""')
     if end != -1:
@@ -54,7 +54,7 @@ def taxonomy_sections() -> tuple[set[str], set[str]]:
 
     never_at = body.find(NEVER_USE_HEADING)
     if never_at == -1:
-        raise SystemExit(f"check-label-taxonomy: vstack.toml has no '{NEVER_USE_HEADING}' section")
+        raise SystemExit(f"check-label-taxonomy: kendex.toml has no '{NEVER_USE_HEADING}' section")
 
     def labels(chunk: str) -> set[str]:
         return {
@@ -109,7 +109,7 @@ def main() -> int:
             return 0
         print(f"check-label-taxonomy: FAIL: {message}", file=sys.stderr)
         print(
-            "This check compares vstack.toml's taxonomy against live Linear and cannot\n"
+            "This check compares kendex.toml's taxonomy against live Linear and cannot\n"
             "run without that inventory. Pass --allow-missing-inventory only when you\n"
             "accept that the sweep did not happen (CI has no Linear credentials).",
             file=sys.stderr,

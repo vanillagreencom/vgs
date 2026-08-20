@@ -7,12 +7,12 @@ symlinked wholesale into every worktree, so a tracked skill cannot live there
 
 | Skill | Description |
 |-------|-------------|
-| [vgs-release](vgs-release/) | Cut and publish a VGS release across GitHub and every maintained install channel. |
-| [vshell-dev](vshell-dev/) | Work on VanillaGreen Shell: Quickshell runtime, bundled plugins, theme engine, generated targets, and workstation wiring boundaries. |
+| [vgs-release](skills/vgs-release/) | Cut and publish a VGS release across GitHub and every maintained install channel. |
+| [vshell-dev](skills/vshell-dev/) | Work on VanillaGreen Shell: Quickshell runtime, bundled plugins, theme engine, generated targets, and workstation wiring boundaries. |
 
-`vstack.toml` sets `project-skills-dir = "project-skills"`, so `vstack refresh`
-links each directory here to `.agents/skills/<name>`, where agents discover it
-as usual. Do not create that symlink by hand, and do not move a skill back
-under `.agents/skills/`. Refresh refuses to replace a real directory with the
-link, so if `.agents/skills/<name>` already exists as a directory, delete it
-first.
+`kendex.toml` declares this directory as the path source `project-skills`
+(skills live under `skills/<name>`), and declares each skill from it, so
+`kendex refresh` installs them into `.agents/skills/<name>` like any other
+package. Do not create those links by hand, and do not move a skill back
+under `.agents/skills/`. A new skill here needs a `skills/<name>/SKILL.md`
+and a `kendex add --skill <name> project-skills` to declare it.

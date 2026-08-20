@@ -4,6 +4,7 @@
 # config (agent/skill wiring, review gates, Linear team) with no secrets —
 # those live in .env.local. The lock file stays ignored because it records
 # per-machine install state (absolute source paths, install timestamps).
+.kendex-lock.json
 .vstack-lock.json
 .agents/
 .claude/

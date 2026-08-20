@@ -122,7 +122,7 @@ CEILINGS: dict[str, int] = {
     # only 4 of bin/'s 15 entries, so it read as complete while it was not.
     #
     # Those registers are what regrew after VGS-107, so 4,500 is a budget the
-    # issue set rather than a size plus headroom: the file is 4,480 B, so there
+    # issue set rather than a size plus headroom: the file is 4,487 B, so there
     # is almost none, and that is the point. The next addition displaces
     # something or moves to a per-area surface — the thing both diets had to do
     # by hand.
@@ -178,12 +178,12 @@ CEILINGS: dict[str, int] = {
     # list in the same machine-read marker pair as AGENTS.md's and named the
     # contract; now 5,552 B, ~2.7% left. The tighter line is tight enough that
     # the next addition here needs a raise, not a shave.
-    "project-skills/vshell-dev/SKILL.md": 5_700,
+    "project-skills/skills/vshell-dev/SKILL.md": 5_700,
     # Adopted at 1,906 B on moving here from gitignored .agents/; now 2,121 B
     # after VGS-204 added the Gentoo overlay's publisher and its credential,
     # which a release cannot be run correctly without knowing about. A numbered
     # checklist: growth means a new release step, worth a deliberate raise.
-    "project-skills/vgs-release/SKILL.md": 2_400,
+    "project-skills/skills/vgs-release/SKILL.md": 2_400,
     # Adopted at 403 B. VGS-124: the diet's own rewrap un-exempted a sanctioned
     # direct-launch mention in check-validation-safety.sh (line-scoped spans),
     # and that check does not run in the `docs` area an AGENTS.md edit reaches
@@ -208,7 +208,7 @@ CEILINGS: dict[str, int] = {
     # missing. A reader deciding whether external publishing is covered must not
     # be told there are four. Now 3,809 B; 4,200 restores the ~10%.
     ".github/instructions/ci.instructions.md": 4_200,
-    ".github/instructions/harness-config.instructions.md": 900,  # adopted at 760 B
+    ".github/instructions/harness-config.instructions.md": 900,  # adopted at 769 B
     ".github/instructions/helper-cli.instructions.md": 600,  # adopted at 517 B
     ".github/instructions/quickshell-qml.instructions.md": 1_700,  # adopted at 1,459 B
     ".github/instructions/themes.instructions.md": 700,  # adopted at 577 B
@@ -232,7 +232,7 @@ CEILINGS: dict[str, int] = {
     # assert it collected something, after three checks in one night reported
     # clean while asserting nothing: it belongs on the surface that already
     # tells reviewers to reject an unreachable failure path. 7,600 keeps ~10%
-    # headroom at the resulting 6,873 B.
+    # headroom at the resulting 6,880 B.
     ".github/instructions/validation-scripts.instructions.md": 7_600,
     ".github/instructions/vendored-engine.instructions.md": 1_000,  # adopted at 854 B
     ".github/instructions/vendored-go.instructions.md": 500,  # adopted at 367 B
