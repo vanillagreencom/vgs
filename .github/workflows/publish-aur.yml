@@ -39,7 +39,7 @@ on:
     inputs:
       packages:
         type: string
-        default: vgs-shell vgs-shell-git
+        default: vgs-shell vgs-shell-assets vgs-shell-git
   schedule:
     - cron: "17 6 * * 1"
   workflow_dispatch:
@@ -47,7 +47,7 @@ on:
       packages:
         description: Packages to publish, space separated
         type: string
-        default: vgs-shell vgs-shell-git
+        default: vgs-shell vgs-shell-assets vgs-shell-git
       dry_run:
         description: Show what would be pushed without pushing it
         type: boolean
@@ -135,7 +135,7 @@ jobs:
           DRY_RUN: ${{ inputs.dry_run }}
           # `inputs.packages` is set for workflow_call and workflow_dispatch and
           # empty for a plain push, which publishes everything.
-          PACKAGES: ${{ inputs.packages || 'vgs-shell vgs-shell-git' }}
+          PACKAGES: ${{ inputs.packages || 'vgs-shell vgs-shell-assets vgs-shell-git' }}
         run: |
           set -euo pipefail
           # Split into an argv array and check every element against the two
@@ -147,9 +147,9 @@ jobs:
           read -ra selected <<< "$PACKAGES"
           for package in "${selected[@]}"; do
             case "$package" in
-              vgs-shell|vgs-shell-git) ;;
+              vgs-shell|vgs-shell-assets|vgs-shell-git) ;;
               *)
-                echo "::error::unknown package '$package'; expected vgs-shell and/or vgs-shell-git"
+                echo "::error::unknown package '$package'; expected vgs-shell, vgs-shell-assets and/or vgs-shell-git"
                 exit 1
                 ;;
             esac
