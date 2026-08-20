@@ -9,6 +9,13 @@ grep -q "Version:        $version" "$root/packaging/fedora/vgs-shell.spec"
 grep -q "vgs-shell ($version-1)" "$root/packaging/debian/changelog"
 grep -q "version=$version" "$root/packaging/void/template"
 grep -qx "$version" "$root/quickshell/vshell/VERSION"
+# The Gentoo recipe carries its version in its FILENAME, and gen-package-metadata
+# deliberately finds it by glob so the rename does not break the generator. That
+# means the generator cannot notice a release that forgot to rename it: bumping
+# VERSION to 0.3.0 while vgs-shell-0.2.0.ebuild is still the only ebuild passes
+# every other check here. The version match belongs at release time, so it is
+# asserted here rather than turning the generator back into a hardcoded path.
+test -f "$root/packaging/gentoo/vgs-shell-$version.ebuild"
 # errexit exempts a pipeline that begins with `!` (SC2251), so the previous
 # `! grep -q` form never failed the script — these two checks were inert. The
 # patterns match the shapes the files actually use: PKGBUILD carries per-arch
