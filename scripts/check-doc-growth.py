@@ -178,12 +178,12 @@ CEILINGS: dict[str, int] = {
     # list in the same machine-read marker pair as AGENTS.md's and named the
     # contract; now 5,552 B, ~2.7% left. The tighter line is tight enough that
     # the next addition here needs a raise, not a shave.
-    "project-skills/vshell-dev/SKILL.md": 5_700,
+    "project-skills/skills/vshell-dev/SKILL.md": 5_700,
     # Adopted at 1,906 B on moving here from gitignored .agents/; now 2,121 B
     # after VGS-204 added the Gentoo overlay's publisher and its credential,
     # which a release cannot be run correctly without knowing about. A numbered
     # checklist: growth means a new release step, worth a deliberate raise.
-    "project-skills/vgs-release/SKILL.md": 2_400,
+    "project-skills/skills/vgs-release/SKILL.md": 2_400,
     # Adopted at 403 B. VGS-124: the diet's own rewrap un-exempted a sanctioned
     # direct-launch mention in check-validation-safety.sh (line-scoped spans),
     # and that check does not run in the `docs` area an AGENTS.md edit reaches
