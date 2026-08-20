@@ -113,6 +113,59 @@ sources_exist() {
   return 0
 }
 
+# A source that EXISTS is not yet a source that INSTALLS. Between a version bump
+# and the checksum pin, `source_x86_64` names the new tarball while
+# `sha256sums_x86_64` still holds the previous release's digest — every URL
+# resolves, the check above is satisfied, and `makepkg` fails validity checking
+# for every user who runs `yay -S vgs-shell`. release.yml calls this script
+# immediately after a tag builds, which is precisely that window, so existence
+# alone is the wrong question to stop at.
+#
+# The release publishes SHA256SUMS beside the tarballs, so the answer costs one
+# 283-byte fetch rather than 2 GiB of downloads. Same three outcomes as above,
+# and for the same reason: a digest that disagrees is a recipe waiting for its
+# pin (defer), and a SHA256SUMS that cannot be read is not evidence of anything
+# (fail).
+checksums_match() {
+  local package="$1" pairs url digest sums_url sums code rc name
+
+  if ! pairs="$("$root/scripts/check-aur-sync.py" --print-source-checksums "$package")"; then
+    echo "publish-aur: cannot read the declared checksums of $package, so whether they are current is unknown." >&2
+    return 2
+  fi
+
+  while IFS=$'\t' read -r url digest; do
+    [[ -n "$url" ]] || continue
+    sums_url="${url%/*}/SHA256SUMS"
+    rc=0
+    sums="$(curl -sSL --max-time 30 --retry 2 -w '\n%{http_code}' "$sums_url")" || rc=$?
+    if [[ "$rc" -ne 0 ]]; then
+      echo "publish-aur: cannot reach $sums_url (curl exit $rc), so whether $package's checksums are current is unknown." >&2
+      return 2
+    fi
+    code="${sums##*$'\n'}"
+    sums="${sums%$'\n'*}"
+    if [[ "$code" != 2?? ]]; then
+      echo "publish-aur: $sums_url returned $code; refusing to publish $package without reading the release's own checksums." >&2
+      return 2
+    fi
+
+    name="${url##*/}"
+    # `awk` rather than `grep`, so a filename that is a prefix of another cannot
+    # match the wrong row.
+    if ! echo "$sums" | awk -v want="$digest" -v file="$name" '
+      { published = $1; sub(/^\*/, "", $2) }
+      $2 == file { found = 1; if (published == want) ok = 1 }
+      END { exit (found && ok) ? 0 : 1 }
+    '; then
+      echo "publish-aur: $package declares a sha256 for $name that the release does not publish." >&2
+      echo "publish-aur: that is the state between a version bump and its checksum pin. Pin the sums from $sums_url and publish again; shipping this recipe would fail makepkg's validity check for every user." >&2
+      return 1
+    fi
+  done <<< "$pairs"
+  return 0
+}
+
 status=0
 published=()
 for package in "${packages[@]}"; do
@@ -121,6 +174,11 @@ for package in "${packages[@]}"; do
 
   sources_exist "$package" || case "$?" in
     1) continue ;;          # deferred by design; release.yml owns it
+    *) status=1; continue ;;  # could not check: never green
+  esac
+
+  checksums_match "$package" || case "$?" in
+    1) continue ;;          # awaiting its checksum pin
     *) status=1; continue ;;  # could not check: never green
   esac
 

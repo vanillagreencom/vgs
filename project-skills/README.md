@@ -7,6 +7,7 @@ symlinked wholesale into every worktree, so a tracked skill cannot live there
 
 | Skill | Description |
 |-------|-------------|
+| [vgs-release](vgs-release/) | Cut and publish a VGS release across GitHub and every maintained install channel. |
 | [vshell-dev](vshell-dev/) | Work on VanillaGreen Shell: Quickshell runtime, bundled plugins, theme engine, generated targets, and workstation wiring boundaries. |
 
 `vstack.toml` sets `project-skills-dir = "project-skills"`, so `vstack refresh`

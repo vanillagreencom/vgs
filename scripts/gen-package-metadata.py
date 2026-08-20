@@ -44,6 +44,14 @@ DISTROS = ("arch", "debian", "fedora", "gentoo")
 REQUIRED_ONLY = ("void", "nix")
 REQUIRED_DISTROS = DISTROS + REQUIRED_ONLY
 
+# The Gentoo recipe's filename carries its version, so a hardcoded path here
+# breaks at every release rename. Glob for it, and refuse to guess when
+# packaging/gentoo does not hold exactly one ebuild.
+_gentoo_ebuilds = sorted((ROOT / "packaging/gentoo").glob("vgs-shell-*.ebuild"))
+if len(_gentoo_ebuilds) != 1:
+    raise SystemExit(f"gen-package-metadata: expected one packaging/gentoo ebuild, found {len(_gentoo_ebuilds)}")
+GENTOO_EBUILD = str(_gentoo_ebuilds[0].relative_to(ROOT))
+
 # Every packaging channel this repo ships, and where its recipe lives. A
 # directory under packaging/ that appears in neither table fails the run: a new
 # channel must state whether its dependencies are generated, rather than being
@@ -52,7 +60,7 @@ CHANNEL_RECIPES = {
     "arch": "packaging/arch/PKGBUILD",
     "debian": "packaging/debian/control",
     "fedora": "packaging/fedora/vgs-shell.spec",
-    "gentoo": "packaging/gentoo/vgs-shell-0.1.0.ebuild",
+    "gentoo": GENTOO_EBUILD,
     "void": "packaging/void/template",
     "nix": "flake.nix",
 }
@@ -68,7 +76,7 @@ CONFLICT_RECIPES = {
     ),
     "debian": ("packaging/debian/control",),
     "fedora": ("packaging/fedora/vgs-shell.spec",),
-    "gentoo": ("packaging/gentoo/vgs-shell-0.1.0.ebuild",),
+    "gentoo": (GENTOO_EBUILD,),
     "void": ("packaging/void/template",),
 }
 UNGENERATED_CHANNELS = {
@@ -868,7 +876,7 @@ def targets(
     )
     out.append((path, replace_block(path, text, render_fedora(collected["fedora"]))))
 
-    path = ROOT / "packaging/gentoo/vgs-shell-0.1.0.ebuild"
+    path = ROOT / GENTOO_EBUILD
     text = replace_gentoo_rdepend(
         path,
         path.read_text(),
