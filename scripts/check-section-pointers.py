@@ -79,7 +79,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 HISTORICAL_SECTIONS = {
     ("scripts/check-doc-growth.py", "AGENTS.md", "Layout"): (
         "its ceilings rationale records that VGS-124 moved this section's "
-        "path/purpose table into project-skills/vshell-dev/SKILL.md"
+        "path/purpose table into project-skills/skills/vshell-dev/SKILL.md"
     ),
     (
         "scripts/check-doc-growth.py",

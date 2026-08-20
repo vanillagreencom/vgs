@@ -30,7 +30,7 @@ editing that manifest, not a doc. `scripts/test-validate.sh` covers the runner
 itself.
 
 **That area list is machine-read**, here and in `AGENTS.md` § Validation and
-`project-skills/vshell-dev/SKILL.md` § Validation, each wrapped in HTML comment
+`project-skills/skills/vshell-dev/SKILL.md` § Validation, each wrapped in HTML comment
 markers that render as nothing:
 
 ```markdown
