@@ -122,7 +122,7 @@ CEILINGS: dict[str, int] = {
     # only 4 of bin/'s 15 entries, so it read as complete while it was not.
     #
     # Those registers are what regrew after VGS-107, so 4,500 is a budget the
-    # issue set rather than a size plus headroom: the file is 4,480 B, so there
+    # issue set rather than a size plus headroom: the file is 4,487 B, so there
     # is almost none, and that is the point. The next addition displaces
     # something or moves to a per-area surface — the thing both diets had to do
     # by hand.
@@ -232,7 +232,7 @@ CEILINGS: dict[str, int] = {
     # assert it collected something, after three checks in one night reported
     # clean while asserting nothing: it belongs on the surface that already
     # tells reviewers to reject an unreachable failure path. 7,600 keeps ~10%
-    # headroom at the resulting 6,873 B.
+    # headroom at the resulting 6,880 B.
     ".github/instructions/validation-scripts.instructions.md": 7_600,
     ".github/instructions/vendored-engine.instructions.md": 1_000,  # adopted at 854 B
     ".github/instructions/vendored-go.instructions.md": 500,  # adopted at 367 B

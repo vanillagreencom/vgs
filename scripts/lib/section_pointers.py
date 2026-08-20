@@ -236,7 +236,7 @@ def pointers(path: str, text: str) -> list[tuple[int, str, str, bool, str | None
     """(line, target, name, quoted, problem, inherited, linked) for every mark.
 
     A SECOND MARK IN THE SAME CLAUSE INHERITS the first's target:
-    `project-skills/vshell-dev/SKILL.md` writes "canonical in `AGENTS.md`
+    `project-skills/skills/vshell-dev/SKILL.md` writes "canonical in `AGENTS.md`
     (§ Mission, § Do not)", where the second pointer names AGENTS.md as plainly
     as the first. Inheritance stops at any INHERITANCE_STOPS character — every
     separator but the comma — so a later "see § Niri" is read as intra-document,
