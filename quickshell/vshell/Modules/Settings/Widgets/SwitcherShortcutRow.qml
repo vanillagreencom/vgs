@@ -171,6 +171,13 @@ Rectangle {
             spacing: Theme.spacingS
             // Nothing to offer when VGS cannot write the compositor's binds.
             visible: root.available && !root.readOnly
+            // And nothing to accept while a save is running: KeybindsService
+            // owns ONE `saveProcess` and has no queue, so a second `saveBind`
+            // assigns `running = true` to a process that is already running —
+            // which launches nothing and drops the later chord silently.
+            // `enabled` propagates, so this covers capture, Replace and Delete.
+            enabled: !KeybindsService.saving
+            opacity: enabled ? 1 : 0.5
 
             VgsButton {
                 anchors.verticalCenter: parent.verticalCenter
