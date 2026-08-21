@@ -179,11 +179,16 @@ CEILINGS: dict[str, int] = {
     # contract; now 5,552 B, ~2.7% left. The tighter line is tight enough that
     # the next addition here needs a raise, not a shave.
     "project-skills/skills/vshell-dev/SKILL.md": 5_700,
-    # Adopted at 1,906 B on moving here from gitignored .agents/; now 2,121 B
-    # after VGS-204 added the Gentoo overlay's publisher and its credential,
-    # which a release cannot be run correctly without knowing about. A numbered
-    # checklist: growth means a new release step, worth a deliberate raise.
-    "project-skills/skills/vgs-release/SKILL.md": 2_400,
+    # Adopted at 1,906 B; now 1,598 B after the per-channel publish commands
+    # moved to vgs-distro-publish, leaving a checklist. Ratcheted down to match.
+    "project-skills/skills/vgs-release/SKILL.md": 1_800,
+    # Adopted at 5,968 B: per-channel publish commands, split out of the release
+    # checklist so that file stays a checklist. Two blocks carry more than their
+    # one-liner would — the Ubuntu build cannot run without its source-tree
+    # preparation, and verification asserts the NEW version across EVERY declared
+    # chroot and repository AND exits non-zero on any miss, because a loose,
+    # partial, or always-green check passes against the release still published.
+    "project-skills/skills/vgs-distro-publish/SKILL.md": 6_000,
     # Adopted at 403 B. VGS-124: the diet's own rewrap un-exempted a sanctioned
     # direct-launch mention in check-validation-safety.sh (line-scoped spans),
     # and that check does not run in the `docs` area an AGENTS.md edit reaches
@@ -206,7 +211,8 @@ CEILINGS: dict[str, int] = {
     # fifth workflow — the Gentoo publisher and its drift check — and the shared
     # rule both publishers follow: fail rather than skip when the credential is
     # missing. A reader deciding whether external publishing is covered must not
-    # be told there are four. Now 3,809 B; 4,200 restores the ~10%.
+    # be told there are four. Now 3,927 B, after VGS-204 made Gentoo publishing
+    # manual and this file had to stop describing a job that no longer exists.
     ".github/instructions/ci.instructions.md": 4_200,
     ".github/instructions/harness-config.instructions.md": 900,  # adopted at 769 B
     ".github/instructions/helper-cli.instructions.md": 600,  # adopted at 517 B

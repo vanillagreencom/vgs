@@ -1,107 +1,27 @@
 name: publish-gentoo
 
-# The VanillaGreen Gentoo overlay is a separate repository that pulls nothing
-# from this one, so an ebuild fix merged here reaches Gentoo users only when
-# something pushes it. Nothing did: the overlay served 0.1.0 with none of the
-# packaging fixes — no generated dependencies, no notification-daemon blockers,
-# no extra-themes USE flag — while every other channel had them (VGS-204). This
-# is the same failure the AUR had twice before publish-aur.yml existed.
+# Publishing is MANUAL: `scripts/publish-gentoo.sh`. Deploy keys are disabled for
+# this organisation by enterprise policy, and an App was more setup than the one
+# command it replaces.
 #
-# A stale overlay emerges and installs perfectly well. The failure is silent by
-# construction, so the weekly run exists to look.
+# This workflow is the half that needs no credential: it reads the overlay over
+# HTTPS and fails when it has drifted from packaging/gentoo/. Without it a stale
+# overlay is invisible — it emerges and installs perfectly well (VGS-204).
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - packaging/gentoo/**
-      - scripts/publish-gentoo.sh
-      - .github/workflows/publish-gentoo.yml
-  workflow_call:
   schedule:
     - cron: "37 6 * * 1"
   workflow_dispatch:
-    inputs:
-      dry_run:
-        description: Show what would be pushed without pushing it
-        type: boolean
-        default: false
 
 permissions:
   contents: read
 
 concurrency:
-  # Never cancel: this pushes to another repository, and a cancelled run can
-  # leave the overlay half written.
   group: publish-gentoo
   cancel-in-progress: false
 
 jobs:
-  publish:
-    if: github.event_name != 'schedule'
-    permissions:
-      contents: read
-    runs-on: ${{ vars.CI_RUNNER_2V || 'ubuntu-latest' }}
-    # The Manifest digests can only come from the release archive's actual
-    # bytes, and that archive is ~1.1 GiB.
-    timeout-minutes: 30
-    steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
-        with:
-          persist-credentials: false
-
-      - name: Configure the overlay SSH key
-        if: ${{ inputs.dry_run != true }}
-        env:
-          GENTOO_OVERLAY_SSH_KEY: ${{ secrets.GENTOO_OVERLAY_SSH_KEY }}
-        run: |
-          set -euo pipefail
-          if [ -z "$GENTOO_OVERLAY_SSH_KEY" ]; then
-            # FAIL rather than skip. A skipped publish is the silent
-            # non-delivery this workflow exists to end: the run would be green
-            # while the overlay kept serving the previous release. This is
-            # exactly how publish-aur.yml surfaced its own missing credential.
-            echo "::error::GENTOO_OVERLAY_SSH_KEY is not set, so nothing can be published. Add the secret, or publish by hand with scripts/publish-gentoo.sh and say so in the release notes."
-            exit 1
-          fi
-          mkdir -p ~/.ssh
-          chmod 700 ~/.ssh
-          printf '%s\n' "$GENTOO_OVERLAY_SSH_KEY" > ~/.ssh/gentoo
-          chmod 600 ~/.ssh/gentoo
-          # github.com's host keys are published by GitHub over HTTPS and are
-          # what the API itself is authenticated with, so fetching them here is
-          # not the blind ssh-keyscan that publish-aur.yml refuses to do.
-          curl -fsSL https://api.github.com/meta \
-            | python3 -c 'import json,sys; [print(f"github.com {k}") for k in json.load(sys.stdin)["ssh_keys"]]' \
-            > ~/.ssh/known_hosts
-          printf 'Host github.com\n  User git\n  IdentityFile ~/.ssh/gentoo\n  IdentitiesOnly yes\n' > ~/.ssh/config
-          chmod 600 ~/.ssh/config ~/.ssh/known_hosts
-          ssh-keygen -lf ~/.ssh/known_hosts
-
-      - name: Publish packaging/gentoo to the overlay
-        env:
-          GENTOO_COMMIT_NAME: ${{ vars.AUR_COMMIT_NAME }}
-          GENTOO_COMMIT_EMAIL: ${{ vars.AUR_COMMIT_EMAIL }}
-          DRY_RUN: ${{ inputs.dry_run }}
-        run: |
-          set -euo pipefail
-          if [ "${DRY_RUN:-false}" = "true" ]; then
-            scripts/publish-gentoo.sh --dry-run
-          else
-            # Exit 3, and ONLY 3, is "the release does not exist yet" — expected
-            # between a version bump and its tag, and release.yml calls this
-            # workflow again once the archive is up. Every other non-zero status
-            # is a publish that delivered nothing and must stay red: a clone,
-            # commit or push failure exits 1, and forgiving that here would be
-            # the silent non-delivery this workflow exists to end.
-            scripts/publish-gentoo.sh || case "$?" in
-              3) echo "publish-gentoo: deferred until the release exists" ;;
-              *) exit 1 ;;
-            esac
-          fi
-
   drift:
-    if: github.event_name == 'schedule'
     permissions:
       contents: read
     runs-on: ${{ vars.CI_RUNNER_2V || 'ubuntu-latest' }}

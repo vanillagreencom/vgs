@@ -129,6 +129,10 @@ enabled = true
 source = "kendex"
 enabled = true
 
+[skills.vgs-distro-publish]
+source = "project-skills"
+enabled = true
+
 [skills.vgs-release]
 source = "project-skills"
 enabled = true

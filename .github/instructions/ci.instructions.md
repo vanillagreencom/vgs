@@ -11,12 +11,13 @@ the workflow's own header. It never invokes the runner itself; the runner's own
 behavior is covered by `scripts/test-validate.sh`, which CI does run.
 `review-gate-writer.yml` is the
 only writer of the `Review gate` commit status. `publish-aur.yml` pushes
-`packaging/arch/` to the AUR and re-checks the published result;
-`publish-gentoo.yml` does the same for `packaging/gentoo/` and the VanillaGreen
-overlay. Both publish on packaging changes, again after a tag, and run a weekly
-drift check, because a stale package builds and installs perfectly well — the
-failure is silent by construction, so something has to look. Both FAIL rather
-than skip when their credential is absent.
+`packaging/arch/` to the AUR on packaging changes and after a tag, re-checks the
+published result, and FAILS rather than skipping when its credential is absent.
+`publish-gentoo.yml` publishes nothing: deploy keys are disabled for this
+organisation by enterprise policy, so the overlay is published by hand with
+`scripts/publish-gentoo.sh` and this workflow runs only the credential-free
+weekly `--check`. Both exist because a stale package builds and installs
+perfectly well — the failure is silent by construction, so something has to look.
 `release.yml` builds releases on version tags. CodeQL runs from GitHub's
 default org-level setup rather than a workflow here, and its per-language
 lanes (rust, ruby, c-cpp) report "skipping" because the repo has little or no
