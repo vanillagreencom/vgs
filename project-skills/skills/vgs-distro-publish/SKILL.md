@@ -77,8 +77,17 @@ scripts/check-aur-sync.py --remote || bad=1
 for c in fedora-43-x86_64 fedora-43-aarch64 fedora-44-x86_64 fedora-44-aarch64; do
   u="https://download.copr.fedorainfracloud.org/results/vanillagreen/vgs-shell/$c"
   pri=$(curl -sL "$u/repodata/repomd.xml" | grep -oE 'repodata/[a-f0-9]+-primary\.xml\.[a-z]+' | head -1)
-  curl -sL "$u/$pri" | { zstd -dc 2>/dev/null || zcat; } \
-    | grep -q "<version epoch=\"[0-9]*\" ver=\"$V\"" && echo "$c ok" || { echo "$c NOT $V"; bad=1; }
+  # Bound to the vgs-shell package: a bare version grep matches any entry, so a
+  # current vgs-shell-assets would vouch for a missing or stale base package.
+  curl -sL "$u/$pri" | { zstd -dc 2>/dev/null || zcat; } | python3 -c '
+import sys, xml.etree.ElementTree as ET
+ns = {"c": "http://linux.duke.edu/metadata/common"}
+want = sys.argv[1]
+root = ET.fromstring(sys.stdin.read())
+ok = any(p.find("c:name", ns).text == "vgs-shell"
+         and p.find("c:version", ns).get("ver") == want
+         for p in root.findall("c:package", ns))
+sys.exit(0 if ok else 1)' "$V" && echo "$c ok" || { echo "$c NOT $V"; bad=1; }
 done
 
 # openSUSE + Debian — the repository index, not osc results
@@ -103,11 +112,14 @@ scripts/publish-gentoo.sh --check || bad=1
 # the derivation was handed, so it passes on a package that cannot build.
 F="github:vanillagreencom/vgs/v$V"
 nix build --no-link "$F#packages.x86_64-linux.default" || bad=1
-# flake.nix declares aarch64-linux too, and the documented user flow imports the
-# Home Manager module. Both are evaluated here, which catches an eval break; a
-# full aarch64 BUILD needs an aarch64 builder — run it there when one exists.
+# flake.nix declares aarch64-linux too. Its derivation is evaluated here; a full
+# aarch64 BUILD needs an aarch64 builder — run it there when one exists.
+# `nix flake check` evaluates every output. It does NOT instantiate
+# homeManagerModules.default against a real Home Manager configuration, so a
+# broken module body can still reach users; that needs home-manager as a flake
+# input and is not done here.
 nix eval --raw "$F#packages.aarch64-linux.default.drvPath" >/dev/null || bad=1
-nix eval "$F#homeManagerModules.default" --apply builtins.isFunction | grep -q true || bad=1
+nix flake check "$F" || bad=1
 
 # A per-channel report that always exits 0 is how a stale channel gets claimed
 # as shipped. Every miss above sets bad; this is the block's answer.
