@@ -182,13 +182,13 @@ CEILINGS: dict[str, int] = {
     # Adopted at 1,906 B; now 1,598 B after the per-channel publish commands
     # moved to vgs-distro-publish, leaving a checklist. Ratcheted down to match.
     "project-skills/skills/vgs-release/SKILL.md": 1_800,
-    # Adopted at 6,148 B: per-channel publish commands, split out of the release
-    # checklist so that file stays a checklist. Two blocks carry more than their
-    # one-liner would — the Ubuntu build cannot run without its source-tree
-    # preparation, and verification asserts the NEW version across EVERY declared
-    # chroot and repository AND exits non-zero on any miss, because a loose,
-    # partial, or always-green check passes against the release still published.
-    "project-skills/skills/vgs-distro-publish/SKILL.md": 6_800,
+    # Adopted at 5,968 B: per-channel publish commands, split out so the release checklist stays
+    # one; Ubuntu's source-tree prep and an every-chroot, non-zero-on-miss verification earn their
+    # bulk. VGS-204: now 6,148 B, 148 past the old line, for the two gaps a hand publisher hits when
+    # CI is down — publish-aur.sh IS that publisher, wanting AUR commit rights on all three
+    # packages, and dput's `incoming` reads owner, then distro, then PPA. 6,200 keeps the round line
+    # just above, held since adoption; +10%'s 6,800 would absorb the next addition.
+    "project-skills/skills/vgs-distro-publish/SKILL.md": 6_200,
     # Adopted at 403 B. VGS-124: the diet's own rewrap un-exempted a sanctioned
     # direct-launch mention in check-validation-safety.sh (line-scoped spans),
     # and that check does not run in the `docs` area an AGENTS.md edit reaches
