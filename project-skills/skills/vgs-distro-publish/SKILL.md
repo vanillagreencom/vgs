@@ -59,16 +59,32 @@ Void ships a recipe only — Void has no Quickshell 0.3.0.
 
 ## Verify
 
-```bash
-scripts/check-aur-sync.py --remote
-curl -s https://download.copr.fedorainfracloud.org/results/vanillagreen/vgs-shell/fedora-44-x86_64/ | grep vgs-shell
-osc results home:vanillagreen vgs-shell
-curl -s "https://api.launchpad.net/1.0/~vanillagreen/+archive/ubuntu/vgs-shell?ws.op=getPublishedSources"
-git clone https://github.com/vanillagreencom/gentoo-overlay   # ebuild version
-```
+Assert the NEW version, not merely that a package exists — an older release still
+published makes every loose check pass. Read the published artefact, not the build
+status: COPR and OBS report success for a build whose packages are not yet in the
+repository, and the AUR's RPC index lags its git by minutes.
 
-Read the published artefact, not the build status: COPR and OBS report success for a
-build whose packages are not yet in the repository, and the AUR's RPC index lags its
-git by minutes.
+```bash
+V=$(cat VERSION)
+
+# AUR — recipes match this repo byte for byte
+scripts/check-aur-sync.py --remote
+
+# Fedora COPR — the built RPMs, per chroot
+curl -s "https://download.copr.fedorainfracloud.org/results/vanillagreen/vgs-shell/fedora-44-x86_64/$(
+  curl -s https://download.copr.fedorainfracloud.org/results/vanillagreen/vgs-shell/fedora-44-x86_64/ \
+  | grep -oE '[0-9]{7,8}-vgs-shell' | tail -1)/results.json" | grep -q "\"version\": \"$V\"" && echo COPR ok
+
+# openSUSE + Debian — the repository index, not osc results
+curl -s https://download.opensuse.org/repositories/home:/vanillagreen/openSUSE_Tumbleweed/x86_64/ | grep -q "vgs-shell-$V-" && echo Tumbleweed ok
+curl -s https://download.opensuse.org/repositories/home:/vanillagreen/Debian_13/amd64/ | grep -q "vgs-shell_$V-" && echo Debian ok
+
+# Ubuntu — the newest Published source
+curl -s "https://api.launchpad.net/1.0/~vanillagreen/+archive/ubuntu/vgs-shell?ws.op=getPublishedSources" \
+  | grep -q "\"source_package_version\": \"$V-1~" && echo PPA ok
+
+# Gentoo — the overlay's ebuild
+scripts/publish-gentoo.sh --check
+```
 
 Name any channel that did not ship in the release notes.

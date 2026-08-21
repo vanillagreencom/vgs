@@ -182,10 +182,12 @@ CEILINGS: dict[str, int] = {
     # Adopted at 1,906 B; now 1,598 B after the per-channel publish commands
     # moved to vgs-distro-publish, leaving a checklist. Ratcheted down to match.
     "project-skills/skills/vgs-release/SKILL.md": 1_800,
-    # Adopted at 2,998 B: per-channel publish commands, split out of the release
-    # checklist so that file stays a checklist. The Ubuntu block carries its
-    # source-tree preparation because the build cannot run without it.
-    "project-skills/skills/vgs-distro-publish/SKILL.md": 3_300,
+    # Adopted at 3,832 B: per-channel publish commands, split out of the release
+    # checklist so that file stays a checklist. Two blocks carry more than their
+    # one-liner would — the Ubuntu build cannot run without its source-tree
+    # preparation, and each verification asserts the NEW version, because a
+    # loose check passes against the release still published.
+    "project-skills/skills/vgs-distro-publish/SKILL.md": 4_300,
     # Adopted at 403 B. VGS-124: the diet's own rewrap un-exempted a sanctioned
     # direct-launch mention in check-validation-safety.sh (line-scoped spans),
     # and that check does not run in the `docs` area an AGENTS.md edit reaches
