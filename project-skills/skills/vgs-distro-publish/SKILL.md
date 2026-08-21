@@ -34,6 +34,7 @@ copr-cli build vanillagreen/vgs-shell packaging/fedora/vgs-shell.spec
 
 # openSUSE + Debian 13 (one OBS package, three build targets)
 osc checkout home:vanillagreen vgs-shell -o /tmp/obs
+cd /tmp/obs                                   # osc commit needs the working copy
 # update _service (version + source sha256), vgs-shell.spec, and the .dsc +
 # debian.tar.xz built from packaging/debian/
 osc commit -m "Update to vX.Y.Z"
@@ -66,7 +67,7 @@ status: COPR and OBS report success for a build whose packages are not yet in th
 repository, and the AUR's RPC index lags its git by minutes.
 
 ```bash
-V=$(cat VERSION)
+V=$(cat VERSION); bad=0
 
 # AUR — recipes match this repo byte for byte
 scripts/check-aur-sync.py --remote
@@ -76,26 +77,30 @@ for c in fedora-43-x86_64 fedora-43-aarch64 fedora-44-x86_64 fedora-44-aarch64; 
   b=$(curl -s "https://download.copr.fedorainfracloud.org/results/vanillagreen/vgs-shell/$c/" \
       | grep -oE '[0-9]{7,8}-vgs-shell' | tail -1)
   curl -s "https://download.copr.fedorainfracloud.org/results/vanillagreen/vgs-shell/$c/$b/results.json" \
-    | grep -q "\"version\": \"$V\"" && echo "$c ok" || echo "$c NOT $V"
+    | grep -q "\"version\": \"$V\"" && echo "$c ok" || { echo "$c NOT $V"; bad=1; }
 done
 
 # openSUSE + Debian — the repository index, not osc results
 for r in openSUSE_Tumbleweed/x86_64 openSUSE_Slowroll/x86_64; do
   curl -s "https://download.opensuse.org/repositories/home:/vanillagreen/$r/" \
-    | grep -q "vgs-shell-$V-" && echo "$r ok" || echo "$r NOT $V"
+    | grep -q "vgs-shell-$V-" && echo "$r ok" || { echo "$r NOT $V"; bad=1; }
 done
 curl -s https://download.opensuse.org/repositories/home:/vanillagreen/Debian_13/amd64/ \
-  | grep -q "vgs-shell_$V-" && echo "Debian_13 ok" || echo "Debian_13 NOT $V"
+  | grep -q "vgs-shell_$V-" && echo "Debian_13 ok" || { echo "Debian_13 NOT $V"; bad=1; }
 
 # Ubuntu — the newest Published source
 curl -s "https://api.launchpad.net/1.0/~vanillagreen/+archive/ubuntu/vgs-shell?ws.op=getPublishedSources" \
-  | grep -q "\"source_package_version\": \"$V-1~" && echo "PPA ok" || echo "PPA NOT $V"
+  | grep -q "\"source_package_version\": \"$V-1~" && echo "PPA ok" || { echo "PPA NOT $V"; bad=1; }
 
 # Gentoo — the overlay's ebuild
-scripts/publish-gentoo.sh --check
+scripts/publish-gentoo.sh --check || bad=1
 
 # Nix — the public flake at the tag actually evaluates
-nix eval --raw "github:vanillagreencom/vgs/v$V#packages.x86_64-linux.default.version"
+nix eval --raw "github:vanillagreencom/vgs/v$V#packages.x86_64-linux.default.version" || bad=1
+
+# A per-channel report that always exits 0 is how a stale channel gets claimed
+# as shipped. Every miss above sets bad; this is the block's answer.
+exit "$bad"
 ```
 
 Name any channel that did not ship in the release notes.
