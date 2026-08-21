@@ -99,9 +99,15 @@ done
 # Gentoo — the overlay's ebuild
 scripts/publish-gentoo.sh --check || bad=1
 
-# Nix — BUILD the public flake. Evaluating .version only reads back the VERSION
-# file the derivation was handed, so it passes on a package that cannot build.
-nix build --no-link "github:vanillagreencom/vgs/v$V#packages.x86_64-linux.default" || bad=1
+# Nix — BUILD the flake. Evaluating .version only reads back the VERSION file
+# the derivation was handed, so it passes on a package that cannot build.
+F="github:vanillagreencom/vgs/v$V"
+nix build --no-link "$F#packages.x86_64-linux.default" || bad=1
+# flake.nix declares aarch64-linux too, and the documented user flow imports the
+# Home Manager module. Both are evaluated here, which catches an eval break; a
+# full aarch64 BUILD needs an aarch64 builder — run it there when one exists.
+nix eval --raw "$F#packages.aarch64-linux.default.drvPath" >/dev/null || bad=1
+nix eval "$F#homeManagerModules.default" --apply builtins.isFunction | grep -q true || bad=1
 
 # A per-channel report that always exits 0 is how a stale channel gets claimed
 # as shipped. Every miss above sets bad; this is the block's answer.
