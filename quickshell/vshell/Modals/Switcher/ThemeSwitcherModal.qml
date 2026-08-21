@@ -14,10 +14,7 @@ import qs.Services
 FullScreenSwitcher {
     id: root
 
-    headerTitle: I18n.tr("Theme")
-    headerIcon: "palette"
     filterable: true
-    filterPlaceholder: I18n.tr("Filter themes...")
     layerNamespace: "vshell:theme-switcher"
 
     // A failed `theme list` leaves `blueprints` empty, which must not be
@@ -52,7 +49,6 @@ FullScreenSwitcher {
     items: (VGSThemeService.blueprints || []).filter(bp => !!bp.name).map(bp => ({
                 image: bp.preview || "",
                 label: bp.name,
-                badge: bp.name === root.activeTheme ? I18n.tr("Active") : "",
                 key: bp.name
             }))
 

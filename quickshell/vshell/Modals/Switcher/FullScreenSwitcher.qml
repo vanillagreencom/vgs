@@ -5,16 +5,21 @@ import qs.Common
 import qs.Modals.Common
 import qs.Widgets
 
-// Full-screen one-at-a-time picker: a single large preview image, paged with the
-// arrow keys, applied with Enter, abandoned with Esc.
+// Full-screen one-at-a-time picker: a rail of leaning shots over a dimmed
+// desktop, paged with the arrow keys, applied with Enter, abandoned with Esc.
+// The look is Omarchy 4's image picker — see SwitcherCarousel.qml, which owns
+// the geometry. This file owns the surface, the paging, the optional filter,
+// the key handling and the selection seeding; a subclass binds `activeKey`.
+//
+// There is no header, no counter, no input box and no footer: the only things
+// on screen besides the rail are the selected entry's name and whatever the
+// user has typed. Every state that needs words (empty, stale, still applying)
+// is drawn in that same caption slot, outlined against the wallpaper rather
+// than boxed.
 //
 // Paging only moves the selection. Nothing is applied while the user browses, so
 // an Esc really does leave the desktop exactly as it was; the wallpaper and theme
 // switchers both rely on that and neither previews live.
-//
-// Callers supply a normalized `items` list and handle `applied`; this file owns
-// the surface, the paging, the optional filter, the key handling and the
-// selection seeding. A subclass binds `activeKey`.
 //
 // The base's own per-open reset runs from a self-targeted `Connections` rather
 // than a root-level `onOpened:`, because a derived `onOpened:` REPLACES an
@@ -31,21 +36,21 @@ import qs.Widgets
 VgsModal {
     id: root
 
-    // [{image: absolute path, label: caption, badge: short tag or "", key: apply id}]
+    // [{image: absolute path, label: caption, key: apply id}]
     property var items: []
     // Type-to-filter (theme switcher); the wallpaper switcher has no filter.
     property bool filterable: false
-    property string filterPlaceholder: ""
+    // Whether the selected entry is named under the rail. A theme name is worth
+    // reading; a wallpaper's filename is not, and Omarchy shows neither there.
+    property bool showLabels: true
     property string emptyText: I18n.tr("Nothing to show")
-    property string headerTitle: ""
-    property string headerIcon: ""
     // The entry already in use: what the selection is seeded to on open.
     property string activeKey: ""
     // False while the owning service cannot accept an apply. Enter then keeps the
     // surface up and says so, instead of dismissing it with nothing applied.
     property bool canApply: true
     // Set when the list on screen could not be refreshed but the previous one is
-    // still browsable. Shown as a banner, NOT as the empty state: dropping a
+    // still browsable. Shown as a caption, NOT as the empty state: dropping a
     // working list because a refresh failed destroys a usable browse, and
     // showing it silently as if it were fresh is the dishonesty this replaces.
     property string staleNotice: ""
@@ -82,15 +87,6 @@ VgsModal {
 
     readonly property int itemCount: (visibleItems || []).length
     readonly property var currentItem: (currentIndex >= 0 && currentIndex < itemCount) ? visibleItems[currentIndex] : null
-
-    // Wallpaper filenames are user data and routinely carry spaces, '#' and '%',
-    // all of which break a raw file:// URL. Encode per segment, as CachingImage
-    // does, so the separators survive.
-    function fileUrl(path) {
-        if (!path)
-            return "";
-        return "file://" + String(path).split("/").map(encodeURIComponent).join("/");
-    }
 
     // BEGIN SWITCHER SELECTION DECISION
     // The selection arithmetic, taking every input as an argument so
@@ -186,12 +182,49 @@ VgsModal {
         root.navigate("step", delta);
     }
 
-    // The image `delta` steps away, for the lookahead below.
-    function neighborUrl(delta) {
-        if (itemCount < 2)
+    // The one place the filter is written. Typing IS taking over the selection,
+    // with or without a list on screen: the filter is what the user is steering
+    // by, and without this a list landing after they clear it would re-seed and
+    // jump off whatever they were looking at. Unconditional, unlike the paging
+    // keys, which must not latch against an empty pager.
+    function updateFilter(nextQuery) {
+        root.userMoved = true;
+        root.filterQuery = nextQuery;
+    }
+
+    // There is no input box to own the filter — typing goes straight into the
+    // caption under the rail, the way Omarchy's picker does — so the edit keys
+    // are decoded here. Alt- and Meta-modified sequences belong to other
+    // shortcuts and never edit.
+    function editsFilter(event) {
+        if (!root.filterable || !root.filterQuery)
+            return false;
+        if (event.modifiers & (Qt.AltModifier | Qt.MetaModifier))
+            return false;
+        if (event.key === Qt.Key_U)
+            // Ctrl+U only: Ctrl+Shift+U starts Unicode input.
+            return event.modifiers === Qt.ControlModifier;
+        return event.key === Qt.Key_Backspace;
+    }
+
+    function editedFilter(event) {
+        if (event.key === Qt.Key_U)
             return "";
-        const entry = visibleItems[wrapIndex(currentIndex + delta, itemCount)];
-        return entry ? fileUrl(entry.image) : "";
+        if (event.modifiers & Qt.ControlModifier)
+            return root.filterQuery.replace(/\s+$/, "").replace(/\S+$/, "");
+        return root.filterQuery.slice(0, -1);
+    }
+
+    // A printable character, unmodified: what appends to the filter. Control
+    // characters and DEL are excluded so a stray key never becomes a term no
+    // entry can match.
+    function typesFilter(event) {
+        if (!root.filterable || !event.text || event.text.length !== 1)
+            return false;
+        if (event.modifiers !== Qt.NoModifier && event.modifiers !== Qt.ShiftModifier)
+            return false;
+        const code = event.text.charCodeAt(0);
+        return code >= 32 && code !== 127;
     }
 
     function seedSelection() {
@@ -217,7 +250,7 @@ VgsModal {
         root.close();
     }
 
-    // Upper bound only. The footer tells the user to wait for the apply to
+    // Upper bound only. The caption tells the user to wait for the apply to
     // finish, so `onCanApplyChanged` is what normally clears the message; this
     // stops it sticking forever behind a service that never goes idle.
     Timer {
@@ -245,18 +278,27 @@ VgsModal {
 
     function handleKey(event) {
         if (event.key === Qt.Key_Escape) {
-            root.close();
+            // A filter is the first thing Esc takes back, so a mistyped term
+            // does not cost the whole browse.
+            if (root.filterable && root.filterQuery)
+                root.updateFilter("");
+            else
+                root.close();
             return true;
         }
         if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
             root.applyCurrent();
             return true;
         }
-        if (event.key === Qt.Key_Left || event.key === Qt.Key_Up) {
+        if (root.editsFilter(event)) {
+            root.updateFilter(root.editedFilter(event));
+            return true;
+        }
+        if (event.key === Qt.Key_Left || event.key === Qt.Key_Up || event.key === Qt.Key_Backtab) {
             root.step(-1);
             return true;
         }
-        if (event.key === Qt.Key_Right || event.key === Qt.Key_Down) {
+        if (event.key === Qt.Key_Right || event.key === Qt.Key_Down || event.key === Qt.Key_Tab) {
             root.step(1);
             return true;
         }
@@ -266,6 +308,10 @@ VgsModal {
         }
         if (event.key === Qt.Key_End) {
             root.navigate("last", 0);
+            return true;
+        }
+        if (root.typesFilter(event)) {
+            root.updateFilter(root.filterQuery + event.text);
             return true;
         }
         return false;
@@ -280,8 +326,15 @@ VgsModal {
     // animation offset pads the layer surface past the screen edge.
     cornerRadius: 0
     enableShadow: false
+    // A window border traced around the whole screen is a frame with nothing
+    // outside it — the one piece of chrome a full-bleed surface must not draw.
+    enableBorder: false
     animationOffset: 0
-    backgroundColor: Theme.popupSurfaceColor(Theme.background)
+    // A scrim, not a surface: the desktop stays visible underneath, which is
+    // what a wallpaper picker is being judged against. Deliberately not
+    // `popupSurfaceColor`, whose alpha is the user's popup-transparency setting
+    // and would let an opaque preference hide the very thing being previewed.
+    backgroundColor: Theme.withAlpha(Theme.background, 0.5)
     closeOnBackgroundClick: false
 
     // Reopening inside the close animation keeps the content Loader alive and
@@ -311,15 +364,22 @@ VgsModal {
             anchors.fill: parent
             focus: true
 
-            // The filter field takes focus when there is one so typing filters
-            // immediately; otherwise the pager itself holds the keys.
-            function claimFocus() {
-                Qt.callLater(() => {
-                    if (root.filterable)
-                        filterField.forceActiveFocus();
-                    else
-                        switcherContent.forceActiveFocus();
-                });
+            readonly property real gutter: Theme.spacingXL
+            readonly property real availableWidth: width - gutter * 2
+            readonly property real availableHeight: height - gutter * 2 - captions.height - Theme.spacingL
+            // The rail's proportions are Omarchy's, and both dimensions grow
+            // together — see SwitcherCarousel.qml. Sized here rather than by
+            // filling a box so the captions hug the rail on a tall screen
+            // instead of being pushed to the bottom edge.
+            // Captions scale with the rail so the name under a 1.6x rail is not
+            // set at phone size. Derived from the WIDTH alone, never from
+            // `railScale`: the caption block's height is an input to that, and
+            // a font size that depended on it would be a binding loop.
+            readonly property real captionScale: Math.max(1, Math.min(2, switcherContent.availableWidth / carousel.baseRailWidth))
+            readonly property real railScale: {
+                const byWidth = switcherContent.availableWidth / carousel.baseRailWidth;
+                const byHeight = switcherContent.availableHeight / 475;
+                return Math.max(0.35, Math.min(2, Math.min(byWidth, byHeight)));
             }
 
             Keys.onPressed: event => {
@@ -327,177 +387,112 @@ VgsModal {
                     event.accepted = true;
             }
 
-            Component.onCompleted: claimFocus()
+            Component.onCompleted: forceActiveFocus()
 
             Connections {
                 target: root
                 // A reopen inside the close animation does not rebuild this tree,
                 // so nothing else would re-claim the keys.
                 function onOpened() {
-                    filterField.text = "";
-                    switcherContent.claimFocus();
-                }
-                function onDialogClosed() {
-                    // `text` was written by typing, which replaced any binding to
-                    // filterQuery — clear it explicitly.
-                    filterField.text = "";
+                    switcherContent.forceActiveFocus();
                 }
             }
 
+            // Clicking away cancels, as it does on every other full-screen
+            // surface. The rail's own tiles are above this and consume theirs.
+            MouseArea {
+                anchors.fill: parent
+                onClicked: root.close()
+            }
+
+            SwitcherCarousel {
+                id: carousel
+                width: carousel.baseRailWidth * switcherContent.railScale
+                height: 475 * switcherContent.railScale
+                anchors.horizontalCenter: parent.horizontalCenter
+                y: (switcherContent.height - height - Theme.spacingL - captions.height) / 2
+                visible: root.itemCount > 0
+
+                dpr: root.dpr
+                items: root.visibleItems
+                selectedIndex: root.currentIndex
+                onPicked: index => {
+                    root.userMoved = true;
+                    root.currentIndex = index;
+                }
+                onActivated: root.applyCurrent()
+            }
+
+            StyledText {
+                anchors.centerIn: carousel
+                width: Math.min(parent.width - switcherContent.gutter * 2, 720)
+                horizontalAlignment: Text.AlignHCenter
+                wrapMode: Text.WordWrap
+                visible: root.itemCount === 0
+                text: root.emptyText
+                font.pixelSize: Theme.fontSizeLarge * switcherContent.captionScale
+                color: Theme.surfaceText
+                style: Text.Outline
+                styleColor: Theme.withAlpha(Theme.background, 0.7)
+            }
+
+            // Everything that needs words, in one column under the rail: the
+            // entry's name, what has been typed, and whichever of "still
+            // applying" or the stale-list notice is live.
             Column {
-                id: headerBlock
-                anchors.top: parent.top
+                id: captions
+                anchors.top: carousel.bottom
+                anchors.topMargin: Theme.spacingL
                 anchors.left: parent.left
                 anchors.right: parent.right
-                anchors.margins: Theme.spacingXL
-                spacing: Theme.spacingL
+                spacing: Theme.spacingS
 
-                Item {
+                StyledText {
                     width: parent.width
-                    height: headerRow.implicitHeight
-
-                    Row {
-                        id: headerRow
-                        anchors.left: parent.left
-                        anchors.verticalCenter: parent.verticalCenter
-                        spacing: Theme.spacingS
-
-                        VgsIcon {
-                            name: root.headerIcon
-                            size: Theme.iconSize
-                            color: Theme.primary
-                            anchors.verticalCenter: parent.verticalCenter
-                            visible: root.headerIcon !== ""
-                        }
-
-                        StyledText {
-                            text: root.headerTitle
-                            font.pixelSize: Theme.fontSizeXLarge
-                            font.weight: Font.DemiBold
-                            color: Theme.surfaceText
-                            anchors.verticalCenter: parent.verticalCenter
-                        }
-                    }
-
-                    StyledText {
-                        anchors.right: parent.right
-                        anchors.verticalCenter: parent.verticalCenter
-                        text: root.itemCount > 0 ? `${root.currentIndex + 1} / ${root.itemCount}` : "0 / 0"
-                        font.pixelSize: Theme.fontSizeMedium
-                        color: Theme.surfaceVariantText
-                    }
+                    horizontalAlignment: Text.AlignHCenter
+                    elide: Text.ElideRight
+                    visible: root.showLabels
+                    text: root.currentItem ? root.currentItem.label : ""
+                    font.pixelSize: Theme.fontSizeXLarge * switcherContent.captionScale
+                    font.weight: Font.DemiBold
+                    color: Theme.surfaceText
+                    style: Text.Outline
+                    styleColor: Theme.withAlpha(Theme.background, 0.7)
                 }
 
-                VgsTextField {
-                    id: filterField
-                    visible: root.filterable
-                    height: 40
-                    width: Math.min(parent.width, 520)
-                    anchors.horizontalCenter: parent.horizontalCenter
-                    placeholderText: root.filterPlaceholder
-                    backgroundColor: Theme.surfaceContainerHigh
-                    leftIconName: "search"
-                    enabled: root.shouldBeVisible && root.filterable
-                    // The pager owns every navigation key; the field only types.
-                    // `ignoreLeftRightKeys` alone SWALLOWS Left/Right — the flag
-                    // only forwards through `keyForwardTargets`, which is also
-                    // what gets Home/End past the TextInput's cursor handling.
-                    ignoreLeftRightKeys: true
-                    ignoreTabKeys: true
-                    keyForwardTargets: [switcherContent]
-                    onTextEdited: {
-                        // Typing IS taking over the selection, with or without a
-                        // list on screen: the filter is what the user is steering
-                        // by, and without this a list landing after they clear it
-                        // would re-seed and jump off whatever they were looking
-                        // at. Unconditional, unlike the paging keys, which must
-                        // not latch against an empty pager.
-                        root.userMoved = true;
-                        root.filterQuery = text;
-                    }
+                StyledText {
+                    width: parent.width
+                    horizontalAlignment: Text.AlignHCenter
+                    elide: Text.ElideRight
+                    visible: root.filterable && root.filterQuery !== ""
+                    text: root.filterQuery
+                    opacity: 0.85
+                    font.pixelSize: Theme.fontSizeLarge * switcherContent.captionScale
+                    color: Theme.surfaceText
+                    style: Text.Outline
+                    styleColor: Theme.withAlpha(Theme.background, 0.7)
                 }
 
                 StyledText {
                     width: parent.width
                     horizontalAlignment: Text.AlignHCenter
                     wrapMode: Text.WordWrap
-                    // Only over a list there is something to browse; with none,
-                    // the empty state already carries the failure.
-                    visible: root.staleNotice !== "" && root.itemCount > 0
-                    text: root.staleNotice
-                    font.pixelSize: Theme.fontSizeSmall
-                    color: Theme.warning
-                }
-            }
-
-            Column {
-                id: footerBlock
-                anchors.bottom: parent.bottom
-                anchors.left: parent.left
-                anchors.right: parent.right
-                anchors.margins: Theme.spacingXL
-                spacing: Theme.spacingS
-
-                Item {
-                    width: parent.width
-                    height: captionRow.implicitHeight
-
-                    Row {
-                        id: captionRow
-                        anchors.horizontalCenter: parent.horizontalCenter
-                        spacing: Theme.spacingS
-
-                        StyledText {
-                            text: root.currentItem ? root.currentItem.label : ""
-                            font.pixelSize: Theme.fontSizeLarge
-                            font.weight: Font.Medium
-                            color: Theme.surfaceText
-                            anchors.verticalCenter: parent.verticalCenter
-                        }
-
-                        Rectangle {
-                            visible: !!(root.currentItem && root.currentItem.badge)
-                            anchors.verticalCenter: parent.verticalCenter
-                            width: badgeLabel.implicitWidth + Theme.spacingS * 2
-                            height: badgeLabel.implicitHeight + Theme.spacingXS * 2
-                            radius: Theme.controlRadius
-                            color: Theme.primary
-
-                            StyledText {
-                                id: badgeLabel
-                                anchors.centerIn: parent
-                                text: root.currentItem ? (root.currentItem.badge || "") : ""
-                                font.pixelSize: Theme.fontSizeSmall
-                                font.weight: Font.Medium
-                                color: Theme.primaryText
-                            }
-                        }
+                    // The stale notice only means something over a list there is
+                    // something to browse; with none, the empty state already
+                    // carries the failure.
+                    visible: text !== ""
+                    text: {
+                        if (root.applyBlocked)
+                            return I18n.tr("Still applying — press Enter again in a moment");
+                        if (root.staleNotice !== "" && root.itemCount > 0)
+                            return root.staleNotice;
+                        return "";
                     }
+                    font.pixelSize: Theme.fontSizeSmall * switcherContent.captionScale
+                    color: root.applyBlocked ? Theme.primary : Theme.warning
+                    style: Text.Outline
+                    styleColor: Theme.withAlpha(Theme.background, 0.7)
                 }
-
-                StyledText {
-                    width: parent.width
-                    horizontalAlignment: Text.AlignHCenter
-                    text: root.applyBlocked ? I18n.tr("Still applying — press Enter again in a moment") : I18n.tr("Arrow keys page · Enter applies · Esc cancels")
-                    font.pixelSize: Theme.fontSizeSmall
-                    color: root.applyBlocked ? Theme.primary : Theme.surfaceVariantText
-                }
-            }
-
-            SwitcherStage {
-                anchors.top: headerBlock.bottom
-                anchors.bottom: footerBlock.top
-                anchors.left: parent.left
-                anchors.right: parent.right
-                anchors.margins: Theme.spacingL
-                anchors.leftMargin: Theme.spacingXL
-                anchors.rightMargin: Theme.spacingXL
-
-                dpr: root.dpr
-                hasItems: root.itemCount > 0
-                emptyText: root.emptyText
-                imageSource: root.currentItem ? root.fileUrl(root.currentItem.image) : ""
-                prefetchSources: [root.neighborUrl(-1), root.neighborUrl(1)]
             }
         }
     }

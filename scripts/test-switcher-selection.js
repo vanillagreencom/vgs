@@ -57,7 +57,8 @@
 // `navIndex` transposing "first" and "last".
 // Across the seam: a SECOND `root.userMoved` write added to `navigate()`, and one
 // added to `handleKey` (both killed by the exact count and the block-scoped ban);
-// Home routed to "last"; `onTextEdited` dropping its unconditional latch; a decoy
+// Home routed to "last"; `updateFilter` dropping its unconditional latch, and a filter
+// key writing `filterQuery` directly instead of routing through it; a decoy
 // string literal carrying `onActiveKeyChanged: reseedIfUntouched()` with the real
 // edge deleted; an apply run under a NAMED Proc id, which coalesces two applies
 // into one callback again; the request id reverted to the bare Proc command id;
@@ -296,12 +297,26 @@ function mustPrecedeIn(block, label, first, second, why) {
         "FullScreenSwitcher.qml: no key may set the intent latch directly — the guard lives in " +
         "navigate(), and a direct write is how Home and End latched against an empty pager");
 
-    base.requires(handler("FullScreenSwitcher.qml", "onTextEdited"), "onTextEdited",
+    base.requires(base.body("updateFilter"), "updateFilter()",
         [["root.userMoved = true;",
             "typing latches UNCONDITIONALLY — the filter is what the user is steering by, so a list " +
             "landing after they clear it must not re-seed over it. Pinned as source, not routed " +
             "through a predicate that could only answer true", 1],
-        ["root.filterQuery = text;", "and the filter itself is still applied", 1]]);
+        ["root.filterQuery = nextQuery;", "and the filter itself is still applied", 1]]);
+    // Every typed edit goes through that one function. There is no input box any
+    // more — the filter keys are decoded in handleKey() — so a direct write
+    // there is how the latch gets skipped for some of them, which is the
+    // four-site shape `updateFilter` replaced.
+    assert.doesNotMatch(qmlSource.stripComments(base.body("handleKey")), /filterQuery\s*=/,
+        "FullScreenSwitcher.qml: no key may write the filter directly — every edit routes through " +
+        "updateFilter(), which is where the intent latch lives");
+    base.requires(base.body("handleKey"), "handleKey()", [
+        ['root.updateFilter("");',
+            "Esc takes back the FILTER first when there is one, so a mistyped term does not cost " +
+            "the whole browse", 1],
+        ["root.updateFilter(root.editedFilter(event));", "Backspace and Ctrl+U edit it", 1],
+        ["root.updateFilter(root.filterQuery + event.text);", "and a printable key appends to it", 1]
+    ]);
 
     base.requires(base.body("onOpened"), "the base's per-open reset", [
         ['root.filterQuery = "";', "each open starts unfiltered", 1],

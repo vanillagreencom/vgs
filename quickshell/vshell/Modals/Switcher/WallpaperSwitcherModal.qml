@@ -12,9 +12,11 @@ import qs.Services
 FullScreenSwitcher {
     id: root
 
-    headerTitle: I18n.tr("Wallpaper")
-    headerIcon: "wallpaper"
     filterable: false
+    // A wallpaper's filename tells the user nothing the picture does not, and
+    // naming it under the rail is chrome Omarchy's background switcher does not
+    // carry either.
+    showLabels: false
     layerNamespace: "vshell:wallpaper-switcher"
 
     // A failed `theme wallpapers` read leaves whatever was already loaded, so an
@@ -42,7 +44,6 @@ FullScreenSwitcher {
     items: root.wallpaperEntries.filter(entry => !!entry.path).map(entry => ({
                 image: entry.path,
                 label: entry.file,
-                badge: entry.default ? I18n.tr("Default") : "",
                 key: entry.path
             }))
 

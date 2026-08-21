@@ -38,6 +38,9 @@ Item {
     property color backgroundColor: Theme.popupSurfaceColor(Theme.surfaceContainer)
     property real cornerRadius: Theme.cornerRadius
     property bool enableShadow: true
+    // Full-bleed surfaces (the switchers) turn this off: a window border
+    // traced around the whole screen is a frame with nothing outside it.
+    property bool enableBorder: true
     property alias modalFocusScope: focusScope
     property bool shouldBeVisible: false
     property bool isClosing: false
@@ -383,6 +386,7 @@ Item {
                         radius: root.cornerRadius
                         surfaceColor: root.backgroundColor
                         // Native-style window border matching Hyprland's active border.
+                        drawBorder: root.enableBorder
                         borderColor: Theme.windowBorderActive
                         borderWidth: Theme.windowBorderWidth
 

@@ -4,24 +4,25 @@ import QtQuick
 import qs.Common
 import qs.Widgets
 
-// The switcher's preview area: one large image, its lookahead, and the three
-// states that are not an image (loading, empty/unreadable, undecodable).
-// Split out of FullScreenSwitcher.qml, which owns paging and keys.
+// The carousel's selected slot: the one image shown at full size, its
+// lookahead, and the two states that are not an image (loading, undecodable).
+// Split out of SwitcherCarousel.qml, which owns the geometry, and out of
+// FullScreenSwitcher.qml, which owns paging and keys.
 Item {
     id: stage
 
     property real dpr: 1
-    property bool hasItems: false
-    property string emptyText: ""
     property string imageSource: ""
     // Adjacent entries, kept decoded so a page step is a cache hit. Bounded to
     // prev/current/next on purpose: Qt retains only ~2 MB of UNreferenced
-    // pixmaps, so residency is the elements that hold a reference (~25 MB at
-    // 1920x1080) rather than the whole set — gruvy-glass alone ships 38.
+    // pixmaps, so residency is the elements that hold a reference rather than
+    // the whole set — gruvy-glass alone ships 38 wallpapers.
     property var prefetchSources: []
 
-    // Decode at display size: theme previews are 1920x1080 but a user wallpaper
-    // can be far larger than the screen.
+    // Decode at display size, capped: theme previews are 1920x1080 but a user
+    // wallpaper can be far larger than the screen, and on a HiDPI panel the
+    // display size alone would ask for a decode bigger than any source we
+    // actually ship.
     //
     // The lookahead MUST match the visible Image on EVERY property the pixmap
     // cache keys on — url, sourceSize, fillMode, sourceClipRect, frame, mirror —
@@ -31,14 +32,17 @@ Item {
     // misses exactly the entry the lookahead warmed: it pays the memory and
     // re-decodes anyway. These three are declared once here and bound by both
     // so the two cannot drift apart.
-    readonly property int decodeWidth: Math.max(1, Math.round(stage.width * stage.dpr))
-    readonly property int decodeHeight: Math.max(1, Math.round(stage.height * stage.dpr))
-    readonly property int decodeFillMode: Image.PreserveAspectFit
+    readonly property int decodeCap: 2560
+    readonly property int decodeWidth: Math.min(stage.decodeCap, Math.max(1, Math.round(stage.width * stage.dpr)))
+    readonly property int decodeHeight: Math.min(stage.decodeCap, Math.max(1, Math.round(stage.height * stage.dpr)))
+    // Crop, not fit: the tile is a fixed parallelogram and a letterboxed image
+    // inside it would put bars where the lean is supposed to be.
+    readonly property int decodeFillMode: Image.PreserveAspectCrop
 
     Image {
         id: preview
         anchors.fill: parent
-        visible: stage.hasItems && status === Image.Ready
+        visible: status === Image.Ready
         asynchronous: true
         cache: true
         fillMode: stage.decodeFillMode
@@ -64,25 +68,16 @@ Item {
 
     VgsSpinner {
         anchors.centerIn: parent
-        visible: stage.hasItems && preview.status === Image.Loading
+        visible: preview.status === Image.Loading
     }
 
     StyledText {
         anchors.centerIn: parent
-        width: Math.min(parent.width, 720)
-        horizontalAlignment: Text.AlignHCenter
-        wrapMode: Text.WordWrap
-        visible: !stage.hasItems
-        text: stage.emptyText
-        font.pixelSize: Theme.fontSizeLarge
-        color: Theme.surfaceVariantText
-    }
-
-    StyledText {
-        anchors.centerIn: parent
-        visible: stage.hasItems && preview.status !== Image.Ready && preview.status !== Image.Loading
+        visible: preview.status !== Image.Ready && preview.status !== Image.Loading
         text: I18n.tr("Preview unavailable")
         font.pixelSize: Theme.fontSizeMedium
-        color: Theme.surfaceVariantText
+        color: Theme.surfaceText
+        style: Text.Outline
+        styleColor: Theme.withAlpha(Theme.background, 0.7)
     }
 }
