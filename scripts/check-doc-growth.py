@@ -182,7 +182,7 @@ CEILINGS: dict[str, int] = {
     # Adopted at 1,906 B; now 1,598 B after the per-channel publish commands
     # moved to vgs-distro-publish, leaving a checklist. Ratcheted down to match.
     "project-skills/skills/vgs-release/SKILL.md": 1_800,
-    # Adopted at 4,577 B: per-channel publish commands, split out of the release
+    # Adopted at 4,769 B: per-channel publish commands, split out of the release
     # checklist so that file stays a checklist. Two blocks carry more than their
     # one-liner would — the Ubuntu build cannot run without its source-tree
     # preparation, and verification asserts the NEW version across EVERY declared

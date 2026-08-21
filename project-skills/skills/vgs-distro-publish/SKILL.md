@@ -70,7 +70,7 @@ repository, and the AUR's RPC index lags its git by minutes.
 V=$(cat VERSION); bad=0
 
 # AUR — recipes match this repo byte for byte
-scripts/check-aur-sync.py --remote
+scripts/check-aur-sync.py --remote || bad=1
 
 # Fedora COPR — every declared chroot
 for c in fedora-43-x86_64 fedora-43-aarch64 fedora-44-x86_64 fedora-44-aarch64; do
@@ -88,9 +88,12 @@ done
 curl -s https://download.opensuse.org/repositories/home:/vanillagreen/Debian_13/amd64/ \
   | grep -q "vgs-shell_$V-" && echo "Debian_13 ok" || { echo "Debian_13 NOT $V"; bad=1; }
 
-# Ubuntu — the newest Published source
-curl -s "https://api.launchpad.net/1.0/~vanillagreen/+archive/ubuntu/vgs-shell?ws.op=getPublishedSources" \
-  | grep -q "\"source_package_version\": \"$V-1~" && echo "PPA ok" || { echo "PPA NOT $V"; bad=1; }
+# Ubuntu — the published BINARIES, per architecture. A source can be accepted
+# and published while a build fails, and then nobody can install it.
+for a in amd64 arm64; do
+  curl -s "https://api.launchpad.net/1.0/~vanillagreen/+archive/ubuntu/vgs-shell?ws.op=getPublishedBinaries&binary_name=vgs-shell&version=$V-1~ubuntu26.04.1&status=Published" \
+    | grep -q "/$a" && echo "PPA $a ok" || { echo "PPA $a NOT $V"; bad=1; }
+done
 
 # Gentoo — the overlay's ebuild
 scripts/publish-gentoo.sh --check || bad=1
