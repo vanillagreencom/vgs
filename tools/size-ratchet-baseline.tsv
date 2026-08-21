@@ -155,7 +155,7 @@ quickshell/vshell/Modules/Settings/PrinterTab.qml	1152
 quickshell/vshell/Modules/Settings/ScratchpadRow.qml	520
 quickshell/vshell/Modules/Settings/ScratchpadsTab.qml	712
 quickshell/vshell/Modules/Settings/ThemeCatalogBrowser.qml	486
-quickshell/vshell/Modules/Settings/ThemesSettingsTab.qml	560
+quickshell/vshell/Modules/Settings/ThemesSettingsTab.qml	566
 quickshell/vshell/Modules/Settings/TimeWeatherTab.qml	1159
 quickshell/vshell/Modules/Settings/TypographyTab.qml	542
 quickshell/vshell/Modules/Settings/UsersTab.qml	505

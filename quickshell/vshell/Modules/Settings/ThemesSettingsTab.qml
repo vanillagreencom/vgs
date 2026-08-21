@@ -514,7 +514,13 @@ Item {
                     VgsButton {
                         variant: "secondary"
                         text: I18n.tr("Clear Wallpaper")
-                        enabled: root.selectedWallpaper !== "" || SessionData.wallpaperPath !== ""
+                        // Also gated on an apply in flight: `clear-wallpaper`
+                        // and `set-wallpaper` are separate helper runs, so a
+                        // clear fired mid-apply finishes FIRST and the apply
+                        // then puts the wallpaper back — the user's last action
+                        // losing, silently. Serializing the two in the service
+                        // is VGS-211; this closes the one-click path to it.
+                        enabled: !VGSThemeService.applyInFlight && (root.selectedWallpaper !== "" || SessionData.wallpaperPath !== "")
                         onClicked: {
                             root.selectedWallpaper = "";
                             VGSThemeService.clearWallpaper();
