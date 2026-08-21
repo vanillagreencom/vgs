@@ -44,7 +44,19 @@ FullScreenSwitcher {
     // tab already marks its current entry the same way. The service value is
     // the fallback for the window where an apply has claimed a wallpaper
     // optimistically but has not committed it yet.
-    activeKey: SessionData.wallpaperPath || VGSThemeService.selectedWallpaper || ""
+    //
+    // Per SCREEN, because under per-monitor mode the global path is not what
+    // any monitor is showing: each screen displays its own assignment, so
+    // seeding from the global one opened the switcher on a picture that is on
+    // no monitor at all — or on nothing in the list, which lands on index 0.
+    // `getMonitorWallpaper` is the one accessor for this: it already answers
+    // with the global path when per-monitor mode is off or the screen has no
+    // assignment of its own, so there is no mode to branch on here.
+    activeKey: {
+        const screenName = root.effectiveScreen ? String(root.effectiveScreen.name || "") : "";
+        const shown = screenName ? SessionData.getMonitorWallpaper(screenName) : SessionData.wallpaperPath;
+        return shown || VGSThemeService.selectedWallpaper || "";
+    }
     // An apply not already running, not the whole service — see ThemeSwitcherModal.
     canApply: !applyReporter.anyApplyInFlight
 

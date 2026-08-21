@@ -289,7 +289,7 @@ CEILINGS: dict[str, int] = {
     # file made and the code did not keep — no compositor binds ship, Esc clears
     # a filter before it cancels, and sliver residency is a band rather than
     # every entry ever paged past, plus the one-scrim rule and the key-held
-# selection later rounds added. Adopted at 28,861 B; the file is 37,850 B.
+# selection later rounds added. Adopted at 28,861 B; the file is 37,877 B.
     "docs/architecture/theme-architecture.md": 37_900,
     "docs/architecture/wallpaper-upscaling.md": 4_000,  # adopted at 3,625 B
 }

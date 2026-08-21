@@ -677,10 +677,14 @@ mustPrecedeIn(handler("ThemeSwitcherModal.qml", "emptyText"), "ThemeSwitcherModa
     }
 
     q("WallpaperSwitcherModal.qml").requires(body("WallpaperSwitcherModal.qml"), "WallpaperSwitcherModal.qml", [
-        ['activeKey: SessionData.wallpaperPath || VGSThemeService.selectedWallpaper || ""',
-            "the seed is what is ON the desktop first. Not everything that changes the wallpaper " +
-            "goes through this service — cycling writes SessionData directly — so seeding from " +
-            "`selectedWallpaper` alone opened the switcher on whatever the service last applied", 1]
+        ["const shown = screenName ? SessionData.getMonitorWallpaper(screenName) : SessionData.wallpaperPath;",
+            "the seed is what is ON this screen first. Not everything that changes the wallpaper " +
+            "goes through this service — cycling writes SessionData directly — and under " +
+            "per-monitor mode the GLOBAL path is on no monitor at all, so both `selectedWallpaper` " +
+            "alone and `wallpaperPath` alone seed the switcher on the wrong picture", 1],
+        ["return shown || VGSThemeService.selectedWallpaper || \"\";",
+            "with the service value as the fallback for the window where an apply has claimed a " +
+            "wallpaper optimistically but not committed it", 1]
     ]);
 
     q("WallpaperTab.qml").requires(wallpaperTabSource, "WallpaperTab.qml", [
