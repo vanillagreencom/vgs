@@ -1319,18 +1319,12 @@ Item {
         }
     }
 
-    // Registered as well as handed to VGSIPC: the IPC targets are how a keybind
-    // reaches them, the registry is how the Settings window does.
     WallpaperSwitcherModal {
         id: wallpaperSwitcherModal
-
-        Component.onCompleted: ModalManager.registerSwitcher("wallpaper", wallpaperSwitcherModal)
     }
 
     ThemeSwitcherModal {
         id: themeSwitcherModal
-
-        Component.onCompleted: ModalManager.registerSwitcher("theme", themeSwitcherModal)
     }
 
     VGSIPC {

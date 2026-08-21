@@ -93,7 +93,6 @@ const REPORTER = path.join(SWITCHER, "ThemeApplyReporter.qml");
 const THEME_MODAL = path.join(SWITCHER, "ThemeSwitcherModal.qml");
 const WALLPAPER_MODAL = path.join(SWITCHER, "WallpaperSwitcherModal.qml");
 const SERVICE = path.join(repoRoot, "quickshell", "vshell", "Services", "VGSThemeService.qml");
-const SHELL_ROOT = path.join(repoRoot, "quickshell", "vshell", "VGS.qml");
 const WALLPAPER_TAB = path.join(repoRoot, "quickshell", "vshell", "Modules", "Settings", "WallpaperTab.qml");
 const THEMES_TAB = path.join(repoRoot, "quickshell", "vshell", "Modules", "Settings", "ThemesSettingsTab.qml");
 const CAROUSEL = path.join(SWITCHER, "SwitcherCarousel.qml");
@@ -118,7 +117,6 @@ const reporterSource = read(REPORTER);
 const themeSource = read(THEME_MODAL);
 const wallpaperSource = read(WALLPAPER_MODAL);
 const serviceSource = read(SERVICE);
-const shellRootSource = read(SHELL_ROOT);
 const wallpaperTabSource = read(WALLPAPER_TAB);
 const themesTabSource = read(THEMES_TAB);
 const carouselSource = read(CAROUSEL);
@@ -244,7 +242,6 @@ const sources = new Map([
     ["ThemeSwitcherModal.qml", themeSource],
     ["WallpaperSwitcherModal.qml", wallpaperSource],
     ["VGSThemeService.qml", serviceSource],
-    ["VGS.qml", shellRootSource],
     ["WallpaperTab.qml", wallpaperTabSource],
     ["ThemesSettingsTab.qml", themesTabSource],
     ["SwitcherCarousel.qml", carouselSource],
@@ -630,51 +627,26 @@ mustPrecedeIn(handler("ThemeSwitcherModal.qml", "emptyText"), "ThemeSwitcherModa
     }
 }
 
-// The three ways in. A keybind reaches a switcher through its IPC target, which
-// switcher_check already exercises; these are the other two, and both are one
-// line each in a settings tab — exactly the shape that gets reverted by a
-// merge and noticed by nobody, because nothing else fails when they go.
+// The two ways in. A keybind reaches a switcher through its IPC target, which
+// switcher_check already exercises; the other is the per-page shortcut row,
+// one line in a settings tab — exactly the shape that gets dropped by a merge
+// and noticed by nobody, because nothing else fails when it goes.
 {
-    const shell = q("VGS.qml");
-    shell.requires(shellRootSource, "VGS.qml", [
-        ['ModalManager.registerSwitcher("wallpaper", wallpaperSwitcherModal)',
-            "the shell root registers each switcher, or the Settings buttons have nothing to open " +
-            "and silently fall back to the dash tab they were moved off", 1],
-        ['ModalManager.registerSwitcher("theme", themeSwitcherModal)',
-            "and the same for the theme switcher", 1]
-    ]);
-
-    // Registration must survive a `show()` rename: showSwitcher tests for the
-    // function before calling it, so a renamed entry point degrades to the
-    // fallback rather than throwing — the pin is that both modals still expose
-    // one under the name the registry calls.
     for (const file of ["WallpaperSwitcherModal.qml", "ThemeSwitcherModal.qml"]) {
         q(file).requires(body(file), file,
-            [["function show()", "the registry and every IPC target call show(); it also dispatches the list read", 1]]);
+            [["function show()", "every IPC target calls show(); it dispatches the list read as well as opening", 1]]);
     }
 
-    const wallpaperTab = q("WallpaperTab.qml");
-    wallpaperTab.requires(wallpaperTabSource, "WallpaperTab.qml", [
-        ['if (ModalManager.showSwitcher("wallpaper"))',
-            "Browse Wallpapers opens the full-screen switcher", 1],
-        ['if (ModalManager.showSwitcher("theme"))',
-            "and Browse Themes opens the theme one", 1],
+    q("WallpaperTab.qml").requires(wallpaperTabSource, "WallpaperTab.qml", [
         ['action: "spawn vshell ipc call wallpaper-switcher toggle"',
             "the page carries the bind for its OWN switcher, and the action must be one the IPC " +
             "target answers — a typo here writes a compositor bind that does nothing", 1]
     ]);
-    mustPrecedeIn(wallpaperTabSource, "WallpaperTab.qml", /ModalManager\.showSwitcher\("wallpaper"\)/,
-        /dashTabIndexForId\("wallpaper"\)/,
-        "the switcher is the destination and the dash tab is the fallback, not the other way round");
 
     q("ThemesSettingsTab.qml").requires(themesTabSource, "ThemesSettingsTab.qml", [
-        ['if (ModalManager.showSwitcher("theme"))',
-            "Browse Themes on the themes page opens the switcher too", 1],
         ['action: "spawn vshell ipc call theme-switcher toggle"',
             "and that page carries the bind for the theme switcher", 1]
     ]);
-    mustPrecedeIn(themesTabSource, "ThemesSettingsTab.qml", /ModalManager\.showSwitcher\("theme"\)/,
-        /dashTabIndexForId\("themes"\)/, "same order: switcher first, dash only as the fallback");
 }
 
 // What review found, pinned so it cannot come back. Each of these was a

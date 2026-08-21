@@ -288,7 +288,7 @@ CEILINGS: dict[str, int] = {
     # documented nowhere. The last +685 B is review correcting three claims this
     # file made and the code did not keep — no compositor binds ship, Esc clears
     # a filter before it cancels, and sliver residency is a band rather than
-    # every entry ever paged past. Adopted at 28,861 B; the file is 37,612 B.
+    # every entry ever paged past. Adopted at 28,861 B; the file is 37,471 B.
     "docs/architecture/theme-architecture.md": 37_900,
     "docs/architecture/wallpaper-upscaling.md": 4_000,  # adopted at 3,625 B
 }

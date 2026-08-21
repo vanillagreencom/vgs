@@ -58,18 +58,15 @@ FocusScope {
                     width: parent.width
                     spacing: Theme.spacingS
 
-                    // Both open the full-screen switchers, not the dash tabs:
-                    // browsing wallpapers and themes is what those surfaces are
-                    // for, and they are the same thing the keybind below opens.
-                    // `showSwitcher` answers false only when the shell root has
-                    // not registered them, which the dash fallback covers.
+                    // The DASH tabs, deliberately: from Settings the full
+                    // picker is the more capable surface — folders, per-monitor
+                    // assignment, downloads. The switcher is the keyboard-driven
+                    // one, and the shortcut for it is set just below.
                     VgsButton {
                         variant: "secondary"
                         text: I18n.tr("Browse Wallpapers")
                         iconName: "wallpaper"
                         onClicked: {
-                            if (ModalManager.showSwitcher("wallpaper"))
-                                return;
                             const bar = KeyboardFocus.getPreferredBar("clockButtonRef") || KeyboardFocus.getPreferredBar();
                             if (bar)
                                 bar.triggerDashTab(SettingsData.dashTabIndexForId("wallpaper"));
@@ -81,8 +78,6 @@ FocusScope {
                         text: I18n.tr("Browse Themes")
                         iconName: "palette"
                         onClicked: {
-                            if (ModalManager.showSwitcher("theme"))
-                                return;
                             const bar = KeyboardFocus.getPreferredBar("clockButtonRef") || KeyboardFocus.getPreferredBar();
                             if (bar)
                                 bar.triggerDashTab(SettingsData.dashTabIndexForId("themes"));

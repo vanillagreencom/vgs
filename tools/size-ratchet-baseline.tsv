@@ -155,7 +155,7 @@ quickshell/vshell/Modules/Settings/PrinterTab.qml	1152
 quickshell/vshell/Modules/Settings/ScratchpadRow.qml	520
 quickshell/vshell/Modules/Settings/ScratchpadsTab.qml	712
 quickshell/vshell/Modules/Settings/ThemeCatalogBrowser.qml	486
-quickshell/vshell/Modules/Settings/ThemesSettingsTab.qml	565
+quickshell/vshell/Modules/Settings/ThemesSettingsTab.qml	560
 quickshell/vshell/Modules/Settings/TimeWeatherTab.qml	1159
 quickshell/vshell/Modules/Settings/TypographyTab.qml	542
 quickshell/vshell/Modules/Settings/UsersTab.qml	505
@@ -199,7 +199,7 @@ quickshell/vshell/Services/UsersService.qml	469
 quickshell/vshell/Services/VGSBackendService.qml	739
 quickshell/vshell/Services/VGSThemeService.qml	935
 quickshell/vshell/Services/WeatherService.qml	1144
-quickshell/vshell/VGS.qml	1483
+quickshell/vshell/VGS.qml	1477
 quickshell/vshell/VGSIPC.qml	2177
 quickshell/vshell/Widgets/KeybindItem.qml	1724
 quickshell/vshell/Widgets/VgsDropdown.qml	565
@@ -227,7 +227,7 @@ scripts/test-popout-dismiss-envelope.js	489
 scripts/test-remote-desktop-state.js	1243
 scripts/test-section-pointers-e2e.py	434
 scripts/test-section-pointers.py	458
-scripts/test-switcher-selection.js	717
+scripts/test-switcher-selection.js	689
 scripts/test-toast-actions.js	607
 scripts/test-validate.sh	547
 scripts/test-validation-inventory.sh	2278
