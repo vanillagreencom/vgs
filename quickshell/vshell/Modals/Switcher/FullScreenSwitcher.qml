@@ -226,7 +226,14 @@ VgsModal {
     // The one place the held key is written: every mover calls it after moving,
     // so the key and the index cannot disagree about what is selected.
     function holdCurrent() {
-        root.selectedKey = root.currentItem ? String(root.currentItem.key || "") : "";
+        // Only ever WRITES a key, never clears one. A query that matches
+        // nothing empties the list for as long as it is typed, and clearing
+        // here would throw the user's place away mid-keystroke: backspacing
+        // back to a matching query would then land on the top of the list
+        // rather than on the entry they were on. The per-open and per-close
+        // resets are what clear it between uses.
+        if (root.currentItem)
+            root.selectedKey = String(root.currentItem.key || "");
     }
 
     function step(delta) {
@@ -405,6 +412,13 @@ VgsModal {
     // `popupSurfaceColor`, whose alpha is the user's popup-transparency setting
     // and would let an opaque preference hide the very thing being previewed.
     backgroundColor: Theme.withAlpha(Theme.background, 0.5)
+    // ONE scrim. VgsModalStandalone paints its own black backdrop behind the
+    // content when `modalDarkenBackground` is on, which composited with this
+    // surface dimmed the desktop roughly twice as far as the line above says —
+    // and by an amount that depended on a user setting. `showBackground` stays
+    // true so the backdrop's click-catcher and both smoke paths are unchanged;
+    // only its opacity goes.
+    backgroundOpacity: 0
     closeOnBackgroundClick: false
 
     // Reopening inside the close animation keeps the content Loader alive and

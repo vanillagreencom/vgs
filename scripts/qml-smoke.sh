@@ -884,6 +884,23 @@ switcher_records=()
 # outside Modals/Switcher/ FAILS here instead of being quietly absent. So does
 # one whose namespace or IPC target cannot be read — that is exactly the switcher
 # that would otherwise be covered by nothing.
+# Every file whose ROOT element is FullScreenSwitcher. Its own function so the
+# grep's exit status is the function's: inside a process substitution it is
+# discarded, which would let a read error deliver a PARTIAL list that the caller
+# cannot tell from a complete one. Exit 1 (no matches) is the empty list, which
+# the caller already fails on; anything else is a read fault and aborts.
+switcher_roots() {
+  local root_dir="$1" out status
+  out="$(grep -rlE '^FullScreenSwitcher[[:space:]]*(\{|$)' "$root_dir/quickshell/vshell" --include='*.qml')"
+  status=$?
+  if (( status > 1 )); then
+    fail "could not scan quickshell/vshell for switcher root elements (grep exit $status) - a partial list would silently under-cover"
+    return 1
+  fi
+  [[ -n $out ]] && printf '%s\n' "$out" | sort
+  return 0
+}
+
 discover_switchers() {
   switcher_records=()
   local file name namespace target found_any=0
@@ -913,8 +930,12 @@ discover_switchers() {
     fi
     switcher_records+=("$target|$namespace")
   # Anchored at column 0: that is where a QML root element sits, and where a
-  # comment or a nested use of the type cannot.
-  done < <(grep -rlE '^FullScreenSwitcher[[:space:]]*\{' "$repo_root/quickshell/vshell" --include='*.qml' | sort)
+  # comment or a nested use of the type cannot. The brace is NOT required on the
+  # same line - QML accepts it on the next, and demanding it here made the
+  # discovery fail OPEN: a switcher written that way was found by nothing, the
+  # already-collected records kept the count non-zero, and the phase passed
+  # having never measured it.
+  done < <(switcher_roots "$repo_root")
   if [[ $found_any -eq 0 || ${#switcher_records[@]} -eq 0 ]]; then
     fail "no file in quickshell/vshell declares FullScreenSwitcher as its root element - switcher_check would measure nothing and still pass"
     return 1

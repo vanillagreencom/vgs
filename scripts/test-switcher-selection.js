@@ -411,9 +411,14 @@ function mustPrecedeIn(block, label, first, second, why) {
         "and the key is held LAST, or it records the position the re-seed moved off");
 
     base.requires(base.body("holdCurrent"), "holdCurrent()", [
-        ['root.selectedKey = root.currentItem ? String(root.currentItem.key || "") : "";',
-            "one writer for the held key, so it cannot disagree with the index about what is selected", 1]
+        ["if (root.currentItem) root.selectedKey = String(root.currentItem.key || \"\");",
+            "one writer for the held key, and it only ever WRITES one. Clearing it when the list is " +
+            "empty throws the user's place away mid-keystroke: a query matching nothing empties the " +
+            "list, and backspacing back would then land on the top instead of where they were", 1]
     ]);
+    assert.doesNotMatch(qmlSource.stripComments(base.body("holdCurrent")), /selectedKey = ""/,
+        "FullScreenSwitcher.qml: holdCurrent() must not clear the held key — the per-open and " +
+        "per-close resets own that, and clearing here loses the selection to a zero-match filter");
     base.requires(base.body("navigate"), "navigate() holds its key",
         [["root.holdCurrent();", "paging updates the held key, or the NEXT list change puts the selection back where the user paged FROM", 1]]);
     base.requires(base.body("seedSelection"), "seedSelection()",

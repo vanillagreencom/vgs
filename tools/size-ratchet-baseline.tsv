@@ -70,7 +70,7 @@ quickshell/vshell/Modals/PowerMenuModal.qml	883
 quickshell/vshell/Modals/ProcessListModal.qml	615
 quickshell/vshell/Modals/Settings/SettingsModal.qml	464
 quickshell/vshell/Modals/Settings/SettingsSidebar.qml	1090
-quickshell/vshell/Modals/Switcher/FullScreenSwitcher.qml	583
+quickshell/vshell/Modals/Switcher/FullScreenSwitcher.qml	597
 quickshell/vshell/Modals/VgsColorPickerModal.qml	766
 quickshell/vshell/Modals/WifiPasswordModal.qml	747
 quickshell/vshell/Modals/WindowRuleModal.qml	1906
@@ -205,7 +205,7 @@ quickshell/vshell/Widgets/KeybindItem.qml	1724
 quickshell/vshell/Widgets/VgsDropdown.qml	565
 quickshell/vshell/Widgets/VgsPopoutStandalone.qml	1061
 scripts/check-aur-sync.py	471
-scripts/check-doc-growth.py	897
+scripts/check-doc-growth.py	898
 scripts/check-notification-takeover.js	454
 scripts/check-paste-injection.py	897
 scripts/check-section-pointers.py	556
@@ -217,7 +217,7 @@ scripts/gen-package-metadata.py	993
 scripts/lib/section_pointers_selftest.py	515
 scripts/lib/validation_manifest.py	1045
 scripts/lib/vendor-drift.sh	429
-scripts/qml-smoke.sh	1804
+scripts/qml-smoke.sh	1825
 scripts/test-compositor-focus.js	791
 scripts/test-launcher-hover-latch.js	492
 scripts/test-launcher-search-gate.js	1076
@@ -227,7 +227,7 @@ scripts/test-popout-dismiss-envelope.js	489
 scripts/test-remote-desktop-state.js	1243
 scripts/test-section-pointers-e2e.py	434
 scripts/test-section-pointers.py	458
-scripts/test-switcher-selection.js	736
+scripts/test-switcher-selection.js	741
 scripts/test-toast-actions.js	607
 scripts/test-validate.sh	547
 scripts/test-validation-inventory.sh	2278
