@@ -34,10 +34,10 @@ copr-cli build vanillagreen/vgs-shell packaging/fedora/vgs-shell.spec
 
 # openSUSE + Debian 13 (one OBS package, three build targets)
 osc checkout home:vanillagreen vgs-shell -o /tmp/obs
-cd /tmp/obs                                   # osc commit needs the working copy
-# update _service (version + source sha256), vgs-shell.spec, and the .dsc +
-# debian.tar.xz built from packaging/debian/
-osc commit -m "Update to vX.Y.Z"
+( cd /tmp/obs                                 # subshell: this cd must not leak
+  # update _service (version + source sha256), vgs-shell.spec, and the .dsc +
+  # debian.tar.xz built from packaging/debian/
+  osc commit -m "Update to vX.Y.Z" )
 osc results home:vanillagreen vgs-shell
 
 # Ubuntu PPA — debian/ must sit at the source root, and the signing key has a
@@ -72,12 +72,13 @@ V=$(cat VERSION); bad=0
 # AUR — recipes match this repo byte for byte
 scripts/check-aur-sync.py --remote || bad=1
 
-# Fedora COPR — every declared chroot
+# Fedora COPR — the chroot's DNF metadata, which is what dnf resolves against.
+# A build can succeed while repository regeneration lags or fails.
 for c in fedora-43-x86_64 fedora-43-aarch64 fedora-44-x86_64 fedora-44-aarch64; do
-  b=$(curl -s "https://download.copr.fedorainfracloud.org/results/vanillagreen/vgs-shell/$c/" \
-      | grep -oE '[0-9]{7,8}-vgs-shell' | tail -1)
-  curl -s "https://download.copr.fedorainfracloud.org/results/vanillagreen/vgs-shell/$c/$b/results.json" \
-    | grep -q "\"version\": \"$V\"" && echo "$c ok" || { echo "$c NOT $V"; bad=1; }
+  u="https://download.copr.fedorainfracloud.org/results/vanillagreen/vgs-shell/$c"
+  pri=$(curl -sL "$u/repodata/repomd.xml" | grep -oE 'repodata/[a-f0-9]+-primary\.xml\.[a-z]+' | head -1)
+  curl -sL "$u/$pri" | { zstd -dc 2>/dev/null || zcat; } \
+    | grep -q "<version epoch=\"[0-9]*\" ver=\"$V\"" && echo "$c ok" || { echo "$c NOT $V"; bad=1; }
 done
 
 # openSUSE + Debian — the repository index, not osc results
@@ -98,8 +99,9 @@ done
 # Gentoo — the overlay's ebuild
 scripts/publish-gentoo.sh --check || bad=1
 
-# Nix — the public flake at the tag actually evaluates
-nix eval --raw "github:vanillagreencom/vgs/v$V#packages.x86_64-linux.default.version" || bad=1
+# Nix — BUILD the public flake. Evaluating .version only reads back the VERSION
+# file the derivation was handed, so it passes on a package that cannot build.
+nix build --no-link "github:vanillagreencom/vgs/v$V#packages.x86_64-linux.default" || bad=1
 
 # A per-channel report that always exits 0 is how a stale channel gets claimed
 # as shipped. Every miss above sets bad; this is the block's answer.
