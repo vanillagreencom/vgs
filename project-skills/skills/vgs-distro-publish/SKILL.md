@@ -18,6 +18,9 @@ Never claim a channel until its public install command succeeds.
 | AUR `vgs-shell`, `vgs-shell-assets`, `vgs-shell-git` | `publish-aur.yml` on `packaging/arch/**` and after a tag |
 | Nix | flake follows the tag |
 
+If CI is down, `scripts/publish-aur.sh` is the same publisher run by hand; it needs
+an AUR account with commit rights on all three packages.
+
 `publish-aur.sh` defers a package whose release assets 404, or whose declared
 `sha256sums` disagree with the release's `SHA256SUMS`. Both are expected before the
 pin lands. Any other non-zero is a real failure.
@@ -54,7 +57,8 @@ dput vgs-ppa ../vgs-shell_*_source.changes    # host config in ~/.dput.cf
 ```
 
 `dput` on Arch ships no `ppa:` shorthand and exits 0 when the host is unknown —
-define `vgs-ppa` (`fqdn = ppa.launchpad.net`, `incoming = ~vanillagreen/ubuntu/vgs-shell/`)
+define `vgs-ppa` (`fqdn = ppa.launchpad.net`,
+`incoming = ~vanillagreen/ubuntu/vgs-shell/` — owner, then distro, then PPA name)
 and read its output, not its status.
 
 Void ships a recipe only — Void has no Quickshell 0.3.0.
