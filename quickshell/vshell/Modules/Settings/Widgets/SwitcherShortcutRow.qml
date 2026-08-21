@@ -115,12 +115,17 @@ Rectangle {
                 text: {
                     if (!root.available)
                         return I18n.tr("Set this shortcut in your compositor config — VGS cannot write binds for it");
+                    // Hyprland binds are read live from `hyprctl` and VGS has no
+                    // writer for them, so the capture field would only ever warn.
+                    // Say it here instead of offering a control that refuses.
+                    if (root.readOnly)
+                        return KeybindsService.vgsStatus.statusMessage || I18n.tr("VGS reads these binds read-only — change this shortcut in your compositor config");
                     if (root.needsSetup)
                         return I18n.tr("Run Setup first — until VGS's binds file is included in your compositor config, a shortcut saved here will not load");
                     return root.description;
                 }
                 font.pixelSize: Theme.fontSizeSmall
-                color: root.needsSetup ? Theme.warning : Theme.surfaceVariantText
+                color: (root.needsSetup || root.readOnly) ? Theme.warning : Theme.surfaceVariantText
                 wrapMode: Text.WordWrap
                 visible: text !== ""
                 horizontalAlignment: Text.AlignLeft
@@ -164,7 +169,8 @@ Rectangle {
             id: controls
             anchors.verticalCenter: parent.verticalCenter
             spacing: Theme.spacingS
-            visible: root.available
+            // Nothing to offer when VGS cannot write the compositor's binds.
+            visible: root.available && !root.readOnly
 
             VgsButton {
                 anchors.verticalCenter: parent.verticalCenter
