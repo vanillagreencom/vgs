@@ -195,6 +195,20 @@ Item {
             }
         }
 
+        // The theme set is RETAINED when a `theme wallpapers` read fails, so what
+        // the grid shows can be the previous theme's — and applying a tile still
+        // works, because the absolute paths stay valid. The switcher's banner
+        // says exactly this from the same service property; presenting a stale
+        // set here as the current theme's was the other half of the same lie.
+        StyledText {
+            width: parent.width
+            wrapMode: Text.WordWrap
+            visible: root.source === "theme" && VGSThemeService.wallpapersStaleNotice !== "" && (root.entries || []).length > 0
+            text: VGSThemeService.wallpapersStaleNotice
+            font.pixelSize: Theme.fontSizeSmall
+            color: Theme.warning
+        }
+
         VgsGridView {
             id: grid
 
@@ -370,7 +384,18 @@ Item {
 
                 StyledText {
                     anchors.horizontalCenter: parent.horizontalCenter
-                    text: root.source === "folder" ? I18n.tr("No images in ") + Paths.shortenHome(root.effectiveFolder) : I18n.tr("This theme has no wallpapers yet")
+                    // An empty THEME set after a failed read is not "you have
+                    // none" — the read failed with nothing retained to fall back
+                    // on, the same distinction the switcher's empty state draws.
+                    text: {
+                        if (root.source === "folder")
+                            return I18n.tr("No images in ") + Paths.shortenHome(root.effectiveFolder);
+                        if (VGSThemeService.wallpapersLoadFailed)
+                            return I18n.tr("Could not read this theme's wallpapers") + (VGSThemeService.wallpapersLoadError ? "\n" + VGSThemeService.wallpapersLoadError : "");
+                        return I18n.tr("This theme has no wallpapers yet");
+                    }
+                    horizontalAlignment: Text.AlignHCenter
+                    wrapMode: Text.WordWrap
                     color: Theme.surfaceVariantText
                     font.pixelSize: Theme.fontSizeMedium
                 }

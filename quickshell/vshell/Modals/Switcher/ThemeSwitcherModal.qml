@@ -47,7 +47,7 @@ FullScreenSwitcher {
     // What Enter actually needs is an apply not already running. `busy` counts
     // every non-background command, so it blocks on a restyle started from a
     // settings tab and does not block on this switcher's own background reads.
-    canApply: !applyReporter.applyInFlight
+    canApply: !applyReporter.anyApplyInFlight
 
     items: (VGSThemeService.blueprints || []).filter(bp => !!bp.name).map(bp => ({
                 image: bp.preview || "",

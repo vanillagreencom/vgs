@@ -871,16 +871,30 @@ popout_check() {
 # (`<TARGET>_<VERB>_SUCCESS`), so there is nothing left to keep aligned.
 switcher_records=()
 
-# Fills `switcher_records` from quickshell/vshell/Modals/Switcher/*Modal.qml.
-# A subclass this cannot place FAILS the phase: a switcher whose namespace or
-# IPC target cannot be read is exactly the one that would otherwise be covered
+# Fills `switcher_records` with every file in the QML tree whose ROOT ELEMENT is
+# `FullScreenSwitcher` — what makes something a switcher, not what it is named.
+# A filename glob (`*Modal.qml`) was the same silent-zero-coverage shape the five
+# hardcoded arrays had, narrowed rather than closed: the identical file named
+# PaletteSwitcher.qml was discovered by nothing and the phase still reported "2
+# full-screen switchers measured", and the directory already holds non-Modal
+# names (SwitcherStage.qml, ThemeApplyReporter.qml) so the spelling is enforced
 # by nothing.
+#
+# The directory convention is asserted rather than assumed: a FullScreenSwitcher
+# outside Modals/Switcher/ FAILS here instead of being quietly absent. So does
+# one whose namespace or IPC target cannot be read — that is exactly the switcher
+# that would otherwise be covered by nothing.
 discover_switchers() {
   switcher_records=()
-  local file name namespace target
-  for file in "$repo_root"/quickshell/vshell/Modals/Switcher/*Modal.qml; do
-    [[ -e "$file" ]] || continue
+  local file name namespace target found_any=0
+  while IFS= read -r file; do
+    [[ -n "$file" ]] || continue
+    found_any=1
     name="$(basename "$file")"
+    if [[ "$(dirname "$file")" != "$repo_root/quickshell/vshell/Modals/Switcher" ]]; then
+      fail "$name declares FullScreenSwitcher as its root element but lives outside quickshell/vshell/Modals/Switcher - switcher_check only looks there, so it would be covered by nothing"
+      return 1
+    fi
     namespace="$(sed -n 's/^[[:space:]]*layerNamespace:[[:space:]]*"\([^"]*\)".*/\1/p' "$file" | head -n 1)"
     if [[ -z "$namespace" ]]; then
       fail "$name overrides no layerNamespace, so it maps onto the shared 'vshell:modal' surface and switcher_check cannot tell it apart from any other modal"
@@ -898,9 +912,11 @@ discover_switchers() {
       return 1
     fi
     switcher_records+=("$target|$namespace")
-  done
-  if [[ ${#switcher_records[@]} -eq 0 ]]; then
-    fail "no full-screen switchers found under quickshell/vshell/Modals/Switcher"
+  # Anchored at column 0: that is where a QML root element sits, and where a
+  # comment or a nested use of the type cannot.
+  done < <(grep -rlE '^FullScreenSwitcher[[:space:]]*\{' "$repo_root/quickshell/vshell" --include='*.qml' | sort)
+  if [[ $found_any -eq 0 || ${#switcher_records[@]} -eq 0 ]]; then
+    fail "no file in quickshell/vshell declares FullScreenSwitcher as its root element - switcher_check would measure nothing and still pass"
     return 1
   fi
   return 0

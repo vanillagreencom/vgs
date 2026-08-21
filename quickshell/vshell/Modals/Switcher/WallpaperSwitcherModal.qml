@@ -23,7 +23,11 @@ FullScreenSwitcher {
     // shared `lastError` slot — see ThemeSwitcherModal.
     emptyText: VGSThemeService.wallpapersLoadFailed ? I18n.tr("Could not read this theme's wallpapers") + (VGSThemeService.wallpapersLoadError ? "\n" + VGSThemeService.wallpapersLoadError : "") : I18n.tr("This theme has no wallpapers")
 
-    staleNotice: VGSThemeService.wallpapersLoadFailed ? I18n.tr("Could not refresh — showing the last known wallpapers") : ""
+    // The service owns the wording, because the dash's Wallpapers tab shows the
+    // same retained list and the two must not describe it differently. "Could
+    // not refresh" was also too weak: after a theme switch whose re-read failed,
+    // the list is the PREVIOUS theme's, which the service's text names.
+    staleNotice: VGSThemeService.wallpapersStaleNotice
 
     readonly property var wallpaperEntries: VGSThemeService.themeWallpapers || []
 
@@ -31,7 +35,7 @@ FullScreenSwitcher {
     // desktop is, not from the top of the list.
     activeKey: VGSThemeService.selectedWallpaper || ""
     // An apply not already running, not the whole service — see ThemeSwitcherModal.
-    canApply: !applyReporter.applyInFlight
+    canApply: !applyReporter.anyApplyInFlight
 
     // A pathless entry is the apply id as well as the image: `setWallpaper`
     // refuses it and never answers, so it must not be reachable at all.

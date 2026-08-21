@@ -41,8 +41,28 @@ Singleton {
     property string blueprintsLoadError: ""
     property bool wallpapersLoadFailed: false
     property string wallpapersLoadError: ""
+    // The theme whose wallpaper set `themeWallpapers` currently holds. A failed
+    // read LEAVES the previous list, and `applyBlueprint` re-reads on success,
+    // so after a theme switch whose re-read failed the list on screen belongs to
+    // the theme BEFORE it — which no surface could say without this.
+    property string themeWallpapersTheme: ""
     property var currentTheme: ({})
     property string selectedWallpaper: ""
+
+    // The ONE wording every surface shows over a retained wallpaper list, so the
+    // dash tab and the switcher banner cannot describe the same state
+    // differently. Empty while the list is current. "Showing X's set" is the
+    // load-bearing half: after a theme switch the retained list is a DIFFERENT
+    // theme's, and Enter would apply a wallpaper from outside the active theme.
+    readonly property string wallpapersStaleNotice: {
+        if (!wallpapersLoadFailed)
+            return "";
+        const loaded = themeWallpapersTheme;
+        const active = (currentTheme || {}).name || "";
+        if (loaded && active && loaded !== active)
+            return I18n.tr("Could not read this theme's wallpapers — showing %1's set").arg(loaded);
+        return I18n.tr("Could not read this theme's wallpapers — showing the last set that loaded");
+    }
     readonly property var paletteArgMap: ({
         background: "background",
         foreground: "foreground",
@@ -82,34 +102,72 @@ Singleton {
     signal applyCompleted(bool success, string message)
     // The SAME completion, carrying the id of the request it answers. A surface
     // that started one apply and wants to report only that apply's outcome
-    // cannot use `applyCompleted`: roughly 25 unrelated operations emit it, so
-    // "the next one" is whichever command happened to land first. Emitted only
-    // by `applyBlueprint`/`setWallpaper`, which are the two a switcher starts.
+    // cannot use `applyCompleted`: 19 unrelated operations emit it from over 40
+    // sites, so "the next one" is whichever command happened to land first.
+    // Emitted only by `_finishApply`, which `applyBlueprint`/`setWallpaper` —
+    // the two a switcher starts — are the only callers of.
     signal applyFinished(string requestId, bool success, string message)
+    // A request that will never be answered because a newer one on the same
+    // command id replaced it before it launched. Not a failure: nothing went
+    // wrong and nothing should be toasted; the waiting surface only has to stop
+    // waiting. See `_beginApply`.
+    signal applySuperseded(string requestId)
 
-    // Apply requests still running, keyed by their Proc command id. Deliberately
-    // narrower than `busy`: `busy` counts every non-background command, so
-    // gating a switcher's Enter on it blocks while an unrelated `theme restyle`
-    // or per-app override from a settings tab runs, and unblocks while the
-    // switcher's own background reads are still in flight.
+    // Apply requests still running, keyed by a request id that is unique per
+    // CALL. Deliberately narrower than `busy`: `busy` counts every non-background
+    // command, so gating a switcher's Enter on it blocks while an unrelated
+    // `theme restyle` or per-app override from a settings tab runs, and unblocks
+    // while the switcher's own background reads are still in flight.
     property var _applyInFlight: ({})
     readonly property bool applyInFlight: Object.keys(_applyInFlight).length > 0
+    // Monotonic, so no two calls ever share a request id. The Proc COMMAND id is
+    // not an identity: `setWallpaper` uses one constant for every wallpaper, and
+    // `applyBlueprint` repeats one per theme name, so two overlapping calls used
+    // to share a key — the first completion then emptied the set while the second
+    // was still running, and answered a correlated reply the second was owed.
+    property int _applyRequestSeq: 0
+    // The newest request dispatched on each Proc command id, so a superseded one
+    // can be resolved. Proc coalesces same-id calls still inside its debounce
+    // window into ONE launch with ONE callback: the older call's callback then
+    // never fires, and its token would sit in `_applyInFlight` for the rest of
+    // the session with `applyInFlight` stuck true. At most one live token per
+    // command id is the invariant that keeps the set an honest in-flight count.
+    property var _applyOwner: ({})
 
-    function _beginApply(requestId) {
+    // `commandId` is the Proc id the command runs under (Proc's debouncer
+    // coalesces on it); the returned request id identifies THIS call.
+    function _beginApply(commandId) {
+        _applyRequestSeq += 1;
+        const requestId = commandId + "#" + _applyRequestSeq;
+        const superseded = _applyOwner[commandId] || "";
         const next = Object.assign({}, _applyInFlight);
+        if (superseded)
+            delete next[superseded];
         next[requestId] = true;
         _applyInFlight = next;
+        const owners = Object.assign({}, _applyOwner);
+        owners[commandId] = requestId;
+        _applyOwner = owners;
+        if (superseded)
+            applySuperseded(superseded);
         return requestId;
     }
 
     // Ends the request and announces it on both signals: `applyCompleted` for
     // the settings tabs that report any outcome, `applyFinished` for a caller
-    // that is waiting on this request specifically.
+    // that is waiting on this request specifically. A request already resolved
+    // as superseded is no longer in the set and only announces.
     function _finishApply(requestId, success, message) {
         if (_applyInFlight[requestId]) {
             const next = Object.assign({}, _applyInFlight);
             delete next[requestId];
             _applyInFlight = next;
+        }
+        const commandId = requestId.substring(0, requestId.lastIndexOf("#"));
+        if (_applyOwner[commandId] === requestId) {
+            const owners = Object.assign({}, _applyOwner);
+            delete owners[commandId];
+            _applyOwner = owners;
         }
         applyCompleted(success, message);
         applyFinished(requestId, success, message);
@@ -357,6 +415,7 @@ Singleton {
             try {
                 const data = JSON.parse(output || "{}");
                 themeWallpapers = data.wallpapers || [];
+                themeWallpapersTheme = data.theme || "";
                 wallpapersLoadFailed = false;
                 wallpapersLoadError = "";
                 wallpapersLoaded();
@@ -416,14 +475,26 @@ Singleton {
     function applyBlueprint(name) {
         if (!name)
             return "";
-        const requestId = _beginApply("vgs-theme-apply-" + name);
-        _run(requestId, ["theme", "apply", name, "--json"], function(output, exitCode, stderr) {
+        const commandId = "vgs-theme-apply-" + name;
+        const requestId = _beginApply(commandId);
+        _run(commandId, ["theme", "apply", name, "--json"], function(output, exitCode, stderr) {
             if (exitCode !== 0) {
                 _finishApply(requestId, false, stderr || output || "Apply failed");
                 return;
             }
+            let data = {};
             try {
-                const data = JSON.parse(output || "{}");
+                data = JSON.parse(output || "{}");
+            } catch (e) {
+                _finishApply(requestId, false, "Failed to parse apply result: " + e);
+                return;
+            }
+            // A throw raised AFTER the parse succeeded is not a parse failure,
+            // and it must still finish the request: Proc only log.warns a
+            // throwing callback, so an unfinished request pins `applyInFlight`
+            // true and both switchers answer every Enter with "Still applying"
+            // for the rest of the session.
+            try {
                 const warnings = data.warnings || [];
                 const appliedName = data.name || name;
                 const details = [];
@@ -447,7 +518,7 @@ Singleton {
                 refreshWallpapers();
                 _finishApply(requestId, true, lastMessage);
             } catch (e) {
-                _finishApply(requestId, false, "Failed to parse apply result: " + e);
+                _finishApply(requestId, false, "Theme applied but the shell could not finish updating: " + e);
             }
         });
         return requestId;
@@ -472,8 +543,9 @@ Singleton {
             args.push("--mode");
             args.push(mode || SettingsData.matugenMode || "auto");
         }
-        const requestId = _beginApply("vgs-theme-wallpaper");
-        _run(requestId, args, function(output, exitCode, stderr) {
+        const commandId = "vgs-theme-wallpaper";
+        const requestId = _beginApply(commandId);
+        _run(commandId, args, function(output, exitCode, stderr) {
             if (exitCode !== 0) {
                 _rollbackWallpaper(path, previousWallpaper);
                 _finishApply(requestId, false, stderr || output || "Wallpaper apply failed");
@@ -488,24 +560,43 @@ Singleton {
                 _finishApply(requestId, false, lastError);
                 return;
             }
-            const warnings = data.warnings || data.apply?.warnings || [];
-            if (data.saved)
-                _persistAppliedTheme(data.name || (data.apply && data.apply.name));
-            if (typeof SessionData !== "undefined")
-                SessionData.setWallpaper(path);
-            _markGreeterThemeSyncPending();
-            refresh();
-            const base = extractColors ? "Wallpaper colors generated and applied" : "Wallpaper applied";
-            _finishApply(requestId, true, warnings.length > 0 ? base + " (warnings: " + warnings.join("; ") + ")" : base);
+            // Everything past the parse is guarded too: Proc only log.warns a
+            // throwing callback, so a throw here would leave the request
+            // unfinished and `applyInFlight` stuck true for the session.
+            try {
+                const warnings = data.warnings || data.apply?.warnings || [];
+                if (data.saved)
+                    _persistAppliedTheme(data.name || (data.apply && data.apply.name));
+                // Same ownership test the rollback uses: a LATE success from an
+                // older overlapping call must not persist its wallpaper over a
+                // newer one that already moved the desktop on. `refresh()` would
+                // not undo it — it restores `selectedWallpaper`, not SessionData.
+                if (typeof SessionData !== "undefined" && _ownsWallpaperSlot(path))
+                    SessionData.setWallpaper(path);
+                _markGreeterThemeSyncPending();
+                refresh();
+                const base = extractColors ? "Wallpaper colors generated and applied" : "Wallpaper applied";
+                _finishApply(requestId, true, warnings.length > 0 ? base + " (warnings: " + warnings.join("; ") + ")" : base);
+            } catch (e) {
+                _finishApply(requestId, false, "Wallpaper applied but the shell could not finish updating: " + e);
+            }
         });
         return requestId;
+    }
+
+    // True while `path` is still the wallpaper this service last committed to —
+    // i.e. the call that set it optimistically has not been overtaken by a newer
+    // one. Both the rollback and the success-path persist test it, so neither an
+    // old failure nor an old success can write over a newer apply.
+    function _ownsWallpaperSlot(path) {
+        return selectedWallpaper === path;
     }
 
     // Undoes one optimistic `setWallpaper` write, but only while that call still
     // owns the slot: a LATE failure from an older overlapping call must not
     // revert a newer apply that already succeeded and moved the desktop on.
     function _rollbackWallpaper(path, previousWallpaper) {
-        if (selectedWallpaper === path)
+        if (_ownsWallpaperSlot(path))
             selectedWallpaper = previousWallpaper;
     }
 

@@ -21,11 +21,13 @@ import qs.Widgets
 // inline base handler and would silently take the reset with it. A `Connections`
 // handler coexists with any a subclass declares.
 //
-// A subclass MUST also override `layerNamespace`; `switcher_check`
-// (scripts/qml-smoke.sh) discovers the subclasses from this directory and FAILS
-// on one it cannot place, so the coverage is not left to this comment being
-// read. The default below exists only to keep an unregistered switcher off the
-// shared "vshell:modal" surface.
+// A subclass MUST also override `layerNamespace` with a "vshell:"-prefixed name
+// whose derived IPC target VGSIPC.qml registers, and it MUST live in this
+// directory. `switcher_check` (scripts/qml-smoke.sh) finds subclasses by their
+// ROOT ELEMENT across the whole QML tree — not by filename — and FAILS on one
+// that breaks any of those three, so the coverage is not left to this comment
+// being read. The default below exists only to keep an unregistered switcher off
+// the shared "vshell:modal" surface.
 VgsModal {
     id: root
 
@@ -142,13 +144,52 @@ VgsModal {
             return "none";
         return applyAllowed ? "apply" : "blocked";
     }
+
+    // Whether an input takes the selection over — the intent latch's whole
+    // decision, in here rather than repeated at four call sites.
+    //
+    // A PAGING input ("step", "first", "last") latches only when there was
+    // something to move to. Both `show()` paths dispatch their read and `open()`
+    // in the same tick, so there is a window at every open where the list is
+    // empty — guaranteed on the first wallpaper-switcher open of a session. Home
+    // or End pressed in that window used to latch against nothing, and every
+    // later re-seed then found the latch already set: the switcher sat on index 0
+    // for the whole open instead of landing on the entry in use, while the arrow
+    // keys answered the opposite for the same empty list.
+    //
+    // Typing a FILTER latches unconditionally: the filter is what the user is
+    // steering by, and it still holds when the list lands.
+    function latchesIntent(kind, count) {
+        if (kind === "filter")
+            return true;
+        return count > 0;
+    }
+
+    // Where a paging input lands: "step" moves by `delta` and wraps, "first" and
+    // "last" go to the ends. Only meaningful once `latchesIntent` said the input
+    // acts.
+    function navIndex(kind, index, count, delta) {
+        if (count <= 0)
+            return 0;
+        if (kind === "first")
+            return 0;
+        if (kind === "last")
+            return clampIndex(count - 1, count);
+        return wrapIndex(index + delta, count);
+    }
     // END SWITCHER SELECTION DECISION
 
-    function step(delta) {
-        if (itemCount === 0)
+    // The one adapter every paging key goes through, so the latch and the target
+    // are decided once, in the region above, for all of them.
+    function navigate(kind, delta) {
+        if (!root.latchesIntent(kind, root.itemCount))
             return;
-        userMoved = true;
-        currentIndex = wrapIndex(currentIndex + delta, itemCount);
+        root.userMoved = true;
+        root.currentIndex = root.navIndex(kind, root.currentIndex, root.itemCount, delta);
+    }
+
+    function step(delta) {
+        root.navigate("step", delta);
     }
 
     // The image `delta` steps away, for the lookahead below.
@@ -226,13 +267,11 @@ VgsModal {
             return true;
         }
         if (event.key === Qt.Key_Home) {
-            root.userMoved = true;
-            root.currentIndex = 0;
+            root.navigate("first", 0);
             return true;
         }
         if (event.key === Qt.Key_End) {
-            root.userMoved = true;
-            root.currentIndex = root.clampIndex(root.itemCount - 1, root.itemCount);
+            root.navigate("last", 0);
             return true;
         }
         return false;
@@ -375,8 +414,10 @@ VgsModal {
                     onTextEdited: {
                         // Typing IS taking over the selection: without this, a
                         // list landing after the filter is cleared would re-seed
-                        // and jump off whatever the user was looking at.
-                        root.userMoved = true;
+                        // and jump off whatever the user was looking at. The
+                        // "filter" arm is why `latchesIntent` takes a kind — this
+                        // one latches with no list, the paging keys must not.
+                        root.userMoved = root.latchesIntent("filter", root.itemCount);
                         root.filterQuery = text;
                     }
                 }

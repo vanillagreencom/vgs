@@ -271,12 +271,15 @@ CEILINGS: dict[str, int] = {
     # (+55 B) and VGS-208's two switcher IPC targets (+357 B); the file is
     # 23,586 B, leaving 814 B of headroom.
     "docs/architecture/shell-architecture.md": 24_400,
-    # 31,800 -> 34,000: VGS-208's switcher review put the intent-latched
-    # seeding rule, the applyInFlight Enter gate, the correlated apply
-    # reply, the load-failure and stale-list states and what switcher_check
-    # actually measures in writing. Measured + ~1.5%, far tighter than the
-    # ~10% adoption default. Adopted at 28,861 B; the file is 33,465 B.
-    "docs/architecture/theme-architecture.md": 34_000,
+    # 31,800 -> 34,000 -> 35,000: VGS-208's switcher review put the
+    # intent-latched seeding rule, the applyInFlight Enter gate, the
+    # correlated apply reply, the load-failure and stale-list states and what
+    # switcher_check actually measures in writing. Round 4 added the
+    # per-CALL request id and its supersession, the shared wallpaper stale
+    # wording, and the three requirements switcher_check really enforces on a
+    # new switcher (+1,017 B). Measured + ~1.5%, far tighter than the ~10%
+    # adoption default. Adopted at 28,861 B; the file is 34,482 B.
+    "docs/architecture/theme-architecture.md": 35_000,
     "docs/architecture/wallpaper-upscaling.md": 4_000,  # adopted at 3,625 B
 }
 

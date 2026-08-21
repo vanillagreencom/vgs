@@ -21,19 +21,51 @@
 //   2. The wiring, as a lint. A pure region proves nothing if the QML calls it
 //      in the wrong branch, or not at all.
 //
-// THE SEAM IS INSIDE THE REGION on purpose. A first shape asserted on source
-// text for the Enter outcome, which a mutant keeping the token and removing the
-// behaviour walks straight past; `enterOutcome` is now a function this file
-// calls, leaving one dispatch in `applyCurrent` for section 2 to pin by BRANCH
-// and ORDER — the statement a call sits before, not merely its presence.
+// THE SEAM IS INSIDE THE REGION on purpose, and it moved twice. A first shape
+// asserted on source text for the Enter outcome, which a mutant keeping the
+// token and removing the behaviour walks straight past; `enterOutcome` is now a
+// function this file calls, leaving one dispatch in `applyCurrent` for section 2
+// to pin by BRANCH and ORDER — the statement a call sits before, not merely its
+// presence. The INTENT LATCH then went the same way: `userMoved` was set at four
+// call sites, each pinned by a raw regex that `if (false) userMoved = true;`
+// satisfies, so the latch could be made inert with the guard green. The decision
+// is now `latchesIntent`, which this file EXECUTES, and ONE adapter (`navigate`)
+// that section 2 pins by exact occurrence and by order.
+//
+// The residual, stated because it is real: `if (false) root.userMoved = true;`
+// inside that adapter still survives, and no source-text pin can reach a dead
+// branch. What changed is the SIZE of what a pin has to cover — one adapter line
+// instead of four call sites, with the empty-pager rule, the filter exception and
+// every landing index now executed rather than described.
+//
+// Section 2 itself was half a guard before this round. Its predicates ran raw
+// regexes over `stripComments(wholeFile)`, which deliberately KEEPS string
+// literals: `property string decoy: "onActiveKeyChanged: reseedIfUntouched()"`
+// satisfied the pin with the real edge deleted, and every positive pin was in
+// that class. Positive pins now go through `qmlSource(...).requires(...)`, which
+// searches the literal view and confirms each hit is CODE at the same offset,
+// scoped to a NAMED block and counted — so a decoy string, a copy in a comment,
+// and a second call site all fail. Raw regexes are kept only for BANS (which
+// must see literals) and for ORDER across a whole file.
 //
 // MUST-FAIL CONTROLS, each seen red, applied one at a time to the shipped tree.
 // In-region: `wrapIndex` returning a bare modulo (negative index); `clampIndex`
 // using `>` for `>=`; `seedIndex` returning the LAST match instead of the first;
 // `shouldReseed` dropping the `!moved` conjunct; `enterOutcome` answering
-// "apply" for a null entry, and answering "apply" while canApply is false.
-// Across the seam: `userMoved` never set in `step`; never set on Home, on End,
-// or in `onTextEdited`; never cleared in `onOpened`; the base's per-open reset
+// "apply" for a null entry, and answering "apply" while canApply is false;
+// `latchesIntent` answering true for a paging kind on an EMPTY pager (the Home/
+// End defect), and answering false for "filter"; `navIndex` transposing "first"
+// and "last".
+// Across the seam: a SECOND `root.userMoved` write added to `navigate()`, and one
+// added to `handleKey` (both killed by the exact count and the block-scoped ban);
+// Home routed to "last"; `onTextEdited` restating `true` instead of asking
+// `latchesIntent`; a decoy string literal carrying `onActiveKeyChanged:
+// reseedIfUntouched()` with the real edge deleted; `applySuperseded` never
+// emitted in `_beginApply`, and never consumed in the reporter; the request id
+// reverted to the bare Proc command id; the `setWallpaper` success path writing
+// SessionData without `_ownsWallpaperSlot`; the post-parse remainder of either
+// apply left unguarded; `userMoved` never cleared in `onOpened`; the base's
+// per-open reset
 // moved back to a root-level `onOpened:` (the derived-handler hazard item #5
 // closed); `onActiveKeyChanged` deleted; the clamp moved below the re-seed;
 // `applied()` hoisted above the blocked branch; `applyBlockedTimer.stop()`
@@ -85,7 +117,8 @@ const MARKER = "SWITCHER SELECTION DECISION";
 // --- 1. The shipped arithmetic, executed -----------------------------------
 
 const sel = evaluateMarked(baseSource, MARKER, [
-    "wrapIndex", "clampIndex", "seedIndex", "shouldReseed", "enterOutcome"
+    "wrapIndex", "clampIndex", "seedIndex", "shouldReseed", "enterOutcome",
+    "latchesIntent", "navIndex"
 ], "FullScreenSwitcher.qml");
 
 // The extracted block must be free of QML, or this harness tests a different
@@ -144,139 +177,384 @@ assert.equal(sel.enterOutcome(false, { key: "a" }), "blocked",
     "Enter while an apply is in flight must block, not dismiss the surface with nothing applied");
 assert.equal(sel.enterOutcome(true, { key: "a" }), "apply", "Enter on a selected entry applies it");
 
-// --- 2. The wiring ----------------------------------------------------------
+// latchesIntent: the Home/End defect, and the one input that latches regardless.
+// Both show() paths dispatch their read and open() in the same tick, so every
+// open has a window where the pager is empty — guaranteed on the first
+// wallpaper-switcher open of a session.
+for (const kind of ["step", "first", "last"]) {
+    assert.equal(sel.latchesIntent(kind, 0), false,
+        `${kind} on an EMPTY pager moved nothing, so it must not latch: the latch would then be ` +
+        "set when the list and activeKey land, and the switcher sits on index 0 for the whole open");
+    assert.equal(sel.latchesIntent(kind, 3), true, `${kind} over a populated pager takes the selection over`);
+}
+assert.equal(sel.latchesIntent("filter", 0), true,
+    "typing a filter latches with no list on screen: the filter IS what the user is steering by, and " +
+    "a list landing after they clear it must not re-seed over what they were looking at");
+assert.equal(sel.latchesIntent("filter", 3), true, "and it latches over a populated list too");
 
-const bodies = new Map([
-    ["FullScreenSwitcher.qml", qmlSource.stripComments(baseSource)],
-    ["ThemeApplyReporter.qml", qmlSource.stripComments(reporterSource)],
-    ["ThemeSwitcherModal.qml", qmlSource.stripComments(themeSource)],
-    ["WallpaperSwitcherModal.qml", qmlSource.stripComments(wallpaperSource)],
-    ["VGSThemeService.qml", qmlSource.stripComments(serviceSource)]
+// navIndex: where each paging input lands once it is allowed to act.
+assert.equal(sel.navIndex("first", 2, 4, 0), 0, "Home goes to the first entry");
+assert.equal(sel.navIndex("last", 0, 4, 0), 3, "End goes to the last entry");
+assert.equal(sel.navIndex("last", 0, 1, 0), 0, "End on a single-item pager stays on it");
+assert.equal(sel.navIndex("step", 3, 4, 1), 0, "stepping past the end wraps, as the arrow keys always did");
+assert.equal(sel.navIndex("step", 0, 4, -1), 3, "and stepping back off the top wraps too");
+for (const kind of ["step", "first", "last"]) {
+    assert.equal(sel.navIndex(kind, 5, 0, 1), 0,
+        `${kind} on an empty pager must answer an in-range index even though nothing may act on it`);
+}
+
+// --- 2. The wiring ----------------------------------------------------------
+//
+// POSITIVE pins go through `qmlSource(...).requires(...)`: it searches the
+// comment-blanked view (where literals are intact) and confirms every hit is
+// CODE at the same offset, scoped to a NAMED block and counted. That is what
+// kills the three mutants a raw regex over the whole file walks past — a decoy
+// STRING carrying the statement's text, a copy left in a COMMENT, and a second
+// call site the pin never meant to allow.
+//
+// Raw regexes are kept for exactly two jobs a `requires` pin cannot do: BANS,
+// which must see string literals to ban them, and ORDER, which compares two
+// positions. Both are scoped to a block wherever a block exists.
+
+const sources = new Map([
+    ["FullScreenSwitcher.qml", baseSource],
+    ["ThemeApplyReporter.qml", reporterSource],
+    ["ThemeSwitcherModal.qml", themeSource],
+    ["WallpaperSwitcherModal.qml", wallpaperSource],
+    ["VGSThemeService.qml", serviceSource]
 ]);
 
+const readers = new Map();
+for (const [file, source] of sources)
+    readers.set(file, qmlSource(source, file));
+
+function q(file) {
+    const reader = readers.get(file);
+    assert.ok(reader, `${file} must be one of the sources this suite reads`);
+    return reader;
+}
+
 function body(file) {
-    const source = bodies.get(file);
+    const source = sources.get(file);
     assert.ok(source, `${file} must be one of the sources this suite reads`);
-    return source;
+    return qmlSource.stripComments(source);
 }
 
-// Every predicate reads the STRIPPED source, so a token surviving only in a
-// comment satisfies nothing here.
-function must(file, pattern, why) {
-    assert.match(body(file), pattern, `${file}: ${why}`);
+// The sole handler named `name`, as a block or as its own line. `handlers()`
+// finds them on the structure-only view, so a comment or a string MENTIONING one
+// is not mistaken for it — and requiring exactly one means a second copy fails
+// rather than being silently ignored.
+function handler(file, name) {
+    const found = q(file).handlers(name);
+    assert.equal(found.length, 1, `${file} must declare exactly one ${name} handler, found ${found.length}`);
+    return found[0];
 }
 
+// Bans only: this SEES string literals, which is the point.
 function mustNot(file, pattern, why) {
     assert.doesNotMatch(body(file), pattern, `${file}: ${why}`);
 }
 
-// Pins a call's position relative to a later statement, which is what a mutant
-// that merely keeps the token cannot satisfy.
-function mustPrecede(file, first, second, why) {
-    const source = body(file);
-    const a = source.search(first);
-    const b = source.search(second);
-    assert.ok(a >= 0 && b >= 0 && a < b, `${file}: ${why}`);
+// Order of two statements inside one block, which no presence pin can express.
+function mustPrecedeIn(block, label, first, second, why) {
+    const view = qmlSource.stripComments(block);
+    const a = view.search(first);
+    const b = view.search(second);
+    assert.ok(a >= 0 && b >= 0 && a < b, `${label}: ${why}`);
 }
 
-// The base: intent latch, re-seed edges, Enter dispatch, blocked-message life.
-must("FullScreenSwitcher.qml", /function step\(delta\)\s*\{[^}]*userMoved = true;[^}]*wrapIndex\(/,
-    "step() must mark the selection as user-moved BEFORE it moves, or a later reload re-seeds over it");
-must("FullScreenSwitcher.qml", /Qt\.Key_Home\)\s*\{\s*root\.userMoved = true;/,
-    "Home must mark the selection as user-moved");
-must("FullScreenSwitcher.qml", /Qt\.Key_End\)\s*\{\s*root\.userMoved = true;/,
-    "End must mark the selection as user-moved");
-must("FullScreenSwitcher.qml", /onTextEdited:\s*\{\s*root\.userMoved = true;\s*root\.filterQuery = text;/,
-    "typing a filter is taking over the selection: without the latch, clearing the filter later re-seeds and jumps");
-must("FullScreenSwitcher.qml", /function onOpened\(\)\s*\{[^}]*root\.userMoved = false;[^}]*root\.seedSelection\(\);/,
-    "each open must clear the intent latch and seed, or the surface returns on the last selection");
-must("FullScreenSwitcher.qml", /function onDialogClosed\(\)\s*\{[^}]*root\.userMoved = false;/,
-    "closing must clear the intent latch");
-// Item #5: the base's per-open reset lives in a self-targeted Connections. A
-// derived `onOpened:` REPLACES an inline base handler and takes the reset with
-// it, invisibly to the parse, the nested load and switcher_check.
-mustNot("FullScreenSwitcher.qml", /^\s*onOpened:/m,
-    "the base must not use an inline onOpened: — a subclass handler would replace it and silently drop the seeding");
-mustNot("FullScreenSwitcher.qml", /^\s*onDialogClosed:/m,
-    "the base must not use an inline onDialogClosed: — a subclass handler would replace it");
-mustPrecede("FullScreenSwitcher.qml", /currentIndex = clampIndex\(currentIndex, itemCount\);/,
-    /reseedIfUntouched\(\);/,
-    "the clamp must run before the re-seed, or a shrunk list is seeded against an out-of-range index");
-must("FullScreenSwitcher.qml", /onActiveKeyChanged:\s*reseedIfUntouched\(\)/,
-    "activeKey is read asynchronously too: without this edge a list landing first seeds against an empty key and never corrects");
-must("FullScreenSwitcher.qml", /function reseedIfUntouched\(\)\s*\{\s*if \(root\.shouldReseed\(root\.shouldBeVisible, root\.userMoved\)\)/,
-    "the re-seed guard must be the extracted predicate over both inputs");
-must("FullScreenSwitcher.qml", /const outcome = root\.enterOutcome\(root\.canApply, root\.currentItem\);/,
-    "applyCurrent must dispatch on the extracted outcome, not re-derive it");
-mustPrecede("FullScreenSwitcher.qml", /outcome === "blocked"/, /root\.applied\(root\.currentItem\);/,
-    "the blocked branch must return before applied() — otherwise Enter dismisses the surface with an apply already running");
-must("FullScreenSwitcher.qml", /applyBlockedTimer\.restart\(\);/,
-    "a blocked Enter must bound its own message");
-must("FullScreenSwitcher.qml", /onCanApplyChanged:\s*\{\s*if \(!canApply\)\s*return;\s*applyBlocked = false;\s*applyBlockedTimer\.stop\(\);/,
-    "the footer tells the user to wait for canApply: that edge must clear the message and stop the fallback timer");
+// The base: one intent-latch adapter, the re-seed edges, the Enter dispatch, and
+// the blocked message's life.
+{
+    const base = q("FullScreenSwitcher.qml");
 
-// The reporter: one apply, one reply, matched by request id.
-must("ThemeApplyReporter.qml", /readonly property bool applyInFlight: VGSThemeService\.applyInFlight/,
-    "the Enter gate must track applies only — `busy` counts unrelated commands and misses background ones");
-must("ThemeApplyReporter.qml", /function track\(requestId\)\s*\{\s*reporter\.pendingRequest = requestId \|\| "";/,
-    "a refused request answers \"\": arming on it would leave the latch set with no reply coming");
-must("ThemeApplyReporter.qml",
-    /function onApplyFinished\(requestId, success, message\)\s*\{\s*if \(reporter\.pendingRequest === "" \|\| requestId !== reporter\.pendingRequest\)\s*return;/,
-    "the reply must be matched to the request that started it, or ~25 unrelated operations can clear or claim the latch");
-mustPrecede("ThemeApplyReporter.qml", /reporter\.pendingRequest = "";\s*if \(!success\)/, /ToastService\.showError/,
-    "the latch must be cleared before reporting, so a failed apply cannot be reported twice");
+    base.requires(base.body("navigate"), "navigate()", [
+        ["if (!root.latchesIntent(kind, root.itemCount)) return;",
+            "the latch decision is the extracted predicate over the kind and the live count — an " +
+            "adapter that decides for itself is what let Home latch against an empty pager", 1],
+        ["root.userMoved = true;",
+            "the latch must be set exactly here, once: a second site is the four-site shape this " +
+            "replaced, and none at all is the latch made inert", 1],
+        ["root.currentIndex = root.navIndex(kind, root.currentIndex, root.itemCount, delta);",
+            "the target index must come from the extracted function, not be re-derived per key", 1]
+    ]);
+    mustPrecedeIn(base.body("navigate"), "navigate()", /root\.userMoved = true;/,
+        /root\.currentIndex = root\.navIndex\(/,
+        "the latch must be set BEFORE the index moves, or a binding reacting to the index re-seeds over it");
+
+    base.requires(base.body("step"), "step()", [
+        ['root.navigate("step", delta);',
+            "the arrow keys must go through the one adapter, so they cannot answer an empty pager " +
+            "differently from Home and End — which is exactly the bug this closes", 1]
+    ]);
+
+    base.requires(base.body("handleKey"), "handleKey()", [
+        ['if (event.key === Qt.Key_Home) { root.navigate("first", 0); return true; }',
+            "Home routes to the FIRST entry through the adapter, guard and all", 1],
+        ['if (event.key === Qt.Key_End) { root.navigate("last", 0); return true; }',
+            "End routes to the LAST entry through the same adapter", 1],
+        ["root.step(-1);", "Left/Up page backwards", 1],
+        ["root.step(1);", "Right/Down page forwards", 1]
+    ]);
+    assert.doesNotMatch(qmlSource.stripComments(base.body("handleKey")), /userMoved/,
+        "FullScreenSwitcher.qml: no key may set the intent latch directly — the guard lives in " +
+        "navigate(), and a direct write is how Home and End latched against an empty pager");
+
+    base.requires(handler("FullScreenSwitcher.qml", "onTextEdited"), "onTextEdited",
+        [['root.userMoved = root.latchesIntent("filter", root.itemCount);',
+            "typing asks the same predicate with the one kind that latches unconditionally; restating " +
+            "`true` here puts the decision back outside the region where nothing executes it", 1],
+        ["root.filterQuery = text;", "and the filter itself is still applied", 1]]);
+
+    base.requires(base.body("onOpened"), "the base's per-open reset", [
+        ['root.filterQuery = "";', "each open starts unfiltered", 1],
+        ["root.userMoved = false;", "each open clears the intent latch, or the surface returns on the last selection", 1],
+        ["root.seedSelection();", "and seeds from activeKey", 1]
+    ]);
+    mustPrecedeIn(base.body("onOpened"), "the base's per-open reset", /root\.userMoved = false;/,
+        /root\.seedSelection\(\);/, "the latch must be cleared before the seed, or the seed is skipped");
+    base.requires(base.body("onDialogClosed"), "the base's per-close reset",
+        [["root.userMoved = false;", "closing clears the intent latch", 1]]);
+
+    // The base's per-open reset lives in a self-targeted Connections. A derived
+    // `onOpened:` REPLACES an inline base handler and takes the reset with it,
+    // invisibly to the parse, the nested load and switcher_check.
+    mustNot("FullScreenSwitcher.qml", /^\s*onOpened:/m,
+        "the base must not use an inline onOpened: — a subclass handler would replace it and silently drop the seeding");
+    mustNot("FullScreenSwitcher.qml", /^\s*onDialogClosed:/m,
+        "the base must not use an inline onDialogClosed: — a subclass handler would replace it");
+
+    const onVisible = handler("FullScreenSwitcher.qml", "onVisibleItemsChanged");
+    base.requires(onVisible, "onVisibleItemsChanged", [
+        ["currentIndex = clampIndex(currentIndex, itemCount);", "a reshaped list re-clamps the index", 1],
+        ["reseedIfUntouched();", "and then re-seeds while the user has not taken over", 1]
+    ]);
+    mustPrecedeIn(onVisible, "onVisibleItemsChanged", /currentIndex = clampIndex\(/, /reseedIfUntouched\(\);/,
+        "the clamp must run before the re-seed, or a shrunk list is seeded against an out-of-range index");
+
+    base.requires(handler("FullScreenSwitcher.qml", "onActiveKeyChanged"), "onActiveKeyChanged",
+        [["reseedIfUntouched()",
+            "activeKey is read asynchronously too: without this edge a list landing first seeds " +
+            "against an empty key and never corrects", 1]]);
+
+    base.requires(base.body("reseedIfUntouched"), "reseedIfUntouched()",
+        [["if (root.shouldReseed(root.shouldBeVisible, root.userMoved))",
+            "the re-seed guard must be the extracted predicate over both inputs", 1],
+        ["root.seedSelection();", "and it seeds when the predicate says so", 1]]);
+
+    base.requires(base.body("applyCurrent"), "applyCurrent()", [
+        ["const outcome = root.enterOutcome(root.canApply, root.currentItem);",
+            "Enter must dispatch on the extracted outcome, not re-derive it", 1],
+        ["applyBlockedTimer.restart();", "a blocked Enter must bound its own message", 1],
+        ["root.applied(root.currentItem);", "and an allowed one emits exactly once", 1]
+    ]);
+    mustPrecedeIn(base.body("applyCurrent"), "applyCurrent()", /outcome === "blocked"/,
+        /root\.applied\(root\.currentItem\);/,
+        "the blocked branch must return before applied() — otherwise Enter dismisses the surface with an apply already running");
+
+    base.requires(handler("FullScreenSwitcher.qml", "onCanApplyChanged"), "onCanApplyChanged", [
+        ["if (!canApply) return;", "only the edge back to allowed clears the message", 1],
+        ["applyBlocked = false;", "the footer tells the user to wait for canApply: that edge must clear the message", 1],
+        ["applyBlockedTimer.stop();", "and stop the fallback timer, which is an upper bound and not the mechanism", 1]
+    ]);
+}
+
+// The reporter: one apply, one reply, matched by request id — and a gate that
+// says in its own name that it is service-wide.
+{
+    const rep = q("ThemeApplyReporter.qml");
+
+    rep.requires(reporterSource, "ThemeApplyReporter.qml",
+        [["readonly property bool anyApplyInFlight: VGSThemeService.applyInFlight",
+            "the Enter gate tracks applies only — `busy` counts unrelated commands and misses " +
+            "background ones — and is NAMED for the fact that it is service-wide, not this " +
+            "surface's own request, which is what the toast beside it is correlated to", 1]]);
+    mustNot("ThemeApplyReporter.qml", /property bool applyInFlight\b/,
+        "a bare `applyInFlight` on a per-surface object reads as \"my apply\" and means \"any apply\"");
+
+    rep.requires(rep.body("track"), "track()",
+        [['reporter.pendingRequest = requestId || "";',
+            "a refused request answers \"\": arming on it would leave the latch set with no reply coming", 1]]);
+
+    rep.requires(rep.body("onApplyFinished"), "onApplyFinished", [
+        ['if (reporter.pendingRequest === "" || requestId !== reporter.pendingRequest) return;',
+            "the reply must be matched to the request that started it, or 19 unrelated operations " +
+            "can clear or claim the latch", 1],
+        ['reporter.pendingRequest = "";', "the latch is cleared once, for the reply it was waiting on", 1],
+        ["if (!success) ToastService.showError(reporter.errorTitle, message);",
+            "success is silent; only a failure is toasted, under this surface's own title", 1]
+    ]);
+    mustPrecedeIn(rep.body("onApplyFinished"), "onApplyFinished", /reporter\.pendingRequest = "";/,
+        /ToastService\.showError/,
+        "the latch must be cleared before reporting, so a failed apply cannot be reported twice");
+
+    rep.requires(rep.body("onApplySuperseded"), "onApplySuperseded", [
+        ['if (reporter.pendingRequest !== "" && requestId === reporter.pendingRequest) reporter.pendingRequest = "";',
+            "a request replaced before it launched gets no applyFinished: without this the latch waits " +
+            "forever for a reply that is never coming, and the surface's NEXT failure is unreported", 1]
+    ]);
+    mustNot("ThemeApplyReporter.qml", /onApplySuperseded[\s\S]*?ToastService/,
+        "nothing failed when a request is superseded — toasting it would report an error for a double Enter");
+}
 
 // Both subclasses: the reporter is the single owner, and the tracked id is the
 // service call's own return rather than a restatement of it.
 for (const [file, call] of [["ThemeSwitcherModal.qml", "applyBlueprint"], ["WallpaperSwitcherModal.qml", "setWallpaper"]]) {
-    must(file, new RegExp(`onApplied: item => applyReporter\\.track\\(VGSThemeService\\.${call}\\(item\\.key\\)\\)`),
-        "the tracked id must be what the service returned for THIS request");
-    must(file, /canApply: !applyReporter\.applyInFlight/,
-        "Enter must gate on an apply being in flight, not on the whole service being busy");
-    must(file, /ThemeApplyReporter\s*\{\s*id: applyReporter\s*errorTitle: I18n\.tr\("[^"]+"\)/,
-        "each switcher supplies its own toast title to the shared reporter");
+    q(file).requires(sources.get(file), file, [
+        [`onApplied: item => applyReporter.track(VGSThemeService.${call}(item.key))`,
+            "the tracked id must be what the service returned for THIS request", 1],
+        ["canApply: !applyReporter.anyApplyInFlight",
+            "Enter must gate on an apply being in flight, not on the whole service being busy", 1],
+        ['ThemeApplyReporter { id: applyReporter errorTitle: I18n.tr(',
+            "each switcher supplies its own toast title to the shared reporter", 1]
+    ]);
     mustNot(file, /property bool applyPending/,
         "the apply-result reporting has one owner: a per-subclass latch is the copy this replaced");
+    mustNot(file, /VGSThemeService\.lastError/,
+        "lastError is a shared slot: it can name another command's failure, or blank out while the surface is up");
 }
+q("ThemeSwitcherModal.qml").requires(themeSource, "ThemeSwitcherModal.qml",
+    [["VGSThemeService.blueprintsLoadError",
+        "the failure detail must come from the read's own slot, not the shared lastError every command overwrites"],
+    ["staleNotice: VGSThemeService.blueprintsLoadFailed ?",
+        "a theme list left browsable after a failed refresh must say so on the surface", 1]]);
 
-// The service: correlated completion, honest refusal, guarded rollback.
-must("VGSThemeService.qml", /signal applyFinished\(string requestId, bool success, string message\)/,
-    "the correlated completion signal must carry the request id");
-must("VGSThemeService.qml", /readonly property bool applyInFlight: Object\.keys\(_applyInFlight\)\.length > 0/,
-    "applyInFlight must count apply requests, not the `inflight` command counter");
-mustPrecede("VGSThemeService.qml", /delete next\[requestId\];/, /applyFinished\(requestId, success, message\);/,
-    "the request must leave the in-flight set before the completion is announced, or a handler re-reading applyInFlight sees it still busy");
-must("VGSThemeService.qml", /applyCompleted\(success, message\);\s*applyFinished\(requestId, success, message\);/,
-    "both signals must be emitted: settings tabs report any outcome, the switchers report their own");
-for (const fn of ["applyBlueprint", "setWallpaper"]) {
-    must("VGSThemeService.qml", new RegExp(`function ${fn}\\([^)]*\\)\\s*\\{[^}]*return "";`),
-        `${fn} must answer "" when it dispatches nothing, so a caller cannot latch on a reply that will never come`);
-}
-must("VGSThemeService.qml", /function _rollbackWallpaper\(path, previousWallpaper\)\s*\{\s*if \(selectedWallpaper === path\)/,
-    "a late failure must only roll back while it still owns the slot, or it reverts a newer successful apply");
-must("VGSThemeService.qml", /"vgs-theme-preview-check"[\s\S]{0,600}?previewsGenerating = false;/,
-    "the preview-check branch must still release its single-flight guard");
+// The wallpaper wording is the SERVICE's, because the dash tab shows the same
+// retained list. Round 3 gave the switcher a banner and left the dash asserting
+// theme A's wallpapers as theme B's current set.
+q("WallpaperSwitcherModal.qml").requires(wallpaperSource, "WallpaperSwitcherModal.qml", [
+    ["VGSThemeService.wallpapersLoadError",
+        "the failure detail must come from the read's own slot, not the shared lastError"],
+    ["staleNotice: VGSThemeService.wallpapersStaleNotice",
+        "one property owns the wording, or the switcher and the dash describe the same state differently", 1],
+    [".filter(entry => !!entry.path)",
+        "a pathless entry is the apply id as well as the image: setWallpaper refuses it and never answers", 1]
+]);
 {
-    const check = body("VGSThemeService.qml").split('"vgs-theme-preview-check"')[1] || "";
-    const branch = check.slice(0, check.indexOf("blueprints = bps;"));
-    assert.ok(!branch.includes("blueprintsLoadFailed = true"),
-        "VGSThemeService.qml: a failed PREVIEW probe must not set blueprintsLoadFailed — that flag is how a surface " +
-        "says the theme LIST could not be read, and setting it here reported a read failure over a loaded list");
+    const tabPath = path.join(repoRoot, "quickshell", "vshell", "Modules", "Dash", "WallpaperTab.qml");
+    const tabSource = read(tabPath);
+    const tab = qmlSource(tabSource, "WallpaperTab.qml");
+    tab.requires(tabSource, "WallpaperTab.qml", [
+        ["text: VGSThemeService.wallpapersStaleNotice",
+            "the dash tab shows the SAME notice the switcher does: a retained list presented as the " +
+            "current theme's set is the failure mode round 3 closed on one surface and left open here", 1],
+        ["VGSThemeService.wallpapersLoadFailed",
+            "and an empty theme set after a FAILED read is not \"this theme has none\""]
+    ]);
 }
 
 // The empty state must test the filter first: with a populated list, zero
 // matches is a fact about the filter, never about the read.
-mustPrecede("ThemeSwitcherModal.qml", /root\.items\.length > 0/, /blueprintsLoadFailed/,
+mustPrecedeIn(handler("ThemeSwitcherModal.qml", "emptyText"), "ThemeSwitcherModal emptyText",
+    /root\.items\.length > 0/, /blueprintsLoadFailed/,
     "a populated list with zero visible entries is the filter's doing: the read-failure flag must not outrank it");
-for (const [file, prop] of [["ThemeSwitcherModal.qml", "blueprintsLoadError"], ["WallpaperSwitcherModal.qml", "wallpapersLoadError"]]) {
-    must(file, new RegExp(`VGSThemeService\\.${prop}`),
-        "the failure detail must come from the read's own slot, not the shared lastError every command overwrites");
-    mustNot(file, /VGSThemeService\.lastError/,
-        "lastError is a shared slot: it can name another command's failure, or blank out while the surface is up");
-    must(file, /staleNotice: VGSThemeService\.\w+LoadFailed \?/,
-        "a list left browsable after a failed refresh must say so on the surface");
+
+// The service: per-CALL correlation, resolved supersession, honest refusal,
+// guarded wallpaper writes.
+{
+    const svc = q("VGSThemeService.qml");
+
+    svc.requires(serviceSource, "VGSThemeService.qml", [
+        ["signal applyFinished(string requestId, bool success, string message)",
+            "the correlated completion signal must carry the request id", 1],
+        ["signal applySuperseded(string requestId)",
+            "a request replaced before it launched needs its own announcement: it did not fail, and " +
+            "without it the waiting surface latches forever", 1],
+        ["readonly property bool applyInFlight: Object.keys(_applyInFlight).length > 0",
+            "applyInFlight must count apply requests, not the `inflight` command counter", 1]
+    ]);
+
+    svc.requires(svc.body("_beginApply"), "_beginApply()", [
+        ["_applyRequestSeq += 1;",
+            "the request id must be minted per CALL: the Proc command id is constant for every " +
+            "wallpaper, so two overlapping applies shared one key and the first completion emptied " +
+            "the set while the second was still running", 1],
+        ['const requestId = commandId + "#" + _applyRequestSeq;',
+            "and it is derived from the command id plus the sequence, so a reply is still readable", 1],
+        ['const superseded = _applyOwner[commandId] || "";',
+            "at most one live token per command id, or a coalesced call's token never leaves the set", 1],
+        ["delete next[superseded];", "the superseded token leaves the in-flight set", 1],
+        ["owners[commandId] = requestId;", "and the newest request becomes the owner of that command id", 1],
+        ["applySuperseded(superseded);",
+            "Proc coalesces same-id calls inside its debounce window into ONE callback, so the older " +
+            "call is never answered — announcing it is what keeps applyInFlight from sticking true", 1]
+    ]);
+
+    svc.requires(svc.body("_finishApply"), "_finishApply()", [
+        ["delete next[requestId];", "the request leaves the in-flight set", 1],
+        ["applyCompleted(success, message);",
+            "both signals must be emitted: settings tabs report any outcome, the switchers report their own", 1],
+        ["applyFinished(requestId, success, message);", "and the correlated one carries the id", 1],
+        ["delete owners[commandId];", "the command id's ownership is released, or a later call reports a stale supersession", 1]
+    ]);
+    mustPrecedeIn(svc.body("_finishApply"), "_finishApply()", /delete next\[requestId\];/,
+        /applyFinished\(requestId, success, message\);/,
+        "the request must leave the in-flight set before the completion is announced, or a handler re-reading applyInFlight sees it still busy");
+
+    for (const [fn, commandId, noun] of [
+        ["applyBlueprint", 'const commandId = "vgs-theme-apply-" + name;', "Theme"],
+        ["setWallpaper", 'const commandId = "vgs-theme-wallpaper";', "Wallpaper"]
+    ]) {
+        svc.requires(svc.body(fn), `${fn}()`, [
+            ['return "";',
+                `${fn} must answer "" when it dispatches nothing, so a caller cannot latch on a reply that will never come`, 1],
+            [commandId,
+                "the Proc command id stays what Proc's debouncer coalesces on; the request id is separate", 1],
+            ["const requestId = _beginApply(commandId);", "and the reply id is minted from it", 1],
+            ["_run(commandId, ", "the command still runs under the coalescing id", 1],
+            [`_finishApply(requestId, false, "${noun} applied but the shell could not finish updating: " + e);`,
+                "the whole post-parse remainder is guarded: Proc only log.warns a throwing callback, so an " +
+                "unfinished request pins applyInFlight true and both switchers answer every Enter with " +
+                "\"Still applying\" for the rest of the session", 1]
+        ]);
+    }
+    svc.requires(svc.body("applyBlueprint"), "applyBlueprint()",
+        [['_finishApply(requestId, false, "Failed to parse apply result: " + e);',
+            "and a parse failure keeps its own cause: the single catch this splits claimed a parse " +
+            "failure for anything thrown after the parse succeeded", 1]]);
+
+    svc.requires(svc.body("_ownsWallpaperSlot"), "_ownsWallpaperSlot()",
+        [["return selectedWallpaper === path;", "one ownership test, used by both the rollback and the persist", 1]]);
+    svc.requires(svc.body("_rollbackWallpaper"), "_rollbackWallpaper()",
+        [["if (_ownsWallpaperSlot(path))",
+            "a late failure must only roll back while it still owns the slot, or it reverts a newer successful apply", 1]]);
+    svc.requires(svc.body("setWallpaper"), "setWallpaper()",
+        [['if (typeof SessionData !== "undefined" && _ownsWallpaperSlot(path)) SessionData.setWallpaper(path);',
+            "and a late SUCCESS must not persist its wallpaper over a newer one either — refresh() " +
+            "restores selectedWallpaper, not SessionData, so nothing else undoes it", 1]]);
+
+    svc.requires(svc.body("refreshWallpapers"), "refreshWallpapers()",
+        [['themeWallpapersTheme = data.theme || "";',
+            "the retained list has to know whose it is: after a theme switch whose re-read failed it " +
+            "belongs to the PREVIOUS theme, which is what the notice names", 1]]);
+
+    // Item #10, the checkable half. Routing all 43 emissions through
+    // _finishApply would restate applyCompleted's meaning for 19 operations the
+    // switchers never touch, so the guard is a COUNT instead: a new bare
+    // `applyCompleted(` moves it and fails here, which is the direction that
+    // otherwise fails silently — a reporter can start such an operation and its
+    // reply never arrives.
+    const APPLY_COMPLETED_SITES = 44;
+    svc.requires(serviceSource, "VGSThemeService.qml", [
+        ["applyCompleted(",
+            `exactly ${APPLY_COMPLETED_SITES} mentions: one signal declaration, one emission inside ` +
+            "_finishApply, and 42 bare emissions across 19 operations that predate the correlated " +
+            "signal. A NEW apply-like operation must emit through _finishApply and pass its request " +
+            "id, not copy a neighbouring bare emission — that produces an operation a reporter can " +
+            "start but whose reply never arrives. If you deliberately added or removed one, move " +
+            "this number and say which in the commit",
+            APPLY_COMPLETED_SITES]
+    ]);
+
+    svc.requires(svc.body("generateMissingPreviews"), "generateMissingPreviews()",
+        [["previewsGenerating = false;", "the preview-check branch must still release its single-flight guard"]]);
+    {
+        const check = body("VGSThemeService.qml").split('"vgs-theme-preview-check"')[1] || "";
+        const branch = check.slice(0, check.indexOf("blueprints = bps;"));
+        assert.ok(!branch.includes("blueprintsLoadFailed = true"),
+            "VGSThemeService.qml: a failed PREVIEW probe must not set blueprintsLoadFailed — that flag is how a surface " +
+            "says the theme LIST could not be read, and setting it here reported a read failure over a loaded list");
+    }
 }
-must("WallpaperSwitcherModal.qml", /\.filter\(entry => !!entry\.path\)/,
-    "a pathless entry is the apply id as well as the image: setWallpaper refuses it and never answers");
 
 process.stdout.write("switcher selection guard: ok\n");
