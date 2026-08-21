@@ -41,10 +41,11 @@ osc results home:vanillagreen vgs-shell
 
 # Ubuntu PPA — debian/ must sit at the source root, and the signing key has a
 # passphrase, so a person runs debsign.
+R=$(git rev-parse --show-toplevel)              # before any cd
 curl -fsSLO https://github.com/vanillagreencom/vgs/releases/download/vX.Y.Z/vgs-X.Y.Z-source.tar.gz
 cp vgs-X.Y.Z-source.tar.gz vgs-shell_X.Y.Z.orig.tar.gz
 tar -xzf vgs-X.Y.Z-source.tar.gz && cd vgs-X.Y.Z
-cp -a ../../packaging/debian debian
+cp -a "$R/packaging/debian" debian
 sed -i '1s/.*/vgs-shell (X.Y.Z-1~ubuntu26.04.1) resolute; urgency=medium/' debian/changelog
 dpkg-buildpackage -S -us -uc -d -nc           # -nc: dh clean needs debhelper
 debsign -k <KEYID> ../vgs-shell_*_source.changes
@@ -70,21 +71,31 @@ V=$(cat VERSION)
 # AUR — recipes match this repo byte for byte
 scripts/check-aur-sync.py --remote
 
-# Fedora COPR — the built RPMs, per chroot
-curl -s "https://download.copr.fedorainfracloud.org/results/vanillagreen/vgs-shell/fedora-44-x86_64/$(
-  curl -s https://download.copr.fedorainfracloud.org/results/vanillagreen/vgs-shell/fedora-44-x86_64/ \
-  | grep -oE '[0-9]{7,8}-vgs-shell' | tail -1)/results.json" | grep -q "\"version\": \"$V\"" && echo COPR ok
+# Fedora COPR — every declared chroot
+for c in fedora-43-x86_64 fedora-43-aarch64 fedora-44-x86_64 fedora-44-aarch64; do
+  b=$(curl -s "https://download.copr.fedorainfracloud.org/results/vanillagreen/vgs-shell/$c/" \
+      | grep -oE '[0-9]{7,8}-vgs-shell' | tail -1)
+  curl -s "https://download.copr.fedorainfracloud.org/results/vanillagreen/vgs-shell/$c/$b/results.json" \
+    | grep -q "\"version\": \"$V\"" && echo "$c ok" || echo "$c NOT $V"
+done
 
 # openSUSE + Debian — the repository index, not osc results
-curl -s https://download.opensuse.org/repositories/home:/vanillagreen/openSUSE_Tumbleweed/x86_64/ | grep -q "vgs-shell-$V-" && echo Tumbleweed ok
-curl -s https://download.opensuse.org/repositories/home:/vanillagreen/Debian_13/amd64/ | grep -q "vgs-shell_$V-" && echo Debian ok
+for r in openSUSE_Tumbleweed/x86_64 openSUSE_Slowroll/x86_64; do
+  curl -s "https://download.opensuse.org/repositories/home:/vanillagreen/$r/" \
+    | grep -q "vgs-shell-$V-" && echo "$r ok" || echo "$r NOT $V"
+done
+curl -s https://download.opensuse.org/repositories/home:/vanillagreen/Debian_13/amd64/ \
+  | grep -q "vgs-shell_$V-" && echo "Debian_13 ok" || echo "Debian_13 NOT $V"
 
 # Ubuntu — the newest Published source
 curl -s "https://api.launchpad.net/1.0/~vanillagreen/+archive/ubuntu/vgs-shell?ws.op=getPublishedSources" \
-  | grep -q "\"source_package_version\": \"$V-1~" && echo PPA ok
+  | grep -q "\"source_package_version\": \"$V-1~" && echo "PPA ok" || echo "PPA NOT $V"
 
 # Gentoo — the overlay's ebuild
 scripts/publish-gentoo.sh --check
+
+# Nix — the public flake at the tag actually evaluates
+nix eval --raw "github:vanillagreencom/vgs/v$V#packages.x86_64-linux.default.version"
 ```
 
 Name any channel that did not ship in the release notes.
