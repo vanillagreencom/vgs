@@ -70,7 +70,7 @@ quickshell/vshell/Modals/PowerMenuModal.qml	883
 quickshell/vshell/Modals/ProcessListModal.qml	615
 quickshell/vshell/Modals/Settings/SettingsModal.qml	464
 quickshell/vshell/Modals/Settings/SettingsSidebar.qml	1090
-quickshell/vshell/Modals/Switcher/FullScreenSwitcher.qml	548
+quickshell/vshell/Modals/Switcher/FullScreenSwitcher.qml	583
 quickshell/vshell/Modals/VgsColorPickerModal.qml	766
 quickshell/vshell/Modals/WifiPasswordModal.qml	747
 quickshell/vshell/Modals/WindowRuleModal.qml	1906
@@ -227,7 +227,7 @@ scripts/test-popout-dismiss-envelope.js	489
 scripts/test-remote-desktop-state.js	1243
 scripts/test-section-pointers-e2e.py	434
 scripts/test-section-pointers.py	458
-scripts/test-switcher-selection.js	696
+scripts/test-switcher-selection.js	736
 scripts/test-toast-actions.js	607
 scripts/test-validate.sh	547
 scripts/test-validation-inventory.sh	2278

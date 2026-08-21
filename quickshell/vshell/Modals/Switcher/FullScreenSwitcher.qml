@@ -71,6 +71,10 @@ VgsModal {
     // the per-open state, or a half-notch left over from the last open spends
     // itself on the first scroll of the next one.
     property real wheelAccumulator: 0
+    // The entry the selection is ON, by key rather than by position, so a list
+    // that reshapes under it can put it back. Written wherever the selection
+    // moves — see `holdCurrent`.
+    property string selectedKey: ""
 
     signal applied(var item)
 
@@ -171,6 +175,25 @@ VgsModal {
             return clampIndex(count - 1, count);
         return wrapIndex(index + delta, count);
     }
+    // Where the selection lands when the LIST changes under it. The index alone
+    // does not survive a filter: with B selected in [A,B,C], filtering to C
+    // clamps to index 0, and CLEARING the filter then leaves index 0 pointing
+    // at A — the user backspaces and their place is gone. So the KEY is what is
+    // preserved, and the index is only the fallback for a key that is no longer
+    // in the list at all.
+    function preserveIndex(list, wantedKey, index) {
+        const entries = list || [];
+        if (entries.length <= 0)
+            return 0;
+        if (wantedKey) {
+            for (let i = 0; i < entries.length; i++) {
+                if (entries[i].key === wantedKey)
+                    return i;
+            }
+        }
+        return clampIndex(index, entries.length);
+    }
+
     // How far a wheel movement pages, and what it leaves behind. One notch is
     // 120 eighths of a degree by Qt's convention, but a touchpad or a
     // high-resolution wheel sends a stream of fractions of one, so the leftover
@@ -197,6 +220,13 @@ VgsModal {
             return;
         root.userMoved = true;
         root.currentIndex = root.navIndex(kind, root.currentIndex, root.itemCount, delta);
+        root.holdCurrent();
+    }
+
+    // The one place the held key is written: every mover calls it after moving,
+    // so the key and the index cannot disagree about what is selected.
+    function holdCurrent() {
+        root.selectedKey = root.currentItem ? String(root.currentItem.key || "") : "";
     }
 
     function step(delta) {
@@ -267,6 +297,7 @@ VgsModal {
 
     function seedSelection() {
         root.currentIndex = root.seedIndex(root.visibleItems, root.activeKey);
+        root.holdCurrent();
     }
 
     function reseedIfUntouched() {
@@ -305,8 +336,9 @@ VgsModal {
     }
 
     onVisibleItemsChanged: {
-        currentIndex = clampIndex(currentIndex, itemCount);
+        currentIndex = preserveIndex(visibleItems, selectedKey, currentIndex);
         reseedIfUntouched();
+        holdCurrent();
     }
 
     // `activeKey` is read asynchronously too (`theme current --json`), and can
@@ -386,6 +418,7 @@ VgsModal {
             root.applyBlocked = false;
             root.userMoved = false;
             root.wheelAccumulator = 0;
+            root.selectedKey = "";
             root.seedSelection();
         }
 
@@ -395,6 +428,7 @@ VgsModal {
             root.applyBlocked = false;
             root.userMoved = false;
             root.wheelAccumulator = 0;
+            root.selectedKey = "";
         }
     }
 
@@ -468,6 +502,7 @@ VgsModal {
                 onPicked: index => {
                     root.userMoved = true;
                     root.currentIndex = index;
+                    root.holdCurrent();
                 }
                 onActivated: root.applyCurrent()
             }

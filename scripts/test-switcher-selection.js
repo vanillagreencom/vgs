@@ -128,7 +128,7 @@ const MARKER = "SWITCHER SELECTION DECISION";
 
 const sel = evaluateMarked(baseSource, MARKER, [
     "wrapIndex", "clampIndex", "seedIndex", "shouldReseed", "enterOutcome",
-    "latchesIntent", "navIndex", "wheelSteps"
+    "latchesIntent", "navIndex", "wheelSteps", "preserveIndex"
 ], "FullScreenSwitcher.qml");
 
 // The extracted block must be free of QML, or this harness tests a different
@@ -206,6 +206,26 @@ assert.equal(sel.navIndex("step", 0, 4, -1), 3, "and stepping back off the top w
 for (const kind of ["step", "first", "last"]) {
     assert.equal(sel.navIndex(kind, 5, 0, 1), 0,
         `${kind} on an empty pager must answer an in-range index even though nothing may act on it`);
+}
+
+// preserveIndex: a filter must not cost the user their place. The index alone
+// does not survive one — this is the reported defect: with B selected in
+// [A,B,C], filtering to C clamps to index 0, and CLEARING the filter leaves
+// index 0 pointing at A.
+{
+    const abc = [{ key: "a" }, { key: "b" }, { key: "c" }];
+    assert.equal(sel.preserveIndex(abc, "b", 0), 1, "the held key wins over the index it was found at");
+    assert.equal(sel.preserveIndex(abc, "c", 0), 2,
+        "clearing a filter puts the selection back on the entry it was on, not on the top of the list");
+    assert.equal(sel.preserveIndex([{ key: "c" }], "c", 2), 0, "and narrowing to it finds it at its new position");
+    assert.equal(sel.preserveIndex(abc, "zz", 2), 2, "a key that is gone falls back to the index");
+    assert.equal(sel.preserveIndex(abc, "zz", 9), 2, "clamped, so a shrunk list cannot leave it off the end");
+    assert.equal(sel.preserveIndex(abc, "zz", -1), 0, "or below the start");
+    assert.equal(sel.preserveIndex(abc, "", 1), 1, "no held key at all is the index, clamped");
+    assert.equal(sel.preserveIndex([], "b", 3), 0, "an emptied list has no index to hold");
+    assert.equal(sel.preserveIndex(null, "b", 3), 0, "nor does a list that has not arrived");
+    assert.equal(sel.preserveIndex([{ key: "b" }, { key: "b" }], "b", 1), 0,
+        "a duplicated key resolves to the FIRST match, as seeding does");
 }
 
 // wheelSteps: the leftover is CARRIED, not rounded away. A touchpad sends a
@@ -379,11 +399,25 @@ function mustPrecedeIn(block, label, first, second, why) {
 
     const onVisible = handler("FullScreenSwitcher.qml", "onVisibleItemsChanged");
     base.requires(onVisible, "onVisibleItemsChanged", [
-        ["currentIndex = clampIndex(currentIndex, itemCount);", "a reshaped list re-clamps the index", 1],
-        ["reseedIfUntouched();", "and then re-seeds while the user has not taken over", 1]
+        ["currentIndex = preserveIndex(visibleItems, selectedKey, currentIndex);",
+            "a reshaped list puts the selection back on the entry it was ON. Re-clamping the raw " +
+            "index instead is how clearing a filter dropped the user back to the top of the list", 1],
+        ["reseedIfUntouched();", "and then re-seeds while the user has not taken over", 1],
+        ["holdCurrent();", "and whatever it landed on becomes the held key", 1]
     ]);
-    mustPrecedeIn(onVisible, "onVisibleItemsChanged", /currentIndex = clampIndex\(/, /reseedIfUntouched\(\);/,
-        "the clamp must run before the re-seed, or a shrunk list is seeded against an out-of-range index");
+    mustPrecedeIn(onVisible, "onVisibleItemsChanged", /currentIndex = preserveIndex\(/, /reseedIfUntouched\(\);/,
+        "the index must be placed before the re-seed, or a shrunk list is seeded against an out-of-range index");
+    mustPrecedeIn(onVisible, "onVisibleItemsChanged", /reseedIfUntouched\(\);/, /holdCurrent\(\);/,
+        "and the key is held LAST, or it records the position the re-seed moved off");
+
+    base.requires(base.body("holdCurrent"), "holdCurrent()", [
+        ['root.selectedKey = root.currentItem ? String(root.currentItem.key || "") : "";',
+            "one writer for the held key, so it cannot disagree with the index about what is selected", 1]
+    ]);
+    base.requires(base.body("navigate"), "navigate() holds its key",
+        [["root.holdCurrent();", "paging updates the held key, or the NEXT list change puts the selection back where the user paged FROM", 1]]);
+    base.requires(base.body("seedSelection"), "seedSelection()",
+        [["root.holdCurrent();", "and so does seeding", 1]]);
 
     base.requires(handler("FullScreenSwitcher.qml", "onActiveKeyChanged"), "onActiveKeyChanged",
         [["reseedIfUntouched()",
@@ -673,6 +707,12 @@ mustPrecedeIn(handler("ThemeSwitcherModal.qml", "emptyText"), "ThemeSwitcherModa
             "a captured chord is written straight through ONLY when nothing else owns it: " +
             "`keybinds set` deletes every existing entry for a key before appending, so saving " +
             "over a taken chord silently takes the other shortcut away", 1],
+        ["if (!token || token === root.boundKey || KeybindsService.saving) return;",
+            "a save already running blocks the commit. KeybindsService owns ONE saveProcess with no " +
+            "queue, so a second saveBind assigns `running` to a process that is already running: it " +
+            "launches nothing and the chord is dropped silently. Checked in commit() and not only on " +
+            "the controls, because the Replace button sits outside the row that carries the " +
+            "disabled state", 1],
         ["KeybindsService.saveBind(root.boundKey, {",
             "and the save passes the CURRENT key as originalKey, so a rebind moves the chord " +
             "instead of leaving the old one live", 1]

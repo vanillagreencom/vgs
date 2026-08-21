@@ -54,7 +54,11 @@ Rectangle {
     }
 
     function commit(token) {
-        if (!token || token === root.boundKey)
+        // `saving` is checked HERE and not only on the controls: one save
+        // process with no queue means a second `saveBind` assigns `running` to
+        // an already-running Process, which launches nothing and drops the
+        // chord silently.
+        if (!token || token === root.boundKey || KeybindsService.saving)
             return;
         // `originalKey` is what makes this a MOVE rather than a second bind for
         // the same action: without it the old chord keeps working and the row
@@ -135,6 +139,10 @@ Rectangle {
                 width: parent.width
                 spacing: Theme.spacingS
                 visible: root.pendingConflicts.length > 0
+                // This row sits OUTSIDE the controls row, so it needs the save
+                // guard of its own — `commit()` enforces it either way.
+                enabled: !KeybindsService.saving
+                opacity: enabled ? 1 : 0.5
 
                 StyledText {
                     anchors.verticalCenter: parent.verticalCenter
