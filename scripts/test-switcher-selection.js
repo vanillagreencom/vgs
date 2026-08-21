@@ -637,6 +637,13 @@ mustPrecedeIn(handler("ThemeSwitcherModal.qml", "emptyText"), "ThemeSwitcherModa
             [["function show()", "every IPC target calls show(); it dispatches the list read as well as opening", 1]]);
     }
 
+    q("WallpaperSwitcherModal.qml").requires(body("WallpaperSwitcherModal.qml"), "WallpaperSwitcherModal.qml", [
+        ['activeKey: SessionData.wallpaperPath || VGSThemeService.selectedWallpaper || ""',
+            "the seed is what is ON the desktop first. Not everything that changes the wallpaper " +
+            "goes through this service — cycling writes SessionData directly — so seeding from " +
+            "`selectedWallpaper` alone opened the switcher on whatever the service last applied", 1]
+    ]);
+
     q("WallpaperTab.qml").requires(wallpaperTabSource, "WallpaperTab.qml", [
         ['action: "spawn vshell ipc call wallpaper-switcher toggle"',
             "the page carries the bind for its OWN switcher, and the action must be one the IPC " +

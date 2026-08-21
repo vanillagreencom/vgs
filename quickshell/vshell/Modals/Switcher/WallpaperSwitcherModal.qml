@@ -35,7 +35,16 @@ FullScreenSwitcher {
 
     // Land on the wallpaper already in use so paging starts from where the
     // desktop is, not from the top of the list.
-    activeKey: VGSThemeService.selectedWallpaper || ""
+    //
+    // `SessionData` first, because that is what is ON the desktop and not
+    // everything that changes it goes through this service: wallpaper cycling
+    // writes SessionData directly, so seeding from the service's own
+    // `selectedWallpaper` opened the switcher on whatever it last applied
+    // rather than on the picture the user is looking at. The dash's Wallpapers
+    // tab already marks its current entry the same way. The service value is
+    // the fallback for the window where an apply has claimed a wallpaper
+    // optimistically but has not committed it yet.
+    activeKey: SessionData.wallpaperPath || VGSThemeService.selectedWallpaper || ""
     // An apply not already running, not the whole service — see ThemeSwitcherModal.
     canApply: !applyReporter.anyApplyInFlight
 
