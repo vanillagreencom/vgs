@@ -267,6 +267,24 @@ Browsing lives in the bar's center dash dropdown (`Modules/Dash/DashPopout.qml`)
 - Thumbnails: shared `~/.cache/vshell/imagecache/` disk cache, pre-generated in one batched `ffmpegthumbnailer` run by `Widgets/WallpaperThumbnailPreloader.qml` (mtime-aware; optional `thumbnails` dependency).
 - Long helper calls (preview rendering) run as background tasks in `VGSThemeService`; Apply buttons never block.
 
+## Full-screen switchers
+One large preview at a time, arrow keys page, Enter applies, Esc cancels. Additive: the dash tabs and Settings pickers are untouched, and paging applies nothing — the desktop changes only on Enter.
+
+| | Wallpaper switcher | Theme switcher |
+| -- | -- | -- |
+| Modal | `Modals/Switcher/WallpaperSwitcherModal.qml` | `Modals/Switcher/ThemeSwitcherModal.qml` |
+| IPC | `vshell ipc call wallpaper-switcher open\|close\|toggle` | `vshell ipc call theme-switcher open\|close\|toggle` |
+| Layer | `vshell:wallpaper-switcher` | `vshell:theme-switcher` |
+| Source | `VGSThemeService.themeWallpapers` (active theme's `backgrounds/` only) | `VGSThemeService.blueprints` (every installed theme) |
+| Image | the full-size wallpaper file | the blueprint's resolved `preview` (1920x1080) |
+| Typing | — | filters by word match on the theme name |
+| Enter | `VGSThemeService.setWallpaper` | `VGSThemeService.applyBlueprint` |
+
+- `Modals/Switcher/FullScreenSwitcher.qml` owns layout, paging, filter and keys; each switcher maps its data to `{image, label, badge, key}` and handles `applied`.
+- Theme source is `blueprints`, NOT `VGSThemeCatalogService`: the catalog is the download list, so it carries uninstalled themes, omits user-generated ones, and its `preview` skips the cached-screenshot path `theme list --json` resolves.
+- Keybinds are user config, not shipped; `SUPER+SHIFT+W` / `SUPER+SHIFT+T` are the intended bindings.
+- Covered by `switcher_check` in `scripts/qml-smoke.sh`, with `modalDarkenBackground` on and off.
+
 ## Preview screenshots
 `vshell theme preview [name|--all] [--force]` renders a real screenshot per blueprint: a nested Hyprland session runs ghostty+nvim (theme-driven highlights, mock neo-tree/statusline), a second ghostty showcase, the installed file manager (dolphin > nautilus > thunar) with an isolated `XDG_CONFIG_HOME` and a synthetic `HOME` (a fixed sample tree — the pane must not vary per machine or carry real filenames into a committed screenshot), and a minimal Quickshell bar+control-center replica (`quickshell/vshell-preview/shell.qml`).
 

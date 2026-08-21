@@ -799,6 +799,97 @@ popout_check() {
   return 0
 }
 
+# --- the full-screen switchers map, cover the output, and unmap (VGS-208) ---
+#
+# `sandbox_layer_state` calls a surface as large as its output DEGENERATE (exit
+# 2), because for a popout it is. The switchers are the one class of surface
+# here that is meant to be full-bleed, so exit 2 is the reading that says they
+# are RIGHT — hence `wait_layer_state ... 2` below, which is not a typo for 0
+# and must not be "fixed" into one. Exit 0 would mean a switcher came up
+# smaller than the screen, which is the layout failure this witnesses.
+#
+# Nothing else in this file reaches them: both modals stay uninstantiated until
+# an IPC call opens one, so a broken binding or a missing property inside either
+# is invisible to the static parse AND to the nested load.
+#
+# BOTH `modalDarkenBackground` states are exercised, and the `false` pass is the
+# control for a real defect. With it off, VgsModalStandalone's click catcher has
+# nothing to draw; while that window was ALSO excluded from rendering
+# (`updatesEnabled: root.useBackground`), the mapped-but-never-rendered surface
+# stalled the QML animation driver, so the animation-backed Timer that unmaps a
+# closing modal never fired and EVERY modal - the pre-existing colour picker
+# included - stayed on screen indefinitely. Restore that binding and the `false`
+# pass below fails; that is what proves this pass is not vacuous.
+switcher_targets=("wallpaper-switcher" "theme-switcher")
+switcher_namespaces=("vshell:wallpaper-switcher" "vshell:theme-switcher")
+switcher_open_replies=("WALLPAPER_SWITCHER_OPEN_SUCCESS" "THEME_SWITCHER_OPEN_SUCCESS")
+
+# Polls until SettingsData reports the value the caller just wrote. `settings
+# set` answers before the property has propagated, and running the round trip
+# against the OTHER state would silently make one of the two passes a duplicate.
+await_darken_setting() {
+  local want="$1" reply
+  for _ in $(seq 1 20); do
+    reply="$(sandbox_ipc settings get modalDarkenBackground)"
+    [[ "$reply" == "$want" ]] && return 0
+    kill -0 -- "-$qs_group" 2>/dev/null || break
+    sleep 0.2
+  done
+  return 1
+}
+
+switcher_check() {
+  local darken index namespace target want reply
+
+  for darken in true false; do
+    reply="$(sandbox_ipc settings set modalDarkenBackground "$darken")"
+    if [[ "$reply" != "SETTINGS_SET_SUCCESS" ]]; then
+      fail "could not set modalDarkenBackground=$darken (answered '$reply'), so the switchers were never checked in that state"
+      return 1
+    fi
+    if ! await_darken_setting "$darken"; then
+      fail "modalDarkenBackground never read back as $darken, so the switchers were never checked in that state"
+      return 1
+    fi
+
+    for index in "${!switcher_targets[@]}"; do
+      target="${switcher_targets[$index]}"
+      namespace="${switcher_namespaces[$index]}"
+      want="${switcher_open_replies[$index]}"
+
+      # Start from a known state, so a surface left mapped by something else
+      # cannot satisfy the assertion below.
+      if ! wait_layer_state "$namespace" 1; then
+        fail "'$namespace' was already mapped before '$target open' was called (modalDarkenBackground=$darken)"
+        return 1
+      fi
+
+      reply="$(sandbox_ipc "$target" open)"
+      if [[ "$reply" != "$want" ]]; then
+        fail "$target open answered '$reply', wanted '$want' (modalDarkenBackground=$darken)"
+        return 1
+      fi
+
+      # NOT "the call returned success": this waits for the compositor to show it.
+      if ! wait_layer_state "$namespace" 2; then
+        sandbox_layer_state "$namespace" >&2 || true
+        fail "'$target open' never produced a full-output '$namespace' surface (modalDarkenBackground=$darken)"
+        return 1
+      fi
+
+      reply="$(sandbox_ipc "$target" close)"
+      if ! wait_layer_state "$namespace" 1; then
+        sandbox_layer_state "$namespace" >&2 || true
+        fail "'$target close' answered '$reply' but the '$namespace' surface outlived it (modalDarkenBackground=$darken)"
+        return 1
+      fi
+    done
+  done
+
+  note "switcher check passed (both full-screen switchers mapped over the whole output and unmapped on close, with the modal backdrop on and off)"
+  return 0
+}
+
 # How many times the override fixture's OWN component has been instantiated.
 # This is the assertion the original VGS-75 defect defeats: it reported
 # PLUGIN_RELOAD_SUCCESS and logged a clean "Plugin loaded" for what was really
@@ -1280,6 +1371,15 @@ EOF
     if popout_check; then
       override_check || true
     fi
+  fi
+
+  # Gated on `loaded` alone, NOT on the seed or on plugins: the switchers read
+  # the theme services, so their verdict is independent evidence worth having
+  # even when those phases could not run. It writes `modalDarkenBackground`, so
+  # it runs after every phase that reads seeded settings. `|| true` keeps the
+  # teardown below reachable - `fail` has already set the exit status.
+  if [[ "$loaded" == true ]]; then
+    switcher_check || true
   fi
 
   kill_pgid "$qs_group"

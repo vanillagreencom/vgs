@@ -198,7 +198,11 @@ Item {
         id: clickCatcher
         visible: false
         color: "transparent"
-        updatesEnabled: root.useBackground
+        // Rendered even with nothing to draw (VGS-208): a mapped layer surface
+        // Quickshell never renders stalls the QML animation driver, and the
+        // animation-backed `closeTimer` below is what unmaps a closing modal —
+        // gating this on `useBackground` left every modal stuck on screen with
+        // `modalDarkenBackground` off. See scripts/qml-smoke.sh switcher_check.
 
         WlrLayershell.namespace: root.layerNamespace + ":clickcatcher"
         WlrLayershell.layer: WlrLayershell.Top
