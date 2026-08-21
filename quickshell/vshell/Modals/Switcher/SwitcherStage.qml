@@ -21,10 +21,19 @@ Item {
     property var prefetchSources: []
 
     // Decode at display size: theme previews are 1920x1080 but a user wallpaper
-    // can be far larger than the screen. The lookahead MUST use the same size or
-    // the cache key differs and the warm copy is never found.
+    // can be far larger than the screen.
+    //
+    // The lookahead MUST match the visible Image on EVERY property the pixmap
+    // cache keys on — url, sourceSize, fillMode, sourceClipRect, frame, mirror —
+    // not just the size. QQuickImage folds fillMode into the key through
+    // QQuickImageProviderOptions::preserveAspectRatioFit, so a delegate left at
+    // the default Image.Stretch decodes under a DIFFERENT key and the page step
+    // misses exactly the entry the lookahead warmed: it pays the memory and
+    // re-decodes anyway. These three are declared once here and bound by both
+    // so the two cannot drift apart.
     readonly property int decodeWidth: Math.max(1, Math.round(stage.width * stage.dpr))
     readonly property int decodeHeight: Math.max(1, Math.round(stage.height * stage.dpr))
+    readonly property int decodeFillMode: Image.PreserveAspectFit
 
     Image {
         id: preview
@@ -32,7 +41,7 @@ Item {
         visible: stage.hasItems && status === Image.Ready
         asynchronous: true
         cache: true
-        fillMode: Image.PreserveAspectFit
+        fillMode: stage.decodeFillMode
         sourceSize.width: stage.decodeWidth
         sourceSize.height: stage.decodeHeight
         source: stage.imageSource
@@ -46,6 +55,7 @@ Item {
             visible: false
             asynchronous: true
             cache: true
+            fillMode: stage.decodeFillMode
             sourceSize.width: stage.decodeWidth
             sourceSize.height: stage.decodeHeight
             source: modelData

@@ -21,22 +21,33 @@ FullScreenSwitcher {
     layerNamespace: "vshell:theme-switcher"
 
     // A failed `theme list` leaves `blueprints` empty, which must not be
-    // reported as a fact about the user's themes, and "no match" is only true
-    // when a filter is actually on.
+    // reported as a fact about the user's themes. A POPULATED source with zero
+    // visible entries is tested first: that can only be the filter, and the
+    // failure flag outranking it made a filter miss report a read failure over
+    // a list already on screen. The detail comes from `blueprintsLoadError`,
+    // which only the blueprint read writes — `lastError` is a shared slot every
+    // command overwrites, so it can name a different command's failure, or
+    // blank out while the surface is up.
     emptyText: {
-        if (VGSThemeService.blueprintsLoadFailed)
-            return I18n.tr("Could not read the installed themes") + (VGSThemeService.lastError ? "\n" + VGSThemeService.lastError : "");
-        if (root.filterQuery !== "")
+        if (root.items.length > 0)
             return I18n.tr("No themes match");
+        if (VGSThemeService.blueprintsLoadFailed)
+            return I18n.tr("Could not read the installed themes") + (VGSThemeService.blueprintsLoadError ? "\n" + VGSThemeService.blueprintsLoadError : "");
         return I18n.tr("No themes installed");
     }
+
+    // A failed refresh over a list that is still on screen: keep it browsable
+    // and say it may be stale, rather than discarding a working list or passing
+    // it off as fresh.
+    staleNotice: VGSThemeService.blueprintsLoadFailed ? I18n.tr("Could not refresh — showing the last known theme list") : ""
 
     readonly property string activeTheme: (VGSThemeService.currentTheme || {}).name || ""
 
     activeKey: root.activeTheme
-    // show() fires counted helper commands, so `busy` is true for the round trip
-    // right after the surface appears — exactly when Enter gets pressed.
-    canApply: !VGSThemeService.busy
+    // What Enter actually needs is an apply not already running. `busy` counts
+    // every non-background command, so it blocks on a restyle started from a
+    // settings tab and does not block on this switcher's own background reads.
+    canApply: !applyReporter.applyInFlight
 
     items: (VGSThemeService.blueprints || []).filter(bp => !!bp.name).map(bp => ({
                 image: bp.preview || "",
@@ -53,25 +64,10 @@ FullScreenSwitcher {
         open();
     }
 
-    // Driven from a keybind there is no settings tab loaded to report a failed
-    // apply, so the switcher reports its own. Latched to the apply it started,
-    // and silent on success (the desktop shows it) so an open Themes tab does
-    // not double-toast.
-    property bool applyPending: false
-
-    onApplied: item => {
-        root.applyPending = true;
-        VGSThemeService.applyBlueprint(item.key);
+    ThemeApplyReporter {
+        id: applyReporter
+        errorTitle: I18n.tr("VGS theme error")
     }
 
-    Connections {
-        target: VGSThemeService
-        function onApplyCompleted(success, message) {
-            if (!root.applyPending)
-                return;
-            root.applyPending = false;
-            if (!success)
-                ToastService.showError(I18n.tr("VGS theme error"), message);
-        }
-    }
+    onApplied: item => applyReporter.track(VGSThemeService.applyBlueprint(item.key))
 }

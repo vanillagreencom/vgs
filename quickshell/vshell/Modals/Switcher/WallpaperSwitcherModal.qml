@@ -17,20 +17,25 @@ FullScreenSwitcher {
     filterable: false
     layerNamespace: "vshell:wallpaper-switcher"
 
-    // `refreshWallpapers` clears the list on a helper failure too, so an empty
-    // list alone cannot be asserted as "this theme has none".
-    emptyText: VGSThemeService.wallpapersLoadFailed ? I18n.tr("Could not read this theme's wallpapers") + (VGSThemeService.lastError ? "\n" + VGSThemeService.lastError : "") : I18n.tr("This theme has no wallpapers")
+    // A failed `theme wallpapers` read leaves whatever was already loaded, so an
+    // empty list here means the read failed with nothing to fall back on — that
+    // is not "this theme has none". The detail is the read's own error, not the
+    // shared `lastError` slot — see ThemeSwitcherModal.
+    emptyText: VGSThemeService.wallpapersLoadFailed ? I18n.tr("Could not read this theme's wallpapers") + (VGSThemeService.wallpapersLoadError ? "\n" + VGSThemeService.wallpapersLoadError : "") : I18n.tr("This theme has no wallpapers")
+
+    staleNotice: VGSThemeService.wallpapersLoadFailed ? I18n.tr("Could not refresh — showing the last known wallpapers") : ""
 
     readonly property var wallpaperEntries: VGSThemeService.themeWallpapers || []
 
     // Land on the wallpaper already in use so paging starts from where the
     // desktop is, not from the top of the list.
     activeKey: VGSThemeService.selectedWallpaper || ""
-    // `refreshWallpapers` is a counted command: `busy` is true for the round trip
-    // right after show(), exactly when Enter gets pressed.
-    canApply: !VGSThemeService.busy
+    // An apply not already running, not the whole service — see ThemeSwitcherModal.
+    canApply: !applyReporter.applyInFlight
 
-    items: root.wallpaperEntries.map(entry => ({
+    // A pathless entry is the apply id as well as the image: `setWallpaper`
+    // refuses it and never answers, so it must not be reachable at all.
+    items: root.wallpaperEntries.filter(entry => !!entry.path).map(entry => ({
                 image: entry.path,
                 label: entry.file,
                 badge: entry.default ? I18n.tr("Default") : "",
@@ -42,23 +47,10 @@ FullScreenSwitcher {
         open();
     }
 
-    // See ThemeSwitcherModal: a keybind-driven failure has no settings tab to
-    // report it, and success is silent so an open tab does not double-toast.
-    property bool applyPending: false
-
-    onApplied: item => {
-        root.applyPending = true;
-        VGSThemeService.setWallpaper(item.key);
+    ThemeApplyReporter {
+        id: applyReporter
+        errorTitle: I18n.tr("VGS wallpaper error")
     }
 
-    Connections {
-        target: VGSThemeService
-        function onApplyCompleted(success, message) {
-            if (!root.applyPending)
-                return;
-            root.applyPending = false;
-            if (!success)
-                ToastService.showError(I18n.tr("VGS theme error"), message);
-        }
-    }
+    onApplied: item => applyReporter.track(VGSThemeService.setWallpaper(item.key))
 }

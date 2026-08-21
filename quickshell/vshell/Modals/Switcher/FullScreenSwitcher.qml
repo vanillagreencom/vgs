@@ -14,12 +14,18 @@ import qs.Widgets
 //
 // Callers supply a normalized `items` list and handle `applied`; this file owns
 // the surface, the paging, the optional filter, the key handling and the
-// selection seeding. A subclass binds `activeKey` and must NOT declare its own
-// `onOpened` — a derived handler REPLACES the base's, and the seeding with it.
+// selection seeding. A subclass binds `activeKey`.
 //
-// A subclass MUST also override `layerNamespace` and register that namespace in
-// `switcher_check` (scripts/qml-smoke.sh); the default below exists only to keep
-// an unregistered switcher off the shared "vshell:modal" surface.
+// The base's own per-open reset runs from a self-targeted `Connections` rather
+// than a root-level `onOpened:`, because a derived `onOpened:` REPLACES an
+// inline base handler and would silently take the reset with it. A `Connections`
+// handler coexists with any a subclass declares.
+//
+// A subclass MUST also override `layerNamespace`; `switcher_check`
+// (scripts/qml-smoke.sh) discovers the subclasses from this directory and FAILS
+// on one it cannot place, so the coverage is not left to this comment being
+// read. The default below exists only to keep an unregistered switcher off the
+// shared "vshell:modal" surface.
 VgsModal {
     id: root
 
@@ -36,15 +42,24 @@ VgsModal {
     // False while the owning service cannot accept an apply. Enter then keeps the
     // surface up and says so, instead of dismissing it with nothing applied.
     property bool canApply: true
+    // Set when the list on screen could not be refreshed but the previous one is
+    // still browsable. Shown as a banner, NOT as the empty state: dropping a
+    // working list because a refresh failed destroys a usable browse, and
+    // showing it silently as if it were fresh is the dishonesty this replaces.
+    property string staleNotice: ""
 
     property string filterQuery: ""
     property int currentIndex: 0
     property bool applyBlocked: false
-    // Seeding is ONCE per open. Both services re-emit their loaded signals while
-    // the surface is up (background preview generation, wallpaper adds), and
-    // re-seeding then snaps the selection off whatever the user paged to — Enter
-    // at that moment applies the wrong entry.
-    property bool seeded: false
+    // The latch is USER INTENT, not data arrival. Both services answer
+    // asynchronously and both `show()` paths dispatch their read and `open()` in
+    // the same tick, so the list present at open is by construction the PREVIOUS
+    // one; `activeKey` can also land after it. Until the user has moved the
+    // selection, every new list and every new `activeKey` re-seeds, so the
+    // switcher ends up on the entry actually in use. Once they have moved,
+    // nothing re-seeds — a background reload must not snap the selection off
+    // what they paged to, because Enter at that moment applies the wrong entry.
+    property bool userMoved: false
 
     signal applied(var item)
 
@@ -75,75 +90,123 @@ VgsModal {
         return "file://" + String(path).split("/").map(encodeURIComponent).join("/");
     }
 
-    function wrapIndex(index) {
-        if (itemCount === 0)
+    // BEGIN SWITCHER SELECTION DECISION
+    // The selection arithmetic, taking every input as an argument so
+    // scripts/test-switcher-selection.js can execute it. Nothing here may
+    // reference `root`, `Theme`, `I18n` or `Qt` — the extraction has to be the
+    // same program the shell runs. Parameter names deliberately differ from the
+    // properties they are passed, so nothing here can read a property by
+    // accident if an argument is ever dropped at a call site.
+    function wrapIndex(index, count) {
+        if (count <= 0)
             return 0;
         // Wrap: a single-item pager has no visible list edge to explain a dead
         // arrow key, so running off one end lands on the other.
-        return ((index % itemCount) + itemCount) % itemCount;
+        return ((index % count) + count) % count;
     }
+
+    // A reload can reshape the list under the selection without changing its
+    // length, so the index is re-clamped on every list change.
+    function clampIndex(index, count) {
+        if (count <= 0)
+            return 0;
+        if (index >= count)
+            return count - 1;
+        if (index < 0)
+            return 0;
+        return index;
+    }
+
+    // Where a fresh list should open: the entry already in use, or the top when
+    // it is not in this list (a filtered-out or removed entry).
+    function seedIndex(list, wantedKey) {
+        const entries = list || [];
+        for (let i = 0; i < entries.length; i++) {
+            if (entries[i].key === wantedKey)
+                return i;
+        }
+        return 0;
+    }
+
+    // Re-seed only while the surface is up and the user has not taken over the
+    // selection. Seeding a hidden surface would fight its next open.
+    function shouldReseed(surfaceVisible, moved) {
+        return !!surfaceVisible && !moved;
+    }
+
+    // What Enter does: "none" when there is nothing selected, "blocked" when an
+    // apply is already running (the surface stays up and says so), "apply"
+    // otherwise.
+    function enterOutcome(applyAllowed, entry) {
+        if (!entry)
+            return "none";
+        return applyAllowed ? "apply" : "blocked";
+    }
+    // END SWITCHER SELECTION DECISION
 
     function step(delta) {
         if (itemCount === 0)
             return;
-        currentIndex = wrapIndex(currentIndex + delta);
+        userMoved = true;
+        currentIndex = wrapIndex(currentIndex + delta, itemCount);
     }
 
     // The image `delta` steps away, for the lookahead below.
     function neighborUrl(delta) {
         if (itemCount < 2)
             return "";
-        const entry = visibleItems[wrapIndex(currentIndex + delta)];
+        const entry = visibleItems[wrapIndex(currentIndex + delta, itemCount)];
         return entry ? fileUrl(entry.image) : "";
     }
 
     function seedSelection() {
-        const list = root.visibleItems || [];
-        let index = 0;
-        for (let i = 0; i < list.length; i++) {
-            if (list[i].key === root.activeKey) {
-                index = i;
-                break;
-            }
-        }
-        root.currentIndex = index;
-        // An empty list is not a seed: the services answer asynchronously, so the
-        // first list is routinely empty and the real one arrives after open().
-        if (list.length > 0)
-            root.seeded = true;
+        root.currentIndex = root.seedIndex(root.visibleItems, root.activeKey);
+    }
+
+    function reseedIfUntouched() {
+        if (root.shouldReseed(root.shouldBeVisible, root.userMoved))
+            root.seedSelection();
     }
 
     function applyCurrent() {
-        const entry = root.currentItem;
-        if (!entry)
+        const outcome = root.enterOutcome(root.canApply, root.currentItem);
+        if (outcome === "none")
             return;
-        if (!root.canApply) {
+        if (outcome === "blocked") {
             root.applyBlocked = true;
             applyBlockedTimer.restart();
             return;
         }
         root.applyBlocked = false;
-        root.applied(entry);
+        root.applied(root.currentItem);
         root.close();
     }
 
+    // Upper bound only. The footer tells the user to wait for the apply to
+    // finish, so `onCanApplyChanged` is what normally clears the message; this
+    // stops it sticking forever behind a service that never goes idle.
     Timer {
         id: applyBlockedTimer
         interval: 2500
         onTriggered: root.applyBlocked = false
     }
 
-    // Filtering and reloads both reshape the list under the selection: keep the
-    // index in range (the count alone can be unchanged while the entries are
-    // not), and take the first non-empty list as the seed.
-    onVisibleItemsChanged: {
-        if (currentIndex >= itemCount)
-            currentIndex = Math.max(0, itemCount - 1);
-        if (currentIndex < 0)
-            currentIndex = 0;
-        if (shouldBeVisible && !seeded && filterQuery === "")
-            seedSelection();
+    onCanApplyChanged: {
+        if (!canApply)
+            return;
+        applyBlocked = false;
+        applyBlockedTimer.stop();
     }
+
+    onVisibleItemsChanged: {
+        currentIndex = clampIndex(currentIndex, itemCount);
+        reseedIfUntouched();
+    }
+
+    // `activeKey` is read asynchronously too (`theme current --json`), and can
+    // land either side of the list. Both edges re-seed, so whichever arrives
+    // last is the one the selection ends up on.
+    onActiveKeyChanged: reseedIfUntouched()
 
     function handleKey(event) {
         if (event.key === Qt.Key_Escape) {
@@ -163,11 +226,13 @@ VgsModal {
             return true;
         }
         if (event.key === Qt.Key_Home) {
+            root.userMoved = true;
             root.currentIndex = 0;
             return true;
         }
         if (event.key === Qt.Key_End) {
-            root.currentIndex = Math.max(0, root.itemCount - 1);
+            root.userMoved = true;
+            root.currentIndex = root.clampIndex(root.itemCount - 1, root.itemCount);
             return true;
         }
         return false;
@@ -187,20 +252,24 @@ VgsModal {
     closeOnBackgroundClick: false
 
     // Reopening inside the close animation keeps the content Loader alive and
-    // stops `closeTimer`, so `dialogClosed` never fires — reset here as well or
-    // the surface returns with the last filter and selection still on it.
-    onOpened: {
-        filterQuery = "";
-        applyBlocked = false;
-        seeded = false;
-        seedSelection();
-    }
+    // stops `closeTimer`, so `dialogClosed` never fires — reset on open as well
+    // or the surface returns with the last filter and selection still on it.
+    Connections {
+        target: root
 
-    onDialogClosed: {
-        filterQuery = "";
-        currentIndex = 0;
-        applyBlocked = false;
-        seeded = false;
+        function onOpened() {
+            root.filterQuery = "";
+            root.applyBlocked = false;
+            root.userMoved = false;
+            root.seedSelection();
+        }
+
+        function onDialogClosed() {
+            root.filterQuery = "";
+            root.currentIndex = 0;
+            root.applyBlocked = false;
+            root.userMoved = false;
+        }
     }
 
     content: Component {
@@ -303,7 +372,25 @@ VgsModal {
                     ignoreLeftRightKeys: true
                     ignoreTabKeys: true
                     keyForwardTargets: [switcherContent]
-                    onTextEdited: root.filterQuery = text
+                    onTextEdited: {
+                        // Typing IS taking over the selection: without this, a
+                        // list landing after the filter is cleared would re-seed
+                        // and jump off whatever the user was looking at.
+                        root.userMoved = true;
+                        root.filterQuery = text;
+                    }
+                }
+
+                StyledText {
+                    width: parent.width
+                    horizontalAlignment: Text.AlignHCenter
+                    wrapMode: Text.WordWrap
+                    // Only over a list there is something to browse; with none,
+                    // the empty state already carries the failure.
+                    visible: root.staleNotice !== "" && root.itemCount > 0
+                    text: root.staleNotice
+                    font.pixelSize: Theme.fontSizeSmall
+                    color: Theme.warning
                 }
             }
 
@@ -355,7 +442,7 @@ VgsModal {
                 StyledText {
                     width: parent.width
                     horizontalAlignment: Text.AlignHCenter
-                    text: root.applyBlocked ? I18n.tr("Still loading — press Enter again in a moment") : I18n.tr("Arrow keys page · Enter applies · Esc cancels")
+                    text: root.applyBlocked ? I18n.tr("Still applying — press Enter again in a moment") : I18n.tr("Arrow keys page · Enter applies · Esc cancels")
                     font.pixelSize: Theme.fontSizeSmall
                     color: root.applyBlocked ? Theme.primary : Theme.surfaceVariantText
                 }

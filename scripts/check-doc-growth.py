@@ -257,19 +257,26 @@ CEILINGS: dict[str, int] = {
     "docs/architecture/overlay-and-dependencies.md": 21_300,  # adopted at 19,354 B
     "docs/architecture/remote-desktop.md": 21_700,  # adopted at 19,653 B
     "docs/architecture/scratchpads.md": 24_500,  # adopted at 22,255 B
-    # Adopted at 20,248 B. 2026-08-15 (VGS-134): now 23,174 B, and the raise
-    # absorbs two things, not one. VGS-121 and VGS-118 had already grown the
+    # Adopted at 20,248 B. 2026-08-15 (VGS-134): 23,174 B then, and the raise
+    # absorbed two things, not one. VGS-121 and VGS-118 had already grown the
     # file 2,005 B under the old ceiling, to 22,253 B with 47 B of headroom
     # left; this PR's 921 B — the launcher hover-selection latch, a rule an
     # agent rewiring the vgsMenu delegates has to meet before it edits them,
     # sitting next to the pill-hover rule it mirrors — is what breached it.
     # 24,400 is measured + ~5%, DELIBERATELY tighter than the +10% adoption
-    # default: this file is one of the per-area references agents load by name
-    # and it has taken 2,926 B since adoption, so the next growth should be
-    # argued for rather than absorbed. VGS-124's AGENTS.md repoint (+55 B) and VGS-208's two switcher IPC targets (+357 B); the file is 23,586 B.
+    # default: this file is one of the per-area references agents load by
+    # name, and it has taken 3,338 B since adoption, so the next growth
+    # should be argued for rather than absorbed. That figure is VGS-121 and
+    # VGS-118's 2,005 B plus VGS-134's 921 B, VGS-124's AGENTS.md repoint
+    # (+55 B) and VGS-208's two switcher IPC targets (+357 B); the file is
+    # 23,586 B, leaving 814 B of headroom.
     "docs/architecture/shell-architecture.md": 24_400,
-    # 31,800 -> 33,000: VGS-208's switcher review put the seeding rule, busy-Enter gate, load-failure states and toast ownership in writing. Still tighter than the ~10% default. Adopted at 28,861 B; the file is 31,797 B.
-    "docs/architecture/theme-architecture.md": 33_000,
+    # 31,800 -> 34,000: VGS-208's switcher review put the intent-latched
+    # seeding rule, the applyInFlight Enter gate, the correlated apply
+    # reply, the load-failure and stale-list states and what switcher_check
+    # actually measures in writing. Measured + ~1.5%, far tighter than the
+    # ~10% adoption default. Adopted at 28,861 B; the file is 33,465 B.
+    "docs/architecture/theme-architecture.md": 34_000,
     "docs/architecture/wallpaper-upscaling.md": 4_000,  # adopted at 3,625 B
 }
 
