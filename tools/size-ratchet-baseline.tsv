@@ -197,7 +197,7 @@ quickshell/vshell/Services/ScratchpadService.qml	620
 quickshell/vshell/Services/SessionService.qml	640
 quickshell/vshell/Services/UsersService.qml	469
 quickshell/vshell/Services/VGSBackendService.qml	739
-quickshell/vshell/Services/VGSThemeService.qml	921
+quickshell/vshell/Services/VGSThemeService.qml	935
 quickshell/vshell/Services/WeatherService.qml	1144
 quickshell/vshell/VGS.qml	1483
 quickshell/vshell/VGSIPC.qml	2177
@@ -205,7 +205,7 @@ quickshell/vshell/Widgets/KeybindItem.qml	1724
 quickshell/vshell/Widgets/VgsDropdown.qml	565
 quickshell/vshell/Widgets/VgsPopoutStandalone.qml	1061
 scripts/check-aur-sync.py	471
-scripts/check-doc-growth.py	894
+scripts/check-doc-growth.py	897
 scripts/check-notification-takeover.js	454
 scripts/check-paste-injection.py	897
 scripts/check-section-pointers.py	556
@@ -227,7 +227,7 @@ scripts/test-popout-dismiss-envelope.js	489
 scripts/test-remote-desktop-state.js	1243
 scripts/test-section-pointers-e2e.py	434
 scripts/test-section-pointers.py	458
-scripts/test-switcher-selection.js	674
+scripts/test-switcher-selection.js	717
 scripts/test-toast-actions.js	607
 scripts/test-validate.sh	547
 scripts/test-validation-inventory.sh	2278

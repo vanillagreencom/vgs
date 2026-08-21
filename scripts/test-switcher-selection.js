@@ -96,6 +96,8 @@ const SERVICE = path.join(repoRoot, "quickshell", "vshell", "Services", "VGSThem
 const SHELL_ROOT = path.join(repoRoot, "quickshell", "vshell", "VGS.qml");
 const WALLPAPER_TAB = path.join(repoRoot, "quickshell", "vshell", "Modules", "Settings", "WallpaperTab.qml");
 const THEMES_TAB = path.join(repoRoot, "quickshell", "vshell", "Modules", "Settings", "ThemesSettingsTab.qml");
+const CAROUSEL = path.join(SWITCHER, "SwitcherCarousel.qml");
+const SHORTCUT_ROW = path.join(repoRoot, "quickshell", "vshell", "Modules", "Settings", "Widgets", "SwitcherShortcutRow.qml");
 
 // This text comes from repo files and is EXECUTED here, so it runs inside a
 // child bounded by a wall clock — scripts/lib/qml-region.js says what that
@@ -119,6 +121,8 @@ const serviceSource = read(SERVICE);
 const shellRootSource = read(SHELL_ROOT);
 const wallpaperTabSource = read(WALLPAPER_TAB);
 const themesTabSource = read(THEMES_TAB);
+const carouselSource = read(CAROUSEL);
+const shortcutRowSource = read(SHORTCUT_ROW);
 
 const MARKER = "SWITCHER SELECTION DECISION";
 
@@ -242,7 +246,9 @@ const sources = new Map([
     ["VGSThemeService.qml", serviceSource],
     ["VGS.qml", shellRootSource],
     ["WallpaperTab.qml", wallpaperTabSource],
-    ["ThemesSettingsTab.qml", themesTabSource]
+    ["ThemesSettingsTab.qml", themesTabSource],
+    ["SwitcherCarousel.qml", carouselSource],
+    ["SwitcherShortcutRow.qml", shortcutRowSource]
 ]);
 
 const readers = new Map();
@@ -669,6 +675,43 @@ mustPrecedeIn(handler("ThemeSwitcherModal.qml", "emptyText"), "ThemeSwitcherModa
     ]);
     mustPrecedeIn(themesTabSource, "ThemesSettingsTab.qml", /ModalManager\.showSwitcher\("theme"\)/,
         /dashTabIndexForId\("themes"\)/, "same order: switcher first, dash only as the fallback");
+}
+
+// What review found, pinned so it cannot come back. Each of these was a
+// mechanism that looked bounded or safe and was not.
+{
+    q("SwitcherCarousel.qml").requires(carouselSource, "SwitcherCarousel.qml", [
+        ["source: slice.retained ? carousel.urlFor(slice.index) : \"\"",
+            "a sliver's source is RELEASED outside the hysteresis band. A latch that only ever " +
+            "turns on retains one decoded pixmap per entry a browse ever paged past — 79 installed " +
+            "themes is 79 of them, which is not the bound this file documents", 1]
+    ]);
+    mustNot("SwitcherCarousel.qml", /sourceActivated/,
+        "the one-way source latch is what unbounded the rail's residency; `retained` replaced it");
+
+    q("SwitcherShortcutRow.qml").requires(shortcutRowSource, "SwitcherShortcutRow.qml", [
+        ["if (root.pendingConflicts.length === 0) root.commit(token);",
+            "a captured chord is written straight through ONLY when nothing else owns it: " +
+            "`keybinds set` deletes every existing entry for a key before appending, so saving " +
+            "over a taken chord silently takes the other shortcut away", 1],
+        ["KeybindsService.saveBind(root.boundKey, {",
+            "and the save passes the CURRENT key as originalKey, so a rebind moves the chord " +
+            "instead of leaving the old one live", 1]
+    ]);
+
+    const svcWallpapers = q("VGSThemeService.qml").body("refreshWallpapers");
+    q("VGSThemeService.qml").requires(svcWallpapers, "refreshWallpapers()", [
+        ["const readId = ++root._wallpapersReadSeq;",
+            "each read takes a generation token BEFORE dispatching", 1],
+        ["if (readId !== root._wallpapersReadSeq) return;",
+            "and a callback that is no longer the latest commits nothing. Proc coalesces only " +
+            "same-tick calls, so two overlapping reads both land and the OLDER one finishing last " +
+            "presented the previous theme's wallpapers as fresh — clearing the stale notice that " +
+            "would have said so", 1]
+    ]);
+    mustPrecedeIn(svcWallpapers, "refreshWallpapers()", /if \(readId !== root\._wallpapersReadSeq\)/,
+        /wallpapersLoadFailed = true;/,
+        "the generation check must come before ANY commit, including the failure branch");
 }
 
 process.stdout.write("switcher selection guard: ok\n");

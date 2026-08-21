@@ -110,12 +110,14 @@ Item {
                 readonly property int relativeIndex: index - carousel.selectedIndex
                 readonly property bool isSelected: index === carousel.selectedIndex
                 readonly property bool nearby: Math.abs(relativeIndex) <= carousel.slicesPerSide
-                // Keep the source once it has been on screen, so Qt does not
-                // tear the texture down and re-decode it as the selection
-                // moves back and forth over the same few entries.
-                property bool sourceActivated: nearby
-                onNearbyChanged: if (nearby)
-                    sourceActivated = true
+                // A small hysteresis band around the visible window: the source
+                // is kept a couple of steps past the edge so paging back and
+                // forth over the same entries does not re-decode, and RELEASED
+                // beyond that. Latching it on for good instead — which is what
+                // Omarchy does, over a list of a dozen — retained every sliver
+                // a long browse had ever passed: 79 installed themes is 79
+                // decoded pixmaps, not the bound this file claims.
+                readonly property bool retained: Math.abs(relativeIndex) <= carousel.slicesPerSide + 2
 
                 visible: nearby
                 x: {
@@ -156,7 +158,7 @@ Item {
                     fillMode: Image.PreserveAspectCrop
                     sourceSize.width: carousel.sliceDecodeWidth
                     sourceSize.height: carousel.sliceDecodeHeight
-                    source: slice.sourceActivated ? carousel.urlFor(slice.index) : ""
+                    source: slice.retained ? carousel.urlFor(slice.index) : ""
                 }
             }
         }

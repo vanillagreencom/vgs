@@ -4,6 +4,7 @@ import QtQuick
 import qs.Common
 import qs.Services
 import qs.Widgets
+import "../../../Common/KeyUtils.js" as KeyUtils
 
 // One shortcut, offered where the thing it opens is configured: the wallpaper
 // and theme pages each carry the bind for their own full-screen switcher, so a
@@ -40,6 +41,32 @@ Rectangle {
     // config includes that file. Saying so here is the difference between a
     // shortcut that did not take and a shortcut that silently went nowhere.
     readonly property bool needsSetup: root.available && !KeybindsService.vgsBindsIncluded
+    // A chord captured that another action already owns. `keybinds set` deletes
+    // every existing entry for a key before appending the new one, so saving
+    // straight through would silently take the other shortcut away — the
+    // keybinds editor checks the same way before it writes.
+    property string pendingKey: ""
+    readonly property var pendingConflicts: {
+        void (root.keybindDataVersion);
+        if (!root.pendingKey)
+            return [];
+        return KeyUtils.getConflictingBinds(root.pendingKey, root.action, KeybindsService.getFlatBinds(), KeybindsService.currentProvider === "niri" ? KeybindsService.modKey : "Super");
+    }
+
+    function commit(token) {
+        if (!token || token === root.boundKey)
+            return;
+        // `originalKey` is what makes this a MOVE rather than a second bind for
+        // the same action: without it the old chord keeps working and the row
+        // shows only one of them.
+        KeybindsService.saveBind(root.boundKey, {
+            "key": token,
+            "action": root.action,
+            "desc": root.bindDescription || root.text
+        });
+        root.pendingKey = "";
+    }
+
     readonly property string boundKey: {
         void (root.keybindDataVersion);
         if (!root.available)
@@ -98,6 +125,39 @@ Rectangle {
                 visible: text !== ""
                 horizontalAlignment: Text.AlignLeft
             }
+
+            Row {
+                width: parent.width
+                spacing: Theme.spacingS
+                visible: root.pendingConflicts.length > 0
+
+                StyledText {
+                    anchors.verticalCenter: parent.verticalCenter
+                    width: parent.width - replaceButton.width - cancelButton.width - Theme.spacingS * 2
+                    text: root.pendingConflicts.length > 0 ? I18n.tr("%1 already runs %2").arg(root.pendingKey).arg(root.pendingConflicts[0].desc) : ""
+                    font.pixelSize: Theme.fontSizeSmall
+                    color: Theme.warning
+                    wrapMode: Text.WordWrap
+                    horizontalAlignment: Text.AlignLeft
+                }
+
+                VgsButton {
+                    id: replaceButton
+                    anchors.verticalCenter: parent.verticalCenter
+                    text: I18n.tr("Replace")
+                    backgroundColor: Theme.primary
+                    textColor: Theme.primaryText
+                    onClicked: root.commit(root.pendingKey)
+                }
+
+                VgsButton {
+                    id: cancelButton
+                    anchors.verticalCenter: parent.verticalCenter
+                    variant: "secondary"
+                    text: I18n.tr("Cancel")
+                    onClicked: root.pendingKey = ""
+                }
+            }
         }
 
         Row {
@@ -125,16 +185,11 @@ Rectangle {
                 keyText: root.boundKey
                 onRecordingRefused: KeybindsService.showHyprlandReadOnlyWarning()
                 onCaptured: token => {
-                    if (!token || token === root.boundKey)
-                        return;
-                    // `originalKey` is what makes this a MOVE rather than a
-                    // second bind for the same action: without it the old
-                    // chord keeps working and the row shows only one of them.
-                    KeybindsService.saveBind(root.boundKey, {
-                        "key": token,
-                        "action": root.action,
-                        "desc": root.bindDescription || root.text
-                    });
+                    root.pendingKey = token;
+                    // Only a chord nothing else owns is written straight
+                    // through; a taken one waits for Replace.
+                    if (root.pendingConflicts.length === 0)
+                        root.commit(token);
                 }
             }
 

@@ -285,8 +285,11 @@ CEILINGS: dict[str, int] = {
     # three ways INTO a switcher (keybind, the Settings Browse buttons through
     # the ModalManager registry, and the per-page shortcut row) plus the wheel's
     # carried remainder: entry points are what a reader looks for first and were
-    # documented nowhere. Adopted at 28,861 B; the file is 36,927 B.
-    "docs/architecture/theme-architecture.md": 37_200,
+    # documented nowhere. The last +685 B is review correcting three claims this
+    # file made and the code did not keep — no compositor binds ship, Esc clears
+    # a filter before it cancels, and sliver residency is a band rather than
+    # every entry ever paged past. Adopted at 28,861 B; the file is 37,612 B.
+    "docs/architecture/theme-architecture.md": 37_900,
     "docs/architecture/wallpaper-upscaling.md": 4_000,  # adopted at 3,625 B
 }
 

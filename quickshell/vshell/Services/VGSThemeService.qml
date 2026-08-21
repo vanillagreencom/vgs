@@ -393,8 +393,22 @@ Singleton {
         }, 120000, true);
     }
 
+    // Generation token for the wallpaper read. Proc coalesces only SAME-TICK
+    // calls, so two overlapping `theme wallpapers` reads both launch and both
+    // call back — and the OLDER one can land last. That is reachable in one
+    // ordinary sequence: opening the wallpaper switcher dispatches a read, an
+    // apply succeeds and dispatches another, and if the pre-apply read finishes
+    // second it presents the PREVIOUS theme's wallpapers as fresh, clearing the
+    // stale notice that would otherwise have said so.
+    property int _wallpapersReadSeq: 0
+
     function refreshWallpapers() {
+        const readId = ++root._wallpapersReadSeq;
         _run("vgs-theme-wallpapers", ["theme", "wallpapers", "--json"], function(output, exitCode) {
+            // A newer read owns the list; this one answers about a theme that
+            // may no longer be the current one.
+            if (readId !== root._wallpapersReadSeq)
+                return;
             if (exitCode !== 0) {
                 // The previous list is LEFT in place. Discarding a working list
                 // because one refresh failed destroys a usable browse; the flag
