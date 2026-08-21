@@ -39,15 +39,21 @@ osc checkout home:vanillagreen vgs-shell -o /tmp/obs
 osc commit -m "Update to vX.Y.Z"
 osc results home:vanillagreen vgs-shell
 
-# Ubuntu PPA — needs the Launchpad signing key's passphrase, so a person runs it
-dpkg-buildpackage -S -us -uc -d -nc          # in a tree with packaging/debian/
+# Ubuntu PPA — debian/ must sit at the source root, and the signing key has a
+# passphrase, so a person runs debsign.
+curl -fsSLO https://github.com/vanillagreencom/vgs/releases/download/vX.Y.Z/vgs-X.Y.Z-source.tar.gz
+cp vgs-X.Y.Z-source.tar.gz vgs-shell_X.Y.Z.orig.tar.gz
+tar -xzf vgs-X.Y.Z-source.tar.gz && cd vgs-X.Y.Z
+cp -a ../../packaging/debian debian
+sed -i '1s/.*/vgs-shell (X.Y.Z-1~ubuntu26.04.1) resolute; urgency=medium/' debian/changelog
+dpkg-buildpackage -S -us -uc -d -nc           # -nc: dh clean needs debhelper
 debsign -k <KEYID> ../vgs-shell_*_source.changes
-dput vgs-ppa ../vgs-shell_*_source.changes   # host config in ~/.dput.cf
+dput vgs-ppa ../vgs-shell_*_source.changes    # host config in ~/.dput.cf
 ```
 
-Ubuntu revisions are `X.Y.Z-1~ubuntu26.04.1`, distribution `resolute`. Arch's
-`dput` ships no `ppa:` shorthand; define the host and note that `dput` exits 0 when
-the host is unknown.
+`dput` on Arch ships no `ppa:` shorthand and exits 0 when the host is unknown —
+define `vgs-ppa` (`fqdn = ppa.launchpad.net`, `incoming = ~vanillagreen/ubuntu/vgs-shell/`)
+and read its output, not its status.
 
 Void ships a recipe only — Void has no Quickshell 0.3.0.
 

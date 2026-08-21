@@ -182,9 +182,10 @@ CEILINGS: dict[str, int] = {
     # Adopted at 1,906 B; now 1,598 B after the per-channel publish commands
     # moved to vgs-distro-publish, leaving a checklist. Ratcheted down to match.
     "project-skills/skills/vgs-release/SKILL.md": 1_800,
-    # Adopted at 2,602 B. Per-channel publish commands, split out of the release
-    # checklist so that file stays a checklist. Growth means a new channel.
-    "project-skills/skills/vgs-distro-publish/SKILL.md": 2_900,
+    # Adopted at 2,998 B: per-channel publish commands, split out of the release
+    # checklist so that file stays a checklist. The Ubuntu block carries its
+    # source-tree preparation because the build cannot run without it.
+    "project-skills/skills/vgs-distro-publish/SKILL.md": 3_300,
     # Adopted at 403 B. VGS-124: the diet's own rewrap un-exempted a sanctioned
     # direct-launch mention in check-validation-safety.sh (line-scoped spans),
     # and that check does not run in the `docs` area an AGENTS.md edit reaches
@@ -207,7 +208,8 @@ CEILINGS: dict[str, int] = {
     # fifth workflow — the Gentoo publisher and its drift check — and the shared
     # rule both publishers follow: fail rather than skip when the credential is
     # missing. A reader deciding whether external publishing is covered must not
-    # be told there are four. Now 3,809 B; 4,200 restores the ~10%.
+    # be told there are four. Now 3,927 B, after VGS-204 made Gentoo publishing
+    # manual and this file had to stop describing a job that no longer exists.
     ".github/instructions/ci.instructions.md": 4_200,
     ".github/instructions/harness-config.instructions.md": 900,  # adopted at 769 B
     ".github/instructions/helper-cli.instructions.md": 600,  # adopted at 517 B
