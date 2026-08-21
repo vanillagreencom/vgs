@@ -21,12 +21,4 @@ description: Cut and publish a VGS release across GitHub and every maintained in
 8. Add failed or unavailable channels to release notes; do not silently skip them.
 9. Verify README commands against public URLs.
 
-The Gentoo overlay is published by `.github/workflows/publish-gentoo.yml`, which
-needs the `GENTOO_OVERLAY_SSH_KEY` secret and fails rather than skipping without it.
-`scripts/publish-gentoo.sh` is the manual path.
-
-The AUR is published by `.github/workflows/publish-aur.yml`, which needs the
-`AUR_SSH_PRIVATE_KEY` secret and the `AUR_SSH_KNOWN_HOSTS` variable. Neither is
-set today, so every run of it fails by design rather than publishing a stale
-recipe silently. Until they are set, run `scripts/publish-aur.sh` from a machine
-whose SSH key has AUR commit rights, and say so in the release notes.
+Publishing per channel: `project-skills/skills/vgs-distro-publish/SKILL.md`.

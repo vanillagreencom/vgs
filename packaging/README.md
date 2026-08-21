@@ -149,12 +149,9 @@ Never edit the AUR side by hand — the next publish overwrites it.
 
 ## The Gentoo overlay is a publishing target, not a source
 
-Same shape as the AUR, and it failed the same way: the overlay is a separate
-repository that pulls nothing from here, so `packaging/gentoo/` reached Gentoo users
-only when someone pushed it — and between v0.1.0 and v0.2.0 nobody did. The overlay
-served an ebuild with none of the generated dependencies, none of the
-notification-daemon blockers, no `extra-themes` USE flag and no activation notice,
-while every other channel had them (VGS-204).
+The overlay is a separate repository that pulls nothing from here, so
+`packaging/gentoo/` reaches users only when something pushes it. Between v0.1.0 and
+v0.2.0 nothing did, and a stale overlay installs perfectly well (VGS-204).
 
 ```bash
 scripts/publish-gentoo.sh --dry-run   # what a publish would change
@@ -162,15 +159,12 @@ scripts/publish-gentoo.sh --check     # drift is a failure; the weekly alarm
 scripts/publish-gentoo.sh             # publish (needs overlay commit rights)
 ```
 
-`.github/workflows/publish-gentoo.yml` runs it on `packaging/gentoo/` changes, again
-after a tag, and weekly for drift. Publishing needs `GENTOO_OVERLAY_SSH_KEY`, a
-secret holding a key with commit rights on the overlay, and the workflow **fails**
-rather than skipping when it is absent — the AUR spent six weeks proving that a
-skipped publish is indistinguishable from a successful one.
+Publishing is **manual**, at release time. Deploy keys are disabled for this
+organisation by enterprise policy, so CI has no narrow credential to push with.
+`publish-gentoo.yml` runs `--check` weekly, which needs none.
 
-The `Manifest` pins the release archive by size, BLAKE2B and SHA512, so the publisher
-downloads the archive to compute them rather than inventing them. That is why the job
-allows thirty minutes for a ~1.1 GiB download.
+The `Manifest` pins the release archive by size, BLAKE2B and SHA512, so the
+publisher downloads it (~1.1 GiB) rather than inventing them.
 
 Never edit the overlay by hand — the next publish overwrites it.
 

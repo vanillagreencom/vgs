@@ -43,7 +43,7 @@ docs/architecture/design-language.md	421
 docs/architecture/scratchpads.md	410
 docs/media/vgs-demo-poster.jpg	1197
 docs/media/vgs-demo.mp4	30319
-kendex.toml	1114
+kendex.toml	1118
 packaging/optional-packages.json	589
 quickshell/vshell-preview/shell.qml	456
 quickshell/vshell/Common/KeybindActions.js	1424
@@ -204,7 +204,7 @@ quickshell/vshell/Widgets/KeybindItem.qml	1892
 quickshell/vshell/Widgets/VgsDropdown.qml	565
 quickshell/vshell/Widgets/VgsPopoutStandalone.qml	1061
 scripts/check-aur-sync.py	471
-scripts/check-doc-growth.py	871
+scripts/check-doc-growth.py	877
 scripts/check-notification-takeover.js	454
 scripts/check-paste-injection.py	897
 scripts/check-section-pointers.py	556

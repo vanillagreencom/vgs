@@ -7,6 +7,7 @@ symlinked wholesale into every worktree, so a tracked skill cannot live there
 
 | Skill | Description |
 |-------|-------------|
+| [vgs-distro-publish](skills/vgs-distro-publish/) | Publish a cut release to every distribution channel, and verify each from its public install command. |
 | [vgs-release](skills/vgs-release/) | Cut and publish a VGS release across GitHub and every maintained install channel. |
 | [vshell-dev](skills/vshell-dev/) | Work on VanillaGreen Shell: Quickshell runtime, bundled plugins, theme engine, generated targets, and workstation wiring boundaries. |
 
