@@ -51,28 +51,29 @@
 // MUST-FAIL CONTROLS, each seen red, applied one at a time to the shipped tree.
 // In-region: `wrapIndex` returning a bare modulo (negative index); `clampIndex`
 // using `>` for `>=`; `seedIndex` returning the LAST match instead of the first;
-// `shouldReseed` dropping the `!moved` conjunct; `enterOutcome` answering
-// "apply" for a null entry, and answering "apply" while canApply is false;
-// `latchesIntent` answering true for a paging kind on an EMPTY pager (the Home/
-// End defect), and answering false for "filter"; `navIndex` transposing "first"
-// and "last".
+// `shouldReseed` dropping the `!moved` conjunct; `enterOutcome` answering "apply"
+// for a null entry, and answering "apply" while canApply is false;
+// `latchesIntent` answering true on an EMPTY pager (the Home/End defect);
+// `navIndex` transposing "first" and "last".
 // Across the seam: a SECOND `root.userMoved` write added to `navigate()`, and one
 // added to `handleKey` (both killed by the exact count and the block-scoped ban);
-// Home routed to "last"; `onTextEdited` restating `true` instead of asking
-// `latchesIntent`; a decoy string literal carrying `onActiveKeyChanged:
-// reseedIfUntouched()` with the real edge deleted; `applySuperseded` never
-// emitted in `_beginApply`, and never consumed in the reporter; the request id
-// reverted to the bare Proc command id; the `setWallpaper` success path writing
-// SessionData without `_ownsWallpaperSlot`; the post-parse remainder of either
-// apply left unguarded; `userMoved` never cleared in `onOpened`; the base's
-// per-open reset
-// moved back to a root-level `onOpened:` (the derived-handler hazard item #5
-// closed); `onActiveKeyChanged` deleted; the clamp moved below the re-seed;
-// `applied()` hoisted above the blocked branch; `applyBlockedTimer.stop()`
-// dropped from `onCanApplyChanged`; `canApply` reverted to
-// `!VGSThemeService.busy`; a subclass calling `track()` with a literal instead
-// of the service call's return; `ThemeApplyReporter` consuming any
-// `applyFinished` rather than its own request id; `track()` arming on a falsy
+// Home routed to "last"; `onTextEdited` dropping its unconditional latch; a decoy
+// string literal carrying `onActiveKeyChanged: reseedIfUntouched()` with the real
+// edge deleted; an apply run under a NAMED Proc id, which coalesces two applies
+// into one callback again; the request id reverted to the bare Proc command id;
+// `_beginApply` resurrecting a per-command-id owner map; the `setWallpaper`
+// success path writing SessionData without `_ownsWallpaperSlot`, and that test
+// keyed back on the PATH rather than the request; the wallpaper slot never
+// released in `_finishApply` or in `clearWallpaper`; either apply resolving its
+// success INSIDE the try whose catch resolves it again; the post-parse remainder
+// of either apply left unguarded; `userMoved` never cleared in `onOpened`; the
+// base's per-open reset moved back to a root-level `onOpened:` (the derived-
+// handler hazard item #5 closed); `onActiveKeyChanged` deleted; the clamp moved
+// below the re-seed; `applied()` hoisted above the blocked branch;
+// `applyBlockedTimer.stop()` dropped from `onCanApplyChanged`; `canApply`
+// reverted to `!VGSThemeService.busy`; a subclass calling `track()` with a
+// literal instead of the service call's return; `ThemeApplyReporter` consuming
+// any `applyFinished` rather than its own request id; `track()` arming on a falsy
 // id; `applyBlueprint`/`setWallpaper` returning nothing on refusal;
 // `_finishApply` emitting before clearing the in-flight key; `applyInFlight`
 // derived from `inflight`; the `setWallpaper` rollback dropping its ownership
@@ -177,20 +178,15 @@ assert.equal(sel.enterOutcome(false, { key: "a" }), "blocked",
     "Enter while an apply is in flight must block, not dismiss the surface with nothing applied");
 assert.equal(sel.enterOutcome(true, { key: "a" }), "apply", "Enter on a selected entry applies it");
 
-// latchesIntent: the Home/End defect, and the one input that latches regardless.
+// latchesIntent: the Home/End defect. Paging only — typing a filter latches
+// unconditionally, said in one statement at its own call site and pinned below.
 // Both show() paths dispatch their read and open() in the same tick, so every
 // open has a window where the pager is empty — guaranteed on the first
 // wallpaper-switcher open of a session.
-for (const kind of ["step", "first", "last"]) {
-    assert.equal(sel.latchesIntent(kind, 0), false,
-        `${kind} on an EMPTY pager moved nothing, so it must not latch: the latch would then be ` +
-        "set when the list and activeKey land, and the switcher sits on index 0 for the whole open");
-    assert.equal(sel.latchesIntent(kind, 3), true, `${kind} over a populated pager takes the selection over`);
-}
-assert.equal(sel.latchesIntent("filter", 0), true,
-    "typing a filter latches with no list on screen: the filter IS what the user is steering by, and " +
-    "a list landing after they clear it must not re-seed over what they were looking at");
-assert.equal(sel.latchesIntent("filter", 3), true, "and it latches over a populated list too");
+assert.equal(sel.latchesIntent(0), false,
+    "paging an EMPTY pager moved nothing, so it must not latch: the latch would then be " +
+    "set when the list and activeKey land, and the switcher sits on index 0 for the whole open");
+assert.equal(sel.latchesIntent(3), true, "paging over a populated pager takes the selection over");
 
 // navIndex: where each paging input lands once it is allowed to act.
 assert.equal(sel.navIndex("first", 2, 4, 0), 0, "Home goes to the first entry");
@@ -269,8 +265,8 @@ function mustPrecedeIn(block, label, first, second, why) {
     const base = q("FullScreenSwitcher.qml");
 
     base.requires(base.body("navigate"), "navigate()", [
-        ["if (!root.latchesIntent(kind, root.itemCount)) return;",
-            "the latch decision is the extracted predicate over the kind and the live count — an " +
+        ["if (!root.latchesIntent(root.itemCount)) return;",
+            "the latch decision is the extracted predicate over the live count — an " +
             "adapter that decides for itself is what let Home latch against an empty pager", 1],
         ["root.userMoved = true;",
             "the latch must be set exactly here, once: a second site is the four-site shape this " +
@@ -301,9 +297,10 @@ function mustPrecedeIn(block, label, first, second, why) {
         "navigate(), and a direct write is how Home and End latched against an empty pager");
 
     base.requires(handler("FullScreenSwitcher.qml", "onTextEdited"), "onTextEdited",
-        [['root.userMoved = root.latchesIntent("filter", root.itemCount);',
-            "typing asks the same predicate with the one kind that latches unconditionally; restating " +
-            "`true` here puts the decision back outside the region where nothing executes it", 1],
+        [["root.userMoved = true;",
+            "typing latches UNCONDITIONALLY — the filter is what the user is steering by, so a list " +
+            "landing after they clear it must not re-seed over it. Pinned as source, not routed " +
+            "through a predicate that could only answer true", 1],
         ["root.filterQuery = text;", "and the filter itself is still applied", 1]]);
 
     base.requires(base.body("onOpened"), "the base's per-open reset", [
@@ -388,13 +385,9 @@ function mustPrecedeIn(block, label, first, second, why) {
         /ToastService\.showError/,
         "the latch must be cleared before reporting, so a failed apply cannot be reported twice");
 
-    rep.requires(rep.body("onApplySuperseded"), "onApplySuperseded", [
-        ['if (reporter.pendingRequest !== "" && requestId === reporter.pendingRequest) reporter.pendingRequest = "";',
-            "a request replaced before it launched gets no applyFinished: without this the latch waits " +
-            "forever for a reply that is never coming, and the surface's NEXT failure is unreported", 1]
-    ]);
-    mustNot("ThemeApplyReporter.qml", /onApplySuperseded[\s\S]*?ToastService/,
-        "nothing failed when a request is superseded — toasting it would report an error for a double Enter");
+    mustNot("ThemeApplyReporter.qml", /[Ss]uperseded/,
+        "there is no supersession to consume: every apply answers its own callback, and clearing " +
+        "pendingRequest for a request that IS still running is how a real failure went untoasted");
 }
 
 // Both subclasses: the reporter is the single owner, and the tracked id is the
@@ -457,71 +450,92 @@ mustPrecedeIn(handler("ThemeSwitcherModal.qml", "emptyText"), "ThemeSwitcherModa
     svc.requires(serviceSource, "VGSThemeService.qml", [
         ["signal applyFinished(string requestId, bool success, string message)",
             "the correlated completion signal must carry the request id", 1],
-        ["signal applySuperseded(string requestId)",
-            "a request replaced before it launched needs its own announcement: it did not fail, and " +
-            "without it the waiting surface latches forever", 1],
         ["readonly property bool applyInFlight: Object.keys(_applyInFlight).length > 0",
             "applyInFlight must count apply requests, not the `inflight` command counter", 1]
     ]);
 
     svc.requires(svc.body("_beginApply"), "_beginApply()", [
         ["_applyRequestSeq += 1;",
-            "the request id must be minted per CALL: the Proc command id is constant for every " +
+            "the request id must be minted per CALL: the name is constant for every " +
             "wallpaper, so two overlapping applies shared one key and the first completion emptied " +
             "the set while the second was still running", 1],
-        ['const requestId = commandId + "#" + _applyRequestSeq;',
-            "and it is derived from the command id plus the sequence, so a reply is still readable", 1],
-        ['const superseded = _applyOwner[commandId] || "";',
-            "at most one live token per command id, or a coalesced call's token never leaves the set", 1],
-        ["delete next[superseded];", "the superseded token leaves the in-flight set", 1],
-        ["owners[commandId] = requestId;", "and the newest request becomes the owner of that command id", 1],
-        ["applySuperseded(superseded);",
-            "Proc coalesces same-id calls inside its debounce window into ONE callback, so the older " +
-            "call is never answered — announcing it is what keeps applyInFlight from sticking true", 1]
+        ['const requestId = label + "#" + _applyRequestSeq;',
+            "and it is derived from the label plus the sequence, so a reply is still readable", 1]
     ]);
+
+    // Applies must not be coalesced. Proc folds same-id calls into ONE callback
+    // only inside its window (interval 0 — the same event-loop tick), so
+    // inferring launch state from a newer request dropped a still-running
+    // apply's token and let its genuine FAILURE reach no surface at all.
+    svc.requires(svc.body("_runApply"), "_runApply()", [
+        ['_run(requestId, args, callback, undefined, false, "");',
+            "an apply books itself under its unique request id and passes an EMPTY Proc id, so Proc " +
+            "mints a random self-cleaning id and nothing is coalesced. A NAMED id would leak one " +
+            "debouncer entry and Timer per apply — Proc reaps those only for a random id", 1]
+    ]);
+    mustNot("VGSThemeService.qml", /[Aa]pplySuperseded|_applyOwner/,
+        "no supersession mechanism: it rested on the premise that a newer request on the same id " +
+        "proves the older one never launched, which holds only inside one event-loop tick");
 
     svc.requires(svc.body("_finishApply"), "_finishApply()", [
         ["delete next[requestId];", "the request leaves the in-flight set", 1],
         ["applyCompleted(success, message);",
             "both signals must be emitted: settings tabs report any outcome, the switchers report their own", 1],
         ["applyFinished(requestId, success, message);", "and the correlated one carries the id", 1],
-        ["delete owners[commandId];", "the command id's ownership is released, or a later call reports a stale supersession", 1]
+        ['if (_wallpaperSlotOwner === requestId) _wallpaperSlotOwner = "";',
+            "and the finishing apply releases the wallpaper slot, which is otherwise still owned", 1]
     ]);
     mustPrecedeIn(svc.body("_finishApply"), "_finishApply()", /delete next\[requestId\];/,
         /applyFinished\(requestId, success, message\);/,
         "the request must leave the in-flight set before the completion is announced, or a handler re-reading applyInFlight sees it still busy");
 
-    for (const [fn, commandId, noun] of [
-        ["applyBlueprint", 'const commandId = "vgs-theme-apply-" + name;', "Theme"],
-        ["setWallpaper", 'const commandId = "vgs-theme-wallpaper";', "Wallpaper"]
+    for (const [fn, begin, noun] of [
+        ["applyBlueprint", 'const requestId = _beginApply("vgs-theme-apply-" + name);', "Theme"],
+        ["setWallpaper", 'const requestId = _beginApply("vgs-theme-wallpaper");', "Wallpaper"]
     ]) {
         svc.requires(svc.body(fn), `${fn}()`, [
             ['return "";',
                 `${fn} must answer "" when it dispatches nothing, so a caller cannot latch on a reply that will never come`, 1],
-            [commandId,
-                "the Proc command id stays what Proc's debouncer coalesces on; the request id is separate", 1],
-            ["const requestId = _beginApply(commandId);", "and the reply id is minted from it", 1],
-            ["_run(commandId, ", "the command still runs under the coalescing id", 1],
+            [begin, "the reply id is minted per call, from a label that only makes it readable", 1],
+            ["_runApply(requestId, ", "and the apply runs uncoalesced, under that id", 1],
+            ["_finishApply(requestId, true, message);",
+                "the SUCCESS resolves after the try: a handler throwing back into the emitting frame " +
+                "would otherwise reach the catch and fail a request that just succeeded", 1],
             [`_finishApply(requestId, false, "${noun} applied but the shell could not finish updating: " + e);`,
                 "the whole post-parse remainder is guarded: Proc only log.warns a throwing callback, so an " +
                 "unfinished request pins applyInFlight true and both switchers answer every Enter with " +
                 "\"Still applying\" for the rest of the session", 1]
         ]);
+        mustPrecedeIn(svc.body(fn), `${fn}()`,
+            new RegExp(`_finishApply\\(requestId, false, "${noun} applied but`),
+            /_finishApply\(requestId, true, message\);/,
+            "and BELOW the catch: the pin above is satisfied by the same call left inside the try");
     }
     svc.requires(svc.body("applyBlueprint"), "applyBlueprint()",
         [['_finishApply(requestId, false, "Failed to parse apply result: " + e);',
             "and a parse failure keeps its own cause: the single catch this splits claimed a parse " +
             "failure for anything thrown after the parse succeeded", 1]]);
 
+    // Ownership is keyed on the REQUEST. Keyed on the PATH, any background
+    // `theme current --json` falsified it mid-apply (refreshCurrent writes
+    // selectedWallpaper too), so a SUCCESSFUL apply skipped SessionData and
+    // never reached the monitors, under a success toast.
     svc.requires(svc.body("_ownsWallpaperSlot"), "_ownsWallpaperSlot()",
-        [["return selectedWallpaper === path;", "one ownership test, used by both the rollback and the persist", 1]]);
+        [["return _wallpaperSlotOwner === requestId;",
+            "one ownership test, keyed on the request, used by both the rollback and the persist", 1]]);
     svc.requires(svc.body("_rollbackWallpaper"), "_rollbackWallpaper()",
-        [["if (_ownsWallpaperSlot(path))",
+        [["if (_ownsWallpaperSlot(requestId))",
             "a late failure must only roll back while it still owns the slot, or it reverts a newer successful apply", 1]]);
-    svc.requires(svc.body("setWallpaper"), "setWallpaper()",
-        [['if (typeof SessionData !== "undefined" && _ownsWallpaperSlot(path)) SessionData.setWallpaper(path);',
+    svc.requires(svc.body("setWallpaper"), "setWallpaper()", [
+        ["_wallpaperSlotOwner = requestId;",
+            "the dispatching request claims the slot, which is what makes the test immune to a " +
+            "background read rewriting selectedWallpaper", 1],
+        ['if (typeof SessionData !== "undefined" && _ownsWallpaperSlot(requestId)) SessionData.setWallpaper(path);',
             "and a late SUCCESS must not persist its wallpaper over a newer one either — refresh() " +
             "restores selectedWallpaper, not SessionData, so nothing else undoes it", 1]]);
+    svc.requires(svc.body("clearWallpaper"), "clearWallpaper()",
+        [['_wallpaperSlotOwner = "";',
+            "clearing releases the slot, or an apply still in flight persists its wallpaper over the clear", 1]]);
 
     svc.requires(svc.body("refreshWallpapers"), "refreshWallpapers()",
         [['themeWallpapersTheme = data.theme || "";',

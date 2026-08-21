@@ -145,23 +145,17 @@ VgsModal {
         return applyAllowed ? "apply" : "blocked";
     }
 
-    // Whether an input takes the selection over — the intent latch's whole
-    // decision, in here rather than repeated at four call sites.
+    // Whether a PAGING input takes the selection over: only when there was
+    // something to move to.
     //
-    // A PAGING input ("step", "first", "last") latches only when there was
-    // something to move to. Both `show()` paths dispatch their read and `open()`
-    // in the same tick, so there is a window at every open where the list is
-    // empty — guaranteed on the first wallpaper-switcher open of a session. Home
-    // or End pressed in that window used to latch against nothing, and every
-    // later re-seed then found the latch already set: the switcher sat on index 0
-    // for the whole open instead of landing on the entry in use, while the arrow
-    // keys answered the opposite for the same empty list.
-    //
-    // Typing a FILTER latches unconditionally: the filter is what the user is
-    // steering by, and it still holds when the list lands.
-    function latchesIntent(kind, count) {
-        if (kind === "filter")
-            return true;
+    // Both `show()` paths dispatch their read and `open()` in the same tick, so
+    // there is a window at every open where the list is empty — guaranteed on the
+    // first wallpaper-switcher open of a session. Home or End pressed in that
+    // window used to latch against nothing, and every later re-seed then found
+    // the latch already set: the switcher sat on index 0 for the whole open
+    // instead of landing on the entry in use, while the arrow keys answered the
+    // opposite for the same empty list.
+    function latchesIntent(count) {
         return count > 0;
     }
 
@@ -182,7 +176,7 @@ VgsModal {
     // The one adapter every paging key goes through, so the latch and the target
     // are decided once, in the region above, for all of them.
     function navigate(kind, delta) {
-        if (!root.latchesIntent(kind, root.itemCount))
+        if (!root.latchesIntent(root.itemCount))
             return;
         root.userMoved = true;
         root.currentIndex = root.navIndex(kind, root.currentIndex, root.itemCount, delta);
@@ -412,12 +406,13 @@ VgsModal {
                     ignoreTabKeys: true
                     keyForwardTargets: [switcherContent]
                     onTextEdited: {
-                        // Typing IS taking over the selection: without this, a
-                        // list landing after the filter is cleared would re-seed
-                        // and jump off whatever the user was looking at. The
-                        // "filter" arm is why `latchesIntent` takes a kind — this
-                        // one latches with no list, the paging keys must not.
-                        root.userMoved = root.latchesIntent("filter", root.itemCount);
+                        // Typing IS taking over the selection, with or without a
+                        // list on screen: the filter is what the user is steering
+                        // by, and without this a list landing after they clear it
+                        // would re-seed and jump off whatever they were looking
+                        // at. Unconditional, unlike the paging keys, which must
+                        // not latch against an empty pager.
+                        root.userMoved = true;
                         root.filterQuery = text;
                     }
                 }

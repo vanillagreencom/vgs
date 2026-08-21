@@ -53,13 +53,5 @@ QtObject {
             if (!success)
                 ToastService.showError(reporter.errorTitle, message);
         }
-
-        // A request replaced before it launched gets no `applyFinished`. Nothing
-        // failed, so nothing is toasted — the latch just stops waiting for a
-        // reply that is never coming.
-        function onApplySuperseded(requestId) {
-            if (reporter.pendingRequest !== "" && requestId === reporter.pendingRequest)
-                reporter.pendingRequest = "";
-        }
     }
 }
