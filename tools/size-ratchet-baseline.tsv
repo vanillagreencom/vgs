@@ -217,7 +217,7 @@ scripts/gen-package-metadata.py	993
 scripts/lib/section_pointers_selftest.py	515
 scripts/lib/validation_manifest.py	1045
 scripts/lib/vendor-drift.sh	429
-scripts/qml-smoke.sh	1825
+scripts/qml-smoke.sh	1826
 scripts/test-compositor-focus.js	791
 scripts/test-launcher-hover-latch.js	492
 scripts/test-launcher-search-gate.js	1076

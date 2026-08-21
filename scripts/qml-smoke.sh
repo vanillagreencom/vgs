@@ -891,7 +891,7 @@ switcher_records=()
 # the caller already fails on; anything else is a read fault and aborts.
 switcher_roots() {
   local root_dir="$1" out status
-  out="$(grep -rlE '^FullScreenSwitcher[[:space:]]*(\{|$)' "$root_dir/quickshell/vshell" --include='*.qml')"
+  out="$(grep -rlE '^[[:space:]]*FullScreenSwitcher[[:space:]]*(\{|$)' "$root_dir/quickshell/vshell" --include='*.qml')"
   status=$?
   if (( status > 1 )); then
     fail "could not scan quickshell/vshell for switcher root elements (grep exit $status) - a partial list would silently under-cover"
@@ -929,12 +929,13 @@ discover_switchers() {
       return 1
     fi
     switcher_records+=("$target|$namespace")
-  # Anchored at column 0: that is where a QML root element sits, and where a
-  # comment or a nested use of the type cannot. The brace is NOT required on the
-  # same line - QML accepts it on the next, and demanding it here made the
-  # discovery fail OPEN: a switcher written that way was found by nothing, the
+  # Deliberately LOOSE, in both directions QML allows: the brace may sit on the
+  # next line, and the element may be indented. Demanding either made the
+  # discovery fail OPEN - a switcher written that way was found by nothing, the
   # already-collected records kept the count non-zero, and the phase passed
-  # having never measured it.
+  # having never measured it. The cost is that a NESTED use of the type would
+  # also be collected; that fails LOUDLY on the directory and namespace checks
+  # below rather than under-covering, which is the direction a guard should err.
   done < <(switcher_roots "$repo_root")
   if [[ $found_any -eq 0 || ${#switcher_records[@]} -eq 0 ]]; then
     fail "no file in quickshell/vshell declares FullScreenSwitcher as its root element - switcher_check would measure nothing and still pass"
