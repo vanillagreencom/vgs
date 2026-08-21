@@ -67,6 +67,10 @@ VgsModal {
     // nothing re-seeds — a background reload must not snap the selection off
     // what they paged to, because Enter at that moment applies the wrong entry.
     property bool userMoved: false
+    // Carried between wheel events — see `wheelSteps`. Cleared with the rest of
+    // the per-open state, or a half-notch left over from the last open spends
+    // itself on the first scroll of the next one.
+    property real wheelAccumulator: 0
 
     signal applied(var item)
 
@@ -167,6 +171,23 @@ VgsModal {
             return clampIndex(count - 1, count);
         return wrapIndex(index + delta, count);
     }
+    // How far a wheel movement pages, and what it leaves behind. One notch is
+    // 120 eighths of a degree by Qt's convention, but a touchpad or a
+    // high-resolution wheel sends a stream of fractions of one, so the leftover
+    // is RETURNED to be carried into the next event. Rounding it away instead
+    // is how a slow scroll ends up moving nothing at all.
+    function wheelSteps(accumulated, notch) {
+        if (!notch || notch <= 0)
+            return {
+                steps: 0,
+                remainder: 0
+            };
+        const steps = Math.trunc(accumulated / notch);
+        return {
+            steps: steps,
+            remainder: accumulated - steps * notch
+        };
+    }
     // END SWITCHER SELECTION DECISION
 
     // The one adapter every paging key goes through, so the latch and the target
@@ -180,6 +201,23 @@ VgsModal {
 
     function step(delta) {
         root.navigate("step", delta);
+    }
+
+    // The scroll wheel pages the rail. It goes through `step` like every other
+    // paging input, so the intent latch and the empty-pager guard are the same
+    // ones the keys get.
+    function pageByWheel(deltaY, deltaX) {
+        const delta = deltaY !== 0 ? deltaY : deltaX;
+        if (delta === 0)
+            return;
+        root.wheelAccumulator += delta;
+        const outcome = root.wheelSteps(root.wheelAccumulator, 120);
+        root.wheelAccumulator = outcome.remainder;
+        if (outcome.steps === 0)
+            return;
+        // Scrolling up or left pages BACK, which is the direction the rail
+        // itself travels.
+        root.step(-outcome.steps);
     }
 
     // The one place the filter is written. Typing IS taking over the selection,
@@ -347,6 +385,7 @@ VgsModal {
             root.filterQuery = "";
             root.applyBlocked = false;
             root.userMoved = false;
+            root.wheelAccumulator = 0;
             root.seedSelection();
         }
 
@@ -355,6 +394,7 @@ VgsModal {
             root.currentIndex = 0;
             root.applyBlocked = false;
             root.userMoved = false;
+            root.wheelAccumulator = 0;
         }
     }
 
@@ -403,6 +443,15 @@ VgsModal {
             MouseArea {
                 anchors.fill: parent
                 onClicked: root.close()
+            }
+
+            // The WHOLE surface scrolls, not just the rail: the pointer is
+            // wherever the user left it when the switcher came up, and a picker
+            // that only answers the wheel over its tiles reads as broken.
+            WheelHandler {
+                target: null
+                acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
+                onWheel: event => root.pageByWheel(event.angleDelta.y, event.angleDelta.x)
             }
 
             SwitcherCarousel {

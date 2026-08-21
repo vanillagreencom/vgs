@@ -93,6 +93,9 @@ const REPORTER = path.join(SWITCHER, "ThemeApplyReporter.qml");
 const THEME_MODAL = path.join(SWITCHER, "ThemeSwitcherModal.qml");
 const WALLPAPER_MODAL = path.join(SWITCHER, "WallpaperSwitcherModal.qml");
 const SERVICE = path.join(repoRoot, "quickshell", "vshell", "Services", "VGSThemeService.qml");
+const SHELL_ROOT = path.join(repoRoot, "quickshell", "vshell", "VGS.qml");
+const WALLPAPER_TAB = path.join(repoRoot, "quickshell", "vshell", "Modules", "Settings", "WallpaperTab.qml");
+const THEMES_TAB = path.join(repoRoot, "quickshell", "vshell", "Modules", "Settings", "ThemesSettingsTab.qml");
 
 // This text comes from repo files and is EXECUTED here, so it runs inside a
 // child bounded by a wall clock — scripts/lib/qml-region.js says what that
@@ -113,6 +116,9 @@ const reporterSource = read(REPORTER);
 const themeSource = read(THEME_MODAL);
 const wallpaperSource = read(WALLPAPER_MODAL);
 const serviceSource = read(SERVICE);
+const shellRootSource = read(SHELL_ROOT);
+const wallpaperTabSource = read(WALLPAPER_TAB);
+const themesTabSource = read(THEMES_TAB);
 
 const MARKER = "SWITCHER SELECTION DECISION";
 
@@ -120,7 +126,7 @@ const MARKER = "SWITCHER SELECTION DECISION";
 
 const sel = evaluateMarked(baseSource, MARKER, [
     "wrapIndex", "clampIndex", "seedIndex", "shouldReseed", "enterOutcome",
-    "latchesIntent", "navIndex"
+    "latchesIntent", "navIndex", "wheelSteps"
 ], "FullScreenSwitcher.qml");
 
 // The extracted block must be free of QML, or this harness tests a different
@@ -200,6 +206,21 @@ for (const kind of ["step", "first", "last"]) {
         `${kind} on an empty pager must answer an in-range index even though nothing may act on it`);
 }
 
+// wheelSteps: the leftover is CARRIED, not rounded away. A touchpad sends a
+// stream of fractions of a notch, so a version that truncates and drops the
+// remainder pages on none of them and the switcher ignores the wheel entirely.
+assert.deepEqual(sel.wheelSteps(120, 120), { steps: 1, remainder: 0 }, "one notch pages one entry");
+assert.deepEqual(sel.wheelSteps(-120, 120), { steps: -1, remainder: 0 }, "and one notch the other way pages back");
+assert.deepEqual(sel.wheelSteps(360, 120), { steps: 3, remainder: 0 }, "a fast flick pages by as many notches as it carried");
+assert.deepEqual(sel.wheelSteps(0, 120), { steps: 0, remainder: 0 }, "no movement pages nothing");
+assert.deepEqual(sel.wheelSteps(40, 120), { steps: 0, remainder: 40 },
+    "a partial notch pages nothing YET and keeps what it had, or a slow scroll never moves at all");
+assert.deepEqual(sel.wheelSteps(200, 120), { steps: 1, remainder: 80 },
+    "a notch and a bit pages once and carries the bit into the next event");
+assert.deepEqual(sel.wheelSteps(-200, 120), { steps: -1, remainder: -80 },
+    "the carry keeps its SIGN, or a scroll back accumulates against itself");
+assert.deepEqual(sel.wheelSteps(120, 0), { steps: 0, remainder: 0 }, "a zero notch cannot page, and must not divide");
+
 // --- 2. The wiring ----------------------------------------------------------
 //
 // POSITIVE pins go through `qmlSource(...).requires(...)`: it searches the
@@ -218,7 +239,10 @@ const sources = new Map([
     ["ThemeApplyReporter.qml", reporterSource],
     ["ThemeSwitcherModal.qml", themeSource],
     ["WallpaperSwitcherModal.qml", wallpaperSource],
-    ["VGSThemeService.qml", serviceSource]
+    ["VGSThemeService.qml", serviceSource],
+    ["VGS.qml", shellRootSource],
+    ["WallpaperTab.qml", wallpaperTabSource],
+    ["ThemesSettingsTab.qml", themesTabSource]
 ]);
 
 const readers = new Map();
@@ -278,6 +302,20 @@ function mustPrecedeIn(block, label, first, second, why) {
     mustPrecedeIn(base.body("navigate"), "navigate()", /root\.userMoved = true;/,
         /root\.currentIndex = root\.navIndex\(/,
         "the latch must be set BEFORE the index moves, or a binding reacting to the index re-seeds over it");
+
+    base.requires(base.body("pageByWheel"), "pageByWheel()", [
+        ["const outcome = root.wheelSteps(root.wheelAccumulator, 120);",
+            "how far a scroll pages is the extracted function over the CARRIED total, not a " +
+            "per-event decision that rounds a touchpad's fractions away", 1],
+        ["root.wheelAccumulator = outcome.remainder;",
+            "and the leftover is carried back, which is the whole reason the function returns it", 1],
+        ["root.step(-outcome.steps);",
+            "the wheel pages through the same adapter as the keys, so it cannot answer an empty " +
+            "pager differently or skip the intent latch", 1]
+    ]);
+    assert.doesNotMatch(qmlSource.stripComments(base.body("pageByWheel")), /currentIndex/,
+        "FullScreenSwitcher.qml: the wheel must not move the index itself — that is navigate()'s " +
+        "job, and a second mover is how the latch gets skipped");
 
     base.requires(base.body("step"), "step()", [
         ['root.navigate("step", delta);',
@@ -584,6 +622,53 @@ mustPrecedeIn(handler("ThemeSwitcherModal.qml", "emptyText"), "ThemeSwitcherModa
             "VGSThemeService.qml: a failed PREVIEW probe must not set blueprintsLoadFailed — that flag is how a surface " +
             "says the theme LIST could not be read, and setting it here reported a read failure over a loaded list");
     }
+}
+
+// The three ways in. A keybind reaches a switcher through its IPC target, which
+// switcher_check already exercises; these are the other two, and both are one
+// line each in a settings tab — exactly the shape that gets reverted by a
+// merge and noticed by nobody, because nothing else fails when they go.
+{
+    const shell = q("VGS.qml");
+    shell.requires(shellRootSource, "VGS.qml", [
+        ['ModalManager.registerSwitcher("wallpaper", wallpaperSwitcherModal)',
+            "the shell root registers each switcher, or the Settings buttons have nothing to open " +
+            "and silently fall back to the dash tab they were moved off", 1],
+        ['ModalManager.registerSwitcher("theme", themeSwitcherModal)',
+            "and the same for the theme switcher", 1]
+    ]);
+
+    // Registration must survive a `show()` rename: showSwitcher tests for the
+    // function before calling it, so a renamed entry point degrades to the
+    // fallback rather than throwing — the pin is that both modals still expose
+    // one under the name the registry calls.
+    for (const file of ["WallpaperSwitcherModal.qml", "ThemeSwitcherModal.qml"]) {
+        q(file).requires(body(file), file,
+            [["function show()", "the registry and every IPC target call show(); it also dispatches the list read", 1]]);
+    }
+
+    const wallpaperTab = q("WallpaperTab.qml");
+    wallpaperTab.requires(wallpaperTabSource, "WallpaperTab.qml", [
+        ['if (ModalManager.showSwitcher("wallpaper"))',
+            "Browse Wallpapers opens the full-screen switcher", 1],
+        ['if (ModalManager.showSwitcher("theme"))',
+            "and Browse Themes opens the theme one", 1],
+        ['action: "spawn vshell ipc call wallpaper-switcher toggle"',
+            "the page carries the bind for its OWN switcher, and the action must be one the IPC " +
+            "target answers — a typo here writes a compositor bind that does nothing", 1]
+    ]);
+    mustPrecedeIn(wallpaperTabSource, "WallpaperTab.qml", /ModalManager\.showSwitcher\("wallpaper"\)/,
+        /dashTabIndexForId\("wallpaper"\)/,
+        "the switcher is the destination and the dash tab is the fallback, not the other way round");
+
+    q("ThemesSettingsTab.qml").requires(themesTabSource, "ThemesSettingsTab.qml", [
+        ['if (ModalManager.showSwitcher("theme"))',
+            "Browse Themes on the themes page opens the switcher too", 1],
+        ['action: "spawn vshell ipc call theme-switcher toggle"',
+            "and that page carries the bind for the theme switcher", 1]
+    ]);
+    mustPrecedeIn(themesTabSource, "ThemesSettingsTab.qml", /ModalManager\.showSwitcher\("theme"\)/,
+        /dashTabIndexForId\("themes"\)/, "same order: switcher first, dash only as the fallback");
 }
 
 process.stdout.write("switcher selection guard: ok\n");

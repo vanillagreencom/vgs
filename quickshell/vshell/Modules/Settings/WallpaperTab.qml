@@ -58,11 +58,18 @@ FocusScope {
                     width: parent.width
                     spacing: Theme.spacingS
 
+                    // Both open the full-screen switchers, not the dash tabs:
+                    // browsing wallpapers and themes is what those surfaces are
+                    // for, and they are the same thing the keybind below opens.
+                    // `showSwitcher` answers false only when the shell root has
+                    // not registered them, which the dash fallback covers.
                     VgsButton {
                         variant: "secondary"
                         text: I18n.tr("Browse Wallpapers")
                         iconName: "wallpaper"
                         onClicked: {
+                            if (ModalManager.showSwitcher("wallpaper"))
+                                return;
                             const bar = KeyboardFocus.getPreferredBar("clockButtonRef") || KeyboardFocus.getPreferredBar();
                             if (bar)
                                 bar.triggerDashTab(SettingsData.dashTabIndexForId("wallpaper"));
@@ -74,11 +81,21 @@ FocusScope {
                         text: I18n.tr("Browse Themes")
                         iconName: "palette"
                         onClicked: {
+                            if (ModalManager.showSwitcher("theme"))
+                                return;
                             const bar = KeyboardFocus.getPreferredBar("clockButtonRef") || KeyboardFocus.getPreferredBar();
                             if (bar)
                                 bar.triggerDashTab(SettingsData.dashTabIndexForId("themes"));
                         }
                     }
+                }
+
+                SwitcherShortcutRow {
+                    action: "spawn vshell ipc call wallpaper-switcher toggle"
+                    text: I18n.tr("Wallpaper Switcher Shortcut")
+                    description: I18n.tr("Opens the full-screen wallpaper switcher")
+                    bindDescription: I18n.tr("Wallpaper switcher")
+                    panelWindow: root.parentModal
                 }
 
                 SettingsDropdownRow {

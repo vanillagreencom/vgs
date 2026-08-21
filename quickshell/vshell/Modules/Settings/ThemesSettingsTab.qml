@@ -276,10 +276,16 @@ Item {
                     spacing: Theme.spacingS
                     width: parent.width
 
+                    // Opens the full-screen switcher, not the dash tab: that is
+                    // the browse surface, and the same one the shortcut below
+                    // opens. The dash stays the fallback for a shell root that
+                    // has not registered it.
                     VgsButton {
                         variant: "secondary"
                         text: I18n.tr("Browse Themes")
                         onClicked: {
+                            if (ModalManager.showSwitcher("theme"))
+                                return;
                             const bar = KeyboardFocus.getPreferredBar("clockButtonRef") || KeyboardFocus.getPreferredBar();
                             if (bar)
                                 bar.triggerDashTab(SettingsData.dashTabIndexForId("themes"));
@@ -328,6 +334,14 @@ Item {
                             }
                         }
                     }
+                }
+
+                SwitcherShortcutRow {
+                    action: "spawn vshell ipc call theme-switcher toggle"
+                    text: I18n.tr("Theme Switcher Shortcut")
+                    description: I18n.tr("Opens the full-screen theme switcher")
+                    bindDescription: I18n.tr("Theme switcher")
+                    panelWindow: root.parentModal
                 }
             }
 
