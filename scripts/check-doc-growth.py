@@ -266,10 +266,10 @@ CEILINGS: dict[str, int] = {
     # 24,400 is measured + ~5%, DELIBERATELY tighter than the +10% adoption
     # default: this file is one of the per-area references agents load by name
     # and it has taken 2,926 B since adoption, so the next growth should be
-    # argued for rather than absorbed. VGS-124's AGENTS.md repoint (+55 B) and
-    # VGS-208's two switcher IPC targets (+357 B) put it at now 23,586 B.
+    # argued for rather than absorbed. VGS-124's AGENTS.md repoint (+55 B) and VGS-208's two switcher IPC targets (+357 B); the file is 23,586 B.
     "docs/architecture/shell-architecture.md": 24_400,
-    "docs/architecture/theme-architecture.md": 31_800,  # adopted at 28,861 B; now 30,404 B
+    # 31,800 -> 33,000: VGS-208's switcher review put the seeding rule, busy-Enter gate, load-failure states and toast ownership in writing. Still tighter than the ~10% default. Adopted at 28,861 B; the file is 31,797 B.
+    "docs/architecture/theme-architecture.md": 33_000,
     "docs/architecture/wallpaper-upscaling.md": 4_000,  # adopted at 3,625 B
 }
 

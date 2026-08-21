@@ -4,7 +4,7 @@ import QtQuick
 import qs.Common
 import qs.Services
 
-// Full-screen wallpaper switcher (`vshell ipc call wallpaper open`).
+// Full-screen wallpaper switcher (`vshell ipc call wallpaper-switcher open`).
 //
 // Scope is the active theme's `backgrounds/` set only — the same list the dash's
 // Wallpapers tab shows in "theme" mode. The user's own wallpaper folder stays a
@@ -15,10 +15,20 @@ FullScreenSwitcher {
     headerTitle: I18n.tr("Wallpaper")
     headerIcon: "wallpaper"
     filterable: false
-    emptyText: I18n.tr("This theme has no wallpapers")
     layerNamespace: "vshell:wallpaper-switcher"
 
+    // `refreshWallpapers` clears the list on a helper failure too, so an empty
+    // list alone cannot be asserted as "this theme has none".
+    emptyText: VGSThemeService.wallpapersLoadFailed ? I18n.tr("Could not read this theme's wallpapers") + (VGSThemeService.lastError ? "\n" + VGSThemeService.lastError : "") : I18n.tr("This theme has no wallpapers")
+
     readonly property var wallpaperEntries: VGSThemeService.themeWallpapers || []
+
+    // Land on the wallpaper already in use so paging starts from where the
+    // desktop is, not from the top of the list.
+    activeKey: VGSThemeService.selectedWallpaper || ""
+    // `refreshWallpapers` is a counted command: `busy` is true for the round trip
+    // right after show(), exactly when Enter gets pressed.
+    canApply: !VGSThemeService.busy
 
     items: root.wallpaperEntries.map(entry => ({
                 image: entry.path,
@@ -32,33 +42,23 @@ FullScreenSwitcher {
         open();
     }
 
-    onOpened: selectActive()
+    // See ThemeSwitcherModal: a keybind-driven failure has no settings tab to
+    // report it, and success is silent so an open tab does not double-toast.
+    property bool applyPending: false
 
-    // Land on the wallpaper already in use so paging starts from where the
-    // desktop is, not from the top of the list.
-    function selectActive() {
-        const active = VGSThemeService.selectedWallpaper || "";
-        const list = root.items || [];
-        for (let i = 0; i < list.length; i++) {
-            if (list[i].key === active) {
-                root.currentIndex = i;
-                return;
-            }
-        }
-        root.currentIndex = 0;
+    onApplied: item => {
+        root.applyPending = true;
+        VGSThemeService.setWallpaper(item.key);
     }
 
     Connections {
         target: VGSThemeService
-        function onWallpapersLoaded() {
-            if (root.shouldBeVisible)
-                root.selectActive();
+        function onApplyCompleted(success, message) {
+            if (!root.applyPending)
+                return;
+            root.applyPending = false;
+            if (!success)
+                ToastService.showError(I18n.tr("VGS theme error"), message);
         }
-    }
-
-    onApplied: item => {
-        if (VGSThemeService.busy)
-            return;
-        VGSThemeService.setWallpaper(item.key);
     }
 }

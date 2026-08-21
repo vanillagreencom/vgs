@@ -466,14 +466,16 @@ for monitor_name, monitor in data.items():
 if not matches:
     raise SystemExit(1)
 
-# A popout binds to exactly ONE screen (VgsPopoutStandalone `screen:
-# root.screen`, from PluginPopout's `triggerScreen`), so a second surface is a
-# duplicate-mapping defect, not a second reading. Picking one would hide it and
-# averaging would invent a number, so neither: no reading was taken.
+# A popout or modal surface binds to exactly ONE screen (VgsPopoutStandalone
+# `screen: root.screen`, from PluginPopout's `triggerScreen`; VgsModalStandalone
+# `contentWindow.screen`), so a second surface is a duplicate-mapping defect, not
+# a second reading. Picking one would hide it and averaging would invent a
+# number, so neither: no reading was taken.
 if len(matches) > 1:
     sys.stderr.write(
-        "sandbox_layer_state: %s is mapped %d times (%s), but a popout binds to exactly "
-        "one screen - that is a duplicate-mapping defect, not a geometry reading\n"
+        "sandbox_layer_state: %s is mapped %d times (%s), but a popout or modal surface "
+        "binds to exactly one screen - that is a duplicate-mapping defect, not a geometry "
+        "reading\n"
         % (namespace, len(matches), ", ".join(entry[0] for entry in matches))
     )
     raise SystemExit(3)
@@ -491,8 +493,12 @@ screen_w, screen_h = outputs[monitor_name]
 print("%dx%d %dx%d" % (w, h, screen_w, screen_h))
 if w <= 0 or h <= 0:
     raise SystemExit(2)
-# Unguarded, because the output size is measured by the time it runs. A popout
-# that covers the whole output is a layout failure, not an open popout.
+# Unguarded, because the output size is measured by the time it runs. Exit 2 is
+# a READING, not a verdict: for a popout, covering the whole output is a layout
+# failure; for a full-screen switcher it is the expected result. Both readings
+# are collapsed here because both are "not a normal content-sized surface", so a
+# caller that cares which one it got must compare the printed measurement -
+# switcher_check does. Do not "fix" that caller toward exit 0.
 if w >= screen_w and h >= screen_h:
     raise SystemExit(2)
 raise SystemExit(0)
@@ -801,16 +807,23 @@ popout_check() {
 
 # --- the full-screen switchers map, cover the output, and unmap (VGS-208) ---
 #
-# `sandbox_layer_state` calls a surface as large as its output DEGENERATE (exit
-# 2), because for a popout it is. The switchers are the one class of surface
-# here that is meant to be full-bleed, so exit 2 is the reading that says they
-# are RIGHT — hence `wait_layer_state ... 2` below, which is not a typo for 0
-# and must not be "fixed" into one. Exit 0 would mean a switcher came up
-# smaller than the screen, which is the layout failure this witnesses.
+# The MEASUREMENT is asserted, not an exit code. `sandbox_layer_state` returns 2
+# for two OPPOSITE readings - a degenerate surface (`w <= 0 or h <= 0`) and one
+# as large as its output - so reading exit 2 as proof of full-bleed passes the
+# 0x0 layout collapse this phase exists to catch. `wait_switcher_mapped` below
+# reads the `<w>x<h> <screen_w>x<screen_h>` line instead and requires both
+# dimensions to be non-zero AND at least the output's.
 #
-# Nothing else in this file reaches them: both modals stay uninstantiated until
-# an IPC call opens one, so a broken binding or a missing property inside either
-# is invisible to the static parse AND to the nested load.
+# What this phase reaches that nothing else does: VGS.qml instantiates both
+# modals directly, so their own bindings do evaluate at startup, but a modal's
+# `content: Component` is not loaded until an open - every binding inside the
+# content tree, and the geometry of the mapped surface it produces, is invisible
+# to the static parse AND to the nested load.
+#
+# `toggle` and Escape are driven, not just `open`/`close`: `toggle` is the verb a
+# keybind binds and its close branch reads `shouldBeVisible`, and Escape is the
+# only way out of a surface that covers the whole output with
+# `closeOnBackgroundClick: false`.
 #
 # BOTH `modalDarkenBackground` states are exercised, and the `false` pass is the
 # control for a real defect. With it off, VgsModalStandalone's click catcher has
@@ -820,73 +833,241 @@ popout_check() {
 # closing modal never fired and EVERY modal - the pre-existing colour picker
 # included - stayed on screen indefinitely. Restore that binding and the `false`
 # pass below fails; that is what proves this pass is not vacuous.
+#
+# The setting is RESTORED to whatever the sandbox had, on every exit path: D008
+# is about a phase's state not leaking into the next one, and an ordering
+# invariant stated only in a comment is not enforcement.
 switcher_targets=("wallpaper-switcher" "theme-switcher")
 switcher_namespaces=("vshell:wallpaper-switcher" "vshell:theme-switcher")
 switcher_open_replies=("WALLPAPER_SWITCHER_OPEN_SUCCESS" "THEME_SWITCHER_OPEN_SUCCESS")
+switcher_close_replies=("WALLPAPER_SWITCHER_CLOSE_SUCCESS" "THEME_SWITCHER_CLOSE_SUCCESS")
+switcher_toggle_replies=("WALLPAPER_SWITCHER_TOGGLE_SUCCESS" "THEME_SWITCHER_TOGGLE_SUCCESS")
 
-# Polls until SettingsData reports the value the caller just wrote. `settings
-# set` answers before the property has propagated, and running the round trip
-# against the OTHER state would silently make one of the two passes a duplicate.
-await_darken_setting() {
-  local want="$1" reply
-  for _ in $(seq 1 20); do
-    reply="$(sandbox_ipc settings get modalDarkenBackground)"
-    [[ "$reply" == "$want" ]] && return 0
+# The last reading wait_switcher_mapped took, so a failure can quote it.
+switcher_last_geometry=""
+
+# Waits for `namespace` to map at full output size and prints that measurement.
+# 0 = full-bleed; 1 = timed out, with the last reading in
+# `switcher_last_geometry` (empty if the surface never mapped at all); 3 = no
+# reading could be taken.
+wait_switcher_mapped() {
+  local namespace="$1" geometry rc surface screen
+  switcher_last_geometry=""
+  for _ in $(seq 1 30); do
+    rc=0
+    geometry="$(sandbox_layer_state "$namespace")" || rc=$?
+    [[ "$rc" -eq 3 ]] && return 3
+    # Shape-guarded before splitting: `${g%% *}` returns the WHOLE string when
+    # there is no space, which would compare a field against itself.
+    if [[ "$geometry" =~ ^[0-9]+x[0-9]+\ [0-9]+x[0-9]+$ ]]; then
+      switcher_last_geometry="$geometry"
+      surface="${geometry%% *}"
+      screen="${geometry##* }"
+      if ((${surface%x*} > 0 && ${surface#*x} > 0 && ${surface%x*} >= ${screen%x*} && ${surface#*x} >= ${screen#*x})); then
+        printf '%s\n' "$geometry"
+        return 0
+      fi
+    fi
     kill -0 -- "-$qs_group" 2>/dev/null || break
     sleep 0.2
   done
   return 1
 }
 
+# Turns a wait_switcher_mapped status into the diagnosis it actually is.
+fail_switcher_mapped() {
+  local rc="$1" what="$2"
+  case "$rc" in
+    3) fail "could not take a geometry reading for $what - hyprctl failed, or its output has no reported size, or the surface is mapped more than once. That is not evidence about the switcher" ;;
+    *)
+      if [[ -z "$switcher_last_geometry" ]]; then
+        fail "$what never produced a surface at all"
+      else
+        fail "$what mapped at '$switcher_last_geometry' (surface then output) - a switcher must cover the whole output, and a zero dimension is the layout collapse this checks for"
+      fi
+      ;;
+  esac
+}
+
+# Waits for the surface to be gone. A failed QUERY already failed loudly inside
+# wait_layer_state, so it is not re-reported here as a surface that outlived its
+# close - that would name the wrong defect for the next reader.
+wait_switcher_unmapped() {
+  local namespace="$1" what="$2" state=0
+  wait_layer_state "$namespace" 1 || state=$?
+  [[ "$state" -eq 0 ]] && return 0
+  if [[ "$state" -ne 2 ]]; then
+    sandbox_layer_state "$namespace" >&2 || true
+    fail "$what"
+  fi
+  return 1
+}
+
+# Polls until SettingsData reports the value the caller just wrote. `settings
+# set` answers before the property has propagated, and running the round trip
+# against the OTHER state would silently make one of the two passes a duplicate.
+# 1 = the value never converged; 2 = the shell exited, which is a different
+# defect and gets a different message.
+await_darken_setting() {
+  local want="$1" reply
+  for _ in $(seq 1 20); do
+    reply="$(sandbox_ipc settings get modalDarkenBackground)"
+    [[ "$reply" == "$want" ]] && return 0
+    kill -0 -- "-$qs_group" 2>/dev/null || return 2
+    sleep 0.2
+  done
+  return 1
+}
+
+set_darken_setting() {
+  local want="$1" reply rc=0
+  reply="$(sandbox_ipc settings set modalDarkenBackground "$want")"
+  if [[ "$reply" != "SETTINGS_SET_SUCCESS" ]]; then
+    fail "could not set modalDarkenBackground=$want (answered '$reply')"
+    return 1
+  fi
+  await_darken_setting "$want" || rc=$?
+  if [[ "$rc" -eq 2 ]]; then
+    fail "the sandbox shell exited while waiting for modalDarkenBackground=$want"
+    return 1
+  fi
+  if [[ "$rc" -ne 0 ]]; then
+    fail "modalDarkenBackground never read back as $want, though the settings set call reported success"
+    return 1
+  fi
+  return 0
+}
+
+# One open/close cycle per verb, for one target in one backdrop state.
+switcher_cycle() {
+  local target="$1" namespace="$2" darken="$3" open_want="$4" close_want="$5" toggle_want="$6"
+  local reply state=0 rc=0
+
+  # Start from a known state, so a surface left mapped by something else cannot
+  # satisfy the assertions below.
+  wait_layer_state "$namespace" 1 || state=$?
+  if [[ "$state" -ne 0 ]]; then
+    # A failed query already reported itself; do not add a contradictory claim.
+    [[ "$state" -ne 2 ]] && fail "'$namespace' was already mapped before '$target open' was called (modalDarkenBackground=$darken)"
+    return 1
+  fi
+
+  reply="$(sandbox_ipc "$target" open)"
+  if [[ "$reply" != "$open_want" ]]; then
+    fail "$target open answered '$reply', wanted '$open_want' (modalDarkenBackground=$darken)"
+    return 1
+  fi
+  # NOT "the call returned success": this waits for the compositor to show it.
+  wait_switcher_mapped "$namespace" >/dev/null || rc=$?
+  if [[ "$rc" -ne 0 ]]; then
+    fail_switcher_mapped "$rc" "'$target open' (modalDarkenBackground=$darken)"
+    return 1
+  fi
+
+  # The close REPLY is asserted, not just quoted in a failure message: a close
+  # handler regressed to an error string, or an IPC call that failed outright
+  # (sandbox_ipc swallows the exit status), must fail on its own evidence rather
+  # than on the surface happening to be gone.
+  reply="$(sandbox_ipc "$target" close)"
+  if [[ "$reply" != "$close_want" ]]; then
+    fail "$target close answered '$reply', wanted '$close_want' (modalDarkenBackground=$darken)"
+    return 1
+  fi
+  wait_switcher_unmapped "$namespace" "'$target close' reported success but the '$namespace' surface outlived it (modalDarkenBackground=$darken)" || return 1
+
+  # `toggle` both ways, which is what proves `shouldBeVisible` tracks the mapped
+  # surface - an inverted or stale value answers TOGGLE_SUCCESS either way.
+  reply="$(sandbox_ipc "$target" toggle)"
+  if [[ "$reply" != "$open_want" ]]; then
+    fail "$target toggle (to open) answered '$reply', wanted '$open_want' (modalDarkenBackground=$darken)"
+    return 1
+  fi
+  rc=0
+  wait_switcher_mapped "$namespace" >/dev/null || rc=$?
+  if [[ "$rc" -ne 0 ]]; then
+    fail_switcher_mapped "$rc" "'$target toggle' (modalDarkenBackground=$darken)"
+    return 1
+  fi
+
+  reply="$(sandbox_ipc "$target" toggle)"
+  if [[ "$reply" != "$toggle_want" ]]; then
+    fail "$target toggle (to close) answered '$reply', wanted '$toggle_want' - it took the open branch, so shouldBeVisible does not track the mapped surface (modalDarkenBackground=$darken)"
+    return 1
+  fi
+  wait_switcher_unmapped "$namespace" "'$target toggle' did not unmap the '$namespace' surface (modalDarkenBackground=$darken)" || return 1
+
+  switcher_escape_cycle "$target" "$namespace" "$darken" "$open_want" || return 1
+  return 0
+}
+
+# Escape is the ONLY way out for a user: the switcher covers the whole output
+# and sets `closeOnBackgroundClick: false`. If focus never reaches the
+# FocusScope they are stranded on an opaque surface, and the IPC close path
+# above still passes.
+switcher_escape_cycle() {
+  local target="$1" namespace="$2" darken="$3" open_want="$4" reply rc=0
+
+  if ! command -v wtype >/dev/null 2>&1; then
+    # Named, never silent: a skip that reads as a pass is what this file exists
+    # to prevent.
+    note "NOT CHECKED: $target Escape-to-dismiss - wtype is not installed"
+    return 0
+  fi
+
+  reply="$(sandbox_ipc "$target" open)"
+  if [[ "$reply" != "$open_want" ]]; then
+    fail "$target open answered '$reply' before the Escape check (modalDarkenBackground=$darken)"
+    return 1
+  fi
+  wait_switcher_mapped "$namespace" >/dev/null || rc=$?
+  if [[ "$rc" -ne 0 ]]; then
+    fail_switcher_mapped "$rc" "'$target open' before the Escape check (modalDarkenBackground=$darken)"
+    return 1
+  fi
+
+  # The content grabs keyboard focus asynchronously (FullScreenSwitcher defers
+  # forceActiveFocus through Qt.callLater), so a key sent the instant the
+  # surface appears can land before anything is listening for it.
+  sleep 1.5
+  "${sandbox_env[@]}" WAYLAND_DISPLAY="$nested_socket" wtype -k Escape >/dev/null 2>&1 || true
+  wait_switcher_unmapped "$namespace" "Escape did not dismiss the '$target' switcher, which is the only way out of it (modalDarkenBackground=$darken)" || return 1
+  return 0
+}
+
 switcher_check() {
-  local darken index namespace target want reply
+  local original rc=0
+  # Read FIRST, restore LAST: this phase persists into the sandbox HOME
+  # (`settings set` calls SettingsData.saveSettings()), so leaving it on the
+  # value this phase wanted hands the next phase an unseeded setting.
+  original="$(sandbox_ipc settings get modalDarkenBackground)"
+  if [[ "$original" != "true" && "$original" != "false" ]]; then
+    fail "could not read modalDarkenBackground before the switcher check (answered '$original'), so it could not be restored afterwards"
+    return 1
+  fi
+
+  switcher_check_body || rc=$?
+
+  if ! set_darken_setting "$original"; then
+    fail "modalDarkenBackground was left at the switcher check's value instead of the sandbox's own '$original'"
+    rc=1
+  fi
+  return "$rc"
+}
+
+switcher_check_body() {
+  local darken index
 
   for darken in true false; do
-    reply="$(sandbox_ipc settings set modalDarkenBackground "$darken")"
-    if [[ "$reply" != "SETTINGS_SET_SUCCESS" ]]; then
-      fail "could not set modalDarkenBackground=$darken (answered '$reply'), so the switchers were never checked in that state"
-      return 1
-    fi
-    if ! await_darken_setting "$darken"; then
-      fail "modalDarkenBackground never read back as $darken, so the switchers were never checked in that state"
-      return 1
-    fi
+    set_darken_setting "$darken" || return 1
 
     for index in "${!switcher_targets[@]}"; do
-      target="${switcher_targets[$index]}"
-      namespace="${switcher_namespaces[$index]}"
-      want="${switcher_open_replies[$index]}"
-
-      # Start from a known state, so a surface left mapped by something else
-      # cannot satisfy the assertion below.
-      if ! wait_layer_state "$namespace" 1; then
-        fail "'$namespace' was already mapped before '$target open' was called (modalDarkenBackground=$darken)"
-        return 1
-      fi
-
-      reply="$(sandbox_ipc "$target" open)"
-      if [[ "$reply" != "$want" ]]; then
-        fail "$target open answered '$reply', wanted '$want' (modalDarkenBackground=$darken)"
-        return 1
-      fi
-
-      # NOT "the call returned success": this waits for the compositor to show it.
-      if ! wait_layer_state "$namespace" 2; then
-        sandbox_layer_state "$namespace" >&2 || true
-        fail "'$target open' never produced a full-output '$namespace' surface (modalDarkenBackground=$darken)"
-        return 1
-      fi
-
-      reply="$(sandbox_ipc "$target" close)"
-      if ! wait_layer_state "$namespace" 1; then
-        sandbox_layer_state "$namespace" >&2 || true
-        fail "'$target close' answered '$reply' but the '$namespace' surface outlived it (modalDarkenBackground=$darken)"
-        return 1
-      fi
+      switcher_cycle "${switcher_targets[$index]}" "${switcher_namespaces[$index]}" "$darken" \
+        "${switcher_open_replies[$index]}" "${switcher_close_replies[$index]}" \
+        "${switcher_toggle_replies[$index]}" || return 1
     done
   done
 
-  note "switcher check passed (both full-screen switchers mapped over the whole output and unmapped on close, with the modal backdrop on and off)"
+  note "switcher check passed (both full-screen switchers measured full-output on open and on toggle, unmapped on close, on toggle and on Escape, with the modal backdrop on and off)"
   return 0
 }
 

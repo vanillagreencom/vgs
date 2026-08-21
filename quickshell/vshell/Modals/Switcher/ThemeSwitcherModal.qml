@@ -18,10 +18,25 @@ FullScreenSwitcher {
     headerIcon: "palette"
     filterable: true
     filterPlaceholder: I18n.tr("Filter themes...")
-    emptyText: I18n.tr("No themes match")
     layerNamespace: "vshell:theme-switcher"
 
+    // A failed `theme list` leaves `blueprints` empty, which must not be
+    // reported as a fact about the user's themes, and "no match" is only true
+    // when a filter is actually on.
+    emptyText: {
+        if (VGSThemeService.blueprintsLoadFailed)
+            return I18n.tr("Could not read the installed themes") + (VGSThemeService.lastError ? "\n" + VGSThemeService.lastError : "");
+        if (root.filterQuery !== "")
+            return I18n.tr("No themes match");
+        return I18n.tr("No themes installed");
+    }
+
     readonly property string activeTheme: (VGSThemeService.currentTheme || {}).name || ""
+
+    activeKey: root.activeTheme
+    // show() fires counted helper commands, so `busy` is true for the round trip
+    // right after the surface appears — exactly when Enter gets pressed.
+    canApply: !VGSThemeService.busy
 
     items: (VGSThemeService.blueprints || []).filter(bp => !!bp.name).map(bp => ({
                 image: bp.preview || "",
@@ -38,33 +53,25 @@ FullScreenSwitcher {
         open();
     }
 
-    onOpened: selectActive()
+    // Driven from a keybind there is no settings tab loaded to report a failed
+    // apply, so the switcher reports its own. Latched to the apply it started,
+    // and silent on success (the desktop shows it) so an open Themes tab does
+    // not double-toast.
+    property bool applyPending: false
 
-    // Start on the theme currently applied.
-    function selectActive() {
-        const list = root.items || [];
-        for (let i = 0; i < list.length; i++) {
-            if (list[i].key === root.activeTheme) {
-                root.currentIndex = i;
-                return;
-            }
-        }
-        root.currentIndex = 0;
+    onApplied: item => {
+        root.applyPending = true;
+        VGSThemeService.applyBlueprint(item.key);
     }
 
     Connections {
         target: VGSThemeService
-        function onBlueprintsLoaded() {
-            // Only while the user has not started filtering: re-seeding the
-            // selection under an active query would fight their typing.
-            if (root.shouldBeVisible && root.filterQuery === "")
-                root.selectActive();
+        function onApplyCompleted(success, message) {
+            if (!root.applyPending)
+                return;
+            root.applyPending = false;
+            if (!success)
+                ToastService.showError(I18n.tr("VGS theme error"), message);
         }
-    }
-
-    onApplied: item => {
-        if (VGSThemeService.busy)
-            return;
-        VGSThemeService.applyBlueprint(item.key);
     }
 }

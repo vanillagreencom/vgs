@@ -46,7 +46,7 @@ docs/media/vgs-demo.mp4	30319
 kendex.toml	1118
 packaging/optional-packages.json	589
 quickshell/vshell-preview/shell.qml	456
-quickshell/vshell/Common/KeybindActions.js	1424
+quickshell/vshell/Common/KeybindActions.js	1430
 quickshell/vshell/Common/MethodTheme.qml	1480
 quickshell/vshell/Common/SessionData.qml	1577
 quickshell/vshell/Common/SettingsData.qml	3675
@@ -196,7 +196,7 @@ quickshell/vshell/Services/ScratchpadService.qml	620
 quickshell/vshell/Services/SessionService.qml	640
 quickshell/vshell/Services/UsersService.qml	469
 quickshell/vshell/Services/VGSBackendService.qml	739
-quickshell/vshell/Services/VGSThemeService.qml	735
+quickshell/vshell/Services/VGSThemeService.qml	755
 quickshell/vshell/Services/WeatherService.qml	1144
 quickshell/vshell/VGS.qml	1477
 quickshell/vshell/VGSIPC.qml	2177
@@ -216,7 +216,7 @@ scripts/gen-package-metadata.py	993
 scripts/lib/section_pointers_selftest.py	515
 scripts/lib/validation_manifest.py	1045
 scripts/lib/vendor-drift.sh	429
-scripts/qml-smoke.sh	1514
+scripts/qml-smoke.sh	1695
 scripts/test-compositor-focus.js	791
 scripts/test-launcher-hover-latch.js	492
 scripts/test-launcher-search-gate.js	1076

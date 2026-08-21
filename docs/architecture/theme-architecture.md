@@ -278,12 +278,15 @@ One large preview at a time, arrow keys page, Enter applies, Esc cancels. Additi
 | Source | `VGSThemeService.themeWallpapers` (active theme's `backgrounds/` only) | `VGSThemeService.blueprints` (every installed theme) |
 | Image | the full-size wallpaper file | the blueprint's resolved `preview` (1920x1080) |
 | Typing | — | filters by word match on the theme name |
-| Enter | `VGSThemeService.setWallpaper` | `VGSThemeService.applyBlueprint` |
+| Enter | `VGSThemeService.setWallpaper` unless busy | `VGSThemeService.applyBlueprint` unless busy |
 
-- `Modals/Switcher/FullScreenSwitcher.qml` owns layout, paging, filter and keys; each switcher maps its data to `{image, label, badge, key}` and handles `applied`.
-- Theme source is `blueprints`, NOT `VGSThemeCatalogService`: the catalog is the download list, so it carries uninstalled themes, omits user-generated ones, and its `preview` skips the cached-screenshot path `theme list --json` resolves.
-- Keybinds are user config, not shipped; `SUPER+SHIFT+W` / `SUPER+SHIFT+T` are the intended bindings.
-- Covered by `switcher_check` in `scripts/qml-smoke.sh`, with `modalDarkenBackground` on and off.
+- `Modals/Switcher/FullScreenSwitcher.qml` owns layout, paging, filter and keys; each switcher maps its data to `{image, label, badge, key}` and handles `applied`. `SwitcherStage.qml` is the preview area: visible image plus prev/next lookahead at the same `sourceSize`, all `cache: true` — a cold decode is ~152 ms, and only the three referenced pixmaps stay resident.
+- Theme source is `blueprints`, NOT `VGSThemeCatalogService`: the catalog is the download list, so it carries uninstalled themes, omits user-generated ones, and its `preview` skips the cached-screenshot path `theme list --json` takes.
+- Enter is gated on `canApply` (`!VGSThemeService.busy`): `show()` fires counted helper commands, and closing during that round trip would dismiss the surface with nothing applied. A blocked Enter keeps the switcher up and says so in the footer.
+- The base seeds the selection ONCE per open from `activeKey`, on the first non-empty list: both services re-emit their loaded signals while the surface is up, and re-seeding snaps the selection off whatever the user paged to. A subclass binds `activeKey` and must not declare `onOpened`, which replaces the base's.
+- Failures are reported as failures: `blueprintsLoadFailed` / `wallpapersLoadFailed` mark a failed helper call so an empty list is not asserted as "you have none", and a failed apply toasts from the switcher itself, latched to the apply it started — from a keybind no settings tab is loaded to report it. Success is silent, or an open Themes tab double-toasts.
+- `Common/KeybindActions.js` ships open/close/toggle rows per switcher, so the keybind editor reaches them; `SUPER+SHIFT+W` / `SUPER+SHIFT+T` are the intended bindings.
+- Covered by `switcher_check` in `scripts/qml-smoke.sh` with `modalDarkenBackground` on and off: open, close, toggle both ways, Escape, each asserting the MEASURED layer geometry covers the output. A new switcher overrides `layerNamespace` and joins that check's arrays.
 
 ## Preview screenshots
 `vshell theme preview [name|--all] [--force]` renders a real screenshot per blueprint: a nested Hyprland session runs ghostty+nvim (theme-driven highlights, mock neo-tree/statusline), a second ghostty showcase, the installed file manager (dolphin > nautilus > thunar) with an isolated `XDG_CONFIG_HOME` and a synthetic `HOME` (a fixed sample tree — the pane must not vary per machine or carry real filenames into a committed screenshot), and a minimal Quickshell bar+control-center replica (`quickshell/vshell-preview/shell.qml`).

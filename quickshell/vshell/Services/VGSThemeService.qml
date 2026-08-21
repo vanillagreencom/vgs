@@ -28,6 +28,11 @@ Singleton {
     property string lastMessage: ""
     property string lastError: ""
     property var blueprints: []
+    // A failed list/wallpapers read leaves the corresponding array empty, which
+    // reads identically to a genuinely empty set. UI that asserts "you have
+    // none" must check these first.
+    property bool blueprintsLoadFailed: false
+    property bool wallpapersLoadFailed: false
     property var currentTheme: ({})
     property string selectedWallpaper: ""
     readonly property var paletteArgMap: ({
@@ -277,14 +282,18 @@ Singleton {
 
     function refreshBlueprints() {
         _run("vgs-theme-list", ["theme", "list", "--json"], function(output, exitCode) {
-            if (exitCode !== 0)
+            if (exitCode !== 0) {
+                blueprintsLoadFailed = true;
                 return;
+            }
             try {
                 const data = JSON.parse(output || "{}");
                 blueprints = data.blueprints || [];
+                blueprintsLoadFailed = false;
                 blueprintsLoaded();
             } catch (e) {
                 lastError = "Failed to parse blueprints: " + e;
+                blueprintsLoadFailed = true;
             }
         }, 120000, true);
     }
@@ -293,15 +302,18 @@ Singleton {
         _run("vgs-theme-wallpapers", ["theme", "wallpapers", "--json"], function(output, exitCode) {
             if (exitCode !== 0) {
                 themeWallpapers = [];
+                wallpapersLoadFailed = true;
                 wallpapersLoaded();
                 return;
             }
             try {
                 const data = JSON.parse(output || "{}");
                 themeWallpapers = data.wallpapers || [];
+                wallpapersLoadFailed = false;
                 wallpapersLoaded();
             } catch (e) {
                 lastError = "Failed to parse theme wallpapers: " + e;
+                wallpapersLoadFailed = true;
             }
         });
     }
@@ -386,6 +398,9 @@ Singleton {
     function setWallpaper(path, extractColors, mode) {
         if (!path)
             return;
+        // Optimistic, so the UI tracks the pending choice; restored below if the
+        // helper refuses it, or the service claims a wallpaper that never landed.
+        const previousWallpaper = selectedWallpaper;
         selectedWallpaper = path;
         const args = ["theme", "set-wallpaper", path, "--json"];
         if (extractColors) {
@@ -399,6 +414,7 @@ Singleton {
         }
         _run("vgs-theme-wallpaper", args, function(output, exitCode, stderr) {
             if (exitCode !== 0) {
+                selectedWallpaper = previousWallpaper;
                 applyCompleted(false, stderr || output || "Wallpaper apply failed");
                 return;
             }
@@ -406,6 +422,7 @@ Singleton {
             try {
                 data = JSON.parse(output || "{}");
             } catch (e) {
+                selectedWallpaper = previousWallpaper;
                 lastError = "Failed to parse wallpaper result: " + e;
                 applyCompleted(false, lastError);
                 return;
@@ -690,6 +707,7 @@ Singleton {
         // paths (wallpaper/palette edits invalidate cached previews).
         _run("vgs-theme-preview-check", ["theme", "list", "--json"], function(output, exitCode) {
             if (exitCode !== 0) {
+                blueprintsLoadFailed = true;
                 previewsGenerating = false;
                 return;
             }
@@ -698,10 +716,12 @@ Singleton {
                 bps = JSON.parse(output || "{}").blueprints || [];
             } catch (e) {
                 lastError = "Failed to parse blueprints: " + e;
+                blueprintsLoadFailed = true;
                 previewsGenerating = false;
                 return;
             }
             blueprints = bps;
+            blueprintsLoadFailed = false;
             blueprintsLoaded();
             if (!bps.some(bp => !bp.preview)) {
                 previewsGenerating = false;
