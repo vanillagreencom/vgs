@@ -164,8 +164,15 @@ FocusScope {
         cursorShape: capture.recording ? Qt.CrossCursor : Qt.PointingHandCursor
         acceptedButtons: Qt.LeftButton
 
+        // This area covers the WHOLE field, the close button included, and sits
+        // above it — so the button's own click never arrives and a recording
+        // could not be cancelled with the control that advertises it. Escape is
+        // no escape either: it is a capturable key and would be taken as the
+        // new bind. So the field itself toggles, exactly as the button does.
         onClicked: {
-            if (!capture.recording)
+            if (capture.recording)
+                capture.stopRecording();
+            else
                 capture.startRecording();
         }
 

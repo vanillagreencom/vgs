@@ -227,7 +227,7 @@ scripts/test-popout-dismiss-envelope.js	489
 scripts/test-remote-desktop-state.js	1243
 scripts/test-section-pointers-e2e.py	434
 scripts/test-section-pointers.py	458
-scripts/test-switcher-selection.js	745
+scripts/test-switcher-selection.js	747
 scripts/test-toast-actions.js	607
 scripts/test-validate.sh	547
 scripts/test-validation-inventory.sh	2278

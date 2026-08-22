@@ -716,12 +716,14 @@ mustPrecedeIn(handler("ThemeSwitcherModal.qml", "emptyText"), "ThemeSwitcherModa
             "a captured chord is written straight through ONLY when nothing else owns it: " +
             "`keybinds set` deletes every existing entry for a key before appending, so saving " +
             "over a taken chord silently takes the other shortcut away", 1],
-        ["if (!token || token === root.boundKey || KeybindsService.saving) return;",
+        ["if (!token || token === root.boundKey || KeybindsService.saving || !root.bindsReady) return;",
             "a save already running blocks the commit. KeybindsService owns ONE saveProcess with no " +
             "queue, so a second saveBind assigns `running` to a process that is already running: it " +
             "launches nothing and the chord is dropped silently. Checked in commit() and not only on " +
             "the controls, because the Replace button sits outside the row that carries the " +
-            "disabled state", 1],
+            "disabled state. `bindsReady` is the other half: before the first read lands the bind " +
+            "inventory is empty, so NO chord looks taken and the conflict check waves everything " +
+            "through while `keybinds set` deletes the entry it did not see", 1],
         ["KeybindsService.saveBind(root.boundKey, {",
             "and the save passes the CURRENT key as originalKey, so a rebind moves the chord " +
             "instead of leaving the old one live", 1]

@@ -41,6 +41,13 @@ Rectangle {
     // config includes that file. Saying so here is the difference between a
     // shortcut that did not take and a shortcut that silently went nowhere.
     readonly property bool needsSetup: root.available && !KeybindsService.vgsBindsIncluded
+    // Nothing may be captured until a bind read has actually completed.
+    // `loadBinds(false)` deliberately suppresses `loading`, so before the first
+    // read lands `getFlatBinds()` is empty, `pendingConflicts` reports no owner
+    // for ANY chord, and a capture commits straight through — and `keybinds
+    // set` deletes the existing entry for that key on its way past. Zero is the
+    // pre-read value; the service bumps it on every load and every save.
+    readonly property bool bindsReady: KeybindsService._dataVersion > 0
     // A chord captured that another action already owns. `keybinds set` deletes
     // every existing entry for a key before appending the new one, so saving
     // straight through would silently take the other shortcut away — the
@@ -58,7 +65,7 @@ Rectangle {
         // process with no queue means a second `saveBind` assigns `running` to
         // an already-running Process, which launches nothing and drops the
         // chord silently.
-        if (!token || token === root.boundKey || KeybindsService.saving)
+        if (!token || token === root.boundKey || KeybindsService.saving || !root.bindsReady)
             return;
         // `originalKey` is what makes this a MOVE rather than a second bind for
         // the same action: without it the old chord keeps working and the row
@@ -184,7 +191,7 @@ Rectangle {
             // assigns `running = true` to a process that is already running —
             // which launches nothing and drops the later chord silently.
             // `enabled` propagates, so this covers capture, Replace and Delete.
-            enabled: !KeybindsService.saving
+            enabled: !KeybindsService.saving && root.bindsReady
             opacity: enabled ? 1 : 0.5
 
             VgsButton {
