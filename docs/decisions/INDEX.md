@@ -14,6 +14,7 @@ was chosen, why, and what would change the answer.
 | 2026-08-10 | D007 | — | One CI suite job (`ci-ok`) beside the review-gate selftest, no lanes/nightly/Go cache, 2 vCPU runner, range-scoped whitespace check | ~30s total compute, so per-job overhead dominates; caching and lanes cost more than they save | Any step crosses ~5 minutes, or the Go block gains real dependency weight | Active | [Full](D007-ci-single-job-economics.md) |
 | 2026-08-14 | D008 | VGS-92 | Nested smoke sandbox is built from the repo alone; nothing copied from `~/.config/vshell` | A sandbox whose verdict depends on the machine it ran on is not a sandbox | A phase genuinely needs host state, or the helper can write theme.json without hooks | Active | [Full](D008-nested-sandbox-state-seeding.md) |
 | 2026-08-15 | D009 | VGS-144 | Keep the manifest's second reader; the grammar keeps one | An inventory taken from the audited party's own report is not a cross-check | A `--dump-manifest` gains a second consumer, or the two readers diverge | Active | [Full](D009-manifest-second-reader.md) |
+| 2026-08-24 | D010 | — | Single-screen wallpaper apply is a verified SessionData write, not a new service method | SessionData owns per-monitor assignments; a synchronous write's only failure is answered by a read-back, not a reply shape | VGS-211's wallpaper-mutation lock lands, or a single-screen apply needs the service path's extras | Active | [Full](D010-single-screen-wallpaper-apply.md) |
 
 ---
 
