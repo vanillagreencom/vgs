@@ -2,7 +2,6 @@ pragma ComponentBehavior: Bound
 
 import QtQuick
 import QtQuick.Layouts
-import Quickshell.Wayland
 import qs.Common
 import qs.Services
 import qs.Widgets
@@ -19,7 +18,6 @@ Item {
     property var bindData: ({})
     property bool isExpanded: false
     property var panelWindow: null
-    property bool recording: false
     property bool isNew: false
     property bool readOnly: false
     property string restoreKey: ""
@@ -42,7 +40,6 @@ Item {
     property string _actionType: ""
     property bool addingNewKey: false
     property bool useCustomCompositor: false
-    property bool _altShiftGhost: false
 
     readonly property var keys: bindData.keys || []
     readonly property bool hasOverride: {
@@ -272,23 +269,6 @@ Item {
         });
         hasChanges = false;
         addingNewKey = false;
-    }
-
-    ShortcutInhibitor {
-        window: root.panelWindow
-        enabled: root.recording
-    }
-
-    function startRecording() {
-        if (readOnly) {
-            KeybindsService.showHyprlandReadOnlyWarning();
-            return;
-        }
-        recording = true;
-    }
-
-    function stopRecording() {
-        recording = false;
     }
 
     Column {
@@ -630,165 +610,17 @@ Item {
                         Layout.preferredWidth: root._labelWidth
                     }
 
-                    FocusScope {
-                        id: captureScope
+                    KeybindCaptureField {
                         Layout.fillWidth: true
                         Layout.preferredHeight: root._inputHeight
-                        focus: root.recording
-
-                        Component.onCompleted: {
-                            if (root.recording)
-                                forceActiveFocus();
-                        }
-
-                        Connections {
-                            target: root
-                            function onRecordingChanged() {
-                                if (root.recording)
-                                    captureScope.forceActiveFocus();
-                            }
-                        }
-
-                        Rectangle {
-                            anchors.fill: parent
-                            radius: Theme.cornerRadius
-                            color: root.recording ? Theme.primaryContainer : Theme.surfaceContainer
-                            border.color: root.recording ? Theme.primary : Theme.outlineHeavy
-                            border.width: root.recording ? 2 : 1
-
-                            Row {
-                                anchors.left: parent.left
-                                anchors.right: parent.right
-                                anchors.verticalCenter: parent.verticalCenter
-                                anchors.margins: Theme.spacingS
-                                spacing: Theme.spacingS
-
-                                StyledText {
-                                    text: root.editKey || (root.recording ? I18n.tr("Press key...") : I18n.tr("Click to capture"))
-                                    font.pixelSize: Theme.fontSizeMedium
-                                    isMonospace: root.editKey ? true : false
-                                    color: root.editKey ? Theme.surfaceText : Theme.surfaceVariantText
-                                    width: parent.width - recordBtn.width - parent.spacing
-                                    anchors.verticalCenter: parent.verticalCenter
-                                    elide: Text.ElideRight
-                                }
-
-                                VgsActionButton {
-                                    id: recordBtn
-                                    width: root._chipHeight
-                                    height: root._chipHeight
-                                    anchors.verticalCenter: parent.verticalCenter
-                                    circular: false
-                                    iconName: root.recording ? "close" : "radio_button_checked"
-                                    iconSize: Theme.iconSizeSmall
-                                    iconColor: root.recording ? Theme.error : Theme.primary
-                                    enabled: !root.readOnly
-                                    onClicked: root.recording ? root.stopRecording() : root.startRecording()
-                                }
-                            }
-                        }
-
-                        Keys.onPressed: event => {
-                            if (!root.recording)
-                                return;
-                            event.accepted = true;
-
-                            switch (event.key) {
-                            case Qt.Key_Control:
-                            case Qt.Key_Shift:
-                            case Qt.Key_Alt:
-                            case Qt.Key_Meta:
-                            // Lock keys are toggles, not useful bind targets; ignore
-                            // them so toggling NumLock to pick the numpad keysym
-                            // (KP_7 vs KP_Home) doesn't get captured as the bind.
-                            case Qt.Key_NumLock:
-                            case Qt.Key_CapsLock:
-                            case Qt.Key_ScrollLock:
-                                return;
-                            }
-
-                            if (event.key === 0 && (event.modifiers & Qt.AltModifier)) {
-                                root._altShiftGhost = true;
-                                return;
-                            }
-
-                            let mods = KeyUtils.modsFromEvent(event.modifiers);
-                            let qtKey = event.key;
-
-                            if (root._altShiftGhost && (event.modifiers & Qt.AltModifier) && !mods.includes("Shift")) {
-                                mods.push("Shift");
-                            }
-                            root._altShiftGhost = false;
-
-                            if (qtKey === Qt.Key_Backtab) {
-                                qtKey = Qt.Key_Tab;
-                                if (!mods.includes("Shift"))
-                                    mods.push("Shift");
-                            }
-                            const hasShift = mods.includes("Shift");
-                            if (KeybindsService.currentProvider === "niri")
-                                mods = KeyUtils.withSymbolicMod(mods, KeybindsService.modKey);
-
-                            const key = KeyUtils.xkbKeyFromQtKey(qtKey, !!(event.modifiers & Qt.KeypadModifier), hasShift);
-                            if (!key) {
-                                log.warn("Unknown key:", event.key, "mods:", event.modifiers);
-                                return;
-                            }
-
-                            root.updateEdit({
-                                "key": KeyUtils.formatToken(mods, key)
-                            });
-                            root.stopRecording();
-                        }
-
-                        MouseArea {
-                            anchors.fill: parent
-                            hoverEnabled: true
-                            cursorShape: root.recording ? Qt.CrossCursor : Qt.PointingHandCursor
-                            acceptedButtons: Qt.LeftButton
-
-                            onClicked: {
-                                if (!root.recording)
-                                    root.startRecording();
-                            }
-
-                            onWheel: wheel => {
-                                if (!root.recording) {
-                                    wheel.accepted = false;
-                                    return;
-                                }
-                                wheel.accepted = true;
-
-                                let mods = [];
-                                if (wheel.modifiers & Qt.ControlModifier)
-                                    mods.push("Ctrl");
-                                if (wheel.modifiers & Qt.ShiftModifier)
-                                    mods.push("Shift");
-                                if (wheel.modifiers & Qt.AltModifier)
-                                    mods.push("Alt");
-                                if (wheel.modifiers & Qt.MetaModifier)
-                                    mods.push("Super");
-                                if (KeybindsService.currentProvider === "niri")
-                                    mods = KeyUtils.withSymbolicMod(mods, KeybindsService.modKey);
-
-                                let wheelKey = "";
-                                if (wheel.angleDelta.y > 0)
-                                    wheelKey = "WheelScrollUp";
-                                else if (wheel.angleDelta.y < 0)
-                                    wheelKey = "WheelScrollDown";
-                                else if (wheel.angleDelta.x > 0)
-                                    wheelKey = "WheelScrollRight";
-                                else if (wheel.angleDelta.x < 0)
-                                    wheelKey = "WheelScrollLeft";
-
-                                if (!wheelKey)
-                                    return;
-                                root.updateEdit({
-                                    "key": KeyUtils.formatToken(mods, wheelKey)
-                                });
-                                root.stopRecording();
-                            }
-                        }
+                        panelWindow: root.panelWindow
+                        readOnly: root.readOnly
+                        keyText: root.editKey
+                        buttonSize: root._chipHeight
+                        onRecordingRefused: KeybindsService.showHyprlandReadOnlyWarning()
+                        onCaptured: token => root.updateEdit({
+                            "key": token
+                        })
                     }
 
                     Rectangle {

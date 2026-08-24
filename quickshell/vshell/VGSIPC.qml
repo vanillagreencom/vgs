@@ -34,6 +34,8 @@ Item {
     required property var browserPickerModal
     required property var appPickerModal
     required property var changelogLoader
+    required property var wallpaperSwitcherModal
+    required property var themeSwitcherModal
 
     function getPreferredBar(refPropertyName) {
         if (!root.barRepeater || root.barRepeater.count === 0)
@@ -308,6 +310,53 @@ Item {
         }
 
         target: "theme-picker"
+    }
+
+    // Full-screen switchers (VGS-208). Separate targets from `wallpaper` and
+    // `theme`, which are already taken by SessionData's wallpaper accessors and
+    // MethodTheme's light/dark mode toggle.
+    IpcHandler {
+        function open(): string {
+            root.wallpaperSwitcherModal.show();
+            return "WALLPAPER_SWITCHER_OPEN_SUCCESS";
+        }
+
+        function close(): string {
+            root.wallpaperSwitcherModal.close();
+            return "WALLPAPER_SWITCHER_CLOSE_SUCCESS";
+        }
+
+        function toggle(): string {
+            if (root.wallpaperSwitcherModal.shouldBeVisible) {
+                root.wallpaperSwitcherModal.close();
+                return "WALLPAPER_SWITCHER_TOGGLE_SUCCESS";
+            }
+            return open();
+        }
+
+        target: "wallpaper-switcher"
+    }
+
+    IpcHandler {
+        function open(): string {
+            root.themeSwitcherModal.show();
+            return "THEME_SWITCHER_OPEN_SUCCESS";
+        }
+
+        function close(): string {
+            root.themeSwitcherModal.close();
+            return "THEME_SWITCHER_CLOSE_SUCCESS";
+        }
+
+        function toggle(): string {
+            if (root.themeSwitcherModal.shouldBeVisible) {
+                root.themeSwitcherModal.close();
+                return "THEME_SWITCHER_TOGGLE_SUCCESS";
+            }
+            return open();
+        }
+
+        target: "theme-switcher"
     }
 
     IpcHandler {
