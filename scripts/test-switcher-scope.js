@@ -27,13 +27,24 @@
 // dropping the pending-claim fallback under agreement; `applyRoute` answering
 // "screen" for a single monitor (the stale-scope hazard) and "screen" while
 // allMonitors is set; the base's scope branch moved BELOW the arrow branch
-// that consumes Backtab; the Loader's `sourceComponent` unhooked from
-// `scopeToggle`; the subclass's per-open reset deleted; the flip handler
-// replaced by a decoy string carrying its text; `setPerMonitorWallpaper`
-// dropped from applyHere (the product decision undone), and reordered below
-// the write; the read-back deleted; the screen-known guard moved below the
-// mode flip; the pill's click writing the scope directly instead of routing
-// through the signal; the theme switcher growing a `scopeToggle`.
+// that consumes Backtab; the base's Loader moved ABOVE the click-away
+// MouseArea; the Loader's `sourceComponent` unhooked from `scopeToggle`; the
+// subclass's per-open reset deleted; the flip handler replaced by a decoy
+// string carrying its text; `setPerMonitorWallpaper` dropped from applyHere
+// (the product decision undone), and reordered below the write; the mode
+// restore dropped from the miss branch, and hoisted above the read-back; the
+// read-back deleted; the screen-known guard moved below the mode flip; the
+// pill's active-segment no-op guard dropped; the pill's padding absorber
+// deleted, and moved above the segments; the pill's click writing the scope
+// directly instead of routing through the signal; the theme switcher growing
+// a `scopeToggle`.
+//
+// Wiring pins prove presence, order, and liveness-as-code — never
+// REACHABILITY: a pinned statement wrapped in a dead conditional stays green,
+// so behavior guarantees live only in the executed region above. If applyHere
+// ever grows branches, the upgrade path is extracting an executable plan
+// (ordered ops from screenKnown/perMonitorOn inputs) into the marked region,
+// not more pins.
 
 "use strict";
 
@@ -177,6 +188,12 @@ function mustPrecedeIn(block, label, first, second, why) {
         /root\.scopeToggle &&/, /Qt\.Key_Left \|\| event\.key === Qt\.Key_Up/,
         "the scope claim must be decided BEFORE the paging branches: the back-page branch also " +
         "consumes Backtab, so below it the toggle only ever hears Tab");
+
+    mustPrecedeIn(baseSource, "FullScreenSwitcher.qml",
+        /onClicked: root\.close\(\)/, /sourceComponent: root\.scopeToggle/,
+        "the click-away MouseArea is declared BEFORE the scope Loader: siblings stack in " +
+        "declaration order, so a Loader moved above it puts the pill UNDER the dismissal target " +
+        "and every pill click closes the switcher — the pill's own handlers never hear it");
 }
 
 // The subclass: the slot gated by the extracted predicate, one flip path, a
@@ -194,8 +211,13 @@ function mustPrecedeIn(block, label, first, second, why) {
         ["function onOpened() { root.applyToAllMonitors = true; }",
             "every open aims at all monitors again: a scope chosen yesterday and silently still " +
             "aimed at one monitor is how a pick lands somewhere unexpected", 1],
-        ["onClicked: root.scopeFlipRequested()",
-            "the pill's click goes through the same signal Tab drives — one flip path", 1],
+        ["onClicked: if (!segment.active) root.scopeFlipRequested()",
+            "a click SELECTS the segment under the cursor — through the one signal Tab drives, and " +
+            "a no-op on the active one: an unguarded whole-pill flip activated the OPPOSITE of the " +
+            "label the mouse user clicked to confirm", 1],
+        ["MouseArea { anchors.fill: parent }",
+            "the pill carries a bare click absorber, or a near-miss on the capsule's padding falls " +
+            "through to the click-away MouseArea and dismisses the whole switcher", 1],
         ["const everywhere = (Quickshell.screens || []).map(screen => SessionData.getMonitorWallpaper(screen.name));",
             "the all-monitors seed polls every screen through the one accessor that answers per screen", 1],
         ['return root.scopeSeedKey(root.applyToAllMonitors, everywhere, shown, VGSThemeService.selectedWallpaper || "");',
@@ -216,7 +238,10 @@ function mustPrecedeIn(block, label, first, second, why) {
             "the screen is checked FIRST, so a monitor unplugged mid-open is named as the cause " +
             "instead of surfacing as a mysterious failed write — and per-monitor mode is not " +
             "flipped on for a write that cannot land", 1],
-        ["if (!SessionData.perMonitorWallpaper) SessionData.setPerMonitorWallpaper(true);",
+        ["const modeWasOff = !SessionData.perMonitorWallpaper;",
+            "whether the mode flip below is this apply's doing is remembered, because it is what " +
+            "the miss branch has to undo", 1],
+        ["if (modeWasOff) SessionData.setPerMonitorWallpaper(true);",
             "the product decision on VGS-212: picking \"This monitor\" turns per-monitor mode on, " +
             "exactly as the dash's buttons do, rather than bouncing the user to Settings", 1],
         ["SessionData.setMonitorWallpaper(screenName, path);",
@@ -224,6 +249,10 @@ function mustPrecedeIn(block, label, first, second, why) {
         ["if (SessionData.getMonitorWallpaper(screenName) !== path)",
             "and it is read BACK: SessionData refuses a write silently (a warn and a return), so " +
             "the only way to know it landed is to ask what the screen now shows", 1],
+        ["if (modeWasOff) SessionData.setPerMonitorWallpaper(false);",
+            "a refused write takes its mode flip back with it: the toast names the wallpaper " +
+            "failure, and every monitor silently switched to per-monitor rendering would be a " +
+            "global change nothing reported", 1],
         ["ToastService.showError(", "both failure exits toast — a silent one is the failure mode this path must not have", 2]
     ]);
     mustPrecedeIn(applyHere, "applyHere()", /Quickshell\.screens \|\| \[\]\)\.some/, /setPerMonitorWallpaper\(true\)/,
@@ -233,10 +262,17 @@ function mustPrecedeIn(block, label, first, second, why) {
         "and the read-back (which answers the GLOBAL path with the mode off) cries wolf");
     mustPrecedeIn(applyHere, "applyHere()", /setMonitorWallpaper\(screenName, path\);/, /getMonitorWallpaper\(screenName\) !== path/,
         "and the read-back reads AFTER the write, or it verifies the previous state");
+    mustPrecedeIn(applyHere, "applyHere()", /getMonitorWallpaper\(screenName\) !== path/, /setPerMonitorWallpaper\(false\)/,
+        "the restore lives INSIDE the miss branch, below the read-back — hoisted above it, every " +
+        "successful first per-monitor apply turns the mode straight back off");
 
     mustNot("WallpaperSwitcherModal.qml", /onClicked:\s*root\.applyToAllMonitors/,
         "the pill's click must not write the scope directly — the signal is the one flip path, " +
         "and a second writer is how Tab and the click drift apart");
+    mustPrecedeIn(wallpaperSource, "WallpaperSwitcherModal.qml",
+        /MouseArea \{\s*anchors\.fill: parent\s*\}/, /Row \{\s*id: segments/,
+        "the absorber is declared BEFORE the segments: siblings stack in declaration order, so an " +
+        "absorber moved below the Row sits on top of the segment hit targets and eats every click");
 }
 
 // The theme switcher has no per-monitor concept and must not grow the toggle

@@ -14,8 +14,9 @@ import qs.Widgets
 //
 // On a multi-monitor setup a pill above the rail chooses where Enter applies:
 // every monitor (the default on every open) or only the one the switcher is
-// on. Tab and a click flip it — the base takes Tab off paging while the pill
-// is up. One monitor has nothing to choose, so the pill is not there at all.
+// on. Tab flips it, a click selects the segment under the cursor — the base
+// takes Tab off paging while the pill is up. One monitor has nothing to
+// choose, so the pill is not there at all.
 FullScreenSwitcher {
     id: root
 
@@ -146,11 +147,18 @@ FullScreenSwitcher {
         // Product decision (VGS-212): picking "This monitor" with per-monitor
         // mode off turns the mode ON, exactly as the dash's per-monitor
         // buttons do, rather than bouncing the user to Settings.
-        if (!SessionData.perMonitorWallpaper)
+        const modeWasOff = !SessionData.perMonitorWallpaper;
+        if (modeWasOff)
             SessionData.setPerMonitorWallpaper(true);
         SessionData.setMonitorWallpaper(screenName, path);
-        if (SessionData.getMonitorWallpaper(screenName) !== path)
+        if (SessionData.getMonitorWallpaper(screenName) !== path) {
+            // The flip above must not outlive a refused write: the wallpaper
+            // failure is toasted, but every monitor silently switched to
+            // per-monitor rendering would be a global change nothing reported.
+            if (modeWasOff)
+                SessionData.setPerMonitorWallpaper(false);
             ToastService.showError(I18n.tr("VGS wallpaper error"), I18n.tr("The wallpaper for this monitor did not take") + " (" + screenName + ")");
+        }
     }
 
     onApplied: item => {
@@ -188,6 +196,13 @@ FullScreenSwitcher {
             border.width: 1
             border.color: Theme.withAlpha(Theme.surfaceText, 0.2)
 
+            // Below the segments in stacking order: consumes a click on the
+            // pill's own padding, or a near-miss on the capsule falls through
+            // to the click-away MouseArea and dismisses the whole switcher.
+            MouseArea {
+                anchors.fill: parent
+            }
+
             Row {
                 id: segments
                 anchors.centerIn: parent
@@ -216,16 +231,18 @@ FullScreenSwitcher {
                             color: Theme.surfaceText
                             opacity: segment.active ? 1 : 0.7
                         }
+
+                        // Clicking a segment SELECTS it, through the same
+                        // signal Tab drives when that means flipping — and a
+                        // no-op on the one already active: a control drawn as
+                        // two labeled choices must not activate the opposite
+                        // of the label under the cursor.
+                        MouseArea {
+                            anchors.fill: parent
+                            onClicked: if (!segment.active) root.scopeFlipRequested()
+                        }
                     }
                 }
-            }
-
-            // A click flips the pill through the same signal Tab drives — one
-            // flip path. Whole-pill target, because with two states there is
-            // nothing a per-segment hit test would add.
-            MouseArea {
-                anchors.fill: parent
-                onClicked: root.scopeFlipRequested()
             }
         }
     }
