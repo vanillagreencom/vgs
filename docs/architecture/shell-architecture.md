@@ -184,7 +184,14 @@ vshell ipc call capture open
 vshell ipc call theme reload
 vshell ipc call settings openWith theme
 vshell ipc call settings openWith wallpaper
+vshell ipc call wallpaper-switcher open
+vshell ipc call theme-switcher open
 ```
+
+The two switcher targets are the full-screen wallpaper/theme pickers
+(`docs/architecture/theme-architecture.md` § Full-screen switchers). They are
+NOT `wallpaper`/`theme`: those targets already belong to `SessionData`'s
+wallpaper accessors and `MethodTheme`'s light/dark toggle.
 
 ### Capture state
 

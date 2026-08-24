@@ -8,6 +8,7 @@ import qs.Modals.Clipboard
 import qs.Modals.Capture
 import qs.Modals.Common
 import qs.Modals.Settings
+import qs.Modals.Switcher
 import qs.Modules
 import qs.Modules.Dash
 import qs.Modules.ControlCenter
@@ -1318,6 +1319,14 @@ Item {
         }
     }
 
+    WallpaperSwitcherModal {
+        id: wallpaperSwitcherModal
+    }
+
+    ThemeSwitcherModal {
+        id: themeSwitcherModal
+    }
+
     VGSIPC {
         captureModalLoader: captureModalLoader
         powerMenuModalLoader: powerMenuModalLoader
@@ -1333,6 +1342,8 @@ Item {
         browserPickerModal: browserPickerModal
         appPickerModal: filePickerModal
         changelogLoader: changelogLoader
+        wallpaperSwitcherModal: wallpaperSwitcherModal
+        themeSwitcherModal: themeSwitcherModal
     }
 
     Variants {

@@ -28,8 +28,41 @@ Singleton {
     property string lastMessage: ""
     property string lastError: ""
     property var blueprints: []
+    // A failed list/wallpapers read leaves the corresponding array empty, which
+    // reads identically to a genuinely empty set. UI that asserts "you have
+    // none" must check these first.
+    //
+    // Each flag carries its OWN error text. `lastError` is a shared slot that
+    // every `_run` clears at dispatch and overwrites in its callback, so a
+    // surface that fires four commands and then reads `lastError` renders
+    // whichever one failed LAST — and watches it mutate, or blank out, under the
+    // user. These are written only by the read that owns the flag.
+    property bool blueprintsLoadFailed: false
+    property string blueprintsLoadError: ""
+    property bool wallpapersLoadFailed: false
+    property string wallpapersLoadError: ""
+    // The theme whose wallpaper set `themeWallpapers` currently holds. A failed
+    // read LEAVES the previous list, and `applyBlueprint` re-reads on success,
+    // so after a theme switch whose re-read failed the list on screen belongs to
+    // the theme BEFORE it — which no surface could say without this.
+    property string themeWallpapersTheme: ""
     property var currentTheme: ({})
     property string selectedWallpaper: ""
+
+    // The ONE wording every surface shows over a retained wallpaper list, so the
+    // dash tab and the switcher banner cannot describe the same state
+    // differently. Empty while the list is current. "Showing X's set" is the
+    // load-bearing half: after a theme switch the retained list is a DIFFERENT
+    // theme's, and Enter would apply a wallpaper from outside the active theme.
+    readonly property string wallpapersStaleNotice: {
+        if (!wallpapersLoadFailed)
+            return "";
+        const loaded = themeWallpapersTheme;
+        const active = (currentTheme || {}).name || "";
+        if (loaded && active && loaded !== active)
+            return I18n.tr("Could not read this theme's wallpapers — showing %1's set").arg(loaded);
+        return I18n.tr("Could not read this theme's wallpapers — showing the last set that loaded");
+    }
     readonly property var paletteArgMap: ({
         background: "background",
         foreground: "foreground",
@@ -67,6 +100,55 @@ Singleton {
     signal wallpapersLoaded
     signal appRolesLoaded(string app)
     signal applyCompleted(bool success, string message)
+    // The SAME completion, carrying the id of the request it answers. A surface
+    // that started one apply and wants to report only that apply's outcome
+    // cannot use `applyCompleted`: 19 unrelated operations emit it from over 40
+    // sites, so "the next one" is whichever command happened to land first.
+    // Emitted only by `_finishApply`, which `applyBlueprint`/`setWallpaper` —
+    // the two a switcher starts — are the only callers of.
+    signal applyFinished(string requestId, bool success, string message)
+
+    // Apply requests still running, keyed by a request id that is unique per
+    // CALL. Deliberately narrower than `busy`: `busy` counts every non-background
+    // command, so gating a switcher's Enter on it blocks while an unrelated
+    // `theme restyle` or per-app override from a settings tab runs, and unblocks
+    // while the switcher's own background reads are still in flight.
+    property var _applyInFlight: ({})
+    readonly property bool applyInFlight: Object.keys(_applyInFlight).length > 0
+    // Monotonic, so no two calls ever share a request id. A NAME is not an
+    // identity — `setWallpaper` uses one constant for every wallpaper — so two
+    // overlapping calls shared a key and the first completion emptied the set.
+    property int _applyRequestSeq: 0
+    // The apply request that last claimed `selectedWallpaper`, or "" when none
+    // does. Keyed on the REQUEST, never the path — see `_ownsWallpaperSlot`.
+    property string _wallpaperSlotOwner: ""
+
+    // `label` only makes the returned request id readable; it is NOT a Proc id
+    // — see `_runApply`. Every apply answers its own callback, so a token leaves
+    // `_applyInFlight` when its own `_finishApply` runs.
+    function _beginApply(label) {
+        _applyRequestSeq += 1;
+        const requestId = label + "#" + _applyRequestSeq;
+        const next = Object.assign({}, _applyInFlight);
+        next[requestId] = true;
+        _applyInFlight = next;
+        return requestId;
+    }
+
+    // Ends the request and announces it on both signals: `applyCompleted` for
+    // the settings tabs that report any outcome, `applyFinished` for a caller
+    // that is waiting on this request specifically.
+    function _finishApply(requestId, success, message) {
+        if (_applyInFlight[requestId]) {
+            const next = Object.assign({}, _applyInFlight);
+            delete next[requestId];
+            _applyInFlight = next;
+        }
+        if (_wallpaperSlotOwner === requestId)
+            _wallpaperSlotOwner = "";
+        applyCompleted(success, message);
+        applyFinished(requestId, success, message);
+    }
 
     function _persistAppliedTheme(name) {
         if (!name || typeof SettingsData === "undefined")
@@ -83,13 +165,17 @@ Singleton {
 
     // backgroundTask: long-running helper calls (preview rendering) must not
     // count toward `busy`, or every Apply button goes dead for minutes.
-    function _run(id, args, callback, timeoutMs, backgroundTask) {
+    // `id` is this call's bookkeeping key in `_pending`; `procId` is the id Proc
+    // COALESCES on and defaults to it — `_runApply` is the one caller that
+    // wants them different.
+    function _run(id, args, callback, timeoutMs, backgroundTask, procId) {
+        const coalesceId = (procId === undefined) ? id : procId;
         if (!backgroundTask) {
             _pending[id] = true;
             inflight = Object.keys(_pending).length;
         }
         lastError = "";
-        Proc.runCommand(id, [Paths.vshellCli].concat(args), function(output, exitCode, stderr) {
+        Proc.runCommand(coalesceId, [Paths.vshellCli].concat(args), function(output, exitCode, stderr) {
             if (!backgroundTask) {
                 delete _pending[id];
                 inflight = Object.keys(_pending).length;
@@ -102,6 +188,17 @@ Singleton {
             if (callback)
                 callback(output, exitCode, stderr || "");
         }, 0, timeoutMs || 120000);
+    }
+
+    // An apply, run under its own request id and coalesced with nothing. Proc's
+    // debouncer folds same-id calls into ONE callback, and only within its window
+    // — applies run at interval 0, so it catches same-tick calls and nothing else,
+    // while two applies from separate key presses both launch and both answer. An
+    // EMPTY Proc id makes Proc mint a random, self-cleaning id, so every apply
+    // runs its own process into one `_finishApply`; a unique NAMED id would leak
+    // a debouncer entry and Timer, reaped only for a random id.
+    function _runApply(requestId, args, callback) {
+        _run(requestId, args, callback, undefined, false, "");
     }
 
     function refresh() {
@@ -277,31 +374,61 @@ Singleton {
 
     function refreshBlueprints() {
         _run("vgs-theme-list", ["theme", "list", "--json"], function(output, exitCode) {
-            if (exitCode !== 0)
+            if (exitCode !== 0) {
+                blueprintsLoadFailed = true;
+                blueprintsLoadError = lastError;
                 return;
+            }
             try {
                 const data = JSON.parse(output || "{}");
                 blueprints = data.blueprints || [];
+                blueprintsLoadFailed = false;
+                blueprintsLoadError = "";
                 blueprintsLoaded();
             } catch (e) {
                 lastError = "Failed to parse blueprints: " + e;
+                blueprintsLoadFailed = true;
+                blueprintsLoadError = lastError;
             }
         }, 120000, true);
     }
 
+    // Generation token for the wallpaper read. Proc coalesces only SAME-TICK
+    // calls, so two overlapping `theme wallpapers` reads both launch and both
+    // call back — and the OLDER one can land last. That is reachable in one
+    // ordinary sequence: opening the wallpaper switcher dispatches a read, an
+    // apply succeeds and dispatches another, and if the pre-apply read finishes
+    // second it presents the PREVIOUS theme's wallpapers as fresh, clearing the
+    // stale notice that would otherwise have said so.
+    property int _wallpapersReadSeq: 0
+
     function refreshWallpapers() {
+        const readId = ++root._wallpapersReadSeq;
         _run("vgs-theme-wallpapers", ["theme", "wallpapers", "--json"], function(output, exitCode) {
+            // A newer read owns the list; this one answers about a theme that
+            // may no longer be the current one.
+            if (readId !== root._wallpapersReadSeq)
+                return;
             if (exitCode !== 0) {
-                themeWallpapers = [];
+                // The previous list is LEFT in place. Discarding a working list
+                // because one refresh failed destroys a usable browse; the flag
+                // is what surfaces say the data may be stale with.
+                wallpapersLoadFailed = true;
+                wallpapersLoadError = lastError;
                 wallpapersLoaded();
                 return;
             }
             try {
                 const data = JSON.parse(output || "{}");
                 themeWallpapers = data.wallpapers || [];
+                themeWallpapersTheme = data.theme || "";
+                wallpapersLoadFailed = false;
+                wallpapersLoadError = "";
                 wallpapersLoaded();
             } catch (e) {
                 lastError = "Failed to parse theme wallpapers: " + e;
+                wallpapersLoadFailed = true;
+                wallpapersLoadError = lastError;
             }
         });
     }
@@ -348,16 +475,33 @@ Singleton {
         });
     }
 
+    // Returns the request id the completion will carry, or "" when nothing was
+    // dispatched. A caller latching on the reply must check for "": there is no
+    // completion coming for a request that was never made.
     function applyBlueprint(name) {
         if (!name)
-            return;
-        _run("vgs-theme-apply-" + name, ["theme", "apply", name, "--json"], function(output, exitCode, stderr) {
+            return "";
+        const requestId = _beginApply("vgs-theme-apply-" + name);
+        _runApply(requestId, ["theme", "apply", name, "--json"], function(output, exitCode, stderr) {
             if (exitCode !== 0) {
-                applyCompleted(false, stderr || output || "Apply failed");
+                _finishApply(requestId, false, stderr || output || "Apply failed");
                 return;
             }
+            let data = {};
             try {
-                const data = JSON.parse(output || "{}");
+                data = JSON.parse(output || "{}");
+            } catch (e) {
+                _finishApply(requestId, false, "Failed to parse apply result: " + e);
+                return;
+            }
+            // A throw raised AFTER the parse succeeded is not a parse failure,
+            // and it must still finish the request: Proc only log.warns a
+            // throwing callback, so an unfinished request pins `applyInFlight`
+            // true and both switchers answer every Enter with "Still applying".
+            // The SUCCESS resolves after the try, so a handler throwing back into
+            // this frame cannot reach the catch.
+            let message = "";
+            try {
                 const warnings = data.warnings || [];
                 const appliedName = data.name || name;
                 const details = [];
@@ -376,17 +520,27 @@ Singleton {
                     SessionData.setWallpaper(data.wallpaper);
                 _markGreeterThemeSyncPending();
                 refreshCurrent();
-                applyCompleted(true, lastMessage);
+                // The wallpaper set is theme-scoped: without this, every surface
+                // reading `themeWallpapers` keeps the previous theme's list.
+                refreshWallpapers();
+                message = lastMessage;
             } catch (e) {
-                applyCompleted(false, "Failed to parse apply result: " + e);
+                _finishApply(requestId, false, "Theme applied but the shell could not finish updating: " + e);
+                return;
             }
+            _finishApply(requestId, true, message);
         });
+        return requestId;
     }
 
+    // Returns the request id, or "" when nothing was dispatched — see
+    // `applyBlueprint`.
     function setWallpaper(path, extractColors, mode) {
         if (!path)
-            return;
-        selectedWallpaper = path;
+            return "";
+        // Optimistic, so the UI tracks the pending choice; restored below if the
+        // helper refuses it, or the service claims a wallpaper that never landed.
+        const previousWallpaper = selectedWallpaper;
         const args = ["theme", "set-wallpaper", path, "--json"];
         if (extractColors) {
             args.push("--extract");
@@ -397,29 +551,65 @@ Singleton {
             args.push("--mode");
             args.push(mode || SettingsData.matugenMode || "auto");
         }
-        _run("vgs-theme-wallpaper", args, function(output, exitCode, stderr) {
+        const requestId = _beginApply("vgs-theme-wallpaper");
+        selectedWallpaper = path;
+        _wallpaperSlotOwner = requestId;
+        _runApply(requestId, args, function(output, exitCode, stderr) {
             if (exitCode !== 0) {
-                applyCompleted(false, stderr || output || "Wallpaper apply failed");
+                _rollbackWallpaper(requestId, previousWallpaper);
+                _finishApply(requestId, false, stderr || output || "Wallpaper apply failed");
                 return;
             }
             let data = {};
             try {
                 data = JSON.parse(output || "{}");
             } catch (e) {
+                _rollbackWallpaper(requestId, previousWallpaper);
                 lastError = "Failed to parse wallpaper result: " + e;
-                applyCompleted(false, lastError);
+                _finishApply(requestId, false, lastError);
                 return;
             }
-            const warnings = data.warnings || data.apply?.warnings || [];
-            if (data.saved)
-                _persistAppliedTheme(data.name || (data.apply && data.apply.name));
-            if (typeof SessionData !== "undefined")
-                SessionData.setWallpaper(path);
-            _markGreeterThemeSyncPending();
-            refresh();
-            const base = extractColors ? "Wallpaper colors generated and applied" : "Wallpaper applied";
-            applyCompleted(true, warnings.length > 0 ? base + " (warnings: " + warnings.join("; ") + ")" : base);
+            // Everything past the parse is guarded too: Proc only log.warns a
+            // throwing callback, so a throw here would leave the request
+            // unfinished and `applyInFlight` stuck true. The SUCCESS resolves
+            // after the try, so a handler throwing back cannot reach the catch.
+            let message = "";
+            try {
+                const warnings = data.warnings || data.apply?.warnings || [];
+                if (data.saved)
+                    _persistAppliedTheme(data.name || (data.apply && data.apply.name));
+                // Same ownership test the rollback uses: a LATE success from an
+                // apply that no longer owns the slot must not persist its
+                // wallpaper over a newer one that already moved the desktop on.
+                // `refresh()` restores `selectedWallpaper`, not SessionData.
+                if (typeof SessionData !== "undefined" && _ownsWallpaperSlot(requestId))
+                    SessionData.setWallpaper(path);
+                _markGreeterThemeSyncPending();
+                refresh();
+                const base = extractColors ? "Wallpaper colors generated and applied" : "Wallpaper applied";
+                message = warnings.length > 0 ? base + " (warnings: " + warnings.join("; ") + ")" : base;
+            } catch (e) {
+                _finishApply(requestId, false, "Wallpaper applied but the shell could not finish updating: " + e);
+                return;
+            }
+            _finishApply(requestId, true, message);
         });
+        return requestId;
+    }
+
+    // True while `requestId` is still the apply that claimed `selectedWallpaper`.
+    // Both the rollback and the success-path persist test it, so no late reply
+    // writes over a newer apply, and a mid-apply `refreshCurrent` cannot void it.
+    function _ownsWallpaperSlot(requestId) {
+        return _wallpaperSlotOwner === requestId;
+    }
+
+    // Undoes one optimistic `setWallpaper` write, but only while that call still
+    // owns the slot: a LATE failure from an older overlapping call must not
+    // revert a newer apply that already succeeded and moved the desktop on.
+    function _rollbackWallpaper(requestId, previousWallpaper) {
+        if (_ownsWallpaperSlot(requestId))
+            selectedWallpaper = previousWallpaper;
     }
 
     // The blueprint entry for the active theme (carries modified/builtin/
@@ -654,6 +844,8 @@ Singleton {
 
     function clearWallpaper() {
         selectedWallpaper = "";
+        // Releases the slot: an in-flight apply must not persist over this clear.
+        _wallpaperSlotOwner = "";
         _run("vgs-theme-clear-wallpaper", ["theme", "clear-wallpaper", "--json"], function(output, exitCode, stderr) {
             if (exitCode !== 0) {
                 applyCompleted(false, stderr || output || "Wallpaper clear failed");
@@ -688,8 +880,14 @@ Singleton {
         previewsGenerating = true;
         // Re-read blueprints first so the "missing" check runs on fresh preview
         // paths (wallpaper/palette edits invalidate cached previews).
+        // This read does NOT own `blueprintsLoadFailed`. That flag is how a
+        // surface says "the theme list could not be read", and `refreshBlueprints`
+        // is the read that backs the list; setting it from here reported a failed
+        // PREVIEW probe as a failed list even when the list was loaded and on
+        // screen. Failing here just means no previews were rendered this round.
         _run("vgs-theme-preview-check", ["theme", "list", "--json"], function(output, exitCode) {
             if (exitCode !== 0) {
+                log.warn("Preview check failed, previews not refreshed:", lastError);
                 previewsGenerating = false;
                 return;
             }
@@ -697,11 +895,13 @@ Singleton {
             try {
                 bps = JSON.parse(output || "{}").blueprints || [];
             } catch (e) {
-                lastError = "Failed to parse blueprints: " + e;
+                log.warn("Preview check returned unparseable blueprints:", e);
                 previewsGenerating = false;
                 return;
             }
             blueprints = bps;
+            blueprintsLoadFailed = false;
+            blueprintsLoadError = "";
             blueprintsLoaded();
             if (!bps.some(bp => !bp.preview)) {
                 previewsGenerating = false;

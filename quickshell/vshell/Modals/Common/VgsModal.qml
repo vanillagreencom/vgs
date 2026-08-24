@@ -29,6 +29,7 @@ Item {
     property color backgroundColor: Theme.popupSurfaceColor(Theme.surfaceContainer)
     property real cornerRadius: Theme.cornerRadius
     property bool enableShadow: true
+    property bool enableBorder: true
     property bool shouldBeVisible: false
     property bool shouldHaveFocus: shouldBeVisible
     property bool allowFocusOverride: false
@@ -115,6 +116,7 @@ Item {
         backgroundColor: root.backgroundColor
         cornerRadius: root.cornerRadius
         enableShadow: root.enableShadow
+        enableBorder: root.enableBorder
         allowFocusOverride: root.allowFocusOverride
         allowStacking: root.allowStacking
         keepContentLoaded: root.keepContentLoaded

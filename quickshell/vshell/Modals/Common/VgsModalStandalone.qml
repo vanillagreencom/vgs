@@ -38,6 +38,9 @@ Item {
     property color backgroundColor: Theme.popupSurfaceColor(Theme.surfaceContainer)
     property real cornerRadius: Theme.cornerRadius
     property bool enableShadow: true
+    // Full-bleed surfaces (the switchers) turn this off: a window border
+    // traced around the whole screen is a frame with nothing outside it.
+    property bool enableBorder: true
     property alias modalFocusScope: focusScope
     property bool shouldBeVisible: false
     property bool isClosing: false
@@ -198,7 +201,11 @@ Item {
         id: clickCatcher
         visible: false
         color: "transparent"
-        updatesEnabled: root.useBackground
+        // Rendered even with nothing to draw (VGS-208): a mapped layer surface
+        // Quickshell never renders stalls the QML animation driver, and the
+        // animation-backed `closeTimer` below is what unmaps a closing modal —
+        // gating this on `useBackground` left every modal stuck on screen with
+        // `modalDarkenBackground` off. See scripts/qml-smoke.sh switcher_check.
 
         WlrLayershell.namespace: root.layerNamespace + ":clickcatcher"
         WlrLayershell.layer: WlrLayershell.Top
@@ -379,6 +386,7 @@ Item {
                         radius: root.cornerRadius
                         surfaceColor: root.backgroundColor
                         // Native-style window border matching Hyprland's active border.
+                        drawBorder: root.enableBorder
                         borderColor: Theme.windowBorderActive
                         borderWidth: Theme.windowBorderWidth
 

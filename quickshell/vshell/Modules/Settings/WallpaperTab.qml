@@ -58,6 +58,10 @@ FocusScope {
                     width: parent.width
                     spacing: Theme.spacingS
 
+                    // The DASH tabs, deliberately: from Settings the full
+                    // picker is the more capable surface — folders, per-monitor
+                    // assignment, downloads. The switcher is the keyboard-driven
+                    // one, and the shortcut for it is set just below.
                     VgsButton {
                         variant: "secondary"
                         text: I18n.tr("Browse Wallpapers")
@@ -79,6 +83,14 @@ FocusScope {
                                 bar.triggerDashTab(SettingsData.dashTabIndexForId("themes"));
                         }
                     }
+                }
+
+                SwitcherShortcutRow {
+                    action: "spawn vshell ipc call wallpaper-switcher toggle"
+                    text: I18n.tr("Wallpaper Switcher Shortcut")
+                    description: I18n.tr("Opens the full-screen wallpaper switcher")
+                    bindDescription: I18n.tr("Wallpaper switcher")
+                    panelWindow: root.parentModal
                 }
 
                 SettingsDropdownRow {
