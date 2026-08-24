@@ -48,7 +48,7 @@ packaging/optional-packages.json	589
 quickshell/vshell-preview/shell.qml	456
 quickshell/vshell/Common/KeybindActions.js	1430
 quickshell/vshell/Common/MethodTheme.qml	1480
-quickshell/vshell/Common/SessionData.qml	1577
+quickshell/vshell/Common/SessionData.qml	1551
 quickshell/vshell/Common/SettingsData.qml	3675
 quickshell/vshell/Common/fzf.js	1308
 quickshell/vshell/Common/settings/Processes.qml	754

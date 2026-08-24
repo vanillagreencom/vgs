@@ -582,63 +582,85 @@ Singleton {
         saveSettings();
     }
 
-    function setMonitorWallpaper(screenName, path) {
-        var screen = null;
+    // The one screen lookup: every per-monitor writer walked Quickshell.screens
+    // for this.
+    function _screenByName(screenName) {
         var screens = Quickshell.screens;
         for (var i = 0; i < screens.length; i++) {
-            if (screens[i].name === screenName) {
-                screen = screens[i];
-                break;
+            if (screens[i].name === screenName)
+                return screens[i];
+        }
+        return null;
+    }
+
+    // One screen's entry in one per-monitor map, as a NEW map so the property
+    // change is seen. The screen's OTHER keys go with it: an assignment an
+    // earlier session wrote under the raw name or model is answered by
+    // _findMonitorValue BEFORE the display name written here, so leaving one
+    // behind means the value just written is not the one read back.
+    function _mapWithMonitorValue(map, screen, value) {
+        var identifier = typeof SettingsData !== "undefined" ? SettingsData.getScreenDisplayName(screen) : screen.name;
+        var next = {};
+        for (var key in map) {
+            var isThisScreen = key === screen.name || (screen.model && key === screen.model) || key === identifier;
+            if (!isThisScreen)
+                next[key] = map[key];
+        }
+        if (value && value !== "")
+            next[identifier] = value;
+        return next;
+    }
+
+    // Turn per-monitor mode ON without changing what any monitor shows.
+    //
+    // setPerMonitorWallpaper alone only flips the flag: monitorWallpapers —
+    // and, under per-mode, the light/dark maps syncWallpaperForCurrentMode
+    // refills it from — keep whatever an earlier per-monitor session left in
+    // them, and getMonitorWallpaper starts answering those the instant the
+    // flag goes on. Every screen holding a retained entry therefore JUMPS to
+    // an old wallpaper the moment the mode is enabled (VGS-212). Seeding each
+    // connected screen from what it displays right now makes the flip
+    // invisible, so only the caller's own write afterwards changes anything.
+    //
+    // The mirror of setPerModeWallpaper's own enable seeding, which copies the
+    // live values into the maps it is about to start reading.
+    function enablePerMonitorWallpaperFromCurrent() {
+        if (perMonitorWallpaper)
+            return;
+        var screens = Quickshell.screens || [];
+        for (var i = 0; i < screens.length; i++) {
+            var screen = screens[i];
+            var shown = getMonitorWallpaper(screen.name);
+            monitorWallpapers = _mapWithMonitorValue(monitorWallpapers, screen, shown);
+            // BOTH mode maps, not just the current one: after the flip a
+            // light/dark switch refills monitorWallpapers from the OTHER map,
+            // and an unseeded one jumps every screen exactly as the flag flip
+            // would. The CURRENT mode is seeded from what is ON the screen
+            // rather than from its global path — wallpaper cycling writes
+            // wallpaperPath alone, so the two can disagree — and the other
+            // mode from its own.
+            if (perModeWallpaper) {
+                monitorWallpapersLight = _mapWithMonitorValue(monitorWallpapersLight, screen, isLightMode ? shown : wallpaperPathLight);
+                monitorWallpapersDark = _mapWithMonitorValue(monitorWallpapersDark, screen, isLightMode ? wallpaperPathDark : shown);
             }
         }
+        setPerMonitorWallpaper(true);
+    }
 
+    function setMonitorWallpaper(screenName, path) {
+        var screen = _screenByName(screenName);
         if (!screen) {
             log.warn("Screen not found");
             return;
         }
 
-        var identifier = typeof SettingsData !== "undefined" ? SettingsData.getScreenDisplayName(screen) : screen.name;
-
-        var newMonitorWallpapers = {};
-        for (var key in monitorWallpapers) {
-            var isThisScreen = key === screen.name || (screen.model && key === screen.model);
-            if (!isThisScreen) {
-                newMonitorWallpapers[key] = monitorWallpapers[key];
-            }
-        }
-
-        if (path && path !== "") {
-            newMonitorWallpapers[identifier] = path;
-        }
-
-        monitorWallpapers = newMonitorWallpapers;
+        monitorWallpapers = _mapWithMonitorValue(monitorWallpapers, screen, path);
 
         if (perModeWallpaper) {
-            if (isLightMode) {
-                var newLight = {};
-                for (var key in monitorWallpapersLight) {
-                    var isThisScreen = key === screen.name || (screen.model && key === screen.model);
-                    if (!isThisScreen) {
-                        newLight[key] = monitorWallpapersLight[key];
-                    }
-                }
-                if (path && path !== "") {
-                    newLight[identifier] = path;
-                }
-                monitorWallpapersLight = newLight;
-            } else {
-                var newDark = {};
-                for (var key in monitorWallpapersDark) {
-                    var isThisScreen = key === screen.name || (screen.model && key === screen.model);
-                    if (!isThisScreen) {
-                        newDark[key] = monitorWallpapersDark[key];
-                    }
-                }
-                if (path && path !== "") {
-                    newDark[identifier] = path;
-                }
-                monitorWallpapersDark = newDark;
-            }
+            if (isLightMode)
+                monitorWallpapersLight = _mapWithMonitorValue(monitorWallpapersLight, screen, path);
+            else
+                monitorWallpapersDark = _mapWithMonitorValue(monitorWallpapersDark, screen, path);
         }
 
         saveSettings();
@@ -670,15 +692,7 @@ Singleton {
     }
 
     function setMonitorCyclingEnabled(screenName, enabled) {
-        var screen = null;
-        var screens = Quickshell.screens;
-        for (var i = 0; i < screens.length; i++) {
-            if (screens[i].name === screenName) {
-                screen = screens[i];
-                break;
-            }
-        }
-
+        var screen = _screenByName(screenName);
         if (!screen) {
             log.warn("Screen not found");
             return;
@@ -701,15 +715,7 @@ Singleton {
     }
 
     function setMonitorCyclingMode(screenName, mode) {
-        var screen = null;
-        var screens = Quickshell.screens;
-        for (var i = 0; i < screens.length; i++) {
-            if (screens[i].name === screenName) {
-                screen = screens[i];
-                break;
-            }
-        }
-
+        var screen = _screenByName(screenName);
         if (!screen) {
             log.warn("Screen not found");
             return;
@@ -732,15 +738,7 @@ Singleton {
     }
 
     function setMonitorCyclingInterval(screenName, interval) {
-        var screen = null;
-        var screens = Quickshell.screens;
-        for (var i = 0; i < screens.length; i++) {
-            if (screens[i].name === screenName) {
-                screen = screens[i];
-                break;
-            }
-        }
-
+        var screen = _screenByName(screenName);
         if (!screen) {
             log.warn("Screen not found");
             return;
@@ -763,15 +761,7 @@ Singleton {
     }
 
     function setMonitorCyclingTime(screenName, time) {
-        var screen = null;
-        var screens = Quickshell.screens;
-        for (var i = 0; i < screens.length; i++) {
-            if (screens[i].name === screenName) {
-                screen = screens[i];
-                break;
-            }
-        }
-
+        var screen = _screenByName(screenName);
         if (!screen) {
             log.warn("Screen not found");
             return;
@@ -1292,15 +1282,7 @@ Singleton {
     }
 
     function _findMonitorValue(map, screenName) {
-        var screen = null;
-        var screens = Quickshell.screens;
-        for (var i = 0; i < screens.length; i++) {
-            if (screens[i].name === screenName) {
-                screen = screens[i];
-                break;
-            }
-        }
-
+        var screen = _screenByName(screenName);
         if (!screen)
             return map[screenName];
 
@@ -1332,15 +1314,7 @@ Singleton {
     }
 
     function setMonitorWallpaperFillMode(screenName, mode) {
-        var screen = null;
-        var screens = Quickshell.screens;
-        for (var i = 0; i < screens.length; i++) {
-            if (screens[i].name === screenName) {
-                screen = screens[i];
-                break;
-            }
-        }
-
+        var screen = _screenByName(screenName);
         if (!screen)
             return;
 

@@ -19,7 +19,10 @@
 //      branch that also consumes Backtab; the subclass's Enter must dispatch
 //      on the extracted route; the single-screen write must check its screen,
 //      read itself back and toast a miss — a write that can fail with nothing
-//      said is the failure mode VGS-208 spent rounds removing elsewhere.
+//      said is the failure mode VGS-208 spent rounds removing elsewhere. And
+//      SessionData's own SEEDED enable, because without it "This monitor"
+//      reaches every OTHER monitor: turning per-monitor mode on republishes
+//      whatever an earlier per-monitor session left in the maps.
 //
 // MUST-FAIL CONTROLS, each seen red against the shipped tree, one at a time:
 // `scopeChoiceExists` answering true for a single monitor; `scopeSeedKey`
@@ -30,8 +33,13 @@
 // that consumes Backtab; the base's Loader moved ABOVE the click-away
 // MouseArea; the Loader's `sourceComponent` unhooked from `scopeToggle`; the
 // subclass's per-open reset deleted; the flip handler replaced by a decoy
-// string carrying its text; `setPerMonitorWallpaper` dropped from applyHere
-// (the product decision undone), and reordered below the write; the mode
+// string carrying its text; the seeded enable dropped from applyHere
+// (the product decision undone), reordered below the write, and swapped back
+// for the bare `setPerMonitorWallpaper(true)` flip; SessionData's seed of
+// `monitorWallpapers` deleted, its two mode-map seeds deleted, each of the
+// three hoisted BELOW the flag flip, its already-on guard dropped, its seed
+// read straight from `wallpaperPath` instead of through `getMonitorWallpaper`,
+// and `_mapWithMonitorValue` keeping the screen's stale alias keys; the mode
 // restore dropped from the miss branch, and hoisted above the read-back; the
 // read-back deleted; the screen-known guard moved below the mode flip; the
 // pill's active-segment no-op guard dropped; the pill's padding absorber
@@ -57,6 +65,7 @@ const SWITCHER = path.join(repoRoot, "quickshell", "vshell", "Modals", "Switcher
 const BASE = path.join(SWITCHER, "FullScreenSwitcher.qml");
 const WALLPAPER_MODAL = path.join(SWITCHER, "WallpaperSwitcherModal.qml");
 const THEME_MODAL = path.join(SWITCHER, "ThemeSwitcherModal.qml");
+const SESSION_DATA = path.join(repoRoot, "quickshell", "vshell", "Common", "SessionData.qml");
 
 // This text comes from repo files and is EXECUTED here, so it runs inside a
 // child bounded by a wall clock — scripts/lib/qml-region.js says what that
@@ -75,6 +84,7 @@ const read = file => fs.readFileSync(file, "utf8");
 const baseSource = read(BASE);
 const wallpaperSource = read(WALLPAPER_MODAL);
 const themeSource = read(THEME_MODAL);
+const sessionSource = read(SESSION_DATA);
 
 const MARKER = "WALLPAPER SCOPE DECISION";
 
@@ -139,12 +149,14 @@ assert.equal(scope.applyRoute(false, 0), "service", "and no screens at all never
 const readers = new Map([
     ["FullScreenSwitcher.qml", qmlSource(baseSource, "FullScreenSwitcher.qml")],
     ["WallpaperSwitcherModal.qml", qmlSource(wallpaperSource, "WallpaperSwitcherModal.qml")],
-    ["ThemeSwitcherModal.qml", qmlSource(themeSource, "ThemeSwitcherModal.qml")]
+    ["ThemeSwitcherModal.qml", qmlSource(themeSource, "ThemeSwitcherModal.qml")],
+    ["SessionData.qml", qmlSource(sessionSource, "SessionData.qml")]
 ]);
 const sources = new Map([
     ["FullScreenSwitcher.qml", baseSource],
     ["WallpaperSwitcherModal.qml", wallpaperSource],
-    ["ThemeSwitcherModal.qml", themeSource]
+    ["ThemeSwitcherModal.qml", themeSource],
+    ["SessionData.qml", sessionSource]
 ]);
 
 function q(file) {
@@ -241,9 +253,11 @@ function mustPrecedeIn(block, label, first, second, why) {
         ["const modeWasOff = !SessionData.perMonitorWallpaper;",
             "whether the mode flip below is this apply's doing is remembered, because it is what " +
             "the miss branch has to undo", 1],
-        ["if (modeWasOff) SessionData.setPerMonitorWallpaper(true);",
-            "the product decision on VGS-212: picking \"This monitor\" turns per-monitor mode on, " +
-            "exactly as the dash's buttons do, rather than bouncing the user to Settings", 1],
+        ["if (modeWasOff) SessionData.enablePerMonitorWallpaperFromCurrent();",
+            "the product decision on VGS-212: picking \"This monitor\" turns per-monitor mode on " +
+            "rather than bouncing the user to Settings — through the SEEDING enable, because the " +
+            "bare flag flip republishes every retained assignment and changes every OTHER monitor " +
+            "before this apply writes a thing", 1],
         ["SessionData.setMonitorWallpaper(screenName, path);",
             "the write itself — the same call the dash's per-monitor buttons make", 1],
         ["if (SessionData.getMonitorWallpaper(screenName) !== path)",
@@ -255,11 +269,15 @@ function mustPrecedeIn(block, label, first, second, why) {
             "global change nothing reported", 1],
         ["ToastService.showError(", "both failure exits toast — a silent one is the failure mode this path must not have", 2]
     ]);
-    mustPrecedeIn(applyHere, "applyHere()", /Quickshell\.screens \|\| \[\]\)\.some/, /setPerMonitorWallpaper\(true\)/,
+    mustPrecedeIn(applyHere, "applyHere()", /Quickshell\.screens \|\| \[\]\)\.some/, /enablePerMonitorWallpaperFromCurrent/,
         "the screen-known guard must run before the mode flip, or a doomed write still flips a global setting");
-    mustPrecedeIn(applyHere, "applyHere()", /setPerMonitorWallpaper\(true\)/, /setMonitorWallpaper\(screenName, path\)/,
+    mustPrecedeIn(applyHere, "applyHere()", /enablePerMonitorWallpaperFromCurrent/, /setMonitorWallpaper\(screenName, path\)/,
         "the mode goes on before the write: with it off, the write lands in a map nothing displays " +
         "and the read-back (which answers the GLOBAL path with the mode off) cries wolf");
+    mustNot("WallpaperSwitcherModal.qml", /setPerMonitorWallpaper\(true\)/,
+        "and it must be the SEEDED enable, never the bare flag: setPerMonitorWallpaper(true) on its " +
+        "own makes every retained per-monitor assignment visible at once, so picking \"This monitor\" " +
+        "changes every other monitor first");
     mustPrecedeIn(applyHere, "applyHere()", /setMonitorWallpaper\(screenName, path\);/, /getMonitorWallpaper\(screenName\) !== path/,
         "and the read-back reads AFTER the write, or it verifies the previous state");
     mustPrecedeIn(applyHere, "applyHere()", /getMonitorWallpaper\(screenName\) !== path/, /setPerMonitorWallpaper\(false\)/,
@@ -273,6 +291,51 @@ function mustPrecedeIn(block, label, first, second, why) {
         /MouseArea \{\s*anchors\.fill: parent\s*\}/, /Row \{\s*id: segments/,
         "the absorber is declared BEFORE the segments: siblings stack in declaration order, so an " +
         "absorber moved below the Row sits on top of the segment hit targets and eats every click");
+}
+
+// SessionData's seeded enable: the operation that makes turning the mode on
+// invisible. Owned here (D010: a SessionData write, not a new service method)
+// so the dash buttons and the Settings toggle can adopt it under VGS-213/214.
+{
+    const session = q("SessionData.qml");
+    const seed = session.body("enablePerMonitorWallpaperFromCurrent");
+
+    session.requires(seed, "enablePerMonitorWallpaperFromCurrent()", [
+        ["if (perMonitorWallpaper) return;",
+            "already on, there is nothing to make invisible and every entry is live: reseeding " +
+            "from the accessor would be a write over assignments the user made on purpose", 1],
+        ["var shown = getMonitorWallpaper(screen.name);",
+            "the seed is what the screen DISPLAYS, read through the one accessor the wallpaper " +
+            "bindings read — not wallpaperPath, which per-mode and cycling can disagree with", 1],
+        ["monitorWallpapers = _mapWithMonitorValue(monitorWallpapers, screen, shown);",
+            "every connected screen gets its own entry BEFORE the flag goes on, or the flip " +
+            "republishes whatever an earlier per-monitor session left in the map", 1],
+        ["monitorWallpapersLight = _mapWithMonitorValue(monitorWallpapersLight, screen, isLightMode ? shown : wallpaperPathLight);",
+            "the light map is seeded too, or the first light/dark switch after the flip jumps " +
+            "every screen the way the flip itself would have", 1],
+        ["monitorWallpapersDark = _mapWithMonitorValue(monitorWallpapersDark, screen, isLightMode ? wallpaperPathDark : shown);",
+            "and the dark map with it — syncWallpaperForCurrentMode refills monitorWallpapers " +
+            "from whichever of the two the new mode names", 1],
+        ["setPerMonitorWallpaper(true);",
+            "the flag flip is this function's last act, and its only one: everything above exists " +
+            "to make that line change nothing on screen", 1]
+    ]);
+    for (const [what, first] of [
+        ["the per-screen seed", /monitorWallpapers = _mapWithMonitorValue/],
+        ["the light-map seed", /monitorWallpapersLight = _mapWithMonitorValue/],
+        ["the dark-map seed", /monitorWallpapersDark = _mapWithMonitorValue/]
+    ]) {
+        mustPrecedeIn(seed, "enablePerMonitorWallpaperFromCurrent()", first, /setPerMonitorWallpaper\(true\)/,
+            `${what} must run BEFORE the flag flip — after it, getMonitorWallpaper is already ` +
+            "answering the stale map and every screen has jumped before the seed lands");
+    }
+
+    session.requires(session.body("_mapWithMonitorValue"), "_mapWithMonitorValue()", [
+        ["var isThisScreen = key === screen.name || (screen.model && key === screen.model) || key === identifier;",
+            "the screen's OTHER keys drop out: _findMonitorValue answers a raw name or model key " +
+            "BEFORE the display name written here, so a stale alias left in place is read back " +
+            "instead of the value just written — and the seed would not be a seed", 1]
+    ]);
 }
 
 // The theme switcher has no per-monitor concept and must not grow the toggle
