@@ -486,11 +486,15 @@ function mustPrecedeIn(block, label, first, second, why) {
 }
 
 // Both subclasses: the reporter is the single owner, and the tracked id is the
-// service call's own return rather than a restatement of it.
-for (const [file, call] of [["ThemeSwitcherModal.qml", "applyBlueprint"], ["WallpaperSwitcherModal.qml", "setWallpaper"]]) {
+// service call's own return rather than a restatement of it. The wallpaper
+// modal's Enter BRANCHES on scope (VGS-212); its branch and screen route are
+// scripts/test-switcher-scope.js's to pin, the service route's id stays here.
+for (const [file, trackPin] of [
+    ["ThemeSwitcherModal.qml", "onApplied: item => applyReporter.track(VGSThemeService.applyBlueprint(item.key))"],
+    ["WallpaperSwitcherModal.qml", "applyReporter.track(VGSThemeService.setWallpaper(item.key));"]
+]) {
     q(file).requires(sources.get(file), file, [
-        [`onApplied: item => applyReporter.track(VGSThemeService.${call}(item.key))`,
-            "the tracked id must be what the service returned for THIS request", 1],
+        [trackPin, "the tracked id must be what the service returned for THIS request", 1],
         ["canApply: !applyReporter.anyApplyInFlight",
             "Enter must gate on an apply being in flight, not on the whole service being busy", 1],
         ['ThemeApplyReporter { id: applyReporter errorTitle: I18n.tr(',
@@ -682,9 +686,9 @@ mustPrecedeIn(handler("ThemeSwitcherModal.qml", "emptyText"), "ThemeSwitcherModa
             "goes through this service — cycling writes SessionData directly — and under " +
             "per-monitor mode the GLOBAL path is on no monitor at all, so both `selectedWallpaper` " +
             "alone and `wallpaperPath` alone seed the switcher on the wrong picture", 1],
-        ["return shown || VGSThemeService.selectedWallpaper || \"\";",
-            "with the service value as the fallback for the window where an apply has claimed a " +
-            "wallpaper optimistically but not committed it", 1]
+        ['return root.scopeSeedKey(root.applyToAllMonitors, everywhere, shown, VGSThemeService.selectedWallpaper || "");',
+            "the CHOSEN scope decides whose answer counts (VGS-212), via the extracted function " +
+            "scripts/test-switcher-scope.js executes; the service value stays the optimistic-claim fallback", 1]
     ]);
 
     q("WallpaperTab.qml").requires(wallpaperTabSource, "WallpaperTab.qml", [

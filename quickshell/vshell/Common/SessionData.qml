@@ -539,6 +539,12 @@ Singleton {
     }
 
     function setPerMonitorWallpaper(enabled) {
+        // Off to on: seed BEFORE the flip, while the accessors still answer the
+        // global values every screen shows — past it they answer whatever an
+        // earlier per-monitor session left retained and every screen with an
+        // entry has jumped (VGS-212). EVERY enable comes through here.
+        if (enabled && !perMonitorWallpaper)
+            _seedPerMonitorFromCurrent();
         perMonitorWallpaper = enabled;
         if (enabled && perModeWallpaper) {
             syncWallpaperForCurrentMode();
@@ -582,65 +588,81 @@ Singleton {
         saveSettings();
     }
 
-    function setMonitorWallpaper(screenName, path) {
-        var screen = null;
+    // The one screen lookup: every per-monitor writer walked Quickshell.screens.
+    function _screenByName(screenName) {
         var screens = Quickshell.screens;
         for (var i = 0; i < screens.length; i++) {
-            if (screens[i].name === screenName) {
-                screen = screens[i];
-                break;
+            if (screens[i].name === screenName)
+                return screens[i];
+        }
+        return null;
+    }
+
+    // One screen's entry in one per-monitor map, as a NEW map so the property
+    // change is seen. The screen's OTHER keys go with it: a value an earlier
+    // session wrote under the raw name or model is answered by _findMonitorValue
+    // BEFORE the display name written here, so one left behind is read back
+    // instead of the value just written.
+    function _mapWithMonitorValue(map, screen, value) {
+        var identifier = typeof SettingsData !== "undefined" ? SettingsData.getScreenDisplayName(screen) : screen.name;
+        var next = {};
+        for (var key in map) {
+            var isThisScreen = key === screen.name || (screen.model && key === screen.model) || key === identifier;
+            if (!isThisScreen)
+                next[key] = map[key];
+        }
+        if (value && value !== "")
+            next[identifier] = value;
+        return next;
+    }
+
+    // What every screen shows RIGHT NOW, written on setPerMonitorWallpaper's
+    // off-to-on edge (its only caller) into the maps per-monitor mode is about
+    // to start reading: enabling the mode changes nothing on any screen, and
+    // the caller's own write afterwards is the only change anyone asked for.
+    // Unseeded, the retained maps are republished wholesale — months-old
+    // assignments back when the Settings toggle goes on, or "This monitor"
+    // moving every OTHER monitor. FOUR maps, one flag gating all four: the
+    // wallpaper; both mode maps under per-mode (syncWallpaperForCurrentMode
+    // refills the wallpaper map from whichever the current mode names); the
+    // fill mode, which otherwise re-crops a screen to a retained Fit/Stretch at
+    // the flip; and per-screen cycling, where a retained enabled:true starts a
+    // slideshow on a screen nobody touched that overwrites the seed.
+    function _seedPerMonitorFromCurrent() {
+        var screens = Quickshell.screens || [];
+        for (var i = 0; i < screens.length; i++) {
+            var screen = screens[i];
+            // Both accessors answer the GLOBAL value while the flag is off.
+            var shown = getMonitorWallpaper(screen.name);
+            monitorWallpapers = _mapWithMonitorValue(monitorWallpapers, screen, shown);
+            monitorWallpaperFillModes = _mapWithMonitorValue(monitorWallpaperFillModes, screen, getMonitorWallpaperFillMode(screen.name));
+            if (perModeWallpaper) {
+                // The current mode takes what is ON the screen (cycling writes
+                // wallpaperPath alone), the other mode its own global.
+                monitorWallpapersLight = _mapWithMonitorValue(monitorWallpapersLight, screen, isLightMode ? shown : wallpaperPathLight);
+                monitorWallpapersDark = _mapWithMonitorValue(monitorWallpapersDark, screen, isLightMode ? wallpaperPathDark : shown);
+            }
+            var cycling = getMonitorCyclingSettings(screen.name);
+            if (cycling.enabled) {
+                cycling.enabled = false;
+                monitorCyclingSettings = _mapWithMonitorValue(monitorCyclingSettings, screen, cycling);
             }
         }
+    }
 
+    function setMonitorWallpaper(screenName, path) {
+        var screen = _screenByName(screenName);
         if (!screen) {
             log.warn("Screen not found");
             return;
         }
-
-        var identifier = typeof SettingsData !== "undefined" ? SettingsData.getScreenDisplayName(screen) : screen.name;
-
-        var newMonitorWallpapers = {};
-        for (var key in monitorWallpapers) {
-            var isThisScreen = key === screen.name || (screen.model && key === screen.model);
-            if (!isThisScreen) {
-                newMonitorWallpapers[key] = monitorWallpapers[key];
-            }
-        }
-
-        if (path && path !== "") {
-            newMonitorWallpapers[identifier] = path;
-        }
-
-        monitorWallpapers = newMonitorWallpapers;
-
+        monitorWallpapers = _mapWithMonitorValue(monitorWallpapers, screen, path);
         if (perModeWallpaper) {
-            if (isLightMode) {
-                var newLight = {};
-                for (var key in monitorWallpapersLight) {
-                    var isThisScreen = key === screen.name || (screen.model && key === screen.model);
-                    if (!isThisScreen) {
-                        newLight[key] = monitorWallpapersLight[key];
-                    }
-                }
-                if (path && path !== "") {
-                    newLight[identifier] = path;
-                }
-                monitorWallpapersLight = newLight;
-            } else {
-                var newDark = {};
-                for (var key in monitorWallpapersDark) {
-                    var isThisScreen = key === screen.name || (screen.model && key === screen.model);
-                    if (!isThisScreen) {
-                        newDark[key] = monitorWallpapersDark[key];
-                    }
-                }
-                if (path && path !== "") {
-                    newDark[identifier] = path;
-                }
-                monitorWallpapersDark = newDark;
-            }
+            if (isLightMode)
+                monitorWallpapersLight = _mapWithMonitorValue(monitorWallpapersLight, screen, path);
+            else
+                monitorWallpapersDark = _mapWithMonitorValue(monitorWallpapersDark, screen, path);
         }
-
         saveSettings();
     }
 
@@ -670,15 +692,7 @@ Singleton {
     }
 
     function setMonitorCyclingEnabled(screenName, enabled) {
-        var screen = null;
-        var screens = Quickshell.screens;
-        for (var i = 0; i < screens.length; i++) {
-            if (screens[i].name === screenName) {
-                screen = screens[i];
-                break;
-            }
-        }
-
+        var screen = _screenByName(screenName);
         if (!screen) {
             log.warn("Screen not found");
             return;
@@ -701,15 +715,7 @@ Singleton {
     }
 
     function setMonitorCyclingMode(screenName, mode) {
-        var screen = null;
-        var screens = Quickshell.screens;
-        for (var i = 0; i < screens.length; i++) {
-            if (screens[i].name === screenName) {
-                screen = screens[i];
-                break;
-            }
-        }
-
+        var screen = _screenByName(screenName);
         if (!screen) {
             log.warn("Screen not found");
             return;
@@ -732,15 +738,7 @@ Singleton {
     }
 
     function setMonitorCyclingInterval(screenName, interval) {
-        var screen = null;
-        var screens = Quickshell.screens;
-        for (var i = 0; i < screens.length; i++) {
-            if (screens[i].name === screenName) {
-                screen = screens[i];
-                break;
-            }
-        }
-
+        var screen = _screenByName(screenName);
         if (!screen) {
             log.warn("Screen not found");
             return;
@@ -763,15 +761,7 @@ Singleton {
     }
 
     function setMonitorCyclingTime(screenName, time) {
-        var screen = null;
-        var screens = Quickshell.screens;
-        for (var i = 0; i < screens.length; i++) {
-            if (screens[i].name === screenName) {
-                screen = screens[i];
-                break;
-            }
-        }
-
+        var screen = _screenByName(screenName);
         if (!screen) {
             log.warn("Screen not found");
             return;
@@ -1292,15 +1282,7 @@ Singleton {
     }
 
     function _findMonitorValue(map, screenName) {
-        var screen = null;
-        var screens = Quickshell.screens;
-        for (var i = 0; i < screens.length; i++) {
-            if (screens[i].name === screenName) {
-                screen = screens[i];
-                break;
-            }
-        }
-
+        var screen = _screenByName(screenName);
         if (!screen)
             return map[screenName];
 
@@ -1332,15 +1314,7 @@ Singleton {
     }
 
     function setMonitorWallpaperFillMode(screenName, mode) {
-        var screen = null;
-        var screens = Quickshell.screens;
-        for (var i = 0; i < screens.length; i++) {
-            if (screens[i].name === screenName) {
-                screen = screens[i];
-                break;
-            }
-        }
-
+        var screen = _screenByName(screenName);
         if (!screen)
             return;
 

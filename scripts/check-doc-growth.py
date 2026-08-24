@@ -271,26 +271,25 @@ CEILINGS: dict[str, int] = {
     # (+55 B) and VGS-208's two switcher IPC targets (+357 B); the file is
     # 23,586 B, leaving 814 B of headroom.
     "docs/architecture/shell-architecture.md": 24_400,
-    # 31,800 -> 34,000 -> 35,000 -> 36,000: VGS-208's switcher review put the
-    # intent-latched seeding rule, the applyInFlight Enter gate, the correlated
-    # apply reply, the load-failure and stale-list states and what
-    # switcher_check measures. Round 4 added the per-CALL request id, the shared
-    # wallpaper stale wording and the three requirements switcher_check enforces
-    # on a new switcher (+1,017 B); round 5 swapped its supersession text for the
-    # uncoalesced-apply rule and the request-keyed wallpaper slot, paying for
-    # both by cutting prose. The +828 B after that is the carousel the switchers
-    # actually draw — the slice geometry, the two decode budgets and why the
-    # rail carries no border — which replaced a one-image preview area and is
-    # the part a reader has to have to touch it. The last +1,133 B buys the
-    # three ways INTO a switcher (keybind, the Settings Browse buttons through
-    # the ModalManager registry, and the per-page shortcut row) plus the wheel's
-    # carried remainder: entry points are what a reader looks for first and were
-    # documented nowhere. The last +685 B is review correcting three claims this
-    # file made and the code did not keep — no compositor binds ship, Esc clears
-    # a filter before it cancels, and sliver residency is a band rather than
-    # every entry ever paged past, plus the one-scrim rule and the key-held
-# selection later rounds added. Adopted at 28,861 B; the file is 37,877 B.
-    "docs/architecture/theme-architecture.md": 37_900,
+    # 31,800 -> 34,000 -> 35,000 -> 36,000 -> 37,900: VGS-208's switcher review
+    # put in the intent-latched seeding rule, the applyInFlight Enter gate, the
+    # correlated apply reply, the load-failure and stale-list states and what
+    # switcher_check measures; then the per-CALL request id, the shared stale
+    # wording and switcher_check's three requirements on a new switcher
+    # (+1,017 B); then the uncoalesced-apply rule and the request-keyed
+    # wallpaper slot, paid for by cutting prose. +828 B is the carousel the
+    # switchers actually draw — slice geometry, two decode budgets, why the
+    # rail has no border. +1,133 B is the three ways INTO a switcher (keybind,
+    # Settings Browse via the ModalManager registry, the per-page shortcut row)
+    # plus the wheel's carried remainder. +685 B is review correcting three
+    # claims the code did not keep, the one-scrim rule and the key-held
+    # selection. VGS-212's +3,256 B is the per-monitor scope toggle: Enter's
+    # per-scope routing, the verified single-screen write, the Tab claim, the
+    # scope-following seed, the second marked region its own suite executes,
+    # and the seeded enable inside setPerMonitorWallpaper — four maps, the
+    # cycling force-off, and the two product calls behind them. Adopted at
+    # 28,861 B; the file is 41,133 B, leaving 367 B under the 41,500 ceiling.
+    "docs/architecture/theme-architecture.md": 41_500,
     "docs/architecture/wallpaper-upscaling.md": 4_000,  # adopted at 3,625 B
 }
 
