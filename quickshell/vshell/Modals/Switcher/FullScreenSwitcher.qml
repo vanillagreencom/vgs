@@ -472,15 +472,14 @@ VgsModal {
 
             readonly property real gutter: Theme.spacingXL
             readonly property real availableWidth: width - gutter * 2
-            readonly property real availableHeight: height - gutter * 2 - captions.height - Theme.spacingL
-            // The rail's proportions are Omarchy's, and both dimensions grow
-            // together — see SwitcherCarousel.qml. Sized here rather than by
-            // filling a box so the captions hug the rail on a tall screen
-            // instead of being pushed to the bottom edge.
-            // Captions scale with the rail so the name under a 1.6x rail is not
-            // set at phone size. Derived from the WIDTH alone, never from
-            // `railScale`: the caption block's height is an input to that, and
-            // a font size that depended on it would be a binding loop.
+            readonly property real availableHeight: height - gutter * 2 - captions.height - Theme.spacingL - scopeReserve
+            readonly property real scopeReserve: scopeSlot.height > 0 ? scopeSlot.height + Theme.spacingL : 0
+            // The rail's proportions are Omarchy's and both dimensions grow
+            // together (SwitcherCarousel.qml); sized here, not by filling a
+            // box, so captions hug the rail instead of the bottom edge.
+            // Captions scale from the WIDTH alone, never `railScale`: the
+            // caption block's height is an input to that, so a font size
+            // depending on it would be a binding loop.
             readonly property real captionScale: Math.max(1, Math.min(2, switcherContent.availableWidth / carousel.baseRailWidth))
             readonly property real railScale: {
                 const byWidth = switcherContent.availableWidth / carousel.baseRailWidth;
@@ -525,7 +524,7 @@ VgsModal {
                 width: carousel.baseRailWidth * switcherContent.railScale
                 height: 475 * switcherContent.railScale
                 anchors.horizontalCenter: parent.horizontalCenter
-                y: (switcherContent.height - height - Theme.spacingL - captions.height) / 2
+                y: (switcherContent.height - height - Theme.spacingL - captions.height + switcherContent.scopeReserve) / 2
                 visible: root.itemCount > 0
 
                 dpr: root.dpr
@@ -615,6 +614,7 @@ VgsModal {
             // click-away MouseArea: the toggle's own clicks must not read
             // as a dismissal.
             Loader {
+                id: scopeSlot
                 anchors.horizontalCenter: parent.horizontalCenter
                 anchors.bottom: carousel.top
                 anchors.bottomMargin: Theme.spacingL
