@@ -539,6 +539,12 @@ Singleton {
     }
 
     function setPerMonitorWallpaper(enabled) {
+        // Off to on: seed BEFORE the flip, while the accessors still answer the
+        // global values every screen shows — past it they answer whatever an
+        // earlier per-monitor session left retained and every screen with an
+        // entry has jumped (VGS-212). EVERY enable comes through here.
+        if (enabled && !perMonitorWallpaper)
+            _seedPerMonitorFromCurrent();
         perMonitorWallpaper = enabled;
         if (enabled && perModeWallpaper) {
             syncWallpaperForCurrentMode();
@@ -582,8 +588,7 @@ Singleton {
         saveSettings();
     }
 
-    // The one screen lookup: every per-monitor writer walked Quickshell.screens
-    // for this.
+    // The one screen lookup: every per-monitor writer walked Quickshell.screens.
     function _screenByName(screenName) {
         var screens = Quickshell.screens;
         for (var i = 0; i < screens.length; i++) {
@@ -594,10 +599,10 @@ Singleton {
     }
 
     // One screen's entry in one per-monitor map, as a NEW map so the property
-    // change is seen. The screen's OTHER keys go with it: an assignment an
-    // earlier session wrote under the raw name or model is answered by
-    // _findMonitorValue BEFORE the display name written here, so leaving one
-    // behind means the value just written is not the one read back.
+    // change is seen. The screen's OTHER keys go with it: a value an earlier
+    // session wrote under the raw name or model is answered by _findMonitorValue
+    // BEFORE the display name written here, so one left behind is read back
+    // instead of the value just written.
     function _mapWithMonitorValue(map, screen, value) {
         var identifier = typeof SettingsData !== "undefined" ? SettingsData.getScreenDisplayName(screen) : screen.name;
         var next = {};
@@ -611,40 +616,38 @@ Singleton {
         return next;
     }
 
-    // Turn per-monitor mode ON without changing what any monitor shows.
-    //
-    // setPerMonitorWallpaper alone only flips the flag: monitorWallpapers —
-    // and, under per-mode, the light/dark maps syncWallpaperForCurrentMode
-    // refills it from — keep whatever an earlier per-monitor session left in
-    // them, and getMonitorWallpaper starts answering those the instant the
-    // flag goes on. Every screen holding a retained entry therefore JUMPS to
-    // an old wallpaper the moment the mode is enabled (VGS-212). Seeding each
-    // connected screen from what it displays right now makes the flip
-    // invisible, so only the caller's own write afterwards changes anything.
-    //
-    // The mirror of setPerModeWallpaper's own enable seeding, which copies the
-    // live values into the maps it is about to start reading.
-    function enablePerMonitorWallpaperFromCurrent() {
-        if (perMonitorWallpaper)
-            return;
+    // What every screen shows RIGHT NOW, written on setPerMonitorWallpaper's
+    // off-to-on edge (its only caller) into the maps per-monitor mode is about
+    // to start reading: enabling the mode changes nothing on any screen, and
+    // the caller's own write afterwards is the only change anyone asked for.
+    // Unseeded, the retained maps are republished wholesale — months-old
+    // assignments back when the Settings toggle goes on, or "This monitor"
+    // moving every OTHER monitor. FOUR maps, one flag gating all four: the
+    // wallpaper; both mode maps under per-mode (syncWallpaperForCurrentMode
+    // refills the wallpaper map from whichever the current mode names); the
+    // fill mode, which otherwise re-crops a screen to a retained Fit/Stretch at
+    // the flip; and per-screen cycling, where a retained enabled:true starts a
+    // slideshow on a screen nobody touched that overwrites the seed.
+    function _seedPerMonitorFromCurrent() {
         var screens = Quickshell.screens || [];
         for (var i = 0; i < screens.length; i++) {
             var screen = screens[i];
+            // Both accessors answer the GLOBAL value while the flag is off.
             var shown = getMonitorWallpaper(screen.name);
             monitorWallpapers = _mapWithMonitorValue(monitorWallpapers, screen, shown);
-            // BOTH mode maps, not just the current one: after the flip a
-            // light/dark switch refills monitorWallpapers from the OTHER map,
-            // and an unseeded one jumps every screen exactly as the flag flip
-            // would. The CURRENT mode is seeded from what is ON the screen
-            // rather than from its global path — wallpaper cycling writes
-            // wallpaperPath alone, so the two can disagree — and the other
-            // mode from its own.
+            monitorWallpaperFillModes = _mapWithMonitorValue(monitorWallpaperFillModes, screen, getMonitorWallpaperFillMode(screen.name));
             if (perModeWallpaper) {
+                // The current mode takes what is ON the screen (cycling writes
+                // wallpaperPath alone), the other mode its own global.
                 monitorWallpapersLight = _mapWithMonitorValue(monitorWallpapersLight, screen, isLightMode ? shown : wallpaperPathLight);
                 monitorWallpapersDark = _mapWithMonitorValue(monitorWallpapersDark, screen, isLightMode ? wallpaperPathDark : shown);
             }
+            var cycling = getMonitorCyclingSettings(screen.name);
+            if (cycling.enabled) {
+                cycling.enabled = false;
+                monitorCyclingSettings = _mapWithMonitorValue(monitorCyclingSettings, screen, cycling);
+            }
         }
-        setPerMonitorWallpaper(true);
     }
 
     function setMonitorWallpaper(screenName, path) {
@@ -653,16 +656,13 @@ Singleton {
             log.warn("Screen not found");
             return;
         }
-
         monitorWallpapers = _mapWithMonitorValue(monitorWallpapers, screen, path);
-
         if (perModeWallpaper) {
             if (isLightMode)
                 monitorWallpapersLight = _mapWithMonitorValue(monitorWallpapersLight, screen, path);
             else
                 monitorWallpapersDark = _mapWithMonitorValue(monitorWallpapersDark, screen, path);
         }
-
         saveSettings();
     }
 

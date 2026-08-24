@@ -131,11 +131,10 @@ FullScreenSwitcher {
         open();
     }
 
-    // The single-screen apply. SessionData owns per-monitor assignments — the
-    // dash's per-monitor buttons reach the same writer — but unlike the
-    // service path nothing on it reports failure, so the screen is checked
-    // first and the write is read back: a write that can fail with nothing
-    // said is the failure mode the service path exists to avoid.
+    // The single-screen apply. SessionData owns per-monitor assignments, but
+    // unlike the service path nothing on it reports failure, so the screen is
+    // checked first and the write is read back: a write that can fail with
+    // nothing said is the failure mode the service path exists to avoid.
     // REVISIT(D010): VGS-211's wallpaper-mutation lock should cover this
     // write too.
     function applyHere(path) {
@@ -145,24 +144,20 @@ FullScreenSwitcher {
             return;
         }
         // Product decision (VGS-212): picking "This monitor" with per-monitor
-        // mode off turns the mode ON, exactly as the dash's per-monitor
-        // buttons do, rather than bouncing the user to Settings.
-        //
-        // Through the SEEDING enable, not the bare flag: turning the mode on
-        // makes every retained assignment from an earlier per-monitor session
-        // visible at once, so a bare flip changes EVERY OTHER monitor before
-        // this apply has written a thing — the opposite of what "This monitor"
-        // promises. The seeded enable is a no-op on every screen but this one.
+        // mode off turns the mode ON rather than bouncing the user to Settings.
+        // The enable itself is what keeps that off the other monitors —
+        // SessionData seeds every screen from what it currently shows before it
+        // flips the flag, so this apply is the only thing that changes.
         const modeWasOff = !SessionData.perMonitorWallpaper;
         if (modeWasOff)
-            SessionData.enablePerMonitorWallpaperFromCurrent();
+            SessionData.setPerMonitorWallpaper(true);
         SessionData.setMonitorWallpaper(screenName, path);
         if (SessionData.getMonitorWallpaper(screenName) !== path) {
             // The flip above must not outlive a refused write: the wallpaper
             // failure is toasted, but every monitor silently switched to
             // per-monitor rendering would be a global change nothing reported.
-            // The seed it wrote can stay — with the mode off nothing reads
-            // those entries, and they hold what each screen shows anyway.
+            // The entries the enable seeded can stay: with the mode off nothing
+            // reads them, and the next enable reseeds from current state.
             if (modeWasOff)
                 SessionData.setPerMonitorWallpaper(false);
             ToastService.showError(I18n.tr("VGS wallpaper error"), I18n.tr("The wallpaper for this monitor did not take") + " (" + screenName + ")");

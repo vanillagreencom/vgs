@@ -283,12 +283,12 @@ CEILINGS: dict[str, int] = {
     # Settings Browse via the ModalManager registry, the per-page shortcut row)
     # plus the wheel's carried remainder. +685 B is review correcting three
     # claims the code did not keep, the one-scrim rule and the key-held
-    # selection. VGS-212's +2,670 B is the per-monitor scope toggle: Enter's
+    # selection. VGS-212's +3,149 B is the per-monitor scope toggle: Enter's
     # per-scope routing, the verified single-screen write, the Tab claim, the
     # scope-following seed, the second marked region its own suite executes,
-    # and the seeded per-monitor enable keeping "This monitor" off every other
-    # monitor. 41,500 is measured + 953 B, tighter still than the +10% default
-    # for the same reason above. Adopted at 28,861 B; the file is 40,547 B.
+    # and the seeded enable inside setPerMonitorWallpaper — four maps, the
+    # cycling force-off, and the two product calls behind them. Adopted at
+    # 28,861 B; the file is 41,026 B, leaving 474 B under the 41,500 ceiling.
     "docs/architecture/theme-architecture.md": 41_500,
     "docs/architecture/wallpaper-upscaling.md": 4_000,  # adopted at 3,625 B
 }
