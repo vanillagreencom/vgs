@@ -55,7 +55,7 @@ VgsModal {
     // showing it silently as if it were fresh is the dishonesty this replaces.
     property string staleNotice: ""
     // The wallpaper switcher's per-monitor scope toggle (VGS-212), loaded
-    // top-centre over the rail. One property is both the surface and the Tab
+    // centred just above the rail. One property is both the surface and the Tab
     // claim, so they cannot drift apart: null — the theme switcher, and any
     // single-monitor open — draws nothing and leaves Tab on paging.
     property Component scopeToggle: null
@@ -616,14 +616,13 @@ VgsModal {
             // as a dismissal.
             Loader {
                 anchors.horizontalCenter: parent.horizontalCenter
-                anchors.top: parent.top
-                anchors.topMargin: switcherContent.gutter
+                anchors.bottom: carousel.top
+                anchors.bottomMargin: Theme.spacingL
                 sourceComponent: root.scopeToggle
-                // Grows with the captions so the pill is not set at phone
-                // size over a 1.6x rail; from the TOP edge, so scaling
-                // does not push it off the screen.
-                transformOrigin: Item.Top
-                scale: switcherContent.captionScale
+                // Above the rail it scopes, not the screen edge where it went
+                // unseen. NOT Item-scaled: StyledText defaults to
+                // NativeRendering, which rasterizes glyphs at their own pixel
+                // size and smears under a transform. The pill sizes itself.
             }
         }
     }
