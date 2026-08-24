@@ -192,8 +192,8 @@ FullScreenSwitcher {
         id: scopePill
 
         Rectangle {
-            width: segments.width + Theme.spacingXS * 2
-            height: segments.height + Theme.spacingXS * 2
+            width: segments.width + Theme.spacingXXS * 2
+            height: segments.height + Theme.spacingXXS * 2
             radius: height / 2
             color: Theme.withAlpha(Theme.background, 0.45)
             border.width: 1
@@ -221,8 +221,8 @@ FullScreenSwitcher {
                         required property var modelData
                         readonly property bool active: root.applyToAllMonitors === (segment.index === 0)
 
-                        width: segmentLabel.width + Theme.spacingL * 2
-                        height: segmentLabel.height + Theme.spacingS * 2
+                        width: segmentLabel.width + Theme.spacingM * 2
+                        height: segmentLabel.height + Theme.spacingXS * 2
                         radius: height / 2
                         color: segment.active ? Theme.withAlpha(Theme.surfaceText, 0.22) : "transparent"
 
@@ -230,7 +230,7 @@ FullScreenSwitcher {
                             id: segmentLabel
                             anchors.centerIn: parent
                             text: segment.modelData
-                            font.pixelSize: Theme.fontSizeMedium
+                            font.pixelSize: Theme.fontSizeLarge
                             color: Theme.surfaceText
                             opacity: segment.active ? 1 : 0.7
                         }
