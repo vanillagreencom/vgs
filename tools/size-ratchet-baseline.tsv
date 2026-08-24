@@ -1,4 +1,4 @@
-.github/workflows/ci.yml	496
+.github/workflows/ci.yml	497
 .github/workflows/review-gate-writer.yml	656
 backend/internal/services/bluez/bluez.go	744
 backend/internal/services/clipboard/clipboard.go	635
@@ -70,7 +70,7 @@ quickshell/vshell/Modals/PowerMenuModal.qml	883
 quickshell/vshell/Modals/ProcessListModal.qml	615
 quickshell/vshell/Modals/Settings/SettingsModal.qml	464
 quickshell/vshell/Modals/Settings/SettingsSidebar.qml	1090
-quickshell/vshell/Modals/Switcher/FullScreenSwitcher.qml	597
+quickshell/vshell/Modals/Switcher/FullScreenSwitcher.qml	630
 quickshell/vshell/Modals/VgsColorPickerModal.qml	766
 quickshell/vshell/Modals/WifiPasswordModal.qml	747
 quickshell/vshell/Modals/WindowRuleModal.qml	1906
@@ -205,7 +205,7 @@ quickshell/vshell/Widgets/KeybindItem.qml	1724
 quickshell/vshell/Widgets/VgsDropdown.qml	565
 quickshell/vshell/Widgets/VgsPopoutStandalone.qml	1061
 scripts/check-aur-sync.py	471
-scripts/check-doc-growth.py	898
+scripts/check-doc-growth.py	897
 scripts/check-notification-takeover.js	454
 scripts/check-paste-injection.py	897
 scripts/check-section-pointers.py	556
@@ -227,10 +227,10 @@ scripts/test-popout-dismiss-envelope.js	489
 scripts/test-remote-desktop-state.js	1243
 scripts/test-section-pointers-e2e.py	434
 scripts/test-section-pointers.py	458
-scripts/test-switcher-selection.js	747
+scripts/test-switcher-selection.js	751
 scripts/test-toast-actions.js	607
 scripts/test-validate.sh	547
 scripts/test-validation-inventory.sh	2278
 scripts/test-vendor-drift-evidence.sh	420
 scripts/test-vendor-drift.sh	434
-scripts/validate	1068
+scripts/validate	1069

@@ -54,6 +54,16 @@ VgsModal {
     // working list because a refresh failed destroys a usable browse, and
     // showing it silently as if it were fresh is the dishonesty this replaces.
     property string staleNotice: ""
+    // The wallpaper switcher's per-monitor scope toggle (VGS-212), loaded
+    // top-centre over the rail. One property is both the surface and the Tab
+    // claim, so they cannot drift apart: null — the theme switcher, and any
+    // single-monitor open — draws nothing and leaves Tab on paging.
+    property Component scopeToggle: null
+    // Emitted for Tab, Backtab and a click on the toggle; the subclass owns
+    // the state it flips. Deliberately NOT a `userMoved` write: choosing a
+    // scope is not taking over the selection, and the re-seed that follows
+    // is how the selection lands on that scope's current entry.
+    signal scopeFlipRequested
 
     property string filterQuery: ""
     property int currentIndex: 0
@@ -371,6 +381,14 @@ VgsModal {
             root.updateFilter(root.editedFilter(event));
             return true;
         }
+        // Tab is the scope toggle's whenever one is on the surface — taken
+        // OFF paging deliberately (VGS-212), and Backtab goes with it: the
+        // toggle has two states, so either direction lands on the other one.
+        // The arrows, Home/End and the wheel still page.
+        if (root.scopeToggle && (event.key === Qt.Key_Tab || event.key === Qt.Key_Backtab)) {
+            root.scopeFlipRequested();
+            return true;
+        }
         if (event.key === Qt.Key_Left || event.key === Qt.Key_Up || event.key === Qt.Key_Backtab) {
             root.step(-1);
             return true;
@@ -591,6 +609,21 @@ VgsModal {
                     style: Text.Outline
                     styleColor: Theme.withAlpha(Theme.background, 0.7)
                 }
+            }
+
+            // Declared below everything else so it stacks above the
+            // click-away MouseArea: the toggle's own clicks must not read
+            // as a dismissal.
+            Loader {
+                anchors.horizontalCenter: parent.horizontalCenter
+                anchors.top: parent.top
+                anchors.topMargin: switcherContent.gutter
+                sourceComponent: root.scopeToggle
+                // Grows with the captions so the pill is not set at phone
+                // size over a 1.6x rail; from the TOP edge, so scaling
+                // does not push it off the screen.
+                transformOrigin: Item.Top
+                scale: switcherContent.captionScale
             }
         }
     }
