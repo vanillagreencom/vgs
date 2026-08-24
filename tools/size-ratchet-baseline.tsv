@@ -70,7 +70,7 @@ quickshell/vshell/Modals/PowerMenuModal.qml	883
 quickshell/vshell/Modals/ProcessListModal.qml	615
 quickshell/vshell/Modals/Settings/SettingsModal.qml	464
 quickshell/vshell/Modals/Settings/SettingsSidebar.qml	1090
-quickshell/vshell/Modals/Switcher/FullScreenSwitcher.qml	630
+quickshell/vshell/Modals/Switcher/FullScreenSwitcher.qml	629
 quickshell/vshell/Modals/VgsColorPickerModal.qml	766
 quickshell/vshell/Modals/WifiPasswordModal.qml	747
 quickshell/vshell/Modals/WindowRuleModal.qml	1906
