@@ -453,7 +453,20 @@ Singleton {
     function _sweepWallpaperThumbs() {
         if (root._thumbSweepInFlight)
             return;
-        const missing = (root.themeWallpapers || [])
+        const entries = root.themeWallpapers || [];
+        // Forget every path this read saw WITH a thumbnail. Keyed on the path
+        // alone, the record would otherwise outlive the thumbnail it stands
+        // for: edit a wallpaper in place and its cache key moves (the key is
+        // path+size+mtime), or delete the cached JPEG, and `thumb` comes back
+        // empty while the path is still marked tried — no rebuild until the
+        // shell restarts. What survives is only what is STILL missing.
+        const stillTried = {};
+        entries.forEach(entry => {
+            if (entry && entry.path && !entry.thumb && root._thumbSweepTried[entry.path])
+                stillTried[entry.path] = true;
+        });
+        root._thumbSweepTried = stillTried;
+        const missing = entries
             .filter(entry => entry && entry.path && !entry.thumb)
             .map(entry => entry.path);
         if (!missing.some(path => !root._thumbSweepTried[path]))

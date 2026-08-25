@@ -197,7 +197,7 @@ quickshell/vshell/Services/ScratchpadService.qml	620
 quickshell/vshell/Services/SessionService.qml	640
 quickshell/vshell/Services/UsersService.qml	469
 quickshell/vshell/Services/VGSBackendService.qml	739
-quickshell/vshell/Services/VGSThemeService.qml	977
+quickshell/vshell/Services/VGSThemeService.qml	990
 quickshell/vshell/Services/WeatherService.qml	1144
 quickshell/vshell/VGS.qml	1477
 quickshell/vshell/VGSIPC.qml	2177

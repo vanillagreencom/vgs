@@ -20,7 +20,6 @@ BEHAVIOUR, not source text.
 """
 from __future__ import annotations
 
-import json
 import shutil
 import subprocess
 import sys
@@ -85,6 +84,7 @@ def main() -> int:
         fail("no tracked wallpaper to build from")
         return 1
 
+    exercised = 0
     for rung, available in (
         ("pil", thumbs.Image is not None),
         ("magick", shutil.which("magick") is not None),
@@ -93,6 +93,7 @@ def main() -> int:
         if not available:
             print(f"  skip  {rung} rung: not installed here")
             continue
+        exercised += 1
         out = build_with(src, rung)
         if out is None or not out.is_file() or out.stat().st_size == 0:
             fail(f"the {rung} rung produced no thumbnail — the format the "
@@ -118,6 +119,13 @@ def main() -> int:
                  "bug it exists to pin")
         else:
             ok("control: without the .jpg suffix the ffmpeg rung produces nothing")
+
+    # An empty run is NOT a pass. With no decoder present every rung skips,
+    # FAILURES stays empty, and this suite would report the generator green
+    # while never having called it — the shape that ships a broken cache.
+    if exercised == 0:
+        fail("no decoder available, so no rung was exercised: this suite proved "
+             "nothing and must not read as a pass")
 
     if FAILURES:
         print(f"test-wallpaper-thumbs: {len(FAILURES)} failure(s)")
