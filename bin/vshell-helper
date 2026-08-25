@@ -1629,6 +1629,21 @@ def theme_wallpaper_entries(bp: Dict[str, Any]) -> List[Dict[str, Any]]:
     return entries
 
 
+def prune_wallpaper_thumbs_now() -> int:
+    """Drop thumbnails no installed wallpaper claims. Called by the paths that
+    DELETE one, so the CLI cleans up after itself rather than leaving the shell
+    to notice: a removal leaves nothing missing, so nothing would trigger a
+    build sweep and the orphan would outlive every later session."""
+    live: List[Path] = []
+    seen: set = set()
+    for pkg in list_themes():
+        for path in pkg.get("backgrounds") or []:
+            if path not in seen:
+                seen.add(path)
+                live.append(Path(path))
+    return _wp_thumbs.prune_orphans(live)
+
+
 def read_theme_overlay_meta(pkg_dir_name: str) -> Dict[str, Any]:
     files = compose_theme_files(pkg_dir_name)
     if "theme.json" not in files:
@@ -7627,6 +7642,7 @@ def _cmd_theme_unlocked(argv: List[str]) -> int:
             meta_dirty = True
         if meta_dirty:
             write_theme_overlay_meta(pkg_dir_name, meta)
+        result["thumbsPruned"] = prune_wallpaper_thumbs_now()
         print(json.dumps(result, indent=2) if args.json else f"Removed {fname} from {bp.get('name')}")
         return 0
     if args.cmd == "wallpaper-default":
@@ -8092,7 +8108,8 @@ def _cmd_theme_unlocked(argv: List[str]) -> int:
             eprint(f"{bp.get('name')} is built-in; only its user overlay can be removed")
             if bp.get("userDir"):
                 shutil.rmtree(bp["userDir"], ignore_errors=True)
-                print(json.dumps({"success": True, "removedOverlay": bp["userDir"]}, indent=2) if args.json else f"Removed user overlay: {bp['userDir']}")
+                pruned = prune_wallpaper_thumbs_now()
+                print(json.dumps({"success": True, "removedOverlay": bp["userDir"], "thumbsPruned": pruned}, indent=2) if args.json else f"Removed user overlay: {bp['userDir']}")
                 return 0
             return 1
         removed = []
@@ -8104,6 +8121,8 @@ def _cmd_theme_unlocked(argv: List[str]) -> int:
                 Path(bp["path"]).unlink()
                 removed.append(bp["path"])
         result = {"success": bool(removed), "removed": removed}
+        if removed:
+            result["thumbsPruned"] = prune_wallpaper_thumbs_now()
         print(json.dumps(result, indent=2) if args.json else "\n".join(f"deleted {p}" for p in removed))
         return 0 if removed else 1
     if args.cmd == "duplicate":

@@ -523,6 +523,26 @@ Singleton {
                     root._thumbPruneWanted = true;
                 return;
             }
+            // Count the failures the sweep REPORTS, not just the ones visible in
+            // the current theme. `--all` attempts every theme, so an undecodable
+            // wallpaper in one the user is not looking at is never in
+            // `themeWallpapers` and would otherwise never reach the attempt cap
+            // — running its decoder rungs again on every later sweep.
+            try {
+                const reported = (JSON.parse(output || "{}").failed || []);
+                if (reported.length > 0) {
+                    const counted = Object.assign({}, root._thumbAttempts);
+                    reported.forEach(entry => {
+                        const key = entry && entry.key;
+                        if (key)
+                            counted[key] = (counted[key] || 0) + 1;
+                    });
+                    root._thumbAttempts = counted;
+                }
+            } catch (e) {
+                // A sweep that answered with unparseable output still built what
+                // it built; the per-theme counting above bounds the rest.
+            }
             root.refreshWallpapers();
         }, 600000, true);
     }

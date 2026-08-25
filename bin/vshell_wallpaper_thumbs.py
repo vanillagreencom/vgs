@@ -167,26 +167,47 @@ def build_one(src: Path) -> Optional[Path]:
     return None
 
 
+def prune_orphans(paths: List[Path]) -> int:
+    """Drop cache entries no live wallpaper claims, building nothing. `paths`
+    must be the COMPLETE set, exactly as for build_all's prune — run over one
+    theme it would delete every other theme's thumbnails."""
+    wanted: set[str] = set()
+    for src in paths:
+        with contextlib.suppress(OSError):
+            wanted.add(thumb_name(src))
+    pruned = 0
+    with contextlib.suppress(OSError):
+        for entry in thumb_dir().iterdir():
+            if entry.is_file() and entry.name.endswith(".jpg") and entry.name not in wanted:
+                with contextlib.suppress(OSError):
+                    entry.unlink()
+                    pruned += 1
+    return pruned
+
+
 def build_all(paths: List[Path], prune: bool = False) -> Dict[str, Any]:
     """Build every missing thumbnail for `paths`, then optionally drop cache
     entries no live wallpaper claims. Pruning is opt-in because it is only
     correct over a COMPLETE set: run against one theme it would delete every
     other theme's thumbnails."""
     built = reused = pruned = 0
-    failed: List[str] = []
+    # Each failure carries its cache IDENTITY as well as its path: a caller
+    # bounding retries needs the same key the cache is named for, and over an
+    # all-theme sweep it cannot derive one for a theme it is not showing.
+    failed: List[Dict[str, str]] = []
     wanted: set[str] = set()
     for src in paths:
         try:
             name = thumb_name(src)
         except OSError:
-            failed.append(str(src))
+            failed.append({"path": str(src), "key": ""})
             continue
         wanted.add(name)
         existing = thumb_dir() / name
         if existing.is_file() and existing.stat().st_size > 0:
             reused += 1
         elif build_one(src) is None:
-            failed.append(str(src))
+            failed.append({"path": str(src), "key": name})
         else:
             built += 1
     if prune:
