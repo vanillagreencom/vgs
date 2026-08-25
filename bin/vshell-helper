@@ -44,6 +44,7 @@ if _HELPER_MODULE_DIR not in sys.path:
 
 _NIRI_SUPPORT: Any = None
 import vshell_theme_color as _theme_color
+import vshell_wallpaper_thumbs as _wp_thumbs
 
 try:
     from PIL import Image
@@ -85,6 +86,7 @@ GREETER_RUNTIME_BIN_FILES = {
     "vshell": 0o750,
     "vshell-helper": 0o750,
     "vshell_theme_color.py": 0o640,
+    "vshell_wallpaper_thumbs.py": 0o640,
     "vshell_niri.py": 0o640,
     "vshell_niri_kdl.py": 0o640,
 }
@@ -122,6 +124,9 @@ def state_dir() -> Path:
 
 def cache_dir() -> Path:
     return home() / ".cache" / "vshell"
+
+
+_wp_thumbs.configure(_wp_thumbs.ThumbRuntime(cache_dir=cache_dir, run=run))
 
 
 def generated_dir() -> Path:
@@ -1596,7 +1601,11 @@ def catalog_remove_theme(name: str) -> Dict[str, Any]:
     _catalog_discard(trash)
     if dest.exists():
         raise ValueError(f"could not remove {clean}: {dest} still exists")
-    return {"name": clean, "status": "removed", "path": str(dest)}
+    # Prune HERE, not in the caller: `theme catalog remove` is a documented
+    # command run directly as often as through the browser, and a removal
+    # leaves nothing missing for a later sweep to notice.
+    return {"name": clean, "status": "removed", "path": str(dest),
+            "thumbsPruned": prune_wallpaper_thumbs_now()}
 
 
 def theme_wallpaper_entries(bp: Dict[str, Any]) -> List[Dict[str, Any]]:
@@ -1607,13 +1616,36 @@ def theme_wallpaper_entries(bp: Dict[str, Any]) -> List[Dict[str, Any]]:
     entries: List[Dict[str, Any]] = []
     for path in bp.get("backgrounds") or []:
         p = Path(path)
+        # `thumb` is a LOOKUP, never a build: listing wallpapers must not pay a
+        # decode. Empty means the rail falls back to the original, which is
+        # what it always read before the cache existed.
+        thumb = _wp_thumbs.thumb_for(p)
         entries.append({
             "file": p.name,
             "path": str(p),
+            "thumb": str(thumb) if thumb else "",
+            # The cache identity, so a consumer can tell a replaced file from
+            # the same one — see vshell_wallpaper_thumbs.thumb_key.
+            "thumbKey": _wp_thumbs.thumb_key(p),
             "origin": "builtin" if builtin_root in p.parents else "user",
             "default": str(p) == default_path,
         })
     return entries
+
+
+def prune_wallpaper_thumbs_now() -> int:
+    """Drop thumbnails no installed wallpaper claims. Called by the paths that
+    DELETE one, so the CLI cleans up after itself rather than leaving the shell
+    to notice: a removal leaves nothing missing, so nothing would trigger a
+    build sweep and the orphan would outlive every later session."""
+    live: List[Path] = []
+    seen: set = set()
+    for pkg in list_themes():
+        for path in pkg.get("backgrounds") or []:
+            if path not in seen:
+                seen.add(path)
+                live.append(Path(path))
+    return _wp_thumbs.prune_orphans(live)
 
 
 def read_theme_overlay_meta(pkg_dir_name: str) -> Dict[str, Any]:
@@ -7299,6 +7331,10 @@ def _cmd_theme_unlocked(argv: List[str]) -> int:
     p_setwp.add_argument("--json", action="store_true")
     p_clearwp = sub.add_parser("clear-wallpaper")
     p_clearwp.add_argument("--json", action="store_true")
+    p_thumbs = sub.add_parser("wallpaper-thumbs", help="build the switcher's sliver thumbnails")
+    p_thumbs.add_argument("name", nargs="?", default="", help="theme name (default: current)")
+    p_thumbs.add_argument("--all", action="store_true", help="every installed theme, and prune orphans")
+    p_thumbs.add_argument("--json", action="store_true")
     p_wps = sub.add_parser("wallpapers")
     p_wps.add_argument("name", nargs="?", default="", help="theme name (default: current)")
     p_wps.add_argument("--json", action="store_true")
@@ -7516,6 +7552,30 @@ def _cmd_theme_unlocked(argv: List[str]) -> int:
         result["saved"] = ""
         print(json.dumps(result, indent=2) if args.json else "Wallpaper cleared")
         return 0
+    if args.cmd == "wallpaper-thumbs":
+        if args.all:
+            paths = []
+            seen = set()
+            for pkg in list_themes():
+                for path in pkg.get("backgrounds") or []:
+                    if path not in seen:
+                        seen.add(path)
+                        paths.append(Path(path))
+        else:
+            bp = resolve_theme_package(args.name)
+            if not bp:
+                eprint(f"Theme package not found: {args.name or current_theme().get('name', '')}")
+                return 1
+            paths = [Path(str(e["path"])) for e in theme_wallpaper_entries(bp)]
+        # Pruning is only correct over the COMPLETE set — see build_wallpaper_thumbs.
+        result = _wp_thumbs.build_all(paths, prune=bool(args.all))
+        result["total"] = len(paths)
+        if args.json:
+            print(json.dumps(result, indent=2))
+        else:
+            print(f"thumbnails: {result['built']} built, {result['reused']} reused, "
+                  f"{len(result['failed'])} failed, {result['pruned']} pruned -> {result['dir']}")
+        return 1 if result["failed"] and not result["built"] and not result["reused"] else 0
     if args.cmd == "wallpapers":
         bp = resolve_theme_package(args.name)
         if not bp:
@@ -7586,6 +7646,7 @@ def _cmd_theme_unlocked(argv: List[str]) -> int:
             meta_dirty = True
         if meta_dirty:
             write_theme_overlay_meta(pkg_dir_name, meta)
+        result["thumbsPruned"] = prune_wallpaper_thumbs_now()
         print(json.dumps(result, indent=2) if args.json else f"Removed {fname} from {bp.get('name')}")
         return 0
     if args.cmd == "wallpaper-default":
@@ -7642,7 +7703,10 @@ def _cmd_theme_unlocked(argv: List[str]) -> int:
             if reverted:
                 apply_theme_obj(reverted)
                 applied = True
-        result = {"reverted": True, "name": bp.get("name"), "applied": applied}
+        # Dropping the overlay can take user backgrounds with it, so the same
+        # orphaning applies as a delete or a removal.
+        result = {"reverted": True, "name": bp.get("name"), "applied": applied,
+                  "thumbsPruned": prune_wallpaper_thumbs_now()}
         print(json.dumps(result, indent=2) if args.json else f"Reverted {bp.get('name')} to defaults")
         return 0
     if args.cmd == "restyle":
@@ -8051,7 +8115,8 @@ def _cmd_theme_unlocked(argv: List[str]) -> int:
             eprint(f"{bp.get('name')} is built-in; only its user overlay can be removed")
             if bp.get("userDir"):
                 shutil.rmtree(bp["userDir"], ignore_errors=True)
-                print(json.dumps({"success": True, "removedOverlay": bp["userDir"]}, indent=2) if args.json else f"Removed user overlay: {bp['userDir']}")
+                pruned = prune_wallpaper_thumbs_now()
+                print(json.dumps({"success": True, "removedOverlay": bp["userDir"], "thumbsPruned": pruned}, indent=2) if args.json else f"Removed user overlay: {bp['userDir']}")
                 return 0
             return 1
         removed = []
@@ -8063,6 +8128,8 @@ def _cmd_theme_unlocked(argv: List[str]) -> int:
                 Path(bp["path"]).unlink()
                 removed.append(bp["path"])
         result = {"success": bool(removed), "removed": removed}
+        if removed:
+            result["thumbsPruned"] = prune_wallpaper_thumbs_now()
         print(json.dumps(result, indent=2) if args.json else "\n".join(f"deleted {p}" for p in removed))
         return 0 if removed else 1
     if args.cmd == "duplicate":

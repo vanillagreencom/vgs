@@ -119,6 +119,7 @@ FullScreenSwitcher {
     // refuses it and never answers, so it must not be reachable at all.
     items: root.wallpaperEntries.filter(entry => !!entry.path).map(entry => ({
                 image: entry.path,
+                thumb: entry.thumb || "",
                 label: entry.file,
                 key: entry.path
             }))

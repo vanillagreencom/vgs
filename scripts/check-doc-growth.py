@@ -278,18 +278,18 @@ CEILINGS: dict[str, int] = {
     # wording and switcher_check's three requirements on a new switcher
     # (+1,017 B); then the uncoalesced-apply rule and the request-keyed
     # wallpaper slot, paid for by cutting prose. +828 B is the carousel the
-    # switchers actually draw — slice geometry, two decode budgets, why the
-    # rail has no border. +1,133 B is the three ways INTO a switcher (keybind,
-    # Settings Browse via the ModalManager registry, the per-page shortcut row)
-    # plus the wheel's carried remainder. +685 B is review correcting three
-    # claims the code did not keep, the one-scrim rule and the key-held
-    # selection. VGS-212's +3,256 B is the per-monitor scope toggle: Enter's
+    # switchers draw — slice geometry, two decode budgets, why the rail has
+    # no border. +1,133 B is the three ways INTO a switcher (keybind, Settings
+    # Browse, the per-page shortcut row) plus the wheel's carried remainder.
+    # +685 B is review correcting three claims, the one-scrim rule, the key-held selection. VGS-212's +3,256 B is the per-monitor scope toggle: Enter's
     # per-scope routing, the verified single-screen write, the Tab claim, the
     # scope-following seed, the second marked region its own suite executes,
     # and the seeded enable inside setPerMonitorWallpaper — four maps, the
-    # cycling force-off, and the two product calls behind them. Adopted at
-    # 28,861 B; the file is 41,133 B, leaving 367 B under the 41,500 ceiling.
-    "docs/architecture/theme-architecture.md": 41_500,
+    # cycling force-off, and the two product calls behind them. VGS-216's
+    # +388 B is the rail's thumbnail cache: where it lives, its key, the
+    # measured 596 ms -> 21 ms, and why it is NOT the dash grid's PNG
+    # imagecache. Adopted at 28,861 B; the file is 41,521 B, under 42,000.
+    "docs/architecture/theme-architecture.md": 42_000,
     "docs/architecture/wallpaper-upscaling.md": 4_000,  # adopted at 3,625 B
 }
 

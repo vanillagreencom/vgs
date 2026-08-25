@@ -239,6 +239,9 @@ qml       | scripts/test-launcher-hover-latch.js
 qml       | scripts/test-popout-dismiss-envelope.js
 qml       | scripts/test-switcher-selection.js
 qml       | scripts/test-switcher-scope.js
+qml       | scripts/test-thumb-sweep.js
+helper    | scripts/test-wallpaper-thumbs.py
+helper    | scripts/test-wallpaper-thumb-cache.py
 helper    | python3 -m py_compile bin/vshell-helper
 helper    | bash -n bin/vshell
 always    | git diff --check
