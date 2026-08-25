@@ -149,5 +149,3 @@ def build_with(src: Path, rung: str) -> Path | None:
 def is_jpeg(path: Path) -> bool:
     with path.open("rb") as handle:
         return handle.read(3) == b"\xff\xd8\xff"
-
-
