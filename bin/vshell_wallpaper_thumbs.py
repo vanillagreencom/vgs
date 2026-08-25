@@ -79,6 +79,16 @@ def thumb_for(src: Path) -> Optional[Path]:
     return None
 
 
+def temp_path(out: Path) -> Path:
+    """The in-progress name for `out`. The `.jpg` MUST stay last: the magick and
+    ffmpeg rungs pick their output FORMAT from the final extension, and ffmpeg
+    refuses outright ("Unable to choose an output format") when the name ends in
+    a timestamp — so every build failed on exactly the installs with no Pillow.
+    Named rather than inlined so scripts/test-wallpaper-thumbs.py can plant the
+    old shape and prove the rung breaks without it."""
+    return out.with_name(f".{out.stem}.{os.getpid()}.{time.time_ns()}.jpg")
+
+
 def build_one(src: Path) -> Optional[Path]:
     """Build one thumbnail, atomically. None when no decoder is available or the
     source cannot be read — every caller treats a miss as "use the original", so
@@ -90,11 +100,7 @@ def build_one(src: Path) -> Optional[Path]:
     if out.is_file() and out.stat().st_size > 0:
         return out
     out.parent.mkdir(parents=True, exist_ok=True)
-    # The suffix must stay .jpg: the magick and ffmpeg rungs pick their output
-    # FORMAT from the final extension, and ffmpeg refuses outright ("Unable to
-    # choose an output format") when the name ends in a timestamp — so every
-    # build failed on exactly the installs that have no Pillow.
-    tmp = out.with_name(f".{out.stem}.{os.getpid()}.{time.time_ns()}.jpg")
+    tmp = temp_path(out)
     box = f"{WIDTH}x{HEIGHT}"
     try:
         # The same ladder the fastfetch logo uses. `>` and PIL's thumbnail()

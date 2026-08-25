@@ -442,21 +442,36 @@ Singleton {
     // `--all` covers every installed theme, not just the current one, so
     // switching themes does not pay a fresh decode; it also prunes entries no
     // wallpaper claims any more, which is only correct over the complete set.
-    property bool _thumbSweepStarted: false
+    property bool _thumbSweepInFlight: false
+    // Paths a COMPLETED sweep already tried. Not a one-shot latch: a wallpaper
+    // added, replaced or installed from the catalog later has a new cache key
+    // and must still get a thumbnail, and a sweep that failed transiently must
+    // be retryable. Marked on SUCCESS only, so an undecodable file is not
+    // retried forever while a failed command is retried on the next read.
+    property var _thumbSweepTried: ({})
 
     function _sweepWallpaperThumbs() {
-        if (root._thumbSweepStarted)
+        if (root._thumbSweepInFlight)
             return;
-        const entries = root.themeWallpapers || [];
-        if (!entries.some(entry => entry && entry.path && !entry.thumb))
+        const missing = (root.themeWallpapers || [])
+            .filter(entry => entry && entry.path && !entry.thumb)
+            .map(entry => entry.path);
+        if (!missing.some(path => !root._thumbSweepTried[path]))
             return;
-        root._thumbSweepStarted = true;
+        root._thumbSweepInFlight = true;
         _run("vgs-theme-wallpaper-thumbs", ["theme", "wallpaper-thumbs", "--all", "--json"], function(output, exitCode) {
+            root._thumbSweepInFlight = false;
             // A failed sweep is not reported: the rail is already drawing from
-            // the originals, which is correct, just slower. Re-reading the list
-            // is what swaps the rail onto the thumbnails it just built.
-            if (exitCode === 0)
-                root.refreshWallpapers();
+            // the originals, which is correct, just slower. It also leaves
+            // `_thumbSweepTried` alone, so the next read retries it — and does
+            // NOT re-read here, which is what keeps a failure from looping.
+            if (exitCode !== 0)
+                return;
+            const tried = Object.assign({}, root._thumbSweepTried);
+            missing.forEach(path => tried[path] = true);
+            root._thumbSweepTried = tried;
+            // Re-reading is what swaps the rail onto the thumbnails just built.
+            root.refreshWallpapers();
         }, 600000, true);
     }
 

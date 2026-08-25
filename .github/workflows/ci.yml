@@ -320,6 +320,7 @@ jobs:
           scripts/test-popout-dismiss-envelope.js
           scripts/test-switcher-selection.js
           scripts/test-switcher-scope.js
+          scripts/test-wallpaper-thumbs.py
 
       # Wired in by VGS-50: all four were committed, maintained and invoked by
       # nothing until then.
