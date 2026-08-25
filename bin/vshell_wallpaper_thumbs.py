@@ -69,6 +69,17 @@ def thumb_name(src: Path) -> str:
     return hashlib.sha256(key.encode("utf-8", "surrogateescape")).hexdigest() + ".jpg"
 
 
+def thumb_key(src: Path) -> str:
+    """The cache IDENTITY — the name the thumbnail is stored under, which folds
+    in the source's size and mtime. Callers outside this module use it to tell
+    "the same file" from "something else written to the same path", which a path
+    alone cannot: overwrite a wallpaper in place and the key moves while the path
+    does not. Empty when the source cannot be stat'd."""
+    with contextlib.suppress(OSError):
+        return thumb_name(src)
+    return ""
+
+
 def thumb_for(src: Path) -> Optional[Path]:
     """The thumbnail for `src` if one is already built, else None. Pure lookup:
     it never generates, so listing wallpapers stays off the decode path."""

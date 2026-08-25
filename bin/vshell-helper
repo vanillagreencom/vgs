@@ -1620,6 +1620,9 @@ def theme_wallpaper_entries(bp: Dict[str, Any]) -> List[Dict[str, Any]]:
             "file": p.name,
             "path": str(p),
             "thumb": str(thumb) if thumb else "",
+            # The cache identity, so a consumer can tell a replaced file from
+            # the same one — see vshell_wallpaper_thumbs.thumb_key.
+            "thumbKey": _wp_thumbs.thumb_key(p),
             "origin": "builtin" if builtin_root in p.parents else "user",
             "default": str(p) == default_path,
         })

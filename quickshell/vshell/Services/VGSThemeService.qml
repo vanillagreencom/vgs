@@ -443,48 +443,52 @@ Singleton {
     // switching themes does not pay a fresh decode; it also prunes entries no
     // wallpaper claims any more, which is only correct over the complete set.
     property bool _thumbSweepInFlight: false
-    // Paths a COMPLETED sweep already tried. Not a one-shot latch: a wallpaper
-    // added, replaced or installed from the catalog later has a new cache key
-    // and must still get a thumbnail, and a sweep that failed transiently must
-    // be retryable. Marked on SUCCESS only, so an undecodable file is not
-    // retried forever while a failed command is retried on the next read.
-    property var _thumbSweepTried: ({})
+    // Attempts per cache IDENTITY, not per path. `thumbKey` folds in the
+    // source's size and mtime, so overwriting a wallpaper in place mints a new
+    // key and earns fresh attempts, while the same failing file keeps its own
+    // and stops. A path-keyed record could not tell those apart and refused to
+    // rebuild a replaced file for the rest of the session.
+    //
+    // Bounded rather than one-shot: `wallpaper-thumbs` exits 0 when it built or
+    // reused ANYTHING, so a per-file timeout or decode error rides back on a
+    // success. Counting attempts is what retries that without trusting the exit
+    // status, and what stops a genuinely undecodable file from sweeping forever.
+    property var _thumbAttempts: ({})
+    readonly property int _thumbMaxAttempts: 2
 
     function _sweepWallpaperThumbs() {
         if (root._thumbSweepInFlight)
             return;
         const entries = root.themeWallpapers || [];
-        // Forget every path this read saw WITH a thumbnail. Keyed on the path
-        // alone, the record would otherwise outlive the thumbnail it stands
-        // for: edit a wallpaper in place and its cache key moves (the key is
-        // path+size+mtime), or delete the cached JPEG, and `thumb` comes back
-        // empty while the path is still marked tried — no rebuild until the
-        // shell restarts. What survives is only what is STILL missing.
-        const stillTried = {};
+        const identity = entry => String(entry.thumbKey || entry.path);
+        // Keep counts only for what is STILL missing. Anything now carrying a
+        // thumbnail is forgotten, so if that thumbnail is later deleted or its
+        // source replaced, the rebuild starts from zero attempts.
+        const kept = {};
+        const missing = [];
         entries.forEach(entry => {
-            if (entry && entry.path && !entry.thumb && root._thumbSweepTried[entry.path])
-                stillTried[entry.path] = true;
+            if (!entry || !entry.path || entry.thumb)
+                return;
+            const key = identity(entry);
+            missing.push(key);
+            if (root._thumbAttempts[key] !== undefined)
+                kept[key] = root._thumbAttempts[key];
         });
-        root._thumbSweepTried = stillTried;
-        const missing = entries
-            .filter(entry => entry && entry.path && !entry.thumb)
-            .map(entry => entry.path);
-        if (!missing.some(path => !root._thumbSweepTried[path]))
+        root._thumbAttempts = kept;
+        if (!missing.some(key => (kept[key] || 0) < root._thumbMaxAttempts))
             return;
+        const spent = Object.assign({}, kept);
+        missing.forEach(key => spent[key] = (spent[key] || 0) + 1);
+        root._thumbAttempts = spent;
         root._thumbSweepInFlight = true;
         _run("vgs-theme-wallpaper-thumbs", ["theme", "wallpaper-thumbs", "--all", "--json"], function(output, exitCode) {
             root._thumbSweepInFlight = false;
             // A failed sweep is not reported: the rail is already drawing from
-            // the originals, which is correct, just slower. It also leaves
-            // `_thumbSweepTried` alone, so the next read retries it — and does
-            // NOT re-read here, which is what keeps a failure from looping.
-            if (exitCode !== 0)
-                return;
-            const tried = Object.assign({}, root._thumbSweepTried);
-            missing.forEach(path => tried[path] = true);
-            root._thumbSweepTried = tried;
-            // Re-reading is what swaps the rail onto the thumbnails just built.
-            root.refreshWallpapers();
+            // the originals, which is correct, just slower. Re-reading is what
+            // swaps the rail onto the thumbnails just built, and it is skipped
+            // on failure so a broken command cannot spin.
+            if (exitCode === 0)
+                root.refreshWallpapers();
         }, 600000, true);
     }
 
