@@ -139,6 +139,15 @@ Singleton {
                  if (!data)
                      return;
                  const result = (data.results || [])[0] || {};
+                 // A new theme's wallpapers are missing but invisible from the
+                 // service, which only sees the CURRENT theme — without a sweep
+                 // its rail falls back to full-size sources until it is applied,
+                 // which is the prewarm `--all` promises. The request is only
+                 // READ by a wallpaper read, so it needs one to act on it.
+                 if (result.status === "installed" && typeof VGSThemeService !== "undefined") {
+                     VGSThemeService.requestThumbnailSweep();
+                     VGSThemeService.refreshWallpapers();
+                 }
                  if (result.status === "installed")
                      operationCompleted(true, I18n.tr("Downloaded %1").arg(name));
                  else
@@ -154,6 +163,17 @@ Singleton {
              function (output, exitCode, stderr) {
                  downloadingAll = false;
                  const data = _finishDownload(output, exitCode, stderr, "Downloading all themes failed");
+                 // Whatever else happened, themes may have been installed: a
+                 // PARTIAL run exits nonzero and reports failures, and both of
+                 // those returned before the sweep was requested. The installed
+                 // ones are invisible from the current theme's list, so nothing
+                 // else would ever schedule one and their rails would decode
+                 // full-size sources until each was applied. Requesting it costs
+                 // a stat pass when there is nothing to do.
+                 if (typeof VGSThemeService !== "undefined") {
+                     VGSThemeService.requestThumbnailSweep();
+                     VGSThemeService.refreshWallpapers();
+                 }
                  if (!data)
                      return;
                  const count = (data.installed || []).length;
@@ -177,8 +197,13 @@ Singleton {
                  if (!data)
                      return;
                  const result = (data.results || [])[0] || {};
-                 if (result.status === "removed")
+                 if (result.status === "removed") {
+                     // The helper prunes the removed theme's thumbnails itself,
+                     // so this only refreshes shell state.
+                     if (typeof VGSThemeService !== "undefined")
+                         VGSThemeService.refreshWallpapers();
                      operationCompleted(true, I18n.tr("Removed %1").arg(name));
+                 }
                  else
                      operationCompleted(false, result.error || I18n.tr("Remove failed: %1").arg(name));
              });

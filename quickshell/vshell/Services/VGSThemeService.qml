@@ -317,6 +317,10 @@ Singleton {
                 applyCompleted(false, stderr || output || ("Delete failed: " + name));
                 return;
             }
+            // A deleted theme takes its wallpapers with it, so its thumbnails
+            // are orphaned exactly as a removed wallpaper's are.
+            root.requestThumbnailSweep();
+            refreshWallpapers();
             refreshBlueprints();
             applyCompleted(true, "Deleted " + name);
         });
@@ -425,12 +429,136 @@ Singleton {
                 wallpapersLoadFailed = false;
                 wallpapersLoadError = "";
                 wallpapersLoaded();
+                root._sweepWallpaperThumbs();
             } catch (e) {
                 lastError = "Failed to parse theme wallpapers: " + e;
                 wallpapersLoadFailed = true;
                 wallpapersLoadError = lastError;
             }
         });
+    }
+
+    // One sweep per session, and only when an entry is actually missing its
+    // thumbnail. Dispatched AFTER the list is published, as a background task,
+    // so opening the switcher never waits on it: the rail falls back to the
+    // originals meanwhile and simply gets faster once the sweep lands.
+    //
+    // `--all` covers every installed theme, not just the current one, so
+    // switching themes does not pay a fresh decode; it also prunes entries no
+    // wallpaper claims any more, which is only correct over the complete set.
+    property bool _thumbSweepInFlight: false
+    // Attempts per cache IDENTITY, not per path. `thumbKey` folds in the
+    // source's size and mtime, so overwriting a wallpaper in place mints a new
+    // key and earns fresh attempts, while the same failing file keeps its own
+    // and stops. A path-keyed record could not tell those apart and refused to
+    // rebuild a replaced file for the rest of the session.
+    //
+    // Bounded rather than one-shot: `wallpaper-thumbs` exits 0 when it built or
+    // reused ANYTHING, so a per-file timeout or decode error rides back on a
+    // success. Counting attempts is what retries that without trusting the exit
+    // status, and what stops a genuinely undecodable file from sweeping forever.
+    property var _thumbAttempts: ({})
+    readonly property int _thumbMaxAttempts: 2
+    // Set by the flows that DELETE a wallpaper; cleared when a sweep runs.
+    property bool _thumbSweepWanted: false
+
+    // Force the next sweep even when the CURRENT theme is fully cached. `--all`
+    // both builds and prunes, so this covers each side: a removal orphans
+    // thumbnails nothing would otherwise sweep, and an install adds a theme
+    // whose wallpapers are missing but invisible from here — without this its
+    // rail falls back to full-size sources until it is applied.
+    // Public because both happen outside this service, in the catalog browser.
+    function requestThumbnailSweep() {
+        root._thumbSweepWanted = true;
+    }
+
+    // BEGIN THUMBNAIL SWEEP DECISION
+    // The sweep's state machine, with every input an argument so
+    // scripts/test-thumb-sweep.js can execute it — the same contract as the
+    // switcher's decision regions: nothing here may reference `root`, `Theme`,
+    // `I18n` or `Qt`. Every finding this logic attracted in review lived in
+    // these two functions, which is why they are executed rather than pinned.
+
+    // What a read should do. `attempts` is per cache IDENTITY, not per path:
+    // overwriting a wallpaper mints a new key and earns fresh attempts, while
+    // the same failing file keeps its own and stops. Identities confirmed to
+    // carry a thumbnail are FORGOTTEN, so a deleted thumbnail or a replaced
+    // source starts from zero; counts for entries this read cannot see — every
+    // other theme — are kept, or switching themes would refund them.
+    function thumbSweepPlan(entries, attempts, forced, maxAttempts) {
+        const kept = {};
+        for (const key in attempts)
+            kept[key] = attempts[key];
+        const missing = [];
+        (entries || []).forEach(entry => {
+            if (!entry || !entry.path)
+                return;
+            const key = String(entry.thumbKey || entry.path);
+            if (entry.thumb)
+                delete kept[key];
+            else
+                missing.push(key);
+        });
+        if (!forced && !missing.some(key => (kept[key] || 0) < maxAttempts))
+            return {sweep: false, attempts: kept, missing: missing};
+        const spent = {};
+        for (const key in kept)
+            spent[key] = kept[key];
+        missing.forEach(key => spent[key] = (spent[key] || 0) + 1);
+        return {sweep: true, attempts: spent, missing: missing};
+    }
+
+    // What a finished command means. Exit status alone does not say whether the
+    // sweep RAN: the helper also exits non-zero when it completed and every
+    // uncached wallpaper failed to decode, which is the normal answer with no
+    // decoder installed. A parseable result is a COMPLETED sweep whatever it
+    // exited with — counted against the cap and spending the request — while an
+    // unparseable one restores the request and must not trigger a re-read, or a
+    // broken command spins. Reported identities this dispatch already charged
+    // are skipped, or one failed sweep would spend both attempts at once.
+    function thumbSweepResult(output, missing, attempts, forced) {
+        let parsed = null;
+        try {
+            parsed = JSON.parse(output || "");
+        } catch (error) {
+            parsed = null;
+        }
+        if (!parsed || !Array.isArray(parsed.failed))
+            return {completed: false, attempts: attempts, restoreForced: !!forced, reread: false};
+        const counted = {};
+        for (const key in attempts)
+            counted[key] = attempts[key];
+        const charged = {};
+        (missing || []).forEach(key => charged[key] = true);
+        (parsed.failed || []).forEach(entry => {
+            const key = entry && entry.key;
+            if (key && !charged[key])
+                counted[key] = (counted[key] || 0) + 1;
+        });
+        return {completed: true, attempts: counted, restoreForced: false, reread: true};
+    }
+    // END THUMBNAIL SWEEP DECISION
+
+    function _sweepWallpaperThumbs() {
+        if (root._thumbSweepInFlight)
+            return;
+        const forced = root._thumbSweepWanted;
+        const plan = root.thumbSweepPlan(root.themeWallpapers || [], root._thumbAttempts,
+                                         forced, root._thumbMaxAttempts);
+        root._thumbAttempts = plan.attempts;
+        if (!plan.sweep)
+            return;
+        root._thumbSweepWanted = false;
+        root._thumbSweepInFlight = true;
+        _run("vgs-theme-wallpaper-thumbs", ["theme", "wallpaper-thumbs", "--all", "--json"], function(output, exitCode) {
+            root._thumbSweepInFlight = false;
+            const outcome = root.thumbSweepResult(output, plan.missing, root._thumbAttempts, forced);
+            root._thumbAttempts = outcome.attempts;
+            if (outcome.restoreForced)
+                root._thumbSweepWanted = true;
+            if (outcome.reread)
+                root.refreshWallpapers();
+        }, 600000, true);
     }
 
     function wallpaperAdd(path) {
@@ -455,6 +583,7 @@ Singleton {
                 applyCompleted(false, stderr || output || ("Wallpaper remove failed: " + file));
                 return;
             }
+            root.requestThumbnailSweep();
             refreshWallpapers();
             refreshBlueprints();
             applyCompleted(true, "Removed " + file + " from " + (currentTheme.name || "theme"));
