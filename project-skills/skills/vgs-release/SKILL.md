@@ -12,10 +12,13 @@ description: Cut and publish a VGS release across GitHub and every maintained in
    conventional types, and a repository rule requires every change to `main` to
    arrive through a pull request. Then create and push the signed tag `vX.Y.Z`.
    Sign with the ed25519 key `C23A00D650F28E947AD8EEBA6CB466C12AA86B98`, set as
-   `user.signingkey`, not the rsa4096 PPA key. gpg-agent caches after one unlock,
-   so tag from a terminal. With no TTY `git tag -s` fails and creates nothing:
-   fall back to `git tag -a vX.Y.Z -m "vX.Y.Z"`, since a bare `-a` opens an
-   editor and fails too, and record the tag as unsigned in the notes.
+   `user.signingkey`, not the rsa4096 PPA key. Always pass `-m`, as in `git tag
+   -s vX.Y.Z -m "vX.Y.Z"`: a tag command with no message opens an editor and
+   fails where there is no TTY, before signing is even reached. Signing itself
+   only needs a warm gpg-agent, so unlock once from a terminal and a later
+   headless session signs fine. When pinentry has no TTY and no cached PIN,
+   nothing can sign: fall back to `git tag -a vX.Y.Z -m "vX.Y.Z"` and record the
+   tag as unsigned in the notes.
 4. Verify GitHub Actions publishes both Linux bundles, the source archive, and `SHA256SUMS`.
 5. Test `install.sh --version vX.Y.Z --no-start` in a clean temporary HOME.
 6. Pin the published checksums. `sha256sums` in `packaging/arch/PKGBUILD`,

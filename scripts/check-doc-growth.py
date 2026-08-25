@@ -180,8 +180,8 @@ CEILINGS: dict[str, int] = {
     # the next addition here needs a raise, not a shave.
     "project-skills/skills/vshell-dev/SKILL.md": 5_700,
     # Adopted at 1,906 B; 1,598 B once publish commands left for vgs-distro-publish.
-    # Now 1,985 B: v0.4.0 shipped unsigned — full fingerprint, and the no-TTY fallback.
-    "project-skills/skills/vgs-release/SKILL.md": 2_200,
+    # Now 2,179 B: v0.4.0 shipped unsigned — full fingerprint, and the no-TTY fallback.
+    "project-skills/skills/vgs-release/SKILL.md": 2_400,
     # Adopted at 5,968 B: per-channel publish commands, split out so the release checklist stays
     # one; Ubuntu's source-tree prep and an every-chroot, non-zero-on-miss verification earn their
     # bulk. VGS-204: now 6,148 B, 148 past the old line, for the two gaps a hand publisher hits when
