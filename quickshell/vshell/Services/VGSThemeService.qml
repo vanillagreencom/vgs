@@ -319,7 +319,7 @@ Singleton {
             }
             // A deleted theme takes its wallpapers with it, so its thumbnails
             // are orphaned exactly as a removed wallpaper's are.
-            root._thumbPruneWanted = true;
+            root.requestThumbnailPrune();
             refreshWallpapers();
             refreshBlueprints();
             applyCompleted(true, "Deleted " + name);
@@ -462,6 +462,14 @@ Singleton {
     // Set by the flows that DELETE a wallpaper; cleared when a sweep runs.
     property bool _thumbPruneWanted: false
 
+    // Ask the next sweep to run even when nothing is MISSING, so `--all` prunes
+    // thumbnails whose wallpaper is gone. Public because removal happens from
+    // more than one place: a wallpaper, a theme, and the catalog browser, which
+    // owns its own service.
+    function requestThumbnailPrune() {
+        root._thumbPruneWanted = true;
+    }
+
     function _sweepWallpaperThumbs() {
         if (root._thumbSweepInFlight)
             return;
@@ -541,7 +549,7 @@ Singleton {
                 applyCompleted(false, stderr || output || ("Wallpaper remove failed: " + file));
                 return;
             }
-            root._thumbPruneWanted = true;
+            root.requestThumbnailPrune();
             refreshWallpapers();
             refreshBlueprints();
             applyCompleted(true, "Removed " + file + " from " + (currentTheme.name || "theme"));
