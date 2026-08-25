@@ -319,7 +319,7 @@ Singleton {
             }
             // A deleted theme takes its wallpapers with it, so its thumbnails
             // are orphaned exactly as a removed wallpaper's are.
-            root.requestThumbnailPrune();
+            root.requestThumbnailSweep();
             refreshWallpapers();
             refreshBlueprints();
             applyCompleted(true, "Deleted " + name);
@@ -460,14 +460,16 @@ Singleton {
     property var _thumbAttempts: ({})
     readonly property int _thumbMaxAttempts: 2
     // Set by the flows that DELETE a wallpaper; cleared when a sweep runs.
-    property bool _thumbPruneWanted: false
+    property bool _thumbSweepWanted: false
 
-    // Ask the next sweep to run even when nothing is MISSING, so `--all` prunes
-    // thumbnails whose wallpaper is gone. Public because removal happens from
-    // more than one place: a wallpaper, a theme, and the catalog browser, which
-    // owns its own service.
-    function requestThumbnailPrune() {
-        root._thumbPruneWanted = true;
+    // Force the next sweep even when the CURRENT theme is fully cached. `--all`
+    // both builds and prunes, so this covers each side: a removal orphans
+    // thumbnails nothing would otherwise sweep, and an install adds a theme
+    // whose wallpapers are missing but invisible from here — without this its
+    // rail falls back to full-size sources until it is applied.
+    // Public because both happen outside this service, in the catalog browser.
+    function requestThumbnailSweep() {
+        root._thumbSweepWanted = true;
     }
 
     function _sweepWallpaperThumbs() {
@@ -498,13 +500,13 @@ Singleton {
         // every surviving entry cached there is nothing MISSING to trigger a
         // sweep — so the orphan would outlive the session and every one after
         // it. `--all` prunes, so a removal asks for a sweep in its own right.
-        const hadPrune = root._thumbPruneWanted;
-        if (!hadPrune && !missing.some(key => (kept[key] || 0) < root._thumbMaxAttempts))
+        const forced = root._thumbSweepWanted;
+        if (!forced && !missing.some(key => (kept[key] || 0) < root._thumbMaxAttempts))
             return;
         // Consumed at DISPATCH so a removal that lands while this sweep is in
         // flight sets a fresh request the callback cannot swallow: that sweep
         // read the wallpaper set before the removal, so it did not prune it.
-        root._thumbPruneWanted = false;
+        root._thumbSweepWanted = false;
         const spent = Object.assign({}, kept);
         missing.forEach(key => spent[key] = (spent[key] || 0) + 1);
         root._thumbAttempts = spent;
@@ -519,8 +521,8 @@ Singleton {
                 // Restored, not left cleared: a sweep that times out must not
                 // spend the request, or a removal whose only sweep failed loses
                 // its orphan for good once every surviving entry is cached.
-                if (hadPrune)
-                    root._thumbPruneWanted = true;
+                if (forced)
+                    root._thumbSweepWanted = true;
                 return;
             }
             // Count the failures the sweep REPORTS, not just the ones visible in
@@ -575,7 +577,7 @@ Singleton {
                 applyCompleted(false, stderr || output || ("Wallpaper remove failed: " + file));
                 return;
             }
-            root.requestThumbnailPrune();
+            root.requestThumbnailSweep();
             refreshWallpapers();
             refreshBlueprints();
             applyCompleted(true, "Removed " + file + " from " + (currentTheme.name || "theme"));
