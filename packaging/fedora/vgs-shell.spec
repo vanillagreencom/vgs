@@ -1,7 +1,7 @@
 %global debug_package %{nil}
 
 Name:           vgs-shell
-Version:        0.3.0
+Version:        0.4.0
 Release:        1%{?dist}
 Summary:        VanillaGreen desktop shell for Hyprland and Niri
 AutoReqProv:     no
@@ -182,6 +182,14 @@ EOF
 %exclude /usr/lib/vshell/themes/THEMES-ATTRIBUTION.md
 
 %changelog
+* Tue Aug 25 2026 Brad <brad@vanillagreen> - 0.4.0-1
+- Full-screen wallpaper and theme switchers, replacing the cramped popups
+- The wallpaper switcher can target one monitor or all of them, with the scope
+  toggle sitting directly above the wallpaper rail
+- Wallpaper thumbnails are cached pre-sized on disk, so the switcher opens from
+  cache instead of decoding full-size sources every time
+- Gentoo has a publisher script and a weekly drift alarm
+
 * Thu Aug 20 2026 Brad <brad@vanillagreen> - 0.3.0-1
 - Split the extras into their own release bundle; the shell download drops from
   ~1.1 GiB to ~71 MiB, with themes fetched on demand from the catalog
