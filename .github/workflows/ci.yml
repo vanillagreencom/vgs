@@ -320,6 +320,7 @@ jobs:
           scripts/test-popout-dismiss-envelope.js
           scripts/test-switcher-selection.js
           scripts/test-switcher-scope.js
+          scripts/test-thumb-sweep.js
           scripts/test-wallpaper-thumbs.py
           scripts/test-wallpaper-thumb-cache.py
 

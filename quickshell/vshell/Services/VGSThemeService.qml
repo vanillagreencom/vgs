@@ -472,89 +472,92 @@ Singleton {
         root._thumbSweepWanted = true;
     }
 
-    function _sweepWallpaperThumbs() {
-        if (root._thumbSweepInFlight)
-            return;
-        const entries = root.themeWallpapers || [];
-        const identity = entry => String(entry.thumbKey || entry.path);
-        // Clear ONLY identities this read confirmed carry a thumbnail, and keep
-        // every other count. `entries` is the current theme while the sweep is
-        // `--all`, so rebuilding the map from it would drop the counts of every
-        // theme not selected: a decoder that times out on one wallpaper would
-        // earn its attempts back each time the user returned to that theme.
-        // A cleared identity starts from zero again, which is what lets a
-        // deleted thumbnail or a replaced source be rebuilt.
-        const kept = Object.assign({}, root._thumbAttempts);
+    // BEGIN THUMBNAIL SWEEP DECISION
+    // The sweep's state machine, with every input an argument so
+    // scripts/test-thumb-sweep.js can execute it — the same contract as the
+    // switcher's decision regions: nothing here may reference `root`, `Theme`,
+    // `I18n` or `Qt`. Every finding this logic attracted in review lived in
+    // these two functions, which is why they are executed rather than pinned.
+
+    // What a read should do. `attempts` is per cache IDENTITY, not per path:
+    // overwriting a wallpaper mints a new key and earns fresh attempts, while
+    // the same failing file keeps its own and stops. Identities confirmed to
+    // carry a thumbnail are FORGOTTEN, so a deleted thumbnail or a replaced
+    // source starts from zero; counts for entries this read cannot see — every
+    // other theme — are kept, or switching themes would refund them.
+    function thumbSweepPlan(entries, attempts, forced, maxAttempts) {
+        const kept = {};
+        for (const key in attempts)
+            kept[key] = attempts[key];
         const missing = [];
-        entries.forEach(entry => {
+        (entries || []).forEach(entry => {
             if (!entry || !entry.path)
                 return;
-            const key = identity(entry);
+            const key = String(entry.thumbKey || entry.path);
             if (entry.thumb)
                 delete kept[key];
             else
                 missing.push(key);
         });
-        root._thumbAttempts = kept;
-        // A removal leaves the departed wallpaper's thumbnail behind, and with
-        // every surviving entry cached there is nothing MISSING to trigger a
-        // sweep — so the orphan would outlive the session and every one after
-        // it. `--all` prunes, so a removal asks for a sweep in its own right.
-        const forced = root._thumbSweepWanted;
-        if (!forced && !missing.some(key => (kept[key] || 0) < root._thumbMaxAttempts))
-            return;
-        // Consumed at DISPATCH so a removal that lands while this sweep is in
-        // flight sets a fresh request the callback cannot swallow: that sweep
-        // read the wallpaper set before the removal, so it did not prune it.
-        root._thumbSweepWanted = false;
-        const spent = Object.assign({}, kept);
+        if (!forced && !missing.some(key => (kept[key] || 0) < maxAttempts))
+            return {sweep: false, attempts: kept, missing: missing};
+        const spent = {};
+        for (const key in kept)
+            spent[key] = kept[key];
         missing.forEach(key => spent[key] = (spent[key] || 0) + 1);
-        root._thumbAttempts = spent;
+        return {sweep: true, attempts: spent, missing: missing};
+    }
+
+    // What a finished command means. Exit status alone does not say whether the
+    // sweep RAN: the helper also exits non-zero when it completed and every
+    // uncached wallpaper failed to decode, which is the normal answer with no
+    // decoder installed. A parseable result is a COMPLETED sweep whatever it
+    // exited with — counted against the cap and spending the request — while an
+    // unparseable one restores the request and must not trigger a re-read, or a
+    // broken command spins. Reported identities this dispatch already charged
+    // are skipped, or one failed sweep would spend both attempts at once.
+    function thumbSweepResult(output, missing, attempts, forced) {
+        let parsed = null;
+        try {
+            parsed = JSON.parse(output || "");
+        } catch (error) {
+            parsed = null;
+        }
+        if (!parsed || !Array.isArray(parsed.failed))
+            return {completed: false, attempts: attempts, restoreForced: !!forced, reread: false};
+        const counted = {};
+        for (const key in attempts)
+            counted[key] = attempts[key];
+        const charged = {};
+        (missing || []).forEach(key => charged[key] = true);
+        (parsed.failed || []).forEach(entry => {
+            const key = entry && entry.key;
+            if (key && !charged[key])
+                counted[key] = (counted[key] || 0) + 1;
+        });
+        return {completed: true, attempts: counted, restoreForced: false, reread: true};
+    }
+    // END THUMBNAIL SWEEP DECISION
+
+    function _sweepWallpaperThumbs() {
+        if (root._thumbSweepInFlight)
+            return;
+        const forced = root._thumbSweepWanted;
+        const plan = root.thumbSweepPlan(root.themeWallpapers || [], root._thumbAttempts,
+                                         forced, root._thumbMaxAttempts);
+        root._thumbAttempts = plan.attempts;
+        if (!plan.sweep)
+            return;
+        root._thumbSweepWanted = false;
         root._thumbSweepInFlight = true;
         _run("vgs-theme-wallpaper-thumbs", ["theme", "wallpaper-thumbs", "--all", "--json"], function(output, exitCode) {
             root._thumbSweepInFlight = false;
-            // Exit status alone does not say whether the sweep RAN: the helper
-            // also exits 1 when it completed and every uncached wallpaper failed
-            // to decode, which is the normal answer on a machine with no
-            // decoder. Treating that as "did not run" restored the forced
-            // request and re-ran the whole `--all` on every later read, forever.
-            // A parseable result is a COMPLETED sweep whatever it exited with.
-            let result = null;
-            try {
-                result = JSON.parse(output || "");
-            } catch (e) {
-                result = null;
-            }
-            const completed = !!result && Array.isArray(result.failed);
-            if (!completed) {
-                // Genuinely did not complete — a timeout, a crash, no output.
-                // Restore the request so a removal or install does not lose its
-                // only sweep, and do NOT re-read, which is what stops a broken
-                // command from spinning.
-                if (forced)
-                    root._thumbSweepWanted = true;
-                return;
-            }
-            // Count the failures the sweep REPORTS, not just the ones visible in
-            // the current theme: `--all` attempts every theme, so a bad file in
-            // one the user is not looking at is never in `themeWallpapers` and
-            // would otherwise never reach the attempt cap. Only identities this
-            // dispatch did not already charge, or one failed sweep would spend
-            // both attempts and the retry would never run.
-            const reported = result.failed || [];
-            if (reported.length > 0) {
-                const counted = Object.assign({}, root._thumbAttempts);
-                const charged = {};
-                missing.forEach(key => charged[key] = true);
-                reported.forEach(entry => {
-                    const key = entry && entry.key;
-                    if (key && !charged[key])
-                        counted[key] = (counted[key] || 0) + 1;
-                });
-                root._thumbAttempts = counted;
-            }
-            // Re-reading is what swaps the rail onto the thumbnails just built.
-            root.refreshWallpapers();
+            const outcome = root.thumbSweepResult(output, plan.missing, root._thumbAttempts, forced);
+            root._thumbAttempts = outcome.attempts;
+            if (outcome.restoreForced)
+                root._thumbSweepWanted = true;
+            if (outcome.reread)
+                root.refreshWallpapers();
         }, 600000, true);
     }
 
