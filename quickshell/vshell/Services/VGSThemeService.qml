@@ -513,44 +513,47 @@ Singleton {
         root._thumbSweepInFlight = true;
         _run("vgs-theme-wallpaper-thumbs", ["theme", "wallpaper-thumbs", "--all", "--json"], function(output, exitCode) {
             root._thumbSweepInFlight = false;
-            // A failed sweep is not reported: the rail is already drawing from
-            // the originals, which is correct, just slower. Re-reading is what
-            // swaps the rail onto the thumbnails just built, and it is skipped
-            // on failure so a broken command cannot spin.
-            if (exitCode !== 0) {
-                // Restored, not left cleared: a sweep that times out must not
-                // spend the request, or a removal whose only sweep failed loses
-                // its orphan for good once every surviving entry is cached.
+            // Exit status alone does not say whether the sweep RAN: the helper
+            // also exits 1 when it completed and every uncached wallpaper failed
+            // to decode, which is the normal answer on a machine with no
+            // decoder. Treating that as "did not run" restored the forced
+            // request and re-ran the whole `--all` on every later read, forever.
+            // A parseable result is a COMPLETED sweep whatever it exited with.
+            let result = null;
+            try {
+                result = JSON.parse(output || "");
+            } catch (e) {
+                result = null;
+            }
+            const completed = !!result && Array.isArray(result.failed);
+            if (!completed) {
+                // Genuinely did not complete — a timeout, a crash, no output.
+                // Restore the request so a removal or install does not lose its
+                // only sweep, and do NOT re-read, which is what stops a broken
+                // command from spinning.
                 if (forced)
                     root._thumbSweepWanted = true;
                 return;
             }
             // Count the failures the sweep REPORTS, not just the ones visible in
-            // the current theme. `--all` attempts every theme, so an undecodable
-            // wallpaper in one the user is not looking at is never in
-            // `themeWallpapers` and would otherwise never reach the attempt cap
-            // — running its decoder rungs again on every later sweep.
-            try {
-                const reported = (JSON.parse(output || "{}").failed || []);
-                if (reported.length > 0) {
-                    const counted = Object.assign({}, root._thumbAttempts);
-                    // Only identities this dispatch did NOT already charge:
-                    // a current-theme entry is counted once before dispatch, and
-                    // counting it again here spent both attempts on one sweep, so
-                    // the promised retry never ran.
-                    const charged = {};
-                    missing.forEach(key => charged[key] = true);
-                    reported.forEach(entry => {
-                        const key = entry && entry.key;
-                        if (key && !charged[key])
-                            counted[key] = (counted[key] || 0) + 1;
-                    });
-                    root._thumbAttempts = counted;
-                }
-            } catch (e) {
-                // A sweep that answered with unparseable output still built what
-                // it built; the per-theme counting above bounds the rest.
+            // the current theme: `--all` attempts every theme, so a bad file in
+            // one the user is not looking at is never in `themeWallpapers` and
+            // would otherwise never reach the attempt cap. Only identities this
+            // dispatch did not already charge, or one failed sweep would spend
+            // both attempts and the retry would never run.
+            const reported = result.failed || [];
+            if (reported.length > 0) {
+                const counted = Object.assign({}, root._thumbAttempts);
+                const charged = {};
+                missing.forEach(key => charged[key] = true);
+                reported.forEach(entry => {
+                    const key = entry && entry.key;
+                    if (key && !charged[key])
+                        counted[key] = (counted[key] || 0) + 1;
+                });
+                root._thumbAttempts = counted;
             }
+            // Re-reading is what swaps the rail onto the thumbnails just built.
             root.refreshWallpapers();
         }, 600000, true);
     }
