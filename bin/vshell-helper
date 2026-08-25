@@ -7703,7 +7703,10 @@ def _cmd_theme_unlocked(argv: List[str]) -> int:
             if reverted:
                 apply_theme_obj(reverted)
                 applied = True
-        result = {"reverted": True, "name": bp.get("name"), "applied": applied}
+        # Dropping the overlay can take user backgrounds with it, so the same
+        # orphaning applies as a delete or a removal.
+        result = {"reverted": True, "name": bp.get("name"), "applied": applied,
+                  "thumbsPruned": prune_wallpaper_thumbs_now()}
         print(json.dumps(result, indent=2) if args.json else f"Reverted {bp.get('name')} to defaults")
         return 0
     if args.cmd == "restyle":
