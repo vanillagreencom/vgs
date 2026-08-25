@@ -90,7 +90,11 @@ def build_one(src: Path) -> Optional[Path]:
     if out.is_file() and out.stat().st_size > 0:
         return out
     out.parent.mkdir(parents=True, exist_ok=True)
-    tmp = out.with_name(f".{out.name}.{os.getpid()}.{time.time_ns()}")
+    # The suffix must stay .jpg: the magick and ffmpeg rungs pick their output
+    # FORMAT from the final extension, and ffmpeg refuses outright ("Unable to
+    # choose an output format") when the name ends in a timestamp — so every
+    # build failed on exactly the installs that have no Pillow.
+    tmp = out.with_name(f".{out.stem}.{os.getpid()}.{time.time_ns()}.jpg")
     box = f"{WIDTH}x{HEIGHT}"
     try:
         # The same ladder the fastfetch logo uses. `>` and PIL's thumbnail()
