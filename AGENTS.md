@@ -17,7 +17,7 @@ VGS = VanillaGreen Shell. Runtime name stays `vshell`: `vgs` collides with LVM.
 ## Where the rest lives
 - `docs/architecture/` — one reference per subsystem; read the one you touch.
 - `.github/instructions/*.instructions.md` — path-scoped rules (CI, scripts,
-  vendored trees). `vstack.settings.toml` — review-gate trust,
+  vendored trees). `kendex.settings.toml` — review-gate trust,
   every key with its rationale. `docs/decisions/INDEX.md` — decisions.
 - `project-skills/README.md` — the skills.
 - `AGENTS.local.md` — this machine's wiring; untracked, absent on a fresh clone.
@@ -52,7 +52,7 @@ the mode that replaces what `qs -c vshell` used to cover.
 ## Conventions
 - Tracker: **Linear** (team `vg-shell`, `VGS-<n>`). GitHub Issues is
   intake-only and nothing syncs back; mirroring into Linear is MANUAL —
-  commands in the linear skill's instructions (`vstack.toml`), rationale in
+  commands in the linear skill's instructions (`kendex.toml`), rationale in
   `docs/decisions/D002-github-linear-intake-sync.md`.
 - Branch `vgs-<n>-<slug>` — attaches the PR to Linear; `GH_ISSUE_PATTERN` reads it.
 - Commits `area: imperative summary`, lowercase; `area(VGS-12): ...` with an issue.
