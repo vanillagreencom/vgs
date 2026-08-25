@@ -160,6 +160,16 @@ def build_one(src: Path) -> Optional[Path]:
         try:
             rung(tmp)
             tmp.replace(out)
+            # The source may have been DELETED while this was decoding. A prune
+            # running in that window skips the temp file by design, so without
+            # this the rename would publish an orphan nothing later sweeps —
+            # the deletion has already spent its one prune. Checking after the
+            # rename also covers the other order: a prune landing between them
+            # removes `out` itself, and the unlink below is then a no-op.
+            if not src.exists():
+                with contextlib.suppress(OSError):
+                    out.unlink()
+                return None
             return out
         except Exception:
             with contextlib.suppress(OSError):
