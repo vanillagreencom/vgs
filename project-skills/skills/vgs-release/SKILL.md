@@ -14,7 +14,8 @@ description: Cut and publish a VGS release across GitHub and every maintained in
    Sign with the ed25519 key `C23A00D650F28E947AD8EEBA6CB466C12AA86B98`, set as
    `user.signingkey`, not the rsa4096 PPA key. gpg-agent caches after one unlock,
    so tag from a terminal. With no TTY `git tag -s` fails and creates nothing:
-   fall back to `git tag -a` and record the tag as unsigned in the notes.
+   fall back to `git tag -a vX.Y.Z -m "vX.Y.Z"`, since a bare `-a` opens an
+   editor and fails too, and record the tag as unsigned in the notes.
 4. Verify GitHub Actions publishes both Linux bundles, the source archive, and `SHA256SUMS`.
 5. Test `install.sh --version vX.Y.Z --no-start` in a clean temporary HOME.
 6. Pin the published checksums. `sha256sums` in `packaging/arch/PKGBUILD`,
