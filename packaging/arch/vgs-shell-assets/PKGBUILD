@@ -13,7 +13,7 @@ url='https://github.com/vanillagreencom/vgs'
 license=('MIT')
 depends=('vgs-shell')
 source=("$url/releases/download/v$pkgver/vgs-$pkgver-assets.tar.gz")
-sha256sums=('cab6238a8217bbe08407403efba57cf9681f50202adcf7366111a4071f2ce448')
+sha256sums=('555c256d071827321035c67acc2dc75848701df73a3d38f3f73ea9cf956b47ce')
 
 package() {
   cd "vgs-$pkgver-assets"
