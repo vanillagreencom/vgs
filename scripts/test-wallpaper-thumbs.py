@@ -20,6 +20,7 @@ BEHAVIOUR, not source text.
 """
 from __future__ import annotations
 
+import base64
 import shutil
 import subprocess
 import sys
@@ -31,6 +32,55 @@ sys.path.insert(0, str(REPO / "bin"))
 import vshell_wallpaper_thumbs as thumbs  # noqa: E402
 
 FAILURES: list[str] = []
+
+# A real 8x6 JPEG. The stub rungs write these bytes so the ladder can be
+# exercised end to end on a machine with no decoder at all — which is what CI
+# runners are, and what made "skip everything" the shipped outcome.
+TINY_JPEG = base64.b64decode(
+    "/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAA0JCgsKCA0LCgsODg0PEyAVExISEyccHhcgLikxMC4p"
+    "LSwzOko+MzZGNywtQFdBRkxOUlNSMj5aYVpQYEpRUk//2wBDAQ4ODhMREyYVFSZPNS01T09PT09P"
+    "T09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT0//wAARCAAGAAgDASIA"
+    "AhEBAxEB/8QAHwAAAQUBAQEBAQEAAAAAAAAAAAECAwQFBgcICQoL/8QAtRAAAgEDAwIEAwUFBAQA"
+    "AAF9AQIDAAQRBRIhMUEGE1FhByJxFDKBkaEII0KxwRVS0fAkM2JyggkKFhcYGRolJicoKSo0NTY3"
+    "ODk6Q0RFRkdISUpTVFVWV1hZWmNkZWZnaGlqc3R1dnd4eXqDhIWGh4iJipKTlJWWl5iZmqKjpKWm"
+    "p6ipqrKztLW2t7i5usLDxMXGx8jJytLT1NXW19jZ2uHi4+Tl5ufo6erx8vP09fb3+Pn6/8QAHwEA"
+    "AwEBAQEBAQEBAQAAAAAAAAECAwQFBgcICQoL/8QAtREAAgECBAQDBAcFBAQAAQJ3AAECAxEEBSEx"
+    "BhJBUQdhcRMiMoEIFEKRobHBCSMzUvAVYnLRChYkNOEl8RcYGRomJygpKjU2Nzg5OkNERUZHSElK"
+    "U1RVVldYWVpjZGVmZ2hpanN0dXZ3eHl6goOEhYaHiImKkpOUlZaXmJmaoqOkpaanqKmqsrO0tba3"
+    "uLm6wsPExcbHyMnK0tPU1dbX2Nna4uPk5ebn6Onq8vP09fb3+Pn6/9oADAMBAAIRAxEAPwB9FFFI"
+    "yP/Z"
+)
+
+
+def stub_runner(recorded: list[list[str]]):
+    """Stands in for magick and ffmpeg, modelling the ONE behaviour that broke:
+    both pick their output format from the destination's extension, and ffmpeg
+    refuses outright when it cannot. Nothing else about them is simulated — this
+    exercises `build_one`'s own argv and atomic-rename path, deterministically,
+    on a machine with no decoder installed."""
+    def run(cmd, **kwargs):
+        recorded.append(list(cmd))
+        dest = Path(cmd[-1])
+        if dest.suffix.lower() not in {".jpg", ".jpeg"}:
+            return subprocess.CompletedProcess(
+                cmd, 1, "", "Unable to choose an output format for '%s'" % dest)
+        dest.write_bytes(TINY_JPEG)
+        return subprocess.CompletedProcess(cmd, 0, "", "")
+    return run
+
+
+def build_stubbed(src: Path, rung: str, recorded: list[list[str]]) -> Path | None:
+    """Run one rung with the tool STUBBED, so the ladder is reachable without it."""
+    out_dir = Path(tempfile.mkdtemp())
+    thumbs.configure(thumbs.ThumbRuntime(cache_dir=lambda: out_dir, run=stub_runner(recorded)))
+    real_image, real_which = thumbs.Image, thumbs.shutil.which
+    try:
+        thumbs.Image = None
+        thumbs.shutil.which = lambda name: (
+            f"/usr/bin/{name}" if name == rung else None)
+        return thumbs.build_one(src)
+    finally:
+        thumbs.Image, thumbs.shutil.which = real_image, real_which
 
 
 def ok(message: str) -> None:
@@ -115,6 +165,40 @@ def main() -> int:
         return 1
 
     exercised = 0
+
+    # Always-on layer: the ladder's own argv and rename path, with the tools
+    # stubbed. This is what makes the suite meaningful on a bare CI runner
+    # instead of skipping every rung and reading as a pass.
+    for rung in ("magick", "ffmpeg"):
+        recorded: list[list[str]] = []
+        out = build_stubbed(src, rung, recorded)
+        exercised += 1
+        if not recorded:
+            fail(f"the {rung} rung never invoked its tool")
+        elif Path(recorded[-1][-1]).suffix.lower() != ".jpg":
+            fail(f"the {rung} rung was handed {recorded[-1][-1]!r} — these tools "
+                 f"pick their output FORMAT from that extension, and ffmpeg "
+                 f"refuses without one")
+        elif out is None or not out.is_file() or not is_jpeg(out):
+            fail(f"the {rung} rung did not land a JPEG at its final path")
+        else:
+            ok(f"the {rung} rung writes to a .jpg destination and renames it into place")
+
+    # Control for that layer: plant the shipped shape and require the rung to
+    # break, so the assertion above cannot be vacuously true.
+    recorded = []
+    real_temp = thumbs.temp_path
+    thumbs.temp_path = lambda out: out.with_name(f".{out.name}.0.1")
+    try:
+        broken = build_stubbed(src, "ffmpeg", recorded)
+    finally:
+        thumbs.temp_path = real_temp
+    if broken is not None:
+        fail("MUST-FAIL CONTROL DID NOT FIRE: a destination with no .jpg suffix "
+             "still produced a thumbnail, so this layer cannot see the bug")
+    else:
+        ok("control: a destination with no .jpg suffix is refused")
+
     for rung, available in (
         ("pil", thumbs.Image is not None),
         ("magick", shutil.which("magick") is not None),
