@@ -139,19 +139,17 @@ Singleton {
                  if (!data)
                      return;
                  const result = (data.results || [])[0] || {};
-                 if (result.status === "installed") {
-                     // A new theme's wallpapers are missing but invisible from
-                     // the service, which only sees the CURRENT theme — without
-                     // this its rail falls back to full-size sources until it
-                     // is applied, which is the prewarm `--all` promises.
-                     if (typeof VGSThemeService !== "undefined") {
-                         VGSThemeService.requestThumbnailSweep();
-                         // The request is only READ by a wallpaper read, so it
-                         // needs one to act on it.
-                         VGSThemeService.refreshWallpapers();
-                     }
-                     operationCompleted(true, I18n.tr("Downloaded %1").arg(name));
+                 // A new theme's wallpapers are missing but invisible from the
+                 // service, which only sees the CURRENT theme — without a sweep
+                 // its rail falls back to full-size sources until it is applied,
+                 // which is the prewarm `--all` promises. The request is only
+                 // READ by a wallpaper read, so it needs one to act on it.
+                 if (result.status === "installed" && typeof VGSThemeService !== "undefined") {
+                     VGSThemeService.requestThumbnailSweep();
+                     VGSThemeService.refreshWallpapers();
                  }
+                 if (result.status === "installed")
+                     operationCompleted(true, I18n.tr("Downloaded %1").arg(name));
                  else
                      operationCompleted(false, result.error || result.reason || I18n.tr("Download failed: %1").arg(name));
              });
@@ -165,6 +163,17 @@ Singleton {
              function (output, exitCode, stderr) {
                  downloadingAll = false;
                  const data = _finishDownload(output, exitCode, stderr, "Downloading all themes failed");
+                 // Whatever else happened, themes may have been installed: a
+                 // PARTIAL run exits nonzero and reports failures, and both of
+                 // those returned before the sweep was requested. The installed
+                 // ones are invisible from the current theme's list, so nothing
+                 // else would ever schedule one and their rails would decode
+                 // full-size sources until each was applied. Requesting it costs
+                 // a stat pass when there is nothing to do.
+                 if (typeof VGSThemeService !== "undefined") {
+                     VGSThemeService.requestThumbnailSweep();
+                     VGSThemeService.refreshWallpapers();
+                 }
                  if (!data)
                      return;
                  const count = (data.installed || []).length;
@@ -172,10 +181,6 @@ Singleton {
                  if (failed.length > 0) {
                      operationCompleted(false, I18n.tr("Downloaded %1 themes, %2 failed").arg(count).arg(failed.length));
                      return;
-                 }
-                 if (typeof VGSThemeService !== "undefined") {
-                     VGSThemeService.requestThumbnailSweep();
-                     VGSThemeService.refreshWallpapers();
                  }
                  operationCompleted(true, I18n.tr("Downloaded %1 themes").arg(count));
              });
