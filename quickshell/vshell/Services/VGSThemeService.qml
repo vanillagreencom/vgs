@@ -455,6 +455,8 @@ Singleton {
     // status, and what stops a genuinely undecodable file from sweeping forever.
     property var _thumbAttempts: ({})
     readonly property int _thumbMaxAttempts: 2
+    // Set by the flows that DELETE a wallpaper; cleared when a sweep runs.
+    property bool _thumbPruneWanted: false
 
     function _sweepWallpaperThumbs() {
         if (root._thumbSweepInFlight)
@@ -480,8 +482,14 @@ Singleton {
                 missing.push(key);
         });
         root._thumbAttempts = kept;
-        if (!missing.some(key => (kept[key] || 0) < root._thumbMaxAttempts))
+        // A removal leaves the departed wallpaper's thumbnail behind, and with
+        // every surviving entry cached there is nothing MISSING to trigger a
+        // sweep — so the orphan would outlive the session and every one after
+        // it. `--all` prunes, so a removal asks for a sweep in its own right.
+        const wantPrune = root._thumbPruneWanted;
+        if (!wantPrune && !missing.some(key => (kept[key] || 0) < root._thumbMaxAttempts))
             return;
+        root._thumbPruneWanted = false;
         const spent = Object.assign({}, kept);
         missing.forEach(key => spent[key] = (spent[key] || 0) + 1);
         root._thumbAttempts = spent;
@@ -519,6 +527,7 @@ Singleton {
                 applyCompleted(false, stderr || output || ("Wallpaper remove failed: " + file));
                 return;
             }
+            root._thumbPruneWanted = true;
             refreshWallpapers();
             refreshBlueprints();
             applyCompleted(true, "Removed " + file + " from " + (currentTheme.name || "theme"));

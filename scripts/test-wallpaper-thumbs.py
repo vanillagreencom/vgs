@@ -199,6 +199,35 @@ def main() -> int:
     else:
         ok("control: a destination with no .jpg suffix is refused")
 
+    # A rung that CANNOT decode must not end the build. Pillow's codec set
+    # depends on how it was built, so a valid wallpaper in a format it cannot
+    # open (JXL, AVIF, HEIF are all accepted by the picker) must still reach
+    # ImageMagick. Break Pillow deliberately and require a later rung to answer.
+    if thumbs.Image is not None:
+        recorded = []
+        out_dir = Path(tempfile.mkdtemp())
+        thumbs.configure(thumbs.ThumbRuntime(cache_dir=lambda: out_dir, run=stub_runner(recorded)))
+        real_open, real_which = thumbs.Image.open, thumbs.shutil.which
+
+        def no_codec(*args, **kwargs):
+            raise OSError("cannot identify image file")
+
+        thumbs.Image.open = no_codec
+        thumbs.shutil.which = lambda name: "/usr/bin/magick" if name == "magick" else None
+        try:
+            fell_through = thumbs.build_one(src)
+        finally:
+            thumbs.Image.open, thumbs.shutil.which = real_open, real_which
+        exercised += 1
+        if fell_through is None or not fell_through.is_file():
+            fail("a Pillow codec failure ended the build instead of falling "
+                 "through to ImageMagick — the ladder exists for exactly the "
+                 "formats one decoder cannot open")
+        elif not recorded:
+            fail("the build claimed success without reaching the next rung")
+        else:
+            ok("a rung that cannot decode falls through to the next")
+
     for rung, available in (
         ("pil", thumbs.Image is not None),
         ("magick", shutil.which("magick") is not None),

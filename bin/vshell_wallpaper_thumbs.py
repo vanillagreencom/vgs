@@ -10,9 +10,10 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
 try:
-    from PIL import Image
+    from PIL import Image, ImageOps
 except Exception:  # pragma: no cover - handled at runtime
     Image = None  # type: ignore
+    ImageOps = None  # type: ignore
 
 
 # Sliver thumbnails for the wallpaper switcher's rail.
@@ -111,42 +112,59 @@ def build_one(src: Path) -> Optional[Path]:
     if out.is_file() and out.stat().st_size > 0:
         return out
     out.parent.mkdir(parents=True, exist_ok=True)
-    tmp = temp_path(out)
     box = f"{WIDTH}x{HEIGHT}"
-    try:
-        # The same ladder the fastfetch logo uses. `>` and PIL's thumbnail()
-        # both FIT inside the box and never enlarge, which is what Qt does with
-        # sourceSize, so a portrait source keeps its aspect instead of being
-        # cropped to 16:9.
-        if Image is not None:
-            with Image.open(src) as im:
-                im.draft("RGB", (WIDTH, HEIGHT))
-                im = im.convert("RGB")
-                im.thumbnail((WIDTH, HEIGHT), Image.LANCZOS)
-                im.save(tmp, "JPEG", quality=QUALITY)
-        elif shutil.which("magick"):
-            proc = _rt().run([
-                "magick", str(src), "-auto-orient", "-resize", f"{box}>",
-                "-quality", str(QUALITY), "-strip", str(tmp),
-            ], timeout=60)
-            if proc.returncode != 0:
-                raise RuntimeError(proc.stderr.strip() or "ImageMagick failed")
-        elif shutil.which("ffmpeg"):
-            proc = _rt().run([
-                "ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-i", str(src),
-                "-vf", f"scale='min({WIDTH},iw)':'min({HEIGHT},ih)':force_original_aspect_ratio=decrease",
-                "-frames:v", "1", str(tmp),
-            ], timeout=60)
-            if proc.returncode != 0:
-                raise RuntimeError(proc.stderr.strip() or "ffmpeg failed")
-        else:
-            return None
-        tmp.replace(out)
-        return out
-    except Exception:
-        with contextlib.suppress(OSError):
-            tmp.unlink()
-        return None
+
+    def with_pillow(tmp: Path) -> None:
+        # exif_transpose FIRST: the magick rung passes -auto-orient, and a
+        # phone photo carrying an EXIF rotation would otherwise be resized
+        # unrotated and saved without the tag — a thumbnail on its side, or
+        # the wrong way round from the same wallpaper on another machine.
+        with Image.open(src) as im:
+            im.draft("RGB", (WIDTH, HEIGHT))
+            oriented = ImageOps.exif_transpose(im) or im
+            oriented = oriented.convert("RGB")
+            oriented.thumbnail((WIDTH, HEIGHT), Image.LANCZOS)
+            oriented.save(tmp, "JPEG", quality=QUALITY)
+
+    def with_magick(tmp: Path) -> None:
+        proc = _rt().run([
+            "magick", str(src), "-auto-orient", "-resize", f"{box}>",
+            "-quality", str(QUALITY), "-strip", str(tmp),
+        ], timeout=60)
+        if proc.returncode != 0:
+            raise RuntimeError(proc.stderr.strip() or "ImageMagick failed")
+
+    def with_ffmpeg(tmp: Path) -> None:
+        proc = _rt().run([
+            "ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-i", str(src),
+            "-vf", f"scale='min({WIDTH},iw)':'min({HEIGHT},ih)':force_original_aspect_ratio=decrease",
+            "-frames:v", "1", str(tmp),
+        ], timeout=60)
+        if proc.returncode != 0:
+            raise RuntimeError(proc.stderr.strip() or "ffmpeg failed")
+
+    # Each rung is tried in turn and its failure is caught SEPARATELY. Pillow's
+    # codec set depends on how it was built, so a valid wallpaper in a format it
+    # cannot open — JXL, AVIF and HEIF are all accepted by the picker — used to
+    # abort the whole build and never reach ImageMagick, which usually can.
+    rungs = []
+    if Image is not None:
+        rungs.append(("pillow", with_pillow))
+    if shutil.which("magick"):
+        rungs.append(("magick", with_magick))
+    if shutil.which("ffmpeg"):
+        rungs.append(("ffmpeg", with_ffmpeg))
+
+    for _name, rung in rungs:
+        tmp = temp_path(out)
+        try:
+            rung(tmp)
+            tmp.replace(out)
+            return out
+        except Exception:
+            with contextlib.suppress(OSError):
+                tmp.unlink()
+    return None
 
 
 def build_all(paths: List[Path], prune: bool = False) -> Dict[str, Any]:
