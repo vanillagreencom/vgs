@@ -294,6 +294,26 @@ def main() -> int:
                 ok(f"control: an unresized build is {width}x{height}, which the "
                    "budget check rejects")
 
+    # Pruning must not eat a build that is still running. Temp paths keep the
+    # .jpg suffix deliberately and are absent from `wanted`, so an unguarded
+    # sweep unlinks one mid-decode and the rename that follows fails — losing
+    # the thumbnail on a machine with only that rung.
+    prune_dir = Path(tempfile.mkdtemp())
+    thumbs.configure(thumbs.ThumbRuntime(cache_dir=lambda: prune_dir, run=runner))
+    thumbs.thumb_dir().mkdir(parents=True, exist_ok=True)
+    in_progress = thumbs.thumb_dir() / ".abc123.4321.999.jpg"
+    orphan = thumbs.thumb_dir() / "deadbeefcafe.jpg"
+    in_progress.write_bytes(b"partial"); orphan.write_bytes(b"stale")
+    pruned = thumbs.prune_orphans([])
+    exercised += 1
+    if in_progress.exists() and not orphan.exists() and pruned == 1:
+        ok("pruning drops orphans and leaves an in-progress build alone")
+    elif not in_progress.exists():
+        fail("pruning unlinked an in-progress build: the rename that follows "
+             "would fail and the thumbnail would be lost")
+    else:
+        fail(f"pruning removed {pruned} entries, orphan gone: {not orphan.exists()}")
+
     # The control, run LAST so a green above cannot be the fix being absent:
     # strip the suffix the way the shipped bug did and require a rung to break.
     if shutil.which("ffmpeg") and thumbs.Image is not None:

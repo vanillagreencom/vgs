@@ -178,7 +178,13 @@ def prune_orphans(paths: List[Path]) -> int:
     pruned = 0
     with contextlib.suppress(OSError):
         for entry in thumb_dir().iterdir():
-            if entry.is_file() and entry.name.endswith(".jpg") and entry.name not in wanted:
+            # Hidden names are builds IN PROGRESS: a temp path keeps the .jpg
+            # suffix on purpose (the rungs pick their format from it) and is
+            # absent from `wanted`, so an unguarded sweep would unlink one
+            # mid-decode and break the rename that follows.
+            if (entry.is_file() and entry.name.endswith(".jpg")
+                    and not entry.name.startswith(".")
+                    and entry.name not in wanted):
                 with contextlib.suppress(OSError):
                     entry.unlink()
                     pruned += 1
@@ -213,7 +219,13 @@ def build_all(paths: List[Path], prune: bool = False) -> Dict[str, Any]:
     if prune:
         with contextlib.suppress(OSError):
             for entry in thumb_dir().iterdir():
-                if entry.is_file() and entry.name.endswith(".jpg") and entry.name not in wanted:
+                # Hidden names are builds IN PROGRESS: a temp path keeps the .jpg
+                # suffix on purpose (the rungs pick their format from it) and is
+                # absent from `wanted`, so an unguarded sweep would unlink one
+                # mid-decode and break the rename that follows.
+                if (entry.is_file() and entry.name.endswith(".jpg")
+                        and not entry.name.startswith(".")
+                        and entry.name not in wanted):
                     with contextlib.suppress(OSError):
                         entry.unlink()
                         pruned += 1
