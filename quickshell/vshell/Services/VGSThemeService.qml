@@ -486,10 +486,8 @@ Singleton {
         // every surviving entry cached there is nothing MISSING to trigger a
         // sweep — so the orphan would outlive the session and every one after
         // it. `--all` prunes, so a removal asks for a sweep in its own right.
-        const wantPrune = root._thumbPruneWanted;
-        if (!wantPrune && !missing.some(key => (kept[key] || 0) < root._thumbMaxAttempts))
+        if (!root._thumbPruneWanted && !missing.some(key => (kept[key] || 0) < root._thumbMaxAttempts))
             return;
-        root._thumbPruneWanted = false;
         const spent = Object.assign({}, kept);
         missing.forEach(key => spent[key] = (spent[key] || 0) + 1);
         root._thumbAttempts = spent;
@@ -500,8 +498,13 @@ Singleton {
             // the originals, which is correct, just slower. Re-reading is what
             // swaps the rail onto the thumbnails just built, and it is skipped
             // on failure so a broken command cannot spin.
-            if (exitCode === 0)
-                root.refreshWallpapers();
+            if (exitCode !== 0)
+                return;
+            // Cleared HERE, not at dispatch: a sweep that times out must leave
+            // the request standing, or a removal whose only sweep failed loses
+            // its orphan forever once every surviving entry is cached.
+            root._thumbPruneWanted = false;
+            root.refreshWallpapers();
         }, 600000, true);
     }
 
