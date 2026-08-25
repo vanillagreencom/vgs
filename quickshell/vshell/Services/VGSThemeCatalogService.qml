@@ -178,13 +178,10 @@ Singleton {
                      return;
                  const result = (data.results || [])[0] || {};
                  if (result.status === "removed") {
-                     // A removed theme takes its wallpapers with it, so its
-                     // thumbnails are orphaned; nothing else here would ever
-                     // trigger the sweep that prunes them.
-                     if (typeof VGSThemeService !== "undefined") {
-                         VGSThemeService.requestThumbnailPrune();
+                     // The helper prunes the removed theme's thumbnails itself,
+                     // so this only refreshes shell state.
+                     if (typeof VGSThemeService !== "undefined")
                          VGSThemeService.refreshWallpapers();
-                     }
                      operationCompleted(true, I18n.tr("Removed %1").arg(name));
                  }
                  else

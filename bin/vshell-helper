@@ -1601,7 +1601,11 @@ def catalog_remove_theme(name: str) -> Dict[str, Any]:
     _catalog_discard(trash)
     if dest.exists():
         raise ValueError(f"could not remove {clean}: {dest} still exists")
-    return {"name": clean, "status": "removed", "path": str(dest)}
+    # Prune HERE, not in the caller: `theme catalog remove` is a documented
+    # command run directly as often as through the browser, and a removal
+    # leaves nothing missing for a later sweep to notice.
+    return {"name": clean, "status": "removed", "path": str(dest),
+            "thumbsPruned": prune_wallpaper_thumbs_now()}
 
 
 def theme_wallpaper_entries(bp: Dict[str, Any]) -> List[Dict[str, Any]]:

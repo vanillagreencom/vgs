@@ -532,9 +532,15 @@ Singleton {
                 const reported = (JSON.parse(output || "{}").failed || []);
                 if (reported.length > 0) {
                     const counted = Object.assign({}, root._thumbAttempts);
+                    // Only identities this dispatch did NOT already charge:
+                    // a current-theme entry is counted once before dispatch, and
+                    // counting it again here spent both attempts on one sweep, so
+                    // the promised retry never ran.
+                    const charged = {};
+                    missing.forEach(key => charged[key] = true);
                     reported.forEach(entry => {
                         const key = entry && entry.key;
-                        if (key)
+                        if (key && !charged[key])
                             counted[key] = (counted[key] || 0) + 1;
                     });
                     root._thumbAttempts = counted;
