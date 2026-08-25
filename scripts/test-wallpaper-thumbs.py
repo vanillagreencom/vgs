@@ -144,10 +144,12 @@ def build_with(src: Path, rung: str) -> Path | None:
     thumbs.configure(thumbs.ThumbRuntime(cache_dir=lambda: out_dir, run=runner))
     real_image, real_which = thumbs.Image, thumbs.shutil.which
     try:
+        # EXACTLY one rung, not "this one and everything after it". The ladder
+        # falls through on failure, so leaving later rungs enabled would let
+        # ffmpeg quietly answer for a broken magick and be reported as magick.
         if rung != "pil":
             thumbs.Image = None
-        if rung == "ffmpeg":
-            thumbs.shutil.which = lambda name: None if name == "magick" else real_which(name)
+        thumbs.shutil.which = lambda name: real_which(name) if name == rung else None
         return thumbs.build_one(src)
     finally:
         thumbs.Image, thumbs.shutil.which = real_image, real_which
@@ -165,6 +167,7 @@ def main() -> int:
         return 1
 
     exercised = 0
+    real_runs = 0
 
     # Always-on layer: the ladder's own argv and rename path, with the tools
     # stubbed. This is what makes the suite meaningful on a bare CI runner
@@ -181,8 +184,13 @@ def main() -> int:
                  f"refuses without one")
         elif out is None or not out.is_file() or not is_jpeg(out):
             fail(f"the {rung} rung did not land a JPEG at its final path")
+        elif not any(f"{thumbs.WIDTH}" in str(part) and f"{thumbs.HEIGHT}" in str(part)
+                     for part in recorded[-1]):
+            fail(f"the {rung} rung's command carries no {thumbs.WIDTH}x{thumbs.HEIGHT} "
+                 f"budget: {recorded[-1]!r}. Pre-sizing is the whole point, and on a "
+                 f"machine with no decoder this is the only place it can be seen")
         else:
-            ok(f"the {rung} rung writes to a .jpg destination and renames it into place")
+            ok(f"the {rung} rung asks for the budget, writes to .jpg and renames into place")
 
     # Control for that layer: plant the shipped shape and require the rung to
     # break, so the assertion above cannot be vacuously true.
@@ -237,6 +245,7 @@ def main() -> int:
             print(f"  skip  {rung} rung: not installed here")
             continue
         exercised += 1
+        real_runs += 1
         out = build_with(src, rung)
         if out is None or not out.is_file() or out.stat().st_size == 0:
             fail(f"the {rung} rung produced no thumbnail — the format the "
@@ -302,12 +311,17 @@ def main() -> int:
         else:
             ok("control: without the .jpg suffix the ffmpeg rung produces nothing")
 
-    # An empty run is NOT a pass. With no decoder present every rung skips,
-    # FAILURES stays empty, and this suite would report the generator green
-    # while never having called it — the shape that ships a broken cache.
+    # An empty run is NOT a pass. The stubbed layer always runs, so `exercised`
+    # can never be zero — the honest guard is that it ran at all, and a separate
+    # NOTE when no real decoder was present, since the dimension and aspect
+    # assertions are the part a stub cannot stand in for. The resize contract
+    # itself is pinned in both layers, so a bare runner is not blind to it.
     if exercised == 0:
-        fail("no decoder available, so no rung was exercised: this suite proved "
-             "nothing and must not read as a pass")
+        fail("nothing was exercised at all: this suite proved nothing and must "
+             "not read as a pass")
+    if real_runs == 0:
+        print("  note  no decoder installed: the stubbed layer pinned the command "
+              "and the rename, the dimension and aspect assertions did not run")
 
     if FAILURES:
         print(f"test-wallpaper-thumbs: {len(FAILURES)} failure(s)")

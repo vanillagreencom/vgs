@@ -317,6 +317,10 @@ Singleton {
                 applyCompleted(false, stderr || output || ("Delete failed: " + name));
                 return;
             }
+            // A deleted theme takes its wallpapers with it, so its thumbnails
+            // are orphaned exactly as a removed wallpaper's are.
+            root._thumbPruneWanted = true;
+            refreshWallpapers();
             refreshBlueprints();
             applyCompleted(true, "Deleted " + name);
         });
