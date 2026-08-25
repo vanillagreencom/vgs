@@ -723,6 +723,18 @@ mustPrecedeIn(handler("ThemeSwitcherModal.qml", "emptyText"), "ThemeSwitcherModa
             "an entry with no thumbnail falls back to its source. A cold, pruned or unwritable " +
             "cache must degrade to the pre-cache behaviour — slower — never to an empty tile", 1]
     ]);
+    q("WallpaperSwitcherModal.qml").requires(wallpaperSource, "WallpaperSwitcherModal.qml", [
+        ["thumb: entry.thumb || \"\"",
+            "the modal CARRIES the thumbnail onto each item. Drop this and every entry reaches " +
+            "the rail without one, thumbUrlFor falls back to the source for all of them, and the " +
+            "596 ms decode is back with the carousel's own pins still green", 1]
+    ]);
+    q("VGSThemeService.qml").requires(serviceSource, "VGSThemeService.qml", [
+        ["root._sweepWallpaperThumbs();",
+            "the wallpaper read DISPATCHES the sweep. Drop this and nothing ever builds a " +
+            "thumbnail, so every entry falls back forever — the same regression, and the only " +
+            "call site that starts generation", 1]
+    ]);
     mustNot("SwitcherCarousel.qml", /sourceActivated/,
         "the one-way source latch is what unbounded the rail's residency; `retained` replaced it");
 
