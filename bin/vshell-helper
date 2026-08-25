@@ -44,6 +44,7 @@ if _HELPER_MODULE_DIR not in sys.path:
 
 _NIRI_SUPPORT: Any = None
 import vshell_theme_color as _theme_color
+import vshell_wallpaper_thumbs as _wp_thumbs
 
 try:
     from PIL import Image
@@ -85,6 +86,7 @@ GREETER_RUNTIME_BIN_FILES = {
     "vshell": 0o750,
     "vshell-helper": 0o750,
     "vshell_theme_color.py": 0o640,
+    "vshell_wallpaper_thumbs.py": 0o640,
     "vshell_niri.py": 0o640,
     "vshell_niri_kdl.py": 0o640,
 }
@@ -122,6 +124,9 @@ def state_dir() -> Path:
 
 def cache_dir() -> Path:
     return home() / ".cache" / "vshell"
+
+
+_wp_thumbs.configure(_wp_thumbs.ThumbRuntime(cache_dir=cache_dir, run=run))
 
 
 def generated_dir() -> Path:
@@ -1607,9 +1612,14 @@ def theme_wallpaper_entries(bp: Dict[str, Any]) -> List[Dict[str, Any]]:
     entries: List[Dict[str, Any]] = []
     for path in bp.get("backgrounds") or []:
         p = Path(path)
+        # `thumb` is a LOOKUP, never a build: listing wallpapers must not pay a
+        # decode. Empty means the rail falls back to the original, which is
+        # what it always read before the cache existed.
+        thumb = _wp_thumbs.thumb_for(p)
         entries.append({
             "file": p.name,
             "path": str(p),
+            "thumb": str(thumb) if thumb else "",
             "origin": "builtin" if builtin_root in p.parents else "user",
             "default": str(p) == default_path,
         })
@@ -7299,6 +7309,10 @@ def _cmd_theme_unlocked(argv: List[str]) -> int:
     p_setwp.add_argument("--json", action="store_true")
     p_clearwp = sub.add_parser("clear-wallpaper")
     p_clearwp.add_argument("--json", action="store_true")
+    p_thumbs = sub.add_parser("wallpaper-thumbs", help="build the switcher's sliver thumbnails")
+    p_thumbs.add_argument("name", nargs="?", default="", help="theme name (default: current)")
+    p_thumbs.add_argument("--all", action="store_true", help="every installed theme, and prune orphans")
+    p_thumbs.add_argument("--json", action="store_true")
     p_wps = sub.add_parser("wallpapers")
     p_wps.add_argument("name", nargs="?", default="", help="theme name (default: current)")
     p_wps.add_argument("--json", action="store_true")
@@ -7516,6 +7530,30 @@ def _cmd_theme_unlocked(argv: List[str]) -> int:
         result["saved"] = ""
         print(json.dumps(result, indent=2) if args.json else "Wallpaper cleared")
         return 0
+    if args.cmd == "wallpaper-thumbs":
+        if args.all:
+            paths = []
+            seen = set()
+            for pkg in list_themes():
+                for path in pkg.get("backgrounds") or []:
+                    if path not in seen:
+                        seen.add(path)
+                        paths.append(Path(path))
+        else:
+            bp = resolve_theme_package(args.name)
+            if not bp:
+                eprint(f"Theme package not found: {args.name or current_theme().get('name', '')}")
+                return 1
+            paths = [Path(str(e["path"])) for e in theme_wallpaper_entries(bp)]
+        # Pruning is only correct over the COMPLETE set — see build_wallpaper_thumbs.
+        result = _wp_thumbs.build_all(paths, prune=bool(args.all))
+        result["total"] = len(paths)
+        if args.json:
+            print(json.dumps(result, indent=2))
+        else:
+            print(f"thumbnails: {result['built']} built, {result['reused']} reused, "
+                  f"{len(result['failed'])} failed, {result['pruned']} pruned -> {result['dir']}")
+        return 1 if result["failed"] and not result["built"] and not result["reused"] else 0
     if args.cmd == "wallpapers":
         bp = resolve_theme_package(args.name)
         if not bp:

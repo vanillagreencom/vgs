@@ -707,10 +707,21 @@ mustPrecedeIn(handler("ThemeSwitcherModal.qml", "emptyText"), "ThemeSwitcherModa
 // mechanism that looked bounded or safe and was not.
 {
     q("SwitcherCarousel.qml").requires(carouselSource, "SwitcherCarousel.qml", [
-        ["source: slice.retained ? carousel.urlFor(slice.index) : \"\"",
+        ["source: slice.retained ? carousel.thumbUrlFor(slice.index) : \"\"",
             "a sliver's source is RELEASED outside the hysteresis band. A latch that only ever " +
             "turns on retains one decoded pixmap per entry a browse ever paged past — 79 installed " +
-            "themes is 79 of them, which is not the bound this file documents", 1]
+            "themes is 79 of them, which is not the bound this file documents. It reads " +
+            "thumbUrlFor, NOT urlFor: the rail draws pre-sized thumbnails and only the selected " +
+            "slot decodes an original, which is what keeps the full-size quality unchanged", 1]
+    ]);
+    q("SwitcherCarousel.qml").requires(carouselSource, "SwitcherCarousel.qml", [
+        ["imageSource: slice.isSelected ? carousel.urlFor(slice.index) : \"\"",
+            "the SELECTED slot reads urlFor — the ORIGINAL — never the thumbnail. The rail's " +
+            "thumbnails are the sliver decode budget, so routing the full-size slot through them " +
+            "would cap the one image actually shown at 1536x864 and lose quality the user can see", 1],
+        ["return carousel.fileUrl(entry.thumb || entry.image);",
+            "an entry with no thumbnail falls back to its source. A cold, pruned or unwritable " +
+            "cache must degrade to the pre-cache behaviour — slower — never to an empty tile", 1]
     ]);
     mustNot("SwitcherCarousel.qml", /sourceActivated/,
         "the one-way source latch is what unbounded the rail's residency; `retained` replaced it");

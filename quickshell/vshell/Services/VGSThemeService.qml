@@ -425,12 +425,39 @@ Singleton {
                 wallpapersLoadFailed = false;
                 wallpapersLoadError = "";
                 wallpapersLoaded();
+                root._sweepWallpaperThumbs();
             } catch (e) {
                 lastError = "Failed to parse theme wallpapers: " + e;
                 wallpapersLoadFailed = true;
                 wallpapersLoadError = lastError;
             }
         });
+    }
+
+    // One sweep per session, and only when an entry is actually missing its
+    // thumbnail. Dispatched AFTER the list is published, as a background task,
+    // so opening the switcher never waits on it: the rail falls back to the
+    // originals meanwhile and simply gets faster once the sweep lands.
+    //
+    // `--all` covers every installed theme, not just the current one, so
+    // switching themes does not pay a fresh decode; it also prunes entries no
+    // wallpaper claims any more, which is only correct over the complete set.
+    property bool _thumbSweepStarted: false
+
+    function _sweepWallpaperThumbs() {
+        if (root._thumbSweepStarted)
+            return;
+        const entries = root.themeWallpapers || [];
+        if (!entries.some(entry => entry && entry.path && !entry.thumb))
+            return;
+        root._thumbSweepStarted = true;
+        _run("vgs-theme-wallpaper-thumbs", ["theme", "wallpaper-thumbs", "--all", "--json"], function(output, exitCode) {
+            // A failed sweep is not reported: the rail is already drawing from
+            // the originals, which is correct, just slower. Re-reading the list
+            // is what swaps the rail onto the thumbnails it just built.
+            if (exitCode === 0)
+                root.refreshWallpapers();
+        }, 600000, true);
     }
 
     function wallpaperAdd(path) {

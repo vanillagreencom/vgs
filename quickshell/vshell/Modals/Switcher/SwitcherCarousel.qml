@@ -84,6 +84,18 @@ Item {
         return entry ? carousel.fileUrl(entry.image) : "";
     }
 
+    // Slivers read a pre-sized thumbnail; the SELECTED slot never does, so the
+    // one image shown at full size still decodes from the original and its
+    // quality is untouched. Empty `thumb` falls back to the source, which is
+    // what the rail read before the cache existed, so a cold or unwritable
+    // cache costs speed and nothing else.
+    function thumbUrlFor(index) {
+        const entry = (carousel.items || [])[index];
+        if (!entry)
+            return "";
+        return carousel.fileUrl(entry.thumb || entry.image);
+    }
+
     // The image `delta` steps away, for the selected slot's lookahead.
     function neighborUrl(delta) {
         const count = (carousel.items || []).length;
@@ -158,7 +170,7 @@ Item {
                     fillMode: Image.PreserveAspectCrop
                     sourceSize.width: carousel.sliceDecodeWidth
                     sourceSize.height: carousel.sliceDecodeHeight
-                    source: slice.retained ? carousel.urlFor(slice.index) : ""
+                    source: slice.retained ? carousel.thumbUrlFor(slice.index) : ""
                 }
             }
         }
