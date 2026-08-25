@@ -111,7 +111,14 @@ def build_one(src: Path) -> Optional[Path]:
         return None
     if out.is_file() and out.stat().st_size > 0:
         return out
-    out.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        # Inside the guard: an unwritable cache — a read-only path, or a parent
+        # that is a file — must answer like any other miss, so the caller falls
+        # back to the original. Raising here ended `wallpaper-thumbs` with a
+        # traceback instead of a count.
+        out.parent.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        return None
     box = f"{WIDTH}x{HEIGHT}"
 
     def with_pillow(tmp: Path) -> None:

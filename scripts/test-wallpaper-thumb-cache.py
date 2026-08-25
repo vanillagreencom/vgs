@@ -70,6 +70,26 @@ def main() -> int:
         ok("build_all prunes the orphan and reuses the live thumbnail")
 
 
+    # An unwritable cache must answer like any other miss. Raising here ended
+    # `wallpaper-thumbs` with a traceback instead of a count, and the caller
+    # falls back to the original either way.
+    blocked = Path(tempfile.mkdtemp()) / "a-file"
+    blocked.write_text("not a directory")
+    thumbs.configure(thumbs.ThumbRuntime(cache_dir=lambda: blocked, run=runner))
+    exercised += 1
+    try:
+        built = thumbs.build_one(src)
+        summary = thumbs.build_all([src])
+    except Exception as error:  # noqa: BLE001 - the point is that nothing escapes
+        fail(f"an unwritable cache raised {type(error).__name__} instead of "
+             f"answering like a miss: the command dies with a traceback")
+    else:
+        if built is not None or summary["built"] or len(summary["failed"]) != 1:
+            fail(f"an unwritable cache reported built={summary['built']} "
+                 f"failed={len(summary['failed'])}: it must count as a miss")
+        else:
+            ok("an unwritable cache answers like a miss, not a traceback")
+
     if exercised == 0:
         fail("nothing was exercised: this suite proved nothing and must not "
              "read as a pass")
