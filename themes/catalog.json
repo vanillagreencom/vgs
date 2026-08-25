@@ -3,14 +3,14 @@
   "source": {
     "type": "github-raw",
     "repo": "vanillagreencom/vgs",
-    "ref": "v0.3.0",
+    "ref": "v0.4.0",
     "refs": [
-      "v0.3.0",
+      "v0.4.0",
       "main"
     ],
-    "baseUrl": "https://raw.githubusercontent.com/vanillagreencom/vgs/v0.3.0/themes",
+    "baseUrl": "https://raw.githubusercontent.com/vanillagreencom/vgs/v0.4.0/themes",
     "baseUrls": [
-      "https://raw.githubusercontent.com/vanillagreencom/vgs/v0.3.0/themes",
+      "https://raw.githubusercontent.com/vanillagreencom/vgs/v0.4.0/themes",
       "https://raw.githubusercontent.com/vanillagreencom/vgs/main/themes"
     ]
   },
