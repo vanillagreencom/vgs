@@ -461,18 +461,23 @@ Singleton {
             return;
         const entries = root.themeWallpapers || [];
         const identity = entry => String(entry.thumbKey || entry.path);
-        // Keep counts only for what is STILL missing. Anything now carrying a
-        // thumbnail is forgotten, so if that thumbnail is later deleted or its
-        // source replaced, the rebuild starts from zero attempts.
-        const kept = {};
+        // Clear ONLY identities this read confirmed carry a thumbnail, and keep
+        // every other count. `entries` is the current theme while the sweep is
+        // `--all`, so rebuilding the map from it would drop the counts of every
+        // theme not selected: a decoder that times out on one wallpaper would
+        // earn its attempts back each time the user returned to that theme.
+        // A cleared identity starts from zero again, which is what lets a
+        // deleted thumbnail or a replaced source be rebuilt.
+        const kept = Object.assign({}, root._thumbAttempts);
         const missing = [];
         entries.forEach(entry => {
-            if (!entry || !entry.path || entry.thumb)
+            if (!entry || !entry.path)
                 return;
             const key = identity(entry);
-            missing.push(key);
-            if (root._thumbAttempts[key] !== undefined)
-                kept[key] = root._thumbAttempts[key];
+            if (entry.thumb)
+                delete kept[key];
+            else
+                missing.push(key);
         });
         root._thumbAttempts = kept;
         if (!missing.some(key => (kept[key] || 0) < root._thumbMaxAttempts))
