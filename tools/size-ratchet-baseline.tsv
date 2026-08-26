@@ -1,4 +1,4 @@
-.github/workflows/ci.yml	489
+.github/workflows/ci.yml	459
 .github/workflows/review-gate-writer.yml	656
 backend/internal/services/bluez/bluez.go	744
 backend/internal/services/clipboard/clipboard.go	635
@@ -231,4 +231,4 @@ scripts/test-switcher-selection.js	774
 scripts/test-toast-actions.js	607
 scripts/test-validate.sh	539
 scripts/test-validation-inventory.sh	2278
-scripts/validate	1056
+scripts/validate	1057

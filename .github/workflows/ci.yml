@@ -99,44 +99,14 @@ jobs:
           EVENT_NAME: ${{ github.event_name }}
           PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
           PUSH_BEFORE: ${{ github.event.before }}
-        run: |
-          set -euo pipefail
-          case "$EVENT_NAME" in
-            pull_request) base="$PR_BASE_SHA" ;;
-            merge_group) base="HEAD^1" ;;
-            push) base="$PUSH_BEFORE" ;;
-            *)
-              echo "::warning::no diff base defined for event $EVENT_NAME; running every check"
-              echo "harness_only=false" >>"$GITHUB_OUTPUT"
-              exit 0
-              ;;
-          esac
+        run: .github/scripts/classify-harness-only.sh
 
-          if [ -z "$base" ] || ! git rev-parse --verify --quiet "$base^{commit}" >/dev/null; then
-            echo "::warning::cannot resolve '$base' for event $EVENT_NAME; running every check"
-            echo "harness_only=false" >>"$GITHUB_OUTPUT"
-            exit 0
-          fi
-
-          git diff --name-only "$base...HEAD" >"$RUNNER_TEMP/changed.txt"
-          if [ ! -s "$RUNNER_TEMP/changed.txt" ]; then
-            echo "::warning::empty diff against '$base'; running every check"
-            echo "harness_only=false" >>"$GITHUB_OUTPUT"
-            exit 0
-          fi
-
-          harness_only=true
-          while IFS= read -r path; do
-            case "$path" in
-              .agents/* | .claude/* | .codex/* | .opencode/* | .cursor/* | .pi/* | opencode.json) continue ;;
-            esac
-            harness_only=false
-            break
-          done <"$RUNNER_TEMP/changed.txt"
-
-          sed 's/^/changed: /' "$RUNNER_TEMP/changed.txt"
-          echo "harness_only=$harness_only"
-          echo "harness_only=$harness_only" >>"$GITHUB_OUTPUT"
+      # The classifier decides whether the lanes that produce required evidence
+      # run, so its verdict is proven by EXECUTION over real git history rather
+      # than by reading its `case` arms. Unconditional, ahead of everything it
+      # gates: a suite gated on the thing it proves is no proof.
+      - name: Classifier regression suite (offline, real git history)
+        run: scripts/test-classify-harness-only.sh
 
       # Cheapest checks first, so the common failures report in seconds rather
       # than after the Go toolchain and the Qt install.

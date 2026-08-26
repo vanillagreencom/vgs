@@ -162,8 +162,7 @@ CEILINGS: dict[str, int] = {
     # TIGHTER than the 4,000 the adoption formula rounds to, because the
     # rounding above is an adoption convention and a raise is only required to
     # carry a rationale — so the tighter line wins over the rounder number.
-    # Now 4,106 B: the 2026-08-26 render-out-of-review-scope rule, stated here
-    # because Copilot code review reads only this file. 4,500 is ~9% headroom.
+    # Now 4,175 B: the 2026-08-26 render rule plus the vendored-tree correction.
     ".github/copilot-instructions.md": 4_500,
     # Adopted at 4,497 B. VGS-124: "a green CI run does not prove the shell
     # starts — run the qml area, which forces --require-nested" left AGENTS.md
@@ -240,7 +239,8 @@ CEILINGS: dict[str, int] = {
     # tells reviewers to reject an unreachable failure path. 7,600 keeps ~10%
     # headroom at the 6,880 B that resulted; now 6,475 B, vendor-sync rows gone.
     ".github/instructions/validation-scripts.instructions.md": 7_600,
-    ".github/instructions/vendored-engine.instructions.md": 1_000,  # adopted at 854 B
+    # Adopted at 854 B. Now 1,001 B: 2026-08-26 replaced two false claims there.
+    ".github/instructions/vendored-engine.instructions.md": 1_200,
     ".github/instructions/vendored-go.instructions.md": 500,  # adopted at 367 B
     # Adopted at 302 B. 2026-08-14: ATTRIBUTION.md carve-out (PR #132) — the
     # blanket "never patch in-repo, skip style findings" rule covered a

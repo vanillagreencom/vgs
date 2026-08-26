@@ -233,9 +233,10 @@ reviews:
         A mixed tree, not a uniformly vendored one. The pinned artifacts
         (`coderabbit-schema/schema.v2.json`, `asdcontrol/asdcontrol.cpp`) are
         carried verbatim by the convention their own READMEs record — no check
-        enforces it. The `review-gate/` and `size-ratchet/` engine trees are
-        diffed whole against the vstack-managed copy by LOCAL validation, not
-        CI. Frame findings in any of those as upstream issues.
+        enforces it. Nothing diffs or tests the `review-gate/` and
+        `size-ratchet/` engine trees either, since 2026-08-26: they are kendex
+        packages, tested upstream. Frame findings in any of those as upstream
+        issues.
 
         `coderabbit-schema/README.md` and `asdcontrol/README.md` are the
         exception: VGS-authored maintenance docs recording why each artifact is
