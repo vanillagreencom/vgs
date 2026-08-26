@@ -117,6 +117,13 @@ FIXTURE_FILES = {
 # fence is named as the cause when someone points at it, not failed over, since
 # it is no more ours to repair than its prose is (declined_fences).
 SKIP_ROOTS = (
+    # The kendex-rendered harness trees are vendored docs the same way
+    # third_party/ is: tracked since the committed posture, never ours to edit.
+    ".agents/",
+    ".claude/",
+    ".codex/",
+    ".opencode/",
+    ".pi/",
     "third_party/",
     "config/vshell/nvim/colorschemes/",
     "themes/",

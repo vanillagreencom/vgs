@@ -145,11 +145,27 @@ enabled = true
 source = "kendex"
 enabled = true
 
+[hooks.block-bare-cd]
+source = "kendex"
+enabled = true
+
 [hooks.block-repo-copy]
 source = "kendex"
 enabled = true
 
 [hooks.block-unsafe-rm]
+source = "kendex"
+enabled = true
+
+[hooks.post-edit-lint]
+source = "kendex"
+enabled = true
+
+[hooks.pre-commit-check]
+source = "kendex"
+enabled = true
+
+[hooks.task-completed-check]
 source = "kendex"
 enabled = true
 

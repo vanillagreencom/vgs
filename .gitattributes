@@ -1,1 +1,7 @@
 backend/vendor/** -text -whitespace
+# Vendored kendex renders: upstream bytes, not this repo's whitespace to police.
+.agents/** -whitespace
+.claude/** -whitespace
+.codex/** -whitespace
+.opencode/** -whitespace
+.pi/** -whitespace
