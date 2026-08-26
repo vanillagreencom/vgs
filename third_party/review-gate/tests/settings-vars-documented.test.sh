@@ -2,7 +2,7 @@
 # Doc-contract lint: every REVIEW_GATE_* variable the engine's scripts or
 # templates reference must be documented — in SKILL.md (or
 # references/adoption.md) for readers, and in the skill's
-# vstack.settings.toml.example for installers. A knob that exists only in
+# kendex.settings.toml.example for installers. A knob that exists only in
 # code is a knob nobody can find.
 set -euo pipefail
 
@@ -43,8 +43,8 @@ for v in $vars; do
         echo "FAIL: $v (legacy alias target) must stay documented in references/settings.md"
         fail=1
       fi
-      for example in "$SKILL_DIR/vstack.settings.toml.example" \
-                     "$SKILL_DIR/../../vstack.settings.toml.example"; do
+      for example in "$SKILL_DIR/kendex.settings.toml.example" \
+                     "$SKILL_DIR/../../kendex.settings.toml.example"; do
         [ -f "$example" ] || continue
         if forbidden_assignment_matches "$v" "$example"; then
           echo "FAIL: $v is the legacy alias target; the example must assign REVIEW_GATE_OVERRIDE_CONTEXT instead ($example)"
@@ -53,8 +53,8 @@ for v in $vars; do
       done
       continue ;;
     REVIEW_GATE_SETTINGS_FILE|REVIEW_GATE_STATUS_SNAPSHOT_FILE)
-      for example in "$SKILL_DIR/vstack.settings.toml.example" \
-                     "$SKILL_DIR/../../vstack.settings.toml.example"; do
+      for example in "$SKILL_DIR/kendex.settings.toml.example" \
+                     "$SKILL_DIR/../../kendex.settings.toml.example"; do
         [ -f "$example" ] || continue
         # Whitespace/quote-tolerant: any TOML spelling of an assignment for
         # this name must fail, not just the canonical `KEY = ` shape.
@@ -65,15 +65,15 @@ for v in $vars; do
       done
       continue ;;
   esac
-  if ! grep -q "^$v = " "$SKILL_DIR/vstack.settings.toml.example"; then
-    echo "FAIL: $v missing from the skill's vstack.settings.toml.example"
+  if ! grep -q "^$v = " "$SKILL_DIR/kendex.settings.toml.example"; then
+    echo "FAIL: $v missing from the skill's kendex.settings.toml.example"
     fail=1
   fi
 done
 
 # Reverse direction: every key the example documents must be real — either
 # read by the scripts or an explicitly wiring-level key named in SKILL.md.
-for key in $(sed -n 's/^\(REVIEW_GATE_[A-Z_]*\) = .*/\1/p' "$SKILL_DIR/vstack.settings.toml.example"); do
+for key in $(sed -n 's/^\(REVIEW_GATE_[A-Z_]*\) = .*/\1/p' "$SKILL_DIR/kendex.settings.toml.example"); do
   if ! printf '%s\n' "$vars" | grep -qx "$key" && ! grep -q "$key" "$SKILL_DIR/SKILL.md" "$SKILL_DIR/references/settings.md"; then
     echo "FAIL: $key is documented in the example but neither read by scripts nor described in SKILL.md/references/settings.md"
     fail=1
@@ -83,7 +83,7 @@ done
 # Failing-direction self-check: the forbidden-assignment guard above only
 # ever runs against examples where the keys are absent, so it would stay
 # green even if the matcher stopped recognizing assignments. Prove each
-# TOML spelling actually trips the matcher (vstack#1086).
+# TOML spelling actually trips the matcher (kendex#1086).
 matcher_fixture="$(mktemp)"
 while IFS= read -r spelling; do
   printf '%s\n' "$spelling" >"$matcher_fixture"
@@ -101,7 +101,7 @@ SPELLINGS
 
 # And the reverse direction: spellings that are NOT assignments of the key
 # must NOT match — an over-broad matcher would flag innocent example text
-# (vstack#1092).
+# (kendex#1092).
 while IFS= read -r spelling; do
   printf '%s\n' "$spelling" >"$matcher_fixture"
   if forbidden_assignment_matches "REVIEW_GATE_SETTINGS_FILE" "$matcher_fixture"; then

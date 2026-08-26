@@ -392,3 +392,28 @@ GROWTH_GUARDS_PRE_COMMIT_LOCAL = ""
 # Max re-review cycles per issue before the verdict pass; the re-review
 # re-entry refuses once cycles is past it.
 REVIEW_MAX_CYCLES = "4"
+
+# The repo's own validation command: the same checks the pre-commit hook
+# runs, so a skill validating a change gets the answer that will gate it.
+DEV_VALIDATE_CMD = ""
+
+# Optional extra verification command for GitHub-side checks; empty means
+# none beyond the guard chain.
+GH_VERIFY_CMD = ""
+
+# Bot identity for gate-side commits; empty means the default account.
+BOT_EMAIL = ""
+
+# Bot display name for gate-side commits; empty means the default account.
+BOT_NAME = ""
+
+# Remote the bot pushes through; empty means origin.
+BOT_REMOTE_NAME = ""
+
+# GitHub login the bot acts as; empty means the default account.
+GH_BOT_USERNAME = ""
+
+# Max external (gh bot) review rounds per PR before findings get
+# dispositions instead of fix pushes. Read by tooling landing with KEN-592;
+# harmless to set early.
+REVIEW_MAX_EXTERNAL_ROUNDS = "4"

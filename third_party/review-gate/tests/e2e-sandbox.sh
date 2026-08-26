@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Layer-2 E2E replay for the v2 single writer against a LIVE sandbox repo
-# (the v2 single-writer plan's "Validation and cutover" section — vanillagreencom/vstack#1099).
+# (the v2 single-writer plan's "Validation and cutover" section — vanillagreencom/kendex#1099).
 # Drives the end-to-end PR lifecycles observed on hyprtrade/drovr through the
 # real GitHub API — real events, real merge queue, real branch protection —
 # and asserts the posted gate state after each step. This is the durable
@@ -11,7 +11,7 @@
 #   - $E2E_REPO is a throwaway repo with the v2 writer installed
 #     (.agents/skills/review-gate/ vendored, review-gate-writer.yml, the
 #     tiered ci.yml with the .sandbox-slow-gate/.sandbox-heavy-fail hooks,
-#     open-pr.yml, mint-status.yml, vstack.settings.toml trusting the
+#     open-pr.yml, mint-status.yml, kendex.settings.toml trusting the
 #     driver identity) and hyprtrade-shaped rulesets (merge queue requiring
 #     "CI Required" + "Review gate"; zero-bypass thread resolution).
 #   - gh is authenticated as the scripted-reviewer identity (repo admin,
@@ -61,9 +61,9 @@ fi
 REPO="$E2E_REPO"
 SCENARIOS="${E2E_SCENARIOS:-s1 s2 s3 s4 s5 s6 s7 s9 s10a s10b s11 sfinal}"
 GATE_CTX="Review gate"
-OVERRIDE_CTX="vstack-reviewer-outage"
+OVERRIDE_CTX="kendex-reviewer-outage"
 # The sandbox's CI workflow NAME — parameterized because consumers differ
-# (the vstack sandbox names it "CI"; drovr's is lowercase "ci"). A hardcoded
+# (the kendex sandbox names it "CI"; drovr's is lowercase "ci"). A hardcoded
 # name would silently find zero runs on a differently-named sandbox and turn
 # every CI-observing probe into a false verdict.
 CI_WORKFLOW="${E2E_CI_WORKFLOW:-CI}"

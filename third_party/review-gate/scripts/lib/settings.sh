@@ -6,7 +6,7 @@
 # family, plus shared keys like PR_REVIEW_WAIT_SECS):
 #   1. explicit environment — a SET variable wins even when set to the empty
 #      string, so a caller (or the selftest) can force "explicitly empty";
-#   2. the repo's committed vstack.settings.toml (the file's sole uncommented
+#   2. the repo's committed kendex.settings.toml (the file's sole uncommented
 #      `KEY = "value"` assignment; the file path can be overridden with
 #      REVIEW_GATE_SETTINGS_FILE);
 #   3. the built-in default passed by the caller.
@@ -16,7 +16,7 @@
 # environment variables and the built-in defaults.
 #
 # The parser reads flat single-line basic-string TOML assignments only —
-# exactly the shape vstack.settings.toml [env] blocks use. List-valued keys
+# exactly the shape kendex.settings.toml [env] blocks use. List-valued keys
 # therefore pack multiple items into one string with ';' separators.
 #
 # Keys are matched FILE-WIDE by exact name, with no TOML-table awareness:
@@ -89,7 +89,7 @@ rg_setting() { # NAME DEFAULT — resolved value on stdout; nonzero + ::error on
     printf '%s' "$default"
     return 0
   fi
-  file="${REVIEW_GATE_SETTINGS_FILE:-vstack.settings.toml}"
+  file="${REVIEW_GATE_SETTINGS_FILE:-kendex.settings.toml}"
   rg_settings_usable "$file" || return 1
   if [ -f "$file" ]; then
     # Key PRESENCE decides, not value non-emptiness: `NAME = ""` is a real
@@ -99,7 +99,7 @@ rg_setting() { # NAME DEFAULT — resolved value on stdout; nonzero + ::error on
     # whitespace-tolerant everywhere (presence, ambiguity guard, extraction)
     # — anchoring at column one made an indented duplicate bypass the
     # fail-loud guard and an indented sole assignment collapse silently to
-    # the built-in default (vstack#1059).
+    # the built-in default (kendex#1059).
     status=0
     matches="$(rg_settings_grep "^[[:space:]]*${name}[[:space:]]*=" "$file")" || status=$?
     [ "$status" -le 1 ] || return 1

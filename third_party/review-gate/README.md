@@ -12,7 +12,7 @@ keeping the two separate is what makes this small enough to trust.
 > **This skill runs in CI, so it must be COMMITTED to your repo.** GitHub
 > Actions checks out only tracked files — a machine-local `.agents` install
 > (symlinked or untracked) does not exist there. Vendor the skill as tracked
-> files at `.agents/skills/review-gate/` (what `vstack refresh` produces in a
+> files at `.agents/skills/review-gate/` (what `kendex refresh` produces in a
 > consuming repo, committed), plus the copied workflow under
 > `.github/workflows/`. If the engine is not in the commit, the gate is not
 > in your CI.
@@ -113,6 +113,6 @@ repo; the engine's own files and internals: [DEVELOPMENT.md](DEVELOPMENT.md).
 | `references/settings.md` | Every `REVIEW_GATE_*` key and the security reasoning behind the trust ones. |
 | `references/vendored-paths.md` | Why reviewer path exclusions starve the gate, and the remedy-locus rule that suppresses duplicate findings without doing so. |
 
-Nothing repo-specific is hard-coded: consumers vendor the skill via `vstack
+Nothing repo-specific is hard-coded: consumers vendor the skill via `kendex
 refresh` and set every per-repo `REVIEW_GATE_*` value in their own
-`vstack.settings.toml` (env wins over the file, which wins over the default).
+`kendex.settings.toml` (env wins over the file, which wins over the default).
