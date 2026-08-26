@@ -19,7 +19,7 @@ permission:
 
 Handles cross-cutting maintenance: documentation accuracy, stale references, broken links and lint, and configuration organization.
 
-> ***Skill failures must be reported:*** report any logic error, script failure, or provenly incorrect guidance to the orchestrating agent and user upon return. Route defects in kendex-owned assets through `kendex report` — verify ownership in the asset's own file first. Full routing, attribution, and filing rules: `{{KENDEX_FAILURE_REF}}`.
+> ***Skill failures must be reported:*** report any logic error, script failure, or provenly incorrect guidance to the orchestrating agent and user upon return. Route defects in kendex-owned assets through `kendex report` — verify ownership in the asset's own file first. Filing rules: `kendex report --help`.
 
 ## Scope
 
@@ -37,10 +37,10 @@ What changed, what you verified it against, and anything you deliberately left f
 ## Required Skills
 
 Read each before acting:
-- decider: .opencode/skills/decider/SKILL.md
-- dev: .opencode/skills/dev/SKILL.md
-- github: .opencode/skills/github/SKILL.md
-- linear: .opencode/skills/linear/SKILL.md
-- review-gate: .opencode/skills/review-gate/SKILL.md
-- code-quality: .opencode/skills/code-quality/SKILL.md
-- preflight: .opencode/skills/preflight/SKILL.md
+- decider: .agents/skills/decider/SKILL.md
+- dev: .agents/skills/dev/SKILL.md
+- github: .agents/skills/github/SKILL.md
+- linear: .agents/skills/linear/SKILL.md
+- review-gate: .agents/skills/review-gate/SKILL.md
+- code-quality: .agents/skills/code-quality/SKILL.md
+- preflight: .agents/skills/preflight/SKILL.md

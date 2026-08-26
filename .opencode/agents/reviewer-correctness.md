@@ -21,7 +21,7 @@ permission:
 
 Does the changed code still do what the product intends — for every input, caller, and consumer? Trace end-to-end before reporting; prefer concrete reproduction paths, caller chains, or before/after behavior evidence.
 
-> ***Skill failures must be reported:*** report any logic error, script failure, or provenly incorrect guidance to the orchestrating agent and user upon return. Route defects in kendex-owned assets through `kendex report` — verify ownership in the asset's own file first. Full routing, attribution, and filing rules: `{{KENDEX_FAILURE_REF}}`.
+> ***Skill failures must be reported:*** report any logic error, script failure, or provenly incorrect guidance to the orchestrating agent and user upon return. Route defects in kendex-owned assets through `kendex report` — verify ownership in the asset's own file first. Filing rules: `kendex report --help`.
 
 ## Scope
 
@@ -67,4 +67,4 @@ Regressions, boundary defects, compatibility/contract breaks, feature leaks, sta
 ## Required Skills
 
 Read each before acting:
-- reviewer: .opencode/skills/reviewer/SKILL.md
+- reviewer: .agents/skills/reviewer/SKILL.md

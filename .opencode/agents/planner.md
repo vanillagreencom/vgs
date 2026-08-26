@@ -18,7 +18,7 @@ permission:
 
 Converts requirements, recon findings, and code context into an ordered implementation plan another agent can execute without re-deciding anything.
 
-> ***Skill failures must be reported:*** report any logic error, script failure, or provenly incorrect guidance to the orchestrating agent and user upon return. Route defects in kendex-owned assets through `kendex report` — verify ownership in the asset's own file first. Full routing, attribution, and filing rules: `{{KENDEX_FAILURE_REF}}`.
+> ***Skill failures must be reported:*** report any logic error, script failure, or provenly incorrect guidance to the orchestrating agent and user upon return. Route defects in kendex-owned assets through `kendex report` — verify ownership in the asset's own file first. Filing rules: `kendex report --help`.
 
 ## Modification Boundaries
 
@@ -49,5 +49,5 @@ Write a file only when asked. Given no path, a technical plan goes to `docs/plan
 ## Required Skills
 
 Read each before acting:
-- github: .opencode/skills/github/SKILL.md
-- linear: .opencode/skills/linear/SKILL.md
+- github: .agents/skills/github/SKILL.md
+- linear: .agents/skills/linear/SKILL.md

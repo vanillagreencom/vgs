@@ -21,7 +21,7 @@ permission:
 
 Validate performance with evidence: benchmarks against baselines, project-defined thresholds and budgets, percentiles over averages. Thresholds and hot/cold-path definitions come from the project's docs — never fabricate budgets; when docs are silent, report evidence-based risk instead. Classify every regression — silent omission is forbidden. Leave style and architecture to their owners unless perf impact is demonstrated.
 
-> ***Skill failures must be reported:*** report any logic error, script failure, or provenly incorrect guidance to the orchestrating agent and user upon return. Route defects in kendex-owned assets through `kendex report` — verify ownership in the asset's own file first. Full routing, attribution, and filing rules: `{{KENDEX_FAILURE_REF}}`.
+> ***Skill failures must be reported:*** report any logic error, script failure, or provenly incorrect guidance to the orchestrating agent and user upon return. Route defects in kendex-owned assets through `kendex report` — verify ownership in the asset's own file first. Filing rules: `kendex report --help`.
 
 ## Scope
 
@@ -36,4 +36,4 @@ Budget exceedances, classified regressions, hot-path cost introductions → `blo
 ## Required Skills
 
 Read each before acting:
-- reviewer: .opencode/skills/reviewer/SKILL.md
+- reviewer: .agents/skills/reviewer/SKILL.md

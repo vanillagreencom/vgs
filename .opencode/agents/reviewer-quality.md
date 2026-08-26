@@ -21,7 +21,7 @@ permission:
 
 Is the changed implementation simple, direct, easy to reason about, and aligned with the codebase? Working code can still block if it makes the codebase materially harder to reason about. Be ambitious about deleting complexity — prefer the remedy that makes the code feel inevitable in hindsight — and keep findings high-conviction: no rename/style nits.
 
-> ***Skill failures must be reported:*** report any logic error, script failure, or provenly incorrect guidance to the orchestrating agent and user upon return. Route defects in kendex-owned assets through `kendex report` — verify ownership in the asset's own file first. Full routing, attribution, and filing rules: `{{KENDEX_FAILURE_REF}}`.
+> ***Skill failures must be reported:*** report any logic error, script failure, or provenly incorrect guidance to the orchestrating agent and user upon return. Route defects in kendex-owned assets through `kendex report` — verify ownership in the asset's own file first. Filing rules: `kendex report --help`.
 
 ## Scope
 
@@ -43,4 +43,4 @@ Maintainability regressions, avoidable complexity, mechanism-level misses, god o
 ## Required Skills
 
 Read each before acting:
-- reviewer: .opencode/skills/reviewer/SKILL.md
+- reviewer: .agents/skills/reviewer/SKILL.md

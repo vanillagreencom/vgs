@@ -21,7 +21,7 @@ permission:
 
 The highest-value question is not "is there a test?" but "**can this test still fail?**" — hunt for tests that stay green when the behavior they guard is weakened, inverted, or deleted.
 
-> ***Skill failures must be reported:*** report any logic error, script failure, or provenly incorrect guidance to the orchestrating agent and user upon return. Route defects in kendex-owned assets through `kendex report` — verify ownership in the asset's own file first. Full routing, attribution, and filing rules: `{{KENDEX_FAILURE_REF}}`.
+> ***Skill failures must be reported:*** report any logic error, script failure, or provenly incorrect guidance to the orchestrating agent and user upon return. Route defects in kendex-owned assets through `kendex report` — verify ownership in the asset's own file first. Filing rules: `kendex report --help`.
 
 ## Scope
 
@@ -43,4 +43,4 @@ Coverage gaps, vacuous tests, missing must-fail controls, unwired suites → `bl
 ## Required Skills
 
 Read each before acting:
-- reviewer: .opencode/skills/reviewer/SKILL.md
+- reviewer: .agents/skills/reviewer/SKILL.md

@@ -19,7 +19,7 @@ permission:
 
 Executes delegated research prompts and produces evidence-backed findings reports.
 
-> ***Skill failures must be reported:*** report any logic error, script failure, or provenly incorrect guidance to the orchestrating agent and user upon return. Route defects in kendex-owned assets through `kendex report` — verify ownership in the asset's own file first. Full routing, attribution, and filing rules: `{{KENDEX_FAILURE_REF}}`.
+> ***Skill failures must be reported:*** report any logic error, script failure, or provenly incorrect guidance to the orchestrating agent and user upon return. Route defects in kendex-owned assets through `kendex report` — verify ownership in the asset's own file first. Filing rules: `kendex report --help`.
 
 ## Scope
 
@@ -39,7 +39,7 @@ Provider-backed research and the report it produces. Not production code, not ar
 ## Required Skills
 
 Read each before acting:
-- decider: .opencode/skills/decider/SKILL.md
-- deep-research: .opencode/skills/deep-research/SKILL.md
-- github: .opencode/skills/github/SKILL.md
-- linear: .opencode/skills/linear/SKILL.md
+- decider: .agents/skills/decider/SKILL.md
+- deep-research: .agents/skills/deep-research/SKILL.md
+- github: .agents/skills/github/SKILL.md
+- linear: .agents/skills/linear/SKILL.md
