@@ -20,8 +20,8 @@ trap 'rm -rf "$work"' EXIT
 
 cases=0
 run_case() { # LABEL EVENT BASE HEAD EXPECT
-  # HEAD is unused: this classifier diffs `<base>...HEAD` in the checkout it
-  # runs in, so the case moves the work tree rather than passing a head sha.
+  # HEAD is unused: the classifier diffs against HEAD in the checkout it runs
+  # in, so the case moves the work tree rather than passing a head sha.
   local label=$1 event=$2 base=$3 _head=$4 expect=$5 got
   export GITHUB_OUTPUT="$RUNNER_TEMP/out"
   : >"$GITHUB_OUTPUT"
@@ -109,5 +109,21 @@ run_case "empty diff" pull_request "$NEAR" "$NEAR" false
 run_case "unreadable base" pull_request 0000000000000000000000000000000000000000 "$NEAR" false
 run_case "missing endpoints" pull_request "" "" false
 run_case "unclassified event" schedule "$BASE" "$NEAR" false
+
+# NON-FAST-FORWARD PUSH. The head that was pushed away carried product code the
+# replacement head never had, so their merge base never had it either. Three-dot
+# measures from that merge base and sees only the render change; two endpoints
+# see the removal. Force-pushes are how a branch loses product code silently.
+git checkout -q -b discarded "$NEAR"
+echo 'export const gone = 1' >src/discarded.ts
+git add -A
+git commit -qm "product code the force-push throws away"
+DISCARDED="$(git rev-parse HEAD)"
+git checkout -q -b replacement "$NEAR"
+echo forced >>.agents/skills/x/app2.ts
+git add -A
+git commit -qm "render-only work on the replacement head"
+REPLACEMENT="$(git rev-parse HEAD)"
+run_case "force-push discarding product code" push "$DISCARDED" "$REPLACEMENT" false
 
 printf 'classify-harness-only: %d case(s), all pass\n' "$cases"

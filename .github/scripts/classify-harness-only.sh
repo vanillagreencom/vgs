@@ -26,9 +26,13 @@
 
 set -euo pipefail
 case "$EVENT_NAME" in
-  pull_request) base="$PR_BASE_SHA" ;;
-  merge_group) base="HEAD^1" ;;
-  push) base="$PUSH_BEFORE" ;;
+  # Three-dot for the two events whose base is an ancestor by construction.
+  pull_request) base="$PR_BASE_SHA"; range=("$base...HEAD") ;;
+  merge_group) base="HEAD^1"; range=("$base...HEAD") ;;
+  # Two endpoints, no dots. A force-push leaves PUSH_BEFORE off HEAD's history,
+  # and three-dot would then measure from a merge base where the product files
+  # the push discarded never existed, reading the whole push as render-only.
+  push) base="$PUSH_BEFORE"; range=("$base" HEAD) ;;
   *)
     echo "::warning::no diff base defined for event $EVENT_NAME; running every check"
     echo "harness_only=false" >>"$GITHUB_OUTPUT"
@@ -42,7 +46,7 @@ if [ -z "$base" ] || ! git rev-parse --verify --quiet "$base^{commit}" >/dev/nul
   exit 0
 fi
 
-git diff --name-only --no-renames "$base...HEAD" >"$RUNNER_TEMP/changed.txt"
+git diff --name-only --no-renames "${range[@]}" >"$RUNNER_TEMP/changed.txt"
 if [ ! -s "$RUNNER_TEMP/changed.txt" ]; then
   echo "::warning::empty diff against '$base'; running every check"
   echo "harness_only=false" >>"$GITHUB_OUTPUT"
