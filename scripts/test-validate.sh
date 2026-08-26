@@ -489,7 +489,6 @@ echo "=== the shipped manifest still reaches the local-only checks ==="
 # them, and retagging one to `-` shrinks the area silently.
 real_qml="$("$runner" --list qml)"
 real_go="$("$runner" --list go)"
-real_docs="$("$runner" --list docs)"
 for needed in \
   "scripts/qml-smoke.sh --nested --require-static --require-nested" \
   "scripts/check-validation-safety.sh --require-static" \

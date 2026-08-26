@@ -229,6 +229,6 @@ scripts/test-section-pointers-e2e.py	434
 scripts/test-section-pointers.py	458
 scripts/test-switcher-selection.js	774
 scripts/test-toast-actions.js	607
-scripts/test-validate.sh	539
+scripts/test-validate.sh	538
 scripts/test-validation-inventory.sh	2278
 scripts/validate	1057
