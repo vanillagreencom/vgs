@@ -8,9 +8,9 @@ name: CI
 # ONE JOB, DELIBERATELY, on the 2 vCPU runner (shared CI_RUNNER_2V repository
 # variable; Blacksmith when set, `ubuntu-latest` when unset — that fallback is
 # supported and must keep working). The suite is ~30s of total compute, so
-# per-job overhead dominates: no lanes, no change-detection gate, no
-# ci-nightly.yml, and the bigger runner tiers buy nothing. Measured figures and
-# re-measure commands: docs/decisions/D007-ci-single-job-economics.md.
+# per-job overhead dominates: no lanes, no change-detection JOB, no
+# ci-nightly.yml, no bigger runner tier; the classifier STEP below adds no
+# runner. Figures: docs/decisions/D007-ci-single-job-economics.md.
 #
 # One job also means one stable required check. Point branch protection and the
 # merge queue at `CI / ci-ok` — the job is NAMED for the required context

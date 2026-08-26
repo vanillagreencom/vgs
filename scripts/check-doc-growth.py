@@ -210,9 +210,9 @@ CEILINGS: dict[str, int] = {
     # fifth workflow — the Gentoo publisher and its drift check — and the shared
     # rule both publishers follow: fail rather than skip when the credential is
     # missing. A reader deciding whether external publishing is covered must not
-    # be told there are four. Now 3,927 B, after VGS-204 made Gentoo publishing
-    # manual and this file had to stop describing a job that no longer exists.
-    ".github/instructions/ci.instructions.md": 4_200,
+    # be told there are four. Now 4,461 B: VGS-204 made Gentoo publishing manual,
+    # and 2026-08-26 swapped the gate-selftest clause for the harness exception.
+    ".github/instructions/ci.instructions.md": 4_900,
     ".github/instructions/harness-config.instructions.md": 900,  # adopted at 769 B
     ".github/instructions/helper-cli.instructions.md": 600,  # adopted at 517 B
     ".github/instructions/quickshell-qml.instructions.md": 1_700,  # adopted at 1,459 B
@@ -239,8 +239,8 @@ CEILINGS: dict[str, int] = {
     # tells reviewers to reject an unreachable failure path. 7,600 keeps ~10%
     # headroom at the 6,880 B that resulted; now 6,475 B, vendor-sync rows gone.
     ".github/instructions/validation-scripts.instructions.md": 7_600,
-    # Adopted at 854 B. Now 1,001 B: 2026-08-26 replaced two false claims there.
-    ".github/instructions/vendored-engine.instructions.md": 1_200,
+    # Adopted at 854 B. Now 1,306 B: three false claims replaced (VGS-223).
+    ".github/instructions/vendored-engine.instructions.md": 1_500,
     ".github/instructions/vendored-go.instructions.md": 500,  # adopted at 367 B
     # Adopted at 302 B. 2026-08-14: ATTRIBUTION.md carve-out (PR #132) — the
     # blanket "never patch in-repo, skip style findings" rule covered a
