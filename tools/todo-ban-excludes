@@ -1,3 +1,4 @@
+# kendex-guard-dialect: legacy-glob
 .agents/*	vendored vstack install, upstream-owned
 third_party/*	byte-pinned vendored trees, upstream-owned
 backend/vendor/*	vendored Go modules, upstream-owned

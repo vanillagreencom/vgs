@@ -1,3 +1,4 @@
+# kendex-guard-dialect: legacy-glob
 # size-ratchet exclusion list — pattern<TAB>reason, glob against the full
 # repo-relative path, `*` crosses `/`. See third_party/size-ratchet/README.md.
 #
@@ -129,3 +130,7 @@ themes/*/theme.json	theme-package palette data, not source
 themes/*/colors.toml	theme-package palette data, not source
 themes/*/preview.png	theme-package preview image, not source
 themes/catalog.json	generated theme catalog index, regenerated from packages
+.agents/*	vendored kendex install, upstream-owned
+.claude/hooks/block-repo-copy.sh	kendex-rendered hook copy, 511 lines, source owned upstream
+.codex/hooks/block-repo-copy.sh	kendex-rendered hook copy, 511 lines, source owned upstream
+.pi/kendex/hooks/block-repo-copy.sh	kendex-rendered hook copy, 511 lines, source owned upstream

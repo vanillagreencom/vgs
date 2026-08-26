@@ -1,21 +1,25 @@
 # Agent and coding-harness workspaces
-# Existing tracked files stay tracked until removed from the index.
-# vstack.toml and vstack.settings.toml are tracked: they are project-owned
-# config (agent/skill wiring, review gates, Linear team) with no secrets —
-# those live in .env.local. The lock file stays ignored because it records
-# per-machine install state (absolute source paths, install timestamps).
-.kendex-lock.json
+# The managed harness trees (.agents, .claude, .codex, .opencode, .pi and
+# opencode.json) are TRACKED; `kendex refresh` renders them from
+# kendex.toml. The links into .agents/skills are relative and the hook
+# commands are repo-relative, so a clone works without running kendex.
+# kendex.toml and kendex.settings.toml are tracked too: project-owned config
+# (agent/skill wiring, review gates, Linear team) with no secrets — those
+# live in .env.local.
+#
+# kendex: this machine's install ledger — the .agents trees and the
+# links into them are committed, so a clone works without kendex.
+/.kendex-lock.json
 .vstack-lock.json
-.agents/
-.claude/
-.codex/
-.opencode/
-opencode.json
-.pi/
+/.claude/settings.local.json
+# Session-continuation state, never shared.
+/.claude/RESUME.md
+.kendex-refreshed
+.vstack-refreshed
+
+# Harness workspaces kendex does not render to — purely local editor state.
 .aider*/
-.cursor/
 .continue/
-.gemini/
 .roo/
 .windsurf/
 
