@@ -73,8 +73,9 @@ it, what shipping it obliges — so drift findings on those two are valid.
 Pinned beside them are the artifacts themselves (`schema.v2.json`,
 `asdcontrol.cpp`), by the convention those READMEs record rather than by any
 check, and the `third_party/review-gate/` and `third_party/size-ratchet/`
-engine trees, which local validation — not CI — diffs whole against the
-vstack-managed copy.
+engine trees, which nothing here diffs or tests since 2026-08-26: they are
+kendex packages, tested upstream, and a defect in them goes upstream with
+`kendex report`.
 
 Every backend method must map to a documented capability in
 `docs/architecture/backend-methods.json`; QML gates on advertised capabilities,

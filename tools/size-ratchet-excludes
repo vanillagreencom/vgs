@@ -8,54 +8,16 @@
 # `scripts/test-*.js` harnesses simply enter the baseline instead — acceptable,
 # since a baselined test still cannot grow, and it needs no second gate.
 #
-# THREE BASELINED SIZE EXCEPTIONS, argued and granted (VGS-155, 2026-08-16), and
-# recorded here because a baseline row is `path<TAB>digits` and cannot carry a
-# comment — the engine rejects both a third field and a `#` line as malformed:
-#
-#   scripts/lib/vendor-drift.sh            429 lines, 254 of them code
-#   scripts/test-vendor-drift-evidence.sh  420 lines, 279 of them code
-#   scripts/test-vendor-drift.sh           434 lines, 269 of them code
-#
-# vendor-drift.sh's row was RAISED from 422 to 429, with sign-off, which is a
-# stronger act than granting a new row: tighten-only exists precisely to forbid
-# growth of a baselined file. It bought a guard refusing a DOUBLE-quoted `Only
-# in` component. Without it the at-risk list printed `m/"'doomed.txt'"` — a file
-# that does not exist — as the target of an `rsync --delete`. The three shapes
-# deferred to VGS-178 record the raw diff line instead, which reads as "could
-# not attribute"; this one made a confident wrong statement about what was about
-# to be deleted, which is the sentence VGS-155 was filed to make impossible.
-#
-# All three are MAJORITY CODE, and the growth is rounds of reviewer-demanded
-# fixes rather than padding. The prose-to-guard audit already ran on the library
-# and converted everything convertible — 425 to 369 with code unchanged — which
-# REMOVED an earlier exception rather than arguing for one; what remains is the
-# residue that cannot execute. None is excluded: they stay baselined, so the
-# ratchet still holds them tighten-only and the number can only ever go DOWN.
-#
-# The third was granted last and separately. test-vendor-drift.sh sat at 399,
-# one line under the threshold, until a reviewer found a repair branch no case
-# drove — the overridden merged deletion. Pinning it is a case, and a case is
-# how a suite is supposed to grow. The alternatives were a split (a new file, a
-# manifest row and a CI change, to avoid a 22-line overage) or shipping the fix
-# with nothing driving its branch, which is the false confidence this whole
-# issue is about.
-#
-# THE RECURRENCE IS THE FINDING, and it is recorded here rather than left as
-# four independent good calls. VGS-155 took FOUR size accommodations: two rows
-# granted originally, a third for test-vendor-drift.sh, and then vendor-drift.sh
-# raised 422 → 429. Each was argued on its own merits and each is defensible.
-# The sequence is a signal none of them saw: a single 400-line cap is repeatedly
-# obstructing correctness work on one small cluster of files, and every reviewer
-# finding on them arrives as a size argument before it can be fixed.
-#
-# Two mechanisms drive it. A suite grows by exactly the process's own mechanism —
-# one more case per finding — so a cap on a suite taxes coverage. And a library
-# whose comments ARE the evidence (the incident, the shapes that defeated two
-# prefix tests) cannot shed lines without shedding the reason its guards exist.
-# The fleet's 800-line test allowance would have covered the first; this engine
-# exposes one threshold, so it is not expressible.
-#
-# That is a deliberate decision to take, not a fifth argument to win.
+# THE THREE VENDOR-DRIFT BASELINE ROWS ARE GONE, with their files: the
+# consumer-side vendor-drift checks re-vetted kendex package content, which the
+# owner ruled out on 2026-08-26. Their history is in the git log, not here.
+# What the sequence taught survives and still applies to the rows below: a
+# single 400-line cap repeatedly obstructed correctness work on one small
+# cluster of files, and every reviewer finding on them arrived as a size
+# argument before it could be fixed. A suite grows by the process's own
+# mechanism, one more case per finding, so a cap on a suite taxes coverage; the
+# fleet's 800-line test allowance would cover that, and this engine exposes one
+# threshold, so it is not expressible.
 #
 # SIX MORE ACCOMMODATIONS, taken by one branch (VGS-150, 2026-08-16), recorded
 # here so the paragraph above reads against the real arithmetic rather than

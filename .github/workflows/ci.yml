@@ -8,9 +8,9 @@ name: CI
 # ONE JOB, DELIBERATELY, on the 2 vCPU runner (shared CI_RUNNER_2V repository
 # variable; Blacksmith when set, `ubuntu-latest` when unset — that fallback is
 # supported and must keep working). The suite is ~30s of total compute, so
-# per-job overhead dominates: no lanes, no change-detection gate, no
-# ci-nightly.yml, and the bigger runner tiers buy nothing. Measured figures and
-# re-measure commands: docs/decisions/D007-ci-single-job-economics.md.
+# per-job overhead dominates: no lanes, no change-detection JOB, no
+# ci-nightly.yml, no bigger runner tier; the classifier STEP below adds no
+# runner. Figures: docs/decisions/D007-ci-single-job-economics.md.
 #
 # One job also means one stable required check. Point branch protection and the
 # merge queue at `CI / ci-ok` — the job is NAMED for the required context
@@ -52,78 +52,20 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  # THE ONE-JOB RULE HAS ONE DELIBERATE EXCEPTION, structural rather than
-  # economic (VGS-41/v2 cutover, the vstack review-gate engine):
+  # ONE JOB, no exceptions. The vendored kendex engines (third_party/) are
+  # tested upstream in vanillagreencom/kendex, whose CI runs every package's
+  # own suite on every change; this repo runs them, it does not re-vet them.
+  # The `review-gate-selftest` job that used to sit here, and the size-ratchet
+  # and vendor-drift suites inside `ci-ok`, were exactly that re-vetting and
+  # are gone (owner directive, 2026-08-26).
   #
-  #   review-gate-selftest
-  #                    must be UNGATED and separate: a broken predicate
-  #                    approves nothing, so a selftest sharing a job with
-  #                    gated work could never run when it matters.
-  #
-  # The old second exception — an in-CI `review-gate` job that evaluated the
-  # predicate and posted the gate status — is gone with the v1 machinery: the
-  # v2 single writer (.github/workflows/review-gate-writer.yml) is the ONLY
-  # writer of the gate status, runs the default-branch engine on every leg,
-  # and replaced that job plus approval-rerun.yml and approval-sweep.yml.
-  #
-  # `ci-ok` deliberately takes no gate condition and no fast/full split. The
-  # engine's recommended split holds heavy jobs to the merge queue, which
-  # pays off when suites run for minutes; VGS's whole suite is ~30s, so every
-  # job simply runs on every leg (the adoption precondition's "no held-back
-  # jobs" arm — satisfied here in addition to the merge queue). The gate
-  # blocks the MERGE via its status; it is not here to save compute VGS does
-  # not spend.
-  review-gate-selftest:
-    name: Review gate selftest
-    # DELIBERATELY UNGATED: no `needs`, no approval condition, no path filter.
-    # A broken predicate approves nothing, so a gated selftest could never run
-    # when it matters. Failing here reds the build without stopping the writer
-    # workflow from posting — a PR with no gate status at all is stuck, not
-    # blocked.
-    #
-    # UNGATED IS NOT THE SAME AS NON-BLOCKING, and conflating the two left a
-    # real hole: this job is not a required context, and the writer evaluates
-    # the DEFAULT-BRANCH predicate, so the gate stays green on a PR that
-    # breaks the head's predicate. A change breaking review-predicate.sh could
-    # merge with its own selftest red. `ci-ok` therefore takes `needs:` on
-    # this job (below), which makes it blocking without gating it — the
-    # selftest still runs first, on every event, and hands out no write token,
-    # since it holds only `contents: read`.
-    runs-on: ${{ vars.CI_RUNNER_2V || 'ubuntu-latest' }}
-    timeout-minutes: 10
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
-        with:
-          persist-credentials: false
-      # Run from the repo root so the configured layer re-derives its cases
-      # from VGS's own REVIEW_GATE_* values, not the engine's defaults.
-      - name: Pin the review-gate decision table
-        run: third_party/review-gate/scripts/review-predicate-selftest.sh
-      - name: pr-watch behavioral suite (offline, stubbed gh)
-        run: bash third_party/review-gate/tests/pr-watch.test.sh
-      # Runs the writer template's step scripts AND this repo's adopted
-      # .github/workflows/review-gate-writer.yml. Unwired, the adopted copy
-      # could drift off the relay/converge topology (VST-210) while every
-      # green check kept saying otherwise — the gate's own workflow is the
-      # one file no other check reads.
-      - name: Writer template and adopted-workflow suite (offline, stubbed gh)
-        run: bash third_party/review-gate/tests/review-writer-template.test.sh
-      - name: review-writer behavioral suite (offline, stubbed gh)
-        run: bash third_party/review-gate/tests/review-writer.test.sh
-
+  # `ci-ok` deliberately takes no gate condition and no fast/full split beyond
+  # the harness classifier below. The v2 single writer
+  # (.github/workflows/review-gate-writer.yml) is the ONLY writer of the gate
+  # status; CI here never evaluates or posts it.
   validate:
     # The required-check context is `CI / ci-ok`; see the aggregator note above.
     name: ci-ok
-    # The ONE `needs` here, and it is about blocking rather than sequencing:
-    # `ci-ok` is the required context, so depending on the selftest is what
-    # makes a broken review predicate unable to merge. It does not gate the
-    # selftest on anything, and it costs no token — the selftest is
-    # `contents: read` only. The gate job is deliberately NOT a dependency:
-    # that one holds `statuses: write`, and `ci-ok` must never wait on a
-    # write-capable job, nor delay the author's first signal on review state.
-    needs: review-gate-selftest
     runs-on: ${{ vars.CI_RUNNER_2V || 'ubuntu-latest' }}
     timeout-minutes: 15
     permissions:
@@ -134,6 +76,37 @@ jobs:
           # The whitespace check below diffs against the pull request base.
           fetch-depth: 0
           persist-credentials: false
+
+      # Change classifier. The kendex render trees (.agents, .claude, .codex,
+      # .opencode, .cursor, .pi, opencode.json) are upstream output, tested in
+      # vanillagreencom/kendex, so a diff touching nothing else skips the two
+      # expensive tails of this job: the Go toolchain and the Qt install, plus
+      # the pinned actionlint/shellcheck/ruff download between them. The cheap
+      # text checks above and below still run over the whole tree, so the
+      # render keeps its integrity coverage.
+      #
+      # A STEP, not a workflow-level paths-ignore and not a separate job: a
+      # skipped workflow leaves `CI / ci-ok` "expected" and the merge queue
+      # waits on it forever, and a second job would break the one-job rule this
+      # workflow's header states. `ci-ok` runs and reports either way.
+      #
+      # Same base derivation as the whitespace check below, and the same
+      # refusal to substitute a range: an unresolvable base classifies as
+      # not-harness-only and runs everything.
+      - name: Classify the diff
+        id: classify
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PUSH_BEFORE: ${{ github.event.before }}
+        run: .github/scripts/classify-harness-only.sh
+
+      # The classifier decides whether the lanes that produce required evidence
+      # run, so its verdict is proven by EXECUTION over real git history rather
+      # than by reading its `case` arms. Unconditional, ahead of everything it
+      # gates: a suite gated on the thing it proves is no proof.
+      - name: Classifier regression suite (offline, real git history)
+        run: scripts/test-classify-harness-only.sh
 
       # Cheapest checks first, so the common failures report in seconds rather
       # than after the Go toolchain and the Qt install.
@@ -171,24 +144,10 @@ jobs:
       # Tighten-only line-count gate over every tracked file: offenders are
       # frozen in tools/size-ratchet-baseline.tsv and may only shrink; new
       # files stay under SIZE_RATCHET_THRESHOLD (vstack.settings.toml). The
-      # engine is the vendored vstack copy — CI has no .agents/ mirror — and
-      # scripts/check-size-ratchet-vendor.sh (local-only) keeps the two copies
-      # identical (VGS-111).
+      # engine is the vendored copy; this repo runs it, it does not re-vet it
+      # (VGS-111).
       - name: File-size ratchet
         run: third_party/size-ratchet/scripts/size-ratchet
-
-      # The engine's own behavioral suites, same rationale as the review-gate
-      # selftest: CI proving only "today's tree passes the gate" would let a
-      # future re-vendor weaken a failure direction (new-offender, growth,
-      # malformed-config, --update tighten-only, collection fail-closed)
-      # while byte-identity keeps looking clean. Every suite ships with the
-      # vendored engine and runs offline.
-      - name: size-ratchet behavioral suites (offline)
-        run: |
-          for t in third_party/size-ratchet/tests/*.test.sh; do
-            echo "== $t"
-            bash "$t"
-          done
 
       # scripts/validate lists a bare `git diff --check`, which is a working-tree
       # check: on a clean CI checkout it inspects nothing at all. The form that
@@ -340,13 +299,6 @@ jobs:
           # fail-closed argument and manifest handling, and its skip channel.
           scripts/test-validate.sh
           scripts/test-qml-smoke.sh
-          # Both vendor-drift checks are local-only (they need the .agents/
-          # mirror), but the engine deciding which side of a drift is newer —
-          # printing the wrong repair reverts a merged engine fix, VGS-155 —
-          # runs off fixture repos, so that decision IS checkable here.
-          scripts/test-vendor-drift.sh
-          scripts/test-vendor-drift-evidence.sh
-          scripts/test-vendor-drift-contracts.sh
           # `scripts/test-validation-inventory.sh` belongs with these but runs in
           # its own step at the END OF THE JOB — see that step for why. Order
           # here is free: each script builds its own mktemp tree.
@@ -373,6 +325,7 @@ jobs:
         run: scripts/check-lock-reload-order.py
 
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        if: steps.classify.outputs.harness_only != 'true'
         with:
           # Pinned to the version release.yml builds with, so a PR cannot pass
           # here on a toolchain the release never uses.
@@ -385,6 +338,7 @@ jobs:
           cache: false
 
       - name: Go build, vet and race tests
+        if: steps.classify.outputs.harness_only != 'true'
         working-directory: backend
         run: |
           go build ./...
@@ -407,6 +361,7 @@ jobs:
       # later step; shellcheck and ruff feed the format/lint floor two steps
       # down, which fails on a missing or wrong-version tool the same way.
       - name: Install actionlint, shellcheck and ruff (pinned)
+        if: steps.classify.outputs.harness_only != 'true'
         env:
           ACTIONLINT_VERSION: 1.7.12
         run: |
@@ -429,6 +384,7 @@ jobs:
           echo "$RUNNER_TEMP" >>"$GITHUB_PATH"
 
       - name: Workflow lint (YAML and every `run:` block)
+        if: steps.classify.outputs.harness_only != 'true'
         run: scripts/check-workflows.sh
 
       # Formatter/lint floor over first-party Go/shell/Python/JS: gofmt -l,
@@ -440,6 +396,7 @@ jobs:
       # entries: it drives a copy of the check, so it needs the pinned
       # shellcheck and ruff installed two steps up.
       - name: First-party format and lint floor
+        if: steps.classify.outputs.harness_only != 'true'
         run: |
           scripts/check-format-lint.sh
           scripts/test-format-lint.sh
@@ -458,6 +415,7 @@ jobs:
       # check tolerates unresolved qs.* imports by design and fails only on
       # `[syntax…]` findings.
       - name: Install qmllint (Qt 6 declarative tooling)
+        if: steps.classify.outputs.harness_only != 'true'
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends qt6-declarative-dev-tools
@@ -475,6 +433,7 @@ jobs:
       # no live session in CI to disturb. The validation-scripts instruction
       # file's "What CI covers" tables record what that leaves local-only.
       - name: Validation safety and QML static smoke
+        if: steps.classify.outputs.harness_only != 'true'
         run: scripts/check-validation-safety.sh --require-static
 
       # MUST STAY THE LAST STEP OF THIS JOB. It is the only script in the job

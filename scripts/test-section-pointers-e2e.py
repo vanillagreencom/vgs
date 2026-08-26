@@ -10,7 +10,7 @@ suite still prints "all reporting". Only a real exit status sees it, so this
 file builds throwaway git repos and runs the guard against them. That is a
 different kind of test rather than a longer one — it writes trees, creates
 symlinks, runs `git init` and reads process statuses — which is why it is a peer
-script, in the shape of the three `test-vendor-drift-*.sh`.
+script.
 
 ONE TREE PER ARM, each isolating its arm AND asserting the diagnostic it
 expects, because a dropped `problems.extend` is invisible when another arm

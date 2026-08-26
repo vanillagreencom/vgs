@@ -6,9 +6,9 @@
 #
 # VGS ADAPT: the engine path is third_party/review-gate/ (not the template's
 # .agents/skills/review-gate/) — VGS symlinks .agents wholesale into every
-# worktree, so the tracked CI-facing copy lives under third_party/ and
-# scripts/check-review-gate-vendor.sh pins it to the vstack-managed mirror
-# (rationale: scripts/lib/vendor-drift.sh, "WHY THERE ARE TWO COPIES").
+# worktree, so the tracked CI-facing copy lives under third_party/. Nothing in
+# this repo re-vets that copy: kendex CI runs the package's own suites upstream
+# on every change (owner directive, 2026-08-26).
 #
 # This one workflow replaces the old
 # four-workflow mesh (the PR-side gate pair, approval-rerun, approval-sweep,

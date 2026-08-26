@@ -51,6 +51,12 @@ changes nothing:
   get fixed in vanillagreencom/vstack first and re-vendored — flag them, but
   local restructuring (splitting files, style changes) would fork the pinned
   bytes; cross-repo sync timing is a coordination note, not a merge blocker.
+- **The harness render is out of review scope.** `.agents/**`, `.claude/**`,
+  `.codex/**`, `.opencode/**`, `.cursor/**`, `.pi/**` and `opencode.json` are
+  `kendex refresh` output owned upstream in vanillagreencom/kendex. Do not
+  review them and do not report findings on them, in any round. Defects there
+  go upstream with `kendex report`; a local edit is erased by the next render.
+  Stronger than the bullet above: there, flag and route; here, do not flag.
 
 ## Risk classes (route depth by path, not uniformly)
 
@@ -100,8 +106,7 @@ files at all.
 **Low-risk — do not spend rounds on style here:**
 
 - Docs-only diffs (the existing carry-forward class).
-- Vendored-tree re-syncs under `third_party/`, verified by
-  `scripts/check-review-gate-vendor.sh` — review the sync, not the
+- Vendored-tree re-syncs under `third_party/` — review the sync, not the
   upstream bytes (see the residual class above).
 - Generated-file-only diffs whose generator is unchanged or itself in
   the diff.

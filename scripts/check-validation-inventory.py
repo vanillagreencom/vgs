@@ -68,8 +68,6 @@ NOT_A_SUITE_CHECK = {
 LOCAL_ONLY = {
     "smoke-surfaces.sh": "needs a live Hyprland VGS session and reads `hyprctl layers`",
     "check-label-taxonomy.py": "reads live Linear label inventory; CI has no Linear credentials and no local cache",
-    "check-review-gate-vendor.sh": "compares the tracked engine against the vstack-managed copy under .agents/, which CI does not have",
-    "check-size-ratchet-vendor.sh": "compares the tracked size-ratchet engine against the vstack-managed copy under .agents/, which CI does not have",
 }
 
 # Checks CI runs through another entry rather than by name. Naming the caller
@@ -94,8 +92,8 @@ SYNTAX_CHECK_FLAGS = {"--check", "-n", "py_compile"}
 # The prose tables in validation-scripts.instructions.md § What CI covers, keyed
 # by the bold lead-in above each. Claiming the doc and the code cannot
 # disagree is only true if something compares them; before this, nothing did,
-# and the table had drifted (it omitted check-review-gate-vendor.sh and listed
-# qml-smoke.sh, which is reached indirectly rather than being local-only).
+# and the table had drifted (it listed qml-smoke.sh, which is reached
+# indirectly rather than being local-only).
 DOC_TABLES = {
     "LOCAL_ONLY": "**Local-only — CI cannot run these at all:**",
     "INDIRECT_IN_CI": "**Reached indirectly — CI runs these through another entry, not by name:**",

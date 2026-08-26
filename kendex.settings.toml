@@ -24,13 +24,11 @@ LINEAR_FORMAT = "safe"
 ORCH_STATE_DIR = "tmp"
 # File-size ratchet (VGS-111, fleet ruling 2026-08-10: adopt size-ratchet,
 # never hand-roll a size gate). Threshold is the fleet's 400 lines; CI runs
-# the vendored engine at third_party/size-ratchet/ (see
-# scripts/lib/vendor-drift.sh for why two copies exist). The engine
+# the vendored engine at third_party/size-ratchet/. The engine
 # has one threshold, so the fleet's 800-line test allowance is not
 # expressible — oversized tests enter the baseline instead (noted in the
-# excludes file). Three scripts/ files carry argued exceptions as BASELINE rows,
-# so still tighten-only; each reason — and why one threshold bites suites harder
-# than libraries — is in that file's header and the excludes file (VGS-155).
+# excludes file). Why one threshold bites suites harder than libraries is in
+# the excludes file's header.
 SIZE_RATCHET_THRESHOLD = "400"
 SIZE_RATCHET_BASELINE = "tools/size-ratchet-baseline.tsv"
 SIZE_RATCHET_EXCLUDES = "tools/size-ratchet-excludes"
