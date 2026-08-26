@@ -1,4 +1,4 @@
-schema = 5
+schema = 6
 
 [sources.kendex]
 repo = "vanillagreencom/kendex"
@@ -152,62 +152,6 @@ enabled = true
 [hooks.block-unsafe-rm]
 source = "kendex"
 enabled = true
-
-[safety-overrides."skill:growth-guards:claude"]
-review-hash = "3981f539fe4aa935e0a29160f1f1e00d0df7de40ea47872ec69cc9b1107496d8"
-ruleset = 2
-findings = [
-    "0892fe609ffd68a5",
-    "23dbf119fb80b46a",
-    "2b5b66bec4e82b03",
-    "33f97cae50768d71",
-    "90d45946fa99b409",
-    "ea0babc43ef4143e",
-    "ed4970c784f691a7",
-]
-granted-at = "2026-08-20T07:20:44Z"
-
-[safety-overrides."skill:growth-guards:codex"]
-review-hash = "3981f539fe4aa935e0a29160f1f1e00d0df7de40ea47872ec69cc9b1107496d8"
-ruleset = 2
-findings = [
-    "0892fe609ffd68a5",
-    "23dbf119fb80b46a",
-    "2b5b66bec4e82b03",
-    "33f97cae50768d71",
-    "90d45946fa99b409",
-    "ea0babc43ef4143e",
-    "ed4970c784f691a7",
-]
-granted-at = "2026-08-20T07:20:44Z"
-
-[safety-overrides."skill:growth-guards:opencode"]
-review-hash = "3981f539fe4aa935e0a29160f1f1e00d0df7de40ea47872ec69cc9b1107496d8"
-ruleset = 2
-findings = [
-    "0892fe609ffd68a5",
-    "23dbf119fb80b46a",
-    "2b5b66bec4e82b03",
-    "33f97cae50768d71",
-    "90d45946fa99b409",
-    "ea0babc43ef4143e",
-    "ed4970c784f691a7",
-]
-granted-at = "2026-08-20T07:20:44Z"
-
-[safety-overrides."skill:growth-guards:pi"]
-review-hash = "3981f539fe4aa935e0a29160f1f1e00d0df7de40ea47872ec69cc9b1107496d8"
-ruleset = 2
-findings = [
-    "0892fe609ffd68a5",
-    "23dbf119fb80b46a",
-    "2b5b66bec4e82b03",
-    "33f97cae50768d71",
-    "90d45946fa99b409",
-    "ea0babc43ef4143e",
-    "ed4970c784f691a7",
-]
-granted-at = "2026-08-20T07:20:44Z"
 
 [agent-skills]
 generalist = [

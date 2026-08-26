@@ -347,7 +347,8 @@ ORCH_OVERSEER_LANES = "3"
 
 # Substrings marking a review row's body as the reviewer's own errored-run
 # attestation — such a row is NOT-EVIDENCE, never a blocker, never carried.
-# Empty disables.
+# Matched at the start of the body only (first line); a review quoting a
+# pattern in later text stays evidence. Empty disables.
 REVIEW_GATE_REVIEW_OBJECT_ERROR_PATTERNS = "encountered an error and was unable to review"
 
 # Used by: orch (`approval-wait`). Comma-separated reviewer logins that must
@@ -387,3 +388,7 @@ SECOND_OPINION_ARTIFACT_DIR = "tmp/second-opinion"
 # else "could not complete"); any nonzero blocks the commit, and so does a
 # missing or non-executable value. Empty = no repo-local check.
 GROWTH_GUARDS_PRE_COMMIT_LOCAL = ""
+
+# Max re-review cycles per issue before the verdict pass; the re-review
+# re-entry refuses once cycles is past it.
+REVIEW_MAX_CYCLES = "4"
