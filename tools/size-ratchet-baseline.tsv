@@ -44,7 +44,7 @@ docs/architecture/scratchpads.md	410
 docs/media/vgs-demo-poster.jpg	1197
 docs/media/vgs-demo.mp4	30319
 kendex.settings.toml	419
-kendex.toml	1062
+kendex.toml	1078
 packaging/optional-packages.json	589
 quickshell/vshell-preview/shell.qml	456
 quickshell/vshell/Common/KeybindActions.js	1430
@@ -209,7 +209,7 @@ scripts/check-aur-sync.py	471
 scripts/check-doc-growth.py	897
 scripts/check-notification-takeover.js	454
 scripts/check-paste-injection.py	897
-scripts/check-section-pointers.py	556
+scripts/check-section-pointers.py	563
 scripts/check-settings-migration.js	952
 scripts/check-validation-inventory.py	413
 scripts/check-vshell-helper.py	5864
