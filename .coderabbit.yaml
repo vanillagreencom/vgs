@@ -109,6 +109,17 @@ reviews:
   # raster icons, cursors, wallpapers, and the bulk of the vendored Yaru icon
   # theme (its ATTRIBUTION.md and any code stay in scope).
   path_filters:
+    # Harness render: `kendex refresh` output, owned upstream in
+    # vanillagreencom/kendex. A defect here is fixed at the source and
+    # re-rendered, so a review comment on these paths cannot be acted on
+    # in this repo.
+    - "!.agents/**"
+    - "!.claude/**"
+    - "!.codex/**"
+    - "!.opencode/**"
+    - "!.cursor/**"
+    - "!.pi/**"
+    - "!opencode.json"
     - "!**/*.png"
     - "!**/*.jpg"
     - "!**/*.jpeg"

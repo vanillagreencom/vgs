@@ -42,8 +42,7 @@
 # holds non-executable libraries reached only by import, sourcing, or an
 # explicit interpreter — `python3 scripts/lib/shell_scan.py` and
 # `python3 scripts/lib/qml_source_selftest.py` run a library's self-test (each
-# carries a `__main__` only for that; `session-snapshot.sh`,
-# `vendor-drift.sh`, `vendor-drift-report.sh` and `vendor-drift-test.sh` are
+# carries a `__main__` only for that; `session-snapshot.sh` is
 # sourced, `validation_manifest.py` is imported by the inventory guard,
 # `collected.py`, `section_pointers.py`, `pointer_targets.py`, `prose_blocks.py`
 # and `tracked_blobs.py` by the checks that collect and by the pointer guard, and
@@ -154,8 +153,7 @@ cd "$repo_root" || exit 1
 # load-bearing: cheap, network-free, and correct in ANY checkout — a plain
 # clone, a CI-shaped checkout, a worktree made before `vstack refresh`. A check
 # that hard-fails when some out-of-tree artifact is absent does NOT qualify
-# however fast it is (the vendor-sync checks are exactly that, and are `-`).
-# What qualifies: the format/lint floor, this manifest's own guard,
+# however fast it is. What qualifies: the format/lint floor, this manifest's own guard,
 # `git diff --check` — a Go-scoped run must still gofmt the Go it changed.
 #
 # The per-area sets are the scoping AGENTS.md used to state in prose:
@@ -247,21 +245,7 @@ helper    | bash -n bin/vshell
 always    | git diff --check
 -         | scripts/check-workflows.sh
 -         | scripts/check-coderabbit-config.py
--         | scripts/test-vendor-drift.sh
--         | scripts/test-vendor-drift-evidence.sh
--         | scripts/test-vendor-drift-contracts.sh
--         | scripts/check-review-gate-vendor.sh
--         | third_party/review-gate/scripts/review-predicate-selftest.sh
--         | third_party/review-gate/tests/pr-watch.test.sh
--         | third_party/review-gate/tests/review-writer.test.sh
--         | third_party/review-gate/tests/review-writer-template.test.sh
--         | scripts/check-size-ratchet-vendor.sh
 -         | third_party/size-ratchet/scripts/size-ratchet
--         | third_party/size-ratchet/tests/bash32-portability.test.sh
--         | third_party/size-ratchet/tests/collection-fail-closed.test.sh
--         | third_party/size-ratchet/tests/ratchet-directions.test.sh
--         | third_party/size-ratchet/tests/settings-and-config.test.sh
--         | third_party/size-ratchet/tests/update-tightens.test.sh
 qml       | scripts/qml-smoke.sh --nested --require-static --require-nested
 qml       | scripts/check-validation-safety.sh --require-static
 -         | scripts/check-label-taxonomy.py

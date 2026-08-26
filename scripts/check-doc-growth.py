@@ -149,8 +149,8 @@ CEILINGS: dict[str, int] = {
     # regression-test policy sections plus the PR #120 review rounds
     # (coverage gaps, property-defined privileged class) earned the bytes;
     # 7,200 keeps ~10% headroom at the final 6,490 B size, superseding the
-    # 6,500 figure measured mid-review at 5,865 B. Now 6,569 B (~9.6% left):
-    # drift predating VGS-124, recorded here when that PR re-derived every size.
+    # 6,500 figure measured mid-review at 5,865 B. Now 6,979 B, ~3.1% left after
+    # the 2026-08-26 harness-render rule. NOT raised: 3.1% is a real budget.
     "review-bots.md": 7_200,
     # Adopted at 2,909 B. 2026-08-14: the PR #132 review found the doc-surface
     # and vendored-tree rules were telling reviewers to suppress valid drift
@@ -162,9 +162,9 @@ CEILINGS: dict[str, int] = {
     # TIGHTER than the 4,000 the adoption formula rounds to, because the
     # rounding above is an adoption convention and a raise is only required to
     # carry a rationale — so the tighter line wins over the rounder number.
-    # Now 3,660 B: VGS-124 added AGENTS.local.md to the doc-surface set. The
-    # deliberately tight 3,850 still holds, with ~190 B left.
-    ".github/copilot-instructions.md": 3_850,
+    # Now 4,106 B: the 2026-08-26 render-out-of-review-scope rule, stated here
+    # because Copilot code review reads only this file. 4,500 is ~9% headroom.
+    ".github/copilot-instructions.md": 4_500,
     # Adopted at 4,497 B. VGS-124: "a green CI run does not prove the shell
     # starts — run the qml area, which forces --require-nested" left AGENTS.md
     # with the rest of the validation runbook, and its only remaining home was
@@ -238,7 +238,7 @@ CEILINGS: dict[str, int] = {
     # assert it collected something, after three checks in one night reported
     # clean while asserting nothing: it belongs on the surface that already
     # tells reviewers to reject an unreachable failure path. 7,600 keeps ~10%
-    # headroom at the resulting 6,880 B.
+    # headroom at the 6,880 B that resulted; now 6,475 B, vendor-sync rows gone.
     ".github/instructions/validation-scripts.instructions.md": 7_600,
     ".github/instructions/vendored-engine.instructions.md": 1_000,  # adopted at 854 B
     ".github/instructions/vendored-go.instructions.md": 500,  # adopted at 367 B

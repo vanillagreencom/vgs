@@ -35,6 +35,13 @@ applications on the seat are legitimate, so signal by pid or process group.
 Causal chain and recovery: `AGENTS.md` § Never launch a second shell into the
 live session.
 
+**The harness render is out of review scope.** `.agents/**`, `.claude/**`,
+`.codex/**`, `.opencode/**`, `.cursor/**`, `.pi/**` and `opencode.json` are
+`kendex refresh` output. Do not review them or report findings on them.
+Defects go upstream with `kendex report` to vanillagreencom/kendex; a local
+edit is erased by the next render. Stronger than the vendored-tree rule
+below, which asks for upstream issues: on the render, do not flag at all.
+
 **Vendored trees are byte-exact — but not uniformly.** Carried verbatim:
 `backend/vendor/**`, the plugin directories under
 `config/vshell/nvim/colorschemes/`, `quickshell/vshell/assets/sounds/plasma/`,

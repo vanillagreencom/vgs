@@ -502,19 +502,11 @@ expect_contains "$real_go" "(cd backend && go build ./... && go vet ./... && go 
   "validate go membership"
 ok "validate go still runs the Go block"
 
-# The vendor-sync checks are deliberately NOT `always`: both hard-fail when the
-# vstack-managed copy under .agents/ is absent, so a plain clone or a pre-refresh
-# worktree would fail every scoped run for a reason unrelated to the change.
-for tagged in scripts/check-review-gate-vendor.sh scripts/check-size-ratchet-vendor.sh; do
-  expect_absent "$real_docs" "$tagged" "vendor checks stay out of scoped runs"
-done
-ok "the vendor-sync checks are reachable only from validate all"
-
 # THE TWO PARSERS MUST AGREE. The runner's bash loop decides what actually runs;
 # the shared python reader decides what the guard checks. Nothing tied them
 # together: a row the python side dropped resurfaces only for `scripts/` paths,
-# as "executable but the manifest never runs it", so the third_party/ engine
-# tests and the Go block could have vanished from the guard's view unnoticed.
+# as "executable but the manifest never runs it", so the Go block could have
+# vanished from the guard's view unnoticed.
 python_rows="$(python3 - "$repo_root" <<'ROWS_PY'
 import importlib.util, pathlib, sys
 root = pathlib.Path(sys.argv[1])
