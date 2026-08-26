@@ -1,7 +1,7 @@
-# SCAFFOLD from the vstack review-gate skill (templates/review-gate-writer.yml)
+# SCAFFOLD from the kendex review-gate skill (templates/review-gate-writer.yml)
 # — the v2 SINGLE WRITER (review-gate v2 single-writer plan, Change 1/1b;
-# vanillagreencom/vstack#1099). Copy once into .github/workflows/ in the adoption PR; the file is
-# REPO-OWNED after the copy — `vstack refresh` does not sync workflow YAML.
+# vanillagreencom/kendex#1099). Copy once into .github/workflows/ in the adoption PR; the file is
+# REPO-OWNED after the copy — `kendex refresh` does not sync workflow YAML.
 # Lines marked ADAPT are per-repo values. This one workflow replaces the old
 # four-workflow mesh (the PR-side gate pair, approval-rerun, approval-sweep,
 # review-gate-queue): exactly one writer, default-branch-defined, which
@@ -181,7 +181,7 @@ jobs:
       HEAD_SHA: ${{ github.event.merge_group.head_sha }}
     steps:
       # Checkout only to resolve the CONFIGURABLE gate context from
-      # vstack.settings.toml — pinned to the DEFAULT branch: the ruleset
+      # kendex.settings.toml — pinned to the DEFAULT branch: the ruleset
       # requires whatever context name MAIN's config declares, and nothing
       # queued may run under this job's write-capable token.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

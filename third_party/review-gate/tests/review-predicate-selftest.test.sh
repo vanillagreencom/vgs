@@ -188,19 +188,19 @@ replay modetypo "$work/modetypo" REVIEW_GATE_MODE=offf
 # The file is bound explicitly, so the fixture reads what it planted rather
 # than whatever cwd resolution finds.
 mkdir -p "$work/delaytypo"
-printf '[env]\nREVIEW_GATE_API_RETRY_DELAY_SECONDS = "two"\n' >"$work/delaytypo/vstack.settings.toml"
-replay delaytypo "$work/delaytypo" REVIEW_GATE_SETTINGS_FILE="$work/delaytypo/vstack.settings.toml"
+printf '[env]\nREVIEW_GATE_API_RETRY_DELAY_SECONDS = "two"\n' >"$work/delaytypo/kendex.settings.toml"
+replay delaytypo "$work/delaytypo" REVIEW_GATE_SETTINGS_FILE="$work/delaytypo/kendex.settings.toml"
 # Same fixture, with a VALID delay exported the way a developer's shell
 # would export it. Environment outranks a settings file by design, so
 # without replay()'s scrub of the namespace that value masks the planted
 # typo and the guard's own control reports a false failure.
 export REVIEW_GATE_API_RETRY_DELAY_SECONDS=0
-replay delaytypoenv "$work/delaytypo" REVIEW_GATE_SETTINGS_FILE="$work/delaytypo/vstack.settings.toml"
+replay delaytypoenv "$work/delaytypo" REVIEW_GATE_SETTINGS_FILE="$work/delaytypo/kendex.settings.toml"
 unset REVIEW_GATE_API_RETRY_DELAY_SECONDS
 
 # --- layer 2: the selftest must exercise CONFIGURED values ------------------
 mkdir -p "$work/configured"
-cat >"$work/configured/vstack.settings.toml" <<'EOF'
+cat >"$work/configured/kendex.settings.toml" <<'EOF'
 [env]
 REVIEW_GATE_TRUSTED_STATUS_CONTEXTS = "Acme Review; Beta Scan"
 REVIEW_GATE_CHECKRUN_SKIP_PATTERNS = "quota exceeded"
@@ -220,10 +220,10 @@ replay configured "$work/configured"
 mkdir -p "$work/excludes"
 # BSD/macOS sed has no \n replacement extension — build fixtures with
 # grep -v + printf instead.
-grep -v '^REVIEW_GATE_CARRY_FORWARD = ' "$work/configured/vstack.settings.toml" \
-  >"$work/excludes/vstack.settings.toml"
+grep -v '^REVIEW_GATE_CARRY_FORWARD = ' "$work/configured/kendex.settings.toml" \
+  >"$work/excludes/kendex.settings.toml"
 printf 'REVIEW_GATE_CARRY_FORWARD = "docs"\nREVIEW_GATE_CARRY_FORWARD_EXCLUDE = "*AGENTS.md;guides/*"\n' \
-  >>"$work/excludes/vstack.settings.toml"
+  >>"$work/excludes/kendex.settings.toml"
 replay excludes "$work/excludes"
 
 # --- layer 2c: a broken ls-files fails loud, never a hermetic fallback ------
@@ -255,7 +255,7 @@ chmod +x "$work/brokengit/bin/git"
 (cd "$work/brokengit/repo" && "$real_git" init -q .)
 # The tracked-probe battery only runs under an ACTIVE carry-exclude list —
 # reuse the committed-glob fixture settings.
-cp "$work/excludes/vstack.settings.toml" "$work/brokengit/repo/vstack.settings.toml"
+cp "$work/excludes/kendex.settings.toml" "$work/brokengit/repo/kendex.settings.toml"
 replay brokengit "$work/brokengit/repo" PATH="$work/brokengit/bin:$PATH"
 
 # --- layer 2c2: rev-parse's STATUS decides the root, never its stdout ------
@@ -287,7 +287,7 @@ exec "$real_git" "\$@"
 BROKENROOT
 chmod +x "$work/brokenroot/bin/git"
 (cd "$work/brokenroot/repo" && "$real_git" init -q .)
-cp "$work/excludes/vstack.settings.toml" "$work/brokenroot/repo/vstack.settings.toml"
+cp "$work/excludes/kendex.settings.toml" "$work/brokenroot/repo/kendex.settings.toml"
 replay brokenroot "$work/brokenroot/repo" PATH="$work/brokenroot/bin:$PATH"
 
 # --- layer 2d: a failed mktemp is unverifiable, same refuse-to-degrade -----
@@ -305,16 +305,16 @@ exec "$real_mktemp" "\$@"
 BROKENMKTEMP
 chmod +x "$work/brokenmktemp/bin/mktemp"
 (cd "$work/brokenmktemp/repo" && git init -q .)
-cp "$work/excludes/vstack.settings.toml" "$work/brokenmktemp/repo/vstack.settings.toml"
+cp "$work/excludes/kendex.settings.toml" "$work/brokenmktemp/repo/kendex.settings.toml"
 replay brokenmktemp "$work/brokenmktemp/repo" PATH="$work/brokenmktemp/bin:$PATH"
 
 # --- layer 2e: the harness namespace is not the over-broad namespace --------
 # Hermetic fixture with `carry-probe*` as the ONLY exclusion.
 mkdir -p "$work/probeglob"
-grep -v '^REVIEW_GATE_CARRY_FORWARD = ' "$work/configured/vstack.settings.toml" \
-  >"$work/probeglob/vstack.settings.toml"
+grep -v '^REVIEW_GATE_CARRY_FORWARD = ' "$work/configured/kendex.settings.toml" \
+  >"$work/probeglob/kendex.settings.toml"
 printf 'REVIEW_GATE_CARRY_FORWARD = "docs"\nREVIEW_GATE_CARRY_FORWARD_EXCLUDE = "carry-probe*"\n' \
-  >>"$work/probeglob/vstack.settings.toml"
+  >>"$work/probeglob/kendex.settings.toml"
 replay probeglob "$work/probeglob"
 
 # --- layer 2g: tracked evidence is ROOT-relative and dead globs fail -------
@@ -328,41 +328,41 @@ mkdir -p "$work/rooted/repo/guides" "$work/rooted/repo/sub"
   && printf '[package]\n' > Cargo.toml \
   && git add guides/intro.md README.md Cargo.toml \
   && git -c user.email=t@t -c user.name=t commit -qm probe)
-grep -v '^REVIEW_GATE_CARRY_FORWARD = ' "$work/configured/vstack.settings.toml" \
-  >"$work/rooted/repo/vstack.settings.toml"
+grep -v '^REVIEW_GATE_CARRY_FORWARD = ' "$work/configured/kendex.settings.toml" \
+  >"$work/rooted/repo/kendex.settings.toml"
 printf 'REVIEW_GATE_CARRY_FORWARD = "docs"\nREVIEW_GATE_CARRY_FORWARD_EXCLUDE = "guides/*"\n' \
-  >>"$work/rooted/repo/vstack.settings.toml"
+  >>"$work/rooted/repo/kendex.settings.toml"
 
 printf 'REVIEW_GATE_CARRY_FORWARD = "docs"\nREVIEW_GATE_CARRY_FORWARD_EXCLUDE = "gudies/*"\n' \
   >"$work/rooted/repo/typo.settings.toml"
-grep -v '^REVIEW_GATE_CARRY_FORWARD = ' "$work/configured/vstack.settings.toml" \
+grep -v '^REVIEW_GATE_CARRY_FORWARD = ' "$work/configured/kendex.settings.toml" \
   >>"$work/rooted/repo/typo.settings.toml"
 
 printf 'REVIEW_GATE_CARRY_FORWARD = "docs"\nREVIEW_GATE_CARRY_FORWARD_EXCLUDE = "gudies/*"\nREVIEW_GATE_CARRY_FORWARD_EXCLUDE_PROPHYLACTIC = "gudies/*"\n' \
   >"$work/rooted/repo/declared.settings.toml"
-grep -v '^REVIEW_GATE_CARRY_FORWARD = ' "$work/configured/vstack.settings.toml" \
+grep -v '^REVIEW_GATE_CARRY_FORWARD = ' "$work/configured/kendex.settings.toml" \
   >>"$work/rooted/repo/declared.settings.toml"
 
 printf 'REVIEW_GATE_CARRY_FORWARD = "docs"\nREVIEW_GATE_CARRY_FORWARD_EXCLUDE = "*Cargo.toml"\n' \
   >"$work/rooted/repo/inert.settings.toml"
-grep -v '^REVIEW_GATE_CARRY_FORWARD = ' "$work/configured/vstack.settings.toml" \
+grep -v '^REVIEW_GATE_CARRY_FORWARD = ' "$work/configured/kendex.settings.toml" \
   >>"$work/rooted/repo/inert.settings.toml"
 
 printf 'REVIEW_GATE_CARRY_FORWARD = "docs"\nREVIEW_GATE_CARRY_FORWARD_EXCLUDE = "guides/*"\nREVIEW_GATE_CARRY_FORWARD_EXCLUDE_PROPHYLACTIC = "gudies/*"\n' \
   >"$work/rooted/repo/orphan.settings.toml"
-grep -v '^REVIEW_GATE_CARRY_FORWARD = ' "$work/configured/vstack.settings.toml" \
+grep -v '^REVIEW_GATE_CARRY_FORWARD = ' "$work/configured/kendex.settings.toml" \
   >>"$work/rooted/repo/orphan.settings.toml"
 
 printf 'REVIEW_GATE_CARRY_FORWARD = "docs"\nREVIEW_GATE_CARRY_FORWARD_EXCLUDE = "guides/*"\nREVIEW_GATE_CARRY_FORWARD_EXCLUDE_PROPHYLACTIC = "guides/*"\n' \
   >"$work/rooted/repo/falsified.settings.toml"
-grep -v '^REVIEW_GATE_CARRY_FORWARD = ' "$work/configured/vstack.settings.toml" \
+grep -v '^REVIEW_GATE_CARRY_FORWARD = ' "$work/configured/kendex.settings.toml" \
   >>"$work/rooted/repo/falsified.settings.toml"
 
 printf 'REVIEW_GATE_CARRY_FORWARD = "docs"\nREVIEW_GATE_CARRY_FORWARD_EXCLUDE_PROPHYLACTIC = "gudies/*"\n' \
   >"$work/rooted/repo/emptyexcl.settings.toml"
-grep -v '^REVIEW_GATE_CARRY_FORWARD = ' "$work/configured/vstack.settings.toml" \
+grep -v '^REVIEW_GATE_CARRY_FORWARD = ' "$work/configured/kendex.settings.toml" \
   >>"$work/rooted/repo/emptyexcl.settings.toml"
-replay rooted "$work/rooted/repo/sub" REVIEW_GATE_SETTINGS_FILE="$work/rooted/repo/vstack.settings.toml"
+replay rooted "$work/rooted/repo/sub" REVIEW_GATE_SETTINGS_FILE="$work/rooted/repo/kendex.settings.toml"
 replay rootedtypo "$work/rooted/repo" REVIEW_GATE_SETTINGS_FILE="$work/rooted/repo/typo.settings.toml"
 replay rooteddecl "$work/rooted/repo" REVIEW_GATE_SETTINGS_FILE="$work/rooted/repo/declared.settings.toml"
 replay rootedinert "$work/rooted/repo" REVIEW_GATE_SETTINGS_FILE="$work/rooted/repo/inert.settings.toml"
@@ -376,8 +376,8 @@ replay rootedemptyexcl "$work/rooted/repo" REVIEW_GATE_SETTINGS_FILE="$work/root
 # exercises the link-joining branch; the OPTION-LOOKING name (dash-leading,
 # no slash) exercises the readlink option-parse path.
 mkdir -p "$work/symlinked/outside"
-ln -s ../../rooted/repo/vstack.settings.toml "$work/symlinked/outside/settings.toml"
-ln -s "$work/rooted/repo/vstack.settings.toml" "$work/symlinked/outside/-settings"
+ln -s ../../rooted/repo/kendex.settings.toml "$work/symlinked/outside/settings.toml"
+ln -s "$work/rooted/repo/kendex.settings.toml" "$work/symlinked/outside/-settings"
 replay symlinked "$work/symlinked/outside" REVIEW_GATE_SETTINGS_FILE="$work/symlinked/outside/settings.toml"
 replay symlinkdash "$work/symlinked/outside" REVIEW_GATE_SETTINGS_FILE="-settings"
 
@@ -396,7 +396,7 @@ mkdir -p "$work/cyclic"
 ln -s cycle-b.settings.toml "$work/cyclic/cycle-a.settings.toml"
 ln -s cycle-a.settings.toml "$work/cyclic/cycle-b.settings.toml"
 ln -s does-not-exist.toml "$work/cyclic/dangling.settings.toml"
-cp "$work/rooted/repo/vstack.settings.toml" "$work/cyclic/unreadable.settings.toml"
+cp "$work/rooted/repo/kendex.settings.toml" "$work/cyclic/unreadable.settings.toml"
 chmod 000 "$work/cyclic/unreadable.settings.toml"
 mkdir -p "$work/cyclic/nonregular.dir"
 replay cyclic "$work/rooted/repo" REVIEW_GATE_SETTINGS_FILE="$work/cyclic/cycle-a.settings.toml"
@@ -414,7 +414,7 @@ fi
 # A BROKEN WORKTREE (a .git file naming a missing gitdir).
 mkdir -p "$work/brokengitfile"
 printf 'gitdir: /nonexistent/pruned-away/.git/worktrees/gone\n' >"$work/brokengitfile/.git"
-cp "$work/excludes/vstack.settings.toml" "$work/brokengitfile/vstack.settings.toml"
+cp "$work/excludes/kendex.settings.toml" "$work/brokengitfile/kendex.settings.toml"
 replay brokengitfile "$work/brokengitfile"
 
 # A repository-probe failure inside a REAL repository: a git shim failing
@@ -432,17 +432,17 @@ exec "$real_git" "\$@"
 BROKENPROBE
 chmod +x "$work/brokenprobe/bin/git"
 (cd "$work/brokenprobe/repo" && "$real_git" init -q .)
-cp "$work/excludes/vstack.settings.toml" "$work/brokenprobe/repo/vstack.settings.toml"
+cp "$work/excludes/kendex.settings.toml" "$work/brokenprobe/repo/kendex.settings.toml"
 replay brokenprobe "$work/brokenprobe/repo" PATH="$work/brokenprobe/bin:$PATH"
 
 # A repository with ZERO tracked files.
 mkdir -p "$work/emptyrepo/repo"
 (cd "$work/emptyrepo/repo" && git init -q . \
   && git -c user.email=t@t -c user.name=t commit -qm empty --allow-empty)
-grep -v '^REVIEW_GATE_CARRY_FORWARD = ' "$work/configured/vstack.settings.toml" \
-  >"$work/emptyrepo/repo/vstack.settings.toml"
+grep -v '^REVIEW_GATE_CARRY_FORWARD = ' "$work/configured/kendex.settings.toml" \
+  >"$work/emptyrepo/repo/kendex.settings.toml"
 printf 'REVIEW_GATE_CARRY_FORWARD = "docs"\nREVIEW_GATE_CARRY_FORWARD_EXCLUDE = "guides/*"\n' \
-  >>"$work/emptyrepo/repo/vstack.settings.toml"
+  >>"$work/emptyrepo/repo/kendex.settings.toml"
 replay emptyrepo "$work/emptyrepo/repo"
 
 # A structurally universal exclusion inside a real repository with a
@@ -452,10 +452,10 @@ mkdir -p "$work/trackeduniv/repo"
   && printf '# probe\n' > README.md \
   && git add README.md \
   && git -c user.email=t@t -c user.name=t commit -qm probe)
-grep -v '^REVIEW_GATE_CARRY_FORWARD = ' "$work/configured/vstack.settings.toml" \
-  >"$work/trackeduniv/repo/vstack.settings.toml"
+grep -v '^REVIEW_GATE_CARRY_FORWARD = ' "$work/configured/kendex.settings.toml" \
+  >"$work/trackeduniv/repo/kendex.settings.toml"
 printf 'REVIEW_GATE_CARRY_FORWARD = "docs"\nREVIEW_GATE_CARRY_FORWARD_EXCLUDE = "*"\n' \
-  >>"$work/trackeduniv/repo/vstack.settings.toml"
+  >>"$work/trackeduniv/repo/kendex.settings.toml"
 replay trackeduniv "$work/trackeduniv/repo"
 
 # --- layer 2f: probe exhaustion without a structurally universal glob ------
@@ -465,19 +465,19 @@ replay trackeduniv "$work/trackeduniv/repo"
 # dead ('/docs/*') + over-broad ('*') run.
 for fx in bothns allstars oneq twoq deadglob; do
   mkdir -p "$work/$fx"
-  grep -v '^REVIEW_GATE_CARRY_FORWARD = ' "$work/configured/vstack.settings.toml" \
-    >"$work/$fx/vstack.settings.toml"
+  grep -v '^REVIEW_GATE_CARRY_FORWARD = ' "$work/configured/kendex.settings.toml" \
+    >"$work/$fx/kendex.settings.toml"
 done
 printf 'REVIEW_GATE_CARRY_FORWARD = "docs"\nREVIEW_GATE_CARRY_FORWARD_EXCLUDE = "carry-probe*;unexcluded-sample*"\n' \
-  >>"$work/bothns/vstack.settings.toml"
+  >>"$work/bothns/kendex.settings.toml"
 printf 'REVIEW_GATE_CARRY_FORWARD = "docs"\nREVIEW_GATE_CARRY_FORWARD_EXCLUDE = "***"\n' \
-  >>"$work/allstars/vstack.settings.toml"
+  >>"$work/allstars/kendex.settings.toml"
 printf 'REVIEW_GATE_CARRY_FORWARD = "docs"\nREVIEW_GATE_CARRY_FORWARD_EXCLUDE = "?*"\n' \
-  >>"$work/oneq/vstack.settings.toml"
+  >>"$work/oneq/kendex.settings.toml"
 printf 'REVIEW_GATE_CARRY_FORWARD = "docs"\nREVIEW_GATE_CARRY_FORWARD_EXCLUDE = "??*"\n' \
-  >>"$work/twoq/vstack.settings.toml"
+  >>"$work/twoq/kendex.settings.toml"
 printf 'REVIEW_GATE_CARRY_FORWARD = "docs"\nREVIEW_GATE_CARRY_FORWARD_EXCLUDE = "/docs/*;*"\n' \
-  >>"$work/deadglob/vstack.settings.toml"
+  >>"$work/deadglob/kendex.settings.toml"
 replay bothns "$work/bothns"
 replay allstars "$work/allstars"
 replay oneq "$work/oneq"

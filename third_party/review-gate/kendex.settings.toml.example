@@ -1,8 +1,8 @@
 [env]
 
 # REVIEW GATE — shared merge-gate engine (review-gate skill).
-# Project-scope `vstack add` / `vstack refresh` merge these defaults into
-# <project>/vstack.settings.toml (never overwriting existing keys). Keys
+# Project-scope `kendex add` / `kendex refresh` merge these defaults into
+# <project>/kendex.settings.toml (never overwriting existing keys). Keys
 # resolve environment-first, then this file, then the built-in default; list
 # values pack into one string with ';' separators. Full reference:
 # review-gate SKILL.md and references/adoption.md.
@@ -37,7 +37,7 @@ REVIEW_GATE_SHA_PREFIX_FLOOR = "7"
 # contexts above.
 # Alias over legacy REVIEW_GATE_OUTAGE_CONTEXT; set only this key in new
 # installs. Empty disables.
-REVIEW_GATE_OVERRIDE_CONTEXT = "vstack-reviewer-outage"
+REVIEW_GATE_OVERRIDE_CONTEXT = "kendex-reviewer-outage"
 
 # Creator logins whose commit statuses are never evidence. SECURITY:
 # wherever PR workflows hold statuses:write, PR content can mint statuses
@@ -56,7 +56,8 @@ REVIEW_GATE_REVIEW_OBJECT_MIN_STATE = "any"
 
 # Substrings marking a review row's body as the reviewer's own errored-run
 # attestation — such a row is NOT-EVIDENCE, never a blocker, never carried.
-# Empty disables.
+# Matched at the start of the body only (first line); a review quoting a
+# pattern in later text stays evidence. Empty disables.
 REVIEW_GATE_REVIEW_OBJECT_ERROR_PATTERNS = "encountered an error and was unable to review"
 
 # "enforce" fails closed on unresolved threads CI-side; "off" only where a
