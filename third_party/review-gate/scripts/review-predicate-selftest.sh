@@ -19,7 +19,7 @@
 #      approval non-supersession, fail-loud reads, and config validation.
 #   2. Configured layer — the same approve/near-miss discipline re-derived
 #      from THIS repo's resolved REVIEW_GATE_* settings (env >
-#      vstack.settings.toml > defaults), so a repo trusting a different bot
+#      kendex.settings.toml > defaults), so a repo trusting a different bot
 #      tests its OWN trust list, not someone else's defaults.
 #
 # Mechanism: a `gh` shim earlier on PATH answers from fixtures and applies any
@@ -51,7 +51,7 @@ ACTIVE_FLOOR="$(rg_setting REVIEW_GATE_SHA_PREFIX_FLOOR "7")" || exit 1
 # the legacy default.
 ACTIVE_OUTAGE="$(rg_setting REVIEW_GATE_OVERRIDE_CONTEXT "__unset__")" || exit 1
 if [ "$ACTIVE_OUTAGE" = "__unset__" ]; then
-  ACTIVE_OUTAGE="$(rg_setting REVIEW_GATE_OUTAGE_CONTEXT "vstack-reviewer-outage")" || exit 1
+  ACTIVE_OUTAGE="$(rg_setting REVIEW_GATE_OUTAGE_CONTEXT "kendex-reviewer-outage")" || exit 1
 fi
 ACTIVE_PUBLISHER_REJECT="$(rg_setting REVIEW_GATE_STATUS_PUBLISHER_REJECT "")" || exit 1
 ACTIVE_TRUSTED_LOGINS="$(rg_setting REVIEW_GATE_REVIEW_OBJECT_TRUSTED_LOGINS "")" || exit 1
@@ -583,7 +583,7 @@ CFG_CONTEXTS="mech-ctx"
 jq -n '{check_runs:[{id:1,name:"mech-ctx",conclusion:"success",output:{title:null,summary:"analysis complete"}}]}' >"$fixtures/checkruns.json"
 run "check-run with no app slug (unprovable provenance) is not evidence" awaiting
 
-# NEWEST RUN DECIDES per name (vstack#1110), ordered by run id — the
+# NEWEST RUN DECIDES per name (kendex#1110), ordered by run id — the
 # check-run mirror of the status surface's newest-row projection. A
 # reviewer starting a fresh analysis round must withdraw its own older
 # clean success on the same head; counting "any clean success" would open
@@ -685,7 +685,7 @@ run "slugless anomaly as the newest run masks toward closed (never revives the o
 # LIST endpoint, where every real publisher carries a login, so a missing one
 # is an anomaly and trusting anomalies is the fail-open direction. (The
 # COMBINED endpoint nulls every App-posted creator, which made this filter
-# inert — vstack#1099, caught live by sandbox scenario 6.) The shipped
+# inert — kendex#1099, caught live by sandbox scenario 6.) The shipped
 # default (empty list) must change nothing.
 reset
 CFG_CONTEXTS="mech-ctx"; CFG_PUBLISHER_REJECT="github-actions[bot]"
@@ -952,6 +952,27 @@ CFG_TRUSTED_LOGINS=""; CFG_MIN_STATE="any"; CFG_ERROR_PATTERNS=""
 reviews_set "$(review "auto-reviewer" COMMENTED "2026-08-02T18:00:00Z" "$HEAD" "$ERRORED_BODY")"
 run "empty error-pattern list disables the filter (explicit opt-out)" approved
 
+# Start-of-body scoping (KEN-456): a pattern is an attestation only on the
+# FIRST line of the body, after trimming leading whitespace and markdown
+# quote markers. Whole-body substring matching dropped any genuine review
+# that QUOTED a pattern in later text — e.g. the review of a PR editing
+# REVIEW_GATE_REVIEW_OBJECT_ERROR_PATTERNS itself — so that PR could never
+# pass the gate.
+reset
+CFG_TRUSTED_LOGINS=""; CFG_MIN_STATE="any"; CFG_ERROR_PATTERNS="$ERRORED_MARK"
+reviews_set "$(review "auto-reviewer" COMMENTED "2026-08-02T18:00:00Z" "$HEAD" "encountered an error and was unable to review this pull request.")"
+run "a body BEGINNING with a pattern is NOT evidence" awaiting
+
+reset
+CFG_TRUSTED_LOGINS=""; CFG_MIN_STATE="any"; CFG_ERROR_PATTERNS="$ERRORED_MARK"
+reviews_set "$(review "reviewer" COMMENTED "2026-08-02T18:00:00Z" "$HEAD" "$(printf 'Reviewed 2 of 2 changed files.\n\nThe doc edit quotes the marker "encountered an error and was unable to review" verbatim; the wording matches the shipped default.')")"
+run "a body QUOTING a pattern in later text IS evidence" approved
+
+reset
+CFG_TRUSTED_LOGINS=""; CFG_MIN_STATE="any"; CFG_ERROR_PATTERNS="$ERRORED_MARK"
+reviews_set "$(review "auto-reviewer" COMMENTED "2026-08-02T18:00:00Z" "$HEAD" "$(printf '\n> Copilot encountered an error and was unable to review this pull request.')")"
+run "leading blank line and quote marker are trimmed before matching" awaiting
+
 # NON-SUPERSESSION: a trailing COMMENTED from the same reviewer at the same
 # head must not mask its earlier APPROVED (observed live: APPROVED at
 # :47, COMMENTED at :50 on the same commit — a latest-review-per-reviewer
@@ -1123,7 +1144,7 @@ run "outage attestation + unresolved thread stays closed" threads-open
 
 reset
 CFG_OUTAGE=""
-status_ctx "vstack-reviewer-outage" success "reviewer outage attested"
+status_ctx "kendex-reviewer-outage" success "reviewer outage attested"
 run "empty outage context disables the source" awaiting
 
 # The publisher reject-list guards the outage read too: the sanctioned
@@ -1144,7 +1165,7 @@ run "publisher filter set: unlisted-login outage attestation still counts" appro
 # semantics need their own pins: a creator-less attestation is not evidence
 # while the list is configured, and the empty default stays publisher-blind
 # even for github-actions — Actions-posted attestation is legitimate on some
-# repos (vstack's own sweep/refire included).
+# repos (kendex's own sweep/refire included).
 reset
 CFG_OUTAGE="mech-outage"; CFG_PUBLISHER_REJECT="github-actions[bot]"
 status_ctx "mech-outage" success "reviewer outage attested" ""
@@ -1219,7 +1240,7 @@ run "threads=off: the reviewThreads read is skipped entirely (failing endpoint c
 unset GH_SHIM_FAIL
 cases=$((cases + 1))
 # Fail-closed on the instrument itself: a missing/empty url log proves
-# nothing about the read being skipped (vstack#1097) — the run above made
+# nothing about the read being skipped (kendex#1097) — the run above made
 # other API reads, so the log must exist and be non-empty.
 if [ ! -s "$fixtures/.urls.log" ]; then
   echo "FAIL  threads=off url log missing or empty - cannot prove the read was skipped" >&2
@@ -1447,7 +1468,7 @@ jq -n '{statuses:[{context:"mech-ctx",state:"success",description:"analysis comp
 CFG_SNAPSHOT="$fixtures/unbound-snapshot.json"
 run "snapshot seam: snapshot with NO top-level sha is exit 2 (binding required)" "" 2
 
-# Multi-value snapshots (vstack#1086): a caller that concatenates page
+# Multi-value snapshots (kendex#1086): a caller that concatenates page
 # responses instead of merging their statuses used to yield one normalized
 # object per value; downstream per-value jq reads then emitted multi-line
 # counts ("0\n0") that dodge every string comparison — with no trusted
@@ -1483,7 +1504,7 @@ run "combined-status SHAPE served to the list read is exit 2 (wrong endpoint sha
 
 reset
 printf '\n   \n' >"$fixtures/statuses.json"
-run "whitespace-only statuses response is exit 2, not a vacuous empty status set (vstack#1086)" "" 2
+run "whitespace-only statuses response is exit 2, not a vacuous empty status set (kendex#1086)" "" 2
 
 reset
 CFG_CONTEXTS="mech-ctx"
@@ -1677,7 +1698,7 @@ compare_fix ahead "[$(delta_file "src/new.sh" added '@@ -0,0 +1 @@
 +# new file of comments')]"
 run "carry: an ADDED file refuses under 'comments' (modified-only)" awaiting
 
-# vstack#1097 negative controls: shebang lines, renames into .md, and
+# kendex#1097 negative controls: shebang lines, renames into .md, and
 # malformed later compare pages must all refuse or fail loud.
 reset
 carry_candidate
@@ -1741,7 +1762,7 @@ CFG_CARRY="docs"
 compare_fix diverged "[$DOCS_DELTA]"
 run "carry: a non-ancestor candidate (diverged) never carries" awaiting
 
-# Path exclusions (vstack#1115): policy-bearing markdown classifies "docs"
+# Path exclusions (kendex#1115): policy-bearing markdown classifies "docs"
 # by extension, so REVIEW_GATE_CARRY_FORWARD_EXCLUDE globs disqualify any
 # carry whose delta touches an excluded path — surgical (non-matching deltas
 # still carry), '*' crosses '/', and inert for identical trees (no delta).
@@ -1860,6 +1881,16 @@ reviews_set "$(review "auto-reviewer" COMMENTED "2026-01-01T00:00:00Z" "$OTHER" 
 compare_fix ahead "[$DOCS_DELTA]"
 run "carry: an errored ancestor auto-review is not a carry candidate" awaiting
 
+# The carry-candidate filter shares the head path's first-line scoping
+# (KEN-456): an ancestor review that QUOTES a marker in later text is a
+# genuine review and stays a carry seed. Whole-body matching at this site
+# would reproduce the KEN-456 symptom on the carry route alone.
+reset
+CFG_CARRY="docs"; CFG_TRUSTED_LOGINS=""; CFG_MIN_STATE="any"; CFG_ERROR_PATTERNS="$ERRORED_MARK"
+reviews_set "$(review "reviewer" COMMENTED "2026-01-01T00:00:00Z" "$OTHER" "$(printf 'Reviewed 2 of 2 changed files.\n\nThe doc edit quotes the marker "encountered an error and was unable to review" verbatim; the wording matches the shipped default.')")"
+compare_fix ahead "[$DOCS_DELTA]"
+run "carry: an ancestor review QUOTING a pattern in later text is a candidate" approved
+
 reset
 carry_candidate
 CFG_CARRY="docs"
@@ -1942,7 +1973,7 @@ else
   run "configured: unresolved thread fails closed (threads=enforce)" threads-open
 fi
 
-# Carry-exclude probes (vstack#1174). Both use the predicate's matcher shape
+# Carry-exclude probes (kendex#1174). Both use the predicate's matcher shape
 # — an unquoted pattern in a bash `case` — so the probes pin the real glob
 # semantics ('*' crosses '/', whole-path anchoring, ';' separators) against
 # the repo's COMMITTED exclude list, not a hardcoded example.
@@ -2263,7 +2294,7 @@ if [ -n "$ACTIVE_CARRY" ]; then
   compare_fix ahead "[$CODE_DELTA]"
   run "configured: carry-forward — a code delta still refuses" awaiting
 
-  # The repo's exclude list must be shown to MATCH (vstack#1174): a typo'd
+  # The repo's exclude list must be shown to MATCH (kendex#1174): a typo'd
   # or wrongly-anchored committed glob leaves the exclusion dead while every
   # case above stays green in both directions. So: a carry-class path a
   # committed glob matches must refuse the carry, and a sibling path outside

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Review-gate SINGLE WRITER — the one place the gate commit status is written
-# (review-gate v2; vanillagreencom/vstack#1099). Shipped by the vstack
+# (review-gate v2; vanillagreencom/kendex#1099). Shipped by the kendex
 # review-gate skill, vendored into consumers at
 # .agents/skills/review-gate/scripts/, invoked only by the writer workflow
 # (templates/review-gate-writer.yml).
@@ -70,7 +70,7 @@
 #   WRITER_READ_ONLY  "1": exit 0 immediately, reading and posting nothing.
 #   PR_NUMBER / HEAD_SHA / PR_AUTHOR  the INTERNAL single-head contract used
 #                 by the enumeration's recursive per-PR invocation.
-# Settings (lib/settings.sh — env > vstack.settings.toml > default):
+# Settings (lib/settings.sh — env > kendex.settings.toml > default):
 #   REVIEW_GATE_CONTEXT   gate commit-status context (default "Review gate").
 #                 Every trust and evidence knob belongs to the predicate;
 #                 see references/settings.md.
@@ -194,6 +194,7 @@ case "$verdict" in
   approved)              desired="success" ;;
   changes-requested)     desired="failure" ;;
   awaiting|threads-open) desired="pending" ;;
+  untracked-claim)       desired="failure" ;;
   *)
     echo "::error::unknown verdict '$verdict'"
     exit 1

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Unit pins for lib/settings.sh's rg_setting contract (vstack#1059):
+# Unit pins for lib/settings.sh's rg_setting contract (kendex#1059):
 # leading whitespace before a key is valid TOML, so matching must be
 # whitespace-tolerant EVERYWHERE — presence, the duplicate-key ambiguity
 # guard, and extraction. Column-one anchoring let an indented duplicate
@@ -162,7 +162,7 @@ echo "=== the /dev/null sentinel selects NO settings source ==="
 # it and answer the sentinel the same way, so the contract is pinned here
 # where the shared logic lives.
 mkdir -p "$TMP/sentinel"
-printf '[env]\nREVIEW_GATE_TS = "fromfile"\n' >"$TMP/sentinel/vstack.settings.toml"
+printf '[env]\nREVIEW_GATE_TS = "fromfile"\n' >"$TMP/sentinel/kendex.settings.toml"
 OUT=""; RC=0
 OUT="$(cd "$TMP/sentinel" && { unset REVIEW_GATE_TS REVIEW_GATE_SETTINGS_FILE 2>/dev/null; rg_setting REVIEW_GATE_TS "dflt" 2>"$TMP/err"; })" || RC=$?
 [[ "$RC" -eq 0 && "$OUT" == "fromfile" ]] && ok "control: without the sentinel the settings file at the default path supplies the value" || bad "sentinel control" "rc=$RC out=$OUT"
