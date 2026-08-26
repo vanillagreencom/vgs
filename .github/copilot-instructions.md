@@ -35,14 +35,22 @@ applications on the seat are legitimate, so signal by pid or process group.
 Causal chain and recovery: `AGENTS.md` § Never launch a second shell into the
 live session.
 
+**The harness render is out of review scope.** `.agents/**`, `.claude/**`,
+`.codex/**`, `.opencode/**`, `.cursor/**`, `.pi/**` and `opencode.json` are
+`kendex refresh` output. Do not review them or report findings on them.
+Defects go upstream with `kendex report` to vanillagreencom/kendex; a local
+edit is erased by the next render. Stronger than the vendored-tree rule
+below, which asks for upstream issues: on the render, do not flag at all.
+
 **Vendored trees are byte-exact — but not uniformly.** Carried verbatim:
 `backend/vendor/**`, the plugin directories under
 `config/vshell/nvim/colorschemes/`, `quickshell/vshell/assets/sounds/plasma/`,
 and `third_party/`'s pinned artifacts (`schema.v2.json`, `asdcontrol.cpp`, by
 the convention their READMEs record rather than by any check) and its
-`review-gate/` and `size-ratchet/` trees, which local validation diffs whole
-against the vstack-managed copy. Report real defects in those as upstream
-issues to file — never an in-repo patch, refactor, or style fix. Three files
+`review-gate/` and `size-ratchet/` trees, which nothing here diffs or tests any
+more: they are kendex packages, tested upstream, and the vendor-diff checks
+retired on 2026-08-26. Report real defects in those as upstream issues to
+file — never an in-repo patch, refactor, or style fix. Three files
 among them are VGS-authored and maintained here, so drift findings on them are
 wanted: `colorschemes/ATTRIBUTION.md`, `third_party/coderabbit-schema/README.md`
 and `third_party/asdcontrol/README.md`.

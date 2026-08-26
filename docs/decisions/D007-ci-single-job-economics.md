@@ -11,7 +11,15 @@
 VGS CI is one suite job (`ci-ok`) plus the structurally separate review-gate
 selftest: no lanes, no change-detection gate, no nightly split, no Go build
 caching, the 2 vCPU runner tier, and a range-scoped (never whole-tree)
-whitespace check. Every one of those is an economics decision driven by
+whitespace check.
+
+> **AMENDED (2026-08-26), two clauses of the paragraph above.** The separate
+> review-gate selftest job is GONE — it ran kendex package content, tested
+> upstream on every change, and the owner ruled that no consumer repo re-vets
+> it. And `ci-ok` now carries ONE change-detection step: a diff whose every path
+> is `kendex refresh` output stands the expensive tail down. Neither amendment
+> touches the economics this record argues — see § Decision below, where each
+> is stated against the measurement it does not contradict. Every one of those is an economics decision driven by
 measured timings. `.github/instructions/ci.instructions.md` (required checks,
 whitespace range) and `validation-scripts.instructions.md` § "What CI covers,
 and what it cannot" state the posture, `.github/workflows/ci.yml` implements it, and this record holds the
@@ -44,10 +52,18 @@ block once with a throwaway `GOCACHE` and `du -sh` that for the cache figure.
   repos (hyprtrade, memsira, drovr) split because their lanes run for minutes;
   that economics does not transfer. There is no `ci-nightly.yml` for the same
   reason: nothing is slow enough to be worth deferring to a schedule.
+  **AMENDED (2026-08-26):** still one job, and the reasoning stands unchanged.
+  What arrived is a change-detection STEP inside it, not a job — no second
+  runner, no second checkout, and it gates only the Go toolchain, the Qt
+  install and the pinned tool downloads, which are the parts of `ci-ok` that
+  are not in the ~30s. It exists for correctness rather than economics: those
+  lanes read nothing a kendex render contains.
 - **The job is named `ci-ok`** — for the required context rather than for what
   it does, which is the indirection a separate aggregator job would have
-  bought. There are no conditional lanes that could leave a required context
-  permanently skipped, so there is nothing to aggregate; if lanes are ever
+  bought. There are still no conditional LANES that could leave a required
+  context permanently skipped, so there is nothing to aggregate (2026-08-26:
+  the harness classification skips STEPS inside this job, which is why the
+  required context still reports on every head); if lanes are ever
   added, the work moves to new jobs and `ci-ok` becomes the aggregator over
   them, and branch protection never has to change.
 - **Go caching is off.** A cold Go run downloads 13 MB of modules but leaves a

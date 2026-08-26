@@ -109,6 +109,17 @@ reviews:
   # raster icons, cursors, wallpapers, and the bulk of the vendored Yaru icon
   # theme (its ATTRIBUTION.md and any code stay in scope).
   path_filters:
+    # Harness render: `kendex refresh` output, owned upstream in
+    # vanillagreencom/kendex. A defect here is fixed at the source and
+    # re-rendered, so a review comment on these paths cannot be acted on
+    # in this repo.
+    - "!.agents/**"
+    - "!.claude/**"
+    - "!.codex/**"
+    - "!.opencode/**"
+    - "!.cursor/**"
+    - "!.pi/**"
+    - "!opencode.json"
     - "!**/*.png"
     - "!**/*.jpg"
     - "!**/*.jpeg"
@@ -222,9 +233,10 @@ reviews:
         A mixed tree, not a uniformly vendored one. The pinned artifacts
         (`coderabbit-schema/schema.v2.json`, `asdcontrol/asdcontrol.cpp`) are
         carried verbatim by the convention their own READMEs record — no check
-        enforces it. The `review-gate/` and `size-ratchet/` engine trees are
-        diffed whole against the vstack-managed copy by LOCAL validation, not
-        CI. Frame findings in any of those as upstream issues.
+        enforces it. Nothing diffs or tests the `review-gate/` and
+        `size-ratchet/` engine trees either, since 2026-08-26: they are kendex
+        packages, tested upstream. Frame findings in any of those as upstream
+        issues.
 
         `coderabbit-schema/README.md` and `asdcontrol/README.md` are the
         exception: VGS-authored maintenance docs recording why each artifact is
