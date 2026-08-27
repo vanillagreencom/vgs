@@ -106,3 +106,5 @@ local edit to `.agents/skills/harness-ci/` is drift that the next refresh
 overwrites. Send changes to
 [vanillagreencom/kendex](https://github.com/vanillagreencom/kendex) via
 `kendex report`.
+
+<!-- probe: harness-only classification, closed after the checks report -->
