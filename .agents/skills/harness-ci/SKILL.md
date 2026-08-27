@@ -1,6 +1,6 @@
 ---
 name: harness-ci
-description: "Classifies a CI diff as harness-only — every changed path under the kendex render trees (.agents, .claude, .codex, .opencode, .cursor, .pi, opencode.json or opencode.jsonc) — so heavy lanes can stand down. Ships the classifier script and its tests; the workflow wiring stays the consumer's. Load to wire, tune, or debug a repo's harness-only skip."
+description: "Load to wire, tune, or debug a repo's harness-only skip."
 license: MIT
 user-invocable: true
 metadata:
@@ -58,6 +58,12 @@ implicit `success()` and skips the lane whenever the classifying job failed,
 which stands the expensive lanes down on exactly the diffs nothing classified.
 An aggregate accepts a `skipped` lane only after checking that the classifier
 ran and cleared the diff.
+
+**A lane reading a path family beside the verdict needs more than the status
+function.** A dead classifying job publishes no outputs, so the family term
+reads empty and skips the lane on its own. Lift it behind
+`needs.changes.result != 'success'` — the two-gate shape in
+[references/wiring.md](references/wiring.md).
 
 ## Reading a verdict
 

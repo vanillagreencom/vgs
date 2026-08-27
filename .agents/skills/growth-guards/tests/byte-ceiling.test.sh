@@ -48,7 +48,7 @@ new_repo staged
 mkbytes small.bin 1
 git -C "$R" add -A
 run_bc
-[ "$RC" -eq 0 ] && case "$OUT" in *"1 staged addition(s) checked"*) true ;; *) false ;; esac \
+[ "$RC" -eq 0 ] && case "$OUT" in *"1 staged file(s) checked"*) true ;; *) false ;; esac \
   && ok "a 1 KB addition at ceiling 1 KB passes (at-ceiling is not over)" \
   || bad "at-ceiling addition passes" "rc=$RC out=$OUT"
 
@@ -75,21 +75,69 @@ run_bc_default
 [ "$RC" -eq 0 ] && ok "a 100 KB addition passes under the default (control)" \
   || bad "100 KB passes under the default" "rc=$RC out=$OUT"
 
-echo "=== diff-scoping: modification and rename are not additions ==="
+echo "=== diff-scoping: a change over the ceiling fails; a rename does not ==="
 new_repo grown
-mkbytes seed.bin 3
+mkbytes seed.bin 1
 git -C "$R" add -A
-git -C "$R" commit -qm "seed: legacy file over any future ceiling"
+git -C "$R" commit -qm "seed: a file under the ceiling"
 mkbytes seed.bin 5
 git -C "$R" add -A
 run_bc
-[ "$RC" -eq 0 ] && case "$OUT" in *"0 staged addition(s)"*) true ;; *) false ;; esac \
-  && ok "growing an existing tracked file is not an addition (staged mode)" \
-  || bad "modification is not an addition" "rc=$RC out=$OUT"
+[ "$RC" -eq 1 ] && case "$OUT" in *"seed.bin"*"5120 bytes"*) true ;; *) false ;; esac \
+  && ok "editing a tracked file past the ceiling fails (the staged lane reads A and M)" \
+  || bad "a change over the ceiling fails" "rc=$RC out=$OUT"
+mkbytes seed.bin 1
+git -C "$R" add -A
+run_bc
+[ "$RC" -eq 0 ] && ok "control: the same file edited back under the ceiling passes" \
+  || bad "control: back under the ceiling passes" "rc=$RC out=$OUT"
+mkbytes seed.bin 5
+git -C "$R" add -A
+git -C "$R" commit -qm "grow it past the ceiling"
+run_bc
+[ "$RC" -eq 0 ] && ok "a committed oversized file is not re-judged while nothing stages it" \
+  || bad "a committed oversized file is not re-judged while nothing stages it" "rc=$RC out=$OUT"
 git -C "$R" mv seed.bin moved.bin
 run_bc
 [ "$RC" -eq 0 ] && ok "renaming an existing large file is not an addition (rename detection pinned on)" \
   || bad "rename is not an addition" "rc=$RC out=$OUT"
+# A move that also grows is not a move: below exact similarity it would be one
+# R record the filter drops, and the growth would arrive unjudged.
+new_repo movedgrown
+mkbytes carried.bin 1
+git -C "$R" add -A
+git -C "$R" commit -qm "seed: a file under the ceiling"
+git -C "$R" mv carried.bin elsewhere.bin
+mkbytes elsewhere.bin 5
+git -C "$R" add -A
+run_bc
+[ "$RC" -eq 1 ] && case "$OUT" in *"elsewhere.bin"*"5120 bytes"*) true ;; *) false ;; esac \
+  && ok "a file moved AND grown past the ceiling fails at its new path" \
+  || bad "a file moved AND grown past the ceiling fails at its new path" "rc=$RC out=$OUT"
+# A type change carries a new blob too: the symlink's target was a few bytes.
+new_repo typechange
+mkbytes payload.bin 5
+ln -s payload.bin "$R/thing"
+git -C "$R" add -A
+git -C "$R" commit -qm "seed: a symlink beside its target"
+rm "$R/thing"
+mkbytes thing 5
+git -C "$R" add -A
+run_bc
+[ "$RC" -eq 1 ] && case "$OUT" in *"thing"*"5120 bytes"*) true ;; *) false ;; esac \
+  && ok "a symlink replaced by an oversized regular file fails (type change)" \
+  || bad "a symlink replaced by an oversized regular file fails (type change)" "rc=$RC out=$OUT"
+new_repo grown2
+mkbytes seed.bin 5
+git -C "$R" add -A
+git -C "$R" commit -qm "seed: an oversized tracked file"
+rm "$R/seed.bin"
+ln -s payload "$R/seed.bin"
+git -C "$R" add -A
+run_bc
+[ "$RC" -eq 0 ] && ok "control: a file replaced BY a symlink is not sized content" \
+  || bad "control: a file replaced BY a symlink is not sized content" "rc=$RC out=$OUT"
+R="$TMP/grown" # back to the renamed fixture; the copy case below builds on it
 cp "$R/moved.bin" "$R/second-copy.bin" 2>/dev/null || true
 printf 'x' >>"$R/second-copy.bin"
 git -C "$R" add -A

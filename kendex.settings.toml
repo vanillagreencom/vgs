@@ -279,10 +279,10 @@ REVIEW_GATE_MODE = "enforce"
 #                          machinery). Inert under "docs" (no markdown
 #                          there today); holds if a comment-carry class
 #                          is ever enabled.
-#   vstack.settings.toml — this file: the gate's own trust config, whose
+#   kendex.settings.toml — this file: the gate's own trust config, whose
 #                          comments carry the policy rationale. Same
 #                          future-proofing.
-#   vstack.toml          — source of the rendered reviewer/skill
+#   kendex.toml          — source of the rendered reviewer/skill
 #                          instructions ([skill-instructions]); a policy
 #                          input like this file, same future-proofing
 #                          (PR #120 review).
@@ -291,7 +291,7 @@ REVIEW_GATE_MODE = "enforce"
 #   backend/*            — backend/ATTRIBUTION.md and vendored Go-module
 #                          markdown classify "docs" and would carry.
 # Lock/idle/greeter QML needs no glob: no carry class matches .qml.
-REVIEW_GATE_CARRY_FORWARD_EXCLUDE = "*AGENTS.md;*CLAUDE.md;.github/*;*review-bots.md;third_party/*;project-skills/*;scripts/*;vstack.settings.toml;vstack.toml;packaging/*;backend/*"
+REVIEW_GATE_CARRY_FORWARD_EXCLUDE = "*AGENTS.md;*CLAUDE.md;.github/*;*review-bots.md;third_party/*;project-skills/*;scripts/*;kendex.settings.toml;kendex.toml;packaging/*;backend/*"
 
 # Declared agent-routing label set (e.g. "agent:generalist, agent:rust").
 # Non-empty makes `issues create` refuse a create carrying none of them —
