@@ -109,7 +109,7 @@ INHERITANCE_STOPS = SEPARATORS.replace(",", "")
 # "…live session." yields the whole heading rather than one word less.
 TERMINATORS = set(".,;:!?()[]{}\"`|—–") | {SECTION_MARK}
 # A bare name ending in a JOINER is an enumeration of pointers, not a heading
-# whose last word happens to be "and": where `vstack.toml` cites two of
+# whose last word happens to be "and": where `kendex.toml` cites two of
 # review-bots.md's headings in one sentence, the conjunction between them belongs
 # to the sentence rather than to either name. Only ever stripped from the END of
 # a bare name, and only these two words.
@@ -149,7 +149,7 @@ def target_token(before: str) -> tuple[str, bool]:
 def _without_open_qualifier(text: str) -> str:
     """`text` with a trailing UNCLOSED parenthetical removed, or "" if none may be.
 
-    A QUALIFIER IS NOT A SEPARATOR. `vstack.toml` writes the shape below: the
+    A QUALIFIER IS NOT A SEPARATOR. `kendex.toml` writes the shape below: the
     parenthetical says where the file lives, and the mark inside it cites that
     file as plainly as if it stood alone. Refusing to cross it left two pointers
     at real headings — the ones review bots route by — counted as bare and never

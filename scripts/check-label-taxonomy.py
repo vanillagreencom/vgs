@@ -38,7 +38,7 @@ NEVER_USE_HEADING = "### Never-use labels"
 LABEL_SPAN = re.compile(r"`([A-Za-z][A-Za-z0-9:._-]*)`")
 
 # Prose inside the taxonomy also uses backticks for non-label text.
-NOT_A_LABEL = re.compile(r"^(issues|kendex|vstack|linear|docs/|quickshell/|\.github/|\.agents/)")
+NOT_A_LABEL = re.compile(r"^(issues|kendex|linear|docs/|quickshell/|\.github/|\.agents/)")
 
 
 def taxonomy_sections() -> tuple[set[str], set[str]]:

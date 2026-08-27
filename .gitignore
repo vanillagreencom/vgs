@@ -10,12 +10,10 @@
 # kendex: this machine's install ledger — the .agents trees and the
 # links into them are committed, so a clone works without kendex.
 /.kendex-lock.json
-.vstack-lock.json
 /.claude/settings.local.json
 # Session-continuation state, never shared.
 /.claude/RESUME.md
 .kendex-refreshed
-.vstack-refreshed
 
 # Harness workspaces kendex does not render to — purely local editor state.
 .aider*/
@@ -101,5 +99,5 @@ docs/handoff/
 # would rot on every other one.
 /AGENTS.local.md
 
-# Local git worktrees (vstack worktree skill)
+# Local git worktrees (kendex worktree skill)
 /trees/

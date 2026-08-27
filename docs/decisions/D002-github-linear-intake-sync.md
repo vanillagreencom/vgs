@@ -28,7 +28,7 @@ report that never reaches Linear is therefore invisible, indefinitely.
 ## Decision
 
 **Mirroring GitHub intake into Linear is a manual triage step, and the docs now
-say so.** The linear skill's project instructions (generated from `vstack.toml`)
+say so.** The linear skill's project instructions (generated from `kendex.toml`)
 carry the actual commands and no longer claim a sync exists; `AGENTS.md`
 § Conventions states the manual step and points there. (`AGENTS.md` carried a
 duplicate copy of the commands until the VGS-124 diet removed it.)
@@ -104,6 +104,6 @@ diff /tmp/gh-45-body.md /tmp/vgs-61.md   # no output
 ## References
 
 - VGS-16 — the issue this decision resolves
-- `vstack.toml` `[skill-instructions] linear` — the manual triage step and its
+- `kendex.toml` `[skill-instructions] linear` — the manual triage step and its
   commands; `AGENTS.md` § Conventions points there. It is generated into
   `.claude/skills/linear/SKILL.md`; never hand-edit the generated file

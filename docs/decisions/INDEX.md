@@ -43,5 +43,4 @@ here, because re-sorting a log churns rows nobody changed.
 
 The column order is a machine contract — eight cells read positionally, and the
 Link cell must name the decision document — so do not reorder or drop a column.
-The full row-format and document schema are owned by the vstack decider skill,
-which is agent-side tooling and is not vendored into this repo.
+The full row-format and document schema are owned by the kendex decider skill.
