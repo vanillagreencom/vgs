@@ -90,23 +90,21 @@ jobs:
       # waits on it forever, and a second job would break the one-job rule this
       # workflow's header states. `ci-ok` runs and reports either way.
       #
-      # Same base derivation as the whitespace check below, and the same
-      # refusal to substitute a range: an unresolvable base classifies as
-      # not-harness-only and runs everything.
+      # Fail-closed on every edge, the package's semantics and the package's
+      # tests: an unresolvable endpoint, an unreadable or empty diff and an
+      # unclassified event all classify as not-harness-only and run everything.
+      # The classification function is the kendex harness-ci package's,
+      # rendered into .agents by `kendex refresh` and tested upstream. This
+      # step is the only part this repo owns.
       - name: Classify the diff
         id: classify
         env:
-          EVENT_NAME: ${{ github.event_name }}
-          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          PUSH_BEFORE: ${{ github.event.before }}
-        run: .github/scripts/classify-harness-only.sh
-
-      # The classifier decides whether the lanes that produce required evidence
-      # run, so its verdict is proven by EXECUTION over real git history rather
-      # than by reading its `case` arms. Unconditional, ahead of everything it
-      # gates: a suite gated on the thing it proves is no proof.
-      - name: Classifier regression suite (offline, real git history)
-        run: scripts/test-classify-harness-only.sh
+          EVENT: ${{ github.event_name }}
+          BASE: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.event.before }}
+          HEAD: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha || github.event.after || github.sha }}
+        run: >-
+          .agents/skills/harness-ci/scripts/harness-only
+          --event "$EVENT" --base "$BASE" --head "$HEAD"
 
       # Cheapest checks first, so the common failures report in seconds rather
       # than after the Go toolchain and the Qt install.

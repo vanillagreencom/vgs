@@ -1,4 +1,4 @@
-.github/workflows/ci.yml	459
+.github/workflows/ci.yml	457
 .github/workflows/review-gate-writer.yml	656
 backend/internal/services/bluez/bluez.go	744
 backend/internal/services/clipboard/clipboard.go	635
@@ -44,7 +44,7 @@ docs/architecture/scratchpads.md	410
 docs/media/vgs-demo-poster.jpg	1197
 docs/media/vgs-demo.mp4	30319
 kendex.settings.toml	417
-kendex.toml	1078
+kendex.toml	1082
 packaging/optional-packages.json	589
 quickshell/vshell-preview/shell.qml	456
 quickshell/vshell/Common/KeybindActions.js	1430
@@ -231,4 +231,4 @@ scripts/test-switcher-selection.js	774
 scripts/test-toast-actions.js	607
 scripts/test-validate.sh	538
 scripts/test-validation-inventory.sh	2278
-scripts/validate	1057
+scripts/validate	1056

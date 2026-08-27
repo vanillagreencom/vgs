@@ -31,9 +31,9 @@ exception since 2026-08-26. A diff whose every path is `kendex refresh` output
 skips the toolchain-bearing tail of `ci-ok` (Go, the pinned tool downloads, the
 workflow lint, the format and lint floor, Qt, the QML smoke); the cheap text
 checks still run tree-wide and `ci-ok` still reports.
-`.github/scripts/classify-harness-only.sh` is the predicate and
-`scripts/test-classify-harness-only.sh` proves it over real git history. Those
-trees are kendex packages, tested upstream; do not propose restoring the lanes
+The kendex `harness-ci` package is the predicate, called from one step at
+`.agents/skills/harness-ci/scripts/harness-only`. That function and those
+trees are kendex packages tested upstream; do not propose restoring the lanes
 for them. Those
 tables live with the checks they describe rather than here, because judging a
 check is `scripts/**` work and lands on PRs that touch no workflow file.

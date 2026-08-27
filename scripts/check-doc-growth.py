@@ -210,8 +210,8 @@ CEILINGS: dict[str, int] = {
     # fifth workflow — the Gentoo publisher and its drift check — and the shared
     # rule both publishers follow: fail rather than skip when the credential is
     # missing. A reader deciding whether external publishing is covered must not
-    # be told there are four. Now 4,461 B: VGS-204 made Gentoo publishing manual,
-    # and 2026-08-26 swapped the gate-selftest clause for the harness exception.
+    # be told there are four. Now 4,465 B: Gentoo publishing became manual, the
+    # harness exception replaced the gate-selftest clause, KEN-672 the pointer.
     ".github/instructions/ci.instructions.md": 4_900,
     ".github/instructions/harness-config.instructions.md": 900,  # adopted at 769 B
     ".github/instructions/helper-cli.instructions.md": 600,  # adopted at 517 B
