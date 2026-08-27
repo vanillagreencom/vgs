@@ -79,7 +79,7 @@ code cannot disagree silently.
 
 | Check | Why it is local-only |
 |-------|----------------------|
-| `scripts/check-label-taxonomy.py` | Compares `vstack.toml`'s label taxonomy against live Linear; CI has no Linear credentials and no local cache. It FAILS rather than skipping when the inventory is unreachable — `--allow-missing-inventory` is the explicit "I accept the sweep did not happen". |
+| `scripts/check-label-taxonomy.py` | Compares `kendex.toml`'s label taxonomy against live Linear; CI has no Linear credentials and no local cache. It FAILS rather than skipping when the inventory is unreachable — `--allow-missing-inventory` is the explicit "I accept the sweep did not happen". |
 | `scripts/smoke-surfaces.sh` | Needs a **live** Hyprland VGS session and reads `hyprctl layers`. Anywhere else it prints a skip and exits 77 — "nothing was checked", distinct from both its pass and its failures — so CI could only ever go red on it, never green. `scripts/validate` maps that 77 to a named skip in its summary; a foreign checkout is still a hard failure. |
 
 **Reached indirectly — CI runs these through another entry, not by name:**

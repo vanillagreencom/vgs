@@ -11,7 +11,7 @@
 # evidence as a commit STATUS named "CodeRabbit" (not a check-run — the GitHub
 # checks rollup hides that distinction), and orch's PR_REVIEW_CHECK is
 # deliberately empty because both reviewers on this repo submit review objects.
-# See vstack.settings.toml for that reasoning.
+# See kendex.settings.toml for that reasoning.
 
 language: en-US
 
@@ -37,7 +37,7 @@ reviews:
 
   # Evidence surfaces. Kept on because they are cheap and the repo's tooling
   # reads the commit status; do not turn these off without checking
-  # vstack.settings.toml first.
+  # kendex.settings.toml first.
   review_status: true
   commit_status: true
   fail_commit_status: false
@@ -233,10 +233,7 @@ reviews:
         A mixed tree, not a uniformly vendored one. The pinned artifacts
         (`coderabbit-schema/schema.v2.json`, `asdcontrol/asdcontrol.cpp`) are
         carried verbatim by the convention their own READMEs record — no check
-        enforces it. Nothing diffs or tests the `review-gate/` and
-        `size-ratchet/` engine trees either, since 2026-08-26: they are kendex
-        packages, tested upstream. Frame findings in any of those as upstream
-        issues.
+        enforces it. Frame findings in them as upstream issues.
 
         `coderabbit-schema/README.md` and `asdcontrol/README.md` are the
         exception: VGS-authored maintenance docs recording why each artifact is
@@ -281,17 +278,17 @@ reviews:
         value here. `docs/architecture/backend-methods.json` is a machine-read
         manifest enforced by `scripts/check-backend-inventory.py`, not prose.
 
-    - path: "vstack*.toml"
+    - path: "kendex*.toml"
       instructions: >-
         Agent-harness configuration, and the sections are NOT all hand-authored.
-        `[agent-frontmatter.*]` and `[agent-skills]` in `vstack.toml` are
-        generated and rewritten by `vstack refresh` from upstream defaults, so
+        `[agent-frontmatter.*]` and `[agent-skills]` in `kendex.toml` are
+        generated and rewritten by `kendex refresh` from upstream defaults, so
         findings about the values there (model choice, effort, sandbox-mode)
         belong upstream, not in this repo — an in-repo edit is overwritten on
         the next refresh. This has already produced a wrong finding about the
         Codex `danger-full-access` sandbox mode.
 
-        `vstack.settings.toml` is public by design: it holds non-secret project
+        `kendex.settings.toml` is public by design: it holds non-secret project
         defaults and is committed deliberately. Every credential lives in
         `.env.local`, which is gitignored. Do not flag values here as leaked
         secrets, and do not ask for these options to be documented in

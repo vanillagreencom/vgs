@@ -46,10 +46,8 @@ below, which asks for upstream issues: on the render, do not flag at all.
 `backend/vendor/**`, the plugin directories under
 `config/vshell/nvim/colorschemes/`, `quickshell/vshell/assets/sounds/plasma/`,
 and `third_party/`'s pinned artifacts (`schema.v2.json`, `asdcontrol.cpp`, by
-the convention their READMEs record rather than by any check) and its
-`review-gate/` and `size-ratchet/` trees, which nothing here diffs or tests any
-more: they are kendex packages, tested upstream, and the vendor-diff checks
-retired on 2026-08-26. Report real defects in those as upstream issues to
+the convention their READMEs record rather than by any check). Report real
+defects in those as upstream issues to
 file — never an in-repo patch, refactor, or style fix. Three files
 among them are VGS-authored and maintained here, so drift findings on them are
 wanted: `colorschemes/ATTRIBUTION.md`, `third_party/coderabbit-schema/README.md`
@@ -66,7 +64,7 @@ mirrored between them or for changelog entries.
 
 **Secrets live in one place.** `.env.local` is gitignored and holds every
 credential; `.env.local.example` carries the key names with empty values;
-`vstack.settings.toml` is public by design and committed deliberately. Do not
+`kendex.settings.toml` is public by design and committed deliberately. Do not
 report values in the committed files as leaked secrets.
 
 **One owner per resource.** Reject a second watcher, poller, or daemon for

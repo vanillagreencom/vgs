@@ -1,5 +1,5 @@
 ---
-applyTo: "{kendex,vstack}*.toml"
+applyTo: "kendex*.toml"
 ---
 
 # Agent-harness configuration

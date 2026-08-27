@@ -112,8 +112,8 @@ CEILINGS: dict[str, int] = {
     # § Documentation resources and § Layout's path/purpose table (the
     # vshell-dev skill's "## Repo layout" tree, which predates the diet and
     # gained that table's three missing entries in the same PR), § Review gate
-    # (review-gate-writer.yml's header and vstack.settings.toml), the Linear
-    # mirroring runbook (vstack.toml, D002) and § Live workstation wiring (the
+    # (review-gate-writer.yml's header and kendex.settings.toml), the Linear
+    # mirroring runbook (kendex.toml, D002) and § Live workstation wiring (the
     # untracked AGENTS.local.md). DROPPED outright, with no successor:
     # § Architecture docs' per-file "when to read" routing, replaced by a
     # pointer at docs/architecture/. Neither deleted table was STALE at
@@ -149,8 +149,8 @@ CEILINGS: dict[str, int] = {
     # regression-test policy sections plus the PR #120 review rounds
     # (coverage gaps, property-defined privileged class) earned the bytes;
     # 7,200 keeps ~10% headroom at the final 6,490 B size, superseding the
-    # 6,500 figure measured mid-review at 5,865 B. Now 6,979 B, ~3.1% left after
-    # the 2026-08-26 harness-render rule. NOT raised: 3.1% is a real budget.
+    # 6,500 figure measured mid-review at 5,865 B. Now 6,818 B, ~5.3% left with
+    # the engine bullets folded into the harness-render rule. NOT raised.
     "review-bots.md": 7_200,
     # Adopted at 2,909 B. 2026-08-14: the PR #132 review found the doc-surface
     # and vendored-tree rules were telling reviewers to suppress valid drift
@@ -162,7 +162,7 @@ CEILINGS: dict[str, int] = {
     # TIGHTER than the 4,000 the adoption formula rounds to, because the
     # rounding above is an adoption convention and a raise is only required to
     # carry a rationale — so the tighter line wins over the rounder number.
-    # Now 4,175 B: the 2026-08-26 render rule plus the vendored-tree correction.
+    # Now 3,989 B: the engine-tree clauses left with the kendex adoption.
     ".github/copilot-instructions.md": 4_500,
     # Adopted at 4,497 B. VGS-124: "a green CI run does not prove the shell
     # starts — run the qml area, which forces --require-nested" left AGENTS.md
@@ -213,7 +213,7 @@ CEILINGS: dict[str, int] = {
     # be told there are four. Now 4,465 B: Gentoo publishing became manual, the
     # harness exception replaced the gate-selftest clause, KEN-672 the pointer.
     ".github/instructions/ci.instructions.md": 4_900,
-    ".github/instructions/harness-config.instructions.md": 900,  # adopted at 769 B
+    ".github/instructions/harness-config.instructions.md": 900,  # adopted at 769 B; now 760 B
     ".github/instructions/helper-cli.instructions.md": 600,  # adopted at 517 B
     ".github/instructions/quickshell-qml.instructions.md": 1_700,  # adopted at 1,459 B
     ".github/instructions/themes.instructions.md": 700,  # adopted at 577 B
@@ -239,8 +239,6 @@ CEILINGS: dict[str, int] = {
     # tells reviewers to reject an unreachable failure path. 7,600 keeps ~10%
     # headroom at the 6,880 B that resulted; now 6,475 B, vendor-sync rows gone.
     ".github/instructions/validation-scripts.instructions.md": 7_600,
-    # Adopted at 854 B. Now 1,306 B: three false claims replaced (VGS-223).
-    ".github/instructions/vendored-engine.instructions.md": 1_500,
     ".github/instructions/vendored-go.instructions.md": 500,  # adopted at 367 B
     # Adopted at 302 B. 2026-08-14: ATTRIBUTION.md carve-out (PR #132) — the
     # blanket "never patch in-repo, skip style findings" rule covered a

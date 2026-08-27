@@ -29,7 +29,7 @@ on:
     branches: [main]
     types: [opened, synchronize, reopened, ready_for_review]
   # Required checks must exist on merge-group shas too, or a queue entry blocks
-  # forever waiting on a context nothing creates (vstack VST-10).
+  # forever waiting on a context nothing creates (kendex VST-10).
   merge_group:
     types: [checks_requested]
   # Post-merge signal on main. The absence of exactly this is how a permanently
@@ -52,9 +52,9 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  # ONE JOB, no exceptions. The vendored kendex engines (third_party/) are
-  # tested upstream in vanillagreencom/kendex, whose CI runs every package's
-  # own suite on every change; this repo runs them, it does not re-vet them.
+  # ONE JOB, no exceptions. The kendex engines run from the committed render
+  # (.agents/skills/) and are tested upstream in vanillagreencom/kendex on
+  # every change; this repo runs them, it does not re-vet them.
   # The `review-gate-selftest` job that used to sit here, and the size-ratchet
   # and vendor-drift suites inside `ci-ok`, were exactly that re-vetting and
   # are gone (owner directive, 2026-08-26).
@@ -141,11 +141,11 @@ jobs:
 
       # Tighten-only line-count gate over every tracked file: offenders are
       # frozen in tools/size-ratchet-baseline.tsv and may only shrink; new
-      # files stay under SIZE_RATCHET_THRESHOLD (vstack.settings.toml). The
-      # engine is the vendored copy; this repo runs it, it does not re-vet it
-      # (VGS-111).
+      # files stay under SIZE_RATCHET_THRESHOLD (kendex.settings.toml). The
+      # engine is the committed kendex render; this repo runs it, it does not
+      # re-vet it (VGS-111).
       - name: File-size ratchet
-        run: third_party/size-ratchet/scripts/size-ratchet
+        run: .agents/skills/size-ratchet/scripts/size-ratchet
 
       # scripts/validate lists a bare `git diff --check`, which is a working-tree
       # check: on a clean CI checkout it inspects nothing at all. The form that
