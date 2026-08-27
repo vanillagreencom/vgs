@@ -96,3 +96,4 @@ themes/catalog.json	generated theme catalog index, regenerated from packages
 .claude/hooks/block-repo-copy.sh	kendex-rendered hook copy, 511 lines, source owned upstream
 .codex/hooks/block-repo-copy.sh	kendex-rendered hook copy, 511 lines, source owned upstream
 .pi/kendex/hooks/block-repo-copy.sh	kendex-rendered hook copy, 511 lines, source owned upstream
+.github/workflows/review-gate-writer.yml	adopted verbatim from the review-gate template kendex ships; validate.sh holds it to equality, so its size is the template's
