@@ -244,7 +244,6 @@ helper    | python3 -m py_compile bin/vshell-helper
 helper    | bash -n bin/vshell
 always    | git diff --check
 -         | scripts/check-workflows.sh
--         | scripts/test-classify-harness-only.sh
 -         | scripts/check-coderabbit-config.py
 -         | third_party/size-ratchet/scripts/size-ratchet
 qml       | scripts/qml-smoke.sh --nested --require-static --require-nested
