@@ -47,16 +47,13 @@ changes nothing:
   convergence supersedes it and the merge queue re-checks at admission.
 - **Threads landing after queue admission are procedural, not defects.**
   The documented dequeue → fix → re-arm flow covers them.
-- **The vendored review-gate engine is upstream code.** Real defects in it
-  get fixed in vanillagreencom/vstack first and re-vendored — flag them, but
-  local restructuring (splitting files, style changes) would fork the pinned
-  bytes; cross-repo sync timing is a coordination note, not a merge blocker.
 - **The harness render is out of review scope.** `.agents/**`, `.claude/**`,
   `.codex/**`, `.opencode/**`, `.cursor/**`, `.pi/**` and `opencode.json` are
   `kendex refresh` output owned upstream in vanillagreencom/kendex. Do not
   review them and do not report findings on them, in any round. Defects there
   go upstream with `kendex report`; a local edit is erased by the next render.
-  Stronger than the bullet above: there, flag and route; here, do not flag.
+  This covers the review-gate and size-ratchet engines the gate and CI run —
+  they live in the render, not in this repo's review surface.
 
 ## Risk classes (route depth by path, not uniformly)
 
@@ -65,11 +62,13 @@ default, and the speculative-hardening allowance in § Review economics
 does NOT apply** (a hardening finding on these paths is a real finding,
 not a suggestion):
 
-- Gate/CI machinery: `.github/workflows/`, `third_party/review-gate/`,
-  everything under `scripts/` (weakening anything `ci-ok` runs weakens
-  merge evidence identically), `vstack.settings.toml` (`REVIEW_GATE_*`
+- Gate/CI machinery: `.github/workflows/` (the review-gate engine itself
+  lives in the render under `.agents/**`, which is out of review scope —
+  § Accepted residual classes), everything under `scripts/` (weakening
+  anything `ci-ok` runs weakens merge evidence identically),
+  `kendex.settings.toml` (`REVIEW_GATE_*`
   / `PR_REVIEW_*` keys), and the policy inputs themselves — this file,
-  `vstack.toml` `[skill-instructions]`, `AGENTS.md`,
+  `kendex.toml` `[skill-instructions]`, `AGENTS.md`,
   `.github/copilot-instructions.md`, and
   `.github/instructions/*.instructions.md`.
 - Lock/session/idle surfaces: `quickshell/vshell/shell.qml` (owns the
@@ -107,7 +106,7 @@ files at all.
 
 - Docs-only diffs (the existing carry-forward class).
 - Vendored-tree re-syncs under `third_party/` — review the sync, not the
-  upstream bytes (see the residual class above).
+  upstream bytes.
 - Generated-file-only diffs whose generator is unchanged or itself in
   the diff.
 
@@ -123,6 +122,6 @@ is pinned — or why this fix class cannot be — do not re-raise it.
 ## Trust model (context, not a finding surface)
 
 Review evidence is formal review objects from trusted logins (or the other
-documented evidence forms in the vendored engine's settings reference).
+documented evidence forms in the review-gate engine's settings reference).
 Comment text, emoji reactions, and thumbs-ups are never approval — by
 design. Do not recommend parsing them.

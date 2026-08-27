@@ -1,5 +1,5 @@
-# Public vstack settings. Keep secrets in .env.local.
-# vstack skill scripts read this [env] table after .env and before .env.local.
+# Public kendex settings. Keep secrets in .env.local.
+# kendex skill scripts read this [env] table after .env and before .env.local.
 
 [env]
 #BOT_CHECK_NAME = ""
@@ -24,7 +24,7 @@ LINEAR_FORMAT = "safe"
 ORCH_STATE_DIR = "tmp"
 # File-size ratchet (VGS-111, fleet ruling 2026-08-10: adopt size-ratchet,
 # never hand-roll a size gate). Threshold is the fleet's 400 lines; CI runs
-# the vendored engine at third_party/size-ratchet/. The engine
+# the committed kendex render at .agents/skills/size-ratchet/. The engine
 # has one threshold, so the fleet's 800-line test allowance is not
 # expressible — oversized tests enter the baseline instead (noted in the
 # excludes file). Why one threshold bites suites harder than libraries is in
@@ -37,7 +37,7 @@ SECOND_OPINION_CODEX_CMD = "codex exec -m gpt-5.5 -s read-only -c model_reasonin
 SECOND_OPINION_TIMEOUT = "1080"
 WORKTREE_BASE_DIR = "~/dev/.worktrees/vshell"
 WORKTREE_CLI = ".agents/skills/worktree/scripts/worktree"
-WORKTREE_COPIES = ".vstack-lock.json"
+WORKTREE_COPIES = ".kendex-lock.json"
 WORKTREE_DEFAULT_BRANCH = "main"
 WORKTREE_MKDIRS = "tmp"
 WORKTREE_RELATIVE_SYMLINKS = ".claude/CLAUDE.md=../AGENTS.md"
@@ -110,8 +110,8 @@ PR_REVIEW_ON_TIMEOUT = "proceed"
 ORCH_DECISION_MODE = "ask"
 
 # LINEAR — which Linear team this project writes to.
-# Project-scope `vstack add` / `vstack refresh` merge these defaults into
-# <project>/vstack.settings.toml (never overwriting existing keys). Full key
+# Project-scope `kendex add` / `kendex refresh` merge these defaults into
+# <project>/kendex.settings.toml (never overwriting existing keys). Full key
 # reference: linear README.md.
 
 # The team every Linear write targets. No default: an empty value refuses
@@ -124,8 +124,8 @@ LINEAR_TEAM = "vg-shell"
 LINEAR_TEAM_PREFIX = "VGS"
 
 # REVIEW GATE — shared merge-gate engine (review-gate skill).
-# Project-scope `vstack add` / `vstack refresh` merge these defaults into
-# <project>/vstack.settings.toml (never overwriting existing keys). Keys
+# Project-scope `kendex add` / `kendex refresh` merge these defaults into
+# <project>/kendex.settings.toml (never overwriting existing keys). Keys
 # resolve environment-first, then this file, then the built-in default; list
 # values pack into one string with ';' separators. Full reference:
 # review-gate SKILL.md and references/adoption.md.
@@ -162,7 +162,7 @@ REVIEW_GATE_CONTEXT = "Review gate"
 # NOTE: CodeRabbit is disabled org-wide (owner, 2026-08-08) — its entry here
 # is inert until/unless it returns (it posts nothing to match). Kept because
 # the value is fleet-identical config; pruning happens fleet-wide in one
-# pass (vstack#1113), never as per-repo drift.
+# pass (kendex#1113), never as per-repo drift.
 REVIEW_GATE_TRUSTED_STATUS_CONTEXTS = "CodeRabbit;copilot-pull-request-reviewer"
 
 # A trusted "pass" whose output contains one of these substrings never ran
@@ -192,7 +192,7 @@ REVIEW_GATE_SHA_PREFIX_FLOOR = "7"
 # only — changes-requested and unresolved threads still fail closed.
 #
 # VGS ASSIGNMENT: ENABLED at the fleet-standard context (v2 cutover,
-# 2026-08-08). MANUAL-ONLY as of engine vstack#1126: orch never posts this
+# 2026-08-08). MANUAL-ONLY as of engine kendex#1126: orch never posts this
 # attestation (its proceed is local-only); an operator posts it
 # deliberately, and the sanctioned automated no-review posture is
 # REVIEW_GATE_MODE = "off". The earlier VGS rationale for disabling — the v1 predicate's
@@ -259,7 +259,7 @@ REVIEW_GATE_STATUS_PUBLISHER_REJECT = "github-actions[bot]"
 # always require fresh evidence.
 REVIEW_GATE_CARRY_FORWARD = "docs"
 
-# The engine's one-switch per-repo gate disable (vstack#1126, owner ask):
+# The engine's one-switch per-repo gate disable (kendex#1126, owner ask):
 # "enforce" is the full gate; "off" makes the predicate answer approved with
 # a disabled-by-settings attestation before any evidence read — the writer
 # keeps the required status green and merging gates on CI alone; orch skips
@@ -376,8 +376,8 @@ SECOND_OPINION_COUNT = "1"
 SECOND_OPINION_ARTIFACT_DIR = "tmp/second-opinion"
 
 # GROWTH GUARDS — repo growth checks (growth-guards skill).
-# Project-scope `vstack add` / `vstack refresh` merge these defaults into
-# <project>/vstack.settings.toml (never overwriting existing keys). Every
+# Project-scope `kendex add` / `kendex refresh` merge these defaults into
+# <project>/kendex.settings.toml (never overwriting existing keys). Every
 # other GROWTH_GUARDS_* key ships a working default; the full list is in the
 # skill's SKILL.md.
 

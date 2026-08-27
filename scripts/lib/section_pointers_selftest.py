@@ -314,7 +314,7 @@ def pointer_controls() -> list[str]:
         )
 
     # A QUALIFIER BETWEEN THE TARGET AND THE MARK IS CROSSED, driven with the
-    # REAL citation this recovered — `vstack.toml` names review-bots.md and then
+    # REAL citation this recovered — `kendex.toml` names review-bots.md and then
     # says where it lives before citing two of its headings, and it WRAPS
     # mid-pointer, so the joining has to hold for it too. Paired with the shape
     # that must stay bare: a parenthetical carrying a path OF ITS OWN belongs to
