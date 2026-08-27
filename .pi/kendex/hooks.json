@@ -15,7 +15,7 @@
           {
             "type": "command",
             "command": "bash \"$(git rev-parse --show-toplevel)/.pi/kendex/hooks/pre-commit-check.sh\"",
-            "timeout": 1800
+            "timeout": 60
           }
         ]
       }
