@@ -202,7 +202,7 @@ REVIEW_GATE_SHA_PREFIX_FLOOR = "7"
 # REVIEW_GATE_STATUS_PUBLISHER_REJECT to the override read too, and the
 # override is operator-PAT-posted (never github-actions[bot]), which that
 # reject list below enforces.
-REVIEW_GATE_OVERRIDE_CONTEXT = "vstack-reviewer-outage"
+REVIEW_GATE_OVERRIDE_CONTEXT = "kendex-reviewer-outage"
 
 # Review-object trust list: logins whose review objects at the exact head
 # count as evidence. Empty = any non-author (the compatible default; on
