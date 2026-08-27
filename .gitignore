@@ -30,9 +30,16 @@
 !.env.sample
 !.env.local.example
 
-# Runtime logs, scratch files, and caches
+# Runtime logs, scratch files, and caches.
+#
+# Dependency, virtualenv and cache dirs are ignored BARE, never with a trailing
+# slash. A trailing-slash pattern matches a real directory but not a symlink
+# pointing at one, so a store linked into a worktree stays untracked and
+# `git add -A` can commit it (that is how drovr#644 landed a symlinked
+# node_modules and broke `pnpm install` in CI). `.cache` is the live case here,
+# since every worktree links it.
 tmp/
-.cache/
+.cache
 logs/
 *.log
 *.tmp
@@ -42,22 +49,22 @@ logs/
 *.rej
 
 # Python helper/tooling artifacts
-__pycache__/
+__pycache__
 *.py[cod]
 *$py.class
-.pytest_cache/
-.mypy_cache/
-.ruff_cache/
+.pytest_cache
+.mypy_cache
+.ruff_cache
 .coverage
 htmlcov/
 build/
 dist/
 *.egg-info/
-.venv/
-venv/
+.venv
+venv
 
 # Node/QML tooling artifacts
-node_modules/
+node_modules
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
