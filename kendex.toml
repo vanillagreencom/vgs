@@ -97,6 +97,10 @@ enabled = true
 source = "kendex"
 enabled = true
 
+[skills.harness-ci]
+source = "kendex"
+enabled = true
+
 [skills.linear]
 source = "kendex"
 enabled = true
