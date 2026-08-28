@@ -495,7 +495,6 @@ Item {
                     height: 28
                     variant: "secondary"
                     textColor: Theme.error
-                    outlineColor: Theme.withAlpha(Theme.error, 0.45)
                     iconName: "delete"
                     text: I18n.tr("Remove")
                     onClicked: {

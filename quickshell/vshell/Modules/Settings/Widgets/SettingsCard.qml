@@ -1,6 +1,7 @@
 pragma ComponentBehavior: Bound
 
 import QtQuick
+import QtQuick.Layouts
 import qs.Common
 import qs.Services
 import qs.Widgets
@@ -27,6 +28,7 @@ StyledRect {
     property alias headerActions: headerActionsRow.children
 
     readonly property bool isHighlighted: settingKey !== "" && SettingsSearchService.highlightSection === settingKey
+    readonly property real headerCenterY: mainColumn.y + headerRow.y + headerRow.height / 2
 
     width: parent?.width ?? 0
     height: {
@@ -38,13 +40,9 @@ StyledRect {
             h += headerRow.height + Theme.spacingM;
         return h;
     }
-    // Flatline: border-forward card. Fill stays a clear step above the reading
-    // pane, now separated by a crisp 1px hairline — the shadcn/Vercel card
-    // signature. See docs/architecture/design-language.md.
+    // Large settings cards rely on the fill step, without a resting border.
     radius: Theme.cornerRadius
     color: Theme.popupSurfaceColor(Theme.surfaceContainerHigh)
-    border.width: 1
-    border.color: Theme.borderColor
 
     readonly property bool collapsed: collapsible && !expanded
     readonly property bool hasHeader: root.title !== "" || root.iconName !== ""
@@ -127,10 +125,11 @@ StyledRect {
         Item {
             id: headerRow
             width: parent.width
-            height: root.hasHeader ? Math.max(headerIcon.height, headerText.height, headerActionsRow.height) : 0
+            height: root.hasHeader ? Math.max(headerTitleRow.implicitHeight, headerActionsRow.implicitHeight, caretIcon.visible ? caretIcon.implicitHeight : 0) : 0
             visible: root.hasHeader
 
             Row {
+                id: headerTitleRow
                 anchors.left: parent.left
                 anchors.leftMargin: root.headerLeftPadding
                 anchors.verticalCenter: parent.verticalCenter
@@ -158,7 +157,7 @@ StyledRect {
                 }
             }
 
-            Row {
+            RowLayout {
                 id: headerActionsRow
                 anchors.right: root.collapsible ? caretIcon.left : parent.right
                 anchors.rightMargin: root.collapsible ? Theme.spacingS : 0

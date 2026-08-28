@@ -63,7 +63,7 @@ Rectangle {
         tabChangeRequested(newIndex);
         autoCollapseIfNeeded(oldIndex, newIndex);
         keyboardHighlightIndex = -1;
-        Qt.callLater(searchField.forceActiveFocus);
+        searchField.setFocus(false);
     }
 
     // Resolves each entry's tabIndex from SettingsRegistry so the registry
@@ -637,9 +637,7 @@ Rectangle {
         root._collapsedIds = SessionData.settingsSidebarCollapsedIds;
     }
 
-    // Flatline (shadcn/Vercel) flat nav row. Groups are always expanded so this
-    // replaces the old accordion category/child rows. Active state is a quiet
-    // neutral pill with a 2px accent bar — no ripple. See design-language.md.
+    // Flat nav row; groups stay expanded and active state uses a quiet tinted pill.
     component NavRow: Rectangle {
         id: navRow
 
@@ -656,8 +654,7 @@ Rectangle {
         width: parent ? parent.width : 0
         height: 34
         radius: Theme.controlRadius
-        // Clean Vercel/Linear active state: an accent-tinted fill with accent
-        // text — no separate indicator bar (which read as busy).
+        // Accent-tinted fill and text, without a separate indicator bar.
         color: isActive ? Theme.withAlpha(Theme.primary, 0.12) : ((navMouse.containsMouse || isHighlighted) ? Theme.surfaceHover : "transparent")
 
         Behavior on color {
@@ -701,8 +698,8 @@ Rectangle {
             cursorShape: Qt.PointingHandCursor
             onClicked: {
                 root.keyboardHighlightIndex = -1;
+                searchField.setFocus(false);
                 navRow.activated(navRow.tabIndex);
-                Qt.callLater(searchField.forceActiveFocus);
             }
         }
     }
@@ -758,7 +755,7 @@ Rectangle {
         SettingsSearchService.clear();
         searchSelectedIndex = 0;
         keyboardHighlightIndex = -1;
-        Qt.callLater(searchField.forceActiveFocus);
+        searchField.setFocus(false);
     }
 
     function navigateSearchResults(delta) {
@@ -787,8 +784,7 @@ Rectangle {
             id: sidebarColumn
             width: parent.width
             leftPadding: Theme.spacingM
-            // Extra right padding keeps content clear of the overlay scrollbar so
-            // it never butts up against the search field / row edges.
+            // Keep content clear of the overlay scrollbar.
             rightPadding: Theme.spacingL
             bottomPadding: Theme.spacingL
             topPadding: Theme.spacingM + 2
@@ -799,21 +795,11 @@ Rectangle {
                 parentModal: root.parentModal
             }
 
-            Rectangle {
-                width: parent.width - parent.leftPadding - parent.rightPadding
-                height: 1
-                color: Theme.outline
-                opacity: 0.2
-            }
-
-            Item {
-                width: parent.width - parent.leftPadding - parent.rightPadding
-                height: Theme.spacingXS
-            }
-
             VgsTextField {
                 id: searchField
                 width: parent.width - parent.leftPadding - parent.rightPadding
+                leftInset: Theme.spacingM
+                rightInset: Theme.spacingXXS
                 placeholderText: I18n.tr("Search...")
                 normalBorderColor: Theme.borderColor
                 focusedBorderColor: Theme.primary
@@ -1036,9 +1022,7 @@ Rectangle {
                         visible: categoryDelegate.isStandalone
                     }
 
-                    // Group header: static small-caps muted label (Vercel style).
-                    // Generous space above each group separates the sections;
-                    // a tight gap below tucks the header onto its rows.
+                    // Small-caps group label with more space above than below.
                     Item {
                         width: parent.width
                         height: groupHeaderText.implicitHeight + Theme.spacingXL + Theme.spacingXS

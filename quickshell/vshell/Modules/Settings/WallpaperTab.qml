@@ -122,13 +122,15 @@ FocusScope {
                     onToggled: checked => SettingsData.set("wallpaperSource", checked ? "theme" : "folder")
                 }
 
-                Row {
+                Item {
                     width: parent.width
-                    spacing: Theme.spacingS
+                    height: wallpaperFolderField.height
                     visible: SettingsData.wallpaperSource === "folder"
 
                     VgsTextField {
-                        width: parent.width - pickFolderButton.width - Theme.spacingS
+                        id: wallpaperFolderField
+                        width: parent.width
+                        rightAccessoryWidth: pickFolderButton.width + Theme.spacingM
                         placeholderText: I18n.tr("Wallpaper folder (default: ~/Pictures/Wallpapers)")
                         text: SettingsData.wallpaperFolder
                         backgroundColor: Theme.surfaceContainerHighest
@@ -140,7 +142,10 @@ FocusScope {
 
                     VgsButton {
                         id: pickFolderButton
+                        anchors.right: parent.right
+                        anchors.verticalCenter: parent.verticalCenter
                         variant: "secondary"
+                        reserveTrailingSpacing: false
                         text: I18n.tr("Browse")
                         onClicked: wallpaperFolderBrowser.open()
                     }

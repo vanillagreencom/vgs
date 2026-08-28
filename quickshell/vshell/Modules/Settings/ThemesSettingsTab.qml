@@ -62,9 +62,8 @@ Item {
         return "file://" + path.split('/').map(s => encodeURIComponent(s)).join('/');
     }
 
-    // Preview hashes churn when apps/ files change; render missing ones when
-    // the tab opens too, not only from the picker. One deferred kick after the
-    // fresh list lands, so a failing generator can't retry-loop.
+    // Render missing previews after the fresh list lands; one deferred attempt
+    // prevents a failing generator from retry-looping.
     property bool _previewKickDone: false
 
     Component.onCompleted: {
@@ -287,9 +286,7 @@ Item {
                         }
                     }
 
-                    // Packages ship one theme, so "Browse Themes" alone browses a
-                    // single entry on a fresh install. This is the discovery path
-                    // for the rest.
+                    // Fresh installs ship one theme; this exposes the catalog.
                     VgsButton {
                         variant: "secondary"
                         iconName: "cloud_download"
@@ -514,12 +511,9 @@ Item {
                     VgsButton {
                         variant: "secondary"
                         text: I18n.tr("Clear Wallpaper")
-                        // Also gated on an apply in flight: `clear-wallpaper`
-                        // and `set-wallpaper` are separate helper runs, so a
-                        // clear fired mid-apply finishes FIRST and the apply
-                        // then puts the wallpaper back — the user's last action
-                        // losing, silently. Serializing the two in the service
-                        // is VGS-211; this closes the one-click path to it.
+                        // `clear-wallpaper` and `set-wallpaper` are separate helper
+                        // runs. Block clear during apply so the older apply cannot
+                        // finish last and restore what the user cleared (VGS-211).
                         enabled: !VGSThemeService.applyInFlight && (root.selectedWallpaper !== "" || SessionData.wallpaperPath !== "")
                         onClicked: {
                             root.selectedWallpaper = "";
@@ -542,12 +536,13 @@ Item {
                     color: Theme.surfaceVariantText
                     font.pixelSize: Theme.fontSizeSmall
                 }
-
-                Row {
-                    width: parent.width
-                    spacing: Theme.spacingS
+                Item {
+                    width: Math.min(parent.width, Math.max(180, parent.width * 0.25))
+                    height: themeNameField.height
                     VgsTextField {
-                        width: parent.width - saveButton.width - Theme.spacingS
+                        id: themeNameField
+                        width: parent.width
+                        rightAccessoryWidth: saveButton.width
                         text: root.saveName
                         placeholderText: I18n.tr("Theme name")
                         backgroundColor: Theme.surfaceContainerHighest
@@ -555,6 +550,10 @@ Item {
                     }
                     VgsButton {
                         id: saveButton
+                        anchors.right: parent.right
+                        anchors.verticalCenter: parent.verticalCenter
+                        variant: "secondary"
+                        reserveTrailingSpacing: false
                         text: I18n.tr("Save Theme")
                         enabled: root.saveName !== "" && !VGSThemeService.busy
                         onClicked: VGSThemeService.saveCurrent(root.saveName)

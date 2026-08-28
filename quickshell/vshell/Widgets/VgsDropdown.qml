@@ -1,4 +1,5 @@
 import "../Common/fzf.js" as Fzf
+import "VgsDropdownLogic.js" as DropdownLogic
 import QtQuick
 import QtQuick.Controls
 import Quickshell
@@ -26,20 +27,16 @@ Item {
     property string description: ""
     property string currentValue: ""
     property var options: []
+    property bool multiSelect: false
+    property var selectedValues: []
+    property int selectedOptionIndex: -1
     property var optionIcons: []
     property bool enableFuzzySearch: false
     property var optionIconMap: ({})
     property var optionColorMap: ({})
-
     function rebuildIconMap() {
-        const map = {};
-        for (let i = 0; i < options.length; i++) {
-            if (optionIcons.length > i)
-                map[options[i]] = optionIcons[i];
-        }
-        optionIconMap = map;
+        optionIconMap = DropdownLogic.iconMap(options, optionIcons);
     }
-
     onOptionsChanged: rebuildIconMap()
     onOptionIconsChanged: rebuildIconMap()
 
@@ -49,6 +46,7 @@ Item {
     property int popupWidth: 0
     property bool alignPopupRight: false
     property int dropdownWidth: 200
+    readonly property int triggerHeight: 40
     property bool compactMode: text === "" && description === ""
     property bool showTrigger: true
     property Item popupAnchorItem: null
@@ -56,9 +54,9 @@ Item {
     property string emptyText: ""
     property bool usePopupTransparency: !checkParentDisablesTransparency()
     property var transientSurfaceTracker: null
-
     signal valueChanged(string value)
-
+    signal optionSelected(int index, string value)
+    signal multiSelectionChanged(int index, string value, bool selected, var values)
     property bool menuOpen: false
 
     onMenuOpenChanged: transientSurfaceTracker?.setActive(root, menuOpen, null)
@@ -71,7 +69,7 @@ Item {
     }
 
     function positionDropdownMenu() {
-        let currentIndex = root.options.indexOf(root.currentValue);
+        let currentIndex = root.selectedOptionIndex >= 0 ? root.selectedOptionIndex : root.options.indexOf(root.currentValue);
         listView.positionViewAtIndex(currentIndex >= 0 ? currentIndex : 0, ListView.Beginning);
 
         const anchorItem = root.popupAnchorItem || dropdown;
@@ -113,9 +111,19 @@ Item {
         dropdownMenu.selectedIndex = -1;
     }
 
+    function toggleSelectedValue(index, value) {
+        const selected = selectedValues.includes(value);
+        multiSelectionChanged(index, value, !selected, DropdownLogic.toggledValues(selectedValues, value));
+    }
+    function selectOption(index, value) {
+        if (selectedOptionIndex < 0)
+            currentValue = value;
+        valueChanged(value);
+        optionSelected(index, value);
+    }
     width: !showTrigger ? 0 : (compactMode ? dropdownWidth : parent.width)
-    implicitHeight: !showTrigger ? 0 : (compactMode ? 40 : Math.max(60, labelColumn.implicitHeight + Theme.spacingM))
-
+    implicitHeight: !showTrigger ? 0 : (compactMode ? dropdown.height : Math.max(dropdown.height + Theme.spacingS * 2, labelColumn.implicitHeight + Theme.spacingM))
+    height: implicitHeight
     Component.onDestruction: {
         transientSurfaceTracker?.unregister(root);
         if (root.menuOpen || dropdownMenu.opened || dropdownMenu.visible)
@@ -167,7 +175,7 @@ Item {
 
         visible: root.showTrigger
         width: root.compactMode ? parent.width : (root.popupWidth === -1 ? undefined : (root.popupWidth > 0 ? root.popupWidth : root.dropdownWidth))
-        height: 40
+        height: root.triggerHeight
         anchors.right: parent.right
         anchors.rightMargin: root.addHorizontalPadding && !root.compactMode ? Theme.spacingM : 0
         anchors.verticalCenter: parent.verticalCenter
@@ -217,9 +225,9 @@ Item {
 
             StyledText {
                 anchors.verticalCenter: parent.verticalCenter
-                text: root.currentValue !== "" ? root.currentValue : root.emptyText
+                text: root.multiSelect ? I18n.tr("%1 selected").arg(root.selectedValues.length) : (root.currentValue !== "" ? root.currentValue : root.emptyText)
                 font.pixelSize: Theme.fontSizeMedium
-                color: root.currentValue !== "" ? Theme.surfaceText : Theme.outline
+                color: root.multiSelect || root.currentValue !== "" ? Theme.surfaceText : Theme.outline
                 width: contentRow.width - (triggerSwatch.visible ? triggerSwatch.width + contentRow.spacing : 0) - (triggerIcon.visible ? triggerIcon.width + contentRow.spacing : 0)
                 elide: Text.ElideRight
                 wrapMode: Text.NoWrap
@@ -287,8 +295,13 @@ Item {
         function selectCurrent() {
             if (selectedIndex < 0 || selectedIndex >= filteredOptions.length)
                 return;
-            root.currentValue = filteredOptions[selectedIndex];
-            root.valueChanged(filteredOptions[selectedIndex]);
+            const value = filteredOptions[selectedIndex];
+            const sourceIndex = DropdownLogic.sourceIndex(root.options, filteredOptions, value, selectedIndex);
+            if (root.multiSelect) {
+                root.toggleSelectedValue(sourceIndex, value);
+                return;
+            }
+            root.selectOption(sourceIndex, value);
             close();
         }
 
@@ -313,7 +326,7 @@ Item {
             if (root.options.length === 0 && root.emptyText !== "")
                 h += 32;
             else
-                h += Math.min(filteredOptions.length, 10) * 36;
+                h += Math.min(filteredOptions.length, 10) * (32 + Theme.spacingXXS) - (filteredOptions.length > 0 ? Theme.spacingXXS : 0);
             return Math.min(root.maxPopupHeight, h + 16);
         }
         padding: 0
@@ -490,71 +503,23 @@ Item {
                         pressDelay: 0
                         flickableDirection: Flickable.VerticalFlick
 
-                        delegate: Rectangle {
-                            id: delegateRoot
-
-                            required property var modelData
-                            required property int index
-                            property bool isSelected: dropdownMenu.selectedIndex === index
-                            property bool isCurrentValue: root.currentValue === modelData
-                            property string iconName: root.optionIconMap[modelData] ?? ""
-                            property var swatchColor: root.optionColorMap[modelData]
-
+                        delegate: VgsDropdownOption {
                             width: ListView.view.width
-                            height: 32
-                            radius: Theme.controlRadius
-                            color: isSelected ? Theme.primaryHover : optionArea.containsMouse ? Theme.primaryHoverLight : Theme.withAlpha(Theme.primaryHoverLight, 0)
+                            selected: dropdownMenu.selectedIndex === index
+                            property int sourceIndex: DropdownLogic.sourceIndex(root.options, dropdownMenu.filteredOptions, modelData, index)
 
-                            Row {
-                                anchors.left: parent.left
-                                anchors.right: parent.right
-                                anchors.leftMargin: Theme.spacingS
-                                anchors.rightMargin: Theme.spacingS
-                                anchors.verticalCenter: parent.verticalCenter
-                                spacing: Theme.spacingS
-
-                                VgsColorSwatch {
-                                    id: optionSwatch
-
-                                    width: 16
-                                    height: 16
-                                    anchors.verticalCenter: parent.verticalCenter
-                                    visible: delegateRoot.swatchColor !== undefined
-                                    swatchColor: visible ? delegateRoot.swatchColor : Theme.withAlpha(delegateRoot.swatchColor, 0)
-                                    ringColor: delegateRoot.isCurrentValue ? Theme.primary : Theme.outline
+                            current: root.multiSelect ? root.selectedValues.includes(modelData) : (root.selectedOptionIndex >= 0 ? root.selectedOptionIndex === sourceIndex : root.currentValue === modelData)
+                            multiSelect: root.multiSelect
+                            optionIcon: root.optionIconMap[modelData] ?? ""
+                            optionColor: root.optionColorMap[modelData]
+                            fitContent: root.popupWidth > 0
+                            onClicked: {
+                                if (root.multiSelect) {
+                                    root.toggleSelectedValue(sourceIndex, modelData);
+                                    return;
                                 }
-
-                                VgsIcon {
-                                    name: delegateRoot.iconName
-                                    size: 18
-                                    color: delegateRoot.isCurrentValue ? Theme.primary : Theme.surfaceText
-                                    visible: name !== ""
-                                }
-
-                                StyledText {
-                                    anchors.verticalCenter: parent.verticalCenter
-                                    text: delegateRoot.modelData
-                                    font.pixelSize: Theme.fontSizeMedium
-                                    color: delegateRoot.isCurrentValue ? Theme.primary : Theme.surfaceText
-                                    font.weight: delegateRoot.isCurrentValue ? Font.Medium : Font.Normal
-                                    width: root.popupWidth > 0 ? undefined : (delegateRoot.width - parent.x - Theme.spacingS * 2 - (optionSwatch.visible ? optionSwatch.width + parent.spacing : 0))
-                                    elide: root.popupWidth > 0 ? Text.ElideNone : Text.ElideRight
-                                    wrapMode: Text.NoWrap
-                                    horizontalAlignment: Text.AlignLeft
-                                }
-                            }
-
-                            MouseArea {
-                                id: optionArea
-
-                                anchors.fill: parent
-                                hoverEnabled: true
-                                cursorShape: Qt.PointingHandCursor
-                                onClicked: {
-                                    root.currentValue = delegateRoot.modelData;
-                                    root.valueChanged(delegateRoot.modelData);
-                                    root.closeDropdownMenu();
-                                }
+                                root.selectOption(sourceIndex, modelData);
+                                root.closeDropdownMenu();
                             }
                         }
                     }

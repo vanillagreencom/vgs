@@ -281,7 +281,7 @@ Item {
                 iconName: "layers"
                 visible: CompositorService.isNiri
 
-                SettingsButtonGroupRow {
+                SettingsChoiceRow {
                     tags: ["niri", "gaps", "override", "unmanaged"]
                     settingKey: "niriLayoutGapsMode"
                     text: I18n.tr("Gaps")
@@ -351,7 +351,7 @@ Item {
                 iconName: "crop_square"
                 visible: CompositorService.isHyprland
 
-                SettingsButtonGroupRow {
+                SettingsChoiceRow {
                     tags: ["hyprland", "gaps", "override", "inner", "outer", "unmanaged"]
                     settingKey: "hyprlandLayoutGapsMode"
                     text: I18n.tr("Gaps")
@@ -444,7 +444,7 @@ Item {
                 iconName: "crop_square"
                 visible: CompositorService.isMango
 
-                SettingsButtonGroupRow {
+                SettingsChoiceRow {
                     tags: ["mangowc", "mango", "gaps", "override", "inner", "outer", "unmanaged"]
                     settingKey: "mangoLayoutGapsMode"
                     text: I18n.tr("Gaps")

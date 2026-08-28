@@ -106,7 +106,7 @@ Item {
                 width: parent.width
                 tags: ["surface", "shape", "radius", "rounding", "border", "thickness", "quickshell", "hyprland", "window"]
 
-                SettingsButtonGroupRow {
+                SettingsChoiceRow {
                     settingKey: "surfaceGeometryTarget"
                     tags: ["surface", "shape", "sync", "quickshell", "compositor", "hyprland", "niri"]
                     text: I18n.tr("Apply To")

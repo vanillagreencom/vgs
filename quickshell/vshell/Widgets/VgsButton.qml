@@ -2,7 +2,7 @@ import QtQuick
 import qs.Common
 import qs.Widgets
 
-Rectangle {
+Item {
     id: root
 
     property string text: ""
@@ -11,25 +11,36 @@ Rectangle {
     property bool hovered: mouseArea.containsMouse
     property bool pressed: mouseArea.pressed
     // "primary" = filled, high-emphasis affirmative action.
-    // "secondary" = muted outline, no fill, for low-emphasis / alternative actions.
+    // "secondary" = link-styled, low-emphasis alternative action.
     property string variant: "primary"
     readonly property bool isSecondary: variant === "secondary"
     property color backgroundColor: isSecondary ? "transparent" : Theme.buttonBg
-    property color textColor: isSecondary ? Theme.surfaceText : Theme.buttonText
-    property color outlineColor: Theme.secondaryOutline
+    property color textColor: isSecondary ? Theme.buttonBg : Theme.buttonText
     property int buttonHeight: 40
     property int horizontalPadding: Theme.spacingL
+    readonly property bool followedBySecondaryLink: {
+        let foundSelf = false;
+        for (const sibling of parent?.children ?? []) {
+            if (sibling === root) {
+                foundSelf = true;
+            } else if (foundSelf && sibling.visible && sibling.hasOwnProperty("variant") && sibling.variant === "secondary") {
+                return true;
+            }
+        }
+        return false;
+    }
+    property bool reserveTrailingSpacing: isSecondary || followedBySecondaryLink
     property bool enableScaleAnimation: false
     property bool enableRipple: typeof SettingsData !== "undefined" ? (SettingsData.enableRippleEffects ?? true) : true
 
     signal clicked
 
-    width: Math.max(contentRow.implicitWidth + horizontalPadding * 2, 64)
+    readonly property real visualWidth: isSecondary ? contentRow.implicitWidth : Math.max(contentRow.implicitWidth + horizontalPadding * 2, 64)
+    readonly property real trailingSpacing: reserveTrailingSpacing ? Theme.spacingL : 0
+
+    implicitWidth: visualWidth + trailingSpacing
+    width: implicitWidth
     height: buttonHeight
-    radius: Theme.controlRadius
-    color: backgroundColor
-    border.width: isSecondary ? 1 : 0
-    border.color: outlineColor
     opacity: enabled ? 1 : 0.4
     scale: (enableScaleAnimation && pressed) ? 0.98 : 1.0
 
@@ -43,9 +54,19 @@ Rectangle {
     }
 
     Rectangle {
+        id: buttonSurface
+        width: root.isSecondary ? root.visualWidth : Math.max(0, root.width - root.trailingSpacing)
+        height: parent.height
+        radius: Theme.controlRadius
+        color: root.backgroundColor
+    }
+
+    Rectangle {
         id: stateLayer
+        parent: buttonSurface
         anchors.fill: parent
         radius: parent.radius
+        visible: !root.isSecondary
         color: {
             if (pressed)
                 return Theme.withAlpha(root.textColor, 0.20);
@@ -64,17 +85,18 @@ Rectangle {
 
     VgsRipple {
         id: rippleLayer
+        parent: buttonSurface
         rippleColor: root.textColor
-        cornerRadius: root.radius
-        enableRipple: root.enableRipple
+        cornerRadius: buttonSurface.radius
+        enableRipple: root.enableRipple && !root.isSecondary
     }
 
     // Flatline keyboard focus ring — only renders when the button holds active
     // focus, so it adds no visual weight for pointer users.
     Rectangle {
-        anchors.fill: parent
+        anchors.fill: buttonSurface
         anchors.margins: -Theme.focusRingWidth
-        radius: root.radius + Theme.focusRingWidth
+        radius: buttonSurface.radius + Theme.focusRingWidth
         color: "transparent"
         border.color: Theme.focusRing
         border.width: Theme.focusRingWidth
@@ -84,7 +106,9 @@ Rectangle {
 
     Row {
         id: contentRow
-        anchors.centerIn: parent
+        anchors.left: root.isSecondary ? buttonSurface.left : undefined
+        anchors.horizontalCenter: root.isSecondary ? undefined : buttonSurface.horizontalCenter
+        anchors.verticalCenter: buttonSurface.verticalCenter
         spacing: Theme.spacingS
 
         VgsIcon {
@@ -99,6 +123,7 @@ Rectangle {
             text: root.text
             font.pixelSize: Theme.fontSizeMedium
             font.weight: Font.Medium
+            font.underline: root.isSecondary && root.hovered
             color: root.textColor
             anchors.verticalCenter: parent.verticalCenter
         }
@@ -106,12 +131,12 @@ Rectangle {
 
     MouseArea {
         id: mouseArea
-        anchors.fill: parent
+        anchors.fill: buttonSurface
         hoverEnabled: true
         cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
         enabled: root.enabled
         onPressed: mouse => {
-            if (root.enableRipple)
+            if (root.enableRipple && !root.isSecondary)
                 rippleLayer.trigger(mouse.x, mouse.y);
         }
         onClicked: root.clicked()

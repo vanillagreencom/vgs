@@ -449,18 +449,12 @@ Item {
                     text: I18n.tr("Updating palette preview…")
                     color: Theme.surfaceVariantText
                     font.pixelSize: Theme.fontSizeSmall
-                    opacity: VGSThemeService.restyling ? 1 : 0
-
-                    Behavior on opacity {
-                        NumberAnimation {
-                            duration: Theme.shortDuration
-                            easing.type: Theme.standardEasing
-                        }
-                    }
+                    visible: VGSThemeService.restyling
                 }
 
                 Flow {
                     width: parent.width
+                    height: implicitHeight + Theme.spacingM
                     spacing: Theme.spacingS
 
                     Repeater {
@@ -475,7 +469,6 @@ Item {
                         }
                     }
                 }
-
                 SettingsSliderRow {
                     id: brightnessSlider
                     width: parent.width

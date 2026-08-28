@@ -36,24 +36,18 @@ StyledRect {
     property bool showClearButton: false
     property bool showPasswordToggle: false
     property real rightAccessoryWidth: 0
+    property real leftInset: 0
+    property real rightInset: 0
     property bool passwordVisible: false
     property bool usePopupTransparency: !checkParentDisablesTransparency()
+    // Surface beneath the transparent field, used to derive readable hint text.
     property color backgroundColor: usePopupTransparency ? Theme.withAlpha(Theme.surfaceContainerHigh, Theme.popupTransparency) : Theme.surfaceContainerHigh
     property color focusedBorderColor: Theme.primary
     property color normalBorderColor: Theme.borderColor
     property color placeholderColor: Theme.inputHintFor(backgroundColor)
     property real borderWidth: 1
-    property real focusedBorderWidth: 2
+    property real focusedBorderWidth: 1
     property real cornerRadius: Theme.controlRadius
-    readonly property real leftPadding: Theme.spacingM + (leftIconName ? leftIconSize + Theme.spacingM : 0)
-    readonly property real rightPadding: {
-        let p = Theme.spacingS + rightAccessoryWidth;
-        if (showPasswordToggle)
-            p += 20 + Theme.spacingXS;
-        if (showClearButton && text.length > 0)
-            p += 20 + Theme.spacingXS;
-        return p;
-    }
     property real topPadding: Theme.spacingS
     property real bottomPadding: Theme.spacingS
     property bool ignoreLeftRightKeys: false
@@ -91,16 +85,42 @@ StyledRect {
 
     width: 200
     height: labelText !== "" ? Math.round(Theme.fontSizeMedium * 3) + labelBandHeight : Math.round(Theme.fontSizeMedium * 3)
-    radius: cornerRadius
-    color: backgroundColor
-    border.color: textInput.activeFocus ? focusedBorderColor : normalBorderColor
-    border.width: textInput.activeFocus ? focusedBorderWidth : borderWidth
+    radius: 0
+    color: "transparent"
+    border.width: 0
+
+    Rectangle {
+        id: underline
+
+        anchors.left: parent.left
+        anchors.leftMargin: root.leftInset
+        anchors.right: parent.right
+        anchors.rightMargin: root.rightInset
+        anchors.bottom: parent.bottom
+        height: textInput.activeFocus ? root.focusedBorderWidth : root.borderWidth
+        radius: Math.min(root.cornerRadius, height / 2)
+        color: textInput.activeFocus ? root.focusedBorderColor : root.normalBorderColor
+
+        Behavior on color {
+            ColorAnimation {
+                duration: Theme.shortDuration
+                easing.type: Theme.standardEasing
+            }
+        }
+
+        Behavior on height {
+            NumberAnimation {
+                duration: Theme.shortDuration
+                easing.type: Theme.standardEasing
+            }
+        }
+    }
 
     VgsIcon {
         id: leftIcon
 
         anchors.left: parent.left
-        anchors.leftMargin: Theme.spacingM
+        anchors.leftMargin: root.leftInset
         anchors.verticalCenter: textInput.verticalCenter
         name: leftIconName
         size: leftIconSize
@@ -126,16 +146,16 @@ StyledRect {
         id: textInput
 
         anchors.left: leftIcon.visible ? leftIcon.right : parent.left
-        anchors.leftMargin: Theme.spacingM
+        anchors.leftMargin: leftIcon.visible ? Theme.spacingS : root.leftInset
         anchors.right: rightButtonsRow.left
-        anchors.rightMargin: rightButtonsRow.visible ? Theme.spacingS : Theme.spacingM
+        anchors.rightMargin: rightButtonsRow.visible ? Theme.spacingS : 0
         anchors.top: parent.top
         anchors.topMargin: root.labelText !== "" ? root.labelBandHeight : root.topPadding
         anchors.bottom: parent.bottom
         anchors.bottomMargin: root.bottomPadding
         font.pixelSize: Theme.fontSizeMedium
         font.family: Theme.fontFamily
-        color: Theme.surfaceText
+        color: activeFocus ? Theme.surfaceText : Theme.surfaceVariantText
         selectionColor: Theme.primaryContainer
         selectedTextColor: Theme.primary
         horizontalAlignment: TextInput.AlignLeft
@@ -202,7 +222,7 @@ StyledRect {
         id: rightButtonsRow
 
         anchors.right: parent.right
-        anchors.rightMargin: Theme.spacingS + root.rightAccessoryWidth
+        anchors.rightMargin: root.rightAccessoryWidth + root.rightInset
         anchors.verticalCenter: parent.verticalCenter
         spacing: Theme.spacingXS
         visible: showPasswordToggle || (showClearButton && text.length > 0)
@@ -269,21 +289,8 @@ StyledRect {
         color: placeholderColor
         horizontalAlignment: Text.AlignLeft
         verticalAlignment: textInput.verticalAlignment
-        visible: textInput.text.length === 0 && !textInput.activeFocus
+        visible: textInput.text.length === 0
         elide: I18n.isRtl ? Text.ElideLeft : Text.ElideRight
     }
 
-    Behavior on border.color {
-        ColorAnimation {
-            duration: Theme.shortDuration
-            easing.type: Theme.standardEasing
-        }
-    }
-
-    Behavior on border.width {
-        NumberAnimation {
-            duration: Theme.shortDuration
-            easing.type: Theme.standardEasing
-        }
-    }
 }

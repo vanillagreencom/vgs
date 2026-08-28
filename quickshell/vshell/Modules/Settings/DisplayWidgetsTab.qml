@@ -161,6 +161,7 @@ Item {
                             height: displayModeRow.implicitHeight
 
                             StyledText {
+                                width: parent.width - displayModeRow.width - Theme.spacingM
                                 text: I18n.tr("Available Screens (%1)").arg(Quickshell.screens.length)
                                 font.pixelSize: Theme.fontSizeMedium
                                 font.weight: Font.Medium
@@ -168,38 +169,29 @@ Item {
                                 anchors.left: parent.left
                                 anchors.verticalCenter: parent.verticalCenter
                                 horizontalAlignment: Text.AlignLeft
+                                elide: Text.ElideRight
                             }
 
-                            Row {
+                            SettingsChoiceRow {
                                 id: displayModeRow
-                                spacing: Theme.spacingS
+                                width: Math.min(300, parent.width * 0.6)
                                 anchors.right: parent.right
                                 anchors.verticalCenter: parent.verticalCenter
-
-                                StyledText {
-                                    text: I18n.tr("Display Name Format")
-                                    font.pixelSize: Theme.fontSizeSmall
-                                    color: Theme.surfaceVariantText
-                                    anchors.verticalCenter: parent.verticalCenter
+                                text: I18n.tr("Display Name Format")
+                                dropdownWidth: 120
+                                model: [I18n.tr("Name"), I18n.tr("Model")]
+                                currentIndex: SettingsData.displayNameMode === "model" ? 1 : 0
+                                onSelectionChanged: (index, selected) => {
+                                    if (!selected)
+                                        return;
+                                    SettingsData.displayNameMode = index === 1 ? "model" : "system";
+                                    SettingsData.saveSettings();
                                 }
 
-                                VgsButtonGroup {
-                                    id: displayModeGroup
-                                    anchors.verticalCenter: parent.verticalCenter
-                                    model: [I18n.tr("Name"), I18n.tr("Model")]
-                                    currentIndex: SettingsData.displayNameMode === "model" ? 1 : 0
-                                    onSelectionChanged: (index, selected) => {
-                                        if (!selected)
-                                            return;
-                                        SettingsData.displayNameMode = index === 1 ? "model" : "system";
-                                        SettingsData.saveSettings();
-                                    }
-
-                                    Connections {
-                                        target: SettingsData
-                                        function onDisplayNameModeChanged() {
-                                            displayModeGroup.currentIndex = SettingsData.displayNameMode === "model" ? 1 : 0;
-                                        }
+                                Connections {
+                                    target: SettingsData
+                                    function onDisplayNameModeChanged() {
+                                        displayModeRow.currentIndex = SettingsData.displayNameMode === "model" ? 1 : 0;
                                     }
                                 }
                             }
