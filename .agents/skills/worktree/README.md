@@ -12,7 +12,7 @@ scripts/worktree list
 scripts/worktree remove PROJ-123
 ```
 
-Worktrees are created under `<parent-of-checkout>/.worktrees/<checkout-name>/` — beside the checkout, not inside it, so editor file watchers never ingest worktree build outputs and sibling repos cannot collide. The default branch comes from `origin/HEAD` (fallback `main`). After creation the configured symlinks, copies, and scratch directories are applied. JS dependencies install automatically only where npm is the package manager (a `package.json` with no other manager's lockfile and no non-npm `packageManager` pin; explicit npm evidence wins over an incidental foreign lockfile) — pnpm/yarn/bun workspaces provision their own dependencies. The install runs in the background with every std fd detached (a `$(create)` capture returns at once); a failure leaves its full log, owner-readable only, at `npm-install.log` inside the worktree's own gitdir — the directory `git rev-parse --absolute-git-dir` reports from the worktree, typically `<checkout>/.git/worktrees/<name>/` — which is private to that worktree and never shared.
+Worktrees are created under `<parent-of-checkout>/.worktrees/<checkout-name>/` — beside the checkout, not inside it, so editor file watchers never ingest worktree build outputs and sibling repos cannot collide. The default branch comes from `origin/HEAD` (fallback `main`). After creation the configured symlinks, copies, and scratch directories are applied. No worktree command runs a package-manager install: installs run only in the main checkout, and only when the lockfile changed. Link the main checkout's install into each worktree with a `WORKTREE_SYMLINKS` entry for the `node_modules` path; a worktree whose root `package.json` has no `node_modules` gets a warning naming the main checkout instead, as does a configured `node_modules` entry, root or nested, that sits beside a worktree `package.json` and has no source in the main checkout. The entry warning fires on every path; the root-`package.json` fallback comes from link setup, so `repair-links`, which re-asserts configured symlinks only, never emits it. Linked `node_modules` resolves pnpm workspace dependencies (`workspace:`/`link:`) to the main checkout's source, so a worktree's type checks and tests see main's copy of sibling workspace packages, not the branch's.
 
 `create` claims new work only. Existing ownership exits 75 without touching branches; a GitHub or remote outage exits 1 rather than being read as "nobody owns this". The owning session resumes with `--reuse`, which rebases onto the default branch — if that rebase conflicts, `--restack` pauses in the conflict state and `restack continue|skip|abort` drives it. Where the execution policy forbids `git rebase` outright, `--replay` produces the same result from ordered cherry-picks. A worktree lost outside the tool with unpushed commits is recovered with `--recover-local`.
 
@@ -27,7 +27,7 @@ Limits worth knowing before relying on the guard:
 - Mutations serialize through `flock(1)` when it is on PATH and a `mkdir` mutex otherwise (stock macOS ships no flock) — a capability, not a platform — so **wherever the repository's common dir is writable, the claim is mandatory**.
 - `git worktree remove -f -f` and `rm -rf` still destroy a claimed worktree; `status` and `list` exist to attribute that afterwards.
 
-Recovering a broken `.agents` link in a worktree, the app-created-worktree hooks, and the deeper failure semantics are documented in `SKILL.md` and `references/`.
+Recovering a broken `.agents` entry in a worktree, the app-created-worktree hooks, and the deeper failure semantics are documented in `SKILL.md` and `references/`.
 
 ## Setup
 
@@ -48,15 +48,15 @@ Run from the main checkout of a git repo with an `origin` remote. New-work claim
 ```toml
 [env]
 WORKTREE_BASE_DIR = "~/dev/.worktrees/myproject"
-WORKTREE_SYMLINKS = ".env.local .claude/agents .claude/hooks .claude/skills"
+WORKTREE_SYMLINKS = ".env.local .cache node_modules"
 WORKTREE_RELATIVE_SYMLINKS = ".claude/CLAUDE.md=../AGENTS.md"
 WORKTREE_MKDIRS = "tmp"
 ```
 
-Point `WORKTREE_SYMLINKS` at untracked paths. A directory entry containing tracked files stays a real directory with only its untracked children linked; a tracked file entry is marked assume-unchanged before replacement. Full rules: `scripts/worktree --help` and `scripts/worktree fix-links --help`.
+Point `WORKTREE_SYMLINKS` at paths git does not carry; an entry does nothing when git carries every path under it. A directory entry containing tracked files stays a real directory with only its untracked children linked (an untracked `.gitignore` is copied, since git will not read one through a symlink); a tracked file entry is marked assume-unchanged before replacement. Full rules: `scripts/worktree --help` and `scripts/worktree fix-links --help`.
 
 ### App-created worktrees
 
 Codex Desktop owns creation, branch metadata, and teardown for its own worktrees — wire the project setup and cleanup hooks to `codex-setup` / `codex-cleanup`, which apply the same provisioning `create` does. Branch normalization to the lower-case issue branch runs automatically under `orch`; invoke `codex-branch <ID> "$CODEX_WORKTREE_PATH"` by hand only for a raw worktree workflow that does not go through `orch`.
 
-`claude-setup` / `claude-cleanup` are the Claude Code equivalents for `--worktree` sessions, `isolation: worktree` subagents, and desktop parallel sessions, all of which run a bare `git worktree add` that leaves no `.agents`, `.claude/*` links, or `.env.local`. Wire `claude-setup` into the consumer repo's `.claude/settings.json` `WorktreeCreate` hook, and keep it in **project-level** settings so it covers every Claude config-dir variant on the machine.
+`claude-setup` / `claude-cleanup` are the Claude Code equivalents for `--worktree` sessions, `isolation: worktree` subagents, and desktop parallel sessions, all of which run a bare `git worktree add`. That gives the worktree whatever the branch tracks, committed `.agents` and `.claude/*` content included, and none of what setup provisions: `.env.local`, the symlinks for untracked entries and for the untracked children under a tracked one, the copies and scratch dirs, the bot remote, and the bot identity. Identity is per-worktree config, so a new worktree never inherits it; the bot remote is repository-shared and may already be there from another checkout. Wire `claude-setup` into the consumer repo's `.claude/settings.json` `WorktreeCreate` hook, and keep it in **project-level** settings so it covers every Claude config-dir variant on the machine.

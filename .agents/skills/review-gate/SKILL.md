@@ -1,6 +1,7 @@
 ---
 name: review-gate
 description: "Load to wire, adopt, tune, or debug a repo's review gate or its REVIEW_GATE_* settings."
+summary: "Org-wide PR review gate: one predicate answers whether this exact head is reviewed, one writer posts the answer as a merge-blocking commit status."
 license: MIT
 user-invocable: true
 metadata:
@@ -128,7 +129,8 @@ Everything else has a working default. Full table:
 | `REVIEW_GATE_COMMENT_REVIEWERS` | Only for a comment-form reviewer: `login:binding-prefix`. |
 | `REVIEW_GATE_OVERRIDE_CONTEXT` | The operator override status context. |
 | `REVIEW_GATE_THREADS` | `enforce`, unless a server-side zero-bypass thread ruleset is the enforcement point. |
-| `REVIEW_GATE_CARRY_FORWARD` | Off by default. Turn on `docs`/`comments` where re-review of review-inert deltas is unwanted. |
+| `REVIEW_GATE_CARRY_FORWARD` | Off by default. Turn on `docs`/`comments` where re-review of review-inert deltas is unwanted; `vendored` where `kendex refresh` pushes should carry, with the render trees listed in `REVIEW_GATE_VENDORED_PATHS`. |
+| `REVIEW_GATE_VENDORED_PATHS` | The render trees `vendored` trusts as kendex output, e.g. `.agents/*;.claude/skills/*`. A hand-edit under them rides; keep hook scripts and instruction markdown in `REVIEW_GATE_CARRY_FORWARD_EXCLUDE`, which wins. |
 | `REVIEW_GATE_MODE` | `enforce`. `off` is the one-switch disable, and it attests rather than evaluates. |
 
 ## 4. Repair, when validate reports FAIL
@@ -199,9 +201,10 @@ Evidence for the CURRENT head is any of:
 
 With `REVIEW_GATE_CARRY_FORWARD` (off by default), evidence at an ancestor
 carries to head when the delta is provably in a class review would not
-re-examine — docs-only, comment-only, identical tree. Never a waiver: real
-evidence must exist, code changes always require fresh evidence, and the
-fail-closed terms still apply.
+re-examine — docs-only, comment-only, a committed kendex render tree,
+identical tree. Never a waiver: real evidence must exist, code changes
+outside those classes always require fresh evidence, and the fail-closed
+terms still apply.
 
 Changes-requested and unresolved threads always fail closed. Every evidence
 read fails LOUD (exit 2, no verdict). Read bounds, retry budget and thread
@@ -276,4 +279,8 @@ ENGINE's proofs and run in the kendex repo, not in a consumer's CI:
 
 For re-vendor PRs, suppress duplicate findings with the remedy-locus reviewer
 instruction, never a reviewer path exclusion:
-[references/vendored-paths.md](references/vendored-paths.md).
+[references/vendored-paths.md](references/vendored-paths.md). A committed
+`kendex refresh` tree is the same problem with no pin over it and a blast
+radius of every consuming repo; it routes every finding over the render
+upstream, with no carve-out:
+[references/rendered-paths.md](references/rendered-paths.md).
