@@ -1,6 +1,7 @@
 ---
 name: code-quality
 description: "Load before writing or modifying code."
+summary: "Code-authoring standards for dev agents: correctness over convenience, no fail-open branches, comment rules, over-engineering limits, prove-your-guards."
 license: MIT
 user-invocable: true
 metadata:
@@ -34,6 +35,15 @@ A loud failure beats a silent wrong answer. Handle every error, check invariants
 
 A new or modified check, guard, assertion, or test ships with a must-fail control: plant the defect it catches (a red-first run or a temporary mutation) and see it go red before its green counts. A guard that pattern-matches source text also gets controls for shapes that satisfy the match without the property: comments, string and template-literal interiors, nested occurrences, alternate quoting, a braceless statement. Reject assertions loose enough to match a skip note, fixtures that never reach the guarded bound, and harness code that keeps alive what the implementation should.
 
+- **A scripted text substitution asserts its match, or it is not an edit.** Assert the pattern's occurrence count and that the file changed, or use an edit tool that errors on no match. Neither assertion holds on a symlink, which `sed -i` replaces with a new file while its target stands: resolve the path first, or refuse a symlink.
+- **A floor alone is not a control.** Derive the expected set from the artifact under test (the flag's own regex, the function's own body), never from a second list in a test file. Floor it, with a message naming the extractor as broken rather than the subject as sparse. Under-inclusion needs the floor plus a required member; over-inclusion needs a forbidden member. State which direction stays open.
+
+### Instruments you did not write
+
+- **A check narrower than the claim can only confirm it, never establish it.** Match the instrument's reach to the assertion's reach before running it, and prefer one that fails visibly on a planted counterexample. A grep over one directory supports no claim about the tree.
+- **Behaviour measured at an interactive prompt is not what scripts get.** `type <cmd>` names the shadow, which differs per shell. Resolve the command in the script's own shell and PATH, and name the shell and implementation it resolves to.
+- **A guard's failure message is an instrument.** It is what an author acts on. Unescaped backticks inside a double-quoted diagnostic execute their contents, so the intended text is altered or gone while the surrounding command still succeeds.
+
 ## Language Discipline
 
 - **Rust**: make illegal states unrepresentable; exhaustive matches (no `_ =>` over enums you own); enums over strings/sentinels/booleans-with-meaning.
@@ -53,6 +63,7 @@ Don't:
 - Temporal markers ("added", "new", "existing code", "Phase 1") or revision narration.
 - References to AI conversations, review rounds, or issue archaeology.
 - Claims broader than what the adjacent code or assertion actually enforces.
+- A numeral counting things outside the sentence. State the property and the command that enumerates it. A numeral bound to something adjacent — a list in the same paragraph, a constant a check compares against, one a ratchet owns — stays.
 
 Same rules for docs, READMEs, and skill/agent files: state the rule or behavior, never its provenance or justification. Their reader is an agent — write the shortest unambiguous rule and delete sentences nothing acts on.
 

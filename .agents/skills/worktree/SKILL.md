@@ -1,6 +1,7 @@
 ---
 name: worktree
 description: "Load to create, list, remove, push, or repair a git worktree."
+summary: "Git worktree management: create, list, remove isolated working copies with env and config symlinks."
 license: MIT
 user-invocable: true
 argument-hint: "create <ID> [--base <branch>] [--from <ref>] [--pr <N>] [--reuse|--restack|--recover-local] [--replay] | restack continue|skip|abort <ID|path> | list | remove <ID|path>"
@@ -42,31 +43,29 @@ Worktrees live at `<parent-of-checkout>/.worktrees/<checkout-name>/{id}`, outsid
 
 When an execution policy rejects top-level `git rebase` porcelain, never retry the porcelain and never substitute a raw `--force` push — add `--replay` to the guarded restack (`create --help`); the controls stay `restack continue|skip|abort <ID>`.
 
-## Recovering a broken `.agents` link
+## Recovering a broken `.agents` entry
 
-Route by shape, not by whether `test -L .agents` passes — the routing table and the tracked-content link mechanics are under `fix-links --help`. Run `fix-links` **from the main checkout**: the worktree's own copy of the script is reached *through* the broken link. Until it is fixed, do not trust that tree for local verification.
+Route by shape, not by whether `test -L .agents` passes. Ask both indexes what sits under the path — `git -C <worktree> ls-files -- '.agents/'`, and the same command against the main checkout. The trailing slash is the query: descendants decide the layout, and the entry itself does not count. Neither index alone decides: a branch can add the render ahead of main, or trail the commit that started tracking it. Reading one index routes a healthy tree to the untracked-only repair, where `fix-links` produces no symlink and the operator loops on a command that changed nothing. Both answer while the path itself is broken:
 
-**Consumers: carry this inline in the tracked `AGENTS.md` / `CLAUDE.md`; do not point here** (this section is read *through* `.agents`). Copy it verbatim:
+- **Either non-empty** — the repo commits its render, and `.agents` is a REAL DIRECTORY by design: the tracked files, plus one symlink per untracked child, except an untracked `.gitignore`, which is a copy of main's file. A child missing its link, or a real path where a link belongs, is `fix-links`. A modified or corrupt TRACKED file is `git checkout -- <path>`, run in the checkout the file really lives in — the main checkout when the path sits under a configured symlink, the worktree otherwise.
+- **Both empty** — the entry is untracked-only and must itself be a symlink. `fix-links` is the repair; with no tracked content at the path, `git checkout -- .agents` changes nothing while the link stays broken.
 
-```text
-Broken `.agents` in a worktree (missing, or a real directory): from the MAIN checkout run
-`.agents/skills/worktree/scripts/worktree fix-links <ID|PATH>` — never from the worktree,
-and never `git checkout -- .agents` (the path holds no tracked content, so the command
-changes nothing while the link stays broken). A genuinely corrupt tracked file is the other
-case: `git checkout -- <path>`, run in the checkout the file really lives in (the main
-checkout when the path sits under a configured symlink). `fix-links` reports success only
-when every configured entry ended healthy; a non-zero exit names the paths it did not
-restore, so read them rather than re-running the same command.
-```
+`fix-links` reads its sources from the main checkout wherever it is invoked, and only the main checkout's copy of the script is guaranteed intact — a worktree copy reached *through* the entry being repaired may be among the missing files. Run `.agents/skills/worktree/scripts/worktree fix-links <ID|PATH>` from the main checkout; name the target, since a bare invocation there resolves to the main checkout and is refused. Until the entry is fixed, do not trust that tree for local verification. It reports success only when every configured entry ended healthy; a non-zero exit names the paths it did not restore, so read them rather than re-running the same command. Routing table and link mechanics: `fix-links --help`.
+
+Consumers wanting this locally get a pointer, never a copy. One line resolves the main checkout from any worktree, at any depth, and prints this file: `cat "$(dirname "$(git rev-parse --path-format=absolute --git-common-dir)")"/.agents/skills/worktree/SKILL.md`. A verbatim copy in a tracked `AGENTS.md` / `CLAUDE.md` is out of `kendex refresh`'s reach and goes stale silently.
 
 ## Session guard (ownership leases)
 
 `scripts/worktree-session-guard` stops cleanup from destroying a worktree a session is still working in; the lease is a native Git worktree lock whose reason line carries the owner and heartbeat. Claiming is the caller's job: `create` never claims, the orchestrating workflow claims once the worktree is the session's, and `remove` releases at teardown. Probe with `status` (read-only), never `claim` — `claim` takes or rewrites the lease. Commands, exit codes, `--repo` scope, and staleness caveats: `worktree-session-guard --help`; the guard's limits: [references/session-guard.md](references/session-guard.md).
 
+## JS Dependencies
+
+No worktree command runs a package-manager install: installs run only in the main checkout, and only when the lockfile changed. Link the main checkout's install into each worktree with a `WORKTREE_SYMLINKS` entry for the `node_modules` path; a worktree whose root `package.json` has no `node_modules` gets a warning naming the main checkout instead, as does a configured `node_modules` entry, root or nested, that sits beside a worktree `package.json` and has no source in the main checkout. The entry warning fires on every path; the root-`package.json` fallback comes from link setup, so `repair-links`, which re-asserts configured symlinks only, never emits it. Limitation: linked `node_modules` resolves pnpm workspace dependencies (`workspace:`/`link:`) to the main checkout's source, so a worktree's type checks and tests see main's copy of sibling workspace packages, not the branch's.
+
 ## System Dependencies
 
-`git`; authenticated `gh` for new-work PR ownership discovery; `flock` for repository-local per-issue claim serialization (the session guard prefers it and falls back to a `mkdir` mutex without it); Bash 3.2+ (macOS system bash is supported).
+`git`; authenticated `gh` for new-work PR ownership discovery and for proving a squash-merged branch merged in `cleanup` and `remove`; `flock` for repository-local per-issue claim serialization (the session guard prefers it and falls back to a `mkdir` mutex without it); Bash 3.2+ (macOS system bash is supported).
 
 ## Configuration
 
-Set non-sensitive defaults in committed `kendex.settings.toml` under `[env]`; existing `.env` and `.env.local` variables still work, and `.env.local` wins for secrets or personal overrides. **Symlink untracked paths only** — an entry that shadows tracked files is linked per untracked child instead (`fix-links --help`). Variable semantics and setup-path hardening: `worktree --help`.
+Set non-sensitive defaults in committed `kendex.settings.toml` under `[env]`; existing `.env` and `.env.local` variables still work, and `.env.local` wins for secrets or personal overrides. **Symlink only what git does not carry** — an entry does nothing when git carries every path under it, and a directory holding tracked content stays a real directory with its untracked children linked, bar an untracked `.gitignore`, which is copied (`fix-links --help`). Variable semantics and setup-path hardening: `worktree --help`.
