@@ -1,6 +1,7 @@
 ---
 name: harness-ci
 description: "Load to wire, tune, or debug a repo's harness-only skip."
+summary: "Classifies a CI diff as harness-only, every changed path under a kendex render tree, so heavy lanes can stand down; ships the classifier script and its tests."
 license: MIT
 user-invocable: true
 metadata:
@@ -22,7 +23,11 @@ output?** The classifier reads a diff's changed-file set and prints
 `.codex/`, `.opencode/`, `.cursor/`, `.pi/`, or is the root
 `opencode.json` — `opencode.jsonc` where a project carries that spelling.
 Anything else prints `false`, and so does every diff the classifier cannot
-read.
+read. A path the selected head tree's manifests (`kendex.toml`, and
+`kendex-local.toml` where a source catalog keeps its installs) declare in
+place —
+`.agents/skills/<name>` under `[skills.<name>] source = "in-place"` — and
+any `.agents/hooks/` script are project source, never render output.
 
 ```bash
 .agents/skills/harness-ci/scripts/harness-only \

@@ -99,6 +99,16 @@ Setup-path hardening:
   existing leaf symlink or file without following it, but refuse a real
   directory leaf.
 
+Dependencies:
+  No command runs a package-manager install: installs run only in the main
+  checkout, and only when the lockfile changed. Link it into each worktree
+  with a WORKTREE_SYMLINKS entry for the node_modules path. A configured
+  node_modules entry beside a worktree package.json always warns when its
+  source is missing; a root package.json with nothing linked warns wherever
+  links are set up, but not from repair-links. Limitation: linked node_modules
+  resolves pnpm workspace dependencies (workspace:/link:) to main's source, so
+  a worktree's checks see main's copy of sibling packages.
+
 Session guard:
   create never claims an ownership lease — a fresh worktree is unclaimed, and
   claiming is the calling workflow's job. The lease is a native git worktree
@@ -251,10 +261,15 @@ Failure semantics:
   (fix-links restores configured symlinks); the branch is never deleted on
   that path. remove checks for a native 'git worktree lock' up front and
   exits non-zero with a diagnostic naming the lock reason and the
-  'git worktree unlock' command. Branch deletion uses safe 'git branch -d';
-  if that fails after worktree removal, the exit is non-zero with a
-  diagnostic naming the remaining branch and the manual 'git branch -D'
-  recovery command.
+  'git worktree unlock' command. The branch goes only on the proof cleanup
+  uses: ancestry into the default branch, or, when a squash erased that, a
+  pull request gh reports merged into the default branch of THIS repository
+  whose head commit IS this branch's tip. 'git branch -d' is not that proof and is not consulted —
+  it deletes a branch merged into its configured UPSTREAM, which 'push' sets,
+  so it passes for any pushed branch however far it is from the default
+  branch. Every other answer keeps the branch, and the exit is non-zero with a
+  diagnostic naming the remaining branch, the answer the proof gave, and the
+  manual 'git branch -D' recovery command.
 
 Session leases:
   remove releases its own lease before removing. A foreign lease is left
@@ -280,13 +295,25 @@ this session claimed — nor is a zero-commit worktree: a branch with no
 commits of its own is pending work, not merged work. Every skip is reported;
 a quiet cleanup means nothing was held back.
 
-cleanup fetches origin, considers non-main registered worktrees, proves each
-branch is merged into origin/<default> (or the local default branch when the
-remote ref is unavailable), then asks Git to remove the intact worktree and
-deletes the proven-merged local branch. If Git cannot remove a worktree,
-cleanup exits nonzero and preserves its path, configured symlinks, and
-branch for manual recovery. If branch deletion fails after worktree removal,
-cleanup also exits nonzero and names the remaining branch.
+cleanup fetches origin, considers non-main registered worktrees, and proves
+each branch merged two ways: ancestry into origin/<default> (or the local
+default branch when the remote ref is unavailable), or, when ancestry fails,
+a pull request gh reports merged into <default> in THIS repository whose
+head commit IS this branch's tip. The second proof is what a squash merge needs — it rewrites the
+work into a new commit, so a merged branch is an ancestor of nothing. With
+merge proven, cleanup asks Git to remove the intact worktree and deletes the
+local branch.
+
+The proof is that commit, never the branch name. One name is reused by every
+worktree an issue ever had, so a branch carrying commits past the pull request
+that merged it is unmerged work: cleanup keeps it and says so. Anything short
+of a proof keeps the worktree and names its reason, a lookup that cannot
+answer included. If the worktree listing itself fails, cleanup exits nonzero
+having inspected nothing, rather than reporting the empty sweep as a clean
+one. If Git cannot remove a worktree, cleanup exits nonzero and preserves its
+path, configured symlinks, and branch for manual recovery. If branch deletion
+fails after worktree removal, cleanup also exits nonzero and names the
+remaining branch.
 
 Options:
   --stale             Also collect worktrees whose guard lease is past the TTL
@@ -361,17 +388,18 @@ Restore configured symlinks, copies, and mkdirs in a worktree — the repair
 after a manual rebase or merge that clobbered them, or after a
 partially-completed remove. repair-links is the git-hook-driven variant that
 never destroys untracked data and exits 0 quietly for the main checkout or an
-unregistered path. Run fix-links FROM THE MAIN CHECKOUT: the worktree's own
-copy of this script is reached through the possibly-broken link.
+unregistered path. Run fix-links FROM THE MAIN CHECKOUT: a worktree copy of
+this script may itself be among the missing files.
 
 Recovery routing — route by shape, not by whether 'test -L' passes:
   - An untracked-only WORKTREE_SYMLINKS entry must be a symlink. Missing, or
     a real directory instead: fix-links, from the main checkout.
   - An entry with tracked content underneath is a real directory BY DESIGN,
-    holding the tracked files plus one symlink per untracked child. A child
+    holding the tracked files plus one symlink per untracked child, except
+    an untracked .gitignore, which is a copy of main's file. A child
     missing its link, or itself a real path: fix-links (heals per child;
     never overwrites a child holding data git does not track — reported
-    instead).
+    instead; the .gitignore copy is the one child it re-copies on drift).
   - A genuinely modified or corrupt TRACKED file: 'git checkout -- <path>',
     run in the checkout the file really lives in.
   'git checkout -- <entry>' is never the recovery for an untracked-only
@@ -398,7 +426,13 @@ Symlink entries that shadow tracked content:
   paths stay real files git owns, and only the untracked children are
   symlinked, recursing into children that mix tracked and untracked content.
   A newly installed skill under the entry is linked on the next
-  create/fix-links/auto-repair pass. Each untracked child goes through the
+  create/fix-links/auto-repair pass. One child is copied instead of linked:
+  an untracked .gitignore, because git refuses to read .gitignore through
+  a symlink ("unable to access ... Too many levels of symbolic links") and
+  would apply none of its rules. The main checkout's file is the source:
+  every pass re-copies it when the content differs, so a change on main
+  reaches the worktree on the next pass and an edit made to the worktree
+  copy is overwritten. Every other untracked child goes through the
   same quarantine as a top-level entry: a child that has materialized as a
   real file or directory holding data git does not track, or that differs
   from the index, is reported and left in place, never overwritten. A child
@@ -421,7 +455,7 @@ info/exclude entries:
   tracked content, setup follows the entry with '!<path>/' (a trailing-slash
   pattern matches a real directory but NOT a symlink pointing at one).
   Runtime-only paths keep the plain entry. The shape is re-evaluated on every
-  create/fix-links against both indexes, main authoritative.
+  create/fix-links against both indexes, either one enough.
 
 Git-hook auto-repair:
   create and fix-links install shared post-checkout, post-merge, and
@@ -435,11 +469,11 @@ Git-hook auto-repair:
   core.hooksPath is never used or modified: when it is set, the install is
   skipped with a warning — add a repair-links call to those hooks manually.
   The helper no-ops in the main checkout and in repos without the skill
-  installed, and never fails the git operation it runs after. Repair is the
-  fix-links logic with one extra guarantee: a materialized path holding
-  files git does not track (untracked OR ignored) is never clobbered; the
-  hook warns loudly, names the files, and points at manual fix-links after
-  the data has been moved or deleted.
+  installed, and never fails the git operation it runs after. Repair
+  re-asserts the configured WORKTREE_SYMLINKS entries only, with one extra
+  guarantee: a materialized path holding files git does not track (untracked
+  OR ignored) is never clobbered; the hook warns loudly, names the files, and
+  points at manual fix-links after the data has been moved or deleted.
 EOF
 }
 
@@ -1324,6 +1358,55 @@ atomic_symlink_swap() {
   return 1
 }
 
+# The one untracked child COPIED into the worktree, not symlinked (KEN-685):
+# a regular file named .gitignore. Git refuses to read .gitignore through a
+# symlink ("unable to access ...: Too many levels of symbolic links") and
+# applies none of its rules, so whatever main's file ignores becomes stageable
+# and `git add -A` commits it. The repair path and both detectors share this
+# predicate so they agree by construction. $1 is the name, $2 its path in main.
+is_copied_ignore_child() {
+  [[ "$1" == .gitignore && -f "$2" ]]
+}
+
+# Drift policy: main owns the file. Every create/fix-links/auto-repair pass
+# re-copies when the content differs, so a change on main reaches the
+# worktrees next pass and an edit to the worktree copy is overwritten. The
+# copy is the tool's own artifact, not user data, so the quarantine's
+# never-overwrite rule does not apply; a legacy symlink is replaced the same
+# way. It gets the info/exclude entry the symlink got: main's file is
+# untracked, so nothing else hides the copy when it does not ignore itself.
+ignore_file_copy_matches() {
+  local src="$1" dst="$2"
+  [[ -f "$dst" && ! -L "$dst" ]] && cmp -s "$src" "$dst"
+}
+
+copy_ignore_file_into_worktree() {
+  local wt="$1" path="$2"
+  local src="$PROJECT_ROOT/$path" dst="$wt/$path" tmp="" err="" effect=""
+  ensure_worktree_path_safe "$wt" "$path" false || return 1
+  exclude_from_worktree_index "$wt" "$path" false
+  ignore_file_copy_matches "$src" "$dst" && return 0
+  if [[ -d "$dst" && ! -L "$dst" ]]; then
+    echo "Warning: '$path' in $wt is a directory where main's .gitignore should be copied; leaving it alone." >&2
+    return 1
+  fi
+  # Built beside the destination and renamed over it (atomic_symlink_swap's
+  # GNU -T / BSD -h pair, no delete-first fallback), so a reader never finds
+  # the path absent; rename(2) replaces a symlink destination, not its target.
+  # The temp name is cleared first: cp writes THROUGH a stale symlink there.
+  tmp="$dst.wt-tmp.$$"
+  rm -f "$tmp" 2>/dev/null
+  if err="$(cp "$src" "$tmp" 2>&1)" &&
+     { err="$(mv -T "$tmp" "$dst" 2>&1)" || err="$(mv -h "$tmp" "$dst" 2>&1)"; }; then
+    return 0
+  fi
+  rm -f "$tmp" 2>/dev/null
+  effect="its ignore rules are not applied there"
+  [[ -f "$dst" && ! -L "$dst" ]] && effect="the previous copy stays in effect, not main's current rules"
+  echo "Warning: could not copy '$path' into $wt (${err:-no diagnostic}); $effect." >&2
+  return 1
+}
+
 # Sets $CIE_EXACT and $CIE_DESCENDANTS (non-empty = true) for whether $rel is
 # tracked as an exact leaf entry (file, symlink, or gitlink), or has tracked
 # descendants beneath it, in $repo's index.
@@ -1444,7 +1527,9 @@ link_untracked_children() {
     classify_index_entry "$PROJECT_ROOT" "$rel"
     [[ -n "$CIE_EXACT" ]] && exact=1
     [[ -n "$CIE_DESCENDANTS" ]] && descendants=1
-    if [[ -z "$exact" && -z "$descendants" ]]; then
+    if [[ -z "$exact" && -z "$descendants" ]] && is_copied_ignore_child "$name" "$child"; then
+      copy_ignore_file_into_worktree "$wt" "$rel" || unresolved="$unresolved  - $rel (copy failed — see warning above)"$'\n'
+    elif [[ -z "$exact" && -z "$descendants" ]]; then
       # Nothing tracked here: ordinary symlink treatment, own exclude entry.
       # Quarantine-checked (#1317): this child may have materialized as a real
       # file or directory holding untracked user data since the last repair,
@@ -1613,6 +1698,8 @@ collect_materialized_child_links() {
     [[ -n "$CIE_EXACT" ]] && exact=1
     [[ -n "$CIE_DESCENDANTS" ]] && descendants=1
     if [[ -z "$exact" && -z "$descendants" ]]; then
+      # A copied child is a real file by design; fix-links judges its content.
+      is_copied_ignore_child "$name" "$child" && continue
       [[ -e "$wt/$rel" && ! -L "$wt/$rel" ]] && printf '%s\n' "$rel"
     elif [[ -z "$exact" ]]; then
       # `|| capped=1`: a depth-capped deeper subtree must not abort this
@@ -1681,6 +1768,19 @@ collect_unhealthy_child_links() {
       collect_unhealthy_child_links "$rel" "$wt" $((depth + 1))
       continue
     fi
+    if is_copied_ignore_child "$name" "$child"; then
+      # Healthy is a real file with main's content; a symlink is the shape git
+      # refuses to read, stale content the drift the repair pass closes.
+      ignore_file_copy_matches "$child" "$wt/$rel" && continue
+      if [[ -L "$wt/$rel" ]]; then
+        printf '%s (a symlink, expected a copy of main'"'"'s .gitignore)\n' "$rel"
+      elif [[ -e "$wt/$rel" ]]; then
+        printf '%s (differs from main'"'"'s .gitignore)\n' "$rel"
+      else
+        printf '%s (absent)\n' "$rel"
+      fi
+      continue
+    fi
     report_link_health "$wt" "$rel" "$PROJECT_ROOT/$rel"
   done
 }
@@ -1709,14 +1809,14 @@ collect_unrestored_links() {
   for path in ${WORKTREE_CONFIG_WORDS[@]+"${WORKTREE_CONFIG_WORDS[@]}"}; do
     path="$(normalize_worktree_config_path WORKTREE_SYMLINKS "$path" 2>/dev/null)" || continue
     if [[ ! -e "$PROJECT_ROOT/$path" ]]; then
-      # setup skips this entry entirely, so the link is absent afterwards with
-      # nothing printed. Only the main checkout can resolve it.
+      # setup skips this entry entirely; outside a node_modules entry it prints
+      # nothing, so only this line names it.
       printf '%s (no such path in the main checkout — create it there, or drop it from WORKTREE_SYMLINKS)\n' "$path"
       continue
     fi
     # An entry with tracked content underneath is a real directory BY DESIGN
     # (VST-37); its untracked children are what must be links. The layout is
-    # decided from the INDEX alone — both, main authoritative, matching how the
+    # decided from the INDEX alone — both, either one enough, matching how the
     # repair path decides it — never from what the destination happens to be
     # right now. Reading the destination first would let a legacy parent
     # symlink still shadowing the tracked subtree answer as a plain-symlink
@@ -2171,31 +2271,38 @@ quarantine_and_relink_path() {
   return 1
 }
 
+# The one test and message for a WORKTREE_SYMLINKS entry with no main-checkout
+# source, shared by the two skip sites so they cannot drift. Warns, and returns
+# 0, only for a node_modules entry beside a worktree package.json: skipping
+# that one in silence surfaces later as the worktree's own checks failing.
+warn_missing_symlink_source() {
+  local wt="$1" path="$2"
+  [[ "${path##*/}" == node_modules && -f "$wt/${path%node_modules}package.json" ]] || return 1
+  echo "Warning: dependencies were not installed — WORKTREE_SYMLINKS entry '$path' has no source at $PROJECT_ROOT/$path. Run the install in the main checkout ($PROJECT_ROOT), then rerun fix-links to link it." >&2
+}
+
 # Re-assert configured WORKTREE_SYMLINKS in one worktree. Cheap on the healthy
 # path (one readlink per entry); repair is quarantine_and_relink_path above.
 repair_worktree_links() {
-  local wt="$1" path="" src="" dst="" repaired="" blocked=false
+  local wt="$1" path="" src="" repaired="" blocked=false
   validate_worktree_setup_config || return 1
 
   split_worktree_config_words "${WORKTREE_SYMLINKS:-}"
   for path in ${WORKTREE_CONFIG_WORDS[@]+"${WORKTREE_CONFIG_WORDS[@]}"}; do
     path="$(normalize_worktree_config_path WORKTREE_SYMLINKS "$path" 2>/dev/null)" || continue
     src="$PROJECT_ROOT/$path"
-    dst="$wt/$path"
-    [[ -e "$src" ]] || continue
+    [[ -e "$src" ]] || { warn_missing_symlink_source "$wt" "$path" || true; continue; }
     # An entry with tracked content underneath never becomes a parent link
     # (VST-37): its healthy state is a real directory holding per-child links,
-    # and symlink_into_worktree heals that state idempotently (clears stale
-    # assume-unchanged bits, restores missing tracked files, re-links
-    # untracked children — through the same quarantine as any other child,
-    # since link_untracked_children calls quarantine_and_relink_path too).
-    #
+    # which symlink_into_worktree heals idempotently — stale assume-unchanged
+    # bits cleared, missing tracked files restored, untracked children re-linked
+    # through the same quarantine as any other child, since
+    # link_untracked_children calls quarantine_and_relink_path too.
     # Ask BOTH indexes (#964): checking only $wt here means a branch that
     # predates a path becoming tracked on main takes the quarantine branch
-    # below instead. If $dst is already a healthy symlink from an earlier run,
-    # quarantine_and_relink_path returns success on sight without ever
-    # re-deciding the shape, so the entry never converts to the per-child
-    # layout main's tracked content now requires.
+    # below instead, where a destination already healthy from an earlier run
+    # returns success on sight without ever re-deciding the shape — so the
+    # entry never converts to the per-child layout main's content now requires.
     if [[ -d "$src" ]] &&
        { [[ -n "$(git -C "$wt" ls-files -- "$path/" 2>/dev/null)" ]] ||
          [[ -n "$(git -C "$PROJECT_ROOT" ls-files -- "$path/" 2>/dev/null || true)" ]]; }; then
@@ -2293,7 +2400,7 @@ restore_unshadowed_worktree_setup() {
 }
 
 setup_worktree_links() {
-  local wt="$1"
+  local wt="$1" root_nm_warned=0
   validate_worktree_setup_config || return 1
 
   # Project-configured mkdirs (run first so subsequent symlinks/copies can
@@ -2311,6 +2418,8 @@ setup_worktree_links() {
     path="$(normalize_worktree_config_path WORKTREE_SYMLINKS "$path")" || return 1
     if [[ -e "$PROJECT_ROOT/$path" ]]; then
       symlink_into_worktree "$path" "$wt" || return 1
+    elif warn_missing_symlink_source "$wt" "$path"; then
+      [[ "$path" == node_modules ]] && root_nm_warned=1
     fi
   done
 
@@ -2342,8 +2451,7 @@ setup_worktree_links() {
       echo "Warning: Ignoring invalid WORKTREE_RELATIVE_SYMLINKS entry '$spec' (expected path=target)" >&2
       continue
     fi
-    local path="${spec%%=*}"
-    local target="${spec#*=}"
+    local path="${spec%%=*}" target="${spec#*=}"
     path="$(normalize_worktree_config_path WORKTREE_RELATIVE_SYMLINKS "$path")" || return 1
     validate_relative_symlink_target "$spec" "$target" || return 1
     ensure_worktree_path_safe "$wt" "$path" false || return 1
@@ -2368,6 +2476,14 @@ setup_worktree_links() {
     fi
     exclude_from_worktree_index "$wt" "$path"
   done
+
+  # Installs run only in the main checkout: inside a linked worktree they write
+  # node_modules through into the checkout every worktree shares, and a pnpm
+  # workspace install records its deps as links into the installing tree. A root
+  # package.json with nothing linked warns, unless the root entry warned above.
+  if [[ "$root_nm_warned" -eq 0 && -f "$wt/package.json" && ! -e "$wt/node_modules" ]]; then
+    echo "Warning: dependencies were not installed — installs run only in the main checkout. Run the install in $PROJECT_ROOT, then link its node_modules into worktrees with a WORKTREE_SYMLINKS entry." >&2
+  fi
 
   # Explicit: the last loop's trailing command must not decide this function's
   # exit status — every failure above returns 1 on its own.
@@ -2397,89 +2513,6 @@ configure_worktree_git() {
   fi
 }
 
-install_worktree_dependencies() {
-  local wt="$1"
-
-  [[ -f "$wt/package.json" ]] || return 0
-  # npm is wrong for a workspace that pins another package manager: it
-  # resolves a different tree and writes a stray package-lock.json into the
-  # fresh checkout (dirty from birth, and `git add -A` would commit an npm
-  # lockfile into a pnpm monorepo). Explicit npm evidence — its own lockfile
-  # or an npm packageManager pin — wins over an incidental foreign lockfile;
-  # otherwise another manager's lockfile or pin means that repo provisions
-  # its own dependencies, so skip.
-  # The TOP-LEVEL packageManager field only — a nested look-alike (e.g.
-  # config.packageManager) is not a pin. Structural readers in preference
-  # order: node (present wherever a package.json matters), then jq; a
-  # machine with neither reads no pin, and the only cost of that miss is an
-  # automatic install skipped — never a wrong-tree install.
-  local pkg_manager="" pkg_manager_readable=1
-  if command -v node >/dev/null 2>&1; then
-    # npm itself tolerates a UTF-8 BOM, so strip it before parsing — a BOM'd
-    # pin must still read as a pin.
-    pkg_manager="$(node -e 'const m=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8").replace(/^\uFEFF/,"")).packageManager;process.stdout.write(typeof m==="string"?m:"")' "$wt/package.json" 2>/dev/null)" || pkg_manager_readable=0
-  elif command -v jq >/dev/null 2>&1; then
-    pkg_manager="$(jq -r '.packageManager // ""' "$wt/package.json" 2>/dev/null)" || pkg_manager_readable=0
-  else
-    # No structural reader: the pin is unreadable, and running npm on an
-    # unreadable pin is the wrong-tree case this gate exists to prevent.
-    pkg_manager_readable=0
-  fi
-  # Precedence: an explicit pin outranks lockfiles either way (a migration
-  # leaves stale ones behind); with no pin, npm evidence beats an incidental
-  # foreign lockfile. A manifest the reader could not parse — or no reader at
-  # all — reads no pin, so any foreign evidence makes npm the wrong call.
-  case "$pkg_manager" in
-    pnpm@*|yarn@*|bun@*) return 0 ;;
-    npm@*) ;;
-    *)
-      local npm_evidence=0 foreign_evidence=0
-      [[ -f "$wt/package-lock.json" || -f "$wt/npm-shrinkwrap.json" ]] && npm_evidence=1
-      # Foreign evidence: another manager's lockfile or a pnpm workspace
-      # manifest.
-      [[ -f "$wt/pnpm-lock.yaml" || -f "$wt/yarn.lock" || -f "$wt/bun.lockb" || -f "$wt/bun.lock" || -f "$wt/pnpm-workspace.yaml" ]] && foreign_evidence=1
-      if [[ "$pkg_manager_readable" -eq 0 ]]; then
-        # An unreadable pin installs only on unambiguous npm evidence.
-        [[ "$npm_evidence" -eq 1 && "$foreign_evidence" -eq 0 ]] || return 0
-      elif [[ "$npm_evidence" -eq 0 && "$foreign_evidence" -eq 1 ]]; then
-        return 0
-      fi
-      ;;
-  esac
-  if command -v npm >/dev/null 2>&1; then
-    # Every std fd detached: a caller capturing $(create) — stdout, or
-    # combined 2>&1 — gets EOF at once; any inherited pipe fd would make the
-    # capture wait out the whole install. Never invisible even so: a failed
-    # install leaves its full log at a stable per-worktree path.
-    (
-      cd "$wt" || exit 0
-      # The log lands in this worktree's own gitdir: private to one worktree
-      # and owner-controlled by construction, so nothing is shared with
-      # other users and there is no predictable path to pre-plant. The
-      # gitdir itself is commonly 0755 on a traversable host, so the log is
-      # created owner-only — npm output must not be readable by other
-      # accounts. The umask is scoped to that creation alone: npm and its
-      # lifecycle scripts keep the caller's umask for node_modules. The
-      # redirect below reuses the 0600 file. An unresolvable or unwritable
-      # gitdir → install still runs, just unlogged.
-      log=""
-      if gitdir="$(git rev-parse --absolute-git-dir 2>/dev/null)" &&
-        [ -n "$gitdir" ] && [ -d "$gitdir" ] &&
-        (umask 077 && rm -f -- "$gitdir/npm-install.log" &&
-          : >"$gitdir/npm-install.log") 2>/dev/null; then
-        log="$gitdir/npm-install.log"
-      fi
-      if [ -n "$log" ]; then
-        if npm install --no-audit --no-fund >"$log" 2>&1; then
-          rm -f -- "$log"
-        fi
-      else
-        npm install --no-audit --no-fund >/dev/null 2>&1
-      fi
-    ) </dev/null >/dev/null 2>&1 &
-  fi
-}
-
 # Provisioning applied to a worktree that some OTHER tool created — Codex
 # Desktop Environments, or Claude Code's WorktreeCreate hook. Nothing here is
 # app-specific; it is the same setup `create` applies once git has made the
@@ -2489,7 +2522,6 @@ setup_app_worktree() {
 
   setup_worktree_links "$wt" || return 1
   configure_worktree_git "$wt" || return 1
-  install_worktree_dependencies "$wt" || return 1
   # Best-effort by contract (#1032): a repo where the hooks cannot be written
   # still gets a fully provisioned worktree.
   install_worktree_autorepair_hooks
@@ -2838,6 +2870,88 @@ open_pr_for_branch() {
   fi
   result="$output"
   printf '%s\n' "$result"
+}
+
+# Merge proof for a branch ancestry cannot see. Work that lands by squash — the
+# whole fleet, through the merge queue — is rewritten into a new commit, so the
+# branch tip is an ancestor of nothing and `merge-base --is-ancestor` reports a
+# merged branch as pending forever (#697). The forge's merged PR is the proof
+# that survives the rewrite.
+#
+# The proof is COMMIT identity, never the branch name. `issue_branch_name`
+# derives one name per issue, so every worktree ever made for an issue reuses
+# it: a name-only match hands the merged record of last month's PR to today's
+# fresh work and force-deletes it. The tip this repository has right now must
+# be the exact commit some merged PR carried, and `--base` keeps the answer to
+# PRs that landed on the default branch.
+#
+# Exit 0: merged, PR number on stdout. Exit 1: provably NOT merged, either
+# because no merged PR carries the name or because none of the ones that do has
+# this tip as its head — an identity mismatch is a definite answer, so it reads
+# as unmerged rather than as a failed lookup. Exit 2 stays reserved for a lookup
+# that genuinely cannot answer: gh missing, gh failing, a response this cannot
+# read. 1 and 2 print a one-line reason on stdout; only exit 0 authorizes a
+# delete.
+merged_pr_for_branch() {
+  local branch="$1" tip="" rows="" err_file="" detail="" oid="" number="" seen="" rc=0
+  [[ -n "$branch" ]] || { printf 'no branch to look up\n'; return 2; }
+  if ! command -v gh >/dev/null 2>&1; then
+    printf 'gh is not installed\n'
+    return 2
+  fi
+  tip="$(git -C "$PROJECT_ROOT" rev-parse --verify --quiet "refs/heads/$branch" || true)"
+  if [[ -z "$tip" ]]; then
+    printf 'branch has no local tip to compare a merged pull request against\n'
+    return 2
+  fi
+  if ! err_file="$(mktemp "${TMPDIR:-/tmp}/worktree-merged-pr.XXXXXX")"; then
+    printf 'could not create a scratch file for the gh diagnostic\n'
+    return 2
+  fi
+  # stdout and stderr are captured SEPARATELY. Folding them together let gh's
+  # routine chatter — an update notice, an auth warning — land beside the
+  # answer and fail the parse, turning the proof off for every branch at once.
+  # Every merged PR sharing the name is scanned, not just the newest row.
+  #
+  # The query answers for THIS checkout, the way reconcile-work-items does it:
+  # an inherited GH_REPO / GITHUB_REPOSITORY redirect would let another
+  # repository's same-named branch at the same commit authorize a delete here,
+  # and a fork's PR is someone else's merge, so cross-repository rows are cut.
+  rows="$( (cd "$PROJECT_ROOT" && env -u GH_REPO -u GITHUB_REPOSITORY \
+              gh pr list --state merged --head "$branch" \
+              --base "$DEFAULT_BRANCH" --limit 100 \
+              --json number,headRefOid,isCrossRepository \
+              --jq '.[] | select(.isCrossRepository | not) | "\(.headRefOid) \(.number)"') 2>"$err_file" )" || rc=$?
+  if [[ "$rc" -ne 0 ]]; then
+    detail="$(tr '\n' ' ' <"$err_file")"
+    rm -f "$err_file"
+    printf '%s\n' "${detail:-gh pr list failed (exit $rc)}"
+    return 2
+  fi
+  rm -f "$err_file"
+  if [[ -z "$rows" ]]; then
+    printf 'no pull request merged into %s carries this branch name\n' "$DEFAULT_BRANCH"
+    return 1
+  fi
+  # Each row is validated as it is read: a row that is not a commit id and a
+  # number returns 2, so contamination anywhere ahead of a match stops the
+  # scan. A validated row whose oid equals the tip is the proof, and the scan
+  # stops there.
+  while read -r oid number; do
+    [[ -n "$oid$number" ]] || continue
+    if ! [[ "$oid" =~ ^[0-9a-f]{7,64}$ ]] || ! [[ "$number" =~ ^[0-9]+$ ]]; then
+      printf 'gh returned a row this cannot read: %s %s\n' "$oid" "$number"
+      return 2
+    fi
+    seen="$seen #$number"
+    if [[ "$oid" == "$tip" ]]; then
+      printf '%s\n' "$number"
+      return 0
+    fi
+  done <<<"$rows"
+  printf 'carries work past its merged pull request (merged under this name:%s; none has this tip %s as its head)\n' \
+    "$seen" "$tip"
+  return 1
 }
 
 resolve_pr_branch() {
@@ -4333,21 +4447,45 @@ case "${1:-}" in
       [[ -d "$WT_PATH" ]] && rm -rf "$WT_PATH"
     fi
     git -C "$PROJECT_ROOT" worktree prune
-    # Only delete local branch if merged (branch -d checks this). If the
-    # worktree was removed but branch deletion is unsafe, report exactly what
+    # Only delete the local branch if merged, proven exactly the way `cleanup`
+    # proves it: ancestry into the default branch, or a merged pull request
+    # carrying this tip when a squash erased that ancestry. `git branch -d` is
+    # NOT that proof and no longer decides anything here — it deletes a branch
+    # merged into its configured UPSTREAM, and `push` sets one, so every pushed
+    # branch satisfied it however far it was from the default branch (#697).
+    # If the worktree was removed but neither proof holds, report exactly what
     # remains instead of letting set -e exit silently after partial cleanup.
     BRANCH_DELETE_FAILED=false
     if [[ -n "$BRANCH" ]] && git -C "$PROJECT_ROOT" show-ref --verify --quiet "refs/heads/$BRANCH"; then
+      REMOVE_MERGE_TARGET="origin/$DEFAULT_BRANCH"
+      if ! git -C "$PROJECT_ROOT" rev-parse --verify "$REMOVE_MERGE_TARGET" >/dev/null 2>&1; then
+        REMOVE_MERGE_TARGET="$DEFAULT_BRANCH"
+      fi
+      REMOVE_MERGE_DETAIL=""
+      REMOVE_MERGE_PROOF=""
+      REMOVE_MERGE_RC=0
+      if git -C "$PROJECT_ROOT" merge-base --is-ancestor "$BRANCH" "$REMOVE_MERGE_TARGET" 2>/dev/null; then
+        REMOVE_MERGE_PROOF="merged into $REMOVE_MERGE_TARGET"
+      else
+        REMOVE_MERGE_DETAIL="$(merged_pr_for_branch "$BRANCH")" || REMOVE_MERGE_RC=$?
+        REMOVE_MERGE_PROOF="squash-merged in pull request #$REMOVE_MERGE_DETAIL"
+      fi
       DELETE_OUTPUT=""
-      if ! DELETE_OUTPUT=$(git -C "$PROJECT_ROOT" branch -d "$BRANCH" 2>&1); then
+      if [[ "$REMOVE_MERGE_RC" == "0" ]] && DELETE_OUTPUT="$(git -C "$PROJECT_ROOT" branch -D "$BRANCH" 2>&1)"; then
+        echo "Deleted branch '$BRANCH' — $REMOVE_MERGE_PROOF." >&2
+      else
         BRANCH_DELETE_FAILED=true
         echo "Error: Removed worktree but could not delete local branch '$BRANCH'." >&2
         echo "  Remaining branch: $BRANCH" >&2
         echo "  Worktree path removed/pruned: $WT_PATH" >&2
-        echo "  Safe delete refused by: git branch -d $BRANCH" >&2
-        if [[ -n "$DELETE_OUTPUT" ]]; then
-          printf '%s\n' "$DELETE_OUTPUT" | sed 's/^/  git: /' >&2
-        fi
+        case "$REMOVE_MERGE_RC" in
+          0)
+            echo "  $REMOVE_MERGE_PROOF, but the delete itself failed." >&2
+            [[ -n "$DELETE_OUTPUT" ]] && printf '%s\n' "$DELETE_OUTPUT" | sed 's/^/  git: /' >&2
+            ;;
+          1) echo "  Not merged into $REMOVE_MERGE_TARGET, and $REMOVE_MERGE_DETAIL" >&2 ;;
+          *) echo "  Merged-pull-request lookup could not answer: ${REMOVE_MERGE_DETAIL:-no detail}" >&2 ;;
+        esac
         echo "  After verifying it is safe, delete manually with: git -C \"$PROJECT_ROOT\" branch -D \"$BRANCH\"" >&2
       fi
     fi
@@ -4406,52 +4544,106 @@ case "${1:-}" in
     # with spaces, and the main checkout is excluded by canonical comparison —
     # git may report it under an older lexical (symlinked) spelling that a
     # textual match against $PROJECT_ROOT would miss.
+    #
+    # The listing lands in a file so its exit status is READ. Fed through
+    # process substitution, bash discards that status, so a failed or truncated
+    # list left the candidate set empty and cleanup reported a clean sweep —
+    # the silent keep this whole loop exists to end. A file, not a variable:
+    # bash cannot hold the NUL bytes -z depends on.
+    if ! CLEANUP_LIST_FILE="$(mktemp "${TMPDIR:-/tmp}/worktree-cleanup-list.XXXXXX")"; then
+      echo "Error: could not create a scratch file to enumerate worktrees; nothing was inspected." >&2
+      exit 1
+    fi
+    CLEANUP_LIST_RC=0
+    git -C "$PROJECT_ROOT" worktree list --porcelain -z >"$CLEANUP_LIST_FILE" || CLEANUP_LIST_RC=$?
+    if [[ "$CLEANUP_LIST_RC" -ne 0 ]]; then
+      rm -f "$CLEANUP_LIST_FILE"
+      echo "Error: 'git -C \"$PROJECT_ROOT\" worktree list --porcelain -z' failed (exit $CLEANUP_LIST_RC)." >&2
+      echo "  No worktree was inspected and none was collected; this is not a clean sweep." >&2
+      exit 1
+    fi
     CLEANUP_TREES=()
     while IFS= read -r -d '' CLEANUP_LINE; do
       [[ "$CLEANUP_LINE" == worktree\ * ]] || continue
       CLEANUP_WT="${CLEANUP_LINE#worktree }"
       same_canonical_dir "$CLEANUP_WT" "$PROJECT_ROOT" && continue
       CLEANUP_TREES+=("$CLEANUP_WT")
-    done < <(git -C "$PROJECT_ROOT" worktree list --porcelain -z)
+    done <"$CLEANUP_LIST_FILE"
+    rm -f "$CLEANUP_LIST_FILE"
     for wt in ${CLEANUP_TREES[@]+"${CLEANUP_TREES[@]}"}; do
-      BRANCH=$(git -C "$wt" branch --show-current 2>/dev/null)
-      if [[ -n "$BRANCH" ]] && \
-         git -C "$PROJECT_ROOT" show-ref --verify --quiet "refs/heads/$BRANCH" && \
-         git -C "$PROJECT_ROOT" merge-base --is-ancestor "$BRANCH" "$CLEANUP_MERGE_TARGET"; then
-        # This runs BEFORE the lease probe: --stale must not release the lease
-        # of a worktree the skip is about to keep.
-        CLEANUP_TIP="$(git -C "$PROJECT_ROOT" rev-parse --verify --quiet "refs/heads/$BRANCH" || true)"
-        if [[ -z "$CLEANUP_TIP" ]] || grep -qxF "$CLEANUP_TIP" <<<"$CLEANUP_MAINLINE"; then
-          echo "Skipped (branch '$BRANCH' has no commits of its own — pending work, not merged): $wt" >&2
-          echo "  Zero-commit worktrees are never collected; drop it explicitly with: $0 remove \"$wt\"" >&2
-          continue
-        fi
-        # A merged branch does NOT mean an idle tree: uncommitted work in it is
-        # exactly what gets lost. Ask the lease, not the branch.
-        if ! cleanup_lease_permits_removal "$wt" "$(issue_session_owner "$BRANCH")"; then
-          continue
-        fi
-        CLEANUP_REMOVE_OUTPUT=""
-        if ! CLEANUP_REMOVE_OUTPUT="$(git -C "$PROJECT_ROOT" worktree remove --force "$wt" 2>&1)"; then
-          CLEANUP_FAILED=true
-          echo "Error: Git could not remove merged worktree; preserving it for manual recovery: $wt" >&2
-          [[ -n "$CLEANUP_REMOVE_OUTPUT" ]] && printf '%s\n' "$CLEANUP_REMOVE_OUTPUT" | sed 's/^/  git: /' >&2
-          continue
-        fi
-        if [[ -e "$wt" || -L "$wt" ]]; then
-          CLEANUP_FAILED=true
-          echo "Error: Git reported successful worktree removal but the path remains; preserving it for manual recovery: $wt" >&2
-          continue
-        fi
-        if ! git -C "$PROJECT_ROOT" branch -D "$BRANCH" >/dev/null 2>&1; then
-          CLEANUP_FAILED=true
-          echo "Error: Removed merged worktree but could not delete local branch '$BRANCH'." >&2
-          echo "  Remaining branch: $BRANCH" >&2
-          echo "  Worktree path removed/pruned: $wt" >&2
-          continue
-        fi
-        echo "Cleaned: $wt"
+      # Every arm below either removes the worktree or says on stderr why it is
+      # keeping it. Nothing falls through silently: the help promises that a
+      # quiet run held nothing back, and a silent keep is how 30 merged
+      # worktrees accumulated unreported (#697).
+      BRANCH=""
+      CLEANUP_BRANCH_RC=0
+      BRANCH=$(git -C "$wt" branch --show-current 2>/dev/null) || CLEANUP_BRANCH_RC=$?
+      if [[ "$CLEANUP_BRANCH_RC" != "0" ]]; then
+        echo "Skipped (git could not read the checked-out branch, exit $CLEANUP_BRANCH_RC): $wt" >&2
+        echo "  Inspect the path, then drop it explicitly with: $0 remove \"$wt\"" >&2
+        continue
       fi
+      if [[ -z "$BRANCH" ]]; then
+        echo "Skipped (no branch checked out — detached HEAD, so there is nothing to prove merged): $wt" >&2
+        echo "  Drop it explicitly with: $0 remove \"$wt\"" >&2
+        continue
+      fi
+      if ! git -C "$PROJECT_ROOT" show-ref --verify --quiet "refs/heads/$BRANCH"; then
+        echo "Skipped (branch '$BRANCH' has no ref in the main checkout): $wt" >&2
+        echo "  Drop it explicitly with: $0 remove \"$wt\"" >&2
+        continue
+      fi
+      # This runs BEFORE the merge and lease probes: a zero-commit branch is
+      # pending work whichever way it would have been proven merged, and
+      # --stale must not release the lease of a worktree the skip is keeping.
+      CLEANUP_TIP="$(git -C "$PROJECT_ROOT" rev-parse --verify --quiet "refs/heads/$BRANCH" || true)"
+      if [[ -z "$CLEANUP_TIP" ]] || grep -qxF "$CLEANUP_TIP" <<<"$CLEANUP_MAINLINE"; then
+        echo "Skipped (branch '$BRANCH' has no commits of its own — pending work, not merged): $wt" >&2
+        echo "  Zero-commit worktrees are never collected; drop it explicitly with: $0 remove \"$wt\"" >&2
+        continue
+      fi
+      if ! git -C "$PROJECT_ROOT" merge-base --is-ancestor "$BRANCH" "$CLEANUP_MERGE_TARGET"; then
+        CLEANUP_MERGE_DETAIL=""
+        CLEANUP_MERGE_RC=0
+        CLEANUP_MERGE_DETAIL="$(merged_pr_for_branch "$BRANCH")" || CLEANUP_MERGE_RC=$?
+        case "$CLEANUP_MERGE_RC" in
+          0) ;;
+          1)
+            echo "Skipped (branch '$BRANCH' is not merged — not an ancestor of $CLEANUP_MERGE_TARGET, and $CLEANUP_MERGE_DETAIL): $wt" >&2
+            continue
+            ;;
+          *)
+            echo "Skipped (merge status of branch '$BRANCH' could not be determined: ${CLEANUP_MERGE_DETAIL:-no detail}): $wt" >&2
+            echo "  A lookup that cannot answer never authorizes a removal; restore the gh query and re-run cleanup." >&2
+            continue
+            ;;
+        esac
+      fi
+      # A merged branch does NOT mean an idle tree: uncommitted work in it is
+      # exactly what gets lost. Ask the lease, not the branch.
+      if ! cleanup_lease_permits_removal "$wt" "$(issue_session_owner "$BRANCH")"; then
+        continue
+      fi
+      CLEANUP_REMOVE_OUTPUT=""
+      if ! CLEANUP_REMOVE_OUTPUT="$(git -C "$PROJECT_ROOT" worktree remove --force "$wt" 2>&1)"; then
+        CLEANUP_FAILED=true
+        echo "Error: Git could not remove merged worktree; preserving it for manual recovery: $wt" >&2
+        [[ -n "$CLEANUP_REMOVE_OUTPUT" ]] && printf '%s\n' "$CLEANUP_REMOVE_OUTPUT" | sed 's/^/  git: /' >&2
+        continue
+      fi
+      if [[ -e "$wt" || -L "$wt" ]]; then
+        CLEANUP_FAILED=true
+        echo "Error: Git reported successful worktree removal but the path remains; preserving it for manual recovery: $wt" >&2
+        continue
+      fi
+      if ! git -C "$PROJECT_ROOT" branch -D "$BRANCH" >/dev/null 2>&1; then
+        CLEANUP_FAILED=true
+        echo "Error: Removed merged worktree but could not delete local branch '$BRANCH'." >&2
+        echo "  Remaining branch: $BRANCH" >&2
+        echo "  Worktree path removed/pruned: $wt" >&2
+        continue
+      fi
+      echo "Cleaned: $wt"
     done
     if [[ "$CLEANUP_FAILED" == true ]]; then
       exit 1
@@ -4658,7 +4850,7 @@ case "${1:-}" in
     # Codex Desktop owns worktree creation. This command applies the same
     # project-local setup that `create` applies after git has already created
     # the worktree: env/config symlinks, configured copies/dirs, optional bot
-    # git config, optional bot remote, and lightweight dependency bootstrap.
+    # git config, and optional bot remote.
     ARG="${2:-}"
     if [[ -z "$ARG" ]]; then
       WT_PATH="$PWD"
@@ -4743,8 +4935,8 @@ case "${1:-}" in
   claude-setup)
     # Claude Code owns worktree creation for `--worktree` sessions, subagents
     # with `isolation: worktree`, and desktop parallel sessions — all of which
-    # run a bare `git worktree add` and so produce a worktree with no `.agents`,
-    # no `.claude/*` links and no `.env.local`. Wire this from a consumer repo's
+    # run a bare `git worktree add`, so tracked content arrives and the
+    # untracked machine-local layer does not. Wire this from a consumer repo's
     # `.claude/settings.json` WorktreeCreate hook; because that hook lives in
     # PROJECT-level settings it applies to every Claude config-dir variant on
     # the machine (CLAUDE_CONFIG_DIR only moves user-level config).

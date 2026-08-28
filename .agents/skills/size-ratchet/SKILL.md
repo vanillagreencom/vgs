@@ -1,6 +1,7 @@
 ---
 name: size-ratchet
 description: "Load to add, tune, or debug the size ratchet, its baseline, or SIZE_RATCHET_* settings."
+summary: "Tighten-only file-size gate: tracked files over their threshold are frozen in a baseline TSV that only moves down."
 license: MIT
 user-invocable: true
 metadata:
@@ -40,13 +41,38 @@ Every diagnostic names the file, its count, the baseline row it violated,
 the deciding threshold (class pattern or default), and the remedy: *split
 at a concept seam*.
 
+**Check composition before the seam.** A file over its cap whose bulk is
+inline tests needs those tests moved to the language's separate-test
+convention, not its concepts split; that move has no seam in it. In Rust
+the measure is every line inside `#[cfg(test)]`, under any module name,
+and past roughly 300 of them extraction comes first. Find a seam only if
+what remains is still over.
+
 **The ratchet serves cohesion, never defeats it.** The goal is files an
 agent can load and reason about whole: one concept per file, whole
 concept in the file. A *concept seam* is a boundary where the extracted
 file stands alone — its reader never needs the source file open beside
-it. Moving half a function, a helper only one caller uses, or "part 2 of
-X" into a second file to duck the count is worse than the long file:
-prefer the raise.
+it. For a file offered as one, count the names it imports straight from
+its parent (`use super::{...}`): a real seam sits near zero, and
+`use super::*` is an automatic failure. Moving half a function, a helper
+only one caller uses, or "part 2 of X" into a second file to duck the
+count is worse than the long file: prefer the raise.
+
+**Three Rust shapes are that move, whatever the seam is called.**
+1. `#[path = "<sibling>.rs"]` on a private `mod` that exists to hold the
+   parent's lines. `#[path]` chosen for any other reason, a test module,
+   a `cfg`-selected alternative, names a real seam.
+2. A hub declaring `mod child;` then `use child::*`, with every spoke
+   opening `use super::*`. The split is invisible by construction, so no
+   seam is load-bearing and every spoke reaches whatever its siblings
+   widened for the hub's glob. A hub carries declarations, narrow
+   orchestration, and stable exports. A spoke depends on the hub's shared
+   types or on a lower shared module, never on a sibling's internals.
+3. A file whose only top-level items are inherent `impl` blocks on a type
+   its parent declares. That file is part 2 of the type by construction.
+
+A file header that justifies the file's existence by a line threshold is
+the author writing down that the seam is not real.
 
 **Raising a row** (`RATCHET_RAISE=1`, reason in the commit body) is
 correct in exactly two cases, both for hand-written files:
@@ -64,3 +90,9 @@ is absent from HEAD's baseline, or lower there, fails whatever the commit
 declares. Rows already at HEAD are grandfathered. Generated
 and vendored content is never raised either: it is excluded (the
 exclusion list, `pattern<TAB>reason`) and leaves the counted set.
+
+**A threshold change requires a fragment sweep.** In either direction it
+strands the splits made under the previous number: a repo that loosens already
+holds those fragments, a repo that tightens is about to create them. A seam
+that fits only the old number is not evidence of a seam.
+[references/threshold-change.md](references/threshold-change.md).
