@@ -32,9 +32,13 @@ class DuplicateList(Exception):
     other arm — so the refusal is on the count, not on the names.
     """
 
-# A skill directory name. Deliberately excludes `<`, so the `.agents/skills/<name>`
-# placeholders these documents write in prose are not read as a fourth skill.
-NAME = r"[a-z0-9][a-z0-9._-]*"
+# A skill directory name. `/` is IN IT because kendex matches a declared name as
+# a path prefix — `[skills."plugin/item"]` carves `.agents/skills/plugin/item/`,
+# and a pattern that stops at the first segment cannot spell what these lists
+# have to name for such a skill, so every one of them would read as drifted.
+# Deliberately excludes `<`, so the `.agents/skills/<name>` placeholders these
+# documents write in prose are not read as a further skill.
+NAME = r"[a-z0-9][a-z0-9._/-]*"
 
 # `.coderabbit.yaml`'s two register-held lists, which point in OPPOSITE
 # directions and so cannot share one pattern: `path_filters` names every skill

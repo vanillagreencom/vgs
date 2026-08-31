@@ -53,8 +53,8 @@ class RegisterError(Exception):
     """`kendex.toml` could not be read as a skill register."""
 
 
-def skill_sources(text: str) -> dict[str, str]:
-    """Every `[skills.<name>]` table mapped to its `source`.
+def skill_table(text: str) -> dict[str, object]:
+    """The `[skills]` table, or the sentence saying why it is not one.
 
     Only the `skills` table is read — `[agents.<name>]` carries a `source` key
     of its own, and reading it would put agent names in the skill set.
@@ -75,6 +75,12 @@ def skill_sources(text: str) -> dict[str, str]:
             f"owned set reads this, and an empty answer would silently narrow all "
             f"of them to nothing."
         )
+    return table
+
+
+def skill_sources(text: str) -> dict[str, str]:
+    """Every `[skills.<name>]` table mapped to its `source`."""
+    table = skill_table(text)
     sources = {
         name: str(row.get("source", "")) if isinstance(row, dict) else ""
         for name, row in table.items()
@@ -118,6 +124,31 @@ def rendered_names(text: str) -> tuple[str, ...]:
     )
 
 
+def switched_off(text: str) -> tuple[str, ...]:
+    """Skills the register declares and switches off, sorted.
+
+    `enabled` DEFAULTS TO TRUE, which is kendex's own reading — `ItemDecl` in
+    crates/core/src/manifest/mod.rs carries `#[serde(default = "default_true")]`
+    — so a row without the key is on and only an explicit `false` lands here.
+    Anything else `enabled` could hold is left on: this set only ever relaxes a
+    check, so a value kendex would refuse outright must not relax one here.
+
+    SWITCHING A SKILL OFF DOES NOT REMOVE ITS TREE. kendex renames the
+    declaration to `SKILL.md.disabled` and leaves the directory and every file
+    below it in the repository, so a disabled row keeps its place in both sets
+    above and in every scope derived from them — its prose is still here to be
+    ceilinged, and the bots still read it. The one thing that stops being true
+    of it is that `.agents/skills/<name>/SKILL.md` exists.
+    """
+    return tuple(
+        sorted(
+            name
+            for name, row in skill_table(text).items()
+            if isinstance(row, dict) and row.get("enabled", True) is False
+        )
+    )
+
+
 def register_text(manifest: Path = MANIFEST) -> str:
     """`kendex.toml`'s text, or a sentence saying why it could not be read.
 
@@ -140,9 +171,9 @@ def in_place_dirs(text: str | None = None) -> tuple[str, ...]:
     """Repo-relative directory of each in-place skill, sorted.
 
     THE DERIVED VALUE the guards use. `scripts/check-owned-skills.py` asserts
-    each one exists and carries a `SKILL.md`, so a derived path that names
-    nothing on disk is a named failure there rather than a silent narrowing in
-    every guard that globs it.
+    each one exists and carries a `SKILL.md` unless the row is switched off, so
+    a derived path that names nothing on disk is a named failure there rather
+    than a silent narrowing in every guard that globs it.
     """
     return tuple(
         f"{SKILLS_DIR}/{name}"
