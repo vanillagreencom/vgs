@@ -80,10 +80,11 @@
 # of list KEN-938 removed. A byte ceiling in check-doc-growth.py covers them
 # instead: three reference files that came out of project-skills/ with no size
 # gate at all got one, and the owned roots' glob widened from each tree's
-# SKILL.md to every markdown file under it, so the next reference file is
-# discovered and demands a ceiling of its own. The lines are those entries, that
-# glob, and the rationale this repo requires of every ceiling. No seam divides
-# them from the table they are entries in.
+# SKILL.md to every file under it, so the next file added to one — a
+# reference, a script, a template — is discovered and demands a ceiling of
+# its own. The lines are those entries, that glob, and the rationale this
+# repo requires of every ceiling. No seam divides them from the table they
+# are entries in.
 #
 # The three grants are majority code and the growth is five review rounds — 23
 # findings, then 12, then 6, then 12 — each asking for another rule, another

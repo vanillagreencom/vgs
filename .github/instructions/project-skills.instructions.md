@@ -19,7 +19,7 @@ plain invocation looks.
 
 The guards scope themselves: `scripts/check-doc-growth.py`,
 `scripts/check-section-pointers.py` and `scripts/check-naming.sh` read the
-register. Left by hand are a `CEILINGS` entry per markdown file and the
+register. Left by hand are a `CEILINGS` entry per file and the
 review-scope lists in `.coderabbit.yaml`, `.github/copilot-instructions.md` and
 `review-bots.md`, which `scripts/check-owned-skills.py` names while missing.
 Qodo is not among them — `.pr_agent.toml` has no path scoping at all, so it

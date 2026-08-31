@@ -191,13 +191,11 @@ CEILINGS: dict[str, int] = {
     # THE SAME SKILL'S REFERENCE FILES, which nothing capped between the move
     # and this entry. KEN-938 put them under `.agents/`, where the size
     # ratchet's `.agents/*` exclusion covers the whole tree as upstream-owned
-    # — its globs cross `/` — and the roots' glob below still asked only for
-    # each tree's SKILL.md, so three files that had been line-capped under
+    # — its globs cross `/` — so three files that had been line-capped under
     # project-skills/ came out of the move with no size gate of any kind. The
     # exclusion is right and stays: the excludes file takes no negation, so
-    # narrowing it means hand-listing skills again, which is the list this
-    # issue removed. These ceilings are the cover instead, and the glob below
-    # reaches every markdown file so the next reference file demands one too.
+    # narrowing it means hand-listing skills again, the list this issue
+    # removed. These ceilings are the cover, and the glob below finds the next.
     ".agents/skills/vshell-dev/references/plugin-development.md": 3_800,  # adopted at 3,436 B
     ".agents/skills/vshell-dev/references/qml-runtime.md": 2_200,  # adopted at 1,957 B
     ".agents/skills/vshell-dev/references/theme-engine.md": 1_300,  # adopted at 1,174 B
@@ -245,8 +243,8 @@ CEILINGS: dict[str, int] = {
     # scripts/check-owned-skills.py holds the bot configs to.
     # project-skills/README.md, which it replaces, was 1,259 B. 1,300 is the
     # adoption formula at that size: 1,152 plus ~10% is 1,267, rounded up to the
-    # next 100. Now 1,288 B, ~0.9% left, the checklist rewritten around the
-    # guards deriving their own scope and a ceiling due per markdown file.
+    # next 100. Now 1,279 B, ~1.6% left, the checklist rewritten around the
+    # guards deriving their own scope and a ceiling due per file.
     ".github/instructions/project-skills.instructions.md": 1_300,
     ".github/instructions/quickshell-qml.instructions.md": 1_700,  # adopted at 1,459 B
     ".github/instructions/themes.instructions.md": 700,  # adopted at 577 B
@@ -362,9 +360,10 @@ CEILINGS: dict[str, int] = {
 # `scripts/lib/kendex_skills.py` is why that cannot happen again, and
 # `scripts/check-owned-skills.py` asserts each derived root exists on disk.
 #
-# EVERY MARKDOWN FILE UNDER AN OWNED ROOT, not each tree's SKILL.md: the
-# reference files beside it are the same authored prose, and the size ratchet
-# cannot reach them. Their ceilings above say why.
+# EVERY FILE UNDER AN OWNED ROOT, never a file category. The ratchet's
+# `.agents/*` exclusion drops every descendant, so a category-shaped glob
+# leaves whatever it does not name — a script, a template — covered by
+# nothing. That hole reopened twice, once per category; a root is the seam.
 #
 # DERIVED ROOTS ARE STILL DECLARED ROOTS. The separation the paragraph above
 # insists on is between a root and the PATTERN under test, not between a root
@@ -379,7 +378,7 @@ try:
     WATCHED_SURFACES = (
         (".github/instructions", ".github/instructions/**/*.md"),
         ("docs/architecture", "docs/architecture/**/*.md"),
-    ) + tuple((root, f"{root}/**/*.md") for root in in_place_dirs())
+    ) + tuple((root, f"{root}/**/*") for root in in_place_dirs())
 except RegisterError as error:
     raise SystemExit(f"check-doc-growth: {error}") from error
 
@@ -622,9 +621,10 @@ def watched_glob_problems(
         )
 
     for base, pattern in surfaces:
-        discovered = {
-            path.relative_to(root).as_posix() for path in sorted(root.glob(pattern))
-        }
+        # FILES ONLY: the owned roots ask for every file, so the glob also
+        # yields the directories on the way down, which carry no ceiling.
+        matches = [path for path in sorted(root.glob(pattern)) if path.is_file()]
+        discovered = {path.relative_to(root).as_posix() for path in matches}
         # COLLECTION POINT 2, the PARTIAL half. "Did it match anything?" was
         # satisfied by the top-level files while a nested surface was invisible,
         # so the expected set is named instead: every ceilinged file living under
@@ -640,7 +640,7 @@ def watched_glob_problems(
         )
         if shortfall:
             problems.append(shortfall)
-        for path in sorted(root.glob(pattern)):
+        for path in matches:
             rel = path.relative_to(root).as_posix()
             if rel not in ceilinged:
                 size = path.stat().st_size
