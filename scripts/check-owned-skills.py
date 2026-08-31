@@ -27,9 +27,11 @@ eight holes that came from consumers re-deriving one definition — one reader
 makes divergence impossible by construction, and where a reader is impossible,
 one comparison makes it detectable at the moment it happens.
 
-BOTH DIRECTIONS ON DISK TOO. A registered skill with no tree is a scope every
-derived guard silently narrows to nothing; a tree with no row is a skill nothing
-classifies, which the bots then review or skip by accident.
+BOTH DIRECTIONS ON DISK TOO, and the absent direction splits by source: an
+in-place skill with no tree is a scope every derived guard silently narrows to
+nothing, a rendered one with no tree is an incomplete render a fresh clone
+inherits. A tree with no row is a skill nothing classifies, which the bots then
+review or skip by accident.
 
 WHAT THE CONTROLS COVER, exactly. `self_test()` runs on every invocation rather
 than behind a flag, and holds the register spellings, the pattern reads in both
@@ -102,15 +104,23 @@ class _Unlistable:
         raise PermissionError(13, "Permission denied")
 
 
-def tree_problems(root: Path, in_place: tuple[str, ...], registered: set[str]) -> list[str]:
+def tree_problems(
+    root: Path, in_place: tuple[str, ...], rendered: tuple[str, ...]
+) -> list[str]:
     """Both directions between the register and `.agents/skills/` on disk.
 
     Takes its root as an argument so the controls can drive it over a throwaway
     tree: asserted against the repo alone it could only show that today's
     directories still exist, which is what the copies it replaces also showed.
+
+    BOTH REGISTER SETS, each with its own sentence, because the absent tree of a
+    rendered skill and of an in-place one are different repairs and the earlier
+    shape of this arm read only `in_place` — a `source = "kendex"` row whose
+    tree went missing passed here and passed the clean fixture.
     """
     problems: list[str] = []
     skills = root / SKILLS_DIR
+    registered = set(in_place) | set(rendered)
     for name in in_place:
         if not (skills / name / "SKILL.md").is_file():
             problems.append(
@@ -119,6 +129,15 @@ def tree_problems(root: Path, in_place: tuple[str, ...], registered: set[str]) -
                 f"the owned set derives that path, so each one is now scanning a "
                 f"directory that does not exist and reporting nothing. Fix the row "
                 f"or restore the tree."
+            )
+    for name in rendered:
+        if not (skills / name / "SKILL.md").is_file():
+            problems.append(
+                f"kendex.toml registers {name} as render output, but "
+                f"{SKILLS_DIR}/{name}/SKILL.md is not there. The committed render is "
+                f"incomplete, so a fresh clone is missing a skill the harnesses read "
+                f"and no guard here scopes to. Restore the tree with `kendex refresh`, "
+                f"or drop the row."
             )
     present: list[str] = []
     if skills.is_dir():
@@ -163,7 +182,7 @@ def audit(root: Path, in_place: tuple[str, ...], rendered: tuple[str, ...]) -> l
     finding of each family, so an `extend` dropped here exits 0 where a case
     expects 1.
     """
-    problems = tree_problems(root, in_place, set(in_place) | set(rendered))
+    problems = tree_problems(root, in_place, rendered)
     problems.extend(config_problems(root, in_place, rendered))
     return problems
 
@@ -265,11 +284,21 @@ def self_test(root: Path) -> Controls:
         f"than the sentence naming it unchecked, so the operator gets a traceback "
         f"where every other unread surface gets a finding",
     )
-    unlistable = tree_problems(_Unlistable(), (), set())
+    unlistable = tree_problems(_Unlistable(), (), ())
     record(
         any("could not be listed" in problem for problem in unlistable),
         f"a render root that cannot be listed was not reported, so it reaches the "
         f"operator as a bare traceback naming no directory: {unlistable}",
+    )
+    # THE RENDERED DIRECTION, driven over a root that holds no tree at all. Its
+    # sentence must be the render's own: reported through the in-place one, an
+    # incomplete render sends the operator to fix a `source` row.
+    unrendered = tree_problems(root / "no-such-root", (), ("rendered",))
+    record(
+        any("committed render is incomplete" in problem for problem in unrendered),
+        f"a registered rendered skill with no SKILL.md on disk was not reported "
+        f"with the render's own sentence, so an incomplete render is either "
+        f"unreported or blamed on the register: {unrendered}",
     )
 
     # AND THE OTHER DIRECTION: a list that agrees with the register is accepted.

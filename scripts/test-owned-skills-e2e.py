@@ -106,7 +106,7 @@ def prose(
 def clean_root() -> dict[str, bytes | str]:
     """A root the guard must pass, derived from the register and its own tables."""
     tree: dict[str, bytes | str] = {"kendex.toml": REGISTER}
-    for name in IN_PLACE:
+    for name in IN_PLACE + RENDERED:
         tree[f"{check.SKILLS_DIR}/{name}/SKILL.md"] = f"# {name}\n"
     tree[CODERABBIT] = coderabbit()
     for rel, _what in PROSE_SURFACES:
@@ -273,10 +273,20 @@ def end_to_end_controls() -> list[str]:
             "has no `[skills.stray]` row",
         ),
         (
-            "with a registered skill whose tree is gone",
+            "with a registered in-place skill whose tree is gone",
             without(clean, f"{check.SKILLS_DIR}/{absent_skill}/SKILL.md"),
             1,
-            f"{check.SKILLS_DIR}/{absent_skill}/SKILL.md is not there",
+            f"{check.SKILLS_DIR}/{absent_skill}/SKILL.md is not there. Every guard",
+        ),
+        # THE RENDERED HALF, on its own root. Both absent-tree arms print the
+        # same "SKILL.md is not there" clause, so each case matches on what
+        # follows it — the repair — or a dropped arm passes for the other's
+        # report.
+        (
+            "with a registered rendered skill whose tree is gone",
+            without(clean, f"{check.SKILLS_DIR}/{RENDERED[0]}/SKILL.md"),
+            1,
+            f"{check.SKILLS_DIR}/{RENDERED[0]}/SKILL.md is not there. The committed",
         ),
         (
             "with the render root moved away entirely",
