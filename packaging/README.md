@@ -339,4 +339,4 @@ sudo emaint sync -a
 sudo emerge --ask gui-apps/vgs-shell
 ```
 
-Maintainer recipes remain in `arch/`, `fedora/`, `debian/`, `ubuntu/`, `gentoo/`, and `void/`. Guix needs a packaged Quickshell dependency before VGS can publish a truthful channel. Release procedure: `project-skills/skills/vgs-release/SKILL.md`.
+Maintainer recipes remain in `arch/`, `fedora/`, `debian/`, `ubuntu/`, `gentoo/`, and `void/`. Guix needs a packaged Quickshell dependency before VGS can publish a truthful channel. Release procedure: `.agents/skills/vgs-release/SKILL.md`.

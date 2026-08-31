@@ -124,10 +124,24 @@ jobs:
       - name: Instruction-surface growth ratchet
         run: scripts/check-doc-growth.py
 
+      # `.agents/skills/` holds render output and this repo's own skills side by
+      # side, and only kendex.toml tells them apart. The guards read it; the two
+      # bot configs and review-bots.md cannot, so this holds their lists to it.
+      # KEN-938 copied the names instead, and a fourth in-place skill then swept
+      # past five surfaces with a dead pointer and no ceiling.
+      - name: Owned-skill register
+        run: scripts/check-owned-skills.py
+      # The guard's own arms are controlled in-process; its WIRING is not, and
+      # cannot be — on a clean tree every control passes, so the gate that reads
+      # them is invisible from inside. This runs the guard as a process, one
+      # throwaway root per arm.
+      - name: Owned-skill register controls
+        run: scripts/test-owned-skills-e2e.py
+
       # Every `<doc>.md § <section>` pointer must name a heading that exists.
       # VGS-124's dead pointers were found by hand; VGS-125 merges
       # docs/architecture/ 13 files into 4, invalidating pointers across bin/,
-      # quickshell/, project-skills/ and docs/decisions/ at once (VGS-150). The
+      # quickshell/, the project skills and docs/decisions/ at once (VGS-150). The
       # controls run beside the guard, which has no inline self-test.
       - name: Doc section pointers
         run: scripts/check-section-pointers.py

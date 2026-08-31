@@ -60,6 +60,54 @@
 # the cap grows the files that wire the splits together, so the cap stops
 # rewarding the split it asked for.
 #
+# KEN-938 ADDS ONE EXCLUSION AND SEVEN RAISES, in the same shape. The exclusion
+# is `.coderabbit.yaml`, which reached 400 of a 400-line threshold: its skill
+# lists grow by one line per skill UPSTREAM ships, which this repo does not
+# author and cannot decline, and `scripts/check-owned-skills.py` now makes the
+# missing line a CI failure — so the next `kendex refresh` that adds a skill
+# would fail twice, once for the missing exclusion and once for the line that
+# fixes it, with the printed remedy (split at a concept seam) unavailable to a
+# single-file bot config a vendor's schema owns. That is the `.agents/*`
+# carve-out one file over: a line count tracking upstream inventory rather than
+# authored complexity.
+#
+# THE RAISES, derived from `git diff origin/main...HEAD --
+# tools/size-ratchet-baseline.tsv` rather than retyped from an earlier note.
+# (`kendex.toml` moves in that diff too, 1082 -> 1078, downward, so it is not a
+# raise and is not listed.)
+#
+#   RAISED    .github/workflows/ci.yml                457 ->  471
+#   RAISED    scripts/validate                       1056 -> 1061
+#   RAISED    kendex.settings.toml                    425 ->  431
+#   RAISED    scripts/check-doc-growth.py             895 ->  955
+#   RAISED    scripts/check-section-pointers.py       563 ->  601
+#   RAISED    scripts/test-section-pointers.py        458 ->  489
+#   RAISED    scripts/test-section-pointers-e2e.py    434 ->  496
+#
+# THE FIRST TWO ARE WIRING, this header's named cost of a control script paid
+# again: one CI step and one manifest row each for the owned-skill register
+# guard `scripts/check-owned-skills.py` and its process-level control suite
+# `scripts/test-owned-skills-e2e.py`. kendex.settings.toml is the move landing
+# in a setting — REVIEW_GATE_CARRY_FORWARD_EXCLUDE swaps `project-skills/*` for
+# `.agents/*`, and this repo requires a rationale beside every entry there.
+#
+# check-doc-growth.py is the `.agents/*` row below reading back on the move.
+# That row excludes the skills this repo now owns along with the render it was
+# written for, and this list takes no negation, so narrowing it means naming the
+# rendered skills by hand — the kind of list KEN-938 removed. Byte ceilings
+# cover them instead: three reference files that came out of project-skills/
+# with no size gate at all got one, and the owned roots' glob widened from each
+# tree's SKILL.md to every file under it, so the next file added to one — a
+# reference, a script, a template — is discovered and demands a ceiling of its
+# own. No seam divides those entries from the table they are entries in.
+#
+# THE LAST THREE SHARE ONE REASON. `.agents/` is a SKIP_ROOT, so the move would
+# have stopped the pointer sweep reading the skills this repo authors; the guard
+# carves them back out by reading the register, and its unreadable-blob arm now
+# asks that question through the same predicate instead of spelling it a second
+# way. The two suites are those arms' controls, one case per shape, and the e2e
+# one pays ten lines a case because every case there is a whole repository.
+#
 # The three grants are majority code and the growth is five review rounds — 23
 # findings, then 12, then 6, then 12 — each asking for another rule, another
 # arm, or another reason written down. The `<doc>.md § <section>` pointer guard's
@@ -93,6 +141,7 @@ themes/*/colors.toml	theme-package palette data, not source
 themes/*/preview.png	theme-package preview image, not source
 themes/catalog.json	generated theme catalog index, regenerated from packages
 .agents/*	vendored kendex install, upstream-owned
+.coderabbit.yaml	skill path lists grow one line per UPSTREAM-shipped skill; check-owned-skills.py makes the line mandatory
 .claude/hooks/block-repo-copy.sh	kendex-rendered hook copy, 511 lines, source owned upstream
 .codex/hooks/block-repo-copy.sh	kendex-rendered hook copy, 511 lines, source owned upstream
 .pi/kendex/hooks/block-repo-copy.sh	kendex-rendered hook copy, 511 lines, source owned upstream

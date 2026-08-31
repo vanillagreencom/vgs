@@ -111,9 +111,29 @@ reviews:
   path_filters:
     # Harness render: `kendex refresh` output, owned upstream in
     # vanillagreencom/kendex. A defect here is fixed at the source and
-    # re-rendered, so a review comment on these paths cannot be acted on
-    # in this repo.
-    - "!.agents/**"
+    # re-rendered, so a review comment on these paths cannot be acted on here.
+    # EXCLUSION-ONLY (a positive entry flips this into an allowlist), and plain
+    # globs only (the schema feeds these same patterns to `git sparse-checkout`).
+    # So: every `.agents/skills/<name>` `kendex.toml` does not mark `in-place`.
+    # `scripts/check-owned-skills.py` holds this list and the in-place one below
+    # to those rows — unheld, the next refresh renders an unexcluded skill into
+    # review scope, silently.
+    - "!.agents/skills/code-quality/**"
+    - "!.agents/skills/decider/**"
+    - "!.agents/skills/deep-research/**"
+    - "!.agents/skills/dev/**"
+    - "!.agents/skills/github/**"
+    - "!.agents/skills/growth-guards/**"
+    - "!.agents/skills/harness-ci/**"
+    - "!.agents/skills/linear/**"
+    - "!.agents/skills/orch/**"
+    - "!.agents/skills/preflight/**"
+    - "!.agents/skills/project-management/**"
+    - "!.agents/skills/reviewer/**"
+    - "!.agents/skills/review-gate/**"
+    - "!.agents/skills/second-opinion/**"
+    - "!.agents/skills/size-ratchet/**"
+    - "!.agents/skills/worktree/**"
     - "!.claude/**"
     - "!.codex/**"
     - "!.opencode/**"
@@ -262,7 +282,8 @@ reviews:
         is exactly `README.md`, `packaging/README.md` (which owns per-channel
         packaging detail) and `packaging/ubuntu/README.md`.
         `docs/architecture/**` are agent reference docs; `AGENTS.md` and
-        `project-skills/README.md` are process; `AGENTS.local.md` is
+        `.github/instructions/project-skills.instructions.md` are process;
+        `AGENTS.local.md` is
         AGENTS.md's machine-local companion, untracked by design, so a PR
         never contains it.
 
@@ -293,6 +314,16 @@ reviews:
         `.env.local`, which is gitignored. Do not flag values here as leaked
         secrets, and do not ask for these options to be documented in
         `README.md` — they are documented inline in the file itself.
+
+    - path: ".agents/skills/{vgs-distro-publish,vgs-release,vshell-dev}/**"
+      instructions: >-
+        This repo's own agent skills, declared `source = "in-place"` in
+        `kendex.toml` — project files, not `kendex refresh` output, so review
+        them like any other. Every other `.agents/skills/<name>` IS render
+        output and is filtered out above. A claim added here is executed
+        literally by agents, so check it against the code it describes; a
+        release or publish step named here must match `scripts/` and
+        `packaging/`.
 
     - path: ".github/workflows/**"
       instructions: >-
@@ -356,7 +387,7 @@ knowledge_base:
     filePatterns:
       - "AGENTS.md"
       - "docs/architecture/**"
-      - "project-skills/vshell-dev/**"
+      - ".agents/skills/vshell-dev/**"
   # Linear is this repo's tracker (team vg-shell, identifiers VGS-<n>).
   linear:
     usage: enabled

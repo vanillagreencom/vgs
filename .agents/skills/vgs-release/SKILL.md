@@ -29,4 +29,4 @@ description: Cut and publish a VGS release across GitHub and every maintained in
 8. Add failed or unavailable channels to release notes; do not silently skip them.
 9. Verify README commands against public URLs.
 
-Publishing per channel: `project-skills/skills/vgs-distro-publish/SKILL.md`.
+Publishing per channel: `.agents/skills/vgs-distro-publish/SKILL.md`.

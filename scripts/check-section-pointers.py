@@ -6,7 +6,7 @@ with them; two more dangling citations under `docs/architecture/` were caught
 only because a reviewer read files the PR did not touch. VGS-125 merges
 `docs/architecture/` from thirteen files into four, renaming or removing the
 target of every architecture-doc pointer in `bin/vshell-helper`,
-`quickshell/vshell/Widgets/`, `project-skills/` and `docs/decisions/` — that
+`quickshell/vshell/Widgets/`, the project skills and `docs/decisions/` — that
 consolidation is the event this check exists to survive, and without it four PRs
 again rely on a reviewer noticing across files they are not reading. Ordinary
 link checkers do not help: `#slug` links they resolve, and this shape is not one.
@@ -14,9 +14,9 @@ link checkers do not help: `#slug` links they resolve, and this shape is not one
 AGENTS.md is NOT in that list: it names the `docs/architecture/` DIRECTORY, and
 a bare directory reference is not a pointer — still a reviewer's job.
 
-IT JUDGES THE INDEX, not the working tree — `scripts/lib/tracked_blobs.py` says
-why. `git add` a pointer fix before re-running, or this reports on bytes you
-have not staged. What CI sees and what a commit would contain are then the same.
+THE SWEEP JUDGES THE INDEX, not the working tree — `scripts/lib/tracked_blobs.py`
+says why. `git add` a pointer fix before re-running, or this reports on unstaged
+bytes. Its SCOPE is the exception, and OWNED_ROOTS below says why that is safe.
 
 The grammar, the wrap handling and the matching rule — including what the rule
 deliberately does not prove — are in `scripts/lib/section_pointers.py`. This
@@ -60,6 +60,7 @@ from typing import NamedTuple
 
 sys.path.insert(0, str(Path(__file__).resolve().parent / "lib"))
 from collected import members_missing, nothing_collected  # noqa: E402
+from kendex_skills import RegisterError, in_place_dirs  # noqa: E402
 from prose_blocks import fence_left_open, headings, normalized_words  # noqa: E402
 from tracked_blobs import REGULAR_MODES, Entry, blob_texts, tracked_entries  # noqa: E402
 from section_pointers import (  # noqa: E402
@@ -79,7 +80,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 HISTORICAL_SECTIONS = {
     ("scripts/check-doc-growth.py", "AGENTS.md", "Layout"): (
         "its ceilings rationale records that VGS-124 moved this section's "
-        "path/purpose table into project-skills/skills/vshell-dev/SKILL.md"
+        "path/purpose table into .agents/skills/vshell-dev/SKILL.md"
     ),
     (
         "scripts/check-doc-growth.py",
@@ -129,7 +130,35 @@ SKIP_ROOTS = (
     "themes/",
     "docs/media/",
 )
-SELECTOR = "`git ls-files` minus " + ", ".join(SKIP_ROOTS)
+
+# The carve-out from a skipped root, because a prefix cannot express "vendored
+# except here". KEN-938 moved the three VGS-authored skills under `.agents/`,
+# where `.agents/` above would have stopped reading their pointers — and they
+# carry the shape this guard exists for, marks at AGENTS.md and at
+# docs/architecture/. They are ours to edit, so they are ours to keep correct.
+#
+# READ FROM THE REGISTER, never copied from it: `kendex.toml`'s
+# `source = "in-place"` rows are what makes a tree under `.agents/` ours, and
+# `scripts/lib/kendex_skills.py` is their only reader. A hand-kept copy here
+# went stale the first time it was tested — a fourth in-place skill with a dead
+# pointer inside it swept clean. Both ways a copy could stop meaning anything
+# are now gone with it: a derived root always starts with `.agents/`, a SKIP_ROOT,
+# and `scripts/check-owned-skills.py` fails when a registered skill has no
+# `SKILL.md` on disk. That guard is also why THIS SCOPE MAY READ THE WORKING TREE
+# while the sweep reads the index: an unstaged row dropped from the register
+# narrows the roots here, and leaves behind a tree it fails by name over.
+#
+# A REGISTER THIS CANNOT READ IS A REFUSAL, never an empty carve-out that sweeps
+# past every tree under `.agents/`: `SystemExit` with a sentence, not a traceback.
+try:
+    OWNED_ROOTS = tuple(f"{root}/" for root in in_place_dirs())
+except RegisterError as error:
+    raise SystemExit(f"check-section-pointers: {error}") from error
+SELECTOR = (
+    "`git ls-files` minus "
+    + ", ".join(SKIP_ROOTS)
+    + " plus " + ", ".join(OWNED_ROOTS)
+)
 
 # Files whose absence means the sweep narrowed rather than that the repo
 # changed: one per surface class. They double as the heading-parser anchors,
@@ -263,7 +292,9 @@ def is_citer(rel: str) -> bool:
     the other silently drops a file from the sweep. The contrast the docstring
     below draws only holds if each half is named in one place.
     """
-    return not rel.startswith(SKIP_ROOTS) and rel not in FIXTURE_FILES
+    if rel in FIXTURE_FILES:
+        return False
+    return rel.startswith(OWNED_ROOTS) or not rel.startswith(SKIP_ROOTS)
 
 
 class Sweep(NamedTuple):
@@ -365,13 +396,20 @@ def unreadable_problems(undecodable: dict[str, str]) -> list[str]:
     is otherwise blamed on its CITER, the wrong file to send anyone to. Any other
     undecodable blob is a binary, the intended skip — and so is one under a
     SKIP_ROOT, a vendored encoding not being ours to fix.
+
+    FIRST-PARTY IS `is_citer`, THE SAME PREDICATE THE SWEEP USES, and that is
+    the fix for a hole this arm shipped with: spelling the question a second way
+    as `not rel.startswith(SKIP_ROOTS)` left an unreadable blob under an owned
+    skill tree dropped from `files` by the sweep AND skipped here, so the guard
+    exited clean on a first-party document it could not read. Two spellings of
+    one question is how a carve-out reaches one arm and not the other.
     """
     return [
         f"{rel} is a tracked markdown file whose blob is {reason}, so none of its "
         f"headings could be parsed and every pointer into it is unresolvable. Fix "
         f"the file's encoding — this is not a pointer defect."
         for rel, reason in sorted(undecodable.items())
-        if rel.endswith(".md") and not rel.startswith(SKIP_ROOTS)
+        if rel.endswith(".md") and is_citer(rel)
     ]
 
 

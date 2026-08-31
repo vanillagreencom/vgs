@@ -5,25 +5,59 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$repo_root"
 
 pattern='dank|DANK|Dank|Dms|DMS|dms|Aether|aether|DankMaterialShell|danklinux'
-candidate_paths=(
-  README.md
-  quickshell/vshell
-  config/vshell
-  bin
-  backend
-  systemd
-  themes
-  AGENTS.md
-  project-skills
-  docs/architecture
-)
 
-# Some paths (e.g. backend/) only exist once their phase lands; skip absent ones
-# so the check works during incremental rollout.
+# This repo's own skills, READ from `kendex.toml`'s `source = "in-place"` rows
+# rather than copied out of them: the rest of `.agents/` is kendex render,
+# upstream-owned, and a finding there is not fixable here. A copy of the three
+# names lived here for one PR and was already wrong — a fourth in-place skill
+# went unscanned with this check green. `scripts/lib/kendex_skills.py` is the
+# only reader, and it refuses — with its own sentence, on stderr — rather than
+# yielding an empty list. A register naming no in-place skill therefore arrives
+# here as a non-zero exit, so there is no empty-output arm to write.
+#
+# NOT `mapfile < <(...)`: process substitution's exit status is unreachable, so
+# a reader that failed would leave `skill_paths` empty and this check green with
+# every skill unscanned — the fail-open this whole derivation exists to close.
+if ! skills_raw="$(python3 scripts/lib/kendex_skills.py)"; then
+  printf 'check-naming: kendex.toml could not be read, so no skill tree was scanned.\n' >&2
+  exit 1
+fi
+mapfile -t skill_paths <<< "$skills_raw"
+
+# EVERY DECLARED PATH MUST EXIST. This used to drop absent ones silently, for an
+# incremental rollout that has since landed — all of these are here today. Under
+# one broad root that silence was survivable; per-skill entries make it a
+# per-skill fail-open, and this check is the one a rename walks past: a typo'd or
+# renamed entry narrows the scan and still prints the success line. So an absent
+# path is a failure naming it, and a path genuinely phasing in is added here in
+# the PR that creates it, not covered by a blanket skip.
+missing=()
 paths=()
-for p in "${candidate_paths[@]}"; do
-  [[ -e "$p" ]] && paths+=("$p")
+for p in \
+  README.md \
+  quickshell/vshell \
+  config/vshell \
+  bin \
+  backend \
+  systemd \
+  themes \
+  AGENTS.md \
+  "${skill_paths[@]}" \
+  docs/architecture
+do
+  if [[ -e "$p" ]]; then
+    paths+=("$p")
+  else
+    missing+=("$p")
+  fi
 done
+
+if (( ${#missing[@]} )); then
+  printf 'check-naming: these scanned paths do not exist, so they were NOT scanned\n' >&2
+  printf '  - %s\n' "${missing[@]}" >&2
+  printf 'A renamed or removed path updates this list in the same PR; a skill path comes from kendex.toml.\n' >&2
+  exit 1
+fi
 
 # themes/*/apps/* are curated files imported verbatim from omarchy; they may
 # reference third-party plugins (e.g. the aether.nvim colorscheme) by name.
