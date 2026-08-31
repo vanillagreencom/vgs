@@ -64,30 +64,43 @@ def coderabbit(
     filters: tuple[str, ...] = RENDERED,
     instructed: tuple[str, ...] = IN_PLACE,
     curated: tuple[str, ...] = (IN_PLACE[0],),
+    stale_instructed: tuple[str, ...] | None = None,
 ) -> str:
     """A `.coderabbit.yaml` the guard must accept, built from the register.
 
     All three skill lists in one fixture, so a case emptying one proves that
     list's arm rather than a file the guard could not read at all.
+    `stale_instructed` writes a SECOND project-files entry, what a rename that
+    updated one entry and left the other beside it leaves on disk.
     """
     lines = ["reviews:", "  path_filters:"]
     lines += [f'    - "!{check.SKILLS_DIR}/{name}/**"' for name in filters]
     lines += ["  path_instructions:"]
-    if instructed:
-        lines += [f'    - path: "{check.SKILLS_DIR}/{{{",".join(instructed)}}}/**"']
+    for entry in (instructed, stale_instructed):
+        if not entry:
+            continue
+        lines += [f'    - path: "{check.SKILLS_DIR}/{{{",".join(entry)}}}/**"']
         lines += ["      instructions: >-", "        project files, review them"]
     lines += ["knowledge_base:", "  code_guidelines:", "    filePatterns:"]
     lines += [f'      - "{check.SKILLS_DIR}/{name}/**"' for name in curated]
     return "\n".join(lines) + "\n"
 
 
-def prose(names: tuple[str, ...] = IN_PLACE) -> str:
-    """A prose surface whose marker pair names exactly `names`."""
-    globs = ", ".join(f"`{check.SKILLS_DIR}/{name}/**`" for name in names)
-    return (
-        "# surface\n\nThe exception is this repo's own skills:\n"
-        f"<!-- in-place-skills -->{globs}<!-- /in-place-skills -->\n"
-    )
+def prose(
+    names: tuple[str, ...] = IN_PLACE, stale: tuple[str, ...] | None = None
+) -> str:
+    """A prose surface whose marker pair names exactly `names`.
+
+    `stale` writes a SECOND pair below it, the same leftover shape
+    `stale_instructed` writes into `.coderabbit.yaml`.
+    """
+    text = "# surface\n\nThe exception is this repo's own skills:\n"
+    for pair in (names, stale):
+        if pair is None:
+            continue
+        globs = ", ".join(f"`{check.SKILLS_DIR}/{name}/**`" for name in pair)
+        text += f"<!-- in-place-skills -->{globs}<!-- /in-place-skills -->\n"
+    return text
 
 
 def clean_root() -> dict[str, bytes | str]:
@@ -182,6 +195,23 @@ def end_to_end_controls() -> list[str]:
             1,
             f"{CODERABBIT} — the `reviews.path_instructions` entry",
         ),
+        # A SECOND ENTRY THAT UNIONS TO THE REGISTER, which is the only shape
+        # the refusal on the count is for: merged, the two agree with the
+        # register and every other arm reports nothing, so a root that reaches
+        # rc=1 here reached it through the refusal and through nothing else.
+        (
+            "with a stale path_instructions entry beside the current one",
+            dict(
+                clean,
+                **{
+                    CODERABBIT: coderabbit(
+                        instructed=IN_PLACE[:1], stale_instructed=IN_PLACE[1:]
+                    )
+                },
+            ),
+            1,
+            "carries 2 `reviews.path_instructions` entries",
+        ),
         (
             "with a code_guidelines path naming an unregistered skill",
             dict(clean, **{CODERABBIT: coderabbit(curated=("gone-away",))}),
@@ -224,6 +254,15 @@ def end_to_end_controls() -> list[str]:
                 dict(clean, **{rel: b"# surface\n\xff\n"}),
                 1,
                 f"{rel} could not be read",
+            ),
+            # Subset-shaped for the reason the `.coderabbit.yaml` case above is,
+            # and only this surface carries the second pair, so the sentence
+            # names the refusal and the root names the surface.
+            (
+                f"with a stale marker pair beside {rel}'s current one",
+                dict(clean, **{rel: prose(names=IN_PLACE[:1], stale=IN_PLACE[1:])}),
+                1,
+                "carries 2 `in-place-skills` marker pairs",
             ),
         ]
     cases += [

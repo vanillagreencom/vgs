@@ -32,12 +32,13 @@ derived guard silently narrows to nothing; a tree with no row is a skill nothing
 classifies, which the bots then review or skip by accident.
 
 WHAT THE CONTROLS COVER, exactly. `self_test()` runs on every invocation rather
-than behind a flag, and holds the shapes no throwaway root can reach: the
-register spellings, the pattern reads in both directions, and the two surface
-reads that need a path rather than a tree. Everything a real root can produce
-is driven end to end instead, because a control set cannot observe its own
-wiring — on a healthy tree every control passes, so dropping the gate that
-reads them changes nothing an in-process assertion can see.
+than behind a flag, and holds the register spellings, the pattern reads in both
+directions, and the two surface reads that need a path rather than a tree. Two
+of its shapes have no throwaway root — an unlistable render root, and a list
+naming a skill the register does not. The rest is driven end to end as well,
+because a control set cannot observe its own wiring — on a healthy tree every
+control passes, so dropping the gate that reads them changes nothing an
+in-process assertion can see.
 `scripts/test-owned-skills-e2e.py` owns that half — it runs this file as a
 PROCESS over throwaway roots, one per arm, asserting the exit status and the
 arm's own sentence, pins `PROSE_SURFACES` and the ok line's list count against
@@ -250,8 +251,7 @@ def self_test(root: Path) -> Controls:
 
     # THE TWO SURFACE READS THAT NEED A PATH, not a tree. Both are the shape
     # this guard exists for — a surface going unread — so neither may arrive as
-    # a traceback, and neither is reachable from a fixture root that can only
-    # withhold a file.
+    # a traceback.
     _, absent = read_surface(root / "no-such-root", CODERABBIT, "w")
     record(
         absent is not None and "is not there" in absent,
@@ -327,7 +327,7 @@ def self_test(root: Path) -> Controls:
     )
 
     # THE GATE, which nothing above can reach: on a healthy tree every control
-    # passes, so a `run()` that stopped reading these failures is invisible from
+    # passes, so a `main()` that stopped reading these failures is invisible from
     # in here. `scripts/test-owned-skills-e2e.py` sets this on an otherwise clean
     # root and asserts the guard exits 1 naming the control.
     if os.environ.get(TRIPWIRE):
