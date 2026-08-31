@@ -61,8 +61,9 @@ sandbox-mode values there belong upstream; an in-repo edit is overwritten.
 Doc surfaces are distinct and deliberately non-overlapping: the product-facing
 set is exactly `README.md`, `packaging/README.md` (which owns per-channel
 packaging detail) and `packaging/ubuntu/README.md`. `docs/architecture/**` are
-agent reference docs, `AGENTS.md` and `project-skills/README.md` are agent
-process instruction, and `AGENTS.local.md` is AGENTS.md's machine-local
+agent reference docs, `AGENTS.md` and
+`.github/instructions/project-skills.instructions.md` are agent process
+instruction, and `AGENTS.local.md` is AGENTS.md's machine-local
 companion — untracked by design, so a PR never contains it. Do not request
 cross-posting between them.
 

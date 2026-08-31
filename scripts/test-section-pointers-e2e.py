@@ -32,6 +32,7 @@ import tempfile
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
+REPO_ROOT = HERE.parent
 sys.path.insert(0, str(HERE / "lib"))
 import tracked_blobs  # noqa: E402
 from section_pointers import SECTION_MARK  # noqa: E402
@@ -91,6 +92,11 @@ def clean_tree(*, with_pointers: bool = True) -> dict[str, bytes | str]:
         tree[citer] = f'{tree[citer]}# recorded: `{target}` {SECTION_MARK} "{name}" gone\n'
     for rel in check.FIXTURE_FILES:
         tree.setdefault(rel, "")
+    # One document under each OWNED_ROOT, derived the same way: the carve-out
+    # arm fails on a tree with none, so a root added there fails here until
+    # this tree covers it.
+    for root in check.OWNED_ROOTS:
+        tree.setdefault(f"{root}SKILL.md", f"# {root}\n\n## Live section\n")
     return tree
 
 
@@ -163,6 +169,17 @@ def end_to_end_controls() -> list[str]:
         (
             "with a markdown blob that is not text",
             dict(clean, **{"x.md": b"# \xff\n"}), 1, "none of its headings could be parsed",
+        ),
+        (
+            # THE SAME BLOB INSIDE AN OWNED TREE. `is_citer` carves those out of
+            # a skipped root, and this arm used to ask the question its own way
+            # — so the sweep dropped the file and the arm skipped it, and the
+            # guard reported clean on a first-party document it could not read.
+            "with an unreadable markdown blob inside an owned skill tree",
+            dict(clean, **{f"{check.OWNED_ROOTS[0]}notes.md": b"# \xff\n"})
+            if check.OWNED_ROOTS
+            else clean,
+            1, "none of its headings could be parsed",
         ),
         ("with a binary blob that is not markdown", dict(clean, **{"x.png": b"\x89\xff"}), 0, ""),
         (
@@ -247,6 +264,20 @@ def end_to_end_controls() -> list[str]:
                 f"some other arm and proves nothing about the one it names: {output}"
             )
 
+    # THE REGISTER IS A PREREQUISITE, NOT AN INPUT WHOSE ABSENCE MEANS "NONE".
+    # Every skill root the guard carves out of `.agents/` comes from
+    # `kendex.toml`; without it the sweep would skip that whole tree and the ok
+    # line would print. Asserted on the diagnostic, since rc=1 alone is what a
+    # traceback also gives.
+    status, output = run_guard(clean, register=False)
+    if status == 0 or "yielded no" not in output and "could not be read" not in output:
+        failures.append(
+            f"the guard exited {status} on a repo with no kendex.toml, and without "
+            f"naming the unreadable register — with no `source = in-place` rows to "
+            f"read it carves nothing out of `.agents/` and sweeps past every owned "
+            f"skill tree: {output}"
+        )
+
     # THE GUARD JUDGES TRACKED BLOBS, NOT THE WORKING TREE, and each half of
     # that has its own fixture. Both are paired against `dirty` above — the same
     # dead pointer, tracked, asserted rc=1 — so neither can pass by being inert.
@@ -316,6 +347,17 @@ def end_to_end_controls() -> list[str]:
     # heading passes, and a dead pointer INSIDE that tree is not read at all.
     vendored = check.SKIP_ROOTS[0]
     anchor = check.SWEEP_ANCHORS[0]
+    # NAMED, NOT AN IndexError. OWNED_ROOTS is derived from kendex.toml's
+    # `source = "in-place"` rows, so an empty one means the register stopped
+    # naming any skill as this repo's — a finding, and indexing it for the rows
+    # below would report that as a traceback with no sentence in it.
+    if not check.OWNED_ROOTS:
+        return failures + [
+            "OWNED_ROOTS is empty, so no tree under a skipped root is read for "
+            "pointers and the rows below cannot run — check kendex.toml's "
+            "`source = \"in-place\"` rows"
+        ]
+    owned = check.OWNED_ROOTS[0]
     for case, tree, want in (
         (
             "a pointer AT a vendored document",
@@ -331,6 +373,17 @@ def end_to_end_controls() -> list[str]:
                 f"{vendored}vendor.md": f"# Vendor\n\n`{anchor}` {SECTION_MARK} Gone section.\n",
             }),
             0,
+        ),
+        (
+            # THE CARVE-OUT'S OTHER HALF, paired with the row above because a
+            # prefix rule that stopped carving would leave that one passing on
+            # its own. Both trees sit under the same skip root; only this one is
+            # named in OWNED_ROOTS, and it is ours to keep correct.
+            "a dead pointer INSIDE an owned tree under a skipped root",
+            dict(clean, **{
+                f"{owned}note.md": f"# Owned\n\n`{anchor}` {SECTION_MARK} Gone section.\n",
+            }),
+            1,
         ),
         (
             "a pointer at a vendored document that does NOT carry the section",
@@ -357,6 +410,7 @@ def run_guard(
     symlinks: dict[str, str] | None = None,
     outside: str | None = None,
     after_add: dict[str, str] | None = None,
+    register: bool = True,
 ) -> tuple[int, str]:
     """Run the real check as a PROCESS over a throwaway repo, returning (rc, output).
 
@@ -408,6 +462,14 @@ def run_guard(
         # does not sweep its own source: these files carry real pointers into
         # this repo's docs, none of which exist in a fixture tree.
         shutil.copytree(HERE, root / "scripts", dirs_exist_ok=True)
+        # AND THE REGISTER BESIDE THEM, untracked for the same reason. OWNED_ROOTS
+        # is read from `kendex.toml`, so the fixture repo needs this repo's own
+        # copy for the carve-out under test to be the one the trees are built
+        # from. `register=False` withholds it, which is its own control: a guard
+        # that cannot read the register must refuse rather than sweep with no
+        # carve-out at all.
+        if register:
+            shutil.copy(REPO_ROOT / "kendex.toml", root / "kendex.toml")
         done = subprocess.run(
             [sys.executable, str(root / "scripts" / "check-section-pointers.py")],
             capture_output=True,

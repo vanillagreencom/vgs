@@ -54,6 +54,12 @@ changes nothing:
   go upstream with `kendex report`; a local edit is erased by the next render.
   This covers the review-gate and size-ratchet engines the gate and CI run —
   they live in the render, not in this repo's review surface.
+  The exception is this repo's own skills, which `kendex.toml` declares
+  `source = "in-place"` and nothing renders over:
+  <!-- in-place-skills -->`.agents/skills/vgs-distro-publish/**`,
+  `.agents/skills/vgs-release/**` and
+  `.agents/skills/vshell-dev/**`<!-- /in-place-skills -->. Review those
+  like any project file.
 
 ## Risk classes (route depth by path, not uniformly)
 
@@ -63,8 +69,9 @@ does NOT apply** (a hardening finding on these paths is a real finding,
 not a suggestion):
 
 - Gate/CI machinery: `.github/workflows/` (the review-gate engine itself
-  lives in the render under `.agents/**`, which is out of review scope —
-  § Accepted residual classes), everything under `scripts/` (weakening
+  lives in the render under `.agents/skills/review-gate/**`, which is out of
+  review scope — § Accepted residual classes), everything under `scripts/`
+  (weakening
   anything `ci-ok` runs weakens merge evidence identically),
   `kendex.settings.toml` (`REVIEW_GATE_*`
   / `PR_REVIEW_*` keys), and the policy inputs themselves — this file,

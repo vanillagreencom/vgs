@@ -114,6 +114,9 @@ added by review after surviving unnoticed.
                         like the deliberate citation   (+)
                         both HISTORICAL_SECTIONS staleness arms
                         the FIXTURE_FILES staleness arm
+                        `unreadable_problems` asking `not startswith(SKIP_ROOTS)`
+                        instead of `is_citer`, which drops an unreadable blob
+                        under an owned skill tree from both arms at once   (+)
                         nothing_collected dropped from the heading arm
                         the GRAMMAR_SPELLINGS anchor dropped
                         TARGET_ANCHORS reduced to one member   (+)
@@ -257,6 +260,34 @@ def collection_controls() -> list[str]:
         failures.append(
             "a FIXTURE_FILES entry naming no tracked file was accepted, so an "
             "exclusion outlives its file and exempts whatever takes that path next"
+        )
+
+    # ONE PREDICATE, BOTH ARMS. The sweep drops what `is_citer` refuses, so an
+    # arm asking the question a second way answers about a different set: a
+    # non-UTF-8 blob under an owned skill tree was dropped from `files` by
+    # `is_citer` AND skipped by `unreadable_problems`, and the guard exited
+    # clean on a first-party document it could not read. Asserted at the message
+    # level, not on emptiness, so a report about some other file cannot stand in.
+    owned_blob = f"{check.OWNED_ROOTS[0]}SKILL.md" if check.OWNED_ROOTS else None
+    if owned_blob is None:
+        failures.append(
+            "OWNED_ROOTS is empty, so the carve-out this control exercises covers "
+            "nothing and no tree under a skipped root is read for pointers — check "
+            "kendex.toml's `source = \"in-place\"` rows"
+        )
+    elif not any(
+        owned_blob in problem
+        for problem in check.unreadable_problems({owned_blob: "not UTF-8"})
+    ):
+        failures.append(
+            f"an unreadable markdown blob at {owned_blob} was not reported, so a "
+            f"first-party document the sweep could not read passes as clean — the "
+            f"carve-out reached is_citer and not this arm"
+        )
+    if check.unreadable_problems({f"{check.SKIP_ROOTS[0]}vendor.md": "not UTF-8"}):
+        failures.append(
+            "an unreadable blob under a skipped root was reported, so a vendored "
+            "encoding this repo cannot fix now fails the guard"
         )
 
     # THE ROOT ANCHOR AT EACH DEPTH. A file anchor cannot stand in for these:

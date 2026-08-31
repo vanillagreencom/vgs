@@ -77,7 +77,8 @@ SECTION_MARK = "§"
 # quotes closing a wrapped string literal, the paren in `(`AGENTS.md` § Mission)`
 # — and crossing a SEPARATOR means the nearest path belongs to the sentence
 # rather than to this pointer. `check-doc-growth.py` writes
-# "§ Project skills (project-skills/README.md), § Documentation resources": the
+# "§ Project skills (.github/instructions/project-skills.instructions.md),
+# § Documentation resources": the
 # path is the FIRST pointer's parenthetical, and reading it as the second's
 # target would resolve a pointer against a document it does not name.
 CROSSABLE = "`\"'*_([{)]}"
@@ -236,7 +237,7 @@ def pointers(path: str, text: str) -> list[tuple[int, str, str, bool, str | None
     """(line, target, name, quoted, problem, inherited, linked) for every mark.
 
     A SECOND MARK IN THE SAME CLAUSE INHERITS the first's target:
-    `project-skills/skills/vshell-dev/SKILL.md` writes "canonical in `AGENTS.md`
+    `.agents/skills/vshell-dev/SKILL.md` writes "canonical in `AGENTS.md`
     (§ Mission, § Do not)", where the second pointer names AGENTS.md as plainly
     as the first. Inheritance stops at any INHERITANCE_STOPS character — every
     separator but the comma — so a later "see § Niri" is read as intra-document,
