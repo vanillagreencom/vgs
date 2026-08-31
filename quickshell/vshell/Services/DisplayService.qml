@@ -39,13 +39,17 @@ Singleton {
     property bool suppressOsd: true
     property string lastBrightnessError: ""
     // A dead i2c/PCI bus wedges every scan; past the threshold, scanning stops
-    // until hotplug, resume, or backend arrival lifts it. Sits above the
-    // 3-attempt retry ladders so one slow-to-wake display cannot latch it.
+    // until hotplug, resume, backend arrival, or a successful brightness write
+    // lifts it. Each lift starts a counting episode (scanEpoch): failures of
+    // scans launched before the lift never count, every failure inside the
+    // episode does, and the threshold sits above the 3-attempt retry ladders
+    // so a fully failed ladder alone cannot latch the quarantine.
     readonly property int scanQuarantineThreshold: 4
     property int consecutiveScanFailures: 0
     property bool scanQuarantined: false
     property int scanGeneration: 0
-    property int completedScanGeneration: 0
+    property int settledScanGeneration: 0
+    property int scanEpoch: 0
 
     signal brightnessChanged(bool showOsd)
     signal deviceSwitched
@@ -489,6 +493,9 @@ Singleton {
             }
 
             ToastService.dismissCategory("brightness");
+            // A write that reached the hardware is positive evidence the bus
+            // answers again; scanning must not stay quarantined behind it.
+            liftScanQuarantine();
             const result = response.result || response;
             if (result.device) {
                 updateSingleDevice(result.device, true, latest.showOsd === true);
@@ -980,58 +987,85 @@ Singleton {
         }
     }
 
+    // BEGIN SCAN VERDICT DECISION
+    // What one terminal scan response may do, as data; every input is an
+    // argument, so scripts/test-brightness-scan-ordering.js executes this
+    // exact program. A failure counts toward quarantine only when its scan
+    // launched in the current lift episode; state commits only for the latest
+    // scan and only while nothing newer has settled, so an out-of-order
+    // response can never overwrite a newer verdict.
+    function scanVerdict(isFailure, myGeneration, myEpoch, latestGeneration, currentEpoch, settledGeneration) {
+        if (isFailure) {
+            return {
+                "count": myEpoch === currentEpoch,
+                "commit": myGeneration === latestGeneration && myGeneration > settledGeneration
+            };
+        }
+        return {
+            "count": false,
+            "commit": myGeneration > settledGeneration
+        };
+    }
+    // END SCAN VERDICT DECISION
+
     function recordScanFailure() {
         consecutiveScanFailures++;
         if (consecutiveScanFailures >= scanQuarantineThreshold && !scanQuarantined) {
             scanQuarantined = true;
-            log.warn("Brightness scans quarantined after", consecutiveScanFailures, "consecutive failures; waiting for display hotplug or resume");
+            log.warn("Brightness scans quarantined after", consecutiveScanFailures, "consecutive failures; waiting for display hotplug, resume, backend arrival, or a successful brightness write");
         }
     }
 
     function liftScanQuarantine() {
         consecutiveScanFailures = 0;
         scanQuarantined = false;
+        scanEpoch++;
     }
 
     function rescanDevices() {
         if (scanQuarantined) {
-            log.debug("Dropping brightness rescan: scans quarantined until hotplug, resume, or backend arrival");
+            log.debug("Dropping brightness rescan: scans quarantined until hotplug, resume, backend arrival, or a successful write");
             return;
         }
         const myGeneration = ++scanGeneration;
+        const myEpoch = scanEpoch;
         const scanWriteSeq = brightnessWriteSeq;
         const scanBlockedDevices = snapshotScanBlockedDevices();
         const failScan = kind => {
-            if (myGeneration !== scanGeneration) {
-                log.debug("Ignoring superseded brightness rescan", kind);
+            const verdict = scanVerdict(true, myGeneration, myEpoch, scanGeneration, scanEpoch, settledScanGeneration);
+            if (verdict.count) {
+                recordScanFailure();
+            }
+            if (!verdict.commit) {
+                log.debug("Keeping newer brightness scan state despite this", kind);
                 return;
             }
             if (scanHasLocalWriteConflict(scanWriteSeq, scanBlockedDevices)) {
                 log.warn("Ignoring stale brightness rescan", kind, "during local write");
                 return;
             }
+            settledScanGeneration = myGeneration;
             devices = [];
             deviceBrightness = ({});
             brightnessAvailable = false;
             brightnessVersion++;
-            recordScanFailure();
         };
         const handleResponse = response => {
-            if (myGeneration <= completedScanGeneration) {
-                log.debug("Ignoring brightness rescan response: a newer scan already completed");
-                return;
-            }
             if (response.error) {
                 lastBrightnessError = response.error;
                 log.warn("Brightness rescan failed:", response.error);
                 failScan("failure");
                 return;
             }
+            if (!scanVerdict(false, myGeneration, myEpoch, scanGeneration, scanEpoch, settledScanGeneration).commit) {
+                log.debug("Ignoring brightness rescan response: a newer scan already settled");
+                return;
+            }
             if (!applyBrightnessStateJson(JSON.stringify(response.result || response), scanWriteSeq, scanBlockedDevices)) {
                 failScan("parse failure");
                 return;
             }
-            completedScanGeneration = myGeneration;
+            settledScanGeneration = myGeneration;
             liftScanQuarantine();
         };
 

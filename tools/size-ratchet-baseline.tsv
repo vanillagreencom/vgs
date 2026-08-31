@@ -1,4 +1,4 @@
-.github/workflows/ci.yml	471
+.github/workflows/ci.yml	472
 backend/internal/services/bluez/bluez.go	744
 backend/internal/services/clipboard/clipboard.go	635
 backend/internal/services/cloudsync/cloudsync.go	1115
@@ -181,7 +181,7 @@ quickshell/vshell/Services/CompositorService.qml	447
 quickshell/vshell/Services/CupsService.qml	837
 quickshell/vshell/Services/DSearchService.qml	427
 quickshell/vshell/Services/DgopService.qml	780
-quickshell/vshell/Services/DisplayService.qml	1488
+quickshell/vshell/Services/DisplayService.qml	1522
 quickshell/vshell/Services/IdleService.qml	798
 quickshell/vshell/Services/KeybindsService.qml	665
 quickshell/vshell/Services/LegacyNetworkService.qml	627
@@ -230,4 +230,4 @@ scripts/test-switcher-selection.js	774
 scripts/test-toast-actions.js	607
 scripts/test-validate.sh	538
 scripts/test-validation-inventory.sh	2278
-scripts/validate	1061
+scripts/validate	1062

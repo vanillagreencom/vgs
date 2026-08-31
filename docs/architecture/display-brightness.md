@@ -101,12 +101,17 @@ cannot abandon a helper that is itself in uninterruptible sleep — Wait blocks
 in wait4 regardless — so probes that can D-state must stay in helper
 subprocesses, never in the helper's own process; the QML pending-request
 sweep and the scan quarantine are the backstop for that case.
-`DisplayService` quarantines scanning after consecutive failures
-(`scanQuarantineThreshold`, sized above the 3-attempt retry ladders so one
-slow-to-wake display cannot latch it) until hotplug, resume, or backend
-arrival lifts it, and a scan generation keeps a stale in-flight failure from
-clobbering a newer scan's success. Writes stay allowed — user-initiated,
-cheap backends first.
+`DisplayService` quarantines scanning after `scanQuarantineThreshold`
+consecutive failures within one counting episode. Every lift — hotplug,
+resume, backend arrival, or a successful brightness write — starts a new
+episode: failures of scans launched before it never count, every failure
+inside it does, and the threshold sits above the 3-attempt retry ladders so a
+fully failed ladder alone cannot latch. A settled-scan generation keeps
+out-of-order responses from overwriting a newer verdict — a stale failure
+cannot clobber a newer scan's success, and a stale success cannot restore
+devices a newer committed failure cleared
+(`scripts/test-brightness-scan-ordering.js` executes that decision). Writes
+stay allowed — user-initiated, cheap backends first.
 
 ## `vshell brightness doctor`
 
