@@ -1,4 +1,4 @@
-.github/workflows/ci.yml	457
+.github/workflows/ci.yml	465
 backend/internal/services/bluez/bluez.go	744
 backend/internal/services/clipboard/clipboard.go	635
 backend/internal/services/cloudsync/cloudsync.go	1115
@@ -42,7 +42,7 @@ docs/architecture/design-language.md	421
 docs/architecture/scratchpads.md	410
 docs/media/vgs-demo-poster.jpg	1197
 docs/media/vgs-demo.mp4	30319
-kendex.settings.toml	430
+kendex.settings.toml	431
 kendex.toml	1078
 packaging/optional-packages.json	589
 quickshell/vshell-preview/shell.qml	456
@@ -205,10 +205,10 @@ quickshell/vshell/Widgets/KeybindItem.qml	1724
 quickshell/vshell/Widgets/VgsDropdown.qml	565
 quickshell/vshell/Widgets/VgsPopoutStandalone.qml	1061
 scripts/check-aur-sync.py	471
-scripts/check-doc-growth.py	921
+scripts/check-doc-growth.py	938
 scripts/check-notification-takeover.js	454
 scripts/check-paste-injection.py	897
-scripts/check-section-pointers.py	621
+scripts/check-section-pointers.py	601
 scripts/check-settings-migration.js	952
 scripts/check-validation-inventory.py	411
 scripts/check-vshell-helper.py	5864
@@ -224,10 +224,10 @@ scripts/test-paste-lifecycle.js	1168
 scripts/test-pill-hover-safety.js	420
 scripts/test-popout-dismiss-envelope.js	489
 scripts/test-remote-desktop-state.js	1243
-scripts/test-section-pointers-e2e.py	462
-scripts/test-section-pointers.py	481
+scripts/test-section-pointers-e2e.py	496
+scripts/test-section-pointers.py	489
 scripts/test-switcher-selection.js	774
 scripts/test-toast-actions.js	607
 scripts/test-validate.sh	538
 scripts/test-validation-inventory.sh	2278
-scripts/validate	1056
+scripts/validate	1060

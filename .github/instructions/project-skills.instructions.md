@@ -5,17 +5,22 @@ applyTo: ".agents/skills/**"
 # Project skills
 
 `.agents/` is the kendex render tree, tracked so a clone works without kendex —
-but three skills inside it are VGS's own and are never rendered over:
-`vgs-distro-publish`, `vgs-release` and `vshell-dev`. `kendex.toml` declares
-each with `source = "in-place"`, and that table is the register. Edit those
-here. Every other `.agents/skills/<name>` is upstream output: fix the defect in
+but the skills `kendex.toml` declares `source = "in-place"` are VGS's own and
+nothing renders over them. That table is the register, and
+`python3 scripts/lib/kendex_skills.py` lists what it says. Edit those here.
+Every other `.agents/skills/<name>` is upstream output: fix the defect in
 `vanillagreencom/kendex` and re-render, never in this repo.
 
 A new project skill is written at `.claude/skills/<name>/SKILL.md`; `kendex
 adopt skill <name>` moves it into `.agents/skills/<name>`, links each harness
-dir at it, and declares it `source = "in-place"`. Adopt reads the harness path,
-so authoring straight into `.agents/` leaves it nothing to find. Then add an
-entry wherever a guard or bot scopes to the owned set — `WATCHED_SURFACES` and `CEILINGS` in `scripts/check-doc-growth.py`,
-`OWNED_ROOTS` in `scripts/check-section-pointers.py`, `candidate_paths` in
-`scripts/check-naming.sh`, and the review-scope carve-outs in `.coderabbit.yaml`,
-`.pr_agent.toml` and `.github/copilot-instructions.md`.
+dir at it, and declares it `source = "in-place"`. Adopt reads the Claude
+harness unless `--harness` names another, and `.claude/skills` is where that
+plain invocation looks.
+
+The guards scope themselves: `scripts/check-doc-growth.py`,
+`scripts/check-section-pointers.py` and `scripts/check-naming.sh` read the
+register. Left by hand are a `CEILINGS` entry for the new `SKILL.md` and the
+review-scope lists in `.coderabbit.yaml`, `.github/copilot-instructions.md` and
+`review-bots.md`, which `scripts/check-owned-skills.py` names while missing.
+Qodo is not among them — `.pr_agent.toml` has no path scoping at all, so it
+reviews the whole render tree.

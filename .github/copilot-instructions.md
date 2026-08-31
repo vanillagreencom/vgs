@@ -41,10 +41,12 @@ live session.
 Defects go upstream with `kendex report` to vanillagreencom/kendex; a local
 edit is erased by the next render. Stronger than the vendored-tree rule
 below, which asks for upstream issues: on the render, do not flag at all.
-The exception is this repo's own skills — `.agents/skills/vgs-distro-publish/**`,
-`.agents/skills/vgs-release/**` and `.agents/skills/vshell-dev/**`, which
-`kendex.toml` declares `source = "in-place"`. Nothing renders over them; review
-them like any project file.
+The exception is this repo's own skills —
+<!-- in-place-skills -->`.agents/skills/vgs-distro-publish/**`,
+`.agents/skills/vgs-release/**` and
+`.agents/skills/vshell-dev/**`<!-- /in-place-skills --> — which `kendex.toml`
+declares `source = "in-place"`. Nothing renders over them; review them like any
+project file.
 
 **Vendored trees are byte-exact — but not uniformly.** Carried verbatim:
 `backend/vendor/**`, the plugin directories under

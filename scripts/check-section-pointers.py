@@ -60,6 +60,7 @@ from typing import NamedTuple
 
 sys.path.insert(0, str(Path(__file__).resolve().parent / "lib"))
 from collected import members_missing, nothing_collected  # noqa: E402
+from kendex_skills import RegisterError, in_place_dirs  # noqa: E402
 from prose_blocks import fence_left_open, headings, normalized_words  # noqa: E402
 from tracked_blobs import REGULAR_MODES, Entry, blob_texts, tracked_entries  # noqa: E402
 from section_pointers import (  # noqa: E402
@@ -134,18 +135,25 @@ SKIP_ROOTS = (
 # except here". KEN-938 moved the three VGS-authored skills under `.agents/`,
 # where `.agents/` above would have stopped reading their pointers — and they
 # carry the shape this guard exists for, marks at AGENTS.md and at
-# docs/architecture/. They are ours to edit, so they are ours to keep correct. `kendex.toml`'s `source = "in-place"` rows
-# are the register these copy; a fourth project skill adds a root here, as
-# `.github/instructions/project-skills.instructions.md` says.
+# docs/architecture/. They are ours to edit, so they are ours to keep correct.
 #
-# NARROWER THAN ITS SKIP ROOT, always: an entry that does not start with one of
-# SKIP_ROOTS carves nothing and is dead config, which `owned_roots_problems`
-# below reports rather than leaving to be discovered.
-OWNED_ROOTS = (
-    ".agents/skills/vgs-distro-publish/",
-    ".agents/skills/vgs-release/",
-    ".agents/skills/vshell-dev/",
-)
+# READ FROM THE REGISTER, never copied from it: `kendex.toml`'s
+# `source = "in-place"` rows are what makes a tree under `.agents/` ours, and
+# `scripts/lib/kendex_skills.py` is their only reader. A hand-kept copy here
+# went stale the first time it was tested — a fourth in-place skill with a dead
+# pointer inside it swept clean. Both ways a copy could stop meaning anything
+# are now gone with it: a derived root always starts with `.agents/`, which is a
+# SKIP_ROOT, and `scripts/check-owned-skills.py` fails when a registered skill
+# has no tree on disk.
+#
+# A REGISTER THIS CANNOT READ IS A REFUSAL, never an empty carve-out: with no
+# roots the guard would sweep silently past every tree under `.agents/` and
+# print its ok line. `SystemExit` with a sentence, so the operator gets the
+# reader's diagnostic rather than a traceback.
+try:
+    OWNED_ROOTS = tuple(f"{root}/" for root in in_place_dirs())
+except RegisterError as error:
+    raise SystemExit(f"check-section-pointers: {error}") from error
 SELECTOR = (
     "`git ls-files` minus "
     + ", ".join(SKIP_ROOTS)
@@ -331,40 +339,6 @@ def swept_tree(entries: list[Entry]) -> Sweep:
     )
 
 
-def owned_roots_problems(
-    tracked: list[str],
-    owned: tuple[str, ...] = OWNED_ROOTS,
-    skipped: tuple[str, ...] = SKIP_ROOTS,
-) -> list[str]:
-    """Both staleness directions for OWNED_ROOTS, neither discoverable by eye.
-
-    A carve-out under no skip root carves nothing: it reads as policy while
-    `is_citer` would have said the same without it, so a typo'd or repointed
-    prefix silently becomes decoration. And one that names a tree no tracked
-    file sits under is the FIXTURE_FILES arm's failure a level up — coverage
-    that stopped existing when the tree was renamed away.
-
-    Takes both tables as arguments for the reason `watched_glob_problems` in
-    check-doc-growth.py does: a control that can only mutate the module
-    constant asserts against a global it has just rewritten.
-    """
-    problems = []
-    for root in owned:
-        if not root.startswith(skipped):
-            problems.append(
-                f"OWNED_ROOTS carves out {root}, which is under no SKIP_ROOTS "
-                f"prefix — it exempts nothing, since is_citer already reads that "
-                f"tree. Point it inside a skipped root, or drop it."
-            )
-        elif not any(rel.startswith(root) for rel in tracked):
-            problems.append(
-                f"OWNED_ROOTS carves out {root}, but no tracked file sits under "
-                f"it. Drop the entry — a carve-out that names nothing reads the "
-                f"pointers of whatever is written there next."
-            )
-    return problems
-
-
 def fixture_problems(tracked: list[str]) -> list[str]:
     """A FIXTURE_FILES entry that no longer names a tracked file.
 
@@ -422,13 +396,20 @@ def unreadable_problems(undecodable: dict[str, str]) -> list[str]:
     is otherwise blamed on its CITER, the wrong file to send anyone to. Any other
     undecodable blob is a binary, the intended skip — and so is one under a
     SKIP_ROOT, a vendored encoding not being ours to fix.
+
+    FIRST-PARTY IS `is_citer`, THE SAME PREDICATE THE SWEEP USES, and that is
+    the fix for a hole this arm shipped with: spelling the question a second way
+    as `not rel.startswith(SKIP_ROOTS)` left an unreadable blob under an owned
+    skill tree dropped from `files` by the sweep AND skipped here, so the guard
+    exited clean on a first-party document it could not read. Two spellings of
+    one question is how a carve-out reaches one arm and not the other.
     """
     return [
         f"{rel} is a tracked markdown file whose blob is {reason}, so none of its "
         f"headings could be parsed and every pointer into it is unresolvable. Fix "
         f"the file's encoding — this is not a pointer defect."
         for rel, reason in sorted(undecodable.items())
-        if rel.endswith(".md") and not rel.startswith(SKIP_ROOTS)
+        if rel.endswith(".md") and is_citer(rel)
     ]
 
 
@@ -591,7 +572,6 @@ def main() -> int:
     problems = list(found.problems)
     problems.extend(sweep_problems(files, found.judged))
     problems.extend(fixture_problems(tracked))
-    problems.extend(owned_roots_problems(tracked))
     problems.extend(unreadable_problems(undecodable))
 
     if problems:

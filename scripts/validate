@@ -48,7 +48,10 @@
 # and `tracked_blobs.py` by the checks that collect and by the pointer guard, and
 # `qml_scrub_selftest.py` and `shell_scan_selftest.py` by the entry points above, none of
 # them run; `section_pointers_selftest.py` and `prose_blocks_selftest.py` join
-# that list of libraries carrying a `__main__` only for their own self-test).
+# that list of libraries carrying a `__main__` only for their own self-test.
+# `kendex_skills.py` is the exception: its `__main__` prints the in-place skill
+# paths for `scripts/check-naming.sh`, which is bash and cannot import it, and
+# its controls live in `scripts/check-owned-skills.py`).
 # `bin/vshell_niri.py`,
 # `bin/vshell_niri_kdl.py` and `bin/vshell_theme_color.py` likewise stay
 # importable modules with no shebang and no `__main__`.
@@ -161,9 +164,9 @@ cd "$repo_root" || exit 1
 # the QML smoke, the safety guard, surfaces, plus the QML source lints carrying
 # the tag: the launcher hover latch and the popout dismiss envelope; helper =
 # the helper checks plus the py_compile/bash -n pass; packaging = its three;
-# docs = the instruction-surface growth ratchet, the section-pointer guard, and
-# that guard's five control scripts, one per subject and enumerated by the rows
-# above rather than by a count here. An area
+# docs = the instruction-surface growth ratchet, the owned-skill register guard,
+# the section-pointer guard, and that guard's five control scripts, one per
+# subject and enumerated by the rows above rather than by a count here. An area
 # tag on a `test-` row is not new (the two qml rows above); what earns it here
 # is that the guard has no inline self-test, so a `docs` run without the
 # controls would exercise it while proving nothing about whether it guards.
@@ -185,6 +188,7 @@ always    | scripts/check-format-lint.sh
 -         | node scripts/lib/qml-region-testkit-selftest.js | grep -qxF 'qml-region testkit selftest: all checks passed'
 always    | scripts/check-validation-inventory.py
 docs      | scripts/check-doc-growth.py
+docs      | scripts/check-owned-skills.py
 docs      | scripts/check-section-pointers.py
 docs      | scripts/test-section-pointers.py
 docs      | scripts/test-section-pointers-e2e.py

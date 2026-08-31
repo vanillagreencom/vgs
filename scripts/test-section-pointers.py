@@ -114,8 +114,9 @@ added by review after surviving unnoticed.
                         like the deliberate citation   (+)
                         both HISTORICAL_SECTIONS staleness arms
                         the FIXTURE_FILES staleness arm
-                        either OWNED_ROOTS staleness arm — a carve-out naming
-                        no tracked file, or one under no skip prefix   (+)
+                        `unreadable_problems` asking `not startswith(SKIP_ROOTS)`
+                        instead of `is_citer`, which drops an unreadable blob
+                        under an owned skill tree from both arms at once   (+)
                         nothing_collected dropped from the heading arm
                         the GRAMMAR_SPELLINGS anchor dropped
                         TARGET_ANCHORS reduced to one member   (+)
@@ -252,10 +253,6 @@ def collection_controls() -> list[str]:
         ("heading", check.heading_problems(anchors)),
         ("sweep", check.sweep_problems(whole, healthy)),
         ("fixture-exclusion", check.fixture_problems(list(check.FIXTURE_FILES))),
-        (
-            "owned-roots",
-            check.owned_roots_problems([f"{root}SKILL.md" for root in check.OWNED_ROOTS]),
-        ),
     ):
         if quiet:
             failures.append(f"the {arm_name} arm reported a healthy input: {quiet}")
@@ -265,21 +262,32 @@ def collection_controls() -> list[str]:
             "exclusion outlives its file and exempts whatever takes that path next"
         )
 
-    # THE CARVE-OUT'S TWO STALENESS ARMS. OWNED_ROOTS reads the pointers of
-    # trees SKIP_ROOTS excludes, so both ways it can stop meaning anything are
-    # invisible from the file: a root nothing sits under, and a root under no
-    # skip prefix, which `is_citer` would have read anyway.
-    if not check.owned_roots_problems([]):
+    # ONE PREDICATE, BOTH ARMS. The sweep drops what `is_citer` refuses, so an
+    # arm asking the question a second way answers about a different set: a
+    # non-UTF-8 blob under an owned skill tree was dropped from `files` by
+    # `is_citer` AND skipped by `unreadable_problems`, and the guard exited
+    # clean on a first-party document it could not read. Asserted at the message
+    # level, not on emptiness, so a report about some other file cannot stand in.
+    owned_blob = f"{check.OWNED_ROOTS[0]}SKILL.md" if check.OWNED_ROOTS else None
+    if owned_blob is None:
         failures.append(
-            "an OWNED_ROOTS entry under which no tracked file sits was accepted, "
-            "so a renamed skill tree leaves a carve-out that reads the pointers "
-            "of whatever is written there next"
+            "OWNED_ROOTS is empty, so the carve-out this control exercises covers "
+            "nothing and no tree under a skipped root is read for pointers — check "
+            "kendex.toml's `source = \"in-place\"` rows"
         )
-    if not check.owned_roots_problems(["docs/owned/SKILL.md"], owned=("docs/owned/",)):
+    elif not any(
+        owned_blob in problem
+        for problem in check.unreadable_problems({owned_blob: "not UTF-8"})
+    ):
         failures.append(
-            "an OWNED_ROOTS entry under no SKIP_ROOTS prefix was accepted, so a "
-            "carve-out that exempts nothing reads as policy while is_citer says "
-            "the same without it"
+            f"an unreadable markdown blob at {owned_blob} was not reported, so a "
+            f"first-party document the sweep could not read passes as clean — the "
+            f"carve-out reached is_citer and not this arm"
+        )
+    if check.unreadable_problems({f"{check.SKIP_ROOTS[0]}vendor.md": "not UTF-8"}):
+        failures.append(
+            "an unreadable blob under a skipped root was reported, so a vendored "
+            "encoding this repo cannot fix now fails the guard"
         )
 
     # THE ROOT ANCHOR AT EACH DEPTH. A file anchor cannot stand in for these:

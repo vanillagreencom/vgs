@@ -111,11 +111,13 @@ reviews:
   path_filters:
     # Harness render: `kendex refresh` output, owned upstream in
     # vanillagreencom/kendex. A defect here is fixed at the source and
-    # re-rendered, so a review comment on these paths cannot be acted on
-    # in this repo.
+    # re-rendered, so a review comment on these paths cannot be acted on here.
     # EXCLUSION-ONLY (a positive entry flips this into an allowlist), and plain
     # globs only (the schema feeds these same patterns to `git sparse-checkout`).
     # So: every `.agents/skills/<name>` `kendex.toml` does not mark `in-place`.
+    # `scripts/check-owned-skills.py` holds this list and the in-place one below
+    # to those rows — unheld, the next refresh renders an unexcluded skill into
+    # review scope, silently.
     - "!.agents/skills/code-quality/**"
     - "!.agents/skills/decider/**"
     - "!.agents/skills/deep-research/**"

@@ -88,6 +88,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent / "lib"))
 from collected import members_missing, nothing_collected  # noqa: E402
+from kendex_skills import RegisterError, in_place_dirs  # noqa: E402
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SELF = Path(__file__).resolve()
@@ -153,8 +154,11 @@ CEILINGS: dict[str, int] = {
     # regression-test policy sections plus the PR #120 review rounds
     # (coverage gaps, property-defined privileged class) earned the bytes;
     # 7,200 keeps ~10% headroom at the final 6,490 B size, superseding the
-    # 6,500 figure measured mid-review at 5,865 B. Now 6,818 B, ~5.3% left with
-    # the engine bullets folded into the harness-render rule. NOT raised.
+    # 6,500 figure measured mid-review at 5,865 B. Now 7,162 B, ~0.5% left: the
+    # engine bullets folded into the harness-render rule, and KEN-938 gave that
+    # rule the in-place exception the other bot surfaces got, inside the marker
+    # pair scripts/check-owned-skills.py reads. NOT raised — the next addition
+    # here displaces something.
     "review-bots.md": 7_200,
     # Adopted at 2,909 B. 2026-08-14: the PR #132 review found the doc-surface
     # and vendored-tree rules were telling reviewers to suppress valid drift
@@ -166,9 +170,9 @@ CEILINGS: dict[str, int] = {
     # TIGHTER than the 4,000 the adoption formula rounds to, because the
     # rounding above is an adoption convention and a raise is only required to
     # carry a rationale — so the tighter line wins over the rounder number.
-    # Now 4,282 B: the engine-tree clauses left with the kendex adoption, and
-    # KEN-938 added the carve-out naming the three in-place skills the render
-    # tree does not own.
+    # Now 4,334 B: the engine-tree clauses left with the kendex adoption, and
+    # KEN-938 added the carve-out naming the in-place skills the render tree
+    # does not own, inside the marker pair scripts/check-owned-skills.py reads.
     ".github/copilot-instructions.md": 4_500,
     # Adopted at 4,497 B. VGS-124: "a green CI run does not prove the shell
     # starts — run the qml area, which forces --require-nested" left AGENTS.md
@@ -223,12 +227,13 @@ CEILINGS: dict[str, int] = {
     ".github/instructions/helper-cli.instructions.md": 600,  # adopted at 517 B
     # Adopted at 1,152 B. KEN-938 moved the three VGS-authored skills into
     # `.agents/skills/`, beside the kendex render: this is the surface an agent
-    # editing one loads, and the only place that says which of those trees are
-    # ours and which are upstream output. It also names the guards and bot
-    # configs that scope to the owned set, so a fourth skill has one checklist
-    # rather than a hunt. project-skills/README.md, which it replaces, was 1,259 B.
-    # 1,300 is the adoption formula at that size: 1,152 plus ~10% is 1,267,
-    # rounded up to the next 100.
+    # editing one loads, and it says how to tell an owned tree from render
+    # output — by kendex.toml's `source` rows, which the guards read and
+    # scripts/check-owned-skills.py holds the bot configs to.
+    # project-skills/README.md, which it replaces, was 1,259 B. 1,300 is the
+    # adoption formula at that size: 1,152 plus ~10% is 1,267, rounded up to the
+    # next 100. Now 1,293 B, ~0.5% left, the checklist rewritten around the
+    # guards deriving their own scope.
     ".github/instructions/project-skills.instructions.md": 1_300,
     ".github/instructions/quickshell-qml.instructions.md": 1_700,  # adopted at 1,459 B
     ".github/instructions/themes.instructions.md": 700,  # adopted at 577 B
@@ -334,22 +339,32 @@ CEILINGS: dict[str, int] = {
 # failure. So the two must be narrowed together AND the orphaned file exempted
 # by name — three edits, all visible in review, which is what "conscious
 # decision" is supposed to mean.
-# ONE ROOT PER VGS-AUTHORED SKILL, not the `.agents/skills` tree they sit in.
-# KEN-938 moved them beside the kendex render, and a root at `.agents/skills`
-# would discover every rendered skill's SKILL.md and demand a ceiling for
-# upstream output this repo does not own. There is no marker in the tree itself
-# to sort the two apart; `kendex.toml`'s `source = "in-place"` rows are the
-# register, and these roots are its copy. A fourth project skill adds a root
-# here — the same edit the header's "renamed directory" rule already requires,
-# and `.github/instructions/project-skills.instructions.md` names it beside the
-# other guards that scope to the owned set.
-WATCHED_SURFACES = (
-    (".github/instructions", ".github/instructions/**/*.md"),
-    ("docs/architecture", "docs/architecture/**/*.md"),
-    (".agents/skills/vgs-distro-publish", ".agents/skills/vgs-distro-publish/**/SKILL.md"),
-    (".agents/skills/vgs-release", ".agents/skills/vgs-release/**/SKILL.md"),
-    (".agents/skills/vshell-dev", ".agents/skills/vshell-dev/**/SKILL.md"),
-)
+#
+# ONE ROOT PER VGS-AUTHORED SKILL, not the `.agents/skills` tree they sit in:
+# a root there would discover every rendered skill's SKILL.md and demand a
+# ceiling for upstream output this repo does not own. Nothing in the tree sorts
+# the two apart, so the roots are READ from `kendex.toml`'s `source = "in-place"`
+# rows rather than copied from them. KEN-938 copied them, and a fourth in-place
+# skill then arrived carrying 16 KB and no ceiling with this check clean —
+# `scripts/lib/kendex_skills.py` is why that cannot happen again, and
+# `scripts/check-owned-skills.py` asserts each derived root exists on disk.
+#
+# DERIVED ROOTS ARE STILL DECLARED ROOTS. The separation the paragraph above
+# insists on is between a root and the PATTERN under test, not between a root
+# and a register: the pattern is still written here, and narrowing it still
+# leaves the ceilinged files under a root the glob no longer reaches.
+#
+# A REGISTER THIS CANNOT READ IS A REFUSAL, never a shorter tuple: with the
+# skill roots gone the new-file ratchet is off for them and this check still
+# prints its ok line. `SystemExit` with a sentence, so the operator gets the
+# reader's diagnostic rather than a traceback.
+try:
+    WATCHED_SURFACES = (
+        (".github/instructions", ".github/instructions/**/*.md"),
+        ("docs/architecture", "docs/architecture/**/*.md"),
+    ) + tuple((root, f"{root}/**/SKILL.md") for root in in_place_dirs())
+except RegisterError as error:
+    raise SystemExit(f"check-doc-growth: {error}") from error
 
 # Ceilinged files that live under no watched root, each because it is an
 # individually named surface rather than a member of a discovered class. This is
@@ -645,11 +660,13 @@ def self_test() -> list[str]:
     # invisible.
     with tempfile.TemporaryDirectory() as scratch:
         root = Path(scratch)
-        for rel in (
-            ".github/instructions/nested/deep.md",
-            "docs/architecture/lock/details.md",
-            ".agents/skills/vshell-dev/nested/SKILL.md",
-        ):
+        # ONE PROBE PER WATCHED SURFACE, derived from the surface rather than
+        # listed beside it: the skill roots come from kendex.toml now, so a
+        # named probe would fail here on a skill RENAME with a message about
+        # recursion, and a surface added there would go unprobed.
+        for base, pattern in WATCHED_SURFACES:
+            leaf = pattern.rsplit("/", 1)[-1].replace("*", "probe")
+            rel = f"{base}/nested/{leaf}"
             probe = root / rel
             probe.parent.mkdir(parents=True, exist_ok=True)
             probe.write_text("x" * 100, encoding="utf-8")

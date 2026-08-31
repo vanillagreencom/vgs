@@ -290,11 +290,12 @@ REVIEW_GATE_MODE = "enforce"
 #                          carry; they are install instructions.
 #   backend/*            — backend/ATTRIBUTION.md and vendored Go-module
 #                          markdown classify "docs" and would carry.
-#   .agents/*            — the committed kendex render, the three in-place
-#                          skills inside it included; a glob cannot carve them
-#                          apart. Succeeds project-skills/*, deleted by
-#                          KEN-938, and covers what was outside the list only
-#                          while .agents was untracked.
+#   .agents/*            — the whole committed render tree, taken as one
+#                          because per-skill globs would need an edit on every
+#                          kendex refresh. The in-place skills ride along, and
+#                          that only forces fresh review evidence they already
+#                          deserve. Succeeds project-skills/*, deleted by
+#                          KEN-938.
 # Lock/idle/greeter QML needs no glob: no carry class matches .qml.
 REVIEW_GATE_CARRY_FORWARD_EXCLUDE = "*AGENTS.md;*CLAUDE.md;.github/*;*review-bots.md;third_party/*;.agents/*;scripts/*;kendex.settings.toml;kendex.toml;packaging/*;backend/*"
 
