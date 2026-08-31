@@ -227,6 +227,7 @@ module.exports = function qmlSource(source, fileLabel) {
 
 module.exports.flat = flat;
 module.exports.stripComments = stripComments;
+module.exports.codeOnly = codeOnly;
 
 // The self-test a library with no executable bit cannot run for itself. Every
 // case below FAILED before the tokenizer went in: the guards could not detect
