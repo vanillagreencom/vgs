@@ -54,6 +54,13 @@ Singleton {
     property int scanGeneration: 0
     property int settledScanGeneration: 0
     property int scanEpoch: 0
+    // A committed failure that cleared brightness state arms one minutes-scale
+    // recovery rescan, at most this many per episode, so a desktop that never
+    // hotplugs, resumes, or sees the backend restart still recovers. The
+    // single-shot timer and this budget keep it from becoming the removed
+    // repeating poll, and each failed retry still counts toward quarantine.
+    readonly property int scanRecoveryRetryBudget: 3
+    property int scanRecoveryRetriesUsed: 0
 
     signal brightnessChanged(bool showOsd)
     signal deviceSwitched
@@ -1025,6 +1032,8 @@ Singleton {
         consecutiveScanFailures = 0;
         scanQuarantined = false;
         scanEpoch++;
+        scanRecoveryRetriesUsed = 0;
+        scanRecoveryTimer.stop();
     }
 
     function rescanDevices() {
@@ -1062,6 +1071,10 @@ Singleton {
             deviceBrightness = ({});
             brightnessAvailable = false;
             brightnessVersion++;
+            if (scanRecoveryRetriesUsed < scanRecoveryRetryBudget) {
+                scanRecoveryRetriesUsed++;
+                scanRecoveryTimer.restart();
+            }
         };
         const handleResponse = response => {
             if (response.error) {
@@ -1143,6 +1156,17 @@ Singleton {
             interval = 3000;
             osdSuppressTimer.restart();
         }
+    }
+
+    // The write entry points gate on brightnessAvailable, so a cleared list
+    // cannot be recovered by the successful-write lift; this bounded retry is
+    // the only path back on a machine with no hotplug, resume, or backend
+    // event. rescanDevices owns the quarantine drop.
+    Timer {
+        id: scanRecoveryTimer
+        interval: 120000
+        repeat: false
+        onTriggered: rescanDevices()
     }
 
     Connections {

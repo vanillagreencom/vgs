@@ -222,8 +222,16 @@ once(/resumeRecoveryAttempt < scanRetryLadderAttempts/,
 // The lift is the episode boundary, and a successful brightness write is one
 // of the lift events: the dismissCategory success prologue must lift before
 // the result.device dispatch, or a recovered bus waits for the next hotplug.
-once(/function liftScanQuarantine\(\) \{\s*consecutiveScanFailures = 0;\s*scanQuarantined = false;\s*scanEpoch\+\+;/,
-    "liftScanQuarantine must reset the counter, the flag, and open a new episode");
+once(/function liftScanQuarantine\(\) \{\s*consecutiveScanFailures = 0;\s*scanQuarantined = false;\s*scanEpoch\+\+;\s*scanRecoveryRetriesUsed = 0;\s*scanRecoveryTimer\.stop\(\);/,
+    "liftScanQuarantine must reset the counter, the flag, the retry budget, " +
+        "the pending retry, and open a new episode");
+
+// A committed failure clear arms the bounded recovery retry, adjacent to the
+// state clear so it cannot fire for failures that neither count nor commit;
+// without it, the availability-gated write entry points make the cleared
+// state unrecoverable on a machine with no lifecycle events.
+once(/brightnessVersion\+\+;\s*if \(scanRecoveryRetriesUsed < scanRecoveryRetryBudget\) \{\s*scanRecoveryRetriesUsed\+\+;\s*scanRecoveryTimer\.restart\(\);/,
+    "a committed failure clear must arm the bounded recovery retry");
 const writeSuccess = serviceCode.indexOf('ToastService.dismissCategory("brightness");');
 assert.ok(writeSuccess >= 0, "the write-success prologue must exist");
 const writeLift = serviceCode.indexOf("liftScanQuarantine();", writeSuccess);

@@ -111,8 +111,12 @@ fully failed ladder alone cannot latch. A settled-scan generation keeps
 out-of-order responses from overwriting a newer verdict — a stale failure
 cannot clobber a newer scan's success, and a stale success cannot restore
 devices a newer committed failure cleared
-(`scripts/test-brightness-scan-ordering.js` executes that decision). Writes
-stay allowed — user-initiated, cheap backends first.
+(`scripts/test-brightness-scan-ordering.js` executes that decision). A
+committed failure that cleared state also arms one recovery rescan minutes
+later, at most `scanRecoveryRetryBudget` per episode — the write entry points
+gate on availability, so without it a machine with no hotplug, resume, or
+backend event never recovers; each failed retry counts toward quarantine.
+Writes stay allowed — user-initiated, cheap backends first.
 
 ## `vshell brightness doctor`
 
