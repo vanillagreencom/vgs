@@ -103,7 +103,8 @@ subprocesses, never in the helper's own process; the QML pending-request
 sweep and the scan quarantine are the backstop for that case.
 `DisplayService` quarantines scanning after `scanQuarantineThreshold`
 consecutive failures within one counting episode. Every lift — hotplug,
-resume, backend arrival, or a successful brightness write — starts a new
+resume, backend arrival, a successful brightness write, or a late success
+from a scan already in flight — starts a new
 episode: failures of scans launched before it never count, every failure
 inside it does, and the threshold sits above the 3-attempt retry ladders so a
 fully failed ladder alone cannot latch. A settled-scan generation keeps

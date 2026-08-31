@@ -96,11 +96,11 @@ const { scanVerdict } = new Function(`${marked[1]}\nreturn { scanVerdict };`)();
 const thresholdMatch = serviceCode.match(/readonly property int scanQuarantineThreshold: (\d+)/);
 assert.ok(thresholdMatch, "scanQuarantineThreshold extractor found no property");
 const threshold = Number(thresholdMatch[1]);
-const ladderMatch = serviceCode.match(/rescanAttempt < (\d+)/);
-assert.ok(ladderMatch, "screen-change ladder length extractor found no bound");
+const ladderMatch = serviceCode.match(/readonly property int scanRetryLadderAttempts: (\d+)/);
+assert.ok(ladderMatch, "scanRetryLadderAttempts extractor found no property");
 assert.ok(
     threshold > Number(ladderMatch[1]),
-    "scanQuarantineThreshold must exceed the retry ladder length, or one fully " +
+    "scanQuarantineThreshold must exceed scanRetryLadderAttempts, or one fully " +
         "failed ladder latches the quarantine on a display that is merely slow to wake"
 );
 
@@ -211,6 +211,13 @@ once(/scanVerdict\(false, myGeneration, myEpoch, scanGeneration, scanEpoch, sett
     "the success path must dispatch on scanVerdict");
 assert.equal((serviceCode.match(/recordScanFailure\(\)/g) || []).length, 2,
     "recordScanFailure has exactly its definition and the verdict-gated call");
+
+// Both retry ladders read the shared attempt bound the threshold assertion
+// derives, so neither can outgrow the quarantine budget unnoticed.
+once(/rescanAttempt < scanRetryLadderAttempts/,
+    "the hotplug ladder must read scanRetryLadderAttempts");
+once(/resumeRecoveryAttempt < scanRetryLadderAttempts/,
+    "the resume ladder must read scanRetryLadderAttempts");
 
 // The lift is the episode boundary, and a successful brightness write is one
 // of the lift events: the dismissCategory success prologue must lift before

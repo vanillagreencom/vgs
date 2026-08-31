@@ -39,12 +39,16 @@ Singleton {
     property bool suppressOsd: true
     property string lastBrightnessError: ""
     // A dead i2c/PCI bus wedges every scan; past the threshold, scanning stops
-    // until hotplug, resume, backend arrival, or a successful brightness write
-    // lifts it. Each lift starts a counting episode (scanEpoch): failures of
-    // scans launched before the lift never count, every failure inside the
-    // episode does, and the threshold sits above the 3-attempt retry ladders
-    // so a fully failed ladder alone cannot latch the quarantine.
+    // until a lift: hotplug, resume, backend arrival, a successful brightness
+    // write, or a late success from a scan already in flight. Each lift starts
+    // a counting episode (scanEpoch): failures of scans launched before the
+    // lift never count, every failure inside the episode does, and the
+    // threshold sits above scanRetryLadderAttempts so a fully failed ladder
+    // alone cannot latch the quarantine.
     readonly property int scanQuarantineThreshold: 4
+    // Both post-event retry ladders (hotplug and resume) run this many
+    // staggered scans.
+    readonly property int scanRetryLadderAttempts: 3
     property int consecutiveScanFailures: 0
     property bool scanQuarantined: false
     property int scanGeneration: 0
@@ -77,6 +81,11 @@ Singleton {
         if (state && state.errors && state.errors.length > 0) {
             lastBrightnessError = state.errors.join("\n");
             log.warn("Brightness helper warnings:", lastBrightnessError);
+        }
+        // A response with no devices array applied nothing and must not read
+        // as a recovered bus; an explicit empty list is a genuine answer.
+        if (!state || !state.devices) {
+            return false;
         }
         updateFromBrightnessState(state, scanWriteSeq, scanBlockedDevices);
         return true;
@@ -251,10 +260,6 @@ Singleton {
     }
 
     function updateFromBrightnessState(state, scanWriteSeq, scanBlockedDevices) {
-        if (!state || !state.devices) {
-            return;
-        }
-
         const scanSeq = typeof scanWriteSeq === "number" ? scanWriteSeq : brightnessWriteSeq;
         if (state.devices.length === 0 && scanHasLocalWriteConflict(scanSeq, scanBlockedDevices)) {
             return;
@@ -499,6 +504,11 @@ Singleton {
             const result = response.result || response;
             if (result.device) {
                 updateSingleDevice(result.device, true, latest.showOsd === true);
+                if (!brightnessAvailable) {
+                    // A committed scan failure cleared the device list; this
+                    // write reached the hardware, so a scan can rebuild it.
+                    rescanDevices();
+                }
             } else {
                 rescanDevices();
             }
@@ -971,13 +981,8 @@ Singleton {
             runResumeRecoveryPass();
             resumeRecoveryAttempt++;
 
-            switch (resumeRecoveryAttempt) {
-            case 1:
-                interval = 1400;
-                restart();
-                return;
-            case 2:
-                interval = 2600;
+            if (resumeRecoveryAttempt < scanRetryLadderAttempts) {
+                interval = resumeRecoveryAttempt === 1 ? 1400 : 2600;
                 restart();
                 return;
             }
@@ -1031,8 +1036,16 @@ Singleton {
         const myEpoch = scanEpoch;
         const scanWriteSeq = brightnessWriteSeq;
         const scanBlockedDevices = snapshotScanBlockedDevices();
-        const failScan = kind => {
+        const failScan = (kind, message) => {
             const verdict = scanVerdict(true, myGeneration, myEpoch, scanGeneration, scanEpoch, settledScanGeneration);
+            if (!verdict.count && !verdict.commit) {
+                log.debug("Dropping brightness rescan", kind, "from before the last recovery");
+                return;
+            }
+            if (message) {
+                lastBrightnessError = message;
+                log.warn("Brightness rescan failed:", message);
+            }
             if (verdict.count) {
                 recordScanFailure();
             }
@@ -1041,7 +1054,7 @@ Singleton {
                 return;
             }
             if (scanHasLocalWriteConflict(scanWriteSeq, scanBlockedDevices)) {
-                log.warn("Ignoring stale brightness rescan", kind, "during local write");
+                log.warn("Ignoring brightness rescan", kind, "while a local write is in flight");
                 return;
             }
             settledScanGeneration = myGeneration;
@@ -1052,9 +1065,7 @@ Singleton {
         };
         const handleResponse = response => {
             if (response.error) {
-                lastBrightnessError = response.error;
-                log.warn("Brightness rescan failed:", response.error);
-                failScan("failure");
+                failScan("failure", response.error);
                 return;
             }
             if (!scanVerdict(false, myGeneration, myEpoch, scanGeneration, scanEpoch, settledScanGeneration).commit) {
@@ -1123,7 +1134,7 @@ Singleton {
         onTriggered: {
             rescanDevices();
             rescanAttempt++;
-            if (rescanAttempt < 3) {
+            if (rescanAttempt < scanRetryLadderAttempts) {
                 interval = rescanAttempt === 1 ? 5000 : 8000;
                 restart();
                 return;
