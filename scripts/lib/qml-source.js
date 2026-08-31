@@ -16,19 +16,13 @@
 // an unpaired quote would desync the scan; none of the QML this reads has one.
 
 "use strict";
-
 const assert = require("node:assert/strict");
 
 // Runs of whitespace flattened, so re-wrapping a call across lines is free while
 // renaming or reshaping it still fails.
 const flat = text => String(text).replace(/\s+/g, " ");
-
-// How many times `token` appears in the block AS CODE: matched with its own
-// literal text on the comment-blanked view, then confirmed at the same offset on
-// the structure view, where a string's contents are blanked away — so a match
-// that lives inside a string literal has nothing but spaces there and does not
-// count. Whitespace in the token matches any run of whitespace, which is what
-// makes re-wrapping a call across lines free while renaming it still fails.
+// Count only when literal text and code structure occur at the same offset.
+// Whitespace may be rewrapped; comments and string interiors cannot count.
 function codeOccurrences(literalView, structureView, token) {
     const shape = flat(codeOnly(token));
     const at = new RegExp(
@@ -183,6 +177,27 @@ module.exports = function qmlSource(source, fileLabel) {
         return out;
     }
 
+    // Nested children and JavaScript labels cannot answer a top-level binding lookup.
+    function binding(name) {
+        const hits = [];
+        let depth = 0;
+        let lineStart = 0;
+        for (let i = 0; i < structure.length; i += 1) {
+            const ch = structure[i];
+            if (ch === "{") depth += 1;
+            else if (ch === "}") depth -= 1;
+            else if (ch === "\n") lineStart = i + 1;
+            else if (ch === ":" && depth === 1
+                    && structure.slice(lineStart, i).trim().split(/\s+/).at(-1) === name) {
+                const eol = source.indexOf("\n", i);
+                hits.push({ at: i + 1, value: source.slice(i + 1, eol < 0 ? source.length : eol).trim() });
+            }
+        }
+        assert.equal(hits.length, 1, `${label} must define ${name} exactly once at component top level, found ${hits.length}`);
+        const hit = hits[0];
+        return { value: hit.value, block: hit.value.startsWith("{") ? blockFrom(hit.at, `${name} binding`) : null };
+    }
+
     // Every token has to be present, each named on its own so a failure says
     // which line went missing.
     //
@@ -222,13 +237,10 @@ module.exports = function qmlSource(source, fileLabel) {
         }
     }
 
-    return { blockFrom, body, handlers, requires, indexOf, lastIndexOf, flat, stripComments };
+    return { blockFrom, body, binding, handlers, requires, indexOf, lastIndexOf, flat, stripComments };
 };
-
 module.exports.flat = flat;
 module.exports.stripComments = stripComments;
-module.exports.codeOnly = codeOnly;
-
 // The self-test a library with no executable bit cannot run for itself. Every
 // case below FAILED before the tokenizer went in: the guards could not detect
 // the thing they claim to.
@@ -262,6 +274,17 @@ module.exports.selfTest = function selfTest() {
     assert.equal(stripComments("a(); // x\nb();").length, "a(); // x\nb();".length,
         "blanked, not deleted: offsets and line structure survive");
 
+    // --- binding reads only the component top level ---
+    const bindingFixture = module.exports(`{
+property int target: 7
+Item { property int target: 8 }
+property string decoy: "target: 9"
+property var decision: { if (false) { target: 10; } return 7; }
+}`, "binding fixture");
+    assert.equal(bindingFixture.binding("target").value, "7", "nested and string decoys do not answer");
+    assert.ok(bindingFixture.binding("decision").block.includes("return 7"), "block bindings return their body");
+    assert.throws(() => module.exports("{ property int x: 1\nproperty int x: 2 }", "duplicate fixture").binding("x"),
+        /exactly once/, "duplicate top-level bindings fail loudly");
     // --- blockFrom counts only structural braces ---
     const cases = [
         ['function f() { // }\n    keepMe();\n}', "a brace in a line comment"],

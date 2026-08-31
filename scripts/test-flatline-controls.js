@@ -44,50 +44,8 @@ function blockById(source, type, id, label) {
     return q.blockFrom(typeAt, `${type} ${id}`);
 }
 
-// Finds one property on the component itself. Nested children, JS branches,
-// labels, strings, and comments cannot answer because their brace depth is not
-// the component's top level or their contents are blank in codeOnly().
-function topLevelBinding(block, name, label) {
-    const structure = qmlSource.codeOnly(block);
-    const matches = [];
-    let depth = 0;
-    let lineStart = 0;
-    for (let i = 0; i <= structure.length; i += 1) {
-        if (i !== structure.length && structure[i] !== "\n")
-            continue;
-        const structuralLine = structure.slice(lineStart, i);
-        const colon = structuralLine.indexOf(":");
-        if (depth === 1 && colon >= 0) {
-            const left = structuralLine.slice(0, colon).trim();
-            const declaredName = left.split(/\s+/).at(-1);
-            if (declaredName === name) {
-                const sourceLine = block.slice(lineStart, i);
-                const sourceColon = sourceLine.indexOf(":");
-                matches.push({
-                    at: lineStart + sourceColon + 1,
-                    value: sourceLine.slice(sourceColon + 1).trim()
-                });
-            }
-        }
-        for (const ch of structuralLine) {
-            if (ch === "{") depth += 1;
-            else if (ch === "}") depth -= 1;
-        }
-        lineStart = i + 1;
-    }
-    assert.equal(matches.length, 1,
-        `${label} must define ${name} exactly once at component top level, found ${matches.length}`);
-    const match = matches[0];
-    return {
-        value: match.value,
-        block: match.value.startsWith("{")
-            ? qmlSource(block, label).blockFrom(match.at, `${label}.${name}`)
-            : null
-    };
-}
-
 function assertBinding(block, name, expected, label) {
-    assert.equal(topLevelBinding(block, name, label).value, expected,
+    assert.equal(qmlSource(block, label).binding(name).value, expected,
         `${label}.${name} must be the live binding ${expected}`);
 }
 
@@ -190,7 +148,7 @@ function assertDropdownUsesStableRecords(dropdown, option) {
     const optionText = optionQ.blockFrom(optionQ.indexOf("StyledText {"), "dropdown option label");
     assertBinding(root, "optionRecords", "DropdownLogic.optionRecords(options, optionIcons, optionColorMap)",
         "VgsDropdown root");
-    assertExactBlock(topLevelBinding(popup, "filteredOptions", "dropdown popup").block,
+    assertExactBlock(qmlSource(popup, "dropdown popup").binding("filteredOptions").block,
         FILTERED_OPTIONS, "dropdown popup.filteredOptions");
     assertExactBlock(q.body("initFinder"), INIT_FINDER, "initFinder");
     assertBinding(delegate, "current",
