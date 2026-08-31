@@ -17,10 +17,12 @@ dir at it, and declares it `source = "in-place"`. Adopt reads the Claude
 harness unless `--harness` names another, and `.claude/skills` is where that
 plain invocation looks.
 
-The guards scope themselves: `scripts/check-doc-growth.py`,
-`scripts/check-section-pointers.py` and `scripts/check-naming.sh` read the
-register. Left by hand are a `CEILINGS` entry per file and the
-review-scope lists in `.coderabbit.yaml`, `.github/copilot-instructions.md` and
+The guards scope themselves: `scripts/check-section-pointers.py` and
+`scripts/check-naming.sh` read the register. Left by hand are the review-scope
+lists in `.coderabbit.yaml`, `.github/copilot-instructions.md` and
 `review-bots.md`, which `scripts/check-owned-skills.py` names while missing.
+No size gate covers these files any more: the per-file byte ceilings went with
+`scripts/check-doc-growth.py` (KEN-839), and the shipped size-ratchet class for
+markdown is 24 KB, which none of them approaches.
 Qodo is not among them — `.pr_agent.toml` has no path scoping at all, so it
 reviews the whole render tree.

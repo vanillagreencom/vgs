@@ -117,13 +117,6 @@ jobs:
       - name: Validation inventory
         run: scripts/check-validation-inventory.py
 
-      # Byte ceilings on always-loaded instruction surfaces and
-      # docs/architecture/*.md. AGENTS.md grew 3.3x in 14 days before the
-      # VGS-107 diet; regrowth past a ceiling must be a same-PR ceiling edit
-      # with a rationale, not drift (VGS-108).
-      - name: Instruction-surface growth ratchet
-        run: scripts/check-doc-growth.py
-
       # `.agents/skills/` holds render output and this repo's own skills side by
       # side, and only kendex.toml tells them apart. The guards read it; the two
       # bot configs and review-bots.md cannot, so this holds their lists to it.

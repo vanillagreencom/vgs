@@ -187,7 +187,6 @@ always    | scripts/check-format-lint.sh
 -         | node scripts/lib/qml-region-wiring-selftest.js | grep -qxF 'qml-region wiring selftest: all checks passed'
 -         | node scripts/lib/qml-region-testkit-selftest.js | grep -qxF 'qml-region testkit selftest: all checks passed'
 always    | scripts/check-validation-inventory.py
-docs      | scripts/check-doc-growth.py
 docs      | scripts/check-owned-skills.py
 docs      | scripts/test-owned-skills-e2e.py
 docs      | scripts/check-section-pointers.py

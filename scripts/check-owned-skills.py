@@ -3,8 +3,8 @@
 
 `kendex.toml` says which trees under `.agents/skills/` are this repo's
 (`source = "in-place"`) and which are `kendex refresh` output. The guards read
-it — `scripts/lib/kendex_skills.py` is their one reader, and doc-growth,
-section-pointers and naming derive their scopes from it rather than copying it.
+it — `scripts/lib/kendex_skills.py` is their one reader, and section-pointers
+and naming derive their scopes from it rather than copying it.
 
 THREE DOCUMENTS CANNOT DERIVE ANYTHING, and carry four lists between them.
 `.coderabbit.yaml` and `.github/copilot-instructions.md` are read by external

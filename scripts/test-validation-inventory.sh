@@ -435,8 +435,8 @@ guard_case "an unknown tag is reported (by the shared grammar)" \
   "$(python3 - "$runner" <<'PY'
 import sys
 t = open(sys.argv[1], encoding="utf-8").read()
-print(t.replace("docs      | scripts/check-doc-growth.py",
-                "dcos      | scripts/check-doc-growth.py"), end="")
+print(t.replace("docs      | scripts/test-owned-skills-e2e.py",
+                "dcos      | scripts/test-owned-skills-e2e.py"), end="")
 PY
 )" \
   "malformed tag field"
@@ -1394,7 +1394,7 @@ expect_contains "$pyyaml_out" "IMPORTED" "PyYAML absent"
 # The literal is the point: a count derived from the manifest would agree with
 # a parser that returned nothing. Adding or dropping a manifest row therefore
 # moves it here too; a small mismatch is that, not a broken parser.
-expect_contains "$pyyaml_out" "ROWS 78" "PyYAML absent"
+expect_contains "$pyyaml_out" "ROWS 77" "PyYAML absent"
 expect_contains "$pyyaml_out" "MANIFESTERROR PyYAML is not installed" "PyYAML absent"
 expect_absent "$pyyaml_out" "Traceback" "PyYAML absent"
 ok "without PyYAML the module imports, the other parsers work, and ci.yml fails with one line"
@@ -1551,8 +1551,8 @@ spec.loader.exec_module(mod)
 runner = root / "scripts" / "validate"
 crlf = tmp / "validate-crlf"
 crlf.write_bytes(runner.read_bytes().replace(b"\n", b"\r\n"))
-row = "scripts/check-doc-growth.py"
-assert row in runner.read_text(encoding="utf-8"), "the doc-growth manifest row moved"
+row = "scripts/test-owned-skills-e2e.py"
+assert row in runner.read_text(encoding="utf-8"), "the owned-skills-e2e manifest row moved"
 try:
     logic = mod.runner_logic(crlf)
 except mod.ManifestError as error:

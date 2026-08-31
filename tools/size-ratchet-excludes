@@ -148,6 +148,26 @@
 # the manifest still promised the lane. Ten lines close it and fifteen are the
 # must-fail control, which is this header's usual ratio for a fail-open.
 #
+# KEN-839 ALSO REMOVES A ROW AND RAISES TWO MORE. `scripts/check-doc-growth.py`
+# is deleted on owner ruling, so its 955-line row is gone from the baseline and
+# the two mentions above, in KEN-938's raise ledger, now name a file that no
+# longer exists. They stay: the ledger records what a past branch spent, and
+# rewriting it to hide a later deletion would make the arithmetic unauditable.
+# Four rows tightened on their own as the deletion rippled out — ci.yml 480 to
+# 473, check-section-pointers.py 601 to 594, validate 1062 to 1061.
+#
+#   RAISED    scripts/test-section-pointers-e2e.py    496 ->  540
+#   RAISED    scripts/test-section-pointers.py        489 ->  515
+#
+# THE DELETION TOOK THE LAST HISTORICAL_SECTIONS ENTRY WITH IT, and an empty
+# table drives neither staleness direction, so both control scripts would have
+# gone quiet on a rule that still ships. They install a fixture entry instead —
+# in-process in the unit control, patched into the guard the e2e copies into a
+# throwaway repo — and go back to driving the shipped entries the day this repo
+# records another removed section. That is the wiring cost this header keeps
+# naming: a rule survives its last real instance only if something stands in for
+# it, and the stand-in has to be built in both places the rule is exercised.
+#
 backend/vendor/*	vendored Go modules (go mod vendor for offline Nix builds), upstream-owned
 config/vshell/nvim/colorschemes/*	vendored upstream colorscheme plugins, upstream-owned
 third_party/*	byte-pinned vendored trees (coderabbit-schema, asdcontrol)
