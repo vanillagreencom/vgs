@@ -1016,6 +1016,43 @@ def ci_run_commands(ci: Path) -> str:
     return "\n".join(lines)
 
 
+# Where one command ends and the next begins, and the `VAR=value` prefix that
+# is not yet the command. Both feed ci_runs below.
+_COMMAND_SEPARATOR = re.compile(r"[;&|(){}]")
+_ASSIGNMENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
+
+
+def ci_runs(ci_text: str, path: str) -> bool:
+    """Whether ci.yml INVOKES `path`, rather than merely mentioning it.
+
+    `path in ci_text` was the first form of this question, and it answers yes to
+    an ARGUMENT and to a trailing comment: `echo scripts/foo.py` and
+    `scripts/bar.py  # replaces scripts/foo.py` both contain the path while CI
+    runs nothing of the sort. A workflow could stop running a lane and leave
+    every lockstep arm green, which is the false green those arms exist to
+    prevent. ci_run_commands already drops YAML comments and whole-line shell
+    comments; the shapes left over are the trailing comment and the argument.
+
+    A path counts only in COMMAND POSITION: the first word of a command, which
+    is the start of a `run:` block or whatever follows `;`, `|`, `&`, a brace or
+    a paren. Leading `VAR=value` assignments are skipped, because
+    `FOO=1 scripts/bar.py` does invoke it.
+
+    APPROXIMATE IN ONE DIRECTION, deliberately. A `#` inside a quoted string is
+    read as a comment, so an invocation hiding after one reads as absent. That
+    is a REPORTED problem, never a missed one, and the opposite bias would be
+    the false green this predicate was written to remove.
+    """
+    for line in ci_text.splitlines():
+        for segment in _COMMAND_SEPARATOR.split(re.sub(r"(?:^|\s)#.*$", "", line)):
+            words = segment.split()
+            while words and _ASSIGNMENT.match(words[0]):
+                words.pop(0)
+            if words and words[0] == path:
+                return True
+    return False
+
+
 def documented_table(doc: Path, lead_in: str) -> set[str]:
     """Script basenames named in the first column of the table after `lead_in`."""
     text = _read(doc, "a documented-table surface")

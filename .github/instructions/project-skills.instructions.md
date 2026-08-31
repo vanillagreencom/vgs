@@ -21,8 +21,14 @@ The guards scope themselves: `scripts/check-section-pointers.py` and
 `scripts/check-naming.sh` read the register. Left by hand are the review-scope
 lists in `.coderabbit.yaml`, `.github/copilot-instructions.md` and
 `review-bots.md`, which `scripts/check-owned-skills.py` names while missing.
-No size gate covers these files any more: the per-file byte ceilings went with
-`scripts/check-doc-growth.py` (KEN-839), and the shipped size-ratchet class for
-markdown is 24 KB, which none of them approaches.
+Their per-file byte ceilings went with `scripts/check-doc-growth.py` (KEN-839),
+and what is left is three different gates, none of them tight:
+`.github/copilot-instructions.md` (4,334 B) and `review-bots.md` (7,162 B) fall
+back to size-ratchet's shipped `*.md` class at 64 KiB, and `.coderabbit.yaml` is
+excluded from size-ratchet outright in `tools/size-ratchet-excludes`, since its
+path lists grow one line per skill upstream ships. Only the flat 200 KB
+growth-guards `byte-ceiling` still covers all three. The 24 KiB markdown class
+reaches `AGENTS.md`, `CLAUDE.md` and `SKILL.md` alone, so no skill document here
+is held to anything tighter than its own review.
 Qodo is not among them — `.pr_agent.toml` has no path scoping at all, so it
 reviews the whole render tree.

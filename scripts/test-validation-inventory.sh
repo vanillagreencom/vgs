@@ -250,6 +250,7 @@ for var, attr in (
     ("RUNNER_PATH", "RUNNER"),
     ("AGENTS_PATH", "AGENTS"),
     ("TABLES_PATH", "TABLES_DOC"),
+    ("CI_PATH", "CI"),
 ):
     if os.environ.get(var):
         setattr(mod, attr, pathlib.Path(os.environ[var]))
@@ -2261,6 +2262,35 @@ chmod +x "$offtree_runner"
 run_guard "RUNNER_PATH=$offtree_runner"
 expect_refused "off-tree manifest row" "which .github/workflows/ci.yml does not"
 ok "a manifest row outside scripts/ that ci.yml never runs is reported"
+
+# MENTIONING A PATH IS NOT RUNNING IT. The CI half of both lockstep arms asked
+# `path in ci_text`, a substring test over the concatenated `run:` blocks, so a
+# workflow that stopped invoking a lane kept the guard green as long as the path
+# survived anywhere — as an argument, or in a trailing comment that
+# ci_run_commands' whole-line filter does not reach. The fixture is the real
+# ci.yml with one step's invocation replaced by exactly those two shapes, so it
+# tracks the workflow rather than restating it.
+mention_only_ci="$tmp/ci-mention-only.yml"
+python3 - "$repo_root" "$mention_only_ci" <<'MENTION_ONLY'
+import pathlib, sys
+root, out = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2])
+text = (root / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+step = "        run: .agents/skills/size-ratchet/scripts/size-ratchet\n"
+if step not in text:
+    sys.exit("the size-ratchet ci.yml step this fixture doctors has moved")
+out.write_text(text.replace(step,
+    "        run: |\n"
+    "          echo .agents/skills/size-ratchet/scripts/size-ratchet\n"
+    "          true  # was .agents/skills/size-ratchet/scripts/size-ratchet\n", 1),
+    encoding="utf-8")
+MENTION_ONLY
+if [[ ! -s "$mention_only_ci" ]]; then
+  fail "ci mention-only" "the fixture workflow was not written (see the message above)"
+else
+  run_guard "CI_PATH=$mention_only_ci"
+  expect_refused "ci mention-only" "which .github/workflows/ci.yml does not"
+  ok "a path CI only mentions, as an argument or a trailing comment, is not run"
+fi
 
 # The executable-bit arm (VGS-30 applied to the entry point itself).
 non_exec="$tmp/non-exec-runner"

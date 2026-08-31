@@ -148,6 +148,23 @@
 # the manifest still promised the lane. Ten lines close it and fifteen are the
 # must-fail control, which is this header's usual ratio for a fail-open.
 #
+# THE REVIEW OF THAT ARM FOUND IT TOO WEAK and cost three more raises. Asking
+# `path in ci_text` is satisfied by a MENTION: `echo <path>`, or a trailing
+# comment ci_run_commands' whole-line filter does not reach, both keep a lockstep
+# arm green while the workflow no longer runs the lane. The predicate moved into
+# validation_manifest.ci_runs, which requires command position, and all four
+# call sites use it, so the older scripts/-keyed arm gained the same rigour
+# rather than being left with the hole its neighbour had just closed.
+#
+#   RAISED    scripts/lib/validation_manifest.py     1045 -> 1082
+#   RAISED    scripts/check-validation-inventory.py   421 ->  423
+#   RAISED    scripts/test-validation-inventory.sh   2293 -> 2323
+#
+# The predicate and its reasoning are the 37 lines in the library; the guard
+# itself spends two. The rest is the control, which drives the real ci.yml with
+# one step's invocation replaced by exactly those two shapes, and was shown red
+# against the substring form before it went green.
+#
 # KEN-839 ALSO REMOVES A ROW AND RAISES TWO MORE. `scripts/check-doc-growth.py`
 # is deleted on owner ruling, so its 955-line row is gone from the baseline and
 # the two mentions above, in KEN-938's raise ledger, now name a file that no
