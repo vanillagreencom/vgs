@@ -2,11 +2,12 @@
 # size-ratchet exclusion list — pattern<TAB>reason, glob against the full
 # repo-relative path, `*` crosses `/`. See .agents/skills/size-ratchet/README.md.
 #
-# Divergence from the fleet's 400/800 split, stated per the 2026-08-10 audit:
-# the engine exposes ONE threshold, so the fleet's 800-line test allowance
-# cannot be expressed here. Oversized Go `_test.go` files and the
-# `scripts/test-*.js` harnesses simply enter the baseline instead — acceptable,
-# since a baselined test still cannot grow, and it needs no second gate.
+# Divergence from the fleet's 400/800 split. The engine ships an 800-line test
+# class, but its patterns (`tests/*`, `*.test.*`, `*.spec.*`, `tests.rs`) name
+# none of VGS's tests: Go's convention is `_test.go` beside the source and the
+# harnesses here are `scripts/test-*.js`, so both take the 400-line default and
+# enter the baseline instead — acceptable, since a baselined test still cannot
+# grow, and it needs no second gate.
 #
 # THE THREE VENDOR-DRIFT BASELINE ROWS ARE GONE, with their files: the
 # consumer-side vendor-drift checks re-vetted kendex package content, which the
@@ -16,8 +17,8 @@
 # cluster of files, and every reviewer finding on them arrived as a size
 # argument before it could be fixed. A suite grows by the process's own
 # mechanism, one more case per finding, so a cap on a suite taxes coverage; the
-# fleet's 800-line test allowance would cover that, and this engine exposes one
-# threshold, so it is not expressible.
+# fleet's 800-line test allowance would cover that, and the engine's test class
+# does not reach this repo's test naming, as the header above records.
 #
 # SIX MORE ACCOMMODATIONS, taken by one branch (VGS-150, 2026-08-16), recorded
 # here so the paragraph above reads against the real arithmetic rather than

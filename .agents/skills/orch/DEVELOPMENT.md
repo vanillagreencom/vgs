@@ -18,7 +18,6 @@ Every test the runner discovers ships with the installed skill and must pass in 
 - **Round-id identity.** Every dev/QA delegation mints a token (`workflow-state new-round-id`, a nanosecond timestamp plus a random suffix) and embeds it; `dev-return-write --round-id RID` writes `tmp/dev-return-[ISSUE]-[RID].json` with `round_id` inside, and `dev-artifact-check --round-id RID` resolves that exact path and requires the internal token to match. There is one identity model — no mtime gate, no legacy positional mode — so a same-second re-stamp, a late-writing timed-out agent, a bundle group-A receipt consumed by group-B, and a cross-round ci-fix receipt are all unmatchable. `dev_delegated_at` remains only as the stall-watchdog deadline. Full gate ordering and field rules: `dev-artifact-check --help` (routing: [`references/artifact-checks.md`](./references/artifact-checks.md)); schemas in [`schemas/`](./schemas/).
 - **Command shapes.** Four lints scan the orch and dev docs for shapes strict harness classifiers reject: a literal backtick or an env-assignment prefix inside a fenced `bash`/`sh` block, two or more `workflow-state` invocations stacked in one fenced block, and a token naming one harness's tool, agent type, poll shape, or tool-call cap sitting outside a block that labels the harness it belongs to. Each carries planted-control cases proving it still has teeth.
 - **Reference hygiene.** Lints pin that no doc routes CI waiting through `github.sh` (the waiter is `.agents/skills/orch/scripts/ci-wait`), that no doc uses an unsupported `decisions issue` lookup shape, and that no always-loaded `SKILL.md` or `agents/*.md` carries an issue-number citation.
-- **Settings parity.** `settings-example-sync.test.sh` requires every orch key to exist in both `kendex.settings.toml.example` files with identical defaults, so the two places users learn the options cannot drift.
 - **Waiter contracts.** `approval_wait.sh`, `ci_wait.sh`, and `queue_wait.sh` exercise the state machines and the shared auth ladder against stubbed `gh`, including the check-run and commit-status evidence surfaces, run correlation across reruns and cancelled siblings, and the queue's cross-poll `WAS_QUEUED` memory.
 
 ## GitHub auth ladder
@@ -67,7 +66,24 @@ Reruns re-execute the workflow definition and verifier state pinned at the origi
 
 ## Container close
 
-`merge-pr.md` § 5 step 2's container-close sequence — the per-parent lock, the canceled-child snapshot, validation, completion, and cascade repair — is agent-interpreted prose rather than a helper script. Every step is lock-guarded and fail-closed, and each exit path names its cleanup. Mechanizing it into a tested helper is the intended evolution; grow that helper from this sequence rather than re-deriving it.
+`container-close` derives the shared main checkout, waits up to 120 seconds for
+the per-parent lock, and owns the completion gate and bundle summary. Pending or
+canceled descendants return `deferred [CHILD_IDS...]` before parent mutation;
+the helper never infers that a later child completion came from a parent
+cascade. Completion validation must provide Boolean `all_ok`, exactly one typed
+parent result, and Boolean `has_summary`. A retry with validated summary evidence
+calls `issues complete` without summary flags so it does not post the bundle
+comment twice. Exit zero prints one `closed [PARENT_ID]` or deferred line to
+stdout. A closed result may include completion diagnostics on stderr; consumers
+preserve them all. Any incomplete read, summary, or completion exits nonzero,
+save the one cause no retry can cure: with `gh` absent the child's PR reference
+is recorded as `lookup failed`, held distinct from the `unavailable` only a
+valid lookup matching no PR may write. `sync-base`
+likewise owns base resolution, fetch, checkout ownership, and the fast-forward.
+It preserves unrelated untracked paths and refuses incoming collisions with
+untracked paths, including ignored ones. The fast-forward itself is the sole
+judge, through Git's no-overwrite-ignore rule: a colliding path that appears at
+any moment before the merge still fails it.
 
 ## Codex app worktree routing
 

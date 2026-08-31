@@ -4,6 +4,12 @@
 # must stay ONE `--all-projects` command. These workflows are markdown
 # contracts, so this test statically pins that shape and the absence of every
 # loop form it replaced.
+#
+# No check that a caller states it never loops `--project`. That rule lives
+# only in prose; the flag itself appears on every legitimate call, so a pin on
+# it would stand while the rule was gone. review-bots.md: a token pin
+# establishes that a structural element is present, never that a behavioral
+# claim written in prose is true.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -17,20 +23,22 @@ fail() {
   exit 1
 }
 
-batch_cmd='.agents/skills/linear/scripts/linear.sh cache issues list --all-projects --state "Backlog,Todo,In Progress,In Review,Done" --max'
+batch_cmd_prefix='.agents/skills/linear/scripts/linear.sh cache issues list --all-projects --state '
 
-# check_section <file> <start> <end> <label> — the region holds exactly the
-# batch command and none of the loop shapes it replaced.
+# check_section <file> <start> <end> <label> <states> — the region holds
+# exactly the batch command over <states> and none of the loop shapes it
+# replaced. <states> is pinned per workflow; each call site below says what
+# its own set is, and whether the pin defends it.
 check_section() {
-  local file="$1" start="$2" end="$3" label="$4"
+  local file="$1" start="$2" end="$3" label="$4" states="$5"
   [[ -f "$file" ]] || fail "workflow not found: ${file#"$SKILL_DIR"/}"
 
   local section="$tmp/$label.md"
   sed -n "/$start/,/$end/p" "$file" >"$section"
   [[ -s "$section" ]] || fail "$label section could not be extracted"
 
-  grep -Fq -- "$batch_cmd" "$section" \
-    || fail "$label lost the single --all-projects comparison-set command"
+  grep -Fq -- "$batch_cmd_prefix\"$states\" --max" "$section" \
+    || fail "$label lost the single --all-projects comparison-set command over $states"
 
   local shape
   for shape in 'for each project' 'Run for each project' '--project "[PROJECT_NAME]"' 'for p in'; do
@@ -40,17 +48,28 @@ check_section() {
   done
 }
 
+# tpm-audit compares against the historical record, so Canceled belongs in
+# its set and the pin defends it there.
 check_section "$SKILL_DIR/workflows/tpm-audit.md" \
-  '^### 1\.5 ' '^### 1\.6 ' tpm-audit
+  '^### 1\.5 ' '^### 1\.6 ' tpm-audit \
+  'Backlog,Todo,In Progress,In Review,Done,Canceled'
 
+# roadmap-plan's set is pinned as it stands, NOT as a contract. Its § 2
+# proposes cancel and supersede against this set while Canceled is missing
+# from it, and that is an unresolved gap in the workflow rather than a
+# decision this pin protects. Adding Canceled there is the fix for it, so a
+# red line here means update this literal alongside the workflow.
 check_section "$SKILL_DIR/workflows/tpm-roadmap-plan.md" \
-  '^### 1\.5 ' '^### 1\.6 ' tpm-roadmap-plan
+  '^### 1\.5 ' '^### 1\.6 ' tpm-roadmap-plan \
+  'Backlog,Todo,In Progress,In Review,Done'
 
-# Each workflow states why, so an editor does not "helpfully" restore the loop.
-for rel in workflows/tpm-audit.md workflows/tpm-roadmap-plan.md; do
-  grep -Eq -- 'never loop `--project`|Never loop `--project`' "$SKILL_DIR/$rel" \
-    || fail "${rel} lost the no-loop instruction"
-done
+# Canceled is comparison evidence only. tpm-audit's INPUT fetches must never
+# pick it up — an audit that put Canceled issues up for disposition would
+# recommend changes to closed history.
+sed -n '/^### 1\.4 /,/^### 1\.4\.1 /p' "$SKILL_DIR/workflows/tpm-audit.md" >"$tmp/input.md"
+[[ -s "$tmp/input.md" ]] || fail 'the tpm-audit § 1.4 input section could not be extracted'
+grep -Fq -- 'Canceled' "$tmp/input.md" \
+  && fail 'tpm-audit § 1.4 admits Canceled into the audit input set'
 
 # The flag the workflows depend on is documented by the skill that provides it.
 linear_skill="$SKILL_DIR/../linear/SKILL.md"

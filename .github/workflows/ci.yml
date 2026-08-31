@@ -161,6 +161,15 @@ jobs:
       - name: File-size ratchet
         run: .agents/skills/size-ratchet/scripts/size-ratchet
 
+      # The index-wide half of the work-marker ban. The pre-commit hook runs
+      # `todo-ban --staged`, which judges only the lines a commit ADDS, so a
+      # marker already in the tree is invisible to it; this step reads the whole
+      # index and is the only place one is found. Ungated for the same reason as
+      # the checks above it: a marker lands in whatever file the diff touched,
+      # render trees included.
+      - name: Work-marker ban
+        run: .agents/skills/growth-guards/scripts/todo-ban
+
       # scripts/validate lists a bare `git diff --check`, which is a working-tree
       # check: on a clean CI checkout it inspects nothing at all. The form that
       # means something is a range of what the event actually introduces.

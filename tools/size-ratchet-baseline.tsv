@@ -38,8 +38,6 @@ config/vshell/plugins/sysUpdate/SysUpdateWidget.qml	712
 config/vshell/plugins/tailscale/TailscaleWidget.qml	804
 config/vshell/plugins/vgsMenu/VGSMenu.qml	2349
 config/vshell/settings.default.json	758
-docs/architecture/design-language.md	421
-docs/architecture/scratchpads.md	410
 docs/media/vgs-demo-poster.jpg	1197
 docs/media/vgs-demo.mp4	30319
 kendex.settings.toml	431
