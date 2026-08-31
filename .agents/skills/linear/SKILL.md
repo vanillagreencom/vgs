@@ -92,7 +92,7 @@ this way:
   reported success. `cleaned` records it, the loop names the file that survived,
   and the status is `created` when the create failed and `cleaned` otherwise —
   the create's failure is the more important one and still wins, but a cleanup
-  failure can no longer vanish behind it.
+  failure cannot vanish behind it.
 
 `gh_json= gh_body=` BEFORE the first `mktemp`, and this one is about the
 operator's own shell rather than about statuses. You paste this block into an

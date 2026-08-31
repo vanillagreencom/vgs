@@ -1393,7 +1393,7 @@ expect_contains "$pyyaml_out" "IMPORTED" "PyYAML absent"
 # The literal is the point: a count derived from the manifest would agree with
 # a parser that returned nothing. Adding or dropping a manifest row therefore
 # moves it here too; a small mismatch is that, not a broken parser.
-expect_contains "$pyyaml_out" "ROWS 77" "PyYAML absent"
+expect_contains "$pyyaml_out" "ROWS 78" "PyYAML absent"
 expect_contains "$pyyaml_out" "MANIFESTERROR PyYAML is not installed" "PyYAML absent"
 expect_absent "$pyyaml_out" "Traceback" "PyYAML absent"
 ok "without PyYAML the module imports, the other parsers work, and ci.yml fails with one line"

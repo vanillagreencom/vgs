@@ -124,7 +124,7 @@ CEILINGS: dict[str, int] = {
     # only 4 of bin/'s 15 entries, so it read as complete while it was not.
     #
     # Those registers are what regrew after VGS-107, so 4,500 is a budget the
-    # issue set rather than a size plus headroom: the file is 4,497 B, so there
+    # issue set rather than a size plus headroom: the file is 4,439 B, so there
     # is almost none, and that is the point. The next addition displaces
     # something or moves to a per-area surface — the thing both diets had to do
     # by hand.
@@ -279,7 +279,7 @@ CEILINGS: dict[str, int] = {
     "docs/architecture/backend-daemon.md": 7_800,  # adopted at 7,087 B
     "docs/architecture/cloud-sync.md": 15_400,  # adopted at 13,975 B
     "docs/architecture/design-language.md": 24_900,  # adopted at 17,886 B; 22,565 after VGS-133
-    "docs/architecture/display-brightness.md": 7_600,  # adopted at 6,852 B
+    "docs/architecture/display-brightness.md": 9_600,  # adopted at 6,852 B; 9,573 after VGS-228
     "docs/architecture/greeter-auto-login-keyring.md": 3_500,  # adopted at 3,151 B
     "docs/architecture/idle-lock-screensaver.md": 20_300,  # adopted at 18,453 B; 18,569 after VGS-124
     "docs/architecture/notification-ownership.md": 19_300,  # adopted at 17,530 B
