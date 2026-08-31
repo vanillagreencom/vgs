@@ -69,7 +69,7 @@ Rectangle {
 
         StyledText {
             anchors.verticalCenter: parent.verticalCenter
-            text: root.modelData
+            text: root.modelData.label
             font.pixelSize: Theme.fontSizeMedium
             color: root.current ? Theme.primary : Theme.surfaceText
             font.weight: root.current ? Font.Medium : Font.Normal

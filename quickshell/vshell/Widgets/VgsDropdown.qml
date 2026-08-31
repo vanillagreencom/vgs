@@ -32,13 +32,12 @@ Item {
     property int selectedOptionIndex: -1
     property var optionIcons: []
     property bool enableFuzzySearch: false
-    property var optionIconMap: ({})
     property var optionColorMap: ({})
-    function rebuildIconMap() {
-        optionIconMap = DropdownLogic.iconMap(options, optionIcons);
+    readonly property var optionRecords: DropdownLogic.optionRecords(options, optionIcons, optionColorMap)
+    readonly property var currentOptionRecord: {
+        const sourceIndex = selectedOptionIndex >= 0 ? selectedOptionIndex : options.indexOf(currentValue);
+        return sourceIndex >= 0 && sourceIndex < optionRecords.length ? optionRecords[sourceIndex] : null;
     }
-    onOptionsChanged: rebuildIconMap()
-    onOptionIconsChanged: rebuildIconMap()
 
     property int popupWidthOffset: 0
     property int maxPopupHeight: 400
@@ -209,14 +208,14 @@ Item {
                 width: 16
                 height: 16
                 anchors.verticalCenter: parent.verticalCenter
-                visible: root.optionColorMap[root.currentValue] !== undefined
-                swatchColor: visible ? root.optionColorMap[root.currentValue] : "transparent"
+                visible: root.currentOptionRecord?.color !== undefined
+                swatchColor: visible ? root.currentOptionRecord.color : "transparent"
             }
 
             VgsIcon {
                 id: triggerIcon
 
-                name: root.optionIconMap[root.currentValue] ?? ""
+                name: root.currentOptionRecord?.icon ?? ""
                 size: 18
                 color: Theme.surfaceText
                 anchors.verticalCenter: parent.verticalCenter
@@ -260,17 +259,17 @@ Item {
         property string searchQuery: ""
         property var filteredOptions: {
             if (!root.enableFuzzySearch || searchQuery.length === 0)
-                return root.options;
+                return root.optionRecords;
             if (!fzfFinder)
-                return root.options;
-            return fzfFinder.find(searchQuery).map(r => r.item);
+                return root.optionRecords;
+            return fzfFinder.find(searchQuery).map(result => result.item);
         }
         property int selectedIndex: -1
         property var fzfFinder: null
 
         function initFinder() {
-            fzfFinder = new Fzf.Finder(root.options, {
-                "selector": option => option,
+            fzfFinder = new Fzf.Finder(root.optionRecords, {
+                "selector": option => option.label,
                 "limit": 50,
                 "casing": "case-insensitive",
                 "sort": true,
@@ -295,13 +294,12 @@ Item {
         function selectCurrent() {
             if (selectedIndex < 0 || selectedIndex >= filteredOptions.length)
                 return;
-            const value = filteredOptions[selectedIndex];
-            const sourceIndex = DropdownLogic.sourceIndex(root.options, filteredOptions, value, selectedIndex);
+            const option = filteredOptions[selectedIndex];
             if (root.multiSelect) {
-                root.toggleSelectedValue(sourceIndex, value);
+                root.toggleSelectedValue(option.sourceIndex, option.value);
                 return;
             }
-            root.selectOption(sourceIndex, value);
+            root.selectOption(option.sourceIndex, option.value);
             close();
         }
 
@@ -506,19 +504,18 @@ Item {
                         delegate: VgsDropdownOption {
                             width: ListView.view.width
                             selected: dropdownMenu.selectedIndex === index
-                            property int sourceIndex: DropdownLogic.sourceIndex(root.options, dropdownMenu.filteredOptions, modelData, index)
 
-                            current: root.multiSelect ? root.selectedValues.includes(modelData) : (root.selectedOptionIndex >= 0 ? root.selectedOptionIndex === sourceIndex : root.currentValue === modelData)
+                            current: root.multiSelect ? root.selectedValues.includes(modelData.value) : (root.selectedOptionIndex >= 0 ? root.selectedOptionIndex === modelData.sourceIndex : root.currentValue === modelData.value)
                             multiSelect: root.multiSelect
-                            optionIcon: root.optionIconMap[modelData] ?? ""
-                            optionColor: root.optionColorMap[modelData]
+                            optionIcon: modelData.icon
+                            optionColor: modelData.color
                             fitContent: root.popupWidth > 0
                             onClicked: {
                                 if (root.multiSelect) {
-                                    root.toggleSelectedValue(sourceIndex, modelData);
+                                    root.toggleSelectedValue(modelData.sourceIndex, modelData.value);
                                     return;
                                 }
-                                root.selectOption(sourceIndex, modelData);
+                                root.selectOption(modelData.sourceIndex, modelData.value);
                                 root.closeDropdownMenu();
                             }
                         }

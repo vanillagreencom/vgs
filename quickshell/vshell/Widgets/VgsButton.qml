@@ -18,27 +18,14 @@ Item {
     property color textColor: isSecondary ? Theme.buttonBg : Theme.buttonText
     property int buttonHeight: 40
     property int horizontalPadding: Theme.spacingL
-    readonly property bool followedBySecondaryLink: {
-        let foundSelf = false;
-        for (const sibling of parent?.children ?? []) {
-            if (sibling === root) {
-                foundSelf = true;
-            } else if (foundSelf && sibling.visible && sibling.hasOwnProperty("variant") && sibling.variant === "secondary") {
-                return true;
-            }
-        }
-        return false;
-    }
-    property bool reserveTrailingSpacing: isSecondary || followedBySecondaryLink
     property bool enableScaleAnimation: false
     property bool enableRipple: typeof SettingsData !== "undefined" ? (SettingsData.enableRippleEffects ?? true) : true
 
     signal clicked
 
     readonly property real visualWidth: isSecondary ? contentRow.implicitWidth : Math.max(contentRow.implicitWidth + horizontalPadding * 2, 64)
-    readonly property real trailingSpacing: reserveTrailingSpacing ? Theme.spacingL : 0
 
-    implicitWidth: visualWidth + trailingSpacing
+    implicitWidth: visualWidth
     width: implicitWidth
     height: buttonHeight
     opacity: enabled ? 1 : 0.4
@@ -55,7 +42,7 @@ Item {
 
     Rectangle {
         id: buttonSurface
-        width: root.isSecondary ? root.visualWidth : Math.max(0, root.width - root.trailingSpacing)
+        width: root.isSecondary ? root.visualWidth : root.width
         height: parent.height
         radius: Theme.controlRadius
         color: root.backgroundColor

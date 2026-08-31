@@ -80,10 +80,10 @@ navigation/list surfaces, which use a hover/active background wash instead.
 
 ## Surfaces & buttons
 
-- **Primary button**: solid `primary` fill, `primaryText`, medium weight, 36–40px height, `controlRadius`; keyboard focus draws `focusRing`.
+- **Primary button**: solid `buttonBg` fill, `buttonText`, medium weight, default 40px height, `controlRadius`; compact contexts may set 26–36px heights, and keyboard focus draws `focusRing`.
 - **Settings choice**: label on the left, dropdown on the right. Single-choice settings do not use segmented controls; true multi-select settings use checkbox options and report the selected count.
 - **Secondary button**: `buttonBg` text link, no fill/border, underline on hover.
-  Inline rows space links and preceding filled buttons equally; input-field actions omit it; danger may override `textColor`.
+  Owning rows set spacing between actions; input-field accessories reserve space inside the shared underline; danger may override `textColor`.
 - **Ghost / nav row**: no border, transparent, subtle hover/active wash.
 - **Text input**: transparent with a 1px underline; idle text is dim, focused text brightens, and trailing actions sit inside the line.
 - **Cards**: `surfaceContainer` (or content surface) + `containerRadius`; large settings cards use fill only, while compact cards may use a quiet `borderColor` hairline.

@@ -145,7 +145,6 @@ FocusScope {
                         anchors.right: parent.right
                         anchors.verticalCenter: parent.verticalCenter
                         variant: "secondary"
-                        reserveTrailingSpacing: false
                         text: I18n.tr("Browse")
                         onClicked: wallpaperFolderBrowser.open()
                     }

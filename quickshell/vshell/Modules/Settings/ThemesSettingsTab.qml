@@ -553,7 +553,6 @@ Item {
                         anchors.right: parent.right
                         anchors.verticalCenter: parent.verticalCenter
                         variant: "secondary"
-                        reserveTrailingSpacing: false
                         text: I18n.tr("Save Theme")
                         enabled: root.saveName !== "" && !VGSThemeService.busy
                         onClicked: VGSThemeService.saveCurrent(root.saveName)

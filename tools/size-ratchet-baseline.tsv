@@ -140,7 +140,7 @@ quickshell/vshell/Modules/Settings/GammaControlTab.qml	610
 quickshell/vshell/Modules/Settings/GreeterTab.qml	485
 quickshell/vshell/Modules/Settings/KeybindsTab.qml	726
 quickshell/vshell/Modules/Settings/LauncherTab.qml	1357
-quickshell/vshell/Modules/Settings/LockScreenTab.qml	509
+quickshell/vshell/Modules/Settings/LockScreenTab.qml	508
 quickshell/vshell/Modules/Settings/NetworkEthernetTab.qml	487
 quickshell/vshell/Modules/Settings/NetworkVpnTab.qml	514
 quickshell/vshell/Modules/Settings/NetworkWifiTab.qml	1294
@@ -153,7 +153,7 @@ quickshell/vshell/Modules/Settings/PrinterTab.qml	1152
 quickshell/vshell/Modules/Settings/ScratchpadRow.qml	520
 quickshell/vshell/Modules/Settings/ScratchpadsTab.qml	712
 quickshell/vshell/Modules/Settings/ThemeCatalogBrowser.qml	486
-quickshell/vshell/Modules/Settings/ThemesSettingsTab.qml	565
+quickshell/vshell/Modules/Settings/ThemesSettingsTab.qml	564
 quickshell/vshell/Modules/Settings/TimeWeatherTab.qml	1159
 quickshell/vshell/Modules/Settings/TypographyTab.qml	538
 quickshell/vshell/Modules/Settings/UsersTab.qml	505
@@ -200,7 +200,7 @@ quickshell/vshell/Services/WeatherService.qml	1144
 quickshell/vshell/VGS.qml	1477
 quickshell/vshell/VGSIPC.qml	2177
 quickshell/vshell/Widgets/KeybindItem.qml	1724
-quickshell/vshell/Widgets/VgsDropdown.qml	530
+quickshell/vshell/Widgets/VgsDropdown.qml	527
 quickshell/vshell/Widgets/VgsPopoutStandalone.qml	1061
 scripts/check-aur-sync.py	471
 scripts/check-notification-takeover.js	454
