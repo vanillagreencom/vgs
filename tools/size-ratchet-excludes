@@ -2,12 +2,15 @@
 # size-ratchet exclusion list — pattern<TAB>reason, glob against the full
 # repo-relative path, `*` crosses `/`. See .agents/skills/size-ratchet/README.md.
 #
-# Divergence from the fleet's 400/800 split. The engine ships an 800-line test
-# class, but its patterns (`tests/*`, `*.test.*`, `*.spec.*`, `tests.rs`) name
-# none of VGS's tests: Go's convention is `_test.go` beside the source and the
-# harnesses here are `scripts/test-*.js`, so both take the 400-line default and
-# enter the baseline instead — acceptable, since a baselined test still cannot
-# grow, and it needs no second gate.
+# Divergence from the fleet's 400/800 split. The engine's 800-line test class
+# is a set of path patterns — `tests/*`, `test/*`, `__tests__/*`, `tests.rs`,
+# `*test_util.rs`, `*.test.*`, `*.spec.*` — and none of them reach VGS's test
+# naming. Go puts `_test.go` beside the source. The script harnesses are
+# `scripts/test-*` across .js, .sh and .py alike (test-validate.sh,
+# test-section-pointers.py, test-qml-smoke.sh), and the in-tree unit checks are
+# `*_selftest.py` and `*-selftest.js` under scripts/lib. Every one of those
+# takes the 400-line default and enters the baseline instead — acceptable,
+# since a baselined test still cannot grow, and it needs no second gate.
 #
 # THE THREE VENDOR-DRIFT BASELINE ROWS ARE GONE, with their files: the
 # consumer-side vendor-drift checks re-vetted kendex package content, which the
