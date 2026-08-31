@@ -11,18 +11,15 @@ pattern='dank|DANK|Dank|Dms|DMS|dms|Aether|aether|DankMaterialShell|danklinux'
 # upstream-owned, and a finding there is not fixable here. A copy of the three
 # names lived here for one PR and was already wrong — a fourth in-place skill
 # went unscanned with this check green. `scripts/lib/kendex_skills.py` is the
-# only reader, and it refuses rather than yielding an empty list.
+# only reader, and it refuses — with its own sentence, on stderr — rather than
+# yielding an empty list. A register naming no in-place skill therefore arrives
+# here as a non-zero exit, so there is no empty-output arm to write.
 #
 # NOT `mapfile < <(...)`: process substitution's exit status is unreachable, so
 # a reader that failed would leave `skill_paths` empty and this check green with
 # every skill unscanned — the fail-open this whole derivation exists to close.
 if ! skills_raw="$(python3 scripts/lib/kendex_skills.py)"; then
   printf 'check-naming: kendex.toml could not be read, so no skill tree was scanned.\n' >&2
-  exit 1
-fi
-if [[ -z "$skills_raw" ]]; then
-  printf 'check-naming: kendex.toml declares no in-place skill, so this check would\n' >&2
-  printf 'scan none. Drop this derivation if that is now true.\n' >&2
   exit 1
 fi
 mapfile -t skill_paths <<< "$skills_raw"

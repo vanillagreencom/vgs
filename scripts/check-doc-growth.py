@@ -154,12 +154,12 @@ CEILINGS: dict[str, int] = {
     # regression-test policy sections plus the PR #120 review rounds
     # (coverage gaps, property-defined privileged class) earned the bytes;
     # 7,200 keeps ~10% headroom at the final 6,490 B size, superseding the
-    # 6,500 figure measured mid-review at 5,865 B. Now 7,162 B, ~0.5% left: the
-    # engine bullets folded into the harness-render rule, and KEN-938 gave that
-    # rule the in-place exception the other bot surfaces got, inside the marker
-    # pair scripts/check-owned-skills.py reads. NOT raised — the next addition
-    # here displaces something.
-    "review-bots.md": 7_200,
+    # 6,500 figure measured mid-review at 5,865 B. Now 7,162 B: engine bullets
+    # folded into the harness-render rule, and KEN-938 gave that rule the
+    # in-place exception the other bot surfaces got, inside the marker pair
+    # scripts/check-owned-skills.py reads. RAISED to 7,400 there: that guard made
+    # the pair merge-blocking, and 38 B deadlocked the next skill's ~40 B glob.
+    "review-bots.md": 7_400,
     # Adopted at 2,909 B. 2026-08-14: the PR #132 review found the doc-surface
     # and vendored-tree rules were telling reviewers to suppress valid drift
     # findings on the three VGS-authored files inside vendored trees

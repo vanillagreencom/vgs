@@ -44,8 +44,8 @@
 # `python3 scripts/lib/qml_source_selftest.py` run a library's self-test (each
 # carries a `__main__` only for that; `session-snapshot.sh` is
 # sourced, `validation_manifest.py` is imported by the inventory guard,
-# `collected.py`, `section_pointers.py`, `pointer_targets.py`, `prose_blocks.py`
-# and `tracked_blobs.py` by the checks that collect and by the pointer guard, and
+# `collected.py`, `section_pointers.py`, `pointer_targets.py`, `prose_blocks.py`,
+# `tracked_blobs.py` and `owned_skill_lists.py` by the checks that import them, and
 # `qml_scrub_selftest.py` and `shell_scan_selftest.py` by the entry points above, none of
 # them run; `section_pointers_selftest.py` and `prose_blocks_selftest.py` join
 # that list of libraries carrying a `__main__` only for their own self-test.
@@ -189,6 +189,7 @@ always    | scripts/check-format-lint.sh
 always    | scripts/check-validation-inventory.py
 docs      | scripts/check-doc-growth.py
 docs      | scripts/check-owned-skills.py
+docs      | scripts/test-owned-skills-e2e.py
 docs      | scripts/check-section-pointers.py
 docs      | scripts/test-section-pointers.py
 docs      | scripts/test-section-pointers-e2e.py

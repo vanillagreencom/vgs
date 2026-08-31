@@ -60,6 +60,19 @@
 # the cap grows the files that wire the splits together, so the cap stops
 # rewarding the split it asked for.
 #
+# KEN-938 ADDS ONE EXCLUSION AND TWO RAISES, in the same shape. The exclusion is
+# `.coderabbit.yaml`, which reached 400 of a 400-line threshold: its skill lists
+# grow by one line per skill UPSTREAM ships, which this repo does not author and
+# cannot decline, and `scripts/check-owned-skills.py` now makes the missing line
+# a CI failure — so the next `kendex refresh` that adds a skill would fail twice,
+# once for the missing exclusion and once for the line that fixes it, with the
+# printed remedy (split at a concept seam) unavailable to a single-file bot
+# config a vendor's schema owns. That is the `.agents/*` carve-out one file over:
+# a line count tracking upstream inventory rather than authored complexity.
+# The two raises are that guard's wiring — one CI step and one manifest row for
+# `scripts/test-owned-skills-e2e.py`, the process-level control suite — which is
+# this header's named cost of a control script, paid again.
+#
 # The three grants are majority code and the growth is five review rounds — 23
 # findings, then 12, then 6, then 12 — each asking for another rule, another
 # arm, or another reason written down. The `<doc>.md § <section>` pointer guard's
@@ -93,6 +106,7 @@ themes/*/colors.toml	theme-package palette data, not source
 themes/*/preview.png	theme-package preview image, not source
 themes/catalog.json	generated theme catalog index, regenerated from packages
 .agents/*	vendored kendex install, upstream-owned
+.coderabbit.yaml	skill path lists grow one line per UPSTREAM-shipped skill; check-owned-skills.py makes the line mandatory
 .claude/hooks/block-repo-copy.sh	kendex-rendered hook copy, 511 lines, source owned upstream
 .codex/hooks/block-repo-copy.sh	kendex-rendered hook copy, 511 lines, source owned upstream
 .pi/kendex/hooks/block-repo-copy.sh	kendex-rendered hook copy, 511 lines, source owned upstream

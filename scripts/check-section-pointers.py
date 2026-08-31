@@ -142,9 +142,9 @@ SKIP_ROOTS = (
 # `scripts/lib/kendex_skills.py` is their only reader. A hand-kept copy here
 # went stale the first time it was tested — a fourth in-place skill with a dead
 # pointer inside it swept clean. Both ways a copy could stop meaning anything
-# are now gone with it: a derived root always starts with `.agents/`, which is a
-# SKIP_ROOT, and `scripts/check-owned-skills.py` fails when a registered skill
-# has no tree on disk.
+# are now gone with it: a derived root always starts with `.agents/`, a SKIP_ROOT,
+# and `scripts/check-owned-skills.py` fails when a registered skill has no
+# `SKILL.md` on disk — narrower than the retired arm's tracked-file question.
 #
 # A REGISTER THIS CANNOT READ IS A REFUSAL, never an empty carve-out: with no
 # roots the guard would sweep silently past every tree under `.agents/` and
