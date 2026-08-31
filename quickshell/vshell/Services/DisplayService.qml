@@ -38,14 +38,25 @@ Singleton {
     property bool brightnessInitialized: false
     property bool suppressOsd: true
     property string lastBrightnessError: ""
-    // A dead i2c/PCI device wedges every scan that touches it; after the
-    // threshold, scanning stops until hotplug or resume says hardware changed.
-    readonly property int scanQuarantineThreshold: 3
+    // A dead i2c/PCI bus wedges every scan; past the threshold, scanning stops
+    // until hotplug, resume, or backend arrival lifts it. Sits above the
+    // 3-attempt retry ladders so one slow-to-wake display cannot latch it.
+    readonly property int scanQuarantineThreshold: 4
     property int consecutiveScanFailures: 0
     property bool scanQuarantined: false
+    property int scanGeneration: 0
+    property int completedScanGeneration: 0
 
     signal brightnessChanged(bool showOsd)
     signal deviceSwitched
+
+    // Startup-era CLI failures must not hold the quarantine once the daemon can answer.
+    onBackendBrightnessAvailableChanged: {
+        if (backendBrightnessAvailable) {
+            liftScanQuarantine();
+            rescanDevices();
+        }
+    }
 
     function isDisplayBrightnessClass(deviceClass) {
         return deviceClass === "backlight" || deviceClass === "ddc" || deviceClass === "apple";
@@ -984,39 +995,44 @@ Singleton {
 
     function rescanDevices() {
         if (scanQuarantined) {
+            log.debug("Dropping brightness rescan: scans quarantined until hotplug, resume, or backend arrival");
             return;
         }
+        const myGeneration = ++scanGeneration;
         const scanWriteSeq = brightnessWriteSeq;
         const scanBlockedDevices = snapshotScanBlockedDevices();
+        const failScan = kind => {
+            if (myGeneration !== scanGeneration) {
+                log.debug("Ignoring superseded brightness rescan", kind);
+                return;
+            }
+            if (scanHasLocalWriteConflict(scanWriteSeq, scanBlockedDevices)) {
+                log.warn("Ignoring stale brightness rescan", kind, "during local write");
+                return;
+            }
+            devices = [];
+            deviceBrightness = ({});
+            brightnessAvailable = false;
+            brightnessVersion++;
+            recordScanFailure();
+        };
         const handleResponse = response => {
+            if (myGeneration <= completedScanGeneration) {
+                log.debug("Ignoring brightness rescan response: a newer scan already completed");
+                return;
+            }
             if (response.error) {
-                const message = response.error;
-                lastBrightnessError = message;
-                if (scanHasLocalWriteConflict(scanWriteSeq, scanBlockedDevices)) {
-                    log.warn("Ignoring stale brightness rescan failure during local write:", message);
-                    return;
-                }
-                devices = [];
-                deviceBrightness = ({});
-                brightnessAvailable = false;
-                brightnessVersion++;
-                log.warn("Failed to rescan brightness devices:", message);
-                recordScanFailure();
+                lastBrightnessError = response.error;
+                log.warn("Brightness rescan failed:", response.error);
+                failScan("failure");
                 return;
             }
             if (!applyBrightnessStateJson(JSON.stringify(response.result || response), scanWriteSeq, scanBlockedDevices)) {
-                if (scanHasLocalWriteConflict(scanWriteSeq, scanBlockedDevices)) {
-                    log.warn("Ignoring stale brightness rescan parse failure during local write");
-                    return;
-                }
-                devices = [];
-                deviceBrightness = ({});
-                brightnessAvailable = false;
-                brightnessVersion++;
-                recordScanFailure();
+                failScan("parse failure");
                 return;
             }
-            consecutiveScanFailures = 0;
+            completedScanGeneration = myGeneration;
+            liftScanQuarantine();
         };
 
         if (backendBrightnessAvailable) {

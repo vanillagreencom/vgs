@@ -3,55 +3,110 @@ package brightnessbridge
 import (
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
 
-func writeHelper(t *testing.T, script string) string {
+// writePipeHolderHelper writes a fake helper whose backgrounded child inherits
+// stdout and holds the pipe open long after the helper is gone, reproducing
+// how a ddcutil wedged on a dead bus keeps the pipes of a killed or exited
+// helper alive. `body` runs after the child is spawned; the child's PID is
+// killed from t.Cleanup so no stray sleep outlives the test.
+func writePipeHolderHelper(t *testing.T, body string) string {
 	t.Helper()
-	path := filepath.Join(t.TempDir(), "fake-helper")
+	dir := t.TempDir()
+	pidFile := filepath.Join(dir, "pid")
+	script := "#!/bin/sh\nsleep 60 &\necho $! > " + pidFile + "\n" + body
+	path := filepath.Join(dir, "fake-helper")
 	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() {
+		b, err := os.ReadFile(pidFile)
+		if err != nil {
+			return
+		}
+		pid, err := strconv.Atoi(strings.TrimSpace(string(b)))
+		if err != nil || pid <= 1 {
+			return
+		}
+		_ = syscall.Kill(pid, syscall.SIGKILL)
+	})
 	return path
 }
 
-// A helper stuck probing dead hardware cannot be joined: the kill that fires at
-// the timeout does not land in uninterruptible sleep, and any grandchild keeps
-// the stdout pipe open. The call must abandon the child and fail soft instead
-// of blocking the backend request forever.
+// A helper that never finishes must be killed at the timeout and its
+// pipe-holding descendant abandoned; the call fails soft instead of blocking
+// the backend request until the descendant exits.
 func TestCallAbandonsStuckHelper(t *testing.T) {
-	// The backgrounded sleep inherits stdout and holds the pipe open long
-	// after the parent is killed, reproducing the join-forever failure mode.
-	helper := writeHelper(t, "#!/bin/sh\nsleep 60 &\nsleep 60\n")
+	// exec replaces the shell so the timeout's kill leaves only the
+	// backgrounded pipe holder behind.
+	helper := writePipeHolderHelper(t, "exec sleep 60\n")
 	m := &Manager{helper: helper, timeout: 200 * time.Millisecond, waitDelay: 300 * time.Millisecond}
 
-	type result struct {
-		err error
-	}
-	done := make(chan result, 1)
+	done := make(chan error, 1)
 	go func() {
 		_, err := m.call("list", "--json")
-		done <- result{err}
+		done <- err
 	}()
 
 	select {
-	case r := <-done:
-		if r.err == nil {
+	case err := <-done:
+		if err == nil {
 			t.Fatal("expected timeout error, got nil")
 		}
-		if !strings.Contains(r.err.Error(), "timed out") {
-			t.Fatalf("expected timed-out error, got: %v", r.err)
+		if !strings.Contains(err.Error(), "timed out") {
+			t.Fatalf("expected timed-out error, got: %v", err)
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("call did not abandon the stuck helper: still blocked long past timeout+waitDelay")
 	}
 }
 
+// A helper that exits promptly with a complete response must not have that
+// response discarded just because a descendant held the pipes past waitDelay.
+func TestCallSalvagesOutputFromHeldPipes(t *testing.T) {
+	helper := writePipeHolderHelper(t, "echo '{\"devices\":[]}'\nexit 0\n")
+	m := &Manager{helper: helper, timeout: 5 * time.Second, waitDelay: 300 * time.Millisecond}
+
+	done := make(chan struct {
+		res any
+		err error
+	}, 1)
+	go func() {
+		res, err := m.call("list", "--json")
+		done <- struct {
+			res any
+			err error
+		}{res, err}
+	}()
+
+	select {
+	case r := <-done:
+		if r.err != nil {
+			t.Fatalf("expected salvaged response, got error: %v", r.err)
+		}
+		obj, ok := r.res.(map[string]any)
+		if !ok {
+			t.Fatalf("expected decoded JSON object, got %T", r.res)
+		}
+		if _, ok := obj["devices"]; !ok {
+			t.Fatalf("expected devices key in %v", obj)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("call still blocked long past waitDelay on pipes held by a descendant")
+	}
+}
+
 func TestCallReturnsHelperOutput(t *testing.T) {
-	helper := writeHelper(t, "#!/bin/sh\necho '{\"devices\":[]}'\n")
-	m := &Manager{helper: helper, timeout: timeout, waitDelay: waitDelay}
+	path := filepath.Join(t.TempDir(), "fake-helper")
+	if err := os.WriteFile(path, []byte("#!/bin/sh\necho '{\"devices\":[]}'\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	m := &Manager{helper: path, timeout: timeout, waitDelay: waitDelay}
 	res, err := m.call("list", "--json")
 	if err != nil {
 		t.Fatalf("expected success, got: %v", err)

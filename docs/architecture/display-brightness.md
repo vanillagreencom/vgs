@@ -89,16 +89,24 @@ Empty target resolves to the primary display.
 ## Rescan scheduling & dead-hardware protection
 
 QML rescans are **event-driven only** — startup, display hotplug (staggered
-retries), session resume, and failed or ambiguous write responses. No
-repeating poll: a poll re-enters the i2c/PCI bus even when the probed device
-is dead in D3hot, wedging the helper in uninterruptible sleep. External
-brightness changes surface at the next event, not continuously.
+retries), session resume, backend arrival, and failed or ambiguous write
+responses. No repeating poll: a poll re-enters the i2c/PCI bus even when the
+probed device is dead in D3hot, wedging probes in uninterruptible sleep.
+External brightness changes surface at the next event, not continuously.
 
-Two layers fail soft on a dead bus: the backend times the helper out and
-abandons a child the kill cannot reach (`cmd.WaitDelay`, never rejoined), and
+On a dead bus the backend kills the helper at a hard timeout, and
+`cmd.WaitDelay` abandons pipes still held by the killed helper's wedged
+descendants (a D-state ddcutil) instead of reading toward EOF forever. It
+cannot abandon a helper that is itself in uninterruptible sleep — Wait blocks
+in wait4 regardless — so probes that can D-state must stay in helper
+subprocesses, never in the helper's own process; the QML pending-request
+sweep and the scan quarantine are the backstop for that case.
 `DisplayService` quarantines scanning after consecutive failures
-(`scanQuarantineThreshold`) until hotplug or resume lifts it. Writes stay
-allowed — user-initiated, cheap backends first.
+(`scanQuarantineThreshold`, sized above the 3-attempt retry ladders so one
+slow-to-wake display cannot latch it) until hotplug, resume, or backend
+arrival lifts it, and a scan generation keeps a stale in-flight failure from
+clobbering a newer scan's success. Writes stay allowed — user-initiated,
+cheap backends first.
 
 ## `vshell brightness doctor`
 

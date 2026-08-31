@@ -3,6 +3,7 @@ package brightnessbridge
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -16,10 +17,13 @@ import (
 
 const (
 	timeout = 8 * time.Second
-	// How long after the timeout's kill to wait for the helper's pipes before
-	// abandoning it. A helper probing a dead i2c/PCI device sits in
-	// uninterruptible sleep where the kill cannot land; without this, Output
-	// rejoins the stuck child and blocks the request forever.
+	// Bounds how long Output waits on stdout/stderr pipes after the timeout's
+	// kill lands on the helper. The killed helper's wedged descendants
+	// (ddcutil in uninterruptible sleep on a dead i2c bus) inherit the pipes
+	// and never close them; without this, Output reads toward EOF forever.
+	// It cannot abandon a helper that is itself in uninterruptible sleep —
+	// Wait blocks in wait4 regardless — so probes that can D-state must stay
+	// in subprocesses of the helper, never in the helper's own process.
 	waitDelay = 2 * time.Second
 )
 
@@ -122,6 +126,16 @@ func (m *Manager) call(args ...string) (any, error) {
 	out, err := cmd.Output()
 	if ctx.Err() == context.DeadlineExceeded {
 		return nil, fmt.Errorf("brightness helper timed out")
+	}
+	if errors.Is(err, exec.ErrWaitDelay) {
+		// The helper exited in time but a descendant still holds its pipes;
+		// what was read before the pipes were abandoned may already be the
+		// complete response.
+		var result any
+		if jsonErr := json.Unmarshal(out, &result); jsonErr == nil {
+			return result, nil
+		}
+		return nil, fmt.Errorf("brightness helper left its pipes held open")
 	}
 	if err != nil {
 		if ee, ok := err.(*exec.ExitError); ok {
