@@ -38,6 +38,11 @@ Singleton {
     property bool brightnessInitialized: false
     property bool suppressOsd: true
     property string lastBrightnessError: ""
+    // A dead i2c/PCI device wedges every scan that touches it; after the
+    // threshold, scanning stops until hotplug or resume says hardware changed.
+    readonly property int scanQuarantineThreshold: 3
+    property int consecutiveScanFailures: 0
+    property bool scanQuarantined: false
 
     signal brightnessChanged(bool showOsd)
     signal deviceSwitched
@@ -964,7 +969,23 @@ Singleton {
         }
     }
 
+    function recordScanFailure() {
+        consecutiveScanFailures++;
+        if (consecutiveScanFailures >= scanQuarantineThreshold && !scanQuarantined) {
+            scanQuarantined = true;
+            log.warn("Brightness scans quarantined after", consecutiveScanFailures, "consecutive failures; waiting for display hotplug or resume");
+        }
+    }
+
+    function liftScanQuarantine() {
+        consecutiveScanFailures = 0;
+        scanQuarantined = false;
+    }
+
     function rescanDevices() {
+        if (scanQuarantined) {
+            return;
+        }
         const scanWriteSeq = brightnessWriteSeq;
         const scanBlockedDevices = snapshotScanBlockedDevices();
         const handleResponse = response => {
@@ -980,6 +1001,7 @@ Singleton {
                 brightnessAvailable = false;
                 brightnessVersion++;
                 log.warn("Failed to rescan brightness devices:", message);
+                recordScanFailure();
                 return;
             }
             if (!applyBrightnessStateJson(JSON.stringify(response.result || response), scanWriteSeq, scanBlockedDevices)) {
@@ -991,7 +1013,10 @@ Singleton {
                 deviceBrightness = ({});
                 brightnessAvailable = false;
                 brightnessVersion++;
+                recordScanFailure();
+                return;
             }
+            consecutiveScanFailures = 0;
         };
 
         if (backendBrightnessAvailable) {
@@ -1031,14 +1056,6 @@ Singleton {
         onTriggered: flushBrightnessWrites()
     }
 
-    Timer {
-        id: brightnessPollTimer
-        interval: 10000
-        repeat: true
-        running: true
-        onTriggered: rescanDevices()
-    }
-
     Component.onCompleted: {
         nightModeEnabled = SessionData.nightModeEnabled;
         deviceBrightnessUserSet = Object.assign({}, SessionData.brightnessUserSetValues);
@@ -1072,6 +1089,7 @@ Singleton {
 
         function onScreensChanged() {
             suppressOsd = true;
+            liftScanQuarantine();
             screenChangeRescanTimer.rescanAttempt = 0;
             screenChangeRescanTimer.interval = 3000;
             screenChangeRescanTimer.restart();
@@ -1105,6 +1123,7 @@ Singleton {
         function onSessionResumed() {
             suppressOsd = true;
             osdSuppressTimer.restart();
+            liftScanQuarantine();
             resumeRecoveryAttempt = 0;
             resumeRecoveryTimer.interval = 400;
             resumeRecoveryTimer.restart();

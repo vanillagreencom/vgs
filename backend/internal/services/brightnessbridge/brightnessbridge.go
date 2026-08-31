@@ -14,10 +14,19 @@ import (
 	"vshell/backend/internal/server"
 )
 
-const timeout = 8 * time.Second
+const (
+	timeout = 8 * time.Second
+	// How long after the timeout's kill to wait for the helper's pipes before
+	// abandoning it. A helper probing a dead i2c/PCI device sits in
+	// uninterruptible sleep where the kill cannot land; without this, Output
+	// rejoins the stuck child and blocks the request forever.
+	waitDelay = 2 * time.Second
+)
 
 type Manager struct {
-	helper string
+	helper    string
+	timeout   time.Duration
+	waitDelay time.Duration
 }
 
 type setParams struct {
@@ -35,7 +44,7 @@ func Register(srv *server.Server, log *slog.Logger) (*Manager, error) {
 	if err != nil {
 		return nil, err
 	}
-	m := &Manager{helper: helper}
+	m := &Manager{helper: helper, timeout: timeout, waitDelay: waitDelay}
 	srv.Register("brightness", "brightness.getState", m.handleGetState)
 	srv.Register("brightness", "brightness.rescan", m.handleGetState)
 	srv.Register("brightness", "brightness.setBrightness", m.handleSetBrightness)
@@ -105,10 +114,11 @@ func (m *Manager) state() (any, error) {
 }
 
 func (m *Manager) call(args ...string) (any, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(context.Background(), m.timeout)
 	defer cancel()
 	cmdArgs := append([]string{"brightness"}, args...)
 	cmd := exec.CommandContext(ctx, m.helper, cmdArgs...)
+	cmd.WaitDelay = m.waitDelay
 	out, err := cmd.Output()
 	if ctx.Err() == context.DeadlineExceeded {
 		return nil, fmt.Errorf("brightness helper timed out")

@@ -16,7 +16,7 @@ it. Priority: **backlight → DDC/CI → Apple HID**.
 | Class | Backend | Mechanism | Notes |
 |-------|---------|-----------|-------|
 | `backlight` | `brightnessctl` | `/sys/class/backlight/*` | Laptop panels, and Apple panels when the in-kernel `appledisplay` module claims them. Preferred when present. |
-| `ddc` | `ddcutil` | DDC/CI over the video link, VESA MCCS feature `0x10` | Standard external monitors. No-ops with guidance if `ddcutil` isn't installed. Addressed by a stable EDID-derived id, resolved to its i2c bus at write time. `ddcutil detect` topology is cached (in-process + on-disk, 30 s TTL) so the periodic poll and per-keypress `set` don't re-run the slow probe; brightness values are still read live via getvcp, and the cache is dropped on a setvcp failure. An Apple/backlight `set` resolves against the cheap backends first and skips DDC entirely. |
+| `ddc` | `ddcutil` | DDC/CI over the video link, VESA MCCS feature `0x10` | Standard external monitors. No-ops with guidance if `ddcutil` isn't installed. Addressed by a stable EDID-derived id, resolved to its i2c bus at write time. `ddcutil detect` topology is cached (in-process + on-disk, 30 s TTL) so rescans and per-keypress `set` don't re-run the slow probe; brightness values are still read live via getvcp, and the cache is dropped on a setvcp failure. An Apple/backlight `set` resolves against the cheap backends first and skips DDC entirely. |
 | `apple` | native **hidraw** (pure Python) or vendored **asdcontrol** | USB HID monitor-control feature report (report id 1, 32-bit little-endian value, range 400–60000) | Apple Pro Display XDR / Studio Display. See below. |
 
 A single physical panel visible on multiple backends (shared EDID serial) is
@@ -85,6 +85,20 @@ not change when connectors renumber on re-cable. `_resolve_targets` accepts:
 - monitor-name substring
 
 Empty target resolves to the primary display.
+
+## Rescan scheduling & dead-hardware protection
+
+QML rescans are **event-driven only** — startup, display hotplug (staggered
+retries), session resume, and failed or ambiguous write responses. No
+repeating poll: a poll re-enters the i2c/PCI bus even when the probed device
+is dead in D3hot, wedging the helper in uninterruptible sleep. External
+brightness changes surface at the next event, not continuously.
+
+Two layers fail soft on a dead bus: the backend times the helper out and
+abandons a child the kill cannot reach (`cmd.WaitDelay`, never rejoined), and
+`DisplayService` quarantines scanning after consecutive failures
+(`scanQuarantineThreshold`) until hotplug or resume lifts it. Writes stay
+allowed — user-initiated, cheap backends first.
 
 ## `vshell brightness doctor`
 
