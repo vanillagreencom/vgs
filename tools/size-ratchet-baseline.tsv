@@ -40,8 +40,8 @@ config/vshell/plugins/vgsMenu/VGSMenu.qml	2349
 config/vshell/settings.default.json	758
 docs/media/vgs-demo-poster.jpg	1197
 docs/media/vgs-demo.mp4	30319
-kendex.settings.toml	431
-kendex.toml	1078
+kendex.settings.toml	429
+kendex.toml	1074
 packaging/optional-packages.json	589
 quickshell/vshell-preview/shell.qml	456
 quickshell/vshell/Common/KeybindActions.js	1430
