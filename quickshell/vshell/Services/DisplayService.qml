@@ -38,9 +38,40 @@ Singleton {
     property bool brightnessInitialized: false
     property bool suppressOsd: true
     property string lastBrightnessError: ""
+    // A dead i2c/PCI bus wedges every scan; past the threshold, scanning stops
+    // until a lift: hotplug, resume, backend arrival, a successful ddc
+    // write, or a late success from a scan already in flight. Each lift starts
+    // a counting episode (scanEpoch): failures of scans launched before the
+    // lift never count, every failure inside the episode does, and the
+    // threshold sits above scanRetryLadderAttempts so a fully failed ladder
+    // alone cannot latch the quarantine.
+    readonly property int scanQuarantineThreshold: 4
+    // Both post-event retry ladders (hotplug and resume) run this many
+    // staggered scans.
+    readonly property int scanRetryLadderAttempts: 3
+    property int consecutiveScanFailures: 0
+    property bool scanQuarantined: false
+    property int scanGeneration: 0
+    property int settledScanGeneration: 0
+    property int scanEpoch: 0
+    // A committed failure that cleared brightness state arms one minutes-scale
+    // recovery rescan, at most this many per episode, so a desktop that never
+    // hotplugs, resumes, or sees the backend restart still recovers. The
+    // single-shot timer and this budget keep it from becoming the removed
+    // repeating poll, and each failed retry still counts toward quarantine.
+    readonly property int scanRecoveryRetryBudget: 3
+    property int scanRecoveryRetriesUsed: 0
 
     signal brightnessChanged(bool showOsd)
     signal deviceSwitched
+
+    // Startup-era CLI failures must not hold the quarantine once the daemon can answer.
+    onBackendBrightnessAvailableChanged: {
+        if (backendBrightnessAvailable) {
+            liftScanQuarantine();
+            rescanDevices();
+        }
+    }
 
     function isDisplayBrightnessClass(deviceClass) {
         return deviceClass === "backlight" || deviceClass === "ddc" || deviceClass === "apple";
@@ -57,6 +88,11 @@ Singleton {
         if (state && state.errors && state.errors.length > 0) {
             lastBrightnessError = state.errors.join("\n");
             log.warn("Brightness helper warnings:", lastBrightnessError);
+        }
+        // A response with no devices array applied nothing and must not read
+        // as a recovered bus; an explicit empty list is a genuine answer.
+        if (!state || !state.devices) {
+            return false;
         }
         updateFromBrightnessState(state, scanWriteSeq, scanBlockedDevices);
         return true;
@@ -231,10 +267,6 @@ Singleton {
     }
 
     function updateFromBrightnessState(state, scanWriteSeq, scanBlockedDevices) {
-        if (!state || !state.devices) {
-            return;
-        }
-
         const scanSeq = typeof scanWriteSeq === "number" ? scanWriteSeq : brightnessWriteSeq;
         if (state.devices.length === 0 && scanHasLocalWriteConflict(scanSeq, scanBlockedDevices)) {
             return;
@@ -474,8 +506,20 @@ Singleton {
 
             ToastService.dismissCategory("brightness");
             const result = response.result || response;
+            // The lift needs the class the write actually exercised: the
+            // response's device is authoritative, the local list the fallback.
+            const writtenClass = (result.device && result.device.class)
+                || (getCurrentDeviceInfoByName(deviceName) || {}).class || "";
+            if (writeLiftsQuarantine(writtenClass)) {
+                liftScanQuarantine();
+            }
             if (result.device) {
                 updateSingleDevice(result.device, true, latest.showOsd === true);
+                if (!brightnessAvailable) {
+                    // A committed scan failure cleared the device list; this
+                    // write reached the hardware, so a scan can rebuild it.
+                    rescanDevices();
+                }
             } else {
                 rescanDevices();
             }
@@ -948,13 +992,8 @@ Singleton {
             runResumeRecoveryPass();
             resumeRecoveryAttempt++;
 
-            switch (resumeRecoveryAttempt) {
-            case 1:
-                interval = 1400;
-                restart();
-                return;
-            case 2:
-                interval = 2600;
+            if (resumeRecoveryAttempt < scanRetryLadderAttempts) {
+                interval = resumeRecoveryAttempt === 1 ? 1400 : 2600;
                 restart();
                 return;
             }
@@ -964,34 +1003,106 @@ Singleton {
         }
     }
 
+    // BEGIN SCAN VERDICT DECISION
+    // What one terminal scan response may do, as data; every input is an
+    // argument, so scripts/test-brightness-scan-ordering.js executes this
+    // exact program. A failure counts toward quarantine only when its scan
+    // launched in the current lift episode; state commits only for the latest
+    // scan and only while nothing newer has settled, so an out-of-order
+    // response can never overwrite a newer verdict.
+    function scanVerdict(isFailure, myGeneration, myEpoch, latestGeneration, currentEpoch, settledGeneration) {
+        if (isFailure) {
+            return {
+                "count": myEpoch === currentEpoch,
+                "commit": myGeneration === latestGeneration && myGeneration > settledGeneration
+            };
+        }
+        return {
+            "count": false,
+            "commit": myGeneration > settledGeneration
+        };
+    }
+
+    // A write proves only the path it took: a ddc write exercises the i2c bus
+    // the scans wedge on, while backlight and apple writes resolve through
+    // the cheap path and say nothing about it. An unknown class is no
+    // evidence at all.
+    function writeLiftsQuarantine(writtenClass) {
+        return writtenClass === "ddc";
+    }
+    // END SCAN VERDICT DECISION
+
+    function recordScanFailure() {
+        consecutiveScanFailures++;
+        if (consecutiveScanFailures >= scanQuarantineThreshold && !scanQuarantined) {
+            scanQuarantined = true;
+            log.warn("Brightness scans quarantined after", consecutiveScanFailures, "consecutive failures; waiting for display hotplug, resume, backend arrival, or a successful ddc write");
+        }
+    }
+
+    function liftScanQuarantine() {
+        consecutiveScanFailures = 0;
+        scanQuarantined = false;
+        scanEpoch++;
+        scanRecoveryRetriesUsed = 0;
+        scanRecoveryTimer.stop();
+    }
+
     function rescanDevices() {
+        if (scanQuarantined) {
+            log.debug("Dropping brightness rescan: scans quarantined until hotplug, resume, backend arrival, or a successful ddc write");
+            return;
+        }
+        const myGeneration = ++scanGeneration;
+        const myEpoch = scanEpoch;
         const scanWriteSeq = brightnessWriteSeq;
         const scanBlockedDevices = snapshotScanBlockedDevices();
+        const failScan = (kind, message) => {
+            const verdict = scanVerdict(true, myGeneration, myEpoch, scanGeneration, scanEpoch, settledScanGeneration);
+            if (!verdict.count && !verdict.commit) {
+                log.debug("Dropping brightness rescan", kind, "from before the last recovery");
+                return;
+            }
+            if (message) {
+                lastBrightnessError = message;
+                log.warn("Brightness rescan failed:", message);
+            }
+            if (verdict.count) {
+                recordScanFailure();
+            }
+            if (!verdict.commit) {
+                log.debug("Keeping newer brightness scan state despite this", kind);
+                return;
+            }
+            if (scanHasLocalWriteConflict(scanWriteSeq, scanBlockedDevices)) {
+                log.warn("Ignoring brightness rescan", kind, "while a local write is in flight");
+                return;
+            }
+            settledScanGeneration = myGeneration;
+            devices = [];
+            deviceBrightness = ({});
+            brightnessAvailable = false;
+            brightnessVersion++;
+            if (scanRecoveryRetriesUsed < scanRecoveryRetryBudget) {
+                scanRecoveryRetriesUsed++;
+                scanRecoveryTimer.restart();
+            }
+        };
         const handleResponse = response => {
             if (response.error) {
-                const message = response.error;
-                lastBrightnessError = message;
-                if (scanHasLocalWriteConflict(scanWriteSeq, scanBlockedDevices)) {
-                    log.warn("Ignoring stale brightness rescan failure during local write:", message);
-                    return;
-                }
-                devices = [];
-                deviceBrightness = ({});
-                brightnessAvailable = false;
-                brightnessVersion++;
-                log.warn("Failed to rescan brightness devices:", message);
+                failScan("failure", response.error);
+                return;
+            }
+            if (!scanVerdict(false, myGeneration, myEpoch, scanGeneration, scanEpoch, settledScanGeneration).commit) {
+                log.debug("Ignoring brightness rescan response: a newer scan already settled");
                 return;
             }
             if (!applyBrightnessStateJson(JSON.stringify(response.result || response), scanWriteSeq, scanBlockedDevices)) {
-                if (scanHasLocalWriteConflict(scanWriteSeq, scanBlockedDevices)) {
-                    log.warn("Ignoring stale brightness rescan parse failure during local write");
-                    return;
-                }
-                devices = [];
-                deviceBrightness = ({});
-                brightnessAvailable = false;
-                brightnessVersion++;
+                failScan("parse failure");
+                return;
             }
+            settledScanGeneration = myGeneration;
+            liftScanQuarantine();
         };
 
         if (backendBrightnessAvailable) {
@@ -1031,14 +1142,6 @@ Singleton {
         onTriggered: flushBrightnessWrites()
     }
 
-    Timer {
-        id: brightnessPollTimer
-        interval: 10000
-        repeat: true
-        running: true
-        onTriggered: rescanDevices()
-    }
-
     Component.onCompleted: {
         nightModeEnabled = SessionData.nightModeEnabled;
         deviceBrightnessUserSet = Object.assign({}, SessionData.brightnessUserSetValues);
@@ -1056,7 +1159,7 @@ Singleton {
         onTriggered: {
             rescanDevices();
             rescanAttempt++;
-            if (rescanAttempt < 3) {
+            if (rescanAttempt < scanRetryLadderAttempts) {
                 interval = rescanAttempt === 1 ? 5000 : 8000;
                 restart();
                 return;
@@ -1067,11 +1170,23 @@ Singleton {
         }
     }
 
+    // The write entry points gate on brightnessAvailable, so a cleared list
+    // cannot be recovered by the successful-write lift; this bounded retry is
+    // the only path back on a machine with no hotplug, resume, or backend
+    // event. rescanDevices owns the quarantine drop.
+    Timer {
+        id: scanRecoveryTimer
+        interval: 120000
+        repeat: false
+        onTriggered: rescanDevices()
+    }
+
     Connections {
         target: Quickshell
 
         function onScreensChanged() {
             suppressOsd = true;
+            liftScanQuarantine();
             screenChangeRescanTimer.rescanAttempt = 0;
             screenChangeRescanTimer.interval = 3000;
             screenChangeRescanTimer.restart();
@@ -1105,6 +1220,7 @@ Singleton {
         function onSessionResumed() {
             suppressOsd = true;
             osdSuppressTimer.restart();
+            liftScanQuarantine();
             resumeRecoveryAttempt = 0;
             resumeRecoveryTimer.interval = 400;
             resumeRecoveryTimer.restart();

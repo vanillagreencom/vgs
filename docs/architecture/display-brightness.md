@@ -16,7 +16,7 @@ it. Priority: **backlight → DDC/CI → Apple HID**.
 | Class | Backend | Mechanism | Notes |
 |-------|---------|-----------|-------|
 | `backlight` | `brightnessctl` | `/sys/class/backlight/*` | Laptop panels, and Apple panels when the in-kernel `appledisplay` module claims them. Preferred when present. |
-| `ddc` | `ddcutil` | DDC/CI over the video link, VESA MCCS feature `0x10` | Standard external monitors. No-ops with guidance if `ddcutil` isn't installed. Addressed by a stable EDID-derived id, resolved to its i2c bus at write time. `ddcutil detect` topology is cached (in-process + on-disk, 30 s TTL) so the periodic poll and per-keypress `set` don't re-run the slow probe; brightness values are still read live via getvcp, and the cache is dropped on a setvcp failure. An Apple/backlight `set` resolves against the cheap backends first and skips DDC entirely. |
+| `ddc` | `ddcutil` | DDC/CI over the video link, VESA MCCS feature `0x10` | Standard external monitors. No-ops with guidance if `ddcutil` isn't installed. Addressed by a stable EDID-derived id, resolved to its i2c bus at write time. `ddcutil detect` topology is cached (in-process + on-disk, 30 s TTL) so rescans and per-keypress `set` don't re-run the slow probe; brightness values are still read live via getvcp, and the cache is dropped on a setvcp failure. An Apple/backlight `set` resolves against the cheap backends first and skips DDC entirely. |
 | `apple` | native **hidraw** (pure Python) or vendored **asdcontrol** | USB HID monitor-control feature report (report id 1, 32-bit little-endian value, range 400–60000) | Apple Pro Display XDR / Studio Display. See below. |
 
 A single physical panel visible on multiple backends (shared EDID serial) is
@@ -85,6 +85,48 @@ not change when connectors renumber on re-cable. `_resolve_targets` accepts:
 - monitor-name substring
 
 Empty target resolves to the primary display.
+
+## Rescan scheduling & dead-hardware protection
+
+QML rescans are **event-driven** — startup, display hotplug (staggered
+retries), session resume, backend arrival, and failed or ambiguous write
+responses — with one bounded timed exception: a committed failure arms a
+single-shot recovery rescan two minutes later, at most
+`scanRecoveryRetryBudget` per episode, and each failed retry counts toward
+quarantine. No repeating poll: a poll re-enters the i2c/PCI bus even when the
+probed device is dead in D3hot, wedging probes in uninterruptible sleep.
+External brightness changes surface at the next event, not continuously.
+
+On a dead bus the backend kills the helper at a hard timeout, and that
+context deadline is the operative bound for the ddcutil chain: the helper
+runs every probe pipe-isolated (`_run_timeout` and `run` use `stdout=PIPE`,
+`stderr=PIPE`, plus Python's `close_fds` default), so a D-state ddcutil holds
+the helper's pipes, not the backend's, and the kill on the killable helper
+releases the backend's pipes at the deadline. `cmd.WaitDelay` is
+defense-in-depth for a descendant that does inherit the backend's pipes,
+bounding a read toward EOF that would otherwise never end. Neither bound can
+abandon a helper that is itself in uninterruptible sleep — Wait blocks in
+wait4 regardless — so probes that can D-state must stay in helper
+subprocesses, never in the helper's own process; the QML pending-request
+sweep and the scan quarantine are the backstop for that case.
+`DisplayService` quarantines scanning after `scanQuarantineThreshold`
+consecutive failures within one counting episode. Every lift — hotplug,
+resume, backend arrival, a successful ddc write (backlight and apple writes
+take the cheap path and prove nothing about the scanned i2c bus, so they
+leave the quarantine held), or a late success
+from a scan already in flight — starts a new
+episode: failures of scans launched before it never count, every failure
+inside it does, and the threshold sits above the 3-attempt retry ladders so a
+fully failed ladder alone cannot latch. A settled-scan generation keeps
+out-of-order responses from overwriting a newer verdict — a stale failure
+cannot clobber a newer scan's success, and a stale success cannot restore
+devices a newer committed failure cleared
+(`scripts/test-brightness-scan-ordering.js` executes that decision). A
+committed failure that cleared state also arms one recovery rescan minutes
+later, at most `scanRecoveryRetryBudget` per episode — the write entry points
+gate on availability, so without it a machine with no hotplug, resume, or
+backend event never recovers; each failed retry counts toward quarantine.
+Writes stay allowed — user-initiated, cheap backends first.
 
 ## `vshell brightness doctor`
 

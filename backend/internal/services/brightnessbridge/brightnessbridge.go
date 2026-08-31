@@ -3,6 +3,7 @@ package brightnessbridge
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -14,10 +15,26 @@ import (
 	"vshell/backend/internal/server"
 )
 
-const timeout = 8 * time.Second
+const (
+	timeout = 8 * time.Second
+	// Defense-in-depth bound on how long Output waits for stdout/stderr after
+	// the helper is gone. The ddcutil chain does not reach it: the helper
+	// runs its probes pipe-isolated (bin/vshell-helper _run_timeout and run
+	// use stdout=PIPE, stderr=PIPE, and Python's close_fds default), so a
+	// D-state ddcutil holds the helper's pipes, not these, and the context
+	// timeout killing the killable helper releases them at the deadline.
+	// WaitDelay bounds the wait only for a descendant that does inherit the
+	// pipes. Neither bound can abandon a helper that is itself in
+	// uninterruptible sleep — Wait blocks in wait4 regardless — so probes
+	// that can D-state must stay in helper subprocesses, never in the
+	// helper's own process.
+	waitDelay = 2 * time.Second
+)
 
 type Manager struct {
-	helper string
+	helper    string
+	timeout   time.Duration
+	waitDelay time.Duration
 }
 
 type setParams struct {
@@ -35,7 +52,7 @@ func Register(srv *server.Server, log *slog.Logger) (*Manager, error) {
 	if err != nil {
 		return nil, err
 	}
-	m := &Manager{helper: helper}
+	m := &Manager{helper: helper, timeout: timeout, waitDelay: waitDelay}
 	srv.Register("brightness", "brightness.getState", m.handleGetState)
 	srv.Register("brightness", "brightness.rescan", m.handleGetState)
 	srv.Register("brightness", "brightness.setBrightness", m.handleSetBrightness)
@@ -105,11 +122,25 @@ func (m *Manager) state() (any, error) {
 }
 
 func (m *Manager) call(args ...string) (any, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(context.Background(), m.timeout)
 	defer cancel()
 	cmdArgs := append([]string{"brightness"}, args...)
 	cmd := exec.CommandContext(ctx, m.helper, cmdArgs...)
+	cmd.WaitDelay = m.waitDelay
 	out, err := cmd.Output()
+	// Salvage before the timeout classification: a helper can exit cleanly
+	// with the complete response and the deadline expire while Output still
+	// waits on a descendant-held pipe, making both conditions true at once.
+	if errors.Is(err, exec.ErrWaitDelay) {
+		var result any
+		if jsonErr := json.Unmarshal(out, &result); jsonErr == nil {
+			return result, nil
+		}
+		if ctx.Err() == context.DeadlineExceeded {
+			return nil, fmt.Errorf("brightness helper timed out")
+		}
+		return nil, fmt.Errorf("brightness helper left its pipes held open")
+	}
 	if ctx.Err() == context.DeadlineExceeded {
 		return nil, fmt.Errorf("brightness helper timed out")
 	}
