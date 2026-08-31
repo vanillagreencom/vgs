@@ -101,6 +101,43 @@ func TestCallSalvagesOutputFromHeldPipes(t *testing.T) {
 	}
 }
 
+// The boundary where the helper exits cleanly with a complete response but
+// the deadline expires while Output waits on the descendant-held pipes: both
+// exec.ErrWaitDelay and a DeadlineExceeded context are true, and the salvage
+// must still win over the timeout classification.
+func TestCallSalvagesAtTimeoutBoundary(t *testing.T) {
+	helper := writePipeHolderHelper(t, "echo '{\"devices\":[]}'\nexit 0\n")
+	m := &Manager{helper: helper, timeout: 300 * time.Millisecond, waitDelay: 700 * time.Millisecond}
+
+	done := make(chan struct {
+		res any
+		err error
+	}, 1)
+	go func() {
+		res, err := m.call("list", "--json")
+		done <- struct {
+			res any
+			err error
+		}{res, err}
+	}()
+
+	select {
+	case r := <-done:
+		if r.err != nil {
+			t.Fatalf("expected salvaged response at the timeout boundary, got error: %v", r.err)
+		}
+		obj, ok := r.res.(map[string]any)
+		if !ok {
+			t.Fatalf("expected decoded JSON object, got %T", r.res)
+		}
+		if _, ok := obj["devices"]; !ok {
+			t.Fatalf("expected devices key in %v", obj)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("call still blocked long past timeout and waitDelay")
+	}
+}
+
 func TestCallReturnsHelperOutput(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "fake-helper")
 	if err := os.WriteFile(path, []byte("#!/bin/sh\necho '{\"devices\":[]}'\n"), 0o755); err != nil {

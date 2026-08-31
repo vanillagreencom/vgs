@@ -39,7 +39,7 @@ Singleton {
     property bool suppressOsd: true
     property string lastBrightnessError: ""
     // A dead i2c/PCI bus wedges every scan; past the threshold, scanning stops
-    // until a lift: hotplug, resume, backend arrival, a successful brightness
+    // until a lift: hotplug, resume, backend arrival, a successful ddc
     // write, or a late success from a scan already in flight. Each lift starts
     // a counting episode (scanEpoch): failures of scans launched before the
     // lift never count, every failure inside the episode does, and the
@@ -505,10 +505,14 @@ Singleton {
             }
 
             ToastService.dismissCategory("brightness");
-            // A write that reached the hardware is positive evidence the bus
-            // answers again; scanning must not stay quarantined behind it.
-            liftScanQuarantine();
             const result = response.result || response;
+            // The lift needs the class the write actually exercised: the
+            // response's device is authoritative, the local list the fallback.
+            const writtenClass = (result.device && result.device.class)
+                || (getCurrentDeviceInfoByName(deviceName) || {}).class || "";
+            if (writeLiftsQuarantine(writtenClass)) {
+                liftScanQuarantine();
+            }
             if (result.device) {
                 updateSingleDevice(result.device, true, latest.showOsd === true);
                 if (!brightnessAvailable) {
@@ -1018,13 +1022,21 @@ Singleton {
             "commit": myGeneration > settledGeneration
         };
     }
+
+    // A write proves only the path it took: a ddc write exercises the i2c bus
+    // the scans wedge on, while backlight and apple writes resolve through
+    // the cheap path and say nothing about it. An unknown class is no
+    // evidence at all.
+    function writeLiftsQuarantine(writtenClass) {
+        return writtenClass === "ddc";
+    }
     // END SCAN VERDICT DECISION
 
     function recordScanFailure() {
         consecutiveScanFailures++;
         if (consecutiveScanFailures >= scanQuarantineThreshold && !scanQuarantined) {
             scanQuarantined = true;
-            log.warn("Brightness scans quarantined after", consecutiveScanFailures, "consecutive failures; waiting for display hotplug, resume, backend arrival, or a successful brightness write");
+            log.warn("Brightness scans quarantined after", consecutiveScanFailures, "consecutive failures; waiting for display hotplug, resume, backend arrival, or a successful ddc write");
         }
     }
 
@@ -1038,7 +1050,7 @@ Singleton {
 
     function rescanDevices() {
         if (scanQuarantined) {
-            log.debug("Dropping brightness rescan: scans quarantined until hotplug, resume, backend arrival, or a successful write");
+            log.debug("Dropping brightness rescan: scans quarantined until hotplug, resume, backend arrival, or a successful ddc write");
             return;
         }
         const myGeneration = ++scanGeneration;

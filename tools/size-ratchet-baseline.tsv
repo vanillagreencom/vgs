@@ -181,7 +181,7 @@ quickshell/vshell/Services/CompositorService.qml	447
 quickshell/vshell/Services/CupsService.qml	837
 quickshell/vshell/Services/DSearchService.qml	427
 quickshell/vshell/Services/DgopService.qml	780
-quickshell/vshell/Services/DisplayService.qml	1557
+quickshell/vshell/Services/DisplayService.qml	1569
 quickshell/vshell/Services/IdleService.qml	798
 quickshell/vshell/Services/KeybindsService.qml	665
 quickshell/vshell/Services/LegacyNetworkService.qml	627

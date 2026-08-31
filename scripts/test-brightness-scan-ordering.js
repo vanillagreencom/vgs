@@ -88,7 +88,9 @@ const marked = serviceSource.match(
     /\/\/ BEGIN SCAN VERDICT DECISION\n([\s\S]*?)\/\/ END SCAN VERDICT DECISION/
 );
 assert.ok(marked, "DisplayService.qml must carry the SCAN VERDICT DECISION markers");
-const { scanVerdict } = new Function(`${marked[1]}\nreturn { scanVerdict };`)();
+const { scanVerdict, writeLiftsQuarantine } = new Function(
+    `${marked[1]}\nreturn { scanVerdict, writeLiftsQuarantine };`
+)();
 
 // The bounds the doc claims, derived from the service itself rather than a
 // second copy here. A miss means the extractor broke, not that the service
@@ -193,6 +195,15 @@ for (const order of [[0, 1, 2], [2, 0, 1]]) {
     assert.ok(launch(s), "a lift resumes scanning");
 }
 
+// A write proves only the path it took: the quarantine lifts on ddc evidence
+// covering the scanned i2c bus and holds for cheap-path or unknown writes,
+// or a laptop-backlight key repeat re-arms doomed D-state probes of a dead
+// external bus.
+assert.equal(writeLiftsQuarantine("ddc"), true, "a ddc write covers the i2c bus and lifts");
+for (const cls of ["backlight", "apple", "", undefined])
+    assert.equal(writeLiftsQuarantine(cls), false,
+        `a ${cls || "classless"} write must leave the quarantine held`);
+
 // --- half 2: the wiring, as a lint ------------------------------------------
 
 const once = (re, why) => {
@@ -219,9 +230,10 @@ once(/rescanAttempt < scanRetryLadderAttempts/,
 once(/resumeRecoveryAttempt < scanRetryLadderAttempts/,
     "the resume ladder must read scanRetryLadderAttempts");
 
-// The lift is the episode boundary, and a successful brightness write is one
-// of the lift events: the dismissCategory success prologue must lift before
-// the result.device dispatch, or a recovered bus waits for the next hotplug.
+// The lift is the episode boundary, and a covering write success is one of
+// the lift events: the dismissCategory success prologue must consult the
+// extracted class gate before the result.device dispatch, or the lift either
+// vanishes or goes back to firing for cheap-path writes.
 once(/function liftScanQuarantine\(\) \{\s*consecutiveScanFailures = 0;\s*scanQuarantined = false;\s*scanEpoch\+\+;\s*scanRecoveryRetriesUsed = 0;\s*scanRecoveryTimer\.stop\(\);/,
     "liftScanQuarantine must reset the counter, the flag, the retry budget, " +
         "the pending retry, and open a new episode");
@@ -232,11 +244,13 @@ once(/function liftScanQuarantine\(\) \{\s*consecutiveScanFailures = 0;\s*scanQu
 // state unrecoverable on a machine with no lifecycle events.
 once(/brightnessVersion\+\+;\s*if \(scanRecoveryRetriesUsed < scanRecoveryRetryBudget\) \{\s*scanRecoveryRetriesUsed\+\+;\s*scanRecoveryTimer\.restart\(\);/,
     "a committed failure clear must arm the bounded recovery retry");
+once(/if \(writeLiftsQuarantine\(writtenClass\)\) \{\s*liftScanQuarantine\(\);/,
+    "the write-success lift must be gated on the extracted class decision");
 const writeSuccess = serviceCode.indexOf('ToastService.dismissCategory("brightness");');
 assert.ok(writeSuccess >= 0, "the write-success prologue must exist");
-const writeLift = serviceCode.indexOf("liftScanQuarantine();", writeSuccess);
-const writeDispatch = serviceCode.indexOf("const result = response.result || response;", writeSuccess);
-assert.ok(writeLift >= 0 && writeDispatch >= 0 && writeLift < writeDispatch,
-    "a successful brightness write must lift the scan quarantine before dispatching on the result");
+const gatedLift = serviceCode.indexOf("if (writeLiftsQuarantine(writtenClass)) {", writeSuccess);
+const deviceDispatch = serviceCode.indexOf("if (result.device) {", writeSuccess);
+assert.ok(gatedLift >= 0 && deviceDispatch >= 0 && gatedLift < deviceDispatch,
+    "a write success must consult the class gate before dispatching on the result");
 
 console.log("brightness scan ordering: all checks passed");

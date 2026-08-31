@@ -88,9 +88,12 @@ Empty target resolves to the primary display.
 
 ## Rescan scheduling & dead-hardware protection
 
-QML rescans are **event-driven only** — startup, display hotplug (staggered
+QML rescans are **event-driven** — startup, display hotplug (staggered
 retries), session resume, backend arrival, and failed or ambiguous write
-responses. No repeating poll: a poll re-enters the i2c/PCI bus even when the
+responses — with one bounded timed exception: a committed failure arms a
+single-shot recovery rescan two minutes later, at most
+`scanRecoveryRetryBudget` per episode, and each failed retry counts toward
+quarantine. No repeating poll: a poll re-enters the i2c/PCI bus even when the
 probed device is dead in D3hot, wedging probes in uninterruptible sleep.
 External brightness changes surface at the next event, not continuously.
 
@@ -103,7 +106,9 @@ subprocesses, never in the helper's own process; the QML pending-request
 sweep and the scan quarantine are the backstop for that case.
 `DisplayService` quarantines scanning after `scanQuarantineThreshold`
 consecutive failures within one counting episode. Every lift — hotplug,
-resume, backend arrival, a successful brightness write, or a late success
+resume, backend arrival, a successful ddc write (backlight and apple writes
+take the cheap path and prove nothing about the scanned i2c bus, so they
+leave the quarantine held), or a late success
 from a scan already in flight — starts a new
 episode: failures of scans launched before it never count, every failure
 inside it does, and the threshold sits above the 3-attempt retry ladders so a

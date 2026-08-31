@@ -124,18 +124,21 @@ func (m *Manager) call(args ...string) (any, error) {
 	cmd := exec.CommandContext(ctx, m.helper, cmdArgs...)
 	cmd.WaitDelay = m.waitDelay
 	out, err := cmd.Output()
-	if ctx.Err() == context.DeadlineExceeded {
-		return nil, fmt.Errorf("brightness helper timed out")
-	}
+	// Salvage before the timeout classification: a helper can exit cleanly
+	// with the complete response and the deadline expire while Output still
+	// waits on a descendant-held pipe, making both conditions true at once.
 	if errors.Is(err, exec.ErrWaitDelay) {
-		// The helper exited in time but a descendant still holds its pipes;
-		// what was read before the pipes were abandoned may already be the
-		// complete response.
 		var result any
 		if jsonErr := json.Unmarshal(out, &result); jsonErr == nil {
 			return result, nil
 		}
+		if ctx.Err() == context.DeadlineExceeded {
+			return nil, fmt.Errorf("brightness helper timed out")
+		}
 		return nil, fmt.Errorf("brightness helper left its pipes held open")
+	}
+	if ctx.Err() == context.DeadlineExceeded {
+		return nil, fmt.Errorf("brightness helper timed out")
 	}
 	if err != nil {
 		if ee, ok := err.(*exec.ExitError); ok {
