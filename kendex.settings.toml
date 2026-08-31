@@ -22,14 +22,14 @@ GH_ISSUE_PATTERN = "vgs-[0-9]+"
 GIT_HOST_CLI = ".agents/skills/github/scripts/github.sh"
 LINEAR_FORMAT = "safe"
 ORCH_STATE_DIR = "tmp"
-# File-size ratchet (VGS-111, fleet ruling 2026-08-10: adopt size-ratchet,
-# never hand-roll a size gate). CI runs the committed kendex render at
-# .agents/skills/size-ratchet/, and this file configures NOTHING for it. The
-# shipped path classes decide every threshold — markdown in bytes, tests at 800
-# lines, everything else at the 400-line default — and tools/size-ratchet-
-# baseline.tsv and tools/size-ratchet-excludes sit where the package already
-# looks for them. A key repeating a default holds the old number or the old
-# path through an upgrade that moves it, and nobody reads it again (KEN-839).
+
+# File-size ratchet: NO KEY HERE, deliberately (VGS-111; fleet ruling
+# 2026-08-10, adopt size-ratchet and never hand-roll a size gate). The shipped
+# path classes decide every threshold, and tools/size-ratchet-baseline.tsv and
+# tools/size-ratchet-excludes sit where the package already looks. A key
+# repeating a default holds the old number or the old path through an upgrade
+# that moves it, and nobody reads it again (KEN-839).
+
 SECOND_OPINION_CLAUDE_CMD = "claude -p --no-session-persistence --model opus --effort max --allowedTools Bash(read-only:true),Read,Glob,Grep"
 SECOND_OPINION_CODEX_CMD = "codex exec -m gpt-5.5 -s read-only -c model_reasoning_effort=xhigh --ephemeral"
 SECOND_OPINION_TIMEOUT = "1080"
