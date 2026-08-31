@@ -188,6 +188,19 @@ CEILINGS: dict[str, int] = {
     # contract; now 5,552 B, ~2.7% left. The tighter line is tight enough that
     # the next addition here needs a raise, not a shave.
     ".agents/skills/vshell-dev/SKILL.md": 5_700,
+    # THE SAME SKILL'S REFERENCE FILES, which nothing capped between the move
+    # and this entry. KEN-938 put them under `.agents/`, where the size
+    # ratchet's `.agents/*` exclusion covers the whole tree as upstream-owned
+    # — its globs cross `/` — and the roots' glob below still asked only for
+    # each tree's SKILL.md, so three files that had been line-capped under
+    # project-skills/ came out of the move with no size gate of any kind. The
+    # exclusion is right and stays: the excludes file takes no negation, so
+    # narrowing it means hand-listing skills again, which is the list this
+    # issue removed. These ceilings are the cover instead, and the glob below
+    # reaches every markdown file so the next reference file demands one too.
+    ".agents/skills/vshell-dev/references/plugin-development.md": 3_800,  # adopted at 3,436 B
+    ".agents/skills/vshell-dev/references/qml-runtime.md": 2_200,  # adopted at 1,957 B
+    ".agents/skills/vshell-dev/references/theme-engine.md": 1_300,  # adopted at 1,174 B
     # Adopted at 1,906 B; 1,598 B once publish commands left for vgs-distro-publish.
     # Now 2,172 B: v0.4.0 shipped unsigned — full fingerprint, and the no-TTY fallback.
     ".agents/skills/vgs-release/SKILL.md": 2_400,
@@ -232,8 +245,8 @@ CEILINGS: dict[str, int] = {
     # scripts/check-owned-skills.py holds the bot configs to.
     # project-skills/README.md, which it replaces, was 1,259 B. 1,300 is the
     # adoption formula at that size: 1,152 plus ~10% is 1,267, rounded up to the
-    # next 100. Now 1,293 B, ~0.5% left, the checklist rewritten around the
-    # guards deriving their own scope.
+    # next 100. Now 1,288 B, ~0.9% left, the checklist rewritten around the
+    # guards deriving their own scope and a ceiling due per markdown file.
     ".github/instructions/project-skills.instructions.md": 1_300,
     ".github/instructions/quickshell-qml.instructions.md": 1_700,  # adopted at 1,459 B
     ".github/instructions/themes.instructions.md": 700,  # adopted at 577 B
@@ -349,6 +362,10 @@ CEILINGS: dict[str, int] = {
 # `scripts/lib/kendex_skills.py` is why that cannot happen again, and
 # `scripts/check-owned-skills.py` asserts each derived root exists on disk.
 #
+# EVERY MARKDOWN FILE UNDER AN OWNED ROOT, not each tree's SKILL.md: the
+# reference files beside it are the same authored prose, and the size ratchet
+# cannot reach them. Their ceilings above say why.
+#
 # DERIVED ROOTS ARE STILL DECLARED ROOTS. The separation the paragraph above
 # insists on is between a root and the PATTERN under test, not between a root
 # and a register: the pattern is still written here, and narrowing it still
@@ -362,7 +379,7 @@ try:
     WATCHED_SURFACES = (
         (".github/instructions", ".github/instructions/**/*.md"),
         ("docs/architecture", "docs/architecture/**/*.md"),
-    ) + tuple((root, f"{root}/**/SKILL.md") for root in in_place_dirs())
+    ) + tuple((root, f"{root}/**/*.md") for root in in_place_dirs())
 except RegisterError as error:
     raise SystemExit(f"check-doc-growth: {error}") from error
 
