@@ -208,7 +208,7 @@ scripts/check-notification-takeover.js	454
 scripts/check-paste-injection.py	897
 scripts/check-section-pointers.py	601
 scripts/check-settings-migration.js	952
-scripts/check-validation-inventory.py	411
+scripts/check-validation-inventory.py	421
 scripts/check-vshell-helper.py	5864
 scripts/check-vshell-niri.py	678
 scripts/gen-package-metadata.py	993
@@ -227,5 +227,5 @@ scripts/test-section-pointers.py	489
 scripts/test-switcher-selection.js	774
 scripts/test-toast-actions.js	607
 scripts/test-validate.sh	538
-scripts/test-validation-inventory.sh	2278
+scripts/test-validation-inventory.sh	2293
 scripts/validate	1062

@@ -131,6 +131,20 @@
 # every case in it is a whole throwaway repository, so a finding costs ten lines
 # there rather than two.
 #
+# KEN-839 ADDS TWO RAISES, and they are the wiring cost again, from the review
+# that found the hole rather than from a split.
+#
+#   RAISED    scripts/check-validation-inventory.py    411 ->  421
+#   RAISED    scripts/test-validation-inventory.sh    2278 -> 2293
+#
+# The guard compared CI coverage only for executable `scripts/*` entries, so a
+# manifest row pointing outside that directory — the two rendered engines this
+# branch wired in, `.agents/skills/size-ratchet/scripts/size-ratchet` and
+# `.agents/skills/growth-guards/scripts/todo-ban` — was never compared against
+# ci.yml at all. Deleting either workflow step left the inventory green while
+# the manifest still promised the lane. Ten lines close it and fifteen are the
+# must-fail control, which is this header's usual ratio for a fail-open.
+#
 backend/vendor/*	vendored Go modules (go mod vendor for offline Nix builds), upstream-owned
 config/vshell/nvim/colorschemes/*	vendored upstream colorscheme plugins, upstream-owned
 third_party/*	byte-pinned vendored trees (coderabbit-schema, asdcontrol)

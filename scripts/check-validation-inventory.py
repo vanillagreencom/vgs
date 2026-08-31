@@ -342,6 +342,16 @@ def main() -> int:
                 f"scripts/validate runs `{head}` bare, but it is not executable "
                 f"(git update-index --chmod=+x {head})"
             )
+        # CI LOCKSTEP FOR ROWS OUTSIDE scripts/. The arm below keys CI coverage
+        # by basename under scripts/, so a row that runs a rendered engine
+        # (.agents/skills/...) was never compared at all: deleting its ci.yml
+        # step left this check green while the manifest still promised the lane.
+        elif ci_text is not None and not head.startswith("scripts/") and head not in ci_text:
+            problems.append(
+                f"scripts/validate runs `{head}`, which .github/workflows/ci.yml does not. "
+                f"Add the step, or drop the manifest row — an entry CI never runs "
+                f"is coverage that does not exist."
+            )
 
     # --- every executable check is invoked, or excluded with a reason ---------
     # The CI half of this arm needs ci_text; without it the manifest half still

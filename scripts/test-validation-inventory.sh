@@ -116,6 +116,7 @@ GUARD_ONLY_MESSAGES=(
   "does not act on it"
   "the runner's derivation and the definition have drifted"
   "CI coverage was NOT checked"
+  "which .github/workflows/ci.yml does not"
 )
 ARM_MESSAGES+=("${GUARD_ONLY_MESSAGES[@]}")
 
@@ -2246,6 +2247,20 @@ PATH="$wrapper_dir:$PATH" "$runner" --list docs >/dev/null 2>&1 || rc=$?
 [[ "$rc" == 0 ]] || fail "producer wrapper" "a passthrough wrapper changed the outcome (rc $rc)"
 rm -f "$wrapper_dir/sed"
 ok "a passthrough wrapper is transparent, so the cases above catch the status"
+
+# CI LOCKSTEP FOR A MANIFEST ROW OUTSIDE scripts/. The scripts/-keyed arm walks
+# executable_checks(), so a row naming a rendered engine was compared against
+# ci.yml by nothing at all — its workflow step could be deleted with the guard
+# still green. The fixture adds one such row for a real, executable file ci.yml
+# does not run; the unmutated control below is the other polarity.
+offtree_runner="$tmp/offtree-runner"
+awk '/^MANIFEST_EOF$/ && !seen {
+  print "-         | .agents/skills/worktree/scripts/worktree"; seen = 1
+} { print }' "$runner" >"$offtree_runner"
+chmod +x "$offtree_runner"
+run_guard "RUNNER_PATH=$offtree_runner"
+expect_refused "off-tree manifest row" "which .github/workflows/ci.yml does not"
+ok "a manifest row outside scripts/ that ci.yml never runs is reported"
 
 # The executable-bit arm (VGS-30 applied to the entry point itself).
 non_exec="$tmp/non-exec-runner"
