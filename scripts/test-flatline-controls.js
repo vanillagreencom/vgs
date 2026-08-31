@@ -174,8 +174,8 @@ function runSelectCurrent(source, multiSelect) {
     const body = qmlSource(source, dropdownPath).body("selectCurrent");
     vm.runInNewContext(`(() => ${body})()`, {
         root,
-        filteredOptions: duplicateRecords,
-        selectedIndex: 2,
+        filteredOptions: [duplicateRecords[2]],
+        selectedIndex: 0,
         close: () => events.push(["close"])
     });
     return events;
@@ -260,6 +260,12 @@ const controls = [
     ["single keyboard selection restores the old string assignment", assertKeyboardSelectionUsesStableRecord, dropdownSource,
         dropdownSource.replace("const option = filteredOptions[selectedIndex];",
             "const option = filteredOptions[selectedIndex].value;")],
+    ["single keyboard selection substitutes the popup index", assertKeyboardSelectionUsesStableRecord, dropdownSource,
+        dropdownSource.replace("root.selectOption(option.sourceIndex, option.value);",
+            "root.selectOption(selectedIndex, option.value);")],
+    ["multi keyboard selection substitutes the popup index", assertKeyboardSelectionUsesStableRecord, dropdownSource,
+        dropdownSource.replace("root.toggleSelectedValue(option.sourceIndex, option.value);",
+            "root.toggleSelectedValue(selectedIndex, option.value);")],
     ["single-choice forwarding handler is deleted", assertChoiceForwardsSelection, choiceSource,
         choiceSource.replace("onOptionSelected: (index, value) => selectionChanged(index, true)", "")],
     ["multi-choice forwarding survives only in an inert handler", assertChoiceForwardsSelection, choiceSource,
