@@ -298,7 +298,6 @@ jobs:
           scripts/test-brightness-scan-ordering.js
           scripts/test-wallpaper-thumbs.py
           scripts/test-wallpaper-thumb-cache.py
-
       # Wired in by VGS-50: all four were committed, maintained and invoked by
       # nothing until then.
       - name: Fixture and capability regressions

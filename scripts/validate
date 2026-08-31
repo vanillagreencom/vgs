@@ -260,7 +260,6 @@ qml,may-skip | scripts/smoke-surfaces.sh
 go        | (cd backend && go build ./... && go vet ./... && go test -race ./...)
 MANIFEST_EOF
 }
-
 # ═══ THE VOCABULARY IS READ, NOT RESTATED ══════════════════════════════════
 #
 # scripts/lib/validation-grammar.conf is the one definition, and THIS IS ITS
