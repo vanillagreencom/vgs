@@ -2,14 +2,12 @@
 sentence a drift from the register gets.
 
 `scripts/check-owned-skills.py` owns the other half — the register, what is on
-disk, the controls and the verdict — and the seam between them is the one the
-pointer guard's parser libraries sit on: what a surface SAYS, separated from
-what says it must. `PROSE_SURFACES` and `CODERABBIT_LISTS` are the membership
-decision and live here beside the patterns that read them, so adding a surface
-is one edit and `COMPARED_LISTS` follows it into the guard's ok line.
+disk, the controls and the verdict. `PROSE_SURFACES` and `CODERABBIT_LISTS` are
+the membership decision and live here beside the patterns that read them.
 
-Every function here is driven by a must-fail control in that guard's
-`self_test()`, and end to end by `scripts/test-owned-skills-e2e.py`.
+Every function here is driven by must-fail controls in that guard's
+`self_test()` and in `scripts/test-owned-skills-e2e.py`, which also pins
+`PROSE_SURFACES` to the surfaces it covers.
 """
 
 from __future__ import annotations
@@ -21,6 +19,18 @@ from typing import Callable
 from kendex_skills import SKILLS_DIR
 
 CODERABBIT = ".coderabbit.yaml"
+
+
+class DuplicateList(Exception):
+    """A surface carries the same register-held list more than once.
+
+    MERGING TWO SPANS IS THE DRIFT THIS MODULE EXISTS TO CATCH. A rename that
+    updates one entry and leaves a stale one beside it unions to a set that
+    still equals the register, so every list reports agreement while the live
+    entry scopes a bot to the wrong trees. Only the SUBSET direction hides that
+    way — a stale entry naming a retired skill still fires `disagreement`'s
+    other arm — so the refusal is on the count, not on the names.
+    """
 
 # A skill directory name. Deliberately excludes `<`, so the `.agents/skills/<name>`
 # placeholders these documents write in prose are not read as a fourth skill.
@@ -60,9 +70,17 @@ def named_in_prose(text: str) -> set[str]:
     An absent or unclosed pair yields the empty set, which every caller reports
     as "does not name <every skill>" — the marker moving is the same failure as
     the list emptying, and both mean a bot is no longer told these trees are
-    project files.
+    project files. A SECOND PAIR IS REFUSED rather than merged.
     """
-    return {name for span in MARKED.findall(text) for name in PROSE_GLOB.findall(span)}
+    spans = MARKED.findall(text)
+    if len(spans) > 1:
+        raise DuplicateList(
+            f"carries {len(spans)} `in-place-skills` marker pairs, whose names were "
+            f"merged into one list, so a stale pair beside a current one still "
+            f"equals the register while the current one alone does not. Keep one "
+            f"pair per surface"
+        )
+    return {name for span in spans for name in PROSE_GLOB.findall(span)}
 
 
 def filtered_skills(text: str) -> set[str]:
@@ -71,9 +89,20 @@ def filtered_skills(text: str) -> set[str]:
 
 
 def instructed_skills(text: str) -> set[str]:
-    """Skills `.coderabbit.yaml`'s project-files path_instructions entry names."""
+    """Skills `.coderabbit.yaml`'s project-files path_instructions entry names.
+
+    ONE ENTRY, refused rather than merged for the same reason the marker pair is.
+    """
+    groups = INSTRUCTION_PATH.findall(text)
+    if len(groups) > 1:
+        raise DuplicateList(
+            f"carries {len(groups)} `reviews.path_instructions` entries for "
+            f"`{SKILLS_DIR}/{{...}}/**`, whose names were merged into one list, so a "
+            f"stale entry beside a current one still equals the register while the "
+            f"current one alone does not. Keep one entry"
+        )
     names: set[str] = set()
-    for group in INSTRUCTION_PATH.findall(text):
+    for group in groups:
         names.update(part.strip() for part in group.split(",") if part.strip())
     return names
 
@@ -182,7 +211,12 @@ def config_problems(root: Path, in_place: tuple[str, ...], rendered: tuple[str, 
         problems.append(unread)
     else:
         for reader, which, what in CODERABBIT_LISTS:
-            problem = disagreement(reader(text), expected[which], CODERABBIT, what)
+            try:
+                found = reader(text)
+            except DuplicateList as error:
+                problems.append(f"{CODERABBIT} — {what} — {error}.")
+                continue
+            problem = disagreement(found, expected[which], CODERABBIT, what)
             if problem:
                 problems.append(problem)
         registered = set(in_place) | set(rendered)
@@ -199,7 +233,12 @@ def config_problems(root: Path, in_place: tuple[str, ...], rendered: tuple[str, 
         if unread:
             problems.append(unread)
             continue
-        problem = disagreement(named_in_prose(text), in_place, rel, what)
+        try:
+            found = named_in_prose(text)
+        except DuplicateList as error:
+            problems.append(f"{rel} — {what} — {error}.")
+            continue
+        problem = disagreement(found, in_place, rel, what)
         if problem:
             problems.append(problem)
     return problems

@@ -14,9 +14,9 @@ link checkers do not help: `#slug` links they resolve, and this shape is not one
 AGENTS.md is NOT in that list: it names the `docs/architecture/` DIRECTORY, and
 a bare directory reference is not a pointer — still a reviewer's job.
 
-IT JUDGES THE INDEX, not the working tree — `scripts/lib/tracked_blobs.py` says
-why. `git add` a pointer fix before re-running, or this reports on bytes you
-have not staged. What CI sees and what a commit would contain are then the same.
+THE SWEEP JUDGES THE INDEX, not the working tree — `scripts/lib/tracked_blobs.py`
+says why. `git add` a pointer fix before re-running, or this reports on unstaged
+bytes. Its SCOPE is the exception, and OWNED_ROOTS below says why that is safe.
 
 The grammar, the wrap handling and the matching rule — including what the rule
 deliberately does not prove — are in `scripts/lib/section_pointers.py`. This
@@ -144,12 +144,12 @@ SKIP_ROOTS = (
 # pointer inside it swept clean. Both ways a copy could stop meaning anything
 # are now gone with it: a derived root always starts with `.agents/`, a SKIP_ROOT,
 # and `scripts/check-owned-skills.py` fails when a registered skill has no
-# `SKILL.md` on disk — narrower than the retired arm's tracked-file question.
+# `SKILL.md` on disk. That guard is also why THIS SCOPE MAY READ THE WORKING TREE
+# while the sweep reads the index: an unstaged row dropped from the register
+# narrows the roots here, and leaves behind a tree it fails by name over.
 #
-# A REGISTER THIS CANNOT READ IS A REFUSAL, never an empty carve-out: with no
-# roots the guard would sweep silently past every tree under `.agents/` and
-# print its ok line. `SystemExit` with a sentence, so the operator gets the
-# reader's diagnostic rather than a traceback.
+# A REGISTER THIS CANNOT READ IS A REFUSAL, never an empty carve-out that sweeps
+# past every tree under `.agents/`: `SystemExit` with a sentence, not a traceback.
 try:
     OWNED_ROOTS = tuple(f"{root}/" for root in in_place_dirs())
 except RegisterError as error:

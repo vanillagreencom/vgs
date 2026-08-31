@@ -1,23 +1,29 @@
 #!/usr/bin/env python3
 """End-to-end controls: scripts/check-owned-skills.py run as a PROGRAM.
 
-That guard drives every arm from `self_test()`, which leaves the wiring between
-them — `run`, its gate, and the `problems.extend` in `audit` — guarded by
-nothing a control inside the file can reach: on a healthy tree every control
-passes, so `if controls.failures or problems:` -> `if False:` is invisible from
-in there while the CI step goes permanently green. The prose-surface loop was
-worse: deleting it, dropping either surface from `PROSE_SURFACES`, or replacing
-`problem = disagreement(...)` with `None` each survived the whole control set,
-which is the KEN-938 hole verbatim — a fourth in-place skill missing from
-`review-bots.md` and `.github/copilot-instructions.md`, reported by nothing.
+That guard drives every arm from `self_test()`, which leaves the gate reading
+them — `if controls.failures or problems:` in `main()` — guarded by nothing a
+control inside the file can reach: on a healthy tree every control passes, so
+`if False:` there is invisible from in there while the CI step goes permanently
+green. The prose-surface loop was worse: deleting it, dropping either surface
+from `PROSE_SURFACES`, or replacing `problem = disagreement(...)` with `None`
+each survived the whole control set, which is the KEN-938 hole verbatim — a
+fourth in-place skill missing from `review-bots.md` and
+`.github/copilot-instructions.md`, reported by nothing.
 
 So this file builds throwaway roots and runs the guard against them. ONE ROOT
 PER ARM, each asserting the exit status AND the sentence that arm owns, because
 a dropped arm is invisible when another one reports anyway; the two prose
 surfaces are emptied INDEPENDENTLY and matched on their own path, since both
-`.coderabbit.yaml` arms produce the same sentence shape. The clean root is
-derived from the guard's own tables and this repo's real `kendex.toml`, so a
-list or a surface added there fails here until this file covers it.
+`.coderabbit.yaml` arms produce the same sentence shape.
+
+WHAT THIS FILE DOES NOT DERIVE is `PROSE_SURFACES` and the ok line's list count.
+The roots are built from the register and the guard's tables, so a skill added
+to `kendex.toml` is covered by construction — but a SURFACE added to or dropped
+from that table would take its own cases with it, and a list count read off
+`COMPARED_LISTS` would report whatever that table says. Both are pinned to
+literals below and compared, which is the one comparison here that the tables
+cannot decide.
 
 Peer to `scripts/check-backend-inventory-tests.py`, which is the same shape for
 the backend ownership guard, and to `scripts/test-section-pointers-e2e.py`.
@@ -44,6 +50,10 @@ _SPEC = importlib.util.spec_from_file_location(
 )
 check = importlib.util.module_from_spec(_SPEC)
 _SPEC.loader.exec_module(check)
+
+# THE TWO PINS the module docstring names, compared in `end_to_end_controls`.
+COVERED_SURFACES = (".github/copilot-instructions.md", "review-bots.md")
+HAND_KEPT_LISTS = 4
 
 REGISTER = (REPO_ROOT / "kendex.toml").read_text(encoding="utf-8")
 IN_PLACE = check.in_place_names(REGISTER)
@@ -109,9 +119,9 @@ def run_guard(
             else:
                 (root / rel).write_text(text, encoding="utf-8")
         shutil.copytree(HERE, root / "scripts", dirs_exist_ok=True)
-        env = dict(os.environ, **(env_extra or {}))
-        env.pop(check.TRIPWIRE, None)
-        env.update(env_extra or {})
+        env = {
+            name: value for name, value in os.environ.items() if name != check.TRIPWIRE
+        } | (env_extra or {})
         done = subprocess.run(
             [sys.executable, str(root / "scripts" / "check-owned-skills.py")],
             capture_output=True,
@@ -131,10 +141,35 @@ def end_to_end_controls() -> list[str]:
     failures: list[str] = []
     clean = clean_root()
     absent_skill = IN_PLACE[0]
-    copilot, review_bots = (rel for rel, _what in PROSE_SURFACES)
+
+    # AN AMBIENT TRIPWIRE IS DROPPED FOR THE WHOLE RUN, not only for the
+    # subprocesses `run_guard` scrubs: the in-process `self_test` call at the end
+    # reads the real environment, and one inherited from the caller would fail
+    # this suite with a sentence blaming the guard's control wiring for a
+    # variable this file defines.
+    os.environ.pop(check.TRIPWIRE, None)
+
+    # THE MEMBERSHIP DECISION, compared rather than consumed. Both directions,
+    # named one surface at a time: adding a surface and dropping one are
+    # different repairs, so each arrives as its own sentence.
+    declared = tuple(rel for rel, _what in PROSE_SURFACES)
+    for rel in sorted(set(declared) - set(COVERED_SURFACES)):
+        failures.append(
+            f"PROSE_SURFACES names {rel}, which this suite does not cover — every "
+            f"case here is built from that table, so the surface brought its own "
+            f"cases along and nothing proves the guard reports on it. Cover it in "
+            f"the same edit that adds it."
+        )
+    for rel in sorted(set(COVERED_SURFACES) - set(declared)):
+        failures.append(
+            f"PROSE_SURFACES no longer names {rel}, so its list is compared "
+            f"against the register by nothing and a drift in it goes unreported, "
+            f"with this suite and the guard both green. Dropping a surface is a "
+            f"decision; record it here in the same edit."
+        )
 
     cases: list[tuple[str, dict[str, bytes | str], int, str]] = [
-        ("clean", clean, 0, "hand-kept lists agree"),
+        ("clean", clean, 0, f"{HAND_KEPT_LISTS} hand-kept lists agree"),
         (
             "with path_filters missing a rendered skill",
             dict(clean, **{CODERABBIT: coderabbit(filters=RENDERED[1:])}),
@@ -249,9 +284,9 @@ def end_to_end_controls() -> list[str]:
             )
         elif expect not in output:
             failures.append(
-                f"the root {case} exited {want} without reporting {expect!r}, so it "
-                f"tripped some other arm and proves nothing about the one it "
-                f"names: {output}"
+                f"the root {case} exited {want} without reporting {expect!r}, so "
+                f"the verdict came from something other than the finding this "
+                f"case names and proves nothing about it: {output}"
             )
 
     # THE GATE THAT READS THE CONTROLS, which nothing inside `self_test` can
@@ -271,8 +306,8 @@ def end_to_end_controls() -> list[str]:
     # leaves every case above passing; the ok line carries the count the
     # recorder produced, so it is checked against what `self_test` reports here.
     exercised = check.self_test(REPO_ROOT).exercised
-    status, output = run_guard(clean)
-    if status == 0 and f"{exercised} controls" not in output:
+    _, output = run_guard(clean)
+    if f"{exercised} controls" not in output:
         failures.append(
             f"the ok line did not report {exercised} controls, so the count is not "
             f"the one self_test produced and a run that skipped its controls "

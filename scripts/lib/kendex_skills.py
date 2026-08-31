@@ -23,8 +23,8 @@ register by `scripts/check-owned-skills.py`, which also owns this module's
 must-fail controls. `.github/instructions/project-skills.instructions.md` is
 NOT among them: it names no skill, it points at this module's `__main__`.
 
-`tomllib` READS IT, stdlib since 3.11 and this repo runs 3.14. The register is
-ordinary TOML and a hand-rolled line scanner only adds shapes to get wrong.
+`tomllib` READS IT, stdlib since 3.11. The register is ordinary TOML and a
+hand-rolled line scanner only adds shapes to get wrong.
 
 AN UNREADABLE REGISTER RAISES, and so does a readable one with no in-place row:
 "no skills are ours" is the answer that turns every derived guard into a no-op

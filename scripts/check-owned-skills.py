@@ -32,23 +32,24 @@ derived guard silently narrows to nothing; a tree with no row is a skill nothing
 classifies, which the bots then review or skip by accident.
 
 WHAT THE CONTROLS COVER, exactly. `self_test()` runs on every invocation rather
-than behind a flag, and each control asserts the SENTENCE its arm owns — a
-non-empty result is also what a different arm firing looks like. But a control
-set cannot observe its own wiring: on a healthy tree every control passes, so
-dropping the gate that reads them changes nothing an in-process assertion can
-see, and `run()` cannot be driven from inside `self_test()` without recursing.
+than behind a flag, and holds the shapes no throwaway root can reach: the
+register spellings, the pattern reads in both directions, and the two surface
+reads that need a path rather than a tree. Everything a real root can produce
+is driven end to end instead, because a control set cannot observe its own
+wiring — on a healthy tree every control passes, so dropping the gate that
+reads them changes nothing an in-process assertion can see.
 `scripts/test-owned-skills-e2e.py` owns that half — it runs this file as a
 PROCESS over throwaway roots, one per arm, asserting the exit status and the
-arm's own sentence, checks that the ok line's control count is the one
-`self_test` reports, and sets `TRIPWIRE` to make a control fail on an otherwise
-clean root so the gate itself is proven wired.
+arm's own sentence, pins `PROSE_SURFACES` and the ok line's list count against
+literals of its own rather than against the tables they describe, and sets
+`TRIPWIRE` to make a control fail on an otherwise clean root so the gate itself
+is proven wired.
 """
 
 from __future__ import annotations
 
 import os
 import sys
-import tempfile
 from pathlib import Path
 from typing import NamedTuple
 
@@ -61,6 +62,7 @@ from kendex_skills import (  # noqa: E402
     rendered_names,
 )
 from owned_skill_lists import (  # noqa: E402
+    CODERABBIT,
     COMPARED_LISTS,
     config_problems,
     disagreement,
@@ -68,17 +70,35 @@ from owned_skill_lists import (  # noqa: E402
     instructed_skills,
     named_in_prose,
     other_named_skills,
+    read_surface,
 )
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
 # Set by `scripts/test-owned-skills-e2e.py` to make one control fail on a root
-# that is otherwise clean. The gate in `run()` is the one thing no in-process
+# that is otherwise clean. The gate in `main()` is the one thing no in-process
 # control can reach — on a healthy tree `self_test` returns no failures, so
-# deleting the gate is invisible from inside. This is the same shape as
-# `scripts/check-backend-inventory.py`'s `VGS_INVENTORY_REPO_ROOT`: a test hook
-# in the guard, because the property under test is the guard's own wiring.
+# deleting the gate is invisible from inside.
 TRIPWIRE = "VGS_OWNED_SKILLS_TRIP_CONTROL"
+
+
+class _Unlistable:
+    """A root whose `.agents/skills` is there and refuses to be listed.
+
+    A STAND-IN RATHER THAN A REAL DIRECTORY: the only way to build one on disk
+    is to drop the read bit, which does nothing when the suite runs as root, so
+    the control would pass for the wrong reason exactly where it is least
+    watched. Duck-typed on the three calls `tree_problems` makes of its root.
+    """
+
+    def __truediv__(self, _segment: str) -> "_Unlistable":
+        return self
+
+    def is_dir(self) -> bool:
+        return True
+
+    def iterdir(self):
+        raise PermissionError(13, "Permission denied")
 
 
 def tree_problems(root: Path, in_place: tuple[str, ...], registered: set[str]) -> list[str]:
@@ -90,13 +110,6 @@ def tree_problems(root: Path, in_place: tuple[str, ...], registered: set[str]) -
     """
     problems: list[str] = []
     skills = root / SKILLS_DIR
-    if not in_place:
-        problems.append(
-            "kendex.toml registers no skill as `source = in-place`, so every "
-            "comparison here compared the register against nothing and would "
-            "report agreement whatever the hand-kept lists hold. Restore the rows "
-            "or retire the surfaces that carry them."
-        )
     for name in in_place:
         if not (skills / name / "SKILL.md").is_file():
             problems.append(
@@ -106,7 +119,20 @@ def tree_problems(root: Path, in_place: tuple[str, ...], registered: set[str]) -
                 f"directory that does not exist and reporting nothing. Fix the row "
                 f"or restore the tree."
             )
-    present = sorted(path.name for path in skills.iterdir() if path.is_dir()) if skills.is_dir() else []
+    present: list[str] = []
+    if skills.is_dir():
+        try:
+            present = sorted(path.name for path in skills.iterdir() if path.is_dir())
+        except OSError as error:
+            # A FINDING, NOT A TRACEBACK, in `read_surface`'s shape one level up:
+            # an unreadable render root is the same class as an unreadable
+            # surface, and the arms below would otherwise report on an empty
+            # listing as though the tree were empty.
+            problems.append(
+                f"{SKILLS_DIR}/ could not be listed ({error}), so no tree there was "
+                f"compared against the register and NOTHING on disk was checked."
+            )
+            return problems
     for name in present:
         if name not in registered:
             problems.append(
@@ -129,11 +155,12 @@ def tree_problems(root: Path, in_place: tuple[str, ...], registered: set[str]) -
 def audit(root: Path, in_place: tuple[str, ...], rendered: tuple[str, ...]) -> list[str]:
     """Every arm, assembled into one verdict.
 
-    ONE ASSEMBLY POINT, driven by its own control below. With the arms proven
-    individually and `main` doing the assembling, dropping an `extend` here was
-    a surviving mutant: every control still passed and the check still printed
-    its ok line with a whole family of findings unreachable. That is the shape
-    `scripts/test-section-pointers-e2e.py` was written for one guard over.
+    ONE ASSEMBLY POINT. With the arms proven individually, dropping an `extend`
+    here was a surviving mutant: every control still passed and the check still
+    printed its ok line with a whole family of findings unreachable.
+    `scripts/test-owned-skills-e2e.py` kills it from outside — its roots trip one
+    finding of each family, so an `extend` dropped here exits 0 where a case
+    expects 1.
     """
     problems = tree_problems(root, in_place, set(in_place) | set(rendered))
     problems.extend(config_problems(root, in_place, rendered))
@@ -143,9 +170,9 @@ def audit(root: Path, in_place: tuple[str, ...], rendered: tuple[str, ...]) -> l
 class Controls(NamedTuple):
     """What `self_test` did, not only what it found.
 
-    `exercised` is counted by the recorder, so a control deleted lowers it and
-    a `self_test` call replaced by a constant prints zero on the ok line — the
-    two mutations an in-process assertion cannot otherwise see.
+    `exercised` is counted by the recorder, so a `self_test` call replaced by a
+    constant prints zero on the ok line — the mutation an in-process assertion
+    cannot otherwise see.
     """
 
     exercised: int
@@ -176,96 +203,74 @@ def self_test(root: Path) -> Controls:
     # skill. Yielding an empty set instead would turn every derived guard into a
     # no-op that still prints its ok line, which is the failure this whole file
     # exists to end.
-    for broken, why in (
-        ('[install]\nmethod = "symlink"\n', "a file with no `[skills.<name>]` table"),
-        ("[skills.owned]\nenabled = true\n", "a skill row with no `source` key"),
-        ('[skills.rendered]\nsource = "kendex"\n', "a register with no in-place row"),
-        ('[skills.owned]\nsource = "in-place\n', "a file that is not TOML at all"),
+    for broken, why, expect in (
+        (
+            '[install]\nmethod = "symlink"\n',
+            "a file with no `[skills.<name>]` table",
+            "yielded no `[skills.<name>]` table",
+        ),
+        (
+            "[skills.owned]\nenabled = true\n",
+            "a skill row with no `source` key",
+            "with no `source` key",
+        ),
+        (
+            '[skills.rendered]\nsource = "kendex"\n',
+            "a register with no in-place row",
+            'declares no skill `source = "in-place"`',
+        ),
+        (
+            '[skills.owned]\nsource = "in-place\n',
+            "a file that is not TOML at all",
+            "is not readable TOML",
+        ),
     ):
-        refused = False
+        said = ""
         try:
             in_place_names(broken)
-        except RegisterError:
-            refused = True
+        except RegisterError as error:
+            said = str(error)
         record(
-            refused,
-            f"{why} was read as a register rather than refused, so a guard "
-            f"deriving its scope from it would silently scope to nothing",
+            expect in said,
+            f"{why} was not refused with {expect!r}, so either it was read as a "
+            f"register or another arm answered for it and its own refusal could "
+            f"be deleted unnoticed: {said!r}",
         )
 
-    # THE ARMS, each driven over a throwaway shape and asserted on its own
-    # sentence: a non-empty result is also what a different arm firing looks like.
-    for case, problems, expect in (
-        (
-            "a registered skill with no tree",
-            tree_problems(root / "no-such-tree", ("owned",), {"owned"}),
-            "is not there",
-        ),
-        (
-            "a register with no in-place row, reaching the on-disk arms",
-            tree_problems(root / "no-such-tree", (), {"rendered"}),
-            "registers no skill as `source = in-place`",
-        ),
-        (
-            "a moved render root",
-            tree_problems(root / "no-such-tree", ("owned",), {"owned"}),
-            "The render tree moved or was emptied.",
-        ),
-        (
-            "a list that omits a registered skill",
-            [disagreement({"a"}, ("a", "b"), "f", "w") or ""],
-            "does not name b",
-        ),
-        (
-            "a list naming a skill the register does not",
-            [disagreement({"a", "z"}, ("a",), "f", "w") or ""],
-            "names z, which the register does not",
-        ),
-        (
-            "a path_filters list read from a config with none",
-            [disagreement(filtered_skills("reviews:\n"), ("a",), "f", "w") or ""],
-            "does not name a",
-        ),
-        (
-            "a path_instructions entry read from a config with none",
-            [disagreement(instructed_skills("reviews:\n"), ("a",), "f", "w") or ""],
-            "does not name a",
-        ),
-        (
-            "a prose surface naming no skill",
-            [disagreement(named_in_prose("no globs here"), ("a",), "f", "w") or ""],
-            "does not name a",
-        ),
-        (
-            "a missing config file",
-            config_problems(root / "no-such-root", ("owned",), ("rendered",)),
-            "NOTHING was checked",
-        ),
-    ):
-        record(
-            any(expect in problem for problem in problems),
-            f"{case} was not reported with {expect!r}, so that arm is vacuous "
-            f"or answers about something else: {problems}",
-        )
+    # THE EXTRA DIRECTION, which no throwaway root reaches: every fixture in
+    # `scripts/test-owned-skills-e2e.py` is built FROM the register, so a list
+    # naming a skill the register does not is producible only here. The absent
+    # direction has a root per surface there.
+    extra = disagreement({"a", "z"}, ("a",), "f", "w") or ""
+    record(
+        "names z, which the register does not" in extra,
+        f"a list naming a skill the register does not was not reported as such, "
+        f"so only the absent direction of a drift is ever named: {extra!r}",
+    )
 
-    # THE ASSEMBLY, not the arms. A scratch root trips one finding of each
-    # family at once, and both must reach the verdict — an `extend` dropped from
-    # `audit` leaves every control above passing.
-    with tempfile.TemporaryDirectory() as scratch:
-        stray = Path(scratch) / SKILLS_DIR / "stray"
-        stray.mkdir(parents=True)
-        (stray / "SKILL.md").write_text("# stray\n", encoding="utf-8")
-        verdict = audit(Path(scratch), ("owned",), ("rendered",))
-        for family, expect in (
-            ("on-disk", "has no `[skills.stray]` row"),
-            ("configuration", "NOTHING was checked"),
-        ):
-            record(
-                any(expect in problem for problem in verdict),
-                f"the assembled verdict carried no {family} finding ({expect!r}), "
-                f"so that whole family is unreachable however well its own arm "
-                f"reports: {verdict}",
-            )
+    # THE TWO SURFACE READS THAT NEED A PATH, not a tree. Both are the shape
+    # this guard exists for — a surface going unread — so neither may arrive as
+    # a traceback, and neither is reachable from a fixture root that can only
+    # withhold a file.
+    _, absent = read_surface(root / "no-such-root", CODERABBIT, "w")
+    record(
+        absent is not None and "is not there" in absent,
+        f"an absent surface did not produce the sentence saying nothing in it was "
+        f"checked: {absent!r}",
+    )
+    _, undecodable = read_surface(Path(__file__).resolve().parent, "lib", "w")
+    record(
+        undecodable is not None and "could not be read" in undecodable,
+        f"a surface that could not be read as text produced {undecodable!r} rather "
+        f"than the sentence naming it unchecked, so the operator gets a traceback "
+        f"where every other unread surface gets a finding",
+    )
+    unlistable = tree_problems(_Unlistable(), (), set())
+    record(
+        any("could not be listed" in problem for problem in unlistable),
+        f"a render root that cannot be listed was not reported, so it reaches the "
+        f"operator as a bare traceback naming no directory: {unlistable}",
+    )
 
     # AND THE OTHER DIRECTION: a list that agrees with the register is accepted.
     # Without this the arms above pass just as well on a function that reports
@@ -310,10 +315,15 @@ def self_test(root: Path) -> Controls:
         "an unclosed marker pair still yielded names, so a marker that moved "
         "would leave this arm reading whatever follows it",
     )
+    placeholder = (
+        "<!-- in-place-skills -->`.agents/skills/vshell-dev/**`; every other "
+        "`.agents/skills/<name>/**` is render<!-- /in-place-skills -->"
+    )
     record(
-        not named_in_prose("every other `.agents/skills/<name>` is render"),
-        "the `<name>` placeholder these documents write in prose was read as a "
-        "skill, so the arms would report a drift that is only a sentence",
+        named_in_prose(placeholder) == {"vshell-dev"},
+        f"the `<name>` placeholder these documents write beside their real globs "
+        f"was read as a skill: {named_in_prose(placeholder)}. The arms would then "
+        f"report a drift that is only a sentence",
     )
 
     # THE GATE, which nothing above can reach: on a healthy tree every control
@@ -325,13 +335,9 @@ def self_test(root: Path) -> Controls:
     return Controls(exercised, failures)
 
 
-def run(root: Path) -> int:
-    """The whole verdict for one root, so a control can drive it end to end.
-
-    Split from `main` because everything below the register read takes `root`
-    already: with the assembly reachable only through `main`'s hard-wired
-    `REPO_ROOT`, the exit status was the one thing no fixture could observe.
-    """
+def main() -> int:
+    """The whole verdict for this repo: read the register, run the arms, gate."""
+    root = REPO_ROOT
     try:
         register = register_text(root / "kendex.toml")
         in_place = in_place_names(register)
@@ -356,10 +362,6 @@ def run(root: Path) -> int:
         f"{controls.exercised} controls)"
     )
     return 0
-
-
-def main() -> int:
-    return run(REPO_ROOT)
 
 
 if __name__ == "__main__":
