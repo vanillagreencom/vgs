@@ -27,6 +27,14 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
 
+// The marked region comes from a repo file and is EXECUTED here, so it runs
+// inside a child bounded by a wall clock — scripts/lib/qml-region.js says
+// what that bounds and what it does not.
+const { evaluateMarked, guardChild } = require("./lib/qml-region.js");
+
+// Returns only in the child; the parent exits with its status.
+guardChild();
+
 const SERVICE = path.join(
     __dirname, "..", "quickshell", "vshell", "Services", "DisplayService.qml"
 );
@@ -84,13 +92,10 @@ const serviceCode = stripComments(serviceSource);
 
 // --- half 1: the decision, executed -----------------------------------------
 
-const marked = serviceSource.match(
-    /\/\/ BEGIN SCAN VERDICT DECISION\n([\s\S]*?)\/\/ END SCAN VERDICT DECISION/
+const { scanVerdict, writeLiftsQuarantine } = evaluateMarked(
+    serviceSource, "SCAN VERDICT DECISION",
+    ["scanVerdict", "writeLiftsQuarantine"], "DisplayService.qml"
 );
-assert.ok(marked, "DisplayService.qml must carry the SCAN VERDICT DECISION markers");
-const { scanVerdict, writeLiftsQuarantine } = new Function(
-    `${marked[1]}\nreturn { scanVerdict, writeLiftsQuarantine };`
-)();
 
 // The bounds the doc claims, derived from the service itself rather than a
 // second copy here. A miss means the extractor broke, not that the service
