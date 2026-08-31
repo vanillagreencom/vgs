@@ -13,6 +13,7 @@ const buttonPath = path.join(repoRoot, "quickshell/vshell/Widgets/VgsButton.qml"
 const dropdownPath = path.join(repoRoot, "quickshell/vshell/Widgets/VgsDropdown.qml");
 const optionPath = path.join(repoRoot, "quickshell/vshell/Widgets/VgsDropdownOption.qml");
 const logicPath = path.join(repoRoot, "quickshell/vshell/Widgets/VgsDropdownLogic.js");
+const choicePath = path.join(repoRoot, "quickshell/vshell/Modules/Settings/Widgets/SettingsChoiceRow.qml");
 const fzfPath = path.join(repoRoot, "quickshell/vshell/Common/fzf.js");
 const lockScreenPath = path.join(repoRoot, "quickshell/vshell/Modules/Settings/LockScreenTab.qml");
 
@@ -20,6 +21,7 @@ const read = file => fs.readFileSync(file, "utf8");
 const buttonSource = read(buttonPath);
 const dropdownSource = read(dropdownPath);
 const optionSource = read(optionPath);
+const choiceSource = read(choicePath);
 const lockScreenSource = read(lockScreenPath);
 const flatCode = text => qmlSource.flat(qmlSource.stripComments(text));
 
@@ -162,6 +164,49 @@ function assertDropdownUsesStableRecords(dropdown, option) {
     assertBinding(optionText, "text", "root.modelData.label", "dropdown option label");
 }
 
+function runSelectCurrent(source, multiSelect) {
+    const events = [];
+    const root = {
+        multiSelect,
+        toggleSelectedValue: (index, value) => events.push(["multi", index, value]),
+        selectOption: (index, value) => events.push(["single", index, value])
+    };
+    const body = qmlSource(source, dropdownPath).body("selectCurrent");
+    vm.runInNewContext(`(() => ${body})()`, {
+        root,
+        filteredOptions: duplicateRecords,
+        selectedIndex: 2,
+        close: () => events.push(["close"])
+    });
+    return events;
+}
+
+function assertKeyboardSelectionUsesStableRecord(source) {
+    assert.deepEqual(runSelectCurrent(source, false), [["single", 2, "Same"], ["close"]],
+        "single-select keyboard choice must emit the record source index/value and close");
+    assert.deepEqual(runSelectCurrent(source, true), [["multi", 2, "Same"]],
+        "multi-select keyboard choice must emit the record source index/value and stay open");
+}
+
+function runChoiceHandler(source, name, args) {
+    const handlers = qmlSource(source, choicePath).handlers(name);
+    assert.equal(handlers.length, 1, `SettingsChoiceRow must define one ${name} handler`);
+    const expression = handlers[0].slice(handlers[0].indexOf(":") + 1);
+    const events = [];
+    const handler = vm.runInNewContext(`(${expression})`, {
+        selectionChanged: (index, selected) => events.push([index, selected])
+    });
+    handler(...args);
+    return events;
+}
+
+function assertChoiceForwardsSelection(source) {
+    assert.deepEqual(runChoiceHandler(source, "onOptionSelected", [2, "Same"]), [[2, true]],
+        "single selection must forward its source index as selected");
+    assert.deepEqual(runChoiceHandler(source, "onMultiSelectionChanged", [2, "Same", false, ["Other"]]),
+        [[2, false]], "multi selection must forward its source index and selected state");
+}
+
 function assertLockVideoActionSharesUnderline(source) {
     const row = blockById(source, "Item", "videoPathField", lockScreenPath);
     const field = blockById(source, "VgsTextField", "videoPathField", lockScreenPath);
@@ -174,6 +219,8 @@ function assertLockVideoActionSharesUnderline(source) {
 
 assertButtonOwnsOnlyDeclaredGeometry(buttonSource);
 assertDropdownUsesStableRecords(dropdownSource, optionSource);
+assertKeyboardSelectionUsesStableRecord(dropdownSource);
+assertChoiceForwardsSelection(choiceSource);
 assertLockVideoActionSharesUnderline(lockScreenSource);
 
 const controls = [
@@ -210,6 +257,14 @@ const controls = [
     ["option label survives only in a dead satisfied label", source => assertDropdownUsesStableRecords(dropdownSource, source), optionSource,
         optionSource.replace("text: root.modelData.label",
             "property string inertText: { if (false) { text: root.modelData.label; } return \"\"; }\n            text: root.modelData")],
+    ["single keyboard selection restores the old string assignment", assertKeyboardSelectionUsesStableRecord, dropdownSource,
+        dropdownSource.replace("const option = filteredOptions[selectedIndex];",
+            "const option = filteredOptions[selectedIndex].value;")],
+    ["single-choice forwarding handler is deleted", assertChoiceForwardsSelection, choiceSource,
+        choiceSource.replace("onOptionSelected: (index, value) => selectionChanged(index, true)", "")],
+    ["multi-choice forwarding survives only in an inert handler", assertChoiceForwardsSelection, choiceSource,
+        choiceSource.replace("onMultiSelectionChanged: (index, value, selected, values) => selectionChanged(index, selected)",
+            "onMultiSelectionChanged: (index, value, selected, values) => { if (false) selectionChanged(index, selected); }")],
     ["video accessory survives only in a dead satisfied label", assertLockVideoActionSharesUnderline, lockScreenSource,
         lockScreenSource.replace("rightAccessoryWidth: browseVideoButton.width + Theme.spacingM",
             "property real inertAccessory: { if (false) { rightAccessoryWidth: browseVideoButton.width + Theme.spacingM; } return 0; }\n                            rightAccessoryWidth: 0")],
