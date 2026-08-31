@@ -17,13 +17,17 @@ import (
 
 const (
 	timeout = 8 * time.Second
-	// Bounds how long Output waits on stdout/stderr pipes after the timeout's
-	// kill lands on the helper. The killed helper's wedged descendants
-	// (ddcutil in uninterruptible sleep on a dead i2c bus) inherit the pipes
-	// and never close them; without this, Output reads toward EOF forever.
-	// It cannot abandon a helper that is itself in uninterruptible sleep —
-	// Wait blocks in wait4 regardless — so probes that can D-state must stay
-	// in subprocesses of the helper, never in the helper's own process.
+	// Defense-in-depth bound on how long Output waits for stdout/stderr after
+	// the helper is gone. The ddcutil chain does not reach it: the helper
+	// runs its probes pipe-isolated (bin/vshell-helper _run_timeout and run
+	// use stdout=PIPE, stderr=PIPE, and Python's close_fds default), so a
+	// D-state ddcutil holds the helper's pipes, not these, and the context
+	// timeout killing the killable helper releases them at the deadline.
+	// WaitDelay bounds the wait only for a descendant that does inherit the
+	// pipes. Neither bound can abandon a helper that is itself in
+	// uninterruptible sleep — Wait blocks in wait4 regardless — so probes
+	// that can D-state must stay in helper subprocesses, never in the
+	// helper's own process.
 	waitDelay = 2 * time.Second
 )
 

@@ -11,10 +11,11 @@ import (
 )
 
 // writePipeHolderHelper writes a fake helper whose backgrounded child inherits
-// stdout and holds the pipe open long after the helper is gone, reproducing
-// how a ddcutil wedged on a dead bus keeps the pipes of a killed or exited
-// helper alive. `body` runs after the child is spawned; the child's PID is
-// killed from t.Cleanup so no stray sleep outlives the test.
+// stdout and holds the pipe open long after the helper is gone. The production
+// helper never creates this topology — it pipe-isolates every probe — so these
+// fixtures manufacture the descendant-inherits-the-pipes case the WaitDelay
+// defense-in-depth bound exists for. `body` runs after the child is spawned;
+// the child's PID is killed from t.Cleanup so no stray sleep outlives the test.
 func writePipeHolderHelper(t *testing.T, body string) string {
 	t.Helper()
 	dir := t.TempDir()
@@ -36,6 +37,28 @@ func writePipeHolderHelper(t *testing.T, body string) string {
 		_ = syscall.Kill(pid, syscall.SIGKILL)
 	})
 	return path
+}
+
+// The production topology: the helper pipe-isolates its probes, so when the
+// timeout's kill lands on a blocked helper nothing else holds the backend's
+// pipes and the call resolves at the context deadline, never waiting on
+// WaitDelay.
+func TestCallTimeoutReleasesIsolatedHelper(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "fake-helper")
+	if err := os.WriteFile(path, []byte("#!/bin/sh\nexec sleep 60\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	m := &Manager{helper: path, timeout: 200 * time.Millisecond, waitDelay: 5 * time.Second}
+
+	start := time.Now()
+	_, err := m.call("list", "--json")
+	elapsed := time.Since(start)
+	if err == nil || !strings.Contains(err.Error(), "timed out") {
+		t.Fatalf("expected timed-out error, got: %v", err)
+	}
+	if elapsed >= 2*time.Second {
+		t.Fatalf("call took %v; an isolated helper resolves at the context deadline, not WaitDelay", elapsed)
+	}
 }
 
 // A helper that never finishes must be killed at the timeout and its

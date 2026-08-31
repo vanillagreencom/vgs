@@ -97,11 +97,16 @@ quarantine. No repeating poll: a poll re-enters the i2c/PCI bus even when the
 probed device is dead in D3hot, wedging probes in uninterruptible sleep.
 External brightness changes surface at the next event, not continuously.
 
-On a dead bus the backend kills the helper at a hard timeout, and
-`cmd.WaitDelay` abandons pipes still held by the killed helper's wedged
-descendants (a D-state ddcutil) instead of reading toward EOF forever. It
-cannot abandon a helper that is itself in uninterruptible sleep — Wait blocks
-in wait4 regardless — so probes that can D-state must stay in helper
+On a dead bus the backend kills the helper at a hard timeout, and that
+context deadline is the operative bound for the ddcutil chain: the helper
+runs every probe pipe-isolated (`_run_timeout` and `run` use `stdout=PIPE`,
+`stderr=PIPE`, plus Python's `close_fds` default), so a D-state ddcutil holds
+the helper's pipes, not the backend's, and the kill on the killable helper
+releases the backend's pipes at the deadline. `cmd.WaitDelay` is
+defense-in-depth for a descendant that does inherit the backend's pipes,
+bounding a read toward EOF that would otherwise never end. Neither bound can
+abandon a helper that is itself in uninterruptible sleep — Wait blocks in
+wait4 regardless — so probes that can D-state must stay in helper
 subprocesses, never in the helper's own process; the QML pending-request
 sweep and the scan quarantine are the backstop for that case.
 `DisplayService` quarantines scanning after `scanQuarantineThreshold`
