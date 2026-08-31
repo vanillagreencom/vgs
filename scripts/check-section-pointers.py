@@ -6,7 +6,7 @@ with them; two more dangling citations under `docs/architecture/` were caught
 only because a reviewer read files the PR did not touch. VGS-125 merges
 `docs/architecture/` from thirteen files into four, renaming or removing the
 target of every architecture-doc pointer in `bin/vshell-helper`,
-`quickshell/vshell/Widgets/`, `project-skills/` and `docs/decisions/` — that
+`quickshell/vshell/Widgets/`, the project skills and `docs/decisions/` — that
 consolidation is the event this check exists to survive, and without it four PRs
 again rely on a reviewer noticing across files they are not reading. Ordinary
 link checkers do not help: `#slug` links they resolve, and this shape is not one.
@@ -79,7 +79,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 HISTORICAL_SECTIONS = {
     ("scripts/check-doc-growth.py", "AGENTS.md", "Layout"): (
         "its ceilings rationale records that VGS-124 moved this section's "
-        "path/purpose table into project-skills/skills/vshell-dev/SKILL.md"
+        "path/purpose table into .agents/skills/vshell-dev/SKILL.md"
     ),
     (
         "scripts/check-doc-growth.py",
@@ -129,7 +129,28 @@ SKIP_ROOTS = (
     "themes/",
     "docs/media/",
 )
-SELECTOR = "`git ls-files` minus " + ", ".join(SKIP_ROOTS)
+
+# The carve-out from a skipped root, because a prefix cannot express "vendored
+# except here". KEN-938 moved the three VGS-authored skills under `.agents/`,
+# where `.agents/` above would have stopped reading their pointers — and they
+# carry the shape this guard exists for, marks at AGENTS.md and at
+# docs/architecture/. They are ours to edit, so they are ours to keep correct. `kendex.toml`'s `source = "in-place"` rows
+# are the register these copy; a fourth project skill adds a root here, as
+# `.github/instructions/project-skills.instructions.md` says.
+#
+# NARROWER THAN ITS SKIP ROOT, always: an entry that does not start with one of
+# SKIP_ROOTS carves nothing and is dead config, which `owned_roots_problems`
+# below reports rather than leaving to be discovered.
+OWNED_ROOTS = (
+    ".agents/skills/vgs-distro-publish/",
+    ".agents/skills/vgs-release/",
+    ".agents/skills/vshell-dev/",
+)
+SELECTOR = (
+    "`git ls-files` minus "
+    + ", ".join(SKIP_ROOTS)
+    + " plus " + ", ".join(OWNED_ROOTS)
+)
 
 # Files whose absence means the sweep narrowed rather than that the repo
 # changed: one per surface class. They double as the heading-parser anchors,
@@ -263,7 +284,9 @@ def is_citer(rel: str) -> bool:
     the other silently drops a file from the sweep. The contrast the docstring
     below draws only holds if each half is named in one place.
     """
-    return not rel.startswith(SKIP_ROOTS) and rel not in FIXTURE_FILES
+    if rel in FIXTURE_FILES:
+        return False
+    return rel.startswith(OWNED_ROOTS) or not rel.startswith(SKIP_ROOTS)
 
 
 class Sweep(NamedTuple):
@@ -306,6 +329,40 @@ def swept_tree(entries: list[Entry]) -> Sweep:
         undecodable,
         len(wanted) - len(regular),
     )
+
+
+def owned_roots_problems(
+    tracked: list[str],
+    owned: tuple[str, ...] = OWNED_ROOTS,
+    skipped: tuple[str, ...] = SKIP_ROOTS,
+) -> list[str]:
+    """Both staleness directions for OWNED_ROOTS, neither discoverable by eye.
+
+    A carve-out under no skip root carves nothing: it reads as policy while
+    `is_citer` would have said the same without it, so a typo'd or repointed
+    prefix silently becomes decoration. And one that names a tree no tracked
+    file sits under is the FIXTURE_FILES arm's failure a level up — coverage
+    that stopped existing when the tree was renamed away.
+
+    Takes both tables as arguments for the reason `watched_glob_problems` in
+    check-doc-growth.py does: a control that can only mutate the module
+    constant asserts against a global it has just rewritten.
+    """
+    problems = []
+    for root in owned:
+        if not root.startswith(skipped):
+            problems.append(
+                f"OWNED_ROOTS carves out {root}, which is under no SKIP_ROOTS "
+                f"prefix — it exempts nothing, since is_citer already reads that "
+                f"tree. Point it inside a skipped root, or drop it."
+            )
+        elif not any(rel.startswith(root) for rel in tracked):
+            problems.append(
+                f"OWNED_ROOTS carves out {root}, but no tracked file sits under "
+                f"it. Drop the entry — a carve-out that names nothing reads the "
+                f"pointers of whatever is written there next."
+            )
+    return problems
 
 
 def fixture_problems(tracked: list[str]) -> list[str]:
@@ -534,6 +591,7 @@ def main() -> int:
     problems = list(found.problems)
     problems.extend(sweep_problems(files, found.judged))
     problems.extend(fixture_problems(tracked))
+    problems.extend(owned_roots_problems(tracked))
     problems.extend(unreadable_problems(undecodable))
 
     if problems:

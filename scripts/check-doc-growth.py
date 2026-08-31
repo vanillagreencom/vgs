@@ -108,7 +108,8 @@ CEILINGS: dict[str, int] = {
     # HARD BUDGET, not measured-plus-headroom — see HARD_BUDGETS below.
     #
     # The VGS-124 second diet cut this file to invariants only. RELOCATED to
-    # the surface that owns each: § Project skills (project-skills/README.md),
+    # the surface that owns each: § Project skills
+    # (.github/instructions/project-skills.instructions.md),
     # § Documentation resources and § Layout's path/purpose table (the
     # vshell-dev skill's "## Repo layout" tree, which predates the diet and
     # gained that table's three missing entries in the same PR), § Review gate
@@ -122,7 +123,7 @@ CEILINGS: dict[str, int] = {
     # only 4 of bin/'s 15 entries, so it read as complete while it was not.
     #
     # Those registers are what regrew after VGS-107, so 4,500 is a budget the
-    # issue set rather than a size plus headroom: the file is 4,487 B, so there
+    # issue set rather than a size plus headroom: the file is 4,497 B, so there
     # is almost none, and that is the point. The next addition displaces
     # something or moves to a per-area surface — the thing both diets had to do
     # by hand.
@@ -132,9 +133,12 @@ CEILINGS: dict[str, int] = {
     # inventory guard requires in THIS file, so relocation was not available
     # and the budget was 36 B short. It was paid by displacement, not a raise:
     # § Where the rest lives' skills pointer dropped the clause explaining why
-    # skills sit outside the harness mirrors, which project-skills/README.md
-    # opens by explaining at length. The pointer survived; only the duplicate
-    # explanation moved. That is the mechanism working, not a near miss.
+    # skills sat outside the harness mirrors, which the skills README then
+    # explained at length. The pointer survived; only the duplicate explanation
+    # moved. That is the mechanism working, not a near miss. KEN-938 spent the
+    # 10 B that clause freed: the skills now live in `.agents/skills/` beside
+    # the render, so the pointer has to name kendex.toml as the register that
+    # says which of them are ours.
     #
     # Raising it instead was considered and rejected for two reasons. 4,500 is
     # VGS-124's own acceptance criterion, and a ceiling that moves to fit its
@@ -162,7 +166,9 @@ CEILINGS: dict[str, int] = {
     # TIGHTER than the 4,000 the adoption formula rounds to, because the
     # rounding above is an adoption convention and a raise is only required to
     # carry a rationale — so the tighter line wins over the rounder number.
-    # Now 3,989 B: the engine-tree clauses left with the kendex adoption.
+    # Now 4,282 B: the engine-tree clauses left with the kendex adoption, and
+    # KEN-938 added the carve-out naming the three in-place skills the render
+    # tree does not own.
     ".github/copilot-instructions.md": 4_500,
     # Adopted at 4,497 B. VGS-124: "a green CI run does not prove the shell
     # starts — run the qml area, which forces --require-nested" left AGENTS.md
@@ -177,17 +183,17 @@ CEILINGS: dict[str, int] = {
     # list in the same machine-read marker pair as AGENTS.md's and named the
     # contract; now 5,552 B, ~2.7% left. The tighter line is tight enough that
     # the next addition here needs a raise, not a shave.
-    "project-skills/skills/vshell-dev/SKILL.md": 5_700,
+    ".agents/skills/vshell-dev/SKILL.md": 5_700,
     # Adopted at 1,906 B; 1,598 B once publish commands left for vgs-distro-publish.
-    # Now 2,179 B: v0.4.0 shipped unsigned — full fingerprint, and the no-TTY fallback.
-    "project-skills/skills/vgs-release/SKILL.md": 2_400,
+    # Now 2,172 B: v0.4.0 shipped unsigned — full fingerprint, and the no-TTY fallback.
+    ".agents/skills/vgs-release/SKILL.md": 2_400,
     # Adopted at 5,968 B: per-channel publish commands, split out so the release checklist stays
     # one; Ubuntu's source-tree prep and an every-chroot, non-zero-on-miss verification earn their
     # bulk. VGS-204: now 6,148 B, 148 past the old line, for the two gaps a hand publisher hits when
     # CI is down — publish-aur.sh IS that publisher, wanting AUR commit rights on all three
     # packages, and dput's `incoming` reads owner, then distro, then PPA. 6,200 keeps the round line
     # just above, held since adoption; +10%'s 6,800 would absorb the next addition.
-    "project-skills/skills/vgs-distro-publish/SKILL.md": 6_200,
+    ".agents/skills/vgs-distro-publish/SKILL.md": 6_200,
     # Adopted at 403 B. VGS-124: the diet's own rewrap un-exempted a sanctioned
     # direct-launch mention in check-validation-safety.sh (line-scoped spans),
     # and that check does not run in the `docs` area an AGENTS.md edit reaches
@@ -215,6 +221,15 @@ CEILINGS: dict[str, int] = {
     ".github/instructions/ci.instructions.md": 4_900,
     ".github/instructions/harness-config.instructions.md": 900,  # adopted at 769 B; now 760 B
     ".github/instructions/helper-cli.instructions.md": 600,  # adopted at 517 B
+    # Adopted at 1,152 B. KEN-938 moved the three VGS-authored skills into
+    # `.agents/skills/`, beside the kendex render: this is the surface an agent
+    # editing one loads, and the only place that says which of those trees are
+    # ours and which are upstream output. It also names the guards and bot
+    # configs that scope to the owned set, so a fourth skill has one checklist
+    # rather than a hunt. project-skills/README.md, which it replaces, was 1,259 B.
+    # 1,300 is the adoption formula at that size: 1,152 plus ~10% is 1,267,
+    # rounded up to the next 100.
+    ".github/instructions/project-skills.instructions.md": 1_300,
     ".github/instructions/quickshell-qml.instructions.md": 1_700,  # adopted at 1,459 B
     ".github/instructions/themes.instructions.md": 700,  # adopted at 577 B
     # Adopted at 844 B. VGS-123 moved the "What CI covers, and what it cannot"
@@ -237,7 +252,7 @@ CEILINGS: dict[str, int] = {
     # assert it collected something, after three checks in one night reported
     # clean while asserting nothing: it belongs on the surface that already
     # tells reviewers to reject an unreachable failure path. 7,600 keeps ~10%
-    # headroom at the 6,880 B that resulted; now 6,475 B, vendor-sync rows gone.
+    # headroom at the 6,880 B that resulted; now 6,468 B, vendor-sync rows gone.
     ".github/instructions/validation-scripts.instructions.md": 7_600,
     ".github/instructions/vendored-go.instructions.md": 500,  # adopted at 367 B
     # Adopted at 302 B. 2026-08-14: ATTRIBUTION.md carve-out (PR #132) — the
@@ -319,10 +334,21 @@ CEILINGS: dict[str, int] = {
 # failure. So the two must be narrowed together AND the orphaned file exempted
 # by name — three edits, all visible in review, which is what "conscious
 # decision" is supposed to mean.
+# ONE ROOT PER VGS-AUTHORED SKILL, not the `.agents/skills` tree they sit in.
+# KEN-938 moved them beside the kendex render, and a root at `.agents/skills`
+# would discover every rendered skill's SKILL.md and demand a ceiling for
+# upstream output this repo does not own. There is no marker in the tree itself
+# to sort the two apart; `kendex.toml`'s `source = "in-place"` rows are the
+# register, and these roots are its copy. A fourth project skill adds a root
+# here — the same edit the header's "renamed directory" rule already requires,
+# and `.github/instructions/project-skills.instructions.md` names it beside the
+# other guards that scope to the owned set.
 WATCHED_SURFACES = (
     (".github/instructions", ".github/instructions/**/*.md"),
     ("docs/architecture", "docs/architecture/**/*.md"),
-    ("project-skills", "project-skills/**/SKILL.md"),
+    (".agents/skills/vgs-distro-publish", ".agents/skills/vgs-distro-publish/**/SKILL.md"),
+    (".agents/skills/vgs-release", ".agents/skills/vgs-release/**/SKILL.md"),
+    (".agents/skills/vshell-dev", ".agents/skills/vshell-dev/**/SKILL.md"),
 )
 
 # Ceilinged files that live under no watched root, each because it is an
@@ -622,7 +648,7 @@ def self_test() -> list[str]:
         for rel in (
             ".github/instructions/nested/deep.md",
             "docs/architecture/lock/details.md",
-            "project-skills/thing/nested/SKILL.md",
+            ".agents/skills/vshell-dev/nested/SKILL.md",
         ):
             probe = root / rel
             probe.parent.mkdir(parents=True, exist_ok=True)
@@ -684,9 +710,9 @@ def self_test() -> list[str]:
     #
     # 1. NARROW THE PATTERN, leave the root. The old shape passed this.
     # ONE VARIABLE. The real surfaces, with only the architecture PATTERN
-    # narrowed — passing the single narrowed surface alone would also orphan the
-    # other two roots, and the orphan message would satisfy an assertion meant to
-    # be about partial coverage.
+    # narrowed — passing the single narrowed surface alone would also orphan
+    # every other root, and the orphan message would satisfy an assertion meant
+    # to be about partial coverage.
     narrowed = watched_glob_problems(
         REPO_ROOT,
         set(CEILINGS),

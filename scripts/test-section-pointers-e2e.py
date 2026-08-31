@@ -91,6 +91,11 @@ def clean_tree(*, with_pointers: bool = True) -> dict[str, bytes | str]:
         tree[citer] = f'{tree[citer]}# recorded: `{target}` {SECTION_MARK} "{name}" gone\n'
     for rel in check.FIXTURE_FILES:
         tree.setdefault(rel, "")
+    # One document under each OWNED_ROOT, derived the same way: the carve-out
+    # arm fails on a tree with none, so a root added there fails here until
+    # this tree covers it.
+    for root in check.OWNED_ROOTS:
+        tree.setdefault(f"{root}SKILL.md", f"# {root}\n\n## Live section\n")
     return tree
 
 
@@ -147,6 +152,13 @@ def end_to_end_controls() -> list[str]:
         if rel not in prose and rel.rsplit("/", 1)[-1] not in prose
     )
     heading_gone = dict(clean, **{uncited: "no heading in this file\n"})
+    # The carve-out arm's own tree: every OWNED_ROOT emptied, so nothing else
+    # in the run can answer for it.
+    owned_gone = {
+        rel: text
+        for rel, text in clean.items()
+        if not rel.startswith(check.OWNED_ROOTS)
+    }
     # EACH ROW NAMES THE FINDING IT EXPECTS, not just an exit status: rc alone
     # let a tree tripping a DIFFERENT arm pass as if it had proved its own.
     for case, tree, want, expect in (
@@ -159,6 +171,10 @@ def end_to_end_controls() -> list[str]:
         (
             "with its fixture-file exclusion untracked",
             fixture_untracked, 1, "is exempted here",
+        ),
+        (
+            "with its owned-root carve-out naming nothing tracked",
+            owned_gone, 1, "but no tracked file sits under it",
         ),
         (
             "with a markdown blob that is not text",
@@ -315,6 +331,7 @@ def end_to_end_controls() -> list[str]:
     # it") is wrong in every clause. Both halves are asserted: naming a vendored
     # heading passes, and a dead pointer INSIDE that tree is not read at all.
     vendored = check.SKIP_ROOTS[0]
+    owned = check.OWNED_ROOTS[0]
     anchor = check.SWEEP_ANCHORS[0]
     for case, tree, want in (
         (
@@ -331,6 +348,17 @@ def end_to_end_controls() -> list[str]:
                 f"{vendored}vendor.md": f"# Vendor\n\n`{anchor}` {SECTION_MARK} Gone section.\n",
             }),
             0,
+        ),
+        (
+            # THE CARVE-OUT'S OTHER HALF, paired with the row above because a
+            # prefix rule that stopped carving would leave that one passing on
+            # its own. Both trees sit under the same skip root; only this one is
+            # named in OWNED_ROOTS, and it is ours to keep correct.
+            "a dead pointer INSIDE an owned tree under a skipped root",
+            dict(clean, **{
+                f"{owned}note.md": f"# Owned\n\n`{anchor}` {SECTION_MARK} Gone section.\n",
+            }),
+            1,
         ),
         (
             "a pointer at a vendored document that does NOT carry the section",

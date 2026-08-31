@@ -114,6 +114,8 @@ added by review after surviving unnoticed.
                         like the deliberate citation   (+)
                         both HISTORICAL_SECTIONS staleness arms
                         the FIXTURE_FILES staleness arm
+                        either OWNED_ROOTS staleness arm — a carve-out naming
+                        no tracked file, or one under no skip prefix   (+)
                         nothing_collected dropped from the heading arm
                         the GRAMMAR_SPELLINGS anchor dropped
                         TARGET_ANCHORS reduced to one member   (+)
@@ -250,6 +252,10 @@ def collection_controls() -> list[str]:
         ("heading", check.heading_problems(anchors)),
         ("sweep", check.sweep_problems(whole, healthy)),
         ("fixture-exclusion", check.fixture_problems(list(check.FIXTURE_FILES))),
+        (
+            "owned-roots",
+            check.owned_roots_problems([f"{root}SKILL.md" for root in check.OWNED_ROOTS]),
+        ),
     ):
         if quiet:
             failures.append(f"the {arm_name} arm reported a healthy input: {quiet}")
@@ -257,6 +263,23 @@ def collection_controls() -> list[str]:
         failures.append(
             "a FIXTURE_FILES entry naming no tracked file was accepted, so an "
             "exclusion outlives its file and exempts whatever takes that path next"
+        )
+
+    # THE CARVE-OUT'S TWO STALENESS ARMS. OWNED_ROOTS reads the pointers of
+    # trees SKIP_ROOTS excludes, so both ways it can stop meaning anything are
+    # invisible from the file: a root nothing sits under, and a root under no
+    # skip prefix, which `is_citer` would have read anyway.
+    if not check.owned_roots_problems([]):
+        failures.append(
+            "an OWNED_ROOTS entry under which no tracked file sits was accepted, "
+            "so a renamed skill tree leaves a carve-out that reads the pointers "
+            "of whatever is written there next"
+        )
+    if not check.owned_roots_problems(["docs/owned/SKILL.md"], owned=("docs/owned/",)):
+        failures.append(
+            "an OWNED_ROOTS entry under no SKIP_ROOTS prefix was accepted, so a "
+            "carve-out that exempts nothing reads as policy while is_citer says "
+            "the same without it"
         )
 
     # THE ROOT ANCHOR AT EACH DEPTH. A file anchor cannot stand in for these:

@@ -14,7 +14,13 @@ candidate_paths=(
   systemd
   themes
   AGENTS.md
-  project-skills
+  # This repo's own skills, named one at a time rather than as `.agents`: the
+  # rest of that tree is kendex render, upstream-owned, and a finding there is
+  # not fixable here. `kendex.toml`'s `source = "in-place"` rows are the
+  # register these copy.
+  .agents/skills/vgs-distro-publish
+  .agents/skills/vgs-release
+  .agents/skills/vshell-dev
   docs/architecture
 )
 

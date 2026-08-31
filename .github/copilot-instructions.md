@@ -41,6 +41,10 @@ live session.
 Defects go upstream with `kendex report` to vanillagreencom/kendex; a local
 edit is erased by the next render. Stronger than the vendored-tree rule
 below, which asks for upstream issues: on the render, do not flag at all.
+The exception is this repo's own skills — `.agents/skills/vgs-distro-publish/**`,
+`.agents/skills/vgs-release/**` and `.agents/skills/vshell-dev/**`, which
+`kendex.toml` declares `source = "in-place"`. Nothing renders over them; review
+them like any project file.
 
 **Vendored trees are byte-exact — but not uniformly.** Carried verbatim:
 `backend/vendor/**`, the plugin directories under
@@ -57,7 +61,8 @@ and `third_party/asdcontrol/README.md`.
 product/user-facing set is exactly `README.md`, `packaging/README.md` (which
 owns the per-channel packaging detail the architecture docs cite rather than
 repeat) and `packaging/ubuntu/README.md`. `docs/architecture/**` are agent
-reference docs; `AGENTS.md` and `project-skills/README.md` are agent process
+reference docs; `AGENTS.md` and
+`.github/instructions/project-skills.instructions.md` are agent process
 instruction; `AGENTS.local.md` is AGENTS.md's machine-local companion,
 untracked by design, so a PR never contains it. Do not ask for content to be
 mirrored between them or for changelog entries.

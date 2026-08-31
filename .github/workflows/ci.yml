@@ -127,7 +127,7 @@ jobs:
       # Every `<doc>.md § <section>` pointer must name a heading that exists.
       # VGS-124's dead pointers were found by hand; VGS-125 merges
       # docs/architecture/ 13 files into 4, invalidating pointers across bin/,
-      # quickshell/, project-skills/ and docs/decisions/ at once (VGS-150). The
+      # quickshell/, the project skills and docs/decisions/ at once (VGS-150). The
       # controls run beside the guard, which has no inline self-test.
       - name: Doc section pointers
         run: scripts/check-section-pointers.py
