@@ -2,6 +2,7 @@ package main
 
 import (
 	"go/ast"
+	"go/token"
 	"go/types"
 )
 
@@ -121,4 +122,52 @@ func funcKey(obj types.Object) string {
 		return ""
 	}
 	return fn.FullName()
+}
+
+func originIdent(expr ast.Expr) *ast.Ident {
+	switch n := unparen(expr).(type) {
+	case *ast.Ident:
+		if n.Name == "_" {
+			return nil
+		}
+		return n
+	case *ast.SelectorExpr:
+		return originIdent(n.X)
+	case *ast.IndexExpr:
+		return originIdent(n.X)
+	case *ast.StarExpr:
+		return originIdent(n.X)
+	default:
+		return nil
+	}
+}
+
+func (s fileScanner) aggregateCanOriginateFromCmd(expr ast.Expr) bool {
+	switch n := unparen(expr).(type) {
+	case *ast.CompositeLit:
+		return s.compositeCanOriginateFromCmd(n)
+	case *ast.IndexExpr:
+		return s.exprCanOriginateFromCmd(n.X)
+	case *ast.SelectorExpr:
+		return s.exprCanOriginateFromCmd(n.X)
+	case *ast.StarExpr:
+		return s.exprCanOriginateFromCmd(n.X)
+	case *ast.UnaryExpr:
+		return n.Op == token.AND && s.exprCanOriginateFromCmd(n.X)
+	default:
+		return false
+	}
+}
+
+func (s fileScanner) compositeCanOriginateFromCmd(lit *ast.CompositeLit) bool {
+	for _, elt := range lit.Elts {
+		if pair, ok := elt.(*ast.KeyValueExpr); ok {
+			elt = pair.Value
+		}
+		expr, ok := elt.(ast.Expr)
+		if ok && s.exprCanOriginateFromCmd(expr) {
+			return true
+		}
+	}
+	return false
 }

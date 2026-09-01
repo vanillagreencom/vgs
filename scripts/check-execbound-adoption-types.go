@@ -213,14 +213,24 @@ func (s fileScanner) recordOrigins(file *ast.File) {
 					s.recordOrigin(n.Names[i], rhs)
 				}
 			}
+		case *ast.RangeStmt:
+			if s.exprCanOriginateFromCmd(n.X) {
+				s.recordKnownOrigin(n.Key)
+				s.recordKnownOrigin(n.Value)
+			}
 		}
 		return true
 	})
 }
 
 func (s fileScanner) recordOrigin(lhs ast.Expr, rhs ast.Expr) {
-	id, ok := unparen(lhs).(*ast.Ident)
-	if ok && id.Obj != nil && s.exprCanOriginateFromCmd(rhs) {
+	if id := originIdent(lhs); id != nil && id.Obj != nil && s.exprCanOriginateFromCmd(rhs) {
+		s.origins[id.Obj] = true
+	}
+}
+
+func (s fileScanner) recordKnownOrigin(expr ast.Expr) {
+	if id := originIdent(expr); id != nil && id.Obj != nil {
 		s.origins[id.Obj] = true
 	}
 }
@@ -230,6 +240,9 @@ func (s fileScanner) exprCanOriginateFromCmd(expr ast.Expr) bool {
 		return true
 	}
 	if call, ok := unparen(expr).(*ast.CallExpr); ok && s.analyzer.resultOrigins[funcKey(s.calledFunc(call))] {
+		return true
+	}
+	if s.aggregateCanOriginateFromCmd(expr) {
 		return true
 	}
 	id, ok := unparen(expr).(*ast.Ident)

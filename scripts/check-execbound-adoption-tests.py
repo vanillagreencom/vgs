@@ -196,14 +196,15 @@ func genericDelay(ctx context.Context) error {
         write_backend(raw_root, "internal/services/sample/raw.go",
             """
 package sample
-import (
-    "context"
-    "os/exec"
-)
+import ("context"; "os/exec")
+type outputRunner interface{ Output() ([]byte, error) }
+type wlCopyHolder struct{ run outputRunner }
 func rawStart(ctx context.Context) error { cmd := exec.CommandContext(ctx, "raw-tool"); return cmd.Start() }
+func wlCopy(ctx context.Context) error { h := wlCopyHolder{run: exec.CommandContext(ctx, "wl-copy")}; _, err := h.run.Output(); return err }
+func containerRead(ctx context.Context) error { runs := []outputRunner{exec.CommandContext(ctx, "container-tool")}; _, err := runs[0].Output(); return err }
 """,
         )
-        assert_fails(raw_root, "raw os/exec builders outside execbound need a lifecycle reason", "raw-tool", "allowlist key:")
+        assert_fails(raw_root, "raw os/exec builders outside execbound need a lifecycle reason", "raw-tool", "wlCopy: h.run.Output()", "containerRead: runs[0].Output()", "allowlist key:")
     finally:
         shutil.rmtree(raw_root)
 
