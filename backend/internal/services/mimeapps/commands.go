@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os/exec"
 	"strings"
 	"time"
@@ -13,14 +14,14 @@ import (
 
 const commandTimeout = 5 * time.Second
 
-func queryDefault(mimeType string) (string, error) {
-	return queryDefaultWithTimeout(mimeType, commandTimeout)
+func queryDefault(mimeType string, log *slog.Logger) (string, error) {
+	return queryDefaultWithTimeout(mimeType, commandTimeout, log)
 }
 
-func queryDefaultWithTimeout(mimeType string, timeout time.Duration) (string, error) {
+func queryDefaultWithTimeout(mimeType string, timeout time.Duration, log *slog.Logger) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
-	res, err := execbound.Command(ctx, "xdg-mime", "query", "default", mimeType).Output()
+	res, err := execbound.Command(ctx, "xdg-mime", "query", "default", mimeType).WithLogger(log).Output()
 	if err != nil {
 		var exitErr *exec.ExitError
 		if errors.As(err, &exitErr) {
@@ -34,20 +35,24 @@ func queryDefaultWithTimeout(mimeType string, timeout time.Duration) (string, er
 	return strings.TrimSpace(string(res.Out)), nil
 }
 
-func setDefault(desktopID string, mimeTypes []string) error {
-	return setDefaultWithTimeout(desktopID, mimeTypes, commandTimeout)
+func setDefault(desktopID string, mimeTypes []string, log *slog.Logger) error {
+	return setDefaultWithTimeout(desktopID, mimeTypes, commandTimeout, log)
 }
 
-func setDefaultWithTimeout(desktopID string, mimeTypes []string, timeout time.Duration) error {
+func setDefaultWithTimeout(desktopID string, mimeTypes []string, timeout time.Duration, log *slog.Logger) error {
 	args := append([]string{"default", desktopID}, mimeTypes...)
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
-	res, err := execbound.Command(ctx, "xdg-mime", args...).CombinedOutput()
+	res, err := execbound.Command(ctx, "xdg-mime", args...).WithLogger(log).CombinedOutput()
 	if err != nil {
 		if errors.Is(err, execbound.ErrTimeout) {
 			return fmt.Errorf("xdg-mime default timed out")
 		}
-		return fmt.Errorf("xdg-mime default failed: %s", strings.TrimSpace(string(res.Out)))
+		msg := strings.TrimSpace(string(res.Out))
+		if msg != "" {
+			return fmt.Errorf("xdg-mime default failed: %s", msg)
+		}
+		return fmt.Errorf("xdg-mime default failed: %w", err)
 	}
 	return nil
 }

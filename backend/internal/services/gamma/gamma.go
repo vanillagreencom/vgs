@@ -432,7 +432,7 @@ func (m *Manager) applyGammaLocked(state State) error {
 	}
 
 	if err := m.hyprsunsetIPC("gamma", strconv.Itoa(gammaPercent)); err != nil {
-		m.log.Warn("hyprsunset set gamma failed", "err", err)
+		return fmt.Errorf("set hyprsunset gamma: %w", err)
 	}
 	return m.hyprsunsetIPC("temperature", strconv.Itoa(state.CurrentTemp))
 }

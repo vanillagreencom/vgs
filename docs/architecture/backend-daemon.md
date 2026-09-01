@@ -116,8 +116,7 @@ every exit path; single-owner discipline per capability (no two watchers);
 in-flight request flush on client disconnect; `vshell backend doctor` health
 check (connect + getServerInfo: socket path, versions, capabilities, methods).
 A dead backend degrades UI to unavailable and never strands displays.
-Context-bounded one-shot commands in the brightnessbridge, clipboard, cups,
-networkmanager, sysupdate, tailscale and wlroutput services are built with
+Context-bounded one-shot commands that read tool output are built with
 `backend/internal/execbound`, whose `cmd.WaitDelay` keeps a descendant holding
 the child's pipes from wedging the request past its context deadline. execbound
 owns the terminal classification, so no call site reads `ctx.Err()` itself: a

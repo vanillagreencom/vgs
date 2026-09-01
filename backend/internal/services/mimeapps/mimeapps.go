@@ -59,7 +59,7 @@ func (m *Manager) handleGetDefault(params json.RawMessage) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	id, err := queryDefault(mimeType)
+	id, err := queryDefault(mimeType, m.log)
 	if err != nil {
 		return nil, err
 	}
@@ -79,7 +79,7 @@ func (m *Manager) handleSetDefault(params json.RawMessage) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := setDefault(desktopID, []string{mimeType}); err != nil {
+	if err := setDefault(desktopID, []string{mimeType}, m.log); err != nil {
 		return nil, err
 	}
 	return map[string]any{"success": true}, nil
@@ -98,7 +98,7 @@ func (m *Manager) handleSetDefaults(params json.RawMessage) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := setDefault(desktopID, mimeTypes); err != nil {
+	if err := setDefault(desktopID, mimeTypes, m.log); err != nil {
 		return nil, err
 	}
 	return map[string]any{"success": true}, nil
@@ -127,7 +127,7 @@ func (m *Manager) handleQueryDefaults(params json.RawMessage) (any, error) {
 	}
 	defaults := map[string]string{}
 	for _, mt := range mimeTypes {
-		id, err := queryDefault(mt)
+		id, err := queryDefault(mt, m.log)
 		if err != nil {
 			return nil, err
 		}
