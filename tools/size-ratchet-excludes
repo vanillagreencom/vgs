@@ -142,8 +142,8 @@
 # that: the ledger states what a reader diffing this branch sees, and nothing
 # else.
 #
-#   RAISED    scripts/lib/validation_manifest.py     1045 -> 1162
-#   RAISED    scripts/test-validation-inventory.sh   2278 -> 2334
+#   RAISED    scripts/lib/validation_manifest.py     1045 -> 1207
+#   RAISED    scripts/test-validation-inventory.sh   2278 -> 2337
 #   RAISED    scripts/test-section-pointers-e2e.py    496 ->  540
 #   RAISED    scripts/test-section-pointers.py        489 ->  515
 #   RAISED    scripts/check-validation-inventory.py   411 ->  423
@@ -188,15 +188,24 @@
 #   round 3   a redirection is not a separator (`: > <path>` truncates the file
 #             and runs nothing) and `<path>() { :; }` DEFINES a name rather than
 #             calling it
+#   round 4   a path can be a real command that never runs — the right side of
+#             `||`, and the body of an `if`, `while` or `case`
 #
 # So the predicate tokenizes with shlex, quote-aware, distinguishes separators
 # from redirections, consumes redirection operands, skips heredoc bodies, joins
-# backslash continuations, and declines a definition. Every one of those is a
-# place a path sits without being a command, and every one was a false green
-# until a reviewer named it. Five fixture cases now, one per shape, and each new
-# case goes red against the implementation the round before it while the older
-# cases stay green — which is what makes each a control on ITS finding rather
-# than on the lane in general.
+# backslash continuations, declines a definition, and excludes short-circuit and
+# conditional branches. The first five are places a path is not a command at
+# all; the last is a place it is a command that may never run. Every one was a
+# false green until a reviewer named it. Seven fixture cases now, one per shape,
+# and each new case goes red against the implementation the round before it
+# while the older cases stay green — which is what makes each a control on ITS
+# finding rather than on the lane in general.
+#
+# WHERE IT STOPS, written down so a later round does not reopen it: a
+# step-level `if:` is invisible to a predicate that reads `run:` strings, and
+# four steps in this repo's ci.yml are gated on `harness_only` while still being
+# the real wiring for their lanes. The guard's subject is the lockstep between
+# two lists, not proof that CI executed anything.
 #
 # That ratio, one lane's predicate against four raised rows, is this header's
 # recurring argument arriving again: the fix is small every time and the cost is

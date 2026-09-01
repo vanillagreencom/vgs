@@ -1031,6 +1031,14 @@ _REDIRECTIONS = frozenset({"<", "<<", "<<-", "<<<", "<&", "<>", ">", ">>", ">|",
 # defined, not called, so a workflow that defines a function named after a lane
 # has still stopped running it.
 _DEFINITION = frozenset({"()", "("})
+# CONDITIONAL BODIES. A command inside one may not run at all, so it is not
+# coverage: `if false; then <path>; fi` and `true || <path>` both leave the lane
+# unexecuted. `then`/`do`/`case` open such a body and `fi`/`done`/`esac` close
+# it; `elif` returns to a CONDITION, which does run. The condition of an `if`
+# runs unconditionally, which is why `if` itself stays in _KEYWORDS above and
+# only `then` suppresses.
+_BODY_OPEN = frozenset({"then", "do", "case"})
+_BODY_CLOSE = frozenset({"fi", "done", "esac"})
 
 
 def _unquote(token: str) -> str:
@@ -1086,13 +1094,32 @@ def ci_runs(ci_text: str, path: str) -> bool:
     than guessed at, so it can never be shown to invoke anything. That direction
     reports a problem instead of hiding one, which is the bias a predicate
     written to remove a false green has to take.
+
+    WHAT THIS IS NOT. It answers "does the workflow invoke this path", not "will
+    the lane execute". A step-level `if:` is invisible here, because
+    ci_run_commands reads `run:` strings and nothing around them, and four steps
+    in this repo's ci.yml are gated on `harness_only` while still being the real
+    wiring for their lanes. So the shell-level branches above are excluded as
+    UNGUARANTEED, and a YAML-level condition is not — the guard's subject is the
+    lockstep between the manifest and the workflow, and execution is CI's own
+    answer to give.
     """
     heredoc: str | None = None
+    # Block state spans logical lines, because `if` and `fi` do. ci_text
+    # concatenates every run: block, and a well-formed one returns the depth to
+    # zero at its end; a malformed one leaks SUPPRESSION into the next, which
+    # reports a problem rather than hiding one.
+    conditional = 0
     for line in _logical_lines(ci_text):
         if heredoc is not None:
             if line.strip() == heredoc:
                 heredoc = None
             continue
+        # `||` runs its right side only when the left FAILED, so nothing after
+        # it on this line is guaranteed coverage. `&&` is not the same and is
+        # not cut here: `cd x && <path>` runs the path on every path where the
+        # step itself succeeds.
+        short_circuit = False
         lexer = shlex.shlex(line, punctuation_chars=True)
         lexer.whitespace_split = True
         lexer.commenters = "#"
@@ -1109,11 +1136,25 @@ def ci_runs(ci_text: str, path: str) -> bool:
             if token.startswith("<<") and index + 1 < len(tokens):
                 heredoc = _unquote(tokens[index + 1]).lstrip("-")
             if token and all(character in lexer.punctuation_chars for character in token):
+                if token == "||":
+                    short_circuit = True
                 if token in _REDIRECTIONS:
                     operand = True
                 elif token in _SEPARATORS:
                     start = True
                     operand = False
+                continue
+            if token in _BODY_OPEN:
+                conditional += 1
+                start = True
+                continue
+            if token in _BODY_CLOSE:
+                conditional = max(0, conditional - 1)
+                start = True
+                continue
+            if token == "elif":
+                conditional = max(0, conditional - 1)
+                start = True
                 continue
             if operand:
                 # A redirection TARGET, which is written to and never executed.
@@ -1122,6 +1163,10 @@ def ci_runs(ci_text: str, path: str) -> bool:
             if not start:
                 continue
             if _ASSIGNMENT.match(token) or token in _KEYWORDS:
+                continue
+            if conditional or short_circuit:
+                # In a branch that may not run. Not coverage.
+                start = False
                 continue
             following = tokens[index + 1 : index + 2]
             defines = bool(following) and following[0] in _DEFINITION

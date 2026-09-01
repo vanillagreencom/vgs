@@ -2270,11 +2270,12 @@ ok "a manifest row outside scripts/ that ci.yml never runs is reported"
 # three would pass while two of them regressed: the argument, the trailing
 # comment that ci_run_commands' whole-line filter does not reach, and the
 # separator inside a quoted string that defeated the first repair's line
-# splitting, plus the two the tokenizing repair still got wrong: a redirection
+# splitting, the two the tokenizing repair still got wrong — a redirection
 # TARGET (`: > <path>` truncates the file and runs nothing) and a function
-# DEFINITION (`<path>() { :; }` defines a name, it does not call one). Each is
-# the real ci.yml with one step's invocation replaced, so the fixtures track the
-# workflow rather than restating it.
+# DEFINITION (`<path>() { :; }` defines a name, it does not call one) — and two
+# where the path IS a command that may never run: the right side of `||`, and a
+# conditional body. Each is the real ci.yml with one step's invocation replaced,
+# so the fixtures track the workflow rather than restating it.
 while IFS='|' read -r shape replacement; do
   [[ -n "$shape" ]] || continue
   doctored="$tmp/ci-$shape.yml"
@@ -2301,6 +2302,8 @@ comment|true  # was @
 quoted-separator|echo "( @ )"
 redirection|: > @
 function-definition|@() { :; }
+short-circuit|true || @
+conditional-branch|if false; then @; fi
 SHAPES
 
 # The executable-bit arm (VGS-30 applied to the entry point itself).
