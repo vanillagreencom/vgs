@@ -1021,6 +1021,16 @@ def ci_run_commands(ci: Path) -> str:
 # command; a shell keyword hands command position to the word after it.
 _ASSIGNMENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
 _KEYWORDS = frozenset({"if", "then", "elif", "else", "while", "until", "do", "!", "time", "{"})
+# Operator tokens that END a command, so the next word starts one. Kept apart
+# from the redirections below because shlex hands back both as punctuation and
+# treating a redirection as a separator is fail-open: `: > <path>` truncates the
+# file and runs nothing, while reading `>` as a separator made <path> a command.
+_SEPARATORS = frozenset({";", ";;", "&", "&&", "|", "||", "(", ")"})
+_REDIRECTIONS = frozenset({"<", "<<", "<<-", "<<<", "<&", "<>", ">", ">>", ">|", ">&"})
+# `name()` and `name ()` open a function DEFINITION. The word before it is being
+# defined, not called, so a workflow that defines a function named after a lane
+# has still stopped running it.
+_DEFINITION = frozenset({"()", "("})
 
 
 def _unquote(token: str) -> str:
@@ -1092,19 +1102,30 @@ def ci_runs(ci_text: str, path: str) -> bool:
             continue
         found = False
         start = True
+        operand = False
         for index, token in enumerate(tokens):
             # Recorded even when the invocation is found on this same line: the
             # body still has to be skipped, so the scan finishes the line first.
             if token.startswith("<<") and index + 1 < len(tokens):
                 heredoc = _unquote(tokens[index + 1]).lstrip("-")
             if token and all(character in lexer.punctuation_chars for character in token):
-                start = True
+                if token in _REDIRECTIONS:
+                    operand = True
+                elif token in _SEPARATORS:
+                    start = True
+                    operand = False
+                continue
+            if operand:
+                # A redirection TARGET, which is written to and never executed.
+                operand = False
                 continue
             if not start:
                 continue
             if _ASSIGNMENT.match(token) or token in _KEYWORDS:
                 continue
-            if _unquote(token) == path:
+            following = tokens[index + 1 : index + 2]
+            defines = bool(following) and following[0] in _DEFINITION
+            if _unquote(token) == path and not defines:
                 found = True
             start = False
         if found:

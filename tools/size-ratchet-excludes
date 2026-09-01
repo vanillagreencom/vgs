@@ -134,67 +134,73 @@
 # every case in it is a whole throwaway repository, so a finding costs ten lines
 # there rather than two.
 #
-# KEN-839 ADDS TWO RAISES, and they are the wiring cost again, from the review
-# that found the hole rather than from a split.
+# KEN-839, DERIVED FROM `git diff origin/main...HEAD --
+# tools/size-ratchet-baseline.tsv` rather than accumulated as the branch went.
+# An earlier draft of this block quoted figures measured against a base this
+# branch has since been rebased off, so it claimed a tightening on ci.yml that
+# the committed diff shows as a raise. The convention above exists for exactly
+# that: the ledger states what a reader diffing this branch sees, and nothing
+# else.
 #
-#   RAISED    scripts/check-validation-inventory.py    411 ->  421
-#   RAISED    scripts/test-validation-inventory.sh    2278 -> 2293
-#
-# The guard compared CI coverage only for executable `scripts/*` entries, so a
-# manifest row pointing outside that directory — the two rendered engines this
-# branch wired in, `.agents/skills/size-ratchet/scripts/size-ratchet` and
-# `.agents/skills/growth-guards/scripts/todo-ban` — was never compared against
-# ci.yml at all. Deleting either workflow step left the inventory green while
-# the manifest still promised the lane. Ten lines close it and fifteen are the
-# must-fail control, which is this header's usual ratio for a fail-open.
-#
-# THE REVIEW OF THAT ARM FOUND IT TOO WEAK and cost three more raises. Asking
-# `path in ci_text` is satisfied by a MENTION: `echo <path>`, or a trailing
-# comment ci_run_commands' whole-line filter does not reach, both keep a lockstep
-# arm green while the workflow no longer runs the lane. The predicate moved into
-# validation_manifest.ci_runs, which requires command position, and all four
-# call sites use it, so the older scripts/-keyed arm gained the same rigour
-# rather than being left with the hole its neighbour had just closed.
-#
-#   RAISED    scripts/lib/validation_manifest.py     1045 -> 1141
-#   RAISED    scripts/check-validation-inventory.py   421 ->  423
-#   RAISED    scripts/test-validation-inventory.sh   2293 -> 2329
-#
-# The predicate and its reasoning are the lines in the library; the guard itself
-# spends two. The rest is the control, which drives the real ci.yml with one
-# step's invocation replaced, one shape per case, each shown red before green.
-#
-# THE FIRST REPAIR WAS ITSELF FAIL-OPEN and the next review round said so, which
-# is the second half of that raise. Splitting a line on separator CHARACTERS
-# reads a separator inside a quoted string as a real one, so
-# `echo "( <path> )"` made the path the first word of a synthetic segment and
-# passed for an invocation. The predicate tokenizes with shlex now, quote-aware,
-# and skips heredoc bodies and joins backslash continuations for the same reason
-# — a line of heredoc data and the continuation of an argument list are both
-# places a path is not a command. Three cases, one per shape, and the
-# quoted-separator one goes red against the split form while the other two stay
-# green, which is what makes it a control on THAT finding rather than on the
-# arm in general.
-#
-# KEN-839 ALSO REMOVES A ROW AND RAISES TWO MORE. `scripts/check-doc-growth.py`
-# is deleted on owner ruling, so its 955-line row is gone from the baseline and
-# the two mentions above, in KEN-938's raise ledger, now name a file that no
-# longer exists. They stay: the ledger records what a past branch spent, and
-# rewriting it to hide a later deletion would make the arithmetic unauditable.
-# Four rows tightened on their own as the deletion rippled out — ci.yml 480 to
-# 473, check-section-pointers.py 601 to 594, validate 1062 to 1061.
-#
+#   RAISED    scripts/lib/validation_manifest.py     1045 -> 1162
+#   RAISED    scripts/test-validation-inventory.sh   2278 -> 2334
 #   RAISED    scripts/test-section-pointers-e2e.py    496 ->  540
 #   RAISED    scripts/test-section-pointers.py        489 ->  515
+#   RAISED    scripts/check-validation-inventory.py   411 ->  423
+#   RAISED    .github/workflows/ci.yml                472 ->  474
 #
-# THE DELETION TOOK THE LAST HISTORICAL_SECTIONS ENTRY WITH IT, and an empty
-# table drives neither staleness direction, so both control scripts would have
-# gone quiet on a rule that still ships. They install a fixture entry instead —
-# in-process in the unit control, patched into the guard the e2e copies into a
-# throwaway repo — and go back to driving the shipped entries the day this repo
-# records another removed section. That is the wiring cost this header keeps
-# naming: a rule survives its last real instance only if something stands in for
-# it, and the stand-in has to be built in both places the rule is exercised.
+#   REMOVED   scripts/check-doc-growth.py             955, with the file
+#   REMOVED   docs/architecture/design-language.md    421, now byte-measured
+#   REMOVED   docs/architecture/scratchpads.md        410, now byte-measured
+#   LOWERED   check-section-pointers.py               601 ->  594
+#   LOWERED   kendex.settings.toml                    431 ->  429
+#   LOWERED   kendex.toml                            1078 -> 1074
+#
+# THE DELETION IS THE HEADLINE. `scripts/check-doc-growth.py` goes on owner
+# ruling: its per-file byte ceilings cannot be expressed as baseline rows,
+# because a row for a file UNDER its class is dropped as stale and `*.md` is a
+# frozen class no repo entry can override. Its two mentions in KEN-938's ledger
+# above now name a file that no longer exists, and they stay — the ledger records
+# what a past branch spent, and rewriting it to hide a later deletion would make
+# the arithmetic unauditable.
+#
+# THE DELETION TOOK THE LAST HISTORICAL_SECTIONS ENTRY WITH IT, which is the two
+# section-pointer raises. An empty table drives neither staleness direction, so
+# both control scripts would have gone quiet on a rule that still ships. They
+# install a fixture entry instead — in-process in the unit control, patched into
+# the guard the e2e copies into a throwaway repo — and go back to driving the
+# shipped entries the day this repo records another removed section. A rule
+# survives its last real instance only if something stands in for it, and the
+# stand-in has to be built in both places the rule is exercised.
+#
+# THE OTHER FOUR ARE ONE LANE, AND THREE REVIEW ROUNDS ON IT. The guard claimed
+# the scripts/validate manifest and ci.yml move in lockstep and compared only
+# executable `scripts/*` entries, so the two rendered engines this branch wired
+# in — size-ratchet and todo-ban, both under `.agents/` — were compared by
+# nothing, and deleting either workflow step left the inventory green. Closing
+# that was ten lines. The rest is what three rounds of review asked for, and
+# each round found the previous repair still fail-OPEN:
+#
+#   round 1   `path in ci_text` is satisfied by a MENTION — `echo <path>`, or a
+#             trailing comment ci_run_commands' whole-line filter does not reach
+#   round 2   splitting a line on separator CHARACTERS cannot see quoting, so
+#             `echo "( <path> )"` made the path the first word of a segment
+#   round 3   a redirection is not a separator (`: > <path>` truncates the file
+#             and runs nothing) and `<path>() { :; }` DEFINES a name rather than
+#             calling it
+#
+# So the predicate tokenizes with shlex, quote-aware, distinguishes separators
+# from redirections, consumes redirection operands, skips heredoc bodies, joins
+# backslash continuations, and declines a definition. Every one of those is a
+# place a path sits without being a command, and every one was a false green
+# until a reviewer named it. Five fixture cases now, one per shape, and each new
+# case goes red against the implementation the round before it while the older
+# cases stay green — which is what makes each a control on ITS finding rather
+# than on the lane in general.
+#
+# That ratio, one lane's predicate against four raised rows, is this header's
+# recurring argument arriving again: the fix is small every time and the cost is
+# the controls that stop it being wrong a fourth way.
 #
 backend/vendor/*	vendored Go modules (go mod vendor for offline Nix builds), upstream-owned
 config/vshell/nvim/colorschemes/*	vendored upstream colorscheme plugins, upstream-owned
