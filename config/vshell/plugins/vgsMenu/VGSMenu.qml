@@ -178,7 +178,8 @@ PluginComponent {
         } else if (text.indexOf("Z:") === 0) {
             category = "files";
             mode = "zoxide";
-        }
+        } else if (text.indexOf("d:") === 0)
+            category = "dev";
         if (!category) {
             query = text;
             return;
@@ -1347,7 +1348,8 @@ PluginComponent {
                                             { key: "f:", description: I18n.tr("Files") },
                                             { key: "F:", description: I18n.tr("Folders") },
                                             { key: "t:", description: I18n.tr("Text contents") },
-                                            { key: "Z:", description: I18n.tr("Recent folders") }
+                                            { key: "Z:", description: I18n.tr("Recent folders") },
+                                            { key: "d:", description: I18n.tr("Dev tools") }
                                         ]
 
                                         delegate: HelpRow {

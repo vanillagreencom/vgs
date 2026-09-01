@@ -34,19 +34,12 @@ Item {
                 const data = JSON.parse(output);
                 root.agents = data.agents || [];
                 root.miseAvailable = data.mise !== false;
-                root.loadError = "";
+                root.stubsOptedOut = data.optedOut === true;
+                root.loadError = data.error ? "mise: " + data.error : "";
             } catch (e) {
                 root.loadError = "agent list: " + e;
             }
             root.loading = false;
-        }, 0, 15000);
-        Proc.runCommand("developer-stubs", [Paths.vshellCli, "mise", "list", "--json"], (output, exitCode) => {
-            if (exitCode !== 0)
-                return;
-            try {
-                root.stubsOptedOut = JSON.parse(output).optedOut === true;
-            } catch (e) {
-            }
         }, 0, 15000);
         Proc.runCommand("developer-envs", [Paths.vshellCli, "dev-env", "list", "--json"], (output, exitCode) => {
             if (exitCode !== 0)
@@ -144,7 +137,14 @@ Item {
                         iconName: "upgrade"
                         variant: "secondary"
                         enabled: root.miseAvailable
-                        onClicked: root.runInTerminal("developer-update", ["update", "run", "tools"])
+                        onClicked: {
+                            // The backend supervises the run and re-counts on exit; the
+                            // direct terminal is the path without it.
+                            if (SystemUpdateService.sysupdateAvailable)
+                                SystemUpdateService.upgrade("tools");
+                            else
+                                root.runInTerminal("developer-update", ["update", "run", "tools"]);
+                        }
                     }
                 }
 
@@ -179,7 +179,7 @@ Item {
                             StyledText {
                                 anchors.right: parent.right
                                 anchors.verticalCenter: parent.verticalCenter
-                                text: modelData.installed ? modelData.installed : (modelData.stub === "foreign" ? I18n.tr("yours") : (modelData.stub === "ours" ? I18n.tr("on first run") : I18n.tr("no launcher")))
+                                text: modelData.installed ? modelData.installed : (modelData.stub === "foreign" || modelData.stub === "shadowed" ? I18n.tr("yours") : (modelData.stub === "ours" ? I18n.tr("on first run") : I18n.tr("no launcher")))
                                 font.pixelSize: Theme.fontSizeSmall - 1
                                 color: modelData.installed ? Theme.primary : Theme.surfaceVariantText
                             }

@@ -9,7 +9,9 @@ from __future__ import annotations
 import json
 import os
 import shlex
+import shutil
 import subprocess
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Tuple
@@ -68,17 +70,25 @@ def mise_stub_text(package: str, command: str, bin_name: str) -> str:
     return (
         "#!/bin/bash\n"
         f"{MISE_STUB_MARKER}\n"
-        f"# {command}: mise installs {package} on first run, then runs it.\n"
         "export MISE_MINIMUM_RELEASE_AGE=0\n"
         f"mise use -g --quiet {shlex.quote(package)} || exit 1\n"
         f"exec mise x {shlex.quote(package)} -- {shlex.quote(bin_name)} \"$@\"\n"
     )
 
 
+def command_on_path_elsewhere(command: str, local_bin: Path) -> str:
+    """Where `command` resolves on PATH outside ~/.local/bin, or ""."""
+    dirs = [d for d in os.environ.get("PATH", "").split(os.pathsep) if d and Path(d) != local_bin]
+    found = shutil.which(command, path=os.pathsep.join(dirs))
+    return found or ""
+
+
 def mise_stub_state(path: Path) -> str:
-    """absent, ours (written by VGS) or foreign (someone else's file)."""
+    """absent, ours (written by VGS), foreign (someone else's file at the
+    path) or shadowed (absent, but the command is installed elsewhere on
+    PATH and ~/.local/bin would hide it)."""
     if not path.exists() and not path.is_symlink():
-        return "absent"
+        return "shadowed" if command_on_path_elsewhere(path.name, path.parent) else "absent"
     try:
         head = path.read_text(errors="replace").splitlines()[:4]
     except OSError:
@@ -96,9 +106,14 @@ def mise_install_stub(package: str, command: str, bin_name: str = "") -> Dict[st
     if state == "foreign":
         result["error"] = f"{path} exists and was not written by vshell"
         return result
+    if state == "shadowed":
+        result["error"] = f"{command} is already installed at {command_on_path_elsewhere(command, path.parent)}; a stub in {path.parent} would hide it"
+        return result
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(f".{command}.vshell-tmp")
-    tmp.write_text(mise_stub_text(package, command, bin_name))
+    fd, tmp_name = tempfile.mkstemp(prefix=f".{command}.", dir=path.parent)
+    tmp = Path(tmp_name)
+    with os.fdopen(fd, "w") as handle:
+        handle.write(mise_stub_text(package, command, bin_name))
     tmp.chmod(0o755)
     tmp.replace(path)
     result["state"] = "written"
@@ -124,10 +139,12 @@ def mise_refresh() -> Dict[str, Any]:
         return {"ok": True, "optedOut": True, "written": [], "foreign": []}
     written: List[str] = []
     foreign: List[str] = []
+    shadowed: List[str] = []
     for stub in mise_catalog_stubs():
         result = mise_install_stub(stub["package"], stub["command"], stub["bin"])
-        (written if result["state"] == "written" else foreign).append(stub["command"])
-    return {"ok": True, "optedOut": False, "written": written, "foreign": foreign}
+        state = result["state"]
+        (written if state == "written" else shadowed if state == "shadowed" else foreign).append(stub["command"])
+    return {"ok": True, "optedOut": False, "written": written, "foreign": foreign, "shadowed": shadowed}
 
 
 def mise_remove_stubs() -> Dict[str, Any]:
@@ -137,7 +154,7 @@ def mise_remove_stubs() -> Dict[str, Any]:
         path = RT.home() / ".local" / "bin" / stub["command"]
         state = mise_stub_state(path)
         if state == "ours":
-            path.unlink()
+            path.unlink(missing_ok=True)
             removed.append(stub["command"])
         elif state == "foreign":
             kept.append(stub["command"])
@@ -250,7 +267,9 @@ def cmd_mise(argv: List[str]) -> int:
         elif result["optedOut"]:
             print(f"mise stubs are opted out; delete {RT.state_dir() / MISE_STUBS_REMOVED} to opt back in")
         else:
-            print(f"wrote {len(result['written'])} stubs" + (f", kept {len(result['foreign'])} foreign: " + " ".join(result["foreign"]) if result["foreign"] else ""))
+            print(f"wrote {len(result['written'])} stubs"
+                  + (", kept foreign: " + " ".join(result["foreign"]) if result["foreign"] else "")
+                  + (", already installed elsewhere: " + " ".join(result["shadowed"]) if result["shadowed"] else ""))
         return 0
     if sub == "opt-in":
         marker = RT.state_dir() / MISE_STUBS_REMOVED

@@ -39,7 +39,7 @@ func TestParseParu(t *testing.T) {
 // "tools" upgrade on a machine without mise fails before a terminal opens
 // rather than running a step that prints "mise not found" and exits.
 func TestUpgradeModeRequiresItsUpdater(t *testing.T) {
-	m := &Manager{vshell: "/usr/bin/vshell", paru: "/usr/bin/paru", pacman: "/usr/bin/pacman"}
+	m := &Manager{vshell: "/usr/bin/vshell", paru: "/usr/bin/paru", pacman: "/usr/bin/pacman", checkupdates: "/usr/bin/checkupdates"}
 	for _, mode := range []string{"system", "aur", "all", ""} {
 		if _, err := m.upgradeMode(mode); err != nil {
 			t.Fatalf("upgradeMode(%q) = %v, want ok", mode, err)
@@ -57,8 +57,13 @@ func TestUpgradeModeRequiresItsUpdater(t *testing.T) {
 	if got, err := withMise.upgradeMode("tools"); err != nil || got != "tools" {
 		t.Fatalf("upgradeMode(tools) with mise = (%q, %v), want tools", got, err)
 	}
-	if _, err := (&Manager{pacman: "/usr/bin/pacman"}).upgradeMode("system"); err == nil {
+	if _, err := (&Manager{pacman: "/usr/bin/pacman", checkupdates: "/usr/bin/checkupdates"}).upgradeMode("system"); err == nil {
 		t.Fatal("upgradeMode without the vshell CLI must fail: the terminal runs `vshell update run`")
+	}
+	// The widget shows a system button only when the backend advertises one;
+	// pacman without checkupdates advertises none and must not upgrade either.
+	if _, err := (&Manager{vshell: "/usr/bin/vshell", pacman: "/usr/bin/pacman"}).upgradeMode("system"); err == nil {
+		t.Fatal("upgradeMode(system) without checkupdates must fail: backends() advertises no system backend")
 	}
 }
 
@@ -335,4 +340,27 @@ func contains(value, needle string) bool {
 		}
 	}
 	return false
+}
+
+// The count on screen is from before the upgrade. A run that exits non-zero
+// still installed whatever steps succeeded, so the re-count is unconditional.
+func TestUpgradeRecountsAfterAnyExit(t *testing.T) {
+	for _, code := range []int{0, 1} {
+		counter, logPath := fakeUpdateCommand(t, "go 2:1.26.4-2 -> 2:1.26.5-2\n", 0)
+		dir := t.TempDir()
+		vshell := filepath.Join(dir, "vshell")
+		if err := os.WriteFile(vshell, []byte("#!/bin/sh\nexit "+strconv.Itoa(code)+"\n"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		m := &Manager{srv: server.New(0, nil), checkupdates: counter, pacman: "/usr/bin/pacman", vshell: vshell}
+		m.state = State{Phase: "idle", Backends: m.backends(), RecentLog: []string{}}
+		t.Cleanup(m.Close)
+		if _, err := m.handleUpgrade(mustJSON(t, upgradeParams{Mode: "system"})); err != nil {
+			t.Fatalf("exit %d: handleUpgrade = %v", code, err)
+		}
+		waitFor(t, func() bool {
+			state := m.snapshot().(State)
+			return state.Phase == "idle" && state.Count == 1 && readFile(t, logPath) != ""
+		})
+	}
 }

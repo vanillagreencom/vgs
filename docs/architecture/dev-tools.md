@@ -31,6 +31,9 @@ Nothing downloads until first run. Rules:
 
 - A file without the marker line is foreign and is never replaced; `list`
   reports it as `foreign` and the agent launches through it as-is.
+- A command that already resolves on `PATH` outside `~/.local/bin` gets no
+  stub either (`shadowed`): `~/.local/bin` sorts first and the stub would hide
+  the distro binary.
 - `vshell mise remove-stubs` deletes our stubs and writes
   `~/.local/state/vshell/mise-stubs-removed`; `refresh` is a no-op until
   `vshell mise opt-in`.
@@ -49,8 +52,9 @@ vshell update  count | run <system|aur|flatpak|tools|all>
 ```
 
 Default agent is the `defaultCodingAgent` settings key. `launch` starts in
-`~/Work` when it exists, opens a terminal with app id `vshell-agent`, and
-writes the stub first if none exists. `--pick` with no default opens the
+`~/Work` when it exists and opens a terminal with app id `vshell-agent`. When
+the command is neither a stub nor on `PATH`, it writes the stub first, or
+notifies and exits 1 without mise. `--pick` with no default opens the
 Developer settings tab.
 
 ## Updates, end to end
@@ -79,5 +83,5 @@ the same `tools` rows.
 
 Shell wiring lives in the user's dotfiles: interactive `mise activate`, the
 session `PATH` (`~/.local/bin`, `~/.local/share/mise/shims`), and the PAM line
-for SSH commands. VGS assumes `~/.local/bin` is on `PATH`, as its own service
-unit already does.
+for SSH commands. VGS assumes `~/.local/bin` is on `PATH`; `agent launch`
+and the stubs resolve their commands through it.

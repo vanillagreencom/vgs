@@ -7,29 +7,10 @@ package sysupdate
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"fmt"
-	"log/slog"
-	"os"
-	"os/exec"
 	"sort"
-	"strings"
-
-	"vshell/backend/internal/execbound"
 )
-
-func commandOutputEnv(ctx context.Context, log *slog.Logger, env []string, name string, args ...string) ([]byte, error) {
-	c := execbound.Command(ctx, name, args...).WithLogger(log)
-	c.Exec().Env = append(os.Environ(), env...)
-	res, err := c.Output()
-	if err != nil {
-		if ee, ok := err.(*exec.ExitError); ok && len(ee.Stderr) > 0 {
-			return res.Out, fmt.Errorf("%s", strings.TrimSpace(string(ee.Stderr)))
-		}
-	}
-	return res.Out, err
-}
 
 // parseMiseOutdated reads `mise outdated --json`: a map of tool name to
 // {name, requested, current, latest}. An empty object means up to date.

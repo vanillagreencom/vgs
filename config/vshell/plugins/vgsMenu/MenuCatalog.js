@@ -42,6 +42,12 @@ var categories = [
         label: "System",
         icon: "\uef1c",
         description: "Packages, maintenance and diagnostics"
+    },
+    {
+        id: "dev",
+        label: "Dev tools",
+        icon: "\uf121",
+        description: "Coding agents, language environments and tool updates"
     }
 ]
 
@@ -176,7 +182,7 @@ var items = [
         argv: ["{vshell}", "terminal", "exec", "--tui", "--hold", "--", "{vshell}", "update", "run", "aur"]
     },
     {
-        category: "system",
+        category: "dev",
         title: "Dev tools update",
         subtitle: "Update mise-managed coding agents and language toolchains",
         icon: "\uf0ab",
@@ -184,7 +190,7 @@ var items = [
         argv: ["{vshell}", "terminal", "exec", "--tui", "--hold", "--", "{vshell}", "update", "run", "tools"]
     },
     {
-        category: "apps",
+        category: "dev",
         title: "Coding agent",
         subtitle: "Launch the default coding agent, or pick one",
         icon: "\uf544",
@@ -192,7 +198,7 @@ var items = [
         argv: ["{vshell}", "agent", "launch", "--pick"]
     },
     {
-        category: "shell",
+        category: "dev",
         title: "Developer settings",
         subtitle: "Coding agents, launchers and language environments",
         icon: "\uf121",

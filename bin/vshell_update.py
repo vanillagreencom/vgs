@@ -11,32 +11,39 @@ import json
 import os
 import subprocess
 import time
-from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, Dict, List
+from typing import Any, Dict, List
 
 import vshell_mise as mise
+from vshell_mise import DevToolsRuntime
+
+RT: DevToolsRuntime
 
 
-@dataclass
-class UpdateRuntime:
-    command_exists: Callable[[str], bool]
-    eprint: Callable[..., None]
-
-
-RT: UpdateRuntime
-
-
-def configure(runtime: UpdateRuntime) -> None:
+def configure(runtime: DevToolsRuntime) -> None:
     global RT
     RT = runtime
+    mise.configure(runtime)
+
+
+def tools_rows() -> Dict[str, Any]:
+    """The mise part of a count: rows, count, and the probe error if any."""
+    if not RT.command_exists("mise"):
+        return {"tools": 0, "rows": [], "source": "", "error": ""}
+    rows, error = mise.mise_outdated()
+    return {"tools": len(rows), "source": "mise outdated", "error": error,
+            "rows": [{"name": r["name"], "old": r["current"], "new": r["latest"], "src": "tools"} for r in rows]}
 
 
 def update_count() -> Dict[str, Any]:
-    if not RT.command_exists("pacman"):
-        return {"ok": False, "error": "pacman not found", "repo": 0, "aur": 0, "packages": [], "orphanCount": 0, "orphans": []}
-    if not RT.command_exists("checkupdates"):
-        return {"ok": False, "error": "checkupdates not found", "repo": 0, "aur": 0, "packages": [], "orphanCount": 0, "orphans": []}
+    tools = tools_rows()
+    for probe in ("pacman", "checkupdates"):
+        if not RT.command_exists(probe):
+            # No repo counter, but mise alone is still a count worth showing.
+            return {"ok": bool(tools["source"]), "error": f"{probe} not found", "repo": 0, "aur": 0,
+                    "tools": tools["tools"], "packages": tools["rows"], "orphanCount": 0, "orphans": [],
+                    "source": {"repo": "", "aur": "", "tools": tools["source"]}, "checkedAt": int(time.time()),
+                    **({"toolsError": tools["error"]} if tools["error"] else {})}
     lock = Path(os.environ.get("XDG_RUNTIME_DIR", "/tmp")) / "vshell-update-count.lock"
     script = r'''
 set -u
@@ -68,14 +75,11 @@ jq -cn --argjson repo "${repo:-0}" --argjson aur "${aur:-0}" --argjson packages 
     if isinstance(data, dict):
         data.setdefault("source", meta["source"])
         data.setdefault("checkedAt", meta["checkedAt"])
-        tools, tools_error = mise.mise_outdated() if RT.command_exists("mise") else ([], "")
-        data["tools"] = len(tools)
-        data["packages"] = list(data.get("packages") or []) + [
-            {"name": row["name"], "old": row["current"], "new": row["latest"], "src": "tools"} for row in tools
-        ]
-        data["source"]["tools"] = "mise outdated" if RT.command_exists("mise") else ""
-        if tools_error:
-            data["toolsError"] = tools_error
+        data["tools"] = tools["tools"]
+        data["packages"] = list(data.get("packages") or []) + tools["rows"]
+        data["source"]["tools"] = tools["source"]
+        if tools["error"]:
+            data["toolsError"] = tools["error"]
     return data
 
 
@@ -127,7 +131,9 @@ def cmd_update(argv: List[str]) -> int:
     if args.cmd == "count":
         data = update_count()
         print(json.dumps(data, indent=2) if args.json else str((data.get("repo") or 0) + (data.get("aur") or 0) + (data.get("tools") or 0)))
-        return 0 if data.get("ok", True) else 1
+        if data.get("toolsError"):
+            RT.eprint(f"tools count unavailable: {data['toolsError']}")
+        return 0 if data.get("ok", True) and not data.get("toolsError") else 1
     if args.cmd == "run":
         steps = update_steps(args.mode)
         if not steps:
@@ -138,7 +144,11 @@ def cmd_update(argv: List[str]) -> int:
             print(f":: {step['title']}")
             failures += 0 if subprocess.run(step["argv"], check=False, env=step.get("env")).returncode == 0 else 1
             for after in step.get("after") or ():
-                after()
+                try:
+                    after()
+                except OSError as exc:
+                    RT.eprint(f"{step['title']}: follow-up failed: {exc}")
+                    failures += 1
         try:
             input(("Failed — press Enter to close…" if failures else "Done — press Enter to close…"))
         except EOFError:

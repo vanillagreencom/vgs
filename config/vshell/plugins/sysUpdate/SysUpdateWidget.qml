@@ -18,6 +18,9 @@ PluginComponent {
     // mise is installed: the backend advertises a tools backend, or the CLI
     // count named a tools source.
     property bool toolsAvailable: false
+    // The mise probe failed while the repo count succeeded; shown instead of a
+    // false "0 tools".
+    property string toolsError: ""
     property var packages: []
     property string errorText: ""
     property int orphanCount: 0
@@ -215,6 +218,7 @@ PluginComponent {
             root.aurCount = d.aur || 0;
             root.toolsCount = d.tools || 0;
             root.toolsAvailable = !!(d.source && d.source.tools);
+            root.toolsError = String(d.toolsError || "");
             root.packages = d.packages || [];
             root.orphanCount = d.orphanCount || 0;
             root.orphans = d.orphans || [];
@@ -254,6 +258,7 @@ PluginComponent {
         root.aurCount = pkgs.filter(p => p.src === "aur").length;
         root.toolsCount = pkgs.filter(p => p.src === "tools").length;
         root.toolsAvailable = SystemUpdateService.hasBackend("mise");
+        root.toolsError = "";
         root.orphanCount = 0;
         root.orphans = [];
         root.showOrphans = false;
@@ -366,7 +371,7 @@ PluginComponent {
             id: popout
 
             headerText: "System Updates"
-            detailsText: root.loading ? "Checking…" : (root.errorText.length > 0 ? root.errorText : (root.totalCount > 0 ? (root.totalCount + " available  (" + root.repoCount + " repo - " + root.aurCount + " aur" + (root.toolsAvailable ? " - " + root.toolsCount + " tools" : "") + ")") : "Up to date"))
+            detailsText: root.loading ? "Checking…" : (root.errorText.length > 0 ? root.errorText : (root.totalCount > 0 ? (root.totalCount + " available  (" + root.repoCount + " repo - " + root.aurCount + " aur" + (root.toolsAvailable ? " - " + (root.toolsError ? "tools ?" : root.toolsCount + " tools") : "") + ")") : (root.toolsError ? "Up to date (tools check failed)" : "Up to date")))
             showCloseButton: true
 
             Column {
@@ -424,6 +429,15 @@ PluginComponent {
                         visible: opacity > 0
                         Behavior on opacity {
                             NumberAnimation { duration: Theme.shortDuration; easing.type: Theme.standardEasing }
+                        }
+
+                        StyledText {
+                            visible: root.errorText.length === 0 && root.toolsError.length > 0
+                            width: parent.width
+                            text: "Dev tools check failed: " + root.toolsError
+                            wrapMode: Text.WordWrap
+                            font.pixelSize: Theme.fontSizeSmall
+                            color: Theme.error
                         }
 
                         StyledText {

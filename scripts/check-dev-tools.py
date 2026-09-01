@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import importlib.machinery
 import importlib.util
+import os
 import subprocess
 import sys
 import tempfile
@@ -38,8 +39,11 @@ def test_stub_template_and_foreign_files():
     with tempfile.TemporaryDirectory() as tmp:
         original_home = mise.RT.home
         original_state = mise.RT.state_dir
+        original_path = os.environ.get("PATH", "")
         mise.RT.home = lambda: Path(tmp)
         mise.RT.state_dir = lambda: Path(tmp) / ".local" / "state" / "vshell"
+        # The host's own PATH must not decide the verdict: only the temp dirs count.
+        os.environ["PATH"] = str(Path(tmp) / ".local" / "bin")
         try:
             result = mise.mise_install_stub("npm:@deepseek-ai/dsh", "dsh")
             assert_equal(result["state"], "written", "a fresh stub must be written")
@@ -63,6 +67,21 @@ def test_stub_template_and_foreign_files():
             assert "error" in result, result
             assert_equal(foreign.read_text(), before, "foreign file must be untouched")
 
+            # A command installed elsewhere on PATH never gets a stub: ~/.local/bin
+            # comes first and the stub would hide the distro binary.
+            elsewhere = Path(tmp) / "usr-bin"
+            elsewhere.mkdir()
+            (elsewhere / "gh").write_text("#!/bin/sh\nexit 0\n")
+            (elsewhere / "gh").chmod(0o755)
+            os.environ["PATH"] = f"{elsewhere}:{Path(tmp) / '.local' / 'bin'}"
+            try:
+                shadowed = mise.mise_install_stub("gh", "gh")
+                assert_equal(shadowed["state"], "shadowed", "a command on PATH outside ~/.local/bin must not get a stub")
+                assert not (Path(tmp) / ".local" / "bin" / "gh").exists(), "shadowed stub must not be written"
+                refreshed = mise.mise_refresh()
+                assert "gh" in refreshed["shadowed"], refreshed
+            finally:
+                os.environ["PATH"] = str(Path(tmp) / ".local" / "bin")
             refreshed = mise.mise_refresh()
             assert "claude" in refreshed["foreign"], refreshed
             assert "codex" in refreshed["written"], refreshed
@@ -75,6 +94,7 @@ def test_stub_template_and_foreign_files():
         finally:
             mise.RT.home = original_home
             mise.RT.state_dir = original_state
+            os.environ["PATH"] = original_path
 
 
 def test_outdated_parsing_and_update_steps():
@@ -112,6 +132,82 @@ def test_outdated_parsing_and_update_steps():
         update.RT.eprint = original_eprint
 
 
+def test_update_run_and_count_carry_tools():
+    """`update run tools` runs mise up then the stub refresh; a count merges mise rows."""
+    calls = []
+    original_run = update.subprocess.run
+    original_input = update.input if hasattr(update, "input") else None
+    original_exists = mise.RT.command_exists
+    original_refresh = mise.mise_refresh
+    original_mise_run = mise.RT.run
+    mise.RT.command_exists = lambda name: name in {"mise", "pacman", "checkupdates"}
+    refreshed = []
+    mise.mise_refresh = lambda: refreshed.append(True)
+    update.subprocess.run = lambda argv, check=False, env=None, **kw: (calls.append((list(argv), (env or {}).get("MISE_MINIMUM_RELEASE_AGE"))), subprocess.CompletedProcess(argv, 0))[1]
+    update.input = lambda *a: ""
+    try:
+        assert_equal(update.cmd_update(["run", "tools"]), 0, "tools run must succeed")
+        assert_equal(calls, [(["mise", "up"], "0")], "tools mode runs mise up with the cooldown off")
+        assert_equal(len(refreshed), 1, "stubs are refreshed after the tools step")
+        # The after-hook also runs, and a failing hook counts as a failure.
+        calls.clear()
+        refreshed.clear()
+        def boom():
+            raise OSError("disk full")
+        mise.mise_refresh = boom
+        assert_equal(update.cmd_update(["run", "tools"]), 1, "a failing after-hook is a failed run, not a traceback")
+
+        payload = '{"claude": {"name": "claude", "requested": "latest", "current": "2.1.0", "latest": "2.2.0"}}'
+        mise.RT.run = lambda cmd, check=False, **kw: subprocess.CompletedProcess(cmd, 0, stdout=payload, stderr="")
+        count_json = '{"ok":true,"repo":1,"aur":0,"packages":[{"name":"go","old":"1","new":"2","src":"repo"}],"orphanCount":0,"orphans":[]}'
+        update.subprocess.run = lambda argv, **kw: subprocess.CompletedProcess(argv, 0, stdout=count_json, stderr="")
+        data = update.update_count()
+        assert_equal(data["tools"], 1, "count carries the mise rows")
+        assert_equal(data["packages"][-1], {"name": "claude", "old": "2.1.0", "new": "2.2.0", "src": "tools"}, "tools row appended")
+        assert_equal(data["source"]["tools"], "mise outdated", "tools source named")
+        assert "toolsError" not in data, data
+        mise.RT.run = lambda cmd, check=False, **kw: subprocess.CompletedProcess(cmd, 1, stdout="", stderr="mise ERROR nope")
+        data = update.update_count()
+        assert data.get("toolsError") and data["tools"] == 0, "a failed probe is reported, not a clean zero"
+        # No pacman: the tools rows still come through.
+        mise.RT.command_exists = lambda name: name == "mise"
+        mise.RT.run = lambda cmd, check=False, **kw: subprocess.CompletedProcess(cmd, 0, stdout=payload, stderr="")
+        data = update.update_count()
+        assert data["ok"] and data["tools"] == 1 and data["packages"][0]["src"] == "tools", data
+    finally:
+        update.subprocess.run = original_run
+        if original_input is None:
+            del update.input
+        else:
+            update.input = original_input
+        mise.RT.command_exists = original_exists
+        mise.mise_refresh = original_refresh
+        mise.RT.run = original_mise_run
+
+
+def test_os_release_resolves_through_id_like():
+    """cachyos resolves to arch, ubuntu to debian; an unknown host fails loudly."""
+    with tempfile.TemporaryDirectory() as tmp:
+        rel = Path(tmp) / "os-release"
+        rel.write_text('NAME="CachyOS"\nID=cachyos\nID_LIKE=arch\n')
+        assert_equal(devtools.os_release_ids(rel), ["cachyos", "arch"], "ID then ID_LIKE tokens")
+        rel.write_text('ID=ubuntu\nID_LIKE="debian"\n')
+        assert_equal(devtools.os_release_ids(rel), ["ubuntu", "debian"], "quoted ID_LIKE")
+        assert_equal(devtools.os_release_ids(Path(tmp) / "missing"), [], "unreadable file is empty, not a crash")
+    original_ids = devtools.os_release_ids
+    original_eprint = devtools.RT.eprint
+    said = []
+    devtools.RT.eprint = lambda *a: said.append(" ".join(str(x) for x in a))
+    devtools.os_release_ids = lambda path=None: ["gentoo"]
+    try:
+        assert_equal(devtools.dev_env_install_packages({"arch": ["libyaml"]}), 1, "no matching key must fail")
+        assert said and "libyaml" in said[-1] and "gentoo" in said[-1], said
+        assert_equal(devtools.dev_env_install_packages({}), 0, "no packages needed is not a failure")
+    finally:
+        devtools.os_release_ids = original_ids
+        devtools.RT.eprint = original_eprint
+
+
 def test_catalog_is_consistent():
     """One catalog feeds stubs, agents and envs; ids and commands must be unique."""
     catalog = mise.dev_tools_catalog()
@@ -141,6 +237,8 @@ def test_cli_wrapper_routes_the_commands():
 def main() -> int:
     test_stub_template_and_foreign_files()
     test_outdated_parsing_and_update_steps()
+    test_update_run_and_count_carry_tools()
+    test_os_release_resolves_through_id_like()
     test_catalog_is_consistent()
     test_cli_wrapper_routes_the_commands()
     print("check-dev-tools: ok")

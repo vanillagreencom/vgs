@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any, Dict, List
 
 import vshell_mise
-from vshell_mise import DevToolsRuntime, dev_tools_catalog, mise_env, mise_install_stub, mise_installed_versions, mise_stub_state
+from vshell_mise import DevToolsRuntime, dev_tools_catalog, mise_stubs_opted_out, mise_env, mise_install_stub, mise_installed_versions, mise_stub_state
 
 RT: DevToolsRuntime
 
@@ -22,6 +22,10 @@ def configure(runtime: DevToolsRuntime) -> None:
     global RT
     RT = runtime
     vshell_mise.configure(runtime)
+
+
+def runtime() -> DevToolsRuntime:
+    return RT
 
 
 def agent_entries() -> List[Dict[str, Any]]:
@@ -33,7 +37,7 @@ def agent_default_id() -> str:
 
 
 def agent_list() -> Dict[str, Any]:
-    versions, _ = mise_installed_versions()
+    versions, versions_error = mise_installed_versions()
     default = agent_default_id()
     agents = []
     for entry in agent_entries():
@@ -51,7 +55,8 @@ def agent_list() -> Dict[str, Any]:
             "runnable": bool(versions.get(str(entry["package"]))) or stub == "foreign" or (stub == "absent" and RT.command_exists(command)),
             "default": entry["id"] == default,
         })
-    return {"ok": True, "default": default, "mise": RT.command_exists("mise"), "agents": agents}
+    return {"ok": True, "default": default, "mise": RT.command_exists("mise"), "error": versions_error,
+            "optedOut": mise_stubs_opted_out(), "agents": agents}
 
 
 def agent_launch(pick: bool, inline: bool) -> int:
@@ -62,14 +67,13 @@ def agent_launch(pick: bool, inline: bool) -> int:
         if pick or not agent_id:
             cli = str(RT.repo_root() / "bin" / "vshell")
             RT.run([cli, "ipc", "call", "settings", "openWith", "developer"], timeout=5)
-            if agent_id:
-                RT.eprint(f"default coding agent {agent_id!r} is not in the catalog")
-            return 0 if not agent_id else 1
-        RT.eprint(f"default coding agent {agent_id!r} is not in the catalog")
-        return 1
+        if agent_id:
+            RT.eprint(f"default coding agent {agent_id!r} is not in the catalog")
+            return 1
+        return 0
     command = str(entry["command"])
     stub_path = RT.home() / ".local" / "bin" / command
-    if mise_stub_state(stub_path) == "absent" and not RT.command_exists(command):
+    if mise_stub_state(stub_path) == "absent":
         if not RT.command_exists("mise"):
             RT.notify_user("mise is not installed", f"{entry['name']} installs through mise; install mise and retry.")
             return 1
@@ -79,10 +83,9 @@ def agent_launch(pick: bool, inline: bool) -> int:
     # first launch from re-asking every session.
     work = RT.home() / "Work"
     cwd = work if work.is_dir() else RT.home()
-    if inline:
-        os.chdir(cwd)
-        os.execvp(launch[0], launch)
     os.chdir(cwd)
+    if inline:
+        os.execvp(launch[0], launch)
     return RT.spawn_terminal(launch, app_id="vshell-agent", detach=True, notify=True, what=f"{entry['name']}")
 
 
@@ -142,33 +145,45 @@ def dev_env_list() -> Dict[str, Any]:
     }
 
 
-def os_release_id() -> str:
+def os_release_ids(path: Path = Path("/etc/os-release")) -> List[str]:
+    """ID followed by each ID_LIKE token, so cachyos resolves to arch and
+    ubuntu to debian. Empty when the file is unreadable."""
+    values: Dict[str, str] = {}
     try:
-        for line in Path("/etc/os-release").read_text().splitlines():
-            if line.startswith("ID="):
-                return line[3:].strip().strip('"')
+        for line in path.read_text().splitlines():
+            key, sep, value = line.partition("=")
+            if sep:
+                values[key.strip()] = value.strip().strip('"')
     except OSError:
-        pass
-    return ""
+        return []
+    ids = [values.get("ID", "")] + values.get("ID_LIKE", "").split()
+    return [i for i in ids if i]
+
+
+PACKAGE_INSTALLERS = {
+    "arch": ["sudo", "pacman", "-S", "--needed"],
+    "debian": ["sudo", "apt-get", "install"],
+    "fedora": ["sudo", "dnf", "install"],
+}
 
 
 def dev_env_install_packages(packages: Dict[str, List[str]]) -> int:
-    distro = os_release_id()
-    names = [str(p) for p in packages.get(distro) or []]
-    if not names:
+    """Install the catalog's distribution packages for this host, interactively.
+    A host no catalog key matches fails loudly rather than letting the mise
+    build fail later with the wrong name on it."""
+    if not packages:
         return 0
-    installers = {
-        "arch": ["sudo", "pacman", "-S", "--needed", "--noconfirm"],
-        "debian": ["sudo", "apt-get", "install", "-y"],
-        "ubuntu": ["sudo", "apt-get", "install", "-y"],
-        "fedora": ["sudo", "dnf", "install", "-y"],
-    }
-    argv = installers.get(distro)
-    if argv is None:
-        RT.eprint(f"install these packages first: {' '.join(names)}")
-        return 1
-    print(f":: Installing {' '.join(names)}")
-    return subprocess.run([*argv, *names], check=False).returncode
+    ids = os_release_ids()
+    for distro in ids:
+        names = [str(p) for p in packages.get(distro) or []]
+        argv = PACKAGE_INSTALLERS.get(distro)
+        if names and argv:
+            print(f":: Installing {' '.join(names)}")
+            return subprocess.run([*argv, *names], check=False).returncode
+    wanted = "; ".join(f"{k}: {' '.join(v)}" for k, v in packages.items())
+    RT.eprint(f"no package list for this distribution ({' '.join(ids) or 'unreadable /etc/os-release'}); "
+              f"install the equivalent of one of these first, then retry: {wanted}")
+    return 1
 
 
 def dev_env_run(argv: List[str]) -> int:

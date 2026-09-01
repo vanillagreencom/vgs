@@ -110,7 +110,7 @@ func Register(srv *server.Server, log *slog.Logger) (*Manager, error) {
 	m.flatpak, _ = exec.LookPath("flatpak")
 	m.mise, _ = exec.LookPath("mise")
 	m.vshell = vshellCLIPath()
-	if m.checkupdates == "" && m.paru == "" && m.flatpak == "" && m.mise == "" {
+	if len(m.backends()) == 0 {
 		return nil, fmt.Errorf("no supported update counter found")
 	}
 	distro, pretty := osRelease()
@@ -158,7 +158,7 @@ func (m *Manager) handleRefresh(params json.RawMessage) (any, error) {
 
 func (m *Manager) refresh(force bool) (any, error) {
 	m.mu.Lock()
-	if m.state.Phase != "idle" {
+	if m.closed || m.state.Phase != "idle" {
 		state := m.state
 		m.mu.Unlock()
 		return state, nil
@@ -353,7 +353,9 @@ func (m *Manager) snapshot() any {
 
 func (m *Manager) backends() []Backend {
 	var backends []Backend
-	if m.checkupdates != "" {
+	// The system backend counts with checkupdates and upgrades with pacman;
+	// both are needed for the widget's button to mean anything.
+	if m.checkupdates != "" && m.pacman != "" {
 		backends = append(backends, Backend{ID: "pacman", DisplayName: "Pacman", Repo: "system", NeedsAuth: true, RunsInTerminal: true})
 	}
 	if m.paru != "" {
@@ -368,33 +370,27 @@ func (m *Manager) backends() []Backend {
 	return backends
 }
 
-// upgradeMode validates the requested mode against the updaters present.
-// "all" needs at least one; every other mode needs its own.
+// upgradeMode validates the requested mode against the advertised backends,
+// so the daemon accepts exactly the buttons the widget shows: a mode is its
+// backend's Repo id. "all" needs at least one backend.
 func (m *Manager) upgradeMode(mode string) (string, error) {
 	if m.vshell == "" {
 		return "", fmt.Errorf("vshell CLI not found; `vshell update run` cannot be launched")
 	}
-	present := map[string]bool{
-		"system":  m.pacman != "",
-		"aur":     m.paru != "",
-		"flatpak": m.flatpak != "",
-		"tools":   m.mise != "",
-	}
+	backends := m.backends()
 	switch mode {
 	case "", "all":
-		for _, ok := range present {
-			if ok {
-				return "all", nil
-			}
+		if len(backends) == 0 {
+			return "", fmt.Errorf("no supported updater found")
 		}
-		return "", fmt.Errorf("no supported updater found")
-	case "system", "aur", "flatpak", "tools":
-		if !present[mode] {
-			return "", fmt.Errorf("no %s updater installed", mode)
-		}
-		return mode, nil
+		return "all", nil
 	}
-	return "", fmt.Errorf("unknown upgrade mode %q", mode)
+	for _, b := range backends {
+		if b.Repo == mode {
+			return mode, nil
+		}
+	}
+	return "", fmt.Errorf("no %s updater installed", mode)
 }
 
 func (m *Manager) collectUpdates(ctx context.Context) ([]Package, []string, error) {
@@ -434,7 +430,7 @@ func (m *Manager) collectUpdates(ctx context.Context) ([]Package, []string, erro
 	if m.mise != "" {
 		// Release-age cooldown off, the same way `vshell update run tools`
 		// runs `mise up`, so the count matches what the upgrade would install.
-		out, err := commandOutputEnv(ctx, m.log, []string{"MISE_MINIMUM_RELEASE_AGE=0"}, m.mise, "outdated", "--json")
+		out, err := commandOutputEnv(ctx, m.log, false, []string{"MISE_MINIMUM_RELEASE_AGE=0"}, m.mise, "outdated", "--json")
 		if err != nil {
 			logs = append(logs, "mise check unavailable: "+err.Error())
 		} else {
@@ -560,10 +556,9 @@ func (m *Manager) waitUpgrade(cmd *exec.Cmd, gen uint64) {
 	m.mu.Unlock()
 	m.srv.Broadcast("sysupdate", state)
 	// The count on screen is from before the upgrade; re-check now rather
-	// than leave it stale until the next scheduled refresh.
-	if err == nil {
-		go func() { _, _ = m.refresh(true) }()
-	}
+	// than leave it stale until the next scheduled refresh. A failed run
+	// still installed whatever steps succeeded, so this is unconditional.
+	go func() { _, _ = m.refresh(true) }()
 }
 
 func (m *Manager) scheduledRefresh() {
@@ -613,7 +608,17 @@ func (m *Manager) stopScheduleLocked() {
 }
 
 func commandOutput(ctx context.Context, log *slog.Logger, allowNoUpdatesExit bool, name string, args ...string) ([]byte, error) {
-	res, err := execbound.Command(ctx, name, args...).WithLogger(log).Output()
+	return commandOutputEnv(ctx, log, allowNoUpdatesExit, nil, name, args...)
+}
+
+// commandOutputEnv is commandOutput with extra environment entries appended
+// to the daemon's own.
+func commandOutputEnv(ctx context.Context, log *slog.Logger, allowNoUpdatesExit bool, env []string, name string, args ...string) ([]byte, error) {
+	c := execbound.Command(ctx, name, args...).WithLogger(log)
+	if len(env) > 0 {
+		c.Exec().Env = append(os.Environ(), env...)
+	}
+	res, err := c.Output()
 	out := res.Out
 	if err != nil {
 		if execbound.Interrupted(err) {

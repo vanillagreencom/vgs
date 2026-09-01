@@ -7067,11 +7067,16 @@ def _devtools() -> Any:
     return _DEVTOOLS
 
 
+_UPDATE: Any = None
+
+
 def _update() -> Any:
-    _devtools()
-    import vshell_update
-    vshell_update.configure(vshell_update.UpdateRuntime(command_exists=command_exists, eprint=eprint))
-    return vshell_update
+    global _UPDATE
+    if _UPDATE is None:
+        import vshell_update
+        vshell_update.configure(_devtools().runtime())
+        _UPDATE = vshell_update
+    return _UPDATE
 
 
 def cmd_ai_usage(argv: List[str]) -> int:
