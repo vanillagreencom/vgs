@@ -9,9 +9,8 @@ backend/internal/services/cloudsync/state.go	635
 backend/internal/services/cloudsync/watch.go	404
 backend/internal/services/cups/cups.go	888
 backend/internal/services/freedesktop/screensaver.go	745
-backend/internal/services/gamma/gamma.go	693
+backend/internal/services/gamma/gamma.go	671
 backend/internal/services/loginctl/loginctl.go	824
-backend/internal/services/mimeapps/mimeapps.go	408
 backend/internal/services/networkmanager/networkmanager.go	1464
 backend/internal/services/sysupdate/sysupdate.go	715
 backend/internal/services/tailscale/tailscale.go	445
