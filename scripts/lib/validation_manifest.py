@@ -1153,12 +1153,17 @@ def ci_runs(ci_text: str, path: str) -> bool:
                 heredoc = None
             continue
         # `||` runs its right side only when the left FAILED, so nothing after
-        # it on this line is guaranteed coverage. `&&` is NOT cut, and that is
-        # an approximation rather than a proof: `cd x && <path>` runs the path
-        # whenever the step succeeds, but `false && <path> || true` recovers and
-        # the step succeeds without it. Deciding which of the two a chain is
-        # needs the left side's exit status, so the AND-OR list is named in the
-        # boundary below as out of model rather than half-modelled here.
+        # it on this line is guaranteed coverage.
+        #
+        # `&&` IS NOT CUT, and its worst case is stated rather than left to be
+        # found: a command after `&&` is COUNTED AS COVERED even where a later
+        # `||` recovers the list, so `false && <path> || true` reads as covered
+        # while the path never runs. That is known and deliberately unmodelled,
+        # not an oversight. Deciding it needs the left side's EXIT STATUS, which
+        # is runtime; the reviewer's own example is decidable only because its
+        # left side is the literal `false`, and a rule keyed on that literal
+        # would buy one spelling and be evaded by the next. The AND-OR list is
+        # therefore named in the boundary below as out of model.
         short_circuit = False
         lexer = shlex.shlex(line, punctuation_chars=True)
         lexer.whitespace_split = True

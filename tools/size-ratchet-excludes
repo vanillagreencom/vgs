@@ -142,7 +142,7 @@
 # that: the ledger states what a reader diffing this branch sees, and nothing
 # else.
 #
-#   RAISED    scripts/lib/validation_manifest.py     1045 -> 1273
+#   RAISED    scripts/lib/validation_manifest.py     1045 -> 1278
 #   RAISED    scripts/test-validation-inventory.sh   2278 -> 2371
 #   RAISED    scripts/test-section-pointers-e2e.py    496 ->  540
 #   RAISED    scripts/test-section-pointers.py        489 ->  515
@@ -196,11 +196,16 @@
 #             trimmed comparison closed it early and read the body as commands
 #   round 7   DECLINED, and the first one that is. `false && <path> || true`
 #             does skip the path, and the predicate does count it — the finding
-#             is accurate. It does not converge: telling that chain from
-#             `cd x && <path>` needs the left side's exit status, which puts it
-#             in the same open class as command substitution, `eval`, aliases
-#             and sourced files. The boundary is corrected to name it rather
-#             than widened to half-model it.
+#             is accurate, and a command after `&&` is counted as covered even
+#             where a later `||` recovers the list. It does not converge:
+#             telling that chain from `cd x && <path>` needs the left side's
+#             EXIT STATUS, which is runtime. The reviewer's example is decidable
+#             only because its left side is the literal `false`, and a rule
+#             keyed on that literal buys one spelling. Same open class as
+#             command substitution, `eval`, aliases and sourced files. The
+#             boundary is corrected to name the worst case rather than widened
+#             to half-model it, and this is the last patch round on this
+#             predicate: a further lexical-shape finding is declined against it.
 #
 # So the predicate tokenizes with shlex, quote-aware, distinguishes separators
 # from redirections, consumes redirection operands, skips heredoc bodies, joins
