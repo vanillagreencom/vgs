@@ -14,7 +14,7 @@ func (s fileScanner) rawBuilderHasLifecycle(call *ast.CallExpr) bool {
 		return true
 	}
 	id := s.rawBuilderAssignedIdent(call)
-	return id != nil && s.functionCallsMethod(id, call.Pos(), isRawLifecycleName)
+	return id != nil && s.assignedBuilderHasLifecycle(id, call.Pos())
 }
 
 func (s fileScanner) rawBuilderAssignedIdent(call *ast.CallExpr) *ast.Ident {
@@ -101,14 +101,14 @@ func (s fileScanner) directMethodCall(call *ast.CallExpr, match func(string) boo
 	return s.outputReadNode(sel)
 }
 
-func (s fileScanner) functionCallsMethod(id *ast.Ident, after token.Pos, match func(string) bool) bool {
+func (s fileScanner) assignedBuilderHasLifecycle(id *ast.Ident, after token.Pos) bool {
 	body := s.functionBody(after)
 	if body == nil {
 		return false
 	}
-	found, invalid := false, false
+	foundLifecycle, invalid, outputRead := false, false, false
 	ast.Inspect(body, func(node ast.Node) bool {
-		if found || invalid {
+		if invalid || outputRead {
 			return false
 		}
 		if _, ok := node.(*ast.FuncLit); ok {
@@ -122,22 +122,32 @@ func (s fileScanner) functionCallsMethod(id *ast.Ident, after token.Pos, match f
 				}
 			}
 		}
+		sel, ok := node.(*ast.SelectorExpr)
+		if ok && sel.Pos() > after {
+			recv, ok := unparen(sel.X).(*ast.Ident)
+			if ok && sameIdent(recv, id) && isOutputReadName(sel.Sel.Name) {
+				outputRead = true
+				return false
+			}
+		}
 		call, ok := node.(*ast.CallExpr)
 		if !ok || call.Pos() <= after {
 			return true
 		}
-		sel, ok := unparen(call.Fun).(*ast.SelectorExpr)
-		if !ok || !match(sel.Sel.Name) {
+		sel, ok = unparen(call.Fun).(*ast.SelectorExpr)
+		if !ok {
 			return true
 		}
 		recv, ok := unparen(sel.X).(*ast.Ident)
-		if ok && sameIdent(recv, id) {
-			found = true
-			return false
+		if !ok || !sameIdent(recv, id) {
+			return true
+		}
+		if isRawLifecycleName(sel.Sel.Name) {
+			foundLifecycle = true
 		}
 		return true
 	})
-	return found && !invalid
+	return foundLifecycle && !invalid && !outputRead
 }
 
 func (s fileScanner) functionBody(pos token.Pos) *ast.BlockStmt {

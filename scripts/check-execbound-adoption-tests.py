@@ -43,7 +43,7 @@ def assert_fails(root: Path, *expected: str) -> None:
             raise AssertionError(f"checker output missing {needle!r}\n{output}")
 
 
-def assert_fails_without(root: Path, expected: tuple[str, ...], unexpected: str) -> None:
+def assert_fails_without(root: Path, expected: tuple[str, ...], *unexpected: str) -> None:
     result = run_checker(root)
     output = result.stdout + result.stderr
     if result.returncode == 0:
@@ -51,8 +51,9 @@ def assert_fails_without(root: Path, expected: tuple[str, ...], unexpected: str)
     for needle in expected:
         if needle not in output:
             raise AssertionError(f"checker output missing {needle!r}\n{output}")
-    if unexpected in output:
-        raise AssertionError(f"checker output unexpectedly contained {unexpected!r}\n{output}")
+    for needle in unexpected:
+        if needle in output:
+            raise AssertionError(f"checker output unexpectedly contained {needle!r}\n{output}")
 
 
 def make_root() -> Path:
@@ -259,6 +260,42 @@ func watch(ctx context.Context) error { _, err := exec.CommandContext(ctx, "wl-p
         )
     finally:
         shutil.rmtree(raw_allowed_combined_root)
+
+    raw_assigned_output_root = make_root()
+    try:
+        write_backend(raw_assigned_output_root, "internal/services/clipboard/wayland.go",
+            """
+package clipboard
+import "os/exec"
+func wlCopy(args []string) error { cmd := exec.Command("wl-copy", args...); if err := cmd.Start(); err != nil { return err }; output := cmd.Output; _, err := output(); return err }
+""",
+        )
+        assert_fails_without(
+            raw_assigned_output_root,
+            ("raw os/exec builders must start or run", "wlCopy: exec.Command(\"wl-copy\", args...)"),
+            "raw os/exec builders outside execbound need a lifecycle reason",
+            "raw exec.Command or exec.CommandContext output reads",
+        )
+    finally:
+        shutil.rmtree(raw_assigned_output_root)
+
+    raw_assigned_combined_root = make_root()
+    try:
+        write_backend(raw_assigned_combined_root, "internal/services/clipboard/wayland.go",
+            """
+package clipboard
+import ("context"; "os/exec")
+func watch(ctx context.Context) error { cmd := exec.CommandContext(ctx, "wl-paste", "--watch", "echo"); output := cmd.CombinedOutput; if err := cmd.Start(); err != nil { return err }; _, err := output(); return err }
+""",
+        )
+        assert_fails_without(
+            raw_assigned_combined_root,
+            ("raw os/exec builders must start or run", "watch: exec.CommandContext(ctx, \"wl-paste\", \"--watch\", \"echo\")"),
+            "raw os/exec builders outside execbound need a lifecycle reason",
+            "raw exec.Command or exec.CommandContext output reads",
+        )
+    finally:
+        shutil.rmtree(raw_assigned_combined_root)
 
     raw_reassigned_root = make_root()
     try:
