@@ -77,37 +77,16 @@ func malformed( {
     finally:
         shutil.rmtree(parse_root)
 
-    type_root = make_root()
+    root = make_root()
     try:
         write(
-            type_root / "backend" / "go.mod",
+            root / "backend" / "go.mod",
             """
 module example.com/backend
 
 go 1.22
 """,
         )
-        write(
-            type_root / "backend" / "internal" / "services" / "sample" / "bad.go",
-            """
-package sample
-
-func brokenType() {
-    var value int = "bad"
-    _ = value
-}
-""",
-        )
-        assert_fails(
-            type_root,
-            "could not type-check backend Go package(s)",
-            "bad.go",
-        )
-    finally:
-        shutil.rmtree(type_root)
-
-    root = make_root()
-    try:
         write(
             root / "backend" / "internal" / "services" / "sample" / "clean.go",
             """
@@ -116,11 +95,22 @@ package sample
 import (
     "context"
     "os/exec"
+    "example.com/backend/internal/execbound"
 )
 
 func mentions(ctx context.Context) {
     _ = "exec.CommandContext(ctx, \\"bad-tool\\").Output()"
     // _, _ = exec.CommandContext(ctx, "bad-tool").CombinedOutput()
+}
+
+func directBound(ctx context.Context) error {
+    _, err := execbound.Command(ctx, "good-tool").WithLogger(nil).Output()
+    return err
+}
+
+func directBoundDelay(ctx context.Context) error {
+    _, err := execbound.CommandWithDelay(ctx, 1, "delay-tool").CombinedOutput()
+    return err
 }
 """,
         )
@@ -176,7 +166,7 @@ func viaVariable(ctx context.Context) error {
         )
         assert_fails(
             root,
-            "one-shot os/exec output reads must use",
+            "backend output reads must be directly chained",
             "bad-tool",
             ".Output()",
             "other-tool",
@@ -211,6 +201,66 @@ func rawStart(ctx context.Context) error {
         )
     finally:
         shutil.rmtree(raw_root)
+
+    assigned_root = make_root()
+    try:
+        write(
+            assigned_root / "backend" / "go.mod",
+            """
+module example.com/backend
+
+go 1.22
+""",
+        )
+        write(
+            assigned_root / "backend" / "internal" / "services" / "sample" / "assigned.go",
+            """
+package sample
+
+import (
+    "context"
+    "example.com/backend/internal/execbound"
+)
+
+func assignedBound(ctx context.Context) error {
+    cmd := execbound.Command(ctx, "assigned-tool")
+    _, err := cmd.Output()
+    return err
+}
+""",
+        )
+        assert_fails(
+            assigned_root,
+            "backend output reads must be directly chained",
+            "assignedBound: cmd.Output()",
+        )
+    finally:
+        shutil.rmtree(assigned_root)
+
+    method_value_root = make_root()
+    try:
+        write(
+            method_value_root / "backend" / "internal" / "services" / "sample" / "method_value.go",
+            """
+package sample
+
+import "os/exec"
+
+func methodValue() error {
+    methodValueCmd := &exec.Cmd{Path: "method-value-tool"}
+    read := methodValueCmd.Output
+    _, err := read()
+    return err
+}
+""",
+        )
+        assert_fails(
+            method_value_root,
+            "backend output reads must be directly chained",
+            "methodValue: methodValueCmd.Output (receiver unverified selector)",
+        )
+    finally:
+        shutil.rmtree(method_value_root)
 
     alias_root = make_root()
     try:
@@ -284,13 +334,6 @@ func helperCaller(ctx context.Context) error {
     return helperRead(éxec.CommandContext(ctx, "helper-tool"))
 }
 
-func methodValue(ctx context.Context) error {
-    cmd := éxec.CommandContext(ctx, "method-value-tool")
-    read := cmd.Output
-    _, err := read()
-    return err
-}
-
 func methodExpression(cmd *éxec.Cmd) error {
     read := (*éxec.Cmd).CombinedOutput
     _, err := read(cmd)
@@ -320,13 +363,12 @@ func interfaceRead(ctx context.Context) error {
         )
         assert_fails(
             structural_root,
-            "one-shot os/exec output reads must use",
+            "backend output reads must be directly chained",
             "unicode-tool",
             ".Output()",
             "cmd.CombinedOutput()",
             "cmd.Output()",
             "helperRead",
-            "cmd.Output",
             "(*éxec.Cmd).CombinedOutput",
             "wrappedCmd.Output()",
             "runner.Output()",

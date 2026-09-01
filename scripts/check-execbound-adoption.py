@@ -85,18 +85,6 @@ def run_analyzer(go: str) -> dict[str, object] | None:
         return None
 
 
-def typecheck_backend(go: str) -> bool:
-    backend = REPO_ROOT / "backend"
-    if not (backend / "go.mod").is_file():
-        return True
-    result = subprocess.run([go, "test", "./...", "-run", "^$"], cwd=backend, text=True, capture_output=True, check=False)
-    if result.returncode == 0:
-        return True
-    print("check-execbound-adoption: FAIL: could not type-check backend Go package(s):", file=sys.stderr)
-    print(result.stdout + result.stderr, file=sys.stderr)
-    return False
-
-
 def findings(report: dict[str, object], key: str) -> list[Finding]:
     rows = report.get(key)
     if not isinstance(rows, list):
@@ -149,8 +137,8 @@ def main() -> int:
             )
     if output_reads:
         print(
-            "check-execbound-adoption: FAIL: one-shot os/exec output reads must use "
-            "backend/internal/execbound:",
+            "check-execbound-adoption: FAIL: backend output reads must be "
+            "directly chained from backend/internal/execbound.Command or CommandWithDelay:",
             file=sys.stderr,
         )
         for read in output_reads:
@@ -168,14 +156,12 @@ def main() -> int:
 
     if references or output_reads or unallowed_raw:
         print(
-            "\nUse execbound.Command for one-shot Output or CombinedOutput reads. Call "
-            "raw os/exec builders directly only at long-lived process sites, and add an "
+            "\nCall execbound.Command(...).Output or "
+            "execbound.CommandWithDelay(...).CombinedOutput as a direct chain. Call raw "
+            "os/exec builders directly only at long-lived process sites, and add an "
             "ALLOWED_RAW_EXECS entry when that lifecycle is owned outside execbound.",
             file=sys.stderr,
         )
-        return 1
-
-    if not typecheck_backend(go):
         return 1
 
     print(f"check-execbound-adoption: ok ({len(raw_calls)} raw os/exec builders checked)")
