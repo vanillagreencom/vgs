@@ -75,6 +75,14 @@ class ExecCall:
     output_reader: str | None
 
 
+@dataclass(frozen=True)
+class ExecReference:
+    rel: str
+    line: int
+    function: str
+    expression: str
+
+
 def _blank(chars: list[str], start: int, end: int) -> None:
     for index in range(start, min(end, len(chars))):
         if chars[index] != "\n":
@@ -225,11 +233,14 @@ def assigned_name(mask: str, call_start: int) -> str | None:
     return match.group(1) if match else None
 
 
-def direct_reader(mask: str, close_paren: int) -> str | None:
-    index = close_paren + 1
+def next_nonspace(mask: str, index: int) -> int:
     while index < len(mask) and mask[index].isspace():
         index += 1
-    match = re.match(r"\.\s*(Output|CombinedOutput)\s*\(", mask[index:])
+    return index
+
+
+def direct_reader(mask: str, close_paren: int) -> str | None:
+    match = re.match(r"\.\s*(Output|CombinedOutput)\s*\(", mask[next_nonspace(mask, close_paren + 1):])
     return match.group(1) if match else None
 
 
@@ -243,31 +254,43 @@ def variable_reader(mask: str, name: str, start: int, end: int) -> str | None:
     return None
 
 
-def scan_file(path: Path) -> list[ExecCall]:
+def scan_file(path: Path) -> tuple[list[ExecCall], list[ExecReference]]:
     rel = path.relative_to(REPO_ROOT).as_posix()
     text = path.read_text(encoding="utf-8")
     aliases = exec_aliases(text)
     if not aliases:
-        return []
+        return [], []
 
     code = mask_go(text, strings=True)
     functions = function_ranges(code)
     calls: list[ExecCall] = []
+    references: list[ExecReference] = []
     for alias in sorted(aliases):
         if alias == ".":
-            pattern = re.compile(r"(?<![\w.])(?P<name>Command|CommandContext)\s*\(")
+            pattern = re.compile(r"(?<![\w.])(?P<name>CommandContext|Command)\b")
             prefix = ""
         else:
-            pattern = re.compile(rf"(?<![\w.]){re.escape(alias)}\s*\.\s*(?P<name>Command|CommandContext)\s*\(")
+            pattern = re.compile(rf"(?<![\w.]){re.escape(alias)}\s*\.\s*(?P<name>CommandContext|Command)\b")
             prefix = f"{alias}."
         for match in pattern.finditer(code):
-            open_paren = code.find("(", match.start())
+            function = function_for(functions, match.start(), len(code))
+            expression = f"{prefix}{match.group('name')}"
+            open_paren = next_nonspace(code, match.end())
+            if open_paren >= len(code) or code[open_paren] != "(":
+                references.append(
+                    ExecReference(
+                        rel=rel,
+                        line=line_at(text, match.start()),
+                        function=function.name,
+                        expression=expression,
+                    )
+                )
+                continue
             close_paren = matching(code, open_paren, "(", ")")
             if close_paren is None:
                 continue
-            function = function_for(functions, match.start(), len(code))
             args = split_args(text, code, open_paren + 1, close_paren)
-            expression = f"{prefix}{match.group('name')}({', '.join(args)})"
+            expression = f"{expression}({', '.join(args)})"
             reader = direct_reader(code, close_paren)
             variable = assigned_name(code, match.start())
             if reader is None and variable is not None:
@@ -283,7 +306,7 @@ def scan_file(path: Path) -> list[ExecCall]:
                     output_reader=reader,
                 )
             )
-    return calls
+    return calls, references
 
 
 def go_files() -> list[Path]:
@@ -300,6 +323,7 @@ def go_files() -> list[Path]:
 def main() -> int:
     unreadable: list[str] = []
     calls: list[ExecCall] = []
+    references: list[ExecReference] = []
     files = go_files()
     if not files:
         print(
@@ -310,7 +334,9 @@ def main() -> int:
         return 1
     for path in files:
         try:
-            calls.extend(scan_file(path))
+            file_calls, file_references = scan_file(path)
+            calls.extend(file_calls)
+            references.extend(file_references)
         except (OSError, UnicodeDecodeError) as exc:
             unreadable.append(f"{path.relative_to(REPO_ROOT).as_posix()}: {exc}")
 
@@ -323,6 +349,18 @@ def main() -> int:
     output_bypasses = [call for call in calls if call.output_reader is not None]
     unallowed_raw = [call for call in calls if call.output_reader is None and call.key not in ALLOWED_RAW_EXECS]
 
+    if references:
+        print(
+            "check-execbound-adoption: FAIL: os/exec command builders must be called directly "
+            "so the guard can see the process lifecycle:",
+            file=sys.stderr,
+        )
+        for reference in references:
+            print(
+                f"  {reference.rel}:{reference.line}: {reference.function}: "
+                f"{reference.expression} referenced without a call",
+                file=sys.stderr,
+            )
     if output_bypasses:
         print(
             "check-execbound-adoption: FAIL: one-shot os/exec output reads must use "
@@ -344,11 +382,11 @@ def main() -> int:
             print(f"  {call.rel}:{call.line}: {call.function}: {call.expression}", file=sys.stderr)
             print(f"      allowlist key: {call.key}", file=sys.stderr)
 
-    if output_bypasses or unallowed_raw:
+    if references or output_bypasses or unallowed_raw:
         print(
-            "\nUse execbound.Command for one-shot Output or CombinedOutput reads. Add an "
-            "ALLOWED_RAW_EXECS entry only for a long-lived process whose lifecycle is "
-            "owned outside execbound.",
+            "\nUse execbound.Command for one-shot Output or CombinedOutput reads. Call "
+            "raw os/exec builders directly only at long-lived process sites, and add an "
+            "ALLOWED_RAW_EXECS entry when that lifecycle is owned outside execbound.",
             file=sys.stderr,
         )
         return 1

@@ -30,13 +30,14 @@ def assert_passes(root: Path) -> None:
         raise AssertionError(result.stdout + result.stderr)
 
 
-def assert_fails(root: Path, expected: str) -> None:
+def assert_fails(root: Path, *expected: str) -> None:
     result = run_checker(root)
     output = result.stdout + result.stderr
     if result.returncode == 0:
         raise AssertionError(f"checker unexpectedly passed; wanted {expected!r}")
-    if expected not in output:
-        raise AssertionError(f"checker output missing {expected!r}\n{output}")
+    for needle in expected:
+        if needle not in output:
+            raise AssertionError(f"checker output missing {needle!r}\n{output}")
 
 
 def make_root() -> Path:
@@ -118,10 +119,77 @@ func viaVariable(ctx context.Context) error {
 }
 """,
         )
-        assert_fails(root, "bad-tool")
-        assert_fails(root, "other-tool")
+        assert_fails(
+            root,
+            "one-shot os/exec output reads must use",
+            "bad-tool",
+            ".Output()",
+            "other-tool",
+            ".CombinedOutput()",
+        )
     finally:
         shutil.rmtree(root)
+
+    raw_root = make_root()
+    try:
+        write(
+            raw_root / "backend" / "internal" / "services" / "sample" / "raw.go",
+            """
+package sample
+
+import (
+    "context"
+    "os/exec"
+)
+
+func rawStart(ctx context.Context) error {
+    cmd := exec.CommandContext(ctx, "raw-tool")
+    return cmd.Start()
+}
+""",
+        )
+        assert_fails(
+            raw_root,
+            "raw os/exec builders outside execbound need a lifecycle reason",
+            "raw-tool",
+            "allowlist key:",
+        )
+    finally:
+        shutil.rmtree(raw_root)
+
+    alias_root = make_root()
+    try:
+        write(
+            alias_root / "backend" / "internal" / "services" / "sample" / "alias.go",
+            """
+package sample
+
+import (
+    "context"
+    ex "os/exec"
+)
+
+func factoryAlias(ctx context.Context) error {
+    makeCmd := ex.CommandContext
+    cmd := makeCmd(ctx, "bad-tool")
+    _, err := cmd.Output()
+    return err
+}
+
+func chainedAlias(ctx context.Context) error {
+    run := ex.CommandContext
+    _, err := run(ctx, "security-tool").Output()
+    return err
+}
+""",
+        )
+        assert_fails(
+            alias_root,
+            "os/exec command builders must be called directly",
+            "ex.CommandContext referenced without a call",
+        )
+    finally:
+        shutil.rmtree(alias_root)
 
     print("execbound adoption guard tests passed.")
     return 0
