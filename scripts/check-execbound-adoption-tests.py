@@ -191,6 +191,58 @@ func chainedAlias(ctx context.Context) error {
     finally:
         shutil.rmtree(alias_root)
 
+    structural_root = make_root()
+    try:
+        write(
+            structural_root / "backend" / "internal" / "services" / "sample" / "structural.go",
+            """
+package sample
+
+import (
+    "context"
+    éxec "os/exec"
+)
+
+func unicodeAlias(ctx context.Context) error {
+    _, err := éxec.CommandContext(ctx, "unicode-tool").Output()
+    return err
+}
+
+func rawLiteral() error {
+    cmd := &éxec.Cmd{Path: "literal-tool"}
+    _, err := cmd.CombinedOutput()
+    return err
+}
+
+func rawNew() error {
+    cmd := new(éxec.Cmd)
+    _, err := cmd.Output()
+    return err
+}
+
+func helperRead(cmd *éxec.Cmd) error {
+    _, err := cmd.Output()
+    return err
+}
+
+func helperCaller(ctx context.Context) error {
+    return helperRead(éxec.CommandContext(ctx, "helper-tool"))
+}
+""",
+        )
+        assert_fails(
+            structural_root,
+            "one-shot os/exec output reads must use",
+            "unicode-tool",
+            ".Output()",
+            "cmd.CombinedOutput()",
+            "cmd.Output()",
+            "helperRead",
+            "*os/exec.Cmd",
+        )
+    finally:
+        shutil.rmtree(structural_root)
+
     print("execbound adoption guard tests passed.")
     return 0
 

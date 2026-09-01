@@ -132,7 +132,9 @@ it through an injectable field only its tests vary, and why the ddcutil chain
 never reaches the bound is in `display-brightness.md`. Long-lived watchers own
 their own lifecycle. `scripts/check-execbound-adoption.py` keeps new one-shot
 `os/exec` output reads out of backend services and records the raw long-lived
-processes that intentionally stay outside execbound.
+processes that intentionally stay outside execbound. The guard parses and
+type-checks Go, so `Output` or `CombinedOutput` on a `*os/exec.Cmd` receiver
+fails regardless of the import alias or construction path.
 
 ## Feature flags / env
 

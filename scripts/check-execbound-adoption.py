@@ -1,30 +1,22 @@
 #!/usr/bin/env python3
-"""Keep one-shot backend output reads on execbound.
-
-Raw os/exec command builders under backend/internal are allowed only when they
-start a long-lived process with its own lifecycle. A command read through
-Output or CombinedOutput must use backend/internal/execbound, whose WaitDelay
-keeps inherited pipes from wedging the request past its context deadline.
-"""
+"""Keep one-shot backend output reads on execbound."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
+import json
 import os
-import re
+import shutil
+import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 REPO_ROOT = Path(os.environ.get("VGS_EXECBOUND_REPO_ROOT", Path(__file__).resolve().parents[1])).resolve()
-BACKEND_INTERNAL = REPO_ROOT / "backend" / "internal"
-SKIP_TREES = (
-    REPO_ROOT / "backend" / "internal" / "execbound",
-    REPO_ROOT / "backend" / "vendor",
-)
 
 # Raw os/exec sites that intentionally start a process whose lifecycle outlives
 # a single output read. Every entry needs the process reason, because an
-# unreasoned raw exec site is exactly what hides a new bypass.
+# unreasoned raw exec site is exactly what hides a bypass.
 ALLOWED_RAW_EXECS = {
     'backend/internal/services/clipboard/wayland.go::wlCopy exec.Command("wl-copy", args...)':
         "wl-copy serves the Wayland clipboard after the RPC returns; wlCopy starts it, "
@@ -58,296 +50,497 @@ ALLOWED_RAW_EXECS = {
 }
 
 
-@dataclass(frozen=True)
-class FunctionRange:
-    name: str
-    start: int
-    end: int
+ANALYZER = r'''
+package main
+
+import (
+	"encoding/json"
+	"fmt"
+	"go/ast"
+	"go/importer"
+	"go/parser"
+	"go/token"
+	"go/types"
+	"io/fs"
+	"os"
+	"path/filepath"
+	"sort"
+	"strings"
+)
+
+type finding struct {
+	Rel        string `json:"rel"`
+	Line       int    `json:"line"`
+	Function   string `json:"function"`
+	Expression string `json:"expression"`
+	Key        string `json:"key,omitempty"`
+	Receiver   string `json:"receiver,omitempty"`
+}
+
+type report struct {
+	FilesChecked int       `json:"files_checked"`
+	RawCalls     []finding `json:"raw_calls"`
+	OutputReads  []finding `json:"output_reads"`
+	References   []finding `json:"references"`
+	ParseErrors  []string  `json:"parse_errors"`
+}
+
+type functionRange struct {
+	name       string
+	start, end token.Pos
+}
+
+type analyzer struct {
+	root, moduleDir, modulePath string
+	fset                        *token.FileSet
+	sources                     map[string][]byte
+	std                         types.Importer
+	pkgs                        map[string]*types.Package
+	loading                     map[string]bool
+	report                      report
+}
+
+func main() {
+	if len(os.Args) != 2 {
+		fmt.Fprintln(os.Stderr, "usage: execbound-analyzer REPO_ROOT")
+		os.Exit(2)
+	}
+	root, err := filepath.Abs(os.Args[1])
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(2)
+	}
+	a := &analyzer{
+		root:       root,
+		moduleDir:  filepath.Join(root, "backend"),
+		modulePath: modulePath(filepath.Join(root, "backend", "go.mod")),
+		fset:       token.NewFileSet(),
+		sources:    map[string][]byte{},
+		std:        importer.Default(),
+		pkgs:       map[string]*types.Package{},
+		loading:    map[string]bool{},
+	}
+	a.walk()
+	sortFindings(a.report.RawCalls)
+	sortFindings(a.report.OutputReads)
+	sortFindings(a.report.References)
+	if err := json.NewEncoder(os.Stdout).Encode(a.report); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(2)
+	}
+}
+
+func modulePath(path string) string {
+	body, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	for _, line := range strings.Split(string(body), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) >= 2 && fields[0] == "module" {
+			return fields[1]
+		}
+	}
+	return ""
+}
+
+func sortFindings(findings []finding) {
+	sort.Slice(findings, func(i, j int) bool {
+		if findings[i].Rel != findings[j].Rel {
+			return findings[i].Rel < findings[j].Rel
+		}
+		if findings[i].Line != findings[j].Line {
+			return findings[i].Line < findings[j].Line
+		}
+		return findings[i].Expression < findings[j].Expression
+	})
+}
+
+func (a *analyzer) walk() {
+	root := filepath.Join(a.root, "backend", "internal")
+	if _, err := os.Stat(root); err != nil {
+		if !os.IsNotExist(err) {
+			a.report.ParseErrors = append(a.report.ParseErrors, fmt.Sprintf("%s: %v", a.rel(root), err))
+		}
+		return
+	}
+	groups := map[string][]*ast.File{}
+	err := filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {
+		if err != nil {
+			a.report.ParseErrors = append(a.report.ParseErrors, fmt.Sprintf("%s: %v", a.rel(path), err))
+			return nil
+		}
+		if entry.IsDir() && a.skips(path) {
+			return filepath.SkipDir
+		}
+		if entry.IsDir() || filepath.Ext(path) != ".go" {
+			return nil
+		}
+		file := a.parse(path)
+		if file == nil {
+			return nil
+		}
+		key := filepath.Dir(path) + "\x00" + file.Name.Name
+		groups[key] = append(groups[key], file)
+		a.report.FilesChecked++
+		return nil
+	})
+	if err != nil {
+		a.report.ParseErrors = append(a.report.ParseErrors, err.Error())
+	}
+	keys := make([]string, 0, len(groups))
+	for key := range groups {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		a.checkPackage(strings.Split(key, "\x00")[0], groups[key])
+	}
+}
+
+func (a *analyzer) parse(path string) *ast.File {
+	source, err := os.ReadFile(path)
+	if err != nil {
+		a.report.ParseErrors = append(a.report.ParseErrors, fmt.Sprintf("%s: %v", a.rel(path), err))
+		return nil
+	}
+	file, err := parser.ParseFile(a.fset, path, source, parser.AllErrors)
+	if err != nil {
+		a.report.ParseErrors = append(a.report.ParseErrors, err.Error())
+		return nil
+	}
+	a.sources[path] = source
+	return file
+}
+
+func (a *analyzer) checkPackage(dir string, files []*ast.File) {
+	info := &types.Info{
+		Types:      map[ast.Expr]types.TypeAndValue{},
+		Uses:       map[*ast.Ident]types.Object{},
+		Selections: map[*ast.SelectorExpr]*types.Selection{},
+	}
+	_, _ = (&types.Config{Importer: a, Error: func(error) {}}).Check(a.importPath(dir), a.fset, files, info)
+	for _, file := range files {
+		a.scanFile(file, info)
+	}
+}
+
+func (a *analyzer) Import(path string) (*types.Package, error) {
+	if pkg, ok := a.pkgs[path]; ok {
+		return pkg, nil
+	}
+	if a.modulePath != "" && (path == a.modulePath || strings.HasPrefix(path, a.modulePath+"/")) {
+		dir := filepath.Join(a.moduleDir, filepath.FromSlash(strings.TrimPrefix(strings.TrimPrefix(path, a.modulePath), "/")))
+		return a.importLocal(path, dir)
+	}
+	if pkg, err := a.std.Import(path); err == nil {
+		return pkg, nil
+	}
+	return types.NewPackage(path, filepath.Base(path)), nil
+}
+
+func (a *analyzer) importLocal(path string, dir string) (*types.Package, error) {
+	if a.loading[path] {
+		return types.NewPackage(path, filepath.Base(path)), nil
+	}
+	a.loading[path] = true
+	defer delete(a.loading, path)
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, err
+	}
+	var files []*ast.File
+	for _, entry := range entries {
+		name := entry.Name()
+		if entry.IsDir() || filepath.Ext(name) != ".go" || strings.HasSuffix(name, "_test.go") {
+			continue
+		}
+		if file := a.parse(filepath.Join(dir, name)); file != nil {
+			files = append(files, file)
+		}
+	}
+	pkg, _ := (&types.Config{Importer: a, Error: func(error) {}}).Check(path, a.fset, files, nil)
+	if pkg == nil {
+		pkg = types.NewPackage(path, filepath.Base(path))
+	}
+	a.pkgs[path] = pkg
+	return pkg, nil
+}
+
+func (a *analyzer) scanFile(file *ast.File, info *types.Info) {
+	parents := parentMap(file)
+	functions := functionRanges(file)
+	ast.Inspect(file, func(node ast.Node) bool {
+		switch n := node.(type) {
+		case *ast.CallExpr:
+			if sel, ok := n.Fun.(*ast.SelectorExpr); ok && isReader(sel.Sel.Name) {
+				a.recordOutputRead(n, sel, functions, info)
+			}
+			if isExecBuilder(objectOf(n.Fun, info)) {
+				a.report.RawCalls = append(a.report.RawCalls, a.finding(n, functions, a.source(n), "", ""))
+			}
+		case *ast.Ident:
+			if isExecBuilder(info.Uses[n]) && !calledDirectly(n, parents) {
+				ref := referenceNode(n, parents)
+				a.report.References = append(a.report.References, a.finding(ref, functions, a.source(ref), "", ""))
+			}
+		}
+		return true
+	})
+}
+
+func (a *analyzer) recordOutputRead(call *ast.CallExpr, sel *ast.SelectorExpr, functions []functionRange, info *types.Info) {
+	receiverType := info.Types[sel.X].Type
+	if selection := info.Selections[sel]; selection != nil && isExecCmd(selection.Recv()) {
+		receiverType = selection.Recv()
+	}
+	if isExecCmd(receiverType) {
+		a.report.OutputReads = append(a.report.OutputReads, a.finding(call, functions, a.source(call), "", "*os/exec.Cmd"))
+		return
+	}
+	if receiverType == nil && !a.isExecboundChain(sel.X, info) {
+		a.report.OutputReads = append(a.report.OutputReads, a.finding(call, functions, a.source(call), "", "unknown receiver"))
+	}
+}
+
+func (a *analyzer) finding(node ast.Node, functions []functionRange, expr string, key string, receiver string) finding {
+	pos := a.fset.Position(node.Pos())
+	if key == "" {
+		key = fmt.Sprintf("%s::%s %s", a.rel(pos.Filename), functionAt(functions, node.Pos()), expr)
+	}
+	return finding{
+		Rel:        a.rel(pos.Filename),
+		Line:       pos.Line,
+		Function:   functionAt(functions, node.Pos()),
+		Expression: expr,
+		Key:        key,
+		Receiver:   receiver,
+	}
+}
+
+func (a *analyzer) isExecboundChain(expr ast.Expr, info *types.Info) bool {
+	for {
+		call, ok := expr.(*ast.CallExpr)
+		if !ok {
+			return false
+		}
+		if isExecboundCommand(objectOf(call.Fun, info), a.modulePath) {
+			return true
+		}
+		sel, ok := call.Fun.(*ast.SelectorExpr)
+		if !ok || sel.Sel.Name != "WithLogger" {
+			return false
+		}
+		expr = sel.X
+	}
+}
+
+func (a *analyzer) source(node ast.Node) string {
+	file := a.fset.File(node.Pos())
+	if file == nil {
+		return ""
+	}
+	source := a.sources[file.Name()]
+	start := file.Offset(node.Pos())
+	end := file.Offset(node.End())
+	if start < 0 || end > len(source) || start >= end {
+		return ""
+	}
+	expr := strings.Join(strings.Fields(string(source[start:end])), " ")
+	return strings.ReplaceAll(expr, ", )", ")")
+}
+
+func (a *analyzer) rel(path string) string {
+	rel, err := filepath.Rel(a.root, path)
+	if err != nil {
+		return filepath.ToSlash(path)
+	}
+	return filepath.ToSlash(rel)
+}
+
+func (a *analyzer) skips(path string) bool {
+	rel := a.rel(path)
+	return rel == "backend/internal/execbound" || strings.HasPrefix(rel, "backend/internal/execbound/") ||
+		rel == "backend/vendor" || strings.HasPrefix(rel, "backend/vendor/")
+}
+
+func (a *analyzer) importPath(dir string) string {
+	if a.modulePath == "" {
+		return ""
+	}
+	rel, err := filepath.Rel(a.moduleDir, dir)
+	if err != nil || rel == "." {
+		return a.modulePath
+	}
+	return a.modulePath + "/" + filepath.ToSlash(rel)
+}
+
+func objectOf(expr ast.Expr, info *types.Info) types.Object {
+	switch n := expr.(type) {
+	case *ast.Ident:
+		return info.Uses[n]
+	case *ast.SelectorExpr:
+		return info.Uses[n.Sel]
+	default:
+		return nil
+	}
+}
+
+func isExecBuilder(obj types.Object) bool {
+	return objectFromPackage(obj, "os/exec", "Command") || objectFromPackage(obj, "os/exec", "CommandContext")
+}
+
+func isExecboundCommand(obj types.Object, modulePath string) bool {
+	pkg := modulePath + "/internal/execbound"
+	return objectFromPackage(obj, pkg, "Command") || objectFromPackage(obj, pkg, "CommandWithDelay")
+}
+
+func objectFromPackage(obj types.Object, pkg string, name string) bool {
+	return obj != nil && obj.Name() == name && obj.Pkg() != nil && obj.Pkg().Path() == pkg
+}
+
+func isExecCmd(t types.Type) bool {
+	if t == nil {
+		return false
+	}
+	t = types.Unalias(t)
+	if pointer, ok := t.(*types.Pointer); ok {
+		t = types.Unalias(pointer.Elem())
+	}
+	named, ok := t.(*types.Named)
+	if !ok || named.Obj() == nil || named.Obj().Pkg() == nil {
+		return false
+	}
+	return named.Obj().Name() == "Cmd" && named.Obj().Pkg().Path() == "os/exec"
+}
+
+func isReader(name string) bool {
+	return name == "Output" || name == "CombinedOutput"
+}
+
+func parentMap(root ast.Node) map[ast.Node]ast.Node {
+	parents := map[ast.Node]ast.Node{}
+	var stack []ast.Node
+	ast.Inspect(root, func(node ast.Node) bool {
+		if node == nil {
+			stack = stack[:len(stack)-1]
+			return false
+		}
+		if len(stack) > 0 {
+			parents[node] = stack[len(stack)-1]
+		}
+		stack = append(stack, node)
+		return true
+	})
+	return parents
+}
+
+func calledDirectly(id *ast.Ident, parents map[ast.Node]ast.Node) bool {
+	parent := parents[id]
+	if sel, ok := parent.(*ast.SelectorExpr); ok && sel.Sel == id {
+		if call, ok := parents[sel].(*ast.CallExpr); ok {
+			return call.Fun == sel
+		}
+	}
+	if call, ok := parent.(*ast.CallExpr); ok {
+		return call.Fun == id
+	}
+	return false
+}
+
+func referenceNode(id *ast.Ident, parents map[ast.Node]ast.Node) ast.Node {
+	if sel, ok := parents[id].(*ast.SelectorExpr); ok && sel.Sel == id {
+		return sel
+	}
+	return id
+}
+
+func functionRanges(file *ast.File) []functionRange {
+	var ranges []functionRange
+	for _, decl := range file.Decls {
+		if fn, ok := decl.(*ast.FuncDecl); ok {
+			ranges = append(ranges, functionRange{name: fn.Name.Name, start: fn.Pos(), end: fn.End()})
+		}
+	}
+	return ranges
+}
+
+func functionAt(functions []functionRange, pos token.Pos) string {
+	for _, fn := range functions {
+		if fn.start <= pos && pos <= fn.end {
+			return fn.name
+		}
+	}
+	return "<top-level>"
+}
+'''
 
 
 @dataclass(frozen=True)
-class ExecCall:
+class Finding:
     rel: str
     line: int
     function: str
     expression: str
-    key: str
-    output_reader: str | None
+    key: str = ""
+    receiver: str = ""
 
 
-@dataclass(frozen=True)
-class ExecReference:
-    rel: str
-    line: int
-    function: str
-    expression: str
+def run_analyzer() -> dict[str, object] | None:
+    go = shutil.which("go")
+    if go is None:
+        print("check-execbound-adoption: FAIL: go is required for Go type checking", file=sys.stderr)
+        return None
+    with tempfile.TemporaryDirectory(prefix="vgs-execbound-analyzer-") as tmp:
+        analyzer = Path(tmp) / "main.go"
+        analyzer.write_text(ANALYZER, encoding="utf-8")
+        result = subprocess.run([go, "run", str(analyzer), str(REPO_ROOT)], text=True, capture_output=True, check=False)
+    if result.returncode != 0:
+        print("check-execbound-adoption: FAIL: Go analyzer failed:", file=sys.stderr)
+        print(result.stdout + result.stderr, file=sys.stderr)
+        return None
+    try:
+        return json.loads(result.stdout)
+    except json.JSONDecodeError as exc:
+        print(f"check-execbound-adoption: FAIL: Go analyzer returned invalid JSON: {exc}", file=sys.stderr)
+        print(result.stdout + result.stderr, file=sys.stderr)
+        return None
 
 
-def _blank(chars: list[str], start: int, end: int) -> None:
-    for index in range(start, min(end, len(chars))):
-        if chars[index] != "\n":
-            chars[index] = " "
-
-
-def mask_go(text: str, *, strings: bool) -> str:
-    """Return text with comments, and optionally strings, blanked."""
-    out = list(text)
-    index = 0
-    length = len(text)
-    while index < length:
-        if text.startswith("//", index):
-            end = text.find("\n", index)
-            _blank(out, index, length if end == -1 else end)
-            index = length if end == -1 else end
-            continue
-        if text.startswith("/*", index):
-            end = text.find("*/", index + 2)
-            end = length if end == -1 else end + 2
-            _blank(out, index, end)
-            index = end
-            continue
-        if not strings:
-            index += 1
-            continue
-        char = text[index]
-        if char == '"':
-            end = index + 1
-            while end < length:
-                if text[end] == "\\":
-                    end += 2
-                    continue
-                if text[end] == '"':
-                    end += 1
-                    break
-                end += 1
-            _blank(out, index, end)
-            index = end
-            continue
-        if char == "`":
-            end = text.find("`", index + 1)
-            end = length if end == -1 else end + 1
-            _blank(out, index, end)
-            index = end
-            continue
-        if char == "'":
-            end = index + 1
-            while end < length:
-                if text[end] == "\\":
-                    end += 2
-                    continue
-                if text[end] == "'":
-                    end += 1
-                    break
-                end += 1
-            _blank(out, index, end)
-            index = end
-            continue
-        index += 1
-    return "".join(out)
-
-
-def line_at(text: str, offset: int) -> int:
-    return text.count("\n", 0, offset) + 1
-
-
-def normalize(source: str) -> str:
-    return " ".join(source.split())
-
-
-def matching(mask: str, open_index: int, opener: str, closer: str) -> int | None:
-    depth = 0
-    for index in range(open_index, len(mask)):
-        char = mask[index]
-        if char == opener:
-            depth += 1
-        elif char == closer:
-            depth -= 1
-            if depth == 0:
-                return index
-    return None
-
-
-def split_args(source: str, mask: str, start: int, end: int) -> list[str]:
-    args: list[str] = []
-    depth = {"(": 0, "[": 0, "{": 0}
-    openers = {"(": ")", "[": "]", "{": "}"}
-    closers = {")": "(", "]": "[", "}": "{"}
-    arg_start = start
-    for index in range(start, end):
-        char = mask[index]
-        if char in openers:
-            depth[char] += 1
-        elif char in closers and depth[closers[char]] > 0:
-            depth[closers[char]] -= 1
-        elif char == "," and not any(depth.values()):
-            args.append(normalize(source[arg_start:index]))
-            arg_start = index + 1
-    tail = normalize(source[arg_start:end])
-    if tail:
-        args.append(tail)
-    return args
-
-
-def exec_aliases(text: str) -> set[str]:
-    comment_masked = mask_go(text, strings=False)
-    aliases: set[str] = set()
-    pattern = re.compile(r'(?m)^\s*(?:import\s+)?(?:(?P<alias>[A-Za-z_]\w*|\.)\s+)?["`]os/exec["`]')
-    for match in pattern.finditer(comment_masked):
-        alias = match.group("alias") or "exec"
-        if alias != "_":
-            aliases.add(alias)
-    return aliases
-
-
-def function_ranges(mask: str) -> list[FunctionRange]:
-    ranges: list[FunctionRange] = []
-    pattern = re.compile(r"\bfunc\s+(?:\([^{}]*\)\s*)?(?P<name>[A-Za-z_]\w*)\s*\(")
-    for match in pattern.finditer(mask):
-        params_open = mask.find("(", match.start())
-        if params_open == -1:
-            continue
-        params_close = matching(mask, params_open, "(", ")")
-        if params_close is None:
-            continue
-        brace = mask.find("{", params_close + 1)
-        if brace == -1:
-            continue
-        end = matching(mask, brace, "{", "}")
-        if end is None:
-            continue
-        ranges.append(FunctionRange(match.group("name"), match.start(), end + 1))
-    return ranges
-
-
-def function_for(functions: list[FunctionRange], offset: int, fallback_end: int) -> FunctionRange:
-    for function in functions:
-        if function.start <= offset < function.end:
-            return function
-    return FunctionRange("<top-level>", 0, fallback_end)
-
-
-def assigned_name(mask: str, call_start: int) -> str | None:
-    statement_start = max(mask.rfind("\n", 0, call_start), mask.rfind(";", 0, call_start), mask.rfind("{", 0, call_start))
-    prefix = mask[statement_start + 1:call_start]
-    match = re.search(r"\b([A-Za-z_]\w*)\s*(?::=|=)\s*$", prefix)
-    return match.group(1) if match else None
-
-
-def next_nonspace(mask: str, index: int) -> int:
-    while index < len(mask) and mask[index].isspace():
-        index += 1
-    return index
-
-
-def direct_reader(mask: str, close_paren: int) -> str | None:
-    match = re.match(r"\.\s*(Output|CombinedOutput)\s*\(", mask[next_nonspace(mask, close_paren + 1):])
-    return match.group(1) if match else None
-
-
-def variable_reader(mask: str, name: str, start: int, end: int) -> str | None:
-    reader_re = re.compile(rf"\b{re.escape(name)}\s*\.\s*(Output|CombinedOutput)\s*\(")
-    assign_re = re.compile(rf"\b{re.escape(name)}\s*(?::=|=)")
-    for match in reader_re.finditer(mask, start, end):
-        if assign_re.search(mask, start, match.start()):
-            return None
-        return match.group(1)
-    return None
-
-
-def scan_file(path: Path) -> tuple[list[ExecCall], list[ExecReference]]:
-    rel = path.relative_to(REPO_ROOT).as_posix()
-    text = path.read_text(encoding="utf-8")
-    aliases = exec_aliases(text)
-    if not aliases:
-        return [], []
-
-    code = mask_go(text, strings=True)
-    functions = function_ranges(code)
-    calls: list[ExecCall] = []
-    references: list[ExecReference] = []
-    for alias in sorted(aliases):
-        if alias == ".":
-            pattern = re.compile(r"(?<![\w.])(?P<name>CommandContext|Command)\b")
-            prefix = ""
-        else:
-            pattern = re.compile(rf"(?<![\w.]){re.escape(alias)}\s*\.\s*(?P<name>CommandContext|Command)\b")
-            prefix = f"{alias}."
-        for match in pattern.finditer(code):
-            function = function_for(functions, match.start(), len(code))
-            expression = f"{prefix}{match.group('name')}"
-            open_paren = next_nonspace(code, match.end())
-            if open_paren >= len(code) or code[open_paren] != "(":
-                references.append(
-                    ExecReference(
-                        rel=rel,
-                        line=line_at(text, match.start()),
-                        function=function.name,
-                        expression=expression,
-                    )
-                )
-                continue
-            close_paren = matching(code, open_paren, "(", ")")
-            if close_paren is None:
-                continue
-            args = split_args(text, code, open_paren + 1, close_paren)
-            expression = f"{expression}({', '.join(args)})"
-            reader = direct_reader(code, close_paren)
-            variable = assigned_name(code, match.start())
-            if reader is None and variable is not None:
-                reader = variable_reader(code, variable, close_paren + 1, function.end)
-            key = f"{rel}::{function.name} {expression}"
-            calls.append(
-                ExecCall(
-                    rel=rel,
-                    line=line_at(text, match.start()),
-                    function=function.name,
-                    expression=expression,
-                    key=key,
-                    output_reader=reader,
-                )
-            )
-    return calls, references
-
-
-def go_files() -> list[Path]:
-    if not BACKEND_INTERNAL.exists():
+def findings(report: dict[str, object], key: str) -> list[Finding]:
+    rows = report.get(key)
+    if not isinstance(rows, list):
         return []
-    out: list[Path] = []
-    for path in sorted(BACKEND_INTERNAL.rglob("*.go")):
-        if any(path.is_relative_to(tree) for tree in SKIP_TREES):
-            continue
-        out.append(path)
-    return out
+    return [Finding(**row) for row in rows]
+
+
+def print_parse_errors(errors: object) -> bool:
+    if not isinstance(errors, list) or not errors:
+        return False
+    print("check-execbound-adoption: FAIL: could not parse backend Go file(s):", file=sys.stderr)
+    for entry in errors:
+        print(f"  {entry}", file=sys.stderr)
+    return True
 
 
 def main() -> int:
-    unreadable: list[str] = []
-    calls: list[ExecCall] = []
-    references: list[ExecReference] = []
-    files = go_files()
-    if not files:
+    report = run_analyzer()
+    if report is None:
+        return 1
+    if print_parse_errors(report.get("parse_errors")):
+        return 1
+    if not report.get("files_checked"):
         print(
             "check-execbound-adoption: FAIL: found no Go files under backend/internal, "
             "so no backend exec sites were checked",
             file=sys.stderr,
         )
         return 1
-    for path in files:
-        try:
-            file_calls, file_references = scan_file(path)
-            calls.extend(file_calls)
-            references.extend(file_references)
-        except (OSError, UnicodeDecodeError) as exc:
-            unreadable.append(f"{path.relative_to(REPO_ROOT).as_posix()}: {exc}")
 
-    if unreadable:
-        print("check-execbound-adoption: FAIL: could not read backend Go file(s):", file=sys.stderr)
-        for entry in unreadable:
-            print(f"  {entry}", file=sys.stderr)
-        return 1
-
-    output_bypasses = [call for call in calls if call.output_reader is not None]
-    unallowed_raw = [call for call in calls if call.output_reader is None and call.key not in ALLOWED_RAW_EXECS]
+    output_reads = findings(report, "output_reads")
+    references = findings(report, "references")
+    raw_calls = findings(report, "raw_calls")
+    unallowed_raw = [call for call in raw_calls if call.key not in ALLOWED_RAW_EXECS]
 
     if references:
         print(
@@ -361,17 +554,15 @@ def main() -> int:
                 f"{reference.expression} referenced without a call",
                 file=sys.stderr,
             )
-    if output_bypasses:
+    if output_reads:
         print(
             "check-execbound-adoption: FAIL: one-shot os/exec output reads must use "
             "backend/internal/execbound:",
             file=sys.stderr,
         )
-        for call in output_bypasses:
-            print(
-                f"  {call.rel}:{call.line}: {call.function}: {call.expression}.{call.output_reader}()",
-                file=sys.stderr,
-            )
+        for read in output_reads:
+            suffix = f" (receiver {read.receiver})" if read.receiver else ""
+            print(f"  {read.rel}:{read.line}: {read.function}: {read.expression}{suffix}", file=sys.stderr)
     if unallowed_raw:
         print(
             "check-execbound-adoption: FAIL: raw os/exec builders outside execbound need "
@@ -382,7 +573,7 @@ def main() -> int:
             print(f"  {call.rel}:{call.line}: {call.function}: {call.expression}", file=sys.stderr)
             print(f"      allowlist key: {call.key}", file=sys.stderr)
 
-    if references or output_bypasses or unallowed_raw:
+    if references or output_reads or unallowed_raw:
         print(
             "\nUse execbound.Command for one-shot Output or CombinedOutput reads. Call "
             "raw os/exec builders directly only at long-lived process sites, and add an "
@@ -391,7 +582,7 @@ def main() -> int:
         )
         return 1
 
-    print(f"check-execbound-adoption: ok ({len(calls)} raw os/exec builders checked)")
+    print(f"check-execbound-adoption: ok ({len(raw_calls)} raw os/exec builders checked)")
     return 0
 
 
