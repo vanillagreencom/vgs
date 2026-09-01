@@ -332,8 +332,7 @@ func (m *Manager) resolveExitNodeTarget(value string) (string, error) {
 func (m *Manager) output(args ...string) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
-	cmd := execbound.Command(ctx, m.tailscale, args...)
-	out, err := cmd.Output()
+	out, err := execbound.Output(execbound.Command(ctx, m.tailscale, args...))
 	if ctx.Err() == context.DeadlineExceeded {
 		return nil, fmt.Errorf("tailscale %s timed out", strings.Join(args, " "))
 	}
@@ -349,8 +348,7 @@ func (m *Manager) output(args ...string) ([]byte, error) {
 func (m *Manager) outputCombined(args ...string) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
-	cmd := execbound.Command(ctx, m.tailscale, args...)
-	out, err := cmd.CombinedOutput()
+	out, err := execbound.CombinedOutput(execbound.Command(ctx, m.tailscale, args...))
 	if ctx.Err() == context.DeadlineExceeded {
 		return out, fmt.Errorf("tailscale %s timed out", strings.Join(args, " "))
 	}

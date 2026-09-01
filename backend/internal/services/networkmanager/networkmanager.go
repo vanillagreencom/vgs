@@ -1315,8 +1315,7 @@ func nmRowsErr(fields []string, args ...string) ([][]string, error) {
 func runNMCLI(args ...string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), commandTimeout)
 	defer cancel()
-	cmd := execbound.Command(ctx, "nmcli", args...)
-	out, err := cmd.CombinedOutput()
+	out, err := execbound.CombinedOutput(execbound.Command(ctx, "nmcli", args...))
 	text := strings.TrimSpace(string(out))
 	if ctx.Err() == context.DeadlineExceeded {
 		return text, fmt.Errorf("nmcli timed out")

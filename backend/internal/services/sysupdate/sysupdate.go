@@ -601,8 +601,7 @@ func (m *Manager) stopScheduleLocked() {
 }
 
 func commandOutput(ctx context.Context, allowNoUpdatesExit bool, name string, args ...string) ([]byte, error) {
-	cmd := execbound.Command(ctx, name, args...)
-	out, err := cmd.Output()
+	out, err := execbound.Output(execbound.Command(ctx, name, args...))
 	if ctx.Err() != nil {
 		return out, ctx.Err()
 	}

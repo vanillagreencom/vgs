@@ -115,10 +115,16 @@ breaker; idempotent stale-socket cleanup on start; single teardown routine on
 every exit path; single-owner discipline per capability (no two watchers);
 in-flight request flush on client disconnect; `vshell backend doctor` health
 check (connect + getServerInfo: socket path, versions, capabilities, methods).
-A dead backend degrades UI to unavailable and never strands displays. One-shot
-external commands are built with `backend/internal/execbound`, whose
-`cmd.WaitDelay` keeps a descendant holding the child's pipes from wedging the
-request past its context deadline; long-lived watchers own their own lifecycle.
+A dead backend degrades UI to unavailable and never strands displays.
+Context-bounded one-shot commands in the clipboard, cups, networkmanager,
+sysupdate, tailscale and wlroutput services are built with
+`backend/internal/execbound`, whose `cmd.WaitDelay` keeps a descendant holding
+the child's pipes from wedging the request past its context deadline, and whose
+`Output`/`CombinedOutput` report a clean exit read through held pipes as
+success. brightnessbridge sets its own tunable delay (see
+`display-brightness.md`); long-lived watchers own their own lifecycle. Known
+gap: the mimeapps, screensaver and gamma one-shots still use bare
+`exec.Command` with no bound.
 
 ## Feature flags / env
 

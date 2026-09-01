@@ -155,8 +155,7 @@ func (m *Manager) hyprlandState() (State, error) {
 	defer cancel()
 	// "monitors all" includes disabled outputs; plain "monitors" hides them,
 	// which would make a disabled monitor impossible to show or re-enable.
-	cmd := execbound.Command(ctx, m.command, "monitors", "all", "-j")
-	out, err := cmd.Output()
+	out, err := execbound.Output(execbound.Command(ctx, m.command, "monitors", "all", "-j"))
 	if ctx.Err() == context.DeadlineExceeded {
 		return State{}, fmt.Errorf("hyprctl monitors timed out")
 	}
@@ -209,8 +208,7 @@ func (m *Manager) hyprlandState() (State, error) {
 func (m *Manager) niriState() (State, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
-	cmd := execbound.Command(ctx, m.command, "msg", "-j", "outputs")
-	out, err := cmd.Output()
+	out, err := execbound.Output(execbound.Command(ctx, m.command, "msg", "-j", "outputs"))
 	if ctx.Err() == context.DeadlineExceeded {
 		return State{}, fmt.Errorf("niri outputs timed out")
 	}

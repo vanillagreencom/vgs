@@ -622,8 +622,7 @@ func (m *Manager) output(cmdName string, args ...string) ([]byte, error) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
-	cmd := execbound.Command(ctx, cmdPath, args...)
-	out, err := cmd.Output()
+	out, err := execbound.Output(execbound.Command(ctx, cmdPath, args...))
 	if ctx.Err() == context.DeadlineExceeded {
 		return nil, fmt.Errorf("%s timed out", cmdName)
 	}
