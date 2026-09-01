@@ -6,7 +6,6 @@ import (
 	"log/slog"
 	"net/url"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -60,7 +59,7 @@ func (m *Manager) handleGetDefault(params json.RawMessage) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	id, err := queryDefault(mimeType)
+	id, err := queryDefault(mimeType, m.log)
 	if err != nil {
 		return nil, err
 	}
@@ -80,7 +79,7 @@ func (m *Manager) handleSetDefault(params json.RawMessage) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := setDefault(desktopID, []string{mimeType}); err != nil {
+	if err := setDefault(desktopID, []string{mimeType}, m.log); err != nil {
 		return nil, err
 	}
 	return map[string]any{"success": true}, nil
@@ -99,7 +98,7 @@ func (m *Manager) handleSetDefaults(params json.RawMessage) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := setDefault(desktopID, mimeTypes); err != nil {
+	if err := setDefault(desktopID, mimeTypes, m.log); err != nil {
 		return nil, err
 	}
 	return map[string]any{"success": true}, nil
@@ -128,7 +127,7 @@ func (m *Manager) handleQueryDefaults(params json.RawMessage) (any, error) {
 	}
 	defaults := map[string]string{}
 	for _, mt := range mimeTypes {
-		id, err := queryDefault(mt)
+		id, err := queryDefault(mt, m.log)
 		if err != nil {
 			return nil, err
 		}
@@ -186,26 +185,6 @@ func (m *Manager) handleAppPickerOpen(params json.RawMessage) (any, error) {
 		"categories":  categories,
 	})
 	return map[string]any{"success": true}, nil
-}
-
-func queryDefault(mimeType string) (string, error) {
-	out, err := exec.Command("xdg-mime", "query", "default", mimeType).Output()
-	if err != nil {
-		if _, ok := err.(*exec.ExitError); ok {
-			return "", nil
-		}
-		return "", err
-	}
-	return strings.TrimSpace(string(out)), nil
-}
-
-func setDefault(desktopID string, mimeTypes []string) error {
-	args := append([]string{"default", desktopID}, mimeTypes...)
-	out, err := exec.Command("xdg-mime", args...).CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("xdg-mime default failed: %s", strings.TrimSpace(string(out)))
-	}
-	return nil
 }
 
 func appsForMime(mimeType string) []string {

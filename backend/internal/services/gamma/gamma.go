@@ -9,7 +9,6 @@ import (
 	"net/http"
 	"os/exec"
 	"strconv"
-	"strings"
 	"sync"
 	"time"
 
@@ -433,7 +432,7 @@ func (m *Manager) applyGammaLocked(state State) error {
 	}
 
 	if err := m.hyprsunsetIPC("gamma", strconv.Itoa(gammaPercent)); err != nil {
-		m.log.Warn("hyprsunset set gamma failed", "err", err)
+		return fmt.Errorf("set hyprsunset gamma: %w", err)
 	}
 	return m.hyprsunsetIPC("temperature", strconv.Itoa(state.CurrentTemp))
 }
@@ -479,27 +478,6 @@ func gammaCommandFor(current string) (binary, hyprctl, backend string, err error
 		return "", "", "", fmt.Errorf("hyprctl not found")
 	}
 	return command, hyprctlCommand, "hyprsunset", nil
-}
-
-// hyprsunsetIPC changes the running hyprsunset live over its hyprctl socket. It
-// retries briefly because the socket is not connectable for a short window right
-// after the process starts.
-func (m *Manager) hyprsunsetIPC(args ...string) error {
-	full := append([]string{"hyprsunset"}, args...)
-	var lastErr error
-	for i := 0; i < 12; i++ {
-		out, err := exec.Command(m.hyprctl, full...).CombinedOutput()
-		if err == nil && !strings.Contains(string(out), "Couldn't connect") {
-			return nil
-		}
-		if err != nil {
-			lastErr = fmt.Errorf("hyprctl hyprsunset %v: %w (%s)", args, err, strings.TrimSpace(string(out)))
-		} else {
-			lastErr = fmt.Errorf("hyprsunset socket not ready: %s", strings.TrimSpace(string(out)))
-		}
-		time.Sleep(120 * time.Millisecond)
-	}
-	return lastErr
 }
 
 func (m *Manager) fetchIPLocation() (float64, float64, error) {
