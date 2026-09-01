@@ -290,6 +290,65 @@ func TestClassifyKeepsExitErrorWhenBothConditionsHold(t *testing.T) {
 	}
 }
 
+// The other straddle: the child reaches a non-zero exit of its own, then a
+// descendant holds the pipes past the deadline, so Wait returns the original
+// *exec.ExitError with ctx.Err() already DeadlineExceeded. Order the deadline
+// first and sysupdate stops reading checkupdates' exit 2 as "no updates" and
+// cups and tailscale lose ee.Stderr.
+func TestOutputKeepsExitErrorInsideTheDeadlineStraddle(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	defer cancel()
+	cmd := pipeHolder(t, ctx, 700*time.Millisecond, "echo partial\nexit 2\n")
+
+	res, err := cmd.Output()
+
+	if errors.Is(err, ErrTimeout) {
+		t.Fatalf("err = %v, want the exit status, not a timeout", err)
+	}
+	var exitErr *exec.ExitError
+	if !errors.As(err, &exitErr) {
+		t.Fatalf("err = %v, want *exec.ExitError", err)
+	}
+	if exitErr.ExitCode() != 2 {
+		t.Fatalf("exit code = %d, want 2", exitErr.ExitCode())
+	}
+	if res.Salvaged {
+		t.Fatal("Salvaged = true for a non-zero exit")
+	}
+	if strings.TrimSpace(string(res.Out)) != "partial" {
+		t.Fatalf("out = %q, want %q", res.Out, "partial")
+	}
+}
+
+// The same precedence at the classify boundary, and its converse: a child the
+// deadline killed by signal carries no exit code of its own and stays
+// ErrTimeout, so the fix cannot be "return every ExitError".
+func TestClassifyOrdersExitStatusAgainstAnExpiredDeadline(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Nanosecond)
+	defer cancel()
+	<-ctx.Done()
+
+	independent := exec.Command("sh", "-c", "exit 2").Run()
+	var independentExit *exec.ExitError
+	if !errors.As(independent, &independentExit) || independentExit.ExitCode() != 2 {
+		t.Fatalf("fixture err = %v, want an *exec.ExitError with code 2", independent)
+	}
+	if _, got := classify(ctx, nil, independent); !errors.As(got, &independentExit) {
+		t.Fatalf("err = %v, want the independent exit status preserved", got)
+	} else if errors.Is(got, ErrTimeout) {
+		t.Fatalf("err = %v, want no ErrTimeout for an independent exit", got)
+	}
+
+	killed := exec.Command("sh", "-c", "kill -TERM $$").Run()
+	var killedExit *exec.ExitError
+	if !errors.As(killed, &killedExit) || killedExit.ExitCode() != -1 {
+		t.Fatalf("fixture err = %v, want a signalled *exec.ExitError", killed)
+	}
+	if _, got := classify(ctx, nil, killed); !errors.Is(got, ErrTimeout) {
+		t.Fatalf("err = %v, want ErrTimeout for a signalled child", got)
+	}
+}
+
 // Cancellation is not a timeout: it reaches the caller as context.Canceled, so
 // a site that distinguishes the two still can.
 func TestClassifyReportsCancellationAsCanceled(t *testing.T) {

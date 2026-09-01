@@ -92,8 +92,10 @@ func (c *Cmd) Exec() *exec.Cmd { return c.cmd }
 // itself exited successfully and only a descendant still held its pipes open;
 // that is Result.Salvaged with a nil error, because discarding a complete
 // result because an unrelated descendant is slow to exit is the worse failure.
-// The salvage wins over the deadline: a child that finished inside the straddle
-// window did not time out.
+// Both outrank the deadline: a child that reached its own exit status inside
+// the straddle window did not time out, whether that status was 0 or not. Only
+// a child with no exit status of its own — one the deadline killed by signal —
+// classifies as ErrTimeout.
 func (c *Cmd) Output() (Result, error) {
 	out, err := c.cmd.Output()
 	return c.report(classify(c.ctx, out, err))
@@ -135,6 +137,14 @@ func classify(ctx context.Context, out []byte, err error) (Result, error) {
 	if errors.Is(err, exec.ErrWaitDelay) && !errors.As(err, &exitErr) {
 		res.Salvaged = true
 		return res, nil
+	}
+	// An exit status the child reached on its own outranks the deadline. The
+	// two are told apart by the status itself: CommandContext ends a child by
+	// signal, so its ExitError reports no exit code, while a command that failed
+	// independently carries a real one — even if a descendant then held the
+	// pipes past the deadline and only the WaitDelay released Wait.
+	if errors.As(err, &exitErr) && exitErr.ExitCode() >= 0 {
+		return res, err
 	}
 	if ctxErr := ctx.Err(); ctxErr != nil {
 		if errors.Is(ctxErr, context.DeadlineExceeded) {

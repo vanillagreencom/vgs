@@ -123,7 +123,9 @@ the child's pipes from wedging the request past its context deadline. execbound
 owns the terminal classification, so no call site reads `ctx.Err()` itself: a
 clean exit read through held pipes is a success carrying `Result.Salvaged` (one
 Warn naming the tool), and a deadline is one `ErrTimeout` each site wraps with
-its own message. Every adopter runs `DefaultWaitDelay`; brightnessbridge takes
+its own message. An exit status the child reached on its own outranks an expired
+deadline, so a site keying on an exit code or `ee.Stderr` still sees the
+`*exec.ExitError`; only a child killed by signal classifies as `ErrTimeout`. Every adopter runs `DefaultWaitDelay`; brightnessbridge takes
 it through an injectable field only its tests vary, and why the ddcutil chain
 never reaches the bound is in `display-brightness.md`. Long-lived watchers own
 their own lifecycle. Known gap: the mimeapps, freedesktop/screensaver and gamma
