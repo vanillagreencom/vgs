@@ -116,15 +116,18 @@ every exit path; single-owner discipline per capability (no two watchers);
 in-flight request flush on client disconnect; `vshell backend doctor` health
 check (connect + getServerInfo: socket path, versions, capabilities, methods).
 A dead backend degrades UI to unavailable and never strands displays.
-Context-bounded one-shot commands in the clipboard, cups, networkmanager,
-sysupdate, tailscale and wlroutput services are built with
+Context-bounded one-shot commands in the brightnessbridge, clipboard, cups,
+networkmanager, sysupdate, tailscale and wlroutput services are built with
 `backend/internal/execbound`, whose `cmd.WaitDelay` keeps a descendant holding
-the child's pipes from wedging the request past its context deadline, and whose
-`Output`/`CombinedOutput` report a clean exit read through held pipes as
-success. brightnessbridge sets its own tunable delay (see
-`display-brightness.md`); long-lived watchers own their own lifecycle. Known
-gap: the mimeapps, screensaver and gamma one-shots still use bare
-`exec.Command` with no bound.
+the child's pipes from wedging the request past its context deadline. execbound
+owns the terminal classification, so no call site reads `ctx.Err()` itself: a
+clean exit read through held pipes is a success carrying `Result.Salvaged` (one
+Warn naming the tool), and a deadline is one `ErrTimeout` each site wraps with
+its own message. Every adopter runs `DefaultWaitDelay`; brightnessbridge takes
+it through an injectable field only its tests vary, and why the ddcutil chain
+never reaches the bound is in `display-brightness.md`. Long-lived watchers own
+their own lifecycle. Known gap: the mimeapps, freedesktop/screensaver and gamma
+one-shots still use bare `exec.Command` with no bound.
 
 ## Feature flags / env
 

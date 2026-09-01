@@ -3,6 +3,7 @@ package wlroutput
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os/exec"
@@ -155,11 +156,12 @@ func (m *Manager) hyprlandState() (State, error) {
 	defer cancel()
 	// "monitors all" includes disabled outputs; plain "monitors" hides them,
 	// which would make a disabled monitor impossible to show or re-enable.
-	out, err := execbound.Output(execbound.Command(ctx, m.command, "monitors", "all", "-j"))
-	if ctx.Err() == context.DeadlineExceeded {
-		return State{}, fmt.Errorf("hyprctl monitors timed out")
-	}
+	res, err := execbound.Command(ctx, m.command, "monitors", "all", "-j").Output()
+	out := res.Out
 	if err != nil {
+		if errors.Is(err, execbound.ErrTimeout) {
+			return State{}, fmt.Errorf("hyprctl monitors timed out")
+		}
 		if ee, ok := err.(*exec.ExitError); ok && len(ee.Stderr) > 0 {
 			return State{}, fmt.Errorf("%s", ee.Stderr)
 		}
@@ -208,11 +210,12 @@ func (m *Manager) hyprlandState() (State, error) {
 func (m *Manager) niriState() (State, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
-	out, err := execbound.Output(execbound.Command(ctx, m.command, "msg", "-j", "outputs"))
-	if ctx.Err() == context.DeadlineExceeded {
-		return State{}, fmt.Errorf("niri outputs timed out")
-	}
+	res, err := execbound.Command(ctx, m.command, "msg", "-j", "outputs").Output()
+	out := res.Out
 	if err != nil {
+		if errors.Is(err, execbound.ErrTimeout) {
+			return State{}, fmt.Errorf("niri outputs timed out")
+		}
 		if ee, ok := err.(*exec.ExitError); ok && len(ee.Stderr) > 0 {
 			return State{}, fmt.Errorf("%s", strings.TrimSpace(string(ee.Stderr)))
 		}

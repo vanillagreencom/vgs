@@ -83,11 +83,12 @@ func logPasteFailure(log *slog.Logger, op string, err error) {
 func listTypes(log *slog.Logger) ([]string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), listTypesTimeout)
 	defer cancel()
-	out, err := execbound.Output(execbound.Command(ctx, "wl-paste", "--list-types"))
-	if ctx.Err() != nil {
-		return nil, ctx.Err()
-	}
+	res, err := execbound.Command(ctx, "wl-paste", "--list-types").WithLogger(log).Output()
+	out := res.Out
 	if err != nil {
+		if execbound.Interrupted(err) {
+			return nil, err
+		}
 		// wl-paste exits non-zero for an empty clipboard; that is a normal
 		// state, but anything with stderr is a real failure worth logging.
 		logPasteFailure(log, "list-types", err)
@@ -123,11 +124,12 @@ func firstImageType(types []string) string {
 func readText(log *slog.Logger) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), readTextTimeout)
 	defer cancel()
-	out, err := execbound.Output(execbound.Command(ctx, "wl-paste", "--no-newline", "--type", "text"))
-	if ctx.Err() != nil {
-		return "", ctx.Err()
-	}
+	res, err := execbound.Command(ctx, "wl-paste", "--no-newline", "--type", "text").WithLogger(log).Output()
+	out := res.Out
 	if err != nil {
+		if execbound.Interrupted(err) {
+			return "", err
+		}
 		logPasteFailure(log, "read-text", err)
 		return "", nil
 	}
@@ -137,11 +139,12 @@ func readText(log *slog.Logger) (string, error) {
 func readImage(log *slog.Logger, mime string) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), readImageTimeout)
 	defer cancel()
-	out, err := execbound.Output(execbound.Command(ctx, "wl-paste", "--type", mime))
-	if ctx.Err() != nil {
-		return nil, ctx.Err()
-	}
+	res, err := execbound.Command(ctx, "wl-paste", "--type", mime).WithLogger(log).Output()
+	out := res.Out
 	if err != nil {
+		if execbound.Interrupted(err) {
+			return nil, err
+		}
 		logPasteFailure(log, "read-image", err)
 		return nil, nil
 	}

@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net"
@@ -622,11 +623,12 @@ func (m *Manager) output(cmdName string, args ...string) ([]byte, error) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
-	out, err := execbound.Output(execbound.Command(ctx, cmdPath, args...))
-	if ctx.Err() == context.DeadlineExceeded {
-		return nil, fmt.Errorf("%s timed out", cmdName)
-	}
+	res, err := execbound.Command(ctx, cmdPath, args...).Output()
+	out := res.Out
 	if err != nil {
+		if errors.Is(err, execbound.ErrTimeout) {
+			return nil, fmt.Errorf("%s timed out", cmdName)
+		}
 		if ee, ok := err.(*exec.ExitError); ok {
 			msg := strings.TrimSpace(string(ee.Stderr))
 			if msg == "" {

@@ -601,11 +601,12 @@ func (m *Manager) stopScheduleLocked() {
 }
 
 func commandOutput(ctx context.Context, allowNoUpdatesExit bool, name string, args ...string) ([]byte, error) {
-	out, err := execbound.Output(execbound.Command(ctx, name, args...))
-	if ctx.Err() != nil {
-		return out, ctx.Err()
-	}
+	res, err := execbound.Command(ctx, name, args...).Output()
+	out := res.Out
 	if err != nil {
+		if execbound.Interrupted(err) {
+			return out, err
+		}
 		if ee, ok := err.(*exec.ExitError); ok {
 			if len(ee.Stderr) > 0 {
 				return out, fmt.Errorf("%s", strings.TrimSpace(string(ee.Stderr)))

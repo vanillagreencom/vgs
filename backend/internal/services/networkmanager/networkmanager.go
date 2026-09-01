@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net"
@@ -1315,12 +1316,12 @@ func nmRowsErr(fields []string, args ...string) ([][]string, error) {
 func runNMCLI(args ...string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), commandTimeout)
 	defer cancel()
-	out, err := execbound.CombinedOutput(execbound.Command(ctx, "nmcli", args...))
-	text := strings.TrimSpace(string(out))
-	if ctx.Err() == context.DeadlineExceeded {
-		return text, fmt.Errorf("nmcli timed out")
-	}
+	res, err := execbound.Command(ctx, "nmcli", args...).CombinedOutput()
+	text := strings.TrimSpace(string(res.Out))
 	if err != nil {
+		if errors.Is(err, execbound.ErrTimeout) {
+			return text, fmt.Errorf("nmcli timed out")
+		}
 		if text != "" {
 			return text, fmt.Errorf("%s", text)
 		}

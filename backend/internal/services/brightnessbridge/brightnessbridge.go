@@ -3,6 +3,7 @@ package brightnessbridge
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -121,15 +122,12 @@ func (m *Manager) call(args ...string) (any, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), m.timeout)
 	defer cancel()
 	cmdArgs := append([]string{"brightness"}, args...)
-	cmd := execbound.CommandWithDelay(ctx, m.waitDelay, m.helper, cmdArgs...)
-	// execbound.Output reports a clean exit whose pipes a descendant still
-	// holds as success, so a complete response survives the timeout
-	// classification below even when the deadline expired during that wait.
-	out, err := execbound.Output(cmd)
-	if err != nil && ctx.Err() == context.DeadlineExceeded {
-		return nil, fmt.Errorf("brightness helper timed out")
-	}
+	res, err := execbound.CommandWithDelay(ctx, m.waitDelay, m.helper, cmdArgs...).Output()
+	out := res.Out
 	if err != nil {
+		if errors.Is(err, execbound.ErrTimeout) {
+			return nil, fmt.Errorf("brightness helper timed out")
+		}
 		if ee, ok := err.(*exec.ExitError); ok {
 			msg := string(ee.Stderr)
 			if msg == "" {
@@ -144,6 +142,11 @@ func (m *Manager) call(args ...string) (any, error) {
 	}
 	var result any
 	if err := json.Unmarshal(out, &result); err != nil {
+		if res.Salvaged {
+			// Name the abandoned descendant, not the JSON: the helper left its
+			// pipes held open, so this output may be truncated or interleaved.
+			return nil, fmt.Errorf("brightness helper left its pipes held open and its response did not decode: %w", err)
+		}
 		return nil, fmt.Errorf("decode brightness helper response: %w", err)
 	}
 	return result, nil
