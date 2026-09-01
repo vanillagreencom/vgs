@@ -2273,9 +2273,13 @@ ok "a manifest row outside scripts/ that ci.yml never runs is reported"
 # splitting, the two the tokenizing repair still got wrong — a redirection
 # TARGET (`: > <path>` truncates the file and runs nothing) and a function
 # DEFINITION (`<path>() { :; }` defines a name, it does not call one) — and two
-# where the path IS a command that may never run: the right side of `||`, and a
-# conditional body. Each is the real ci.yml with one step's invocation replaced,
-# so the fixtures track the workflow rather than restating it.
+# where the path IS a command that may never run — the right side of `||`, and a
+# conditional body — and an array ELEMENT, which is data. Each is the real ci.yml
+# with one step's invocation replaced, so the fixtures track the workflow rather
+# than restating it.
+#
+# THE HEREDOC TERMINATOR CASE IS SEPARATE, below, because its shape needs three
+# lines rather than one and the loop above substitutes a single line.
 while IFS='|' read -r shape replacement; do
   [[ -n "$shape" ]] || continue
   doctored="$tmp/ci-$shape.yml"
@@ -2304,7 +2308,37 @@ redirection|: > @
 function-definition|@() { :; }
 short-circuit|true || @
 conditional-branch|if false; then @; fi
+array-element|saved=(@)
 SHAPES
+
+# A HEREDOC BODY IS DATA, and its terminator is matched by the shell's rule, not
+# by a trimmed comparison. `<<EOF` closes on a line that is EXACTLY the
+# delimiter; a space-indented look-alike is body text. Trimming closed the body
+# early and read the real data lines after it as commands, so a lane replaced by
+# this shape stayed covered.
+heredoc_ci="$tmp/ci-heredoc-terminator.yml"
+python3 - "$repo_root" "$heredoc_ci" <<'HEREDOC_SHAPE'
+import pathlib, sys
+root, out = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2])
+text = (root / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+step = "        run: .agents/skills/size-ratchet/scripts/size-ratchet\n"
+if step not in text:
+    sys.exit("the size-ratchet ci.yml step these fixtures doctor has moved")
+# The space before the first EOF is the whole point: bash keeps reading.
+out.write_text(text.replace(step,
+    "        run: |\n"
+    "          cat <<EOF\n"
+    "           EOF\n"
+    "          .agents/skills/size-ratchet/scripts/size-ratchet\n"
+    "          EOF\n", 1), encoding="utf-8")
+HEREDOC_SHAPE
+if [[ ! -s "$heredoc_ci" ]]; then
+  fail "ci heredoc terminator" "the fixture workflow was not written (see the message above)"
+else
+  run_guard "CI_PATH=$heredoc_ci"
+  expect_refused "ci heredoc terminator" "which .github/workflows/ci.yml does not"
+  ok "a path inside a heredoc body is data, whatever the body looks like"
+fi
 
 # The executable-bit arm (VGS-30 applied to the entry point itself).
 non_exec="$tmp/non-exec-runner"

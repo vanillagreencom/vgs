@@ -1041,6 +1041,17 @@ _BODY_OPEN = frozenset({"then", "do", "case"})
 _BODY_CLOSE = frozenset({"fi", "done", "esac"})
 
 
+def _heredoc_delimiter(operand: str) -> tuple[str, bool]:
+    """The delimiter a `<<` operand names, and whether `<<-` tab stripping applies.
+
+    shlex hands back `<<` and `-EOF` for `<<-EOF`, so the dash arrives on the
+    operand. Quoting the delimiter changes expansion inside the body, never how
+    the terminator is matched, so it is unwrapped here and nowhere else.
+    """
+    tabs = operand.startswith("-")
+    return _unquote(operand[1:] if tabs else operand), tabs
+
+
 def _unquote(token: str) -> str:
     """A token wrapped whole in one quote pair, unwrapped. `"scripts/x"` runs it."""
     if len(token) >= 2 and token[0] == token[-1] and token[0] in "\"'":
@@ -1095,16 +1106,35 @@ def ci_runs(ci_text: str, path: str) -> bool:
     reports a problem instead of hiding one, which is the bias a predicate
     written to remove a false green has to take.
 
-    WHAT THIS IS NOT. It answers "does the workflow invoke this path", not "will
-    the lane execute". A step-level `if:` is invisible here, because
-    ci_run_commands reads `run:` strings and nothing around them, and four steps
-    in this repo's ci.yml are gated on `harness_only` while still being the real
-    wiring for their lanes. So the shell-level branches above are excluded as
-    UNGUARANTEED, and a YAML-level condition is not — the guard's subject is the
-    lockstep between the manifest and the workflow, and execution is CI's own
-    answer to give.
+    THE BOUNDARY, and it is a boundary rather than a to-do list. This predicate
+    APPROXIMATES shell execution; it cannot decide it, and no amount of widening
+    will change that. Six review rounds each named a real construct and each
+    repair was correct, which is exactly why the limit has to be written down
+    instead of discovered a seventh time.
+
+    What it models: quoting, comments, redirections and their operands, heredoc
+    bodies and the shell's own terminator rule, backslash continuations,
+    function definitions, array-assignment context, short-circuit and
+    conditional branches, and command position after separators and keywords.
+
+    What it does NOT model, and will not: command substitution, `eval`, aliases,
+    functions defined elsewhere, sourced files, `$@` and other expansions, and
+    anything whose execution depends on a runtime value. A step-level `if:` is
+    invisible too, because ci_run_commands reads `run:` strings and nothing
+    around them — four steps in this repo's ci.yml are gated on `harness_only`
+    while being the real wiring for their lanes, so requiring "runs on every
+    successful path" one level up would report them as uncovered on a healthy
+    tree.
+
+    A PROOF THAT A LANE RAN NEEDS A DIFFERENT MECHANISM: CI declaring what it
+    executed, which a reader can check, rather than a reader inferring execution
+    from workflow text. Until that exists, this answers the question it can
+    answer — do the manifest and the workflow name the same checks — and a
+    construct it does not model is a reason to build that mechanism, NOT a
+    reason to widen this one.
     """
     heredoc: str | None = None
+    heredoc_tabs = False
     # Block state spans logical lines, because `if` and `fi` do. ci_text
     # concatenates every run: block, and a well-formed one returns the depth to
     # zero at its end; a malformed one leaks SUPPRESSION into the next, which
@@ -1112,7 +1142,12 @@ def ci_runs(ci_text: str, path: str) -> bool:
     conditional = 0
     for line in _logical_lines(ci_text):
         if heredoc is not None:
-            if line.strip() == heredoc:
+            # EXACTLY the delimiter, per the shell grammar. `.strip()` closed the
+            # body on a space-indented look-alike, and the real data lines after
+            # it were then read as commands. `<<-` permits leading TABS to be
+            # stripped and nothing else; `<<` permits nothing.
+            terminator = line.lstrip("\t") if heredoc_tabs else line
+            if terminator == heredoc:
                 heredoc = None
             continue
         # `||` runs its right side only when the left FAILED, so nothing after
@@ -1130,12 +1165,26 @@ def ci_runs(ci_text: str, path: str) -> bool:
         found = False
         start = True
         operand = False
+        # `name=( word... )` is an ARRAY ASSIGNMENT. Its parens are not command
+        # separators and its elements are words, so a path listed there is never
+        # executed. Entered only after an assignment token, which errs toward
+        # suppression on the shapes shlex cannot tell apart.
+        array = 0
+        assigned = False
         for index, token in enumerate(tokens):
             # Recorded even when the invocation is found on this same line: the
             # body still has to be skipped, so the scan finishes the line first.
-            if token.startswith("<<") and index + 1 < len(tokens):
-                heredoc = _unquote(tokens[index + 1]).lstrip("-")
+            # `<<` only. `<<<` is a herestring: its operand is a WORD, consumed
+            # as a redirection operand below, and it opens no body.
+            if token == "<<" and index + 1 < len(tokens):
+                heredoc, heredoc_tabs = _heredoc_delimiter(tokens[index + 1])
             if token and all(character in lexer.punctuation_chars for character in token):
+                if token == "(" and (assigned or array):
+                    array += 1
+                    continue
+                if token == ")" and array:
+                    array -= 1
+                    continue
                 if token == "||":
                     short_circuit = True
                 if token in _REDIRECTIONS:
@@ -1143,6 +1192,7 @@ def ci_runs(ci_text: str, path: str) -> bool:
                 elif token in _SEPARATORS:
                     start = True
                     operand = False
+                assigned = False
                 continue
             if token in _BODY_OPEN:
                 conditional += 1
@@ -1160,14 +1210,25 @@ def ci_runs(ci_text: str, path: str) -> bool:
                 # A redirection TARGET, which is written to and never executed.
                 operand = False
                 continue
+            if array:
+                # An array ELEMENT, which is data.
+                continue
+            # ABOVE the command-position guard, because an assignment is also an
+            # ARGUMENT: `declare -a x=(<path>)` reaches `x=` with the command
+            # already consumed, and missing it there was the array hole's second
+            # half.
+            if _ASSIGNMENT.match(token):
+                assigned = True
+                continue
             if not start:
                 continue
-            if _ASSIGNMENT.match(token) or token in _KEYWORDS:
+            if token in _KEYWORDS:
                 continue
             if conditional or short_circuit:
                 # In a branch that may not run. Not coverage.
                 start = False
                 continue
+            assigned = False
             following = tokens[index + 1 : index + 2]
             defines = bool(following) and following[0] in _DEFINITION
             if _unquote(token) == path and not defines:

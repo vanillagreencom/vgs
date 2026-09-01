@@ -142,8 +142,8 @@
 # that: the ledger states what a reader diffing this branch sees, and nothing
 # else.
 #
-#   RAISED    scripts/lib/validation_manifest.py     1045 -> 1207
-#   RAISED    scripts/test-validation-inventory.sh   2278 -> 2337
+#   RAISED    scripts/lib/validation_manifest.py     1045 -> 1268
+#   RAISED    scripts/test-validation-inventory.sh   2278 -> 2371
 #   RAISED    scripts/test-section-pointers-e2e.py    496 ->  540
 #   RAISED    scripts/test-section-pointers.py        489 ->  515
 #   RAISED    scripts/check-validation-inventory.py   411 ->  423
@@ -190,6 +190,10 @@
 #             calling it
 #   round 4   a path can be a real command that never runs — the right side of
 #             `||`, and the body of an `if`, `while` or `case`
+#   round 5   `name=(<path>)` is an array ELEMENT, and `(` there is not a
+#             command separator
+#   round 6   a heredoc closes on a line that is EXACTLY the delimiter; a
+#             trimmed comparison closed it early and read the body as commands
 #
 # So the predicate tokenizes with shlex, quote-aware, distinguishes separators
 # from redirections, consumes redirection operands, skips heredoc bodies, joins
@@ -201,11 +205,16 @@
 # while the older cases stay green — which is what makes each a control on ITS
 # finding rather than on the lane in general.
 #
-# WHERE IT STOPS, written down so a later round does not reopen it: a
-# step-level `if:` is invisible to a predicate that reads `run:` strings, and
-# four steps in this repo's ci.yml are gated on `harness_only` while still being
-# the real wiring for their lanes. The guard's subject is the lockstep between
-# two lists, not proof that CI executed anything.
+# WHERE IT STOPS, and this is the last entry that widens it. The predicate
+# APPROXIMATES shell execution and cannot decide it; the docstring on ci_runs
+# now names what it models and what it never will — command substitution,
+# `eval`, aliases, sourced files, expansions, and anything depending on a
+# runtime value — plus the step-level `if:` it cannot see, which four lanes in
+# this repo already use as their real wiring. Six rounds each named a genuine
+# construct and each repair was right, which is the argument FOR writing the
+# limit down rather than against it. A proof that a lane ran needs CI declaring
+# what it executed; a seventh construct is a reason to build that, not to widen
+# this.
 #
 # That ratio, one lane's predicate against four raised rows, is this header's
 # recurring argument arriving again: the fix is small every time and the cost is
