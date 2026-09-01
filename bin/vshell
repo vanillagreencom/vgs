@@ -349,7 +349,7 @@ case "${1:-run}" in
   status)
     exec systemctl --user status vshell.service --no-pager
     ;;
-  theme|fonts|deps|notifications|remote-desktop|update|ai-usage|ai|capture|screenshot|screenrecording|recording|ocr|cl|clipboard|dl|download|trash|color|keybinds|config|scratchpad|compositor|battery|blur|brightness|auth|greeter|sudo-toggle|launcher-search|terminal|instances)
+  theme|fonts|deps|notifications|remote-desktop|update|mise|agent|dev-env|ai-usage|ai|capture|screenshot|screenrecording|recording|ocr|cl|clipboard|dl|download|trash|color|keybinds|config|scratchpad|compositor|battery|blur|brightness|auth|greeter|sudo-toggle|launcher-search|terminal|instances)
     exec "$helper" "$@"
     ;;
   screensaver)
@@ -432,7 +432,10 @@ Usage:
   vshell deps status|check <feature>
   vshell notifications status|takeover|restore [--json]   (org.freedesktop.Notifications ownership)
   vshell remote-desktop status|start|stop|toggle|ui [--json]   (Sunshine host + its virtual output)
-  vshell update count|run <system|aur|all>
+  vshell update count|run <system|aur|flatpak|tools|all>
+  vshell mise install <package> [command [bin]]|refresh|remove-stubs|opt-in|list --json|outdated --json|up
+  vshell agent list|default [<id>|--clear]|launch [--pick] [--inline]
+  vshell dev-env list|install <id>|remove <id>
   vshell ai-usage <claude|codex>
   vshell capture screenshot|screenrecording|text [...]
   vshell screensaver launch|stop|transcode <image> <output>   (decorative ascii screensaver)

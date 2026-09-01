@@ -153,6 +153,26 @@ Singleton {
         });
     }
 
+    // Launches `vshell update run <mode>` in a terminal supervised by the
+    // backend, which re-counts when the terminal exits. Modes: system, aur,
+    // flatpak, tools, all.
+    function upgrade(mode, callback) {
+        VGSBackendService.sysupdateUpgrade({
+            "mode": mode || "all"
+        }, response => {
+            if (response && response.result)
+                _applyState(response.result);
+            if (response && response.error)
+                _applyError("upgrade_failed", response.error);
+            if (callback)
+                callback(response);
+        });
+    }
+
+    function hasBackend(id) {
+        return (backends || []).some(b => b.id === id);
+    }
+
     function setInterval(seconds) {
         VGSBackendService.sysupdateSetInterval(seconds, response => {
             if (response && response.result)

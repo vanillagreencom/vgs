@@ -35,27 +35,84 @@ func TestParseParu(t *testing.T) {
 	}
 }
 
-func TestUpgradeCommandModes(t *testing.T) {
-	m := &Manager{paru: "/usr/bin/paru", pacman: "/usr/bin/pacman"}
-	if got := m.upgradeCommand(upgradeParams{Mode: "system"}); got == "" || contains(got, "paru") {
-		t.Fatalf("system command = %q, want pacman-only command", got)
+// The mode is validated against the updaters actually present, so a
+// "tools" upgrade on a machine without mise fails before a terminal opens
+// rather than running a step that prints "mise not found" and exits.
+func TestUpgradeModeRequiresItsUpdater(t *testing.T) {
+	m := &Manager{vshell: "/usr/bin/vshell", paru: "/usr/bin/paru", pacman: "/usr/bin/pacman", checkupdates: "/usr/bin/checkupdates"}
+	for _, mode := range []string{"system", "aur", "all", ""} {
+		if _, err := m.upgradeMode(mode); err != nil {
+			t.Fatalf("upgradeMode(%q) = %v, want ok", mode, err)
+		}
 	}
-	if got := m.upgradeCommand(upgradeParams{Mode: "aur"}); got == "" || !contains(got, "-Sua") {
-		t.Fatalf("aur command = %q, want paru -Sua command", got)
+	for _, mode := range []string{"tools", "flatpak", "bogus"} {
+		if got, err := m.upgradeMode(mode); err == nil {
+			t.Fatalf("upgradeMode(%q) = %q, want error", mode, got)
+		}
 	}
-	if got := m.upgradeCommand(upgradeParams{Mode: "all", IncludeAUR: true}); got == "" || !contains(got, "pacman") || !contains(got, "-Sua") || contains(got, "paru' -Syu") {
-		t.Fatalf("all command = %q, want repo-only pacman followed by AUR-only paru", got)
+	if got, _ := m.upgradeMode(""); got != "all" {
+		t.Fatalf("upgradeMode(\"\") = %q, want all", got)
+	}
+	withMise := &Manager{vshell: "/usr/bin/vshell", mise: "/usr/bin/mise"}
+	if got, err := withMise.upgradeMode("tools"); err != nil || got != "tools" {
+		t.Fatalf("upgradeMode(tools) with mise = (%q, %v), want tools", got, err)
+	}
+	if _, err := (&Manager{pacman: "/usr/bin/pacman", checkupdates: "/usr/bin/checkupdates"}).upgradeMode("system"); err == nil {
+		t.Fatal("upgradeMode without the vshell CLI must fail: the terminal runs `vshell update run`")
+	}
+	// The widget shows a system button only when the backend advertises one;
+	// pacman without checkupdates advertises none and must not upgrade either.
+	if _, err := (&Manager{vshell: "/usr/bin/vshell", pacman: "/usr/bin/pacman"}).upgradeMode("system"); err == nil {
+		t.Fatal("upgradeMode(system) without checkupdates must fail: backends() advertises no system backend")
 	}
 }
 
-func TestTerminalArgvKeepsShellCommandPosition(t *testing.T) {
+// The CLI owns the per-source commands; the daemon hands it the mode and
+// nothing else, so there is exactly one spelling of "how to upgrade".
+func TestTerminalArgvRunsTheCLIUpdater(t *testing.T) {
 	m := &Manager{vshell: "/usr/bin/vshell"}
-	argv, err := m.terminalArgv("", "printf harmless")
+	argv, err := m.terminalArgv("", "tools")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(argv) < 4 || argv[len(argv)-4] != "sh" || argv[len(argv)-3] != "-lc" || argv[len(argv)-2] != "printf harmless" || argv[len(argv)-1] != "vshell-update" {
-		t.Fatalf("terminal argv tail = %#v, want sh -lc <command> <argv0>", argv)
+	if len(argv) < 5 || argv[len(argv)-5] != "--" || argv[len(argv)-4] != "/usr/bin/vshell" || argv[len(argv)-3] != "update" || argv[len(argv)-2] != "run" || argv[len(argv)-1] != "tools" {
+		t.Fatalf("terminal argv tail = %#v, want -- vshell update run tools", argv)
+	}
+	if _, err := (&Manager{}).terminalArgv("", "all"); err == nil {
+		t.Fatal("terminalArgv without the vshell CLI must fail")
+	}
+}
+
+func TestParseMiseOutdated(t *testing.T) {
+	packages, err := parseMiseOutdated([]byte(`{"npm:@deepseek-ai/dsh": {"name": "npm:@deepseek-ai/dsh", "requested": "latest", "current": "0.1.0", "latest": "0.1.1"}, "claude": {"name": "claude", "requested": "latest", "current": "2.1.0", "latest": "2.2.0"}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(packages) != 2 {
+		t.Fatalf("len(packages) = %d, want 2", len(packages))
+	}
+	if packages[0].Name != "claude" || packages[0].Repo != "tools" || packages[0].Backend != "mise" || packages[0].FromVersion != "2.1.0" || packages[0].ToVersion != "2.2.0" {
+		t.Fatalf("unexpected package: %#v", packages[0])
+	}
+	if packages[1].Name != "npm:@deepseek-ai/dsh" {
+		t.Fatalf("packages must be sorted by name: %#v", packages)
+	}
+	if up, err := parseMiseOutdated([]byte("{}\n")); err != nil || len(up) != 0 {
+		t.Fatalf("up to date = (%#v, %v), want empty", up, err)
+	}
+	if _, err := parseMiseOutdated([]byte("mise ERROR nope")); err == nil {
+		t.Fatal("non-JSON output must be an error, not zero updates")
+	}
+	if _, err := parseMiseOutdated([]byte("  \n")); err == nil {
+		t.Fatal("empty output must be an error: up to date prints {}")
+	}
+}
+
+func TestBackendsListsMise(t *testing.T) {
+	m := &Manager{mise: "/usr/bin/mise"}
+	backends := m.backends()
+	if len(backends) != 1 || backends[0].ID != "mise" || backends[0].Repo != "tools" || backends[0].NeedsAuth {
+		t.Fatalf("backends = %#v, want one mise/tools backend without auth", backends)
 	}
 }
 
@@ -65,7 +122,7 @@ func TestTerminalArgvKeepsShellCommandPosition(t *testing.T) {
 // second upgrade can be started on top of it.
 func TestTerminalArgvWaitsForTheUpgradeToFinish(t *testing.T) {
 	m := &Manager{vshell: "/usr/bin/vshell"}
-	argv, err := m.terminalArgv("", "printf harmless")
+	argv, err := m.terminalArgv("", "all")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -78,7 +135,7 @@ func TestTerminalArgvWaitsForTheUpgradeToFinish(t *testing.T) {
 // being dropped because the CLI happens to be on PATH.
 func TestTerminalArgvForwardsTheCallersTerminal(t *testing.T) {
 	m := &Manager{vshell: "/usr/bin/vshell"}
-	argv, err := m.terminalArgv("foot", "printf harmless")
+	argv, err := m.terminalArgv("foot", "all")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -219,7 +276,7 @@ func TestUpgradePrelaunchFailureSetsStateError(t *testing.T) {
 	if state.Error == nil || state.Error.Code != "upgrade_unavailable" || state.Error.Message == "" {
 		t.Fatalf("missing upgrade error: %#v", state.Error)
 	}
-	if len(state.RecentLog) == 0 || !contains(state.RecentLog[len(state.RecentLog)-1], "no supported upgrade command") {
+	if len(state.RecentLog) == 0 || !contains(state.RecentLog[len(state.RecentLog)-1], "vshell CLI not found") {
 		t.Fatalf("missing recent log entry: %#v", state.RecentLog)
 	}
 }
@@ -286,4 +343,27 @@ func contains(value, needle string) bool {
 		}
 	}
 	return false
+}
+
+// The count on screen is from before the upgrade. A run that exits non-zero
+// still installed whatever steps succeeded, so the re-count is unconditional.
+func TestUpgradeRecountsAfterAnyExit(t *testing.T) {
+	for _, code := range []int{0, 1} {
+		counter, logPath := fakeUpdateCommand(t, "go 2:1.26.4-2 -> 2:1.26.5-2\n", 0)
+		dir := t.TempDir()
+		vshell := filepath.Join(dir, "vshell")
+		if err := os.WriteFile(vshell, []byte("#!/bin/sh\nexit "+strconv.Itoa(code)+"\n"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		m := &Manager{srv: server.New(0, nil), checkupdates: counter, pacman: "/usr/bin/pacman", vshell: vshell}
+		m.state = State{Phase: "idle", Backends: m.backends(), RecentLog: []string{}}
+		t.Cleanup(m.Close)
+		if _, err := m.handleUpgrade(mustJSON(t, upgradeParams{Mode: "system"})); err != nil {
+			t.Fatalf("exit %d: handleUpgrade = %v", code, err)
+		}
+		waitFor(t, func() bool {
+			state := m.snapshot().(State)
+			return state.Phase == "idle" && state.Count == 1 && readFile(t, logPath) != ""
+		})
+	}
 }

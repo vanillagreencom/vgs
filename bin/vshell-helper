@@ -7048,77 +7048,35 @@ def cmd_brightness(argv: List[str]) -> int:
     return 2
 
 
-def update_count() -> Dict[str, Any]:
-    if not command_exists("pacman"):
-        return {"ok": False, "error": "pacman not found", "repo": 0, "aur": 0, "packages": [], "orphanCount": 0, "orphans": []}
-    if not command_exists("checkupdates"):
-        return {"ok": False, "error": "checkupdates not found", "repo": 0, "aur": 0, "packages": [], "orphanCount": 0, "orphans": []}
-    lock = Path(os.environ.get("XDG_RUNTIME_DIR", "/tmp")) / "vshell-update-count.lock"
-    script = r'''
-set -u
-exec 9>"$1"
-flock -w 120 9 2>/dev/null || true
-repo_lines=""
-aur_lines=""
-if command -v checkupdates >/dev/null 2>&1; then repo_lines=$(checkupdates 2>/dev/null || true); fi
-if command -v paru >/dev/null 2>&1; then aur_lines=$(paru -Qua 2>/dev/null || true); fi
-repo=$(printf '%s' "$repo_lines" | grep -c . || true)
-aur=$(printf '%s' "$aur_lines" | grep -c . || true)
-emit() { src="$1"; while read -r name old arrow new rest; do [ -n "$name" ] || continue; jq -cn --arg name "$name" --arg old "$old" --arg new "$new" --arg src "$src" '{name:$name,old:$old,new:$new,src:$src}'; done; }
-pkgs=$( { printf '%s\n' "$repo_lines" | emit repo; printf '%s\n' "$aur_lines" | emit aur; } | jq -s . )
-orphan_lines=$(pacman -Qtd 2>/dev/null || true)
-orphan=$(printf '%s' "$orphan_lines" | grep -c . || true)
-orphans=$(printf '%s\n' "$orphan_lines" | while read -r name ver rest; do [ -n "$name" ] || continue; jq -cn --arg name "$name" --arg ver "$ver" '{name:$name,ver:$ver}'; done | jq -s .)
-jq -cn --argjson repo "${repo:-0}" --argjson aur "${aur:-0}" --argjson packages "$pkgs" --argjson orphanCount "${orphan:-0}" --argjson orphans "$orphans" '{ok:true,repo:$repo,aur:$aur,packages:$packages,orphanCount:$orphanCount,orphans:$orphans}'
-'''
-    proc = subprocess.run(["bash", "-lc", script, "bash", str(lock)], text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-    # Metadata surfaced to the UI so it can show data provenance/freshness without
-    # opening code. Backward-compatible additions; existing keys stay unchanged.
-    meta = {"source": {"repo": "checkupdates", "aur": "paru -Qua"}, "checkedAt": int(time.time())}
-    if proc.returncode != 0:
-        return {"ok": False, "error": proc.stderr.strip() or "update count failed", "repo": 0, "aur": 0, "packages": [], "orphanCount": 0, "orphans": [], **meta}
-    try:
-        data = json.loads(proc.stdout or "{}")
-    except Exception:
-        return {"ok": False, "error": "parse error", "repo": 0, "aur": 0, "packages": [], "orphanCount": 0, "orphans": [], **meta}
-    if isinstance(data, dict):
-        data.setdefault("source", meta["source"])
-        data.setdefault("checkedAt", meta["checkedAt"])
-    return data
+
+_DEVTOOLS: Any = None
 
 
-def cmd_update(argv: List[str]) -> int:
-    parser = argparse.ArgumentParser(prog="vshell update")
-    sub = parser.add_subparsers(dest="cmd", required=True)
-    p_count = sub.add_parser("count")
-    p_count.add_argument("--json", action="store_true")
-    p_run = sub.add_parser("run")
-    p_run.add_argument("mode", choices=["system", "aur", "all"])
-    args = parser.parse_args(argv)
-    if args.cmd == "count":
-        data = update_count()
-        print(json.dumps(data, indent=2) if args.json else str((data.get("repo") or 0) + (data.get("aur") or 0)))
-        return 0 if data.get("ok", True) else 1
-    if args.cmd == "run":
-        failures = 0
-        if args.mode in {"system", "all"}:
-            if not command_exists("pacman"):
-                eprint("pacman not found")
-                return 1
-            print(":: Updating repo packages")
-            failures += 0 if subprocess.run(["sudo", "pacman", "-Syu"], check=False).returncode == 0 else 1
-        if args.mode in {"aur", "all"}:
-            if not command_exists("paru"):
-                eprint("paru not found")
-                return 1
-            print(":: Updating AUR packages")
-            failures += 0 if subprocess.run(["paru", "-Sua"], check=False).returncode == 0 else 1
-        try:
-            input(("Failed — press Enter to close…" if failures else "Done — press Enter to close…"))
-        except EOFError:
-            pass
-        return 1 if failures else 0
-    return 2
+def _devtools() -> Any:
+    """Load the mise/agent/dev-env subsystem only for the commands that use it."""
+    global _DEVTOOLS
+    if _DEVTOOLS is None:
+        import vshell_devtools
+        vshell_devtools.configure(vshell_devtools.DevToolsRuntime(
+            home=home, state_dir=state_dir, repo_root=repo_root, run=run,
+            command_exists=command_exists, load_settings=load_settings,
+            set_settings_value=set_settings_value,
+            load_required_json_file=load_required_json_file, eprint=eprint,
+            spawn_terminal=spawn_terminal, notify_user=notify_user))
+        _DEVTOOLS = vshell_devtools
+    return _DEVTOOLS
+
+
+_UPDATE: Any = None
+
+
+def _update() -> Any:
+    global _UPDATE
+    if _UPDATE is None:
+        import vshell_update
+        vshell_update.configure(_devtools().runtime())
+        _UPDATE = vshell_update
+    return _UPDATE
 
 
 def cmd_ai_usage(argv: List[str]) -> int:
@@ -15987,14 +15945,17 @@ def cmd_terminal(argv: List[str]) -> int:
 
 def main() -> int:
     if len(sys.argv) < 2:
-        eprint("Usage: vshell-helper <theme|fonts|deps|notifications|update|ai-usage|capture|cl|dl|trash|color|keybinds|config|scratchpad|compositor|blur|brightness|auth|greeter> ...")
+        eprint("Usage: vshell-helper <theme|fonts|deps|notifications|update|mise|agent|dev-env|ai-usage|capture|cl|dl|trash|color|keybinds|config|scratchpad|compositor|blur|brightness|auth|greeter> ...")
         return 2
     cmd, argv = sys.argv[1], sys.argv[2:]
     try:
         if cmd == "theme": return cmd_theme(argv)
         if cmd == "fonts": return cmd_fonts(argv)
         if cmd == "deps": return cmd_deps(argv)
-        if cmd == "update": return cmd_update(argv)
+        if cmd == "update": return _update().cmd_update(argv)
+        if cmd == "mise": return _devtools().vshell_mise.cmd_mise(argv)
+        if cmd == "agent": return _devtools().cmd_agent(argv)
+        if cmd == "dev-env": return _devtools().cmd_dev_env(argv)
         if cmd in {"ai-usage", "ai"}: return cmd_ai_usage(argv)
         if cmd == "capture": return cmd_capture(argv)
         if cmd in {"screenshot"}: return cmd_capture(["screenshot", *argv])

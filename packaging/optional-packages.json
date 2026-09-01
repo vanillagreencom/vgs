@@ -154,6 +154,7 @@
     "launcher-folder-open": "launcher default folder opener",
     "updates-arch": "repo update checks",
     "updates-aur": "AUR update checks",
+    "dev-tools": "mise-managed coding agents and language toolchains",
     "ai-usage": "AI usage widget",
     "tailscale": "Tailscale widget",
     "remote-desktop": "Remote desktop widget (Sunshine host)",
@@ -363,6 +364,10 @@
 
     "checkupdates": { "arch": "pacman-contrib" },
     "paru": { "arch": "paru" },
+    "mise": {
+      "arch": "mise",
+      "void": "mise"
+    },
 
     "curl": {
       "arch": "curl",

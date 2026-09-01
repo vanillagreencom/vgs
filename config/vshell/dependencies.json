@@ -214,6 +214,16 @@
         "paru"
       ]
     },
+    "dev-tools": {
+      "$comment": [
+        "mise installs coding-agent harnesses and language toolchains under",
+        "~/.local/share/mise; `vshell mise`, `vshell agent`, `vshell dev-env` and",
+        "the tools row of the System Updates widget all sit behind it."
+      ],
+      "commands": [
+        "mise"
+      ]
+    },
     "ai-usage": {
       "commands": [
         "${VSHELL_ROOT}/bin/vshell-ai-usage",

@@ -15,6 +15,7 @@ was chosen, why, and what would change the answer.
 | 2026-08-14 | D008 | VGS-92 | Nested smoke sandbox is built from the repo alone; nothing copied from `~/.config/vshell` | A sandbox whose verdict depends on the machine it ran on is not a sandbox | A phase genuinely needs host state, or the helper can write theme.json without hooks | Active | [Full](D008-nested-sandbox-state-seeding.md) |
 | 2026-08-15 | D009 | VGS-144 | Keep the manifest's second reader; the grammar keeps one | An inventory taken from the audited party's own report is not a cross-check | A `--dump-manifest` gains a second consumer, or the two readers diverge | Active | [Full](D009-manifest-second-reader.md) |
 | 2026-08-24 | D010 | — | Single-screen wallpaper apply is a verified SessionData write, not a new service method | SessionData owns per-monitor assignments; a synchronous write's only failure is answered by a read-back, not a reply shape | VGS-211's wallpaper-mutation lock lands, or a single-screen apply needs the service path's extras | Active | [Full](D010-single-screen-wallpaper-apply.md) |
+| 2026-09-01 | D011 | VGS-238 | mise owns coding-agent harnesses and language toolchains from one catalog; `vshell update run` is the only upgrade implementation | Agents release faster than any repackaging; the Go upgrade command had no caller | A harness needs an interpreter pin, or a packaged distro has no mise | Active | [Full](D011-mise-owns-agent-harnesses.md) |
 
 ---
 
