@@ -142,16 +142,11 @@ Column {
 
             visible: hotCornersData && !hotCornersData.off && hotCornersData.corners !== undefined
 
-            VgsButtonGroup {
+            SettingsChoiceRow {
                 id: hotCornersGroup
-                anchors.horizontalCenter: parent.horizontalCenter
+                text: I18n.tr("Hot Corners")
                 selectionMode: "multi"
-                checkEnabled: false
                 enabled: !settingsColumn.isDisabled
-                buttonHeight: 32
-                buttonPadding: parent.width < 400 ? Theme.spacingXS : Theme.spacingM
-                minButtonWidth: parent.width < 400 ? 28 : 56
-                textSize: parent.width < 400 ? 11 : Theme.fontSizeMedium
                 model: [I18n.tr("Top Left"), I18n.tr("Top Right"), I18n.tr("Bottom Left"), I18n.tr("Bottom Right")]
 
                 property var cornerKeys: ["top-left", "top-right", "bottom-left", "bottom-right"]
@@ -167,10 +162,9 @@ Column {
                 }
 
                 onSelectionChanged: (index, selected) => {
-                    const corners = currentSelection.map(label => {
-                        const idx = model.indexOf(label);
-                        return idx >= 0 ? cornerKeys[idx] : null;
-                    }).filter(v => v !== null);
+                    const label = model[index];
+                    const labels = selected ? [...currentSelection, label] : currentSelection.filter(value => value !== label);
+                    const corners = labels.map(value => cornerKeys[model.indexOf(value)]).filter(value => value !== undefined);
                     DisplayConfigState.setNiriSetting(root.outputData, root.outputName, "hotCorners", {
                         "corners": corners
                     });

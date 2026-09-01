@@ -94,7 +94,7 @@ Item {
         Row {
             id: headerRow
             width: parent.width
-            height: labelColumn.height
+            height: Math.max(labelColumn.implicitHeight, resetButtonContainer.height)
             spacing: Theme.spacingS
 
             Column {
@@ -127,7 +127,7 @@ Item {
             Item {
                 id: resetButtonContainer
                 width: root.defaultValue >= 0 ? 36 : 0
-                height: 36
+                height: root.defaultValue >= 0 ? resetButton.buttonSize : 0
                 anchors.verticalCenter: parent.verticalCenter
 
                 VgsActionButton {

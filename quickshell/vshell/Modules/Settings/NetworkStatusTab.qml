@@ -138,7 +138,7 @@ Item {
                         }
                     }
 
-                    SettingsButtonGroupRow {
+                    SettingsChoiceRow {
                         text: I18n.tr("Preferred Connection")
                         description: I18n.tr("Which connection to route traffic over when both are active")
                         visible: NetworkService.backend === "networkmanager" && NetworkService.ethernetConnected && NetworkService.wifiConnected

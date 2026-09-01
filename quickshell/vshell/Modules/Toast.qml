@@ -195,7 +195,6 @@ PanelWindow {
                             return Theme.surfaceText;
                         }
                     }
-                    outlineColor: Qt.rgba(textColor.r, textColor.g, textColor.b, 0.45)
                     anchors.right: ToastService.hasDetails ? expandButton.left : (root.closeButtonVisible ? closeButton.left : parent.right)
                     anchors.rightMargin: ToastService.hasDetails ? 2 : Theme.spacingS
                     anchors.verticalCenter: parent.verticalCenter

@@ -421,41 +421,31 @@ Item {
                                 SettingsData.saveSettings();
                             }
                         }
-                    },
-                    Column {
-                        id: displayFormatColumn
-                        visible: !CompositorService.isMango
-                        spacing: Theme.spacingXS
-
-                        StyledText {
-                            text: I18n.tr("Config Format")
-                            font.pixelSize: Theme.fontSizeSmall
-                            color: Theme.surfaceVariantText
-                            horizontalAlignment: Text.AlignHCenter
-                            anchors.horizontalCenter: parent.horizontalCenter
-                        }
-
-                        VgsButtonGroup {
-                            id: displayFormatGroup
-                            model: [I18n.tr("Name"), I18n.tr("Model")]
-                            currentIndex: SettingsData.displayNameMode === "model" ? 1 : 0
-                            onSelectionChanged: (index, selected) => {
-                                if (!selected)
-                                    return;
-                                const newMode = index === 1 ? "model" : "system";
-                                DisplayConfigState.setOriginalDisplayNameMode(SettingsData.displayNameMode);
-                                SettingsData.displayNameMode = newMode;
-                            }
-
-                            Connections {
-                                target: SettingsData
-                                function onDisplayNameModeChanged() {
-                                    displayFormatGroup.currentIndex = SettingsData.displayNameMode === "model" ? 1 : 0;
-                                }
-                            }
-                        }
                     }
                 ]
+
+                SettingsChoiceRow {
+                    id: displayFormatGroup
+                    visible: !CompositorService.isMango
+                    text: I18n.tr("Config Format")
+                    dropdownWidth: 120
+                    model: [I18n.tr("Name"), I18n.tr("Model")]
+                    currentIndex: SettingsData.displayNameMode === "model" ? 1 : 0
+                    onSelectionChanged: (index, selected) => {
+                        if (!selected)
+                            return;
+                        const newMode = index === 1 ? "model" : "system";
+                        DisplayConfigState.setOriginalDisplayNameMode(SettingsData.displayNameMode);
+                        SettingsData.displayNameMode = newMode;
+                    }
+
+                    Connections {
+                        target: SettingsData
+                        function onDisplayNameModeChanged() {
+                            displayFormatGroup.currentIndex = SettingsData.displayNameMode === "model" ? 1 : 0;
+                        }
+                    }
+                }
 
                 Column {
                     id: monitorConfigSection

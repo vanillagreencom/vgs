@@ -44,13 +44,8 @@ Column {
             anchors.verticalCenter: parent.verticalCenter
             spacing: Theme.spacingS
 
-            StyledText {
-                text: I18n.tr("Graph Time Range")
-                font.pixelSize: Theme.fontSizeMedium
-                color: Theme.surfaceText
-            }
-
-            VgsButtonGroup {
+            SettingsChoiceRow {
+                text: I18n.tr("Graph History")
                 model: ["1m", "5m", "10m", "30m"]
                 currentIndex: {
                     switch (cfg.graphInterval ?? 60) {
@@ -66,10 +61,6 @@ Column {
                         return 0;
                     }
                 }
-                buttonHeight: 32
-                minButtonWidth: 48
-                textSize: Theme.fontSizeSmall
-                checkEnabled: false
                 onSelectionChanged: (index, selected) => {
                     if (!selected)
                         return;
@@ -274,20 +265,9 @@ Column {
             anchors.verticalCenter: parent.verticalCenter
             spacing: Theme.spacingM
 
-            Row {
-                width: parent.width
-                spacing: Theme.spacingM
-
-                StyledText {
-                    width: parent.width - processCountButtons.width - Theme.spacingM
+            SettingsChoiceRow {
+                id: processCountButtons
                     text: I18n.tr("Process Count")
-                    font.pixelSize: Theme.fontSizeMedium
-                    color: Theme.surfaceText
-                    anchors.verticalCenter: parent.verticalCenter
-                }
-
-                VgsButtonGroup {
-                    id: processCountButtons
                     model: ["3", "5", "10"]
                     currentIndex: {
                         switch (cfg.topProcessCount ?? 3) {
@@ -301,10 +281,6 @@ Column {
                             return 0;
                         }
                     }
-                    buttonHeight: 32
-                    minButtonWidth: 36
-                    textSize: Theme.fontSizeSmall
-                    checkEnabled: false
                     onSelectionChanged: (index, selected) => {
                         if (!selected)
                             return;
@@ -312,35 +288,18 @@ Column {
                         root.updateConfig("topProcessCount", values[index]);
                     }
                 }
-            }
 
-            Row {
-                width: parent.width
-                spacing: Theme.spacingM
-
-                StyledText {
-                    width: parent.width - sortByButtons.width - Theme.spacingM
+            SettingsChoiceRow {
+                id: sortByButtons
                     text: I18n.tr("Sort By")
-                    font.pixelSize: Theme.fontSizeMedium
-                    color: Theme.surfaceText
-                    anchors.verticalCenter: parent.verticalCenter
-                }
-
-                VgsButtonGroup {
-                    id: sortByButtons
                     model: ["CPU", "MEM"]
                     currentIndex: (cfg.topProcessSortBy ?? "cpu") === "cpu" ? 0 : 1
-                    buttonHeight: 32
-                    minButtonWidth: 48
-                    textSize: Theme.fontSizeSmall
-                    checkEnabled: false
                     onSelectionChanged: (index, selected) => {
                         if (!selected)
                             return;
                         root.updateConfig("topProcessSortBy", index === 0 ? "cpu" : "memory");
                     }
                 }
-            }
         }
     }
 

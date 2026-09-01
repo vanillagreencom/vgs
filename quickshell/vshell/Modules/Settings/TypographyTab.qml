@@ -279,7 +279,7 @@ Item {
                 settingKey: "textRenderType"
                 iconName: "text_format"
 
-                SettingsButtonGroupRow {
+                SettingsChoiceRow {
                     tab: "typography"
                     tags: ["text", "renderer", "native", "qt", "curve"]
                     settingKey: "textRenderType"
@@ -287,7 +287,6 @@ Item {
                     description: I18n.tr("Native uses platform FreeType rendering; Qt and Curve use GPU text paths")
                     model: [I18n.tr("Native"), I18n.tr("Qt"), I18n.tr("Curve")]
                     currentIndex: root.rendererIndex()
-                    minButtonWidth: parent.width < 480 ? 56 : 72
                     onSelectionChanged: (index, selected) => {
                         if (selected)
                             root.setRenderer(index);
@@ -296,7 +295,7 @@ Item {
 
                 SettingsDivider {}
 
-                SettingsButtonGroupRow {
+                SettingsChoiceRow {
                     tab: "typography"
                     tags: ["text", "render", "quality"]
                     settingKey: "textRenderQuality"
@@ -306,15 +305,13 @@ Item {
                     currentIndex: SettingsData.textRenderQuality
                     enabled: SettingsData.textRenderType !== SettingsData.TextRenderType.Native
                     opacity: enabled ? 1 : 0.45
-                    minButtonWidth: parent.width < 480 ? 40 : 52
-                    buttonPadding: parent.width < 480 ? Theme.spacingXS : Theme.spacingS
                     onSelectionChanged: (index, selected) => {
                         if (selected)
                             SettingsData.set("textRenderQuality", index);
                     }
                 }
 
-                SettingsButtonGroupRow {
+                SettingsChoiceRow {
                     tab: "typography"
                     tags: ["text", "hinting", "native", "freetype"]
                     settingKey: "textHintingPreference"
@@ -324,7 +321,6 @@ Item {
                     currentIndex: root.hintingIndex()
                     enabled: SettingsData.textRenderType === SettingsData.TextRenderType.Native
                     opacity: enabled ? 1 : 0.45
-                    minButtonWidth: parent.width < 480 ? 52 : 64
                     onSelectionChanged: (index, selected) => {
                         if (selected)
                             root.setHinting(index);
@@ -387,7 +383,7 @@ Item {
                     onSliderValueChanged: newValue => SettingsData.set("textLineHeight", newValue / 100)
                 }
 
-                SettingsButtonGroupRow {
+                SettingsChoiceRow {
                     tab: "typography"
                     tags: ["text", "line", "height", "mode"]
                     settingKey: "textLineHeightMode"

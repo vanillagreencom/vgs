@@ -34,7 +34,7 @@ All of these live in `Common/Theme.qml` unless noted.
 |-------|-----|-----|-------|
 | `maxSurfaceRadius` | 20 | 14 | Ceiling for window/surface radius |
 | `defaultContainerRadius` | 15 | 10 | Cards, popouts, modals |
-| `defaultControlRadius` | 10 | 7 | Buttons, inputs, chips, rows |
+| `defaultControlRadius` | 10 | 7 | Buttons, chips, rows |
 | `Appearance.rounding.small` | 8 | 6 | |
 | `Appearance.rounding.normal` | 12 | 8 | `StyledRect` default |
 | `Appearance.rounding.large` | 16 | 11 | |
@@ -46,20 +46,21 @@ files that consume `Theme.controlRadius` / `Theme.cornerRadius` /
 `grep -rlE 'Theme\.(controlRadius|cornerRadius)|Appearance\.rounding\.' quickshell/vshell | wc -l`
 rather than trusting the number here.
 
-## Borders (the shadcn signature)
+## Borders (quiet hairlines)
 
-Flatline is **border-forward**. Surfaces read as figure via a 1px hairline, not
-(only) a shadow. Existing tokens already model this; use them:
+Flatline is **fill-first**: contrast comes from fill/wash and typography; the 1px border, where present, defines the edge rather than the contrast:
 
-- `Theme.borderColor` — default hairline for cards/content surfaces.
-- `Theme.borderColorStrong` — emphasis / focused container edge.
+- `Theme.borderColor` — compact-card/content hairline and control resting edge; kept low,
+  so it reads as surface, not ring.
+- `Theme.borderColorStrong` — emphasis / focused edge: full `outline`, the one border that
+  may be visible.
 - `Theme.outlineMedium` / `outlineLight` — translucent variants for glass layers.
 
 New:
 
 - `Theme.focusRing` — accent ring color for keyboard focus (`primary` @ 0.55).
 - `Theme.focusRingWidth` — 2.
-- `Theme.hairline` — opaque 1px separator for lists/dividers (`outline` @ low alpha).
+- `Theme.separatorColor` — 1px separator for lists/dividers (`outline` blend @ low alpha).
 
 ## Motion
 
@@ -79,13 +80,14 @@ navigation/list surfaces, which use a hover/active background wash instead.
 
 ## Surfaces & buttons
 
-- **Primary button**: solid `primary` fill, `primaryText`, medium weight, 36–40px
-  height, `controlRadius`. Keyboard focus draws `focusRing`.
-- **Secondary button**: transparent fill, 1px `secondaryOutline` border, hover
-  wash — a shadcn "outline" button. (`variant: "secondary"`.)
+- **Primary button**: solid `buttonBg` fill, `buttonText`, medium weight, default 40px height, `controlRadius`; compact contexts may set 26–36px heights, and keyboard focus draws `focusRing`.
+- **Settings choice**: label on the left, dropdown on the right. Single-choice settings do not use segmented controls; true multi-select settings use checkbox options and report the selected count.
+- **Secondary button**: `buttonBg` text link, no fill/border, underline on hover.
+  Owning rows set spacing between actions; input-field accessories reserve space inside the shared underline; danger may override `textColor`.
 - **Ghost / nav row**: no border, transparent, subtle hover/active wash.
-- **Cards**: `surfaceContainer` (or content surface) + 1px `borderColor`,
-  `containerRadius`, minimal or no shadow inside the settings reading pane.
+- **Text input**: transparent with a 1px underline; idle text is dim, focused text brightens, and trailing actions sit inside the line.
+- **Cards**: `surfaceContainer` (or content surface) + `containerRadius`; large settings cards use fill only, while compact cards may use a quiet `borderColor` hairline.
+- **Row alignment**: shared row components own their height and vertically center mixed-height labels, icons, switches, and actions; callers do not add optical offsets.
 
 ## Settings layout
 
@@ -117,7 +119,7 @@ to a token so the wallpaper-dynamic palette drives everything:
 | Window / base | `Theme.background`, `Theme.surface` |
 | Card / container | `Theme.surfaceContainer`, `surfaceContainerHigh` |
 | Nested row/tile on a card | `Theme.elevatedRowColor` / `surfaceContainerHighest` |
-| Card border (hairline) | `Theme.borderColor` (emphasis: `borderColorStrong`) |
+| Compact card/control border | `Theme.borderColor` (emphasis: `borderColorStrong`) |
 | Divider / separator | `Theme.separatorColor` |
 | Primary text | `Theme.surfaceText` |
 | Secondary text | `Theme.surfaceTextMedium` (≈0.7) |
@@ -198,9 +200,9 @@ Use only the spacing scale: `spacingXXS` 2 / `XS` 4 / `S` 8 / `M` 12 / `L` 16 /
 ### 5. Radii & borders
 
 `containerRadius` (10) for cards/popouts/modals; `controlRadius` (7) for buttons/
-inputs/chips/tiles/rows; `width/2` (`Appearance.rounding.full`) **only** for true
-circles/pills (avatars, media transport, status dots). Border-forward: a card is
-`surfaceContainer*` + 1px `borderColor`, not a shadow alone.
+chips/tiles/rows; `width/2` (`Appearance.rounding.full`) **only** for true
+circles/pills (avatars, media transport, status dots). Fill-first: a card is
+`surfaceContainer*` + the fill step; the 1px `borderColor` hairline only defines the edge.
 
 ## Bold calibration (neutral surfaces, flat elevation, cards)
 
@@ -215,13 +217,11 @@ was pushed bolder. These are the knobs:
   keeps the theme's hue; 0.6+ read too grey / detached from the palette. This is
   the dial to turn if surfaces feel too colorful or too washed-out.
 - **Flatter elevation** — shadow alphas (`shadowMedium`/`shadowStrong`) and the
-  `elevationLevel1..5` alphas are cut ~40% so surfaces lean on borders, not
-  drop-shadows. Elevation is not removed (surfaces float over wallpaper) — just
+  `elevationLevel1..5` alphas are cut ~40% so surfaces lean on fill steps and
+  quiet edges, not drop-shadows. Elevation remains for wallpaper-backed surfaces — just
   quieted. Still user-tunable via `SettingsData.m3Elevation*`.
-- **Border-forward cards** — `SettingsCard`/`SettingsToggleCard`/
-  `SettingsSliderCard` carry a 1px `borderColor` hairline (the shadcn card
-  signature) over a fill kept a step above the reading pane, so cards read in
-  both glass and no-glass modes. Propagates to every settings card.
+- **Fill-only large cards** — `SettingsCard` has no resting border; its fill sits a
+  step above the reading pane. Compact toggle/slider cards keep the quiet hairline.
 - **Bolder titles** — `fontWeightSectionHeader` is `Font.Bold`.
 - **Card rhythm** — inter-card gap in settings tabs is `spacingXL` (24).
 
