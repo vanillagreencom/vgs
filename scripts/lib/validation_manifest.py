@@ -19,6 +19,7 @@ Library, not a check: no shebang, no `__main__`, never executed directly.
 from __future__ import annotations
 
 import re
+import shlex
 import subprocess
 from pathlib import Path
 
@@ -1014,6 +1015,238 @@ def ci_run_commands(ci: Path) -> str:
             if stripped and not stripped.startswith("#"):
                 lines.append(line)
     return "\n".join(lines)
+
+
+# Command position, for ci_runs below. `VAR=value` is a prefix and not yet the
+# command; a shell keyword hands command position to the word after it.
+_ASSIGNMENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
+_KEYWORDS = frozenset({"if", "then", "elif", "else", "while", "until", "do", "!", "time", "{"})
+# Operator tokens that END a command, so the next word starts one. Kept apart
+# from the redirections below because shlex hands back both as punctuation and
+# treating a redirection as a separator is fail-open: `: > <path>` truncates the
+# file and runs nothing, while reading `>` as a separator made <path> a command.
+_SEPARATORS = frozenset({";", ";;", "&", "&&", "|", "||", "(", ")"})
+_REDIRECTIONS = frozenset({"<", "<<", "<<-", "<<<", "<&", "<>", ">", ">>", ">|", ">&"})
+# `name()` and `name ()` open a function DEFINITION. The word before it is being
+# defined, not called, so a workflow that defines a function named after a lane
+# has still stopped running it.
+_DEFINITION = frozenset({"()", "("})
+# CONDITIONAL BODIES. A command inside one may not run at all, so it is not
+# coverage: `if false; then <path>; fi` and `true || <path>` both leave the lane
+# unexecuted. `then`/`do`/`case` open such a body and `fi`/`done`/`esac` close
+# it; `elif` returns to a CONDITION, which does run. The condition of an `if`
+# runs unconditionally, which is why `if` itself stays in _KEYWORDS above and
+# only `then` suppresses.
+_BODY_OPEN = frozenset({"then", "do", "case"})
+_BODY_CLOSE = frozenset({"fi", "done", "esac"})
+
+
+def _heredoc_delimiter(operand: str) -> tuple[str, bool]:
+    """The delimiter a `<<` operand names, and whether `<<-` tab stripping applies.
+
+    shlex hands back `<<` and `-EOF` for `<<-EOF`, so the dash arrives on the
+    operand. Quoting the delimiter changes expansion inside the body, never how
+    the terminator is matched, so it is unwrapped here and nowhere else.
+    """
+    tabs = operand.startswith("-")
+    return _unquote(operand[1:] if tabs else operand), tabs
+
+
+def _unquote(token: str) -> str:
+    """A token wrapped whole in one quote pair, unwrapped. `"scripts/x"` runs it."""
+    if len(token) >= 2 and token[0] == token[-1] and token[0] in "\"'":
+        return token[1:-1]
+    return token
+
+
+def _logical_lines(text: str) -> list[str]:
+    """Physical lines with backslash continuations joined.
+
+    The word after a continuation is an ARGUMENT of the command above it, not a
+    new command, and treating it as a command start is a fail-open.
+    """
+    lines: list[str] = []
+    pending = ""
+    for line in text.splitlines():
+        if line.endswith("\\"):
+            pending += line[:-1]
+            continue
+        lines.append(pending + line)
+        pending = ""
+    if pending:
+        lines.append(pending)
+    return lines
+
+
+def ci_runs(ci_text: str, path: str) -> bool:
+    """Whether ci.yml INVOKES `path`, rather than merely mentioning it.
+
+    `path in ci_text` was the first form of this question, and it answers yes to
+    an ARGUMENT and to a trailing comment: `echo scripts/foo.py` and
+    `scripts/bar.py  # replaces scripts/foo.py` both contain the path while CI
+    runs nothing of the sort. A workflow could stop running a lane and leave
+    every lockstep arm green, which is the false green those arms exist to
+    prevent. ci_run_commands already drops YAML comments and whole-line shell
+    comments; the shapes left over are the trailing comment and the argument.
+
+    TOKENIZED, NOT SPLIT. The first repair split each line on separator
+    characters, which is fail-open on a quoted one: `echo "( scripts/foo.py )"`
+    made the path the first word of a synthetic segment and read as an
+    invocation. shlex with `punctuation_chars` is quote-aware, so a separator
+    inside a string stays inside the token it belongs to.
+
+    A path counts only in COMMAND POSITION: the first word of a command, which
+    is the start of a logical line or whatever follows an operator token, after
+    any `VAR=value` prefixes and shell keywords. Heredoc bodies are skipped to
+    their delimiter, since a line there is data and not a command; backslash
+    continuations are joined for the same reason.
+
+    A line that cannot be tokenized — an unbalanced quote — is skipped rather
+    than guessed at, so it can never be shown to invoke anything. That direction
+    reports a problem instead of hiding one, which is the bias a predicate
+    written to remove a false green has to take.
+
+    THE BOUNDARY, and it is a boundary rather than a to-do list. This predicate
+    APPROXIMATES shell execution; it cannot decide it, and no amount of widening
+    will change that. Six review rounds each named a real construct and each
+    repair was correct, which is exactly why the limit has to be written down
+    instead of discovered a seventh time.
+
+    What it models: quoting, comments, redirections and their operands, heredoc
+    bodies and the shell's own terminator rule, backslash continuations,
+    function definitions, array-assignment context, short-circuit and
+    conditional branches, and command position after separators and keywords.
+
+    What it does NOT model, and will not: AND-OR recovery (`false && <path> ||
+    true` skips the path and the step still succeeds, and telling that apart
+    from `cd x && <path>` needs the left side's exit status), command
+    substitution, `eval`, aliases, functions defined elsewhere, sourced files,
+    `$@` and other expansions, and anything whose execution depends on a runtime
+    value. A step-level `if:` is invisible too, because ci_run_commands reads
+    `run:` strings and nothing around them — four steps in this repo's ci.yml
+    are gated on `harness_only` while being the real wiring for their lanes, so
+    requiring "runs on every successful path" one level up would report them as
+    uncovered on a healthy tree.
+
+    A PROOF THAT A LANE RAN NEEDS A DIFFERENT MECHANISM: CI declaring what it
+    executed, which a reader can check, rather than a reader inferring execution
+    from workflow text. Until that exists, this answers the question it can
+    answer — do the manifest and the workflow name the same checks — and a
+    construct it does not model is a reason to build that mechanism, NOT a
+    reason to widen this one.
+    """
+    heredoc: str | None = None
+    heredoc_tabs = False
+    # Block state spans logical lines, because `if` and `fi` do. ci_text
+    # concatenates every run: block, and a well-formed one returns the depth to
+    # zero at its end; a malformed one leaks SUPPRESSION into the next, which
+    # reports a problem rather than hiding one.
+    conditional = 0
+    for line in _logical_lines(ci_text):
+        if heredoc is not None:
+            # EXACTLY the delimiter, per the shell grammar. `.strip()` closed the
+            # body on a space-indented look-alike, and the real data lines after
+            # it were then read as commands. `<<-` permits leading TABS to be
+            # stripped and nothing else; `<<` permits nothing.
+            terminator = line.lstrip("\t") if heredoc_tabs else line
+            if terminator == heredoc:
+                heredoc = None
+            continue
+        # `||` runs its right side only when the left FAILED, so nothing after
+        # it on this line is guaranteed coverage.
+        #
+        # `&&` IS NOT CUT, and its worst case is stated rather than left to be
+        # found: a command after `&&` is COUNTED AS COVERED even where a later
+        # `||` recovers the list, so `false && <path> || true` reads as covered
+        # while the path never runs. That is known and deliberately unmodelled,
+        # not an oversight. Deciding it needs the left side's EXIT STATUS, which
+        # is runtime; the reviewer's own example is decidable only because its
+        # left side is the literal `false`, and a rule keyed on that literal
+        # would buy one spelling and be evaded by the next. The AND-OR list is
+        # therefore named in the boundary below as out of model.
+        short_circuit = False
+        lexer = shlex.shlex(line, punctuation_chars=True)
+        lexer.whitespace_split = True
+        lexer.commenters = "#"
+        try:
+            tokens = list(lexer)
+        except ValueError:
+            continue
+        found = False
+        start = True
+        operand = False
+        # `name=( word... )` is an ARRAY ASSIGNMENT. Its parens are not command
+        # separators and its elements are words, so a path listed there is never
+        # executed. Entered only after an assignment token, which errs toward
+        # suppression on the shapes shlex cannot tell apart.
+        array = 0
+        assigned = False
+        for index, token in enumerate(tokens):
+            # Recorded even when the invocation is found on this same line: the
+            # body still has to be skipped, so the scan finishes the line first.
+            # `<<` only. `<<<` is a herestring: its operand is a WORD, consumed
+            # as a redirection operand below, and it opens no body.
+            if token == "<<" and index + 1 < len(tokens):
+                heredoc, heredoc_tabs = _heredoc_delimiter(tokens[index + 1])
+            if token and all(character in lexer.punctuation_chars for character in token):
+                if token == "(" and (assigned or array):
+                    array += 1
+                    continue
+                if token == ")" and array:
+                    array -= 1
+                    continue
+                if token == "||":
+                    short_circuit = True
+                if token in _REDIRECTIONS:
+                    operand = True
+                elif token in _SEPARATORS:
+                    start = True
+                    operand = False
+                assigned = False
+                continue
+            if token in _BODY_OPEN:
+                conditional += 1
+                start = True
+                continue
+            if token in _BODY_CLOSE:
+                conditional = max(0, conditional - 1)
+                start = True
+                continue
+            if token == "elif":
+                conditional = max(0, conditional - 1)
+                start = True
+                continue
+            if operand:
+                # A redirection TARGET, which is written to and never executed.
+                operand = False
+                continue
+            if array:
+                # An array ELEMENT, which is data.
+                continue
+            # ABOVE the command-position guard, because an assignment is also an
+            # ARGUMENT: `declare -a x=(<path>)` reaches `x=` with the command
+            # already consumed, and missing it there was the array hole's second
+            # half.
+            if _ASSIGNMENT.match(token):
+                assigned = True
+                continue
+            if not start:
+                continue
+            if token in _KEYWORDS:
+                continue
+            if conditional or short_circuit:
+                # In a branch that may not run. Not coverage.
+                start = False
+                continue
+            assigned = False
+            following = tokens[index + 1 : index + 2]
+            defines = bool(following) and following[0] in _DEFINITION
+            if _unquote(token) == path and not defines:
+                found = True
+            start = False
+        if found:
+            return True
+    return False
 
 
 def documented_table(doc: Path, lead_in: str) -> set[str]:

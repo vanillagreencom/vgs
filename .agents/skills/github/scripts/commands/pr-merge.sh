@@ -1,43 +1,8 @@
 #!/bin/bash
-# Merge PR as bot account with safety checks
-# Usage: pr-merge <PR_NUMBER> [--check] [--force] [--auto] [--dry-run]
-#
-# Outcomes (distinct exit codes + messages):
-#   0   MERGED                 — merge completed immediately
-#   0   ALREADY MERGED         — PR was already merged; nothing attempted
-#   75  QUEUED / AUTO-MERGE     — merge queue entry or classic auto-merge is active;
-#                                 VOLATILE: a queue ejection disarms it silently,
-#                                 so the caller keeps watching until MERGED
-#   1   BLOCKED                — checks failed; no merge attempted, none queued
-#   1   CLOSED (not merged)    — PR is closed unmerged; nothing attempted
-#
-# A PR that has left OPEN is terminal and short-circuits before any check or
-# mutation: `mergeable` stays UNKNOWN forever once a PR is merged or closed, so
-# running the checks against it manufactures blockers that can never clear.
-#
-# Actionable unresolved review threads are a local hard gate: neither an
-# immediate merge nor `--auto` may mutate merge state while they remain. Only
-# the deliberately dangerous `--force` override skips this gate.
-#
-# `--auto` is idempotent for merge-queue repositories: a re-invocation on a PR
-# that is already enrolled reports QUEUED (75) from the authoritative post-call
-# snapshot, not BLOCKED, even though `gh pr merge --auto` exits nonzero when the
-# PR is already queued.
-# `--force` is deliberately different: it promises an immediate attempt, so a
-# nonzero merge mutation stays BLOCKED unless the exact head is now MERGED.
-# Auto-merge or a queue entry already active before the call is not success
-# proof for this mode.
-#
-# When BLOCKED, stderr distinguishes TRANSIENT issues (mergeable UNKNOWN,
-# ci pending — caller should `await-mergeable` and retry) from PERMANENT
-# issues (conflicts, ci_failed, changes_requested — caller must fix and re-push).
-# Still-running checks are emitted as ci_pending, not ci_failed.
-
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-# Source shared library for load_bot_token (also sets PROJECT_ROOT)
 # shellcheck disable=SC1091
 source "$SCRIPT_DIR/../lib/github-api.sh"
 # Issue prefixes that resolve on their own once GitHub finishes computing or
@@ -73,6 +38,8 @@ Options:
   --auto           If immediate merge is blocked, enable GitHub auto-merge
                    (will fire when CI + branch protection clear). Exits 75.
                    Never bypasses actionable unresolved review threads.
+  --expected-head SHA
+                   Bind GitHub's match-head merge guard to prepared SHA.
   --dry-run        Show what would happen without merging
 
 Modes:
@@ -81,11 +48,82 @@ Modes:
   --force          Deliberately skip all checks, including review threads
   --auto           Enable auto-merge when immediate merge is blocked
 
-Exit codes:
-  0    MERGED / ALREADY MERGED — merge completed now, or the PR was already merged
-  75   QUEUED / AUTO-MERGE     — merge queue entry or classic auto-merge is active
-                                 (volatile: an ejection disarms it silently — keep watching)
-  1    BLOCKED / CLOSED        — checks failed or the PR is closed unmerged; nothing queued
+Merge-mode exit codes:
+  0    MERGED PR #N
+       Merge completed immediately.
+  0    ALREADY MERGED PR #N <mergedAt>
+       The PR was merged before this call. Nothing was attempted.
+  75   QUEUED IN MERGE QUEUE PR #N
+       The required merge queue has an active entry.
+  75   AUTO-MERGE ENABLED PR #N
+       Classic auto-merge is armed until protection clears.
+  1    BLOCKED PR #N
+       The requested operation failed; a pre-existing queue entry or auto-merge request may remain active.
+  1    CLOSED (not merged) PR #N
+       The PR is closed unmerged. Nothing was attempted.
+
+--check exit:
+  --check exits 0 after any valid readiness JSON, including can_merge=false for
+  blocked or CLOSED. Argument or dispatch failures before JSON remain nonzero.
+
+Exit 75 is volatile:
+  A queue ejection can disarm merge state. Launch the prepared .agents/skills/orch/scripts/merge-queue-watch before returning; it binds repository, PR, expected head, and watch generation.
+  Its one-shot worker writes a durable verdict and claims one recovery action. Route verdicts through README.md "Exit 75 recovery"; the review-gate reducer still reports fleet attention.
+  Re-arm only through github.sh pr-merge <N> --auto after that route.
+  await-mergeable is not the lifecycle watcher; it stops when GitHub computes state.
+
+Terminal and mutation rules:
+  After github.sh router setup, MERGED or CLOSED short-circuits pr-merge safety
+  checks, bot-token load, and merge-state mutation; UNKNOWN continues. --check reports state.
+
+  Every gh pr merge invocation is exact-head guarded by --match-head-commit; a changed head is BLOCKED.
+  Queue membership comes from GraphQL isInMergeQueue and mergeQueueEntry. An
+  OPEN PR with an active queue entry exits 75 even when autoMergeRequest is
+  absent. An OPEN PR with no queue or auto-merge proof fails closed. The
+  --delete-branch cleanup after MERGED is best-effort, not merge-state mutation.
+
+Review-thread gate:
+  Unresolved, non-outdated review threads make can_merge false and block both
+  immediate merge and --auto. A failed or malformed thread lookup also blocks.
+  This is narrower than required_conversation_resolution, which requires every
+  conversation resolved and does not exclude outdated threads.
+
+  The gate is policy, not mechanism. It applies only through pr-merge. A raw
+  gh pr merge call or the GitHub UI Merge button bypasses it.
+
+Force rules:
+  --force is the only deliberate override. It skips every check, including the
+  thread gate. It is immediate-only and cannot be combined with --auto. A
+  failed force mutation remains BLOCKED unless the exact-head post-state is
+  MERGED; a pre-existing queue entry or auto-merge request is not success.
+
+--check JSON:
+  stdout is one object with these fields:
+    can_merge   boolean readiness result
+    issues      blocking issue strings
+    warnings    non-blocking issue strings
+    mergeable   MERGEABLE, CONFLICTING, or UNKNOWN
+    review      GitHub review decision
+    transient   true only when every blocker can clear by waiting
+    state       OPEN, MERGED, CLOSED, or UNKNOWN
+    merged_at   merge timestamp, or an empty string
+    head_runs   run IDs used for CI classification
+    checks      raw check rollup read by the classification
+
+  stderr carries mergeable, blocked, merged, or closed, followed by
+  head-run: <ids> when CI runs were classified. can_merge=false with an empty
+  issues array means the PR is terminal; inspect state instead of treating it
+  as a blocker to repair.
+
+  transient=true requires every issue prefix to be unknown:, ci_pending:,
+  ci_unconfigured:, or ci_fetch_failed:. A ci_failed: issue is permanent, as
+  are conflicts and changes_requested. Running checks use ci_pending: while
+  failed or cancelled checks use ci_failed:.
+
+  head_runs contains the authoritative workflow run plus runs referenced by
+  custom commit statuses. checks is the same snapshot consumed by
+  ci-classify-refusal <N>, so cause:, fail:, and superseded: lines cannot race
+  a second fetch.
 
 Examples:
   github.sh pr-merge 42 --check          # Check only, JSON output
@@ -168,18 +206,6 @@ exit_terminal_state() {
     esac
 }
 
-# Run safety checks, output JSON
-# JSON shape:
-#   {can_merge, issues, warnings, mergeable, review,
-#    transient: bool,     # true when only TRANSIENT issues are blocking
-#    state,               # PR lifecycle state: OPEN, MERGED, CLOSED, UNKNOWN
-#    merged_at,           # merge timestamp, "" unless state is MERGED
-#    head_runs,           # run ids the CI classification was scoped to
-#                         # (classify_checks_rollup); [] when none or no fetch
-#    checks}              # the raw rollup this classification read — the
-#                         # ONE snapshot ci-classify-refusal re-scopes
-#                         # instead of refetching; [] on fetch failure or
-#                         # no configured checks
 run_checks() {
     local pr_num="$1"
     local can_merge=true
@@ -203,7 +229,6 @@ run_checks() {
         return 0
     fi
 
-    # 1. Check mergeable status
     local mergeable
     mergeable=$(gh pr view "$pr_num" --json mergeable --jq '.mergeable' 2>/dev/null || echo "UNKNOWN")
     if [ "$mergeable" = "MERGEABLE" ]; then
@@ -274,9 +299,7 @@ run_checks() {
         fi
     fi
 
-    # 4. Check review status
-    # reviewDecision is only populated with branch protection rules requiring approvals.
-    # Fall back to checking latestReviews for both APPROVED and CHANGES_REQUESTED states.
+    # reviewDecision requires branch protection; latestReviews covers both terminal review states.
     local review="" has_approved_review=false has_changes_requested=false
     local review_json
     if ! review_json=$(json_or_default '{}' object gh pr view "$pr_num" --json reviewDecision,latestReviews); then
@@ -295,7 +318,6 @@ run_checks() {
         fi
     fi
 
-    # Output JSON
     local issues_json warnings_json
     issues_json=$(printf '%s\n' "${issues[@]:-}" | jq -R -s -c 'split("\n") | map(select(. != ""))')
     warnings_json=$(printf '%s\n' "${warnings[@]:-}" | jq -R -s -c 'split("\n") | map(select(. != ""))')
@@ -322,7 +344,6 @@ run_checks() {
         '{can_merge: $can_merge, issues: $issues, warnings: $warnings, mergeable: $mergeable, review: $review, transient: $transient, state: $state, merged_at: $merged_at, head_runs: $head_runs, checks: $checks}'
 }
 
-# Print BLOCKED breakdown to stderr, distinguishing transient vs permanent.
 print_blocked() {
     local check_result="$1"
     local pr_num="$2"
@@ -361,10 +382,6 @@ gh_with_token() {
     fi
 }
 
-# Exit 75 is not a resting state: a merge-group failure ejects the entry, a
-# failed protection check drops classic auto-merge, and GitHub disarms the PR
-# silently either way — it can sit open, gate-clear, and unwatched. Every 75
-# exit says so and names runnable watchers.
 volatile_note() {
     local pr_num="$1" repo="${GH_REPO:-}" remote resolved reducer
     # pr-watch.sh requires GH_REPO; print the reducer with the repository it
@@ -405,16 +422,12 @@ volatile_note() {
         */*) ;;
         *) repo="" ;;
     esac
-    echo "  NOTE: queue/auto-merge state is VOLATILE — an ejection or a failed protection check disarms it silently; keep watching until MERGED" >&2
+    echo "  NOTE: queue/auto-merge state is VOLATILE — an ejection or a failed protection check disarms it silently; follow orch merge-pr.md § 5 for PR #$pr_num" >&2
     local reducer="GH_REPO=$repo .agents/skills/review-gate/scripts/pr-watch.sh (disarmed lines)"
     [ -n "$repo" ] || reducer=".agents/skills/review-gate/scripts/pr-watch.sh with GH_REPO set to the repository (not resolvable locally here)"
-    echo "  Watch, re-running until MERGED (neither call is durable — queue-wait exits at its poll budget, pr-watch.sh is one pass), with the orch and review-gate skills installed: .agents/skills/orch/scripts/queue-wait $pr_num (re-arm on ejected/disarmed/not_queued after repairing what the cause names — a failed merge-group/check is a CI repair first; dequeued = triage the late findings first; closed/unknown = stop) or $reducer; re-arm with .agents/skills/github/scripts/github.sh pr-merge $pr_num --auto" >&2
+    echo "  Launch the prepared .agents/skills/orch/scripts/merge-queue-watch once; route its claimed action by orch merge-pr.md § 5 step 1, and never re-arm an unrecognized verdict. The fleet reducer is $reducer; repair what the cause names before re-arming with .agents/skills/github/scripts/github.sh pr-merge $pr_num --auto" >&2
 }
 
-# Read one authoritative post-mutation snapshot. `gh pr view --json` does not
-# expose merge-queue membership, so required-queue repositories need GraphQL.
-# Fall back to the classic `gh pr view` fields when the queue query itself is
-# unavailable; queue membership remains false in that fail-closed fallback.
 post_merge_snapshot() {
     local pr_num="$1"
     local auth_token="$2"
@@ -465,7 +478,7 @@ post_merge_snapshot() {
 
 main() {
     local pr_num="" method="--squash" delete_branch=true
-    local check_only=false force=false dry_run=false auto=false
+    local check_only=false force=false dry_run=false auto=false supplied_head=""
 
     while [ $# -gt 0 ]; do
         case "$1" in
@@ -501,6 +514,7 @@ main() {
             auto=true
             shift
             ;;
+        --expected-head) supplied_head="${2:-}"; shift 2 ;;
         --dry-run)
             dry_run=true
             shift
@@ -529,9 +543,10 @@ main() {
         echo '{"error": "PR number required"}' >&2
         exit 1
     fi
+    if [ -n "$supplied_head" ] && ! [[ "$supplied_head" =~ ^[0-9a-fA-F]{40}$ ]]; then
+        echo "Error: --expected-head must be a 40-character commit SHA" >&2; exit 1
+    fi
 
-    # Check-only mode: JSON on stdout stays the machine interface; the verdict
-    # and run scope (shared check_verdict_lines) go to stderr for jq pipelines.
     if [ "$check_only" = true ]; then
         local check_json
         check_json=$(run_checks "$pr_num")
@@ -540,10 +555,6 @@ main() {
         exit 0
     fi
 
-    # Terminal-state short-circuit, ahead of every mode's checks, auth, and
-    # mutation. Retrying a merge on a PR that already left OPEN can only
-    # produce false diagnostics, and there is nothing left to mutate.
-    # An unreadable state is not terminal — fall through to the normal path.
     if load_pr_state_json "$pr_num"; then
         exit_terminal_state \
             "$(jq -r '.state // ""' <<<"$PR_STATE_JSON")" \
@@ -554,7 +565,6 @@ main() {
     local token
     token=$(load_bot_token)
 
-    # Unless --force, run checks
     local check_result=""
     if [ "$force" = false ]; then
         local can_merge checked_state checked_merged_at
@@ -577,15 +587,12 @@ main() {
             local has_review_thread_gate
             has_review_thread_gate=$(echo "$check_result" | jq '[.issues[] | select(test("^(unresolved_threads|review_threads_fetch_failed):"))] | length > 0')
 
-            # If --auto, fall through to enable auto-merge below.
-            # Otherwise, exit BLOCKED with breakdown.
             if [ "$auto" != true ] || [ "$has_review_thread_gate" = "true" ]; then
                 print_blocked "$check_result" "$pr_num"
                 exit 1
             fi
         fi
 
-        # Show warnings even on success
         local warnings
         warnings=$(echo "$check_result" | jq -r '.warnings | length')
         if [ "$warnings" -gt 0 ]; then
@@ -607,15 +614,16 @@ main() {
 
     # Resolve and guard the exact head before mutating merge state. This prevents
     # a review/CI race from queuing or merging a newer, unverified commit.
-    local expected_head
-    if ! expected_head=$(gh_with_token "$token" pr view "$pr_num" --json headRefOid --jq '.headRefOid' 2>/dev/null) || [ -z "$expected_head" ]; then
+    local expected_head current_head
+    if ! current_head=$(gh_with_token "$token" pr view "$pr_num" --json headRefOid --jq '.headRefOid' 2>/dev/null) || [ -z "$current_head" ]; then
         echo "BLOCKED PR #$pr_num — could not resolve exact head SHA for guarded merge" >&2
         exit 1
     fi
+    expected_head="${supplied_head:-$current_head}"
+    if [ "$current_head" != "$expected_head" ]; then
+        echo "BLOCKED PR #$pr_num — prepared head changed before merge attempt (expected=$expected_head, actual=$current_head)" >&2; exit 1
+    fi
 
-    # Build merge command. --auto enables GitHub's auto-merge — it queues the
-    # merge to fire when CI + branch protection clear, returning success now.
-    # Without --auto, gh attempts an immediate merge and fails if blocked.
     local -a cmd=(pr merge "$pr_num" "$method" --match-head-commit "$expected_head")
     [ "$auto" = true ] && cmd+=(--auto)
 
@@ -627,20 +635,8 @@ main() {
         merge_output=$(gh_with_token "" "${cmd[@]}" 2>&1) || merge_exit=$?
     fi
 
-    # Determine outcome from one authenticated post-call snapshot, taken
-    # REGARDLESS of gh's exit code. gh's exit status is not authoritative for
-    # merge-queue repositories:
-    #   - a required queue can return SUCCESS while the PR stays OPEN with a
-    #     null autoMergeRequest, and
-    #   - a re-invocation of `--auto` on an ALREADY-QUEUED PR returns NONZERO
-    #     even though GitHub still reports it queued, isInMergeQueue: true
-    #    .
-    # Only the GraphQL snapshot (state + mergeQueueEntry) is authoritative, so
-    # take it first and classify from it. This deliberately does not gate on
-    # gh's "already queued" stderr wording — that text is a version- and
-    # API-dependent GraphQL error and cannot be pinned reliably. The snapshot
-    # decides, and it is fail-closed: a genuine failure leaves no active queue
-    # entry.
+    # The post-call snapshot decides queue enrollment. gh can exit either way,
+    # and its already-queued stderr is version-dependent.
     local post_snapshot post_state post_auto post_head post_in_queue post_queue_entry post_queue_state
     post_snapshot=$(post_merge_snapshot "$pr_num" "$token")
     post_state=$(jq -r '.state' <<<"$post_snapshot")

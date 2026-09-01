@@ -12,7 +12,11 @@ TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 
 # Hermetic: a leaked setting would mask every case below.
-unset SIZE_RATCHET_THRESHOLD SIZE_RATCHET_CLASSES SIZE_RATCHET_BASELINE SIZE_RATCHET_EXCLUDES SIZE_RATCHET_SETTINGS_FILE 2>/dev/null || true
+unset SIZE_RATCHET_THRESHOLD SIZE_RATCHET_CLASSES SIZE_RATCHET_DEFAULT_CLASSES SIZE_RATCHET_FROZEN_CLASSES SIZE_RATCHET_BASELINE SIZE_RATCHET_EXCLUDES SIZE_RATCHET_SETTINGS_FILE RATCHET_RAISE 2>/dev/null || true
+# The shipped class list and frozen list are policy, pinned by
+# shipped-defaults.test.sh. Every fixture here declares its own thresholds,
+# so both start empty and a case that needs one sets it.
+export SIZE_RATCHET_DEFAULT_CLASSES="" SIZE_RATCHET_FROZEN_CLASSES=""
 
 PASS=0
 FAIL=0
@@ -20,6 +24,9 @@ ok() { PASS=$((PASS + 1)); printf '  ok    %s\n' "$1"; }
 bad() { FAIL=$((FAIL + 1)); printf '  FAIL  %s\n        %s\n' "$1" "${2:-}"; }
 
 REMEDY="split at a concept seam (RATCHET_RAISE=1 raises the row only when the added lines are the fix with no seam, or fragments of one concept are merged back into one file)"
+# The remedy for a verdict whose path carries NO row yet. Both such verdicts
+# take it, frozen or not: the declaration admits a first row in every class.
+BOOT="split at a concept seam, or declare the row with RATCHET_RAISE=1 — a first row for a path HEAD's baseline does not carry is a bootstrap, admitted in every class"
 
 new_repo() { # NAME — fresh fixture repo in $R
   R="$TMP/$1"
@@ -40,6 +47,14 @@ run_sr() { # [args...] — run in $R at threshold 10; sets OUT and RC
   OUT="$(cd "$R" && SIZE_RATCHET_THRESHOLD=10 "$SR" "$@" 2>&1)" || RC=$?
 }
 
+# The same run with `*.test.*` frozen, for the cases about a class whose rows
+# never rise. RAISE=1 declares the raise the way a commit does.
+run_frozen() { # [args...]
+  OUT=""
+  RC=0
+  OUT="$(cd "$R" && SIZE_RATCHET_THRESHOLD=10 SIZE_RATCHET_FROZEN_CLASSES='*.test.*' RATCHET_RAISE="${RAISE:-}" "$SR" "$@" 2>&1)" || RC=$?
+}
+
 echo "=== control: a clean repo passes, including a file exactly AT the threshold ==="
 new_repo clean
 mkfile a.txt 5
@@ -58,17 +73,35 @@ run_sr
 [ "$RC" -eq 1 ] && case "$OUT" in *"new offender: big.txt — 11 lines > threshold 10"*) true ;; *) false ;; esac \
   && ok "one line over the threshold fails as a new offender, naming file/count/threshold" \
   || bad "one line over the threshold fails as a new offender" "rc=$RC out=$OUT"
-case "$OUT" in *"$REMEDY"*) ok "new-offender diagnostic carries the remedy verbatim" ;; *) bad "new-offender diagnostic carries the remedy verbatim" "$OUT" ;; esac
+case "$OUT" in *"$BOOT"*) ok "new-offender diagnostic carries the bootstrap remedy verbatim" ;; *) bad "new-offender diagnostic carries the bootstrap remedy verbatim" "$OUT" ;; esac
 
-echo "=== a test offender gets the split remedy alone ==="
+echo "=== the freeze refuses a raise of an EXISTING row, and a new offender has none ==="
 new_repo testoff
 mkfile x.test.txt 11
 git -C "$R" add -A
-run_sr
+run_frozen
 [ "$RC" -eq 1 ] && case "$OUT" in *"new offender: x.test.txt"*) true ;; *) false ;; esac \
-  && ok "a test path over the threshold is still a new offender" \
-  || bad "a test path over the threshold is still a new offender" "rc=$RC out=$OUT"
-case "$OUT" in *RATCHET_RAISE*) bad "a test offender is never offered a raise" "$OUT" ;; *) ok "a test offender is never offered a raise" ;; esac
+  && ok "a frozen path over the threshold is still a new offender" \
+  || bad "a frozen path over the threshold is still a new offender" "rc=$RC out=$OUT"
+case "$OUT" in *"$BOOT"*) ok "and is offered the bootstrap: no row exists yet, so the freeze has none to refuse" ;; *) bad "a frozen new offender is offered the bootstrap" "$OUT" ;; esac
+# The control: once the row EXISTS, the same frozen path is offered the split
+# alone. That is the case the freeze speaks to, and the only one.
+mkdir -p "$R/tools"
+printf 'x.test.txt\t11\n' >"$R/tools/size-ratchet-baseline.tsv"
+git -C "$R" add -A
+git -C "$R" commit -q -m row
+mkfile x.test.txt 15
+git -C "$R" add -A
+run_frozen
+# Both halves: the string it IS given, and the absence of either wording that
+# carries RATCHET_RAISE. Without the positive half an empty remedy passes.
+if [ "$RC" -eq 1 ] && case "$OUT" in *"baselined file grew: x.test.txt"*) true ;; *) false ;; esac \
+  && case "$OUT" in *"remedy: split at a concept seam (a frozen class never raises an existing row)"*) true ;; *) false ;; esac \
+  && case "$OUT" in *RATCHET_RAISE*) false ;; *) true ;; esac; then
+  ok "control: a frozen baselined file that grew is told to split, and offered no raise"
+else
+  bad "control: a frozen row refuses the raise" "rc=$RC out=$OUT"
+fi
 
 echo "=== a baseline row at the current count freezes the offender ==="
 new_repo frozen
@@ -76,6 +109,9 @@ mkfile big.txt 15
 mkdir -p "$R/tools"
 printf 'big.txt\t15\n' >"$R/tools/size-ratchet-baseline.tsv"
 git -C "$R" add -A
+# HEAD carries the row from here on, so a growth verdict below is a RAISE the
+# remedy speaks to rather than a first row nothing has frozen yet.
+git -C "$R" commit -q -m row
 run_sr
 [ "$RC" -eq 0 ] && ok "baselined offender at exactly its row passes" || bad "baselined offender at exactly its row passes" "rc=$RC out=$OUT"
 
@@ -234,7 +270,7 @@ git -C "$R" add -A
 run_sr --baseline custom-baseline.tsv
 [ "$RC" -eq 0 ] && ok "--baseline points the check at a custom path" || bad "--baseline points the check at a custom path" "rc=$RC out=$OUT"
 
-echo "=== a test row is frozen where HEAD froze it, never added or raised ==="
+echo "=== a row a change adds or raises is declared, and a frozen one is refused ==="
 BASE="tools/size-ratchet-baseline.tsv"
 commit_baselined() { # NAME PATH LINES ROWLINES — fixture whose HEAD carries the row
   new_repo "$1"
@@ -245,45 +281,98 @@ commit_baselined() { # NAME PATH LINES ROWLINES — fixture whose HEAD carries t
   git -C "$R" commit -q -m "seed: a baselined offender"
 }
 commit_baselined testhead x.test.txt 15 15
-run_sr
-[ "$RC" -eq 0 ] && ok "a test row already at HEAD is grandfathered" \
-  || bad "a test row already at HEAD is grandfathered" "rc=$RC out=$OUT"
+run_frozen
+[ "$RC" -eq 0 ] && ok "a row already at HEAD is grandfathered" \
+  || bad "a row already at HEAD is grandfathered" "rc=$RC out=$OUT"
 mkfile x.test.txt 20
 printf 'x.test.txt\t20\n' >"$R/$BASE"
 git -C "$R" add -A
-run_sr
-[ "$RC" -eq 1 ] && case "$OUT" in *"test baseline row raised: x.test.txt — row 15 -> 20 lines"*) true ;; *) false ;; esac \
-  && ok "raising a test row fails, naming both counts" \
-  || bad "raising a test row fails, naming both counts" "rc=$RC out=$OUT"
-case "$OUT" in *"a test is never raised"*) ok "the raise diagnostic offers the split remedy alone" ;; *) bad "the raise diagnostic offers the split remedy alone" "$OUT" ;; esac
+run_frozen
+[ "$RC" -eq 1 ] && case "$OUT" in *"frozen baseline row raised: x.test.txt — row 15 -> 20 lines"*) true ;; *) false ;; esac \
+  && ok "raising a frozen row fails, naming both counts" \
+  || bad "raising a frozen row fails, naming both counts" "rc=$RC out=$OUT"
+case "$OUT" in *"refuses a raise whatever RATCHET_RAISE says"*) ok "the raise diagnostic says the declaration will not help" ;; *) bad "the raise diagnostic says the declaration will not help" "$OUT" ;; esac
+RAISE=1 run_frozen
+[ "$RC" -eq 1 ] && ok "and the declaration really does not help — a frozen raise is refused with it" \
+  || bad "a frozen raise is refused even when declared" "rc=$RC out=$OUT"
 # HEAD carries a baseline, but no row for this path: adding one is the same
-# refusal routed around.
+# threshold routed around, and the declaration is what carries it.
 commit_baselined testnew other.txt 15 15
 mkfile y.test.txt 15
 printf 'other.txt\t15\ny.test.txt\t15\n' >"$R/$BASE"
 git -C "$R" add -A
-run_sr
-[ "$RC" -eq 1 ] && case "$OUT" in *"test baseline row added: y.test.txt — 15 lines > threshold 10"*) true ;; *) false ;; esac \
-  && ok "adding a test row fails, naming the count and threshold" \
-  || bad "adding a test row fails, naming the count and threshold" "rc=$RC out=$OUT"
-# The control that keeps this gate test-class only.
+run_frozen
+[ "$RC" -eq 1 ] && case "$OUT" in *"baseline row added: y.test.txt — a first row, at 15 lines (threshold 10"*) true ;; *) false ;; esac \
+  && ok "adding a row fails undeclared, naming the count and threshold" \
+  || bad "adding a row fails undeclared, naming the count and threshold" "rc=$RC out=$OUT"
+# The remedy on THIS verdict must name the declaration, because the
+# declaration is what carries it — even here, in a frozen class.
+case "$OUT" in *"remedy: split at a concept seam, or declare the row with RATCHET_RAISE=1"*) ok "and its remedy names the declaration a bootstrap row needs" ;; *) bad "the added-row remedy names RATCHET_RAISE=1" "$OUT" ;; esac
+# A new path still gets its bootstrap row: the frozen list refuses raises, not
+# first rows.
+RAISE=1 run_frozen
+[ "$RC" -eq 0 ] && ok "a declared bootstrap row passes even in a frozen class" \
+  || bad "a declared bootstrap row passes even in a frozen class" "rc=$RC out=$OUT"
+# The control that the frozen list is doing anything at all: the SAME path, a
+# row later, RAISED rather than bootstrapped, with the same declaration.
+git -C "$R" commit -q -m "the bootstrap row, now HEAD's"
+mkfile y.test.txt 20
+printf 'other.txt\t15\ny.test.txt\t20\n' >"$R/$BASE"
+git -C "$R" add -A
+RAISE=1 run_frozen
+[ "$RC" -eq 1 ] && case "$OUT" in *"frozen baseline row raised: y.test.txt — row 15 -> 20 lines"*) true ;; *) false ;; esac \
+  && ok "control: raising that same frozen row is refused under the same declaration" \
+  || bad "control: a frozen RAISE is refused where the bootstrap passed" "rc=$RC out=$OUT"
+# And the remedy each verdict prints is the one that would work.
+case "$OUT" in *"remedy: split at a concept seam (a frozen class never raises an existing row)"*) ok "and its remedy is the split, not a declaration that will not help" ;; *) bad "the frozen raise remedy is the split alone" "$OUT" ;; esac
+# The control that this gate is not frozen-class only: an ordinary row is
+# refused undeclared and passes declared.
 commit_baselined nontest plain.txt 15 15
 mkfile plain.txt 20
 printf 'plain.txt\t20\n' >"$R/$BASE"
 git -C "$R" add -A
-run_sr
-[ "$RC" -eq 0 ] && ok "control: raising a NON-test row is not this gate's business" \
-  || bad "control: raising a NON-test row is not this gate's business" "rc=$RC out=$OUT"
-# A row for a test at or under its threshold is stale, and stale is the one
+run_frozen
+[ "$RC" -eq 1 ] && case "$OUT" in *"baseline row raised: plain.txt — row 15 -> 20 lines"*) true ;; *) false ;; esac \
+  && ok "raising an unfrozen row is refused undeclared" \
+  || bad "raising an unfrozen row is refused undeclared" "rc=$RC out=$OUT"
+RAISE=1 run_frozen
+[ "$RC" -eq 0 ] && ok "control: the declaration carries an unfrozen raise" \
+  || bad "control: the declaration carries an unfrozen raise" "rc=$RC out=$OUT"
+# A row for a file at or under its threshold is stale, and stale is the one
 # thing to say about it.
 commit_baselined stale z.test.txt 15 15
 mkfile z.test.txt 5
 git -C "$R" add -A
-run_sr
+run_frozen
 [ "$RC" -eq 1 ] && case "$OUT" in *"stale baseline row: z.test.txt"*) true ;; *) false ;; esac \
-  && ok "a test row under the threshold is stale" \
-  || bad "a test row under the threshold is stale" "rc=$RC out=$OUT"
-case "$OUT" in *"test baseline row"*) bad "one root cause is reported once" "$OUT" ;; *) ok "one root cause is reported once" ;; esac
+  && ok "a row under the threshold is stale" \
+  || bad "a row under the threshold is stale" "rc=$RC out=$OUT"
+case "$OUT" in *"row raised"* | *"row added"*) bad "one root cause is reported once" "$OUT" ;; *) ok "one root cause is reported once" ;; esac
+# A hand edit is the only way to a bigger number, and a hand edit is where a
+# file with no final newline comes from — so the LAST row is exactly the one a
+# dropped incomplete line would stop judging, silently and with exit 0.
+new_repo nofinalnewline
+mkdir -p "$R/tools"
+mkfile aaa.rs 15
+mkfile zzz.rs 20
+printf 'aaa.rs\t15\nzzz.rs\t15\n' >"$R/$BASE"
+git -C "$R" add -A
+git -C "$R" commit -q -m "seed: two baselined offenders"
+printf 'aaa.rs\t15\nzzz.rs\t20' >"$R/$BASE"
+git -C "$R" add -A
+run_sr
+[ "$RC" -eq 1 ] && case "$OUT" in *"baseline row raised: zzz.rs — row 15 -> 20 lines"*) true ;; *) false ;; esac \
+  && ok "a raise on the last row is judged even with no trailing newline" \
+  || bad "the last row of a newline-less baseline is judged" "rc=$RC out=$OUT"
+# The control: the identical baseline WITH the newline reports the same thing,
+# so the case above is about the missing byte and nothing else.
+printf 'aaa.rs\t15\nzzz.rs\t20\n' >"$R/$BASE"
+git -C "$R" add -A
+run_sr
+[ "$RC" -eq 1 ] && case "$OUT" in *"baseline row raised: zzz.rs — row 15 -> 20 lines"*) true ;; *) false ;; esac \
+  && ok "control: the same rows with the newline give the same verdict" \
+  || bad "control: the newline-terminated baseline gives the same verdict" "rc=$RC out=$OUT"
+
 # A placeholder committed empty is not a row set: judging against it would
 # call every row of the first real baseline one this change added.
 new_repo emptyhead
@@ -295,9 +384,256 @@ git -C "$R" commit -q -m "seed: an empty baseline placeholder"
 mkfile w.test.txt 15
 printf 'w.test.txt\t15\n' >"$R/$BASE"
 git -C "$R" add -A
-run_sr
-[ "$RC" -eq 0 ] && ok "a zero-row HEAD baseline is no baseline, so the first test row passes" \
-  || bad "a zero-row HEAD baseline is no baseline, so the first test row passes" "rc=$RC out=$OUT"
+run_frozen
+[ "$RC" -eq 0 ] && ok "a zero-row HEAD baseline is no baseline, so the first row passes undeclared" \
+  || bad "a zero-row HEAD baseline is no baseline, so the first row passes undeclared" "rc=$RC out=$OUT"
+
+echo "=== a commit that MOVES the baseline is refused, in both classes ==="
+# The raise gate reads HEAD at the CONFIGURED path. Move that path and HEAD
+# carries nothing there, so a raised row — a frozen one included — would land
+# with nothing to compare it against. The move is refused instead.
+settings_baseline() { # PATH — the fixture's committed settings name it
+  printf '[env]\nSIZE_RATCHET_BASELINE = "%s"\n' "$1" >"$R/kendex.settings.toml"
+}
+relocating_repo() { # NAME PATH LINES ROWLINES — HEAD's rows at tools/a.tsv
+  new_repo "$1"
+  mkdir -p "$R/tools"
+  mkfile "$2" "$3"
+  printf '%s\t%s\n' "$2" "$4" >"$R/tools/a.tsv"
+  settings_baseline tools/a.tsv
+  git -C "$R" add -A
+  git -C "$R" commit -q -m "seed: a baselined offender, baseline at tools/a.tsv"
+}
+relocate() { # PATH ROWLINES — the rows move to tools/b.tsv at ROWLINES
+  printf '%s\t%s\n' "$1" "$2" >"$R/tools/b.tsv"
+  rm -f "$R/tools/a.tsv"
+  settings_baseline tools/b.tsv
+  git -C "$R" add -A
+}
+relocating_repo relocfrozen x.test.txt 15 15
+relocate x.test.txt 15
+run_frozen
+[ "$RC" -eq 0 ] && ok "control: a move that carries the rows unchanged passes" \
+  || bad "a move that carries the rows unchanged passes" "rc=$RC out=$OUT"
+mkfile x.test.txt 20
+relocate x.test.txt 20
+RAISE=1 run_frozen
+[ "$RC" -eq 1 ] && case "$OUT" in *"baseline moved and rewritten: tools/a.tsv -> tools/b.tsv"*) true ;; *) false ;; esac \
+  && ok "a frozen row raised across the move is refused, declaration and all" \
+  || bad "a frozen raise across a move is refused" "rc=$RC out=$OUT"
+case "$OUT" in *"move the baseline in a commit that changes nothing else"*) ok "and the refusal says what to do instead" ;; *) bad "the move refusal names its remedy" "$OUT" ;; esac
+# The open class takes the same refusal, and this is where it differs from an
+# in-place raise: there the declaration carries it, across a move nothing does.
+relocating_repo relocopen plain.txt 15 15
+mkfile plain.txt 20
+relocate plain.txt 20
+run_frozen
+[ "$RC" -eq 1 ] && case "$OUT" in *"baseline moved and rewritten: tools/a.tsv -> tools/b.tsv"*) true ;; *) false ;; esac \
+  && ok "an unfrozen row raised across the move is refused undeclared" \
+  || bad "an unfrozen raise across a move is refused undeclared" "rc=$RC out=$OUT"
+RAISE=1 run_frozen
+[ "$RC" -eq 1 ] && ok "and the declaration does not carry it, where in place it would" \
+  || bad "the declaration does not carry a raise across a move" "rc=$RC out=$OUT"
+# A `git mv` is the same move, and rename detection must not hide it. Four
+# rows with one raised keeps the two files similar enough that git pairs them,
+# which is exactly when a rename-detecting listing reports no removal at all.
+new_repo relocgitmv
+mkdir -p "$R/tools"
+for f in m p1 p2 p3; do mkfile "$f.test.txt" 15; done
+printf 'm.test.txt\t15\np1.test.txt\t15\np2.test.txt\t15\np3.test.txt\t15\n' >"$R/tools/a.tsv"
+settings_baseline tools/a.tsv
+git -C "$R" add -A
+git -C "$R" commit -q -m "seed: four baselined offenders at tools/a.tsv"
+mkfile m.test.txt 20
+git -C "$R" mv tools/a.tsv tools/b.tsv
+printf 'm.test.txt\t20\np1.test.txt\t15\np2.test.txt\t15\np3.test.txt\t15\n' >"$R/tools/b.tsv"
+settings_baseline tools/b.tsv
+git -C "$R" add -A
+RAISE=1 run_frozen
+[ "$RC" -eq 1 ] && case "$OUT" in *"baseline moved and rewritten: tools/a.tsv -> tools/b.tsv"*) true ;; *) false ;; esac \
+  && ok "a git mv of the baseline is the same move, not a rename that hides it" \
+  || bad "a git mv of the baseline is the same move" "rc=$RC out=$OUT"
+# The staged lane reads the index, and a commit is what it judges.
+relocating_repo relocstaged s.test.txt 15 15
+mkfile s.test.txt 20
+relocate s.test.txt 20
+RAISE=1 run_frozen --staged
+[ "$RC" -eq 1 ] && case "$OUT" in *"baseline moved and rewritten: tools/a.tsv -> tools/b.tsv"*) true ;; *) false ;; esac \
+  && ok "the staged lane refuses the same move" \
+  || bad "the staged lane refuses the same move" "rc=$RC out=$OUT"
+# Rows at the destination are not proof they were the baseline HEAD used. A
+# b.tsv that already existed carries its own, and comparing against those is
+# how a raise reads as grandfathered while HEAD's real row said 15.
+new_repo relocpreexisting
+mkdir -p "$R/tools"
+mkfile x.test.txt 15
+printf 'x.test.txt\t15\n' >"$R/tools/a.tsv"
+printf 'x.test.txt\t20\n' >"$R/tools/b.tsv"
+settings_baseline tools/a.tsv
+git -C "$R" add -A
+git -C "$R" commit -q -m "seed: the baseline at tools/a.tsv, a tools/b.tsv already beside it"
+mkfile x.test.txt 20
+rm -f "$R/tools/a.tsv"
+settings_baseline tools/b.tsv
+git -C "$R" add -A
+RAISE=1 run_frozen --staged
+[ "$RC" -eq 1 ] && case "$OUT" in *"baseline moved and rewritten: tools/a.tsv -> tools/b.tsv"*) true ;; *) false ;; esac \
+  && ok "a destination that already carried rows is still a move, not a grandfathered row" \
+  || bad "a destination that already carried rows is still a move" "rc=$RC out=$OUT"
+# Emptying the old baseline in place is the same move, and reports as a
+# modification rather than a removal.
+new_repo relocemptied
+mkdir -p "$R/tools"
+mkfile y.test.txt 15
+printf 'y.test.txt\t15\n' >"$R/tools/a.tsv"
+settings_baseline tools/a.tsv
+git -C "$R" add -A
+git -C "$R" commit -q -m "seed: the baseline at tools/a.tsv"
+mkfile y.test.txt 20
+: >"$R/tools/a.tsv"
+printf 'y.test.txt\t20\n' >"$R/tools/b.tsv"
+settings_baseline tools/b.tsv
+git -C "$R" add -A
+RAISE=1 run_frozen --staged
+[ "$RC" -eq 1 ] && case "$OUT" in *"baseline moved and rewritten: tools/a.tsv -> tools/b.tsv"*) true ;; *) false ;; esac \
+  && ok "emptying the old baseline in place is a move, not a modification to ignore" \
+  || bad "emptying the old baseline in place is a move" "rc=$RC out=$OUT"
+# Replacing the old baseline with a symlink to the NEW one leaves a path that
+# reads through as rows, which is how the move looked untouched. A symlink is
+# not the row set that was there, whatever it points at. Both modes are run on
+# one tree, because the defect was that they disagreed: the index records mode
+# 120000 and answered no already, the worktree followed the link.
+new_repo relocsymlinkover
+mkdir -p "$R/tools"
+mkfile x.test.txt 15
+printf 'x.test.txt\t15\n' >"$R/tools/a.tsv"
+settings_baseline tools/a.tsv
+git -C "$R" add -A
+git -C "$R" commit -q -m "seed: the baseline at tools/a.tsv"
+mkfile x.test.txt 20
+printf 'x.test.txt\t20\n' >"$R/tools/b.tsv"
+rm -f "$R/tools/a.tsv"
+ln -s b.tsv "$R/tools/a.tsv"
+settings_baseline tools/b.tsv
+git -C "$R" add -A
+RAISE=1 run_frozen
+WORKTREE_RC="$RC"
+[ "$RC" -eq 1 ] && case "$OUT" in *"baseline moved and rewritten: tools/a.tsv -> tools/b.tsv"*) true ;; *) false ;; esac \
+  && ok "a symlink over the old baseline is not the row set that was there" \
+  || bad "a symlink over the old baseline is not the row set that was there" "rc=$RC out=$OUT"
+RAISE=1 run_frozen --staged
+[ "$RC" -eq 1 ] && case "$OUT" in *"baseline moved and rewritten: tools/a.tsv -> tools/b.tsv"*) true ;; *) false ;; esac \
+  && ok "and the staged lane says the same of the same tree" \
+  || bad "the staged lane refuses the symlinked move" "rc=$RC out=$OUT"
+[ "$WORKTREE_RC" -eq "$RC" ] \
+  && ok "control: the two modes agree on that tree, which is the whole finding" \
+  || bad "the two modes agree on the symlinked move" "worktree=$WORKTREE_RC staged=$RC"
+
+# …and the predicate that keeps the wider list honest: a row-shaped file whose
+# numbers move is still a row set, so an ordinary edit of one is not a move.
+new_repo rowshapededit
+mkdir -p "$R/tools"
+mkfile e.test.txt 15
+printf 'e.test.txt\t15\n' >"$R/$BASE"
+printf 'counts/thing\t3\n' >"$R/data.tsv"
+git -C "$R" add -A
+git -C "$R" commit -q -m "seed: a baseline, and a row-shaped file that is not one"
+printf 'counts/thing\t4\n' >"$R/data.tsv"
+git -C "$R" add -A
+run_frozen
+[ "$RC" -eq 0 ] && ok "control: editing a row-shaped file leaves a row set, so it is no move" \
+  || bad "control: editing a row-shaped file is no move" "rc=$RC out=$OUT"
+
+# git spells a non-ASCII path C-quoted by default, so a listing read as text
+# hands the probe `"tools/\303\251.tsv"` and the moved baseline reads as absent.
+new_repo relocquoted
+mkdir -p "$R/tools"
+mkfile x.test.txt 15
+printf 'x.test.txt\t15\n' >"$R/tools/é.tsv"
+settings_baseline "tools/é.tsv"
+git -C "$R" add -A
+git -C "$R" commit -q -m "seed: a baseline at a path git would quote"
+mkfile x.test.txt 20
+printf 'x.test.txt\t20\n' >"$R/tools/b.tsv"
+rm -f "$R/tools/é.tsv"
+settings_baseline tools/b.tsv
+git -C "$R" add -A
+RAISE=1 run_frozen --staged
+[ "$RC" -eq 1 ] && case "$OUT" in *"baseline moved and rewritten: tools/é.tsv -> tools/b.tsv"*) true ;; *) false ;; esac \
+  && ok "a baseline at a path git quotes is still seen leaving" \
+  || bad "a baseline at a path git quotes is seen leaving" "rc=$RC out=$OUT"
+# The sharper shape: a path may hold a NEWLINE, which is what a listing split on
+# newlines — or one translating NULs into them — turns into two paths that HEAD
+# carries no row set at. Only NUL delimits a path safely.
+new_repo relocnewline
+mkdir -p "$R/tools"
+mkfile x.test.txt 15
+NLPATH="$(printf 'tools/a\nb.tsv')"
+printf 'x.test.txt\t15\n' >"$R/$NLPATH"
+git -C "$R" add -A
+git -C "$R" commit -q -m "seed: a row set at a path holding a newline"
+mkfile x.test.txt 20
+printf 'x.test.txt\t20\n' >"$R/tools/b.tsv"
+rm -f "$R/$NLPATH"
+settings_baseline tools/b.tsv
+git -C "$R" add -A
+RAISE=1 run_frozen
+[ "$RC" -eq 1 ] && case "$OUT" in *"baseline moved and rewritten"*"-> tools/b.tsv"*) true ;; *) false ;; esac \
+  && ok "a baseline at a path holding a newline is still seen leaving" \
+  || bad "a baseline at a path holding a newline is seen leaving" "rc=$RC out=$OUT"
+
+# A removed file that is not a row set is not a moved baseline: the check reads
+# the row shape, so an ordinary deletion beside a first baseline stays a
+# bootstrap.
+new_repo notabaseline
+mkdir -p "$R/tools"
+mkfile n.test.txt 5
+printf 'some prose, not a row\n' >"$R/notes.txt"
+git -C "$R" add -A
+git -C "$R" commit -q -m "seed: no baseline, one ordinary file"
+mkfile n.test.txt 15
+printf 'n.test.txt\t15\n' >"$R/tools/b.tsv"
+rm -f "$R/notes.txt"
+settings_baseline tools/b.tsv
+git -C "$R" add -A
+run_frozen
+[ "$RC" -eq 0 ] && ok "a removed file that is not a row set is not a moved baseline" \
+  || bad "a removed file that is not a row set is not a moved baseline" "rc=$RC out=$OUT"
+
+echo "=== and the three bootstraps still pass: none of them removes a row set ==="
+# Each legitimately leaves HEAD with no rows at the configured path, and each
+# is what refusing on that emptiness alone would break.
+new_repo bootunborn
+mkdir -p "$R/tools"
+mkfile u.test.txt 15
+printf 'u.test.txt\t15\n' >"$R/tools/b.tsv"
+settings_baseline tools/b.tsv
+git -C "$R" add -A
+run_frozen
+[ "$RC" -eq 0 ] && ok "an unborn HEAD bootstraps a first baseline at a configured path" \
+  || bad "an unborn HEAD bootstraps a first baseline" "rc=$RC out=$OUT"
+new_repo bootintroduced
+mkfile v.test.txt 5
+git -C "$R" add -A
+git -C "$R" commit -q -m "seed: a repo with no baseline at all"
+mkdir -p "$R/tools"
+mkfile v.test.txt 15
+printf 'v.test.txt\t15\n' >"$R/tools/b.tsv"
+settings_baseline tools/b.tsv
+git -C "$R" add -A
+run_frozen
+[ "$RC" -eq 0 ] && ok "a baseline this change introduces bootstraps, path and all" \
+  || bad "a baseline this change introduces bootstraps" "rc=$RC out=$OUT"
+relocating_repo bootplaceholder w.test.txt 5 5
+: >"$R/tools/a.tsv"
+git -C "$R" add -A
+git -C "$R" commit -q -m "the baseline, emptied to a placeholder"
+mkfile w.test.txt 15
+relocate w.test.txt 15
+run_frozen
+[ "$RC" -eq 0 ] && ok "a HEAD baseline committed empty is no row set, wherever the path moves" \
+  || bad "an empty HEAD baseline is no row set across a relocation" "rc=$RC out=$OUT"
+case "$OUT" in *"HEAD carries no baseline rows, so added and raised rows were not judged"*) ok "and a bootstrap still says the check had no reference" ;; *) bad "a bootstrap still reports that nothing was judged" "$OUT" ;; esac
 
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

@@ -4,7 +4,6 @@
     ".opencode/instructions/kendex-hook-block-repo-copy.md",
     ".opencode/instructions/kendex-hook-block-unsafe-rm.md",
     ".opencode/instructions/kendex-hook-block-bare-cd.md",
-    ".opencode/instructions/kendex-hook-post-edit-lint.md",
     ".opencode/instructions/kendex-hook-pre-commit-check.md"
   ],
   "permission": {

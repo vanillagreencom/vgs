@@ -54,6 +54,14 @@ Attention kinds:
                      tracking and names no issue; only a later Fixed in
                      <sha>, Declined: <reason>, or Tracked: <issue> reply
                      clears it. Needs the predicate (evaluate mode only)
+  unreasoned-decline a thread whose newest disposition reply declines and
+                     names no mechanism — an empty reason, or nothing but
+                     non-reason tokens (frozen, cap, round N, tests pass,
+                     out of scope, pre-existing and the like). Read by
+                     shape, so a decline written without the colon counts
+                     too. Cleared by a reply that states the passing state
+                     or the false premise. Needs the predicate (evaluate
+                     mode only)
   gate-stale         the predicate and the gate context's newest row
                      disagree, in either mismatch direction — the writer
                      has not converged (event missed, cron slipped). With
@@ -229,6 +237,16 @@ heal() { # pr, head — one bounded writer dispatch ATTEMPT per invocation
   fi
 }
 
+
+# A merge-enabling green gate over a finding that should have withdrawn it.
+# Report and heal are one call at every site: reporting alone leaves the green
+# gate for the cron floor, healing alone leaves the reader nothing. $queued is
+# the loop's own suffix, WITHDRAWAL_WHY the one reason three sites give.
+stale_gate() { # pr, head, why
+  emit "$1" "$2" gate-stale "$3$queued"
+  heal "$1" "$2"
+}
+WITHDRAWAL_WHY="threads are open but the newest '$GATE_CONTEXT' row is success — the writer has not converged the withdrawal"
 
 read_gate_state() { # pr, head — sets gate_state; returns 1 after emitting an error
   # Gate context's NEWEST row (list endpoint, newest-first — the same
@@ -455,13 +473,12 @@ for number in $pr_numbers; do
     read_gate_state "$number" "$head" || continue
     stale_green_reported=0
     if [ "$THREADS_TERM" != "off" ] && [ "$GATE_MODE" != "off" ] && [ "$gate_state" = "success" ]; then
-      emit "$number" "$head" gate-stale "threads are open but the newest '$GATE_CONTEXT' row is success — the writer has not converged the withdrawal$queued"
-      heal "$number" "$head"
+      stale_gate "$number" "$head" "$WITHDRAWAL_WHY"
       stale_green_reported=1
     fi
     # One line PER FINDING: open threads must not suppress a standing
-    # objection (or, under off, the disarmed nudge) — evaluation proceeds
-    # and the predicate's duplicate threads-open verdict dedupes below.
+    # objection (or, under off, the disarmed nudge) — the predicate's
+    # duplicate threads-open verdict dedupes below.
   else
     threads_reported=0
     stale_green_reported=0
@@ -488,7 +505,7 @@ for number in $pr_numbers; do
     # The writer validates this same interface; an unknown or empty verdict
     # from a zero-exit predicate is a broken reducer, never a healthy PR.
     case "$verdict" in
-      approved|awaiting|threads-open|changes-requested|untracked-claim) ;;
+      approved|awaiting|threads-open|changes-requested|untracked-claim|unreasoned-decline) ;;
       *)
         emit "$number" "$head" error "predicate produced no recognizable verdict (broken output)"
         errored=1
@@ -514,8 +531,15 @@ for number in $pr_numbers; do
       emit "$number" "$head" untracked-claim "$detail$queued"
       attention=1
       if [ "$gate_state" = "success" ]; then
-        emit "$number" "$head" gate-stale "an unanchored tracking claim but the newest '$GATE_CONTEXT' row is success — the writer has not converged$queued"
-        heal "$number" "$head"
+        stale_gate "$number" "$head" "an unanchored tracking claim but the newest '$GATE_CONTEXT' row is success — the writer has not converged"
+      fi
+      continue
+      ;;
+    unreasoned-decline)
+      emit "$number" "$head" unreasoned-decline "$detail$queued"
+      attention=1
+      if [ "$gate_state" = "success" ]; then
+        stale_gate "$number" "$head" "a decline naming no mechanism but the newest '$GATE_CONTEXT' row is success — the writer has not converged"
       fi
       continue
       ;;
@@ -527,24 +551,20 @@ for number in $pr_numbers; do
       # merge-enabling green gate unhealed until the cron floor.
       if [ "$threads_reported" = "1" ]; then
         if [ "$stale_green_reported" = "0" ] && [ "$THREADS_TERM" != "off" ] && [ "$gate_state" = "success" ]; then
-          emit "$number" "$head" gate-stale "threads are open but the newest '$GATE_CONTEXT' row is success — the writer has not converged the withdrawal$queued"
-          heal "$number" "$head"
+          stale_gate "$number" "$head" "$WITHDRAWAL_WHY"
         fi
         continue
       fi
       # Direct count was zero but the predicate saw threads (paging race /
       # mid-read resolution) — the predicate fails closed, so surface it,
-      # WITH the same stale-green companion as the direct path (this arm
-      # only exists under enforced threads): a merge-enabling green gate
-      # over the raced-in thread must heal, not wait for the cron floor.
+      # WITH the same stale-green companion as the direct path: a
+      # merge-enabling green gate over the raced-in thread must heal.
       emit "$number" "$head" threads-open "$detail$queued"
       attention=1
-      # THREADS_TERM guard is belt-and-braces here: the predicate never
-      # returns threads-open under off today, but a predicate/config
+      # THREADS_TERM guard is belt-and-braces: a predicate/config
       # inconsistency must not become false stale alerts + dispatch churn.
       if [ "$THREADS_TERM" != "off" ] && [ "$GATE_MODE" != "off" ] && [ "$gate_state" = "success" ]; then
-        emit "$number" "$head" gate-stale "threads are open but the newest '$GATE_CONTEXT' row is success — the writer has not converged the withdrawal$queued"
-        heal "$number" "$head"
+        stale_gate "$number" "$head" "$WITHDRAWAL_WHY"
       fi
       continue
       ;;
@@ -552,8 +572,7 @@ for number in $pr_numbers; do
       emit "$number" "$head" changes-requested "$detail$queued"
       attention=1
       if [ "$gate_state" = "success" ]; then
-        emit "$number" "$head" gate-stale "a standing objection but the newest '$GATE_CONTEXT' row is success — the writer has not converged the withdrawal$queued"
-        heal "$number" "$head"
+        stale_gate "$number" "$head" "a standing objection but the newest '$GATE_CONTEXT' row is success — the writer has not converged the withdrawal"
       fi
       continue
       ;;
@@ -649,18 +668,16 @@ for number in $pr_numbers; do
   case "$verdict" in
     approved)
       if [ "$gate_state" != "success" ]; then
-        emit "$number" "$head" gate-stale "predicate says approved but the newest '$GATE_CONTEXT' row is $gate_state — the writer has not converged$queued"
         attention=1
-        heal "$number" "$head"
+        stale_gate "$number" "$head" "predicate says approved but the newest '$GATE_CONTEXT' row is $gate_state — the writer has not converged"
       fi
       ;;
     awaiting)
       # The INVERSE mismatch is the dangerous one: evidence withdrawn but
       # the gate still green (merge-enabling). Stale success heals too.
       if [ "$gate_state" = "success" ]; then
-        emit "$number" "$head" gate-stale "predicate says awaiting but the newest '$GATE_CONTEXT' row is still success — withdrawn evidence left a merge-enabling gate$queued"
         attention=1
-        heal "$number" "$head"
+        stale_gate "$number" "$head" "predicate says awaiting but the newest '$GATE_CONTEXT' row is still success — withdrawn evidence left a merge-enabling gate"
       fi
       # Drafts are not awaiting REVIEW — they are awaiting readiness: the
       # silence clock skips them (the gate-mismatch check above still

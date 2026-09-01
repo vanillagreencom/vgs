@@ -43,6 +43,36 @@ _SPEC = importlib.util.spec_from_file_location(
 check = importlib.util.module_from_spec(_SPEC)
 _SPEC.loader.exec_module(check)
 
+# The stand-in entry for an EMPTY HISTORICAL_SECTIONS, imported rather than
+# restated: `scripts/test-section-pointers.py` owns it, drives the same two
+# staleness arms in-process, and a second literal here would drift the day one
+# of them is reworded. The table ships empty because KEN-839 deleted
+# check-doc-growth.py, this repo's last citer of a removed section.
+_UNIT_SPEC = importlib.util.spec_from_file_location(
+    "test_section_pointers", HERE / "test-section-pointers.py"
+)
+_unit = importlib.util.module_from_spec(_UNIT_SPEC)
+_UNIT_SPEC.loader.exec_module(_unit)
+FIXTURE_HISTORICAL = _unit.FIXTURE_HISTORICAL
+# The declaration the copied guard carries, patched in run_guard when the
+# shipped table is empty. Spelled out so a rename fails the run rather than
+# silently skipping the patch.
+EMPTY_TABLE = "HISTORICAL_SECTIONS: dict[tuple[str, str, str], str] = {}\n"
+# READ ONCE, BEFORE THE INSTALL BELOW, because it is what decides whether the
+# copied guard needs patching too — after the install the in-process table is
+# never empty and that question can no longer be asked.
+SHIPPED_HISTORICAL = dict(check.HISTORICAL_SECTIONS)
+if not SHIPPED_HISTORICAL:
+    # end_to_end_controls() calls check.audit() in-process on the same trees the
+    # subprocess cases use, so the table this module reads has to be the one
+    # those trees were built from, or every clean tree reads as a dead pointer.
+    check.HISTORICAL_SECTIONS = dict(FIXTURE_HISTORICAL)
+
+
+def historical_entries() -> dict[tuple[str, str, str], str]:
+    """The entries every tree below is built from: shipped, else the fixture."""
+    return dict(check.HISTORICAL_SECTIONS)
+
 
 # A tree the guard must pass end to end: every SWEEP_ANCHOR present with
 # headings, every GRAMMAR_SPELLINGS arm exercised, and the HISTORICAL_SECTIONS
@@ -87,7 +117,7 @@ def clean_tree(*, with_pointers: bool = True) -> dict[str, bytes | str]:
             f"and D001 {SECTION_MARK} Live section, by decision id\n\n"
             f"{reached}"
         )
-    for (citer, target, name), _reason in check.HISTORICAL_SECTIONS.items():
+    for (citer, target, name), _reason in historical_entries().items():
         tree.setdefault(citer, "")
         tree[citer] = f'{tree[citer]}# recorded: `{target}` {SECTION_MARK} "{name}" gone\n'
     for rel in check.FIXTURE_FILES:
@@ -136,7 +166,7 @@ def end_to_end_controls() -> list[str]:
     # the one SWEEP_ANCHOR clean_tree does not cite — a CITED anchor does not
     # isolate, since the pointer arm answers first with "has no such heading".
     exemption_unused = dict(clean)
-    for citer, _target, _name in check.HISTORICAL_SECTIONS:
+    for citer, _target, _name in historical_entries():
         exemption_unused[citer] = "# nothing is cited here\n"
     # The anchor no pointer in clean_tree names, by PATH OR BASENAME — the first
     # attempt matched on path alone and picked one cited by basename, so the
@@ -462,6 +492,20 @@ def run_guard(
         # does not sweep its own source: these files carry real pointers into
         # this repo's docs, none of which exist in a fixture tree.
         shutil.copytree(HERE, root / "scripts", dirs_exist_ok=True)
+        # AN EMPTY SHIPPED TABLE IS PATCHED, because every tree above cites the
+        # section its entry exempts: with no entry the guard reads those
+        # citations as DEAD POINTERS and each case fails on the wrong arm. The
+        # copy gets the same fixture entry the trees were built from, and is
+        # left alone whenever the shipped table has entries of its own.
+        if not SHIPPED_HISTORICAL:
+            copied = root / "scripts" / "check-section-pointers.py"
+            source = copied.read_text(encoding="utf-8")
+            patched = source.replace(
+                EMPTY_TABLE, f"HISTORICAL_SECTIONS = {FIXTURE_HISTORICAL!r}\n", 1
+            )
+            if patched == source:
+                return -1, "the empty HISTORICAL_SECTIONS declaration was not found to patch"
+            copied.write_text(patched, encoding="utf-8")
         # AND THE REGISTER BESIDE THEM, untracked for the same reason. OWNED_ROOTS
         # is read from `kendex.toml`, so the fixture repo needs this repo's own
         # copy for the carve-out under test to be the one the trees are built

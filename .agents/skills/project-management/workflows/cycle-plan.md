@@ -4,6 +4,12 @@ Generate a cycle plan, get the user's approval on what ships, and apply it.
 
 ## 1. Generate the Plan
 
+This workflow mutates project state, so it reconciles before anything reads the cache:
+
+```bash
+.agents/skills/linear/scripts/linear.sh sync --reconcile
+```
+
 1. **Delegate** to a one-shot `[TPM]` sub-agent:
 
    <delegation_format>
@@ -85,7 +91,7 @@ Ask: `Approve plan` | `Modify` | `Cancel`. `Modify` takes free-text changes, adj
 .agents/skills/linear/scripts/linear.sh cache labels list --format=safe
 ```
 
-Preserve unrelated labels and replace only the action's target category unless it says `replace_all_labels: true`. Unknown labels, parent/group labels, missing required categories, or exclusivity violations halt before mutation.
+Preserve unrelated labels and replace only the action's target category unless it says `replace_all_labels: true`. Any § Validation failure there halts before mutation.
 
 ### 4.2 Create the Cycle
 

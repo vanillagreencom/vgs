@@ -30,8 +30,8 @@ Invoke through your AI coding harness (`/orch <command>`, `/skill:orch <command>
 ## Setup
 
 1. Install the required skills: `github`, `worktree`, `dev`, `reviewer`, `decider`, `project-management`. Add `linear` for Linear workflows. `second-opinion` (pre-PR local review) and `review-gate` (multi-PR watching) are optional — orch checks for them and works without them.
-2. Install `jq`, `bash` 4+, and `flock`.
-3. Put non-secret settings in `kendex.settings.toml` under `[env]` and secrets in `.env.local`. `kendex.settings.toml.example` ships every orch key with its default and a comment explaining it.
+2. Install `jq`, `bash` 3.2, and `flock`.
+3. Put non-secret settings in `kendex.settings.toml` under `[env]` and secrets in `.env.local`. The keys a project sets are the Configuration table below, with the lane keys' detail in `lanes --help` and `open-terminal --help`; this skill's `kendex.settings.toml.example` comments the ones worth changing first. Orch marks none of them `# required`, so installing it writes nothing into your settings file.
 
 ## Configuration
 
@@ -40,13 +40,15 @@ Invoke through your AI coding harness (`/orch <command>`, `/skill:orch <command>
 | `ORCH_STATE_DIR` | State-file directory (the `--state-dir` flag wins when both are set) | `tmp` |
 | `GH_ISSUE_PATTERN` | Regex for issue IDs in branch names (matched case-insensitively, then canonicalized: `issue-N` lowercase, Linear-style uppercase) | `([A-Z]+-[0-9]+\|issue-[0-9]+)` |
 | `CI_FIX_MAX_CYCLES` | Max automated ci-fix cycles per PR submission or merge recovery | `6` |
-| `REVIEW_MAX_CYCLES` | Max re-review cycles per issue in review-pr § 4; `workflow-state set … rereview_panel` refuses once `cycles` is past it | `4` |
+| `REVIEW_MAX_CYCLES` | Max internal re-review cycles per issue in review-pr § 4; the `rereview_panel` write raises `rereview_cycles` and refuses at it, so the number configured is the number of re-entries allowed. Nothing else spends it — § 7 QA re-checks write `qa_recheck_panel`, § 2 verification passes write `verification_panel`, and fix rounds tally in `cycles` | `4` |
+| `REVIEW_MAX_EXTERNAL_ROUNDS` | Max external review rounds on an open PR. review-pr-comments § 6.3 is the only writer of `pr_comment_review.iterations`; § 6.1 and submit-pr § 4's Restart check read it. At or past the cap, findings get dispositions and no fix push, and the wait does not restart on its own, except for a defect the diff itself introduces or arms | `4` |
 | `REVIEWER_SLOT_BUDGET` | The runtime's total concurrent agent-session budget, counting the primary session; `0` = unlimited. On Codex, set it to the cap `spawn-adapter slots` reports | `0` |
 | `ORCH_DECISION_MODE` | `ask` presents decision points; `auto-recommended` executes the recommended option and logs `auto-selected: [option] — [reason]` in workflow-state `auto_decisions`. Review findings disposition is by rule in EVERY mode — no mode presents a selection menu over findings. The always-ask set in [SKILL.md § The Cycle](SKILL.md#the-cycle) applies in every mode | `ask` |
 | `ORCH_MERGE_AUTONOMY` | `auto` merges without asking once every merge gate is green; `ask` presents the merge decision. A `MERGE_READY = false` state never auto-merges | `ask` |
 | `ORCH_OVERSEER_LANES` | Max concurrent lanes `oversee` keeps in flight | `3` |
 | `QA_PERF_PATHS` | Space-separated path globs whose modification adds the `needs-perf-test` QA signal in `workflows/review-pr.md` § 5. Empty means the diff scan never raises it | empty |
 | `RECONCILE_STALE_HOURS` | Hours before an In Progress / In Review item counts as started-stale in `reconcile-work-items` sweeps | `24` |
+| `WORKTREE_CLI` | Path to the worktree CLI `open-terminal` drives; empty resolves the installed worktree skill's `scripts/worktree` | *(resolved)* |
 | Review-gate settings | `REVIEW_GATE_MODE`, `PR_REVIEW_GATE`, `PR_REVIEW_CHECK`, `PR_REVIEW_QUORUM`, `PR_REVIEW_ON_TIMEOUT`, `PR_REVIEW_NUDGE*`, `PR_REVIEW_WAIT_SECS` — [references/gates.md](references/gates.md) | — |
 | Lane settings | `ORCH_LANE_DIRS`, `ORCH_LANE_ALIASES`, `ORCH_LANE_MAX_PCT`, `ORCH_TMUX_VERIFY_SECS` — `lanes --help`, `open-terminal --help` | — |
 

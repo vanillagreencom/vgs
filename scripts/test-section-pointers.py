@@ -388,18 +388,44 @@ def collection_controls() -> list[str]:
     return failures
 
 
-def exemption_controls() -> list[str]:
-    """Both staleness directions, driven through the real HISTORICAL_SECTIONS.
+# The entry these arms drive when the shipped table has none. KEN-839 deleted
+# check-doc-growth.py, which was the last file in this repo citing a removed
+# section, so HISTORICAL_SECTIONS ships empty — and an empty table drives
+# NEITHER staleness direction, which is a check that did not run rather than a
+# clean one. `scripts/test-section-pointers-e2e.py` installs this same entry in
+# the guard it copies into a fixture repo, importing it from here so the two
+# cannot drift.
+FIXTURE_HISTORICAL: dict[tuple[str, str, str], str] = {
+    ("docs/upstream/recorded.md", "AGENTS.md", "Retired section"): (
+        "fixture entry: the shipped table is empty, and both staleness arms have "
+        "to be driven by something real enough to exercise the matching rule"
+    ),
+}
 
-    A synthetic table would pass on an entry whose wording drifted out of the
-    shape the check matches, which is the failure this arm exists to report.
+
+def exemption_controls() -> list[str]:
+    """Both staleness directions, driven through HISTORICAL_SECTIONS.
+
+    THE REAL TABLE WHENEVER IT HAS ENTRIES. A synthetic copy would pass on an
+    entry whose wording drifted out of the shape the check matches, which is the
+    failure this arm exists to report. It ships empty today, so FIXTURE_HISTORICAL
+    stands in for the run — the arms still execute, and they go straight back to
+    driving the shipped entries the day this repo records another removed
+    section.
     """
     failures: list[str] = []
-    if not check.HISTORICAL_SECTIONS:
-        return [
-            "HISTORICAL_SECTIONS is empty, so neither staleness direction was driven — "
-            "DID NOT RUN, not a clean result. Drive them from a fixture entry instead."
-        ]
+    shipped = check.HISTORICAL_SECTIONS
+    check.HISTORICAL_SECTIONS = shipped or FIXTURE_HISTORICAL
+    try:
+        failures.extend(_exemption_arms())
+    finally:
+        check.HISTORICAL_SECTIONS = shipped
+    return failures
+
+
+def _exemption_arms() -> list[str]:
+    """The arms themselves, reading whatever table is installed above."""
+    failures: list[str] = []
     for key in check.HISTORICAL_SECTIONS:
         citer, target, name = key
         if not any(
