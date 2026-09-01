@@ -15,6 +15,7 @@ import (
 	"sync"
 	"time"
 
+	"vshell/backend/internal/execbound"
 	"vshell/backend/internal/server"
 )
 
@@ -367,7 +368,7 @@ func (m *Manager) collectUpdates(ctx context.Context) ([]Package, []string, erro
 	var packages []Package
 	var logs []string
 	if m.checkupdates != "" {
-		out, err := commandOutput(ctx, true, m.checkupdates)
+		out, err := commandOutput(ctx, m.log, true, m.checkupdates)
 		if err != nil && len(bytes.TrimSpace(out)) == 0 {
 			return nil, logs, err
 		}
@@ -376,7 +377,7 @@ func (m *Manager) collectUpdates(ctx context.Context) ([]Package, []string, erro
 		logs = append(logs, fmt.Sprintf("pacman: %d updates", len(repoPackages)))
 	}
 	if m.paru != "" {
-		out, err := commandOutput(ctx, false, m.paru, "-Qua")
+		out, err := commandOutput(ctx, m.log, false, m.paru, "-Qua")
 		if err != nil && len(bytes.TrimSpace(out)) > 0 {
 			logs = append(logs, "paru returned partial output")
 		} else if err != nil {
@@ -387,7 +388,7 @@ func (m *Manager) collectUpdates(ctx context.Context) ([]Package, []string, erro
 		logs = append(logs, fmt.Sprintf("aur: %d updates", len(aurPackages)))
 	}
 	if m.flatpak != "" {
-		out, err := commandOutput(ctx, false, m.flatpak, "remote-ls", "--updates", "--columns=application,branch")
+		out, err := commandOutput(ctx, m.log, false, m.flatpak, "remote-ls", "--updates", "--columns=application,branch")
 		if err != nil && len(bytes.TrimSpace(out)) == 0 {
 			logs = append(logs, "flatpak check unavailable: "+err.Error())
 		}
@@ -599,13 +600,13 @@ func (m *Manager) stopScheduleLocked() {
 	}
 }
 
-func commandOutput(ctx context.Context, allowNoUpdatesExit bool, name string, args ...string) ([]byte, error) {
-	cmd := exec.CommandContext(ctx, name, args...)
-	out, err := cmd.Output()
-	if ctx.Err() != nil {
-		return out, ctx.Err()
-	}
+func commandOutput(ctx context.Context, log *slog.Logger, allowNoUpdatesExit bool, name string, args ...string) ([]byte, error) {
+	res, err := execbound.Command(ctx, name, args...).WithLogger(log).Output()
+	out := res.Out
 	if err != nil {
+		if execbound.Interrupted(err) {
+			return out, err
+		}
 		if ee, ok := err.(*exec.ExitError); ok {
 			if len(ee.Stderr) > 0 {
 				return out, fmt.Errorf("%s", strings.TrimSpace(string(ee.Stderr)))

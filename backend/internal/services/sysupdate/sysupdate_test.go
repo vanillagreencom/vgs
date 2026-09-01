@@ -146,12 +146,12 @@ func TestSetIntervalReschedulesOnlyWhenAcquired(t *testing.T) {
 }
 
 func TestCommandOutputPropagatesUnexpectedEmptyFailure(t *testing.T) {
-	_, err := commandOutput(testContext(t), false, "sh", "-c", "exit 1")
+	_, err := commandOutput(testContext(t), nil, false, "sh", "-c", "exit 1")
 	if err == nil {
 		t.Fatal("commandOutput returned nil error for unexpected empty failure")
 	}
 
-	_, err = commandOutput(testContext(t), true, "sh", "-c", "exit 2")
+	_, err = commandOutput(testContext(t), nil, true, "sh", "-c", "exit 2")
 	if err != nil {
 		t.Fatalf("commandOutput with checkupdates no-update exit returned %v", err)
 	}

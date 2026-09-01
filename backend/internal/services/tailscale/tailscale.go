@@ -3,6 +3,7 @@ package tailscale
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os/exec"
@@ -12,6 +13,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"vshell/backend/internal/execbound"
 	"vshell/backend/internal/server"
 )
 
@@ -331,32 +333,30 @@ func (m *Manager) resolveExitNodeTarget(value string) (string, error) {
 func (m *Manager) output(args ...string) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, m.tailscale, args...)
-	out, err := cmd.Output()
-	if ctx.Err() == context.DeadlineExceeded {
-		return nil, fmt.Errorf("tailscale %s timed out", strings.Join(args, " "))
-	}
+	res, err := execbound.Command(ctx, m.tailscale, args...).WithLogger(m.log).Output()
 	if err != nil {
+		if errors.Is(err, execbound.ErrTimeout) {
+			return nil, fmt.Errorf("tailscale %s timed out", strings.Join(args, " "))
+		}
 		if ee, ok := err.(*exec.ExitError); ok && len(ee.Stderr) > 0 {
 			return nil, fmt.Errorf("%s", strings.TrimSpace(string(ee.Stderr)))
 		}
 		return nil, err
 	}
-	return out, nil
+	return res.Out, nil
 }
 
 func (m *Manager) outputCombined(args ...string) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, m.tailscale, args...)
-	out, err := cmd.CombinedOutput()
-	if ctx.Err() == context.DeadlineExceeded {
-		return out, fmt.Errorf("tailscale %s timed out", strings.Join(args, " "))
+	res, err := execbound.Command(ctx, m.tailscale, args...).WithLogger(m.log).CombinedOutput()
+	if errors.Is(err, execbound.ErrTimeout) {
+		return res.Out, fmt.Errorf("tailscale %s timed out", strings.Join(args, " "))
 	}
-	if err != nil && len(out) > 0 {
-		return out, fmt.Errorf("%s", strings.TrimSpace(string(out)))
+	if err != nil && len(res.Out) > 0 {
+		return res.Out, fmt.Errorf("%s", strings.TrimSpace(string(res.Out)))
 	}
-	return out, err
+	return res.Out, err
 }
 
 func (m *Manager) run(args ...string) error {

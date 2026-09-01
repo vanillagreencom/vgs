@@ -3,6 +3,7 @@ package wlroutput
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os/exec"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	"vshell/backend/internal/compositor"
+	"vshell/backend/internal/execbound"
 	"vshell/backend/internal/server"
 )
 
@@ -19,6 +21,7 @@ const timeout = 5 * time.Second
 type Manager struct {
 	command string
 	backend string
+	log     *slog.Logger
 }
 
 type State struct {
@@ -117,7 +120,7 @@ func Register(srv *server.Server, log *slog.Logger) (*Manager, error) {
 	if err != nil {
 		return nil, err
 	}
-	m := &Manager{command: command, backend: backend}
+	m := &Manager{command: command, backend: backend, log: log}
 	srv.Register("wlroutput", "wlroutput.getState", m.handleGetState)
 	srv.Register("wlroutput", "wlroutput.subscribe", m.handleGetState)
 	srv.Register("wlroutput", "wlroutput.applyConfiguration", rejectWrite)
@@ -154,12 +157,12 @@ func (m *Manager) hyprlandState() (State, error) {
 	defer cancel()
 	// "monitors all" includes disabled outputs; plain "monitors" hides them,
 	// which would make a disabled monitor impossible to show or re-enable.
-	cmd := exec.CommandContext(ctx, m.command, "monitors", "all", "-j")
-	out, err := cmd.Output()
-	if ctx.Err() == context.DeadlineExceeded {
-		return State{}, fmt.Errorf("hyprctl monitors timed out")
-	}
+	res, err := execbound.Command(ctx, m.command, "monitors", "all", "-j").WithLogger(m.log).Output()
+	out := res.Out
 	if err != nil {
+		if errors.Is(err, execbound.ErrTimeout) {
+			return State{}, fmt.Errorf("hyprctl monitors timed out")
+		}
 		if ee, ok := err.(*exec.ExitError); ok && len(ee.Stderr) > 0 {
 			return State{}, fmt.Errorf("%s", ee.Stderr)
 		}
@@ -208,12 +211,12 @@ func (m *Manager) hyprlandState() (State, error) {
 func (m *Manager) niriState() (State, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, m.command, "msg", "-j", "outputs")
-	out, err := cmd.Output()
-	if ctx.Err() == context.DeadlineExceeded {
-		return State{}, fmt.Errorf("niri outputs timed out")
-	}
+	res, err := execbound.Command(ctx, m.command, "msg", "-j", "outputs").WithLogger(m.log).Output()
+	out := res.Out
 	if err != nil {
+		if errors.Is(err, execbound.ErrTimeout) {
+			return State{}, fmt.Errorf("niri outputs timed out")
+		}
 		if ee, ok := err.(*exec.ExitError); ok && len(ee.Stderr) > 0 {
 			return State{}, fmt.Errorf("%s", strings.TrimSpace(string(ee.Stderr)))
 		}
