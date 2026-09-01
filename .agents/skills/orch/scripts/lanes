@@ -17,6 +17,7 @@
 # Usage:
 #   lanes list [--harness claude|codex|all] [--refresh] [--json]
 #   lanes pick [--harness claude|codex] [--max-pct N] [--json]
+#   lanes context [--json]
 #
 #   list  Print every lane found, measured, with its live claim count. Table
 #         by default, --json for the structured record.
@@ -25,6 +26,13 @@
 #         --max-pct, the one with the fewest launches already in flight,
 #         headroom breaking the tie. Exit 3 when no lane is under --max-pct,
 #         so a caller can fail closed rather than launch into a wall.
+#   context  Print each LIVE WORK LANE's context use, read from its pane
+#         status line and nothing else: Claude prints `Opus 5 41%` (the
+#         percentage USED), Codex prints either `Context 86% left` (the
+#         percentage REMAINING) or `Context 14% used`, and only the `left`
+#         spelling is converted. Both harnesses are reported as
+#         CONTEXT_USED_PCT — the share CONSUMED. The lanes are the live
+#         claims below, one per pane.
 #
 # Options:
 #   --harness NAME   claude, codex, or all (default: all for list, claude for pick)
@@ -42,7 +50,7 @@
 #   ORCH_LANE_DIRS     Colon-separated config dirs, for a layout discovery does
 #                      not reach. Replaces claude discovery entirely.
 # Both read through the kendex settings ladder (process env > .env.local >
-# kendex.settings.toml [env] > .env).
+# .kendex/settings.toml / kendex.settings.toml [env]).
 #
 # CLAIMS are the launches already in flight on a lane: `open-terminal` records
 # one per tmux lane it launches under a resolved lane, and a claim is live
@@ -80,9 +88,17 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 # shellcheck source=lib/kendex-env.sh
 source "$SCRIPT_DIR/lib/kendex-env.sh"
-kendex_load_project_env "$PROJECT_ROOT"
+# This script runs without errexit, so the loader's refusal must be checked
+# here: continuing past it would select a lane from whatever exported before
+# the bad line — a successful-looking answer from partial configuration.
+kendex_load_project_env "$PROJECT_ROOT" || {
+  echo "$PROG: refusing to run on a rejected settings load (see error above)" >&2
+  exit 1
+}
 # shellcheck source=lib/lane-claims.sh
 source "$SCRIPT_DIR/lib/lane-claims.sh"
+# shellcheck source=lib/lane-context.sh
+source "$SCRIPT_DIR/lib/lane-context.sh"
 # The lib carries the strict mode its other callers run under. This one is
 # deliberately errexit-free — one unreadable lane must not fail the whole
 # inventory — so restore that posture at the seam.
@@ -465,7 +481,7 @@ render_table() {
 		         (if .headroom_pct == null then "-" else (.headroom_pct | tostring) + "%" end),
 		         (if .claims == null then "?" else .claims end)
 		       ] | @tsv)
-	' | column -t -s "$(printf '\t')"
+	' | lane_context_columns
 }
 
 # `pick` fails closed. Exit 3 when nothing qualifies, so a caller can tell
@@ -546,5 +562,14 @@ case "$SUB" in
 		[[ "$HARNESS" =~ ^(claude|codex)$ ]] || die "pick --harness must be claude or codex"
 		cmd_pick "$HARNESS" "$MAX_PCT" "$AS_JSON" "$ALLOW_REFRESH"
 		;;
-	*) die "unknown subcommand: $SUB (expected list or pick)" ;;
+	context)
+		load_lane_claims
+		# An unreadable claim store is not an empty fleet: reporting no lanes
+		# would read as "every lane has room", which is the answer that sends
+		# a lane into its wall.
+		[[ "$LANE_CLAIMS_RC" -eq 0 ]] || die "in-flight lane claims could not be read; refusing to report context (fix the claims directory, or set OVERSEE_WATCH_STATE_DIR)"
+		out="$(lane_context_collect "$LANE_CLAIMS_LIVE" lane_alias_for)"
+		if [[ "$AS_JSON" == "true" ]]; then printf '%s\n' "$out"; else lane_context_render <<<"$out"; fi
+		;;
+	*) die "unknown subcommand: $SUB (expected list, pick, or context)" ;;
 esac

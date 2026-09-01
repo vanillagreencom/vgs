@@ -97,8 +97,10 @@ Without the block, audit-issues infers the tracker from `parent_issue`: an `issu
 In `decompose-under-parent` mode, `parent_issue` is the blocked implementation issue (also listed in `blocked_issues`), converted into the coordination-only parent of the new domain children. For every item in `child_indexes`:
 
 - MUST be created as a sub-issue of `hierarchy_contract.parent_issue`, in the parent's project: `action: "create"` with `hierarchy: {"action": "make_child", "parent": [hierarchy_contract.parent_issue]}`.
-- MUST NOT be resolved to `skip`, `update`, `expand`, or `combine` by duplicate or overlap analysis. When an existing issue — including `parent_issue` — already carries scope belonging to a covered item, that scope moves into the new domain child via the child's `supersedes[]` (full coverage) or a `related` relation (partial overlap), never by updating the existing issue in place of the child create.
-- `parent_issue` is coordination-only. It is never one domain's implementation leaf, and never an `update`/`expand` target for covered scope.
+- MUST NOT be resolved to `skip`, `update`, `expand`, or `combine` by duplicate or overlap analysis.
+- `parent_issue` is coordination-only.
+
+What the analysis must do to satisfy these: [tpm-audit.md](../workflows/tpm-audit.md) § 7.0.
 
 ## Building from Review Findings
 
@@ -106,7 +108,13 @@ Set top-level `tracker` from the caller's resolved tracker (plus `repository` fo
 
 **Suggestions** (`category=issue`) map field for field: `title`, `location`, `description`, `recommendation`, `priority`, `estimate`, and `labels` when provided (otherwise completed through the taxonomy before create). `found_by` is the reporting agent; `origin` is `"suggestion"`.
 
-**Escalated and skipped items** from the orchestrator's workflow state use the same mapping, with the entry's `outcome` field deciding the origin: outcome "blocked" (or no outcome field) → origin: "escalated"; outcome "skipped" → origin: "skipped".
+**Escalated and skipped items** from the orchestrator's workflow state use the same mapping, with the entry's `outcome` field deciding the origin:
+
+| `outcome` | `origin` |
+|---|---|
+| `"blocked"` | `"escalated"` |
+| absent | `"escalated"` |
+| `"skipped"` | `"skipped"` |
 
 **Discovered work** from dev completion summaries maps the bullet text to `title` and `description`, `estimate: N` to `estimate` (default 2), and infers `priority` from the type (bug 2, tech-debt 3, enhancement 4) and `labels` from the taxonomy and source context. Set `origin: "discovered"`.
 

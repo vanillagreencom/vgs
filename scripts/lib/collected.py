@@ -34,12 +34,10 @@ found, not just the first.
 CALL SITES, each collection point with its own must-fail control. The registry
 is this module's record of who depends on the invariant, so a check that names
 `collected.py` in its own docstring and is absent here has turned a two-way
-relationship into a one-way pointer:
-
-  check-doc-growth.py  1  the surfaces a watched glob finds, asserted against
-                          the ceilinged files under each root
-                       2  each CEILINGS entry's comment
-                          — controls inline, in that file's self_test()
+relationship into a one-way pointer. ONE CHECK IS LISTED, not none by oversight:
+check-doc-growth.py held the other two collection points and was deleted whole
+(KEN-839), so the pairing to verify is check-section-pointers.py's docstring
+against the entry below.
 
   check-section-pointers.py
                        1  the tracked text files swept, asserted against

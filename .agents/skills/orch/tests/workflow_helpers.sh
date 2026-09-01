@@ -130,23 +130,25 @@ fi
 
 # Post-merge base sync: `merge --ff-only` advances whatever branch the target
 # checkout has on HEAD, so a main checkout sitting on a foreign branch
-# fast-forwards THAT branch, exits 0, and leaves the base where it was. The
-# routing that makes ownership explicit is the whole fix, and it is prose — it
-# has no script to fail loudly when it is dropped.
+# fast-forwards THAT branch, exits 0, and leaves the base where it was.
 merge_workflow="$SKILL_DIR/workflows/merge-pr.md"
-assert_file_contains "$merge_workflow" 'rev-parse --abbrev-ref HEAD' \
-  "merge-pr resolves which checkout owns the base branch before advancing it"
-assert_file_contains "$merge_workflow" 'refs/remotes/origin/[BASE_BRANCH]:refs/heads/[BASE_BRANCH]' \
-  "merge-pr keeps the by-name fetch refspec route for a foreign-HEAD checkout"
-assert_file_contains "$merge_workflow" 'The `Base sync` row is never omitted' \
+sync_base="$SKILL_DIR/scripts/sync-base"
+assert_file_contains "$merge_workflow" 'scripts/sync-base [MAIN_REPO_ROOT]' \
+  "merge-pr delegates base synchronization to sync-base"
+assert_file_contains "$sync_base" 'worktree list --porcelain' \
+  "sync-base resolves which checkout owns the base branch before advancing it"
+assert_file_contains "$sync_base" 'refs/remotes/origin/$BASE_BRANCH:refs/heads/$BASE_BRANCH' \
+  "sync-base keeps the by-name ref update for an unowned base branch"
+assert_file_contains "$merge_workflow" '| Base sync |' \
   "merge-pr never omits the Base sync row, so a stale base cannot pass unreported"
 
 # A push that rebases rewrites every stored fix SHA. Without reconciliation the
 # PR body cites commits that no longer exist; worktree-push owns that remap.
 assert_file_contains "$submit_workflow" 'scripts/worktree-push --worktree' \
   "submit-pr pushes through the SHA-reconciling worktree-push wrapper"
-assert_file_contains "$submit_workflow" 'Publishing an unreconciled pre-rebase SHA is forbidden' \
-  "submit-pr keeps the unreconciled-SHA publication ban"
+# No check that submit-pr states the unreconciled pre-rebase SHA publication
+# ban. That rule lives only in prose and the wrapper pin above carries the
+# mechanism instead.
 
 # The lease is what stops two sessions working the same tree.
 assert_file_contains "$SKILL_DIR/workflows/start-worktree.md" \
@@ -184,15 +186,12 @@ for phrase in 'exit 75 refuses a second writer' 'rather than adding a second wri
     pass "SKILL.md does not over-claim the possession gate: $phrase"
   fi
 done
-# Paired with the absence checks: deleting the rows entirely would satisfy them
-# while losing the contract, so the accurate condition must be present in both
-# places that state it.
-assert_file_contains "$SKILL_DIR/SKILL.md" \
-  'or when the token it is bound to differs from the lease' \
-  "SKILL.md's scripts table states what actually exits 75"
-assert_file_contains "$SKILL_DIR/SKILL.md" \
-  "the round's recorded lease generation differs from the lease" \
-  "SKILL.md's Round Closure step states what actually exits 75"
+# No check that either site states what actually exits 75 — the scripts table
+# row and the Round Closure step both say it in prose, and a sentence denying
+# the behaviour carries the number just as well as one asserting it. Deleting
+# the rows outright would satisfy the absence checks above, and this pin did
+# not close that: it covers nothing a negation does not also satisfy. Both
+# rules are uncovered.
 
 # The delegated agent re-verifies the same lease, so a delegation that lands in
 # a tree another session has taken fails closed instead of clobbering it. The
@@ -311,7 +310,7 @@ collect_broken() {
 
 ORCH_DOCS=()
 while IFS= read -r orch_doc; do ORCH_DOCS+=("$orch_doc"); done < <(orch_docs)
-refs="$(scan_refs "${ORCH_DOCS[@]}")"
+refs="$(scan_refs ${ORCH_DOCS[@]+"${ORCH_DOCS[@]}"})"
 ref_count="$(grep -c . <<<"$refs" || true)"
 broken="$(collect_broken <<<"$refs")"
 
@@ -343,7 +342,7 @@ if [[ ! -e "$SKILL_DIR/$control_ref" ]]; then
 else
   fail "planted control asset unexpectedly exists"
 fi
-control_broken="$(scan_refs "${ORCH_DOCS[@]}" "$control_doc" | collect_broken)"
+control_broken="$(scan_refs ${ORCH_DOCS[@]+"${ORCH_DOCS[@]}"} "$control_doc" | collect_broken)"
 if grep -Fqx "$control_ref" <<<"$control_broken"; then
   pass "the reference pipeline reports a planted broken reference (teeth)"
 else

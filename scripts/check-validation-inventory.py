@@ -32,6 +32,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent / "lib"))
 from validation_manifest import (  # noqa: E402
     ManifestError,
     ci_run_commands,
+    ci_runs,
     documented_table,
     manifest_rows,
     prose_areas,
@@ -342,6 +343,17 @@ def main() -> int:
                 f"scripts/validate runs `{head}` bare, but it is not executable "
                 f"(git update-index --chmod=+x {head})"
             )
+        # CI LOCKSTEP FOR ROWS OUTSIDE scripts/. The arm below keys CI coverage
+        # by basename under scripts/, so a row that runs a rendered engine
+        # (.agents/skills/...) was never compared at all: deleting its ci.yml
+        # step left this check green while the manifest still promised the lane.
+        elif (ci_text is not None and not head.startswith("scripts/")
+              and not ci_runs(ci_text, head)):
+            problems.append(
+                f"scripts/validate runs `{head}`, which .github/workflows/ci.yml does not. "
+                f"Add the step, or drop the manifest row — an entry CI never runs "
+                f"is coverage that does not exist."
+            )
 
     # --- every executable check is invoked, or excluded with a reason ---------
     # The CI half of this arm needs ci_text; without it the manifest half still
@@ -358,19 +370,19 @@ def main() -> int:
             )
             continue
         if name in LOCAL_ONLY:
-            if ci_text is not None and rel in ci_text:
+            if ci_text is not None and ci_runs(ci_text, rel):
                 problems.append(
                     f"{rel} is recorded as local-only ({LOCAL_ONLY[name]}) but ci.yml runs it anyway"
                 )
             continue
         if name in INDIRECT_IN_CI:
             caller = INDIRECT_IN_CI[name]
-            if ci_text is not None and caller not in ci_text:
+            if ci_text is not None and not ci_runs(ci_text, caller):
                 problems.append(
                     f"{rel} is recorded as reached through {caller}, but ci.yml does not run {caller}"
                 )
             continue
-        if ci_text is not None and rel not in ci_text:
+        if ci_text is not None and not ci_runs(ci_text, rel):
             problems.append(
                 f"{rel} is in the scripts/validate manifest but not in "
                 f".github/workflows/ci.yml. "

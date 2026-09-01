@@ -6,8 +6,9 @@ fetching CI failure logs; gating and performing merges; and comparing several
 PRs before a batch merge.
 
 Every command prints JSON by default, so output can be piped straight into
-`jq`. `SKILL.md` is the full command reference; `DEVELOPMENT.md` covers
-internals.
+`jq`. Start with `./scripts/github.sh --help`, then use
+`./scripts/github.sh <command> --help` for the full contract. `SKILL.md`
+carries agent routing and recovery; `DEVELOPMENT.md` covers internals.
 
 ## Setup
 
@@ -69,23 +70,21 @@ It is also policy, not mechanism — the gate binds only merges routed through
 
 `pr-merge --auto` exits 75 when the PR is queued or auto-merge is armed. That
 state is volatile — an ejection or a failed protection check disarms it
-silently — so the caller keeps re-running a watcher until the PR is `MERGED`;
-neither watcher is durable, and both live in sibling skills (install orch and
-review-gate beside this one):
+silently — so the caller prepares the orch lifecycle with the repository, PR,
+and exact head before arming. Its one-shot waiter publishes a durable verdict
+and exits. The helpers live in sibling skills (install orch and review-gate
+beside this one):
 
-- `.agents/skills/orch/scripts/queue-wait <N>` polls to a bounded budget and
-  returns `ejected`/`disarmed` with its cause, or `queued` (run it again). A
-  re-run carries no memory of the earlier run, so an ejection between two runs
-  comes back as `not_queued`/`never_armed`.
+- `.agents/skills/orch/scripts/merge-queue-watch` runs queue-wait, preserves
+  its cross-poll memory through a bounded budget, validates the prepared head,
+  and atomically claims recovery or post-merge work at the next lane boundary.
 - `GH_REPO=<owner/repo> .agents/skills/review-gate/scripts/pr-watch.sh` is one
   pass that prints `disarmed … (re-arm)` lines.
 
-Route the verdict: re-arm on `ejected`, `disarmed` and the memoryless
-`not_queued` — after repairing what the cause names (a
-`merge_group_failed`/`check_failed` cause is a CI repair first, else the same
-head ejects again); `dequeued` means late review findings — triage them first;
-`closed` and `unknown` are terminal. Re-arm with
-`.agents/skills/github/scripts/github.sh pr-merge <N> --auto`.
+`queue-wait --help` § Verdicts owns the growing producer set. The durable
+lifecycle maps each accepted verdict to the action table in
+`.agents/skills/orch/workflows/merge-pr.md` § 5 step 1. An unrecognized verdict
+fails closed and is never re-armed. Repair what the `cause` names first.
 
 Where branch protection *is* enabled, the opposite problem appears: after a
 rebase or force-push an outdated thread can become unreachable in the UI —

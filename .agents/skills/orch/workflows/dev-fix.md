@@ -88,10 +88,14 @@ Cancel ends the workflow; a selection goes to § 2.
 
    `worktree-claim` exit 75 aborts the delegation (another session holds this worktree; stderr names the holder); exit 1 stops the workflow and is reported. Its printed token is the delegation's `Worktree Lease:` line.
 
-   Then persist the delegated item set on disk. Write `[WORKTREE_PATH]/tmp/dev-round-items-[DEV_ROUND_ID].json` with the harness file-write tool — a JSON array of `{"n": [N], "text": "[ITEM_TEXT]"}`, one per delegated item, `[ITEM_TEXT]` being that item's formatted block verbatim — then:
+   Then persist the delegated item set on disk. Write `[WORKTREE_PATH]/tmp/dev-round-items-[DEV_ROUND_ID].json` with the harness file-write tool as a JSON array of `{"n": [N], "text": "[ITEM_TEXT]"}`, one per delegated item. `[ITEM_TEXT]` is that item's formatted block verbatim.
+
+   Decide whether this fix round may add protected files. [`../schemas/dev-round.md` § Protected additions](../schemas/dev-round.md#protected-additions) is the sole scope definition. The default is none.
+
+   When the list is non-empty, write `[WORKTREE_PATH]/tmp/dev-round-adds-[DEV_ROUND_ID].json` with the harness file-write tool as a JSON array of exact repository-relative paths. Render the same array after `Adds:` in the delegation, preserving JSON string boundaries, including `Adds: ["tools/one path.sh"]` and `Adds: ["tools/one path.sh","skills/x/scripts/check;safe"]`. Pass only the data-file path to the writer:
 
    ```bash
-   .agents/skills/orch/scripts/dev-round-write --worktree [WORKTREE_PATH] --issue [ISSUE_ID] --round-id [DEV_ROUND_ID] --items-file [WORKTREE_PATH]/tmp/dev-round-items-[DEV_ROUND_ID].json
+   .agents/skills/orch/scripts/dev-round-write --worktree [WORKTREE_PATH] --issue [ISSUE_ID] --round-id [DEV_ROUND_ID] --items-file [WORKTREE_PATH]/tmp/dev-round-items-[DEV_ROUND_ID].json [--adds-file [WORKTREE_PATH]/tmp/dev-round-adds-[DEV_ROUND_ID].json]
    ```
 
    `--issue` takes the normalized workflow-state key — the value the delegation's `Artifact Key:` line carries. Only when every item's text is plain (no backticks or quotes) may you pass `--item [N] '[ITEM_TEXT]'` pairs inline in one command instead.
@@ -110,6 +114,7 @@ Cancel ends the workflow; a selection goes to § 2.
    Round ID: [DEV_ROUND_ID]
    Artifact Key: [ISSUE_ID]
    QA: [QA_AGENT]
+   [If the round may add files: "Adds: [REPO_RELATIVE_PATHS_JSON_ARRAY]"]
 
    Decisions:
    [For each verified decision: "- [DECISION_ID]: [ONE_LINE_SUMMARY] — [DECISION_FILE_PATH]"]
@@ -131,7 +136,7 @@ Cancel ends the workflow; a selection goes to § 2.
    .agents/skills/orch/scripts/dev-artifact-check --worktree [WORKTREE_PATH] --issue [ISSUE_ID] --round-id [DEV_ROUND_ID_FROM_PREVIOUS_COMMAND] --expect-items-from-round
    ```
 
-   `--expect-items-from-round` reads the step-4 record and requires the artifact's `items[]` to cover EXACTLY that set — each item once, no unknowns or duplicates, valid decisions, non-empty reasoning. On exit 2 (record missing) the step-4 persistence never ran: write the record now from the delegated items still in context and re-run; only if that context is also gone, fall back to `--expect-items [ITEM_NUMBERS]` with numbers you can still prove.
+   `--expect-items-from-round` reads the step-4 record and its immutable authorization under the repository's git common directory. It requires an exact match and requires the artifact's `items[]` to cover that set, each item once with no unknowns or duplicates, valid decisions, and non-empty reasoning. Exit 2 means authorization cannot be established. Never recreate either record after delegation and never fall back to `--expect-items`; mint and delegate a fresh round.
 
    **Check B**:
 
@@ -148,23 +153,56 @@ Cancel ends the workflow; a selection goes to § 2.
    | `accept` | fail | The artifact claims done but the worktree is dirty or the commit is missing. Re-read git ONCE after a brief pause, then re-delegate only the missing step: commit, or revert leftover work. |
    | `wait` | pass | Do NOT re-run the fix and do NOT accept on git alone. Send ONE report-only nudge: *"re-run only your completion tail — write your dev-return artifact (`dev-return-write --kind fix … --round-id [DEV_ROUND_ID]` with one `--item` per review item; if the delegation is gone from your context, your item set is on disk at `tmp/dev-round-[ISSUE_ID]-[DEV_ROUND_ID].json`) and re-report your item decisions; do NOT re-run the fix."* Accept only when a valid artifact for THIS round appears. |
    | `wait` | fail | **Not done.** Wait to the deadline, then escalate per [SKILL.md § Round Closure](../SKILL.md#round-closure). |
-| `retry` | any | An artifact for THIS round exists but fails a gate — the check's `reason` names it. A failing `validate` re-delegates fixing the validation; an identity/schema failure gets the report-only tail-rewrite nudge. Never accept, and never treat it as absent. |
+| `retry` | any | An artifact for THIS round exists but fails a gate. The check's `reason` names it. `unapproved_additions` also returns every refused path in `files`; start a fresh round that names each deliberate path in `Adds:`, or order the files cut. A failing `validate` re-delegates fixing the validation; an identity/schema failure gets the report-only tail-rewrite nudge. Never accept, and never treat it as absent. |
 
    **Analysis rounds** run Check A without an expected-set flag, and B expects no new commit and a clean worktree. On accept, read the `summary` recommendation and decide the next step: delegate the actual fixes as a fresh round, or close and re-scope with reasoning.
 
-6. **Record the outcome** — one tool call per block, appends run per item:
+6. **Record the outcome** — one write per item, and the item's own text never enters a shell word:
+
+   Write the item's entry to `tmp/state-item-[ISSUE_ID].json` with the harness file tool, one item at a time. Fixed:
+
+   ```json
+   {"description":"[DESC]","location":"[LOC]","commit":"[SHA]","source":"[SOURCE]"}
+   ```
+
+   Escalated, `[OUTCOME]` carrying the item's accepted decision — Blocked → `"blocked"`, Skipped → `"skipped"`:
+
+   ```json
+   {"description":"[DESC]","location":"[LOC]","reason":"[REASON]","outcome":"[OUTCOME]","source":"[SOURCE]"}
+   ```
+
+   Then bind that file into the write for the bucket the item lands in. Fixed:
 
    ```bash
-   .agents/skills/orch/scripts/workflow-state append [ISSUE_ID] fixed_items '{"description":"[DESC]","location":"[LOC]","commit":"[SHA]","source":"[SOURCE]"}'
+   .agents/skills/orch/scripts/workflow-state update [ISSUE_ID] --slurpfile item tmp/state-item-[ISSUE_ID].json '$item[0] as $e | .fixed_items = ((.fixed_items // []) | map(select(.location != $e.location or .description != $e.description))) | .escalated_items = ((.escalated_items // []) | map(select(.location != $e.location or .description != $e.description))) | .fixed_items += [$e]'
    ```
+
+   Escalated:
+
    ```bash
-   .agents/skills/orch/scripts/workflow-state append [ISSUE_ID] escalated_items '{"description":"[DESC]","location":"[LOC]","reason":"[REASON]","outcome":"[OUTCOME]","source":"[SOURCE]"}'
+   .agents/skills/orch/scripts/workflow-state update [ISSUE_ID] --slurpfile item tmp/state-item-[ISSUE_ID].json '$item[0] as $e | .fixed_items = ((.fixed_items // []) | map(select(.location != $e.location or .description != $e.description))) | .escalated_items = ((.escalated_items // []) | map(select(.location != $e.location or .description != $e.description))) | .escalated_items += [$e]'
    ```
+
+   A fixed item's root cause is recorded too, in `pr_comment_review.patched_causes` — the one record [finding-disposition.md § Recurrence](../references/finding-disposition.md#recurrence) reads, whichever loop patched the cause. `pr-review`, `qa-review`, and `review` rounds reach that rule through this step, and a cause missing from it is one the next pass reads as never patched and answers with an ordinary patch round. One entry per fixed item, through a file like the entry above:
+
+   ```json
+   {"cause": "[ONE_LINE]", "commit": "[SHA]"}
+   ```
+
+   ```bash
+   .agents/skills/orch/scripts/workflow-state append-file [ISSUE_ID] pr_comment_review.patched_causes tmp/patched-cause-[ISSUE_ID].json
+   ```
+
    ```bash
    .agents/skills/orch/scripts/workflow-state increment [ISSUE_ID] cycles
    ```
 
-   `[OUTCOME]` carries the item's accepted decision: Blocked → `"blocked"`, Skipped → `"skipped"`.
+   A re-reported item whose recorded fix did not hold takes a second disposition while a bucket still lists it against the SHA of the failed fix, and an item escalated in one cycle can be fixed in a later one, so each write clears the item from BOTH buckets before appending its own entry. The match is the RECORDED entry's (location, description), the § 8 key: a re-reporting reviewer copies those two fields verbatim off the delegation's Fixed line, and the sha it names rides in the finding's recommendation, which no key reads. One write per item, and the item stands in exactly one bucket, once.
+
+   The entry goes through a file, never `--arg` or `--argjson`. A double quote in the description invalidates a pasted JSON argument and an apostrophe ends the shell word, and a write that fails leaves the stale entry standing with nothing recorded.
+
+   `cycles` is the general fix-round tally that fills review-pr § 1.2's previous-cycle block; it decides no cap. The re-review budget is `rereview_cycles`, raised only by review-pr § 4's `rereview_panel` write, so no fix round spends it and neither does § 7's QA re-check.
+
 
 ## 3. Return
 

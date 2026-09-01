@@ -76,11 +76,11 @@ SECTION_MARK = "§"
 # THE TARGET IS ADJACENT TO THE MARK. Only delimiters may sit between them —
 # quotes closing a wrapped string literal, the paren in `(`AGENTS.md` § Mission)`
 # — and crossing a SEPARATOR means the nearest path belongs to the sentence
-# rather than to this pointer. `check-doc-growth.py` writes
-# "§ Project skills (.github/instructions/project-skills.instructions.md),
-# § Documentation resources": the
-# path is the FIRST pointer's parenthetical, and reading it as the second's
-# target would resolve a pointer against a document it does not name.
+# rather than to this pointer. In "§ Live section (sub/doc.md), § Gone section"
+# the path is the FIRST pointer's parenthetical, and reading it as the second's
+# target would resolve a pointer against a document it does not name. Pinned by
+# that text as a fixture in `section_pointers_selftest.py`; the tree's own
+# instance was check-doc-growth.py's relocation note, deleted with the script.
 CROSSABLE = "`\"'*_([{)]}"
 # THE PIPE IS ONE OF THEM because a table CELL is a clause, not decoration.
 # `docs/architecture/overlay-and-dependencies.md` writes one pointer per row with
@@ -164,10 +164,10 @@ def _without_open_qualifier(text: str) -> str:
 
     Two conditions keep it narrow, and both are load-bearing. The parenthetical
     must be UNCLOSED at the mark, so the mark is inside it rather than after it;
-    and it must carry no path OF ITS OWN, because `check-doc-growth.py` cites one
-    section, names a path parenthetically, then cites another — the path belongs
-    to the FIRST pointer, and reading it as the second's target names a document
-    that pointer does not cite. Crossing commas
+    and it must carry no path OF ITS OWN, because the enumeration shape above
+    cites one section, names a path parenthetically, then cites another — the
+    path belongs to the FIRST pointer, and reading it as the second's target
+    names a document that pointer does not cite. Crossing commas
     generally would do that, and would also reopen the same-clause inheritance
     rule, which depends on the comma meaning what it says.
     """

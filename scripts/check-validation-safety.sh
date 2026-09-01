@@ -63,9 +63,12 @@ SENTENCE_SPLIT = re.compile(r"(?<=[.;!?])\s+")
 #
 # The entries are: the runner describing the child it spawns, the greeter
 # fixtures (a greeter runs from /var/cache, never against a live session), and
-# the prohibition text itself, where the ban wraps onto a continuation line that
-# no longer carries its own negation. shell.qml's guard comment carries "rather
-# than" on the matched line, so it needs no entry at all.
+# the bot-config and instruction-file prohibitions, where the ban wraps onto a
+# continuation line that no longer carries its own negation. shell.qml's guard
+# comment carries "rather than" on the matched line, so it needs no entry at
+# all, and AGENTS.md stopped needing one when its smoke sentence was rewritten
+# to stop naming the command. An entry costs a rewording of the exact line it
+# names, so prefer that rewrite over adding one.
 ALLOWED_CONTEXTS = {
     "backend/internal/runner/runner.go": (
         "extra args appended after `qs -c vshell`",
@@ -79,9 +82,6 @@ ALLOWED_CONTEXTS = {
         # One span covering both commands: sequential deletion cannot use two
         # entries that overlap on the "vs" between them.
         "Config-path matching covers `qs -c vshell` vs `qs -p quickshell/vshell`",
-    ),
-    "AGENTS.md": (
-        "the mode that replaces what `qs -c vshell` used to cover",
     ),
     ".coderabbit.yaml": (
         "`qs -p quickshell/vshell`. Each starts a second full shell",
@@ -195,10 +195,6 @@ FIXTURES = [
     ], [3]),
     # The prohibition text: the wrapped continuation is exempt, a real
     # instruction added to the same file is not.
-    ("AGENTS.md", [
-        "    errors. **This is the mode that replaces what `qs -c vshell` used to cover**,",
-        "  - Or just run `qs -c vshell` yourself.",
-    ], [2]),
     (".coderabbit.yaml", [
         "        `qs -p quickshell/vshell`. Each starts a second full shell in the live",
         "        Validate QML with `qs -c vshell`.",
@@ -211,10 +207,6 @@ FIXTURES = [
     # instruction to a sanctioned line must still be caught. Line 1 of each pair
     # is the untouched sanctioned line, line 2 is that same line with an
     # instruction appended.
-    ("AGENTS.md", [
-        "    errors. **This is the mode that replaces what `qs -c vshell` used to cover**,",
-        "    errors. **This is the mode that replaces what `qs -c vshell` used to cover**, or just run `qs -c vshell`.",
-    ], [2]),
     (".coderabbit.yaml", [
         "        `qs -p quickshell/vshell`. Each starts a second full shell in the live",
         "        `qs -p quickshell/vshell`. Each starts a second full shell in the live; to validate, run qs -c vshell",
@@ -245,7 +237,7 @@ DEFECT_FIXTURES = [
     ("`qs -p quickshell/vshell`. Each starts a second full shell", True),
     ("extra args appended after `qs -c vshell`", True),
     ("VGS_BACKEND_LISTEN_FD", False),
-    ("This is the mode that replaces what", False),
+    ("the sanctioned smoke is scripts/validate qml", False),
 ]
 
 if os.environ.get("SELF_TEST") == "true":

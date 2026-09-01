@@ -2,10 +2,14 @@
 # size-ratchet exclusion list — pattern<TAB>reason, glob against the full
 # repo-relative path, `*` crosses `/`. See .agents/skills/size-ratchet/README.md.
 #
-# Divergence from the fleet's 400/800 split, stated per the 2026-08-10 audit:
-# the engine exposes ONE threshold, so the fleet's 800-line test allowance
-# cannot be expressed here. Oversized Go `_test.go` files and the
-# `scripts/test-*.js` harnesses simply enter the baseline instead — acceptable,
+# Divergence from the fleet's 400/800 split. The engine's 800-line test class
+# is a set of path patterns — `tests/*`, `test/*`, `__tests__/*`, `tests.rs`,
+# `*test_util.rs`, `*.test.*`, `*.spec.*` — and none of them reach VGS's test
+# naming. Go puts `_test.go` beside the source. The script harnesses are
+# `scripts/test-*` across .js, .sh and .py alike (test-validate.sh,
+# test-section-pointers.py, test-qml-smoke.sh), and the in-tree unit checks are
+# `*_selftest.py` and `*-selftest.js` under scripts/lib. Every one of those
+# takes the 400-line default and enters the baseline instead — acceptable,
 # since a baselined test still cannot grow, and it needs no second gate.
 #
 # THE THREE VENDOR-DRIFT BASELINE ROWS ARE GONE, with their files: the
@@ -16,8 +20,8 @@
 # cluster of files, and every reviewer finding on them arrived as a size
 # argument before it could be fixed. A suite grows by the process's own
 # mechanism, one more case per finding, so a cap on a suite taxes coverage; the
-# fleet's 800-line test allowance would cover that, and this engine exposes one
-# threshold, so it is not expressible.
+# fleet's 800-line test allowance would cover that, and the engine's test class
+# does not reach this repo's test naming, as the header above records.
 #
 # SIX MORE ACCOMMODATIONS, taken by one branch (VGS-150, 2026-08-16), recorded
 # here so the paragraph above reads against the real arithmetic rather than
@@ -129,6 +133,105 @@
 # finding, which is the process working. The e2e one is where that is sharpest —
 # every case in it is a whole throwaway repository, so a finding costs ten lines
 # there rather than two.
+#
+# KEN-839, DERIVED FROM `git diff origin/main...HEAD --
+# tools/size-ratchet-baseline.tsv` rather than accumulated as the branch went.
+# An earlier draft of this block quoted figures measured against a base this
+# branch has since been rebased off, so it claimed a tightening on ci.yml that
+# the committed diff shows as a raise. The convention above exists for exactly
+# that: the ledger states what a reader diffing this branch sees, and nothing
+# else.
+#
+#   RAISED    scripts/lib/validation_manifest.py     1045 -> 1278
+#   RAISED    scripts/test-validation-inventory.sh   2278 -> 2371
+#   RAISED    scripts/test-section-pointers-e2e.py    496 ->  540
+#   RAISED    scripts/test-section-pointers.py        489 ->  515
+#   RAISED    scripts/check-validation-inventory.py   411 ->  423
+#   RAISED    .github/workflows/ci.yml                472 ->  474
+#
+#   REMOVED   scripts/check-doc-growth.py             955, with the file
+#   REMOVED   docs/architecture/design-language.md    421, now byte-measured
+#   REMOVED   docs/architecture/scratchpads.md        410, now byte-measured
+#   LOWERED   check-section-pointers.py               601 ->  594
+#   LOWERED   kendex.settings.toml                    431 ->  429
+#   LOWERED   kendex.toml                            1078 -> 1074
+#
+# THE DELETION IS THE HEADLINE. `scripts/check-doc-growth.py` goes on owner
+# ruling: its per-file byte ceilings cannot be expressed as baseline rows,
+# because a row for a file UNDER its class is dropped as stale and `*.md` is a
+# frozen class no repo entry can override. Its two mentions in KEN-938's ledger
+# above now name a file that no longer exists, and they stay — the ledger records
+# what a past branch spent, and rewriting it to hide a later deletion would make
+# the arithmetic unauditable.
+#
+# THE DELETION TOOK THE LAST HISTORICAL_SECTIONS ENTRY WITH IT, which is the two
+# section-pointer raises. An empty table drives neither staleness direction, so
+# both control scripts would have gone quiet on a rule that still ships. They
+# install a fixture entry instead — in-process in the unit control, patched into
+# the guard the e2e copies into a throwaway repo — and go back to driving the
+# shipped entries the day this repo records another removed section. A rule
+# survives its last real instance only if something stands in for it, and the
+# stand-in has to be built in both places the rule is exercised.
+#
+# THE OTHER FOUR ARE ONE LANE, AND THREE REVIEW ROUNDS ON IT. The guard claimed
+# the scripts/validate manifest and ci.yml move in lockstep and compared only
+# executable `scripts/*` entries, so the two rendered engines this branch wired
+# in — size-ratchet and todo-ban, both under `.agents/` — were compared by
+# nothing, and deleting either workflow step left the inventory green. Closing
+# that was ten lines. The rest is what three rounds of review asked for, and
+# each round found the previous repair still fail-OPEN:
+#
+#   round 1   `path in ci_text` is satisfied by a MENTION — `echo <path>`, or a
+#             trailing comment ci_run_commands' whole-line filter does not reach
+#   round 2   splitting a line on separator CHARACTERS cannot see quoting, so
+#             `echo "( <path> )"` made the path the first word of a segment
+#   round 3   a redirection is not a separator (`: > <path>` truncates the file
+#             and runs nothing) and `<path>() { :; }` DEFINES a name rather than
+#             calling it
+#   round 4   a path can be a real command that never runs — the right side of
+#             `||`, and the body of an `if`, `while` or `case`
+#   round 5   `name=(<path>)` is an array ELEMENT, and `(` there is not a
+#             command separator
+#   round 6   a heredoc closes on a line that is EXACTLY the delimiter; a
+#             trimmed comparison closed it early and read the body as commands
+#   round 7   DECLINED, and the first one that is. `false && <path> || true`
+#             does skip the path, and the predicate does count it — the finding
+#             is accurate, and a command after `&&` is counted as covered even
+#             where a later `||` recovers the list. It does not converge:
+#             telling that chain from `cd x && <path>` needs the left side's
+#             EXIT STATUS, which is runtime. The reviewer's example is decidable
+#             only because its left side is the literal `false`, and a rule
+#             keyed on that literal buys one spelling. Same open class as
+#             command substitution, `eval`, aliases and sourced files. The
+#             boundary is corrected to name the worst case rather than widened
+#             to half-model it, and this is the last patch round on this
+#             predicate: a further lexical-shape finding is declined against it.
+#
+# So the predicate tokenizes with shlex, quote-aware, distinguishes separators
+# from redirections, consumes redirection operands, skips heredoc bodies, joins
+# backslash continuations, declines a definition, and excludes short-circuit and
+# conditional branches. The first five are places a path is not a command at
+# all; the last is a place it is a command that may never run. Every one was a
+# false green until a reviewer named it. Seven fixture cases now, one per shape,
+# and each new case goes red against the implementation the round before it
+# while the older cases stay green — which is what makes each a control on ITS
+# finding rather than on the lane in general.
+#
+# WHERE IT STOPS, and this is the last entry that widens it. The predicate
+# APPROXIMATES shell execution and cannot decide it; the docstring on ci_runs
+# now names what it models and what it never will — AND-OR recovery, command
+# substitution, `eval`, aliases, sourced files, expansions, and anything
+# depending on a runtime value — plus the step-level `if:` it cannot see, which
+# four lanes in
+# this repo already use as their real wiring. Six rounds each named a genuine
+# construct and each repair was right, which is the argument FOR writing the
+# limit down rather than against it. A proof that a lane ran needs CI declaring
+# what it executed; a seventh construct is a reason to build that, not to widen
+# this.
+#
+# That ratio, one lane's predicate against four raised rows, is this header's
+# recurring argument arriving again: the fix is small every time and the cost is
+# the controls that stop it being wrong a fourth way.
 #
 backend/vendor/*	vendored Go modules (go mod vendor for offline Nix builds), upstream-owned
 config/vshell/nvim/colorschemes/*	vendored upstream colorscheme plugins, upstream-owned

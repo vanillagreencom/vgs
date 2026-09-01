@@ -1,5 +1,6 @@
-# Public kendex settings. Keep secrets in .env.local.
-# kendex skill scripts read this [env] table after .env and before .env.local.
+# Public kendex settings. Keep secrets in .env.local. A kendex skill script
+# resolves a key from the environment, then .env.local, then .kendex/settings.toml,
+# then this [env] table, then its own built-in default. `.env` is never read.
 
 [env]
 #BOT_CHECK_NAME = ""
@@ -22,16 +23,13 @@ GH_ISSUE_PATTERN = "vgs-[0-9]+"
 GIT_HOST_CLI = ".agents/skills/github/scripts/github.sh"
 LINEAR_FORMAT = "safe"
 ORCH_STATE_DIR = "tmp"
-# File-size ratchet (VGS-111, fleet ruling 2026-08-10: adopt size-ratchet,
-# never hand-roll a size gate). Threshold is the fleet's 400 lines; CI runs
-# the committed kendex render at .agents/skills/size-ratchet/. The engine
-# has one threshold, so the fleet's 800-line test allowance is not
-# expressible — oversized tests enter the baseline instead (noted in the
-# excludes file). Why one threshold bites suites harder than libraries is in
-# the excludes file's header.
-SIZE_RATCHET_THRESHOLD = "400"
-SIZE_RATCHET_BASELINE = "tools/size-ratchet-baseline.tsv"
-SIZE_RATCHET_EXCLUDES = "tools/size-ratchet-excludes"
+
+# File-size ratchet: NO KEY HERE, deliberately (VGS-111; fleet ruling
+# 2026-08-10, adopt size-ratchet and never hand-roll a size gate). The shipped
+# path classes decide every threshold, and the baseline and excludes files sit
+# where the package already looks. A key repeating a default holds the old
+# number through an upgrade that moves it, and nobody reads it again (KEN-839).
+
 SECOND_OPINION_CLAUDE_CMD = "claude -p --no-session-persistence --model opus --effort max --allowedTools Bash(read-only:true),Read,Glob,Grep"
 SECOND_OPINION_CODEX_CMD = "codex exec -m gpt-5.5 -s read-only -c model_reasoning_effort=xhigh --ephemeral"
 SECOND_OPINION_TIMEOUT = "1080"

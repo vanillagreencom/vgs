@@ -70,7 +70,8 @@
 #   WRITER_READ_ONLY  "1": exit 0 immediately, reading and posting nothing.
 #   PR_NUMBER / HEAD_SHA / PR_AUTHOR  the INTERNAL single-head contract used
 #                 by the enumeration's recursive per-PR invocation.
-# Settings (lib/settings.sh — env > kendex.settings.toml > default):
+# Settings (lib/settings.sh — env > .env.local > .kendex/settings.toml >
+# kendex.settings.toml [env] > default):
 #   REVIEW_GATE_CONTEXT   gate commit-status context (default "Review gate").
 #                 Every trust and evidence knob belongs to the predicate;
 #                 see references/settings.md.
@@ -195,6 +196,7 @@ case "$verdict" in
   changes-requested)     desired="failure" ;;
   awaiting|threads-open) desired="pending" ;;
   untracked-claim)       desired="failure" ;;
+  unreasoned-decline)    desired="failure" ;;
   *)
     echo "::error::unknown verdict '$verdict'"
     exit 1

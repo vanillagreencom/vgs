@@ -1,17 +1,5 @@
 {
   "hooks": {
-    "PostToolUse": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "bash \"$(git rev-parse --show-toplevel)/.codex/hooks/post-edit-lint.sh\"",
-            "timeout": 30
-          }
-        ],
-        "matcher": "Edit|Write"
-      }
-    ],
     "PreToolUse": [
       {
         "hooks": [

@@ -37,15 +37,18 @@ Drain what a review bot would surface before the PR exists.
 
 **Skip if** any holds: `lifecycle` is `"managed"`; a PR number argument was provided (arrived comments are triaged in § 3); or `.agents/skills/second-opinion/scripts/second-opinion` does not exist.
 
-Launch the review **in the background**, never as a foreground shell call: the default timeout (`SECOND_OPINION_TIMEOUT`, 1080s) exceeds the ~600s ceiling on a foreground call. On Claude Code use `run_in_background`; on Pi run it under `bg_task`; on Codex and OpenCode use scheduled re-entry, or pass `--timeout` at or below the foreground ceiling. Wait for it to complete before validating.
+Run `second-opinion …`; it backgrounds itself and prints when to check.
 
 ```bash
 mkdir -p [WORKTREE_PATH]/tmp
 .agents/skills/orch/scripts/git-context timestamp epoch
 .agents/skills/orch/scripts/git-context timestamp compact
-# backgrounded:
-.agents/skills/second-opinion/scripts/second-opinion review --cwd [WORKTREE_PATH] --output [WORKTREE_PATH]/tmp/review-local-[TIMESTAMP_FROM_PREVIOUS_COMMAND].json
+.agents/skills/second-opinion/scripts/second-opinion review --cwd [WORKTREE_PATH] --output [WORKTREE_PATH]/tmp/review-local-[TIMESTAMP_FROM_PREVIOUS_COMMAND].json --foreground
 ```
+
+Capture the launch status, stdout, and stderr. A nonzero launch or stdout with no line beginning `wait:` means no wait protocol exists: report `local external review failed — [SECOND-OPINION STDERR]` and continue to § 2 without running the wait command or `review-artifact-check`.
+
+Execute the exact command printed after `wait:`. Exit 75 means completion is still recoverable; do other event checks, then rerun the same command. Exit 124 is terminal: the run reached its deadline, and its processes are stopped when they can still be identified as belonging to it. Continue until terminal before running `review-artifact-check`.
 
 Use the epoch output as `LOCAL_STARTED_AT`:
 
@@ -69,7 +72,7 @@ Route the findings per the `review-finding` schema. No blockers and no `category
    .agents/skills/orch/scripts/worktree-push --worktree "[WORKTREE_PATH]" --issue [ISSUE_ID] --set-upstream
    ```
 
-   The push auto-rebases onto the updated base. When the rebase rewrites commits, `worktree-push` records the old→new map in `.rebase_map` and rewrites the fix commits stored in workflow state (`fixed_items`, `pr_comment_review.fixes`) itself — a commit that vanished in the rebase becomes `dropped:<sha>`, which is never published as a live SHA — reporting what changed on its `sha-reconcile:` line. A failed push exits with the push's own code after any printed map is applied (the rebase happens before the push). An error saying the map was NOT recorded means it waits in the sidecar the error names — repair workflow state and re-run `worktree-push` before publishing any recorded SHA.
+   The push auto-rebases onto the updated base. When the rebase rewrites commits, `worktree-push` records the old→new map in `.rebase_map` and rewrites the fix commits stored in workflow state (`fixed_items`, `pr_comment_review.fixes`) itself — a commit that vanished in the rebase becomes `dropped:<sha>`, which is never published as a live SHA — reporting what changed on its `sha-reconcile:` line. A failed push exits with the push's own code after any printed map is applied (the rebase happens before the push). An error saying the map was NOT recorded means the map never reached workflow state and cannot be regenerated: the rebase is already done, so a re-run prints no map and reports success over the same stale record. That run's transcript, `rebase-map:` lines included, is the only copy — repair workflow state, then apply those lines by hand with `workflow-state update` before publishing any recorded SHA.
 
    Regenerate any already-drafted publication text from the reconciled state, and resolve every SHA sourced from a review or QA artifact (e.g. a perf QA `benchmark_commit`) through `.rebase_map` before publishing it — follow the chain until no key matches. Publishing an unreconciled pre-rebase SHA is forbidden.
 
@@ -142,19 +145,18 @@ Route the findings per the `review-finding` schema. No blockers and no `category
 ```bash
 .agents/skills/orch/scripts/workflow-state append [ISSUE_ID] pr_comment_review.skipped '{"description":"[DESC]","reason":"[REASON]"}'
 ```
-```bash
-.agents/skills/orch/scripts/workflow-state increment [ISSUE_ID] pr_comment_review.iterations
-```
+
+The nested workflow already counted its own pass: `pr_comment_review.iterations` has exactly one writer, review-pr-comments § 6.3. Record the results here and leave the counter alone.
 
 Do not wait for a bot re-review round — late comments are caught by the § 4 gate, the § 6.1 gate-3 check, or queue-wait's late-findings guard (merge-pr § 5, verdict `dequeued`).
 
-Issues created during triage need implementing before merge, bounded at two re-submit cycles:
+The **re-submit set** is the issues this session filed for work the cap did not deny. A filing that stood in for a fix the cap refused — one made at or past `REVIEW_MAX_EXTERNAL_ROUNDS`, or deferred rather than fixed — is recorded in `pr_comment_review.issues_created` and reported in the PR body, and never enters the set: implementing it here is the fix the cap refused, one step later. The re-submit set needs implementing before merge, bounded at two re-submit cycles:
 
 ```bash
 .agents/skills/orch/scripts/workflow-state get [ISSUE_ID] '.submit_cycles // 0'
 ```
 
-At 2 or more → § 3.2 with the note "max re-submit cycles reached, created issues may need manual implementation". Otherwise increment `submit_cycles`, implement via `⤵ workflows/dev-start.md § 1-4`, review via `⤵ workflows/review-pr.md § 1-9` (both managed, same `worktree` and `issue_id`), then re-enter § 2 to push and update the PR body with the new `Closes` lines.
+At 2 or more → § 3.2 with the note "max re-submit cycles reached, the re-submit set may need manual implementation". Otherwise increment `submit_cycles`, implement via `⤵ workflows/dev-start.md § 1-4`, review via `⤵ workflows/review-pr.md § 1-9` (both managed, same `worktree` and `issue_id`), then re-enter § 2 to push and update the PR body with the new `Closes` lines.
 
 ### 3.2 Golden Baselines
 
@@ -203,10 +205,10 @@ For `off` also record the legacy field the gate-4 check reads, then skip the wai
    | `status` | Action |
    |----------|--------|
    | `approved`, `unresolved_count == 0` | → step 2 |
-   | `approved`, `unresolved_count > 0` | Run the triage pass below. Pushed no commits → the approval stands, → step 2. Pushed commits → restart step 1 |
+   | `approved`, `unresolved_count > 0` | Run the triage pass below. Pushed no commits → the approval stands, → step 2. Pushed commits → the Restart check |
    | `reviewed` | → step 2 |
    | `proceeded` | Reviewer-down degrade under `PR_REVIEW_ON_TIMEOUT=proceed`. Record `pr_approval.reviewer_down` (below), then → step 2. CI and gate 3 still apply in full. Orch posts no status and manufactures no review evidence |
-   | `changes_requested` or `comments` | Run the triage pass, then restart step 1 |
+   | `changes_requested` or `comments` | Run the triage pass, then the Restart check |
    | `timeout` | Ask the user: `Force merge` \| `Keep waiting` \| `Stop here` |
    | `error` | Re-run step 1 once; if it repeats, report and ask: `Keep waiting` \| `Stop here` |
 
@@ -214,9 +216,17 @@ For `off` also record the legacy field the gate-4 check reads, then skip the wai
    .agents/skills/orch/scripts/workflow-state set [ISSUE_ID] pr_approval.reviewer_down true
    ```
 
-   **Triage pass**, bounded by `pr_comment_review.iterations` (max 5; at the cap present the remaining feedback and ask `Triage again` | `Force merge` | `Stop here`): `⤵ workflows/review-pr-comments.md [PR_NUMBER] § 1-8 → § 4 step 1` with managed context.
+   **Triage pass**: `⤵ workflows/review-pr-comments.md [PR_NUMBER] § 1-8 → § 4 step 1` with managed context. It applies the external cap to its own fix pushes; what bounds this step is the Restart check.
 
-   **On `timeout`**: `Keep waiting` restarts step 1; `Force merge` records the override and continues to step 2 with the § 6.1 gates still applying; `Stop here` goes to § 6 with `MERGE_READY = false` and skips § 5.
+   **Restart check.** Every path that would restart the wait passes through here first — both restart arms above, `Keep waiting` on `timeout`, and § 6.1 gate 3's re-confirmation. Nothing restarts step 1 without it:
+
+   ```bash
+   .agents/skills/orch/scripts/workflow-state cap REVIEW_MAX_EXTERNAL_ROUNDS --issue [ISSUE_ID]
+   ```
+
+   A `below` verdict on `REVIEW_MAX_EXTERNAL_ROUNDS` → restart step 1. On `at-cap` the wait does not restart on its own: present the remaining feedback and ask `Triage again` | `Force merge` | `Stop here`. A standing `changes_requested` verdict on the current head outlives a disposition — only a dismissal or a newer review clears it, and triage dismisses only what it classifies as noise — so a restart returns that same verdict at once and triages past the cap. `Triage again` is the user's override for one more pass, which returns here; `Force merge` records the override and continues to step 2 with the § 6.1 gates applying; `Stop here` goes to § 6 with `MERGE_READY = false` and skips § 5.
+
+   **On `timeout`**: `Keep waiting` goes to the Restart check; `Force merge` records the override and continues to step 2 with the § 6.1 gates still applying; `Stop here` goes to § 6 with `MERGE_READY = false` and skips § 5.
 
    ```bash
    .agents/skills/orch/scripts/workflow-state set [ISSUE_ID] pr_approval.forced true
@@ -224,7 +234,7 @@ For `off` also record the legacy field the gate-4 check reads, then skip the wai
 
 2. **Record the result** for gate 4 — the gate status and the `unresolved_count` at verdict time — then → § 5.
 
-After any fix-up push: push → wait for a NEW review of the new head → triage, reply to, and resolve every thread → § 5 Verify CI → § 6 merge gates.
+After any fix-up push: push → the Restart check, and on a restart wait for a NEW review of the new head → triage, reply to, and resolve every thread → § 5 Verify CI → § 6 merge gates.
 
 ---
 
@@ -244,7 +254,7 @@ After any fix-up push: push → wait for a NEW review of the new head → triage
 ### 5.1 CI Failure Recovery
 
 ```bash
-.agents/skills/orch/scripts/orch-env CI_FIX_MAX_CYCLES 6
+.agents/skills/orch/scripts/workflow-state cap CI_FIX_MAX_CYCLES
 ```
 
 The printed value is `MAX_CYCLES`. Reruns-in-place are for flakes and re-gating on unchanged workflows only; a PR that changes gate or CI workflow behavior exhibits it only on a fresh head.
@@ -284,7 +294,7 @@ Empty `json_paths` means no internal review is recorded: report the unmet gate a
 .agents/skills/github/scripts/github.sh pr-threads [PR_NUMBER] --unresolved
 ```
 
-`unresolved_count > 0` runs ONE triage pass (`⤵ workflows/review-pr-comments.md [PR_NUMBER] § 1-8 → § 6.1 gate 3`, managed, bounded by the max-5 iteration cap). If that pass pushed commits, re-confirm the § 4 gate with a short wait (skip when `GATE_MODE` is `off`), then re-run § 5:
+`unresolved_count > 0` runs ONE triage pass (`⤵ workflows/review-pr-comments.md [PR_NUMBER] § 1-8 → § 6.1 gate 3`, managed, bounded by the same `REVIEW_MAX_EXTERNAL_ROUNDS` cap on `pr_comment_review.iterations`). If that pass pushed commits, re-confirm the § 4 gate through its Restart check with a short wait (skip when `GATE_MODE` is `off`), then re-run § 5:
 
 ```bash
 .agents/skills/orch/scripts/approval-wait [PR_NUMBER] 15 300 --json --mode [GATE_MODE]
@@ -351,7 +361,7 @@ Linear items also get it on the issue; GitHub items get linkage through `Closes 
 .agents/skills/orch/scripts/orch-env ORCH_MERGE_AUTONOMY ask
 ```
 
-`auto` → merge without asking: `⤵ workflows/merge-pr.md [PR_NUMBER] § 1-7 → end`. Anything else → ask `orch merge-pr [PR_NUMBER]` | `Skip`, and on merge run the same workflow. `MERGE_READY = false` never auto-merges.
+`auto` → merge without asking: `⤵ workflows/merge-pr.md [PR_NUMBER] § 1-7 → workflows/lane-postmerge.md → end`. Anything else → ask `orch merge-pr [PR_NUMBER]` | `Skip`, and on merge run the same workflows. `MERGE_READY = false` never auto-merges.
 
 ---
 

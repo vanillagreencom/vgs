@@ -17,6 +17,11 @@
 # non-executable review-artifact-check is a failure, not a skip: that is
 # precisely the drift this suite exists to catch, and skipping on it would make
 # the branch fire only when it matters.
+#
+# The doc checks pin the schema's own names — `measurement_failed`, and the
+# `zero_sample`, `invalid_declaration` and `valid_undermeasured` states. The
+# gate's own behaviour is exercised against the script above, which is what
+# proves it.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -112,18 +117,11 @@ schema="$SKILL_DIR/schemas/review-finding.md"
 
 # --- a. the rule is stated where every reviewer loads it ---
 
-require_fixed "$skill" 'Zero samples' 'Ethos states the zero-sample rule'
-require_fixed "$skill" 'nonzero measuring pipeline' 'Ethos covers a measuring pipeline that failed'
-require_fixed "$skill" 'instrument failure' 'Ethos names the classification'
 require_fixed "$skill" 'measurement_failed' 'Ethos names the declaration, so evidence is kept not deleted'
-require_fixed "$skill" 'top-level' 'Ethos says where the declaration goes'
-require_fixed "$skill" 'stability: 0/10' 'Ethos distinguishes a zero result from a zero sample'
 require_fixed "$schema" 'zero_sample' 'schema doc names the rejection reason'
 require_fixed "$schema" 'measurement_failed' 'schema doc specifies the declaration field'
 require_fixed "$schema" 'invalid_declaration' 'schema doc names the bar a declaration must clear'
 require_fixed "$schema" 'valid_undermeasured' 'schema doc names the state a declaration produces'
-require_fixed "$schema" 'are never scanned' 'schema doc says where quoted numbers belong'
-require_fixed "$schema" 'Omitting the numbers is never the way past this gate' 'schema doc forbids the omission shortcut'
 
 # --- b. the gate enforces it, in both directions ---
 

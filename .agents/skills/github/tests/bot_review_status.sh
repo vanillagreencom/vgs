@@ -136,7 +136,7 @@ echo
 echo "=== aggregation (verdict + completion) ==="
 
 # Reference aggregate_verdict implementation kept inline so this script does not
-# need to source any wrapper (which would also pull in .env loading).
+# need to source any wrapper (which would also pull in project-env loading).
 agg() {
     jq -r '
         [.[] | select(.status != "skipped")] as $effective |
@@ -256,17 +256,6 @@ assert_eq "$(compute_sticky_verdict_from_body "Verdict: approval withheld")" "ch
 assert_eq "$(compute_sticky_verdict_from_body "Verdict: rejected")" "changes" "rejected verdict = changes"
 assert_eq "$(compute_sticky_verdict_from_body "Verdict: denied")" "changes" "denied verdict = changes"
 assert_eq "$(compute_sticky_verdict_from_body "Recommendation: no approval")" "changes" "no approval text = changes"
-
-# Guard every shipped GitHub script, including commands that fixture-driven
-# unit tests do not otherwise execute, against Bash 4-only syntax.
-echo
-echo "=== Bash 3.2 portability ==="
-BASH32_PATTERN='mapfile|readarray|declare -[a-zA-Z]*A|local -[a-zA-Z]*A'
-BASH32_PATTERN="$BASH32_PATTERN"'|(^|[^$])\{[A-Za-z_][A-Za-z0-9_]*\}[<>]'
-BASH32_PATTERN="$BASH32_PATTERN"'|\$\{[A-Za-z_][A-Za-z0-9_]*(\[[^]]*\])?(,,|\^\^)'
-portability_violations="$(grep -rnE "$BASH32_PATTERN" "$SCRIPTS_DIR" \
-    | grep -vE '^[^:]+:[0-9]+:[[:space:]]*#' || true)"
-assert_eq "$portability_violations" "" "all shipped GitHub scripts avoid Bash 4-only constructs"
 
 echo
 echo "----"

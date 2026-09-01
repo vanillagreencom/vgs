@@ -7,12 +7,27 @@ docs live in README.md.
 
 - `scripts/growth-guards` — batch dispatcher and single-check router
 - `scripts/todo-ban`, `scripts/byte-ceiling`, `scripts/suppression-ban`,
-  `scripts/conflict-markers`, `scripts/commit-msg` — the five checks, each a
-  standalone executable
+  `scripts/conflict-markers`, `scripts/changelog-entries`, `scripts/prose`,
+  `scripts/commit-msg` — the seven checks, each a standalone executable
 - `scripts/pre-commit` — the chain the git `pre-commit` shim runs
 - `scripts/install-git-hooks` — hook installer, remover, and `--check` verdict
 - `scripts/lib/common.sh`, `scripts/lib/settings.sh` — shared helpers and
   layered settings resolution
+- `scripts/lib/configured-paths.sh` — the glob-list concept for the lanes
+  scoped by one: the configured list, the excludes list read from the index,
+  the one matcher both answer through, the walk over the index records, and
+  what may be measured at a matched path
+- `scripts/lib/commit-header.sh`, `scripts/lib/changelog-grammar.sh` — what
+  a commit header and a changelog ARE to this family: the two changelog
+  scopes both lanes resolve from, and the grammars each is judged by, kept
+  apart from the scans that run them
+- `scripts/lib/changelog-record-scope.sh` — the record half of the
+  `changelog-entries` judge: one tracked file against HEAD's copy, kept apart
+  from the fragment-tree walk it shares nothing with but a verdict
+- `scripts/lib/changelog-collate.sh` — the write half, run by
+  `changelog-entries --collate` on the verdict those two just reached: it
+  folds the accepted fragments into the record and deletes them, and decides
+  nothing about either
 - `scripts/lib/hook-check.sh` — the read-only verdict `install-git-hooks
   --check` returns over the shims this installer writes
 - `scripts/lib/hooks-path.sh` — where git reads hooks from, and whether
@@ -68,12 +83,15 @@ carries the EXACT delegating line on a line of its own — a line that was
 commented out, truncated, or left behind by an older version is rewritten,
 not trusted — and a hook whose executable bit was cleared gets it back,
 because git silently ignores a hook it cannot execute. An existing
-`pre-commit`/`commit-msg` keeps its content and its own exit status; a hook
-that is symlinked, deliberately disabled (not executable), or whose shebang
-names an interpreter that is not a POSIX-compatible shell is left alone
-entirely (reported, and the install exits 1). A file at the helper path that
-this installer did not write is never overwritten. A bare repository is
-refused — there is no work tree to guard.
+`pre-commit`/`commit-msg` keeps its content, its shebang and its own exit
+status; a hook that is symlinked, deliberately disabled (not executable),
+whose shebang names an interpreter that is not a POSIX-compatible shell, or
+whose shebang names a shell outside the trusted full paths under `/bin` and
+`/usr/bin`, is left alone entirely (reported, and the install exits 1). That
+trusted-path rule holds at install exactly as it does at `--check`, whoever
+wrote the hook. A file at the helper path that this installer did not write
+is never overwritten. A bare repository is refused — there is no work tree to
+guard.
 
 Linked worktrees share the install, since git resolves their hooks to the
 main checkout's hooks directory. The same sharing governs removal, and it
@@ -100,8 +118,9 @@ it away, `marketplace unsubscribe --remove-packages` — runs `--uninstall`
 while the scripts are still on disk, because shims whose scripts are gone
 block every commit.
 `kendex guard install`, `kendex guard uninstall` and `kendex guard check`
-invoke it directly. `kendex check` runs none of this package's scripts: it
-reads the hook files and names shims a deleted package left behind.
+invoke it directly. So does `kendex check`, but only where
+`.git/hooks/kendex-guards` is already there: git clones no hooks, so that
+file is a local act, and without it nothing here is run.
 
 `--check` is the read-only counterpart: it writes nothing — not even the
 hooks directory — and answers whether the shims are armed. `0`: the helper
@@ -111,7 +130,8 @@ some shim is drifted or absent, or `core.hooksPath` is set and empty, which
 switches git hooks off outright. `2`: the question could not be answered (an
 unreadable hooks directory, a hook file that cannot be read); failure to
 measure is never a pass, and definitive drift outranks an unmeasured
-component. The one stdout line carries every component finding, and `kendex check` reads the hook files natively instead of running this.
+component. The one stdout line carries every component finding, and it is what `kendex check` relays
+where there is something to report; a clean result folds into kendex's own all-clear instead.
 
 The helper is compared BYTE FOR BYTE against what this installer generates.
 The marker inside it is only a comment, and `--check` writes nothing, so it
@@ -151,14 +171,12 @@ one sentence naming no path and no command: clear the setting at its source,
 then run `kendex guard install`. Both modes print the same block, on
 stderr, so `--check` keeps its single stdout line.
 
-Composing a command instead was wrong three times. Unsetting the local file
-misses a value that lives elsewhere. Reading the scope and unsetting there
-still has to be right about `--unset-all`, about a second file the winning
-value shadows, and about `include.path`, which pulls the key in from a file
-git reports under the INCLUDING scope with its own path — so a scoped
-`--unset` edits `.git/config` and leaves the included file setting it. Each
-was this package predicting what a person's configuration would do to a
-command it wrote for them.
+No command is composed for anyone to run. A composed one has to be right
+about `--unset-all`, about a second file the winning value shadows, and about
+`include.path`, which pulls the key in from a file git reports under the
+INCLUDING scope with its own path, so a scoped `--unset` edits `.git/config`
+and leaves the included file setting it. That is this package predicting what
+a person's configuration would do to a command it wrote for them.
 
 Nothing here asserts what an origin is, either. git answers `command line:`
 for a value carried in the environment or on the command line, where there
@@ -206,10 +224,58 @@ at nothing. A marker word counts only in marker shapes:
 - the bare word directly after a comment leader (only whitespace between),
   followed by whitespace or end of line.
 
-Comment leaders: `//`, `#`, `;`, `/*`, `<!--`. A marker preceded by a
-backtick, a quote, or joined text (documentation quoting the word, a regex
-listing the words, `\n` inside a string literal) matches neither shape.
+Comment leaders: `//`, `#`, `;`, `/*`, `<!--`. A marker IMMEDIATELY preceded
+by a backtick, a quote, or joined text (documentation quoting the word, a
+regex listing the words, `\n` inside a string literal) matches neither
+shape; a space between them exempts nothing.
 Matching is case-sensitive — lowercase uses of the words are prose.
+
+The shapes are the same in both scopes; only the lines they are matched
+against differ. `--staged` collects the change set the way byte-ceiling's
+staged lane does (`--raw`, additions/modifications/type changes, renames at
+exact content), dropping symlinks and submodule gitlinks by destination
+mode because they carry no lines to read. A `git grep --cached` over THOSE
+PATHS then names the ones whose staged content carries a marker at all,
+chunked so a large change set stays inside ARG_MAX. Scoping the scan is
+what keeps the cost proportional to the commit and keeps a blob the commit
+never touched — corrupt, or not yet fetched into a blobless clone — out of
+the verdict. Only the named paths reach the per-path `-U0` diff that reads
+their added lines, one file per invocation, so no patch header is ever
+parsed for a path and a path git would have had to quote cannot be misread.
+Membership in that list is a `case` over a newline-delimited set, not a loop
+per staged path: the loop cost O(staged x carriers) and overtook the code it
+replaced on a marker-dense tree, and Bash 3.2 has no associative array.
+
+**Content decides what is scannable. An attribute never does.** That rule
+settles both halves of the commit lane. Diff configuration is pinned
+(`--no-ext-diff`, `--no-textconv`, `--no-color`, `--text`): a textconv filter
+would otherwise hand the lane content the commit does not carry, and a
+committed `.gitattributes` rule marking a path non-diffable would leave the
+diff with no hunks at all. The pre-filter carries no `-I` for the same
+reason — with it, one attributes line would hide a whole extension from the
+fast path, where a skipped file reads as clean. What forcing text lets
+through is then judged on content: each named path's index blob is sniffed
+for a NUL in its first block, git's own test, and a genuinely binary blob is
+NAMED as unmeasured rather than decoded. So a text file under a `-diff` rule
+is still read, while an asset whose bytes happen to spell a marker cannot
+block a commit with a record of raw bytes, and cannot ride inside a clean
+verdict either. Sniffing only the named paths keeps that at one `cat-file`
+per marker-carrying file, not one per staged file.
+
+The index-wide scans give the same answer, in the shared
+`gg_content_carriers` every one of them lists through: it forces text, drops
+the excluded paths, sniffs each named blob, and hands back the paths a scan
+may measure. `gg_grep_lane` details the hits per carrier, and its detail
+scan forces text too — the two move TOGETHER, since text on the listing over
+`-I` on the detail scan would name a file the detail scan then finds nothing
+in, which the lane's own invariant turns into a spurious exit 2.
+`conflict-markers`, `suppression-ban`'s seven blanket lanes and its bare-allow
+count, and `prose` inherit the rule from the helper; `prose` reaches it having
+already made the same judgement in its own walk. Every skip the helper makes
+is named and counted in `GG_WALK_SKIPPED`, which each check's verdict line
+carries as `N matched path(s) not measured`. The tally is of distinct PATHS:
+a check running several lanes over overlapping pathspecs meets the same
+unreadable blob once per lane, and `gg_note_skip` names and counts it once.
 
 ## byte-ceiling sizing
 
@@ -254,7 +320,7 @@ sourced. Only an ABSENT source is skipped: a source that exists but is
 unusable — unreadable, a directory, FIFO, socket or device, or a symlink
 that does not resolve — is a config error (exit 2), never a fall-through to
 the next layer. `GROWTH_GUARDS_SETTINGS_FILE=/dev/null` selects no settings
-source at all — `.env.local`, the settings file and `.env` are all skipped —
+source at all — `.env.local` and the settings files are both skipped —
 leaving explicit environment variables and the built-in defaults. The
 scripts `cd` to `git rev-parse --show-toplevel` before resolving anything,
 so all relative paths are repo-root-relative.
@@ -264,4 +330,12 @@ glob matched against the full repo-relative path (`*` crosses `/`); blank
 lines and `#` comments ignored; a pattern without a reason is a config
 error. **Baseline format**: `path<TAB>count`, `LC_ALL=C` sorted, unique
 paths, positive counts; malformed, unsorted, or duplicated rows are config
-errors (exit 2), never repaired silently.
+errors (exit 2), never repaired silently. **Path-globs format**
+(`GROWTH_GUARDS_CHANGELOG_PATHS`, `GROWTH_GUARDS_PROSE_PATHS`, both loaded
+by `gg_load_path_globs`): one space-separated list of shell globs against
+the full repo-relative path (`*` crosses `/`), REPLACING the built-in
+default rather than extending it. An absolute pattern, one escaping the
+repository, one leading with `-`, and an empty list are all config errors
+(exit 2); a list matching no tracked file is a clean pass. The caller runs
+under `set -f`, which the loader checks: without it the patterns expand
+against the work tree instead of matching the index.

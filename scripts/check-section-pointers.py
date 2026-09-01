@@ -28,11 +28,14 @@ when it stops naming something real.
 WHAT IS OUT OF SCOPE, and so what the count does NOT cover. A mark at a code
 region, and a bare mark in a file with no headings of its own, are DECLINED —
 unresolvable either way — and counted by reason in the ok line rather than
-dropped silently. `scripts/check-doc-growth.py` shows why that matters: it names
-several deleted AGENTS.md sections in bare prose that nothing here judges,
-beside three that DO need HISTORICAL_SECTIONS entries purely because an
-`AGENTS.md` token sits adjacent to the mark. That is the rule behind which lines
-need an entry, and without it the table looks arbitrary.
+dropped silently. Why that matters is the rule behind HISTORICAL_SECTIONS: two
+prose lines can name the same removed section and only one of them needs an
+entry, because an entry is owed for adjacency to a target token, not for
+mentioning a section that is gone. Printing the declines by reason is what makes
+that distinction auditable rather than a table nobody can check. The worked
+example used to be `scripts/check-doc-growth.py`, which named several deleted
+AGENTS.md sections in bare prose beside three that sat next to an `AGENTS.md`
+token; that file is deleted, and HISTORICAL_SECTIONS is empty as a result.
 
 ITS FOUR COLLECTION POINTS are enumerated once, in `scripts/lib/collected.py`'s
 CALL SITES registry — that module owns the invariant they implement (a matcher
@@ -77,24 +80,14 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 # NOT_A_SUITE_CHECK: each entry states why, because an unexplained one is how a
 # genuinely dead pointer gets parked here. BOTH staleness directions fail — an
 # entry no pointer uses, and one whose section came back.
-HISTORICAL_SECTIONS = {
-    ("scripts/check-doc-growth.py", "AGENTS.md", "Layout"): (
-        "its ceilings rationale records that VGS-124 moved this section's "
-        "path/purpose table into .agents/skills/vshell-dev/SKILL.md"
-    ),
-    (
-        "scripts/check-doc-growth.py",
-        "AGENTS.md",
-        "What CI covers, and what it cannot",
-    ): (
-        "its ceilings rationale records that VGS-123 split this section between "
-        "ci.instructions.md and validation-scripts.instructions.md"
-    ),
-    ("scripts/check-doc-growth.py", "AGENTS.md", "Review gate"): (
-        "its ceilings rationale records that VGS-124 repointed this section's "
-        "citation at ci.instructions.md"
-    ),
-}
+# EMPTY, and that is a real state rather than a disabled table. All three
+# entries were check-doc-growth.py's ceilings rationale citing AGENTS.md
+# sections VGS-123 and VGS-124 had relocated; deleting that script (KEN-839)
+# took the last past-tense pointer in the tree with it. The staleness arms below
+# still run against an empty table, so the first new entry is judged the same
+# way, and an entry left behind after its citing file goes is exactly what the
+# "an entry no pointer uses" direction exists to catch.
+HISTORICAL_SECTIONS: dict[tuple[str, str, str], str] = {}
 
 # Files whose pointers are FIXTURES rather than claims, each with the reason.
 # A fence covers an example written in prose; a fixture is a string literal in a

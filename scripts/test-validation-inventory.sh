@@ -116,6 +116,7 @@ GUARD_ONLY_MESSAGES=(
   "does not act on it"
   "the runner's derivation and the definition have drifted"
   "CI coverage was NOT checked"
+  "which .github/workflows/ci.yml does not"
 )
 ARM_MESSAGES+=("${GUARD_ONLY_MESSAGES[@]}")
 
@@ -249,6 +250,7 @@ for var, attr in (
     ("RUNNER_PATH", "RUNNER"),
     ("AGENTS_PATH", "AGENTS"),
     ("TABLES_PATH", "TABLES_DOC"),
+    ("CI_PATH", "CI"),
 ):
     if os.environ.get(var):
         setattr(mod, attr, pathlib.Path(os.environ[var]))
@@ -434,8 +436,8 @@ guard_case "an unknown tag is reported (by the shared grammar)" \
   "$(python3 - "$runner" <<'PY'
 import sys
 t = open(sys.argv[1], encoding="utf-8").read()
-print(t.replace("docs      | scripts/check-doc-growth.py",
-                "dcos      | scripts/check-doc-growth.py"), end="")
+print(t.replace("docs      | scripts/test-owned-skills-e2e.py",
+                "dcos      | scripts/test-owned-skills-e2e.py"), end="")
 PY
 )" \
   "malformed tag field"
@@ -1550,8 +1552,8 @@ spec.loader.exec_module(mod)
 runner = root / "scripts" / "validate"
 crlf = tmp / "validate-crlf"
 crlf.write_bytes(runner.read_bytes().replace(b"\n", b"\r\n"))
-row = "scripts/check-doc-growth.py"
-assert row in runner.read_text(encoding="utf-8"), "the doc-growth manifest row moved"
+row = "scripts/test-owned-skills-e2e.py"
+assert row in runner.read_text(encoding="utf-8"), "the owned-skills-e2e manifest row moved"
 try:
     logic = mod.runner_logic(crlf)
 except mod.ManifestError as error:
@@ -2246,6 +2248,97 @@ PATH="$wrapper_dir:$PATH" "$runner" --list docs >/dev/null 2>&1 || rc=$?
 [[ "$rc" == 0 ]] || fail "producer wrapper" "a passthrough wrapper changed the outcome (rc $rc)"
 rm -f "$wrapper_dir/sed"
 ok "a passthrough wrapper is transparent, so the cases above catch the status"
+
+# CI LOCKSTEP FOR A MANIFEST ROW OUTSIDE scripts/. The scripts/-keyed arm walks
+# executable_checks(), so a row naming a rendered engine was compared against
+# ci.yml by nothing at all — its workflow step could be deleted with the guard
+# still green. The fixture adds one such row for a real, executable file ci.yml
+# does not run; the unmutated control below is the other polarity.
+offtree_runner="$tmp/offtree-runner"
+awk '/^MANIFEST_EOF$/ && !seen {
+  print "-         | .agents/skills/worktree/scripts/worktree"; seen = 1
+} { print }' "$runner" >"$offtree_runner"
+chmod +x "$offtree_runner"
+run_guard "RUNNER_PATH=$offtree_runner"
+expect_refused "off-tree manifest row" "which .github/workflows/ci.yml does not"
+ok "a manifest row outside scripts/ that ci.yml never runs is reported"
+
+# MENTIONING A PATH IS NOT RUNNING IT. The CI half of both lockstep arms asked
+# `path in ci_text`, a substring test over the concatenated `run:` blocks, so a
+# workflow that stopped invoking a lane kept the guard green as long as the path
+# survived anywhere. ONE SHAPE PER CASE, because a single fixture carrying all
+# three would pass while two of them regressed: the argument, the trailing
+# comment that ci_run_commands' whole-line filter does not reach, and the
+# separator inside a quoted string that defeated the first repair's line
+# splitting, the two the tokenizing repair still got wrong — a redirection
+# TARGET (`: > <path>` truncates the file and runs nothing) and a function
+# DEFINITION (`<path>() { :; }` defines a name, it does not call one) — and two
+# where the path IS a command that may never run — the right side of `||`, and a
+# conditional body — and an array ELEMENT, which is data. Each is the real ci.yml
+# with one step's invocation replaced, so the fixtures track the workflow rather
+# than restating it.
+#
+# THE HEREDOC TERMINATOR CASE IS SEPARATE, below, because its shape needs three
+# lines rather than one and the loop above substitutes a single line.
+while IFS='|' read -r shape replacement; do
+  [[ -n "$shape" ]] || continue
+  doctored="$tmp/ci-$shape.yml"
+  SHAPE_REPLACEMENT="$replacement" python3 - "$repo_root" "$doctored" <<'MENTION_ONLY'
+import os, pathlib, sys
+root, out = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2])
+text = (root / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+step = "        run: .agents/skills/size-ratchet/scripts/size-ratchet\n"
+if step not in text:
+    sys.exit("the size-ratchet ci.yml step these fixtures doctor has moved")
+body = os.environ["SHAPE_REPLACEMENT"].replace("@", ".agents/skills/size-ratchet/scripts/size-ratchet")
+out.write_text(text.replace(step, f"        run: |\n          {body}\n", 1), encoding="utf-8")
+MENTION_ONLY
+  if [[ ! -s "$doctored" ]]; then
+    fail "ci mention-only ($shape)" "the fixture workflow was not written (see the message above)"
+    continue
+  fi
+  run_guard "CI_PATH=$doctored"
+  expect_refused "ci mention-only ($shape)" "which .github/workflows/ci.yml does not"
+  ok "a path CI only mentions ($shape) is not a path CI runs"
+done <<'SHAPES'
+argument|echo @
+comment|true  # was @
+quoted-separator|echo "( @ )"
+redirection|: > @
+function-definition|@() { :; }
+short-circuit|true || @
+conditional-branch|if false; then @; fi
+array-element|saved=(@)
+SHAPES
+
+# A HEREDOC BODY IS DATA, and its terminator is matched by the shell's rule, not
+# by a trimmed comparison. `<<EOF` closes on a line that is EXACTLY the
+# delimiter; a space-indented look-alike is body text. Trimming closed the body
+# early and read the real data lines after it as commands, so a lane replaced by
+# this shape stayed covered.
+heredoc_ci="$tmp/ci-heredoc-terminator.yml"
+python3 - "$repo_root" "$heredoc_ci" <<'HEREDOC_SHAPE'
+import pathlib, sys
+root, out = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2])
+text = (root / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+step = "        run: .agents/skills/size-ratchet/scripts/size-ratchet\n"
+if step not in text:
+    sys.exit("the size-ratchet ci.yml step these fixtures doctor has moved")
+# The space before the first EOF is the whole point: bash keeps reading.
+out.write_text(text.replace(step,
+    "        run: |\n"
+    "          cat <<EOF\n"
+    "           EOF\n"
+    "          .agents/skills/size-ratchet/scripts/size-ratchet\n"
+    "          EOF\n", 1), encoding="utf-8")
+HEREDOC_SHAPE
+if [[ ! -s "$heredoc_ci" ]]; then
+  fail "ci heredoc terminator" "the fixture workflow was not written (see the message above)"
+else
+  run_guard "CI_PATH=$heredoc_ci"
+  expect_refused "ci heredoc terminator" "which .github/workflows/ci.yml does not"
+  ok "a path inside a heredoc body is data, whatever the body looks like"
+fi
 
 # The executable-bit arm (VGS-30 applied to the entry point itself).
 non_exec="$tmp/non-exec-runner"
