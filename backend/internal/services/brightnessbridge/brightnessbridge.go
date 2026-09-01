@@ -12,29 +12,27 @@ import (
 	"strconv"
 	"time"
 
+	"vshell/backend/internal/execbound"
 	"vshell/backend/internal/server"
 )
 
 const (
 	timeout = 8 * time.Second
-	// Defense-in-depth bound on how long Output waits for stdout/stderr after
-	// the helper is gone. The ddcutil chain does not reach it: the helper
-	// runs its probes pipe-isolated (bin/vshell-helper _run_timeout and run
-	// use stdout=PIPE, stderr=PIPE, and Python's close_fds default), so a
-	// D-state ddcutil holds the helper's pipes, not these, and the context
-	// timeout killing the killable helper releases them at the deadline.
-	// WaitDelay bounds the wait only for a descendant that does inherit the
-	// pipes. Neither bound can abandon a helper that is itself in
-	// uninterruptible sleep — Wait blocks in wait4 regardless — so probes
-	// that can D-state must stay in helper subprocesses, never in the
-	// helper's own process.
-	waitDelay = 2 * time.Second
+	// Why the ddcutil chain never reaches this bound: the helper runs its
+	// probes pipe-isolated (bin/vshell-helper _run_timeout and run use
+	// stdout=PIPE, stderr=PIPE, and Python's close_fds default), so a D-state
+	// ddcutil holds the helper's pipes, not the backend's, and the context
+	// timeout releases them at the deadline. Probes that can D-state must
+	// therefore stay in helper subprocesses, never in the helper's own
+	// process. What the bound does cover is in the execbound package doc.
+	waitDelay = execbound.DefaultWaitDelay
 )
 
 type Manager struct {
 	helper    string
 	timeout   time.Duration
 	waitDelay time.Duration
+	log       *slog.Logger
 }
 
 type setParams struct {
@@ -52,7 +50,7 @@ func Register(srv *server.Server, log *slog.Logger) (*Manager, error) {
 	if err != nil {
 		return nil, err
 	}
-	m := &Manager{helper: helper, timeout: timeout, waitDelay: waitDelay}
+	m := &Manager{helper: helper, timeout: timeout, waitDelay: waitDelay, log: log}
 	srv.Register("brightness", "brightness.getState", m.handleGetState)
 	srv.Register("brightness", "brightness.rescan", m.handleGetState)
 	srv.Register("brightness", "brightness.setBrightness", m.handleSetBrightness)
@@ -125,26 +123,12 @@ func (m *Manager) call(args ...string) (any, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), m.timeout)
 	defer cancel()
 	cmdArgs := append([]string{"brightness"}, args...)
-	cmd := exec.CommandContext(ctx, m.helper, cmdArgs...)
-	cmd.WaitDelay = m.waitDelay
-	out, err := cmd.Output()
-	// Salvage before the timeout classification: a helper can exit cleanly
-	// with the complete response and the deadline expire while Output still
-	// waits on a descendant-held pipe, making both conditions true at once.
-	if errors.Is(err, exec.ErrWaitDelay) {
-		var result any
-		if jsonErr := json.Unmarshal(out, &result); jsonErr == nil {
-			return result, nil
-		}
-		if ctx.Err() == context.DeadlineExceeded {
+	res, err := execbound.CommandWithDelay(ctx, m.waitDelay, m.helper, cmdArgs...).WithLogger(m.log).Output()
+	out := res.Out
+	if err != nil {
+		if errors.Is(err, execbound.ErrTimeout) {
 			return nil, fmt.Errorf("brightness helper timed out")
 		}
-		return nil, fmt.Errorf("brightness helper left its pipes held open")
-	}
-	if ctx.Err() == context.DeadlineExceeded {
-		return nil, fmt.Errorf("brightness helper timed out")
-	}
-	if err != nil {
 		if ee, ok := err.(*exec.ExitError); ok {
 			msg := string(ee.Stderr)
 			if msg == "" {
@@ -159,6 +143,11 @@ func (m *Manager) call(args ...string) (any, error) {
 	}
 	var result any
 	if err := json.Unmarshal(out, &result); err != nil {
+		if res.Salvaged {
+			// Name the abandoned descendant, not the JSON: the helper left its
+			// pipes held open, so this output may be truncated or interleaved.
+			return nil, fmt.Errorf("brightness helper left its pipes held open and its response did not decode: %w", err)
+		}
 		return nil, fmt.Errorf("decode brightness helper response: %w", err)
 	}
 	return result, nil

@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net"
@@ -16,6 +17,7 @@ import (
 	"strings"
 	"time"
 
+	"vshell/backend/internal/execbound"
 	"vshell/backend/internal/server"
 )
 
@@ -50,6 +52,7 @@ var (
 type Manager struct {
 	srv  *server.Server
 	cmds map[string]string
+	log  *slog.Logger
 }
 
 type Printer struct {
@@ -163,7 +166,7 @@ func Register(srv *server.Server, log *slog.Logger) (*Manager, error) {
 			return nil, fmt.Errorf("%s not found", name)
 		}
 	}
-	m := &Manager{srv: srv, cmds: cmds}
+	m := &Manager{srv: srv, cmds: cmds, log: log}
 	srv.Register("cups", "cups.getPrinters", m.handleGetPrinters)
 	srv.Register("cups", "cups.getJobs", m.handleGetJobs)
 	srv.Register("cups", "cups.pausePrinter", m.handlePausePrinter)
@@ -621,12 +624,12 @@ func (m *Manager) output(cmdName string, args ...string) ([]byte, error) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, cmdPath, args...)
-	out, err := cmd.Output()
-	if ctx.Err() == context.DeadlineExceeded {
-		return nil, fmt.Errorf("%s timed out", cmdName)
-	}
+	res, err := execbound.Command(ctx, cmdPath, args...).WithLogger(m.log).Output()
+	out := res.Out
 	if err != nil {
+		if errors.Is(err, execbound.ErrTimeout) {
+			return nil, fmt.Errorf("%s timed out", cmdName)
+		}
 		if ee, ok := err.(*exec.ExitError); ok {
 			msg := strings.TrimSpace(string(ee.Stderr))
 			if msg == "" {

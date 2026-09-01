@@ -234,3 +234,36 @@ func readLog(t *testing.T, path string) string {
 func shellQuote(value string) string {
 	return "'" + strings.ReplaceAll(value, "'", "'\\''") + "'"
 }
+
+// The converted call site, end to end: a tailscale binary that answers in full
+// and leaves a descendant holding stdout must be read as a success with the
+// complete response, not as the raw "exec: WaitDelay expired before I/O
+// complete" that names neither the tool nor the cause. Before execbound
+// classified the result, m.output returned that error and discarded the
+// status. The holder's sleep is bounded so no signal to a recorded PID is
+// needed; it exits on its own well after the WaitDelay it must outlive.
+func TestOutputSalvagesResponseHeldByDescendant(t *testing.T) {
+	dir := t.TempDir()
+	statusPath := filepath.Join(dir, "status.json")
+	if err := os.WriteFile(statusPath, []byte(statusFixture), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "tailscale")
+	body := "#!/bin/sh\nsleep 20 &\ncat " + shellQuote(statusPath) + "\nexit 0\n"
+	if err := os.WriteFile(path, []byte(body), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	m := &Manager{srv: server.New(0, nil), tailscale: path}
+
+	out, err := m.output("status", "--json")
+	if err != nil {
+		t.Fatalf("output err = %v, want nil: tailscale exited 0 with the whole response", err)
+	}
+	var status statusJSON
+	if err := json.Unmarshal(out, &status); err != nil {
+		t.Fatalf("decode salvaged status: %v", err)
+	}
+	if status.BackendState != "Running" {
+		t.Fatalf("BackendState = %q, want %q", status.BackendState, "Running")
+	}
+}
