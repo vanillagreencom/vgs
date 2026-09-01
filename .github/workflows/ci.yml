@@ -326,13 +326,13 @@ jobs:
           python3 -m py_compile bin/vshell-helper
           bash -n bin/vshell
 
-      # AGENTS.md § Backend rules: this is what keeps the Go and QML sides of
-      # the capability inventory in agreement. Pure text analysis, no toolchain.
+      # AGENTS.md § Backend rules: text guards for backend capability docs and execbound adoption.
       - name: Backend capability inventory
         run: |
           scripts/check-backend-inventory.py
           scripts/check-backend-inventory-tests.py
-
+          scripts/check-execbound-adoption.py
+          scripts/check-execbound-adoption-tests.py
       # Quickshell matches reload children by index, so Lock.qml's child ORDER
       # is what keeps a session lock alive across a hot reload. Getting it wrong
       # aborts the shell on a save while locked, and nothing else in the suite

@@ -130,7 +130,9 @@ code or `ee.Stderr`. Only a child killed by signal classifies as `ErrTimeout`.
 Every adopter runs `DefaultWaitDelay`; brightnessbridge takes
 it through an injectable field only its tests vary, and why the ddcutil chain
 never reaches the bound is in `display-brightness.md`. Long-lived watchers own
-their own lifecycle.
+their own lifecycle. `scripts/check-execbound-adoption.py` keeps new one-shot
+`os/exec` output reads out of backend services and records the raw long-lived
+processes that intentionally stay outside execbound.
 
 ## Feature flags / env
 
@@ -153,7 +155,5 @@ are recorded in `backend/ATTRIBUTION.md` and enforced by
 ## Validation
 
 ```bash
-python3 scripts/check-backend-inventory.py   # method inventory + apiVersion-gate guard
-scripts/check-naming.sh
-go -C backend build ./... && go -C backend vet ./... && go -C backend test -race ./...
+scripts/validate go
 ```

@@ -55,7 +55,8 @@ breakage without a second instance.
   commands in the linear skill's instructions (`kendex.toml`), rationale in
   `docs/decisions/D002-github-linear-intake-sync.md`.
 - Branch `vgs-<n>-<slug>` — attaches the PR to Linear; `GH_ISSUE_PATTERN` reads it.
-- Commits `area: imperative summary`, lowercase; `area(VGS-12): ...` with an issue.
+- Commits use `type(scope)!: subject`, with types from the commit-msg hook;
+  put issue IDs in the scope, e.g. `fix(VGS-12): tighten the gate`.
 - Releases follow `.agents/skills/vgs-release/SKILL.md` and verify every
   maintained install channel; one that cannot be is named in the release notes,
   never silently skipped.
