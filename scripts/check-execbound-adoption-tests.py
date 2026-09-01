@@ -58,9 +58,11 @@ def write_execbound(root: Path) -> None:
     write_backend(root, "internal/execbound/execbound.go",
         """
 package execbound
+import "os/exec"
 type Cmd struct{}
 func Command(any, string, ...string) *Cmd { return &Cmd{} }
 func CommandWithDelay(any, any, string, ...string) *Cmd { return &Cmd{} }
+func (c *Cmd) Exec() *exec.Cmd { return exec.Command("true") }
 func (c *Cmd) WithLogger(any) *Cmd { return c }
 func (c *Cmd) Output() (int, error) { return 0, nil }
 func (c *Cmd) CombinedOutput() (int, error) { return 0, nil }
@@ -246,20 +248,16 @@ import (
     "example.com/backend/internal/execbound"
     "example.com/backend/internal/services/shared"
 )
-func assignedBound(ctx context.Context) error {
-    cmd := execbound.Command(ctx, "assigned-tool")
-    _, err := cmd.Output()
-    return err
-}
-func localPackageParam(cmd *shared.Runner) error {
-    _, err := cmd.Output()
-    return err
-}
-func aliasedFactory(ctx context.Context) error {
-    makeCmd := shared.Factory
-    _, err := makeCmd(ctx, "factory-tool").CombinedOutput()
-    return err
-}
+func assignedBound(ctx context.Context) error { cmd := execbound.Command(ctx, "assigned-tool"); _, err := cmd.Output(); return err }
+func localPackageParam(cmd *shared.Runner) error { _, err := cmd.Output(); return err }
+func aliasedFactory(ctx context.Context) error { makeCmd := shared.Factory; _, err := makeCmd(ctx, "factory-tool").CombinedOutput(); return err }
+type runner interface{ Output() (int, error) }
+func helperPassed(cmd runner) error { _, err := cmd.Output(); return err }
+func callHelper(ctx context.Context) error { return helperPassed(execbound.CommandWithDelay(ctx, 1, "helper-delay-tool")) }
+type combinedRunner interface{ CombinedOutput() (int, error) }
+func buildDelay(ctx context.Context) combinedRunner { return execbound.CommandWithDelay(ctx, 1, "result-delay-tool") }
+func resultRead(ctx context.Context) error { _, err := buildDelay(ctx).CombinedOutput(); return err }
+func execResult(ctx context.Context) error { _, err := execbound.Command(ctx, "exec-tool").Exec().CombinedOutput(); return err }
 """,
         )
         assert_fails(
@@ -268,6 +266,9 @@ func aliasedFactory(ctx context.Context) error {
             "assignedBound: cmd.Output()",
             "localPackageParam: cmd.Output()",
             "aliasedFactory: makeCmd(ctx, \"factory-tool\").CombinedOutput()",
+            "helperPassed: cmd.Output()",
+            "resultRead: buildDelay(ctx).CombinedOutput()",
+            "execResult: execbound.Command(ctx, \"exec-tool\").Exec().CombinedOutput()",
         )
     finally:
         shutil.rmtree(assigned_root)

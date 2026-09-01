@@ -51,6 +51,8 @@ type analyzer struct {
 	fset             *token.FileSet
 	sources          map[string][]byte
 	importer         *moduleImporter
+	paramOrigins     map[string]map[int]bool
+	resultOrigins    map[string]bool
 	report           report
 }
 
@@ -163,6 +165,7 @@ func (a *analyzer) scanDir(dir string) {
 		return
 	}
 	info := a.typeInfo(dir, files)
+	a.markPackageProvenance(files, info)
 	for _, file := range files {
 		a.scanFile(file, info)
 	}

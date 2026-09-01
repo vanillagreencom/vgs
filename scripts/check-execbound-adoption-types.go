@@ -114,6 +114,8 @@ func (m *moduleImporter) importSource(path string) (*types.Package, error) {
 func (a *analyzer) typeInfo(dir string, files []*ast.File) *types.Info {
 	info := &types.Info{
 		Types:      map[ast.Expr]types.TypeAndValue{},
+		Defs:       map[*ast.Ident]types.Object{},
+		Uses:       map[*ast.Ident]types.Object{},
 		Selections: map[*ast.SelectorExpr]*types.Selection{},
 	}
 	imp := a.moduleImporter()
@@ -196,6 +198,7 @@ func typeIsNamedPtr(typ types.Type, pkgPath string, name string) bool {
 }
 
 func (s fileScanner) recordOrigins(file *ast.File) {
+	s.recordParamOrigins(file)
 	ast.Inspect(file, func(node ast.Node) bool {
 		switch n := node.(type) {
 		case *ast.AssignStmt:
@@ -224,6 +227,9 @@ func (s fileScanner) recordOrigin(lhs ast.Expr, rhs ast.Expr) {
 
 func (s fileScanner) exprCanOriginateFromCmd(expr ast.Expr) bool {
 	if s.typeIsGuardedCmd(s.info.TypeOf(expr)) || s.isOSExecBuilderCall(expr) || s.isExecboundProduced(expr) {
+		return true
+	}
+	if call, ok := unparen(expr).(*ast.CallExpr); ok && s.analyzer.resultOrigins[funcKey(s.calledFunc(call))] {
 		return true
 	}
 	id, ok := unparen(expr).(*ast.Ident)

@@ -16,6 +16,7 @@ REPO_ROOT = Path(os.environ.get("VGS_EXECBOUND_REPO_ROOT", DEFAULT_REPO_ROOT)).r
 ANALYZER_SOURCES = [
     Path(__file__).with_suffix(".go"),
     Path(__file__).with_name("check-execbound-adoption-types.go"),
+    Path(__file__).with_name("check-execbound-adoption-provenance.go"),
 ]
 
 # Raw os/exec sites that intentionally start a process whose lifecycle outlives
