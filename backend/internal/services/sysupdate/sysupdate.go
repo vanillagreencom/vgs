@@ -15,6 +15,7 @@ import (
 	"sync"
 	"time"
 
+	"vshell/backend/internal/execbound"
 	"vshell/backend/internal/server"
 )
 
@@ -600,7 +601,7 @@ func (m *Manager) stopScheduleLocked() {
 }
 
 func commandOutput(ctx context.Context, allowNoUpdatesExit bool, name string, args ...string) ([]byte, error) {
-	cmd := exec.CommandContext(ctx, name, args...)
+	cmd := execbound.Command(ctx, name, args...)
 	out, err := cmd.Output()
 	if ctx.Err() != nil {
 		return out, ctx.Err()

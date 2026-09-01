@@ -12,6 +12,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"vshell/backend/internal/execbound"
 	"vshell/backend/internal/server"
 )
 
@@ -331,7 +332,7 @@ func (m *Manager) resolveExitNodeTarget(value string) (string, error) {
 func (m *Manager) output(args ...string) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, m.tailscale, args...)
+	cmd := execbound.Command(ctx, m.tailscale, args...)
 	out, err := cmd.Output()
 	if ctx.Err() == context.DeadlineExceeded {
 		return nil, fmt.Errorf("tailscale %s timed out", strings.Join(args, " "))
@@ -348,7 +349,7 @@ func (m *Manager) output(args ...string) ([]byte, error) {
 func (m *Manager) outputCombined(args ...string) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, m.tailscale, args...)
+	cmd := execbound.Command(ctx, m.tailscale, args...)
 	out, err := cmd.CombinedOutput()
 	if ctx.Err() == context.DeadlineExceeded {
 		return out, fmt.Errorf("tailscale %s timed out", strings.Join(args, " "))

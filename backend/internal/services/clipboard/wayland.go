@@ -10,6 +10,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"vshell/backend/internal/execbound"
 )
 
 const (
@@ -81,7 +83,7 @@ func logPasteFailure(log *slog.Logger, op string, err error) {
 func listTypes(log *slog.Logger) ([]string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), listTypesTimeout)
 	defer cancel()
-	out, err := exec.CommandContext(ctx, "wl-paste", "--list-types").Output()
+	out, err := execbound.Command(ctx, "wl-paste", "--list-types").Output()
 	if err != nil {
 		// wl-paste exits non-zero for an empty clipboard; that is a normal
 		// state, but anything with stderr is a real failure worth logging.
@@ -118,7 +120,7 @@ func firstImageType(types []string) string {
 func readText(log *slog.Logger) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), readTextTimeout)
 	defer cancel()
-	out, err := exec.CommandContext(ctx, "wl-paste", "--no-newline", "--type", "text").Output()
+	out, err := execbound.Command(ctx, "wl-paste", "--no-newline", "--type", "text").Output()
 	if ctx.Err() != nil {
 		return "", ctx.Err()
 	}
@@ -132,7 +134,7 @@ func readText(log *slog.Logger) (string, error) {
 func readImage(log *slog.Logger, mime string) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), readImageTimeout)
 	defer cancel()
-	out, err := exec.CommandContext(ctx, "wl-paste", "--type", mime).Output()
+	out, err := execbound.Command(ctx, "wl-paste", "--type", mime).Output()
 	if ctx.Err() != nil {
 		return nil, ctx.Err()
 	}

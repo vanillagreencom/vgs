@@ -16,6 +16,7 @@ import (
 	"sync"
 	"time"
 
+	"vshell/backend/internal/execbound"
 	"vshell/backend/internal/server"
 )
 
@@ -1314,7 +1315,7 @@ func nmRowsErr(fields []string, args ...string) ([][]string, error) {
 func runNMCLI(args ...string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), commandTimeout)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "nmcli", args...)
+	cmd := execbound.Command(ctx, "nmcli", args...)
 	out, err := cmd.CombinedOutput()
 	text := strings.TrimSpace(string(out))
 	if ctx.Err() == context.DeadlineExceeded {

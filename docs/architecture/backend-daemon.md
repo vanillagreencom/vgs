@@ -115,7 +115,10 @@ breaker; idempotent stale-socket cleanup on start; single teardown routine on
 every exit path; single-owner discipline per capability (no two watchers);
 in-flight request flush on client disconnect; `vshell backend doctor` health
 check (connect + getServerInfo: socket path, versions, capabilities, methods).
-A dead backend degrades UI to unavailable and never strands displays.
+A dead backend degrades UI to unavailable and never strands displays. One-shot
+external commands are built with `backend/internal/execbound`, whose
+`cmd.WaitDelay` keeps a descendant holding the child's pipes from wedging the
+request past its context deadline; long-lived watchers own their own lifecycle.
 
 ## Feature flags / env
 

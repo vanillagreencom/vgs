@@ -16,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	"vshell/backend/internal/execbound"
 	"vshell/backend/internal/server"
 )
 
@@ -621,7 +622,7 @@ func (m *Manager) output(cmdName string, args ...string) ([]byte, error) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, cmdPath, args...)
+	cmd := execbound.Command(ctx, cmdPath, args...)
 	out, err := cmd.Output()
 	if ctx.Err() == context.DeadlineExceeded {
 		return nil, fmt.Errorf("%s timed out", cmdName)

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"vshell/backend/internal/compositor"
+	"vshell/backend/internal/execbound"
 	"vshell/backend/internal/server"
 )
 
@@ -154,7 +155,7 @@ func (m *Manager) hyprlandState() (State, error) {
 	defer cancel()
 	// "monitors all" includes disabled outputs; plain "monitors" hides them,
 	// which would make a disabled monitor impossible to show or re-enable.
-	cmd := exec.CommandContext(ctx, m.command, "monitors", "all", "-j")
+	cmd := execbound.Command(ctx, m.command, "monitors", "all", "-j")
 	out, err := cmd.Output()
 	if ctx.Err() == context.DeadlineExceeded {
 		return State{}, fmt.Errorf("hyprctl monitors timed out")
@@ -208,7 +209,7 @@ func (m *Manager) hyprlandState() (State, error) {
 func (m *Manager) niriState() (State, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, m.command, "msg", "-j", "outputs")
+	cmd := execbound.Command(ctx, m.command, "msg", "-j", "outputs")
 	out, err := cmd.Output()
 	if ctx.Err() == context.DeadlineExceeded {
 		return State{}, fmt.Errorf("niri outputs timed out")
