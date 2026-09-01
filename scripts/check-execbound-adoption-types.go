@@ -159,7 +159,7 @@ func (a *analyzer) importPath(dir string) string {
 }
 
 func (s fileScanner) isOutputRead(sel *ast.SelectorExpr) bool {
-	if sel.Sel.Name != "Output" && sel.Sel.Name != "CombinedOutput" {
+	if !isOutputReadName(sel.Sel.Name) {
 		return false
 	}
 	if s.isExecboundRun(sel.X) {
@@ -236,6 +236,29 @@ func (s fileScanner) exprCanOriginateFromCmd(expr ast.Expr) bool {
 	return ok && id.Obj != nil && s.origins[id.Obj]
 }
 
+func (s fileScanner) isExecboundBuilderCall(call *ast.CallExpr) bool {
+	return s.isExecboundCommand(call.Fun) || s.isExecboundDelayCommand(call.Fun)
+}
+
+func (s fileScanner) execboundBuilderConsumed(call *ast.CallExpr) bool {
+	sel, ok := s.parentAfterParens(call).(*ast.SelectorExpr)
+	if !ok {
+		return false
+	}
+	if isOutputReadName(sel.Sel.Name) {
+		return s.selectorCalledDirectly(sel)
+	}
+	if sel.Sel.Name != "WithLogger" {
+		return false
+	}
+	withLogger, ok := s.parentAfterParens(sel).(*ast.CallExpr)
+	if !ok || withLogger.Fun != sel {
+		return false
+	}
+	output, ok := s.parentAfterParens(withLogger).(*ast.SelectorExpr)
+	return ok && isOutputReadName(output.Sel.Name) && s.selectorCalledDirectly(output)
+}
+
 func (s fileScanner) isOSExecBuilderCall(expr ast.Expr) bool {
 	call, ok := unparen(expr).(*ast.CallExpr)
 	return ok && s.isOSExecBuilder(call.Fun)
@@ -291,6 +314,8 @@ func (s fileScanner) isExecboundDelayCommand(expr ast.Expr) bool {
 
 func isExecboundBuilderName(name string) bool { return name == "Command" }
 
+func isOutputReadName(name string) bool { return name == "Output" || name == "CombinedOutput" }
+
 func (s fileScanner) selectorCalledDirectly(sel *ast.SelectorExpr) bool {
 	call, ok := s.parents[sel].(*ast.CallExpr)
 	return ok && call.Fun == sel
@@ -311,6 +336,17 @@ func (s fileScanner) outputReadNode(sel *ast.SelectorExpr) ast.Node {
 		return call
 	}
 	return sel
+}
+
+func (s fileScanner) parentAfterParens(node ast.Node) ast.Node {
+	for {
+		parent := s.parents[node]
+		if paren, ok := parent.(*ast.ParenExpr); ok && paren.X == node {
+			node = paren
+			continue
+		}
+		return parent
+	}
 }
 
 func parentMap(root ast.Node) map[ast.Node]ast.Node {

@@ -26,12 +26,13 @@ type finding struct {
 }
 
 type report struct {
-	FilesChecked int       `json:"files_checked"`
-	RawCalls     []finding `json:"raw_calls"`
-	OutputReads  []finding `json:"output_reads"`
-	References   []finding `json:"references"`
-	ParseErrors  []string  `json:"parse_errors"`
-	TypeErrors   []string  `json:"type_errors"`
+	FilesChecked  int       `json:"files_checked"`
+	RawCalls      []finding `json:"raw_calls"`
+	OutputReads   []finding `json:"output_reads"`
+	ExecboundUses []finding `json:"execbound_uses"`
+	References    []finding `json:"references"`
+	ParseErrors   []string  `json:"parse_errors"`
+	TypeErrors    []string  `json:"type_errors"`
 }
 
 type functionRange struct {
@@ -84,6 +85,7 @@ func main() {
 	a.walk()
 	sortFindings(a.report.RawCalls)
 	sortFindings(a.report.OutputReads)
+	sortFindings(a.report.ExecboundUses)
 	sortFindings(a.report.References)
 	sort.Strings(a.report.ParseErrors)
 	sort.Strings(a.report.TypeErrors)
@@ -214,6 +216,9 @@ func (a *analyzer) scanFile(file *ast.File, info *types.Info) {
 		case *ast.CallExpr:
 			if scanner.isOSExecBuilder(n.Fun) {
 				a.report.RawCalls = append(a.report.RawCalls, scanner.finding(n, ""))
+			}
+			if scanner.isExecboundBuilderCall(n) && !scanner.execboundBuilderConsumed(n) {
+				a.report.ExecboundUses = append(a.report.ExecboundUses, scanner.finding(n, ""))
 			}
 		case *ast.SelectorExpr:
 			if scanner.isOutputRead(n) {

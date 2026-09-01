@@ -157,6 +157,7 @@ def main() -> int:
 
     output_reads = [read for read in findings(report, "output_reads") if read.key not in ALLOWED_WAIT_DELAY_READS]
     wait_delay_reads = findings(report, "output_reads")
+    execbound_uses = findings(report, "execbound_uses")
     references = findings(report, "references")
     raw_calls = findings(report, "raw_calls")
     unallowed_raw = [call for call in raw_calls if call.key not in ALLOWED_RAW_EXECS]
@@ -186,6 +187,14 @@ def main() -> int:
                 f"{reference.expression} referenced without a call",
                 file=sys.stderr,
             )
+    if execbound_uses:
+        print(
+            "check-execbound-adoption: FAIL: execbound command builders must terminate "
+            "in a direct Output or CombinedOutput chain:",
+            file=sys.stderr,
+        )
+        for use in execbound_uses:
+            print(f"  {use.rel}:{use.line}: {use.function}: {use.expression}", file=sys.stderr)
     if output_reads:
         print(
             "check-execbound-adoption: FAIL: backend output reads must be "
@@ -207,7 +216,7 @@ def main() -> int:
             print(f"  {call.rel}:{call.line}: {call.function}: {call.expression}", file=sys.stderr)
             print(f"      allowlist key: {call.key}", file=sys.stderr)
 
-    if allowlist_errors or references or output_reads or unallowed_raw:
+    if allowlist_errors or references or execbound_uses or output_reads or unallowed_raw:
         print(
             "\nCall execbound.Command(...).Output or execbound.Command(...).CombinedOutput "
             "as a direct chain. Use execbound.CommandWithDelay only at allowlisted custom-delay "

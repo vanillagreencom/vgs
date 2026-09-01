@@ -14,15 +14,12 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[1]
 CHECKER = REPO_ROOT / "scripts" / "check-execbound-adoption.py"
 
-
 def write(path: Path, text: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(text, encoding="utf-8")
 
-
 def write_backend(root: Path, rel: str, text: str) -> None:
     write(root / "backend" / Path(rel), text)
-
 
 def run_checker(root: Path) -> subprocess.CompletedProcess[str]:
     env = os.environ.copy()
@@ -203,10 +200,7 @@ import (
     "context"
     "os/exec"
 )
-func rawStart(ctx context.Context) error {
-    cmd := exec.CommandContext(ctx, "raw-tool")
-    return cmd.Start()
-}
+func rawStart(ctx context.Context) error { cmd := exec.CommandContext(ctx, "raw-tool"); return cmd.Start() }
 """,
         )
         assert_fails(raw_root, "raw os/exec builders outside execbound need a lifecycle reason", "raw-tool", "allowlist key:")
@@ -258,6 +252,10 @@ type combinedRunner interface{ CombinedOutput() (int, error) }
 func buildDelay(ctx context.Context) combinedRunner { return execbound.CommandWithDelay(ctx, 1, "result-delay-tool") }
 func resultRead(ctx context.Context) error { _, err := buildDelay(ctx).CombinedOutput(); return err }
 func execResult(ctx context.Context) error { _, err := execbound.Command(ctx, "exec-tool").Exec().CombinedOutput(); return err }
+func aggregate(ctx context.Context) []runner { return []runner{execbound.Command(ctx, "aggregate-tool")} }
+func execRun(ctx context.Context) error { return execbound.Command(ctx, "exec-run-tool").Exec().Run() }
+func execStart(ctx context.Context) error { return execbound.Command(ctx, "exec-start-tool").Exec().Start() }
+func execWait(ctx context.Context) error { return execbound.Command(ctx, "exec-wait-tool").Exec().Wait() }
 """,
         )
         assert_fails(
@@ -269,6 +267,12 @@ func execResult(ctx context.Context) error { _, err := execbound.Command(ctx, "e
             "helperPassed: cmd.Output()",
             "resultRead: buildDelay(ctx).CombinedOutput()",
             "execResult: execbound.Command(ctx, \"exec-tool\").Exec().CombinedOutput()",
+            "execbound command builders must terminate",
+            "callHelper: execbound.CommandWithDelay(ctx, 1, \"helper-delay-tool\")",
+            "aggregate: execbound.Command(ctx, \"aggregate-tool\")",
+            "execRun: execbound.Command(ctx, \"exec-run-tool\")",
+            "execStart: execbound.Command(ctx, \"exec-start-tool\")",
+            "execWait: execbound.Command(ctx, \"exec-wait-tool\")",
         )
     finally:
         shutil.rmtree(assigned_root)
