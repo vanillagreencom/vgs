@@ -5,23 +5,25 @@ import (
 	"go/types"
 )
 
-func (a *analyzer) markPackageProvenance(files []*ast.File, info *types.Info) {
+func (a *analyzer) markTreeProvenance() {
 	if a.paramOrigins == nil {
 		a.paramOrigins = map[string]map[int]bool{}
 		a.resultOrigins = map[string]bool{}
 	}
 	for {
 		changed := false
-		for _, file := range files {
-			s := fileScanner{
-				analyzer: a,
-				imports:  importAliases(file, a.modulePath),
-				info:     info,
-				origins:  map[*ast.Object]bool{},
-			}
-			s.recordOrigins(file)
-			if s.markFuncProvenance(file) {
-				changed = true
+		for _, pkg := range a.packages {
+			for _, file := range pkg.files {
+				s := fileScanner{
+					analyzer: a,
+					imports:  importAliases(file, a.modulePath),
+					info:     pkg.info,
+					origins:  map[*ast.Object]bool{},
+				}
+				s.recordOrigins(file)
+				if s.markFuncProvenance(file) {
+					changed = true
+				}
 			}
 		}
 		if !changed {

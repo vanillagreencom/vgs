@@ -213,15 +213,8 @@ func rawStart(ctx context.Context) error { cmd := exec.CommandContext(ctx, "raw-
         write_backend(assigned_root, "internal/services/sample/assigned.go",
             """
 package sample
-import (
-    "context"
-    "example.com/backend/internal/execbound"
-)
-func assignedBound(ctx context.Context) error {
-    cmd := execbound.Command(ctx, "assigned-tool")
-    _, err := cmd.Output()
-    return err
-}
+import "example.com/backend/internal/execbound"
+func assignedBound() error { cmd := execbound.Command(nil, "assigned-tool"); _, err := cmd.Output(); return err }
 """,
         )
         assert_fails(assigned_root, "could not type-check", "could not import example.com/backend/internal/execbound")
@@ -232,6 +225,13 @@ package shared
 import "example.com/backend/internal/execbound"
 type Runner = execbound.Cmd
 func Factory(ctx any, name string) *Runner { return execbound.Command(ctx, name) }
+""",
+        )
+        write_backend(assigned_root, "internal/services/aaahelper/helper.go",
+            """
+package aaahelper
+type Runner interface{ Output() (int, error) }
+func Read(r Runner) error { _, err := r.Output(); return err }
 """,
         )
         write_backend(assigned_root, "internal/services/sample/assigned.go",
@@ -274,6 +274,18 @@ func execWait(ctx context.Context) error { return execbound.Command(ctx, "exec-w
             "execStart: execbound.Command(ctx, \"exec-start-tool\")",
             "execWait: execbound.Command(ctx, \"exec-wait-tool\")",
         )
+        write_backend(assigned_root, "internal/services/zzcaller/caller.go",
+            """
+package zzcaller
+import (
+    "context"
+    "example.com/backend/internal/execbound"
+    "example.com/backend/internal/services/aaahelper"
+)
+func Later(ctx context.Context) error { return aaahelper.Read(execbound.Command(ctx, "late-tool")) }
+""",
+        )
+        assert_fails(assigned_root, "backend output reads must be directly chained", "Read: r.Output()")
     finally:
         shutil.rmtree(assigned_root)
 
@@ -283,12 +295,7 @@ func execWait(ctx context.Context) error { return execbound.Command(ctx, "exec-w
             """
 package sample
 import "os/exec"
-func methodValue() error {
-    methodValueCmd := &exec.Cmd{Path: "method-value-tool"}
-    read := methodValueCmd.Output
-    _, err := read()
-    return err
-}
+func methodValue() error { methodValueCmd := &exec.Cmd{Path: "method-value-tool"}; read := methodValueCmd.Output; _, err := read(); return err }
 """,
         )
         assert_fails(method_value_root, "backend output reads must be directly chained", "methodValue: methodValueCmd.Output")
@@ -304,17 +311,8 @@ import (
     "context"
     ex "os/exec"
 )
-func factoryAlias(ctx context.Context) error {
-    makeCmd := ex.CommandContext
-    cmd := makeCmd(ctx, "bad-tool")
-    _, err := cmd.Output()
-    return err
-}
-func chainedAlias(ctx context.Context) error {
-    run := ex.CommandContext
-    _, err := run(ctx, "security-tool").Output()
-    return err
-}
+func factoryAlias(ctx context.Context) error { makeCmd := ex.CommandContext; cmd := makeCmd(ctx, "bad-tool"); _, err := cmd.Output(); return err }
+func chainedAlias(ctx context.Context) error { run := ex.CommandContext; _, err := run(ctx, "security-tool").Output(); return err }
 """,
         )
         assert_fails(alias_root, "os/exec command builders must be called directly", "ex.CommandContext referenced without a call")

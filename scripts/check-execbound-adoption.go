@@ -40,6 +40,11 @@ type functionRange struct {
 	start, end token.Pos
 }
 
+type packageScan struct {
+	files []*ast.File
+	info  *types.Info
+}
+
 type imports struct {
 	osExec       map[string]bool
 	execbound    map[string]bool
@@ -54,6 +59,7 @@ type analyzer struct {
 	importer         *moduleImporter
 	paramOrigins     map[string]map[int]bool
 	resultOrigins    map[string]bool
+	packages         []packageScan
 	report           report
 }
 
@@ -145,6 +151,8 @@ func (a *analyzer) walk() {
 	if err != nil {
 		a.report.ParseErrors = append(a.report.ParseErrors, err.Error())
 	}
+	a.markTreeProvenance()
+	a.scanPackages()
 }
 
 func (a *analyzer) scanDir(dir string) {
@@ -167,9 +175,14 @@ func (a *analyzer) scanDir(dir string) {
 		return
 	}
 	info := a.typeInfo(dir, files)
-	a.markPackageProvenance(files, info)
-	for _, file := range files {
-		a.scanFile(file, info)
+	a.packages = append(a.packages, packageScan{files: files, info: info})
+}
+
+func (a *analyzer) scanPackages() {
+	for _, pkg := range a.packages {
+		for _, file := range pkg.files {
+			a.scanFile(file, pkg.info)
+		}
 	}
 }
 
