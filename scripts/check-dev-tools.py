@@ -228,6 +228,8 @@ def test_env_remove_keeps_shared_tools():
 def test_catalog_is_consistent():
     """One catalog feeds stubs, agents and envs; ids and commands must be unique."""
     catalog = mise.dev_tools_catalog()
+    for section in ("agents", "tools", "envs"):
+        assert catalog.get(section), f"catalog section {section} must not be empty"
     commands = [e["command"] for e in catalog["agents"] + catalog["tools"]]
     assert_equal(len(commands), len(set(commands)), "stub commands must be unique: " + " ".join(commands))
     ids = [e["id"] for e in catalog["agents"]]

@@ -103,6 +103,9 @@ func TestParseMiseOutdated(t *testing.T) {
 	if _, err := parseMiseOutdated([]byte("mise ERROR nope")); err == nil {
 		t.Fatal("non-JSON output must be an error, not zero updates")
 	}
+	if _, err := parseMiseOutdated([]byte("  \n")); err == nil {
+		t.Fatal("empty output must be an error: up to date prints {}")
+	}
 }
 
 func TestBackendsListsMise(t *testing.T) {

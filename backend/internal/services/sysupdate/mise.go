@@ -17,7 +17,7 @@ import (
 func parseMiseOutdated(out []byte) ([]Package, error) {
 	trimmed := bytes.TrimSpace(out)
 	if len(trimmed) == 0 {
-		return nil, nil
+		return nil, fmt.Errorf("empty output; up to date is `{}`")
 	}
 	var raw map[string]struct {
 		Name    string `json:"name"`

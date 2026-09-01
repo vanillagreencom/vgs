@@ -24,7 +24,7 @@
     { "id": "crush", "name": "Crush", "package": "crush", "command": "crush", "launch": ["crush", "--yolo"] },
     { "id": "pi", "name": "Pi", "package": "pi", "command": "pi", "launch": ["pi"] },
     { "id": "omp", "name": "Oh My Pi", "package": "github:can1357/oh-my-pi", "command": "omp", "launch": ["omp", "--auto-approve"] },
-    { "id": "agy", "name": "Antigravity", "package": "antigravity-cli", "command": "agy", "launch": ["agy", "--dangerously-skip-permissions"] },
+    { "id": "agy", "name": "Antigravity", "package": "aqua:google-antigravity/antigravity-cli", "command": "agy", "launch": ["agy", "--dangerously-skip-permissions"] },
     { "id": "grok", "name": "Grok", "package": "npm:@xai-official/grok", "command": "grok", "launch": ["grok", "--permission-mode", "bypassPermissions"] },
     { "id": "ori", "name": "Ori", "package": "github:OpenRouterLabs/ori-releases", "command": "ori", "launch": ["ori", "code"] },
     { "id": "dsh", "name": "DeepSeek Harness", "package": "npm:@deepseek-ai/dsh", "command": "dsh", "launch": ["dsh", "web"] },

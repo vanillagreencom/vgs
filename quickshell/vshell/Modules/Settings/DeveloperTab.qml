@@ -20,6 +20,9 @@ Item {
     property bool loading: false
 
     readonly property var agentNames: root.agents.map(a => a.name)
+    // Launchers count as installed only when at least one stub is ours; a
+    // fresh machine has none and offers installation rather than removal.
+    readonly property bool launchersInstalled: !root.stubsOptedOut && root.agents.some(a => a.stub === "ours")
     readonly property int defaultIndex: root.agents.findIndex(a => a.id === SettingsData.defaultCodingAgent)
 
     function refresh() {
@@ -124,11 +127,11 @@ Item {
                     }
 
                     VgsButton {
-                        text: root.stubsOptedOut ? I18n.tr("Install launchers") : I18n.tr("Remove launchers")
-                        iconName: root.stubsOptedOut ? "download" : "delete"
+                        text: root.launchersInstalled ? I18n.tr("Remove launchers") : I18n.tr("Install launchers")
+                        iconName: root.launchersInstalled ? "delete" : "download"
                         variant: "secondary"
                         onClicked: {
-                            root.runInTerminal("developer-stubs-toggle", ["mise", root.stubsOptedOut ? "opt-in" : "remove-stubs"]);
+                            root.runInTerminal("developer-stubs-toggle", ["mise", root.launchersInstalled ? "remove-stubs" : "opt-in"]);
                         }
                     }
 
