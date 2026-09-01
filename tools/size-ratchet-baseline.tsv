@@ -7,7 +7,7 @@ backend/internal/services/cloudsync/jobs.go	644
 backend/internal/services/cloudsync/remotes.go	1101
 backend/internal/services/cloudsync/state.go	635
 backend/internal/services/cloudsync/watch.go	404
-backend/internal/services/cups/cups.go	887
+backend/internal/services/cups/cups.go	888
 backend/internal/services/freedesktop/screensaver.go	745
 backend/internal/services/gamma/gamma.go	693
 backend/internal/services/loginctl/loginctl.go	824

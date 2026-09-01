@@ -122,7 +122,8 @@ networkmanager, sysupdate, tailscale and wlroutput services are built with
 the child's pipes from wedging the request past its context deadline. execbound
 owns the terminal classification, so no call site reads `ctx.Err()` itself: a
 clean exit read through held pipes is a success carrying `Result.Salvaged` (one
-Warn naming the tool), and an exit status the child reached on its own outranks
+Warn, naming the tool, on the service's own logger so
+`VGS_BACKEND_LOG_LEVEL` governs it), and an exit status the child reached on its own outranks
 an expired deadline — the `*exec.ExitError` still reaches code keying on an exit
 code or `ee.Stderr`. Only a child killed by signal classifies as `ErrTimeout`.
 Every adopter runs `DefaultWaitDelay`; brightnessbridge takes

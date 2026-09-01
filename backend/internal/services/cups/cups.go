@@ -52,6 +52,7 @@ var (
 type Manager struct {
 	srv  *server.Server
 	cmds map[string]string
+	log  *slog.Logger
 }
 
 type Printer struct {
@@ -165,7 +166,7 @@ func Register(srv *server.Server, log *slog.Logger) (*Manager, error) {
 			return nil, fmt.Errorf("%s not found", name)
 		}
 	}
-	m := &Manager{srv: srv, cmds: cmds}
+	m := &Manager{srv: srv, cmds: cmds, log: log}
 	srv.Register("cups", "cups.getPrinters", m.handleGetPrinters)
 	srv.Register("cups", "cups.getJobs", m.handleGetJobs)
 	srv.Register("cups", "cups.pausePrinter", m.handlePausePrinter)
@@ -623,7 +624,7 @@ func (m *Manager) output(cmdName string, args ...string) ([]byte, error) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
-	res, err := execbound.Command(ctx, cmdPath, args...).Output()
+	res, err := execbound.Command(ctx, cmdPath, args...).WithLogger(m.log).Output()
 	out := res.Out
 	if err != nil {
 		if errors.Is(err, execbound.ErrTimeout) {

@@ -32,6 +32,7 @@ type Manager struct {
 	helper    string
 	timeout   time.Duration
 	waitDelay time.Duration
+	log       *slog.Logger
 }
 
 type setParams struct {
@@ -49,7 +50,7 @@ func Register(srv *server.Server, log *slog.Logger) (*Manager, error) {
 	if err != nil {
 		return nil, err
 	}
-	m := &Manager{helper: helper, timeout: timeout, waitDelay: waitDelay}
+	m := &Manager{helper: helper, timeout: timeout, waitDelay: waitDelay, log: log}
 	srv.Register("brightness", "brightness.getState", m.handleGetState)
 	srv.Register("brightness", "brightness.rescan", m.handleGetState)
 	srv.Register("brightness", "brightness.setBrightness", m.handleSetBrightness)
@@ -122,7 +123,7 @@ func (m *Manager) call(args ...string) (any, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), m.timeout)
 	defer cancel()
 	cmdArgs := append([]string{"brightness"}, args...)
-	res, err := execbound.CommandWithDelay(ctx, m.waitDelay, m.helper, cmdArgs...).Output()
+	res, err := execbound.CommandWithDelay(ctx, m.waitDelay, m.helper, cmdArgs...).WithLogger(m.log).Output()
 	out := res.Out
 	if err != nil {
 		if errors.Is(err, execbound.ErrTimeout) {
