@@ -6,7 +6,6 @@ import (
 	"log/slog"
 	"net/url"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -186,26 +185,6 @@ func (m *Manager) handleAppPickerOpen(params json.RawMessage) (any, error) {
 		"categories":  categories,
 	})
 	return map[string]any{"success": true}, nil
-}
-
-func queryDefault(mimeType string) (string, error) {
-	out, err := exec.Command("xdg-mime", "query", "default", mimeType).Output()
-	if err != nil {
-		if _, ok := err.(*exec.ExitError); ok {
-			return "", nil
-		}
-		return "", err
-	}
-	return strings.TrimSpace(string(out)), nil
-}
-
-func setDefault(desktopID string, mimeTypes []string) error {
-	args := append([]string{"default", desktopID}, mimeTypes...)
-	out, err := exec.Command("xdg-mime", args...).CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("xdg-mime default failed: %s", strings.TrimSpace(string(out)))
-	}
-	return nil
 }
 
 func appsForMime(mimeType string) []string {

@@ -476,12 +476,12 @@ func (m *Manager) handleSetIconTheme(params json.RawMessage) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	if _, err := exec.LookPath("gsettings"); err != nil {
+	command, err := exec.LookPath("gsettings")
+	if err != nil {
 		return nil, fmt.Errorf("gsettings not available")
 	}
-	out, err := exec.Command("gsettings", "set", "org.gnome.desktop.interface", "icon-theme", theme).CombinedOutput()
-	if err != nil {
-		return nil, fmt.Errorf("set icon theme: %s", strings.TrimSpace(string(out)))
+	if err := setIconTheme(command, theme, settingsCommandTimeout, m.log); err != nil {
+		return nil, err
 	}
 	return map[string]any{"success": true, "message": "icon theme set"}, nil
 }

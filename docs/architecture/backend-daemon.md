@@ -129,8 +129,7 @@ code or `ee.Stderr`. Only a child killed by signal classifies as `ErrTimeout`.
 Every adopter runs `DefaultWaitDelay`; brightnessbridge takes
 it through an injectable field only its tests vary, and why the ddcutil chain
 never reaches the bound is in `display-brightness.md`. Long-lived watchers own
-their own lifecycle. Known gap: the mimeapps, freedesktop/screensaver and gamma
-one-shots still use bare `exec.Command` with no bound.
+their own lifecycle.
 
 ## Feature flags / env
 

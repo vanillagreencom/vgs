@@ -3,7 +3,9 @@ package gamma
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 )
 
 func fakeCommand(t *testing.T, directory, name string) string {
@@ -69,4 +71,33 @@ func TestWlsunsetSkipsIdenticalProcessReplacement(t *testing.T) {
 	}
 	manager.stopLocked()
 	manager.mu.Unlock()
+}
+
+func TestHyprsunsetIPCTimesOutEachAttempt(t *testing.T) {
+	dir := t.TempDir()
+	logPath := filepath.Join(dir, "hyprctl.log")
+	hyprctl := filepath.Join(dir, "hyprctl")
+	if err := os.WriteFile(hyprctl, []byte("#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$HYPRCTL_LOG\"\nexec sleep 60\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HYPRCTL_LOG", logPath)
+	manager := &Manager{hyprctl: hyprctl}
+
+	started := time.Now()
+	err := manager.hyprsunsetIPCWithBounds(20*time.Millisecond, time.Millisecond, "temperature", "4200")
+	elapsed := time.Since(started)
+
+	if err == nil || !strings.Contains(err.Error(), "timed out") {
+		t.Fatalf("hyprsunsetIPCWithBounds error = %v, want timeout", err)
+	}
+	if elapsed > 2*time.Second {
+		t.Fatalf("hyprsunsetIPCWithBounds took %v, want each retry attempt bounded", elapsed)
+	}
+	content, readErr := os.ReadFile(logPath)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if attempts := strings.Count(string(content), "\n"); attempts != hyprsunsetIPCAttempts {
+		t.Fatalf("attempts = %d, want %d", attempts, hyprsunsetIPCAttempts)
+	}
 }
