@@ -31,6 +31,7 @@ type report struct {
 	OutputReads  []finding `json:"output_reads"`
 	References   []finding `json:"references"`
 	ParseErrors  []string  `json:"parse_errors"`
+	TypeErrors   []string  `json:"type_errors"`
 }
 
 type functionRange struct {
@@ -49,6 +50,7 @@ type analyzer struct {
 	root, modulePath string
 	fset             *token.FileSet
 	sources          map[string][]byte
+	importer         *moduleImporter
 	report           report
 }
 
@@ -82,6 +84,7 @@ func main() {
 	sortFindings(a.report.OutputReads)
 	sortFindings(a.report.References)
 	sort.Strings(a.report.ParseErrors)
+	sort.Strings(a.report.TypeErrors)
 	if err := json.NewEncoder(os.Stdout).Encode(a.report); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(2)

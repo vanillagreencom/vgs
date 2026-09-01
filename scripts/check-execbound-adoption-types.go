@@ -1,20 +1,148 @@
 package main
 
 import (
+	"encoding/json"
+	"fmt"
 	"go/ast"
 	"go/importer"
 	"go/types"
+	"io"
+	"os"
+	osexec "os/exec"
 	"path/filepath"
+	"strings"
 )
+
+type moduleImporter struct {
+	analyzer *analyzer
+	exporter types.Importer
+	exports  map[string]string
+	packages map[string]*types.Package
+}
+
+func (m *moduleImporter) Import(path string) (*types.Package, error) {
+	if pkg := m.packages[path]; pkg != nil {
+		return pkg, nil
+	}
+	if m.analyzer.modulePath != "" &&
+		(path == m.analyzer.modulePath || strings.HasPrefix(path, m.analyzer.modulePath+"/")) {
+		return m.importSource(path)
+	}
+	pkg, err := m.exportImporter().Import(path)
+	if err == nil {
+		m.packages[path] = pkg
+	}
+	return pkg, err
+}
+
+func (m *moduleImporter) exportImporter() types.Importer {
+	if m.exporter == nil {
+		m.exporter = importer.ForCompiler(m.analyzer.fset, "gc", m.lookupExport)
+	}
+	return m.exporter
+}
+
+func (m *moduleImporter) lookupExport(path string) (io.ReadCloser, error) {
+	if export := m.exports[path]; export != "" {
+		return os.Open(export)
+	}
+	export, err := m.goListExport(path)
+	if err != nil {
+		return nil, err
+	}
+	m.exports[path] = export
+	return os.Open(export)
+}
+
+type listedPackage struct {
+	Export string
+	Error  *struct{ Err string }
+}
+
+func (m *moduleImporter) goListExport(path string) (string, error) {
+	cmd := osexec.Command("go", "list", "-export", "-json", path)
+	cmd.Dir = filepath.Join(m.analyzer.root, "backend")
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("go list -export %s: %v: %s", path, err, strings.TrimSpace(string(output)))
+	}
+	var pkg listedPackage
+	if err := json.Unmarshal(output, &pkg); err != nil {
+		return "", err
+	}
+	if pkg.Error != nil {
+		return "", fmt.Errorf("%s", pkg.Error.Err)
+	}
+	if pkg.Export == "" {
+		return "", fmt.Errorf("go list -export %s returned no export data", path)
+	}
+	return pkg.Export, nil
+}
+
+func (m *moduleImporter) importSource(path string) (*types.Package, error) {
+	dir := filepath.Join(
+		m.analyzer.root,
+		"backend",
+		filepath.FromSlash(strings.TrimPrefix(strings.TrimPrefix(path, m.analyzer.modulePath), "/")),
+	)
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, err
+	}
+	files := []*ast.File{}
+	m.packages[path] = types.NewPackage(path, filepath.Base(path))
+	for _, entry := range entries {
+		if entry.IsDir() || filepath.Ext(entry.Name()) != ".go" || strings.HasSuffix(entry.Name(), "_test.go") {
+			continue
+		}
+		file := m.analyzer.parse(filepath.Join(dir, entry.Name()))
+		if file != nil {
+			files = append(files, file)
+		}
+	}
+	if len(files) == 0 {
+		return nil, fmt.Errorf("no source files for %s", path)
+	}
+	conf := types.Config{Importer: m, Error: m.analyzer.recordTypeError}
+	pkg, err := conf.Check(path, m.analyzer.fset, files, nil)
+	if pkg != nil {
+		m.packages[path] = pkg
+	}
+	return pkg, err
+}
 
 func (a *analyzer) typeInfo(dir string, files []*ast.File) *types.Info {
 	info := &types.Info{
 		Types:      map[ast.Expr]types.TypeAndValue{},
 		Selections: map[*ast.SelectorExpr]*types.Selection{},
 	}
-	conf := types.Config{Importer: importer.Default(), Error: func(error) {}}
-	_, _ = conf.Check(a.importPath(dir), a.fset, files, info)
+	imp := a.moduleImporter()
+	conf := types.Config{Importer: imp, Error: a.recordTypeError}
+	importPath := a.importPath(dir)
+	pkg, _ := conf.Check(importPath, a.fset, files, info)
+	if pkg != nil {
+		imp.packages[importPath] = pkg
+	}
 	return info
+}
+
+func (a *analyzer) moduleImporter() *moduleImporter {
+	if a.importer == nil {
+		a.importer = &moduleImporter{analyzer: a, exports: map[string]string{}, packages: map[string]*types.Package{}}
+	}
+	return a.importer
+}
+
+func (a *analyzer) recordTypeError(err error) {
+	if typeErr, ok := err.(types.Error); ok {
+		pos := a.fset.Position(typeErr.Pos)
+		a.report.TypeErrors = append(
+			a.report.TypeErrors,
+			fmt.Sprintf("%s:%d:%d: %s", a.rel(pos.Filename), pos.Line, pos.Column, typeErr.Msg),
+		)
+		return
+	}
+	a.report.TypeErrors = append(a.report.TypeErrors, err.Error())
 }
 
 func (a *analyzer) importPath(dir string) string {
@@ -41,25 +169,30 @@ func (s fileScanner) isOutputRead(sel *ast.SelectorExpr) bool {
 func (s fileScanner) selectorFromExecCmd(sel *ast.SelectorExpr) bool {
 	if selection := s.info.Selections[sel]; selection != nil {
 		fn, ok := selection.Obj().(*types.Func)
-		if ok && funcReceiverIsExecCmd(fn) {
+		if ok && s.funcReceiverIsGuardedCmd(fn) {
 			return true
 		}
 	}
-	return typeIsExecCmd(s.info.TypeOf(sel.X))
+	return s.typeIsGuardedCmd(s.info.TypeOf(sel.X))
 }
 
-func funcReceiverIsExecCmd(fn *types.Func) bool {
+func (s fileScanner) funcReceiverIsGuardedCmd(fn *types.Func) bool {
 	sig, ok := fn.Type().(*types.Signature)
-	return ok && sig.Recv() != nil && typeIsExecCmd(sig.Recv().Type())
+	return ok && sig.Recv() != nil && s.typeIsGuardedCmd(sig.Recv().Type())
 }
 
-func typeIsExecCmd(typ types.Type) bool {
+func (s fileScanner) typeIsGuardedCmd(typ types.Type) bool {
+	return typeIsNamedPtr(typ, "os/exec", "Cmd") ||
+		typeIsNamedPtr(typ, s.analyzer.modulePath+"/internal/execbound", "Cmd")
+}
+
+func typeIsNamedPtr(typ types.Type, pkgPath string, name string) bool {
 	ptr, ok := typ.(*types.Pointer)
 	if !ok {
 		return false
 	}
 	named, ok := ptr.Elem().(*types.Named)
-	return ok && named.Obj().Pkg() != nil && named.Obj().Pkg().Path() == "os/exec" && named.Obj().Name() == "Cmd"
+	return ok && named.Obj().Pkg() != nil && named.Obj().Pkg().Path() == pkgPath && named.Obj().Name() == name
 }
 
 func (s fileScanner) recordOrigins(file *ast.File) {
@@ -90,7 +223,7 @@ func (s fileScanner) recordOrigin(lhs ast.Expr, rhs ast.Expr) {
 }
 
 func (s fileScanner) exprCanOriginateFromCmd(expr ast.Expr) bool {
-	if typeIsExecCmd(s.info.TypeOf(expr)) || s.isOSExecBuilderCall(expr) || s.isExecboundProduced(expr) {
+	if s.typeIsGuardedCmd(s.info.TypeOf(expr)) || s.isOSExecBuilderCall(expr) || s.isExecboundProduced(expr) {
 		return true
 	}
 	id, ok := unparen(expr).(*ast.Ident)

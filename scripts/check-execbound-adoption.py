@@ -11,7 +11,8 @@ import subprocess
 import sys
 from pathlib import Path
 
-REPO_ROOT = Path(os.environ.get("VGS_EXECBOUND_REPO_ROOT", Path(__file__).resolve().parents[1])).resolve()
+DEFAULT_REPO_ROOT = Path(__file__).resolve().parents[1]
+REPO_ROOT = Path(os.environ.get("VGS_EXECBOUND_REPO_ROOT", DEFAULT_REPO_ROOT)).resolve()
 ANALYZER_SOURCES = [
     Path(__file__).with_suffix(".go"),
     Path(__file__).with_name("check-execbound-adoption-types.go"),
@@ -104,10 +105,31 @@ def findings(report: dict[str, object], key: str) -> list[Finding]:
     return [Finding(**row) for row in rows]
 
 
+def allowlist_match_errors(rows: list[Finding], allowlist: dict[str, str], label: str) -> list[str]:
+    counts = {key: 0 for key in allowlist}
+    for row in rows:
+        if row.key in counts:
+            counts[row.key] += 1
+    return [
+        f"{label} allowlist key matched {count} finding(s): {key}"
+        for key, count in counts.items()
+        if count != 1
+    ]
+
+
 def print_parse_errors(errors: object) -> bool:
     if not isinstance(errors, list) or not errors:
         return False
     print("check-execbound-adoption: FAIL: could not parse backend Go file(s):", file=sys.stderr)
+    for entry in errors:
+        print(f"  {entry}", file=sys.stderr)
+    return True
+
+
+def print_type_errors(errors: object) -> bool:
+    if not isinstance(errors, list) or not errors:
+        return False
+    print("check-execbound-adoption: FAIL: could not type-check backend Go file(s):", file=sys.stderr)
     for entry in errors:
         print(f"  {entry}", file=sys.stderr)
     return True
@@ -122,6 +144,8 @@ def main() -> int:
         return 1
     if print_parse_errors(report.get("parse_errors")):
         return 1
+    if print_type_errors(report.get("type_errors")):
+        return 1
     if not report.get("files_checked"):
         print(
             "check-execbound-adoption: FAIL: found no Go files under backend/internal, "
@@ -131,10 +155,24 @@ def main() -> int:
         return 1
 
     output_reads = [read for read in findings(report, "output_reads") if read.key not in ALLOWED_WAIT_DELAY_READS]
+    wait_delay_reads = findings(report, "output_reads")
     references = findings(report, "references")
     raw_calls = findings(report, "raw_calls")
     unallowed_raw = [call for call in raw_calls if call.key not in ALLOWED_RAW_EXECS]
+    allowlist_errors = []
+    if REPO_ROOT == DEFAULT_REPO_ROOT:
+        allowlist_errors = (
+            allowlist_match_errors(raw_calls, ALLOWED_RAW_EXECS, "raw os/exec")
+            + allowlist_match_errors(wait_delay_reads, ALLOWED_WAIT_DELAY_READS, "wait-delay")
+        )
 
+    if allowlist_errors:
+        print(
+            "check-execbound-adoption: FAIL: allowlist entries must match exactly one finding:",
+            file=sys.stderr,
+        )
+        for error in allowlist_errors:
+            print(f"  {error}", file=sys.stderr)
     if references:
         print(
             "check-execbound-adoption: FAIL: os/exec command builders must be called directly "
@@ -168,7 +206,7 @@ def main() -> int:
             print(f"  {call.rel}:{call.line}: {call.function}: {call.expression}", file=sys.stderr)
             print(f"      allowlist key: {call.key}", file=sys.stderr)
 
-    if references or output_reads or unallowed_raw:
+    if allowlist_errors or references or output_reads or unallowed_raw:
         print(
             "\nCall execbound.Command(...).Output or execbound.Command(...).CombinedOutput "
             "as a direct chain. Use execbound.CommandWithDelay only at allowlisted custom-delay "
