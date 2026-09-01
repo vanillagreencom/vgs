@@ -44,6 +44,7 @@ Item {
         id: buttonSurface
         width: root.isSecondary ? root.visualWidth : root.width
         height: parent.height
+        anchors.horizontalCenter: root.isSecondary ? parent.horizontalCenter : undefined
         radius: Theme.controlRadius
         color: root.backgroundColor
     }

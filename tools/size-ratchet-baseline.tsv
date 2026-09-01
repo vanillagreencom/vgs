@@ -160,7 +160,7 @@ quickshell/vshell/Modules/Settings/UsersTab.qml	505
 quickshell/vshell/Modules/Settings/WidgetSelectionPopup.qml	410
 quickshell/vshell/Modules/Settings/WidgetsTab.qml	1433
 quickshell/vshell/Modules/Settings/WidgetsTabSection.qml	493
-quickshell/vshell/Modules/Settings/WindowRulesTab.qml	1065
+quickshell/vshell/Modules/Settings/WindowRulesTab.qml	1062
 quickshell/vshell/Modules/Toast.qml	505
 quickshell/vshell/Modules/WallpaperBackground.qml	1081
 quickshell/vshell/Modules/WorkspaceOverlays/OverviewSearch/Controller.qml	2262

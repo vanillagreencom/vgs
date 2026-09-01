@@ -16,6 +16,7 @@ const logicPath = path.join(repoRoot, "quickshell/vshell/Widgets/VgsDropdownLogi
 const choicePath = path.join(repoRoot, "quickshell/vshell/Modules/Settings/Widgets/SettingsChoiceRow.qml");
 const fzfPath = path.join(repoRoot, "quickshell/vshell/Common/fzf.js");
 const lockScreenPath = path.join(repoRoot, "quickshell/vshell/Modules/Settings/LockScreenTab.qml");
+const windowRulesPath = path.join(repoRoot, "quickshell/vshell/Modules/Settings/WindowRulesTab.qml");
 
 const read = file => fs.readFileSync(file, "utf8");
 const buttonSource = read(buttonPath);
@@ -23,6 +24,7 @@ const dropdownSource = read(dropdownPath);
 const optionSource = read(optionPath);
 const choiceSource = read(choicePath);
 const lockScreenSource = read(lockScreenPath);
+const windowRulesSource = read(windowRulesPath);
 const flatCode = text => qmlSource.flat(qmlSource.stripComments(text));
 
 function qmlLibrary(file, expose = "") {
@@ -113,6 +115,8 @@ function assertButtonOwnsOnlyDeclaredGeometry(source) {
     forbidCode(root, "reserveTrailingSpacing", "VgsButton root", "callers own action spacing");
     assertBinding(root, "implicitWidth", "visualWidth", "VgsButton root");
     assertBinding(surface, "width", "root.isSecondary ? root.visualWidth : root.width", "button surface");
+    assertBinding(surface, "anchors.horizontalCenter",
+        "root.isSecondary ? parent.horizontalCenter : undefined", "button surface");
     assertBinding(mouse, "anchors.fill", "buttonSurface", "button mouse area");
 }
 
@@ -207,6 +211,30 @@ function assertChoiceForwardsSelection(source) {
         [[2, false]], "multi selection must forward its source index and selected state");
 }
 
+function assertWindowSelectorKeepsIndexedIdentity(source) {
+    const selector = blockById(source, "VgsDropdown", "windowSelector", windowRulesPath);
+    const handlers = qmlSource(selector, "window selector").handlers("onOptionSelected");
+    assert.equal(handlers.length, 1, "window selector must define one indexed selection handler");
+    forbidCode(selector, "indexOf(", "window selector", "duplicate labels cannot identify windows");
+    const windows = [
+        { id: "first", appId: "Same", title: "" },
+        { id: "middle", appId: "Other", title: "" },
+        { id: "last", appId: "Same", title: "" }
+    ];
+    let opened = null;
+    const context = vm.createContext({
+        index: 2,
+        value: "Same",
+        options: ["Same", "Other", "Same"],
+        selectedOptionIndex: -1,
+        root: { activeWindows: windows, openRuleModal: window => { opened = window; } }
+    });
+    vm.runInContext(`(() => ${handlers[0]})()`, context);
+    assert.equal(context.selectedOptionIndex, 2,
+        "window selector must retain the emitted source index for trigger rendering");
+    assert.equal(opened, windows[2], "window selector must open the duplicate record at source index 2");
+}
+
 function assertLockVideoActionSharesUnderline(source) {
     const row = blockById(source, "Item", "videoPathField", lockScreenPath);
     const field = blockById(source, "VgsTextField", "videoPathField", lockScreenPath);
@@ -221,6 +249,7 @@ assertButtonOwnsOnlyDeclaredGeometry(buttonSource);
 assertDropdownUsesStableRecords(dropdownSource, optionSource);
 assertKeyboardSelectionUsesStableRecord(dropdownSource);
 assertChoiceForwardsSelection(choiceSource);
+assertWindowSelectorKeepsIndexedIdentity(windowRulesSource);
 assertLockVideoActionSharesUnderline(lockScreenSource);
 
 const controls = [
@@ -230,6 +259,9 @@ const controls = [
     ["surface live binding replaced by an unrelated satisfied label", assertButtonOwnsOnlyDeclaredGeometry, buttonSource,
         buttonSource.replace("width: root.isSecondary ? root.visualWidth : root.width",
             "property real inertSurface: { if (false) { width: root.isSecondary ? root.visualWidth : root.width; } return 0; }\n        width: root.visualWidth")],
+    ["explicit-width secondary surface stays left aligned", assertButtonOwnsOnlyDeclaredGeometry, buttonSource,
+        buttonSource.replace("anchors.horizontalCenter: root.isSecondary ? parent.horizontalCenter : undefined",
+            "anchors.horizontalCenter: undefined")],
     ["dead sibling scan returns", assertButtonOwnsOnlyDeclaredGeometry, buttonSource,
         buttonSource.replace("property bool enableScaleAnimation: false",
             "readonly property real deadScan: { if (false) return parent?.children.length; return 0; }\n    property bool enableScaleAnimation: false")],
@@ -271,6 +303,9 @@ const controls = [
     ["multi-choice forwarding survives only in an inert handler", assertChoiceForwardsSelection, choiceSource,
         choiceSource.replace("onMultiSelectionChanged: (index, value, selected, values) => selectionChanged(index, selected)",
             "onMultiSelectionChanged: (index, value, selected, values) => { if (false) selectionChanged(index, selected); }")],
+    ["window selector re-derives identity from a duplicate label", assertWindowSelectorKeepsIndexedIdentity, windowRulesSource,
+        windowRulesSource.replace("selectedOptionIndex = index;",
+            "selectedOptionIndex = options.indexOf(value);")],
     ["video accessory survives only in a dead satisfied label", assertLockVideoActionSharesUnderline, lockScreenSource,
         lockScreenSource.replace("rightAccessoryWidth: browseVideoButton.width + Theme.spacingM",
             "property real inertAccessory: { if (false) { rightAccessoryWidth: browseVideoButton.width + Theme.spacingM; } return 0; }\n                            rightAccessoryWidth: 0")],
