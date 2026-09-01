@@ -51,6 +51,61 @@ def main() -> int:
     finally:
         shutil.rmtree(empty)
 
+    parse_root = make_root()
+    try:
+        write(
+            parse_root / "backend" / "internal" / "services" / "sample" / "valid.go",
+            """
+package sample
+
+func valid() {}
+""",
+        )
+        write(
+            parse_root / "backend" / "internal" / "services" / "sample" / "malformed.go",
+            """
+package sample
+
+func malformed( {
+""",
+        )
+        assert_fails(
+            parse_root,
+            "could not parse backend Go file(s)",
+            "malformed.go",
+        )
+    finally:
+        shutil.rmtree(parse_root)
+
+    type_root = make_root()
+    try:
+        write(
+            type_root / "backend" / "go.mod",
+            """
+module example.com/backend
+
+go 1.22
+""",
+        )
+        write(
+            type_root / "backend" / "internal" / "services" / "sample" / "bad.go",
+            """
+package sample
+
+func brokenType() {
+    var value int = "bad"
+    _ = value
+}
+""",
+        )
+        assert_fails(
+            type_root,
+            "could not type-check backend Go package(s)",
+            "bad.go",
+        )
+    finally:
+        shutil.rmtree(type_root)
+
     root = make_root()
     try:
         write(
@@ -228,6 +283,39 @@ func helperRead(cmd *éxec.Cmd) error {
 func helperCaller(ctx context.Context) error {
     return helperRead(éxec.CommandContext(ctx, "helper-tool"))
 }
+
+func methodValue(ctx context.Context) error {
+    cmd := éxec.CommandContext(ctx, "method-value-tool")
+    read := cmd.Output
+    _, err := read()
+    return err
+}
+
+func methodExpression(cmd *éxec.Cmd) error {
+    read := (*éxec.Cmd).CombinedOutput
+    _, err := read(cmd)
+    return err
+}
+
+type wrapped struct {
+    *éxec.Cmd
+}
+
+func embedded(ctx context.Context) error {
+    wrappedCmd := wrapped{Cmd: éxec.CommandContext(ctx, "embedded-tool")}
+    _, err := wrappedCmd.Output()
+    return err
+}
+
+type outputRunner interface {
+    Output() ([]byte, error)
+}
+
+func interfaceRead(ctx context.Context) error {
+    var runner outputRunner = éxec.CommandContext(ctx, "interface-tool")
+    _, err := runner.Output()
+    return err
+}
 """,
         )
         assert_fails(
@@ -238,7 +326,11 @@ func helperCaller(ctx context.Context) error {
             "cmd.CombinedOutput()",
             "cmd.Output()",
             "helperRead",
-            "*os/exec.Cmd",
+            "cmd.Output",
+            "(*éxec.Cmd).CombinedOutput",
+            "wrappedCmd.Output()",
+            "runner.Output()",
+            "unverified selector",
         )
     finally:
         shutil.rmtree(structural_root)

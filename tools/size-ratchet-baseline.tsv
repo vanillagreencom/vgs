@@ -202,7 +202,6 @@ quickshell/vshell/Widgets/KeybindItem.qml	1724
 quickshell/vshell/Widgets/VgsDropdown.qml	527
 quickshell/vshell/Widgets/VgsPopoutStandalone.qml	1061
 scripts/check-aur-sync.py	471
-scripts/check-execbound-adoption.py	590
 scripts/check-notification-takeover.js	454
 scripts/check-paste-injection.py	897
 scripts/check-section-pointers.py	594

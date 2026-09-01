@@ -131,10 +131,11 @@ Every adopter runs `DefaultWaitDelay`; brightnessbridge takes
 it through an injectable field only its tests vary, and why the ddcutil chain
 never reaches the bound is in `display-brightness.md`. Long-lived watchers own
 their own lifecycle. `scripts/check-execbound-adoption.py` keeps new one-shot
-`os/exec` output reads out of backend services and records the raw long-lived
-processes that intentionally stay outside execbound. The guard parses and
-type-checks Go, so `Output` or `CombinedOutput` on a `*os/exec.Cmd` receiver
-fails regardless of the import alias or construction path.
+`os/exec` output reads out of backend services and records direct
+`exec.Command` or `exec.CommandContext` builders whose lifecycle intentionally
+stays outside execbound. The guard rejects any non-execbound `Output` or
+`CombinedOutput` selector in backend services, regardless of receiver type or
+syntax, before accepting the direct raw builders named in its allowlist.
 
 ## Feature flags / env
 
