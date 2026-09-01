@@ -100,7 +100,18 @@ $out"
 fi
 ok "the fixture repo reaches the discovery loop"
 
+probe_init
+probe_add scripts/deleted.sh noexec '#!/usr/bin/env bash'
+git -C "$fixture" add -A
+rm "$fixture/scripts/deleted.sh"
+out="$( (cd "$fixture" && ./scripts/check-format-lint.sh) 2>&1 || true)"
+[[ "$out" != *"No such file or directory"* ]] ||
+  fail "deleted tracked file" "a deleted tracked file was still opened by a worktree linter:
+$out"
+ok "a deleted tracked file is skipped by worktree linters"
+
 # THE FAIL-OPEN: extensionless, executable, no shebang.
+out="$(probe_run scripts/probe-exec exec)"
 [[ "$out" == *"$EXEC_MSG"* ]] ||
   fail "executable no-shebang" "an extensionless executable with no shebang was not reported:
 $out"

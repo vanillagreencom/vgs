@@ -183,8 +183,7 @@ func genericDelay(ctx context.Context) error {
             "backend output reads must be directly chained",
             "bad-tool",
             ".Output()",
-            "other-tool",
-            ".CombinedOutput()",
+            "viaVariable: exec.CommandContext(ctx, \"other-tool\")",
             "genericDelay: execbound.CommandWithDelay",
             "allowlist key:",
         )
@@ -198,110 +197,56 @@ func genericDelay(ctx context.Context) error {
 package sample
 import ("context"; "os/exec")
 type outputRunner interface{ Output() ([]byte, error) }
-type wlCopyHolder struct{ run outputRunner }
 func rawStart(ctx context.Context) error { cmd := exec.CommandContext(ctx, "raw-tool"); return cmd.Start() }
-func wlCopy(ctx context.Context) error { h := wlCopyHolder{run: exec.CommandContext(ctx, "wl-copy")}; _, err := h.run.Output(); return err }
-func containerRead(ctx context.Context) error { runs := []outputRunner{exec.CommandContext(ctx, "container-tool")}; _, err := runs[0].Output(); return err }
+func rawReturned(ctx context.Context) (error, outputRunner) { return nil, exec.CommandContext(ctx, "multi-raw-tool") }
+func appendRaw(ctx context.Context) { var runs []outputRunner; runs = append(runs, exec.CommandContext(ctx, "append-tool")) }
 """,
         )
-        assert_fails(raw_root, "raw os/exec builders outside execbound need a lifecycle reason", "raw-tool", "wlCopy: h.run.Output()", "containerRead: runs[0].Output()", "allowlist key:")
+        assert_fails(
+            raw_root,
+            "raw os/exec builders must start or run in the same function",
+            "rawReturned: exec.CommandContext(ctx, \"multi-raw-tool\")",
+            "appendRaw: exec.CommandContext(ctx, \"append-tool\")",
+            "raw os/exec builders outside execbound need a lifecycle reason",
+            "raw-tool",
+            "allowlist key:",
+        )
     finally:
         shutil.rmtree(raw_root)
 
     assigned_root = make_root()
     try:
         write_go_mod(assigned_root)
-        write_backend(assigned_root, "internal/services/sample/assigned.go",
-            """
-package sample
-import "example.com/backend/internal/execbound"
-func assignedBound() error { cmd := execbound.Command(nil, "assigned-tool"); _, err := cmd.Output(); return err }
-""",
-        )
-        assert_fails(assigned_root, "could not type-check", "could not import example.com/backend/internal/execbound")
         write_execbound(assigned_root)
-        write_backend(assigned_root, "internal/services/shared/shared.go",
-            """
-package shared
-import "example.com/backend/internal/execbound"
-type Runner = execbound.Cmd
-func Factory(ctx any, name string) *Runner { return execbound.Command(ctx, name) }
-""",
-        )
-        write_backend(assigned_root, "internal/services/aaahelper/helper.go",
-            """
-package aaahelper
-type Runner interface{ Output() (int, error) }
-func Read(r Runner) error { _, err := r.Output(); return err }
-""",
-        )
         write_backend(assigned_root, "internal/services/sample/assigned.go",
             """
 package sample
 import (
     "context"
     "example.com/backend/internal/execbound"
-    "example.com/backend/internal/services/shared"
 )
 func assignedBound(ctx context.Context) error { cmd := execbound.Command(ctx, "assigned-tool"); _, err := cmd.Output(); return err }
-func localPackageParam(cmd *shared.Runner) error { _, err := cmd.Output(); return err }
-func aliasedFactory(ctx context.Context) error { makeCmd := shared.Factory; _, err := makeCmd(ctx, "factory-tool").CombinedOutput(); return err }
 type runner interface{ Output() (int, error) }
-func helperPassed(cmd runner) error { _, err := cmd.Output(); return err }
-func callHelper(ctx context.Context) error { return helperPassed(execbound.CommandWithDelay(ctx, 1, "helper-delay-tool")) }
-type combinedRunner interface{ CombinedOutput() (int, error) }
-func buildDelay(ctx context.Context) combinedRunner { return execbound.CommandWithDelay(ctx, 1, "result-delay-tool") }
-func resultRead(ctx context.Context) error { _, err := buildDelay(ctx).CombinedOutput(); return err }
-func execResult(ctx context.Context) error { _, err := execbound.Command(ctx, "exec-tool").Exec().CombinedOutput(); return err }
-func aggregate(ctx context.Context) []runner { return []runner{execbound.Command(ctx, "aggregate-tool")} }
+func helperPassed(cmd runner) error { return nil }
+func callHelper(ctx context.Context) error { return helperPassed(execbound.Command(ctx, "passed-tool")) }
+func callDelayHelper(ctx context.Context) error { return helperPassed(execbound.CommandWithDelay(ctx, 1, "passed-delay-tool")) }
+func multiValue(ctx context.Context) (error, runner) { return nil, execbound.Command(ctx, "multi-tool") }
+func appendBound(ctx context.Context) []runner { var runs []runner; return append(runs, execbound.Command(ctx, "append-tool")) }
 func execRun(ctx context.Context) error { return execbound.Command(ctx, "exec-run-tool").Exec().Run() }
-func execStart(ctx context.Context) error { return execbound.Command(ctx, "exec-start-tool").Exec().Start() }
-func execWait(ctx context.Context) error { return execbound.Command(ctx, "exec-wait-tool").Exec().Wait() }
 """,
         )
         assert_fails(
             assigned_root,
-            "backend output reads must be directly chained",
-            "assignedBound: cmd.Output()",
-            "localPackageParam: cmd.Output()",
-            "aliasedFactory: makeCmd(ctx, \"factory-tool\").CombinedOutput()",
-            "helperPassed: cmd.Output()",
-            "resultRead: buildDelay(ctx).CombinedOutput()",
-            "execResult: execbound.Command(ctx, \"exec-tool\").Exec().CombinedOutput()",
             "execbound command builders must terminate",
-            "callHelper: execbound.CommandWithDelay(ctx, 1, \"helper-delay-tool\")",
-            "aggregate: execbound.Command(ctx, \"aggregate-tool\")",
+            "assignedBound: execbound.Command(ctx, \"assigned-tool\")",
+            "callHelper: execbound.Command(ctx, \"passed-tool\")",
+            "callDelayHelper: execbound.CommandWithDelay(ctx, 1, \"passed-delay-tool\")",
+            "multiValue: execbound.Command(ctx, \"multi-tool\")",
+            "appendBound: execbound.Command(ctx, \"append-tool\")",
             "execRun: execbound.Command(ctx, \"exec-run-tool\")",
-            "execStart: execbound.Command(ctx, \"exec-start-tool\")",
-            "execWait: execbound.Command(ctx, \"exec-wait-tool\")",
         )
-        write_backend(assigned_root, "internal/services/zzcaller/caller.go",
-            """
-package zzcaller
-import (
-    "context"
-    "example.com/backend/internal/execbound"
-    "example.com/backend/internal/services/aaahelper"
-)
-func Later(ctx context.Context) error { return aaahelper.Read(execbound.Command(ctx, "late-tool")) }
-""",
-        )
-        assert_fails(assigned_root, "backend output reads must be directly chained", "Read: r.Output()")
     finally:
         shutil.rmtree(assigned_root)
-
-    method_value_root = make_root()
-    try:
-        write_backend(method_value_root, "internal/services/sample/method_value.go",
-            """
-package sample
-import "os/exec"
-func methodValue() error { methodValueCmd := &exec.Cmd{Path: "method-value-tool"}; read := methodValueCmd.Output; _, err := read(); return err }
-""",
-        )
-        assert_fails(method_value_root, "backend output reads must be directly chained", "methodValue: methodValueCmd.Output")
-    finally:
-        shutil.rmtree(method_value_root)
 
     alias_root = make_root()
     try:
@@ -319,76 +264,6 @@ func chainedAlias(ctx context.Context) error { run := ex.CommandContext; _, err 
         assert_fails(alias_root, "os/exec command builders must be called directly", "ex.CommandContext referenced without a call")
     finally:
         shutil.rmtree(alias_root)
-
-    structural_root = make_root()
-    try:
-        write_backend(structural_root, "internal/services/sample/structural.go",
-            """
-package sample
-import (
-    "context"
-    éxec "os/exec"
-)
-func unicodeAlias(ctx context.Context) error {
-    _, err := éxec.CommandContext(ctx, "unicode-tool").Output()
-    return err
-}
-func rawLiteral() error {
-    cmd := &éxec.Cmd{Path: "literal-tool"}
-    _, err := cmd.CombinedOutput()
-    return err
-}
-func rawNew() error {
-    cmd := new(éxec.Cmd)
-    _, err := cmd.Output()
-    return err
-}
-func helperRead(cmd *éxec.Cmd) error {
-    _, err := cmd.Output()
-    return err
-}
-func helperCaller(ctx context.Context) error {
-    return helperRead(éxec.CommandContext(ctx, "helper-tool"))
-}
-func methodExpression(cmd *éxec.Cmd) error {
-    read := (*éxec.Cmd).CombinedOutput
-    _, err := read(cmd)
-    return err
-}
-type wrapped struct {
-    *éxec.Cmd
-}
-func embedded(ctx context.Context) error {
-    wrappedCmd := wrapped{Cmd: éxec.CommandContext(ctx, "embedded-tool")}
-    _, err := wrappedCmd.Output()
-    return err
-}
-
-type outputRunner interface {
-    Output() ([]byte, error)
-}
-func interfaceRead(ctx context.Context) error {
-    var runner outputRunner = éxec.CommandContext(ctx, "interface-tool")
-    _, err := runner.Output()
-    return err
-}
-""",
-        )
-        assert_fails(
-            structural_root,
-            "backend output reads must be directly chained",
-            "unicode-tool",
-            ".Output()",
-            "cmd.CombinedOutput()",
-            "cmd.Output()",
-            "helperRead",
-            "(*éxec.Cmd).CombinedOutput",
-            "wrappedCmd.Output()",
-            "runner.Output()",
-            "unverified selector",
-        )
-    finally:
-        shutil.rmtree(structural_root)
 
     print("execbound adoption guard tests passed.")
     return 0

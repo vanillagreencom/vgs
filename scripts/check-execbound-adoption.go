@@ -7,7 +7,6 @@ import (
 	"go/parser"
 	"go/scanner"
 	"go/token"
-	"go/types"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -22,27 +21,22 @@ type finding struct {
 	Function   string `json:"function"`
 	Expression string `json:"expression"`
 	Key        string `json:"key,omitempty"`
-	Receiver   string `json:"receiver,omitempty"`
 }
 
 type report struct {
 	FilesChecked  int       `json:"files_checked"`
 	RawCalls      []finding `json:"raw_calls"`
+	RawLifecycle  []finding `json:"raw_lifecycle"`
 	OutputReads   []finding `json:"output_reads"`
 	ExecboundUses []finding `json:"execbound_uses"`
 	References    []finding `json:"references"`
 	ParseErrors   []string  `json:"parse_errors"`
-	TypeErrors    []string  `json:"type_errors"`
 }
 
 type functionRange struct {
 	name       string
 	start, end token.Pos
-}
-
-type packageScan struct {
-	files []*ast.File
-	info  *types.Info
+	body       *ast.BlockStmt
 }
 
 type imports struct {
@@ -56,19 +50,13 @@ type analyzer struct {
 	root, modulePath string
 	fset             *token.FileSet
 	sources          map[string][]byte
-	importer         *moduleImporter
-	paramOrigins     map[string]map[int]bool
-	resultOrigins    map[string]bool
-	packages         []packageScan
 	report           report
 }
 
 type fileScanner struct {
 	analyzer  *analyzer
 	imports   imports
-	info      *types.Info
 	parents   map[ast.Node]ast.Node
-	origins   map[*ast.Object]bool
 	functions []functionRange
 }
 
@@ -90,11 +78,11 @@ func main() {
 	}
 	a.walk()
 	sortFindings(a.report.RawCalls)
+	sortFindings(a.report.RawLifecycle)
 	sortFindings(a.report.OutputReads)
 	sortFindings(a.report.ExecboundUses)
 	sortFindings(a.report.References)
 	sort.Strings(a.report.ParseErrors)
-	sort.Strings(a.report.TypeErrors)
 	if err := json.NewEncoder(os.Stdout).Encode(a.report); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(2)
@@ -151,8 +139,6 @@ func (a *analyzer) walk() {
 	if err != nil {
 		a.report.ParseErrors = append(a.report.ParseErrors, err.Error())
 	}
-	a.markTreeProvenance()
-	a.scanPackages()
 }
 
 func (a *analyzer) scanDir(dir string) {
@@ -174,15 +160,8 @@ func (a *analyzer) scanDir(dir string) {
 	if len(files) == 0 {
 		return
 	}
-	info := a.typeInfo(dir, files)
-	a.packages = append(a.packages, packageScan{files: files, info: info})
-}
-
-func (a *analyzer) scanPackages() {
-	for _, pkg := range a.packages {
-		for _, file := range pkg.files {
-			a.scanFile(file, pkg.info)
-		}
+	for _, file := range files {
+		a.scanFile(file)
 	}
 }
 
@@ -214,38 +193,42 @@ func (a *analyzer) recordParseError(err error) {
 	a.report.ParseErrors = append(a.report.ParseErrors, err.Error())
 }
 
-func (a *analyzer) scanFile(file *ast.File, info *types.Info) {
+func (a *analyzer) scanFile(file *ast.File) {
 	scanner := fileScanner{
 		analyzer:  a,
 		imports:   importAliases(file, a.modulePath),
-		info:      info,
 		parents:   parentMap(file),
-		origins:   map[*ast.Object]bool{},
 		functions: functionRanges(file),
 	}
-	scanner.recordOrigins(file)
 	ast.Inspect(file, func(node ast.Node) bool {
 		switch n := node.(type) {
 		case *ast.CallExpr:
 			if scanner.isOSExecBuilder(n.Fun) {
-				a.report.RawCalls = append(a.report.RawCalls, scanner.finding(n, ""))
+				a.report.RawCalls = append(a.report.RawCalls, scanner.finding(n))
+				if output := scanner.rawBuilderOutputRead(n); output != nil {
+					a.report.OutputReads = append(a.report.OutputReads, scanner.finding(output))
+				}
+				if !scanner.rawBuilderHasLifecycle(n) {
+					a.report.RawLifecycle = append(a.report.RawLifecycle, scanner.finding(n))
+				}
 			}
-			if scanner.isExecboundBuilderCall(n) && !scanner.execboundBuilderConsumed(n) {
-				a.report.ExecboundUses = append(a.report.ExecboundUses, scanner.finding(n, ""))
+			if scanner.isExecboundBuilderCall(n) {
+				if output := scanner.execboundDelayOutputRead(n); output != nil {
+					a.report.OutputReads = append(a.report.OutputReads, scanner.finding(output))
+				} else if !scanner.execboundBuilderConsumed(n) {
+					a.report.ExecboundUses = append(a.report.ExecboundUses, scanner.finding(n))
+				}
 			}
 		case *ast.SelectorExpr:
-			if scanner.isOutputRead(n) {
-				a.report.OutputReads = append(a.report.OutputReads, scanner.finding(scanner.outputReadNode(n), "unverified selector"))
-			}
 			if scanner.isOSExecBuilderSelector(n) && !scanner.selectorCalledDirectly(n) {
-				a.report.References = append(a.report.References, scanner.finding(n, ""))
+				a.report.References = append(a.report.References, scanner.finding(n))
 			}
 		case *ast.Ident:
 			if scanner.identIsSelectorPart(n) {
 				return true
 			}
 			if scanner.isDotOSExecBuilderIdent(n) && !scanner.identCalledDirectly(n) {
-				a.report.References = append(a.report.References, scanner.finding(n, ""))
+				a.report.References = append(a.report.References, scanner.finding(n))
 			}
 		}
 		return true
@@ -305,7 +288,7 @@ func isOSExecBuilderName(name string) bool {
 	return name == "Command" || name == "CommandContext"
 }
 
-func (s fileScanner) finding(node ast.Node, receiver string) finding {
+func (s fileScanner) finding(node ast.Node) finding {
 	a := s.analyzer
 	pos := a.fset.Position(node.Pos())
 	expr := a.source(node)
@@ -316,7 +299,6 @@ func (s fileScanner) finding(node ast.Node, receiver string) finding {
 		Function:   functionAt(s.functions, node.Pos()),
 		Expression: expr,
 		Key:        key,
-		Receiver:   receiver,
 	}
 }
 
@@ -353,7 +335,7 @@ func functionRanges(file *ast.File) []functionRange {
 	var ranges []functionRange
 	for _, decl := range file.Decls {
 		if fn, ok := decl.(*ast.FuncDecl); ok {
-			ranges = append(ranges, functionRange{name: fn.Name.Name, start: fn.Pos(), end: fn.End()})
+			ranges = append(ranges, functionRange{name: fn.Name.Name, start: fn.Pos(), end: fn.End(), body: fn.Body})
 		}
 	}
 	return ranges

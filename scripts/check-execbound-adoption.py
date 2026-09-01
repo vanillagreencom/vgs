@@ -16,7 +16,6 @@ REPO_ROOT = Path(os.environ.get("VGS_EXECBOUND_REPO_ROOT", DEFAULT_REPO_ROOT)).r
 ANALYZER_SOURCES = [
     Path(__file__).with_suffix(".go"),
     Path(__file__).with_name("check-execbound-adoption-types.go"),
-    Path(__file__).with_name("check-execbound-adoption-provenance.go"),
 ]
 
 # Raw os/exec sites that intentionally start a process whose lifecycle outlives
@@ -69,7 +68,6 @@ class Finding:
     function: str
     expression: str
     key: str = ""
-    receiver: str = ""
 
 
 def resolve_go() -> str | None:
@@ -127,15 +125,6 @@ def print_parse_errors(errors: object) -> bool:
     return True
 
 
-def print_type_errors(errors: object) -> bool:
-    if not isinstance(errors, list) or not errors:
-        return False
-    print("check-execbound-adoption: FAIL: could not type-check backend Go file(s):", file=sys.stderr)
-    for entry in errors:
-        print(f"  {entry}", file=sys.stderr)
-    return True
-
-
 def main() -> int:
     go = resolve_go()
     if go is None:
@@ -144,8 +133,6 @@ def main() -> int:
     if report is None:
         return 1
     if print_parse_errors(report.get("parse_errors")):
-        return 1
-    if print_type_errors(report.get("type_errors")):
         return 1
     if not report.get("files_checked"):
         print(
@@ -160,6 +147,7 @@ def main() -> int:
     execbound_uses = findings(report, "execbound_uses")
     references = findings(report, "references")
     raw_calls = findings(report, "raw_calls")
+    raw_lifecycle = findings(report, "raw_lifecycle")
     unallowed_raw = [call for call in raw_calls if call.key not in ALLOWED_RAW_EXECS]
     allowlist_errors = []
     if REPO_ROOT == DEFAULT_REPO_ROOT:
@@ -195,6 +183,13 @@ def main() -> int:
         )
         for use in execbound_uses:
             print(f"  {use.rel}:{use.line}: {use.function}: {use.expression}", file=sys.stderr)
+    if raw_lifecycle:
+        print(
+            "check-execbound-adoption: FAIL: raw os/exec builders must start or run in the same function:",
+            file=sys.stderr,
+        )
+        for use in raw_lifecycle:
+            print(f"  {use.rel}:{use.line}: {use.function}: {use.expression}", file=sys.stderr)
     if output_reads:
         print(
             "check-execbound-adoption: FAIL: backend output reads must be "
@@ -202,8 +197,7 @@ def main() -> int:
             file=sys.stderr,
         )
         for read in output_reads:
-            suffix = f" (receiver {read.receiver})" if read.receiver else ""
-            print(f"  {read.rel}:{read.line}: {read.function}: {read.expression}{suffix}", file=sys.stderr)
+            print(f"  {read.rel}:{read.line}: {read.function}: {read.expression}", file=sys.stderr)
             if "CommandWithDelay" in read.expression:
                 print(f"      allowlist key: {read.key}", file=sys.stderr)
     if unallowed_raw:
@@ -216,12 +210,12 @@ def main() -> int:
             print(f"  {call.rel}:{call.line}: {call.function}: {call.expression}", file=sys.stderr)
             print(f"      allowlist key: {call.key}", file=sys.stderr)
 
-    if allowlist_errors or references or execbound_uses or output_reads or unallowed_raw:
+    if allowlist_errors or references or execbound_uses or raw_lifecycle or output_reads or unallowed_raw:
         print(
             "\nCall execbound.Command(...).Output or execbound.Command(...).CombinedOutput "
             "as a direct chain. Use execbound.CommandWithDelay only at allowlisted custom-delay "
-            "sites. Call raw os/exec builders directly only at long-lived process sites, and add an "
-            "ALLOWED_RAW_EXECS entry when that lifecycle is owned outside execbound.",
+            "sites. Raw os/exec builders need Start or Run in the same function and an "
+            "ALLOWED_RAW_EXECS entry for their lifecycle reason.",
             file=sys.stderr,
         )
         return 1

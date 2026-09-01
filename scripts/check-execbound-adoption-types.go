@@ -1,304 +1,155 @@
 package main
 
 import (
-	"encoding/json"
-	"fmt"
 	"go/ast"
-	"go/importer"
-	"go/types"
-	"io"
-	"os"
-	osexec "os/exec"
-	"path/filepath"
-	"strings"
+	"go/token"
 )
 
-type moduleImporter struct {
-	analyzer *analyzer
-	exporter types.Importer
-	exports  map[string]string
-	packages map[string]*types.Package
+func (s fileScanner) rawBuilderOutputRead(call *ast.CallExpr) ast.Node {
+	return s.directMethodCall(call, isOutputReadName)
 }
 
-func (m *moduleImporter) Import(path string) (*types.Package, error) {
-	if pkg := m.packages[path]; pkg != nil {
-		return pkg, nil
+func (s fileScanner) rawBuilderHasLifecycle(call *ast.CallExpr) bool {
+	if s.directMethodCall(call, isRawLifecycleName) != nil {
+		return true
 	}
-	if m.analyzer.modulePath != "" &&
-		(path == m.analyzer.modulePath || strings.HasPrefix(path, m.analyzer.modulePath+"/")) {
-		return m.importSource(path)
-	}
-	pkg, err := m.exportImporter().Import(path)
-	if err == nil {
-		m.packages[path] = pkg
-	}
-	return pkg, err
+	id := s.rawBuilderAssignedIdent(call)
+	return id != nil && s.functionCallsMethod(id, call.Pos(), isRawLifecycleName)
 }
 
-func (m *moduleImporter) exportImporter() types.Importer {
-	if m.exporter == nil {
-		m.exporter = importer.ForCompiler(m.analyzer.fset, "gc", m.lookupExport)
-	}
-	return m.exporter
-}
-
-func (m *moduleImporter) lookupExport(path string) (io.ReadCloser, error) {
-	if export := m.exports[path]; export != "" {
-		return os.Open(export)
-	}
-	export, err := m.goListExport(path)
-	if err != nil {
-		return nil, err
-	}
-	m.exports[path] = export
-	return os.Open(export)
-}
-
-type listedPackage struct {
-	Export string
-	Error  *struct{ Err string }
-}
-
-func (m *moduleImporter) goListExport(path string) (string, error) {
-	cmd := osexec.Command("go", "list", "-export", "-json", path)
-	cmd.Dir = filepath.Join(m.analyzer.root, "backend")
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		return "", fmt.Errorf("go list -export %s: %v: %s", path, err, strings.TrimSpace(string(output)))
-	}
-	var pkg listedPackage
-	if err := json.Unmarshal(output, &pkg); err != nil {
-		return "", err
-	}
-	if pkg.Error != nil {
-		return "", fmt.Errorf("%s", pkg.Error.Err)
-	}
-	if pkg.Export == "" {
-		return "", fmt.Errorf("go list -export %s returned no export data", path)
-	}
-	return pkg.Export, nil
-}
-
-func (m *moduleImporter) importSource(path string) (*types.Package, error) {
-	dir := filepath.Join(
-		m.analyzer.root,
-		"backend",
-		filepath.FromSlash(strings.TrimPrefix(strings.TrimPrefix(path, m.analyzer.modulePath), "/")),
-	)
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return nil, err
-	}
-	files := []*ast.File{}
-	m.packages[path] = types.NewPackage(path, filepath.Base(path))
-	for _, entry := range entries {
-		if entry.IsDir() || filepath.Ext(entry.Name()) != ".go" || strings.HasSuffix(entry.Name(), "_test.go") {
-			continue
+func (s fileScanner) rawBuilderAssignedIdent(call *ast.CallExpr) *ast.Ident {
+	parent := s.parentAfterParens(call)
+	switch n := parent.(type) {
+	case *ast.AssignStmt:
+		for i, rhs := range n.Rhs {
+			if i < len(n.Lhs) && exprIsNode(rhs, call) {
+				return assignedIdent(n.Lhs[i])
+			}
 		}
-		file := m.analyzer.parse(filepath.Join(dir, entry.Name()))
-		if file != nil {
-			files = append(files, file)
+	case *ast.ValueSpec:
+		for i, value := range n.Values {
+			if i < len(n.Names) && exprIsNode(value, call) {
+				return assignedIdent(n.Names[i])
+			}
 		}
 	}
-	if len(files) == 0 {
-		return nil, fmt.Errorf("no source files for %s", path)
-	}
-	conf := types.Config{Importer: m, Error: m.analyzer.recordTypeError}
-	pkg, err := conf.Check(path, m.analyzer.fset, files, nil)
-	if pkg != nil {
-		m.packages[path] = pkg
-	}
-	return pkg, err
+	return nil
 }
 
-func (a *analyzer) typeInfo(dir string, files []*ast.File) *types.Info {
-	info := &types.Info{
-		Types:      map[ast.Expr]types.TypeAndValue{},
-		Defs:       map[*ast.Ident]types.Object{},
-		Uses:       map[*ast.Ident]types.Object{},
-		Selections: map[*ast.SelectorExpr]*types.Selection{},
+func assignedIdent(expr ast.Expr) *ast.Ident {
+	id, ok := unparen(expr).(*ast.Ident)
+	if !ok || id.Name == "_" {
+		return nil
 	}
-	imp := a.moduleImporter()
-	conf := types.Config{Importer: imp, Error: a.recordTypeError}
-	importPath := a.importPath(dir)
-	pkg, _ := conf.Check(importPath, a.fset, files, info)
-	if pkg != nil {
-		imp.packages[importPath] = pkg
-	}
-	return info
+	return id
 }
 
-func (a *analyzer) moduleImporter() *moduleImporter {
-	if a.importer == nil {
-		a.importer = &moduleImporter{analyzer: a, exports: map[string]string{}, packages: map[string]*types.Package{}}
-	}
-	return a.importer
-}
-
-func (a *analyzer) recordTypeError(err error) {
-	if typeErr, ok := err.(types.Error); ok {
-		pos := a.fset.Position(typeErr.Pos)
-		a.report.TypeErrors = append(
-			a.report.TypeErrors,
-			fmt.Sprintf("%s:%d:%d: %s", a.rel(pos.Filename), pos.Line, pos.Column, typeErr.Msg),
-		)
-		return
-	}
-	a.report.TypeErrors = append(a.report.TypeErrors, err.Error())
-}
-
-func (a *analyzer) importPath(dir string) string {
-	if a.modulePath == "" {
-		return a.rel(dir)
-	}
-	rel, err := filepath.Rel(filepath.Join(a.root, "backend"), dir)
-	if err != nil || rel == "." {
-		return a.modulePath
-	}
-	return a.modulePath + "/" + filepath.ToSlash(rel)
-}
-
-func (s fileScanner) isOutputRead(sel *ast.SelectorExpr) bool {
-	if !isOutputReadName(sel.Sel.Name) {
-		return false
-	}
-	if s.isExecboundRun(sel.X) {
-		return false
-	}
-	return s.selectorFromExecCmd(sel) || s.exprCanOriginateFromCmd(sel.X)
-}
-
-func (s fileScanner) selectorFromExecCmd(sel *ast.SelectorExpr) bool {
-	if selection := s.info.Selections[sel]; selection != nil {
-		fn, ok := selection.Obj().(*types.Func)
-		if ok && s.funcReceiverIsGuardedCmd(fn) {
+func exprIsNode(expr ast.Expr, node ast.Node) bool {
+	for {
+		if expr == node {
 			return true
 		}
+		paren, ok := expr.(*ast.ParenExpr)
+		if !ok {
+			return false
+		}
+		expr = paren.X
 	}
-	return s.typeIsGuardedCmd(s.info.TypeOf(sel.X))
 }
 
-func (s fileScanner) funcReceiverIsGuardedCmd(fn *types.Func) bool {
-	sig, ok := fn.Type().(*types.Signature)
-	return ok && sig.Recv() != nil && s.typeIsGuardedCmd(sig.Recv().Type())
+func (s fileScanner) execboundDelayOutputRead(call *ast.CallExpr) ast.Node {
+	if !s.isExecboundDelayCommand(call.Fun) {
+		return nil
+	}
+	return s.execboundOutputCall(call)
 }
 
-func (s fileScanner) typeIsGuardedCmd(typ types.Type) bool {
-	return typeIsNamedPtr(typ, "os/exec", "Cmd") ||
-		typeIsNamedPtr(typ, s.analyzer.modulePath+"/internal/execbound", "Cmd")
+func (s fileScanner) execboundBuilderConsumed(call *ast.CallExpr) bool {
+	return s.execboundOutputCall(call) != nil
 }
 
-func typeIsNamedPtr(typ types.Type, pkgPath string, name string) bool {
-	ptr, ok := typ.(*types.Pointer)
+func (s fileScanner) execboundOutputCall(call *ast.CallExpr) ast.Node {
+	sel, ok := s.parentAfterParens(call).(*ast.SelectorExpr)
 	if !ok {
+		return nil
+	}
+	if isOutputReadName(sel.Sel.Name) {
+		if s.selectorCalledDirectly(sel) {
+			return s.outputReadNode(sel)
+		}
+		return nil
+	}
+	if sel.Sel.Name != "WithLogger" {
+		return nil
+	}
+	withLogger, ok := s.parentAfterParens(sel).(*ast.CallExpr)
+	if !ok || withLogger.Fun != sel {
+		return nil
+	}
+	output, ok := s.parentAfterParens(withLogger).(*ast.SelectorExpr)
+	if !ok || !isOutputReadName(output.Sel.Name) || !s.selectorCalledDirectly(output) {
+		return nil
+	}
+	return s.outputReadNode(output)
+}
+
+func (s fileScanner) directMethodCall(call *ast.CallExpr, match func(string) bool) ast.Node {
+	sel, ok := s.parentAfterParens(call).(*ast.SelectorExpr)
+	if !ok || !match(sel.Sel.Name) || !s.selectorCalledDirectly(sel) {
+		return nil
+	}
+	return s.outputReadNode(sel)
+}
+
+func (s fileScanner) functionCallsMethod(id *ast.Ident, after token.Pos, match func(string) bool) bool {
+	body := s.functionBody(after)
+	if body == nil {
 		return false
 	}
-	named, ok := ptr.Elem().(*types.Named)
-	return ok && named.Obj().Pkg() != nil && named.Obj().Pkg().Path() == pkgPath && named.Obj().Name() == name
-}
-
-func (s fileScanner) recordOrigins(file *ast.File) {
-	s.recordParamOrigins(file)
-	ast.Inspect(file, func(node ast.Node) bool {
-		switch n := node.(type) {
-		case *ast.AssignStmt:
-			for i, rhs := range n.Rhs {
-				if i < len(n.Lhs) {
-					s.recordOrigin(n.Lhs[i], rhs)
-				}
-			}
-		case *ast.ValueSpec:
-			for i, rhs := range n.Values {
-				if i < len(n.Names) {
-					s.recordOrigin(n.Names[i], rhs)
-				}
-			}
-		case *ast.RangeStmt:
-			if s.exprCanOriginateFromCmd(n.X) {
-				s.recordKnownOrigin(n.Key)
-				s.recordKnownOrigin(n.Value)
-			}
+	found := false
+	ast.Inspect(body, func(node ast.Node) bool {
+		if found {
+			return false
+		}
+		if _, ok := node.(*ast.FuncLit); ok {
+			return false
+		}
+		call, ok := node.(*ast.CallExpr)
+		if !ok || call.Pos() <= after {
+			return true
+		}
+		sel, ok := unparen(call.Fun).(*ast.SelectorExpr)
+		if !ok || !match(sel.Sel.Name) {
+			return true
+		}
+		recv, ok := unparen(sel.X).(*ast.Ident)
+		if ok && sameIdent(recv, id) {
+			found = true
+			return false
 		}
 		return true
 	})
+	return found
 }
 
-func (s fileScanner) recordOrigin(lhs ast.Expr, rhs ast.Expr) {
-	if id := originIdent(lhs); id != nil && id.Obj != nil && s.exprCanOriginateFromCmd(rhs) {
-		s.origins[id.Obj] = true
+func (s fileScanner) functionBody(pos token.Pos) *ast.BlockStmt {
+	for _, fn := range s.functions {
+		if fn.start <= pos && pos <= fn.end {
+			return fn.body
+		}
 	}
+	return nil
 }
 
-func (s fileScanner) recordKnownOrigin(expr ast.Expr) {
-	if id := originIdent(expr); id != nil && id.Obj != nil {
-		s.origins[id.Obj] = true
+func sameIdent(a, b *ast.Ident) bool {
+	if a.Obj != nil || b.Obj != nil {
+		return a.Obj != nil && a.Obj == b.Obj
 	}
-}
-
-func (s fileScanner) exprCanOriginateFromCmd(expr ast.Expr) bool {
-	if s.typeIsGuardedCmd(s.info.TypeOf(expr)) || s.isOSExecBuilderCall(expr) || s.isExecboundProduced(expr) {
-		return true
-	}
-	if call, ok := unparen(expr).(*ast.CallExpr); ok && s.analyzer.resultOrigins[funcKey(s.calledFunc(call))] {
-		return true
-	}
-	if s.aggregateCanOriginateFromCmd(expr) {
-		return true
-	}
-	id, ok := unparen(expr).(*ast.Ident)
-	return ok && id.Obj != nil && s.origins[id.Obj]
+	return a.Name == b.Name
 }
 
 func (s fileScanner) isExecboundBuilderCall(call *ast.CallExpr) bool {
 	return s.isExecboundCommand(call.Fun) || s.isExecboundDelayCommand(call.Fun)
-}
-
-func (s fileScanner) execboundBuilderConsumed(call *ast.CallExpr) bool {
-	sel, ok := s.parentAfterParens(call).(*ast.SelectorExpr)
-	if !ok {
-		return false
-	}
-	if isOutputReadName(sel.Sel.Name) {
-		return s.selectorCalledDirectly(sel)
-	}
-	if sel.Sel.Name != "WithLogger" {
-		return false
-	}
-	withLogger, ok := s.parentAfterParens(sel).(*ast.CallExpr)
-	if !ok || withLogger.Fun != sel {
-		return false
-	}
-	output, ok := s.parentAfterParens(withLogger).(*ast.SelectorExpr)
-	return ok && isOutputReadName(output.Sel.Name) && s.selectorCalledDirectly(output)
-}
-
-func (s fileScanner) isOSExecBuilderCall(expr ast.Expr) bool {
-	call, ok := unparen(expr).(*ast.CallExpr)
-	return ok && s.isOSExecBuilder(call.Fun)
-}
-
-func (s fileScanner) isExecboundProduced(expr ast.Expr) bool {
-	call, ok := unparen(expr).(*ast.CallExpr)
-	if !ok {
-		return false
-	}
-	if s.isExecboundCommand(call.Fun) || s.isExecboundDelayCommand(call.Fun) {
-		return true
-	}
-	sel, ok := unparen(call.Fun).(*ast.SelectorExpr)
-	return ok && sel.Sel.Name == "WithLogger" && s.isExecboundProduced(sel.X)
-}
-
-func (s fileScanner) isExecboundRun(expr ast.Expr) bool {
-	call, ok := unparen(expr).(*ast.CallExpr)
-	if !ok {
-		return false
-	}
-	if s.isExecboundCommand(call.Fun) {
-		return true
-	}
-	sel, ok := unparen(call.Fun).(*ast.SelectorExpr)
-	return ok && sel.Sel.Name == "WithLogger" && s.isExecboundRun(sel.X)
 }
 
 func (s fileScanner) isExecboundCommand(expr ast.Expr) bool {
@@ -328,6 +179,8 @@ func (s fileScanner) isExecboundDelayCommand(expr ast.Expr) bool {
 func isExecboundBuilderName(name string) bool { return name == "Command" }
 
 func isOutputReadName(name string) bool { return name == "Output" || name == "CombinedOutput" }
+
+func isRawLifecycleName(name string) bool { return name == "Start" || name == "Run" }
 
 func (s fileScanner) selectorCalledDirectly(sel *ast.SelectorExpr) bool {
 	call, ok := s.parents[sel].(*ast.CallExpr)

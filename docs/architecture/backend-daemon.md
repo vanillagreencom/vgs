@@ -131,15 +131,15 @@ Every adopter runs `DefaultWaitDelay`; brightnessbridge takes
 it through an injectable field only its tests vary, and why the ddcutil chain
 never reaches the bound is in `display-brightness.md`. Long-lived watchers own
 their own lifecycle. `scripts/check-execbound-adoption.py` keeps new one-shot
-`os/exec` output reads out of backend services and records direct
-`exec.Command` or `exec.CommandContext` builders whose lifecycle intentionally
-stays outside execbound. The guard rejects exec-derived `Output` or
-`CombinedOutput` reads in backend services unless the read stays directly
-chained from `execbound.Command`, with any `WithLogger` call kept in that chain.
-Each `execbound` builder must terminate in that chain. `CommandWithDelay` is
-reserved for the allowlisted brightnessbridge path that tests the ddcutil
-pipe-hold bound. Direct raw `exec.Command` and `exec.CommandContext` builders
-pass only when named in the allowlist.
+`os/exec` output reads out of backend services by enforcing command builder
+consumption. Every `execbound.Command` builder must be used as a direct
+`Output` or `CombinedOutput` chain, with any `WithLogger` call kept in that
+chain. `CommandWithDelay` is reserved for the allowlisted brightnessbridge
+chain that tests the ddcutil pipe-hold bound. Direct raw `exec.Command` and
+`exec.CommandContext` builders pass only when named in the allowlist and started
+or run in the same function. Builder aliases are rejected because they hide that
+shape. Unrelated `Output` and `CombinedOutput` methods are allowed when no
+process builder is involved.
 
 ## Feature flags / env
 
