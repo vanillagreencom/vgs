@@ -617,6 +617,11 @@ func commandOutputEnv(ctx context.Context, log *slog.Logger, allowNoUpdatesExit 
 	c := execbound.Command(ctx, name, args...).WithLogger(log)
 	if len(env) > 0 {
 		c.Exec().Env = append(os.Environ(), env...)
+		// Global scope only: mise's bare commands also read a .mise.toml in
+		// the working directory, and the daemon's cwd is whatever started it.
+		if home, err := os.UserHomeDir(); err == nil {
+			c.Exec().Dir = home
+		}
 	}
 	res, err := c.Output()
 	out := res.Out

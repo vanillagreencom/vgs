@@ -143,11 +143,11 @@ def test_update_run_and_count_carry_tools():
     mise.RT.command_exists = lambda name: name in {"mise", "pacman", "checkupdates"}
     refreshed = []
     mise.mise_refresh = lambda: refreshed.append(True)
-    update.subprocess.run = lambda argv, check=False, env=None, **kw: (calls.append((list(argv), (env or {}).get("MISE_MINIMUM_RELEASE_AGE"))), subprocess.CompletedProcess(argv, 0))[1]
+    update.subprocess.run = lambda argv, check=False, env=None, cwd=None, **kw: (calls.append((list(argv), (env or {}).get("MISE_MINIMUM_RELEASE_AGE"), cwd)), subprocess.CompletedProcess(argv, 0))[1]
     update.input = lambda *a: ""
     try:
         assert_equal(update.cmd_update(["run", "tools"]), 0, "tools run must succeed")
-        assert_equal(calls, [(["mise", "up"], "0")], "tools mode runs mise up with the cooldown off")
+        assert_equal(calls, [(["mise", "up"], "0", str(mise.RT.home()))], "tools mode runs mise up from $HOME with the cooldown off")
         assert_equal(len(refreshed), 1, "stubs are refreshed after the tools step")
         # The after-hook also runs, and a failing hook counts as a failure.
         calls.clear()
@@ -208,6 +208,23 @@ def test_os_release_resolves_through_id_like():
         devtools.RT.eprint = original_eprint
 
 
+def test_env_remove_keeps_shared_tools():
+    """Removing Scala must not uninstall the Java the Java env also owns."""
+    ran = []
+    original = devtools.dev_env_run
+    devtools.dev_env_run = lambda argv: (ran.append(list(argv)), 0)[1]
+    original_exists = mise.RT.command_exists
+    mise.RT.command_exists = lambda name: True
+    try:
+        scala = next(e for e in devtools.dev_env_entries() if e["id"] == "scala")
+        assert_equal(devtools.dev_env_remove(scala), 0, "remove succeeds")
+        touched = {argv[-1] for argv in ran}
+        assert "java" not in touched and "scala" in touched, ran
+    finally:
+        devtools.dev_env_run = original
+        mise.RT.command_exists = original_exists
+
+
 def test_catalog_is_consistent():
     """One catalog feeds stubs, agents and envs; ids and commands must be unique."""
     catalog = mise.dev_tools_catalog()
@@ -239,6 +256,7 @@ def main() -> int:
     test_outdated_parsing_and_update_steps()
     test_update_run_and_count_carry_tools()
     test_os_release_resolves_through_id_like()
+    test_env_remove_keeps_shared_tools()
     test_catalog_is_consistent()
     test_cli_wrapper_routes_the_commands()
     print("check-dev-tools: ok")

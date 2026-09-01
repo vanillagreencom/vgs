@@ -168,8 +168,10 @@ def mise_json(args: List[str]) -> Tuple[Dict[str, Any], str]:
     """Run a mise subcommand that prints JSON. (data, error)."""
     if not RT.command_exists("mise"):
         return {}, "mise not found"
+    # From $HOME, so only the global config is in scope: mise's bare
+    # commands otherwise fold in whatever .mise.toml the caller's cwd has.
     try:
-        proc = RT.run(["mise", *args], env=mise_env(), timeout=120)
+        proc = RT.run(["mise", *args], env=mise_env(), cwd=str(RT.home()), timeout=120)
     except (OSError, subprocess.SubprocessError) as exc:
         return {}, f"mise {args[0]} failed: {exc}"
     if proc.returncode != 0:

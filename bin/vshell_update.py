@@ -114,7 +114,7 @@ def update_steps(mode: str) -> List[Dict[str, Any]]:
             # Stubs are rewritten after every tools update so a template change
             # reaches machines that already have them, without a migration.
             steps.append({"title": "Updating mise tools (agents, toolchains)", "argv": ["mise", "up"],
-                          "env": mise.mise_env(), "after": [mise.mise_refresh]})
+                          "env": mise.mise_env(), "cwd": str(RT.home()), "after": [mise.mise_refresh]})
         elif not everything:
             RT.eprint("mise not found")
     return steps
@@ -142,7 +142,7 @@ def cmd_update(argv: List[str]) -> int:
         failures = 0
         for step in steps:
             print(f":: {step['title']}")
-            failures += 0 if subprocess.run(step["argv"], check=False, env=step.get("env")).returncode == 0 else 1
+            failures += 0 if subprocess.run(step["argv"], check=False, env=step.get("env"), cwd=step.get("cwd")).returncode == 0 else 1
             for after in step.get("after") or ():
                 try:
                     after()

@@ -223,8 +223,12 @@ def dev_env_remove(entry: Dict[str, Any]) -> int:
     if not RT.command_exists("mise"):
         RT.eprint("mise not found")
         return 1
+    shared = {str(t) for other in dev_env_entries() if other["id"] != entry["id"] for t in other.get("tools") or []}
     failures = 0
     for tool in entry.get("tools") or []:
+        if str(tool) in shared:
+            print(f":: keeping {tool}: another environment lists it")
+            continue
         failures += dev_env_run(["mise", "uninstall", "--all", str(tool)]) != 0
         failures += dev_env_run(["mise", "unuse", "-g", str(tool)]) != 0
     return 1 if failures else 0

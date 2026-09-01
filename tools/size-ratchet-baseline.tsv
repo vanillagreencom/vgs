@@ -12,7 +12,7 @@ backend/internal/services/freedesktop/screensaver.go	745
 backend/internal/services/gamma/gamma.go	671
 backend/internal/services/loginctl/loginctl.go	824
 backend/internal/services/networkmanager/networkmanager.go	1464
-backend/internal/services/sysupdate/sysupdate.go	728
+backend/internal/services/sysupdate/sysupdate.go	733
 backend/internal/services/tailscale/tailscale.go	445
 backend/internal/services/tailscale/watch_test.go	528
 backend/internal/services/wallpaper/wallpaper.go	459
