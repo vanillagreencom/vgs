@@ -19,6 +19,7 @@ Library, not a check: no shebang, no `__main__`, never executed directly.
 from __future__ import annotations
 
 import re
+import shlex
 import subprocess
 from pathlib import Path
 
@@ -1016,10 +1017,36 @@ def ci_run_commands(ci: Path) -> str:
     return "\n".join(lines)
 
 
-# Where one command ends and the next begins, and the `VAR=value` prefix that
-# is not yet the command. Both feed ci_runs below.
-_COMMAND_SEPARATOR = re.compile(r"[;&|(){}]")
+# Command position, for ci_runs below. `VAR=value` is a prefix and not yet the
+# command; a shell keyword hands command position to the word after it.
 _ASSIGNMENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
+_KEYWORDS = frozenset({"if", "then", "elif", "else", "while", "until", "do", "!", "time", "{"})
+
+
+def _unquote(token: str) -> str:
+    """A token wrapped whole in one quote pair, unwrapped. `"scripts/x"` runs it."""
+    if len(token) >= 2 and token[0] == token[-1] and token[0] in "\"'":
+        return token[1:-1]
+    return token
+
+
+def _logical_lines(text: str) -> list[str]:
+    """Physical lines with backslash continuations joined.
+
+    The word after a continuation is an ARGUMENT of the command above it, not a
+    new command, and treating it as a command start is a fail-open.
+    """
+    lines: list[str] = []
+    pending = ""
+    for line in text.splitlines():
+        if line.endswith("\\"):
+            pending += line[:-1]
+            continue
+        lines.append(pending + line)
+        pending = ""
+    if pending:
+        lines.append(pending)
+    return lines
 
 
 def ci_runs(ci_text: str, path: str) -> bool:
@@ -1033,23 +1060,55 @@ def ci_runs(ci_text: str, path: str) -> bool:
     prevent. ci_run_commands already drops YAML comments and whole-line shell
     comments; the shapes left over are the trailing comment and the argument.
 
-    A path counts only in COMMAND POSITION: the first word of a command, which
-    is the start of a `run:` block or whatever follows `;`, `|`, `&`, a brace or
-    a paren. Leading `VAR=value` assignments are skipped, because
-    `FOO=1 scripts/bar.py` does invoke it.
+    TOKENIZED, NOT SPLIT. The first repair split each line on separator
+    characters, which is fail-open on a quoted one: `echo "( scripts/foo.py )"`
+    made the path the first word of a synthetic segment and read as an
+    invocation. shlex with `punctuation_chars` is quote-aware, so a separator
+    inside a string stays inside the token it belongs to.
 
-    APPROXIMATE IN ONE DIRECTION, deliberately. A `#` inside a quoted string is
-    read as a comment, so an invocation hiding after one reads as absent. That
-    is a REPORTED problem, never a missed one, and the opposite bias would be
-    the false green this predicate was written to remove.
+    A path counts only in COMMAND POSITION: the first word of a command, which
+    is the start of a logical line or whatever follows an operator token, after
+    any `VAR=value` prefixes and shell keywords. Heredoc bodies are skipped to
+    their delimiter, since a line there is data and not a command; backslash
+    continuations are joined for the same reason.
+
+    A line that cannot be tokenized — an unbalanced quote — is skipped rather
+    than guessed at, so it can never be shown to invoke anything. That direction
+    reports a problem instead of hiding one, which is the bias a predicate
+    written to remove a false green has to take.
     """
-    for line in ci_text.splitlines():
-        for segment in _COMMAND_SEPARATOR.split(re.sub(r"(?:^|\s)#.*$", "", line)):
-            words = segment.split()
-            while words and _ASSIGNMENT.match(words[0]):
-                words.pop(0)
-            if words and words[0] == path:
-                return True
+    heredoc: str | None = None
+    for line in _logical_lines(ci_text):
+        if heredoc is not None:
+            if line.strip() == heredoc:
+                heredoc = None
+            continue
+        lexer = shlex.shlex(line, punctuation_chars=True)
+        lexer.whitespace_split = True
+        lexer.commenters = "#"
+        try:
+            tokens = list(lexer)
+        except ValueError:
+            continue
+        found = False
+        start = True
+        for index, token in enumerate(tokens):
+            # Recorded even when the invocation is found on this same line: the
+            # body still has to be skipped, so the scan finishes the line first.
+            if token.startswith("<<") and index + 1 < len(tokens):
+                heredoc = _unquote(tokens[index + 1]).lstrip("-")
+            if token and all(character in lexer.punctuation_chars for character in token):
+                start = True
+                continue
+            if not start:
+                continue
+            if _ASSIGNMENT.match(token) or token in _KEYWORDS:
+                continue
+            if _unquote(token) == path:
+                found = True
+            start = False
+        if found:
+            return True
     return False
 
 
