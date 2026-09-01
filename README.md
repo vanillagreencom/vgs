@@ -196,7 +196,7 @@ you want.
 | VPN | Status and quick connect |
 | Tailscale | Mesh VPN status and controls |
 | AI Usage | Claude and Codex plan limits, per account |
-| System Updates | Repo and AUR update counts |
+| System Updates | Repo, AUR and mise dev-tool update counts, one-click updates |
 | Capture | Screenshot and recording state |
 | VGS Menu | Searchable command menu with categories — the same window the App Launcher widget and the dock launcher button open |
 | Idle Inhibitor | Keeps the screen awake |

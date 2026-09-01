@@ -936,6 +936,7 @@ Singleton {
 
     property bool updaterCheckOnStart: false
     property int updaterIntervalSeconds: 1800
+    property string defaultCodingAgent: ""
 
     property string displayNameMode: "system"
     property var screenPreferences: ({})

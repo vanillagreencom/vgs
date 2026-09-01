@@ -42,6 +42,12 @@ var categories = [
         label: "System",
         icon: "\uef1c",
         description: "Packages, maintenance and diagnostics"
+    },
+    {
+        id: "dev",
+        label: "Dev tools",
+        icon: "\uf121",
+        description: "Coding agents, language environments and tool updates"
     }
 ]
 
@@ -174,6 +180,30 @@ var items = [
         icon: "\uf0ab",
         keywords: ["aur", "paru", "update", "upgrade"],
         argv: ["{vshell}", "terminal", "exec", "--tui", "--hold", "--", "{vshell}", "update", "run", "aur"]
+    },
+    {
+        category: "dev",
+        title: "Dev tools update",
+        subtitle: "Update mise-managed coding agents and language toolchains",
+        icon: "\uf0ab",
+        keywords: ["mise", "agents", "claude", "codex", "tools", "update", "upgrade"],
+        argv: ["{vshell}", "terminal", "exec", "--tui", "--hold", "--", "{vshell}", "update", "run", "tools"]
+    },
+    {
+        category: "dev",
+        title: "Coding agent",
+        subtitle: "Launch the default coding agent, or pick one",
+        icon: "\uf544",
+        keywords: ["agent", "claude", "codex", "opencode", "ai", "code"],
+        argv: ["{vshell}", "agent", "launch", "--pick"]
+    },
+    {
+        category: "dev",
+        title: "Developer settings",
+        subtitle: "Coding agents, launchers and language environments",
+        icon: "\uf121",
+        keywords: ["developer", "agents", "mise", "dev", "environments", "node", "python", "rust", "vgs"],
+        argv: ["{vshell}", "ipc", "call", "settings", "openWith", "developer"]
     },
     {
         category: "system",

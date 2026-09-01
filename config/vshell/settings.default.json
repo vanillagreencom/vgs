@@ -550,6 +550,7 @@
   "customPowerActionPowerOff": "",
   "updaterCheckOnStart": true,
   "updaterIntervalSeconds": 1800,
+  "defaultCodingAgent": "",
   "displayNameMode": "system",
   "screenPreferences": {},
   "showOnLastDisplay": {},
