@@ -105,26 +105,13 @@ Item {
                 width: parent.width
                 visible: SettingsData.screensaverEnabled
 
-                Column {
-                    width: parent.width
-                    spacing: Theme.spacingS
-
-                    StyledText {
-                        text: I18n.tr("Screensaver Type")
-                        font.pixelSize: Theme.fontSizeMedium
-                        color: Theme.surfaceText
-                    }
-
-                    VgsButtonGroup {
-                        id: typeSelector
-                        width: parent.width
-                        fillWidth: true
-                        model: [I18n.tr("ASCII Art"), I18n.tr("Video")]
-                        currentIndex: SettingsData.screensaverType === "video" ? 1 : 0
-                        onSelectionChanged: (index, selected) => {
-                            if (selected)
-                                SettingsData.set("screensaverType", index === 1 ? "video" : "ascii");
-                        }
+                SettingsChoiceRow {
+                    text: I18n.tr("Screensaver Type")
+                    model: [I18n.tr("ASCII Art"), I18n.tr("Video")]
+                    currentIndex: SettingsData.screensaverType === "video" ? 1 : 0
+                    onSelectionChanged: (index, selected) => {
+                        if (selected)
+                            SettingsData.set("screensaverType", index === 1 ? "video" : "ascii");
                     }
                 }
 
@@ -153,13 +140,14 @@ Item {
                         font.pixelSize: Theme.fontSizeSmall
                     }
 
-                    Row {
+                    Item {
                         width: parent.width
-                        spacing: Theme.spacingS
+                        height: asciiImagePathField.height
 
                         VgsTextField {
                             id: asciiImagePathField
-                            width: parent.width - browseAsciiBtn.width - Theme.spacingS
+                            width: parent.width
+                            rightAccessoryWidth: browseAsciiBtn.width + Theme.spacingM
                             placeholderText: I18n.tr("Built-in VGS logo")
                             text: SettingsData.screensaverAsciiImagePath
                             backgroundColor: Theme.surfaceContainerHighest
@@ -171,6 +159,8 @@ Item {
 
                         VgsButton {
                             id: browseAsciiBtn
+                            anchors.right: parent.right
+                            anchors.verticalCenter: parent.verticalCenter
                             variant: "secondary"
                             text: I18n.tr("Browse")
                             onClicked: screensaverImageBrowserModal.open()
@@ -192,13 +182,14 @@ Item {
                         font.pixelSize: Theme.fontSizeSmall
                     }
 
-                    Row {
+                    Item {
                         width: parent.width
-                        spacing: Theme.spacingS
+                        height: videoPathField.height
 
                         VgsTextField {
                             id: videoPathField
-                            width: parent.width - browseVideoBtn.width - Theme.spacingS
+                            width: parent.width
+                            rightAccessoryWidth: browseVideoBtn.width + Theme.spacingM
                             placeholderText: I18n.tr("/path/to/video.mp4")
                             text: SettingsData.screensaverVideoPath
                             backgroundColor: Theme.surfaceContainerHighest
@@ -210,6 +201,8 @@ Item {
 
                         VgsButton {
                             id: browseVideoBtn
+                            anchors.right: parent.right
+                            anchors.verticalCenter: parent.verticalCenter
                             variant: "secondary"
                             text: I18n.tr("Browse")
                             onClicked: screensaverVideoBrowserModal.open()

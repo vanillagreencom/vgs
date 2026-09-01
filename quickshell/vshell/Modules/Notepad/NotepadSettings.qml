@@ -1,6 +1,7 @@
 pragma ComponentBehavior: Bound
 import QtQuick
 import qs.Common
+import qs.Modules.Settings.Widgets
 import qs.Widgets
 
 Item {
@@ -395,50 +396,24 @@ Item {
                         width: parent.width
                         spacing: Theme.spacingS
 
-                        Column {
-                            width: parent.width
-                            spacing: Theme.spacingXS
-
-                            StyledText {
-                                text: I18n.tr("Default Mode")
-                                font.pixelSize: Theme.fontSizeSmall
-                                font.weight: Font.Medium
-                                color: Theme.surfaceText
-                            }
-
-                            VgsButtonGroup {
-                                model: [I18n.tr("Slideout"), I18n.tr("Popout")]
-                                size: "small"
-                                currentIndex: SettingsData.notepadDefaultMode === "popout" ? 1 : 0
-                                onSelectionChanged: (index, selected) => {
-                                    if (!selected)
-                                        return;
+                        SettingsChoiceRow {
+                            text: I18n.tr("Default Mode")
+                            model: [I18n.tr("Slideout"), I18n.tr("Popout")]
+                            currentIndex: SettingsData.notepadDefaultMode === "popout" ? 1 : 0
+                            onSelectionChanged: (index, selected) => {
+                                if (selected)
                                     SettingsData.notepadDefaultMode = index === 1 ? "popout" : "slideout";
-                                }
                             }
                         }
 
-                        Column {
-                            width: parent.width
-                            spacing: Theme.spacingXS
+                        SettingsChoiceRow {
                             visible: SettingsData.notepadDefaultMode !== "popout"
-
-                            StyledText {
-                                text: I18n.tr("Open From")
-                                font.pixelSize: Theme.fontSizeSmall
-                                font.weight: Font.Medium
-                                color: Theme.surfaceText
-                            }
-
-                            VgsButtonGroup {
-                                model: [I18n.tr("Right"), I18n.tr("Left")]
-                                size: "small"
-                                currentIndex: SettingsData.notepadSlideoutSide === "left" ? 1 : 0
-                                onSelectionChanged: (index, selected) => {
-                                    if (!selected)
-                                        return;
+                            text: I18n.tr("Open From")
+                            model: [I18n.tr("Right"), I18n.tr("Left")]
+                            currentIndex: SettingsData.notepadSlideoutSide === "left" ? 1 : 0
+                            onSelectionChanged: (index, selected) => {
+                                if (selected)
                                     SettingsData.notepadSlideoutSide = index === 1 ? "left" : "right";
-                                }
                             }
                         }
 

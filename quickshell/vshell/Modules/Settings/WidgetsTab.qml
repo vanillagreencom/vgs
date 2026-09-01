@@ -989,8 +989,9 @@ Item {
                         }
                     }
 
-                    VgsButtonGroup {
+                    SettingsChoiceRow {
                         id: barSelectorGroup
+                        text: I18n.tr("Bar")
                         width: parent.width
                         model: SettingsData.barConfigs.map((cfg, index) => {
                             const name = cfg.name || I18n.tr("Bar %1").arg(index + 1);
@@ -1000,7 +1001,6 @@ Item {
                             const idx = SettingsData.barConfigs.findIndex(cfg => cfg.id === selectedBarId);
                             return idx >= 0 ? idx : 0;
                         }
-                        checkEnabled: false
                         onSelectionChanged: (index, selected) => {
                             if (!selected)
                                 return;

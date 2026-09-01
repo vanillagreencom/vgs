@@ -228,6 +228,7 @@ SettingsCard {
                             }
                             color: Theme.surfaceVariantText
                             font.pixelSize: Theme.fontSizeSmall - 1
+                            visible: text !== ""
                             elide: Text.ElideMiddle
                         }
                     }

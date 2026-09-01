@@ -438,131 +438,22 @@ Item {
                     x: Theme.spacingM
                     spacing: Theme.spacingM
 
-                    Row {
-                        width: parent.width
-                        spacing: Theme.spacingM
-
-                        Rectangle {
-                            width: 40
-                            height: 40
-                            radius: Theme.controlRadius
-                            color: Theme.primarySelected
-
-                            VgsIcon {
-                                anchors.centerIn: parent
-                                name: "drag_pan"
-                                size: Theme.iconSize
-                                color: Theme.primary
-                            }
-                        }
-
-                        Column {
-                            spacing: Theme.spacingXXS
-                            anchors.verticalCenter: parent.verticalCenter
-                            width: parent.width - 40 - Theme.spacingM
-
-                            StyledText {
-                                text: I18n.tr("Move Widget")
-                                font.pixelSize: Theme.fontSizeMedium
-                                font.weight: Font.Medium
-                                color: Theme.surfaceText
-                                width: parent.width
-                                horizontalAlignment: Text.AlignLeft
-                            }
-
-                            StyledText {
-                                text: I18n.tr("Right-click and drag anywhere on the widget")
-                                font.pixelSize: Theme.fontSizeSmall
-                                color: Theme.surfaceVariantText
-                                width: parent.width
-                                horizontalAlignment: Text.AlignLeft
-                            }
-                        }
+                    SettingsHelpRow {
+                        iconName: "drag_pan"
+                        title: I18n.tr("Move Widget")
+                        description: I18n.tr("Right-click and drag anywhere on the widget")
                     }
 
-                    Row {
-                        width: parent.width
-                        spacing: Theme.spacingM
-
-                        Rectangle {
-                            width: 40
-                            height: 40
-                            radius: Theme.controlRadius
-                            color: Theme.primarySelected
-
-                            VgsIcon {
-                                anchors.centerIn: parent
-                                name: "open_in_full"
-                                size: Theme.iconSize
-                                color: Theme.primary
-                            }
-                        }
-
-                        Column {
-                            spacing: Theme.spacingXXS
-                            anchors.verticalCenter: parent.verticalCenter
-                            width: parent.width - 40 - Theme.spacingM
-
-                            StyledText {
-                                text: I18n.tr("Resize Widget")
-                                font.pixelSize: Theme.fontSizeMedium
-                                font.weight: Font.Medium
-                                color: Theme.surfaceText
-                                width: parent.width
-                                horizontalAlignment: Text.AlignLeft
-                            }
-
-                            StyledText {
-                                text: I18n.tr("Right-click and drag the bottom-right corner")
-                                font.pixelSize: Theme.fontSizeSmall
-                                color: Theme.surfaceVariantText
-                                width: parent.width
-                                horizontalAlignment: Text.AlignLeft
-                            }
-                        }
+                    SettingsHelpRow {
+                        iconName: "open_in_full"
+                        title: I18n.tr("Resize Widget")
+                        description: I18n.tr("Right-click and drag the bottom-right corner")
                     }
 
-                    Row {
-                        width: parent.width
-                        spacing: Theme.spacingM
-
-                        Rectangle {
-                            width: 40
-                            height: 40
-                            radius: Theme.controlRadius
-                            color: Theme.primarySelected
-
-                            VgsIcon {
-                                anchors.centerIn: parent
-                                name: "drag_indicator"
-                                size: Theme.iconSize
-                                color: Theme.primary
-                            }
-                        }
-
-                        Column {
-                            spacing: Theme.spacingXXS
-                            anchors.verticalCenter: parent.verticalCenter
-                            width: parent.width - 40 - Theme.spacingM
-
-                            StyledText {
-                                text: I18n.tr("Reorder & Group")
-                                font.pixelSize: Theme.fontSizeMedium
-                                font.weight: Font.Medium
-                                color: Theme.surfaceText
-                                width: parent.width
-                                horizontalAlignment: Text.AlignLeft
-                            }
-
-                            StyledText {
-                                text: I18n.tr("Drag a widget by its handle here to reorder it or drop it into another group")
-                                font.pixelSize: Theme.fontSizeSmall
-                                color: Theme.surfaceVariantText
-                                width: parent.width
-                                wrapMode: Text.WordWrap
-                                horizontalAlignment: Text.AlignLeft
-                            }
-                        }
+                    SettingsHelpRow {
+                        iconName: "drag_indicator"
+                        title: I18n.tr("Reorder & Group")
+                        description: I18n.tr("Drag a widget by its handle here to reorder it or drop it into another group")
                     }
                 }
             }

@@ -33,7 +33,8 @@ StyledRect {
 
     width: parent?.width ?? 0
     height: Theme.spacingL * 2 + contentColumn.height
-    // Flatline: border-forward card (see design-language.md).
+    // Flatline: quiet-border card — the hairline defines the edge, the fill
+    // step carries the contrast (see design-language.md).
     radius: Theme.cornerRadius
     color: Theme.popupSurfaceColor(Theme.surfaceContainerHigh)
     border.width: 1

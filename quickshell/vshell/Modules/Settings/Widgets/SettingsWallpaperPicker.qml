@@ -36,13 +36,14 @@ Column {
         }
     }
 
-    Row {
+    Item {
         width: parent.width
-        spacing: Theme.spacingS
+        height: wallpaperPathField.height
 
         VgsTextField {
             id: wallpaperPathField
-            width: parent.width - browseWallpaperButton.width - Theme.spacingS
+            width: parent.width
+            rightAccessoryWidth: browseWallpaperButton.width + Theme.spacingM
             placeholderText: root.placeholderText
             text: root.path
             backgroundColor: Theme.popupSurfaceColor(Theme.surfaceContainerHighest)
@@ -54,9 +55,10 @@ Column {
 
         VgsButton {
             id: browseWallpaperButton
+            anchors.right: parent.right
+            anchors.verticalCenter: parent.verticalCenter
             variant: "secondary"
             text: I18n.tr("Browse")
-            horizontalPadding: Theme.spacingL
             onClicked: wallpaperBrowserModal.open()
         }
     }

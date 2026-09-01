@@ -22,38 +22,15 @@ Item {
             SettingsCard {
                 tab: "motion"
                 tags: ["animation", "variant", "style", "slide", "fluent", "dynamic", "motion"]
-                title: I18n.tr("Animation Style")
                 settingKey: "animationVariant"
-                iconName: "auto_awesome_motion"
 
-                Item {
-                    width: parent.width
-                    height: animVariantGroup.implicitHeight
-                    clip: true
-
-                    VgsButtonGroup {
-                        id: animVariantGroup
-                        x: Theme.spacingM
-                        width: parent.width - Theme.spacingM * 2
-                        fillWidth: true
-                        buttonPadding: parent.width < 480 ? Theme.spacingS : Theme.spacingL
-                        minButtonWidth: parent.width < 480 ? 64 : 96
-                        textSize: parent.width < 480 ? Theme.fontSizeSmall : Theme.fontSizeMedium
-                        model: [I18n.tr("Material"), I18n.tr("Fluent"), I18n.tr("Dynamic")]
-                        selectionMode: "single"
-                        currentIndex: SettingsData.animationVariant
-                        onSelectionChanged: (index, selected) => {
-                            if (!selected)
-                                return;
+                SettingsChoiceRow {
+                    text: I18n.tr("Animation Style")
+                    model: [I18n.tr("Material"), I18n.tr("Fluent"), I18n.tr("Dynamic")]
+                    currentIndex: SettingsData.animationVariant
+                    onSelectionChanged: (index, selected) => {
+                        if (selected)
                             SettingsData.set("animationVariant", index);
-                        }
-
-                        Connections {
-                            target: SettingsData
-                            function onAnimationVariantChanged() {
-                                animVariantGroup.currentIndex = SettingsData.animationVariant;
-                            }
-                        }
                     }
                 }
 
@@ -62,38 +39,15 @@ Item {
             SettingsCard {
                 tab: "motion"
                 tags: ["animation", "motion", "effect", "slide", "directional", "depth", "spring", "physics"]
-                title: I18n.tr("Motion Effects")
                 settingKey: "motionEffect"
-                iconName: "motion_photos_on"
 
-                Item {
-                    width: parent.width
-                    height: motionEffectGroup.implicitHeight
-                    clip: true
-
-                    VgsButtonGroup {
-                        id: motionEffectGroup
-                        x: Theme.spacingM
-                        width: parent.width - Theme.spacingM * 2
-                        fillWidth: true
-                        buttonPadding: parent.width < 480 ? Theme.spacingS : Theme.spacingL
-                        minButtonWidth: parent.width < 480 ? 64 : 96
-                        textSize: parent.width < 480 ? Theme.fontSizeSmall : Theme.fontSizeMedium
-                        model: [I18n.tr("Standard"), I18n.tr("Directional"), I18n.tr("Depth")]
-                        selectionMode: "single"
-                        currentIndex: SettingsData.motionEffect
-                        onSelectionChanged: (index, selected) => {
-                            if (!selected)
-                                return;
+                SettingsChoiceRow {
+                    text: I18n.tr("Motion Effects")
+                    model: [I18n.tr("Standard"), I18n.tr("Directional"), I18n.tr("Depth")]
+                    currentIndex: SettingsData.motionEffect
+                    onSelectionChanged: (index, selected) => {
+                        if (selected)
                             SettingsData.set("motionEffect", index);
-                        }
-
-                        Connections {
-                            target: SettingsData
-                            function onMotionEffectChanged() {
-                                motionEffectGroup.currentIndex = SettingsData.motionEffect;
-                            }
-                        }
                     }
                 }
 
@@ -102,38 +56,15 @@ Item {
             SettingsCard {
                 tab: "motion"
                 tags: ["animation", "speed", "motion", "duration"]
-                title: I18n.tr("Animation Speed")
                 settingKey: "animationSpeed"
-                iconName: "animation"
 
-                Item {
-                    width: parent.width
-                    height: animationSpeedGroup.implicitHeight
-                    clip: true
-
-                    VgsButtonGroup {
-                        id: animationSpeedGroup
-                        x: Theme.spacingM
-                        width: parent.width - Theme.spacingM * 2
-                        fillWidth: true
-                        buttonPadding: parent.width < 480 ? Theme.spacingS : Theme.spacingL
-                        minButtonWidth: parent.width < 480 ? 44 : 64
-                        textSize: parent.width < 480 ? Theme.fontSizeSmall : Theme.fontSizeMedium
-                        model: [I18n.tr("None"), I18n.tr("Short"), I18n.tr("Medium"), I18n.tr("Long"), I18n.tr("Custom")]
-                        selectionMode: "single"
-                        currentIndex: SettingsData.animationSpeed
-                        onSelectionChanged: (index, selected) => {
-                            if (!selected)
-                                return;
+                SettingsChoiceRow {
+                    text: I18n.tr("Animation Speed")
+                    model: [I18n.tr("None"), I18n.tr("Short"), I18n.tr("Medium"), I18n.tr("Long"), I18n.tr("Custom")]
+                    currentIndex: SettingsData.animationSpeed
+                    onSelectionChanged: (index, selected) => {
+                        if (selected)
                             SettingsData.set("animationSpeed", index);
-                        }
-
-                        Connections {
-                            target: SettingsData
-                            function onAnimationSpeedChanged() {
-                                animationSpeedGroup.currentIndex = SettingsData.animationSpeed;
-                            }
-                        }
                     }
                 }
 
@@ -191,40 +122,18 @@ Item {
             SettingsCard {
                 tab: "motion"
                 tags: ["animation", "speed", "motion", "duration", "popout", "sync"]
-                title: I18n.tr("%1 Animation Speed").arg(I18n.tr("Popouts"))
                 settingKey: "popoutAnimationSpeed"
-                iconName: "open_in_new"
 
-                Item {
-                    width: parent.width
-                    height: popoutSpeedGroup.implicitHeight
-                    clip: true
-
-                    VgsButtonGroup {
-                        id: popoutSpeedGroup
-                        x: Theme.spacingM
-                        width: parent.width - Theme.spacingM * 2
-                        fillWidth: true
-                        buttonPadding: parent.width < 480 ? Theme.spacingS : Theme.spacingL
-                        minButtonWidth: parent.width < 480 ? 44 : 64
-                        textSize: parent.width < 480 ? Theme.fontSizeSmall : Theme.fontSizeMedium
-                        model: [I18n.tr("None"), I18n.tr("Short"), I18n.tr("Medium"), I18n.tr("Long"), I18n.tr("Custom")]
-                        selectionMode: "single"
-                        currentIndex: SettingsData.popoutAnimationSpeed
-                        onSelectionChanged: (index, selected) => {
-                            if (!selected)
-                                return;
-                            if (SettingsData.syncComponentAnimationSpeeds)
-                                SettingsData.set("syncComponentAnimationSpeeds", false);
-                            SettingsData.set("popoutAnimationSpeed", index);
-                        }
-
-                        Connections {
-                            target: SettingsData
-                            function onPopoutAnimationSpeedChanged() {
-                                popoutSpeedGroup.currentIndex = SettingsData.popoutAnimationSpeed;
-                            }
-                        }
+                SettingsChoiceRow {
+                    text: I18n.tr("%1 Animation Speed").arg(I18n.tr("Popouts"))
+                    model: [I18n.tr("None"), I18n.tr("Short"), I18n.tr("Medium"), I18n.tr("Long"), I18n.tr("Custom")]
+                    currentIndex: SettingsData.popoutAnimationSpeed
+                    onSelectionChanged: (index, selected) => {
+                        if (!selected)
+                            return;
+                        if (SettingsData.syncComponentAnimationSpeeds)
+                            SettingsData.set("syncComponentAnimationSpeeds", false);
+                        SettingsData.set("popoutAnimationSpeed", index);
                     }
                 }
 
@@ -272,40 +181,18 @@ Item {
             SettingsCard {
                 tab: "motion"
                 tags: ["animation", "speed", "motion", "duration", "modal", "sync"]
-                title: I18n.tr("%1 Animation Speed").arg(I18n.tr("Modals"))
                 settingKey: "modalAnimationSpeed"
-                iconName: "web_asset"
 
-                Item {
-                    width: parent.width
-                    height: modalSpeedGroup.implicitHeight
-                    clip: true
-
-                    VgsButtonGroup {
-                        id: modalSpeedGroup
-                        x: Theme.spacingM
-                        width: parent.width - Theme.spacingM * 2
-                        fillWidth: true
-                        buttonPadding: parent.width < 480 ? Theme.spacingS : Theme.spacingL
-                        minButtonWidth: parent.width < 480 ? 44 : 64
-                        textSize: parent.width < 480 ? Theme.fontSizeSmall : Theme.fontSizeMedium
-                        model: [I18n.tr("None"), I18n.tr("Short"), I18n.tr("Medium"), I18n.tr("Long"), I18n.tr("Custom")]
-                        selectionMode: "single"
-                        currentIndex: SettingsData.modalAnimationSpeed
-                        onSelectionChanged: (index, selected) => {
-                            if (!selected)
-                                return;
-                            if (SettingsData.syncComponentAnimationSpeeds)
-                                SettingsData.set("syncComponentAnimationSpeeds", false);
-                            SettingsData.set("modalAnimationSpeed", index);
-                        }
-
-                        Connections {
-                            target: SettingsData
-                            function onModalAnimationSpeedChanged() {
-                                modalSpeedGroup.currentIndex = SettingsData.modalAnimationSpeed;
-                            }
-                        }
+                SettingsChoiceRow {
+                    text: I18n.tr("%1 Animation Speed").arg(I18n.tr("Modals"))
+                    model: [I18n.tr("None"), I18n.tr("Short"), I18n.tr("Medium"), I18n.tr("Long"), I18n.tr("Custom")]
+                    currentIndex: SettingsData.modalAnimationSpeed
+                    onSelectionChanged: (index, selected) => {
+                        if (!selected)
+                            return;
+                        if (SettingsData.syncComponentAnimationSpeeds)
+                            SettingsData.set("syncComponentAnimationSpeeds", false);
+                        SettingsData.set("modalAnimationSpeed", index);
                     }
                 }
 

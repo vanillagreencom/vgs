@@ -68,7 +68,7 @@ Column {
         onToggled: checked => SettingsData.set(root.antialiasKey, checked)
     }
 
-    SettingsButtonGroupRow {
+    SettingsChoiceRow {
         tab: "typography"
         tags: root.tags(["hinting"])
         settingKey: root.hintingKey
@@ -82,7 +82,7 @@ Column {
         }
     }
 
-    SettingsButtonGroupRow {
+    SettingsChoiceRow {
         tab: "typography"
         tags: root.tags(["subpixel", "rgba"])
         settingKey: root.subpixelKey
@@ -98,7 +98,7 @@ Column {
         }
     }
 
-    SettingsButtonGroupRow {
+    SettingsChoiceRow {
         tab: "typography"
         tags: root.tags(["lcd", "filter"])
         settingKey: root.lcdFilterKey

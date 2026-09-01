@@ -427,15 +427,12 @@ Item {
                                 const label = w.appId + (w.title ? " - " + w.title : "");
                                 return label.length > 60 ? label.substring(0, 57) + "..." : label;
                             })
-                            onValueChanged: value => {
-                                if (!value)
-                                    return;
-                                const index = options.indexOf(value);
+                            onOptionSelected: (index, value) => {
                                 if (index < 0 || index >= root.activeWindows.length)
                                     return;
+                                selectedOptionIndex = index;
                                 const window = root.activeWindows[index];
                                 root.openRuleModal(window);
-                                currentValue = "";
                             }
                         }
                     }

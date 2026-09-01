@@ -354,14 +354,13 @@ Item {
                         wrapMode: Text.WordWrap
                         width: parent.width
                     }
-
-                    Row {
+                    Item {
                         width: parent.width
-                        spacing: Theme.spacingS
-
+                        height: videoPathField.height
                         VgsTextField {
                             id: videoPathField
-                            width: parent.width - browseVideoButton.width - Theme.spacingS
+                            width: parent.width
+                            rightAccessoryWidth: browseVideoButton.width + Theme.spacingM
                             placeholderText: I18n.tr("/path/to/videos")
                             text: SettingsData.lockScreenVideoPath
                             backgroundColor: Theme.surfaceContainerHighest
@@ -371,16 +370,16 @@ Item {
                                 }
                             }
                         }
-
                         VgsButton {
                             id: browseVideoButton
+                            anchors.right: parent.right
+                            anchors.verticalCenter: parent.verticalCenter
                             variant: "secondary"
                             text: I18n.tr("Browse")
                             onClicked: videoBrowserModal.open()
                         }
                     }
                 }
-
                 SettingsToggleRow {
                     settingKey: "lockScreenVideoCycling"
                     tags: ["lock", "screen", "video", "screensaver", "cycling", "random", "shuffle"]

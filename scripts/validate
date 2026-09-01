@@ -242,6 +242,7 @@ qml       | scripts/test-popout-dismiss-envelope.js
 qml       | scripts/test-switcher-selection.js
 qml       | scripts/test-switcher-scope.js
 qml       | scripts/test-thumb-sweep.js
+qml       | scripts/test-flatline-controls.js
 qml       | scripts/test-brightness-scan-ordering.js
 helper    | scripts/test-wallpaper-thumbs.py
 helper    | scripts/test-wallpaper-thumb-cache.py
@@ -259,7 +260,6 @@ qml,may-skip | scripts/smoke-surfaces.sh
 go        | (cd backend && go build ./... && go vet ./... && go test -race ./...)
 MANIFEST_EOF
 }
-
 # ═══ THE VOCABULARY IS READ, NOT RESTATED ══════════════════════════════════
 #
 # scripts/lib/validation-grammar.conf is the one definition, and THIS IS ITS

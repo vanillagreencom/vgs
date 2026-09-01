@@ -46,9 +46,8 @@ Rectangle {
     // the unified track are contiguous, so it no longer inserts gaps.
     property int spacing: 0
 
-    // Inner padding between the track edge and the segments.
-    readonly property int trackPad: 3
-    readonly property int segmentRadius: Math.max(4, Theme.controlRadius - 2)
+    readonly property int trackPad: 0
+    readonly property int segmentRadius: Theme.controlRadius
 
     readonly property real _fillSegmentWidth: {
         const count = model?.length ?? 0;
@@ -70,14 +69,9 @@ Rectangle {
     implicitWidth: segmentRow.implicitWidth + trackPad * 2
     height: implicitHeight
     radius: Theme.controlRadius
-    // Recessed track with a hairline border. Flatline is border-forward: the
-    // border defines the control's bounds so it reads clearly as a segmented
-    // toggle even when the track fill sits close to the surface behind it (dark
-    // themes made a borderless track blend into the background). The active
-    // segment is a lighter, crisply-bordered raised tile inside.
+    // Fill alone groups the segments; the active segment carries selection.
     color: usePopupTransparency ? Theme.withAlpha(Theme.surfaceContainerLow, Theme.popupTransparency) : Theme.surfaceContainerLow
-    border.width: 1
-    border.color: Theme.borderColor
+    border.width: 0
     opacity: enabled ? 1 : 0.45
 
     Timer {
@@ -153,10 +147,7 @@ Rectangle {
                 }
                 height: root.buttonHeight
 
-                // Raised tile for the active segment. The tile carries no border
-                // of its own — the track border already bounds the control, and a
-                // second border inside it read as clutter. Fill contrast against
-                // the recessed track is what signals selection.
+                // Fill contrast against the recessed track signals selection.
                 Rectangle {
                     anchors.fill: parent
                     radius: root.segmentRadius

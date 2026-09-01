@@ -348,13 +348,13 @@ Singleton {
     // Opaque borders for settings/content surfaces. Unlike the alpha-based outline*
     // tokens above (kept translucent for blur/glass layers), these are solid 1px
     // lines that do not let underlying content bleed through.
-    readonly property color borderColor: blend(surfaceContainerHigh, outline, 0.6)
+    readonly property color borderColor: blend(surfaceContainerHigh, outline, 0.42)
     readonly property color borderColorStrong: outline
     // A nested row/tile that must read as slightly raised above the card it sits on
     // (e.g. list rows inside a settings card). Always at least as light as the card.
     readonly property color elevatedRowColor: surfaceContainerHighest
-    // Muted outline used for secondary/outlined buttons — solid, low-emphasis.
-    readonly property color secondaryOutline: blend(surfaceContainerHigh, outline, 0.9)
+    // Secondary/outlined resting edge — kept at borderColor's quiet level (VGS-227).
+    readonly property color secondaryOutline: blend(surfaceContainerHigh, outline, 0.42)
 
     // Flatline focus ring (shadcn-style keyboard focus). Primitives draw this as
     // a 2px accent ring when they hold keyboard focus. See design-language.md.
@@ -369,9 +369,8 @@ Singleton {
     readonly property color windowBorderActive: primary
     readonly property color windowBorderInactive: outline
     readonly property int windowBorderWidth: 2
-    // Opaque 1px separator for lists/dividers/group boundaries. Named
-    // separatorColor to avoid colliding with the hairline(dpr) width helper.
-    readonly property color separatorColor: blend(surfaceContainerHigh, outline, 0.4)
+    // Opaque 1px separator for lists/dividers/group boundaries. Named separatorColor to avoid colliding with the hairline(dpr) width helper.
+    readonly property color separatorColor: blend(surfaceContainerHigh, outline, 0.35)
 
     property color errorHover: withAlpha(error, 0.12)
     property color errorPressed: withAlpha(error, 0.16)

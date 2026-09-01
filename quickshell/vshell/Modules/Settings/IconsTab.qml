@@ -95,26 +95,17 @@ Item {
                     font.pixelSize: Theme.fontSizeSmall
                 }
 
-                // Binding: follow theme vs always-use (the aspect policy)
-                Item {
-                    width: parent.width
-                    height: bindingGroup.height
-
-                    VgsButtonGroup {
-                        id: bindingGroup
-                        x: Theme.spacingM
-                        width: parent.width - Theme.spacingM * 2
-                        fillWidth: true
-                        model: [I18n.tr("Follow theme"), I18n.tr("Always use these")]
-                        currentIndex: root.followTheme ? 0 : 1
-                        onSelectionChanged: (index, selected) => {
-                            if (!selected)
-                                return;
-                            if (index === 0)
-                                root.useFollowTheme();
-                            else if (root.installedThemes.length > 0)
-                                root.useFixed(SettingsData.iconThemeDark !== "System Default" ? SettingsData.iconThemeDark : root.installedThemes[0]);
-                        }
+                SettingsChoiceRow {
+                    text: I18n.tr("Icon source")
+                    model: [I18n.tr("Follow theme"), I18n.tr("Always use these")]
+                    currentIndex: root.followTheme ? 0 : 1
+                    onSelectionChanged: (index, selected) => {
+                        if (!selected)
+                            return;
+                        if (index === 0)
+                            root.useFollowTheme();
+                        else if (root.installedThemes.length > 0)
+                            root.useFixed(SettingsData.iconThemeDark !== "System Default" ? SettingsData.iconThemeDark : root.installedThemes[0]);
                     }
                 }
 

@@ -211,7 +211,7 @@ Column {
 
                     VgsIcon {
                         x: Theme.spacingL - 2
-                        y: Theme.spacingL + (Theme.iconSize / 2) - (size / 2)
+                        y: instanceCard.headerCenterY - size / 2
                         name: "drag_indicator"
                         size: 18
                         color: Theme.outline

@@ -206,7 +206,7 @@ Item {
                     onToggled: checked => SettingsData.set("batteryNotifyLow", checked)
                 }
 
-                SettingsButtonGroupRow {
+                SettingsChoiceRow {
                     settingKey: "batteryNotificationType"
                     text: I18n.tr("Notification Type")
                     description: I18n.tr("How battery alerts are shown")

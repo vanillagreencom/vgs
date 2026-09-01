@@ -34,33 +34,15 @@ Item {
                 title: I18n.tr("Idle Behavior")
                 settingKey: "idleSettings"
 
-                Item {
-                    width: parent.width
-                    height: powerCategory.height
+                SettingsChoiceRow {
+                    id: powerCategory
                     visible: BatteryService.batteryAvailable
-
-                    StyledText {
-                        text: I18n.tr("Power Source")
-                        font.pixelSize: Theme.fontSizeMedium
-                        color: Theme.surfaceText
-                        anchors.left: parent.left
-                        anchors.leftMargin: Theme.spacingM
-                        anchors.verticalCenter: parent.verticalCenter
-                    }
-
-                    VgsButtonGroup {
-                        id: powerCategory
-                        anchors.right: parent.right
-                        anchors.verticalCenter: parent.verticalCenter
-                        model: [I18n.tr("AC Power"), I18n.tr("Battery")]
-                        currentIndex: 0
-                        selectionMode: "single"
-                        checkEnabled: false
-                        onSelectionChanged: (index, selected) => {
-                            if (!selected)
-                                return;
+                    text: I18n.tr("Power Source")
+                    model: [I18n.tr("AC Power"), I18n.tr("Battery")]
+                    currentIndex: 0
+                    onSelectionChanged: (index, selected) => {
+                        if (selected)
                             currentIndex = index;
-                        }
                     }
                 }
 
@@ -305,49 +287,26 @@ Item {
                     }
                 }
 
-                Column {
-                    width: parent.width
-                    spacing: Theme.spacingS
+                SettingsChoiceRow {
+                    id: suspendBehaviorSelector
                     visible: SessionService.hibernateSupported
+                    text: I18n.tr("Suspend Behavior")
+                    model: [I18n.tr("Suspend"), I18n.tr("Hibernate"), I18n.tr("Suspend then Hibernate")]
 
-                    StyledText {
-                        text: I18n.tr("Suspend Behavior")
-                        font.pixelSize: Theme.fontSizeMedium
-                        color: Theme.surfaceText
-                        leftPadding: Theme.spacingM
+                    Connections {
+                        target: powerCategory
+                        function onCurrentIndexChanged() {
+                            suspendBehaviorSelector.currentIndex = powerCategory.currentIndex === 0 ? SettingsData.acSuspendBehavior : SettingsData.batterySuspendBehavior;
+                        }
                     }
 
-                    VgsButtonGroup {
-                        id: suspendBehaviorSelector
-                        anchors.right: parent.right
-                        anchors.rightMargin: Theme.spacingM
-                        model: [I18n.tr("Suspend"), I18n.tr("Hibernate"), I18n.tr("Suspend then Hibernate")]
-                        selectionMode: "single"
-                        checkEnabled: false
+                    Component.onCompleted: currentIndex = powerCategory.currentIndex === 0 ? SettingsData.acSuspendBehavior : SettingsData.batterySuspendBehavior
 
-                        Connections {
-                            target: powerCategory
-                            function onCurrentIndexChanged() {
-                                const behavior = powerCategory.currentIndex === 0 ? SettingsData.acSuspendBehavior : SettingsData.batterySuspendBehavior;
-                                suspendBehaviorSelector.currentIndex = behavior;
-                            }
-                        }
-
-                        Component.onCompleted: {
-                            const behavior = powerCategory.currentIndex === 0 ? SettingsData.acSuspendBehavior : SettingsData.batterySuspendBehavior;
-                            currentIndex = behavior;
-                        }
-
-                        onSelectionChanged: (index, selected) => {
-                            if (!selected)
-                                return;
-                            currentIndex = index;
-                            if (powerCategory.currentIndex === 0) {
-                                SettingsData.set("acSuspendBehavior", index);
-                            } else {
-                                SettingsData.set("batterySuspendBehavior", index);
-                            }
-                        }
+                    onSelectionChanged: (index, selected) => {
+                        if (!selected)
+                            return;
+                        currentIndex = index;
+                        SettingsData.set(powerCategory.currentIndex === 0 ? "acSuspendBehavior" : "batterySuspendBehavior", index);
                     }
                 }
             }

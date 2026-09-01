@@ -170,13 +170,9 @@ Item {
                     height: logoModeGroup.implicitHeight
                     clip: true
 
-                    VgsButtonGroup {
+                    SettingsChoiceRow {
                         id: logoModeGroup
-                        anchors.left: parent.left
-                        maximumWidth: parent.width
-                        buttonPadding: parent.width < 480 ? Theme.spacingS : Theme.spacingL
-                        minButtonWidth: parent.width < 480 ? 44 : 64
-                        textSize: parent.width < 480 ? Theme.fontSizeSmall : Theme.fontSizeMedium
+                        text: I18n.tr("Logo")
                         model: {
                             const modes = [I18n.tr("Apps Icon"), I18n.tr("OS Logo"), I18n.tr("VGS Logo")];
                             if (CompositorService.isNiri) {
@@ -279,13 +275,6 @@ Item {
                         width: parent.width
                         spacing: Theme.spacingM
 
-                        StyledText {
-                            text: I18n.tr("Color Override")
-                            font.pixelSize: Theme.fontSizeSmall
-                            color: Theme.surfaceText
-                            font.weight: Font.Medium
-                        }
-
                         Item {
                             width: parent.width
                             height: colorOverrideRow.implicitHeight
@@ -293,15 +282,13 @@ Item {
 
                             Row {
                                 id: colorOverrideRow
-                                anchors.left: parent.left
+                                width: parent.width
                                 spacing: Theme.spacingM
 
-                                VgsButtonGroup {
+                                SettingsChoiceRow {
                                     id: colorModeGroup
-                                    maximumWidth: parent.parent.width - (colorPickerCircle.visible ? colorPickerCircle.width + Theme.spacingM : 0)
-                                    buttonPadding: parent.parent.width < 480 ? Theme.spacingS : Theme.spacingL
-                                    minButtonWidth: parent.parent.width < 480 ? 44 : 64
-                                    textSize: parent.parent.width < 480 ? Theme.fontSizeSmall : Theme.fontSizeMedium
+                                    width: parent.width - (colorPickerCircle.visible ? colorPickerCircle.width + parent.spacing : 0)
+                                    text: I18n.tr("Color Override")
                                     model: [I18n.tr("Default"), I18n.tr("Primary"), I18n.tr("Surface"), I18n.tr("Custom")]
                                     currentIndex: {
                                         const override = SettingsData.launcherLogoColorOverride;
@@ -501,25 +488,14 @@ Item {
                     width: parent.width
                     spacing: Theme.spacingM
 
-                    StyledText {
-                        text: I18n.tr("Size", "launcher size option")
-                        font.pixelSize: Theme.fontSizeSmall
-                        color: Theme.surfaceText
-                        font.weight: Font.Medium
-                    }
-
                     Item {
                         width: parent.width
                         height: sizeGroup.implicitHeight
                         clip: true
 
-                        VgsButtonGroup {
+                        SettingsChoiceRow {
                             id: sizeGroup
-                            anchors.left: parent.left
-                            maximumWidth: parent.width
-                            buttonPadding: parent.width < 400 ? Theme.spacingS : Theme.spacingL
-                            minButtonWidth: parent.width < 400 ? 60 : 80
-                            textSize: parent.width < 400 ? Theme.fontSizeSmall : Theme.fontSizeMedium
+                            text: I18n.tr("Size", "launcher size option")
                             model: [I18n.tr("Micro", "launcher size option"), I18n.tr("Compact", "launcher size option"), I18n.tr("Medium", "launcher size option"), I18n.tr("Large", "launcher size option")]
                             currentIndex: {
                                 switch (SettingsData.launcherSize) {

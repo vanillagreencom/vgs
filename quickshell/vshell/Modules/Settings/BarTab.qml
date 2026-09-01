@@ -247,7 +247,7 @@ Item {
                 settingKey: "barAppearance"
                 visible: barTab.appearanceOnly
 
-                SettingsButtonGroupRow {
+                SettingsChoiceRow {
                     text: I18n.tr("Editing %1").arg(barTab.selectedBarName)
                     // Long custom bar names would push the segmented control past
                     // the column; the full name still shows in the row label.
@@ -491,11 +491,10 @@ Item {
                     width: parent.width
                     height: positionButtonGroup.height
 
-                    VgsButtonGroup {
+                    SettingsChoiceRow {
                         id: positionButtonGroup
-                        x: Theme.spacingM
-                        width: parent.width - Theme.spacingM * 2
-                        fillWidth: true
+                        text: I18n.tr("Screen Edge")
+                        width: parent.width
                         model: [I18n.tr("Top"), I18n.tr("Bottom"), I18n.tr("Left"), I18n.tr("Right")]
                         currentIndex: {
                             selectedBarId;
@@ -1261,7 +1260,7 @@ Item {
                     horizontalAlignment: Text.AlignLeft
                 }
 
-                SettingsButtonGroupRow {
+                SettingsChoiceRow {
                     text: I18n.tr("Mode")
                     model: [I18n.tr("None"), I18n.tr("Monochrome"), I18n.tr("Primary"), I18n.tr("Secondary")]
                     currentIndex: {
@@ -1356,7 +1355,7 @@ Item {
                         borderEnabled: checked
                     })
 
-                SettingsButtonGroupRow {
+                SettingsChoiceRow {
                     text: I18n.tr("Color")
                     description: I18n.tr("Theme color used for the border")
                     model: ["Surface", "Secondary", "Primary"]
@@ -1451,7 +1450,7 @@ Item {
                         widgetOutlineEnabled: checked
                     })
 
-                SettingsButtonGroupRow {
+                SettingsChoiceRow {
                     text: I18n.tr("Color")
                     description: I18n.tr("Theme color used for the widget outline")
                     model: ["Surface", "Secondary", "Primary"]
@@ -1683,25 +1682,13 @@ Item {
                     width: parent.width
                     spacing: Theme.spacingS
 
-                    StyledText {
-                        text: I18n.tr("Color")
-                        font.pixelSize: Theme.fontSizeMedium
-                        color: Theme.surfaceText
-                        horizontalAlignment: Text.AlignLeft
-                        anchors.left: parent.left
-                        anchors.leftMargin: Theme.spacingM
-                    }
-
                     Item {
                         width: parent.width
                         height: shadowColorGroup.implicitHeight
 
-                        VgsButtonGroup {
+                        SettingsChoiceRow {
                             id: shadowColorGroup
-                            anchors.right: parent.right
-                            buttonPadding: parent.width < 420 ? Theme.spacingXS : Theme.spacingS
-                            minButtonWidth: parent.width < 420 ? 36 : 56
-                            textSize: parent.width < 420 ? Theme.fontSizeSmall : Theme.fontSizeMedium
+                            text: I18n.tr("Shadow Color")
                             model: [I18n.tr("Default (Black)"), I18n.tr("Surface", "shadow color option"), I18n.tr("Primary"), I18n.tr("Secondary"), I18n.tr("Custom")]
                             selectionMode: "single"
                             currentIndex: {
@@ -1781,13 +1768,10 @@ Item {
                         scrollEnabled: checked
                     })
 
-                SettingsButtonGroupRow {
+                SettingsChoiceRow {
                     text: I18n.tr("Y Axis")
                     description: I18n.tr("Action performed when scrolling vertically on the bar")
                     model: CompositorService.isNiri ? [I18n.tr("None"), I18n.tr("Workspace"), I18n.tr("Column")] : [I18n.tr("None"), I18n.tr("Workspace")]
-                    buttonPadding: Theme.spacingS
-                    minButtonWidth: 44
-                    textSize: Theme.fontSizeSmall
                     currentIndex: {
                         switch (selectedBarConfig?.scrollYBehavior || "workspace") {
                         case "none":
@@ -1821,14 +1805,11 @@ Item {
                     }
                 }
 
-                SettingsButtonGroupRow {
+                SettingsChoiceRow {
                     text: I18n.tr("X Axis")
                     description: I18n.tr("Action performed when scrolling horizontally on the bar")
                     visible: CompositorService.isNiri
                     model: [I18n.tr("None"), I18n.tr("Workspace"), I18n.tr("Column")]
-                    buttonPadding: Theme.spacingS
-                    minButtonWidth: 44
-                    textSize: Theme.fontSizeSmall
                     currentIndex: {
                         switch (selectedBarConfig?.scrollXBehavior || "column") {
                         case "none":

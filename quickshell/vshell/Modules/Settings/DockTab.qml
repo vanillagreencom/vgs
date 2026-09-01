@@ -102,13 +102,10 @@ Item {
                 title: I18n.tr("Position")
                 settingKey: "dockPosition"
 
-                SettingsButtonGroupRow {
+                SettingsChoiceRow {
                     tags: ["dock", "position", "edge", "top", "bottom", "left", "right"]
                     text: I18n.tr("Screen Edge")
                     model: [I18n.tr("Top"), I18n.tr("Bottom"), I18n.tr("Left"), I18n.tr("Right")]
-                    buttonPadding: Theme.spacingS
-                    minButtonWidth: 44
-                    textSize: Theme.fontSizeSmall
                     currentIndex: {
                         switch (SettingsData.dockPosition) {
                         case SettingsData.Position.Top:
@@ -188,14 +185,11 @@ Item {
                     onToggled: checked => SettingsData.set("dockScratchpadBadge", checked)
                 }
 
-                SettingsButtonGroupRow {
+                SettingsChoiceRow {
                     settingKey: "dockIndicatorStyle"
                     tags: ["dock", "indicator", "style", "circle", "line"]
                     text: I18n.tr("Indicator Style")
                     model: [I18n.tr("Circle", "dock indicator style option"), I18n.tr("Line", "dock indicator style option")]
-                    buttonPadding: Theme.spacingS
-                    minButtonWidth: 44
-                    textSize: Theme.fontSizeSmall
                     currentIndex: SettingsData.dockIndicatorStyle === "circle" ? 0 : 1
                     onSelectionChanged: (index, selected) => {
                         if (selected) {
@@ -263,24 +257,14 @@ Item {
                         width: parent.width
                         spacing: Theme.spacingM
 
-                        StyledText {
-                            text: I18n.tr("Icon")
-                            font.pixelSize: Theme.fontSizeSmall
-                            color: Theme.surfaceText
-                            font.weight: Font.Medium
-                        }
-
                         Item {
                             width: parent.width
                             height: logoModeGroup.implicitHeight
                             clip: true
 
-                            VgsButtonGroup {
+                            SettingsChoiceRow {
                                 id: logoModeGroup
-                                anchors.left: parent.left
-                                buttonPadding: parent.width < 480 ? Theme.spacingS : Theme.spacingL
-                                minButtonWidth: parent.width < 480 ? 44 : 64
-                                textSize: parent.width < 480 ? Theme.fontSizeSmall : Theme.fontSizeMedium
+                                text: I18n.tr("Icon")
                                 model: {
                                     const modes = [I18n.tr("Apps Icon"), I18n.tr("OS Logo"), I18n.tr("VGS Logo")];
                                     if (CompositorService.isNiri) {
@@ -382,13 +366,6 @@ Item {
                             width: parent.width
                             spacing: Theme.spacingM
 
-                            StyledText {
-                                text: I18n.tr("Color Override")
-                                font.pixelSize: Theme.fontSizeSmall
-                                color: Theme.surfaceText
-                                font.weight: Font.Medium
-                            }
-
                             Item {
                                 width: parent.width
                                 height: colorOverrideRow.implicitHeight
@@ -396,14 +373,13 @@ Item {
 
                                 Row {
                                     id: colorOverrideRow
-                                    anchors.left: parent.left
+                                    width: parent.width
                                     spacing: Theme.spacingM
 
-                                    VgsButtonGroup {
+                                    SettingsChoiceRow {
                                         id: colorModeGroup
-                                        buttonPadding: parent.parent.width < 480 ? Theme.spacingS : Theme.spacingL
-                                        minButtonWidth: parent.parent.width < 480 ? 44 : 64
-                                        textSize: parent.parent.width < 480 ? Theme.fontSizeSmall : Theme.fontSizeMedium
+                                        width: parent.width - (colorPickerCircle.visible ? colorPickerCircle.width + parent.spacing : 0)
+                                        text: I18n.tr("Color Override")
                                         model: [I18n.tr("Default"), I18n.tr("Primary"), I18n.tr("Surface"), I18n.tr("Custom")]
                                         currentIndex: {
                                             const override = SettingsData.dockLauncherLogoColorOverride;
@@ -672,14 +648,11 @@ Item {
                     onToggled: checked => SettingsData.set("dockBorderEnabled", checked)
                 }
 
-                SettingsButtonGroupRow {
+                SettingsChoiceRow {
                     text: I18n.tr("Border Color")
                     description: I18n.tr("Accent color used for the dock border")
                     visible: SettingsData.dockBorderEnabled
                     model: [I18n.tr("Surface", "color option"), I18n.tr("Secondary", "color option"), I18n.tr("Primary", "color option")]
-                    buttonPadding: Theme.spacingS
-                    minButtonWidth: 44
-                    textSize: Theme.fontSizeSmall
                     currentIndex: {
                         switch (SettingsData.dockBorderColor) {
                         case "surfaceText":

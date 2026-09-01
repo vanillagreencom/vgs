@@ -484,7 +484,7 @@ Item {
                     onToggled: checked => SettingsData.set("clipboardRememberTypeFilter", checked)
                 }
 
-                SettingsButtonGroupRow {
+                SettingsChoiceRow {
                     tab: "clipboard"
                     tags: ["clipboard", "actions", "buttons", "hide", "density", "copy", "paste", "pin", "edit", "delete"]
                     settingKey: "clipboardVisibleEntryActions"
@@ -493,12 +493,6 @@ Item {
                     selectionMode: "multi"
                     model: root.entryActionLabels
                     currentSelection: root.visibleEntryActionLabels()
-                    checkEnabled: false
-                    buttonHeight: 28
-                    minButtonWidth: 56
-                    buttonPadding: Theme.spacingS
-                    textSize: Theme.fontSizeSmall
-                    spacing: 1
                     onSelectionChanged: (index, selected) => root.setVisibleEntryAction(index, selected)
                 }
             }
