@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Keep one-shot backend output reads on execbound."""
+"""Keep raw exec command output reads on execbound."""
 
 from __future__ import annotations
 
@@ -192,8 +192,8 @@ def main() -> int:
             print(f"  {use.rel}:{use.line}: {use.function}: {use.expression}", file=sys.stderr)
     if output_reads:
         print(
-            "check-execbound-adoption: FAIL: backend output reads must be "
-            "directly chained from backend/internal/execbound.Command or use an allowed CommandWithDelay exception:",
+            "check-execbound-adoption: FAIL: raw exec.Command or exec.CommandContext output reads "
+            "must use backend/internal/execbound.Command, or an allowed CommandWithDelay exception:",
             file=sys.stderr,
         )
         for read in output_reads:

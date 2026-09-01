@@ -43,6 +43,18 @@ def assert_fails(root: Path, *expected: str) -> None:
             raise AssertionError(f"checker output missing {needle!r}\n{output}")
 
 
+def assert_fails_without(root: Path, expected: tuple[str, ...], unexpected: str) -> None:
+    result = run_checker(root)
+    output = result.stdout + result.stderr
+    if result.returncode == 0:
+        raise AssertionError(f"checker unexpectedly passed; wanted {expected!r}")
+    for needle in expected:
+        if needle not in output:
+            raise AssertionError(f"checker output missing {needle!r}\n{output}")
+    if unexpected in output:
+        raise AssertionError(f"checker output unexpectedly contained {unexpected!r}\n{output}")
+
+
 def make_root() -> Path:
     return Path(tempfile.mkdtemp(prefix="vgs-execbound-test-"))
 
@@ -180,7 +192,7 @@ func genericDelay(ctx context.Context) error {
         )
         assert_fails(
             root,
-            "backend output reads must be directly chained",
+            "raw exec.Command or exec.CommandContext output reads",
             "bad-tool",
             ".Output()",
             "viaVariable: exec.CommandContext(ctx, \"other-tool\")",
@@ -213,6 +225,57 @@ func appendRaw(ctx context.Context) { var runs []outputRunner; runs = append(run
         )
     finally:
         shutil.rmtree(raw_root)
+
+    raw_allowed_output_root = make_root()
+    try:
+        write_backend(raw_allowed_output_root, "internal/services/clipboard/wayland.go",
+            """
+package clipboard
+import "os/exec"
+func wlCopy(args []string) error { _, err := exec.Command("wl-copy", args...).Output(); return err }
+""",
+        )
+        assert_fails_without(
+            raw_allowed_output_root,
+            ("raw exec.Command or exec.CommandContext output reads", "wlCopy: exec.Command(\"wl-copy\", args...).Output()", "raw os/exec builders must start or run"),
+            "raw os/exec builders outside execbound need a lifecycle reason",
+        )
+    finally:
+        shutil.rmtree(raw_allowed_output_root)
+
+    raw_allowed_combined_root = make_root()
+    try:
+        write_backend(raw_allowed_combined_root, "internal/services/clipboard/wayland.go",
+            """
+package clipboard
+import ("context"; "os/exec")
+func watch(ctx context.Context) error { _, err := exec.CommandContext(ctx, "wl-paste", "--watch", "echo").CombinedOutput(); return err }
+""",
+        )
+        assert_fails_without(
+            raw_allowed_combined_root,
+            ("raw exec.Command or exec.CommandContext output reads", "watch: exec.CommandContext(ctx, \"wl-paste\", \"--watch\", \"echo\").CombinedOutput()", "raw os/exec builders must start or run"),
+            "raw os/exec builders outside execbound need a lifecycle reason",
+        )
+    finally:
+        shutil.rmtree(raw_allowed_combined_root)
+
+    raw_reassigned_root = make_root()
+    try:
+        write_backend(raw_reassigned_root, "internal/services/clipboard/wayland.go",
+            """
+package clipboard
+import "os/exec"
+func wlCopy(args []string) error { cmd := exec.Command("wl-copy", args...); cmd = nil; return cmd.Start() }
+""",
+        )
+        assert_fails_without(
+            raw_reassigned_root,
+            ("raw os/exec builders must start or run", "wlCopy: exec.Command(\"wl-copy\", args...)"),
+            "raw os/exec builders outside execbound need a lifecycle reason",
+        )
+    finally:
+        shutil.rmtree(raw_reassigned_root)
 
     assigned_root = make_root()
     try:

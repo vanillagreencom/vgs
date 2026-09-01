@@ -106,13 +106,21 @@ func (s fileScanner) functionCallsMethod(id *ast.Ident, after token.Pos, match f
 	if body == nil {
 		return false
 	}
-	found := false
+	found, invalid := false, false
 	ast.Inspect(body, func(node ast.Node) bool {
-		if found {
+		if found || invalid {
 			return false
 		}
 		if _, ok := node.(*ast.FuncLit); ok {
 			return false
+		}
+		if assign, ok := node.(*ast.AssignStmt); ok && assign.Pos() > after {
+			for _, lhs := range assign.Lhs {
+				if recv := assignedIdent(lhs); recv != nil && sameIdent(recv, id) {
+					invalid = true
+					return false
+				}
+			}
 		}
 		call, ok := node.(*ast.CallExpr)
 		if !ok || call.Pos() <= after {
@@ -129,7 +137,7 @@ func (s fileScanner) functionCallsMethod(id *ast.Ident, after token.Pos, match f
 		}
 		return true
 	})
-	return found
+	return found && !invalid
 }
 
 func (s fileScanner) functionBody(pos token.Pos) *ast.BlockStmt {

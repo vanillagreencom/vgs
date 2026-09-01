@@ -86,15 +86,6 @@ list_files() {
   fi
 }
 
-existing_files=()
-keep_existing() {
-  existing_files=()
-  local file
-  for file in "$@"; do
-    [[ -e "$file" ]] && existing_files+=("$file")
-  done
-}
-
 # Is the file a BINARY? Asked of git — `--eol` reports `-text` for content git
 # considers binary — rather than sniffed here, because git is already the tool
 # that discovers every file this check looks at.
@@ -148,7 +139,6 @@ is_binary() {
 # --- Go: gofmt over the non-vendored backend ---------------------------------
 go_files=()
 list_files 'backend/*.go' ':!backend/vendor' && mapfile -d '' -t go_files <"$list_tmp"
-keep_existing "${go_files[@]}"; go_files=("${existing_files[@]}")
 if [[ ${#go_files[@]} -eq 0 ]]; then
   fail "no Go files matched backend/*.go — stale pathspec or the git failure above, not a clean tree"
 else
@@ -170,14 +160,12 @@ fi
 # libraries (sourced or imported, some without a shebang at all).
 bin_files=()
 list_files 'bin/*' && mapfile -d '' -t bin_files <"$list_tmp"
-keep_existing "${bin_files[@]}"; bin_files=("${existing_files[@]}")
 if [[ ${#bin_files[@]} -eq 0 ]]; then
   fail "no files matched bin/* — stale pathspec or the git failure above; bin/ has dropped out of the shell and python surfaces"
 fi
 
 script_files=()
 list_files ':(glob)scripts/*' && mapfile -d '' -t script_files <"$list_tmp"
-keep_existing "${script_files[@]}"; script_files=("${existing_files[@]}")
 if [[ ${#script_files[@]} -eq 0 ]]; then
   fail "no files matched scripts/* — stale pathspec or the git failure above; scripts/ has dropped out of every lint surface"
 fi
@@ -288,7 +276,6 @@ shell_files=()
 list_files 'scripts/lib/*.sh' 'install.sh' 'uninstall.sh' \
   'packaging/*.sh' 'packaging/*.install' 'packaging/*.postinst' \
   && mapfile -d '' -t shell_files <"$list_tmp"
-keep_existing "${shell_files[@]}"; shell_files=("${existing_files[@]}")
 shell_files+=("${shebang_shell[@]}")
 if [[ ${#shell_files[@]} -eq 0 ]]; then
   fail "no shell files found — stale pathspecs or the git failure above"
@@ -299,7 +286,6 @@ fi
 # --- Python: ruff (rule floor in ruff.toml) ----------------------------------
 py_files=()
 list_files 'scripts/lib/*.py' 'bin/*.py' && mapfile -d '' -t py_files <"$list_tmp"
-keep_existing "${py_files[@]}"; py_files=("${existing_files[@]}")
 py_files+=("${shebang_python[@]}")
 if [[ ${#py_files[@]} -eq 0 ]]; then
   fail "no Python files found — stale pathspecs or the git failure above"
@@ -310,7 +296,6 @@ fi
 # --- JS: node --check, the syntax floor --------------------------------------
 js_files=()
 list_files 'scripts/lib/*.js' && mapfile -d '' -t js_files <"$list_tmp"
-keep_existing "${js_files[@]}"; js_files=("${existing_files[@]}")
 js_files+=("${shebang_js[@]}")
 if [[ ${#js_files[@]} -eq 0 ]]; then
   fail "no JS files found — stale pathspecs or the git failure above"
