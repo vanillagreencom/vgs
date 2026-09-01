@@ -118,6 +118,10 @@ func (m *Manager) call(ctx context.Context, cmdArgs []string) error {
     _, err := execbound.CommandWithDelay(ctx, m.waitDelay, m.helper, cmdArgs...).WithLogger(m.log).Output()
     return err
 }
+
+type report struct{}
+func (report) Output() string { return "ok" }
+func unrelatedOutput() string { return report{}.Output() }
 """,
         )
         write(
@@ -326,28 +330,23 @@ func unicodeAlias(ctx context.Context) error {
     _, err := éxec.CommandContext(ctx, "unicode-tool").Output()
     return err
 }
-
 func rawLiteral() error {
     cmd := &éxec.Cmd{Path: "literal-tool"}
     _, err := cmd.CombinedOutput()
     return err
 }
-
 func rawNew() error {
     cmd := new(éxec.Cmd)
     _, err := cmd.Output()
     return err
 }
-
 func helperRead(cmd *éxec.Cmd) error {
     _, err := cmd.Output()
     return err
 }
-
 func helperCaller(ctx context.Context) error {
     return helperRead(éxec.CommandContext(ctx, "helper-tool"))
 }
-
 func methodExpression(cmd *éxec.Cmd) error {
     read := (*éxec.Cmd).CombinedOutput
     _, err := read(cmd)
@@ -357,7 +356,6 @@ func methodExpression(cmd *éxec.Cmd) error {
 type wrapped struct {
     *éxec.Cmd
 }
-
 func embedded(ctx context.Context) error {
     wrappedCmd := wrapped{Cmd: éxec.CommandContext(ctx, "embedded-tool")}
     _, err := wrappedCmd.Output()

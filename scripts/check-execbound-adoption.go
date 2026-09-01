@@ -7,6 +7,7 @@ import (
 	"go/parser"
 	"go/scanner"
 	"go/token"
+	"go/types"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -54,13 +55,15 @@ type analyzer struct {
 type fileScanner struct {
 	analyzer  *analyzer
 	imports   imports
+	info      *types.Info
 	parents   map[ast.Node]ast.Node
+	origins   map[*ast.Object]bool
 	functions []functionRange
 }
 
 func main() {
 	if len(os.Args) != 2 {
-		fmt.Fprintln(os.Stderr, "usage: check-execbound-adoption.go REPO_ROOT")
+		fmt.Fprintln(os.Stderr, "usage: check-execbound-adoption REPO_ROOT")
 		os.Exit(2)
 	}
 	root, err := filepath.Abs(os.Args[1])
@@ -127,19 +130,38 @@ func (a *analyzer) walk() {
 		if entry.IsDir() && a.skips(path) {
 			return filepath.SkipDir
 		}
-		if entry.IsDir() || filepath.Ext(path) != ".go" {
-			return nil
+		if entry.IsDir() {
+			a.scanDir(path)
 		}
-		file := a.parse(path)
-		if file == nil {
-			return nil
-		}
-		a.report.FilesChecked++
-		a.scanFile(file)
 		return nil
 	})
 	if err != nil {
 		a.report.ParseErrors = append(a.report.ParseErrors, err.Error())
+	}
+}
+
+func (a *analyzer) scanDir(dir string) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		a.report.ParseErrors = append(a.report.ParseErrors, fmt.Sprintf("%s: %v", a.rel(dir), err))
+		return
+	}
+	files := []*ast.File{}
+	for _, entry := range entries {
+		if entry.IsDir() || filepath.Ext(entry.Name()) != ".go" {
+			continue
+		}
+		if file := a.parse(filepath.Join(dir, entry.Name())); file != nil {
+			a.report.FilesChecked++
+			files = append(files, file)
+		}
+	}
+	if len(files) == 0 {
+		return
+	}
+	info := a.typeInfo(dir, files)
+	for _, file := range files {
+		a.scanFile(file, info)
 	}
 }
 
@@ -171,13 +193,16 @@ func (a *analyzer) recordParseError(err error) {
 	a.report.ParseErrors = append(a.report.ParseErrors, err.Error())
 }
 
-func (a *analyzer) scanFile(file *ast.File) {
+func (a *analyzer) scanFile(file *ast.File, info *types.Info) {
 	scanner := fileScanner{
 		analyzer:  a,
 		imports:   importAliases(file, a.modulePath),
+		info:      info,
 		parents:   parentMap(file),
+		origins:   map[*ast.Object]bool{},
 		functions: functionRanges(file),
 	}
+	scanner.recordOrigins(file)
 	ast.Inspect(file, func(node ast.Node) bool {
 		switch n := node.(type) {
 		case *ast.CallExpr:
@@ -185,7 +210,7 @@ func (a *analyzer) scanFile(file *ast.File) {
 				a.report.RawCalls = append(a.report.RawCalls, scanner.finding(n, ""))
 			}
 		case *ast.SelectorExpr:
-			if (n.Sel.Name == "Output" || n.Sel.Name == "CombinedOutput") && !scanner.isExecboundRun(n.X) {
+			if scanner.isOutputRead(n) {
 				a.report.OutputReads = append(a.report.OutputReads, scanner.finding(scanner.outputReadNode(n), "unverified selector"))
 			}
 			if scanner.isOSExecBuilderSelector(n) && !scanner.selectorCalledDirectly(n) {
@@ -256,59 +281,6 @@ func isOSExecBuilderName(name string) bool {
 	return name == "Command" || name == "CommandContext"
 }
 
-func (s fileScanner) isExecboundRun(expr ast.Expr) bool {
-	call, ok := unparen(expr).(*ast.CallExpr)
-	if !ok {
-		return false
-	}
-	if s.isExecboundCommand(call.Fun) {
-		return true
-	}
-	sel, ok := unparen(call.Fun).(*ast.SelectorExpr)
-	if !ok || sel.Sel.Name != "WithLogger" {
-		return false
-	}
-	return s.isExecboundRun(sel.X)
-}
-
-func (s fileScanner) isExecboundCommand(expr ast.Expr) bool {
-	switch n := unparen(expr).(type) {
-	case *ast.SelectorExpr:
-		id, ok := unparen(n.X).(*ast.Ident)
-		return ok && id.Obj == nil && s.imports.execbound[id.Name] && isExecboundBuilderName(n.Sel.Name)
-	case *ast.Ident:
-		return n.Obj == nil && s.imports.dotExecbound && isExecboundBuilderName(n.Name)
-	default:
-		return false
-	}
-}
-
-func isExecboundBuilderName(name string) bool {
-	return name == "Command"
-}
-
-func (s fileScanner) selectorCalledDirectly(sel *ast.SelectorExpr) bool {
-	call, ok := s.parents[sel].(*ast.CallExpr)
-	return ok && call.Fun == sel
-}
-
-func (s fileScanner) identCalledDirectly(id *ast.Ident) bool {
-	call, ok := s.parents[id].(*ast.CallExpr)
-	return ok && call.Fun == id
-}
-
-func (s fileScanner) identIsSelectorPart(id *ast.Ident) bool {
-	_, ok := s.parents[id].(*ast.SelectorExpr)
-	return ok
-}
-
-func (s fileScanner) outputReadNode(sel *ast.SelectorExpr) ast.Node {
-	if call, ok := s.parents[sel].(*ast.CallExpr); ok && call.Fun == sel {
-		return call
-	}
-	return sel
-}
-
 func (s fileScanner) finding(node ast.Node, receiver string) finding {
 	a := s.analyzer
 	pos := a.fset.Position(node.Pos())
@@ -351,33 +323,6 @@ func (a *analyzer) skips(path string) bool {
 	rel := a.rel(path)
 	return rel == "backend/internal/execbound" || strings.HasPrefix(rel, "backend/internal/execbound/") ||
 		rel == "backend/vendor" || strings.HasPrefix(rel, "backend/vendor/")
-}
-
-func parentMap(root ast.Node) map[ast.Node]ast.Node {
-	parents := map[ast.Node]ast.Node{}
-	var stack []ast.Node
-	ast.Inspect(root, func(node ast.Node) bool {
-		if node == nil {
-			stack = stack[:len(stack)-1]
-			return false
-		}
-		if len(stack) > 0 {
-			parents[node] = stack[len(stack)-1]
-		}
-		stack = append(stack, node)
-		return true
-	})
-	return parents
-}
-
-func unparen(expr ast.Expr) ast.Expr {
-	for {
-		paren, ok := expr.(*ast.ParenExpr)
-		if !ok {
-			return expr
-		}
-		expr = paren.X
-	}
 }
 
 func functionRanges(file *ast.File) []functionRange {

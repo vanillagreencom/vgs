@@ -12,7 +12,10 @@ import sys
 from pathlib import Path
 
 REPO_ROOT = Path(os.environ.get("VGS_EXECBOUND_REPO_ROOT", Path(__file__).resolve().parents[1])).resolve()
-ANALYZER = Path(__file__).with_suffix(".go")
+ANALYZER_SOURCES = [
+    Path(__file__).with_suffix(".go"),
+    Path(__file__).with_name("check-execbound-adoption-types.go"),
+]
 
 # Raw os/exec sites that intentionally start a process whose lifecycle outlives
 # a single output read. Every entry needs the process reason, because an
@@ -76,10 +79,12 @@ def resolve_go() -> str | None:
 
 
 def run_analyzer(go: str) -> dict[str, object] | None:
-    if not ANALYZER.is_file():
-        print(f"check-execbound-adoption: FAIL: missing Go analyzer: {ANALYZER}", file=sys.stderr)
-        return None
-    result = subprocess.run([go, "run", str(ANALYZER), str(REPO_ROOT)], text=True, capture_output=True, check=False)
+    for source in ANALYZER_SOURCES:
+        if not source.is_file():
+            print(f"check-execbound-adoption: FAIL: missing Go analyzer: {source}", file=sys.stderr)
+            return None
+    argv = [go, "run", *(str(source) for source in ANALYZER_SOURCES), str(REPO_ROOT)]
+    result = subprocess.run(argv, text=True, capture_output=True, check=False)
     if result.returncode != 0:
         print("check-execbound-adoption: FAIL: Go analyzer failed:", file=sys.stderr)
         print(result.stdout + result.stderr, file=sys.stderr)

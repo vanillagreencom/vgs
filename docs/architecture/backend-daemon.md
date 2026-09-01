@@ -133,9 +133,9 @@ never reaches the bound is in `display-brightness.md`. Long-lived watchers own
 their own lifecycle. `scripts/check-execbound-adoption.py` keeps new one-shot
 `os/exec` output reads out of backend services and records direct
 `exec.Command` or `exec.CommandContext` builders whose lifecycle intentionally
-stays outside execbound. The guard rejects any `Output` or `CombinedOutput`
-selector in backend services unless the read stays directly chained from
-`execbound.Command`, with any `WithLogger` call kept in that chain.
+stays outside execbound. The guard rejects exec-derived `Output` or
+`CombinedOutput` reads in backend services unless the read stays directly
+chained from `execbound.Command`, with any `WithLogger` call kept in that chain.
 `CommandWithDelay` is reserved for the allowlisted brightnessbridge path that
 tests the ddcutil pipe-hold bound. Direct raw `exec.Command` and
 `exec.CommandContext` builders pass only when named in the allowlist.
