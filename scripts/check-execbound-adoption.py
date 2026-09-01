@@ -49,6 +49,13 @@ ALLOWED_RAW_EXECS = {
         "the runner supervises the backend serve child with restart and crash-loop handling.",
 }
 
+ALLOWED_WAIT_DELAY_READS = {
+    'backend/internal/services/brightnessbridge/brightnessbridge.go::call '
+    'execbound.CommandWithDelay(ctx, m.waitDelay, m.helper, cmdArgs...).WithLogger(m.log).Output()':
+        "brightnessbridge injects waitDelay only for tests that pin ddcutil pipe-hold behavior; "
+        "production uses execbound.DefaultWaitDelay.",
+}
+
 
 @dataclass(frozen=True)
 class Finding:
@@ -118,7 +125,7 @@ def main() -> int:
         )
         return 1
 
-    output_reads = findings(report, "output_reads")
+    output_reads = [read for read in findings(report, "output_reads") if read.key not in ALLOWED_WAIT_DELAY_READS]
     references = findings(report, "references")
     raw_calls = findings(report, "raw_calls")
     unallowed_raw = [call for call in raw_calls if call.key not in ALLOWED_RAW_EXECS]
@@ -138,12 +145,14 @@ def main() -> int:
     if output_reads:
         print(
             "check-execbound-adoption: FAIL: backend output reads must be "
-            "directly chained from backend/internal/execbound.Command or CommandWithDelay:",
+            "directly chained from backend/internal/execbound.Command or use an allowed CommandWithDelay exception:",
             file=sys.stderr,
         )
         for read in output_reads:
             suffix = f" (receiver {read.receiver})" if read.receiver else ""
             print(f"  {read.rel}:{read.line}: {read.function}: {read.expression}{suffix}", file=sys.stderr)
+            if "CommandWithDelay" in read.expression:
+                print(f"      allowlist key: {read.key}", file=sys.stderr)
     if unallowed_raw:
         print(
             "check-execbound-adoption: FAIL: raw os/exec builders outside execbound need "
@@ -156,9 +165,9 @@ def main() -> int:
 
     if references or output_reads or unallowed_raw:
         print(
-            "\nCall execbound.Command(...).Output or "
-            "execbound.CommandWithDelay(...).CombinedOutput as a direct chain. Call raw "
-            "os/exec builders directly only at long-lived process sites, and add an "
+            "\nCall execbound.Command(...).Output or execbound.Command(...).CombinedOutput "
+            "as a direct chain. Use execbound.CommandWithDelay only at allowlisted custom-delay "
+            "sites. Call raw os/exec builders directly only at long-lived process sites, and add an "
             "ALLOWED_RAW_EXECS entry when that lifecycle is owned outside execbound.",
             file=sys.stderr,
         )

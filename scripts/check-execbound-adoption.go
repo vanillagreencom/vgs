@@ -284,7 +284,7 @@ func (s fileScanner) isExecboundCommand(expr ast.Expr) bool {
 }
 
 func isExecboundBuilderName(name string) bool {
-	return name == "Command" || name == "CommandWithDelay"
+	return name == "Command"
 }
 
 func (s fileScanner) selectorCalledDirectly(sel *ast.SelectorExpr) bool {

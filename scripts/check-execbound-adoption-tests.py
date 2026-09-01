@@ -88,9 +88,9 @@ go 1.22
 """,
         )
         write(
-            root / "backend" / "internal" / "services" / "sample" / "clean.go",
+            root / "backend" / "internal" / "services" / "brightnessbridge" / "brightnessbridge.go",
             """
-package sample
+package brightnessbridge
 
 import (
     "context"
@@ -108,8 +108,14 @@ func directBound(ctx context.Context) error {
     return err
 }
 
-func directBoundDelay(ctx context.Context) error {
-    _, err := execbound.CommandWithDelay(ctx, 1, "delay-tool").CombinedOutput()
+type Manager struct {
+    waitDelay int
+    helper string
+    log any
+}
+
+func (m *Manager) call(ctx context.Context, cmdArgs []string) error {
+    _, err := execbound.CommandWithDelay(ctx, m.waitDelay, m.helper, cmdArgs...).WithLogger(m.log).Output()
     return err
 }
 """,
@@ -150,6 +156,7 @@ package sample
 import (
     "context"
     "os/exec"
+    "example.com/backend/internal/execbound"
 )
 
 func direct(ctx context.Context) error {
@@ -162,6 +169,11 @@ func viaVariable(ctx context.Context) error {
     _, err := cmd.CombinedOutput()
     return err
 }
+
+func genericDelay(ctx context.Context) error {
+    _, err := execbound.CommandWithDelay(ctx, 1, "generic-delay-tool").Output()
+    return err
+}
 """,
         )
         assert_fails(
@@ -171,6 +183,8 @@ func viaVariable(ctx context.Context) error {
             ".Output()",
             "other-tool",
             ".CombinedOutput()",
+            "genericDelay: execbound.CommandWithDelay",
+            "allowlist key:",
         )
     finally:
         shutil.rmtree(root)

@@ -135,9 +135,10 @@ their own lifecycle. `scripts/check-execbound-adoption.py` keeps new one-shot
 `exec.Command` or `exec.CommandContext` builders whose lifecycle intentionally
 stays outside execbound. The guard rejects any `Output` or `CombinedOutput`
 selector in backend services unless the read stays directly chained from
-`execbound.Command` or `execbound.CommandWithDelay`, with any `WithLogger` call
-kept in that chain. Direct raw `exec.Command` and `exec.CommandContext`
-builders pass only when named in the allowlist.
+`execbound.Command`, with any `WithLogger` call kept in that chain.
+`CommandWithDelay` is reserved for the allowlisted brightnessbridge path that
+tests the ddcutil pipe-hold bound. Direct raw `exec.Command` and
+`exec.CommandContext` builders pass only when named in the allowlist.
 
 ## Feature flags / env
 
