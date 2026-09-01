@@ -530,37 +530,56 @@ PluginComponent {
                             width: parent.width
                             spacing: Theme.spacingS
 
-                            Row {
+                            // One quiet row for the partial updates: a label and
+                            // three small buttons. Update All below is the primary.
+                            Item {
                                 width: parent.width
-                                spacing: Theme.spacingS
+                                height: partialRow.height
 
-                                VgsButton {
-                                    width: (parent.width - Theme.spacingS) / 2
-                                    text: "Update System"
-                                    iconName: "download"
-                                    backgroundColor: Theme.surfaceContainerHigh
-                                    textColor: Theme.surfaceText
-                                    onClicked: root.launch("system", popout)
+                                StyledText {
+                                    anchors.left: parent.left
+                                    anchors.verticalCenter: parent.verticalCenter
+                                    text: "Update"
+                                    font.pixelSize: Theme.fontSizeSmall
+                                    color: Theme.surfaceVariantText
                                 }
 
-                                VgsButton {
-                                    width: (parent.width - Theme.spacingS) / 2
-                                    text: "Update AUR"
-                                    iconName: "deployed_code"
-                                    backgroundColor: Theme.surfaceContainerHigh
-                                    textColor: Theme.surfaceText
-                                    onClicked: root.launch("aur", popout)
-                                }
-                            }
+                                Row {
+                                    id: partialRow
+                                    anchors.right: parent.right
+                                    spacing: Theme.spacingXS
 
-                            VgsButton {
-                                width: parent.width
-                                visible: root.toolsAvailable
-                                text: "Update Dev Tools"
-                                iconName: "smart_toy"
-                                backgroundColor: Theme.surfaceContainerHigh
-                                textColor: Theme.surfaceText
-                                onClicked: root.launch("tools", popout)
+                                    VgsButton {
+                                        buttonHeight: 30
+                                        horizontalPadding: Theme.spacingM
+                                        text: "System"
+                                        iconName: "download"
+                                        backgroundColor: Theme.surfaceContainerHigh
+                                        textColor: Theme.surfaceText
+                                        onClicked: root.launch("system", popout)
+                                    }
+
+                                    VgsButton {
+                                        buttonHeight: 30
+                                        horizontalPadding: Theme.spacingM
+                                        text: "AUR"
+                                        iconName: "deployed_code"
+                                        backgroundColor: Theme.surfaceContainerHigh
+                                        textColor: Theme.surfaceText
+                                        onClicked: root.launch("aur", popout)
+                                    }
+
+                                    VgsButton {
+                                        visible: root.toolsAvailable
+                                        buttonHeight: 30
+                                        horizontalPadding: Theme.spacingM
+                                        text: "Dev tools"
+                                        iconName: "smart_toy"
+                                        backgroundColor: Theme.surfaceContainerHigh
+                                        textColor: Theme.surfaceText
+                                        onClicked: root.launch("tools", popout)
+                                    }
+                                }
                             }
 
                             VgsButton {
@@ -673,13 +692,6 @@ PluginComponent {
                     width: contentCol.innerWidth
                     spacing: Theme.spacingXS
                     visible: !root.showOrphans
-
-                    // Thin divider above the footer.
-                    Rectangle {
-                        width: parent.width
-                        height: 1
-                        color: Theme.withAlpha(Theme.outline, 0.4)
-                    }
 
                     // Explanatory copy (P2): the caveat about the checkupdates vs.
                     // paru -S reinstall mismatch. The data source itself is shown by

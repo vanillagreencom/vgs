@@ -191,14 +191,6 @@ var items = [
     },
     {
         category: "dev",
-        title: "Coding agent",
-        subtitle: "Launch the default coding agent, or pick one",
-        icon: "\uf544",
-        keywords: ["agent", "claude", "codex", "opencode", "ai", "code"],
-        argv: ["{vshell}", "agent", "launch", "--pick"]
-    },
-    {
-        category: "dev",
         title: "Developer settings",
         subtitle: "Coding agents, launchers and language environments",
         icon: "\uf121",

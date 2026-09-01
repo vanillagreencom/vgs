@@ -12,6 +12,7 @@ import qs.Services
 import qs.Widgets
 import qs.Widgets.Launcher
 import "./MenuCatalog.js" as MenuCatalog
+import "./DevToolsItems.js" as DevToolsItems
 
 PluginComponent {
     id: root
@@ -26,6 +27,9 @@ PluginComponent {
     property var overlayCategories: []
     property var overlayItems: []
     property var webappItems: []
+    // One entry per coding agent and per language environment, read from
+    // config/vshell/dev-tools.json so the launcher never carries its own list.
+    property var devItems: []
     property string fileSearchType: "file"
     property bool fileSearching: false
     property int fileSearchGeneration: 0
@@ -44,7 +48,7 @@ PluginComponent {
     readonly property HoverSelectionGate hoverGate: HoverSelectionGate {}
 
     readonly property var categories: mergeCategories(MenuCatalog.categories, overlayCategories)
-    readonly property var allItems: mergeItems(MenuCatalog.items, overlayItems, webappItems)
+    readonly property var allItems: mergeItems(MenuCatalog.items, overlayItems, webappItems.concat(devItems))
     readonly property string home: Quickshell.env("HOME")
     readonly property var effectiveScreen: menuWindow.screen
     readonly property real screenWidth: effectiveScreen?.width ?? 1920
@@ -84,6 +88,13 @@ PluginComponent {
         menuOpen = false;
         ModalManager.closeModal(root);
         resetLauncherState();
+    }
+
+    // Open on one sidebar category, the way a typed prefix would.
+    function openCategory(id) {
+        open();
+        selectedCategoryIndex = Math.max(0, categoryIndexFor(id));
+        refreshItems();
     }
 
     function toggle() {
@@ -150,7 +161,7 @@ PluginComponent {
             if (categories[i].id === id)
                 return i;
         }
-        return 0;
+        return -1;
     }
 
     function routeSearchText(text) {
@@ -186,7 +197,7 @@ PluginComponent {
         }
 
         routingPrefix = true;
-        selectedCategoryIndex = categoryIndexFor(category);
+        selectedCategoryIndex = Math.max(0, categoryIndexFor(category));
         if (mode)
             fileSearchType = mode;
         query = text.substring(2).replace(/^\s+/, "");
@@ -1023,6 +1034,25 @@ PluginComponent {
     }
 
     FileView {
+        id: devToolsFile
+        path: Paths.repoRoot + "/config/vshell/dev-tools.json"
+        blockLoading: false
+        watchChanges: true
+        printErrors: false
+        onLoaded: {
+            try {
+                root.devItems = DevToolsItems.itemsFromCatalog(text());
+                root.refreshItems();
+            } catch (e) {
+                root.devItems = [];
+                ToastService.showWarning("Dev tools catalog invalid", e.message || String(e));
+            }
+        }
+        onFileChanged: devToolsFile.reload()
+        onLoadFailed: root.devItems = []
+    }
+
+    FileView {
         id: webappsFile
         path: root.home + "/.config/vshell-local/webapps.json"
         blockLoading: false
@@ -1079,6 +1109,13 @@ PluginComponent {
         function toggle(): string {
             root.toggle();
             return "VSHELL_MENU_TOGGLE_SUCCESS";
+        }
+
+        function openCategory(id: string): string {
+            if (root.categoryIndexFor(id) < 0)
+                return "VSHELL_MENU_UNKNOWN_CATEGORY: " + id;
+            root.openCategory(id);
+            return "VSHELL_MENU_OPEN_SUCCESS: " + id;
         }
     }
 

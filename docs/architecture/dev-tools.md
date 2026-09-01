@@ -13,7 +13,7 @@ under `~/.local/share/mise`. The distribution package manager never sees them.
 | `vshell agent` | `agents` (id, launch argv) |
 | `vshell dev-env` | `envs` (mise tools, distro packages, installer) |
 | Settings → Applications → Developer | all three, through the JSON commands below |
-| VGS menu | fixed entries that call the CLI |
+| VGS menu (Dev tools, `d:`) | reads the file directly: one entry per agent and per env |
 
 ## Stubs
 
@@ -46,16 +46,17 @@ Nothing downloads until first run. Rules:
 
 ```
 vshell mise    install|refresh|remove-stubs|opt-in|list --json|outdated --json|up
-vshell agent   list [--json] | default [<id>|--clear] | launch [--pick] [--inline]
+vshell agent   list [--json] | launch <id> [--inline] | pick
 vshell dev-env list [--json] | install <id> | remove <id>
 vshell update  count | run <system|aur|flatpak|tools|all>
 ```
 
-Default agent is the `defaultCodingAgent` settings key. `launch` starts in
-`~/Work` when it exists and opens a terminal with app id `vshell-agent`. When
-the command is neither a stub nor on `PATH`, it writes the stub first, or
-notifies and exits 1 without mise. `--pick` with no default opens the
-Developer settings tab.
+There is no default agent. `launch <id>` starts in `~/Work` when it exists
+and opens a terminal with app id `vshell-agent`. When the command is neither
+a stub nor on `PATH`, it writes the stub first, or notifies and exits 1
+without mise. `pick` opens the launcher on its Dev tools section, which
+lists one entry per agent and one per language environment straight from
+the catalog (`vshell-menu openCategory dev` over IPC).
 
 ## Updates, end to end
 

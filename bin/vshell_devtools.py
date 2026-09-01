@@ -32,13 +32,8 @@ def agent_entries() -> List[Dict[str, Any]]:
     return [dict(e) for e in dev_tools_catalog().get("agents") or []]
 
 
-def agent_default_id() -> str:
-    return str(RT.load_settings().get("defaultCodingAgent") or "").strip()
-
-
 def agent_list() -> Dict[str, Any]:
     versions, versions_error = mise_installed_versions()
-    default = agent_default_id()
     agents = []
     for entry in agent_entries():
         command = str(entry["command"])
@@ -50,27 +45,19 @@ def agent_list() -> Dict[str, Any]:
             "package": entry["package"],
             "stub": stub,
             "installed": versions.get(str(entry["package"]), ""),
-            # A foreign command is the owner's own install of the same agent;
-            # it launches without mise.
-            "runnable": bool(versions.get(str(entry["package"]))) or stub == "foreign" or (stub == "absent" and RT.command_exists(command)),
-            "default": entry["id"] == default,
+            # A foreign or shadowed command is the owner's own install of the
+            # same agent; it launches without mise.
+            "runnable": bool(versions.get(str(entry["package"]))) or stub in {"foreign", "shadowed"},
         })
-    return {"ok": True, "default": default, "mise": RT.command_exists("mise"), "error": versions_error,
+    return {"ok": True, "mise": RT.command_exists("mise"), "error": versions_error,
             "optedOut": mise_stubs_opted_out(), "agents": agents}
 
 
-def agent_launch(pick: bool, inline: bool) -> int:
-    agent_id = agent_default_id()
-    entries = {e["id"]: e for e in agent_entries()}
-    entry = entries.get(agent_id)
+def agent_launch(agent_id: str, inline: bool) -> int:
+    entry = next((e for e in agent_entries() if e["id"] == agent_id), None)
     if entry is None:
-        if pick or not agent_id:
-            cli = str(RT.repo_root() / "bin" / "vshell")
-            RT.run([cli, "ipc", "call", "settings", "openWith", "developer"], timeout=5)
-        if agent_id:
-            RT.eprint(f"default coding agent {agent_id!r} is not in the catalog")
-            return 1
-        return 0
+        RT.eprint(f"unknown agent {agent_id!r}; one of: " + " ".join(e["id"] for e in agent_entries()))
+        return 1
     command = str(entry["command"])
     stub_path = RT.home() / ".local" / "bin" / command
     if mise_stub_state(stub_path) == "absent":
@@ -90,40 +77,30 @@ def agent_launch(pick: bool, inline: bool) -> int:
 
 
 def cmd_agent(argv: List[str]) -> int:
-    usage = "Usage: vshell agent list [--json] | default [<id>|--clear] [--json] | launch [--pick] [--inline]"
+    usage = "Usage: vshell agent list [--json] | launch <id> [--inline] | pick"
     if not argv:
         RT.eprint(usage)
         return 2
     sub, rest = argv[0], argv[1:]
-    want_json = "--json" in rest
     if sub == "list":
         data = agent_list()
-        if want_json:
+        if "--json" in rest:
             print(json.dumps(data))
         else:
             for agent in data["agents"]:
-                mark = "*" if agent["default"] else " "
-                print(f"{mark} {agent['id']:<10} {agent['name']:<18} {agent['installed'] or ('foreign' if agent['stub'] == 'foreign' else '-')}")
+                print(f"{agent['id']:<10} {agent['name']:<18} {agent['installed'] or ('yours' if agent['stub'] in {'foreign', 'shadowed'} else '-')}")
         return 0
-    if sub == "default":
-        args = [a for a in rest if a != "--json"]
-        if not args:
-            current = agent_default_id()
-            print(json.dumps({"default": current}) if want_json else current)
-            return 0
-        if args[0] == "--clear":
-            RT.set_settings_value("defaultCodingAgent", "")
-            print(json.dumps({"default": ""}) if want_json else "cleared")
-            return 0
-        ids = {e["id"] for e in agent_entries()}
-        if args[0] not in ids:
-            RT.eprint(f"unknown agent {args[0]!r}; one of: " + " ".join(sorted(ids)))
-            return 1
-        RT.set_settings_value("defaultCodingAgent", args[0])
-        print(json.dumps({"default": args[0]}) if want_json else args[0])
-        return 0
+    if sub == "pick":
+        # The launcher's Dev tools section lists every agent; a keybind lands here.
+        cli = str(RT.repo_root() / "bin" / "vshell")
+        proc = RT.run([cli, "ipc", "call", "vshell-menu", "openCategory", "dev"], timeout=5)
+        return 0 if proc.returncode == 0 else 1
     if sub == "launch":
-        return agent_launch(pick="--pick" in rest, inline="--inline" in rest)
+        ids = [a for a in rest if not a.startswith("--")]
+        if len(ids) != 1:
+            RT.eprint(usage)
+            return 2
+        return agent_launch(ids[0], inline="--inline" in rest)
     RT.eprint(usage)
     return 2
 
