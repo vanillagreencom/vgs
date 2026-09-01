@@ -315,6 +315,11 @@ Rectangle {
                     "icon": "star",
                 },
                 {
+                    "id": "developer",
+                    "text": I18n.tr("Developer"),
+                    "icon": "code",
+                },
+                {
                     "id": "running_apps",
                     "text": I18n.tr("Running Apps"),
                     "icon": "app_registration",

@@ -1,0 +1,55 @@
+{
+  "$comment": [
+    "Catalog for `vshell mise`, `vshell agent` and `vshell dev-env`. One list",
+    "feeds the ~/.local/bin stubs, the default-agent picker, the Developer",
+    "settings tab and the VGS menu; nothing else may carry its own copy.",
+    "",
+    "agents: coding-agent harnesses. `package` is what mise installs, `command`",
+    "the stub name in ~/.local/bin, `bin` the executable inside the package",
+    "(defaults to command). `launch` is the argv the default-agent launcher runs,",
+    "the agent's own spelling of \"do not stop to ask\".",
+    "",
+    "tools: developer CLIs that get a lazy stub but are not agents.",
+    "",
+    "envs: language environments. `tools` are mise packages installed globally;",
+    "`installer` names a non-mise route the helper implements; `packages` are",
+    "distribution packages (keyed by dependencies.json distro ids) installed",
+    "first; `present` is the path whose existence means installed."
+  ],
+  "agents": [
+    { "id": "claude", "name": "Claude Code", "package": "claude", "command": "claude", "launch": ["claude", "--permission-mode", "auto"] },
+    { "id": "codex", "name": "Codex", "package": "codex", "command": "codex", "launch": ["codex", "--approve-for-me"] },
+    { "id": "opencode", "name": "OpenCode", "package": "opencode", "command": "opencode", "launch": ["opencode", "--auto"] },
+    { "id": "copilot", "name": "GitHub Copilot", "package": "copilot", "command": "copilot", "launch": ["copilot", "--allow-all"] },
+    { "id": "crush", "name": "Crush", "package": "crush", "command": "crush", "launch": ["crush", "--yolo"] },
+    { "id": "pi", "name": "Pi", "package": "pi", "command": "pi", "launch": ["pi"] },
+    { "id": "omp", "name": "Oh My Pi", "package": "github:can1357/oh-my-pi", "command": "omp", "launch": ["omp", "--auto-approve"] },
+    { "id": "agy", "name": "Antigravity", "package": "antigravity-cli", "command": "agy", "launch": ["agy", "--dangerously-skip-permissions"] },
+    { "id": "grok", "name": "Grok", "package": "npm:@xai-official/grok", "command": "grok", "launch": ["grok", "--permission-mode", "bypassPermissions"] },
+    { "id": "ori", "name": "Ori", "package": "github:OpenRouterLabs/ori-releases", "command": "ori", "launch": ["ori", "code"] },
+    { "id": "dsh", "name": "DeepSeek Harness", "package": "npm:@deepseek-ai/dsh", "command": "dsh", "launch": ["dsh", "web"] },
+    { "id": "t3", "name": "T3 Code", "package": "npm:t3", "command": "t3", "launch": ["t3"] }
+  ],
+  "tools": [
+    { "package": "gh", "command": "gh" },
+    { "package": "npm:playwright", "command": "playwright" },
+    { "package": "npm:@kitlangton/ghui", "command": "ghui" },
+    { "package": "aqua:modem-dev/hunk", "command": "hunk" },
+    { "package": "github:basecamp/hey-cli", "command": "hey" }
+  ],
+  "envs": [
+    { "id": "node", "name": "Node.js", "tools": ["node"], "present": "~/.local/share/mise/installs/node" },
+    { "id": "bun", "name": "Bun", "tools": ["bun"], "present": "~/.local/share/mise/installs/bun" },
+    { "id": "deno", "name": "Deno", "tools": ["deno"], "present": "~/.local/share/mise/installs/deno" },
+    { "id": "go", "name": "Go", "tools": ["go"], "present": "~/.local/share/mise/installs/go" },
+    { "id": "python", "name": "Python", "tools": ["python", "uv"], "present": "~/.local/share/mise/installs/python" },
+    { "id": "ruby", "name": "Ruby", "tools": ["ruby"], "packages": { "arch": ["libyaml"], "debian": ["libyaml-dev"], "fedora": ["libyaml-devel"] }, "settings": { "ruby.compile": "false", "idiomatic_version_file_enable_tools": "ruby" }, "present": "~/.local/share/mise/installs/ruby" },
+    { "id": "java", "name": "Java", "tools": ["java"], "present": "~/.local/share/mise/installs/java" },
+    { "id": "zig", "name": "Zig", "tools": ["zig", "zls"], "present": "~/.local/share/mise/installs/zig" },
+    { "id": "dotnet", "name": ".NET", "tools": ["dotnet"], "present": "~/.local/share/mise/installs/dotnet" },
+    { "id": "clojure", "name": "Clojure", "tools": ["clojure"], "packages": { "arch": ["rlwrap"], "debian": ["rlwrap"], "fedora": ["rlwrap"] }, "present": "~/.local/share/mise/installs/clojure" },
+    { "id": "scala", "name": "Scala", "tools": ["java", "scala", "scala-cli"], "present": "~/.local/share/mise/installs/scala" },
+    { "id": "elixir", "name": "Elixir", "tools": ["erlang", "elixir"], "present": "~/.local/share/mise/installs/elixir" },
+    { "id": "rust", "name": "Rust", "installer": "rustup", "present": "~/.rustup" }
+  ]
+}

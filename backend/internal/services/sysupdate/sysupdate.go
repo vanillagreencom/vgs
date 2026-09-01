@@ -30,7 +30,7 @@ type Manager struct {
 	pacman       string
 	flatpak      string
 	vshell       string
-	terminalExec string
+	mise         string
 
 	mu            sync.Mutex
 	state         State
@@ -89,12 +89,13 @@ type refreshParams struct {
 	Force bool `json:"force"`
 }
 
+// upgradeParams selects which `vshell update run <mode>` the terminal runs.
+// The CLI owns the per-source commands and their order; the daemon only
+// supervises the run and re-counts when it exits.
 type upgradeParams struct {
-	IncludeFlatpak bool   `json:"includeFlatpak"`
-	IncludeAUR     bool   `json:"includeAUR"`
-	Terminal       string `json:"terminal"`
-	DryRun         bool   `json:"dryRun"`
-	Mode           string `json:"mode"`
+	Terminal string `json:"terminal"`
+	DryRun   bool   `json:"dryRun"`
+	Mode     string `json:"mode"`
 }
 
 type intervalParams struct {
@@ -107,9 +108,9 @@ func Register(srv *server.Server, log *slog.Logger) (*Manager, error) {
 	m.paru, _ = exec.LookPath("paru")
 	m.pacman, _ = exec.LookPath("pacman")
 	m.flatpak, _ = exec.LookPath("flatpak")
+	m.mise, _ = exec.LookPath("mise")
 	m.vshell = vshellCLIPath()
-	m.terminalExec, _ = exec.LookPath("xdg-terminal-exec")
-	if m.checkupdates == "" && m.paru == "" && m.flatpak == "" {
+	if m.checkupdates == "" && m.paru == "" && m.flatpak == "" && m.mise == "" {
 		return nil, fmt.Errorf("no supported update counter found")
 	}
 	distro, pretty := osRelease()
@@ -228,15 +229,15 @@ func (m *Manager) handleUpgrade(params json.RawMessage) (any, error) {
 	if p.DryRun {
 		return m.snapshot(), nil
 	}
-	cmdline := m.upgradeCommand(p)
-	if cmdline == "" {
-		return m.failIdle("upgrade_unavailable", "no supported upgrade command found")
+	mode, err := m.upgradeMode(p.Mode)
+	if err != nil {
+		return m.failIdle("upgrade_unavailable", err.Error())
 	}
 	terminal := strings.TrimSpace(p.Terminal)
 	if terminal == "" {
 		terminal = os.Getenv("TERMINAL")
 	}
-	argv, err := m.terminalArgv(terminal, cmdline)
+	argv, err := m.terminalArgv(terminal, mode)
 	if err != nil {
 		return m.failIdle("upgrade_unavailable", err.Error())
 	}
@@ -361,7 +362,39 @@ func (m *Manager) backends() []Backend {
 	if m.flatpak != "" {
 		backends = append(backends, Backend{ID: "flatpak", DisplayName: "Flatpak", Repo: "flatpak", NeedsAuth: false, RunsInTerminal: true})
 	}
+	if m.mise != "" {
+		backends = append(backends, Backend{ID: "mise", DisplayName: "mise tools", Repo: "tools", NeedsAuth: false, RunsInTerminal: true})
+	}
 	return backends
+}
+
+// upgradeMode validates the requested mode against the updaters present.
+// "all" needs at least one; every other mode needs its own.
+func (m *Manager) upgradeMode(mode string) (string, error) {
+	if m.vshell == "" {
+		return "", fmt.Errorf("vshell CLI not found; `vshell update run` cannot be launched")
+	}
+	present := map[string]bool{
+		"system":  m.pacman != "",
+		"aur":     m.paru != "",
+		"flatpak": m.flatpak != "",
+		"tools":   m.mise != "",
+	}
+	switch mode {
+	case "", "all":
+		for _, ok := range present {
+			if ok {
+				return "all", nil
+			}
+		}
+		return "", fmt.Errorf("no supported updater found")
+	case "system", "aur", "flatpak", "tools":
+		if !present[mode] {
+			return "", fmt.Errorf("no %s updater installed", mode)
+		}
+		return mode, nil
+	}
+	return "", fmt.Errorf("unknown upgrade mode %q", mode)
 }
 
 func (m *Manager) collectUpdates(ctx context.Context) ([]Package, []string, error) {
@@ -398,40 +431,24 @@ func (m *Manager) collectUpdates(ctx context.Context) ([]Package, []string, erro
 			logs = append(logs, fmt.Sprintf("flatpak: %d updates", len(flatpakPackages)))
 		}
 	}
+	if m.mise != "" {
+		// Release-age cooldown off, the same way `vshell update run tools`
+		// runs `mise up`, so the count matches what the upgrade would install.
+		out, err := commandOutputEnv(ctx, m.log, []string{"MISE_MINIMUM_RELEASE_AGE=0"}, m.mise, "outdated", "--json")
+		if err != nil {
+			logs = append(logs, "mise check unavailable: "+err.Error())
+		} else {
+			toolPackages, perr := parseMiseOutdated(out)
+			if perr != nil {
+				logs = append(logs, "mise outdated: "+perr.Error())
+			}
+			packages = append(packages, toolPackages...)
+			if len(toolPackages) > 0 {
+				logs = append(logs, fmt.Sprintf("tools: %d updates", len(toolPackages)))
+			}
+		}
+	}
 	return packages, logs, nil
-}
-
-func (m *Manager) upgradeCommand(p upgradeParams) string {
-	var parts []string
-	switch p.Mode {
-	case "aur":
-		if m.paru != "" {
-			parts = append(parts, shellQuote(m.paru)+" -Sua")
-		}
-	case "system":
-		if m.pacman != "" {
-			parts = append(parts, "sudo "+shellQuote(m.pacman)+" -Syu")
-		}
-	default:
-		if m.pacman != "" {
-			parts = append(parts, "sudo "+shellQuote(m.pacman)+" -Syu")
-		}
-		if p.IncludeAUR && m.paru != "" {
-			parts = append(parts, shellQuote(m.paru)+" -Sua")
-		}
-	}
-	if len(parts) == 0 && p.IncludeAUR && m.paru != "" {
-		parts = append(parts, shellQuote(m.paru)+" -Sua")
-	} else if len(parts) == 0 && m.pacman != "" {
-		parts = append(parts, "sudo "+shellQuote(m.pacman)+" -Syu")
-	}
-	if p.IncludeFlatpak && m.flatpak != "" {
-		parts = append(parts, shellQuote(m.flatpak)+" update")
-	}
-	if len(parts) == 0 {
-		return ""
-	}
-	return strings.Join(parts, " && ") + "; printf '\\nUpdates command finished. Press Enter to close... '; read -r _"
 }
 
 // vshellCLIPath locates the VGS CLI the same way the QML side anchors on
@@ -459,33 +476,23 @@ func vshellCLIPath() string {
 	return ""
 }
 
-// terminalArgv defers to `vshell terminal exec`, the single terminal resolver
-// (VGS-32): it owns the VGS setting, $TERMINAL, xdg-terminals.list, the
-// installed-terminal fallback and the optional uwsm scope. The backend only
-// falls back to naming a terminal itself when the CLI is not on PATH, and never
-// to `xdg-terminal-exec`, which no supported install route provides (VGS-54).
-//
-// A terminal the caller asked for is forwarded as --prefer rather than
-// discarded: deferring resolution must not mean ignoring an explicit choice.
-// --wait keeps this process alive for the whole upgrade, because waitUpgrade
-// treats its exit as the transaction finishing; without it the helper returns
-// as soon as the window is up and a second package-manager run could start on
+// terminalArgv runs `vshell update run <mode>` through `vshell terminal exec`,
+// the single terminal resolver (VGS-32): it owns the VGS setting, $TERMINAL,
+// xdg-terminals.list, the installed-terminal fallback and the optional uwsm
+// scope. A terminal the caller asked for is forwarded as --prefer. --wait
+// keeps this process alive for the whole upgrade, because waitUpgrade treats
+// its exit as the transaction finishing; without it the helper returns as
+// soon as the window is up and a second package-manager run could start on
 // top of the first.
-func (m *Manager) terminalArgv(terminal, cmdline string) ([]string, error) {
-	if m.vshell != "" {
-		argv := []string{m.vshell, "terminal", "exec", "--tui", "--wait"}
-		if terminal != "" {
-			argv = append(argv, "--prefer", terminal)
-		}
-		return append(argv, "--", "sh", "-lc", cmdline, "vshell-update"), nil
+func (m *Manager) terminalArgv(terminal, mode string) ([]string, error) {
+	if m.vshell == "" {
+		return nil, fmt.Errorf("vshell CLI not found")
 	}
+	argv := []string{m.vshell, "terminal", "exec", "--tui", "--wait"}
 	if terminal != "" {
-		return []string{terminal, "-e", "sh", "-lc", cmdline, "vshell-update"}, nil
+		argv = append(argv, "--prefer", terminal)
 	}
-	if m.terminalExec != "" {
-		return []string{m.terminalExec, "--", "sh", "-lc", cmdline, "vshell-update"}, nil
-	}
-	return nil, fmt.Errorf("no terminal launcher found")
+	return append(argv, "--", m.vshell, "update", "run", mode), nil
 }
 
 func (m *Manager) addLogLocked(line string) {
@@ -552,6 +559,11 @@ func (m *Manager) waitUpgrade(cmd *exec.Cmd, gen uint64) {
 	state := m.state
 	m.mu.Unlock()
 	m.srv.Broadcast("sysupdate", state)
+	// The count on screen is from before the upgrade; re-check now rather
+	// than leave it stale until the next scheduled refresh.
+	if err == nil {
+		go func() { _, _ = m.refresh(true) }()
+	}
 }
 
 func (m *Manager) scheduledRefresh() {
@@ -699,10 +711,6 @@ func osRelease() (string, string) {
 		values[key] = value
 	}
 	return values["ID"], firstNonEmpty(values["PRETTY_NAME"], values["NAME"])
-}
-
-func shellQuote(value string) string {
-	return "'" + strings.ReplaceAll(value, "'", "'\\''") + "'"
 }
 
 func firstNonEmpty(values ...string) string {

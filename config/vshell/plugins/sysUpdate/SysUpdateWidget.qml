@@ -14,12 +14,16 @@ PluginComponent {
     property bool loading: true
     property int repoCount: 0
     property int aurCount: 0
+    property int toolsCount: 0
+    // mise is installed: the backend advertises a tools backend, or the CLI
+    // count named a tools source.
+    property bool toolsAvailable: false
     property var packages: []
     property string errorText: ""
     property int orphanCount: 0
     property var orphans: []
     property bool showOrphans: false
-    readonly property int totalCount: root.repoCount + root.aurCount
+    readonly property int totalCount: root.repoCount + root.aurCount + root.toolsCount
     readonly property bool useBackend: SystemUpdateService.sysupdateAvailable
 
     // ---- Refresh timing / provenance (P1) ----
@@ -105,6 +109,8 @@ PluginComponent {
             return String(pluginData.systemUpdateCommand || defaultCommandForMode("system")).trim();
         if (mode === "aur")
             return String(pluginData.aurUpdateCommand || defaultCommandForMode("aur")).trim();
+        if (mode === "tools")
+            return String(pluginData.toolsUpdateCommand || defaultCommandForMode("tools")).trim();
         if (mode === "all")
             return String(pluginData.allUpdateCommand || defaultCommandForMode("all")).trim();
         return "";
@@ -132,17 +138,26 @@ PluginComponent {
     }
 
     function launch(mode, sourcePopout) {
-        // The backend owns discovery/state, but button commands are an explicit
-        // widget contract and may encode local sequencing (for example repo-only
-        // pacman followed by an audited AUR workflow). Never replace them with a
-        // backend-generated paru command merely because the backend is online.
-        pendingLaunchCommand = commandForMode(mode);
-        if (!pendingLaunchCommand.length) {
+        const command = commandForMode(mode);
+        if (!command.length) {
             ToastService.showWarning("Update command missing", "Set a command in Settings → Bar → Widgets → System Updates.");
             return;
         }
         if (sourcePopout && sourcePopout.closePopout)
             sourcePopout.closePopout();
+        // A button on its default runs through the backend, which supervises
+        // the terminal and re-counts when it exits. A custom command is an
+        // explicit widget contract that may encode local sequencing (repo-only
+        // pacman followed by an audited AUR workflow); it keeps the detached
+        // launch and the bounded re-check instead.
+        if (root.useBackend && command === defaultCommandForMode(mode)) {
+            SystemUpdateService.upgrade(mode, response => {
+                if (response && response.error)
+                    ToastService.showError("Update failed to start", String(response.error));
+            });
+            return;
+        }
+        pendingLaunchCommand = command;
         launchTimer.restart();
     }
 
@@ -189,6 +204,7 @@ PluginComponent {
                 root.errorText = d.error || "update backend unavailable";
                 root.repoCount = 0;
                 root.aurCount = 0;
+                root.toolsCount = 0;
                 root.packages = [];
                 root.orphanCount = 0;
                 root.orphans = [];
@@ -197,6 +213,8 @@ PluginComponent {
             root.errorText = "";
             root.repoCount = d.repo || 0;
             root.aurCount = d.aur || 0;
+            root.toolsCount = d.tools || 0;
+            root.toolsAvailable = !!(d.source && d.source.tools);
             root.packages = d.packages || [];
             root.orphanCount = d.orphanCount || 0;
             root.orphans = d.orphans || [];
@@ -210,6 +228,7 @@ PluginComponent {
         } catch (e) {
             root.repoCount = 0;
             root.aurCount = 0;
+            root.toolsCount = 0;
             root.packages = [];
             root.errorText = "parse error";
             root.orphanCount = 0;
@@ -226,13 +245,15 @@ PluginComponent {
         root.errorText = SystemUpdateService.hasError ? SystemUpdateService.errorMessage : "";
         const pkgs = (SystemUpdateService.availableUpdates || []).map(p => ({
             "name": p.name || "",
-            "src": p.repo === "aur" ? "aur" : "system",
+            "src": p.repo === "aur" ? "aur" : (p.repo === "tools" ? "tools" : "system"),
             "old": p.fromVersion || "",
             "new": p.toVersion || ""
         }));
         root.packages = pkgs;
-        root.repoCount = pkgs.filter(p => p.src !== "aur").length;
+        root.repoCount = pkgs.filter(p => p.src === "system").length;
         root.aurCount = pkgs.filter(p => p.src === "aur").length;
+        root.toolsCount = pkgs.filter(p => p.src === "tools").length;
+        root.toolsAvailable = SystemUpdateService.hasBackend("mise");
         root.orphanCount = 0;
         root.orphans = [];
         root.showOrphans = false;
@@ -242,6 +263,7 @@ PluginComponent {
         target: SystemUpdateService
         function onSysupdateAvailableChanged() { root._syncBackendState(); }
         function onAvailableUpdatesChanged() { root._syncBackendState(); }
+        function onBackendsChanged() { root._syncBackendState(); }
         function onIsCheckingChanged() { root._syncBackendState(); }
         function onHasErrorChanged() { root._syncBackendState(); }
         function onErrorMessageChanged() { root._syncBackendState(); }
@@ -344,7 +366,7 @@ PluginComponent {
             id: popout
 
             headerText: "System Updates"
-            detailsText: root.loading ? "Checking…" : (root.errorText.length > 0 ? root.errorText : (root.totalCount > 0 ? (root.totalCount + " available  (" + root.repoCount + " repo - " + root.aurCount + " aur)") : "Up to date"))
+            detailsText: root.loading ? "Checking…" : (root.errorText.length > 0 ? root.errorText : (root.totalCount > 0 ? (root.totalCount + " available  (" + root.repoCount + " repo - " + root.aurCount + " aur" + (root.toolsAvailable ? " - " + root.toolsCount + " tools" : "") + ")") : "Up to date"))
             showCloseButton: true
 
             Column {
@@ -464,15 +486,15 @@ PluginComponent {
                                                 radius: height / 2
                                                 height: srcPillText.implicitHeight + 3
                                                 width: srcPillText.implicitWidth + Theme.spacingS * 2
-                                                color: modelData.src === "aur" ? Theme.withAlpha(Theme.secondary, 0.18) : Theme.withAlpha(Theme.primary, 0.18)
+                                                color: Theme.withAlpha(srcPillText.color, 0.18)
 
                                                 StyledText {
                                                     id: srcPillText
                                                     anchors.centerIn: parent
-                                                    text: modelData.src === "aur" ? "aur" : "system"
+                                                    text: modelData.src === "aur" ? "aur" : (modelData.src === "tools" ? "tools" : "system")
                                                     font.pixelSize: Theme.fontSizeSmall - 1
                                                     font.weight: Font.Medium
-                                                    color: modelData.src === "aur" ? Theme.secondary : Theme.primary
+                                                    color: modelData.src === "aur" ? Theme.secondary : (modelData.src === "tools" ? Theme.tertiary : Theme.primary)
                                                 }
                                             }
                                         }
@@ -515,6 +537,16 @@ PluginComponent {
                                     textColor: Theme.surfaceText
                                     onClicked: root.launch("aur", popout)
                                 }
+                            }
+
+                            VgsButton {
+                                width: parent.width
+                                visible: root.toolsAvailable
+                                text: "Update Dev Tools"
+                                iconName: "smart_toy"
+                                backgroundColor: Theme.surfaceContainerHigh
+                                textColor: Theme.surfaceText
+                                onClicked: root.launch("tools", popout)
                             }
 
                             VgsButton {
