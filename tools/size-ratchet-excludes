@@ -142,7 +142,7 @@
 # that: the ledger states what a reader diffing this branch sees, and nothing
 # else.
 #
-#   RAISED    scripts/lib/validation_manifest.py     1045 -> 1268
+#   RAISED    scripts/lib/validation_manifest.py     1045 -> 1273
 #   RAISED    scripts/test-validation-inventory.sh   2278 -> 2371
 #   RAISED    scripts/test-section-pointers-e2e.py    496 ->  540
 #   RAISED    scripts/test-section-pointers.py        489 ->  515
@@ -194,6 +194,13 @@
 #             command separator
 #   round 6   a heredoc closes on a line that is EXACTLY the delimiter; a
 #             trimmed comparison closed it early and read the body as commands
+#   round 7   DECLINED, and the first one that is. `false && <path> || true`
+#             does skip the path, and the predicate does count it — the finding
+#             is accurate. It does not converge: telling that chain from
+#             `cd x && <path>` needs the left side's exit status, which puts it
+#             in the same open class as command substitution, `eval`, aliases
+#             and sourced files. The boundary is corrected to name it rather
+#             than widened to half-model it.
 #
 # So the predicate tokenizes with shlex, quote-aware, distinguishes separators
 # from redirections, consumes redirection operands, skips heredoc bodies, joins
@@ -207,9 +214,10 @@
 #
 # WHERE IT STOPS, and this is the last entry that widens it. The predicate
 # APPROXIMATES shell execution and cannot decide it; the docstring on ci_runs
-# now names what it models and what it never will — command substitution,
-# `eval`, aliases, sourced files, expansions, and anything depending on a
-# runtime value — plus the step-level `if:` it cannot see, which four lanes in
+# now names what it models and what it never will — AND-OR recovery, command
+# substitution, `eval`, aliases, sourced files, expansions, and anything
+# depending on a runtime value — plus the step-level `if:` it cannot see, which
+# four lanes in
 # this repo already use as their real wiring. Six rounds each named a genuine
 # construct and each repair was right, which is the argument FOR writing the
 # limit down rather than against it. A proof that a lane ran needs CI declaring

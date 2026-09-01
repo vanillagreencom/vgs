@@ -1117,14 +1117,16 @@ def ci_runs(ci_text: str, path: str) -> bool:
     function definitions, array-assignment context, short-circuit and
     conditional branches, and command position after separators and keywords.
 
-    What it does NOT model, and will not: command substitution, `eval`, aliases,
-    functions defined elsewhere, sourced files, `$@` and other expansions, and
-    anything whose execution depends on a runtime value. A step-level `if:` is
-    invisible too, because ci_run_commands reads `run:` strings and nothing
-    around them — four steps in this repo's ci.yml are gated on `harness_only`
-    while being the real wiring for their lanes, so requiring "runs on every
-    successful path" one level up would report them as uncovered on a healthy
-    tree.
+    What it does NOT model, and will not: AND-OR recovery (`false && <path> ||
+    true` skips the path and the step still succeeds, and telling that apart
+    from `cd x && <path>` needs the left side's exit status), command
+    substitution, `eval`, aliases, functions defined elsewhere, sourced files,
+    `$@` and other expansions, and anything whose execution depends on a runtime
+    value. A step-level `if:` is invisible too, because ci_run_commands reads
+    `run:` strings and nothing around them — four steps in this repo's ci.yml
+    are gated on `harness_only` while being the real wiring for their lanes, so
+    requiring "runs on every successful path" one level up would report them as
+    uncovered on a healthy tree.
 
     A PROOF THAT A LANE RAN NEEDS A DIFFERENT MECHANISM: CI declaring what it
     executed, which a reader can check, rather than a reader inferring execution
@@ -1151,9 +1153,12 @@ def ci_runs(ci_text: str, path: str) -> bool:
                 heredoc = None
             continue
         # `||` runs its right side only when the left FAILED, so nothing after
-        # it on this line is guaranteed coverage. `&&` is not the same and is
-        # not cut here: `cd x && <path>` runs the path on every path where the
-        # step itself succeeds.
+        # it on this line is guaranteed coverage. `&&` is NOT cut, and that is
+        # an approximation rather than a proof: `cd x && <path>` runs the path
+        # whenever the step succeeds, but `false && <path> || true` recovers and
+        # the step succeeds without it. Deciding which of the two a chain is
+        # needs the left side's exit status, so the AND-OR list is named in the
+        # boundary below as out of model rather than half-modelled here.
         short_circuit = False
         lexer = shlex.shlex(line, punctuation_chars=True)
         lexer.whitespace_split = True

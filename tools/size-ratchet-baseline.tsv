@@ -212,7 +212,7 @@ scripts/check-vshell-helper.py	5864
 scripts/check-vshell-niri.py	678
 scripts/gen-package-metadata.py	993
 scripts/lib/section_pointers_selftest.py	515
-scripts/lib/validation_manifest.py	1268
+scripts/lib/validation_manifest.py	1273
 scripts/qml-smoke.sh	1826
 scripts/test-compositor-focus.js	791
 scripts/test-launcher-hover-latch.js	492
