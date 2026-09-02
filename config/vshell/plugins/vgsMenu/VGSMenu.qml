@@ -424,9 +424,9 @@ PluginComponent {
         return String(left.id || "").localeCompare(String(right.id || ""));
     }
 
-    // `grouped` applies an item's `group` before the alphabet, so harnesses
-    // stay above environments inside their own category; the All list and
-    // ranked results never use it.
+    // `grouped` applies an item's `group` before the alphabet, so a category's
+    // own entries stay above agents, and agents above environments; the All
+    // list and ranked results never use it.
     function sortRanked(items, alphabetical, grouped) {
         items.sort((left, right) => {
             if (alphabetical && grouped) {
