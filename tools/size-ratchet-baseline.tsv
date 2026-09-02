@@ -21,7 +21,7 @@ bin/codexbar	1311
 bin/vshell	475
 bin/vshell-capture-screenrecording	593
 bin/vshell-capture-screenshot	741
-bin/vshell-helper	15993
+bin/vshell-helper	15994
 bin/vshell_niri.py	1110
 config/vshell/icons/Yaru/cursors/half-busy	10208
 config/vshell/icons/Yaru/cursors/half-busy.ani	3364
@@ -33,7 +33,7 @@ config/vshell/plugins/aiUsage/AiUsageWidget.qml	1167
 config/vshell/plugins/cloudSync/CloudSyncWidget.qml	690
 config/vshell/plugins/remoteDesktop/RemoteDesktopWidget.qml	803
 config/vshell/plugins/sudoToggle/SudoToggleWidget.qml	515
-config/vshell/plugins/sysUpdate/SysUpdateWidget.qml	770
+config/vshell/plugins/sysUpdate/SysUpdateWidget.qml	777
 config/vshell/plugins/tailscale/TailscaleWidget.qml	804
 config/vshell/plugins/vgsMenu/VGSMenu.qml	2388
 config/vshell/settings.default.json	758

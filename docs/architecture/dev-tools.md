@@ -13,7 +13,7 @@ under `~/.local/share/mise`. The distribution package manager never sees them.
 | `vshell agent` | `agents` (id, launch argv) |
 | `vshell dev-env` | `envs` (mise tools, distro packages, installer; `managedBy` marks one the package manager owns, e.g. a pacman rustup) |
 | Settings → Applications → Developer | all three, through the JSON commands below |
-| VGS menu (Dev tools, `d:`) | reads the file directly: one entry per agent and per env |
+| VGS menu (Dev tools, `d:`) | reads the file directly: one entry per agent and per env, named after the tool |
 
 ## Stubs
 
@@ -46,15 +46,17 @@ Nothing downloads until first run. Rules:
 
 ```
 vshell mise    install|refresh|remove-stubs|opt-in|list --json|outdated --json|up
-vshell agent   list [--json] | launch <id> [--inline] | pick
+vshell agent   list [--json] | launch <id> [--inline] | install <id> | pick
 vshell dev-env list [--json] | install <id> | remove <id>
 vshell update  count | run <system|aur|flatpak|tools|all>
 ```
 
-There is no default agent. `launch <id>` starts in `~/Work` when it exists
-and opens a terminal with app id `vshell-agent`. When the command is neither
-a stub nor on `PATH`, it writes the stub first, or notifies and exits 1
-without mise. `pick` opens the launcher on its Dev tools section, which
+There is no default agent. `launch <id>` first runs `install <id>` in the
+updater's floating TUI window when the agent has no mise install and no
+command of the owner's on `PATH` (a prompt, then `mise use -g`), and then
+opens the agent's own terminal (app id `vshell-agent`) running
+`launch <id> --inline` from `~/Work` when it exists. One-shot scripts share
+the TUI window; agent sessions do not. `pick` opens the launcher on its Dev tools section, which
 lists one entry per agent and one per language environment straight from
 the catalog (`vshell-menu openCategory dev` over IPC).
 
