@@ -205,7 +205,7 @@ scripts/check-aur-sync.py	471
 scripts/check-notification-takeover.js	454
 scripts/check-paste-injection.py	897
 scripts/check-section-pointers.py	594
-scripts/check-settings-migration.js	952
+scripts/check-settings-migration.js	964
 scripts/check-validation-inventory.py	423
 scripts/check-vshell-helper.py	5864
 scripts/check-vshell-niri.py	678

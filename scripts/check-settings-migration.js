@@ -39,7 +39,7 @@ const settingsDataSource = fs.readFileSync(settingsDataPath, "utf8");
 
 const barWidgets = loadModule(path.join(settingsDir, "BarWidgets.js"), {});
 
-const TARGET_VERSION = 23;
+const TARGET_VERSION = 24;
 
 // Three places declare the schema version, and the runtime authority is
 // SettingsData.qml's settingsConfigVersion — that is what drives migration on
@@ -914,7 +914,7 @@ for (const from of [1, 19, 21, 22]) {
   const walked = migrate({ configVersion: from });
   assert.strictEqual(
     walked.configVersion,
-    23,
+    24,
     `a v${from} config must land on the current schema version`
   );
   assert.deepStrictEqual(
@@ -939,6 +939,18 @@ const bothSteps = migrate({
 });
 assert.strictEqual(bothSteps.notificationFirstRunTakeoverDone, true);
 assert.deepStrictEqual(bothSteps.scratchpads, [{ id: "keep", command: "x", classRegex: "^x$" }]);
+
+// v24 collapses the per-page launcher view modes into one key. A config that
+// chose a grid for its apps page keeps that choice everywhere; one that never
+// had the map lands on the default rather than on undefined.
+const collapsedViewMode = migrate({
+  configVersion: 23,
+  launcherMenuViewModes: { apps: "grid", files: "list", folders: "list" },
+});
+assert.strictEqual(collapsedViewMode.configVersion, 24);
+assert.strictEqual(collapsedViewMode.launcherMenuViewMode, "grid");
+assert.strictEqual(collapsedViewMode.launcherMenuViewModes, undefined);
+assert.strictEqual(migrate({ configVersion: 23 }).launcherMenuViewMode, undefined);
 
 for (const file of [sessionDataPath, settingsDataPath]) {
   assert.deepStrictEqual(
