@@ -31,7 +31,7 @@
     { "id": "grok", "name": "Grok", "package": "npm:@xai-official/grok", "command": "grok", "launch": ["grok", "--permission-mode", "bypassPermissions"] },
     { "id": "ori", "name": "Ori", "package": "github:OpenRouterLabs/ori-releases", "command": "ori", "launch": ["ori", "code"] },
     { "id": "dsh", "name": "DeepSeek Harness", "package": "npm:@deepseek-ai/dsh", "command": "dsh", "launch": ["dsh", "web"] },
-    { "id": "t3", "name": "T3 Code", "package": "npm:t3", "command": "t3", "launch": ["t3"] }
+    { "id": "t3", "name": "T3 Code", "package": "npm:t3", "command": "t3", "launch": ["t3", "start"] }
   ],
   "tools": [
     { "package": "gh", "command": "gh" },
