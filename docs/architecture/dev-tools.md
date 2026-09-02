@@ -11,7 +11,7 @@ under `~/.local/share/mise`. The distribution package manager never sees them.
 |----------|-------|
 | `vshell mise refresh` | `agents` + `tools` → stubs in `~/.local/bin` |
 | `vshell agent` | `agents` (id, launch argv) |
-| `vshell dev-env` | `envs` (mise tools, distro packages, installer) |
+| `vshell dev-env` | `envs` (mise tools, distro packages, installer; `managedBy` marks one the package manager owns, e.g. a pacman rustup) |
 | Settings → Applications → Developer | all three, through the JSON commands below |
 | VGS menu (Dev tools, `d:`) | reads the file directly: one entry per agent and per env |
 

@@ -302,6 +302,14 @@ Item {
                                     color: Theme.success
                                     anchors.verticalCenter: parent.verticalCenter
                                 }
+
+                                StyledText {
+                                    visible: (envRow.modelData.distroPath || "").length > 0
+                                    text: I18n.tr("from your package manager")
+                                    font.pixelSize: Theme.fontSizeSmall - 1
+                                    color: Theme.surfaceVariantText
+                                    anchors.verticalCenter: parent.verticalCenter
+                                }
                             }
 
                             // Install is the primary action; removal is a quiet icon.
@@ -321,7 +329,7 @@ Item {
                                 anchors.right: parent.right
                                 anchors.rightMargin: Theme.spacingXS
                                 anchors.verticalCenter: parent.verticalCenter
-                                visible: envRow.modelData.installed
+                                visible: envRow.modelData.installed && !(envRow.modelData.distroPath || "").length
                                 buttonSize: 28
                                 iconName: "delete"
                                 iconSize: 18

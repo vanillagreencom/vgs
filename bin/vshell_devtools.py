@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 import os
 import shlex
+import shutil
 import subprocess
 from pathlib import Path
 from typing import Any, Dict, List
@@ -114,12 +115,22 @@ def dev_env_present(entry: Dict[str, Any]) -> bool:
     return bool(present) and Path(os.path.expanduser(present)).exists()
 
 
+def dev_env_distro_owned(entry: Dict[str, Any]) -> str:
+    """Path of the distribution's copy of `managedBy`, or "" when VGS may
+    install and remove this environment itself."""
+    command = str(entry.get("managedBy") or "")
+    if not command:
+        return ""
+    found = shutil.which(command) or ""
+    return found if found.startswith(("/usr/bin/", "/usr/local/bin/", "/bin/")) else ""
+
+
 def dev_env_list() -> Dict[str, Any]:
-    return {
-        "ok": True,
-        "mise": RT.command_exists("mise"),
-        "envs": [{"id": e["id"], "name": e["name"], "installed": dev_env_present(e)} for e in dev_env_entries()],
-    }
+    envs = []
+    for e in dev_env_entries():
+        owner = dev_env_distro_owned(e)
+        envs.append({"id": e["id"], "name": e["name"], "installed": dev_env_present(e) or bool(owner), "distroPath": owner})
+    return {"ok": True, "mise": RT.command_exists("mise"), "envs": envs}
 
 
 def os_release_ids(path: Path = Path("/etc/os-release")) -> List[str]:
@@ -169,6 +180,10 @@ def dev_env_run(argv: List[str]) -> int:
 
 
 def dev_env_install(entry: Dict[str, Any]) -> int:
+    owner = dev_env_distro_owned(entry)
+    if owner:
+        RT.eprint(f"{entry['name']} is managed by your package manager ({owner}); nothing to install")
+        return 1
     print(f"Installing {entry['name']}...\n")
     if entry.get("installer") == "rustup":
         return dev_env_run(["sh", "-c", "curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y"])
@@ -194,6 +209,10 @@ def dev_env_install(entry: Dict[str, Any]) -> int:
 
 
 def dev_env_remove(entry: Dict[str, Any]) -> int:
+    owner = dev_env_distro_owned(entry)
+    if owner:
+        RT.eprint(f"{entry['name']} is managed by your package manager ({owner}); remove it there")
+        return 1
     print(f"Removing {entry['name']}...\n")
     if entry.get("installer") == "rustup":
         return dev_env_run(["rustup", "self", "uninstall", "-y"])
