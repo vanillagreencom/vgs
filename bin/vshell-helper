@@ -7068,6 +7068,19 @@ def _devtools() -> Any:
     return _DEVTOOLS
 
 
+_APPS: Any = None
+
+
+def _apps() -> Any:
+    """Load the application-uninstall path only for the command that uses it."""
+    global _APPS
+    if _APPS is None:
+        _devtools()
+        import vshell_apps
+        _APPS = vshell_apps
+    return _APPS
+
+
 _UPDATE: Any = None
 
 
@@ -15946,7 +15959,7 @@ def cmd_terminal(argv: List[str]) -> int:
 
 def main() -> int:
     if len(sys.argv) < 2:
-        eprint("Usage: vshell-helper <theme|fonts|deps|notifications|update|mise|agent|dev-env|ai-usage|capture|cl|dl|trash|color|keybinds|config|scratchpad|compositor|blur|brightness|auth|greeter> ...")
+        eprint("Usage: vshell-helper <theme|fonts|deps|notifications|update|mise|agent|dev-env|app|ai-usage|capture|cl|dl|trash|color|keybinds|config|scratchpad|compositor|blur|brightness|auth|greeter> ...")
         return 2
     cmd, argv = sys.argv[1], sys.argv[2:]
     try:
@@ -15957,6 +15970,7 @@ def main() -> int:
         if cmd == "mise": return _devtools().vshell_mise.cmd_mise(argv)
         if cmd == "agent": return _devtools().cmd_agent(argv)
         if cmd == "dev-env": return _devtools().cmd_dev_env(argv)
+        if cmd == "app": return _apps().cmd_app(argv)
         if cmd in {"ai-usage", "ai"}: return cmd_ai_usage(argv)
         if cmd == "capture": return cmd_capture(argv)
         if cmd in {"screenshot"}: return cmd_capture(["screenshot", *argv])

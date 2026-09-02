@@ -131,8 +131,29 @@ def hold_terminal(code: int, message: str) -> int:
     return code
 
 
+def agent_remove(entry: Dict[str, Any]) -> int:
+    """Uninstall the agent's mise package and retire its launcher stub. An
+    agent the owner installed themselves stays: VGS did not put it there."""
+    package = str(entry["package"])
+    versions, _ = mise_installed_versions()
+    if not versions.get(package):
+        return hold_terminal(1, f"{entry['name']} is not installed through mise; remove it where you installed it.")
+    print(f"Removing {entry['name']}...\n")
+    failures = dev_env_run(["mise", "uninstall", "--all", package]) != 0
+    failures += dev_env_run(["mise", "unuse", "-g", package]) != 0
+    stub = RT.home() / ".local" / "bin" / str(entry["command"])
+    if mise_stub_state(stub) == "ours":
+        try:
+            stub.unlink()
+        except OSError as exc:
+            RT.eprint(f"could not remove the launcher stub {stub}: {exc}")
+            failures += 1
+    return hold_terminal(1 if failures else 0,
+                         f"{entry['name']} could not be fully removed." if failures else f"{entry['name']} removed.")
+
+
 def cmd_agent(argv: List[str]) -> int:
-    usage = "Usage: vshell agent list [--json] | launch <id> [--inline] | install <id> | pick"
+    usage = "Usage: vshell agent list [--json] | launch <id> [--inline] | install <id> | remove <id> | pick"
     if not argv:
         RT.eprint(usage)
         return 2
@@ -158,6 +179,12 @@ def cmd_agent(argv: List[str]) -> int:
         if agent_installed(entry):
             return 0
         return 0 if agent_install_prompt(entry) else hold_terminal(1, f"{entry['name']} was not installed.")
+    if sub == "remove":
+        entry = next((e for e in agent_entries() if e["id"] == (rest[0] if rest else "")), None)
+        if entry is None:
+            RT.eprint(usage)
+            return 2
+        return agent_remove(entry)
     if sub == "launch":
         ids = [a for a in rest if not a.startswith("--")]
         if len(ids) != 1:
@@ -314,6 +341,9 @@ def cmd_dev_env(argv: List[str]) -> int:
         if entry is None:
             RT.eprint(f"unknown environment {rest[0]!r}; one of: " + " ".join(e["id"] for e in dev_env_entries()))
             return 1
-        return dev_env_install(entry) if sub == "install" else dev_env_remove(entry)
+        if sub == "install":
+            return dev_env_install(entry)
+        code = dev_env_remove(entry)
+        return hold_terminal(code, f"{entry['name']} removed." if code == 0 else f"{entry['name']} could not be removed.")
     RT.eprint(usage)
     return 2

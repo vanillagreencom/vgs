@@ -414,7 +414,7 @@ const MUTANTS = [
             "onEntered: {\n                root.selectedItemIndex = 0;\n                if (root.hoverGate.armed)")],
     ["one delegate stops reaching selection through onHovered, leaving its gate guarding nothing",
         selectionWritesGoThroughHovered, menuSource, menuSource.replace(
-            "onHovered: {\n                                        if (!actionContextMenu.visible)\n                                            root.selectedItemIndex = index;\n                                    }",
+            "onHovered: {\n                                        if (!actionMenu.visible)\n                                            root.selectedItemIndex = index;\n                                    }",
             "onHovered: {\n                                    }")],
     ["a delegate writes the selection index straight from onPositionChanged",
         selectionWritesGoThroughHovered, menuSource, menuSource.replace(

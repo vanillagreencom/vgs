@@ -476,6 +476,15 @@ function migrateToVersion(obj, targetVersion) {
         settings.configVersion = 23;
     }
 
+    if (currentVersion < 24) {
+        console.info("Migrating settings from version", currentVersion, "to version 24");
+        console.info("The launcher keeps one view mode for every page, so the per-page map collapses");
+        var modes = settings.launcherMenuViewModes;
+        if (modes && typeof modes === "object")
+            settings.launcherMenuViewMode = modes.apps || modes.files || modes.folders || "list";
+        settings.configVersion = 24;
+    }
+
     var validKeys = SpecModule.getValidKeys();
     var filtered = {};
     for (var key in settings) {

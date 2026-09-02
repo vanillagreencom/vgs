@@ -22,6 +22,8 @@ function itemsFromCatalog(raw) {
             subtitle: agent.kind === "server" ? agent.command + ", server only: opens in the browser (no app)" : agent.command,
             tag: "Agent",
             group: 1,
+            devId: agent.id,
+            devKind: "agent",
             iconColor: agent.color || "",
             keywords: ["agent", "ai", "code", agent.id, agent.command],
             argv: ["{vshell}", "agent", "launch", agent.id]
@@ -34,6 +36,8 @@ function itemsFromCatalog(raw) {
             subtitle: env.installer === "rustup" ? "install with rustup" : "install with mise",
             tag: "Environment",
             group: 2,
+            devId: env.id,
+            devKind: "environment",
             iconColor: env.color || "",
             keywords: ["install", "language", "environment", "dev", env.id],
             argv: ["{vshell}", "terminal", "exec", "--tui", "--hold", "--", "{vshell}", "dev-env", "install", env.id]

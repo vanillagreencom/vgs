@@ -35,8 +35,6 @@ PluginComponent {
     property int fileSearchGeneration: 0
     property bool fileSettingsVisible: false
     property bool filePreviewRevealed: false
-    property bool actionsExpanded: false
-    property int selectedActionIndex: 0
     property bool prefixHelpVisible: false
     property bool resettingState: false
     property bool routingPrefix: false
@@ -60,6 +58,7 @@ PluginComponent {
     readonly property real modalY: Math.max(Theme.spacingL, screenHeight * 0.18)
     readonly property int categoryWidth: sidebarVisible ? 190 : 0
     readonly property int rowHeight: 64
+    readonly property var viewModes: ["list", "grid", "thumbnail"]
     readonly property int openDuration: 80
     readonly property int closeDuration: 60
 
@@ -144,10 +143,7 @@ PluginComponent {
         fileSearchType = "file";
         fileSettingsVisible = false;
         filePreviewRevealed = false;
-        actionsExpanded = false;
-        selectedActionIndex = 0;
-        if (actionContextMenu.visible)
-            actionContextMenu.close();
+        actionMenu.dismiss();
         prefixHelpVisible = false;
         folderCompletion = "";
         sidebarVisible = SettingsData.launcherSidebarShowByDefault;
@@ -203,7 +199,6 @@ PluginComponent {
         query = text.substring(2).replace(/^\s+/, "");
         selectedItemIndex = 0;
         filePreviewRevealed = false;
-        actionsExpanded = false;
         fileSettingsVisible = false;
         routingPrefix = false;
         refreshItems();
@@ -607,7 +602,6 @@ PluginComponent {
                 folderCompletion = String(hits[0].completion);
             selectedItemIndex = 0;
             filePreviewRevealed = next.length > 0;
-            actionsExpanded = false;
             resetResultListPosition();
         });
     }
@@ -671,7 +665,6 @@ PluginComponent {
         fileSearchType = modes[index];
         selectedItemIndex = 0;
         filePreviewRevealed = false;
-        actionsExpanded = false;
         refreshFileItems();
     }
 
@@ -681,36 +674,26 @@ PluginComponent {
             && selectedItem?.kind === "file";
     }
 
-    function viewModeKey() {
-        if (categories[selectedCategoryIndex]?.id === "apps")
-            return "apps";
-        if (fileSearchType === "dir" || fileSearchType === "zoxide")
-            return "folders";
-        return "files";
-    }
-
+    // One remembered view mode, on every page that can draw a grid, so the
+    // choice survives both a page change and the next launcher session.
     function currentViewMode() {
-        const category = categories[selectedCategoryIndex]?.id || "";
-        if (category === "all" || (category !== "apps" && category !== "files"))
+        if (!viewModesAvailable())
             return "list";
-        if (fileSearchType === "text")
-            return "list";
-        return SettingsData.launcherMenuViewModes?.[viewModeKey()] || "list";
+        const mode = String(SettingsData.launcherMenuViewMode || "list");
+        return viewModes.indexOf(mode) === -1 ? "list" : mode;
     }
 
     function viewModesAvailable() {
-        const category = categories[selectedCategoryIndex]?.id || "";
         if (fileSettingsVisible)
             return false;
-        return category === "apps" || (category === "files" && fileSearchType !== "text");
+        // A text-content search lists matching lines, which no grid cell holds.
+        return !(categories[selectedCategoryIndex]?.id === "files" && fileSearchType === "text");
     }
 
     function setViewMode(mode) {
-        if (!viewModesAvailable() || ["list", "grid", "thumbnail"].indexOf(mode) === -1)
+        if (!viewModesAvailable() || viewModes.indexOf(mode) === -1)
             return;
-        const updated = Object.assign({}, SettingsData.launcherMenuViewModes || {});
-        updated[viewModeKey()] = mode;
-        SettingsData.set("launcherMenuViewModes", updated);
+        SettingsData.set("launcherMenuViewMode", mode);
     }
 
     function openFolder(path, opener) {
@@ -762,6 +745,8 @@ PluginComponent {
                 actions.push({ id: "desktop", label: desktopActions[i].name, icon: "play_arrow", data: desktopActions[i] });
             if (SessionService.nvidiaCommand)
                 actions.push({ id: "dgpu", label: "Launch on dGPU", icon: "memory" });
+            if (item.app?.id)
+                actions.push({ id: "uninstall", label: "Uninstall", icon: "delete" });
         } else if (item.kind === "file") {
             if (item.data?.is_dir) {
                 const openers = DSearchService.folderOpeners || [];
@@ -782,6 +767,9 @@ PluginComponent {
             actions.push({ id: "terminal", label: "Open in terminal", icon: "terminal" });
         } else {
             actions.push({ id: "open", label: "Run", icon: "play_arrow" });
+            // A dev tool VGS installed can be taken back out the same way.
+            if (item.devId)
+                actions.push({ id: "uninstall", label: "Uninstall", icon: "delete" });
         }
         return actions;
     }
@@ -789,54 +777,32 @@ PluginComponent {
     function showActionContextMenu(sender, localX, localY) {
         if (!sender)
             return;
+        const point = sender.mapToItem(modal, localX, localY);
+        openActionMenu(point.x, point.y);
+    }
+
+    // Shift+Enter raises the same menu a right click does, at the selected row.
+    function showActionMenuForSelection() {
+        if (actionMenu.visible) {
+            actionMenu.dismiss();
+            return;
+        }
+        const view = currentViewMode() === "list" ? resultList : resultGrid;
+        const row = view.itemAtIndex(selectedItemIndex);
+        const point = row
+            ? row.mapToItem(modal, Theme.spacingXL, row.height - Theme.spacingS)
+            : Qt.point(modal.width / 3, modal.height / 3);
+        openActionMenu(point.x, point.y);
+    }
+
+    function openActionMenu(pointX, pointY) {
         const targetItem = selectedItem;
         const targetActions = selectedActions();
         if (!targetItem || targetActions.length === 0)
             return;
-        actionsExpanded = false;
-        selectedActionIndex = 0;
-        actionContextMenu.targetItem = targetItem;
-        actionContextMenu.actions = targetActions.slice();
-        const point = sender.mapToItem(modal, localX, localY);
-        actionContextMenu.x = Math.max(
-            Theme.spacingS,
-            Math.min(modal.width - actionContextMenu.width - Theme.spacingS, point.x)
-        );
-        actionContextMenu.y = Math.max(
-            Theme.spacingS,
-            Math.min(modal.height - actionContextMenu.height - Theme.spacingS, point.y)
-        );
-        actionContextMenu.open();
+        actionMenu.openAt(pointX, pointY, targetActions, targetItem);
     }
 
-    function toggleActions() {
-        if (actionsExpanded) {
-            actionsExpanded = false;
-            selectedActionIndex = 0;
-            return;
-        }
-        const actions = selectedActions();
-        if (actions.length === 0)
-            return;
-        selectedActionIndex = 0;
-        actionsExpanded = true;
-    }
-
-    function cycleAction(reverse) {
-        const actions = selectedActions();
-        if (actions.length === 0)
-            return;
-        selectedActionIndex = reverse
-            ? (selectedActionIndex - 1 + actions.length) % actions.length
-            : (selectedActionIndex + 1) % actions.length;
-    }
-
-    function executeSelectedAction() {
-        const actions = selectedActions();
-        if (actions.length === 0)
-            return;
-        executeAction(actions[Math.min(selectedActionIndex, actions.length - 1)]);
-    }
 
     function executeAction(action, targetItem) {
         const item = targetItem || selectedItem;
@@ -851,6 +817,10 @@ PluginComponent {
             if (entry)
                 SessionService.launchDesktopAction(entry, action.data);
             close();
+            return;
+        }
+        if (action.id === "uninstall") {
+            uninstallItem(item);
             return;
         }
         if (action.id === "dgpu") {
@@ -876,6 +846,17 @@ PluginComponent {
         close();
     }
 
+    // Removal runs in the same held terminal window the updater uses, so the
+    // package manager can prompt and the result stays on screen.
+    function uninstallItem(item) {
+        const argv = item.devKind === "agent" ? ["agent", "remove", String(item.devId)]
+            : item.devKind === "environment" ? ["dev-env", "remove", String(item.devId)]
+            : ["app", "uninstall", String(item.app?.id || "")];
+        Quickshell.execDetached([Paths.vshellCli, "terminal", "exec", "--tui", "--",
+            Paths.vshellCli].concat(argv));
+        close();
+    }
+
     function selectNext() {
         if (visibleItems.length === 0)
             return;
@@ -898,12 +879,54 @@ PluginComponent {
             resultGrid.positionViewAtIndex(selectedItemIndex, GridView.Contain);
     }
 
+    function handleActionMenuKey(event) {
+        switch (event.key) {
+        case Qt.Key_Escape:
+            actionMenu.dismiss();
+            break;
+        case Qt.Key_Down:
+        case Qt.Key_Tab:
+            actionMenu.step(false);
+            break;
+        case Qt.Key_Up:
+        case Qt.Key_Backtab:
+            actionMenu.step(true);
+            break;
+        case Qt.Key_Return:
+        case Qt.Key_Enter:
+            actionMenu.chooseSelected();
+            break;
+        default:
+            return false;
+        }
+        event.accepted = true;
+        return true;
+    }
+
+    // Alt with an arrow walks the sidebar while the search field keeps focus.
+    function stepCategory(forward) {
+        if (categories.length === 0)
+            return;
+        prefixHelpVisible = false;
+        selectedCategoryIndex = forward
+            ? Math.min(categories.length - 1, selectedCategoryIndex + 1)
+            : Math.max(0, selectedCategoryIndex - 1);
+    }
+
     function handleKey(event) {
         // Every key press — navigation and typing alike — hands selection back
         // to the keyboard and puts hover to sleep until the mouse moves again.
         hoverGate.disarm();
         const hasCtrl = event.modifiers & Qt.ControlModifier;
         const hasShift = event.modifiers & Qt.ShiftModifier;
+        if (actionMenu.visible && handleActionMenuKey(event))
+            return;
+        if ((event.modifiers & Qt.AltModifier)
+                && (event.key === Qt.Key_Up || event.key === Qt.Key_Down)) {
+            stepCategory(event.key === Qt.Key_Down);
+            event.accepted = true;
+            return;
+        }
         if (hasCtrl && event.key === Qt.Key_B) {
             toggleSidebar();
             event.accepted = true;
@@ -928,12 +951,6 @@ PluginComponent {
             }
             if (fileSettingsVisible) {
                 fileSettingsVisible = false;
-                event.accepted = true;
-                return;
-            }
-            if (actionsExpanded) {
-                actionsExpanded = false;
-                selectedActionIndex = 0;
                 event.accepted = true;
                 return;
             }
@@ -965,27 +982,20 @@ PluginComponent {
         case Qt.Key_Return:
         case Qt.Key_Enter:
             if (hasShift) {
-                toggleActions();
+                showActionMenuForSelection();
                 event.accepted = true;
                 return;
             }
-            if (actionsExpanded)
-                executeSelectedAction();
-            else
-                executeSelected();
+            executeSelected();
             event.accepted = true;
             return;
         case Qt.Key_Tab:
-            if (actionsExpanded)
-                cycleAction(false);
-            else if (categories[selectedCategoryIndex]?.id === "files")
+            if (categories[selectedCategoryIndex]?.id === "files")
                 cycleFileType(false);
             event.accepted = true;
             return;
         case Qt.Key_Backtab:
-            if (actionsExpanded)
-                cycleAction(true);
-            else if (categories[selectedCategoryIndex]?.id === "files")
+            if (categories[selectedCategoryIndex]?.id === "files")
                 cycleFileType(true);
             event.accepted = true;
             return;
@@ -1006,22 +1016,18 @@ PluginComponent {
     onQueryChanged: {
         if (resettingState || routingPrefix)
             return;
-        if (actionContextMenu.visible)
-            actionContextMenu.close();
+        actionMenu.dismiss();
         selectedItemIndex = 0;
         filePreviewRevealed = false;
-        actionsExpanded = false;
         refreshItems();
         resetResultListPosition();
     }
     onSelectedCategoryIndexChanged: {
         if (resettingState || routingPrefix)
             return;
-        if (actionContextMenu.visible)
-            actionContextMenu.close();
+        actionMenu.dismiss();
         selectedItemIndex = 0;
         filePreviewRevealed = false;
-        actionsExpanded = false;
         fileSettingsVisible = false;
         refreshItems();
         resetResultListPosition();
@@ -1272,6 +1278,9 @@ PluginComponent {
                         width: root.categoryWidth
                         height: parent.height
                         visible: root.sidebarVisible
+                        // The guide popout overhangs the results column, a
+                        // sibling that would otherwise paint over it.
+                        z: 2
 
                         Column {
                             id: categoryButtons
@@ -1425,7 +1434,13 @@ PluginComponent {
                                     HelpRow {
                                         width: parent.width
                                         shortcut: "Shift+Enter"
-                                        description: I18n.tr("Show or hide actions")
+                                        description: I18n.tr("Show item actions")
+                                    }
+
+                                    HelpRow {
+                                        width: parent.width
+                                        shortcut: "Alt+Up / Down"
+                                        description: I18n.tr("Move the sidebar selection")
                                     }
 
                                     HelpRow {
@@ -1630,7 +1645,6 @@ PluginComponent {
                                         onClicked: {
                                             root.fileSearchType = modelData.id;
                                             root.filePreviewRevealed = false;
-                                            root.actionsExpanded = false;
                                             root.refreshFileItems();
                                             searchInput.forceActiveFocus();
                                         }
@@ -1660,8 +1674,8 @@ PluginComponent {
                         StyledRect {
                             id: resultsSurface
                             width: parent.width
-                            height: parent.height - searchBar.height - fileTools.height - actionStrip.height
-                                - parent.spacing * (1 + (fileTools.visible ? 1 : 0) + (actionStrip.visible ? 1 : 0))
+                            height: parent.height - searchBar.height - fileTools.height
+                                - parent.spacing * (1 + (fileTools.visible ? 1 : 0))
                             radius: Theme.cornerRadius
                             color: Theme.withAlpha(Theme.surfaceContainerHigh, Theme.popupTransparency)
 
@@ -1700,7 +1714,7 @@ PluginComponent {
                                     }
                                     onDoubleClicked: root.executeItem(modelData)
                                     onHovered: {
-                                        if (!actionContextMenu.visible)
+                                        if (!actionMenu.visible)
                                             root.selectedItemIndex = index;
                                     }
                                     onContextRequested: (sender, localX, localY) => {
@@ -1746,7 +1760,7 @@ PluginComponent {
                                     }
                                     onDoubleClicked: root.executeItem(modelData)
                                     onHovered: {
-                                        if (!actionContextMenu.visible)
+                                        if (!actionMenu.visible)
                                             root.selectedItemIndex = index;
                                     }
                                     onContextRequested: (sender, localX, localY) => {
@@ -1757,100 +1771,18 @@ PluginComponent {
                                 }
                             }
 
-                            Popup {
-                                id: actionContextMenu
-
-                                property var targetItem: null
-                                property var actions: []
-
+                            ActionMenu {
+                                id: actionMenu
                                 parent: modal
-                                width: 250
-                                height: contextMenuItems.implicitHeight + Theme.spacingS * 2
-                                padding: 0
-                                modal: false
-                                closePolicy: Popup.CloseOnEscape
                                 z: 60
-
-                                onClosed: Qt.callLater(() => searchInput.forceActiveFocus())
-
-                                background: Rectangle {
-                                    color: "transparent"
-                                }
-
-                                contentItem: Rectangle {
-                                    color: Theme.floatingSurface
-                                    radius: Theme.cornerRadius
-                                    border.width: 1
-                                    border.color: Theme.borderColorStrong
-
-                                    Column {
-                                        id: contextMenuItems
-                                        anchors.left: parent.left
-                                        anchors.right: parent.right
-                                        anchors.top: parent.top
-                                        anchors.margins: Theme.spacingS
-                                        spacing: Theme.spacingXXS
-
-                                        Repeater {
-                                            model: actionContextMenu.actions
-
-                                            delegate: Rectangle {
-                                                id: contextAction
-
-                                                required property var modelData
-
-                                                width: parent.width
-                                                height: 36
-                                                radius: Theme.controlRadius
-                                                color: contextActionArea.containsMouse ? Theme.surfaceHover : "transparent"
-
-                                                Row {
-                                                    anchors.left: parent.left
-                                                    anchors.right: parent.right
-                                                    anchors.leftMargin: Theme.spacingS
-                                                    anchors.rightMargin: Theme.spacingS
-                                                    anchors.verticalCenter: parent.verticalCenter
-                                                    spacing: Theme.spacingS
-
-                                                    VgsIcon {
-                                                        anchors.verticalCenter: parent.verticalCenter
-                                                        name: contextAction.modelData.icon || "play_arrow"
-                                                        size: 16
-                                                        color: contextActionArea.containsMouse ? Theme.primary : Theme.surfaceVariantText
-                                                    }
-
-                                                    StyledText {
-                                                        width: Math.max(0, parent.width - 16 - parent.spacing)
-                                                        anchors.verticalCenter: parent.verticalCenter
-                                                        text: contextAction.modelData.label || ""
-                                                        font.pixelSize: Theme.fontSizeSmall
-                                                        font.weight: contextActionArea.containsMouse ? Font.Medium : Font.Normal
-                                                        color: contextActionArea.containsMouse ? Theme.primary : Theme.surfaceText
-                                                        elide: Text.ElideRight
-                                                    }
-                                                }
-
-                                                MouseArea {
-                                                    id: contextActionArea
-                                                    anchors.fill: parent
-                                                    hoverEnabled: true
-                                                    cursorShape: Qt.PointingHandCursor
-                                                    onClicked: {
-                                                        const targetItem = actionContextMenu.targetItem;
-                                                        actionContextMenu.close();
-                                                        root.executeAction(contextAction.modelData, targetItem);
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
+                                onChosen: (action, targetItem) => root.executeAction(action, targetItem)
+                                onDismissed: searchInput.forceActiveFocus()
                             }
 
                             MouseArea {
                                 parent: modal
                                 anchors.fill: parent
-                                visible: actionContextMenu.visible
+                                visible: actionMenu.visible
                                 enabled: visible
                                 z: 55
                                 hoverEnabled: true
@@ -1858,7 +1790,7 @@ PluginComponent {
                                 preventStealing: true
 
                                 onPressed: mouse => {
-                                    actionContextMenu.close();
+                                    actionMenu.dismiss();
                                     mouse.accepted = true;
                                 }
                             }
@@ -1940,44 +1872,6 @@ PluginComponent {
                             }
                         }
 
-                        StyledRect {
-                            id: actionStrip
-                            width: parent.width
-                            height: visible ? 50 : 0
-                            visible: root.actionsExpanded
-                            radius: 0
-                            color: "transparent"
-                            border.width: 0
-                            clip: true
-
-                            Row {
-                                anchors.fill: parent
-                                anchors.margins: Theme.spacingS
-                                spacing: Theme.spacingS
-
-                                Repeater {
-                                    model: root.selectedActions()
-                                    delegate: ToolButton {
-                                        required property var modelData
-                                        required property int index
-                                        text: modelData.label
-                                        iconName: modelData.icon
-                                        selected: root.selectedActionIndex === index
-                                        onClicked: {
-                                            root.selectedActionIndex = index;
-                                            root.executeAction(modelData);
-                                        }
-                                    }
-                                }
-
-                                StyledText {
-                                    anchors.verticalCenter: parent.verticalCenter
-                                    text: "Tab cycle  ·  Enter open  ·  Shift+Enter close"
-                                    font.pixelSize: Theme.fontSizeSmall - 1
-                                    color: Theme.surfaceVariantText
-                                }
-                            }
-                        }
                     }
                 }
             }

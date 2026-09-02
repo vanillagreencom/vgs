@@ -271,7 +271,7 @@ var SPEC = {
     launcherSearchIgnoreMounts: { def: true },
     launcherFolderOpenCommand: { def: "" },
     launcherMenuUsageHistory: { def: {} },
-    launcherMenuViewModes: { def: { apps: "list", files: "list", folders: "list" } },
+    launcherMenuViewMode: { def: "list" },
     keybindsFloatingWindow: { def: false },
 
     useAutoLocation: { def: false },

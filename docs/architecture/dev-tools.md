@@ -46,7 +46,7 @@ Nothing downloads until first run. Rules:
 
 ```
 vshell mise    install|refresh|remove-stubs|opt-in|list --json|outdated --json|up
-vshell agent   list [--json] | launch <id> [--inline] | install <id> | pick
+vshell agent   list [--json] | launch <id> [--inline] | install <id> | remove <id> | pick
 vshell dev-env list [--json] | install <id> | remove <id>
 vshell update  count | run <system|aur|flatpak|tools|all>
 ```
@@ -59,6 +59,11 @@ opens the agent's own terminal (app id `vshell-agent`) running
 the TUI window; agent sessions do not. `pick` opens the launcher on its Dev tools section, which
 lists one entry per agent and one per language environment straight from
 the catalog (`vshell-menu openCategory dev` over IPC).
+
+`agent remove <id>` uninstalls the mise package and deletes VGS's launcher
+stub; an agent the owner installed themselves is left alone. `dev-env remove`
+does the same for a language environment. Both run in the updater's TUI window
+and hold on the result, and the launcher's item menu offers them as Uninstall.
 
 ## Updates, end to end
 

@@ -278,11 +278,7 @@
   "launcherSearchIgnoreMounts": true,
   "launcherFolderOpenCommand": "",
   "launcherMenuUsageHistory": {},
-  "launcherMenuViewModes": {
-    "apps": "list",
-    "files": "list",
-    "folders": "list"
-  },
+  "launcherMenuViewMode": "list",
   "keybindsFloatingWindow": false,
   "useAutoLocation": false,
   "weatherEnabled": true,
@@ -753,6 +749,6 @@
   "launcherPluginOrder": [],
   "barInsetPaddingShared": -1,
   "barInsetPaddingSyncAll": false,
-  "configVersion": 23,
+  "configVersion": 24,
   "themeApps": {}
 }
