@@ -15,30 +15,28 @@ function itemsFromCatalog(raw) {
     const data = JSON.parse(raw || "{}");
     const out = [];
     for (const agent of data.agents || []) {
-        out.push({
+        out.push(Object.assign({
             category: "dev",
             title: agent.name,
             subtitle: agent.kind === "server" ? agent.command + ", server only: opens in the browser (no app)" : agent.command,
             tag: "harness",
             group: 0,
             iconColor: agent.color || "",
-            ...iconFields(agent.icon),
             keywords: ["agent", "ai", "code", agent.id, agent.command],
             argv: ["{vshell}", "agent", "launch", agent.id]
-        });
+        }, iconFields(agent.icon)));
     }
     for (const env of data.envs || []) {
-        out.push({
+        out.push(Object.assign({
             category: "dev",
             title: env.name,
             subtitle: env.installer === "rustup" ? "install with rustup" : "install with mise",
             tag: "environment",
             group: 1,
             iconColor: env.color || "",
-            ...iconFields(env.icon),
             keywords: ["install", "language", "environment", "dev", env.id],
             argv: ["{vshell}", "terminal", "exec", "--tui", "--hold", "--", "{vshell}", "dev-env", "install", env.id]
-        });
+        }, iconFields(env.icon)));
     }
     return out;
 }
