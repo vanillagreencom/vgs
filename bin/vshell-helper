@@ -2217,7 +2217,9 @@ def tmux_sockets() -> List[Path]:
     from the shell reaches a different socket and silently starts an empty
     server there."""
     uid = os.getuid()
-    roots = [Path(d) for d in (os.environ.get("TMUX_TMPDIR"), f"/run/user/{uid}", tempfile.gettempdir()) if d]
+    # /tmp by name as well as by $TMPDIR: tmux falls back to /tmp itself, whatever
+    # TMPDIR says, so a shell with TMPDIR elsewhere would miss the default socket.
+    roots = [Path(d) for d in (os.environ.get("TMUX_TMPDIR"), f"/run/user/{uid}", tempfile.gettempdir(), "/tmp") if d]
     found: List[Path] = []
     seen = set()
     # $TMUX names the socket of the server this process runs under, which a
