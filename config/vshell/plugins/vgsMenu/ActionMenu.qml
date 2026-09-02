@@ -11,6 +11,11 @@ Item {
     property var actions: []
     property var targetItem: null
     property int selectedIndex: 0
+    // Whether the launcher itself is on screen. The menu is armed separately,
+    // so a launcher hidden while the menu is up cannot bring it back on the
+    // next open, whichever path hid it.
+    property bool launcherVisible: true
+    property bool armed: false
     readonly property int rowHeight: 36
 
     signal chosen(var action, var targetItem)
@@ -18,21 +23,26 @@ Item {
 
     width: 250
     height: menuBody.height
-    visible: false
+    visible: armed && launcherVisible
+
+    onLauncherVisibleChanged: {
+        if (!launcherVisible)
+            dismiss();
+    }
 
     function openAt(pointX, pointY, menuActions, item) {
         actions = menuActions.slice();
         targetItem = item;
         selectedIndex = 0;
-        visible = true;
+        armed = true;
         x = Math.max(Theme.spacingS, Math.min(parent.width - width - Theme.spacingS, pointX));
         y = Math.max(Theme.spacingS, Math.min(parent.height - height - Theme.spacingS, pointY));
     }
 
     function dismiss() {
-        if (!visible)
+        if (!armed)
             return;
-        visible = false;
+        armed = false;
         actions = [];
         targetItem = null;
         dismissed();
@@ -43,7 +53,7 @@ Item {
             return;
         const action = actions[selectedIndex];
         const item = targetItem;
-        visible = false;
+        armed = false;
         chosen(action, item);
     }
 
