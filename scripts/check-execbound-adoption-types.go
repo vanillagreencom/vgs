@@ -106,6 +106,7 @@ func (s fileScanner) assignedBuilderHasLifecycle(id *ast.Ident, after token.Pos)
 	if body == nil {
 		return false
 	}
+	ctx := s.rawBuilderContext(after)
 	foundLifecycle, invalid := false, false
 	ast.Inspect(body, func(node ast.Node) bool {
 		if invalid {
@@ -119,14 +120,7 @@ func (s fileScanner) assignedBuilderHasLifecycle(id *ast.Ident, after token.Pos)
 			invalid = true
 			return false
 		}
-		if foundLifecycle {
-			if s.identIsOutputReadReceiver(use) {
-				invalid = true
-				return false
-			}
-			return true
-		}
-		allowed, lifecycle := s.assignedBuilderUseAllowed(use)
+		allowed, lifecycle := s.assignedBuilderUseAllowed(use, foundLifecycle, ctx)
 		if !allowed {
 			invalid = true
 			return false
@@ -152,27 +146,30 @@ func (s fileScanner) identIsAssignedBuilderWrite(id *ast.Ident) bool {
 	return false
 }
 
-func (s fileScanner) identIsOutputReadReceiver(id *ast.Ident) bool {
-	sel := s.selectorForIdentReceiver(id)
-	return sel != nil && isOutputReadName(sel.Sel.Name)
+func (s fileScanner) rawBuilderContext(pos token.Pos) string {
+	file := s.analyzer.fset.Position(pos).Filename
+	return s.analyzer.rel(file) + "::" + functionAt(s.functions, pos)
 }
 
-func (s fileScanner) assignedBuilderUseAllowed(id *ast.Ident) (bool, bool) {
+func (s fileScanner) assignedBuilderUseAllowed(id *ast.Ident, lifecycleSeen bool, ctx string) (bool, bool) {
 	sel := s.selectorForIdentReceiver(id)
-	if sel == nil {
+	if sel != nil {
+		if isRawLifecycleName(sel.Sel.Name) {
+			called := s.selectorCalledDirectly(sel)
+			return called, called
+		}
+		if !lifecycleSeen && isRawBuilderConfigFieldName(sel.Sel.Name) {
+			return true, false
+		}
+		if !lifecycleSeen && isRawBuilderPipeName(sel.Sel.Name) {
+			return s.selectorCalledDirectly(sel), false
+		}
+		if lifecycleSeen && isRawBuilderFollowupName(sel.Sel.Name) {
+			return sel.Sel.Name == "Process" || sel.Sel.Name == "ProcessState" || s.selectorCalledDirectly(sel), false
+		}
 		return false, false
 	}
-	if isRawLifecycleName(sel.Sel.Name) {
-		called := s.selectorCalledDirectly(sel)
-		return called, called
-	}
-	if isRawBuilderConfigFieldName(sel.Sel.Name) {
-		return true, false
-	}
-	if isRawBuilderPipeName(sel.Sel.Name) {
-		return s.selectorCalledDirectly(sel), false
-	}
-	return false, false
+	return lifecycleSeen && s.allowedRawBuilderFollowupUse(id, ctx), false
 }
 
 func (s fileScanner) selectorForIdentReceiver(id *ast.Ident) *ast.SelectorExpr {
@@ -202,6 +199,78 @@ func isRawBuilderConfigFieldName(name string) bool {
 
 func isRawBuilderPipeName(name string) bool {
 	return name == "StderrPipe" || name == "StdinPipe" || name == "StdoutPipe"
+}
+
+func isRawBuilderFollowupName(name string) bool {
+	return name == "Process" || name == "ProcessState" || name == "Wait"
+}
+
+func (s fileScanner) allowedRawBuilderFollowupUse(id *ast.Ident, ctx string) bool {
+	if call := s.callForArgument(id); call != nil {
+		switch ctx + "::" + callName(call.Fun) {
+		case "backend/internal/runner/runner.go::runQuickshell::exitCode",
+			"backend/internal/services/cloudsync/rcd.go::start::kill",
+			"backend/internal/services/cloudsync/rcd.go::start::wait",
+			"backend/internal/services/gamma/gamma.go::applyGammaLocked::watchLocked",
+			"backend/internal/services/sysupdate/sysupdate.go::handleUpgrade::waitUpgrade":
+			return true
+		}
+	}
+	if assign, ok := s.parentAfterParens(id).(*ast.AssignStmt); ok {
+		for i, rhs := range assign.Rhs {
+			if i >= len(assign.Lhs) || !exprIsNode(rhs, id) {
+				continue
+			}
+			sel, selOK := unparen(assign.Lhs[i]).(*ast.SelectorExpr)
+			if !selOK {
+				continue
+			}
+			recv, recvOK := unparen(sel.X).(*ast.Ident)
+			if recvOK {
+				switch ctx + "::" + recv.Name + "." + sel.Sel.Name {
+				case "backend/internal/services/cloudsync/rcd.go::start::d.cmd",
+					"backend/internal/services/gamma/gamma.go::applyGammaLocked::m.cmd":
+					return true
+				}
+			}
+		}
+	}
+	kv, ok := s.parentAfterParens(id).(*ast.KeyValueExpr)
+	if !ok {
+		return false
+	}
+	key, keyOK := unparen(kv.Key).(*ast.Ident)
+	lit, litOK := s.parents[kv].(*ast.CompositeLit)
+	if !litOK {
+		return false
+	}
+	typ, typOK := unparen(lit.Type).(*ast.Ident)
+	return keyOK && typOK && key.Name == "cmd" && typ.Name == "oauthSession" &&
+		ctx == "backend/internal/services/cloudsync/remotes.go::beginOAuth"
+}
+
+func (s fileScanner) callForArgument(id *ast.Ident) *ast.CallExpr {
+	call, ok := s.parentAfterParens(id).(*ast.CallExpr)
+	if !ok {
+		return nil
+	}
+	for _, arg := range call.Args {
+		if exprIsNode(arg, id) {
+			return call
+		}
+	}
+	return nil
+}
+
+func callName(expr ast.Expr) string {
+	switch n := unparen(expr).(type) {
+	case *ast.Ident:
+		return n.Name
+	case *ast.SelectorExpr:
+		return n.Sel.Name
+	default:
+		return ""
+	}
 }
 
 func (s fileScanner) functionBody(pos token.Pos) *ast.BlockStmt {

@@ -140,8 +140,12 @@ brightnessbridge chain that tests the ddcutil pipe-hold bound. Direct raw
 allowlist and started or run in the same function. Builder aliases are rejected
 because they hide that shape. Before the direct `Start` or `Run`, an assigned
 raw builder may only use `exec.Cmd` configuration fields and direct pipe setup;
-passing, returning, storing, or closure capture is rejected. Unrelated `Output`
-and `CombinedOutput` methods are allowed when no process builder is involved.
+afterward, the same builder is scanned through the whole function and may only
+use direct `Wait`, `Process`, `ProcessState`, or the follow-up operation covered
+by that raw-exec lifecycle reason. Other passing, returning, storing, closure
+capture, method values, method expressions, `Output`, and `CombinedOutput` are
+rejected. Unrelated `Output` and `CombinedOutput` methods are allowed when no
+process builder is involved.
 
 ## Feature flags / env
 

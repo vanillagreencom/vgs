@@ -185,7 +185,8 @@ def main() -> int:
             print(f"  {use.rel}:{use.line}: {use.function}: {use.expression}", file=sys.stderr)
     if raw_lifecycle:
         print(
-            "check-execbound-adoption: FAIL: raw os/exec builders must start or run in the same function:",
+            "check-execbound-adoption: FAIL: raw os/exec builders must start or run in the same "
+            "function and stay inside their allowlisted lifecycle:",
             file=sys.stderr,
         )
         for use in raw_lifecycle:
@@ -215,7 +216,7 @@ def main() -> int:
             "\nCall execbound.Command(...).Output or execbound.Command(...).CombinedOutput "
             "as a direct chain. Use execbound.CommandWithDelay only at allowlisted custom-delay "
             "sites. Raw os/exec builders need Start or Run in the same function and an "
-            "ALLOWED_RAW_EXECS entry for their lifecycle reason.",
+            "ALLOWED_RAW_EXECS entry for their lifecycle reason, with no other builder escape.",
             file=sys.stderr,
         )
         return 1

@@ -56,6 +56,15 @@ def assert_fails_without(root: Path, expected: tuple[str, ...], *unexpected: str
             raise AssertionError(f"checker output unexpectedly contained {needle!r}\n{output}")
 
 
+def assert_raw_failure(source: str, expected: tuple[str, ...], *unexpected: str) -> None:
+    root = make_root()
+    try:
+        write_backend(root, "internal/services/clipboard/wayland.go", source)
+        assert_fails_without(root, expected, *unexpected)
+    finally:
+        shutil.rmtree(root)
+
+
 def make_root() -> Path:
     return Path(tempfile.mkdtemp(prefix="vgs-execbound-test-"))
 
@@ -227,115 +236,38 @@ func appendRaw(ctx context.Context) { var runs []outputRunner; runs = append(run
     finally:
         shutil.rmtree(raw_root)
 
-    raw_allowed_output_root = make_root()
-    try:
-        write_backend(raw_allowed_output_root, "internal/services/clipboard/wayland.go",
-            """
-package clipboard
-import "os/exec"
-func wlCopy(args []string) error { _, err := exec.Command("wl-copy", args...).Output(); return err }
-""",
-        )
-        assert_fails_without(
-            raw_allowed_output_root,
-            ("raw exec.Command or exec.CommandContext output reads", "wlCopy: exec.Command(\"wl-copy\", args...).Output()", "raw os/exec builders must start or run"),
-            "raw os/exec builders outside execbound need a lifecycle reason",
-        )
-    finally:
-        shutil.rmtree(raw_allowed_output_root)
+    assert_raw_failure(
+        'package clipboard\nimport "os/exec"\nfunc wlCopy(args []string) error { _, err := exec.Command("wl-copy", args...).Output(); return err }\n',
+        ("raw exec.Command or exec.CommandContext output reads", "wlCopy: exec.Command(\"wl-copy\", args...).Output()", "raw os/exec builders must start or run"),
+        "raw os/exec builders outside execbound need a lifecycle reason",
+    )
+    assert_raw_failure(
+        'package clipboard\nimport ("context"; "os/exec")\nfunc watch(ctx context.Context) error { _, err := exec.CommandContext(ctx, "wl-paste", "--watch", "echo").CombinedOutput(); return err }\n',
+        ("raw exec.Command or exec.CommandContext output reads", "watch: exec.CommandContext(ctx, \"wl-paste\", \"--watch\", \"echo\").CombinedOutput()", "raw os/exec builders must start or run"),
+        "raw os/exec builders outside execbound need a lifecycle reason",
+    )
 
-    raw_allowed_combined_root = make_root()
-    try:
-        write_backend(raw_allowed_combined_root, "internal/services/clipboard/wayland.go",
-            """
-package clipboard
-import ("context"; "os/exec")
-func watch(ctx context.Context) error { _, err := exec.CommandContext(ctx, "wl-paste", "--watch", "echo").CombinedOutput(); return err }
-""",
-        )
-        assert_fails_without(
-            raw_allowed_combined_root,
-            ("raw exec.Command or exec.CommandContext output reads", "watch: exec.CommandContext(ctx, \"wl-paste\", \"--watch\", \"echo\").CombinedOutput()", "raw os/exec builders must start or run"),
-            "raw os/exec builders outside execbound need a lifecycle reason",
-        )
-    finally:
-        shutil.rmtree(raw_allowed_combined_root)
-
-    raw_assigned_output_root = make_root()
-    try:
-        write_backend(raw_assigned_output_root, "internal/services/clipboard/wayland.go",
-            """
-package clipboard
-import "os/exec"
-func wlCopy(args []string) error { cmd := exec.Command("wl-copy", args...); if err := cmd.Start(); err != nil { return err }; output := cmd.Output; _, err := output(); return err }
-""",
-        )
-        assert_fails_without(
-            raw_assigned_output_root,
-            ("raw os/exec builders must start or run", "wlCopy: exec.Command(\"wl-copy\", args...)"),
-            "raw os/exec builders outside execbound need a lifecycle reason",
-            "raw exec.Command or exec.CommandContext output reads",
-        )
-    finally:
-        shutil.rmtree(raw_assigned_output_root)
-
-    raw_assigned_combined_root = make_root()
-    try:
-        write_backend(raw_assigned_combined_root, "internal/services/clipboard/wayland.go",
-            """
-package clipboard
-import ("context"; "os/exec")
-func watch(ctx context.Context) error { cmd := exec.CommandContext(ctx, "wl-paste", "--watch", "echo"); output := cmd.CombinedOutput; if err := cmd.Start(); err != nil { return err }; _, err := output(); return err }
-""",
-        )
-        assert_fails_without(
-            raw_assigned_combined_root,
-            ("raw os/exec builders must start or run", "watch: exec.CommandContext(ctx, \"wl-paste\", \"--watch\", \"echo\")"),
-            "raw os/exec builders outside execbound need a lifecycle reason",
-            "raw exec.Command or exec.CommandContext output reads",
-        )
-    finally:
-        shutil.rmtree(raw_assigned_combined_root)
-
-    raw_assigned_escape_cases = [
-        ("closure", 'package clipboard\nimport "os/exec"\nfunc wlCopy(args []string) error { cmd := exec.Command("wl-copy", args...); capture := func() { _ = cmd }; capture(); return cmd.Start() }\n'),
-        ("helper", 'package clipboard\nimport "os/exec"\nfunc helper(any) {}\nfunc wlCopy(args []string) error { cmd := exec.Command("wl-copy", args...); helper(cmd); return cmd.Start() }\n'),
-        ("interface", 'package clipboard\nimport "os/exec"\nfunc wlCopy(args []string) error { cmd := exec.Command("wl-copy", args...); var value any = cmd; _ = value; return cmd.Start() }\n'),
-        ("field", 'package clipboard\nimport "os/exec"\ntype holder struct{ cmd any }\nfunc wlCopy(args []string) error { cmd := exec.Command("wl-copy", args...); _ = holder{cmd: cmd}; return cmd.Start() }\n'),
-        ("method-expression", 'package clipboard\nimport "os/exec"\nfunc wlCopy(args []string) error { cmd := exec.Command("wl-copy", args...); output := (*exec.Cmd).Output; _, _ = output(cmd); return cmd.Start() }\n'),
-    ]
-    for name, source in raw_assigned_escape_cases:
-        raw_assigned_escape_root = make_root()
+    for name, source, expression in [
+        ("method-value-output", 'package clipboard\nimport "os/exec"\nfunc wlCopy(args []string) error { cmd := exec.Command("wl-copy", args...); if err := cmd.Start(); err != nil { return err }; output := cmd.Output; _, err := output(); return err }\n', "wlCopy: exec.Command(\"wl-copy\", args...)"),
+        ("method-value-combined", 'package clipboard\nimport ("context"; "os/exec")\nfunc watch(ctx context.Context) error { cmd := exec.CommandContext(ctx, "wl-paste", "--watch", "echo"); output := cmd.CombinedOutput; if err := cmd.Start(); err != nil { return err }; _, err := output(); return err }\n', "watch: exec.CommandContext(ctx, \"wl-paste\", \"--watch\", \"echo\")"),
+        ("direct-output", 'package clipboard\nimport "os/exec"\nfunc wlCopy(args []string) error { cmd := exec.Command("wl-copy", args...); if err := cmd.Start(); err != nil { return err }; _, err := cmd.Output(); return err }\n', "wlCopy: exec.Command(\"wl-copy\", args...)"),
+        ("direct-combined", 'package clipboard\nimport ("context"; "os/exec")\nfunc watch(ctx context.Context) error { cmd := exec.CommandContext(ctx, "wl-paste", "--watch", "echo"); if err := cmd.Start(); err != nil { return err }; _, err := cmd.CombinedOutput(); return err }\n', "watch: exec.CommandContext(ctx, \"wl-paste\", \"--watch\", \"echo\")"),
+        ("reassigned", 'package clipboard\nimport "os/exec"\nfunc wlCopy(args []string) error { cmd := exec.Command("wl-copy", args...); cmd = nil; return cmd.Start() }\n', "wlCopy: exec.Command(\"wl-copy\", args...)"),
+        ("branch-closure", 'package clipboard\nimport "os/exec"\nfunc helper(any) {}\nfunc wlCopy(args []string, ok bool) error { cmd := exec.Command("wl-copy", args...); if ok { return cmd.Start() }; capture := func() { helper(cmd) }; capture(); return nil }\n', "wlCopy: exec.Command(\"wl-copy\", args...)"),
+        ("branch-helper", 'package clipboard\nimport "os/exec"\nfunc helper(any) {}\nfunc wlCopy(args []string, ok bool) error { cmd := exec.Command("wl-copy", args...); if ok { return cmd.Start() }; helper(cmd); return nil }\n', "wlCopy: exec.Command(\"wl-copy\", args...)"),
+        ("branch-interface", 'package clipboard\nimport "os/exec"\nfunc wlCopy(args []string, ok bool) error { cmd := exec.Command("wl-copy", args...); if ok { return cmd.Start() }; var value any = cmd; _ = value; return nil }\n', "wlCopy: exec.Command(\"wl-copy\", args...)"),
+        ("branch-field", 'package clipboard\nimport "os/exec"\ntype holder struct{ cmd any }\nfunc wlCopy(args []string, ok bool) error { cmd := exec.Command("wl-copy", args...); if ok { return cmd.Start() }; _ = holder{cmd: cmd}; return nil }\n', "wlCopy: exec.Command(\"wl-copy\", args...)"),
+        ("branch-method-expression", 'package clipboard\nimport "os/exec"\nfunc wlCopy(args []string, ok bool) error { cmd := exec.Command("wl-copy", args...); if ok { return cmd.Start() }; output := (*exec.Cmd).Output; _, _ = output(cmd); return nil }\n', "wlCopy: exec.Command(\"wl-copy\", args...)"),
+    ]:
         try:
-            write_backend(raw_assigned_escape_root, "internal/services/clipboard/wayland.go", source)
-            try:
-                assert_fails_without(
-                    raw_assigned_escape_root,
-                    ("raw os/exec builders must start or run", "wlCopy: exec.Command(\"wl-copy\", args...)"),
-                    "raw os/exec builders outside execbound need a lifecycle reason",
-                    "raw exec.Command or exec.CommandContext output reads",
-                )
-            except AssertionError as exc:
-                raise AssertionError(f"{name}: {exc}") from exc
-        finally:
-            shutil.rmtree(raw_assigned_escape_root)
-
-    raw_reassigned_root = make_root()
-    try:
-        write_backend(raw_reassigned_root, "internal/services/clipboard/wayland.go",
-            """
-package clipboard
-import "os/exec"
-func wlCopy(args []string) error { cmd := exec.Command("wl-copy", args...); cmd = nil; return cmd.Start() }
-""",
-        )
-        assert_fails_without(
-            raw_reassigned_root,
-            ("raw os/exec builders must start or run", "wlCopy: exec.Command(\"wl-copy\", args...)"),
-            "raw os/exec builders outside execbound need a lifecycle reason",
-        )
-    finally:
-        shutil.rmtree(raw_reassigned_root)
+            assert_raw_failure(
+                source,
+                ("raw os/exec builders must start or run", expression),
+                "raw os/exec builders outside execbound need a lifecycle reason",
+                "raw exec.Command or exec.CommandContext output reads",
+            )
+        except AssertionError as exc:
+            raise AssertionError(f"{name}: {exc}") from exc
 
     assigned_root = make_root()
     try:
