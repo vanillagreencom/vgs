@@ -47,20 +47,26 @@ def assert_equal(actual, expected, message):
         raise AssertionError(f"{message}: expected {expected!r}, got {actual!r}")
 
 
+def _restore_env(name, value):
+    if value is None:
+        os.environ.pop(name, None)
+    else:
+        os.environ[name] = value
+
+
 def with_temp_home(fn):
-    old_home = os.environ.get("HOME")
-    old_sudo = os.environ.pop("SUDO_USER", None)
+    # XDG_CONFIG_HOME travels with HOME, or a helper resolving config through
+    # it reads the real ~/.config from a test that thought it held a temp one.
+    saved = {n: os.environ.get(n) for n in ("HOME", "XDG_CONFIG_HOME", "SUDO_USER")}
+    os.environ.pop("SUDO_USER", None)
     with tempfile.TemporaryDirectory() as tmp:
         os.environ["HOME"] = tmp
+        os.environ["XDG_CONFIG_HOME"] = str(Path(tmp) / ".config")
         try:
             fn(Path(tmp))
         finally:
-            if old_home is None:
-                os.environ.pop("HOME", None)
-            else:
-                os.environ["HOME"] = old_home
-            if old_sudo is not None:
-                os.environ["SUDO_USER"] = old_sudo
+            for name, value in saved.items():
+                _restore_env(name, value)
 
 
 def test_system_font_normalization():
@@ -2882,9 +2888,8 @@ def _rd_journal(lines=None, returncode=0, stderr=""):
     original_run = helper.run
     original_window = helper._rd_journal_window
     helper._rd_journal_window = lambda: ["--boot"]
-    helper.run = lambda argv, **kwargs: subprocess.CompletedProcess(
-        argv, returncode, "\n".join(lines or []), stderr
-    )
+    helper.run = lambda argv, **kw: subprocess.CompletedProcess(
+        argv, returncode, "\n".join(lines or []), stderr)
     try:
         yield
     finally:
@@ -3188,9 +3193,7 @@ def test_remote_desktop_start_verifies_the_output_it_created():
     with _rd_lifecycle(output_present=False, create_takes_effect=None) as (calls, state):
         result = helper.remote_desktop_start()
     assert_equal(result["ok"], False, "an unverifiable output must not start the host either")
-    assert_equal(
-        [c for c in calls if c[0] == "systemctl"], [], "and still no unit start",
-    )
+    assert_equal([c for c in calls if c[0] == "systemctl"], [], "and still no unit start")
     assert_equal(
         _rd_hyprctl_calls(calls), [["hyprctl", "output", "create", "headless"]],
         "nothing is removed when the presence check cannot answer",
@@ -3227,8 +3230,7 @@ def test_remote_desktop_journal_window_never_falls_back_to_unbounded_history():
     with _rd_systemctl({"ActiveEnterTimestamp": good}):
         assert_equal(
             helper._rd_journal_window(), ["--since", "2026-08-06 16:44:12"],
-            "a parseable start time anchors the read to the current run",
-        )
+            "a parseable start time anchors the read to the current run")
 
     for label, reply in {
         "the query failed": subprocess.CompletedProcess([], 1, "", "Failed to connect to bus"),
@@ -3239,8 +3241,7 @@ def test_remote_desktop_journal_window_never_falls_back_to_unbounded_history():
         with _rd_systemctl({"ActiveEnterTimestamp": reply}):
             assert_equal(
                 helper._rd_journal_window(), None,
-                f"no anchor when {label} -- and specifically not a boot-wide replay",
-            )
+                f"no anchor when {label} -- and specifically not a boot-wide replay")
 
     # And the session read must REFUSE rather than read unbounded, reporting
     # unknown. Not idle either: `active` stays false but `readable` is false
@@ -3315,8 +3316,7 @@ def test_remote_desktop_unit_query_failure_is_not_a_missing_unit():
         state = helper._rd_unit_state()
     if state["known"] and not state["running"]:
         raise AssertionError(
-            "a reply carrying only LoadState must not read as 'installed and stopped'"
-        )
+            "a reply carrying only LoadState must not read as 'installed and stopped'")
 
     for label, reply in {"the query failed": broken, "the query said nothing": silent}.items():
         with _rd_systemctl({"LoadState": reply}):
@@ -3370,42 +3370,40 @@ def test_remote_desktop_paired_clients_reads_only_names():
         config = home / ".config" / "sunshine"
         config.mkdir(parents=True)
         (config / "sunshine_state.json").write_text(json.dumps({
-            "username": "method",
-            "salt": "SALTVALUE",
-            "password": "HASHVALUE",
-            "root": {
-                "uniqueid": "UNIQUE",
-                "named_devices": [
-                    {"name": "mbp-1", "cert": "-----BEGIN CERTIFICATE-----"},
-                    {"name": "  ", "cert": "x"},
-                    {"cert": "no name here"},
-                ],
-            },
+            "username": "method", "salt": "SALTVALUE", "password": "HASHVALUE",
+            "root": {"uniqueid": "UNIQUE", "named_devices": [
+                {"name": "mbp-1", "cert": "-----BEGIN CERTIFICATE-----"},
+                {"name": "  ", "cert": "x"}, {"cert": "no name here"}]},
         }))
-        old_xdg = os.environ.pop("XDG_CONFIG_HOME", None)
-        try:
-            result = helper._rd_paired_clients()
-        finally:
-            if old_xdg is not None:
-                os.environ["XDG_CONFIG_HOME"] = old_xdg
+        result = helper._rd_paired_clients()
         # Only names, and only usable ones. The same file holds the Web UI
         # credential hash and salt; nothing but `name` may leave this function.
         assert_equal(result["names"], ["mbp-1"], "only non-blank device names are returned")
         assert_equal(result["known"], True, "a well-formed file is an answer")
-        for name in result["names"]:
-            if "SALT" in name or "HASH" in name:
-                raise AssertionError("credential material must never reach the payload")
+        if any("SALT" in n or "HASH" in n for n in result["names"]):
+            raise AssertionError("credential material must never reach the payload")
 
     with_temp_home(check)
 
     # A machine with no Sunshine config is not an error, just an empty list --
-    # and it is an ANSWER, not an unknown.
+    # and it is an ANSWER, not an unknown. The ambient config is SEEDED so a
+    # runner proves the isolation too: with nothing to leak, the unfixed
+    # fixture answered [] as well and CI could not see the guard go.
     def check_absent(home):
         result = helper._rd_paired_clients()
         assert_equal(result["names"], [], "no state file means no paired clients")
         assert_equal(result["known"], True, "and an absent file is still an answer")
 
-    with_temp_home(check_absent)
+    with tempfile.TemporaryDirectory() as ambient:
+        (Path(ambient) / "sunshine").mkdir()
+        (Path(ambient) / "sunshine" / "sunshine_state.json").write_text(
+            json.dumps({"root": {"named_devices": [{"name": "ambient-leak"}]}}))
+        saved = os.environ.get("XDG_CONFIG_HOME")
+        os.environ["XDG_CONFIG_HOME"] = ambient
+        try:
+            with_temp_home(check_absent)
+        finally:
+            _restore_env("XDG_CONFIG_HOME", saved)
 
 
 def test_remote_desktop_malformed_state_degrades_rather_than_raising():
