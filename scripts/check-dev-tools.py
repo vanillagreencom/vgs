@@ -224,6 +224,10 @@ def test_first_launch_asks_before_installing():
     devtools.mise_install_stub = lambda *a: {"state": "written"}
     try:
         assert_equal(devtools.agent_installed(claude), False, "nothing installed")
+        assert_equal(devtools.agent_launch_argv(claude)[0], "claude", "an owner-installed command runs bare")
+        devtools.mise_installed_versions = lambda: ({"claude": "2.2.0"}, "")
+        assert_equal(devtools.agent_launch_argv(claude)[:4], ["mise", "x", "claude", "--"], "a mise install runs through mise x, no stub needed")
+        devtools.mise_installed_versions = lambda: ({}, "")
         devtools.input = lambda prompt: "n"
         assert_equal(devtools.agent_install_prompt(claude), False, "a refusal installs nothing")
         assert_equal(devtools.hold_terminal(3, "x"), 3, "hold keeps the failing status")

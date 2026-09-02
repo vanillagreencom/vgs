@@ -62,6 +62,16 @@ def agent_installed(entry: Dict[str, Any]) -> bool:
     return mise_stub_state(RT.home() / ".local" / "bin" / str(entry["command"])) in {"foreign", "shadowed"}
 
 
+def agent_launch_argv(entry: Dict[str, Any]) -> List[str]:
+    """The agent's launch argv, run through `mise x` when mise owns it so it
+    resolves without a stub or shim on PATH; the owner's own command otherwise."""
+    launch = [str(part) for part in entry.get("launch") or [entry["command"]]]
+    versions, _ = mise_installed_versions()
+    if versions.get(str(entry["package"])):
+        return ["mise", "x", str(entry["package"]), "--", *launch]
+    return launch
+
+
 def agent_install_prompt(entry: Dict[str, Any]) -> bool:
     """Ask in the terminal before the first download; True when installed."""
     if not RT.command_exists("mise"):
@@ -78,12 +88,11 @@ def agent_install_prompt(entry: Dict[str, Any]) -> bool:
     return subprocess.run(["mise", "use", "-g", str(entry["package"])], check=False, env=mise_env(), cwd=str(RT.home())).returncode == 0
 
 
-def agent_launch(agent_id: str, inline: bool) -> int:
+def agent_launch(agent_id: str, inline: bool, hold: bool = False) -> int:
     entry = next((e for e in agent_entries() if e["id"] == agent_id), None)
     if entry is None:
         RT.eprint(f"unknown agent {agent_id!r}; one of: " + " ".join(e["id"] for e in agent_entries()))
         return 1
-    command = str(entry["command"])
     # Agents refuse to remember trust for $HOME; a work directory keeps the
     # first launch from re-asking every session.
     work = RT.home() / "Work"
@@ -97,21 +106,22 @@ def agent_launch(agent_id: str, inline: bool) -> int:
             # that follows gets its own regular window.
             if RT.spawn_terminal([cli, "agent", "install", agent_id], app_id=RT.tui_app_id, wait=True, notify=True, what=f"installing {entry['name']}") != 0:
                 return 1
-        return RT.spawn_terminal([cli, "agent", "launch", agent_id, "--inline"], app_id="vshell-agent", detach=True, notify=True, what=f"{entry['name']}")
+        return RT.spawn_terminal([cli, "agent", "launch", agent_id, "--inline", "--hold"], app_id="vshell-agent", detach=True, notify=True, what=f"{entry['name']}")
     if not agent_installed(entry) and not agent_install_prompt(entry):
-        return hold_terminal(1, f"{entry['name']} was not installed.")
-    launch = [str(part) for part in entry.get("launch") or [command]]
-    try:
-        code = subprocess.run(launch, check=False).returncode
-    except OSError as exc:
-        return hold_terminal(1, f"could not start {launch[0]}: {exc}")
-    # A clean exit is the agent's own session ending; anything else is a
-    # message the owner would otherwise never see because the window closes.
-    return hold_terminal(code, f"{entry['name']} exited with status {code}.") if code else 0
+        return hold_terminal(1, f"{entry['name']} was not installed.") if hold else 1
+    launch = agent_launch_argv(entry)
+    env = mise_env()
+    if not hold:
+        os.execvpe(launch[0], launch, env)
+    # The agent replaces this process so it owns the terminal and its
+    # signals; the shell around it keeps the window open only on a non-zero
+    # exit, which is otherwise a message the owner never sees.
+    script = '"$@"; code=$?; if [ "$code" -ne 0 ]; then printf "\\n%s exited with status %s.\\nPress Enter to close. " "$0" "$code"; read -r _; fi; exit "$code"'
+    os.execvpe("sh", ["sh", "-c", script, entry["name"], *launch], env)
 
 
 def hold_terminal(code: int, message: str) -> int:
-    """Keep a launcher-opened terminal readable after a failure."""
+    """Keep a one-shot terminal readable after a failure."""
     print(f"\n{message}")
     try:
         input("Press Enter to close. ")
@@ -152,7 +162,7 @@ def cmd_agent(argv: List[str]) -> int:
         if len(ids) != 1:
             RT.eprint(usage)
             return 2
-        return agent_launch(ids[0], inline="--inline" in rest)
+        return agent_launch(ids[0], inline="--inline" in rest, hold="--hold" in rest)
     RT.eprint(usage)
     return 2
 
