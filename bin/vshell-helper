@@ -7062,7 +7062,8 @@ def _devtools() -> Any:
             command_exists=command_exists, load_settings=load_settings,
             set_settings_value=set_settings_value,
             load_required_json_file=load_required_json_file, eprint=eprint,
-            spawn_terminal=spawn_terminal, notify_user=notify_user))
+            spawn_terminal=spawn_terminal, notify_user=notify_user,
+            tui_app_id=TERMINAL_TUI_APP_ID))
         _DEVTOOLS = vshell_devtools
     return _DEVTOOLS
 

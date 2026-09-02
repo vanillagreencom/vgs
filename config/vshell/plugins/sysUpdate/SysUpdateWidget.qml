@@ -1,4 +1,5 @@
 import QtQuick
+import QtQuick.Controls
 import Quickshell
 import Quickshell.Io
 import qs.Common
@@ -465,6 +466,9 @@ PluginComponent {
                                 clip: true
                                 boundsBehavior: Flickable.StopAtBounds
 
+                                ScrollBar.vertical: VgsScrollbar {
+                                }
+
                                 delegate: Item {
                                     width: pkgList.width
                                     height: 44
@@ -635,6 +639,9 @@ PluginComponent {
                                 model: root.orphans
                                 clip: true
                                 boundsBehavior: Flickable.StopAtBounds
+
+                                ScrollBar.vertical: VgsScrollbar {
+                                }
 
                                 delegate: Item {
                                     width: orphanList.width

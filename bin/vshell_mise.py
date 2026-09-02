@@ -30,6 +30,9 @@ class DevToolsRuntime:
     eprint: Callable[..., None]
     spawn_terminal: Callable[..., int]
     notify_user: Callable[[str, str], None]
+    # App id of the floating TUI window the updater uses; one-shot scripts
+    # (installs, prompts) share its styling.
+    tui_app_id: str
 
 
 RT: DevToolsRuntime

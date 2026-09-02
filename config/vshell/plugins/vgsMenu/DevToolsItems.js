@@ -9,8 +9,8 @@ function itemsFromCatalog(raw) {
     for (const agent of data.agents || []) {
         out.push({
             category: "dev",
-            title: "Launch " + agent.name,
-            subtitle: agent.command + " (installs with mise on first run)",
+            title: agent.name,
+            subtitle: "Coding agent, " + agent.command,
             icon: "\uf544",
             keywords: ["agent", "ai", "code", agent.id, agent.command],
             argv: ["{vshell}", "agent", "launch", agent.id]
@@ -19,8 +19,8 @@ function itemsFromCatalog(raw) {
     for (const env of data.envs || []) {
         out.push({
             category: "dev",
-            title: "Install " + env.name,
-            subtitle: env.installer === "rustup" ? "via rustup" : "via mise, global",
+            title: env.name,
+            subtitle: env.installer === "rustup" ? "Language environment, install with rustup" : "Language environment, install with mise",
             icon: "\uf121",
             keywords: ["install", "language", "environment", "dev", env.id],
             argv: ["{vshell}", "terminal", "exec", "--tui", "--hold", "--", "{vshell}", "dev-env", "install", env.id]
