@@ -33,10 +33,10 @@ config/vshell/plugins/aiUsage/AiUsageWidget.qml	1167
 config/vshell/plugins/cloudSync/CloudSyncWidget.qml	690
 config/vshell/plugins/remoteDesktop/RemoteDesktopWidget.qml	803
 config/vshell/plugins/sudoToggle/SudoToggleWidget.qml	515
-config/vshell/plugins/sysUpdate/SysUpdateWidget.qml	758
+config/vshell/plugins/sysUpdate/SysUpdateWidget.qml	770
 config/vshell/plugins/tailscale/TailscaleWidget.qml	804
-config/vshell/plugins/vgsMenu/VGSMenu.qml	2351
-config/vshell/settings.default.json	759
+config/vshell/plugins/vgsMenu/VGSMenu.qml	2388
+config/vshell/settings.default.json	758
 docs/media/vgs-demo-poster.jpg	1197
 docs/media/vgs-demo.mp4	30319
 kendex.settings.toml	429
@@ -46,10 +46,10 @@ quickshell/vshell-preview/shell.qml	456
 quickshell/vshell/Common/KeybindActions.js	1430
 quickshell/vshell/Common/MethodTheme.qml	1479
 quickshell/vshell/Common/SessionData.qml	1551
-quickshell/vshell/Common/SettingsData.qml	3676
+quickshell/vshell/Common/SettingsData.qml	3675
 quickshell/vshell/Common/fzf.js	1308
 quickshell/vshell/Common/settings/Processes.qml	754
-quickshell/vshell/Common/settings/SettingsSpec.js	704
+quickshell/vshell/Common/settings/SettingsSpec.js	703
 quickshell/vshell/Common/settings/SettingsStore.js	511
 quickshell/vshell/Modals/AppPickerModal.qml	549
 quickshell/vshell/Modals/BluetoothPairingModal.qml	404

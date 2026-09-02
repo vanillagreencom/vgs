@@ -12,7 +12,9 @@
     "tools: developer CLIs that get a lazy stub but are not agents.",
     "",
     "envs: language environments. `tools` are mise packages installed globally;",
-    "`installer` names a non-mise route the helper implements; `packages` are",
+    "`installer` names a non-mise route the helper implements; `managedBy` names",
+    "a command whose presence at a distribution path means the package manager",
+    "owns the environment and VGS neither installs nor removes it; `packages` are",
     "distribution packages (keyed by dependencies.json distro ids) installed",
     "first; `present` is the path whose existence means installed."
   ],
@@ -38,7 +40,7 @@
     { "package": "github:basecamp/hey-cli", "command": "hey" }
   ],
   "envs": [
-    { "id": "node", "name": "Node.js", "tools": ["node"], "present": "~/.local/share/mise/installs/node" },
+    { "id": "node", "name": "Node.js", "tools": ["node"], "settings": { "idiomatic_version_file_enable_tools": ["node"] }, "present": "~/.local/share/mise/installs/node" },
     { "id": "bun", "name": "Bun", "tools": ["bun"], "present": "~/.local/share/mise/installs/bun" },
     { "id": "deno", "name": "Deno", "tools": ["deno"], "present": "~/.local/share/mise/installs/deno" },
     { "id": "go", "name": "Go", "tools": ["go"], "present": "~/.local/share/mise/installs/go" },
@@ -50,6 +52,6 @@
     { "id": "clojure", "name": "Clojure", "tools": ["clojure"], "packages": { "arch": ["rlwrap"], "debian": ["rlwrap"], "fedora": ["rlwrap"] }, "present": "~/.local/share/mise/installs/clojure" },
     { "id": "scala", "name": "Scala", "tools": ["java", "scala", "scala-cli"], "present": "~/.local/share/mise/installs/scala" },
     { "id": "elixir", "name": "Elixir", "tools": ["erlang", "elixir"], "present": "~/.local/share/mise/installs/elixir" },
-    { "id": "rust", "name": "Rust", "installer": "rustup", "present": "~/.rustup" }
+    { "id": "rust", "name": "Rust", "installer": "rustup", "present": "~/.rustup", "managedBy": "rustup" }
   ]
 }
