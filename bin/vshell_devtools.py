@@ -90,9 +90,13 @@ def agent_launch(agent_id: str, inline: bool) -> int:
     cwd = work if work.is_dir() else RT.home()
     os.chdir(cwd)
     if not inline:
-        # The terminal owns the first-run question and the download; this
-        # process only opens it.
         cli = str(RT.repo_root() / "bin" / "vshell")
+        if not agent_installed(entry):
+            # The first-run question and download are a one-shot script, so
+            # they get the updater's floating TUI window; the agent session
+            # that follows gets its own regular window.
+            if RT.spawn_terminal([cli, "agent", "install", agent_id], app_id=RT.tui_app_id, wait=True, notify=True, what=f"installing {entry['name']}") != 0:
+                return 1
         return RT.spawn_terminal([cli, "agent", "launch", agent_id, "--inline"], app_id="vshell-agent", detach=True, notify=True, what=f"{entry['name']}")
     if not agent_installed(entry) and not agent_install_prompt(entry):
         return hold_terminal(1, f"{entry['name']} was not installed.")
@@ -117,7 +121,7 @@ def hold_terminal(code: int, message: str) -> int:
 
 
 def cmd_agent(argv: List[str]) -> int:
-    usage = "Usage: vshell agent list [--json] | launch <id> [--inline] | pick"
+    usage = "Usage: vshell agent list [--json] | launch <id> [--inline] | install <id> | pick"
     if not argv:
         RT.eprint(usage)
         return 2
@@ -135,6 +139,14 @@ def cmd_agent(argv: List[str]) -> int:
         cli = str(RT.repo_root() / "bin" / "vshell")
         proc = RT.run([cli, "ipc", "call", "vshell-menu", "openCategory", "dev"], timeout=5)
         return 0 if proc.returncode == 0 else 1
+    if sub == "install":
+        entry = next((e for e in agent_entries() if e["id"] == (rest[0] if rest else "")), None)
+        if entry is None:
+            RT.eprint(usage)
+            return 2
+        if agent_installed(entry):
+            return 0
+        return 0 if agent_install_prompt(entry) else hold_terminal(1, f"{entry['name']} was not installed.")
     if sub == "launch":
         ids = [a for a in rest if not a.startswith("--")]
         if len(ids) != 1:

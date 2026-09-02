@@ -46,16 +46,17 @@ Nothing downloads until first run. Rules:
 
 ```
 vshell mise    install|refresh|remove-stubs|opt-in|list --json|outdated --json|up
-vshell agent   list [--json] | launch <id> [--inline] | pick
+vshell agent   list [--json] | launch <id> [--inline] | install <id> | pick
 vshell dev-env list [--json] | install <id> | remove <id>
 vshell update  count | run <system|aur|flatpak|tools|all>
 ```
 
-There is no default agent. `launch <id>` opens a terminal (app id
-`vshell-agent`) that runs `launch <id> --inline` from `~/Work` when it
-exists. An agent with no mise install and no command of the owner's on
-`PATH` is offered for installation there first (`mise use -g`); a refusal
-exits 1. `pick` opens the launcher on its Dev tools section, which
+There is no default agent. `launch <id>` first runs `install <id>` in the
+updater's floating TUI window when the agent has no mise install and no
+command of the owner's on `PATH` (a prompt, then `mise use -g`), and then
+opens the agent's own terminal (app id `vshell-agent`) running
+`launch <id> --inline` from `~/Work` when it exists. One-shot scripts share
+the TUI window; agent sessions do not. `pick` opens the launcher on its Dev tools section, which
 lists one entry per agent and one per language environment straight from
 the catalog (`vshell-menu openCategory dev` over IPC).
 
