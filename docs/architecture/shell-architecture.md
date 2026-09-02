@@ -337,6 +337,14 @@ right-click menu never do. The decision is
 `config/vshell/plugins/vgsMenu/HoverSelectionGate.js`, and
 `scripts/test-launcher-hover-latch.js` runs it and lints the delegate wiring.
 
+One action list serves both entry points: a right click and Shift+Enter open
+`ActionMenu.qml` on the selected item, and it is a plain item rather than a
+`Popup` so hiding the launcher hides it. Uninstall appears on an application
+with a desktop id (`vshell app uninstall`, the host package manager) and on a
+dev-tools entry (`vshell agent remove` / `vshell dev-env remove`). The view
+mode is one remembered setting, `launcherMenuViewMode`, applied on every page
+except a text-content file search.
+
 ## External commands
 QML may use `Process` for small calls.
 Use `Paths.vshellCli` for VGS helper calls.
