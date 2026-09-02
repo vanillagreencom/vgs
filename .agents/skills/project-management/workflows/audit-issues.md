@@ -83,12 +83,17 @@ No sync step. Load project taxonomy the same way as Linear mode; with no declare
 
 ### 2.1 Delegate
 
-Spawn a one-shot `[TPM]` sub-agent (not a teammate — no re-delegation):
+Spawn a one-shot `[TPM]` sub-agent (not a teammate — no re-delegation).
+
+Fill `Worktree:` and `Worktree Check:` from `git -C "[DIR]" rev-parse --show-toplevel`.
+`[DIR]` is the current repo root; project-order mode takes no input file.
 
 <delegation_format>
 Follow workflow: .agents/skills/project-management/workflows/tpm-audit.md
 
 Arguments: --project-order
+Worktree: [WORKTREE_PATH]
+Worktree Check: `pwd -P` before any repo-relative command; it must print [WORKTREE_PATH]. On any other path, stop and report where the shell started.
 </delegation_format>
 
 ### 2.2 Materialize and Present
@@ -139,17 +144,21 @@ With `TARGET` set, use it. Otherwise take the first `session-status.projects` en
 
 ### 4.1 Delegate
 
-Spawn a one-shot `[TPM]` sub-agent (not a teammate):
+Spawn a one-shot `[TPM]` sub-agent (not a teammate).
+
+Fill `Worktree:` and `Worktree Check:` from `git -C "[DIR]" rev-parse --show-toplevel`.
+`[DIR]` is the input file's `worktree` when the invocation supplied one, the current repo root otherwise.
 
 <delegation_format>
 Follow workflow: .agents/skills/project-management/workflows/tpm-audit.md
 
 Arguments: --project "[PROJECT_NAME]" | --team | --issues [FILE_PATH]
 Worktree: [WORKTREE_PATH]
+Worktree Check: `pwd -P` before any repo-relative command; it must print [WORKTREE_PATH]. On any other path, stop and report where the shell started.
 Tracker: [TRACKER] [OWNER/REPO]
 </delegation_format>
 
-Omit `Worktree:` for the main repo and `[OWNER/REPO]` when `TRACKER=linear`.
+Omit `[OWNER/REPO]` when `TRACKER=linear`.
 
 ### 4.2 Collect and Validate
 
@@ -265,6 +274,14 @@ Process creates in dependency order — every issue after the issues it is block
 | cancel | workflow-actions § State Transitions |
 | skip, valid | No action |
 
+A `create` whose `create_fields.review_born` is true came from a review finding, and passes `--review-born` so the creation bar holds it to a reported `Symptom:` at priority 2:
+
+```bash
+.agents/skills/linear/scripts/linear.sh issues create --state "Backlog" --title "[TITLE]" --description-file [BODY_FILE] --project "[PROJECT]" --labels "[VALIDATED_FINAL_LABELS]" --priority [PRIORITY] --review-born
+```
+
+A `create` whose `review_born` is false is the same command without that flag.
+
 **GitHub route (TRACKER=github)** — `gh issue` against `[OWNER/REPO]`; label mutations on existing issues go through the github skill's `label-add`/`label-remove`:
 
 | Action | Execution |
@@ -273,7 +290,7 @@ Process creates in dependency order — every issue after the issues it is block
 | expand, update | Fetch with `gh issue view [N] --repo [OWNER/REPO] --json body --jq .body`, edit in a tmp file, then `gh issue edit [N] --repo [OWNER/REPO] --body-file [BODY_FILE]`. Title: `gh issue edit [N] --repo [OWNER/REPO] --title "[TITLE]"`. Labels: `.agents/skills/github/scripts/github.sh label-add [N] "[LABEL]" --issue` / `label-remove` |
 | supersede, combine, cancel | `gh issue comment [N] --repo [OWNER/REPO] --body "[REASON]"`, then `gh issue close [N] --repo [OWNER/REPO] --reason "not planned"` |
 
-**Create template**: [issue-description-template.md](../templates/issue-description-template.md), or [parent-issue-template.md](../templates/parent-issue-template.md) for a bundle parent (`create_fields.is_bundle_parent: true`). Write the body to a file and pass it by file — Linear `--description-file`, GitHub `--body-file`. Never an inline string or heredoc. In `analyzed` mode the create fields come from `issues[].create_fields`, with `create_fields.labels[]` authoritative and `source_path` supplying `[ORIGIN_CONTEXT]`. When creating a child, carry the parent's `**Research**:` and `**Decision**:` lines to the top of the child's description.
+**Create template**: [issue-description-template.md](../templates/issue-description-template.md), or [parent-issue-template.md](../templates/parent-issue-template.md) for a bundle parent (`create_fields.is_bundle_parent: true`). Write the body to a file and pass it by file — Linear `--description-file`, GitHub `--body-file`. Never an inline string or heredoc. In `analyzed` mode the create fields come from `issues[].create_fields`, with `create_fields.labels[]` authoritative, `source_path` supplying `[ORIGIN_CONTEXT]`, `reach` supplying `[REACH]`, `symptom` supplying `[SYMPTOM]`, and `review_born` deciding the `--review-born` flag. When creating a child, carry the parent's `**Research**:` and `**Decision**:` lines to the top of the child's description.
 
 **Superseded issues — Linear**: fetch children (`cache issues children [SUPERSEDED_ID]`), detach any child whose scope the replacement does not cover (`issues update [CHILD_ID] --remove-parent`), comment `"Superseded by [ISSUE_ID]. Scope fully covered."`, then `issues update [SUPERSEDED_ID] --state "Canceled"` — remaining children cascade-cancel.
 

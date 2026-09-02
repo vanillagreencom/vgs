@@ -87,9 +87,7 @@ Options:
   --timeout <secs>  CLI timeout (default: 1080, env: SECOND_OPINION_TIMEOUT)
   --foreground      Mark this call as subject to a foreground harness cap
   -h, --help        Show this help
-With --foreground, run the printed wait command unchanged until terminal.
-Exit 75 means completion is still recoverable; exit 124 means the run reached
-its deadline; its processes are stopped when still identifiable as its own.
+With --foreground, run the printed wait command and follow Exit codes below until terminal.
 Target selection: every mode walks SECOND_OPINION_MODELS in order and takes the
 first target that is available AND runs a different model from this session —
 the model this session runs is never dispatched to, in any mode, forced or not.
@@ -101,7 +99,7 @@ written — findings deduplicated by normalized location, per-lane provenance in
 each finding's `sources` and in qa_metadata.lanes, lane artifacts kept beside
 it as <output>.<target>.json. A failed lane is recorded in the artifact
 (qa_metadata.coverage="degraded"); when every lane fails there is no artifact
-and the run exits 4/5.
+and the run exits 4/5/6.
 
 Environment. Every key below belongs in kendex.settings.toml [env] (or
 .env.local) except SECOND_OPINION_CURRENT_MODEL and
@@ -228,10 +226,8 @@ with exit 1.
 
 Exit codes:
   0  success
-  1  config failure (bad target, missing jq), no eligible cross-model target
-     (refused — never a same-model review), any challenge/quick CLI failure
-     including timeout, or an unrecoverable non-JSON response that survived
-     the one-shot retry (review/audit)
+  1  config failure (bad target, missing jq), no eligible target (same-model review refused),
+     challenge/quick CLI failure or timeout, or unrecoverable non-JSON after retry (review/audit)
   3  review: derived diff scope is empty or invalid — nothing to review
   4  review/audit: model self-reported no review was performed
      (qa_metadata.review_performed=false) or omitted the required qa_metadata
@@ -243,26 +239,34 @@ Exit codes:
      non-zero (quota/auth/network), timed out, or returned an empty response on
      a zero exit. No external verdict; whatever partial output existed is kept
      as <output>.failed.json and the CLI's own error text is echoed on stderr
-  75 detached wait: completion is still recoverable — rerun the same command
-  124 detached wait: the run reached its deadline without publishing a status
+  6  review/audit: the external CLI was KILLED — it died to a signal, named in
+     the report and the <output>.failed.json record. Something outside the run
+     (a reaper, an operator) took the reviewer away; it did not refuse: retry,
+     and if it recurs find the killer, not the review's content. 128+N for a
+     signal N the shell can name is a kill; any other non-zero status is a plain
+     failure (5). A multi-lane run records a killed lane as status "killed" and
+     exits 6 only when every lane failed, none unusably
+  75 detached wait: completion or cleanup is recoverable; cleanup failure preserves state
+  124 detached wait: deadline passed; process group gone; runtime state removed
+  1 detached wait: follow its diagnostic; relaunch now only when it says the worker group is gone;
+     invalid state may leave the run active, so restart only after confirming the original process group ended;
+     after missing artifact, restart only once the original process ends; keep completed artifact on replay/runtime-removal failure; otherwise act on replayed worker cause
 HELP
 }
 # Help is answered before project configuration is read: sourcing a repo's
 # .env.local under --help would execute repository-controlled shell code. The
 # option parser treats -h/--help at any position as help, so the same scan
 # decides here.
-DETACHED_AUTH_REQUESTED=false
 for _arg in "$@"; do
   case "$_arg" in
     -h|--help) show_help; exit 0 ;;
-    --detached-worker) DETACHED_AUTH_REQUESTED=true ;;
   esac
 done
 unset _arg
-# shellcheck source=lib/detached-identity.sh
-source "$SCRIPT_DIR/lib/detached-identity.sh"
-second_opinion_authenticate_detached "$DETACHED_AUTH_REQUESTED" || exit 1
-second_opinion_freeze_preloader_state
+# Settle the entry-point state before a project file is loaded into this shell.
+readonly SCRIPT_DIR FOREGROUND_CAP_IN_CALLER_ENV FOREGROUND_CAP_WAS_IN_CALLER_ENV \
+  CURRENT_MODEL_IS_SESSION_SCOPED CURRENT_MODEL_IN_CALLER_ENV
+readonly -a ORIGINAL_ARGS
 # Resolved only after help is answered: help must not require a git
 # checkout around the installed script.
 PROJECT_ROOT="$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel 2>/dev/null)"
@@ -311,9 +315,31 @@ DETACHED_WORKER=false
 # failure (the model never answered) — an operator retries a down lane but reads
 # a code-4 as a real signal about the review. Only review/audit modes (the ones
 # with the no-verdict contract) use it; challenge/quick keep the generic 1.
+#
+# EXIT_CLI_KILLED (KEN-1061): the CLI, or a lane running it, died to a SIGNAL —
+# something outside the run (a reaper, a sweeper, an operator) took the
+# reviewer away. Folded into 5 that reads as a refused review, so a session
+# cannot tell its reviewer was killed until the pattern has cost several runs.
+# Own code in the same no-verdict class, every report naming the signal. The
+# shell cannot tell a child killed by signal N from one that chose
+# `exit $((128+N))`, so 128+N for a nameable signal N is a kill and any other
+# non-zero status a plain failure; that misreports only a CLI faking a kill.
 EXIT_NO_SCOPE=3
 EXIT_NO_REVIEW=4
 EXIT_CLI_FAILED=5
+EXIT_CLI_KILLED=6
+
+# The signal behind an exit status, as SIG<NAME>; returns 1 when the status is
+# not a signal death. 128+N is the shell's encoding for a child killed by
+# signal N; `kill -l` maps N back to a name and is the sole judge of which N
+# are signals (out-of-range N is rejected, an unnameable one prints nothing).
+signal_name() {
+  local status="$1" name
+  [[ "$status" =~ ^[0-9]+$ ]] && [[ $status -gt 128 ]] || return 1
+  name=$(kill -l "$((status - 128))" 2>/dev/null) || return 1
+  [[ -n "$name" ]] || return 1
+  printf 'SIG%s' "$name"
+}
 
 # WHERE `--` IS USED IN THIS FILE, and why it is not used everywhere.
 #
@@ -741,12 +767,6 @@ CURRENT_MODEL_SOURCE=""
 # refusal that names both values. Empty when there is no such conflict.
 CURRENT_MODEL_CONFLICT=""
 resolve_current_model() {
-  if $DETACHED_WORKER && [[ -n "$DETACHED_AUTH_MODEL" ]]; then
-    CURRENT_HARNESS="detached-parent"
-    CURRENT_MODEL=$(canon_identity "$DETACHED_AUTH_MODEL")
-    CURRENT_MODEL_SOURCE="$DETACHED_AUTH_SOURCE"
-    return
-  fi
   CURRENT_HARNESS=$(detect_current_harness)
   local harness_model="" declared=""
   case "$CURRENT_HARNESS" in claude|codex) harness_model="$CURRENT_HARNESS" ;; esac
@@ -1709,7 +1729,8 @@ second_opinion_detach_if_needed
 # the failed lane and its exit code are recorded in qa_metadata.lanes and
 # coverage becomes "degraded". When EVERY lane fails there is no external
 # verdict, so the run joins the no-verdict class: exit 4 when at least one lane
-# answered unusably (its own exit 4), else exit 5.
+# answered unusably (its own exit 4), else 6 when any lane died to a signal,
+# else exit 5.
 if $MULTI_LANE; then
   # Derive scope once, up front: exits 3 before any lane spawns when the diff
   # is empty, and pins the SAME resolved range for every lane.
@@ -1858,11 +1879,9 @@ if $MULTI_LANE; then
         echo "→ lane stderr capture could not be opened — log replay lost: $lane" >&2
       fi
       umask "$lane_umask_prev"
-      # A lane child of a detached run gets the same ownership proof and flag:
-      # it inherits the parent's identity rather than re-deriving one, and must
-      # not detach again. A foreground parent has no proof to hand down.
-      if [[ -n "$DETACHED_RUNTIME_DIR" ]]; then
-        export SECOND_OPINION_RUNTIME_DIR="$DETACHED_RUNTIME_DIR" SECOND_OPINION_RUN_TOKEN="$DETACHED_RUN_TOKEN"
+      # A lane child of a detached run keeps the internal flag so it does not
+      # detach a second time. The resolved model is already in its environment.
+      if $DETACHED_WORKER; then
         detached_worker_arg=--detached-worker
       else
         detached_worker_arg=
@@ -1913,6 +1932,7 @@ if $MULTI_LANE; then
   LANES_FAILED_JSON="[]"
   LANE_WRAPS=()
   ANY_LANE_EXIT4=false
+  ANY_LANE_KILLED=false
   for i in "${!LANE_PIDS[@]}"; do
     lane="${REVIEW_LANES[$i]}"
     lane_rc=0
@@ -2024,19 +2044,37 @@ if $MULTI_LANE; then
       # Exit-code contract: 4 = the lane ANSWERED but unusably. A lane's own
       # exit 1 after the availability check is a response-level defect too
       # (invalid JSON even after the retry exits 1) — only never-answered
-      # classes (5, 124) leave ANY_LANE_EXIT4 unset.
-      [[ $lane_rc -eq "$EXIT_NO_REVIEW" || $lane_rc -eq 1 ]] && ANY_LANE_EXIT4=true
-      echo "→ lane failed: $lane (exit $lane_rc)" >&2
+      # classes (5, 6, 124, a signal) leave ANY_LANE_EXIT4 unset.
+      #
+      # A signal death is a KILL, not a lane failing on its own terms: the lane
+      # child itself died to a signal (the wait reaped 128+N) or its CLI did and
+      # the child classified it (EXIT_CLI_KILLED). Both record status "killed"
+      # so the union names which reviewer was taken away.
+      lane_status="failed"
+      if lane_signal=$(signal_name "$lane_rc") || [[ $lane_rc -eq "$EXIT_CLI_KILLED" ]]; then
+        lane_status="killed"
+        ANY_LANE_KILLED=true
+        lane_kill_why="its CLI died to a signal; the lane's own log above names it"
+        [[ -z "$lane_signal" ]] || lane_kill_why="an external signal, not a review refusal"
+        echo "→ lane killed: $lane (${lane_signal:+$lane_signal, }exit $lane_rc) — $lane_kill_why" >&2
+      else
+        [[ $lane_rc -eq "$EXIT_NO_REVIEW" || $lane_rc -eq 1 ]] && ANY_LANE_EXIT4=true
+        echo "→ lane failed: $lane (exit $lane_rc)" >&2
+      fi
       LANES_FAILED_JSON=$(jq -n --argjson prev "$LANES_FAILED_JSON" \
-        --arg target "$lane" --argjson code "$lane_rc" \
-        '$prev + [{target: $target, status: "failed", exit_code: $code}]')
+        --arg target "$lane" --arg status "$lane_status" --argjson code "$lane_rc" \
+        '$prev + [{target: $target, status: $status, exit_code: $code}]')
     fi
   done
 
   if [[ ${#LANE_WRAPS[@]} -eq 0 ]]; then
     jq -n --argjson lanes "$LANES_FAILED_JSON" \
       '{error: "every review lane failed — no external verdict", lanes: $lanes}' >&2
-    if $ANY_LANE_EXIT4; then exit "$EXIT_NO_REVIEW"; else exit "$EXIT_CLI_FAILED"; fi
+    # 4 outranks 6 outranks 5: an unusable ANSWER is a signal about the review,
+    # a kill says the reviewer was taken away, else a plain lane failure.
+    if $ANY_LANE_EXIT4; then exit "$EXIT_NO_REVIEW"
+    elif $ANY_LANE_KILLED; then exit "$EXIT_CLI_KILLED"
+    else exit "$EXIT_CLI_FAILED"; fi
   fi
 
   # Union merge. Dedupe key: normalized location (lowercased, backticks and
@@ -2187,13 +2225,17 @@ run_target_cli() {
 # exists as <output>.failed.json (mirroring the .noreview/.incomplete sidecars),
 # emit an error JSON on stderr that carries the sidecar path AND the CLI's own
 # error text (so an operator sees "usage limit", not a bare code), then exit
-# EXIT_CLI_FAILED. Only review/audit modes carry the no-verdict contract, so
-# only they call this; challenge/quick keep the generic exit 1. Independent of
-# TARGET_CLI — both lanes route through run_target_cli and STDERR_TMP.
+# EXIT_CLI_FAILED — or EXIT_CLI_KILLED when the caller classified the failure
+# as a signal death, with "was killed" wording throughout. Only review/audit
+# modes carry the no-verdict contract, so only they call this; challenge/quick
+# keep the generic exit 1. Independent of TARGET_CLI — both lanes route through
+# run_target_cli and STDERR_TMP.
 preserve_cli_failure_and_fail() {
   local reason="$1"          # human-readable cause (e.g. "exited with code 2")
   local partial="${2:-}"     # captured stdout, may be empty
-  local sidecar cause="" cause_source=""
+  local exit_code="${3:-$EXIT_CLI_FAILED}"  # EXIT_CLI_KILLED for a signal death
+  local sidecar cause="" cause_source="" verb="failed"
+  [[ "$exit_code" -ne "$EXIT_CLI_KILLED" ]] || verb="was killed"
 
   # The CLI's own stderr is the authoritative cause (e.g. the quota message).
   # Some CLIs report the failure on stdout with an empty stderr — the Claude
@@ -2215,12 +2257,12 @@ preserve_cli_failure_and_fail() {
     artifact_file failed; sidecar="$ARTIFACT_PATH"
   fi
   sidecar=$(store_record "$sidecar" "$(jq -n --arg target "$TARGET_CLI" --arg reason "$reason" \
-        --arg cause "$cause" --arg cause_source "$cause_source" --arg stdout "$partial" \
-    '{error: "external CLI failed before producing a review", target: $target, reason: $reason, cause: $cause, cause_source: $cause_source, partial_stdout: $stdout}')")
+        --arg verb "$verb" --arg cause "$cause" --arg cause_source "$cause_source" --arg stdout "$partial" \
+    '{error: "external CLI \($verb) before producing a review", target: $target, reason: $reason, cause: $cause, cause_source: $cause_source, partial_stdout: $stdout}')")
 
   jq -n --arg target "$TARGET_CLI" --arg reason "$reason" --arg sidecar "$sidecar" \
     '{error: "\($target) \($reason) — refusing to write a review artifact", response: $sidecar}' >&2
-  echo "→ external CLI failed: $TARGET_CLI $reason" >&2
+  echo "→ external CLI $verb: $TARGET_CLI $reason" >&2
   if [[ -n "$cause" ]]; then
     echo "--- cause (${cause_source}) ---" >&2
     printf '%s\n' "$cause" >&2
@@ -2230,10 +2272,10 @@ preserve_cli_failure_and_fail() {
   else
     echo "→ failed invocation could not be preserved anywhere — the cause above is the whole record" >&2
   fi
-  exit "$EXIT_CLI_FAILED"
+  exit "$exit_code"
 }
 
-# review/audit carry the no-verdict contract (exits 3/4/5); challenge/quick do not.
+# review/audit carry the no-verdict contract (the EXIT_* codes); challenge/quick do not.
 REVIEW_LIKE=false
 [[ "$MODE" == "review" || "$MODE" == "audit" ]] && REVIEW_LIKE=true
 
@@ -2244,8 +2286,14 @@ if [[ $EXIT_CODE -eq 124 ]]; then
   echo "{\"error\": \"Timeout after ${TIMEOUT}s\", \"target\": \"$TARGET_CLI\"}" >&2
   exit 1
 elif [[ $EXIT_CODE -ne 0 ]]; then
-  $REVIEW_LIKE && preserve_cli_failure_and_fail "exited with code $EXIT_CODE" "$RESULT"
-  echo "{\"error\": \"$TARGET_CLI exited with code $EXIT_CODE\", \"target\": \"$TARGET_CLI\"}" >&2
+  # Classify first, report once: a signal death is a kill, not a refusal, and
+  # takes its own exit code so the caller can tell its reviewer was taken away.
+  CLI_FAILURE="exited with code $EXIT_CODE"; CLI_FAILURE_EXIT=$EXIT_CLI_FAILED
+  if CLI_SIGNAL=$(signal_name "$EXIT_CODE"); then
+    CLI_FAILURE="was killed by $CLI_SIGNAL (exit $EXIT_CODE)"; CLI_FAILURE_EXIT=$EXIT_CLI_KILLED
+  fi
+  $REVIEW_LIKE && preserve_cli_failure_and_fail "$CLI_FAILURE" "$RESULT" "$CLI_FAILURE_EXIT"
+  echo "{\"error\": \"$TARGET_CLI $CLI_FAILURE\", \"target\": \"$TARGET_CLI\"}" >&2
   if [[ -s "$STDERR_TMP" ]]; then
     echo "--- stderr ---" >&2
     head -20 "$STDERR_TMP" >&2
@@ -2534,6 +2582,14 @@ if [[ "$MODE" == "review" || "$MODE" == "audit" ]]; then
       echo "→ retry timed out after ${TIMEOUT}s" >&2
       preserve_raw_and_fail "$RESULT" "$RETRY_RESULT"
     elif [[ $RETRY_EXIT -ne 0 ]]; then
+      # The retry is a second full CLI run under the same killer exposure, so a
+      # signal death here is the same kill, reported the same way.
+      if RETRY_SIGNAL=$(signal_name "$RETRY_EXIT"); then
+        [[ -z "$RAW_PRESERVED_PATH" ]] || echo "→ raw first response preserved: $RAW_PRESERVED_PATH" >&2
+        preserve_cli_failure_and_fail \
+          "was killed by $RETRY_SIGNAL (exit $RETRY_EXIT) during the recovery retry" \
+          "$RETRY_RESULT" "$EXIT_CLI_KILLED"
+      fi
       echo "→ retry exited with code $RETRY_EXIT" >&2
       preserve_raw_and_fail "$RESULT" "$RETRY_RESULT"
     elif [[ ${#RETRY_RESULT} -eq 0 ]]; then

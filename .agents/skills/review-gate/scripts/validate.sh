@@ -114,8 +114,8 @@ group "runtime"
 # unstripped, which is an absolute path and still names the right file.
 SKILL_REL="${SKILL_DIR#"$REPO_ROOT"/}"
 for rel in scripts/review-predicate.sh scripts/review-writer.sh \
-  scripts/pr-watch.sh scripts/validate.sh scripts/validate-workflow.sh \
-  scripts/lib/settings.sh; do
+  scripts/pr-watch.sh scripts/merged-sweep.sh scripts/validate.sh \
+  scripts/validate-workflow.sh scripts/lib/settings.sh; do
   path="$SKILL_DIR/$rel"
   if [ ! -f "$path" ]; then
     bad "$rel is missing from the installed skill ($SKILL_DIR) — re-run \`kendex refresh\` and commit the result"
@@ -159,14 +159,11 @@ group "settings"
 SETTINGS_FILE="${REVIEW_GATE_SETTINGS_FILE:-kendex.settings.toml}"
 
 # The key ledger is the skill's own shipped example, so this tool cannot
-# drift from what the engine documents. REVIEW_GATE_OUTAGE_CONTEXT is the one
-# deliberate addition: the legacy override name, still resolved by the
-# predicate and deliberately absent from the example, which models v2.
+# drift from what the engine documents.
 EXAMPLE="$SKILL_DIR/kendex.settings.toml.example"
 [ -f "$EXAMPLE" ] ||
   die "$EXAMPLE is missing — it is the ledger of known keys, and without it an unknown-key scan would pass everything"
-KNOWN_KEYS="$(sed -n 's/^[[:space:]]*\([A-Z][A-Z0-9_]*\)[[:space:]]*=.*/\1/p' "$EXAMPLE")
-REVIEW_GATE_OUTAGE_CONTEXT"
+KNOWN_KEYS="$(sed -n 's/^[[:space:]]*\([A-Z][A-Z0-9_]*\)[[:space:]]*=.*/\1/p' "$EXAMPLE")"
 grep -q '^REVIEW_GATE_CONTEXT$' <<<"$KNOWN_KEYS" ||
   die "$EXAMPLE names no REVIEW_GATE_CONTEXT assignment — the ledger is unreadable and the unknown-key scan would pass everything"
 
@@ -327,19 +324,42 @@ $(printf '%s\n' "$unread" | sed 's/^/        /')"
   fi
 }
 
+# ONE classification for every TOML source scanned below, so a third one
+# added later inherits it. Testing -f alone read a present-but-unusable
+# source as absent, and the scan then said "every key resolves to its
+# built-in default" about a file it never opened; an unreadable one reached
+# the scan and surfaced as bash's own line-numbered read error. The resolver
+# refuses both shapes on whichever key it reads first — this is the half
+# that says WHICH file to fix. ABSENT_NOTE is the caller's line for a
+# genuinely absent source; a caller with nothing to say passes none.
+scan_source() { # FILE [ABSENT_NOTE]
+  if [ -f "$1" ]; then
+    if [ ! -r "$1" ]; then
+      bad "$1 exists but cannot be READ (permission denied); nothing below was checked against it"
+      return 0
+    fi
+    scan_settings_source "$1"
+  elif [ -e "$1" ] || [ -L "$1" ]; then
+    bad "$1 exists but is not a file the loader can read (directory, FIFO, socket, device, or a symlink that does not resolve); a source is skipped only when it is ABSENT"
+  elif [ -n "${2:-}" ]; then
+    note "$2"
+  fi
+}
+
 if [ "$SETTINGS_FILE" = "/dev/null" ]; then
   note "REVIEW_GATE_SETTINGS_FILE=/dev/null — settings are forced to built-in defaults; no committed file is being validated"
-elif [ ! -f "$SETTINGS_FILE" ]; then
-  note "$SETTINGS_FILE is absent — every key resolves to its built-in default, which is a valid install carrying no per-repo values"
 else
-  scan_settings_source "$SETTINGS_FILE"
+  scan_source "$SETTINGS_FILE" \
+    "$SETTINGS_FILE is absent — every key resolves to its built-in default, which is a valid install carrying no per-repo values"
 fi
 # The resolver treats .kendex/settings.toml as the AUTHORITATIVE default
 # TOML source when present, so with no explicit override the same checks
 # cover it too: a committed nested file with a typo'd trust key must not
 # validate clean while the engine ignores the typo and the gate widens.
-if [ -z "${REVIEW_GATE_SETTINGS_FILE:-}" ] && [ -f ".kendex/settings.toml" ]; then
-  scan_settings_source ".kendex/settings.toml"
+if [ -z "${REVIEW_GATE_SETTINGS_FILE:-}" ]; then
+  # No absent-note: a repo with no nested file is the ordinary install, and
+  # the line above already said what an absent source resolves to.
+  scan_source ".kendex/settings.toml"
 fi
 
 # The value rules are the ENGINE's, invoked rather than restated: a rule

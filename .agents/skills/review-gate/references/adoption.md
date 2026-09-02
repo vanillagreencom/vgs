@@ -68,8 +68,8 @@ run. It answers repo-own questions only — the engine is installed and
 runnable here, the committed `REVIEW_GATE_*` values are legal, the
 carry-forward exclusions still match tracked paths, and the adopted workflow
 still meets this template's contract. It re-runs no engine test suite: the
-selftest, the wrapper suites and the sandbox replay are the ENGINE's proofs
-and run in the kendex repo on every change to it.
+selftest and the wrapper suites are the ENGINE's proofs and run in the kendex
+repo on every change to it.
 
 Value rules come from the engine, not from a copy of it: the settings half
 calls `review-predicate.sh --check-config`, which resolves and validates
@@ -168,7 +168,7 @@ here. Full key table: [settings.md](settings.md).
 | `REVIEW_GATE_CHECKRUN_SKIP_PATTERNS` | Default closes the rate-limited-pass gap everywhere; empty is an explicit opt-out. |
 | `REVIEW_GATE_COMMENT_REVIEWERS` | Only for repos with a comment-form reviewer (login + binding prefix); empty otherwise. |
 | `REVIEW_GATE_SHA_PREFIX_FLOOR` | Only where a comment-form reviewer binds by SHA prefix. |
-| `REVIEW_GATE_OVERRIDE_CONTEXT` | The operator override context (legacy alias `REVIEW_GATE_OUTAGE_CONTEXT` still resolves; new installs set only the v2 key). |
+| `REVIEW_GATE_OVERRIDE_CONTEXT` | The operator override context. Empty disables the source. |
 | `REVIEW_GATE_STATUS_PUBLISHER_REJECT` | Set `github-actions[bot]` wherever PR workflows hold `statuses: write`. Requires the override to be posted by a non-Actions identity (operator PAT). Empty disables. |
 | `REVIEW_GATE_REVIEW_OBJECT_TRUSTED_LOGINS` | Empty = any non-author. List trusted reviewer logins to restrict. |
 | `REVIEW_GATE_REVIEW_OBJECT_MIN_STATE` | `any` counts COMMENTED reviews (for bots that never APPROVE); `approved` requires an APPROVED verdict. |
@@ -214,6 +214,24 @@ period, or `head-moved` when a push landed mid-reduction — re-run); exit 2
 skill's waiters are the single-PR *foreground* waits; pr-watch is the
 multi-PR *background* reducer.
 
+pr-watch reduces OPEN PRs only, and the gate opens on the first non-author
+review with no quiet period — so a review round landing in the queue's final
+minutes merges before anyone reads it. `merged-sweep.sh` is the same reducer
+over recently-merged PRs, emitting one `post-merge-findings` line per merged
+PR that carries a review or review thread created after its `mergedAt` with
+no disposition reply:
+
+```bash
+export GH_REPO=your-org/your-repo
+.agents/skills/review-gate/scripts/merged-sweep.sh
+```
+
+Same line shape and exit codes, so one consumer reads both. It keeps its own
+per-repo state (`MERGED_SWEEP_STATE_DIR`, default `tmp/review-gate-merged-sweep`):
+a finding surfaces once and stays quiet while unchanged, which makes exit 0
+mean "nothing NEW". Pass `--no-state` to re-read everything still
+outstanding — the audit form.
+
 ## Verification
 
 - `.agents/skills/review-gate/scripts/validate.sh` exits 0 from the repo
@@ -225,6 +243,3 @@ multi-PR *background* reducer.
   correctly blocks — read before resolving anything). A location-bound
   reviewer's threads are recorded, not graded
   ([vendored-paths.md](vendored-paths.md) § Verifying on a real re-vendor PR).
-- For engine changes (not adoptions): the live sandbox replay
-  (`.agents/skills/review-gate/tests/e2e-sandbox.sh`) against the org
-  sandbox.

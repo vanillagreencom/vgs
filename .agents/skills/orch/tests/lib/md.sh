@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# The one markdown reader the orch doc lints use.
+# The one markdown reader the doc lints share. It lives under orch because
+# orch's lints are its callers; a suite in any skill may source it by path.
 #
 # Before this file every lint carried its own HTML-comment stripper, heading
 # slicer and planted-control scaffolding, and each grew to pin the sentences of
@@ -45,6 +46,12 @@
 # reaches itself, `md_report` to close, the path variables SKILL_DIR,
 # SKILLS_ROOT, REPO_ROOT and MD_LIB_DIR, and MD_TMP for scratch. Nothing else
 # here is a suite's to call.
+#
+# THOSE PATHS ARE RESOLVED FROM THIS FILE, so TESTS_DIR, SKILL_DIR and
+# SKILLS_ROOT all name orch whoever sourced it. A caller outside orch must set
+# its own SKILL_DIR after the `source` line, or a rule written in the house
+# style, `"$SKILL_DIR/SKILL.md"`, reads orch's document and answers about the
+# wrong file. REPO_ROOT and MD_LIB_DIR are the same for every caller.
 #
 # A suite must NOT install its own EXIT trap. Sourcing this file installs one
 # that removes MD_TMP, and `trap ... EXIT` replaces rather than adds, so a
@@ -113,7 +120,7 @@
 #
 # The shape that run showed: doubling the rules costs roughly four times the
 # time, while every orch lint suite together still finishes in a few seconds,
-# well inside the shell shard's timeout — `timeout-minutes` on the
+# well inside the orch shard's timeout — `timeout-minutes` on the
 # skill-suites-shard job in `.github/workflows/skill-tests.yml`, which is where
 # to read it rather than here. What the law means for an author is that a suite
 # growing past roughly thirty rules is paying a superlinear price and is better
@@ -124,7 +131,7 @@
 # commands above are what measure what that is worth on a given machine. What
 # was measured and declined is a different set — per-path memoization of the
 # reader, a pre-stripped control scratch, and a file-grouped loop, each at 20
-# percent or worse against the shell shard's budget, which is what the redesign
+# percent or worse against the orch shard's budget, which is what the redesign
 # they pointed at was declined against.
 
 MD_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

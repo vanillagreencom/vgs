@@ -10,7 +10,9 @@ Delegate fix items to a specialist dev agent. Standalone (user-initiated) or man
 
 **Caller context** (via `⤵`): `worktree`; `lifecycle` — `"managed"` (return at § 3) or `"self"` (default); `dev_agent` — a live dev agent; `issue_id` — the workflow-state key, the normalized issue ID (`issue-N` for GitHub, `PROJ-123` for Linear), never the bare GitHub issue number; `items` — formatted review items; `source` — `pr-review` | `qa-review` | `review` | `local-review` (default `conversation`); `qa_agent`.
 
-**Standalone init** (`lifecycle: "self"`). Use the argument as `ISSUE_ID`, else `git-context issue-from-branch .`. Apply [Worktree Scope](../SKILL.md#workflow-execution) and resolve `WT_PATH` (inside a worktree, the current directory; from the main repo, `worktree path [ISSUE_ID]`, asking before creating).
+**Standalone init** (`lifecycle: "self"`). Use the argument as `ISSUE_ID`, else `git-context issue-from-branch .`. Apply [Worktree Scope](../SKILL.md#workflow-execution) and resolve `WT_PATH` as `git-context repo-root "[DIR]"` (inside a worktree `[DIR]` is `.`; from the main repo, `worktree path [ISSUE_ID]`, asking before creating).
+
+Fill `Worktree:` and `Worktree Check:` from `git -C "[DIR]" rev-parse --show-toplevel`.
 
 ## 1. Build Fix Items
 
@@ -58,7 +60,7 @@ Cancel ends the workflow; a selection goes to § 2.
    .agents/skills/orch/scripts/workflow-state get [ISSUE_ID] '.agent // empty'
    ```
 
-2. **Group items by agent domain** when multi-domain, ordered per [SKILL.md § Coordination](../SKILL.md#coordination). Prefer two scoped rounds over one broad round past roughly eight items — one 24-item round injected 8 new blockers, 2 of them P1.
+2. **Group items by agent domain** when multi-domain, ordered per [SKILL.md § Coordination](../SKILL.md#coordination). Prefer two scoped rounds over one broad round past roughly eight items.
 
 3. **Gather decision context**:
 
@@ -98,6 +100,8 @@ Cancel ends the workflow; a selection goes to § 2.
    .agents/skills/orch/scripts/dev-round-write --worktree [WORKTREE_PATH] --issue [ISSUE_ID] --round-id [DEV_ROUND_ID] --items-file [WORKTREE_PATH]/tmp/dev-round-items-[DEV_ROUND_ID].json [--adds-file [WORKTREE_PATH]/tmp/dev-round-adds-[DEV_ROUND_ID].json]
    ```
 
+   Exit 3 is the branch-size refusal. Stop before delegation, discard this item set, and report the current and baseline counts with `Cut required`. After the branch is cut back to the Done-when, mint a fresh round. Every other nonzero exit is an environment or authorization failure and also stops the workflow.
+
    `--issue` takes the normalized workflow-state key — the value the delegation's `Artifact Key:` line carries. Only when every item's text is plain (no backticks or quotes) may you pass `--item [N] '[ITEM_TEXT]'` pairs inline in one command instead.
 
    **An analysis (read-only) round has no delegated item set** — skip `dev-round-write` entirely and run step 6's Check A without an expected-set flag.
@@ -110,6 +114,7 @@ Cancel ends the workflow; a selection goes to § 2.
    Source: [SOURCE]
    Issue: [ISSUE_ID]
    Worktree: [WORKTREE_PATH]
+   Worktree Check: `pwd -P` before any repo-relative command; it must print [WORKTREE_PATH]. On any other path, stop and report where the shell started.
    Worktree Lease: [WORKTREE_LEASE]
    Round ID: [DEV_ROUND_ID]
    Artifact Key: [ISSUE_ID]
@@ -197,9 +202,9 @@ Cancel ends the workflow; a selection goes to § 2.
    .agents/skills/orch/scripts/workflow-state increment [ISSUE_ID] cycles
    ```
 
-   A re-reported item whose recorded fix did not hold takes a second disposition while a bucket still lists it against the SHA of the failed fix, and an item escalated in one cycle can be fixed in a later one, so each write clears the item from BOTH buckets before appending its own entry. The match is the RECORDED entry's (location, description), the § 8 key: a re-reporting reviewer copies those two fields verbatim off the delegation's Fixed line, and the sha it names rides in the finding's recommendation, which no key reads. One write per item, and the item stands in exactly one bucket, once.
+   Each write clears the item from BOTH buckets before appending its own entry, matched on the RECORDED entry's (location, description), the § 8 key. One write per item, and the item stands in exactly one bucket, once.
 
-   The entry goes through a file, never `--arg` or `--argjson`. A double quote in the description invalidates a pasted JSON argument and an apostrophe ends the shell word, and a write that fails leaves the stale entry standing with nothing recorded.
+   The entry goes through a file, never `--arg` or `--argjson`.
 
    `cycles` is the general fix-round tally that fills review-pr § 1.2's previous-cycle block; it decides no cap. The re-review budget is `rereview_cycles`, raised only by review-pr § 4's `rereview_panel` write, so no fix round spends it and neither does § 7's QA re-check.
 
