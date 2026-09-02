@@ -6,9 +6,9 @@ import qs.Widgets
 import qs.Modules.Settings.Widgets
 
 // Coding agents, their mise launchers, and language environments. Every list
-// here is `vshell agent list --json`, `vshell mise list --json` and
-// `vshell dev-env list --json`; the catalog behind them is
-// config/vshell/dev-tools.json and this tab never carries its own copy.
+// here is `vshell agent list --json` and `vshell dev-env list --json`; the
+// catalog behind them is config/vshell/dev-tools.json and this tab never
+// carries its own copy.
 Item {
     id: root
 
@@ -19,11 +19,9 @@ Item {
     property string loadError: ""
     property bool loading: false
 
-    readonly property var agentNames: root.agents.map(a => a.name)
     // Launchers count as installed only when at least one stub is ours; a
     // fresh machine has none and offers installation rather than removal.
     readonly property bool launchersInstalled: !root.stubsOptedOut && root.agents.some(a => a.stub === "ours")
-    readonly property int defaultIndex: root.agents.findIndex(a => a.id === SettingsData.defaultCodingAgent)
 
     function refresh() {
         root.loading = true;
@@ -45,11 +43,14 @@ Item {
             root.loading = false;
         }, 0, 15000);
         Proc.runCommand("developer-envs", [Paths.vshellCli, "dev-env", "list", "--json"], (output, exitCode) => {
-            if (exitCode !== 0)
+            if (exitCode !== 0) {
+                root.loadError = "vshell dev-env list failed (" + exitCode + ")";
                 return;
+            }
             try {
                 root.envs = JSON.parse(output).envs || [];
             } catch (e) {
+                root.loadError = "dev-env list: " + e;
             }
         }, 0, 15000);
     }
@@ -61,9 +62,14 @@ Item {
         Proc.runCommand(id, [Paths.vshellCli, "terminal", "exec", "--tui", "--hold", "--wait", "--", Paths.vshellCli].concat(argv), () => root.refresh(), 0, 3600000);
     }
 
-    function setDefaultAgent(name) {
-        const match = root.agents.find(a => a.name === name);
-        SettingsData.set("defaultCodingAgent", match ? match.id : "");
+    function agentStatus(agent) {
+        if (agent.installed)
+            return agent.installed;
+        if (agent.stub === "foreign" || agent.stub === "shadowed")
+            return I18n.tr("your own install");
+        if (agent.stub === "ours")
+            return I18n.tr("installs on first launch");
+        return I18n.tr("no launcher yet");
     }
 
     Component.onCompleted: refresh()
@@ -83,9 +89,21 @@ Item {
 
             SettingsCard {
                 tab: "developer"
-                tags: ["developer", "agent", "claude", "codex", "opencode", "ai", "default"]
-                title: I18n.tr("Coding Agent")
+                tags: ["developer", "agent", "claude", "codex", "opencode", "ai", "mise", "launcher"]
+                title: I18n.tr("Coding Agents")
                 iconName: "smart_toy"
+
+                headerActions: [
+                    VgsActionButton {
+                        buttonSize: 28
+                        iconName: "refresh"
+                        iconSize: 18
+                        iconColor: Theme.surfaceText
+                        tooltipText: I18n.tr("Refresh")
+                        enabled: !root.loading
+                        onClicked: root.refresh()
+                    }
+                ]
 
                 StyledText {
                     width: parent?.width ?? 0
@@ -105,34 +123,104 @@ Item {
                     wrapMode: Text.WordWrap
                 }
 
-                SettingsDropdownRow {
-                    tab: "developer"
-                    tags: ["developer", "agent", "default"]
-                    settingKey: "defaultCodingAgent"
-                    text: I18n.tr("Default Agent")
-                    description: I18n.tr("Launched by the Coding agent menu entry. Installs on first launch.")
-                    options: root.agentNames
-                    currentValue: root.defaultIndex >= 0 ? root.agents[root.defaultIndex].name : ""
-                    onValueChanged: value => root.setDefaultAgent(value)
+                StyledText {
+                    width: parent?.width ?? 0
+                    text: I18n.tr("Launchers are stubs in ~/.local/bin that install their agent with mise on first run. A command you installed yourself is left alone. The launcher's Dev tools section (d:) lists every agent.")
+                    font.pixelSize: Theme.fontSizeSmall
+                    color: Theme.surfaceVariantText
+                    wrapMode: Text.WordWrap
+                }
+
+                Column {
+                    width: parent?.width ?? 0
+                    spacing: 0
+
+                    Repeater {
+                        model: root.agents
+
+                        delegate: Item {
+                            id: agentRow
+                            required property var modelData
+                            width: parent.width
+                            height: 40
+
+                            Rectangle {
+                                anchors.fill: parent
+                                radius: Theme.cornerRadius
+                                color: agentHover.containsMouse ? Theme.withAlpha(Theme.surfaceText, 0.06) : "transparent"
+                            }
+
+                            MouseArea {
+                                id: agentHover
+                                anchors.fill: parent
+                                hoverEnabled: true
+                                acceptedButtons: Qt.NoButton
+                            }
+
+                            StyledText {
+                                id: agentName
+                                anchors.left: parent.left
+                                anchors.leftMargin: Theme.spacingS
+                                anchors.verticalCenter: parent.verticalCenter
+                                text: agentRow.modelData.name
+                                font.pixelSize: Theme.fontSizeMedium
+                                color: Theme.surfaceText
+                            }
+
+                            StyledText {
+                                anchors.left: agentName.right
+                                anchors.leftMargin: Theme.spacingS
+                                anchors.verticalCenter: parent.verticalCenter
+                                text: agentRow.modelData.command
+                                font.pixelSize: Theme.fontSizeSmall
+                                font.family: Theme.monoFontFamily
+                                color: Theme.surfaceVariantText
+                            }
+
+                            Row {
+                                anchors.right: parent.right
+                                anchors.rightMargin: Theme.spacingXS
+                                anchors.verticalCenter: parent.verticalCenter
+                                spacing: Theme.spacingS
+
+                                VgsIcon {
+                                    visible: agentRow.modelData.installed.length > 0 || agentRow.modelData.stub === "foreign" || agentRow.modelData.stub === "shadowed"
+                                    name: "check_circle"
+                                    size: Theme.iconSizeSmall
+                                    color: Theme.success
+                                    anchors.verticalCenter: parent.verticalCenter
+                                }
+
+                                StyledText {
+                                    text: root.agentStatus(agentRow.modelData)
+                                    font.pixelSize: Theme.fontSizeSmall - 1
+                                    color: Theme.surfaceVariantText
+                                    anchors.verticalCenter: parent.verticalCenter
+                                }
+
+                                VgsActionButton {
+                                    buttonSize: 28
+                                    iconName: "play_arrow"
+                                    iconSize: 18
+                                    iconColor: Theme.primary
+                                    tooltipText: I18n.tr("Launch")
+                                    enabled: root.miseAvailable || agentRow.modelData.runnable
+                                    onClicked: Quickshell.execDetached([Paths.vshellCli, "agent", "launch", agentRow.modelData.id])
+                                    anchors.verticalCenter: parent.verticalCenter
+                                }
+                            }
+                        }
+                    }
                 }
 
                 Row {
                     spacing: Theme.spacingS
 
                     VgsButton {
-                        text: I18n.tr("Launch")
-                        iconName: "play_arrow"
-                        enabled: root.defaultIndex >= 0
-                        onClicked: Quickshell.execDetached([Paths.vshellCli, "agent", "launch"])
-                    }
-
-                    VgsButton {
                         text: root.launchersInstalled ? I18n.tr("Remove launchers") : I18n.tr("Install launchers")
                         iconName: root.launchersInstalled ? "delete" : "download"
                         variant: "secondary"
-                        onClicked: {
-                            root.runInTerminal("developer-stubs-toggle", ["mise", root.launchersInstalled ? "remove-stubs" : "opt-in"]);
-                        }
+                        onClicked: root.runInTerminal("developer-stubs-toggle", ["mise", root.launchersInstalled ? "remove-stubs" : "opt-in"])
                     }
 
                     VgsButton {
@@ -150,45 +238,6 @@ Item {
                         }
                     }
                 }
-
-                StyledText {
-                    width: parent?.width ?? 0
-                    text: I18n.tr("Launchers are stubs in ~/.local/bin that install their agent with mise on first run. A command you wrote yourself at the same path is left alone and listed as yours.")
-                    font.pixelSize: Theme.fontSizeSmall
-                    color: Theme.surfaceVariantText
-                    wrapMode: Text.WordWrap
-                }
-
-                Column {
-                    width: parent?.width ?? 0
-                    spacing: 2
-
-                    Repeater {
-                        model: root.agents
-
-                        delegate: Item {
-                            required property var modelData
-                            width: parent.width
-                            height: 30
-
-                            StyledText {
-                                anchors.left: parent.left
-                                anchors.verticalCenter: parent.verticalCenter
-                                text: modelData.name + "  (" + modelData.command + ")"
-                                font.pixelSize: Theme.fontSizeSmall
-                                color: Theme.surfaceText
-                            }
-
-                            StyledText {
-                                anchors.right: parent.right
-                                anchors.verticalCenter: parent.verticalCenter
-                                text: modelData.installed ? modelData.installed : (modelData.stub === "foreign" || modelData.stub === "shadowed" ? I18n.tr("yours") : (modelData.stub === "ours" ? I18n.tr("on first run") : I18n.tr("no launcher")))
-                                font.pixelSize: Theme.fontSizeSmall - 1
-                                color: modelData.installed ? Theme.primary : Theme.surfaceVariantText
-                            }
-                        }
-                    }
-                }
             }
 
             SettingsCard {
@@ -196,18 +245,6 @@ Item {
                 tags: ["developer", "environment", "node", "python", "rust", "go", "ruby", "java", "mise"]
                 title: I18n.tr("Language Environments")
                 iconName: "code"
-
-                headerActions: [
-                    VgsActionButton {
-                        buttonSize: 28
-                        iconName: "refresh"
-                        iconSize: 18
-                        iconColor: Theme.surfaceText
-                        tooltipText: I18n.tr("Refresh")
-                        enabled: !root.loading
-                        onClicked: root.refresh()
-                    }
-                ]
 
                 StyledText {
                     width: parent?.width ?? 0
@@ -219,43 +256,86 @@ Item {
 
                 Column {
                     width: parent?.width ?? 0
-                    spacing: Theme.spacingXS
+                    spacing: 0
 
                     Repeater {
                         model: root.envs
 
                         delegate: Item {
+                            id: envRow
                             required property var modelData
                             width: parent.width
-                            height: 36
+                            height: 40
 
-                            StyledText {
+                            Rectangle {
+                                anchors.fill: parent
+                                radius: Theme.cornerRadius
+                                color: envHover.containsMouse ? Theme.withAlpha(Theme.surfaceText, 0.06) : "transparent"
+                            }
+
+                            MouseArea {
+                                id: envHover
+                                anchors.fill: parent
+                                hoverEnabled: true
+                                acceptedButtons: Qt.NoButton
+                            }
+
+                            Row {
                                 anchors.left: parent.left
+                                anchors.leftMargin: Theme.spacingS
                                 anchors.verticalCenter: parent.verticalCenter
-                                text: modelData.name
-                                font.pixelSize: Theme.fontSizeMedium
-                                color: Theme.surfaceText
+                                spacing: Theme.spacingS
+
+                                StyledText {
+                                    text: envRow.modelData.name
+                                    font.pixelSize: Theme.fontSizeMedium
+                                    color: Theme.surfaceText
+                                    anchors.verticalCenter: parent.verticalCenter
+                                }
+
+                                // Installed state is a mark, not a word that could read
+                                // as a second action beside Remove.
+                                VgsIcon {
+                                    visible: envRow.modelData.installed
+                                    name: "check_circle"
+                                    size: Theme.iconSizeSmall
+                                    color: Theme.success
+                                    anchors.verticalCenter: parent.verticalCenter
+                                }
+
+                                StyledText {
+                                    visible: (envRow.modelData.distroPath || "").length > 0
+                                    text: I18n.tr("from your package manager")
+                                    font.pixelSize: Theme.fontSizeSmall - 1
+                                    color: Theme.surfaceVariantText
+                                    anchors.verticalCenter: parent.verticalCenter
+                                }
                             }
 
-                            StyledText {
-                                anchors.right: envButton.left
-                                anchors.rightMargin: Theme.spacingM
-                                anchors.verticalCenter: parent.verticalCenter
-                                text: modelData.installed ? I18n.tr("installed") : ""
-                                font.pixelSize: Theme.fontSizeSmall - 1
-                                color: Theme.primary
-                            }
-
+                            // Install is the primary action; removal is a quiet icon.
                             VgsButton {
-                                id: envButton
                                 anchors.right: parent.right
+                                anchors.rightMargin: Theme.spacingXS
                                 anchors.verticalCenter: parent.verticalCenter
+                                visible: !envRow.modelData.installed
                                 buttonHeight: 30
-                                text: modelData.installed ? I18n.tr("Remove") : I18n.tr("Install")
-                                iconName: modelData.installed ? "delete" : "download"
-                                variant: modelData.installed ? "secondary" : "primary"
-                                enabled: root.miseAvailable || modelData.id === "rust"
-                                onClicked: root.runInTerminal("developer-env-" + modelData.id, ["dev-env", modelData.installed ? "remove" : "install", modelData.id])
+                                text: I18n.tr("Install")
+                                iconName: "download"
+                                enabled: root.miseAvailable || envRow.modelData.id === "rust"
+                                onClicked: root.runInTerminal("developer-env-" + envRow.modelData.id, ["dev-env", "install", envRow.modelData.id])
+                            }
+
+                            VgsActionButton {
+                                anchors.right: parent.right
+                                anchors.rightMargin: Theme.spacingXS
+                                anchors.verticalCenter: parent.verticalCenter
+                                visible: envRow.modelData.installed && !(envRow.modelData.distroPath || "").length
+                                buttonSize: 28
+                                iconName: "delete"
+                                iconSize: 18
+                                iconColor: Theme.surfaceVariantText
+                                tooltipText: I18n.tr("Remove ") + envRow.modelData.name
+                                onClicked: root.runInTerminal("developer-env-" + envRow.modelData.id, ["dev-env", "remove", envRow.modelData.id])
                             }
                         }
                     }

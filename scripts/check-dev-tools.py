@@ -225,6 +225,26 @@ def test_env_remove_keeps_shared_tools():
         mise.RT.command_exists = original_exists
 
 
+def test_distro_owned_env_is_hands_off():
+    """A pacman rustup means Rust is installed and VGS neither installs nor removes it."""
+    original_which = devtools.shutil.which
+    original_eprint = devtools.RT.eprint
+    devtools.RT.eprint = lambda *a: None
+    rust = next(e for e in devtools.dev_env_entries() if e["id"] == "rust")
+    try:
+        devtools.shutil.which = lambda name: "/usr/bin/rustup" if name == "rustup" else None
+        row = next(e for e in devtools.dev_env_list()["envs"] if e["id"] == "rust")
+        assert row["installed"] and row["distroPath"] == "/usr/bin/rustup", row
+        assert_equal(devtools.dev_env_install(rust), 1, "install refuses a distro-owned env")
+        assert_equal(devtools.dev_env_remove(rust), 1, "remove refuses a distro-owned env")
+        devtools.shutil.which = lambda name: str(Path.home() / ".cargo" / "bin" / "rustup") if name == "rustup" else None
+        row = next(e for e in devtools.dev_env_list()["envs"] if e["id"] == "rust")
+        assert_equal(row["distroPath"], "", "a rustup under $HOME is the user's own, not the distro's")
+    finally:
+        devtools.shutil.which = original_which
+        devtools.RT.eprint = original_eprint
+
+
 def test_catalog_is_consistent():
     """One catalog feeds stubs, agents and envs; ids and commands must be unique."""
     catalog = mise.dev_tools_catalog()
@@ -259,6 +279,7 @@ def main() -> int:
     test_update_run_and_count_carry_tools()
     test_os_release_resolves_through_id_like()
     test_env_remove_keeps_shared_tools()
+    test_distro_owned_env_is_hands_off()
     test_catalog_is_consistent()
     test_cli_wrapper_routes_the_commands()
     print("check-dev-tools: ok")

@@ -530,7 +530,6 @@ var SPEC = {
 
     updaterCheckOnStart: { def: false },
     updaterIntervalSeconds: { def: 1800 },
-    defaultCodingAgent: { def: "" },
 
     displayNameMode: { def: "system" },
     screenPreferences: { def: {} },
