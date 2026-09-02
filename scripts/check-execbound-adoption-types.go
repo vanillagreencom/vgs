@@ -106,48 +106,102 @@ func (s fileScanner) assignedBuilderHasLifecycle(id *ast.Ident, after token.Pos)
 	if body == nil {
 		return false
 	}
-	foundLifecycle, invalid, outputRead := false, false, false
+	foundLifecycle, invalid := false, false
 	ast.Inspect(body, func(node ast.Node) bool {
-		if invalid || outputRead {
+		if invalid {
 			return false
 		}
-		if _, ok := node.(*ast.FuncLit); ok {
+		use, ok := node.(*ast.Ident)
+		if !ok || use.Pos() <= after || !sameIdent(use, id) {
+			return true
+		}
+		if s.identIsAssignedBuilderWrite(use) {
+			invalid = true
 			return false
 		}
-		if assign, ok := node.(*ast.AssignStmt); ok && assign.Pos() > after {
-			for _, lhs := range assign.Lhs {
-				if recv := assignedIdent(lhs); recv != nil && sameIdent(recv, id) {
-					invalid = true
-					return false
-				}
-			}
-		}
-		sel, ok := node.(*ast.SelectorExpr)
-		if ok && sel.Pos() > after {
-			recv, ok := unparen(sel.X).(*ast.Ident)
-			if ok && sameIdent(recv, id) && isOutputReadName(sel.Sel.Name) {
-				outputRead = true
+		if foundLifecycle {
+			if s.identIsOutputReadReceiver(use) {
+				invalid = true
 				return false
 			}
-		}
-		call, ok := node.(*ast.CallExpr)
-		if !ok || call.Pos() <= after {
 			return true
 		}
-		sel, ok = unparen(call.Fun).(*ast.SelectorExpr)
-		if !ok {
-			return true
+		allowed, lifecycle := s.assignedBuilderUseAllowed(use)
+		if !allowed {
+			invalid = true
+			return false
 		}
-		recv, ok := unparen(sel.X).(*ast.Ident)
-		if !ok || !sameIdent(recv, id) {
-			return true
-		}
-		if isRawLifecycleName(sel.Sel.Name) {
+		if lifecycle {
 			foundLifecycle = true
 		}
 		return true
 	})
-	return foundLifecycle && !invalid && !outputRead
+	return foundLifecycle && !invalid
+}
+
+func (s fileScanner) identIsAssignedBuilderWrite(id *ast.Ident) bool {
+	assign, ok := s.parentAfterParens(id).(*ast.AssignStmt)
+	if !ok {
+		return false
+	}
+	for _, lhs := range assign.Lhs {
+		if assigned := assignedIdent(lhs); assigned != nil && sameIdent(assigned, id) {
+			return true
+		}
+	}
+	return false
+}
+
+func (s fileScanner) identIsOutputReadReceiver(id *ast.Ident) bool {
+	sel := s.selectorForIdentReceiver(id)
+	return sel != nil && isOutputReadName(sel.Sel.Name)
+}
+
+func (s fileScanner) assignedBuilderUseAllowed(id *ast.Ident) (bool, bool) {
+	sel := s.selectorForIdentReceiver(id)
+	if sel == nil {
+		return false, false
+	}
+	if isRawLifecycleName(sel.Sel.Name) {
+		called := s.selectorCalledDirectly(sel)
+		return called, called
+	}
+	if isRawBuilderConfigFieldName(sel.Sel.Name) {
+		return true, false
+	}
+	if isRawBuilderPipeName(sel.Sel.Name) {
+		return s.selectorCalledDirectly(sel), false
+	}
+	return false, false
+}
+
+func (s fileScanner) selectorForIdentReceiver(id *ast.Ident) *ast.SelectorExpr {
+	var node ast.Node = id
+	for {
+		parent := s.parents[node]
+		if paren, ok := parent.(*ast.ParenExpr); ok && paren.X == node {
+			node = paren
+			continue
+		}
+		sel, ok := parent.(*ast.SelectorExpr)
+		if !ok || sel.X != node {
+			return nil
+		}
+		return sel
+	}
+}
+
+func isRawBuilderConfigFieldName(name string) bool {
+	switch name {
+	case "Cancel", "Dir", "Env", "ExtraFiles", "Stderr", "Stdin", "Stdout", "SysProcAttr", "WaitDelay":
+		return true
+	default:
+		return false
+	}
+}
+
+func isRawBuilderPipeName(name string) bool {
+	return name == "StderrPipe" || name == "StdinPipe" || name == "StdoutPipe"
 }
 
 func (s fileScanner) functionBody(pos token.Pos) *ast.BlockStmt {

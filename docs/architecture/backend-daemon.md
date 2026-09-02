@@ -138,8 +138,10 @@ call kept in that chain. `CommandWithDelay` is reserved for the allowlisted
 brightnessbridge chain that tests the ddcutil pipe-hold bound. Direct raw
 `exec.Command` and `exec.CommandContext` builders pass only when named in the
 allowlist and started or run in the same function. Builder aliases are rejected
-because they hide that shape. Unrelated `Output` and `CombinedOutput` methods
-are allowed when no process builder is involved.
+because they hide that shape. Before the direct `Start` or `Run`, an assigned
+raw builder may only use `exec.Cmd` configuration fields and direct pipe setup;
+passing, returning, storing, or closure capture is rejected. Unrelated `Output`
+and `CombinedOutput` methods are allowed when no process builder is involved.
 
 ## Feature flags / env
 

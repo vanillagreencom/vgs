@@ -297,6 +297,29 @@ func watch(ctx context.Context) error { cmd := exec.CommandContext(ctx, "wl-past
     finally:
         shutil.rmtree(raw_assigned_combined_root)
 
+    raw_assigned_escape_cases = [
+        ("closure", 'package clipboard\nimport "os/exec"\nfunc wlCopy(args []string) error { cmd := exec.Command("wl-copy", args...); capture := func() { _ = cmd }; capture(); return cmd.Start() }\n'),
+        ("helper", 'package clipboard\nimport "os/exec"\nfunc helper(any) {}\nfunc wlCopy(args []string) error { cmd := exec.Command("wl-copy", args...); helper(cmd); return cmd.Start() }\n'),
+        ("interface", 'package clipboard\nimport "os/exec"\nfunc wlCopy(args []string) error { cmd := exec.Command("wl-copy", args...); var value any = cmd; _ = value; return cmd.Start() }\n'),
+        ("field", 'package clipboard\nimport "os/exec"\ntype holder struct{ cmd any }\nfunc wlCopy(args []string) error { cmd := exec.Command("wl-copy", args...); _ = holder{cmd: cmd}; return cmd.Start() }\n'),
+        ("method-expression", 'package clipboard\nimport "os/exec"\nfunc wlCopy(args []string) error { cmd := exec.Command("wl-copy", args...); output := (*exec.Cmd).Output; _, _ = output(cmd); return cmd.Start() }\n'),
+    ]
+    for name, source in raw_assigned_escape_cases:
+        raw_assigned_escape_root = make_root()
+        try:
+            write_backend(raw_assigned_escape_root, "internal/services/clipboard/wayland.go", source)
+            try:
+                assert_fails_without(
+                    raw_assigned_escape_root,
+                    ("raw os/exec builders must start or run", "wlCopy: exec.Command(\"wl-copy\", args...)"),
+                    "raw os/exec builders outside execbound need a lifecycle reason",
+                    "raw exec.Command or exec.CommandContext output reads",
+                )
+            except AssertionError as exc:
+                raise AssertionError(f"{name}: {exc}") from exc
+        finally:
+            shutil.rmtree(raw_assigned_escape_root)
+
     raw_reassigned_root = make_root()
     try:
         write_backend(raw_reassigned_root, "internal/services/clipboard/wayland.go",
