@@ -424,9 +424,9 @@ PluginComponent {
         return String(left.id || "").localeCompare(String(right.id || ""));
     }
 
-    // `grouped` applies an item's `group` before the alphabet, so harnesses
-    // stay above environments inside their own category; the All list and
-    // ranked results never use it.
+    // `grouped` applies an item's `group` before the alphabet, so a category's
+    // own entries stay above agents, and agents above environments; the All
+    // list and ranked results never use it.
     function sortRanked(items, alphabetical, grouped) {
         items.sort((left, right) => {
             if (alphabetical && grouped) {
@@ -2290,10 +2290,10 @@ PluginComponent {
                 // own color; everything else follows the selection.
                 readonly property bool branded: String(resultRow.itemData.iconColor || "").length > 0
                 readonly property color brand: branded ? resultRow.itemData.iconColor : (resultRow.selected ? Theme.primary : Theme.surfaceVariantText)
-                // A pale brand mark on a light theme reads as blank; darken
-                // the glyph until it clears the tinted tile behind it.
+                // A brand mark below 3:1 against a light tile reads as blank;
+                // darken the glyph until it clears the tile behind it.
                 readonly property real brandLuma: 0.2126 * brand.r + 0.7152 * brand.g + 0.0722 * brand.b
-                readonly property color tint: (branded && Theme.isLightMode && brandLuma > 0.6) ? Qt.darker(brand, 2.4) : brand
+                readonly property color tint: (branded && Theme.isLightMode && brandLuma > 0.45) ? Qt.darker(brand, 2.4) : brand
                 color: Theme.withAlpha(brand, resultRow.selected ? 0.22 : (branded ? 0.16 : 0.12))
 
                 NerdIcon {
