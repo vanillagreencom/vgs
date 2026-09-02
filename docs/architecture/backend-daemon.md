@@ -130,7 +130,14 @@ code or `ee.Stderr`. Only a child killed by signal classifies as `ErrTimeout`.
 Every adopter runs `DefaultWaitDelay`; brightnessbridge takes
 it through an injectable field only its tests vary, and why the ddcutil chain
 never reaches the bound is in `display-brightness.md`. Long-lived watchers own
-their own lifecycle.
+their own lifecycle. `scripts/check-execbound-adoption.py` keeps one-shot
+`exec.Command` and `exec.CommandContext` output reads out of backend services
+with a parse-only AST guard. The guard follows direct raw builders and
+same-function local variables assigned from them, and fails direct `Output` or
+`CombinedOutput` calls on either form. Other raw `exec.Command` and
+`exec.CommandContext` builders pass only when named in the allowlist with a
+lifecycle reason. The allowlist is the review surface for backend-owned watcher
+and supervisor processes; it is not a general process-lifecycle verifier.
 
 ## Feature flags / env
 
@@ -153,7 +160,5 @@ are recorded in `backend/ATTRIBUTION.md` and enforced by
 ## Validation
 
 ```bash
-python3 scripts/check-backend-inventory.py   # method inventory + apiVersion-gate guard
-scripts/check-naming.sh
-go -C backend build ./... && go -C backend vet ./... && go -C backend test -race ./...
+scripts/validate go
 ```
