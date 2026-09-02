@@ -1,9 +1,10 @@
 .pragma library
 
 // Launcher entries for the Dev tools section, built from
-// config/vshell/dev-tools.json: one entry per coding agent (tag harness,
-// listed first) and one per language environment (tag environment). The
-// catalog is the only list; `group` orders them when no query ranks them.
+// config/vshell/dev-tools.json: one entry per coding agent (tag Agent) and
+// one per language environment (tag Environment). The catalog is the only
+// list; `group` orders them below the category's own entries (group 0)
+// when no query ranks them.
 function iconFields(spec) {
     const match = /^(nerd|brand):([0-9a-f]+)$/i.exec(spec || "");
     if (!match)
@@ -19,8 +20,8 @@ function itemsFromCatalog(raw) {
             category: "dev",
             title: agent.name,
             subtitle: agent.kind === "server" ? agent.command + ", server only: opens in the browser (no app)" : agent.command,
-            tag: "harness",
-            group: 0,
+            tag: "Agent",
+            group: 1,
             iconColor: agent.color || "",
             keywords: ["agent", "ai", "code", agent.id, agent.command],
             argv: ["{vshell}", "agent", "launch", agent.id]
@@ -31,8 +32,8 @@ function itemsFromCatalog(raw) {
             category: "dev",
             title: env.name,
             subtitle: env.installer === "rustup" ? "install with rustup" : "install with mise",
-            tag: "environment",
-            group: 1,
+            tag: "Environment",
+            group: 2,
             iconColor: env.color || "",
             keywords: ["install", "language", "environment", "dev", env.id],
             argv: ["{vshell}", "terminal", "exec", "--tui", "--hold", "--", "{vshell}", "dev-env", "install", env.id]

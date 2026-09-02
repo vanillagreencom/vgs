@@ -27,14 +27,14 @@
   "agents": [
     { "id": "claude", "name": "Claude Code", "icon": "nerd:f06c4", "color": "#D97757", "package": "claude", "command": "claude", "launch": ["claude", "--permission-mode", "auto"] },
     { "id": "codex", "name": "Codex", "icon": "brand:e905", "color": "#10A37F", "package": "codex", "command": "codex", "launch": ["codex", "--approve-for-me"] },
-    { "id": "opencode", "name": "OpenCode", "icon": "brand:e902", "package": "opencode", "command": "opencode", "launch": ["opencode", "--auto"] },
+    { "id": "opencode", "name": "OpenCode", "icon": "brand:e902", "color": "#14B8A6", "package": "opencode", "command": "opencode", "launch": ["opencode", "--auto"] },
     { "id": "copilot", "name": "GitHub Copilot", "icon": "nerd:f4b8", "color": "#6E40C9", "package": "copilot", "command": "copilot", "launch": ["copilot", "--allow-all"] },
     { "id": "crush", "name": "Crush", "icon": "nerd:f02d1", "color": "#FF5C8A", "package": "crush", "command": "crush", "launch": ["crush", "--yolo"] },
-    { "id": "pi", "name": "Pi", "icon": "brand:e901", "package": "pi", "command": "pi", "launch": ["pi"] },
-    { "id": "omp", "name": "Oh My Pi", "icon": "brand:e903", "package": "github:can1357/oh-my-pi", "command": "omp", "launch": ["omp", "--auto-approve"] },
+    { "id": "pi", "name": "Pi", "icon": "brand:e901", "color": "#9DC4FF", "package": "pi", "command": "pi", "launch": ["pi"] },
+    { "id": "omp", "name": "Oh My Pi", "icon": "brand:e903", "color": "#BF40FF", "package": "github:can1357/oh-my-pi", "command": "omp", "launch": ["omp", "--auto-approve"] },
     { "id": "gemini", "name": "Gemini CLI", "icon": "nerd:f0674", "color": "#4E8DF5", "package": "gemini", "command": "gemini", "launch": ["gemini", "--yolo"] },
     { "id": "agy", "name": "Antigravity", "icon": "nerd:f02ad", "color": "#4285F4", "package": "aqua:google-antigravity/antigravity-cli", "command": "agy", "launch": ["agy", "--dangerously-skip-permissions"] },
-    { "id": "grok", "name": "Grok", "icon": "brand:e904", "package": "npm:@xai-official/grok", "command": "grok", "launch": ["grok", "--permission-mode", "bypassPermissions"] },
+    { "id": "grok", "name": "Grok", "icon": "brand:e904", "color": "#FFFFFF", "package": "npm:@xai-official/grok", "command": "grok", "launch": ["grok", "--permission-mode", "bypassPermissions"] },
     { "id": "ori", "name": "Ori", "icon": "brand:e909", "color": "#6467F2", "package": "github:OpenRouterLabs/ori-releases", "command": "ori", "launch": ["ori", "code"] },
     { "id": "dsh", "name": "DeepSeek Harness", "kind": "server", "icon": "nerd:f06a9", "color": "#4D6BFE", "package": "npm:@deepseek-ai/dsh", "command": "dsh", "launch": ["dsh", "web"] }
   ],
