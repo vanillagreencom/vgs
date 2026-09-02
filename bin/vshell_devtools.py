@@ -116,7 +116,7 @@ def agent_launch(agent_id: str, inline: bool, hold: bool = False) -> int:
     # The agent replaces this process so it owns the terminal and its
     # signals; the shell around it keeps the window open only on a non-zero
     # exit, which is otherwise a message the owner never sees.
-    script = '"$@"; code=$?; if [ "$code" -ne 0 ]; then printf "\\n%s exited with status %s.\\nPress Enter to close. " "$0" "$code"; read -r _; fi; exit "$code"'
+    script = '"$@"; code=$?; case "$code" in 0|130|143) ;; *) printf "\\n%s exited with status %s.\\nPress Enter to close. " "$0" "$code"; read -r _;; esac; exit "$code"'
     os.execvpe("sh", ["sh", "-c", script, entry["name"], *launch], env)
 
 
