@@ -200,6 +200,7 @@ scout = [
 ]
 
 [skill-instructions]
+all = "Problems with a kendex-owned skill go through `kendex report`; check ownership in the file first."
 linear = '''
 ## Tracker policy: Linear is canonical; GitHub Issues is intake-only
 
@@ -1072,3 +1073,6 @@ deny-tools = [
 ]
 allowed-subagents = []
 pane = false
+
+[agent-additional-instructions]
+all = "Problems with a kendex-owned skill go through `kendex report`; check ownership in the file first."

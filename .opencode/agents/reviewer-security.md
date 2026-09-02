@@ -21,8 +21,6 @@ permission:
 
 Application security and trust boundaries (memory/thread safety belongs to `reviewer-safety`; general correctness to `reviewer-correctness` unless security impact is central). Project security policies outrank generic standards; include a CWE reference when applicable.
 
-> ***Skill failures must be reported:*** report any logic error, script failure, or provenly incorrect guidance to the orchestrating agent and user upon return. Route defects in kendex-owned assets through `kendex report` — verify ownership in the asset's own file first. Filing rules: `kendex report --help`.
-
 ## Scope
 
 Vulnerability classes (injection, broken auth/authz, data exposure, XSS/CSRF, privilege escalation), input validation at boundaries, API security. Plus:
@@ -32,6 +30,8 @@ Vulnerability classes (injection, broken auth/authz, data exposure, XSS/CSRF, pr
 - **Secret exposure**: credentials or userinfo-bearing URLs reaching logs, diagnostics, or error output; automation that can sweep uncontrolled local edits (and their secrets) into commits.
 - **Untrusted input in control position**: attacker-controlled filenames/branches/settings echoed into shells, workflow commands, or evaluated config; code or config loaded from a reviewed-but-untrusted tree.
 
+A finding in a class `.agents/skills/orch/references/finding-disposition.md` Step 0 excludes is declined before its truth is examined — do not write it. For a symlink, `..`, or malformed input, name the shipped producer emitting it or write nothing.
+
 ## Output
 
 Vulnerabilities, gating gaps, containment escapes, secret exposure → `blockers[]`. Hardening → `suggestions[]`.
@@ -40,3 +40,9 @@ Vulnerabilities, gating gaps, containment escapes, secret exposure → `blockers
 
 Read each before acting:
 - reviewer: .agents/skills/reviewer/SKILL.md
+
+## Additional Instructions
+
+<!-- kendex:shared-instructions:start -->
+Problems with a kendex-owned skill go through `kendex report`; check ownership in the file first.
+<!-- kendex:shared-instructions:end -->

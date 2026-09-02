@@ -3,6 +3,14 @@ name: vgs-release
 description: Cut and publish a VGS release across GitHub and every maintained install channel.
 ---
 
+<!-- kendex:project-instructions:start -->
+## Project Instructions
+
+<!-- kendex:shared-instructions:start -->
+Problems with a kendex-owned skill go through `kendex report`; check ownership in the file first.
+<!-- kendex:shared-instructions:end -->
+<!-- kendex:project-instructions:end -->
+
 # VGS release
 
 1. Set `VERSION`; update matching versions in `quickshell/vshell/VERSION` and `packaging/`.

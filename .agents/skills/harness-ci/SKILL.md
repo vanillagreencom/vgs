@@ -13,9 +13,15 @@ metadata:
 tags: [automation]
 ---
 
-# Harness CI
+<!-- kendex:project-instructions:start -->
+## Project Instructions
 
-> **Problem with this skill?** Run `kendex report` — it files to the owning repo automatically. Do not hand-file.
+<!-- kendex:shared-instructions:start -->
+Problems with a kendex-owned skill go through `kendex report`; check ownership in the file first.
+<!-- kendex:shared-instructions:end -->
+<!-- kendex:project-instructions:end -->
+
+# Harness CI
 
 **One question, one answer: is this diff nothing but kendex render
 output?** The classifier reads a diff's changed-file set and prints

@@ -25,6 +25,10 @@
 #                                               description
 #   w8b. unreasoned-decline over a NEWER     -> posts failure directly
 #        success entry
+#   w9.  untracked-claim                     -> posts failure, remedy in the
+#                                               description
+#   w9b. untracked-claim over a NEWER        -> posts failure directly
+#        success entry
 # Write discipline (VST-65 ordering guard, success posts only):
 #   w10. guard re-read shows a non-success   -> defers (exit 0, no POST)
 #        entry at/after evaluated_at
@@ -56,11 +60,9 @@
 #   wp1-wp3. pagination merges               -> page-two PRs enumerate; a
 #                                               page-two guard entry defers
 # The WORKFLOW YAML is asserted in its own suite,
-# review-writer-template.test.sh — the template's own contract derived from
-# the shipped template alone (expressions offline runs cannot execute, and
-# relations between values in the file), plus the relay step extracted and
-# EXECUTED against a gh stub over both copies. This file is the
-# review-writer.sh engine suite: one instrument class, one subject.
+# review-writer-template.test.sh — the relay step extracted and EXECUTED
+# against a gh stub over both copies. This file is the review-writer.sh
+# engine suite: one instrument class, one subject.
 set -euo pipefail
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -243,6 +245,8 @@ CR="verdict=changes-requested detail=standing review changes requested (persists
 THREADS="verdict=threads-open detail=2 unresolved review thread(s)"
 UNREASONED_DETAIL="1 decline(s) name no mechanism — give a passing state, a false premise, or an excluded class with the fact that puts it there"
 UNREASONED="verdict=unreasoned-decline detail=$UNREASONED_DETAIL"
+UNTRACKED_DETAIL="1 tracking claim(s) name no issue — write Declined: <reason>, or add the tracker/#id"
+UNTRACKED="verdict=untracked-claim detail=$UNTRACKED_DETAIL"
 
 # created_at anchors: OLD predates every stub run's start (RUN_START =
 # 2020-06-01) and every evaluation instant; LATE lands after RUN_START but
@@ -296,6 +300,21 @@ rc=0; out=$(run_writer STUB_VERDICT_LINE="$UNREASONED" \
 assert_eq "$rc" "0" "w8b: unreasoned-decline over a newer success exits 0"
 assert_contains "$(cat "$POST_LOG")" "state=failure" "w8b: posts failure over it — a downward post never defers"
 assert_not_contains "$out" "deferring" "w8b: no deferral on the downward path"
+
+# w9: a reply claiming tracking that names no issue is the other red verdict.
+# Driven through the writer for the same reason w8 is: the mapping line reads
+# the same whether the verdict is spelled right or not, and an unmapped
+# verdict exits 1 on "unknown verdict" instead of posting anything.
+rc=0; out=$(run_writer STUB_VERDICT_LINE="$UNTRACKED" STUB_GATE_HISTORY='[]') || rc=$?
+assert_eq "$rc" "0" "w9: untracked-claim exits 0"
+assert_contains "$(cat "$POST_LOG")" "state=failure" "w9: untracked-claim posts failure"
+assert_contains "$(cat "$POST_LOG")" "$UNTRACKED_DETAIL" "w9: the remedy reaches the status description"
+
+rc=0; out=$(run_writer STUB_VERDICT_LINE="$UNTRACKED" \
+  STUB_GATE_HISTORY='[{"context":"Review gate","state":"success","description":"ok","created_at":"'"$FUTURE"'"}]') || rc=$?
+assert_eq "$rc" "0" "w9b: untracked-claim over a newer success exits 0"
+assert_contains "$(cat "$POST_LOG")" "state=failure" "w9b: posts failure over it — a downward post never defers"
+assert_not_contains "$out" "deferring" "w9b: no deferral on the downward path"
 
 echo "=== approved converges to success ==="
 

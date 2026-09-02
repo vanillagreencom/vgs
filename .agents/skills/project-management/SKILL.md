@@ -19,6 +19,10 @@ tags: [planning]
 <!-- kendex:project-instructions:start -->
 ## Project Instructions
 
+<!-- kendex:shared-instructions:start -->
+Problems with a kendex-owned skill go through `kendex report`; check ownership in the file first.
+<!-- kendex:shared-instructions:end -->
+
 ## Linear projects
 
 Every new non-mirror issue gets exactly one project. The set (all team
@@ -137,8 +141,6 @@ oversight, and gets "fixed" by someone assigning it.
 <!-- kendex:project-instructions:end -->
 
 # Project Management
-
-> **Problem with this skill?** Run `kendex report` — it files to the owning repo automatically. Do not hand-file.
 
 Wrappers run in the primary session: they own the user dialog and every tracker mutation. TPM workflows analyze and return JSON inline; they never mutate the tracker and never write the artifact.
 
