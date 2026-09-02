@@ -4,6 +4,8 @@
 from __future__ import annotations
 
 import importlib.util
+import contextlib
+import io
 import os
 import shutil
 import subprocess
@@ -63,20 +65,45 @@ def checker_module():
     return module
 
 
-def assert_allowlist_controls() -> None:
+def assert_allowlist_entrypoint_controls() -> None:
     checker = checker_module()
-    rows = [checker.Finding("", 0, "", "", "dup"), checker.Finding("", 0, "", "", "dup")]
-    errors = checker.allowlist_match_errors(rows, {"dup": "reason", "missing": "reason", "empty": ""}, "raw")
+    original_allowlist = checker.ALLOWED_RAW_EXECS
+    original_run_analyzer = checker.run_analyzer
+    original_repo_root = checker.REPO_ROOT
+    checker.ALLOWED_RAW_EXECS = {"dup": "reason", "missing": "reason", "empty": ""}
+    checker.REPO_ROOT = checker.DEFAULT_REPO_ROOT
+    checker.run_analyzer = lambda: {
+        "files_checked": 1,
+        "parse_errors": [],
+        "raw_calls": [
+            {"rel": "backend/internal/services/sample/a.go", "line": 1, "function": "a", "expression": 'exec.Command("a")', "key": "dup"},
+            {"rel": "backend/internal/services/sample/b.go", "line": 1, "function": "b", "expression": 'exec.Command("b")', "key": "dup"},
+        ],
+        "output_reads": [],
+    }
+    stderr = io.StringIO()
+    try:
+        with contextlib.redirect_stderr(stderr):
+            status = checker.main()
+    finally:
+        checker.ALLOWED_RAW_EXECS = original_allowlist
+        checker.run_analyzer = original_run_analyzer
+        checker.REPO_ROOT = original_repo_root
+    output = stderr.getvalue()
+    if status == 0:
+        raise AssertionError("checker unexpectedly passed invalid allowlist entrypoint controls")
     for needle in (
-        "raw allowlist key matched 2 finding(s): dup",
-        "raw allowlist key matched 0 finding(s): missing",
-        "raw allowlist key has an empty reason: empty",
+        "allowlist entries must match exactly one finding",
+        "raw os/exec allowlist key matched 2 finding(s): dup",
+        "raw os/exec allowlist key matched 0 finding(s): missing",
+        "raw os/exec allowlist key has an empty reason: empty",
     ):
-        if needle not in errors:
-            raise AssertionError(errors)
+        if needle not in output:
+            raise AssertionError(output)
+
 
 def main() -> int:
-    assert_allowlist_controls()
+    assert_allowlist_entrypoint_controls()
     assert_passes(REPO_ROOT)
 
     parse_root = make_root()
@@ -113,8 +140,16 @@ def main() -> int:
 
     allowlisted = make_root()
     try:
-        write_backend(allowlisted, "internal/services/clipboard/wayland.go", 'package clipboard\nimport "os/exec"\nfunc wlCopy(args []string) error { _, err := exec.Command("wl-copy", args...).Output(); return err }\n')
-        assert_fails(allowlisted, "raw exec.Command or exec.CommandContext output reads", 'wlCopy: exec.Command("wl-copy", args...).Output()', absent=("raw os/exec builders outside execbound need a lifecycle reason",))
+        write_backend(allowlisted, "internal/services/clipboard/wayland.go", 'package clipboard\nimport "os/exec"\nfunc wlCopy(args []string) error { _, directErr := exec.Command("wl-copy", args...).Output(); var cmd = exec.Command("wl-copy", args...); _, varErr := cmd.Output(); var typed *exec.Cmd = exec.Command("wl-copy", args...); _, combinedErr := typed.CombinedOutput(); var ( blocked = exec.Command("wl-copy", args...) ); _, blockErr := blocked.Output(); if directErr != nil { return directErr }; if varErr != nil { return varErr }; if combinedErr != nil { return combinedErr }; return blockErr }\n')
+        assert_fails(
+            allowlisted,
+            "raw exec.Command or exec.CommandContext output reads",
+            'wlCopy: exec.Command("wl-copy", args...).Output()',
+            "wlCopy: cmd.Output()",
+            "wlCopy: typed.CombinedOutput()",
+            "wlCopy: blocked.Output()",
+            absent=("raw os/exec builders outside execbound need a lifecycle reason",),
+        )
     finally:
         shutil.rmtree(allowlisted)
 

@@ -170,21 +170,31 @@ func (s fileScanner) identHasRawBuilder(id *ast.Ident, end token.Pos) bool {
 	}
 	found := false
 	ast.Inspect(fn.body, func(node ast.Node) bool {
-		stmt, ok := node.(*ast.AssignStmt)
-		if !ok {
-			return true
-		}
-		for i, lhs := range stmt.Lhs {
-			lhsID, ok := unparen(lhs).(*ast.Ident)
-			if !ok || !sameIdent(lhsID, id) || lhsID.Pos() >= end || i >= len(stmt.Rhs) {
-				continue
+		switch n := node.(type) {
+		case *ast.AssignStmt:
+			for i, lhs := range n.Lhs {
+				lhsID, ok := unparen(lhs).(*ast.Ident)
+				if !ok || !sameIdent(lhsID, id) || lhsID.Pos() >= end {
+					continue
+				}
+				found = i < len(n.Rhs) && s.isRawBuilderCall(n.Rhs[i])
 			}
-			call, ok := unparen(stmt.Rhs[i]).(*ast.CallExpr)
-			found = ok && s.isRawBuilder(unparen(call.Fun))
+		case *ast.ValueSpec:
+			for i, name := range n.Names {
+				if !sameIdent(name, id) || name.Pos() >= end {
+					continue
+				}
+				found = i < len(n.Values) && s.isRawBuilderCall(n.Values[i])
+			}
 		}
 		return true
 	})
 	return found
+}
+
+func (s fileScanner) isRawBuilderCall(expr ast.Expr) bool {
+	call, ok := unparen(expr).(*ast.CallExpr)
+	return ok && s.isRawBuilder(unparen(call.Fun))
 }
 
 func (s fileScanner) isRawBuilder(expr ast.Expr) bool {
