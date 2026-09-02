@@ -12,8 +12,11 @@ VgsModal {
 
     layerNamespace: "vshell:keybinds"
     useOverlayLayer: true
-    property real _maxW: Math.min(overlay.screenWidth * 0.92, 1200)
-    property real _maxH: Math.min(overlay.screenHeight * 0.92, 900)
+    // The content measures the widest key and description it will draw and
+    // asks for exactly that; the masonry keeps a category in a single column,
+    // so anything wider is empty space beside the list.
+    property real _maxW: Math.min(overlay.screenWidth * 0.92, contentLoader.item ? contentLoader.item.preferredWidth : 720)
+    property real _maxH: Math.min(overlay.screenHeight * 0.92, 940)
     modalWidth: _maxW
     modalHeight: _maxH
     onBackgroundClicked: close()

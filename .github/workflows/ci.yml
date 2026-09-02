@@ -321,6 +321,7 @@ jobs:
       - name: Helper and CLI checks
         run: |
           scripts/check-vshell-helper.py
+          scripts/check-keybinds-display.py
           scripts/check-dev-tools.py
           scripts/check-brightness.py
           python3 -m py_compile bin/vshell-helper
