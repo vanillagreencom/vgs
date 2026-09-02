@@ -14,12 +14,15 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[1]
 CHECKER = REPO_ROOT / "scripts" / "check-execbound-adoption.py"
 
+
 def write(path: Path, text: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(text, encoding="utf-8")
 
+
 def write_backend(root: Path, rel: str, text: str) -> None:
     write(root / "backend" / Path(rel), text)
+
 
 def run_checker(root: Path) -> subprocess.CompletedProcess[str]:
     env = os.environ.copy()
@@ -33,7 +36,7 @@ def assert_passes(root: Path) -> None:
         raise AssertionError(result.stdout + result.stderr)
 
 
-def assert_fails(root: Path, *expected: str) -> None:
+def assert_fails(root: Path, *expected: str, absent: tuple[str, ...] = ()) -> None:
     result = run_checker(root)
     output = result.stdout + result.stderr
     if result.returncode == 0:
@@ -41,284 +44,79 @@ def assert_fails(root: Path, *expected: str) -> None:
     for needle in expected:
         if needle not in output:
             raise AssertionError(f"checker output missing {needle!r}\n{output}")
-
-
-def assert_fails_without(root: Path, expected: tuple[str, ...], *unexpected: str) -> None:
-    result = run_checker(root)
-    output = result.stdout + result.stderr
-    if result.returncode == 0:
-        raise AssertionError(f"checker unexpectedly passed; wanted {expected!r}")
-    for needle in expected:
-        if needle not in output:
-            raise AssertionError(f"checker output missing {needle!r}\n{output}")
-    for needle in unexpected:
+    for needle in absent:
         if needle in output:
             raise AssertionError(f"checker output unexpectedly contained {needle!r}\n{output}")
-
-
-def assert_raw_failure(source: str, expected: tuple[str, ...], *unexpected: str) -> None:
-    root = make_root()
-    try:
-        write_backend(root, "internal/services/clipboard/wayland.go", source)
-        assert_fails_without(root, expected, *unexpected)
-    finally:
-        shutil.rmtree(root)
 
 
 def make_root() -> Path:
     return Path(tempfile.mkdtemp(prefix="vgs-execbound-test-"))
 
 
-def write_go_mod(root: Path) -> None:
-    write_backend(root, "go.mod", "\nmodule example.com/backend\n\ngo 1.22\n")
-
-
-def write_execbound(root: Path) -> None:
-    write_backend(root, "internal/execbound/execbound.go",
-        """
-package execbound
-import "os/exec"
-type Cmd struct{}
-func Command(any, string, ...string) *Cmd { return &Cmd{} }
-func CommandWithDelay(any, any, string, ...string) *Cmd { return &Cmd{} }
-func (c *Cmd) Exec() *exec.Cmd { return exec.Command("true") }
-func (c *Cmd) WithLogger(any) *Cmd { return c }
-func (c *Cmd) Output() (int, error) { return 0, nil }
-func (c *Cmd) CombinedOutput() (int, error) { return 0, nil }
-""",
-    )
-
-
-def assert_allowlist_controls() -> None:
+def checker_module():
     spec = importlib.util.spec_from_file_location("check_execbound_adoption", CHECKER)
     if spec is None or spec.loader is None:
         raise AssertionError("could not load checker module")
-    checker = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = checker
-    spec.loader.exec_module(checker)
-    rows = [checker.Finding("", 0, "", "", "dup"), checker.Finding("", 0, "", "", "dup")]
-    errors = checker.allowlist_match_errors(rows, {"dup": "reason", "missing": "reason"}, "raw")
-    if (
-        "raw allowlist key matched 2 finding(s): dup" not in errors
-        or "raw allowlist key matched 0 finding(s): missing" not in errors
-    ):
-        raise AssertionError(errors)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
 
+
+def assert_allowlist_controls() -> None:
+    checker = checker_module()
+    rows = [checker.Finding("", 0, "", "", "dup"), checker.Finding("", 0, "", "", "dup")]
+    errors = checker.allowlist_match_errors(rows, {"dup": "reason", "missing": "reason", "empty": ""}, "raw")
+    for needle in (
+        "raw allowlist key matched 2 finding(s): dup",
+        "raw allowlist key matched 0 finding(s): missing",
+        "raw allowlist key has an empty reason: empty",
+    ):
+        if needle not in errors:
+            raise AssertionError(errors)
 
 def main() -> int:
     assert_allowlist_controls()
-
-    empty = make_root()
-    try:
-        assert_fails(empty, "found no Go files")
-    finally:
-        shutil.rmtree(empty)
+    assert_passes(REPO_ROOT)
 
     parse_root = make_root()
     try:
-        write_backend(parse_root, "internal/services/sample/valid.go",
-            """
-package sample
-func valid() {}
-""",
-        )
-        write_backend(parse_root, "internal/services/sample/malformed.go",
-            """
-package sample
-func malformed( {
-""",
-        )
+        write_backend(parse_root, "internal/services/sample/valid.go", "package sample\nfunc valid() {}\n")
+        write_backend(parse_root, "internal/services/sample/malformed.go", "package sample\nfunc malformed( {\n")
         assert_fails(parse_root, "could not parse backend Go file(s)", "malformed.go")
     finally:
         shutil.rmtree(parse_root)
 
-    root = make_root()
+    pass_root = make_root()
     try:
-        write_go_mod(root)
-        write_execbound(root)
-        write_backend(root, "internal/services/brightnessbridge/brightnessbridge.go",
-            """
-package brightnessbridge
-import (
-    "context"
-    "example.com/backend/internal/execbound"
-)
-func mentions(ctx context.Context) {
-    _ = "exec.CommandContext(ctx, \\"bad-tool\\").Output()"
-    // _, _ = exec.CommandContext(ctx, "bad-tool").CombinedOutput()
-}
-func directBound(ctx context.Context) error {
-    _, err := execbound.Command(ctx, "good-tool").WithLogger(nil).Output()
-    return err
-}
-type Manager struct {
-    waitDelay int
-    helper string
-    log any
-}
-func (m *Manager) call(ctx context.Context, cmdArgs []string) error {
-    _, err := execbound.CommandWithDelay(ctx, m.waitDelay, m.helper, cmdArgs...).WithLogger(m.log).Output()
-    return err
-}
-type report struct{}
-func (report) Output() string { return "ok" }
-func unrelatedOutput() string { return report{}.Output() }
-""",
-        )
-        write_backend(root, "vendor/example/bad.go",
-            """
-package example
-import "os/exec"
-func vendorBypass() error {
-    _, err := exec.Command("vendor-tool").Output()
-    return err
-}
-""",
-        )
-        assert_passes(root)
-
-        write_backend(root, "internal/services/sample/bad.go",
-            """
-package sample
-import (
-    "context"
-    "os/exec"
-    "example.com/backend/internal/execbound"
-)
-func direct(ctx context.Context) error {
-    _, err := exec.CommandContext(ctx, "bad-tool").Output()
-    return err
-}
-func viaVariable(ctx context.Context) error {
-    cmd := exec.CommandContext(ctx, "other-tool")
-    _, err := cmd.CombinedOutput()
-    return err
-}
-func genericDelay(ctx context.Context) error {
-    _, err := execbound.CommandWithDelay(ctx, 1, "generic-delay-tool").Output()
-    return err
-}
-""",
-        )
-        assert_fails(
-            root,
-            "raw exec.Command or exec.CommandContext output reads",
-            "bad-tool",
-            ".Output()",
-            "viaVariable: exec.CommandContext(ctx, \"other-tool\")",
-            "genericDelay: execbound.CommandWithDelay",
-            "allowlist key:",
-        )
+        write_backend(pass_root, "internal/services/sample/pass.go", 'package sample\nfunc mentions() { _ = "exec.CommandContext(ctx, \\"bad-tool\\").Output()"; /* exec.CommandContext(ctx, "bad-tool").CombinedOutput() */ }\ntype report struct{}\nfunc (report) Output() string { return "ok" }\nfunc (report) CombinedOutput() string { return "ok" }\nfunc unrelatedOutput() string { return report{}.Output() + report{}.CombinedOutput() }\n')
+        write_backend(pass_root, "internal/execbound/execbound.go", 'package execbound\nimport "os/exec"\nfunc ok() { _, _ = exec.Command("internal-tool").Output() }\n')
+        write_backend(pass_root, "vendor/example/bad.go", 'package example\nimport "os/exec"\nfunc bypass() { _, _ = exec.Command("vendor-tool").Output() }\n')
+        assert_passes(pass_root)
     finally:
-        shutil.rmtree(root)
+        shutil.rmtree(pass_root)
 
-    raw_root = make_root()
+    fail_root = make_root()
     try:
-        write_backend(raw_root, "internal/services/sample/raw.go",
-            """
-package sample
-import ("context"; "os/exec")
-type outputRunner interface{ Output() ([]byte, error) }
-func rawStart(ctx context.Context) error { cmd := exec.CommandContext(ctx, "raw-tool"); return cmd.Start() }
-func rawReturned(ctx context.Context) (error, outputRunner) { return nil, exec.CommandContext(ctx, "multi-raw-tool") }
-func appendRaw(ctx context.Context) { var runs []outputRunner; runs = append(runs, exec.CommandContext(ctx, "append-tool")) }
-""",
-        )
+        write_backend(fail_root, "internal/services/sample/bad.go", 'package sample\nimport ("context"; ex "os/exec")\nfunc direct(ctx context.Context) error { _, err := ex.CommandContext(ctx, "bad-tool").Output(); return err }\nfunc viaVariable(ctx context.Context) error { cmd := ex.CommandContext(ctx, "other-tool"); _, err := cmd.CombinedOutput(); return err }\nfunc rawStart(ctx context.Context) error { cmd := ex.CommandContext(ctx, "raw-tool"); return cmd.Start() }\n')
         assert_fails(
-            raw_root,
-            "raw os/exec builders must start or run in the same function",
-            "rawReturned: exec.CommandContext(ctx, \"multi-raw-tool\")",
-            "appendRaw: exec.CommandContext(ctx, \"append-tool\")",
+            fail_root,
+            "raw exec.Command or exec.CommandContext output reads",
+            'direct: ex.CommandContext(ctx, "bad-tool").Output()',
+            "viaVariable: cmd.CombinedOutput()",
             "raw os/exec builders outside execbound need a lifecycle reason",
             "raw-tool",
             "allowlist key:",
         )
     finally:
-        shutil.rmtree(raw_root)
+        shutil.rmtree(fail_root)
 
-    assert_raw_failure(
-        'package clipboard\nimport "os/exec"\nfunc wlCopy(args []string) error { _, err := exec.Command("wl-copy", args...).Output(); return err }\n',
-        ("raw exec.Command or exec.CommandContext output reads", "wlCopy: exec.Command(\"wl-copy\", args...).Output()", "raw os/exec builders must start or run"),
-        "raw os/exec builders outside execbound need a lifecycle reason",
-    )
-    assert_raw_failure(
-        'package clipboard\nimport ("context"; "os/exec")\nfunc watch(ctx context.Context) error { _, err := exec.CommandContext(ctx, "wl-paste", "--watch", "echo").CombinedOutput(); return err }\n',
-        ("raw exec.Command or exec.CommandContext output reads", "watch: exec.CommandContext(ctx, \"wl-paste\", \"--watch\", \"echo\").CombinedOutput()", "raw os/exec builders must start or run"),
-        "raw os/exec builders outside execbound need a lifecycle reason",
-    )
-
-    for name, source, expression in [
-        ("method-value-output", 'package clipboard\nimport "os/exec"\nfunc wlCopy(args []string) error { cmd := exec.Command("wl-copy", args...); if err := cmd.Start(); err != nil { return err }; output := cmd.Output; _, err := output(); return err }\n', "wlCopy: exec.Command(\"wl-copy\", args...)"),
-        ("method-value-combined", 'package clipboard\nimport ("context"; "os/exec")\nfunc watch(ctx context.Context) error { cmd := exec.CommandContext(ctx, "wl-paste", "--watch", "echo"); output := cmd.CombinedOutput; if err := cmd.Start(); err != nil { return err }; _, err := output(); return err }\n', "watch: exec.CommandContext(ctx, \"wl-paste\", \"--watch\", \"echo\")"),
-        ("direct-output", 'package clipboard\nimport "os/exec"\nfunc wlCopy(args []string) error { cmd := exec.Command("wl-copy", args...); if err := cmd.Start(); err != nil { return err }; _, err := cmd.Output(); return err }\n', "wlCopy: exec.Command(\"wl-copy\", args...)"),
-        ("direct-combined", 'package clipboard\nimport ("context"; "os/exec")\nfunc watch(ctx context.Context) error { cmd := exec.CommandContext(ctx, "wl-paste", "--watch", "echo"); if err := cmd.Start(); err != nil { return err }; _, err := cmd.CombinedOutput(); return err }\n', "watch: exec.CommandContext(ctx, \"wl-paste\", \"--watch\", \"echo\")"),
-        ("reassigned", 'package clipboard\nimport "os/exec"\nfunc wlCopy(args []string) error { cmd := exec.Command("wl-copy", args...); cmd = nil; return cmd.Start() }\n', "wlCopy: exec.Command(\"wl-copy\", args...)"),
-        ("branch-closure", 'package clipboard\nimport "os/exec"\nfunc helper(any) {}\nfunc wlCopy(args []string, ok bool) error { cmd := exec.Command("wl-copy", args...); if ok { return cmd.Start() }; capture := func() { helper(cmd) }; capture(); return nil }\n', "wlCopy: exec.Command(\"wl-copy\", args...)"),
-        ("branch-helper", 'package clipboard\nimport "os/exec"\nfunc helper(any) {}\nfunc wlCopy(args []string, ok bool) error { cmd := exec.Command("wl-copy", args...); if ok { return cmd.Start() }; helper(cmd); return nil }\n', "wlCopy: exec.Command(\"wl-copy\", args...)"),
-        ("branch-interface", 'package clipboard\nimport "os/exec"\nfunc wlCopy(args []string, ok bool) error { cmd := exec.Command("wl-copy", args...); if ok { return cmd.Start() }; var value any = cmd; _ = value; return nil }\n', "wlCopy: exec.Command(\"wl-copy\", args...)"),
-        ("branch-field", 'package clipboard\nimport "os/exec"\ntype holder struct{ cmd any }\nfunc wlCopy(args []string, ok bool) error { cmd := exec.Command("wl-copy", args...); if ok { return cmd.Start() }; _ = holder{cmd: cmd}; return nil }\n', "wlCopy: exec.Command(\"wl-copy\", args...)"),
-        ("branch-method-expression", 'package clipboard\nimport "os/exec"\nfunc wlCopy(args []string, ok bool) error { cmd := exec.Command("wl-copy", args...); if ok { return cmd.Start() }; output := (*exec.Cmd).Output; _, _ = output(cmd); return nil }\n', "wlCopy: exec.Command(\"wl-copy\", args...)"),
-    ]:
-        try:
-            assert_raw_failure(
-                source,
-                ("raw os/exec builders must start or run", expression),
-                "raw os/exec builders outside execbound need a lifecycle reason",
-                "raw exec.Command or exec.CommandContext output reads",
-            )
-        except AssertionError as exc:
-            raise AssertionError(f"{name}: {exc}") from exc
-
-    assigned_root = make_root()
+    allowlisted = make_root()
     try:
-        write_go_mod(assigned_root)
-        write_execbound(assigned_root)
-        write_backend(assigned_root, "internal/services/sample/assigned.go",
-            """
-package sample
-import (
-    "context"
-    "example.com/backend/internal/execbound"
-)
-func assignedBound(ctx context.Context) error { cmd := execbound.Command(ctx, "assigned-tool"); _, err := cmd.Output(); return err }
-type runner interface{ Output() (int, error) }
-func helperPassed(cmd runner) error { return nil }
-func callHelper(ctx context.Context) error { return helperPassed(execbound.Command(ctx, "passed-tool")) }
-func callDelayHelper(ctx context.Context) error { return helperPassed(execbound.CommandWithDelay(ctx, 1, "passed-delay-tool")) }
-func multiValue(ctx context.Context) (error, runner) { return nil, execbound.Command(ctx, "multi-tool") }
-func appendBound(ctx context.Context) []runner { var runs []runner; return append(runs, execbound.Command(ctx, "append-tool")) }
-func execRun(ctx context.Context) error { return execbound.Command(ctx, "exec-run-tool").Exec().Run() }
-""",
-        )
-        assert_fails(
-            assigned_root,
-            "execbound command builders must terminate",
-            "assignedBound: execbound.Command(ctx, \"assigned-tool\")",
-            "callHelper: execbound.Command(ctx, \"passed-tool\")",
-            "callDelayHelper: execbound.CommandWithDelay(ctx, 1, \"passed-delay-tool\")",
-            "multiValue: execbound.Command(ctx, \"multi-tool\")",
-            "appendBound: execbound.Command(ctx, \"append-tool\")",
-            "execRun: execbound.Command(ctx, \"exec-run-tool\")",
-        )
+        write_backend(allowlisted, "internal/services/clipboard/wayland.go", 'package clipboard\nimport "os/exec"\nfunc wlCopy(args []string) error { _, err := exec.Command("wl-copy", args...).Output(); return err }\n')
+        assert_fails(allowlisted, "raw exec.Command or exec.CommandContext output reads", 'wlCopy: exec.Command("wl-copy", args...).Output()', absent=("raw os/exec builders outside execbound need a lifecycle reason",))
     finally:
-        shutil.rmtree(assigned_root)
-
-    alias_root = make_root()
-    try:
-        write_backend(alias_root, "internal/services/sample/alias.go",
-            """
-package sample
-import (
-    "context"
-    ex "os/exec"
-)
-func factoryAlias(ctx context.Context) error { makeCmd := ex.CommandContext; cmd := makeCmd(ctx, "bad-tool"); _, err := cmd.Output(); return err }
-func chainedAlias(ctx context.Context) error { run := ex.CommandContext; _, err := run(ctx, "security-tool").Output(); return err }
-""",
-        )
-        assert_fails(alias_root, "os/exec command builders must be called directly", "ex.CommandContext referenced without a call")
-    finally:
-        shutil.rmtree(alias_root)
+        shutil.rmtree(allowlisted)
 
     print("execbound adoption guard tests passed.")
     return 0

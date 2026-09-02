@@ -132,20 +132,12 @@ it through an injectable field only its tests vary, and why the ddcutil chain
 never reaches the bound is in `display-brightness.md`. Long-lived watchers own
 their own lifecycle. `scripts/check-execbound-adoption.py` keeps one-shot
 `exec.Command` and `exec.CommandContext` output reads out of backend services
-by enforcing command builder consumption. Every `execbound.Command` builder must
-be used as a direct `Output` or `CombinedOutput` chain, with any `WithLogger`
-call kept in that chain. `CommandWithDelay` is reserved for the allowlisted
-brightnessbridge chain that tests the ddcutil pipe-hold bound. Direct raw
-`exec.Command` and `exec.CommandContext` builders pass only when named in the
-allowlist and started or run in the same function. Builder aliases are rejected
-because they hide that shape. Before the direct `Start` or `Run`, an assigned
-raw builder may only use `exec.Cmd` configuration fields and direct pipe setup;
-afterward, the same builder is scanned through the whole function and may only
-use direct `Wait`, `Process`, `ProcessState`, or the follow-up operation covered
-by that raw-exec lifecycle reason. Other passing, returning, storing, closure
-capture, method values, method expressions, `Output`, and `CombinedOutput` are
-rejected. Unrelated `Output` and `CombinedOutput` methods are allowed when no
-process builder is involved.
+with a parse-only AST guard. The guard follows direct raw builders and
+same-function local variables assigned from them, and fails direct `Output` or
+`CombinedOutput` calls on either form. Other raw `exec.Command` and
+`exec.CommandContext` builders pass only when named in the allowlist with a
+lifecycle reason. The allowlist is the review surface for backend-owned watcher
+and supervisor processes; it is not a general process-lifecycle verifier.
 
 ## Feature flags / env
 

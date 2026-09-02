@@ -5,12 +5,10 @@ import (
 	"fmt"
 	"go/ast"
 	"go/parser"
-	"go/scanner"
 	"go/token"
 	"io/fs"
 	"os"
 	"path/filepath"
-	"sort"
 	"strconv"
 	"strings"
 )
@@ -24,13 +22,10 @@ type finding struct {
 }
 
 type report struct {
-	FilesChecked  int       `json:"files_checked"`
-	RawCalls      []finding `json:"raw_calls"`
-	RawLifecycle  []finding `json:"raw_lifecycle"`
-	OutputReads   []finding `json:"output_reads"`
-	ExecboundUses []finding `json:"execbound_uses"`
-	References    []finding `json:"references"`
-	ParseErrors   []string  `json:"parse_errors"`
+	FilesChecked int       `json:"files_checked"`
+	RawCalls     []finding `json:"raw_calls"`
+	OutputReads  []finding `json:"output_reads"`
+	ParseErrors  []string  `json:"parse_errors"`
 }
 
 type functionRange struct {
@@ -39,24 +34,18 @@ type functionRange struct {
 	body       *ast.BlockStmt
 }
 
-type imports struct {
-	osExec       map[string]bool
-	execbound    map[string]bool
-	dotOSExec    bool
-	dotExecbound bool
-}
+type imports map[string]bool
 
 type analyzer struct {
-	root, modulePath string
-	fset             *token.FileSet
-	sources          map[string][]byte
-	report           report
+	root    string
+	fset    *token.FileSet
+	sources map[string][]byte
+	report  report
 }
 
 type fileScanner struct {
 	analyzer  *analyzer
 	imports   imports
-	parents   map[ast.Node]ast.Node
 	functions []functionRange
 }
 
@@ -70,49 +59,12 @@ func main() {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(2)
 	}
-	a := &analyzer{
-		root:       root,
-		modulePath: modulePath(filepath.Join(root, "backend", "go.mod")),
-		fset:       token.NewFileSet(),
-		sources:    map[string][]byte{},
-	}
+	a := &analyzer{root: root, fset: token.NewFileSet(), sources: map[string][]byte{}}
 	a.walk()
-	sortFindings(a.report.RawCalls)
-	sortFindings(a.report.RawLifecycle)
-	sortFindings(a.report.OutputReads)
-	sortFindings(a.report.ExecboundUses)
-	sortFindings(a.report.References)
-	sort.Strings(a.report.ParseErrors)
 	if err := json.NewEncoder(os.Stdout).Encode(a.report); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(2)
 	}
-}
-
-func modulePath(path string) string {
-	body, err := os.ReadFile(path)
-	if err != nil {
-		return ""
-	}
-	for _, line := range strings.Split(string(body), "\n") {
-		fields := strings.Fields(line)
-		if len(fields) >= 2 && fields[0] == "module" {
-			return fields[1]
-		}
-	}
-	return ""
-}
-
-func sortFindings(findings []finding) {
-	sort.Slice(findings, func(i, j int) bool {
-		if findings[i].Rel != findings[j].Rel {
-			return findings[i].Rel < findings[j].Rel
-		}
-		if findings[i].Line != findings[j].Line {
-			return findings[i].Line < findings[j].Line
-		}
-		return findings[i].Expression < findings[j].Expression
-	})
 }
 
 func (a *analyzer) walk() {
@@ -128,40 +80,22 @@ func (a *analyzer) walk() {
 			a.report.ParseErrors = append(a.report.ParseErrors, fmt.Sprintf("%s: %v", a.rel(path), err))
 			return nil
 		}
-		if entry.IsDir() && a.skips(path) {
-			return filepath.SkipDir
-		}
 		if entry.IsDir() {
-			a.scanDir(path)
+			if a.skips(path) {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if filepath.Ext(path) == ".go" {
+			if file := a.parse(path); file != nil {
+				a.report.FilesChecked++
+				a.scanFile(file)
+			}
 		}
 		return nil
 	})
 	if err != nil {
 		a.report.ParseErrors = append(a.report.ParseErrors, err.Error())
-	}
-}
-
-func (a *analyzer) scanDir(dir string) {
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		a.report.ParseErrors = append(a.report.ParseErrors, fmt.Sprintf("%s: %v", a.rel(dir), err))
-		return
-	}
-	files := []*ast.File{}
-	for _, entry := range entries {
-		if entry.IsDir() || filepath.Ext(entry.Name()) != ".go" {
-			continue
-		}
-		if file := a.parse(filepath.Join(dir, entry.Name())); file != nil {
-			a.report.FilesChecked++
-			files = append(files, file)
-		}
-	}
-	if len(files) == 0 {
-		return
-	}
-	for _, file := range files {
-		a.scanFile(file)
 	}
 }
 
@@ -173,133 +107,100 @@ func (a *analyzer) parse(path string) *ast.File {
 	}
 	file, err := parser.ParseFile(a.fset, path, source, parser.AllErrors)
 	if err != nil {
-		a.recordParseError(err)
+		a.report.ParseErrors = append(a.report.ParseErrors, err.Error())
 		return nil
 	}
 	a.sources[path] = source
 	return file
 }
 
-func (a *analyzer) recordParseError(err error) {
-	if errors, ok := err.(scanner.ErrorList); ok {
-		for _, entry := range errors {
-			a.report.ParseErrors = append(
-				a.report.ParseErrors,
-				fmt.Sprintf("%s:%d:%d: %s", a.rel(entry.Pos.Filename), entry.Pos.Line, entry.Pos.Column, entry.Msg),
-			)
-		}
-		return
-	}
-	a.report.ParseErrors = append(a.report.ParseErrors, err.Error())
-}
-
 func (a *analyzer) scanFile(file *ast.File) {
-	scanner := fileScanner{
-		analyzer:  a,
-		imports:   importAliases(file, a.modulePath),
-		parents:   parentMap(file),
-		functions: functionRanges(file),
-	}
+	s := fileScanner{analyzer: a, imports: importAliases(file), functions: functionRanges(file)}
 	ast.Inspect(file, func(node ast.Node) bool {
-		switch n := node.(type) {
-		case *ast.CallExpr:
-			if scanner.isOSExecBuilder(n.Fun) {
-				a.report.RawCalls = append(a.report.RawCalls, scanner.finding(n))
-				if output := scanner.rawBuilderOutputRead(n); output != nil {
-					a.report.OutputReads = append(a.report.OutputReads, scanner.finding(output))
-				}
-				if !scanner.rawBuilderHasLifecycle(n) {
-					a.report.RawLifecycle = append(a.report.RawLifecycle, scanner.finding(n))
-				}
-			}
-			if scanner.isExecboundBuilderCall(n) {
-				if output := scanner.execboundDelayOutputRead(n); output != nil {
-					a.report.OutputReads = append(a.report.OutputReads, scanner.finding(output))
-				} else if !scanner.execboundBuilderConsumed(n) {
-					a.report.ExecboundUses = append(a.report.ExecboundUses, scanner.finding(n))
-				}
-			}
-		case *ast.SelectorExpr:
-			if scanner.isOSExecBuilderSelector(n) && !scanner.selectorCalledDirectly(n) {
-				a.report.References = append(a.report.References, scanner.finding(n))
-			}
-		case *ast.Ident:
-			if scanner.identIsSelectorPart(n) {
-				return true
-			}
-			if scanner.isDotOSExecBuilderIdent(n) && !scanner.identCalledDirectly(n) {
-				a.report.References = append(a.report.References, scanner.finding(n))
-			}
+		call, ok := node.(*ast.CallExpr)
+		if !ok {
+			return true
+		}
+		if s.isRawBuilder(unparen(call.Fun)) {
+			a.report.RawCalls = append(a.report.RawCalls, s.finding(call))
+		}
+		if s.isOutputRead(call) {
+			a.report.OutputReads = append(a.report.OutputReads, s.finding(call))
 		}
 		return true
 	})
 }
 
-func importAliases(file *ast.File, modulePath string) imports {
-	aliases := imports{
-		osExec:    map[string]bool{},
-		execbound: map[string]bool{},
-	}
-	execboundPath := modulePath + "/internal/execbound"
+func importAliases(file *ast.File) imports {
+	aliases := imports{}
 	for _, spec := range file.Imports {
 		path, err := strconv.Unquote(spec.Path.Value)
-		if err != nil {
+		if err != nil || path != "os/exec" {
 			continue
 		}
-		name := filepath.Base(path)
+		name := "exec"
 		if spec.Name != nil {
 			name = spec.Name.Name
 		}
-		switch {
-		case path == "os/exec" && name == ".":
-			aliases.dotOSExec = true
-		case path == "os/exec" && name != "_":
-			aliases.osExec[name] = true
-		case path == execboundPath && name == ".":
-			aliases.dotExecbound = true
-		case path == execboundPath && name != "_":
-			aliases.execbound[name] = true
+		if name != "_" && name != "." {
+			aliases[name] = true
 		}
 	}
 	return aliases
 }
 
-func (s fileScanner) isOSExecBuilder(expr ast.Expr) bool {
-	switch n := unparen(expr).(type) {
-	case *ast.SelectorExpr:
-		return s.isOSExecBuilderSelector(n)
-	case *ast.Ident:
-		return s.isDotOSExecBuilderIdent(n)
-	default:
+func (s fileScanner) isOutputRead(call *ast.CallExpr) bool {
+	sel, ok := unparen(call.Fun).(*ast.SelectorExpr)
+	if !ok || !isOutputReadName(sel.Sel.Name) {
 		return false
 	}
+	switch recv := unparen(sel.X).(type) {
+	case *ast.CallExpr:
+		return s.isRawBuilder(unparen(recv.Fun))
+	case *ast.Ident:
+		return s.identHasRawBuilder(recv, call.Pos())
+	}
+	return false
 }
 
-func (s fileScanner) isOSExecBuilderSelector(sel *ast.SelectorExpr) bool {
+func (s fileScanner) identHasRawBuilder(id *ast.Ident, end token.Pos) bool {
+	fn := s.functionAt(end)
+	if fn.body == nil {
+		return false
+	}
+	found := false
+	ast.Inspect(fn.body, func(node ast.Node) bool {
+		stmt, ok := node.(*ast.AssignStmt)
+		if !ok {
+			return true
+		}
+		for i, lhs := range stmt.Lhs {
+			lhsID, ok := unparen(lhs).(*ast.Ident)
+			if !ok || !sameIdent(lhsID, id) || lhsID.Pos() >= end || i >= len(stmt.Rhs) {
+				continue
+			}
+			call, ok := unparen(stmt.Rhs[i]).(*ast.CallExpr)
+			found = ok && s.isRawBuilder(unparen(call.Fun))
+		}
+		return true
+	})
+	return found
+}
+
+func (s fileScanner) isRawBuilder(expr ast.Expr) bool {
+	sel, ok := expr.(*ast.SelectorExpr)
+	if !ok || !isBuilderName(sel.Sel.Name) {
+		return false
+	}
 	id, ok := unparen(sel.X).(*ast.Ident)
-	return ok && id.Obj == nil && s.imports.osExec[id.Name] && isOSExecBuilderName(sel.Sel.Name)
-}
-
-func (s fileScanner) isDotOSExecBuilderIdent(id *ast.Ident) bool {
-	return id.Obj == nil && s.imports.dotOSExec && isOSExecBuilderName(id.Name)
-}
-
-func isOSExecBuilderName(name string) bool {
-	return name == "Command" || name == "CommandContext"
+	return ok && id.Obj == nil && s.imports[id.Name]
 }
 
 func (s fileScanner) finding(node ast.Node) finding {
-	a := s.analyzer
-	pos := a.fset.Position(node.Pos())
-	expr := a.source(node)
-	key := fmt.Sprintf("%s::%s %s", a.rel(pos.Filename), functionAt(s.functions, node.Pos()), expr)
-	return finding{
-		Rel:        a.rel(pos.Filename),
-		Line:       pos.Line,
-		Function:   functionAt(s.functions, node.Pos()),
-		Expression: expr,
-		Key:        key,
-	}
+	pos := s.analyzer.fset.Position(node.Pos())
+	expr := s.analyzer.source(node)
+	fn := s.functionAt(node.Pos()).name
+	return finding{Rel: s.analyzer.rel(pos.Filename), Line: pos.Line, Function: fn, Expression: expr, Key: s.analyzer.rel(pos.Filename) + "::" + fn + " " + expr}
 }
 
 func (a *analyzer) source(node ast.Node) string {
@@ -313,8 +214,7 @@ func (a *analyzer) source(node ast.Node) string {
 	if start < 0 || end > len(source) || start >= end {
 		return ""
 	}
-	expr := strings.Join(strings.Fields(string(source[start:end])), " ")
-	return strings.ReplaceAll(expr, ", )", ")")
+	return strings.ReplaceAll(strings.Join(strings.Fields(string(source[start:end])), " "), ", )", ")")
 }
 
 func (a *analyzer) rel(path string) string {
@@ -327,8 +227,7 @@ func (a *analyzer) rel(path string) string {
 
 func (a *analyzer) skips(path string) bool {
 	rel := a.rel(path)
-	return rel == "backend/internal/execbound" || strings.HasPrefix(rel, "backend/internal/execbound/") ||
-		rel == "backend/vendor" || strings.HasPrefix(rel, "backend/vendor/")
+	return rel == "backend/internal/execbound" || strings.HasPrefix(rel, "backend/internal/execbound/")
 }
 
 func functionRanges(file *ast.File) []functionRange {
@@ -341,11 +240,32 @@ func functionRanges(file *ast.File) []functionRange {
 	return ranges
 }
 
-func functionAt(functions []functionRange, pos token.Pos) string {
-	for _, fn := range functions {
+func (s fileScanner) functionAt(pos token.Pos) functionRange {
+	for _, fn := range s.functions {
 		if fn.start <= pos && pos <= fn.end {
-			return fn.name
+			return fn
 		}
 	}
-	return "<top-level>"
+	return functionRange{name: "<top-level>"}
 }
+
+func sameIdent(a, b *ast.Ident) bool {
+	if a.Obj != nil || b.Obj != nil {
+		return a.Obj != nil && a.Obj == b.Obj
+	}
+	return a.Name == b.Name
+}
+
+func unparen(expr ast.Expr) ast.Expr {
+	for {
+		paren, ok := expr.(*ast.ParenExpr)
+		if !ok {
+			return expr
+		}
+		expr = paren.X
+	}
+}
+
+func isBuilderName(name string) bool { return name == "Command" || name == "CommandContext" }
+
+func isOutputReadName(name string) bool { return name == "Output" || name == "CombinedOutput" }

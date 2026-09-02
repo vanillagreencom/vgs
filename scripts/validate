@@ -160,14 +160,14 @@ cd "$repo_root" || exit 1
 # `git diff --check` — a Go-scoped run must still gofmt the Go it changed.
 #
 # The per-area sets are the scoping AGENTS.md used to state in prose:
-# go = backend static guards plus the Go block; qml = naming, smoke, safety,
-# surfaces, plus the QML source lints carrying the tag: launcher hover and
-# popout dismiss; helper = helper checks plus py_compile/bash -n; packaging =
-# its three; docs = instruction-surface growth, owned-skill register,
-# section-pointer, and that guard's five control scripts, one per subject.
-# An area tag on a test row is not new (the two qml rows above); here it is
-# needed because the guard has no inline self-test, so a docs run without the
-# controls would prove nothing about whether it guards.
+# go = the backend capability inventory guard plus the Go block; qml = naming,
+# the QML smoke, the safety guard, surfaces, plus the QML source lints carrying
+# the tag: the launcher hover latch and the popout dismiss envelope; helper =
+# the helper checks plus the py_compile/bash -n pass; packaging = its three;
+# docs = the instruction-surface growth ratchet, the owned-skill register guard,
+# the section-pointer guard, and that guard's five control scripts, one per
+# subject. This `test-` row is needed because the guard has no inline self-test;
+# a docs run without the controls would prove nothing about whether it guards.
 #
 # The older QML source lints are still `-`, so only `all` reaches them, and the
 # family is bigger than it looks: 23 of today's `-` rows read .qml source, from
