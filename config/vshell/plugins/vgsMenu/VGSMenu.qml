@@ -1775,6 +1775,7 @@ PluginComponent {
                                 id: actionMenu
                                 parent: modal
                                 z: 60
+                                launcherVisible: root.contentVisible
                                 onChosen: (action, targetItem) => root.executeAction(action, targetItem)
                                 onDismissed: searchInput.forceActiveFocus()
                             }
@@ -2022,18 +2023,21 @@ PluginComponent {
         property string shortcut: ""
         property string description: ""
         property real shortcutWidth: 92
+        // The pill grows for a longer shortcut rather than crowding its text.
+        readonly property real pillWidth: Math.max(shortcutWidth, shortcutText.implicitWidth + Theme.spacingM)
 
         height: 28
         spacing: Theme.spacingS
 
         StyledRect {
-            width: helpRow.shortcutWidth
+            width: helpRow.pillWidth
             height: 24
             anchors.verticalCenter: parent.verticalCenter
             radius: Theme.controlRadius
             color: Theme.withAlpha(Theme.primary, 0.1)
 
             StyledText {
+                id: shortcutText
                 anchors.centerIn: parent
                 text: helpRow.shortcut
                 font.family: Theme.monoFontFamily
@@ -2044,7 +2048,7 @@ PluginComponent {
         }
 
         StyledText {
-            width: Math.max(0, parent.width - helpRow.shortcutWidth - parent.spacing)
+            width: Math.max(0, parent.width - helpRow.pillWidth - parent.spacing)
             anchors.verticalCenter: parent.verticalCenter
             text: helpRow.description
             font.pixelSize: Theme.fontSizeSmall
@@ -2081,8 +2085,17 @@ PluginComponent {
             spacing: Theme.spacingS
 
             Item {
+                id: cardIcon
                 width: parent.width
                 height: resultCard.thumbnailMode ? 64 : 38
+                // The same brand tint the list row paints, so a tile does not
+                // drop an item's own color.
+                readonly property bool branded: String(resultCard.itemData.iconColor || "").length > 0
+                readonly property color brand: branded ? resultCard.itemData.iconColor
+                    : (resultCard.selected ? Theme.primary : Theme.surfaceVariantText)
+                readonly property real brandLuma: 0.2126 * brand.r + 0.7152 * brand.g + 0.0722 * brand.b
+                readonly property color tint: (branded && Theme.isLightMode && brandLuma > 0.45)
+                    ? Qt.darker(brand, 2.4) : brand
 
                 Image {
                     anchors.centerIn: parent
@@ -2108,8 +2121,9 @@ PluginComponent {
                     anchors.centerIn: parent
                     visible: resultCard.itemData.iconType !== "image" && resultCard.itemData.iconType !== "material"
                     glyph: resultCard.itemData.icon || "\uf0c1"
+                    fontKind: resultCard.itemData.iconFont || "nerd"
                     size: resultCard.thumbnailMode ? 42 : 30
-                    color: resultCard.selected ? Theme.primary : Theme.surfaceVariantText
+                    color: cardIcon.tint
                 }
             }
 
