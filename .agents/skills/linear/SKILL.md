@@ -16,6 +16,10 @@ tags: [integration]
 <!-- kendex:project-instructions:start -->
 ## Project Instructions
 
+<!-- kendex:shared-instructions:start -->
+Problems with a kendex-owned skill go through `kendex report`; check ownership in the file first.
+<!-- kendex:shared-instructions:end -->
+
 ## Tracker policy: Linear is canonical; GitHub Issues is intake-only
 
 Create, label, and work issues ONLY in Linear (team vg-shell, identifiers
@@ -147,8 +151,6 @@ classification/workflow labels, then pass the full validated set.
 <!-- kendex:project-instructions:end -->
 
 # Linear CLI
-
-> **Problem with this skill?** Run `kendex report` — it files to the owning repo automatically. Do not hand-file.
 
 ```bash
 .agents/skills/linear/scripts/linear.sh <resource> <action> [options]

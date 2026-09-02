@@ -4,7 +4,7 @@ description: "Load to create, list, remove, push, or repair a git worktree."
 summary: "Git worktree management: create, list, remove isolated working copies with env and config symlinks."
 license: MIT
 user-invocable: true
-argument-hint: "create <ID> [--base <branch>] [--from <ref>] [--pr <N>] [--reuse|--restack|--recover-local] [--replay] | restack continue|skip|abort <ID|path> | list | remove <ID|path>"
+argument-hint: "create <ID> [--base <branch>] [--from <ref>] [--pr <N>] [--reuse|--restack] [--replay] | restack continue|skip|abort <ID|path> | list | remove <ID|path>"
 metadata:
   author: vanillagreen
   source: kendex
@@ -14,9 +14,15 @@ metadata:
 tags: [git]
 ---
 
-# Worktree Management
+<!-- kendex:project-instructions:start -->
+## Project Instructions
 
-> **Problem with this skill?** Run `kendex report` — it files to the owning repo automatically. Do not hand-file.
+<!-- kendex:shared-instructions:start -->
+Problems with a kendex-owned skill go through `kendex report`; check ownership in the file first.
+<!-- kendex:shared-instructions:end -->
+<!-- kendex:project-instructions:end -->
+
+# Worktree Management
 
 ```bash
 .agents/skills/worktree/scripts/worktree <command> [options]
@@ -28,7 +34,7 @@ Worktrees live at `<parent-of-checkout>/.worktrees/<checkout-name>/{id}`, outsid
 
 | Command | Description |
 |---------|-------------|
-| `create` | Claim a new issue worktree — a new-work claim, not a discovery command: existing ownership exits 75, and owned work is inspected or monitored, never given a second implementer. Reuse, conflict recovery, `--recover-local`: `create --help` |
+| `create` | Claim a new issue worktree — a new-work claim, not a discovery command: existing ownership exits 75, and owned work is inspected or monitored, never given a second implementer. Reuse and conflict recovery: `create --help` |
 | `restack` | Guardedly continue, skip, or abort a tool-created paused restack |
 | `list` | List all worktrees |
 | `remove` | Remove worktree, clean symlinks, prune branches |
@@ -60,11 +66,11 @@ Consumers wanting this locally get a pointer, never a copy. One line resolves th
 
 ## JS Dependencies
 
-No worktree command runs a package-manager install: installs run only in the main checkout, and only when the lockfile changed. Link the main checkout's install into each worktree with a `WORKTREE_SYMLINKS` entry for the `node_modules` path; a worktree whose root `package.json` has no `node_modules` gets a warning naming the main checkout instead, as does a configured `node_modules` entry, root or nested, that sits beside a worktree `package.json` and has no source in the main checkout. The entry warning fires on every path; the root-`package.json` fallback comes from link setup, so `repair-links`, which re-asserts configured symlinks only, never emits it. Limitation: linked `node_modules` resolves pnpm workspace dependencies (`workspace:`/`link:`) to the main checkout's source, so a worktree's type checks and tests see main's copy of sibling workspace packages, not the branch's.
+`worktree --help` § Dependencies owns install and linked-`node_modules` behavior.
 
 ## System Dependencies
 
-`git`; authenticated `gh` for new-work PR ownership discovery and for proving a squash-merged branch merged in `cleanup` and `remove`; `flock` for repository-local per-issue claim serialization (the session guard prefers it and falls back to a `mkdir` mutex without it); Bash 3.2+ (macOS system bash is supported).
+`git`; authenticated `gh` for new-work PR ownership discovery and for proving a squash-merged branch merged in `cleanup` and `remove`; `flock` for repository-local per-issue claim serialization; Bash 3.2+ (macOS system bash is supported).
 
 ## Configuration
 

@@ -3,17 +3,8 @@ set -euo pipefail
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ORCH="$(cd "$TEST_DIR/.." && pwd)"
-# Relative first, so an exported tree that is no git checkout still runs
-# these suites — the mutation harness extracts one with git archive.
-SEALED="$(cd "$TEST_DIR/../../.." && pwd)/tools/tests/lib/sealed-bin"
-# git's own failure must not become this script's: in a non-git tree the
-# substitution exits 128, and under set -e that would end the run before the
-# named error below ever printed.
-if [[ ! -x "$SEALED/gh" ]]; then
-  REPO_TOP="$(git -C "$TEST_DIR" rev-parse --show-toplevel 2>/dev/null || true)"
-  SEALED="$REPO_TOP/tools/tests/lib/sealed-bin"
-fi
-[[ -x "$SEALED/gh" ]] || { echo "merge_queue_watch: sealed-bin fixture is missing: $SEALED" >&2; exit 1; }
+# shellcheck source=lib/sealed-bin.sh
+. "$TEST_DIR/lib/sealed-bin.sh"
 TMP_ROOT="$(mktemp -d)"; TMP="$TMP_ROOT/watch path"
 mkdir "$TMP"
 # This suite launches real detached supervisors; teardown owns their pids.
@@ -436,7 +427,7 @@ wait_exists "$WATCH_SUPERVISOR_PID_GATE.release" && ok "teardown released the de
 eq "$(cat < "$WATCH_SUPERVISOR_PID_GATE.observed-status")" launch_failed "launch failure claims state before supervisor teardown"
 rm -f -- "$WATCH_SUPERVISOR_PID_GATE.enabled" "$WATCH_SUPERVISOR_PID_GATE.entered" "$WATCH_SUPERVISOR_PID_GATE.release" "$WATCH_SUPERVISOR_PID_GATE.calls" "$WATCH_SUPERVISOR_PID_GATE.observed-status"
 if [[ "$setup_rc" -ne 0 ]]; then ok "supervisor failure before ready exits nonzero"; else bad "supervisor failure before ready exited zero"; fi
-eq "$(jq -r .verdict "$artifact")" unknown "dead supervisor publishes its setup failure"
+wait_file "$artifact" || bad "dead supervisor never published its setup failure"; eq "$(jq -r .verdict "$artifact")" unknown "dead supervisor publishes its setup failure"
 old_inode=$(inode "$artifact")
 retry_state=$("$SCRIPTS/merge-queue-watch" inspect --root "$MAIN" --issue KEN-829); runtime_root=$(jq -r .runtime_root <<<"$retry_state"); outside_runtime="$(dirname "$(dirname "$runtime_root")")/outside-attempt-2"; mismatch_runtime="$runtime_root/other-watch-attempt-2"
 mkdir "$outside_runtime" "$mismatch_runtime"; touch "$outside_runtime/sentinel" "$mismatch_runtime/sentinel"
