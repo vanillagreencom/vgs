@@ -2210,6 +2210,70 @@ def _run_hook_cmd(hook: str, cmd: List[str], **kwargs: Any) -> Dict[str, Any]:
         return {"hook": hook, "ok": False, "error": str(exc)}
 
 
+def tmux_sockets() -> List[Path]:
+    """Every tmux socket this user could have a server on. A server started
+    with TMUX_TMPDIR set — a user unit's own environment, not the shell's —
+    listens under that directory and nowhere else, so a bare `tmux` command
+    from the shell reaches a different socket and silently starts an empty
+    server there."""
+    uid = os.getuid()
+    # /tmp by name as well as by $TMPDIR: tmux falls back to /tmp itself, whatever
+    # TMPDIR says, so a shell with TMPDIR elsewhere would miss the default socket.
+    roots = [Path(d) for d in (os.environ.get("TMUX_TMPDIR"), f"/run/user/{uid}", tempfile.gettempdir(), "/tmp") if d]
+    found: List[Path] = []
+    seen = set()
+    # $TMUX names the socket of the server this process runs under, which a
+    # `tmux -S` server puts anywhere at all, including outside every root above.
+    inside = (os.environ.get("TMUX") or "").split(",")[0]
+    if inside:
+        candidate = Path(inside)
+        try:
+            if candidate.is_socket():
+                seen.add(candidate)
+                found.append(candidate)
+        except OSError:
+            pass
+    for root in roots:
+        try:
+            entries = sorted((root / f"tmux-{uid}").iterdir())
+        except OSError:
+            continue
+        for entry in entries:
+            try:
+                if not entry.is_socket() or entry in seen:
+                    continue
+            except OSError:
+                continue
+            seen.add(entry)
+            found.append(entry)
+    return found
+
+
+def source_tmux_theme_hook(hook: str) -> Dict[str, Any]:
+    """Load the generated theme into every RUNNING tmux server. Sourcing
+    against a socket with no server would create one, so each socket is probed
+    with a command that fails rather than starting a server."""
+    if not shutil.which("tmux"):
+        return {"hook": hook, "ok": True, "skipped": True, "reason": "tmux not found"}
+    theme = home() / ".config" / "tmux" / "vgs-theme.conf"
+    sourced: List[str] = []
+    failures: List[Dict[str, str]] = []
+    for socket in tmux_sockets():
+        probe = _run_hook_cmd(hook, ["tmux", "-S", str(socket), "list-sessions"], timeout=5)
+        if not probe.get("ok"):
+            continue
+        result = _run_hook_cmd(hook, ["tmux", "-S", str(socket), "source-file", str(theme)], timeout=5)
+        if result.get("ok"):
+            sourced.append(str(socket))
+        else:
+            failures.append({"socket": str(socket), "error": result.get("stderr") or result.get("error") or ""})
+    if failures:
+        return {"hook": hook, "ok": False, "sourced": sourced, "failed": failures}
+    if not sourced:
+        return {"hook": hook, "ok": True, "skipped": True, "reason": "no running tmux server"}
+    return {"hook": hook, "ok": True, "sourced": sourced}
+
+
 def process_pids_by_comm(comm: str) -> List[int]:
     pids: List[int] = []
     proc = Path("/proc")
@@ -2491,9 +2555,7 @@ def run_hook(hook: Any, roles: Dict[str, str]) -> Dict[str, Any]:
         except (OSError, UnicodeError) as exc:
             return {"hook": hook, "ok": False, "error": str(exc)}
     if hook == "tmux-source":
-        if not shutil.which("tmux"):
-            return {"hook": hook, "ok": True, "skipped": True, "reason": "tmux not found"}
-        return _run_hook_cmd(hook, ["tmux", "source-file", str(home() / ".config" / "tmux" / "vgs-theme.conf")])
+        return source_tmux_theme_hook(hook)
     if hook == "ghostty-reload":
         return reload_ghostty_hook()
     if hook == "nvim-reload":
