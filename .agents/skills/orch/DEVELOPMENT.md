@@ -11,14 +11,17 @@ bash skills/orch/tests/run-all.sh workflow_helpers   # subset by name fragment
 
 Each `tests/*.sh` is self-contained: it builds its own sandbox with parametrized CLI stubs on `PATH`, prints `pass: N fail: M`, and exits 0 only when every assertion passed. `run-all.sh` discovers them at execution time, so a new suite needs no registration.
 
-Every test the runner discovers ships with the installed skill and must pass in a downstream project with no access to the kendex source checkout. Source-only generator and install regressions live in `cli/scripts/integration-check.sh`, which validates install/refresh byte identity, markdownlint, idempotence, the refreshed downstream `run-all.sh`, and the installed dev cache-preflight contract.
+Every test the runner discovers ships with the installed skill and must pass in a downstream project with no access to the kendex source checkout. Byte identity and idempotence of what an apply writes are covered upstream of the installed tree, in `crates/core/tests/byte_faithful.rs`.
 
 ## Invariants the tests pin
 
 - **Round-id identity.** Every dev/QA delegation mints a token (`workflow-state new-round-id`, a nanosecond timestamp plus a random suffix) and embeds it; `dev-return-write --round-id RID` writes `tmp/dev-return-[ISSUE]-[RID].json` with `round_id` inside, and `dev-artifact-check --round-id RID` resolves that exact path and requires the internal token to match. There is one identity model — no mtime gate, no legacy positional mode — so a same-second re-stamp, a late-writing timed-out agent, a bundle group-A receipt consumed by group-B, and a cross-round ci-fix receipt are all unmatchable. `dev_delegated_at` remains only as the stall-watchdog deadline. Full gate ordering and field rules: `dev-artifact-check --help` (routing: [`references/artifact-checks.md`](./references/artifact-checks.md)); schemas in [`schemas/`](./schemas/).
 - **Command shapes.** Four lints scan the orch and dev docs for shapes strict harness classifiers reject: a literal backtick or an env-assignment prefix inside a fenced `bash`/`sh` block, two or more `workflow-state` invocations stacked in one fenced block, and a token naming one harness's tool, agent type, poll shape, or tool-call cap sitting outside a block that labels the harness it belongs to. Each carries planted-control cases proving it still has teeth.
 - **Reference hygiene.** Lints pin that no doc routes CI waiting through `github.sh` (the waiter is `.agents/skills/orch/scripts/ci-wait`), that no doc uses an unsupported `decisions issue` lookup shape, and that no always-loaded `SKILL.md` or `agents/*.md` carries an issue-number citation.
-- **Waiter contracts.** `approval_wait.sh`, `ci_wait.sh`, and `queue_wait.sh` exercise the state machines and the shared auth ladder against stubbed `gh`, including the check-run and commit-status evidence surfaces, run correlation across reruns and cancelled siblings, and the queue's cross-poll `WAS_QUEUED` memory.
+- **Help is inert.** Every orch CLI that loads project configuration answers a help form before the load. A parser reached by a dry run runs twice, so an arm that RETURNS may only assign; an arm that prints must then exit. Held by `tools/tests/help-inert.test.sh`.
+- **A value a CLI owns is not configuration.** Anything a script still holds when the loader fires is settable from the checkout, so a name is either resolved BELOW the loader or EXPORTED above it. `approval-wait` is the one CLI holding parse state across its load, and its load reads no parser variable. Held by `skills/orch/tests/parser-defaults-not-configurable.sh`.
+- **Controls.** Both suites above plant their own must-fail controls. `workflow-state-state-dir-flag.sh` and `lanes-settings-refusal.sh` assert behaviour with no planted control, so re-run them against the pre-fix file when changing what they cover.
+- **Waiter contracts.** `approval_wait.sh`, `ci_wait.sh`, and `queue_wait.sh` exercise the state machines and the shared auth ladder against stubbed `gh`, including the check-run and commit-status evidence surfaces, run correlation across reruns and cancelled siblings, and the queue's cross-poll `WAS_QUEUED` memory. They and the two `queue_wait_*` suites run on `lib/virtual-clock.sh`, whose `date`/`sleep` stubs make a poll budget arithmetic over a file rather than real seconds, so no poll budget is spent in real time and a deadline case cannot race a loaded runner. Process cost the clock does not touch stays real. A case that needs a real wait sets `STUB_CLOCK=` and both stubs fall through — `ci_wait.sh`'s hanging-auth preflight is the only one; a `STUB_CLOCK` naming no file is a broken clock rather than a waiver and both stubs refuse it. `lib/waiter-assertions.sh` holds the suites' shared assertion vocabulary. `merge_queue_watch.sh` stays on real processes because process lifecycle is its subject, and waits on conditions (a PID gone, a file published), never a settle sleep.
 
 ## GitHub auth ladder
 
@@ -66,24 +69,12 @@ Reruns re-execute the workflow definition and verifier state pinned at the origi
 
 ## Container close
 
-`container-close` derives the shared main checkout, waits up to 120 seconds for
-the per-parent lock, and owns the completion gate and bundle summary. Pending or
-canceled descendants return `deferred [CHILD_IDS...]` before parent mutation;
-the helper never infers that a later child completion came from a parent
-cascade. Completion validation must provide Boolean `all_ok`, exactly one typed
-parent result, and Boolean `has_summary`. A retry with validated summary evidence
-calls `issues complete` without summary flags so it does not post the bundle
-comment twice. Exit zero prints one `closed [PARENT_ID]` or deferred line to
-stdout. A closed result may include completion diagnostics on stderr; consumers
-preserve them all. Any incomplete read, summary, or completion exits nonzero,
-save the one cause no retry can cure: with `gh` absent the child's PR reference
-is recorded as `lookup failed`, held distinct from the `unavailable` only a
-valid lookup matching no PR may write. `sync-base`
-likewise owns base resolution, fetch, checkout ownership, and the fast-forward.
-It preserves unrelated untracked paths and refuses incoming collisions with
-untracked paths, including ignored ones. The fast-forward itself is the sole
-judge, through Git's no-overwrite-ignore rule: a colliding path that appears at
-any moment before the merge still fails it.
+`container-close` owns Linear container closure and `sync-base` owns base
+resolution, fetch, checkout ownership, and the fast-forward. Both contracts are
+in their own `--help`. Completion validation inside `container-close` must
+provide Boolean `all_ok`, exactly one typed parent result, and Boolean
+`has_summary`; the helper never infers that a later child completion came from
+a parent cascade.
 
 ## Codex app worktree routing
 

@@ -116,16 +116,15 @@ build_completion_validation_result() {
 # Invariant: a blocking relation connects peers of one bundle — two issues
 # with the SAME direct parent, or two top-level issues. An issue never blocks
 # its own ancestor or descendant: the parent-child hierarchy already encodes
-# that dependency. Cross-subtree dependencies are expressed at the level
-# where the subtrees separate (the children of the lowest common ancestor).
+# that dependency. Cross-subtree dependencies are expressed between the peers
+# that own the ordering.
 #
-# Ancestor chains are newline-separated identifier lists, self first, root
-# last (e.g. "CC-766\nCC-763\nCC-761").
+# The rule reads one level: each issue's own direct parent identifier, empty
+# for a top-level issue.
 
 # blocking_level_ok BLOCKER_PARENT BLOCKED_PARENT
-# The single acceptance predicate for the blocking-level rule. Both the guard
-# and the remediation generator use it, so a prescribed replacement command is
-# accepted by construction.
+# The single acceptance predicate for the blocking-level rule; the rejection
+# message below states the same rule.
 blocking_level_ok() {
 	local p1="${1:-}" p2="${2:-}"
 
@@ -138,130 +137,139 @@ blocking_level_ok() {
 	return 1
 }
 
-# hierarchy_chain_contains CHAIN ID — true when ID is an entry of CHAIN.
-hierarchy_chain_contains() {
-	local chain="$1" id="$2"
-	[[ -n "$id" ]] && grep -qxF "$id" <<<"$chain"
-}
-
-# hierarchy_chains_overlap CANDIDATES EXISTING — true when any non-empty
-# candidate is already present in the existing newline-separated chain.
-hierarchy_chains_overlap() {
-	local candidates="$1" existing="$2" candidate
-	while IFS= read -r candidate; do
-		if [[ -n "$candidate" ]] && hierarchy_chain_contains "$existing" "$candidate"; then
-			return 0
-		fi
-	done <<<"$candidates"
-	return 1
-}
-
-# validate_parent_chain_shape ISSUE_JSON SELECTED_DEPTH CONTEXT
-# A selected parent field is trustworthy only when the current issue is an
-# object and the field is explicitly present. A literal null proves a root;
-# an edge must be an object with non-empty GraphQL id/identifier fields. At
-# SELECTED_DEPTH the query intentionally stops selecting another parent field.
-validate_parent_chain_shape() {
-	local issue_json="$1" selected_depth="$2" context="$3"
-	if ! jq -e --argjson selected_depth "$selected_depth" '
-		def valid_chain($remaining):
-			(type == "object")
-			and ((.id | type) == "string" and (.id | length) > 0)
-			and ((.identifier | type) == "string" and (.identifier | length) > 0)
-			and (
-				if $remaining == 0 then true
-				elif (has("parent") | not) then false
-				elif .parent == null then true
-				elif (.parent | type) == "object" then
-					(.parent | valid_chain($remaining - 1))
-				else false
-				end
-			);
-		valid_chain($selected_depth)
-	' <<<"$issue_json" >/dev/null; then
-		echo "{\"error\": \"Hierarchy validation failed closed: Linear returned incomplete or malformed parent data for '$context'.\"}" >&2
-		return 1
-	fi
-	if ! jq -e '
-		def unique_chain_field($field):
-			[recurse(.parent; . != null) | .[$field]] as $values
-			| ($values | length) == ($values | unique | length);
-		unique_chain_field("id") and unique_chain_field("identifier")
-	' <<<"$issue_json" >/dev/null; then
-		echo "{\"error\": \"Hierarchy validation failed closed: parent cycle detected from repeated ancestor identity for '$context'.\"}" >&2
-		return 1
-	fi
-}
-
-# hoist_to_lca_child CHAIN OTHER_CHAIN
-# Print two lines: the entry of CHAIN whose parent is the lowest common
-# ancestor of both chains (the subtree root where the chains separate), then
-# that entry's parent (empty line when the entry is a root, i.e. the chains
-# share no ancestor). Callers must have excluded ancestor/descendant pairs.
-hoist_to_lca_child() {
-	local chain="$1" other="$2"
-	# Read the newline-separated chain without an extra subprocess.
-	local -a entries=()
-	local line
-	while IFS= read -r line; do
-		entries+=("$line")
-	done <<<"$chain"
-
-	local i parent
-	for ((i = 0; i < ${#entries[@]}; i++)); do
-		parent="${entries[i + 1]:-}"
-		if [[ -z "$parent" ]] || hierarchy_chain_contains "$other" "$parent"; then
-			printf '%s\n%s\n' "${entries[i]}" "$parent"
-			return 0
-		fi
-	done
-}
-
-# blocking_level_violation_message BLOCKER BLOCKED CHAIN1 CHAIN2
+# blocking_level_violation_message BLOCKER BLOCKED BLOCKER_PARENT BLOCKED_PARENT
 # Compose the plain-text rejection message for a blocking-level violation.
-# Ancestor/descendant pairs get a single explanation (no replacement command
-# exists). Cross-subtree pairs get the one hoisted pair that satisfies
-# blocking_level_ok; the candidate is re-checked through that same predicate
-# before it is printed, so the prescription is never itself rejected.
+# Two outcomes: a parent/child pair gets its own explanation, because the
+# hierarchy already encodes that dependency and no replacement pair exists;
+# every other pair gets the rule it failed.
 blocking_level_violation_message() {
-	local blocker="$1" blocked="$2" chain1="$3" chain2="$4"
-
-	if [[ "$blocker" == "$blocked" ]]; then
-		printf 'Hierarchy violation: %s cannot block itself.' "$blocker"
-		return 0
-	fi
+	local blocker="$1" blocked="$2" p1="$3" p2="$4"
 
 	local ancestor="" descendant=""
-	if hierarchy_chain_contains "$chain1" "$blocked"; then
+	if [[ -n "$p1" && "$p1" == "$blocked" ]]; then
 		ancestor="$blocked" descendant="$blocker"
-	elif hierarchy_chain_contains "$chain2" "$blocker"; then
+	elif [[ -n "$p2" && "$p2" == "$blocker" ]]; then
 		ancestor="$blocker" descendant="$blocked"
 	fi
 	if [[ -n "$ancestor" ]]; then
-		printf 'Hierarchy violation: %s is an ancestor of %s — an issue cannot carry a blocking relation against its own ancestor; the parent-child hierarchy already encodes that dependency. No relation is needed while %s stays under %s; use '\''%s --related %s'\'' for traceability. A true sequencing gate belongs between sibling issues at the level that owns the ordering.' \
+		printf 'Hierarchy violation: %s is the parent of %s — an issue cannot carry a blocking relation against its own ancestor; the parent-child hierarchy already encodes that dependency. No relation is needed while %s stays under %s; use '"'"'%s --related %s'"'"' for traceability. A true sequencing gate belongs between sibling issues at the level that owns the ordering.' \
 			"$ancestor" "$descendant" "$descendant" "$ancestor" "$descendant" "$ancestor"
 		return 0
 	fi
 
-	# hoist_to_lca_child prints "candidate\nparent"; command substitution
-	# strips the trailing newline of an empty parent line.
-	local hoist1 hoist2
-	hoist1=$(hoist_to_lca_child "$chain1" "$chain2")
-	hoist2=$(hoist_to_lca_child "$chain2" "$chain1")
-	local cand1 cand1_parent cand2 cand2_parent
-	cand1=$(sed -n '1p' <<<"$hoist1")
-	cand1_parent=$(sed -n '2p' <<<"$hoist1")
-	cand2=$(sed -n '1p' <<<"$hoist2")
-	cand2_parent=$(sed -n '2p' <<<"$hoist2")
+	printf 'Blocking-level violation: %s and %s sit in different bundles; a blocking relation must connect peers of one bundle (same direct parent, or both top-level). Express the dependency between the peers that own the ordering, or use '"'"'%s --related %s'"'"' for traceability.' \
+		"$blocker" "$blocked" "$blocker" "$blocked"
+}
 
-	if [[ -n "$cand1" && -n "$cand2" && "$cand1" != "$cand2" ]] \
-		&& blocking_level_ok "$cand1_parent" "$cand2_parent"; then
-		printf 'Blocking-level violation: %s and %s sit in different bundles; a blocking relation must connect peers of one bundle (same direct parent, or both top-level). Express the dependency where the subtrees separate: use '\''%s --blocks %s'\'', and '\''%s --related %s'\'' for traceability.' \
-			"$blocker" "$blocked" "$cand1" "$cand2" "$blocker" "$blocked"
-		return 0
+# --- Reach guard (create-time filing bar) ---
+#
+# The reply grammar makes filing the cheap disposition: `Declined:` needs a
+# disproof a gate checks, `Tracked: <ID>` needs only an issue to exist, so a
+# hypothetical gets an issue where it should have got a decline. Every Linear
+# `Tracked:` passes through this create, so it is where the filing bar can be
+# held on this tracker; a `Tracked: #<n>` filed with `gh issue create` never
+# reaches here and is unguarded. Under LINEAR_REQUIRE_REACH
+# (kendex.settings.toml [env]) a create refuses, before any API call, a
+# description that names nothing the defect reaches through. Empty or unset
+# keeps the guard off. The bar itself is project-management SKILL.md,
+# § Disposition.
+
+# The rule both refusals that judge a `Reached by:` value quote, so message
+# and rule cannot drift apart. The symptom refusal below states its own rule.
+REACH_RULE='An issue names what reaches it: the user action, run, check, or shipped producer that arrives at the defect (an owner-directed item names the ask). A value naming only the thread a finding came from, a shape, or something true in theory is not a reach, and an unsubstituted placeholder or a null token is no value at all.'
+
+# A value that IS the artifact a finding came from, rather than one that names
+# a producer and mentions the artifact along the way. Anchored end to end with
+# its parts bounded, the same whole-value discipline the shapes list below
+# uses: a phrase appearing somewhere in the value says nothing about the
+# value, and matching on that refused `running the PR review gate on a stale
+# head`, which names a shipped check. What refuses is a determiner, any run of
+# qualifier words, an artifact head noun, and at most a prepositional tail —
+# so `the PR review suggestion` refuses and `the PR review gate on a stale
+# head` creates, the head noun being what decides.
+#
+# The two lists stay separate because the vocabularies sit in different
+# positions: a shape needs its word after a head noun (`a name containing a
+# quote`), an artifact needs its words at the head (`the pull request
+# comment`). One pattern cannot hold a vocabulary in both places.
+#
+# This project ships a `codex` harness id, a `reviewer` skill and reviewer-*
+# agents, so a bare product noun would refuse honest reaches like `kendex
+# install --harness codex` or `a reviewer running tools/guard`, which the
+# guard has no escape flag to recover. `could` and `might` are absent for the
+# same reason: they mark a speculative impact, which the filing bar judges on
+# its own line, and as words they refuse `could not` in a report of what a
+# user actually hit.
+REACH_ARTIFACT_QUALIFIER='(copilot|codex|reviewer|bot|pr|pull request|pull-request|code|review)'
+REACH_ARTIFACT_HEAD='(review|comment|thread|suggestion|round|finding)'
+REACH_DETERMINER='(the |this |that |a |an )?'
+REACH_ARTIFACT_TAIL='( (on|of|in|from|at|for|about) .{0,40})?'
+REACH_REFUSED_WORDS="^$REACH_DETERMINER($REACH_ARTIFACT_QUALIFIER )*$REACH_ARTIFACT_HEAD$REACH_ARTIFACT_TAIL\$|^prrt_[a-z0-9_-]*\$|^${REACH_DETERMINER}hypothetical( .{0,40})?\$|^in theory( .{0,40})?\$"
+
+# A value that IS an input form is a shape, not a producer: no run emits it and
+# no user performs it. Both patterns are anchored end to end and their parts
+# bounded, the same whole-value discipline the words list above needed: a shape
+# word appearing somewhere after a leading article says nothing about the
+# value, and matching on that refused `a user entering a filename containing
+# spaces` and `an invalid cache entry emitted by kendex sync`, each of which
+# names the user action or shipped producer this guard asks for. A value that
+# goes on past the form to name where it comes from is no longer only a form.
+REACH_REFUSED_SHAPES='^(a|an) [a-z]+ (containing|starting with|ending with|matching) [a-z]+( [a-z]+){0,2}$|^(a|an) (empty|missing|malformed|invalid|unset|blank|null) [a-z_]+( [a-z_]+)?$'
+
+# An unsubstituted template placeholder, and a token whose whole meaning is
+# "nothing here", name no more than a blank line does. Both resolve to the
+# absent case so the caller's missing-line refusal is what the author reads.
+REACH_ABSENT_PLACEHOLDER='^\[[A-Z_]+\]$'
+REACH_ABSENT_TOKENS='^(tbd|n/a|na|none|unknown|-|\?)$'
+
+# issue_marked_value DESCRIPTION MARKER — the first `Marker:` value in the
+# body, or empty where the line is absent or names nothing. MARKER is a POSIX
+# bracket-case pattern, not a literal, because BSD sed has no case-insensitive
+# `s///` flag. A leading list marker and markdown emphasis are tolerated:
+# `Reached by:`, `- **Reached by**:` and `**Reached by:**` are one form, and a
+# whole-line bold leaves its closing `**` on the value.
+issue_marked_value() {
+	local value lower
+	value=$(sed -n "s/^[[:space:]]*[-*+]*[[:space:]]*\**[[:space:]]*$2[[:space:]]*\**[[:space:]]*:[[:space:]]*\**[[:space:]]*//p" <<<"$1" | head -1)
+	value="${value%"${value##*[!*[:space:]]}"}"
+	lower=$(printf '%s' "$value" | tr '[:upper:]' '[:lower:]')
+	if [[ "$value" =~ $REACH_ABSENT_PLACEHOLDER ]] || [[ "$lower" =~ $REACH_ABSENT_TOKENS ]]; then
+		value=""
+	fi
+	printf '%s' "$value"
+}
+
+# require_issue_reach DESCRIPTION PRIORITY REVIEW_BORN — 0 to proceed, 1 + a
+# JSON error on stderr for the caller to return on.
+#
+# The symptom check is bound to REVIEW_BORN ("1" from `--review-born`). A
+# review finding files as priority 2 only with a reported symptom; priority 2
+# minted structurally — a TPM planner, a roadmap layer, the merge-pr rebundle,
+# a research spike — reports no symptom by construction and creates unchecked.
+require_issue_reach() {
+	local description="$1" priority="$2" review_born="${3:-}"
+	[ -n "${LINEAR_REQUIRE_REACH:-}" ] || return 0
+
+	local reach lower
+	reach=$(issue_marked_value "$description" '[Rr]eached[[:space:]][Bb]y')
+	if [ -z "$reach" ]; then
+		jq -cn --arg rule "$REACH_RULE" \
+			'{error: ("Refusing to create an issue with no \"Reached by:\" line. " + $rule + " Add the line to the description (project-management issue-description-template.md carries it) and retry - an item with nothing to name is a decline, not an issue.")}' >&2
+		return 1
 	fi
 
-	# Defensive fallback: no candidate satisfies the guard's own predicate.
-	printf 'Blocking-level violation: %s and %s sit in different bundles; a blocking relation must connect peers of one bundle (same direct parent, or both top-level). No replacement pair satisfies the rule; restructure the hierarchy or use '\''%s --related %s'\'' for traceability.' \
-		"$blocker" "$blocked" "$blocker" "$blocked"
+	lower=$(printf '%s' "$reach" | tr '[:upper:]' '[:lower:]')
+	if [[ "$lower" =~ $REACH_REFUSED_WORDS ]] || [[ "$lower" =~ $REACH_REFUSED_SHAPES ]]; then
+		jq -cn --arg reach "$reach" --arg rule "$REACH_RULE" \
+			'{error: ("Refusing to create an issue whose \"Reached by:\" value names no producer: " + $reach + ". " + $rule + " Name the command, run, check, file, or user action that gets there; where none exists the item is a decline, not an issue.")}' >&2
+		return 1
+	fi
+
+	if [ "$review_born" = "1" ] && [ "$priority" = "2" ] &&
+		[ -z "$(issue_marked_value "$description" '[Ss]ymptom')" ]; then
+		jq -cn '{error: "Refusing to create a review-born priority-2 issue with no \"Symptom:\" line. Priority 2 is the reported tier: name the run, the user, or the red check that already showed the defect. Without one the item is normal work - create it at --priority 3."}' >&2
+		return 1
+	fi
+
+	return 0
 }

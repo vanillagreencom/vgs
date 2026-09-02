@@ -73,11 +73,17 @@ track-word. `untracked-claim` is that reply claiming tracking and naming no
 issue. `unreasoned-decline` is that reply declining and naming no mechanism:
 the reason is empty, or is nothing but non-reason tokens and filler. The
 tokens are the labels and the freeze procedure that answer a finding without
-disproving it, plus bare shas, numbers and tracker ids. A token INSIDE a real
-reason is untouched, because the test is subtraction: only a reply that was
-nothing else reduces to empty. Being vocabulary, it ends where the residue
-becomes NAMES — the suite a bare count belongs to, or a label spelled as a
-sentence.
+disproving it, plus bare shas, numbers and tracker ids. Two NAME strips ride
+after both word lists, both positional and neither a list: a count takes the
+non-space run immediately in front of it (`lifecycle 104/104` is one phrase,
+and a name's own dot, underscore or hyphen is held so `merge-queue 12/12` is
+too) and a slash-joined token is a path (`tools/guard.sh` goes whole). A
+token INSIDE a real reason is untouched, because the test is subtraction:
+only a reply that was nothing else reduces to empty. It ends at a name
+standing anywhere else — after the count, the subject of a pass-verb, a
+control's own label — at a count not spelled N/N, and at a label spelled out
+as a sentence. No SET of names is read: a repo names its files after the
+words it writes reasons in, so a set of them bans ordinary prose.
 
 THE CORPUS IS THE CONTRACT, NOT THIS LIST. tests/corpus/ holds what the gate
 must catch, what it must pass, and that KNOWN LIMIT. Add a label by writing
@@ -123,13 +129,9 @@ ladder and exceptions in references/settings.md; list values pack with ';'):
   REVIEW_GATE_SHA_PREFIX_FLOOR              (c) shortest sha prefix a comment
                                             may bind (4..40; default 7)
   REVIEW_GATE_OVERRIDE_CONTEXT              (d) operator override status
-                                            context, v2 name; when present
-                                            anywhere — even empty, which
-                                            disables the source — it wins
-                                            over the legacy name
-  REVIEW_GATE_OUTAGE_CONTEXT                (d) LEGACY override-context name
-                                            (default kendex-reviewer-outage);
-                                            empty disables
+                                            context (default
+                                            kendex-reviewer-outage); empty
+                                            disables
   REVIEW_GATE_STATUS_PUBLISHER_REJECT       (b,d) commit-status creator logins
                                             whose statuses are never
                                             evidence; while configured, a
@@ -291,18 +293,11 @@ TRUSTED_CONTEXTS="$(rg_setting REVIEW_GATE_TRUSTED_STATUS_CONTEXTS "")" || exit 
 SKIP_PATTERNS="$(rg_setting REVIEW_GATE_CHECKRUN_SKIP_PATTERNS "rate limited;skipped;queued")" || exit 2
 COMMENT_REVIEWERS="$(rg_setting REVIEW_GATE_COMMENT_REVIEWERS "")" || exit 2
 SHA_FLOOR="$(rg_setting REVIEW_GATE_SHA_PREFIX_FLOOR "7")" || exit 2
-# Operator override context, v2 name, resolved HERE (not only in the writer):
-# every live gate read — the writer, consumers' heavy-job gate jobs, the
-# selftest — goes through this predicate, so an adopter who sets only the v2
-# key must not silently lose their override. Presence is detected with a
-# sentinel default: a key set nowhere leaves the legacy resolution untouched;
-# a key set anywhere (even to the empty string, which disables the source)
-# wins over the legacy name.
-override_sentinel="__review-gate-override-unset__"
-OUTAGE_CONTEXT="$(rg_setting REVIEW_GATE_OVERRIDE_CONTEXT "$override_sentinel")" || exit 2
-if [ "$OUTAGE_CONTEXT" = "$override_sentinel" ]; then
-  OUTAGE_CONTEXT="$(rg_setting REVIEW_GATE_OUTAGE_CONTEXT "kendex-reviewer-outage")" || exit 2
-fi
+# Operator override context, resolved HERE (not only in the writer): every
+# live gate read — the writer, consumers' heavy-job gate jobs, the selftest —
+# goes through this predicate, so an adopter's override is read the same way
+# everywhere. Empty disables the source.
+OUTAGE_CONTEXT="$(rg_setting REVIEW_GATE_OVERRIDE_CONTEXT "kendex-reviewer-outage")" || exit 2
 PUBLISHER_REJECT="$(rg_setting REVIEW_GATE_STATUS_PUBLISHER_REJECT "")" || exit 2
 TRUSTED_LOGINS="$(rg_setting REVIEW_GATE_REVIEW_OBJECT_TRUSTED_LOGINS "")" || exit 2
 MIN_STATE="$(rg_setting REVIEW_GATE_REVIEW_OBJECT_MIN_STATE "any")" || exit 2
@@ -441,7 +436,7 @@ if [ -z "$GATE_CONTEXT_SELF" ]; then
   exit 2
 fi
 if [ "$OUTAGE_CONTEXT" = "$GATE_CONTEXT_SELF" ]; then
-  echo "::error::review-predicate: REVIEW_GATE_OUTAGE_CONTEXT equals REVIEW_GATE_CONTEXT ('$GATE_CONTEXT_SELF') — the gate's own status cannot attest a reviewer outage to itself" >&2
+  echo "::error::review-predicate: REVIEW_GATE_OVERRIDE_CONTEXT equals REVIEW_GATE_CONTEXT ('$GATE_CONTEXT_SELF') — the gate's own status cannot attest a reviewer outage to itself" >&2
   exit 2
 fi
 while IFS= read -r ctx; do
@@ -1388,21 +1383,80 @@ if [ "$THREADS_MODE" = "enforce" ]; then
 # punctuation normalization would otherwise leave the letters behind, and
 # `Declined: KEN-881` would read as a stated reason of "ken". The shape is
 # the untracked-claim term's, so the two cannot disagree about what an id is.
+#
+# Two NAME strips ride after BOTH word lists, and both are positional rather
+# than a vocabulary — no set of names is read or listed anywhere. A count
+# takes the non-space run immediately in front of it, because that run is
+# what was counted: "lifecycle 104/104" is one phrase and neither half says
+# anything about the finding. A slash-joined token is a path, and a path is a
+# name: "tools/guard" goes whole.
+#
+# BOTH WORD LISTS RUN FIRST, and that is load-bearing. A strip eats a whole
+# run, so in front of a list it eats the TAIL of a phrase and strands the
+# head: "out of scope 3/3" leaves "out" and "lifecycle is green at 104/104"
+# leaves "lifecycle", and a decline this term exists to red walks through the
+# gate by appending a count. The rule is one rule — a word the term deletes
+# never shields the name behind it — and each list has its own section of
+# tests/corpus/declines-unreasoned.txt and its own must-fail probe.
+#
+# The punctuation pass therefore runs ahead of both lists, so the lists read
+# normalized text; but it HOLDS a dot, underscore or hyphen sitting between
+# two alphanumerics, so a name is still one run when the strips look and
+# "merge-queue 12/12" does not leave "merge". Every multi-word list entry
+# accepts those separators for the same reason, and what the strips leave is
+# flattened afterwards. Widening that hold to the apostrophe would break
+# "won't fix", which the lists read as "won t fix".
+#
+# Both lists are bounded on ALPHANUMERICS rather than on \b for the same
+# reason, so a held separator is a boundary for them as it is for the
+# strips: `\b` reads `_` as a word character. The corpus section "two
+# unrelated labels joined by a held separator" is what holds that.
+#
+# THIS PROGRAM RUNS UNDER `gh --jq`, AND THAT ENGINE IS GO'S RE2: no
+# lookaround compiles. A pattern carrying one aborts the read, so this script
+# exits 2, the writer prints "taking no action" and reds without posting a
+# status, and the gate keeps whatever it already held. That is why a decline
+# stopped a PR converging rather than turning it red. The local jq is
+# Oniguruma and takes lookaround, and every other proof that runs unattended
+# reads through that jq, so `(?<!` shipped here once and nothing caught it.
+# The boundary is therefore spelled by `word_strip`, which consumes the
+# reason in run-aligned pieces (a separator run, a listed word plus the one
+# character ending it, or an unlisted run), so every match starts where the
+# last ended, at a run start, the set of positions a lookbehind allows.
+# The space padded onto the END is how a word in the last position meets that
+# one-character boundary; nothing is asked of the left, and the closing trim
+# takes both pads back. Anything added here has to compile under both
+# engines, and tests/predicate-re2-engine.test.sh is what says so.
+#
+# Position is the only thing that separates a suite name from prose — both
+# are ordinary English, so any SET of names is a word ban on whatever the
+# repo happens to name its files after, and "the guard refuses this path" is
+# a real reason written in three of them. What position does not reach is
+# pinned in tests/corpus/declines-known-limit.txt: a name standing after the
+# count, a count not spelled N/N, a path whose own segments are listed words,
+# and a slash written inside a multi-word entry.
 t_threads_page_jq='def disposition: test("^\\s*(fixed in [0-9a-f]{7,40}\\b|declined:)"; "i");
   def declined: test("^\\s*declined\\b"; "i");
   def tracking: test("(?i)\\btrack(ed|ing|s)?\\b");
   def replies: [(.comments.nodes // [])[] | select((.author.__typename // "User") != "Bot") | (.body // "")];
   def standing: [replies[] | select(disposition or tracking)] | last // empty;
   def standing_decline: [replies[] | select(disposition or declined or tracking)] | last // empty;
+  def word_strip($list):
+    gsub("(?<s>[^\\p{L}\\p{N}]+)|(?<w>" + $list + ")(?<b>[^\\p{L}\\p{N}])|(?<r>[\\p{L}\\p{N}]+)";
+      if .w != null then " " + .b elif .s != null then .s else .r end);
   def reason_left:
     sub("(?i)^\\s*declined\\b"; "")
     | gsub("[A-Z][A-Z0-9]+-[0-9]+|#[0-9]+"; " ")
     | ascii_downcase
-    | gsub("[^\\p{L}\\p{N}]+"; " ")
-    | gsub("\\b(frozen|freezes?|freezing|cap|capped|round [0-9]+|round|rounds|tests?|suites?|pass|passes|passed|passing|green|count|checks?|checking|ci|builds?|building|built|compiles?|compiled|pipelines?|lints?|linter|linting|workflows?|jobs?|typechecks?|validation|coverage|everything|fine|clean|out of scope|scope|pre existing|preexisting|existing|flagged separately|flagged|separately|as discussed|discussed|noted|won ?t ?fix|false positives?|by design|design|not applicable|n a|actionable|no change|nothing to do|later|known|intentional|deliberate|works as intended|as intended|intended|owners?|instruction(s|ed)?|previous|pushe[sd]?|push|last|head|disposition(ed|s)?|findings?|fix(es|ed)?|track(s|ed|ing|er)?|filed|filing|logged)\\b"; " ")
+    | gsub("(?<w>[\\p{L}\\p{N}]+([._-][\\p{L}\\p{N}]+)*)|(?<k>/)|[\\s\\S]"; "\(.w // .k // " ")")
+    | " " + . + " "
+    | word_strip("frozen|freezes?|freezing|cap|capped|round[ ._-][0-9]+|round|rounds|tests?|suites?|pass|passes|passed|passing|green|count|checks?|checking|ci|runs?|builds?|building|built|compiles?|compiled|pipelines?|lints?|linter|linting|workflows?|jobs?|typechecks?|validation|coverage|everything|fine|clean|out[ ._-]of[ ._-]scope|scope|pre[ ._-]existing|preexisting|existing|flagged[ ._-]separately|flagged|separately|as[ ._-]discussed|discussed|noted|won[ ._-]?t[ ._-]?fix|false[ ._-]positives?|by[ ._-]design|design|not[ ._-]applicable|n[ /._-]a|actionable|no[ ._-]change|nothing[ ._-]to[ ._-]do|later|known|intentional|deliberate|works[ ._-]as[ ._-]intended|as[ ._-]intended|intended|owners?|instruction(s|ed)?|previous|pushe[sd]?|push|last|head|disposition(ed|s)?|findings?|fix(es|ed)?|track(s|ed|ing|er)?|filed|filing|logged")
+    | word_strip("a|an|the|this|that|these|those|it|its|is|are|was|were|be|been|for|in|on|at|to|of|and|or|but|so|we|i|you|your|pr|prs|here|now|all|full|whole|entire|complete|still|already|yes|no|not|do|does|did|has|have|had|under|per|within|as|after|rather|than|see|every|set|s|t")
+    | gsub("\\S+\\s+[0-9]+\\s*/\\s*[0-9]+"; " ")
+    | gsub("[a-z0-9][a-z0-9._-]*(/[a-z0-9][a-z0-9._-]*)+"; " ")
+    | gsub("[/._-]"; " ")
     | gsub("\\b[0-9a-f]{7,40}\\b"; " ")
     | gsub("\\b[0-9]+\\b"; " ")
-    | gsub("\\b(a|an|the|this|that|these|those|it|its|is|are|was|were|be|been|for|in|on|at|to|of|and|or|but|so|we|i|you|your|pr|prs|here|now|all|full|whole|entire|complete|still|already|yes|no|not|do|does|did|has|have|had|under|per|within|as|after|rather|than|see|every|set|s|t)\\b"; " ")
     | gsub("^ +| +$"; "");
   if ((.data.repository.pullRequest.reviewThreads.pageInfo.hasNextPage | type) != "boolean")
     or ([.data.repository.pullRequest.reviewThreads.nodes[] | select((.isResolved | type) != "boolean")] | length) > 0
@@ -1493,7 +1547,7 @@ if [ "$cr" != "0" ]; then
 elif [ "$untracked" != "0" ]; then
   echo "verdict=untracked-claim detail=$untracked tracking claim(s) name no issue — write Declined: <reason>, or add the tracker/#id"
 elif [ "$unreasoned" != "0" ]; then
-  echo "verdict=unreasoned-decline detail=$unreasoned decline(s) name no mechanism — state the passing state or the false premise the finding is wrong about"
+  echo "verdict=unreasoned-decline detail=$unreasoned decline(s) name no mechanism — give a passing state, a false premise, or an excluded class with the fact that puts it there"
 elif [ "$got" = "0" ] && [ "$check" = "0" ] && [ "$comment_hits" = "0" ] && [ "$outageok" = "0" ] && [ "$carried" = "0" ]; then
   # One line, no source list. Which sources could open the gate is the repo's
   # own settings (references/settings.md), not a status description GitHub

@@ -77,7 +77,7 @@ gh issue view [N] --repo [REPOSITORY] --json number,title,body,labels,state,url 
 
 Both `--all-projects` fetches return every team; keep only the rows § 1.1.1 scopes in. Issues mode fetches the whole input set in one `bulk-get`, never one call per issue; a lone input issue is `cache issues get [ISSUE_ID]`. `cache issues bulk-get` returns the rows it matched and exits 0 whether or not it matched them all, so compare the returned `id` values against every requested identifier and halt naming any that came back missing. An unmatched target is a mistyped, deleted, or unsynced issue, never an absent one, and auditing the remainder would report a complete result over a subset. An input issue the caller named that resolves outside the § 1.1.1 scope halts the same way — the cache holds it, and auditing another team's issue is not the caller's to authorize.
 
-The cached Linear issue payload carries `blocks`, `blocked_by`, and `related`. GitHub: read relations from body links (`Blocks: #N`, `Blocked by: #N`, `Related: #N`, `Parent: #N`). Proposed items use their provided fields directly.
+The cached Linear issue payload carries `blocks`, `blocked_by`, `blocked_by_open`, and `related`. `blocked_by_open` decides whether an issue is blocked now; `blocked_by` remains the full relation history used by § 4. GitHub: read relations from body links (`Blocks: #N`, `Blocked by: #N`, `Related: #N`, `Parent: #N`). Proposed items use their provided fields directly.
 
 ### 1.4.1 Read Comments
 
@@ -168,7 +168,7 @@ Do not compare every pair. Build candidates from signals: same target component,
 
 A relation on a Done issue is a valid historical record. Flag it for removal only when the dependency itself is wrong (no creates-consumes), not for the source being Done.
 
-**Completed-blocker relations are auto-satisfied, never stale** (the owning rule: linear SKILL.md § Blocked Label vs Issue Relations). Do NOT add such relations to `remove_relations[]`, and do NOT report them under any stale-metadata heading. The one legitimate finding for an active issue whose blockers have all completed is a scheduling signal: `ready_to_schedule[]` in project mode, or "gates cleared, ready to schedule" in the issue's `reason` in issues mode.
+**Completed-blocker relations are auto-satisfied, never stale** (the owning rule: linear SKILL.md § Blocked Label vs Issue Relations). Do NOT add such relations to `remove_relations[]`, and do NOT report them under any stale-metadata heading. When `blocked_by` is non-empty and `blocked_by_open` is empty, emit the one legitimate finding: `ready_to_schedule[]` in project mode, or "gates cleared, ready to schedule" in the issue's `reason` in issues mode.
 
 ### 4.2 Scan Relation Violations
 
@@ -349,7 +349,7 @@ Otherwise, first match wins: creation bar failed → `skip` for a proposed item,
 
 **Completed-issue guard**: `combine`, `expand`, and `update` never target a Done or Canceled issue; new scope goes in a new issue with a `related` relation to the completed one.
 
-For every `create`: populate `create_fields` per [audit-output.md](../schemas/audit-output.md) with the full `labels[]` from the input item or completed from § 1.2 taxonomy — an action that can only supply `agent`/`agent_label` is left blocked with a clear `reason`. Verify `supersedes[]` entries carry `identifier`, `title`, and `reason`, and set `summary.superseded` to the total. When `SOURCE == "research-complete"` and `RESEARCH_ISSUE` is set, add it to `add_relations.related[]` on every `create`.
+For every `create`: populate `create_fields` per [audit-output.md](../schemas/audit-output.md) with the full `labels[]` from the input item or completed from § 1.2 taxonomy — an action that can only supply `agent`/`agent_label` is left blocked with a clear `reason`. `reach` is the producer the input item's `impact` names — the same line the filing bar reads, never re-derived from the finding. `review_born` is true when `SOURCE` is `review`, `pr-comments`, or `local-review`, false otherwise; a `review_born` create at priority 2 also carries `symptom` from the input item, and is left blocked with a `reason` when the item states none. Verify `supersedes[]` entries carry `identifier`, `title`, and `reason`, and set `summary.superseded` to the total. When `SOURCE == "research-complete"` and `RESEARCH_ISSUE` is set, add it to `add_relations.related[]` on every `create`.
 
 ---
 
@@ -381,7 +381,7 @@ Any invariant failing sends you back before the JSON is built.
 - [ ] No completed-blocker relation appears in `remove_relations[]` or under any stale-metadata framing (§ 4.1)
 - [ ] The § 6 cancellation sweep ran against the full comparison set
 - [ ] TRACKER=linear: every issue named anywhere in the output carries the § 1.1.1 team prefix
-- [ ] Every proposed item carries an assigned action, with a one-line reason naming the failed creation-bar test on each `skip` and a complete `create_fields.labels[]` on each `create` (§ 10)
+- [ ] Every proposed item carries an assigned action, with a one-line reason naming the failed creation-bar test on each `skip`, and on each `create` a complete `create_fields.labels[]`, a `reach`, a `review_born`, and a `symptom` where `review_born` is true at priority 2 (§ 10)
 - [ ] Every `hierarchy_contract.child_indexes` item is `action: create` + `hierarchy.action: make_child` + `hierarchy.parent` = the contract parent, none downgraded (§ 7.0, § 10.2)
 
 ---

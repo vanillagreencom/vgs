@@ -44,7 +44,11 @@ gh api user -q .login
 
 **Extract** per item: `thread_id`/`comment_id`, `author`, `body`, `path`, `line`, `url`, and `source` (`inline` or `pr-level`). Bot review summaries additionally get a `section` and a keyword-derived source type — architectural, documentation, security, testing, performance, or plain suggestion — plus `blocking: true` for security items and `false` when the text says non-blocking or optional. Skip anything the bot labels an inline comment: those are already captured as review threads, with the bot username as `author`. Never filter bot inline threads out.
 
-**Issue context.** `issue_id` from the caller, else `git-context issue-from-branch .`; ask the user if nothing matches. Resolve `WT_PATH` from `worktree exists`/`worktree path`, falling back to `.`. Then gather decisions:
+**Issue context.** `issue_id` from the caller, else `git-context issue-from-branch .`; ask the user if nothing matches. Resolve `WT_PATH` as `git-context repo-root "[DIR]"`, `[DIR]` being `worktree exists`/`worktree path` when they match and `.` otherwise.
+
+Fill `Worktree:` and `Worktree Check:` from `git -C "[DIR]" rev-parse --show-toplevel`.
+
+Then gather decisions:
 
 ```bash
 .agents/skills/decider/scripts/decisions search --issue [ISSUE_ID]
@@ -72,6 +76,7 @@ Analyze these PR review comments for your domain.
 PR: #[PR_NUMBER] - [TITLE]
 Parent Issue: [ISSUE_ID]
 Worktree: [WORKTREE_PATH]
+Worktree Check: `pwd -P` before any repo-relative command; it must print [WORKTREE_PATH]. On any other path, stop and report where the shell started.
 
 Decision context (read before classifying — do NOT suggest changes that contradict these):
 [For each verified decision: "[DECISION_ID]: [ONE_LINE_SUMMARY] — [DECISION_FILE_PATH]"]
@@ -179,7 +184,7 @@ The `fix set` is every § 5 row marked Fixing plus every `structural-close` row:
 **Every pass owes both of these before it answers a thread** — fix-only, reply-only, mixed, `freeze`, `declined` alike. The subsections below run in the order they appear and the single `reply step` is the last of them, so a pass reading straight through owes nothing it has not already done:
 
 1. Every class issue a reply names exists. § 6.2 files each `freeze` row's class issue; a `declined` row names the issue its frozen cause carries.
-2. Every cause a reply closes is recorded — a `freeze` row's in `frozen_causes`, an applied item's in `patched_causes`. § 1 hides a resolved thread from the next pass, so a cause the store does not carry is one the next pass re-triages in place of declining it. A cause is reviewer-derived text and never crosses argv: write the file its shape below names with the harness file-write tool, then bind the path.
+2. Every cause a reply closes is recorded — a `freeze` row's in `frozen_causes`, an applied item's in `patched_causes`. A cause the store does not carry is one the next pass re-triages in place of declining it. Write the file its shape below names, then bind the path.
 
 ```json
 {"cause": "[ONE_LINE]", "issue": "[CLASS_ISSUE_ID]"}
@@ -202,7 +207,7 @@ Read the round budget first. The cap governs what may be pushed, so it decides b
 .agents/skills/orch/scripts/workflow-state cap REVIEW_MAX_EXTERNAL_ROUNDS --issue [ISSUE_ID]
 ```
 
-It prints `below [COUNT]/[CAP]` or `at-cap [COUNT]/[CAP]`, counting `pr_comment_review.iterations`. An `at-cap` verdict on `REVIEW_MAX_EXTERNAL_ROUNDS` ends the ordinary fix rounds on this PR. Two rules decide the pass. **At the cap the disposition is unconditional and the fix is what stops**: every thread is analyzed and gets its reply posted and resolved, on this pass and every later one, and what the cap forbids is the fix and the push that follows it. The **fix set** is what the rest of this section groups, records and delegates: the items marked Fixing, and **at the cap only the cap-exempt ones — a defect this diff itself introduces or arms**, since a cap that forces a disposition onto a defect the change created ships the defect. No later step re-derives it, so there is nothing to filter and no second place to keep in step. The pass then runs three steps, in order. **File first** — run § 6.2 for every item clearing its bar, invoked with its return recorded as `→ § 6.1` rather than § 6.2's usual `→ § 6.3`, since the nested audit returns where it is told and a cap path that does not say so files the issue and exits before anything else here runs. **Then the exception**, the only delegation and the only push this pass makes. **Then reply**, through the reply table below: `Tracked: [ISSUE_ID]` for a filed item, `Fixed in [SHA]` for one the exception fixed, `Declined: [REASON]` for the rest, which needs no issue. Resolve each thread as you reply, then → § 6.3 with § 6.2 already done.
+It prints `below [COUNT]/[CAP]` or `at-cap [COUNT]/[CAP]`, counting `pr_comment_review.iterations`. An `at-cap` verdict on `REVIEW_MAX_EXTERNAL_ROUNDS` ends the ordinary fix rounds on this PR. Two rules decide the pass. **At the cap the disposition is unconditional and the fix is what stops**: every thread is analyzed and gets its reply posted and resolved, on this pass and every later one, and what the cap forbids is the fix and the push that follows it. The **fix set** is what the rest of this section groups, records and delegates: the items marked Fixing, and **at the cap only the cap-exempt ones — a defect this diff itself introduces or arms and Step 0 does not exclude**. The pass then runs three steps, in order. **File first** — run § 6.2 for every item clearing its bar, invoked with its return recorded as `→ § 6.1` rather than § 6.2's usual `→ § 6.3`. **Then the exception**, the only delegation and the only push this pass makes. **Then reply**, through the reply table below: `Tracked: [ISSUE_ID]` for a filed item, `Fixed in [SHA]` for one the exception fixed, `Declined: [REASON]` for the rest, which needs no issue. Resolve each thread as you reply, then → § 6.3 with § 6.2 already done.
 
 **Delegate the fix set.** Ensure the worktree exists (`worktree exists`/`worktree path`, creating with `--pr [PR_NUMBER]` when missing), group the `fix set` by `agent`, then stamp the round per group as separate tool calls immediately before delegating, arming the watchdog per [SKILL.md § Round Closure](../SKILL.md#round-closure):
 
@@ -228,7 +233,11 @@ When the list is non-empty, write `[WORKTREE_PATH]/tmp/dev-round-adds-[DEV_ROUND
 .agents/skills/orch/scripts/dev-round-write --worktree [WORKTREE_PATH] --issue [ISSUE_ID] --round-id [DEV_ROUND_ID] --items-file [WORKTREE_PATH]/tmp/dev-round-items-[DEV_ROUND_ID].json [--adds-file [WORKTREE_PATH]/tmp/dev-round-adds-[DEV_ROUND_ID].json]
 ```
 
+Exit 3 is the branch-size refusal. Stop before delegation, discard this fix set, and report the current and baseline counts with `Cut required`. After the branch is cut back to the Done-when, mint a fresh round. Every other nonzero exit is an environment or authorization failure and also stops the workflow.
+
 ⚠ Fill placeholders only ([Format Tags Are Literal](../SKILL.md#format-tags-are-literal)). `Recommendation:` is the technical fix; the agent owns its own process.
+
+Fill `Worktree:` and `Worktree Check:` from `git -C "[DIR]" rev-parse --show-toplevel`.
 
 <delegation_format>
 Follow workflow: .agents/skills/dev/workflows/dev-fix.md
@@ -237,6 +246,7 @@ Source: pr-comments
 Issue: [ISSUE_ID]
 PR: #[PR_NUMBER]
 Worktree: [WORKTREE_PATH]
+Worktree Check: `pwd -P` before any repo-relative command; it must print [WORKTREE_PATH]. On any other path, stop and report where the shell started.
 Worktree Lease: [WORKTREE_LEASE]
 Round ID: [DEV_ROUND_ID]
 Artifact Key: [ISSUE_ID]
@@ -273,9 +283,11 @@ Apply the fix-round A×B table in [`dev-fix.md` § 2](dev-fix.md), which is cano
 git -C "[WORKTREE_PATH]" push origin HEAD
 ```
 
+**A round ends with the description matching its head.** The PR body describes the commits actually on the PR head and names every issue § 6.2 filed this round; nothing else regenerates it after round one, so rebuild it per [`submit-pr.md` § 2](submit-pr.md) step 3 and post it with `pr-edit-body` until both hold.
+
 ### 6.2 Create Issues
 
-**Skip if** nothing clears the filing bar in [references/finding-disposition.md](../references/finding-disposition.md). Blocked items, `category: "issue"` suggestions, and each `freeze` row's class issue that clear it go into an audit-input file at `[WORKTREE_PATH]/tmp/audit-pr-comments-YYYYMMDD-HHMMSS.json` per `.agents/skills/project-management/schemas/audit-issues-input.md`, with `tracker.type` set to the resolved `TRACKER` (plus `tracker.repository` for GitHub items), then `⤵ .agents/skills/project-management/workflows/audit-issues.md --issues [FILE_PATH] § 1-9 → § 6.3`.
+**Skip if** nothing clears the filing bar in [references/finding-disposition.md](../references/finding-disposition.md). Blocked items, skipped items, `category: "issue"` suggestions, and each `freeze` row's class issue that clear it go into an audit-input file at `[WORKTREE_PATH]/tmp/audit-pr-comments-YYYYMMDD-HHMMSS.json` per `.agents/skills/project-management/schemas/audit-issues-input.md`, with `source: "pr-comments"` and `tracker.type` set to the resolved `TRACKER` (plus `tracker.repository` for GitHub items), then `⤵ .agents/skills/project-management/workflows/audit-issues.md --issues [FILE_PATH] § 1-9 → § 6.3`.
 
 ### 6.3 Re-Triage Or Exit
 
@@ -284,14 +296,14 @@ git -C "[WORKTREE_PATH]" push origin HEAD
 | Outcome | Reply body |
 |---------|------------|
 | Applied | `Fixed in [COMMIT_SHA]: [SHORT_FIX_SUMMARY]` |
-| Skipped / declined | `Declined: [REASON]` |
-| Blocked → issue | `Tracked: [CREATED_ISSUE_ID]` |
+| Skipped, blocked, or declined, nothing filed | `Declined: [REASON]` |
+| Blocked or skipped → issue | `Tracked: [CREATED_ISSUE_ID]` |
 | Already fixed | The finding's `draft_response` |
 | Question | The finding's `draft_response` |
 
 The word "tracked" (any form) without a `KEN-` or `#` issue id turns the gate red (`untracked-claim`) unless the reply opens with `Fixed in <sha>` or `Declined:`; only a later reply of one of the three forms clears it, and resolving the thread does not. A decline is a decline — say so.
 
-`[REASON]` is the mechanism the decline disproves: the passing state, or the false premise the finding rests on. A label instead of a reason — `frozen`, `at the cap`, `out of scope`, `pre-existing`, `flagged separately`, a test count — is never one. An empty reason, or one that is nothing but labels the gate knows, turns it red (`unreasoned-decline`), and dropping the colon exempts nothing: `Declined, out of scope` is read as the decline it is. A label beside a real reason is fine.
+`[REASON]` takes one of the forms [../references/finding-disposition.md](../references/finding-disposition.md) § Decision flow sets out. A label instead of a reason — `frozen`, `at the cap`, `out of scope`, `pre-existing`, `flagged separately`, a test count — is never one. An empty reason, or one that is nothing but labels the gate knows, turns it red (`unreasoned-decline`), and dropping the colon exempts nothing: `Declined, out of scope` is read as the decline it is. A label beside a real reason is fine.
 
 ```bash
 .agents/skills/github/scripts/github.sh post-reply "[THREAD_ID]" "[REPLY_BODY]" --pr "[PR_NUMBER]"
@@ -307,7 +319,7 @@ This section counts the round and decides whether to loop; the cap is § 6.1's a
 .agents/skills/orch/scripts/workflow-state increment [ISSUE_ID] pr_comment_review.iterations
 ```
 
-This is the only writer of `pr_comment_review.iterations` in any workflow: one triage pass advances it by exactly one, and a caller that runs this workflow records its results without touching the counter.
+This is the only writer of `pr_comment_review.iterations` in any workflow: one triage pass advances the counter by exactly one, and a caller that runs this workflow writes neither it nor § 8's result arrays.
 
 ```bash
 .agents/skills/orch/scripts/workflow-state get [ISSUE_ID] '{known: (.pr_review_baseline.last_threads // [])}'
@@ -383,16 +395,25 @@ Awaiting your response — ask questions, override skipped items, or confirm don
 
 ## 8. Update State And Return
 
-One tool call per block — each append runs per item:
+One tool call per block — each append runs per item. A fix and a skip entry carry the finding's own text, so each is written to a file with the harness file-write tool and bound by path:
+
+```json
+{"description": "[DESC]", "location": "[LOC]", "commit": "[SHA]", "source": "[SOURCE]"}
+```
+```bash
+.agents/skills/orch/scripts/workflow-state append-file [ISSUE_ID] pr_comment_review.fixes [WORKTREE_PATH]/tmp/state-fix-[ISSUE_ID].json
+```
+```json
+{"description": "[DESC]", "reason": "[REASON]"}
+```
+```bash
+.agents/skills/orch/scripts/workflow-state append-file [ISSUE_ID] pr_comment_review.skipped [WORKTREE_PATH]/tmp/state-skipped-[ISSUE_ID].json
+```
+
+An issue id is not finding text and stays inline:
 
 ```bash
-.agents/skills/orch/scripts/workflow-state append [ISSUE_ID] pr_comment_review.fixes '{"description":"[DESC]","location":"[LOC]","commit":"[SHA]","source":"[SOURCE]"}'
-```
-```bash
 .agents/skills/orch/scripts/workflow-state append [ISSUE_ID] pr_comment_review.issues_created "[CREATED_ISSUE_ID]"
-```
-```bash
-.agents/skills/orch/scripts/workflow-state append [ISSUE_ID] pr_comment_review.skipped '{"description":"[DESC]","reason":"[REASON]"}'
 ```
 
 **Managed**: return to the parent workflow's next section. **Standalone**: session complete.

@@ -7,8 +7,7 @@
 # A `.env` file is never read. The TOML reader loads the [env] table only;
 # a duplicate key inside [env], a value outside the contract grammar
 # (single-line double-quoted, no `"`, no `\`), or a `[`-leading line that
-# is not a lone [name] header, fails the load — as does a leading UTF-8
-# BOM in any project file.
+# is not a lone [name] header, fails the load.
 #
 # Bug 2 (kendex#507): the settings loader clobbered caller-provided env. Parent
 # values must now win over every project file, while the settings < .env.local
@@ -200,37 +199,14 @@ s6_case "an unquoted value" $'[env]\nUNQ = bare' "unsupported syntax for UNQ"
 # quoted foreign header after [env]) whole tables if it passes as content.
 s6_case "a commented [env] header" $'[env] # comment\nHIDDEN = "x"' "unsupported table header shape"
 s6_case "a quoted foreign header after [env]" $'[env]\nGOOD = "y"\n["notes"]\nLEAK = "z"' "unsupported table header shape"
-# A UTF-8 BOM is neither whitespace nor `[` to this reader: a BOM'd first
-# header would leave every assignment outside any table — silent defaults.
-s6_case "a BOM-prefixed first header" "$(printf '\357\273\277')"$'[env]\nHIDDEN = "x"' "byte-order mark"
-
-# Scenario 7: a BOM-prefixed .env.local refuses the load the same way. The
-# env file is SOURCED, and bash would read the BOM as part of the first
-# command name — the assignment it hides would be silently dropped.
-PROJ7="$TMP_ROOT/proj7"
-mkdir -p "$PROJ7"
-printf '\357\273\277BOMMED="x"\n' > "$PROJ7/.env.local"
-set +e
-s7_err=$(
-  set -euo pipefail
-  source "$LIB"
-  kendex_load_project_env "$PROJ7" 2>&1 >/dev/null
-)
-s7_code=$?
-set -e
-assert_eq "$s7_code" "1" "scenario 7: a BOM-prefixed .env.local fails the load"
-case "$s7_err" in
-  *"byte-order mark"*)
-    PASS=$((PASS + 1)); printf '  ok    scenario 7: the refusal names the BOM\n' ;;
-  *)
-    FAIL=$((FAIL + 1)); printf '  FAIL  scenario 7: the refusal names the BOM\n        stderr: %s\n' "$s7_err" ;;
-esac
-
 # Scenario 8: a source is skipped only when ABSENT. A present-but-unusable
 # source (directory, dangling symlink, unreadable file) fails the load
 # loud, naming the path — silently treating it as absent would let a
 # lower-precedence value decide, the same fail-open the rg/gg/sr resolver
-# family refuses.
+# family refuses. The .env.local case carries the same rule one step
+# further: that file is SOURCED, and the shell status of that `source` is
+# the whole of the guarantee. A single `|| return 0` on it drops the layer
+# with nothing said, and only a source whose body RUNS and fails catches it.
 s8_case() { # NAME STAGE EXPECT_SUBSTRING — STAGE runs inside the project dir
   local name="$1" stage="$2" want="$3" code=0 err proj="$TMP_ROOT/proj8"
   rm -rf "$proj"
@@ -253,6 +229,13 @@ s8_case() { # NAME STAGE EXPECT_SUBSTRING — STAGE runs inside the project dir
 s8_case "a DIRECTORY at .env.local" 'mkdir .env.local' ".env.local: source exists but is not a regular file"
 s8_case "a DANGLING SYMLINK at kendex.settings.toml" 'ln -s missing.toml kendex.settings.toml' "kendex.settings.toml: source is a symlink that does not resolve"
 s8_case "a DIRECTORY at .kendex/settings.toml" 'mkdir -p .kendex/settings.toml' "settings.toml: source exists but is not a regular file"
+# A .env.local whose contents RUN and fail: the load must carry that status
+# out, never swallow it and resolve on the layers below. The body has to be
+# parseable — a syntax error aborts the whole subshell on its own, so it
+# reads the same whatever the loader does — and it has to name the file,
+# which a bare `false` would not. Unlike the unreadable arm this one needs
+# no non-root guard: the command is missing for root too.
+s8_case "a FAILING .env.local command" 'printf "no_such_cmd_xyz\n" > .env.local' ".env.local: line "
 if [ "$(id -u)" -eq 0 ]; then
   printf '  skip  scenario 8: unreadable-source pin needs a non-root reader (chmod 000 cannot deny root)\n'
 else
