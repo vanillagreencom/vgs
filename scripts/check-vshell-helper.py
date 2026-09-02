@@ -48,19 +48,23 @@ def assert_equal(actual, expected, message):
 
 
 def with_temp_home(fn):
-    old_home = os.environ.get("HOME")
-    old_sudo = os.environ.pop("SUDO_USER", None)
+    # XDG_CONFIG_HOME travels with HOME, or a helper resolving config through it
+    # reads the real ~/.config from a test that thought it held a temp one: the
+    # paired-clients case below read a live Sunshine pairing and failed by hand
+    # while CI, having neither the variable nor the file, stayed green.
+    saved = {n: os.environ.get(n) for n in ("HOME", "XDG_CONFIG_HOME", "SUDO_USER")}
+    os.environ.pop("SUDO_USER", None)
     with tempfile.TemporaryDirectory() as tmp:
         os.environ["HOME"] = tmp
+        os.environ["XDG_CONFIG_HOME"] = str(Path(tmp) / ".config")
         try:
             fn(Path(tmp))
         finally:
-            if old_home is None:
-                os.environ.pop("HOME", None)
-            else:
-                os.environ["HOME"] = old_home
-            if old_sudo is not None:
-                os.environ["SUDO_USER"] = old_sudo
+            for name, value in saved.items():
+                if value is None:
+                    os.environ.pop(name, None)
+                else:
+                    os.environ[name] = value
 
 
 def test_system_font_normalization():
@@ -3382,12 +3386,7 @@ def test_remote_desktop_paired_clients_reads_only_names():
                 ],
             },
         }))
-        old_xdg = os.environ.pop("XDG_CONFIG_HOME", None)
-        try:
-            result = helper._rd_paired_clients()
-        finally:
-            if old_xdg is not None:
-                os.environ["XDG_CONFIG_HOME"] = old_xdg
+        result = helper._rd_paired_clients()
         # Only names, and only usable ones. The same file holds the Web UI
         # credential hash and salt; nothing but `name` may leave this function.
         assert_equal(result["names"], ["mbp-1"], "only non-blank device names are returned")

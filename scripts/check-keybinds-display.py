@@ -40,9 +40,13 @@ def assert_equal(actual, expected, message):
 
 
 def with_temp_home(fn):
+    # XDG_CONFIG_HOME travels with HOME, or a helper resolving config through
+    # it reads the real ~/.config out of a test that thought it was isolated.
     old_home = os.environ.get("HOME")
+    old_xdg = os.environ.get("XDG_CONFIG_HOME")
     with tempfile.TemporaryDirectory() as tmp:
         os.environ["HOME"] = tmp
+        os.environ["XDG_CONFIG_HOME"] = str(Path(tmp) / ".config")
         try:
             fn(Path(tmp))
         finally:
@@ -50,6 +54,10 @@ def with_temp_home(fn):
                 os.environ.pop("HOME", None)
             else:
                 os.environ["HOME"] = old_home
+            if old_xdg is None:
+                os.environ.pop("XDG_CONFIG_HOME", None)
+            else:
+                os.environ["XDG_CONFIG_HOME"] = old_xdg
 
 
 def test_keycode_binds_get_a_key_name_instead_of_a_raw_code():
