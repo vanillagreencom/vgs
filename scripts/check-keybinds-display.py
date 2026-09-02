@@ -240,7 +240,37 @@ def test_the_reported_binds_carry_every_recovered_and_labelled_key():
     with_temp_home(check)
 
 
+def test_the_temp_home_fixture_isolates_xdg_config_home():
+    """Every check here resolves config from HOME today, so the fixture's
+    XDG_CONFIG_HOME assignment is unexercised by them and could be deleted
+    without a single one going red. This holds the fixture to its contract
+    directly, so the next check that resolves through XDG inherits a temp
+    home that is actually temporary."""
+    ambient = None
+
+    def check(home):
+        assert_equal(os.environ["XDG_CONFIG_HOME"], str(home / ".config"),
+                     "the variable points inside the temp home, not at the real one")
+        assert_equal(os.environ["XDG_CONFIG_HOME"] == ambient, False,
+                     "and specifically not at the ambient value it replaced")
+
+    with tempfile.TemporaryDirectory() as seeded:
+        ambient = seeded
+        saved = os.environ.get("XDG_CONFIG_HOME")
+        os.environ["XDG_CONFIG_HOME"] = seeded
+        try:
+            with_temp_home(check)
+            assert_equal(os.environ.get("XDG_CONFIG_HOME"), seeded,
+                         "the ambient value is put back afterwards")
+        finally:
+            if saved is None:
+                os.environ.pop("XDG_CONFIG_HOME", None)
+            else:
+                os.environ["XDG_CONFIG_HOME"] = saved
+
+
 def main():
+    test_the_temp_home_fixture_isolates_xdg_config_home()
     test_keycode_binds_get_a_key_name_instead_of_a_raw_code()
     test_keybind_labels_name_a_key_the_layout_cannot()
     test_keybind_labels_survive_a_broken_or_hostile_file()
