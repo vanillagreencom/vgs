@@ -5745,24 +5745,35 @@ def test_tmux_theme_reaches_the_running_server():
         )
         stub.chmod(0o755)
 
+        # A `tmux -S` server puts its socket outside every searched root; $TMUX
+        # is the only thing that names it.
+        named = root / "custom.sock"
+        sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        sock.bind(str(named))
+        sock.close()
+
         old_path = os.environ.get("PATH", "")
         old_tmpdir = os.environ.get("TMUX_TMPDIR")
+        old_tmux = os.environ.get("TMUX")
         os.environ["PATH"] = f"{stub_dir}:{old_path}"
         os.environ["TMUX_TMPDIR"] = str(root)
+        os.environ["TMUX"] = f"{named},4242,0"
         try:
             result = helper.source_tmux_theme_hook("tmux-source")
         finally:
             os.environ["PATH"] = old_path
-            if old_tmpdir is None:
-                os.environ.pop("TMUX_TMPDIR", None)
-            else:
-                os.environ["TMUX_TMPDIR"] = old_tmpdir
+            for key, value in (("TMUX_TMPDIR", old_tmpdir), ("TMUX", old_tmux)):
+                if value is None:
+                    os.environ.pop(key, None)
+                else:
+                    os.environ[key] = value
 
         assert_equal(result["ok"], True, "the hook succeeds when a live server took the theme")
         # This host's own tmux socket is scanned too; the assertion is scoped
         # to the sockets this test made.
         sourced = [path for path in result.get("sourced") or [] if path.startswith(str(root))]
-        assert_equal(sourced, [str(live)], "the live socket is sourced and the dead one is not")
+        assert_equal(sorted(sourced), sorted([str(named), str(live)]),
+                     "both the $TMUX socket and the live default socket are sourced, and the dead one is not")
         logged = calls.read_text().splitlines()
         sourced_dead = [line for line in logged if dead.name in line and "source-file" in line]
         assert_equal(sourced_dead, [], "a socket with no server must never be sourced into")

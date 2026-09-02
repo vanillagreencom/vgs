@@ -2220,6 +2220,17 @@ def tmux_sockets() -> List[Path]:
     roots = [Path(d) for d in (os.environ.get("TMUX_TMPDIR"), f"/run/user/{uid}", tempfile.gettempdir()) if d]
     found: List[Path] = []
     seen = set()
+    # $TMUX names the socket of the server this process runs under, which a
+    # `tmux -S` server puts anywhere at all, including outside every root above.
+    inside = (os.environ.get("TMUX") or "").split(",")[0]
+    if inside:
+        candidate = Path(inside)
+        try:
+            if candidate.is_socket():
+                seen.add(candidate)
+                found.append(candidate)
+        except OSError:
+            pass
     for root in roots:
         try:
             entries = sorted((root / f"tmux-{uid}").iterdir())
