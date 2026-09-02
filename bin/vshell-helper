@@ -36,7 +36,7 @@ import tomllib
 import mimetypes
 from collections import Counter
 from pathlib import Path
-from typing import Any, Callable, Dict, Iterable, List, Tuple
+from typing import Any, Callable, Dict, Iterable, List, Optional, Set, Tuple
 
 _HELPER_MODULE_DIR = str(Path(__file__).resolve().parent)
 if _HELPER_MODULE_DIR not in sys.path:
@@ -8758,6 +8758,103 @@ def ppm_first_pixel(data: bytes) -> Tuple[int, int, int]:
     return data[index], data[index + 1], data[index + 2]
 
 
+_HYPR_BINDD_RE = re.compile(r'^bindd\(\s*"([^"]*)"\s*,.*,\s*"([^"]*)"\s*\)')
+
+# X11 keycodes are evdev codes + 8. F13-F24 are the block standard layouts
+# leave without a keysym, so a bind on one can only be written as code:N --
+# which is also all hyprctl can report back for it.
+_EVDEV_KEYCODE_NAMES = {183 + i: f"F{13 + i}" for i in range(12)}
+
+
+def _keycode_display_name(raw: str) -> str:
+    """"code:191" -> "F13", when the keycode has a well-known name."""
+    if not raw.startswith("code:"):
+        return raw
+    try:
+        x_keycode = int(raw[len("code:"):])
+    except ValueError:
+        return raw
+    return _EVDEV_KEYCODE_NAMES.get(x_keycode - 8, raw)
+
+
+def _keybind_labels() -> Dict[str, str]:
+    """User-supplied display names, keyed by whole combo or by its key.
+
+    A remapper (input-remapper mod_tap, QMK, a firmware layer) can put a key
+    on the wire that no layout names and that no longer resembles the key that
+    was physically pressed. Only the person who set it up knows what they
+    press, so that label has to come from them."""
+    path = home() / ".config" / "vshell" / "keybind-labels.json"
+    try:
+        data = json.loads(path.read_text())
+    except (OSError, ValueError):
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    return {str(k): str(v) for k, v in data.items() if isinstance(v, str) and v.strip()}
+
+
+def _display_combo(combo: str, labels: Dict[str, str]) -> str:
+    """Name the key a bind fires on, as a person would say it."""
+    if not combo:
+        return combo
+    if combo in labels:
+        return labels[combo]
+    parts = [part.strip() for part in combo.split("+")]
+    # Either spelling can carry the label: the raw code the bind was written
+    # with, or the key name it resolves to.
+    named = _keycode_display_name(parts[-1])
+    parts[-1] = labels.get(parts[-1]) or labels.get(named) or named
+    return "+".join(parts)
+
+
+def _hypr_raw_bind_keys() -> Dict[str, str]:
+    """Map bindd() description -> literal key, for keys hyprctl cannot report.
+
+    `hyprctl binds -j` reports key=""/keycode=0 for a bind made by raw keycode
+    (e.g. bindd("code:191", ...)) when the active layout leaves that code
+    unmapped to any keysym, so the JSON alone can't recover what was bound;
+    only the source text still has it.
+
+    A description is the only handle the JSON and the source share, and it is
+    not a unique one, so this stays deliberately narrow: keycode binds only,
+    since hyprctl reports every other key itself and matching those would let
+    one bind lend its key to another that merely shares a description; and a
+    description bound to two different keycodes is dropped rather than guessed
+    at. Commented-out binds are excluded by matching at the start of the line,
+    because rebinding by comment-out-and-retype leaves the dead line above the
+    live one."""
+    hypr_dir = home() / ".config" / "hypr"
+    mapping: Dict[str, str] = {}
+    ambiguous: Set[str] = set()
+    if not hypr_dir.is_dir():
+        return mapping
+    # Sorted so a stray copy of a config cannot win or lose by directory order.
+    for path in sorted(hypr_dir.rglob("*.lua")):
+        try:
+            # errors="replace": one undecodable byte in an unrelated file must
+            # not cost the whole cheatsheet.
+            text = path.read_text(errors="replace")
+        except OSError:
+            continue
+        for line in text.splitlines():
+            m = _HYPR_BINDD_RE.match(line.strip())
+            if not m:
+                continue
+            # The literal can carry its modifiers ("SUPER, code:191"), and
+            # hyprctl reports those reliably. Only the key is missing.
+            key = re.split(r"[,+]", m.group(1))[-1].strip()
+            desc = m.group(2)
+            if not key.startswith("code:"):
+                continue
+            if mapping.get(desc, key) != key:
+                ambiguous.add(desc)
+            mapping.setdefault(desc, key)
+    for desc in ambiguous:
+        mapping.pop(desc, None)
+    return mapping
+
+
 def hypr_binds_json() -> Dict[str, Any]:
     proc = run(["hyprctl", "binds", "-j"]) if shutil.which("hyprctl") else subprocess.CompletedProcess([], 1, "", "")
     binds: Dict[str, List[Dict[str, Any]]] = {"Window": [], "Workspace": [], "System": [], "Execute": [], "Other": []}
@@ -8765,6 +8862,8 @@ def hypr_binds_json() -> Dict[str, Any]:
         data = json.loads(proc.stdout or "[]")
     except Exception:
         data = []
+    raw_keys: Optional[Dict[str, str]] = None
+    labels = _keybind_labels()
     for b in data:
         mods = b.get("modmask", 0)
         key = b.get("key") or (f"code:{b.get('keycode')}" if b.get("keycode") else "")
@@ -8778,6 +8877,12 @@ def hypr_binds_json() -> Dict[str, Any]:
         dispatcher = b.get("dispatcher", "")
         arg = b.get("arg", "")
         desc = b.get("description") or arg or dispatcher
+        if not key and desc:
+            if raw_keys is None:
+                raw_keys = _hypr_raw_bind_keys()
+            key = raw_keys.get(desc, "")
+            combo = "+".join(mod_names + ([key] if key else []))
+        combo = _display_combo(combo, labels)
         action = (dispatcher + (" " + arg if arg else "")).strip()
         cat = "Other"
         if "workspace" in action:
@@ -8789,6 +8894,9 @@ def hypr_binds_json() -> Dict[str, Any]:
         elif any(x in action for x in ["dpms", "exit", "lock", "night", "reload"]):
             cat = "System"
         binds.setdefault(cat, []).append({"key": combo, "desc": desc, "action": action, "source": "hyprland"})
+    # A category nothing landed in is not a category: the cheatsheet sizes its
+    # dialog by how many it has, and empty ones buy a column of blank space.
+    binds = {cat: entries for cat, entries in binds.items() if entries}
     return {"provider": "hyprland", "modKey": "Super", "vgsBindsIncluded": True, "vgsStatus": {"exists": True, "included": True, "readOnly": True, "configFormat": "lua", "statusMessage": "VGS reads live Hyprland binds read-only; change them in your Hyprland config"}, "binds": binds}
 
 

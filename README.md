@@ -129,6 +129,15 @@ Run `vshell deps status` after installation. Optional features report their miss
 instead of blocking the shell. Keep `~/.config/vshell` as a real directory: settings, user themes,
 and plugin overrides live there.
 
+A key a remapper puts on the wire — an `input-remapper` mod-tap, a QMK layer — can reach the
+compositor as a keycode no layout names, which is all the keybinds cheatsheet can show for it. Name
+it yourself in `~/.config/vshell/keybind-labels.json`, keyed by the raw code or the key it resolves
+to:
+
+```json
+{ "F13": "Right Alt" }
+```
+
 The universal bundle includes the full built-in wallpaper and icon asset set and starts the user
 service by default unless `install.sh --no-start` is used.
 

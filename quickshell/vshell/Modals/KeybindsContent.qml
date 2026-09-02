@@ -14,6 +14,73 @@ FocusScope {
     property bool floating: false
     property alias searchField: searchField
 
+    // The dialog sizes itself from the widest key and description it will
+    // actually draw, so the columns fit their text instead of eliding it and
+    // the window stops at the content rather than running to a screen edge.
+    // Measured off hidden StyledTexts so the metrics come from the same font
+    // resolution the badges use.
+    readonly property var textExtents: {
+        const cats = KeybindsService.cheatsheet.binds || {};
+        let categories = 0;
+        let key = "";
+        let desc = "";
+        for (const cat in cats) {
+            const list = cats[cat] || [];
+            let counted = false;
+            for (let i = 0; i < list.length; i++) {
+                const bind = list[i];
+                if (bind.hideOnOverlay)
+                    continue;
+                if (!counted) {
+                    counted = true;
+                    categories++;
+                }
+                const k = (bind.key || "").replace(/\+/g, " + ");
+                if (k.length > key.length)
+                    key = k;
+                const d = bind.desc || bind.action || "";
+                if (d.length > desc.length)
+                    desc = d;
+            }
+        }
+        return {
+            "categories": categories,
+            "key": key,
+            "desc": desc
+        };
+    }
+
+    readonly property int categoryCount: textExtents.categories
+
+    readonly property real keyColumnWidth: Math.max(120, Math.min(380, keyMetrics.implicitWidth + Theme.spacingS * 2))
+    readonly property real descColumnWidth: Math.max(200, Math.min(460, descMetrics.implicitWidth + Theme.spacingS))
+    readonly property real columnWidth: keyColumnWidth + Theme.spacingM + descColumnWidth
+    readonly property int preferredColumns: Math.max(1, Math.min(3, categoryCount))
+    // Floored: the cheatsheet is fetched when the dialog opens, so the first
+    // open measures an empty list and would otherwise map at its minimums and
+    // then jump once the binds land.
+    readonly property real preferredWidth: Math.max(720, preferredColumns * columnWidth + (preferredColumns - 1) * Theme.spacingM + Theme.spacingL * 2)
+
+    StyledText {
+        id: keyMetrics
+        visible: false
+        text: content.textExtents.key
+        font.pixelSize: Theme.fontSizeMedium
+        font.weight: Font.Medium
+        isMonospace: true
+        wrapMode: Text.NoWrap
+        elide: Text.ElideNone
+    }
+
+    StyledText {
+        id: descMetrics
+        visible: false
+        text: content.textExtents.desc
+        font.pixelSize: Theme.fontSizeMedium
+        wrapMode: Text.NoWrap
+        elide: Text.ElideNone
+    }
+
     signal closeRequested
     signal floatingToggleRequested
 
@@ -184,7 +251,7 @@ FocusScope {
                     if (key !== "_root")
                         bindCount += 1;
                 }
-                return 40 + bindCount * 28;
+                return 40 + bindCount * 34;
             }
 
             property var categoryKeys: Object.keys(categories)
@@ -214,7 +281,12 @@ FocusScope {
                 width: mainFlickable.width
                 spacing: Theme.spacingM
 
-                property int numColumns: Math.max(1, Math.min(3, Math.floor(width / 350)))
+                // Categories are atomic in the masonry, so asking for more
+                // columns than there are categories only makes empty ones.
+                // Counted after the search filter, which is what is drawn; the
+                // dialog's own width stays on the unfiltered count so it does
+                // not resize under every keystroke.
+                property int numColumns: Math.max(1, Math.min(3, mainFlickable.categoryKeys.length, Math.floor(width / content.columnWidth)))
                 property var columnCategories: mainFlickable.distributeCategories(numColumns)
 
                 Repeater {
@@ -285,41 +357,11 @@ FocusScope {
                                                 Repeater {
                                                     model: parent.parent.subcatBinds
 
-                                                    Item {
+                                                    KeybindsBindRow {
                                                         width: parent.width
-                                                        height: 24
-
-                                                        StyledRect {
-                                                            id: keyBadge
-                                                            width: Math.min(keyText.implicitWidth + 12, 160)
-                                                            height: 22
-                                                            radius: 4
-                                                            anchors.verticalCenter: parent.verticalCenter
-
-                                                            StyledText {
-                                                                id: keyText
-                                                                anchors.centerIn: parent
-                                                                color: Theme.secondary
-                                                                text: (modelData.key || "").replace(/\+/g, " + ")
-                                                                font.pixelSize: Theme.fontSizeSmall
-                                                                font.weight: Font.Medium
-                                                                isMonospace: true
-                                                                elide: Text.ElideRight
-                                                                width: Math.min(implicitWidth, 148)
-                                                            }
-                                                        }
-
-                                                        StyledText {
-                                                            anchors.left: parent.left
-                                                            anchors.leftMargin: 170
-                                                            anchors.right: parent.right
-                                                            anchors.verticalCenter: parent.verticalCenter
-                                                            text: modelData.desc || modelData.action || ""
-                                                            font.pixelSize: Theme.fontSizeSmall
-                                                            opacity: 0.9
-                                                            elide: Text.ElideRight
-                                                            wrapMode: Text.NoWrap
-                                                        }
+                                                        keyColumnWidth: content.keyColumnWidth
+                                                        keyLabel: (modelData.key || "").replace(/\+/g, " + ")
+                                                        description: modelData.desc || modelData.action || ""
                                                     }
                                                 }
                                             }
