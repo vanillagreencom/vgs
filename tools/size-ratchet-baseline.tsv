@@ -33,9 +33,9 @@ config/vshell/plugins/aiUsage/AiUsageWidget.qml	1167
 config/vshell/plugins/cloudSync/CloudSyncWidget.qml	690
 config/vshell/plugins/remoteDesktop/RemoteDesktopWidget.qml	803
 config/vshell/plugins/sudoToggle/SudoToggleWidget.qml	515
-config/vshell/plugins/sysUpdate/SysUpdateWidget.qml	777
+config/vshell/plugins/sysUpdate/SysUpdateWidget.qml	781
 config/vshell/plugins/tailscale/TailscaleWidget.qml	804
-config/vshell/plugins/vgsMenu/VGSMenu.qml	2388
+config/vshell/plugins/vgsMenu/VGSMenu.qml	2411
 config/vshell/settings.default.json	758
 docs/media/vgs-demo-poster.jpg	1197
 docs/media/vgs-demo.mp4	30319

@@ -44,6 +44,7 @@ def agent_list() -> Dict[str, Any]:
             "name": entry["name"],
             "command": command,
             "package": entry["package"],
+            "kind": str(entry.get("kind") or "tui"),
             "stub": stub,
             "installed": versions.get(str(entry["package"]), ""),
             # A foreign or shadowed command is the owner's own install of the

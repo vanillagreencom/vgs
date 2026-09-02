@@ -462,6 +462,8 @@ PluginComponent {
                                 id: pkgList
                                 anchors.fill: parent
                                 anchors.margins: Theme.spacingS
+                                // The bar rides in the card's right gutter, not over the rows.
+                                anchors.rightMargin: 2
                                 model: root.packages
                                 clip: true
                                 boundsBehavior: Flickable.StopAtBounds
@@ -470,7 +472,7 @@ PluginComponent {
                                 }
 
                                 delegate: Item {
-                                    width: pkgList.width
+                                    width: pkgList.width - Theme.spacingS + 2
                                     height: 44
 
                                     Column {
@@ -636,6 +638,8 @@ PluginComponent {
                                 id: orphanList
                                 anchors.fill: parent
                                 anchors.margins: Theme.spacingS
+                                // The bar rides in the card's right gutter, not over the rows.
+                                anchors.rightMargin: 2
                                 model: root.orphans
                                 clip: true
                                 boundsBehavior: Flickable.StopAtBounds
@@ -644,7 +648,7 @@ PluginComponent {
                                 }
 
                                 delegate: Item {
-                                    width: orphanList.width
+                                    width: orphanList.width - Theme.spacingS + 2
                                     height: 30
 
                                     StyledText {
