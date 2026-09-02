@@ -153,6 +153,20 @@ def main() -> int:
     finally:
         shutil.rmtree(allowlisted)
 
+    conditional_clear = make_root()
+    try:
+        write_backend(conditional_clear, "internal/services/clipboard/wayland.go", 'package clipboard\nimport "os/exec"\nfunc wlCopy(args []string, skip bool) error { cmd := exec.Command("wl-copy", args...); if skip { cmd = nil }; _, err := cmd.Output(); return err }\n')
+        assert_fails(conditional_clear, "raw exec.Command or exec.CommandContext output reads", "wlCopy: cmd.Output()", absent=("raw os/exec builders outside execbound need a lifecycle reason",))
+    finally:
+        shutil.rmtree(conditional_clear)
+
+    unconditional_clear = make_root()
+    try:
+        write_backend(unconditional_clear, "internal/services/clipboard/wayland.go", 'package clipboard\nimport "os/exec"\ntype report struct{}\nfunc (report) Output() ([]byte, error) { return nil, nil }\nfunc wlCopy(args []string) error { var cmd interface{ Output() ([]byte, error) } = exec.Command("wl-copy", args...); cmd = report{}; _, err := cmd.Output(); return err }\n')
+        assert_passes(unconditional_clear)
+    finally:
+        shutil.rmtree(unconditional_clear)
+
     print("execbound adoption guard tests passed.")
     return 0
 

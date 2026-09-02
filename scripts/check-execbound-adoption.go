@@ -177,19 +177,96 @@ func (s fileScanner) identHasRawBuilder(id *ast.Ident, end token.Pos) bool {
 				if !ok || !sameIdent(lhsID, id) || lhsID.Pos() >= end {
 					continue
 				}
-				found = i < len(n.Rhs) && s.isRawBuilderCall(n.Rhs[i])
+				if i < len(n.Rhs) && s.isRawBuilderCall(n.Rhs[i]) {
+					found = true
+				} else if directNodeBeforeRead(fn.body, n, end) {
+					found = false
+				}
 			}
 		case *ast.ValueSpec:
 			for i, name := range n.Names {
 				if !sameIdent(name, id) || name.Pos() >= end {
 					continue
 				}
-				found = i < len(n.Values) && s.isRawBuilderCall(n.Values[i])
+				if i < len(n.Values) && s.isRawBuilderCall(n.Values[i]) {
+					found = true
+				} else if directNodeBeforeRead(fn.body, n, end) {
+					found = false
+				}
 			}
 		}
 		return true
 	})
 	return found
+}
+
+func directNodeBeforeRead(block *ast.BlockStmt, target ast.Node, read token.Pos) bool {
+	if block == nil {
+		return false
+	}
+	return directNodeBeforeReadInStatements(block.List, target, read)
+}
+
+func directNodeBeforeReadInStatements(stmts []ast.Stmt, target ast.Node, read token.Pos) bool {
+	for _, stmt := range stmts {
+		if read <= stmt.Pos() {
+			return false
+		}
+		if containsPos(stmt, read) {
+			return directNodeBeforeReadInStatement(stmt, target, read)
+		}
+		if directStatementNode(stmt, target) {
+			return true
+		}
+	}
+	return false
+}
+
+func directNodeBeforeReadInStatement(stmt ast.Stmt, target ast.Node, read token.Pos) bool {
+	switch s := stmt.(type) {
+	case *ast.BlockStmt:
+		return directNodeBeforeReadInStatements(s.List, target, read)
+	case *ast.CaseClause:
+		return directNodeBeforeReadInStatements(s.Body, target, read)
+	case *ast.CommClause:
+		return directNodeBeforeReadInStatements(s.Body, target, read)
+	case *ast.ForStmt:
+		return directNodeBeforeRead(s.Body, target, read)
+	case *ast.IfStmt:
+		if containsPos(s.Body, read) {
+			return directNodeBeforeRead(s.Body, target, read)
+		}
+		if containsPos(s.Else, read) {
+			return directNodeBeforeReadInStatement(s.Else, target, read)
+		}
+	case *ast.RangeStmt:
+		return directNodeBeforeRead(s.Body, target, read)
+	case *ast.SelectStmt:
+		return directNodeBeforeRead(s.Body, target, read)
+	case *ast.SwitchStmt:
+		return directNodeBeforeRead(s.Body, target, read)
+	case *ast.TypeSwitchStmt:
+		return directNodeBeforeRead(s.Body, target, read)
+	}
+	return false
+}
+
+func directStatementNode(stmt ast.Stmt, target ast.Node) bool {
+	switch s := stmt.(type) {
+	case *ast.AssignStmt:
+		return s == target
+	case *ast.DeclStmt:
+		gen, ok := s.Decl.(*ast.GenDecl)
+		if !ok {
+			return false
+		}
+		for _, spec := range gen.Specs {
+			if spec == target {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func (s fileScanner) isRawBuilderCall(expr ast.Expr) bool {
@@ -264,6 +341,10 @@ func sameIdent(a, b *ast.Ident) bool {
 		return a.Obj != nil && a.Obj == b.Obj
 	}
 	return a.Name == b.Name
+}
+
+func containsPos(node ast.Node, pos token.Pos) bool {
+	return node != nil && node.Pos() <= pos && pos <= node.End()
 }
 
 func unparen(expr ast.Expr) ast.Expr {
