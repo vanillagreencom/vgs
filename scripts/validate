@@ -166,10 +166,8 @@ cd "$repo_root" || exit 1
 # the helper checks plus the py_compile/bash -n pass; packaging = its three;
 # docs = the instruction-surface growth ratchet, the owned-skill register guard,
 # the section-pointer guard, and that guard's five control scripts, one per
-# subject and enumerated by the rows above rather than by a count here. An area
-# tag on a `test-` row is not new (the two qml rows above); what earns it here
-# is that the guard has no inline self-test, so a `docs` run without the
-# controls would exercise it while proving nothing about whether it guards.
+# subject. This `test-` row is needed because the guard has no inline self-test;
+# a docs run without the controls would prove nothing about whether it guards.
 #
 # The older QML source lints are still `-`, so only `all` reaches them, and the
 # family is bigger than it looks: 23 of today's `-` rows read .qml source, from
@@ -228,6 +226,8 @@ helper    | scripts/check-dev-tools.py
 helper    | scripts/check-brightness.py
 go        | scripts/check-backend-inventory.py
 go        | scripts/check-backend-inventory-tests.py
+go        | scripts/check-execbound-adoption.py
+go        | scripts/check-execbound-adoption-tests.py
 -         | scripts/check-lock-reload-order.py
 -         | scripts/check-display-config-fixtures.js
 -         | scripts/check-vgs-menu-capabilities.js
