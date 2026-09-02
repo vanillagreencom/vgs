@@ -11,6 +11,7 @@ import math
 import os
 import re
 import shutil
+import socket
 import subprocess
 import sys
 import tempfile
@@ -5714,6 +5715,72 @@ def test_scratchpad_hide_refuses_when_visibility_is_unknown():
              helper._scratchpad_session_ready) = originals
 
 
+def test_tmux_theme_reaches_the_running_server():
+    """A tmux server on a socket the shell's environment does not name still
+    gets the theme, and a socket with no server is never sourced into --
+    sourcing would start an empty server there and report success."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        socket_dir = root / f"tmux-{os.getuid()}"
+        socket_dir.mkdir()
+        live = socket_dir / "default"
+        dead = socket_dir / "spare"
+        for path in (live, dead):
+            sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            sock.bind(str(path))
+            sock.close()
+        (socket_dir / "notes.txt").write_text("not a socket\n")
+
+        stub_dir = root / "bin"
+        stub_dir.mkdir()
+        calls = root / "calls"
+        stub = stub_dir / "tmux"
+        stub.write_text(
+            "#!/bin/sh\n"
+            f'printf "%s\\n" "$*" >> {calls}\n'
+            'case "$*" in\n'
+            f'  *{dead.name}*list-sessions*) echo "no server running" >&2; exit 1 ;;\n'
+            "esac\n"
+            "exit 0\n"
+        )
+        stub.chmod(0o755)
+
+        # A `tmux -S` server puts its socket outside every searched root; $TMUX
+        # is the only thing that names it.
+        named = root / "custom.sock"
+        sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        sock.bind(str(named))
+        sock.close()
+
+        old_path = os.environ.get("PATH", "")
+        old_tmpdir = os.environ.get("TMUX_TMPDIR")
+        old_tmux = os.environ.get("TMUX")
+        os.environ["PATH"] = f"{stub_dir}:{old_path}"
+        os.environ["TMUX_TMPDIR"] = str(root)
+        os.environ["TMUX"] = f"{named},4242,0"
+        try:
+            result = helper.source_tmux_theme_hook("tmux-source")
+        finally:
+            os.environ["PATH"] = old_path
+            for key, value in (("TMUX_TMPDIR", old_tmpdir), ("TMUX", old_tmux)):
+                if value is None:
+                    os.environ.pop(key, None)
+                else:
+                    os.environ[key] = value
+
+        assert_equal(result["ok"], True, "the hook succeeds when a live server took the theme")
+        # This host's own tmux socket is scanned too; the assertion is scoped
+        # to the sockets this test made.
+        sourced = [path for path in result.get("sourced") or [] if path.startswith(str(root))]
+        assert_equal(sorted(sourced), sorted([str(named), str(live)]),
+                     "both the $TMUX socket and the live default socket are sourced, and the dead one is not")
+        logged = calls.read_text().splitlines()
+        sourced_dead = [line for line in logged if dead.name in line and "source-file" in line]
+        assert_equal(sourced_dead, [], "a socket with no server must never be sourced into")
+        assert_equal([line for line in logged if "notes.txt" in line], [],
+                     "a plain file in the socket directory is not a socket")
+
+
 def main():
     # A catalog download is minutes to hours of network transfer. Holding the
     # exclusive theme lock for that long would block applies, the light/dark
@@ -5726,6 +5793,7 @@ def main():
     assert_equal(helper._theme_command_mutates(["chromium-policy"]), True,
                  "Chromium policy refresh must serialize with theme applies")
     test_system_font_normalization()
+    test_tmux_theme_reaches_the_running_server()
     test_perceptual_theme_adjustments()
     test_curated_app_role_passthrough()
     test_restyle_integer_sweeps()
