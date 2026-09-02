@@ -17,7 +17,7 @@ Singleton {
     id: root
     readonly property var log: Log.scoped("SettingsData")
 
-    readonly property int settingsConfigVersion: 23
+    readonly property int settingsConfigVersion: 24
 
     readonly property bool isGreeterMode: Quickshell.env("VSHELL_RUN_GREETER") === "1" || Quickshell.env("VSHELL_RUN_GREETER") === "true"
 
@@ -489,7 +489,7 @@ Singleton {
     property bool launcherSearchIgnoreMounts: true
     property string launcherFolderOpenCommand: ""
     property var launcherMenuUsageHistory: ({})
-    property var launcherMenuViewModes: ({ apps: "list", files: "list", folders: "list" })
+    property string launcherMenuViewMode: "list"
     property bool keybindsFloatingWindow: false
     onKeybindsFloatingWindowChanged: saveSettings()
 

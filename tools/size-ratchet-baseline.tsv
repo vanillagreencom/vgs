@@ -18,10 +18,10 @@ backend/internal/services/tailscale/watch_test.go	528
 backend/internal/services/wallpaper/wallpaper.go	459
 bin/claudebar	1212
 bin/codexbar	1311
-bin/vshell	475
+bin/vshell	476
 bin/vshell-capture-screenrecording	593
 bin/vshell-capture-screenshot	741
-bin/vshell-helper	15994
+bin/vshell-helper	16008
 bin/vshell_niri.py	1110
 config/vshell/icons/Yaru/cursors/half-busy	10208
 config/vshell/icons/Yaru/cursors/half-busy.ani	3364
@@ -35,8 +35,8 @@ config/vshell/plugins/remoteDesktop/RemoteDesktopWidget.qml	803
 config/vshell/plugins/sudoToggle/SudoToggleWidget.qml	515
 config/vshell/plugins/sysUpdate/SysUpdateWidget.qml	781
 config/vshell/plugins/tailscale/TailscaleWidget.qml	804
-config/vshell/plugins/vgsMenu/VGSMenu.qml	2411
-config/vshell/settings.default.json	758
+config/vshell/plugins/vgsMenu/VGSMenu.qml	2305
+config/vshell/settings.default.json	754
 docs/media/vgs-demo-poster.jpg	1197
 docs/media/vgs-demo.mp4	30319
 kendex.settings.toml	429
@@ -50,7 +50,7 @@ quickshell/vshell/Common/SettingsData.qml	3675
 quickshell/vshell/Common/fzf.js	1308
 quickshell/vshell/Common/settings/Processes.qml	754
 quickshell/vshell/Common/settings/SettingsSpec.js	703
-quickshell/vshell/Common/settings/SettingsStore.js	511
+quickshell/vshell/Common/settings/SettingsStore.js	520
 quickshell/vshell/Modals/AppPickerModal.qml	549
 quickshell/vshell/Modals/BluetoothPairingModal.qml	404
 quickshell/vshell/Modals/Capture/CaptureModal.qml	509
@@ -205,7 +205,7 @@ scripts/check-aur-sync.py	471
 scripts/check-notification-takeover.js	454
 scripts/check-paste-injection.py	897
 scripts/check-section-pointers.py	594
-scripts/check-settings-migration.js	952
+scripts/check-settings-migration.js	964
 scripts/check-validation-inventory.py	423
 scripts/check-vshell-helper.py	5864
 scripts/check-vshell-niri.py	678
