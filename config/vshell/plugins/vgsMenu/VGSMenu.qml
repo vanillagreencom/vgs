@@ -1988,6 +1988,8 @@ PluginComponent {
         property int size: Theme.iconSize
         property color color: Theme.surfaceText
         property real xOffset: 0
+        // "nerd" (bundled Nerd Font) or "brand" (bundled omarchy marks).
+        property string fontKind: "nerd"
 
         width: Math.round(size)
         height: Math.round(size)
@@ -1997,17 +1999,21 @@ PluginComponent {
             source: Qt.resolvedUrl("../../assets/fonts/nerd-fonts/FiraCodeNerdFont-Regular.ttf")
         }
 
+        FontLoader {
+            id: brandFont
+            source: Qt.resolvedUrl("../../assets/fonts/omarchy/omarchy.ttf")
+        }
+
+        // Centered on the glyph's own ink box rather than a box the width of
+        // the tile: Nerd Font glyphs carry uneven side bearings, so a
+        // tile-wide text box left many of them visibly off-center.
         StyledText {
-            x: nerdIcon.xOffset
-            y: 0
-            width: parent.width
-            height: parent.height
+            anchors.centerIn: parent
+            anchors.horizontalCenterOffset: nerdIcon.xOffset
             text: nerdIcon.glyph
-            font.family: nerdFont.name
+            font.family: nerdIcon.fontKind === "brand" ? brandFont.name : nerdFont.name
             font.pixelSize: nerdIcon.size
             font.weight: Font.Normal
-            horizontalAlignment: Text.AlignHCenter
-            verticalAlignment: Text.AlignVCenter
             color: nerdIcon.color
             wrapMode: Text.NoWrap
         }
@@ -2277,15 +2283,18 @@ PluginComponent {
                 height: 40
                 anchors.verticalCenter: parent.verticalCenter
                 radius: Theme.cornerRadius
-                color: Theme.withAlpha(resultRow.selected ? Theme.primary : Theme.surfaceVariantText, resultRow.selected ? 0.18 : 0.12)
+                // A brand color tints the tile the way an app icon brings its
+                // own color; everything else follows the selection.
+                readonly property color tint: String(resultRow.itemData.iconColor || "").length > 0 ? resultRow.itemData.iconColor : (resultRow.selected ? Theme.primary : Theme.surfaceVariantText)
+                color: Theme.withAlpha(tint, resultRow.selected ? 0.22 : (String(resultRow.itemData.iconColor || "").length > 0 ? 0.16 : 0.12))
 
                 NerdIcon {
                     anchors.fill: parent
                     visible: resultRow.itemData.iconType !== "image" && resultRow.itemData.iconType !== "material"
                     glyph: resultRow.itemData.icon || "\uf0c1"
+                    fontKind: resultRow.itemData.iconFont || "nerd"
                     size: Theme.iconSize
-                    xOffset: -Math.round(Theme.iconSize * 0.08)
-                    color: resultRow.selected ? Theme.primary : Theme.surfaceVariantText
+                    color: parent.tint
                 }
 
                 Image {

@@ -171,7 +171,7 @@ Item {
                                 anchors.left: agentName.right
                                 anchors.leftMargin: Theme.spacingS
                                 anchors.verticalCenter: parent.verticalCenter
-                                text: agentRow.modelData.command
+                                text: agentRow.modelData.command + (agentRow.modelData.kind === "server" ? "  · server, no app" : "")
                                 font.pixelSize: Theme.fontSizeSmall
                                 font.family: Theme.monoFontFamily
                                 color: Theme.surfaceVariantText
