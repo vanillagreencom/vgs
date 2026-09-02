@@ -416,6 +416,11 @@ PluginComponent {
     }
 
     function compareAlphabetically(left, right) {
+        // An explicit group sorts before the alphabet, so harnesses stay
+        // above environments in the Dev tools list; ungrouped items are 0.
+        const groupDifference = (left.group || 0) - (right.group || 0);
+        if (groupDifference !== 0)
+            return groupDifference;
         const leftTitle = String(left.title || "").toLocaleLowerCase();
         const rightTitle = String(right.title || "").toLocaleLowerCase();
         const titleDifference = leftTitle.localeCompare(rightTitle);
@@ -2348,7 +2353,8 @@ PluginComponent {
                     id: categoryText
                     anchors.centerIn: parent
                     width: parent.width - Theme.spacingS
-                    text: resultRow.categoryLabel
+                    // An item's own tag names its kind inside the category.
+                    text: resultRow.itemData.tag || resultRow.categoryLabel
                     font.pixelSize: Theme.fontSizeSmall - 1
                     font.weight: Font.Medium
                     color: Theme.secondary

@@ -1,8 +1,9 @@
 .pragma library
 
 // Launcher entries for the Dev tools section, built from
-// config/vshell/dev-tools.json: one "Launch" per coding agent and one
-// "Install" per language environment. The catalog is the only list.
+// config/vshell/dev-tools.json: one entry per coding agent (tag harness,
+// listed first) and one per language environment (tag environment). The
+// catalog is the only list; `group` orders them when no query ranks them.
 function itemsFromCatalog(raw) {
     const data = JSON.parse(raw || "{}");
     const out = [];
@@ -10,7 +11,9 @@ function itemsFromCatalog(raw) {
         out.push({
             category: "dev",
             title: agent.name,
-            subtitle: "Coding agent, " + agent.command,
+            subtitle: agent.command,
+            tag: "harness",
+            group: 0,
             icon: "\uf544",
             keywords: ["agent", "ai", "code", agent.id, agent.command],
             argv: ["{vshell}", "agent", "launch", agent.id]
@@ -20,7 +23,9 @@ function itemsFromCatalog(raw) {
         out.push({
             category: "dev",
             title: env.name,
-            subtitle: env.installer === "rustup" ? "Language environment, install with rustup" : "Language environment, install with mise",
+            subtitle: env.installer === "rustup" ? "install with rustup" : "install with mise",
+            tag: "environment",
+            group: 1,
             icon: "\uf121",
             keywords: ["install", "language", "environment", "dev", env.id],
             argv: ["{vshell}", "terminal", "exec", "--tui", "--hold", "--", "{vshell}", "dev-env", "install", env.id]
