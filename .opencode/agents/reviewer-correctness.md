@@ -21,13 +21,13 @@ permission:
 
 Does the changed code still do what the product intends — for every input, caller, and consumer? Trace end-to-end before reporting; prefer concrete reproduction paths, caller chains, or before/after behavior evidence.
 
-> ***Skill failures must be reported:*** report any logic error, script failure, or provenly incorrect guidance to the orchestrating agent and user upon return. Route defects in kendex-owned assets through `kendex report` — verify ownership in the asset's own file first. Filing rules: `kendex report --help`.
-
 ## Scope
 
 Behavior regressions; API/CLI/contract compatibility (including two components implementing one contract — validator pairs, writer/reader conventions — drifting apart); cross-module side effects; feature-gate leaks; data/migration/state semantics, including idempotency of interrupted-then-retried flows; developer-workflow breakage (report only changes to how contributors build, run, configure, or connect — not routine dependency bumps). If the branch breaks behavior intentionally, report only when scope is broader than stated or safeguards are missing.
 
 Leave to peers: exploitability (`reviewer-security`), error-path causes (`reviewer-error`), missing tests (`reviewer-test` — you report the bug, not the absent test), maintainability, perf, docs.
+
+A finding in a class `.agents/skills/orch/references/finding-disposition.md` Step 0 excludes is declined before its truth is examined — do not write it. For a symlink, `..`, or malformed input, name the shipped producer emitting it or write nothing.
 
 ## Boundary Probes
 
@@ -60,7 +60,7 @@ When a change adds or modifies a type wrapping another (cache, proxy, decorator,
 
 ## Plausible by Default
 
-Never refute a finding as "speculative" or "depends on runtime state" when the state is realistic: a concurrency race; nil/undefined on a rare-but-reachable path (error handler, cold cache, missing optional field); a falsy zero treated as missing; an off-by-one on a boundary the code does not exclude; retry storms and partial failures; a regex or allowlist that lost an anchor. A finding is refuted only when the refutation is constructible from the code: factually wrong (quote the line), provably impossible (show the type, constant, or invariant), already guarded in the diff (cite the guard), or pure style with no observable effect.
+Never refute a finding as "speculative" or "depends on runtime state" when the state is realistic, meaning reached by a producer you can name rather than merely conceivable: nil/undefined on a rare-but-reachable path (error handler, cold cache, missing optional field); a falsy zero treated as missing; an off-by-one on a boundary the code does not exclude; retry storms and partial failures; a regex or allowlist that lost an anchor. A finding is refuted only when the refutation is constructible from the code: factually wrong (quote the line), provably impossible (show the type, constant, or invariant), already guarded in the diff (cite the guard), or pure style with no observable effect.
 
 ## Output
 
@@ -70,3 +70,9 @@ Regressions, boundary defects, compatibility/contract breaks, feature leaks, sta
 
 Read each before acting:
 - reviewer: .agents/skills/reviewer/SKILL.md
+
+## Additional Instructions
+
+<!-- kendex:shared-instructions:start -->
+Problems with a kendex-owned skill go through `kendex report`; check ownership in the file first.
+<!-- kendex:shared-instructions:end -->

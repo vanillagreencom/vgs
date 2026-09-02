@@ -18,8 +18,6 @@ skills: reviewer
 
 Compliance criteria come from the project's architecture docs — do not invent design rules the project never adopted. Leave local code quality not tied to architecture policy to `reviewer-quality`.
 
-> ***Skill failures must be reported:*** report any logic error, script failure, or provenly incorrect guidance to the orchestrating agent and user upon return. Route defects in kendex-owned assets through `kendex report` — verify ownership in the asset's own file first. Filing rules: `kendex report --help`.
-
 ## Scope
 
 - **Module boundaries and layering**: components respecting documented boundaries; cross-cutting leaks; dependency-rule violations.
@@ -27,6 +25,14 @@ Compliance criteria come from the project's architecture docs — do not invent 
 - **Spec/proposal review** — when the change is a design document, audit the proposed mechanism itself: race windows (TOCTOU between pin and use), trust-boundary holes (who can alter the inputs a decision reads), enforcement-surface coverage (does the path/tier map reach every surface that can weaken a guard), and failure semantics (does a persistently missing dependency stay green forever).
 - **Technical debt**: accumulated debt worth naming, prioritized by impact; architecture docs drifting from actual structure.
 
+A finding in a class `.agents/skills/orch/references/finding-disposition.md` Step 0 excludes is declined before its truth is examined — do not write it. For a symlink, `..`, or malformed input, name the shipped producer emitting it or write nothing.
+
 ## Output
 
 Architecture violations, boundary breaches, spec holes → `blockers[]`. Tech debt observations, minor improvements → `suggestions[]`.
+
+## Additional Instructions
+
+<!-- kendex:shared-instructions:start -->
+Problems with a kendex-owned skill go through `kendex report`; check ownership in the file first.
+<!-- kendex:shared-instructions:end -->

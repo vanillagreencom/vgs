@@ -2,6 +2,8 @@
 
 The workflow for a dev or QA agent receiving a work-item delegation. Skip every tracker update for ad-hoc requests (no issue reference).
 
+Run `pwd -P` before the first repo-relative command; it must print the delegation's `Worktree:` path. On any other path, stop and report where the shell started.
+
 | Delegation | Detection | Flow |
 |------|-----------|------|
 | Single | `Issue: [ISSUE_ID]`, `GitHub Issue: OWNER/REPO#N`, or ad-hoc | § 1 → § 2 → § 4-10 → return |
@@ -20,12 +22,12 @@ In the sub-issue tree, complete blockers before the issues they block; entries m
 
 ## 1. Environment Setup
 
-Every path is worktree-scoped: `git -C [WORKTREE_PATH] ...` for Bash, `[WORKTREE_PATH]/...` for file tools.
+Every path is worktree-scoped: `git -C [WORKTREE_PATH] ...` for Bash, `[WORKTREE_PATH]/...` for file tools, once the working-directory check at the top of this file has passed.
 
 Verify possession before reading or writing anything else. **Skip if** the delegation carries no `Worktree Lease:` line.
 
 ```bash
-.agents/skills/orch/scripts/worktree-claim --worktree [WORKTREE_PATH] --issue [ARTIFACT_KEY] --expect-gen [WORKTREE_LEASE]
+.agents/skills/worktree/scripts/worktree-session-guard refresh [WORKTREE_PATH] --owner [ARTIFACT_KEY]
 ```
 
 Any non-zero exit ends the round here: change nothing in the worktree and return the command's stderr verbatim.
@@ -135,6 +137,8 @@ Your return states the blocker, the domain and labels for the new issue, and tha
 ### 4.2 Implement
 
 Implement per your domain expertise and run quality gates before completion.
+
+Before writing a refusal, a validator, a lock, a retry, or a test, read [dev SKILL.md § Engineering Rules](../SKILL.md#engineering-rules).
 
 - **Scope growing?** Linear: `linear.sh issues create --state "Backlog" --project "[PARENT_PROJECT]" --parent [PARENT_ID] --labels "[VALIDATED_LABELS]" --description-file [BODY_FILE]` — the parent's project, `Backlog`, and the complete label set (your own `agent:*` label plus every category the project requires) validated against the live inventory. The body follows project-management's [issue-description-template.md](../../project-management/templates/issue-description-template.md), whose `Reached by:` line names what in this implementation run arrives at the discovered work. GitHub and ad-hoc report the discovered scope in § 9 instead; never create issues without orchestrator approval.
 - **Work outside scope?** Note it under Discovered Work in § 9.

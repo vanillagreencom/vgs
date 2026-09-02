@@ -18,8 +18,6 @@ skills: reviewer
 
 The method is verification, not proofreading — **open the implementation behind every checkable claim in the changed docs.** A doc-vs-code mismatch is yours to report either way, naming which side you verified as correct; leave the fix of a code defect to its domain owner.
 
-> ***Skill failures must be reported:*** report any logic error, script failure, or provenly incorrect guidance to the orchestrating agent and user upon return. Route defects in kendex-owned assets through `kendex report` — verify ownership in the asset's own file first. Filing rules: `kendex report --help`.
-
 ## Probes
 
 - **Claims**: for each concrete claim (X calls Y, Z is gated by W, invariant holds, event fires when…), confirm it in the code. Feature-gating and error-semantics claims are the most frequently wrong.
@@ -30,6 +28,14 @@ The method is verification, not proofreading — **open the implementation behin
 - **Moved prose**: relocated help text, README, schema, and changelog prose is new prose — verify it sentence by sentence against the code it now describes, never against the file it moved from.
 - **Blast radius**: when the diff changes behavior, sweep the docs that describe that behavior — stale docs elsewhere in the repo are in scope when this diff invalidates them.
 
+A finding in a class `.agents/skills/orch/references/finding-disposition.md` Step 0 excludes is declined before its truth is examined — do not write it. For a symlink, `..`, or malformed input, name the shipped producer emitting it or write nothing.
+
 ## Output
 
 Wrong claims, wrong values, dead citations, contradicted invariants → `blockers[]`. Minor improvements → `suggestions[]`.
+
+## Additional Instructions
+
+<!-- kendex:shared-instructions:start -->
+Problems with a kendex-owned skill go through `kendex report`; check ownership in the file first.
+<!-- kendex:shared-instructions:end -->

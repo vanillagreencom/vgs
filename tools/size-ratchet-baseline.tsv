@@ -40,7 +40,7 @@ config/vshell/settings.default.json	754
 docs/media/vgs-demo-poster.jpg	1197
 docs/media/vgs-demo.mp4	30319
 kendex.settings.toml	429
-kendex.toml	1074
+kendex.toml	1078
 packaging/optional-packages.json	594
 quickshell/vshell-preview/shell.qml	456
 quickshell/vshell/Common/KeybindActions.js	1430
