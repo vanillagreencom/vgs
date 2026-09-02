@@ -424,8 +424,16 @@ PluginComponent {
         return String(left.id || "").localeCompare(String(right.id || ""));
     }
 
-    function sortRanked(items, alphabetical) {
+    // `grouped` applies an item's `group` before the alphabet, so harnesses
+    // stay above environments inside their own category; the All list and
+    // ranked results never use it.
+    function sortRanked(items, alphabetical, grouped) {
         items.sort((left, right) => {
+            if (alphabetical && grouped) {
+                const groupDifference = (left.group || 0) - (right.group || 0);
+                if (groupDifference !== 0)
+                    return groupDifference;
+            }
             if (alphabetical)
                 return compareAlphabetically(left, right);
             const scoreDifference = (right.rank || 0) - (left.rank || 0);
@@ -546,7 +554,7 @@ PluginComponent {
                 continue;
             next.push(commandItem(item, q));
         }
-        sortRanked(next, !q);
+        sortRanked(next, !q, true);
         visibleItems = next;
         selectedItemIndex = 0;
         filePreviewRevealed = false;
@@ -1983,6 +1991,8 @@ PluginComponent {
         property int size: Theme.iconSize
         property color color: Theme.surfaceText
         property real xOffset: 0
+        // "nerd" (bundled Nerd Font) or "brand" (bundled omarchy marks).
+        property string fontKind: "nerd"
 
         width: Math.round(size)
         height: Math.round(size)
@@ -1992,17 +2002,21 @@ PluginComponent {
             source: Qt.resolvedUrl("../../assets/fonts/nerd-fonts/FiraCodeNerdFont-Regular.ttf")
         }
 
+        FontLoader {
+            id: brandFont
+            source: Qt.resolvedUrl("../../assets/fonts/omarchy/omarchy.ttf")
+        }
+
+        // Centered on the glyph's own ink box rather than a box the width of
+        // the tile: Nerd Font glyphs carry uneven side bearings, so a
+        // tile-wide text box left many of them visibly off-center.
         StyledText {
-            x: nerdIcon.xOffset
-            y: 0
-            width: parent.width
-            height: parent.height
+            anchors.centerIn: parent
+            anchors.horizontalCenterOffset: nerdIcon.xOffset
             text: nerdIcon.glyph
-            font.family: nerdFont.name
+            font.family: nerdIcon.fontKind === "brand" ? brandFont.name : nerdFont.name
             font.pixelSize: nerdIcon.size
             font.weight: Font.Normal
-            horizontalAlignment: Text.AlignHCenter
-            verticalAlignment: Text.AlignVCenter
             color: nerdIcon.color
             wrapMode: Text.NoWrap
         }
@@ -2272,15 +2286,23 @@ PluginComponent {
                 height: 40
                 anchors.verticalCenter: parent.verticalCenter
                 radius: Theme.cornerRadius
-                color: Theme.withAlpha(resultRow.selected ? Theme.primary : Theme.surfaceVariantText, resultRow.selected ? 0.18 : 0.12)
+                // A brand color tints the tile the way an app icon brings its
+                // own color; everything else follows the selection.
+                readonly property bool branded: String(resultRow.itemData.iconColor || "").length > 0
+                readonly property color brand: branded ? resultRow.itemData.iconColor : (resultRow.selected ? Theme.primary : Theme.surfaceVariantText)
+                // A pale brand mark on a light theme reads as blank; darken
+                // the glyph until it clears the tinted tile behind it.
+                readonly property real brandLuma: 0.2126 * brand.r + 0.7152 * brand.g + 0.0722 * brand.b
+                readonly property color tint: (branded && Theme.isLightMode && brandLuma > 0.6) ? Qt.darker(brand, 2.4) : brand
+                color: Theme.withAlpha(brand, resultRow.selected ? 0.22 : (branded ? 0.16 : 0.12))
 
                 NerdIcon {
                     anchors.fill: parent
                     visible: resultRow.itemData.iconType !== "image" && resultRow.itemData.iconType !== "material"
                     glyph: resultRow.itemData.icon || "\uf0c1"
+                    fontKind: resultRow.itemData.iconFont || "nerd"
                     size: Theme.iconSize
-                    xOffset: -Math.round(Theme.iconSize * 0.08)
-                    color: resultRow.selected ? Theme.primary : Theme.surfaceVariantText
+                    color: parent.tint
                 }
 
                 Image {
@@ -2348,7 +2370,8 @@ PluginComponent {
                     id: categoryText
                     anchors.centerIn: parent
                     width: parent.width - Theme.spacingS
-                    text: resultRow.categoryLabel
+                    // An item's own tag names its kind inside the category.
+                    text: resultRow.itemData.tag || resultRow.categoryLabel
                     font.pixelSize: Theme.fontSizeSmall - 1
                     font.weight: Font.Medium
                     color: Theme.secondary

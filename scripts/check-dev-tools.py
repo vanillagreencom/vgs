@@ -82,7 +82,10 @@ def test_stub_template_and_foreign_files():
                 assert "gh" in refreshed["shadowed"], refreshed
             finally:
                 os.environ["PATH"] = str(Path(tmp) / ".local" / "bin")
+            stale = Path(tmp) / ".local" / "bin" / "retired-tool"
+            stale.write_text(mise.mise_stub_text("npm:retired", "retired-tool", "retired-tool"))
             refreshed = mise.mise_refresh()
+            assert "retired-tool" in refreshed["retired"] and not stale.exists(), "a VGS stub for a command the catalog dropped is retired"
             assert "claude" in refreshed["foreign"], refreshed
             assert "codex" in refreshed["written"], refreshed
             removed = mise.mise_remove_stubs()
