@@ -13,7 +13,7 @@ under `~/.local/share/mise`. The distribution package manager never sees them.
 | `vshell agent` | `agents` (id, launch argv) |
 | `vshell dev-env` | `envs` (mise tools, distro packages, installer; `managedBy` marks one the package manager owns, e.g. a pacman rustup) |
 | Settings → Applications → Developer | all three, through the JSON commands below |
-| VGS menu (Dev tools, `d:`) | reads the file directly: one entry per agent and per env |
+| VGS menu (Dev tools, `d:`) | reads the file directly: one entry per agent and per env, named after the tool |
 
 ## Stubs
 
@@ -51,10 +51,11 @@ vshell dev-env list [--json] | install <id> | remove <id>
 vshell update  count | run <system|aur|flatpak|tools|all>
 ```
 
-There is no default agent. `launch <id>` starts in `~/Work` when it exists
-and opens a terminal with app id `vshell-agent`. When the command is neither
-a stub nor on `PATH`, it writes the stub first, or notifies and exits 1
-without mise. `pick` opens the launcher on its Dev tools section, which
+There is no default agent. `launch <id>` opens a terminal (app id
+`vshell-agent`) that runs `launch <id> --inline` from `~/Work` when it
+exists. An agent with no mise install and no command of the owner's on
+`PATH` is offered for installation there first (`mise use -g`); a refusal
+exits 1. `pick` opens the launcher on its Dev tools section, which
 lists one entry per agent and one per language environment straight from
 the catalog (`vshell-menu openCategory dev` over IPC).
 

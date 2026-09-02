@@ -54,27 +54,66 @@ def agent_list() -> Dict[str, Any]:
             "optedOut": mise_stubs_opted_out(), "agents": agents}
 
 
+def agent_installed(entry: Dict[str, Any]) -> bool:
+    """A mise install of the package, or the owner's own command on PATH."""
+    versions, _ = mise_installed_versions()
+    if versions.get(str(entry["package"])):
+        return True
+    return mise_stub_state(RT.home() / ".local" / "bin" / str(entry["command"])) in {"foreign", "shadowed"}
+
+
+def agent_install_prompt(entry: Dict[str, Any]) -> bool:
+    """Ask in the terminal before the first download; True when installed."""
+    if not RT.command_exists("mise"):
+        print(f"{entry['name']} installs through mise, which is not installed. Install the mise package and retry.")
+        return False
+    try:
+        answer = input(f"{entry['name']} is not installed. Install it with mise now? [Y/n] ").strip().lower()
+    except EOFError:
+        answer = "n"
+    if answer not in ("", "y", "yes"):
+        return False
+    command = str(entry["command"])
+    mise_install_stub(str(entry["package"]), command, str(entry.get("bin") or command))
+    return subprocess.run(["mise", "use", "-g", str(entry["package"])], check=False, env=mise_env(), cwd=str(RT.home())).returncode == 0
+
+
 def agent_launch(agent_id: str, inline: bool) -> int:
     entry = next((e for e in agent_entries() if e["id"] == agent_id), None)
     if entry is None:
         RT.eprint(f"unknown agent {agent_id!r}; one of: " + " ".join(e["id"] for e in agent_entries()))
         return 1
     command = str(entry["command"])
-    stub_path = RT.home() / ".local" / "bin" / command
-    if mise_stub_state(stub_path) == "absent":
-        if not RT.command_exists("mise"):
-            RT.notify_user("mise is not installed", f"{entry['name']} installs through mise; install mise and retry.")
-            return 1
-        mise_install_stub(str(entry["package"]), command, str(entry.get("bin") or command))
-    launch = [str(part) for part in entry.get("launch") or [command]]
     # Agents refuse to remember trust for $HOME; a work directory keeps the
     # first launch from re-asking every session.
     work = RT.home() / "Work"
     cwd = work if work.is_dir() else RT.home()
     os.chdir(cwd)
-    if inline:
-        os.execvp(launch[0], launch)
-    return RT.spawn_terminal(launch, app_id="vshell-agent", detach=True, notify=True, what=f"{entry['name']}")
+    if not inline:
+        # The terminal owns the first-run question and the download; this
+        # process only opens it.
+        cli = str(RT.repo_root() / "bin" / "vshell")
+        return RT.spawn_terminal([cli, "agent", "launch", agent_id, "--inline"], app_id="vshell-agent", detach=True, notify=True, what=f"{entry['name']}")
+    if not agent_installed(entry) and not agent_install_prompt(entry):
+        return hold_terminal(1, f"{entry['name']} was not installed.")
+    launch = [str(part) for part in entry.get("launch") or [command]]
+    try:
+        code = subprocess.run(launch, check=False).returncode
+    except OSError as exc:
+        return hold_terminal(1, f"could not start {launch[0]}: {exc}")
+    # A clean exit is the agent's own session ending; anything else is a
+    # message the owner would otherwise never see because the window closes.
+    return hold_terminal(code, f"{entry['name']} exited with status {code}.") if code else 0
+
+
+def hold_terminal(code: int, message: str) -> int:
+    """Keep a launcher-opened terminal readable after a failure."""
+    print(f"\n{message}")
+    try:
+        input("Press Enter to close. ")
+    except EOFError:
+        pass
+    return code
 
 
 def cmd_agent(argv: List[str]) -> int:

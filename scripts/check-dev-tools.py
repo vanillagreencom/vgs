@@ -208,6 +208,38 @@ def test_os_release_resolves_through_id_like():
         devtools.RT.eprint = original_eprint
 
 
+def test_first_launch_asks_before_installing():
+    """An agent with nothing installed is offered for install; no answer means no download."""
+    claude = next(e for e in devtools.agent_entries() if e["id"] == "claude")
+    original_versions = devtools.mise_installed_versions
+    original_state = devtools.mise_stub_state
+    original_exists = mise.RT.command_exists
+    original_run = devtools.subprocess.run
+    original_stub = devtools.mise_install_stub
+    ran = []
+    devtools.mise_installed_versions = lambda: ({}, "")
+    devtools.mise_stub_state = lambda path: "absent"
+    mise.RT.command_exists = lambda name: name == "mise"
+    devtools.subprocess.run = lambda argv, **kw: (ran.append(list(argv)), subprocess.CompletedProcess(argv, 0))[1]
+    devtools.mise_install_stub = lambda *a: {"state": "written"}
+    try:
+        assert_equal(devtools.agent_installed(claude), False, "nothing installed")
+        devtools.input = lambda prompt: "n"
+        assert_equal(devtools.agent_install_prompt(claude), False, "a refusal installs nothing")
+        assert_equal(devtools.hold_terminal(3, "x"), 3, "hold keeps the failing status")
+        assert_equal(ran, [], "no mise call after a refusal")
+        devtools.input = lambda prompt: ""
+        assert_equal(devtools.agent_install_prompt(claude), True, "Enter accepts the default yes")
+        assert_equal(ran, [["mise", "use", "-g", "claude"]], "install goes through mise use -g")
+    finally:
+        del devtools.input
+        devtools.mise_installed_versions = original_versions
+        devtools.mise_stub_state = original_state
+        mise.RT.command_exists = original_exists
+        devtools.subprocess.run = original_run
+        devtools.mise_install_stub = original_stub
+
+
 def test_env_remove_keeps_shared_tools():
     """Removing Scala must not uninstall the Java the Java env also owns."""
     ran = []
@@ -278,6 +310,7 @@ def main() -> int:
     test_outdated_parsing_and_update_steps()
     test_update_run_and_count_carry_tools()
     test_os_release_resolves_through_id_like()
+    test_first_launch_asks_before_installing()
     test_env_remove_keeps_shared_tools()
     test_distro_owned_env_is_hands_off()
     test_catalog_is_consistent()
