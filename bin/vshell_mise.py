@@ -147,7 +147,26 @@ def mise_refresh() -> Dict[str, Any]:
         result = mise_install_stub(stub["package"], stub["command"], stub["bin"])
         state = result["state"]
         (written if state == "written" else shadowed if state == "shadowed" else foreign).append(stub["command"])
-    return {"ok": True, "optedOut": False, "written": written, "foreign": foreign, "shadowed": shadowed}
+    return {"ok": True, "optedOut": False, "written": written, "foreign": foreign, "shadowed": shadowed,
+            "retired": mise_retire_stubs()}
+
+
+def mise_retire_stubs() -> List[str]:
+    """Delete stubs VGS wrote for commands the catalog no longer lists, so a
+    tool dropped from the catalog stops launching after the next refresh.
+    Only files carrying the marker go; the owner's own files stay."""
+    current = {stub["command"] for stub in mise_catalog_stubs()}
+    bin_dir = RT.home() / ".local" / "bin"
+    retired: List[str] = []
+    if not bin_dir.is_dir():
+        return retired
+    for path in sorted(bin_dir.iterdir()):
+        if path.name in current or not path.is_file() or path.is_symlink():
+            continue
+        if mise_stub_state(path) == "ours":
+            path.unlink(missing_ok=True)
+            retired.append(path.name)
+    return retired
 
 
 def mise_remove_stubs() -> Dict[str, Any]:
@@ -274,7 +293,8 @@ def cmd_mise(argv: List[str]) -> int:
         else:
             print(f"wrote {len(result['written'])} stubs"
                   + (", kept foreign: " + " ".join(result["foreign"]) if result["foreign"] else "")
-                  + (", already installed elsewhere: " + " ".join(result["shadowed"]) if result["shadowed"] else ""))
+                  + (", already installed elsewhere: " + " ".join(result["shadowed"]) if result["shadowed"] else "")
+                  + (", retired: " + " ".join(result["retired"]) if result["retired"] else ""))
         return 0
     if sub == "opt-in":
         marker = RT.state_dir() / MISE_STUBS_REMOVED

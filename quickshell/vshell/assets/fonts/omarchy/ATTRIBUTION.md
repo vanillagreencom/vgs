@@ -2,7 +2,8 @@
 
 Brand marks for coding-agent launchers, from the Omarchy project
 (https://github.com/basecamp/omarchy, `default/fonts/omarchy/`), MIT license,
-Copyright (c) David Heinemeier Hansson. Glyphs used here:
+Copyright (c) David Heinemeier Hansson; the license text is in `LICENSE`
+beside this file. Glyphs used here:
 
 | Codepoint | Mark |
 |---|---|

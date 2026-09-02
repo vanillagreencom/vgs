@@ -416,11 +416,6 @@ PluginComponent {
     }
 
     function compareAlphabetically(left, right) {
-        // An explicit group sorts before the alphabet, so harnesses stay
-        // above environments in the Dev tools list; ungrouped items are 0.
-        const groupDifference = (left.group || 0) - (right.group || 0);
-        if (groupDifference !== 0)
-            return groupDifference;
         const leftTitle = String(left.title || "").toLocaleLowerCase();
         const rightTitle = String(right.title || "").toLocaleLowerCase();
         const titleDifference = leftTitle.localeCompare(rightTitle);
@@ -429,8 +424,16 @@ PluginComponent {
         return String(left.id || "").localeCompare(String(right.id || ""));
     }
 
-    function sortRanked(items, alphabetical) {
+    // `grouped` applies an item's `group` before the alphabet, so harnesses
+    // stay above environments inside their own category; the All list and
+    // ranked results never use it.
+    function sortRanked(items, alphabetical, grouped) {
         items.sort((left, right) => {
+            if (alphabetical && grouped) {
+                const groupDifference = (left.group || 0) - (right.group || 0);
+                if (groupDifference !== 0)
+                    return groupDifference;
+            }
             if (alphabetical)
                 return compareAlphabetically(left, right);
             const scoreDifference = (right.rank || 0) - (left.rank || 0);
@@ -551,7 +554,7 @@ PluginComponent {
                 continue;
             next.push(commandItem(item, q));
         }
-        sortRanked(next, !q);
+        sortRanked(next, !q, true);
         visibleItems = next;
         selectedItemIndex = 0;
         filePreviewRevealed = false;
@@ -2285,8 +2288,13 @@ PluginComponent {
                 radius: Theme.cornerRadius
                 // A brand color tints the tile the way an app icon brings its
                 // own color; everything else follows the selection.
-                readonly property color tint: String(resultRow.itemData.iconColor || "").length > 0 ? resultRow.itemData.iconColor : (resultRow.selected ? Theme.primary : Theme.surfaceVariantText)
-                color: Theme.withAlpha(tint, resultRow.selected ? 0.22 : (String(resultRow.itemData.iconColor || "").length > 0 ? 0.16 : 0.12))
+                readonly property bool branded: String(resultRow.itemData.iconColor || "").length > 0
+                readonly property color brand: branded ? resultRow.itemData.iconColor : (resultRow.selected ? Theme.primary : Theme.surfaceVariantText)
+                // A pale brand mark on a light theme reads as blank; darken
+                // the glyph until it clears the tinted tile behind it.
+                readonly property real brandLuma: 0.2126 * brand.r + 0.7152 * brand.g + 0.0722 * brand.b
+                readonly property color tint: (branded && Theme.isLightMode && brandLuma > 0.6) ? Qt.darker(brand, 2.4) : brand
+                color: Theme.withAlpha(brand, resultRow.selected ? 0.22 : (branded ? 0.16 : 0.12))
 
                 NerdIcon {
                     anchors.fill: parent
