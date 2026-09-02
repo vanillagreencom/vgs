@@ -27,7 +27,9 @@ Resolve `TRACKER` first — `github` skips the Linear-only container preflight.
 
 Apply the Ancestor gate ([SKILL.md § Coordination](../SKILL.md#coordination)). A container is refused before anything is initialized, with its unblocked children surfaced as the startable items. A `(one PR)` ancestor promotion is TERMINAL for this invocation: stop and route to `/orch start [PARENT_ID]` rather than continuing with the child's id. A blocked child stops with its live blockers named. Caller context `audit_bundle: true` is equivalent to the `(one PR)` marker: skip the refusal for that parent and carry `Audit Bundle: yes` in the delegation. Managed callers already ran this gate.
 
-Apply [Worktree Scope](../SKILL.md#workflow-execution) and resolve `WT_PATH`: inside a worktree use the current directory; from the main repo use `worktree path [ISSUE_ID]` when it exists, and ask the user before creating one when it does not.
+Apply [Worktree Scope](../SKILL.md#workflow-execution) and resolve `WT_PATH` as `git-context repo-root "[DIR]"`. Inside a worktree `[DIR]` is `.`; from the main repo it is `worktree path [ISSUE_ID]` when that exists, and ask the user before creating one when it does not.
+
+Fill `Worktree:` and `Worktree Check:` from `git -C "[DIR]" rev-parse --show-toplevel`.
 
 Initialize state unless it exists:
 
@@ -86,6 +88,7 @@ Follow workflow: .agents/skills/dev/workflows/dev-implement.md
 
 Issue: [ISSUE_ID]
 Worktree: [WORKTREE_PATH]
+Worktree Check: `pwd -P` before any repo-relative command; it must print [WORKTREE_PATH]. On any other path, stop and report where the shell started.
 Worktree Lease: [WORKTREE_LEASE]
 Round ID: [DEV_ROUND_ID]
 Artifact Key: [ISSUE_ID]
@@ -100,6 +103,8 @@ Group pending sub-issues by `agent:[TYPE]` label and order them per [SKILL.md §
 
 Between groups, read each completed sub-issue's comments for a `Handoff Notes` section and combine them into the next delegation. Re-run all four § 2 stamps immediately before each group's delegation.
 
+Fill `Worktree:` and `Worktree Check:` from `git -C "[DIR]" rev-parse --show-toplevel`.
+
 <delegation_format>
 Follow workflow: .agents/skills/dev/workflows/dev-implement.md
 
@@ -110,6 +115,7 @@ Sub-Issues:
 ↳ [SUB_ISSUE_3]: [TITLE] | blocked by: [SUB_ISSUE_2]
 
 Worktree: [WORKTREE_PATH]
+Worktree Check: `pwd -P` before any repo-relative command; it must print [WORKTREE_PATH]. On any other path, stop and report where the shell started.
 Worktree Lease: [WORKTREE_LEASE]
 Round ID: [DEV_ROUND_ID]
 Artifact Key: [ISSUE_ID]

@@ -207,6 +207,7 @@ In a linked worktree whose `.cache` should be a `WORKTREE_SYMLINKS`-managed syml
 | `LINEAR_FORMAT` | Default output format | `safe` |
 | `LINEAR_TEAM_PREFIX` | Issue identifier prefix | `PROJ` |
 | `LINEAR_AGENT_LABELS` | Declared `agent:*` taxonomy; non-empty makes `issues create` refuse unrouted creates | — (unset = off) |
+| `LINEAR_REQUIRE_REACH` | Non-empty makes `issues create` refuse a body naming nothing that reaches the defect | — (unset = off) |
 
 `LINEAR_API_KEY` belongs in `.env.local`; non-secret defaults in committed `kendex.settings.toml` `[env]`. A key from project files beats one inherited from the environment, and `auth-check` warns (fingerprints only) when it shadows a differing inherited key.
 
@@ -215,6 +216,8 @@ In a linked worktree whose `.cache` should be a `WORKTREE_SYMLINKS`-managed syml
 Never create a tracked issue directly from an orchestration or review session — route it through the TPM pipeline (project-management skill), which owns labels, project, priority, estimate, and relations.
 
 Where `LINEAR_AGENT_LABELS` declares a taxonomy, `issues create` refuses — before any API call — a create carrying no agent label from that set, including a typoed `agent:*` name. `--no-agent-label` permits a deliberate bare create.
+
+Where `LINEAR_REQUIRE_REACH` is set, `issues create` refuses — before any API call — a description whose `Reached by:` line is missing or names no producer, and, with `--review-born`, a `--priority 2` description with no `Symptom:` line. Each refusal states the rule it enforces; the rule itself is the project-management skill's SKILL.md § Disposition, **Name what reaches it**, which is also where a create decides whether it is review-born.
 
 ## Attachments
 
@@ -239,9 +242,11 @@ Where `LINEAR_AGENT_LABELS` declares a taxonomy, `issues create` refuses — bef
 | Issue A blocked by Issue B (both in Linear) | Relation: `--blocked-by` |
 | Issue blocked by an external factor (vendor, license) | `blocked` label + comment |
 
-Blocking relations must connect peers of one bundle: same direct parent, or both top-level. The two issues need not share a project. An issue cannot block its own ancestor or descendant; use `--related` for traceability. Rejections for cross-subtree pairs prescribe the valid pair at the level where the subtrees separate. Incomplete, cyclic, or malformed hierarchy data is rejected before mutation.
+Blocking relations must connect peers of one bundle: same direct parent, or both top-level. The two issues need not share a project. An issue cannot block its own ancestor or descendant; use `--related` for traceability. The check reads each issue's own direct parent in one query.
 
 A blocking relation pointing at a Done or Canceled issue is **satisfied history, not stale metadata** — Linear itself already treats the dependent issue as unblocked. The relation stays for provenance; never remove or "fix" it, and audits must never classify it as stale. The only legitimate audit output for a completed-blocker relation is a scheduling signal ("gates cleared, ready to schedule").
+
+Normalized issue lists, gets, bulk gets, bundles, recursive children, relation reads, and session status keep each blocking relation in `blocked_by` and list only nonterminal blockers in `blocked_by_open`.
 
 ## Option Behavior
 
@@ -265,6 +270,6 @@ Available states: Backlog, Todo, In Progress, In Review, Done, Canceled (not "Ca
 
 ## validate-completion
 
-The pre-merge check on state plus summary comment. The expected-state matrix — session root vs bundle children vs `--container` parents, and the fail-closed flag pairing — is in `issues --help` § Validate-Completion.
+The pre-merge check on state plus summary comment, live only — `issues validate-completion`, with no `cache` spelling. The expected-state matrix — session root vs bundle children vs `--container` parents, and the fail-closed flag pairing — is in `issues --help` § Validate-Completion.
 
 A "labelIds not exclusive child labels" error means two labels from one exclusive group. Requires Bash 4.0+ (macOS system Bash 3.2 is unsupported), `curl`, and `jq`.

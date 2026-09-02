@@ -51,7 +51,10 @@ With several references, convert to a bulleted list under one `**Research**:` he
 
 ## 5. Analyze Impact
 
-Run exactly one flow, unless it escalates.
+Run exactly one flow, unless it escalates. Both flows fill the delegation the same way.
+
+Fill `Worktree:` and `Worktree Check:` from `git -C "[DIR]" rev-parse --show-toplevel`.
+`[DIR]` is the caller's own checkout, main checkout included.
 
 ### 5.1 Targeted
 
@@ -59,6 +62,9 @@ Delegate to the domain agent:
 
 <delegation_format>
 Analyze the impact of these research findings on your domain.
+
+Worktree: [WORKTREE_PATH]
+Worktree Check: `pwd -P` before any repo-relative command; it must print [WORKTREE_PATH]. On any other path, stop and report where the shell started.
 
 Read: [RESEARCH_DOCS_PATH]/[ISSUE_ID]/findings.md
 
@@ -80,10 +86,15 @@ List a technical change only when it changes what a user or operator experiences
 
 ### 5.2 Pervasive
 
-Delegate the same analysis to every affected domain agent in parallel, minus the cross-domain and scope questions. Then delegate the synthesis to the architecture review agent:
+Delegate the same analysis to every affected domain agent in parallel, minus the cross-domain and scope questions. Then delegate the synthesis to the architecture review agent.
+
+Fill `Worktree:` and `Worktree Check:` from `git -C "[DIR]" rev-parse --show-toplevel`.
 
 <delegation_format>
 Synthesize the domain reports into a cross-cutting impact analysis.
+
+Worktree: [WORKTREE_PATH]
+Worktree Check: `pwd -P` before any repo-relative command; it must print [WORKTREE_PATH]. On any other path, stop and report where the shell started.
 
 Read: [RESEARCH_DOCS_PATH]/[ISSUE_ID]/findings.md
 
@@ -124,7 +135,7 @@ When the new decision replaces specific components of an active decision without
 
 ### 6.3 Apply Doc and Config Updates
 
-Implement the doc changes the agents reported: update the architecture docs, add decision references to affected files, and combine every domain's updates for a Pervasive flow. Reusable rules and project-specific insights go into the managing project's kendex config — `[skill-instructions]` for skill-level context, `[agent-additional-instructions]` for persistent agent rules, `[agent-launch-instructions]` for launch instructions — followed by `kendex refresh`.
+Implement the doc changes the agents reported: update the architecture docs, add decision references to affected files, and combine every domain's updates for a Pervasive flow. Reusable rules and project-specific insights go into the managing project's kendex config — `[skill-instructions]` for skill-level context, `[agent-additional-instructions]` for persistent agent rules, `[agent-launch-instructions]` for launch instructions. A config edit takes effect only once it is rendered: run `kendex refresh` from a checkout that permits it, which a worktree does not, so a worktree run leaves the edit in place and the rendered copies stale.
 
 ### 6.4 Decompose the Blocked Work
 

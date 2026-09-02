@@ -1,9 +1,12 @@
 #!/usr/bin/env bash
-# Pins for lib/common.sh's index reads and policy writes: a probe git could
-# not answer never becomes an answer, a configured path is matched literally,
-# a --cached scan refuses an unmerged index, and a policy file is replaced by
-# a same-directory rename or not at all. Every clean assertion is paired with
-# a control that proves it can fail.
+# Pins for the libs the checks share: lib/common.sh's index reads,
+# lib/configured-paths.sh's policy reads and content sniff,
+# lib/atomic-install.sh's policy writes, and the settings cache
+# lib/settings.sh materializes. A probe git could not answer never becomes an
+# answer, a configured path is matched literally, a --cached scan refuses an
+# unmerged index, a policy file is replaced by a same-directory rename or not
+# at all, and no partial cache file survives a resolve. Every clean assertion
+# is paired with a control that proves it can fail.
 set -euo pipefail
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -16,6 +19,11 @@ TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SKILL_DIR="$(cd "$TEST_DIR/.." && pwd)"
 SCRIPTS="$SKILL_DIR/scripts"
 COMMON="$SCRIPTS/lib/common.sh"
+# The lib holding the install helpers, which a probe exercising them sources
+# alongside COMMON: the writer lives beside common.sh rather than inside it,
+# and reaches back across that boundary for the staging file common.sh
+# declares and its exit trap removes.
+INSTALL="$SCRIPTS/lib/atomic-install.sh"
 SETTINGS="$SCRIPTS/lib/settings.sh"
 ROOT="$TMP"
 
@@ -35,7 +43,7 @@ new_repo() { # NAME — fresh fixture repo in $R, cwd unchanged
   git -C "$R" config user.name test
 }
 
-# Run a snippet with common.sh sourced, inside $R. OUT captures stdout+stderr,
+# Run a snippet with the libs sourced, inside $R. OUT captures stdout+stderr,
 # RC the exit status — a collection error is exit 2 and must be observable.
 call() { # SNIPPET
   OUT=""
@@ -43,9 +51,10 @@ call() { # SNIPPET
   OUT="$(cd "$R" && GG_CHECK=probe bash -c '
     set -euo pipefail
     . "$1"
-    shift
+    . "$2"
+    shift 2
     eval "$1"
-  ' _ "$COMMON" "$1" 2>&1)" || RC=$?
+  ' _ "$COMMON" "$INSTALL" "$1" 2>&1)" || RC=$?
 }
 
 echo "=== gg_policy_content: the index governs, and a probe that failed is not an answer ==="
@@ -421,9 +430,10 @@ RC=0
 OUT="$(cd "$R" && PATH="$ROOT/nostat:$PATH" GG_CHECK=probe bash -c '
   set -euo pipefail
   . "$1"
+  . "$2"
   gg_tmpdir
-  gg_install_file "$2" tools/dest.tsv "the fixture"
-' _ "$COMMON" "$ROOT/src.tsv" 2>&1)" || RC=$?
+  gg_install_file "$3" tools/dest.tsv "the fixture"
+' _ "$COMMON" "$INSTALL" "$ROOT/src.tsv" 2>&1)" || RC=$?
 [ "$RC" -eq 2 ] && case "$OUT" in *"could not read the mode of tools/dest.tsv"*) true ;; *) false ;; esac \
   && ok "an unreadable mode is a loud refusal, not a narrowing rename" \
   || bad "an unreadable mode is a loud refusal, not a narrowing rename" "rc=$RC out=$OUT"
@@ -440,8 +450,9 @@ RC=0
 OUT="$(cd "$R" && GG_CHECK=probe bash -c '
   set -euo pipefail
   . "$1"
-  gg_install_file "$2" tools/dest.tsv "the fixture"
-' _ "$COMMON" "$ROOT/src.tsv" 2>&1)" || RC=$?
+  . "$2"
+  gg_install_file "$3" tools/dest.tsv "the fixture"
+' _ "$COMMON" "$INSTALL" "$ROOT/src.tsv" 2>&1)" || RC=$?
 [ "$RC" -eq 2 ] && case "$OUT" in *"needs gg_tmpdir called first"*) true ;; *) false ;; esac \
   && ok "an install with no scratch directory refuses rather than writing beside the root" \
   || bad "an install with no scratch directory refuses rather than writing beside the root" "rc=$RC out=$OUT"
@@ -464,9 +475,10 @@ RC=0
 OUT="$(cd "$R" && PATH="$ROOT/nochmod:$PATH" GG_CHECK=probe bash -c '
   set -euo pipefail
   . "$1"
+  . "$2"
   gg_tmpdir
-  gg_install_file "$2" tools/dest.tsv "the fixture"
-' _ "$COMMON" "$ROOT/src.tsv" 2>&1)" || RC=$?
+  gg_install_file "$3" tools/dest.tsv "the fixture"
+' _ "$COMMON" "$INSTALL" "$ROOT/src.tsv" 2>&1)" || RC=$?
 [ "$RC" -eq 2 ] && case "$OUT" in *"could not give the replacement for the fixture tools/dest.tsv's mode (644)"*) true ;; *) false ;; esac \
   && ok "a failed chmod names the mode it could not give" \
   || bad "a failed chmod names the mode it could not give" "rc=$RC out=$OUT"
@@ -494,13 +506,14 @@ rm -f "$pidfile" "$gofile"
 (
   cd "$R" && GG_CHECK=probe bash -c '
     set -euo pipefail
-    echo "$$" >"$2"
+    echo "$$" >"$3"
     i=0
-    while [ ! -e "$3" ] && [ "$i" -lt 200 ]; do i=$((i + 1)); sleep 0.05; done
+    while [ ! -e "$4" ] && [ "$i" -lt 200 ]; do i=$((i + 1)); sleep 0.05; done
     . "$1"
+    . "$2"
     gg_tmpdir
-    gg_install_file "$4" tools/dest.tsv "the fixture"
-  ' _ "$COMMON" "$pidfile" "$gofile" "$ROOT/src.tsv"
+    gg_install_file "$5" tools/dest.tsv "the fixture"
+  ' _ "$COMMON" "$INSTALL" "$pidfile" "$gofile" "$ROOT/src.tsv"
 ) >"$ROOT/writer.out" 2>&1 &
 writer=$!
 i=0
@@ -535,9 +548,10 @@ RC=0
 OUT="$(cd "$R" && PATH="$ROOT/stub:$PATH" GG_CHECK=probe bash -c '
   set -euo pipefail
   . "$1"
+  . "$2"
   gg_tmpdir
-  gg_install_file "$2" tools/dest.tsv "the fixture"
-' _ "$COMMON" "$ROOT/src.tsv" 2>&1)" || RC=$?
+  gg_install_file "$3" tools/dest.tsv "the fixture"
+' _ "$COMMON" "$INSTALL" "$ROOT/src.tsv" 2>&1)" || RC=$?
 [ "$RC" -eq 2 ] && case "$OUT" in *"could not replace the fixture"*) true ;; *) false ;; esac \
   && ok "a failed rename is a loud collection error" \
   || bad "a failed rename is a loud collection error" "rc=$RC out=$OUT"
@@ -596,9 +610,9 @@ echo "=== gg_grep_lane: content decides what is scanned, an attributes rule neve
 # no status and no stderr — a clean verdict over content never read. Each
 # lane is pinned end to end, each against a control proving the same fixture
 # fails without the row.
-run_check() { # SCRIPT — RC and OUT from a run inside $R
-  RC=0
-  OUT="$(cd "$R" && "$SCRIPTS/$1" 2>&1)" || RC=$?
+run_check() { # SCRIPT [ARG...] — RC and OUT from a run inside $R
+  local script="$1"; shift; RC=0
+  OUT="$(cd "$R" && "$SCRIPTS/$script" "$@" 2>&1)" || RC=$?
 }
 
 new_repo attrs-todo
@@ -742,6 +756,111 @@ case "$OUT" in
   *"not measured"*) bad "control: a scanned path is never named as unmeasured" "out=$OUT" ;;
   *) ok "control: a scanned path is never named as unmeasured" ;;
 esac
+
+echo "=== the shared readers fail closed, once, for every lane that uses them ==="
+
+# gg_grep_guard, gg_read_blob and gg_blob_is_binary are the family's index
+# readers: every lane collects through them, so an incomplete scan is refused
+# HERE, once — including the call sites no default-lane run reaches, which
+# the arms below drive through the lane that owns them.
+REAL_GIT="$(command -v git)"
+git_failing_on() { # ARG [LANE-ARG...] — todo-ban under a git that exits 128 for ARG
+  local a="$1" dir="$TMP/git-shim-$1"; shift; mkdir -p "$dir"
+  printf '#!/usr/bin/env bash\ncase " $* " in *" %s "*) echo "git %s: simulated failure" >&2; exit 128 ;; esac\nexec "%s" "$@"\n' "$a" "$a" "$REAL_GIT" >"$dir/git"
+  chmod +x "$dir/git"
+  under_shim "$dir" todo-ban "$@"
+}
+under_shim() { # SHIM-DIR SCRIPT [ARG...] — run SCRIPT with SHIM-DIR first on PATH
+  local dir="$1"; shift; local script="$1"; shift; RC=0
+  OUT="$(cd "$R" && PATH="$dir:$PATH" "$SCRIPTS/$script" "$@" 2>&1)" || RC=$?
+}
+refused() { # LABEL NEEDLE [CHECK] — exit 2 carrying NEEDLE, and never a clean verdict
+  [ "$RC" -eq 2 ] && case "$OUT" in *"$2"*) true ;; *) false ;; esac \
+    && ok "$1" || bad "$1" "rc=$RC out=$OUT"
+  case "$OUT" in *"${3:-todo-ban}: OK"*) bad "no OK verdict may accompany $1" "$OUT" ;; *) ok "and no OK verdict accompanies it" ;; esac
+}
+
+new_repo readers
+printf '// %s: stranded work\n' "$MARKER" >"$R/a.rs"
+git -C "$R" add -A
+run_check todo-ban
+[ "$RC" -eq 1 ] && ok "control: the staged marker trips with the real git" \
+  || bad "control: the staged marker trips" "rc=$RC out=$OUT"
+git_failing_on grep
+refused "a git grep execution failure is a collection error, never OK" "git grep failed scanning tracked files"
+git_failing_on cat-file
+refused "a blob read that cannot run is exit 2, never a path skipped" "refusing to skip an unread work marker"
+# git spends no error status on a staged blob it cannot read: the `error:`
+# line on stderr is all that separates a partial scan from a clean one.
+OID="$(git -C "$R" rev-parse :a.rs)"
+[ -f "$R/.git/objects/${OID:0:2}/${OID:2}" ] || bad "fixture: the staged blob is a loose object" "$OID"
+rm -f -- "$R/.git/objects/${OID:0:2}/${OID:2}"
+run_check todo-ban
+refused "a vanished staged blob is exit 2 carrying git's own error line" "unable to read"
+printf '// %s: readable\n' "$MARKER" >"$R/b.rs"
+git -C "$R" add b.rs
+run_check todo-ban
+refused "a scan matching one file it read and one it could not is exit 2, never a violation" "unable to read"
+
+# The --staged lane reaches the same readers through calls of its own that
+# the default lane never makes: the carriers pre-filter grep, and the
+# per-file content sniff that reads each staged blob. The fixture stages a
+# marker, so no arm below can be clean by construction.
+new_repo readers-staged
+printf 'fn main() {}\n' >"$R/ok.rs"
+git -C "$R" add -A
+git -C "$R" commit -qm seed
+printf '// %s: staged for the pre-filter to find\n' "$MARKER" >>"$R/ok.rs"
+git -C "$R" add ok.rs
+run_check todo-ban --staged
+[ "$RC" -eq 1 ] && ok "control: the staged marker fires with the real tools" \
+  || bad "control: the staged marker fires" "rc=$RC out=$OUT"
+git_failing_on grep --staged
+refused "a broken staged pre-filter is a collection error, never OK" "git grep failed listing the staged files that carry a work marker"
+git_failing_on cat-file --staged
+refused "a staged blob the sniff cannot read is exit 2, never a path skipped" "refusing to skip an unread work marker"
+
+# gg_blob_is_binary sizes the leading bytes twice, and neither count may
+# decide the verdict after failing: a silent zero out of the NUL strip reads
+# as "every byte was a NUL" and folds an unread blob into a clean pass. One
+# shim per count — the wc shim fails once, so the first count fails while
+# the second succeeds; the tr shim breaks only the strip inside the second.
+COUNT_SHIM="$TMP/count-shim"
+mkdir -p "$COUNT_SHIM"
+printf '#!/usr/bin/env bash\nif [ ! -e "%s" ]; then : >"%s"; echo "wc: simulated execution failure" >&2; exit 1; fi\nexec "%s" "$@"\n' \
+  "$TMP/wc-fired" "$TMP/wc-fired" "$(command -v wc)" >"$COUNT_SHIM/wc"
+chmod +x "$COUNT_SHIM/wc"
+rm -f "$TMP/wc-fired"
+under_shim "$COUNT_SHIM" todo-ban --staged
+refused "a first block that cannot be sized is exit 2, never OK" "could not sample ok.rs to classify its content"
+TR_SHIM="$TMP/tr-shim"
+mkdir -p "$TR_SHIM"
+printf '#!/usr/bin/env bash\necho "tr: simulated execution failure" >&2\nexit 1\n' >"$TR_SHIM/tr"
+chmod +x "$TR_SHIM/tr"
+under_shim "$TR_SHIM" todo-ban --staged
+refused "a NUL-free count that cannot run is exit 2, never OK" "could not sample ok.rs to classify its content"
+
+# suppression-ban's per-carrier count is its own call, made after the shared
+# listing has already named the carrier, and it is the one gg_grep_guard site
+# outside lib/. The shim errors that call alone and exits 0, so the `error:`
+# line gg_grep_guard reads off stderr is the only thing left that can refuse
+# a count which would otherwise read as a clean zero.
+new_repo readers-count
+mkdir -p "$R/tools"
+printf 'fn main() {}\n' >"$R/ok.rs"
+printf '#[allow(dead_code)]\nfn b() {}\n' >"$R/bare.rs"
+printf 'bare.rs\t1\n' >"$R/tools/suppression-baseline.tsv"
+git -C "$R" add -A
+run_check suppression-ban
+[ "$RC" -eq 0 ] && ok "control: the baselined bare allow passes with the real git" \
+  || bad "control: the baselined bare allow passes" "rc=$RC out=$OUT"
+SB_COUNT_SHIM="$TMP/git-shim-count"
+mkdir -p "$SB_COUNT_SHIM"
+printf '#!/usr/bin/env bash\ncase " $* " in *" -acE "*) echo "error: %s: unable to read %s" >&2; exit 0 ;; esac\nexec "%s" "$@"\n' \
+  "'phantom.rs'" "0000000000000000000000000000000000000000" "$REAL_GIT" >"$SB_COUNT_SHIM/git"
+chmod +x "$SB_COUNT_SHIM/git"
+under_shim "$SB_COUNT_SHIM" suppression-ban
+refused "a count whose stderr carries an error line is exit 2, never a clean zero" "could not read staged content while counting the bare allows" suppression-ban
 
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

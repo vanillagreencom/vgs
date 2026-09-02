@@ -25,13 +25,7 @@ The reviewer-gate settings — `PR_REVIEW_GATE`, `PR_REVIEW_CHECK`, `PR_REVIEW_Q
 
 Per-verdict routing lives in the workflows (`submit-pr.md` § 4, `merge-pr.md` § 5); each verdict's semantics live in that script's `--help`.
 
-A wait is a running waiter, never a session sitting at its prompt. Four things
-decide an open PR: CI's verdict, GitHub's merge state, the gate status with its
-description, and the unresolved thread count. None stands in for another. CI
-green is a merge gate and `ci-wait` is what answers it, but it does not finish
-the PR. A reviewer posts on its own schedule, often after the checks pass, and
-a session parked on CI sees neither the thread nor the gate. Which waiter
-answers which is the table above; what each one reads is its `--help`.
+A wait is a running waiter, never a session sitting at its prompt.
 
 ## Waiter auth ladder
 
@@ -44,9 +38,18 @@ one detached generation and exits after that generation publishes a result; it
 is not a shared watcher. For many PRs across a long horizon, the review-gate skill (optional
 dependency) ships `scripts/pr-watch.sh`, a needs-attention reducer — contract
 in `pr-watch.sh --help`, wrap-in-anything loop in review-gate's adoption guide.
-Orch consumes it through `oversee-watch` (`--help`) when the script is installed.
+Orch consumes it through `oversee-watch` when the script is installed, passing
+`--heal`, so a `gate-stale` line dispatches the writer workflow itself. That
+WRITE needs, in this order, a `PR_WATCH_WRITER_WORKFLOW` workflow (default
+`Review gate writer`) present with Actions enabled in every repo covered, then
+a credential carrying `actions:write`. Missing any, the reducer emits
+`gate-stale` plus an `error` naming the failed dispatch and no
+`heal-dispatched`, and repair follows the same order: until a usable writer
+exists there is nothing to hand-dispatch either, and only the credential case
+is answered by a hand dispatch under a scoped token.
 The fallback without it is per-PR `approval-wait`/`queue-wait`, which cannot
 detect `gate-stale`: the waiters never read `REVIEW_GATE_CONTEXT` or verify
 writer convergence, so a PR that reads reviewed-and-clean but sits unmerged
 warrants a manual gate-status check
-(`gh api repos/<owner>/<repo>/commits/<head>/statuses`) and a writer dispatch.
+(`gh api repos/<owner>/<repo>/commits/<head>/statuses`) and a writer dispatch —
+the hand-run equivalent of `pr-watch.sh --heal`.

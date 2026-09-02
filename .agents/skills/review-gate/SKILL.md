@@ -36,7 +36,7 @@ the gate; and merge-group statuses never read the mode, posting green as
 | `threads-open` | `pending` | Evidence exists, but review threads are unresolved. |
 | `changes-requested` | `failure` | A reviewer objects. Red means objection — never a build failure. |
 | `untracked-claim` | `failure` | A thread's disposition reply claims tracking and names no issue. |
-| `unreasoned-decline` | `failure` | A thread's disposition reply declines and its reason strips to nothing against the predicate's label vocabulary: an empty reason, or only labels such as `frozen`, `out of scope`, `pre-existing`, a bare test count. Read by shape, so a decline written without the colon counts too; a label beside a real reason is fine. The vocabulary's reach, and the label shapes past it, are pinned in `tests/corpus/declines-known-limit.txt`. |
+| `unreasoned-decline` | `failure` | A thread's disposition reply declines and its reason strips to nothing against the predicate's label vocabulary: an empty reason, or only labels such as `frozen`, `out of scope`, `pre-existing`, a bare test count. Two positional name strips ride after that vocabulary and the filler words alike — a count takes the non-space run immediately in front of it, a slash-joined token is a path — so `lifecycle 104/104 and the full tools/guard pass` strips to nothing too; a name standing anywhere else survives. Read by shape, so a decline written without the colon counts too; a label beside a real reason is fine. The reach, and the shapes past it, are pinned in `tests/corpus/declines-known-limit.txt`. |
 | (exit 2, no verdict) | *unchanged* | A read failed or config is invalid. Take NO action; retry next pass. |
 
 **Reading the gate's own pending text.** `no review evidence at <sha> yet` is
@@ -151,7 +151,11 @@ Everything else has a working default. Full table:
 monitor on gate-state transitions. Run
 `.agents/skills/review-gate/scripts/pr-watch.sh` (optionally `--heal`) on
 the harness's wake-up mechanism: silence + exit 0 means nothing needs you;
-attention lines name exactly what does. See adoption.md § Watching PRs as an agent.
+attention lines name exactly what does. The gate opens on the first
+non-author review with no quiet period, so a round landing in the queue's
+final minutes merges unread: run `merged-sweep.sh` beside it to catch the
+findings that arrived after the merge. See adoption.md § Watching PRs as an
+agent.
 
 **Reviewers are down / nothing is reviewing.** Run the internal review loop:
 fix findings, resolve every thread, then post the override status with a real
@@ -190,9 +194,8 @@ Evidence for the CURRENT head is any of:
    comment by a trusted bot login — never the PR author, even if configured —
    binding the evidence to this head's sha (floor
    `REVIEW_GATE_SHA_PREFIX_FLOOR`).
-4. **Operator override** (`REVIEW_GATE_OVERRIDE_CONTEXT`, legacy name
-   `REVIEW_GATE_OUTAGE_CONTEXT`): a trusted operator's status carrying a
-   NON-EMPTY reason, which is enforced and surfaced in the gate detail.
+4. **Operator override** (`REVIEW_GATE_OVERRIDE_CONTEXT`): a trusted
+   operator's status carrying a NON-EMPTY reason, which is enforced and surfaced in the gate detail.
    Substitutes for MISSING evidence ONLY — it never overrides a
    changes-requested or an unresolved thread; fix findings and resolve
    threads first, then attest.
@@ -269,10 +272,18 @@ nothing else.
 # the threads-driven gate-stale form all fire; verdict-driven forms need
 # the predicate), --awaiting-after SECS (default: PR_REVIEW_WAIT_SECS)
 .agents/skills/review-gate/scripts/pr-watch.sh [PR# ...]
+
+# the same reducer over recently-MERGED PRs (env: GH_REPO) — one
+# post-merge-findings line per merged PR carrying a review or review thread
+# that arrived after the merge with no disposition reply. Per-repo state
+# surfaces each finding once; --no-state re-reads everything outstanding.
+# Flags: --window SECS (default 172800), --limit N (default 20), --no-state,
+# --state-file PATH
+.agents/skills/review-gate/scripts/merged-sweep.sh
 ```
 
-The offline decision-table selftest and the live sandbox replay are the
-ENGINE's proofs and run in the kendex repo, not in a consumer's CI:
+The offline decision-table selftest and the wrapper suites are the ENGINE's
+proofs and run in the kendex repo, not in a consumer's CI:
 [DEVELOPMENT.md](DEVELOPMENT.md).
 
 For re-vendor PRs, suppress duplicate findings with the remedy-locus reviewer
