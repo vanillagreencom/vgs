@@ -10,7 +10,9 @@ from __future__ import annotations
 
 import importlib.machinery
 import importlib.util
+import json
 import os
+import subprocess
 import sys
 import tempfile
 from pathlib import Path
@@ -182,27 +184,50 @@ def test_hyprland_key_recovery_survives_an_undecodable_config_file():
 
     with_temp_home(check)
 
-def test_a_modifier_bind_recovers_the_key_hyprctl_withheld():
-    """hyprctl reports the modifiers of such a bind perfectly well and only
-    the key as blank, so a recovery keyed on the whole combo never fires and
-    the shortcut renders as its modifiers alone."""
+def test_the_reported_binds_carry_every_recovered_and_labelled_key():
+    """Drives `keybinds show hyprland` itself with a stubbed hyprctl, so the
+    wiring is under test and not just the pieces. hyprctl reports the
+    modifiers of a keycode bind and withholds only the key, so a recovery
+    keyed on the whole combo never fires for one and the shortcut renders as
+    its modifiers alone."""
     def check(home):
         config = home / ".config" / "hypr"
         config.mkdir(parents=True)
         (config / "binds.lua").write_text(
             'bindd("SUPER, code:195", hl.dsp.exec_cmd("x"), "Modified")\n'
-            'bindd("SUPER + SHIFT + code:196", hl.dsp.exec_cmd("y"), "Spaced")\n'
+            'bindd("code:191", hl.dsp.exec_cmd("y"), "Dictate")\n'
         )
-        found = helper._hypr_raw_bind_keys()
-        assert_equal(found.get("Modified"), "code:195",
-                     "the modifiers in the literal are dropped; the key is kept")
-        assert_equal(found.get("Spaced"), "code:196",
-                     "a literal written with spaces yields the same key")
+        vshell = home / ".config" / "vshell"
+        vshell.mkdir(parents=True)
+        (vshell / "keybind-labels.json").write_text('{"F13": "Right Alt"}')
 
-        # What hyprctl hands back for such a bind, rebuilt.
-        combo = "+".join(["Super"] + ([found.get("Modified", "")]))
-        assert_equal(helper._display_combo(combo, {}), "Super+F17",
-                     "the recovered key is named and keeps its modifier")
+        # What hyprctl answers: a keycode bind with modifiers, one without,
+        # and an ordinary bind it can name itself.
+        payload = json.dumps([
+            {"modmask": 64, "key": "", "keycode": 0, "description": "Modified",
+             "dispatcher": "__lua", "arg": "1"},
+            {"modmask": 0, "key": "", "keycode": 0, "description": "Dictate",
+             "dispatcher": "__lua", "arg": "2"},
+            {"modmask": 64, "key": "F", "keycode": 0, "description": "Fullscreen",
+             "dispatcher": "fullscreen", "arg": ""},
+        ])
+        original_run, original_which = helper.run, helper.shutil.which
+        helper.run = lambda *a, **k: subprocess.CompletedProcess([], 0, payload, "")
+        helper.shutil.which = lambda name: "/usr/bin/hyprctl" if name == "hyprctl" else original_which(name)
+        try:
+            result = helper.hypr_binds_json()
+        finally:
+            helper.run, helper.shutil.which = original_run, original_which
+
+        keys = {b["desc"]: b["key"] for binds in result["binds"].values() for b in binds}
+        assert_equal(keys.get("Modified"), "Super+F17",
+                     "a keycode bind keeps the modifiers hyprctl reported and gains its key")
+        assert_equal(keys.get("Dictate"), "Right Alt",
+                     "a bare keycode bind is recovered, named, then labelled")
+        assert_equal(keys.get("Fullscreen"), "Super+F",
+                     "a bind hyprctl can name is left exactly as reported")
+        assert_equal([cat for cat, binds in result["binds"].items() if not binds], [],
+                     "a category nothing landed in is not returned")
 
     with_temp_home(check)
 
@@ -214,7 +239,7 @@ def main():
     test_hyprland_recovers_a_keycode_bind_key_from_the_config_source()
     test_hyprland_key_recovery_refuses_every_ambiguous_source()
     test_hyprland_key_recovery_survives_an_undecodable_config_file()
-    test_a_modifier_bind_recovers_the_key_hyprctl_withheld()
+    test_the_reported_binds_carry_every_recovered_and_labelled_key()
     print("VGS keybind display tests passed.")
 
 

@@ -283,7 +283,10 @@ FocusScope {
 
                 // Categories are atomic in the masonry, so asking for more
                 // columns than there are categories only makes empty ones.
-                property int numColumns: Math.max(1, Math.min(3, content.categoryCount, Math.floor(width / content.columnWidth)))
+                // Counted after the search filter, which is what is drawn; the
+                // dialog's own width stays on the unfiltered count so it does
+                // not resize under every keystroke.
+                property int numColumns: Math.max(1, Math.min(3, mainFlickable.categoryKeys.length, Math.floor(width / content.columnWidth)))
                 property var columnCategories: mainFlickable.distributeCategories(numColumns)
 
                 Repeater {
