@@ -17,6 +17,9 @@ Rectangle {
     }
 
     implicitHeight: headerRow.height + (hasInputVolumeSliderInCC ? 0 : volumeSlider.height) + audioContent.height + Theme.spacingM
+
+    // See AudioOutputDetail: the list sizes the panel, up to the section cap.
+    readonly property real contentPreferredHeight: audioContent.y + audioColumn.height + Theme.spacingM
     radius: Theme.cornerRadius
     color: Theme.nestedSurface
     border.color: Theme.outlineMedium

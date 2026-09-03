@@ -12,6 +12,10 @@ Item {
     property string screenName: ""
     property string screenModel: ""
 
+    // The loaded detail's natural height, when it publishes one. Zero means the
+    // detail has no opinion and the section's fixed height applies.
+    readonly property real preferredContentHeight: coreDetailLoader.item?.contentPreferredHeight ?? 0
+
     property var pluginDetailInstance: null
     property var widgetModel: null
     property var collapseCallback: null

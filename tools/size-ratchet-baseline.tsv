@@ -86,9 +86,9 @@ quickshell/vshell/Modules/Bar/Widgets/WorkspaceSwitcher.qml	2107
 quickshell/vshell/Modules/BuiltinDesktopPlugins/DesktopClockWidget.qml	557
 quickshell/vshell/Modules/BuiltinDesktopPlugins/SystemMonitorWidget.qml	747
 quickshell/vshell/Modules/ControlCenter/BuiltinPlugins/TailscaleWidget.qml	488
-quickshell/vshell/Modules/ControlCenter/Components/DragDropGrid.qml	1272
-quickshell/vshell/Modules/ControlCenter/Details/AudioOutputDetail.qml	566
-quickshell/vshell/Modules/ControlCenter/Details/BluetoothDetail.qml	744
+quickshell/vshell/Modules/ControlCenter/Components/DragDropGrid.qml	1291
+quickshell/vshell/Modules/ControlCenter/Details/AudioOutputDetail.qml	570
+quickshell/vshell/Modules/ControlCenter/Details/BluetoothDetail.qml	754
 quickshell/vshell/Modules/ControlCenter/Details/BrightnessDetail.qml	559
 quickshell/vshell/Modules/ControlCenter/Details/NetworkDetail.qml	907
 quickshell/vshell/Modules/Dash/DashPopout.qml	534
