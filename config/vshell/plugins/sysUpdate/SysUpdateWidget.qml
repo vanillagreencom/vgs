@@ -426,6 +426,15 @@ PluginComponent {
                         id: updatesBody
                         width: parent.width
                         spacing: Theme.spacingM
+
+                        // Nothing to install anywhere, and every source answered.
+                        // A failed tools check is not "up to date": it is an unknown,
+                        // so the buttons stay so the user can still run an upgrade.
+                        readonly property bool allClear: !root.loading
+                            && root.errorText.length === 0
+                            && root.toolsError.length === 0
+                            && root.totalCount === 0
+
                         opacity: root.showOrphans ? 0 : 1
                         visible: opacity > 0
                         Behavior on opacity {
@@ -532,70 +541,17 @@ PluginComponent {
                             }
                         }
 
-                        Column {
+                        UpToDateState {
                             width: parent.width
-                            spacing: Theme.spacingS
+                            visible: updatesBody.allClear
+                            toolsAvailable: root.toolsAvailable
+                        }
 
-                            // One quiet row for the partial updates: a label and
-                            // three small buttons. Update All below is the primary.
-                            Item {
-                                width: parent.width
-                                height: partialRow.height
-
-                                StyledText {
-                                    anchors.left: parent.left
-                                    anchors.verticalCenter: parent.verticalCenter
-                                    text: "Update"
-                                    font.pixelSize: Theme.fontSizeSmall
-                                    color: Theme.surfaceVariantText
-                                }
-
-                                Row {
-                                    id: partialRow
-                                    anchors.right: parent.right
-                                    spacing: Theme.spacingXS
-
-                                    VgsButton {
-                                        buttonHeight: 30
-                                        horizontalPadding: Theme.spacingM
-                                        text: "System"
-                                        iconName: "download"
-                                        backgroundColor: Theme.surfaceContainerHigh
-                                        textColor: Theme.surfaceText
-                                        onClicked: root.launch("system", popout)
-                                    }
-
-                                    VgsButton {
-                                        buttonHeight: 30
-                                        horizontalPadding: Theme.spacingM
-                                        text: "AUR"
-                                        iconName: "deployed_code"
-                                        backgroundColor: Theme.surfaceContainerHigh
-                                        textColor: Theme.surfaceText
-                                        onClicked: root.launch("aur", popout)
-                                    }
-
-                                    VgsButton {
-                                        visible: root.toolsAvailable
-                                        buttonHeight: 30
-                                        horizontalPadding: Theme.spacingM
-                                        text: "Dev tools"
-                                        iconName: "smart_toy"
-                                        backgroundColor: Theme.surfaceContainerHigh
-                                        textColor: Theme.surfaceText
-                                        onClicked: root.launch("tools", popout)
-                                    }
-                                }
-                            }
-
-                            VgsButton {
-                                width: parent.width
-                                text: "Update All"
-                                iconName: "browser_updated"
-                                backgroundColor: Theme.primary
-                                textColor: Theme.primaryText
-                                onClicked: root.launch("all", popout)
-                            }
+                        UpdateActions {
+                            width: parent.width
+                            visible: !updatesBody.allClear
+                            toolsAvailable: root.toolsAvailable
+                            onLaunchRequested: mode => root.launch(mode, popout)
                         }
                     }
 
@@ -710,7 +666,7 @@ PluginComponent {
                     // duplicate "Counts come from …"). Only the CLI/paru path needs it.
                     StyledText {
                         width: parent.width
-                        visible: !root.useBackend && root.errorText.length === 0
+                        visible: !root.useBackend && root.errorText.length === 0 && !updatesBody.allClear
                         text: "For repo packages use Update System / Update All (or paru -Syu); paru -S <pkg> may still show the old local sync DB."
                         wrapMode: Text.WordWrap
                         font.pixelSize: Theme.fontSizeSmall - 1
