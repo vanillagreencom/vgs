@@ -99,7 +99,10 @@ def test_the_leading_letter_pattern_is_what_hid_it():
 
 
 def test_prose_backticks_are_not_labels():
-    usable, _ = sections_for(TAXONOMY + """
+    """Both sets, because this fixture appends past the never-use heading and
+    so lands there: checking only the usable set would let the filter be
+    removed with the control still green."""
+    usable, never = sections_for(TAXONOMY + """
 Prose naming `kendex` and `docs/architecture/` must not become labels.
 
 | Label | Use when |
@@ -107,7 +110,8 @@ Prose naming `kendex` and `docs/architecture/` must not become labels.
 | `linear` | Filtered as prose, not a label. |
 """)
     for name in ("kendex", "docs/architecture/", "linear"):
-        assert_equal(name in usable, False, f"{name!r} is prose, not a label")
+        assert_equal(name in usable, False, f"{name!r} is prose, not a usable label")
+        assert_equal(name in never, False, f"{name!r} is prose, not a never-use label")
 
 
 def main() -> int:
