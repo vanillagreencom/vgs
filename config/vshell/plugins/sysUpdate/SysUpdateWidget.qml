@@ -484,51 +484,43 @@ PluginComponent {
                                     width: pkgList.width - Theme.spacingS + 2
                                     height: 44
 
+                                    // The pill marks the row, not the name line,
+                                    // so it centres against both lines of text.
+                                    Rectangle {
+                                        id: srcPill
+                                        anchors.right: parent.right
+                                        anchors.verticalCenter: parent.verticalCenter
+                                        radius: height / 2
+                                        height: srcPillText.implicitHeight + 3
+                                        width: srcPillText.implicitWidth + Theme.spacingS * 2
+                                        color: Theme.withAlpha(srcPillText.color, 0.18)
+
+                                        StyledText {
+                                            id: srcPillText
+                                            anchors.centerIn: parent
+                                            text: modelData.src === "aur" ? "aur" : (modelData.src === "tools" ? "tools" : "system")
+                                            font.pixelSize: Theme.fontSizeSmall - 1
+                                            font.weight: Font.Medium
+                                            color: modelData.src === "aur" ? Theme.secondary : (modelData.src === "tools" ? Theme.tertiary : Theme.primary)
+                                        }
+                                    }
+
                                     Column {
                                         anchors.left: parent.left
-                                        anchors.right: parent.right
+                                        anchors.right: srcPill.left
+                                        anchors.rightMargin: Theme.spacingS
                                         anchors.verticalCenter: parent.verticalCenter
                                         spacing: 2
 
-                                        // Line 1: package name (left, bold) + source pill (right)
-                                        Item {
+                                        StyledText {
                                             width: parent.width
-                                            height: Math.max(nameText.implicitHeight, srcPill.height)
-
-                                            StyledText {
-                                                id: nameText
-                                                anchors.left: parent.left
-                                                anchors.right: srcPill.left
-                                                anchors.rightMargin: Theme.spacingS
-                                                anchors.verticalCenter: parent.verticalCenter
-                                                text: modelData.name
-                                                font.pixelSize: Theme.fontSizeSmall
-                                                font.weight: Font.Bold
-                                                color: Theme.surfaceText
-                                                elide: Text.ElideRight
-                                            }
-
-                                            Rectangle {
-                                                id: srcPill
-                                                anchors.right: parent.right
-                                                anchors.verticalCenter: parent.verticalCenter
-                                                radius: height / 2
-                                                height: srcPillText.implicitHeight + 3
-                                                width: srcPillText.implicitWidth + Theme.spacingS * 2
-                                                color: Theme.withAlpha(srcPillText.color, 0.18)
-
-                                                StyledText {
-                                                    id: srcPillText
-                                                    anchors.centerIn: parent
-                                                    text: modelData.src === "aur" ? "aur" : (modelData.src === "tools" ? "tools" : "system")
-                                                    font.pixelSize: Theme.fontSizeSmall - 1
-                                                    font.weight: Font.Medium
-                                                    color: modelData.src === "aur" ? Theme.secondary : (modelData.src === "tools" ? Theme.tertiary : Theme.primary)
-                                                }
-                                            }
+                                            text: modelData.name
+                                            font.pixelSize: Theme.fontSizeSmall
+                                            font.weight: Font.Bold
+                                            color: Theme.surfaceText
+                                            elide: Text.ElideRight
                                         }
 
-                                        // Line 2: current -> new version, smaller
                                         StyledText {
                                             width: parent.width
                                             text: (modelData.old ? modelData.old + "  →  " : "") + modelData.new
