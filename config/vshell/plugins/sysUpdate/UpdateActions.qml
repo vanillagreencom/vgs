@@ -2,23 +2,42 @@ import QtQuick
 import qs.Common
 import qs.Widgets
 
-// The upgrade buttons for the updates sheet: one quiet row of per-source
-// buttons, with Update All below as the primary action.
+// The upgrade buttons for the updates sheet.
+//
+// Only the sources that actually have something pending get a button, so a
+// lone AUR package does not present three buttons of which two do nothing.
+// One pending source collapses the row entirely: the primary button below
+// names that source, because "Update All" and "Update AUR" would be the same
+// run. When the check itself failed the counts are unknown, not zero, so every
+// button stays available.
 //
 // Each button reports a `vshell update run` mode through `launchRequested`;
 // the widget owns the command lookup and the terminal launch.
 Column {
     id: actions
 
-    property bool toolsAvailable: false
+    // The widget root, read for the counts and the check's health.
+    property var host
 
     signal launchRequested(string mode)
+
+    // A failed check zeroes the counts, so they say nothing about what is
+    // pending; only a clean check may narrow the buttons.
+    readonly property bool countsKnown: host.errorText.length === 0 && host.toolsError.length === 0
+    readonly property bool systemPending: !countsKnown || host.repoCount > 0
+    readonly property bool aurPending: !countsKnown || host.aurCount > 0
+    readonly property bool toolsPending: host.toolsAvailable && (!countsKnown || host.toolsCount > 0)
+    readonly property int pendingCount: (systemPending ? 1 : 0) + (aurPending ? 1 : 0) + (toolsPending ? 1 : 0)
+
+    // The single pending source, or "all" when several are.
+    readonly property string primaryMode: pendingCount !== 1 ? "all" : (systemPending ? "system" : (aurPending ? "aur" : "tools"))
 
     spacing: Theme.spacingS
 
     Item {
         width: parent.width
         height: partialRow.height
+        visible: actions.pendingCount > 1
 
         StyledText {
             anchors.left: parent.left
@@ -34,6 +53,7 @@ Column {
             spacing: Theme.spacingXS
 
             VgsButton {
+                visible: actions.systemPending
                 buttonHeight: 30
                 horizontalPadding: Theme.spacingM
                 text: "System"
@@ -44,6 +64,7 @@ Column {
             }
 
             VgsButton {
+                visible: actions.aurPending
                 buttonHeight: 30
                 horizontalPadding: Theme.spacingM
                 text: "AUR"
@@ -54,7 +75,7 @@ Column {
             }
 
             VgsButton {
-                visible: actions.toolsAvailable
+                visible: actions.toolsPending
                 buttonHeight: 30
                 horizontalPadding: Theme.spacingM
                 text: "Dev tools"
@@ -68,10 +89,10 @@ Column {
 
     VgsButton {
         width: parent.width
-        text: "Update All"
+        text: actions.primaryMode === "all" ? "Update All" : (actions.primaryMode === "system" ? "Update System" : (actions.primaryMode === "aur" ? "Update AUR" : "Update Dev Tools"))
         iconName: "browser_updated"
         backgroundColor: Theme.primary
         textColor: Theme.primaryText
-        onClicked: actions.launchRequested("all")
+        onClicked: actions.launchRequested(actions.primaryMode)
     }
 }

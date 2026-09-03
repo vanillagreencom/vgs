@@ -550,7 +550,7 @@ PluginComponent {
                         UpdateActions {
                             width: parent.width
                             visible: !root.allClear
-                            toolsAvailable: root.toolsAvailable
+                            host: root
                             onLaunchRequested: mode => root.launch(mode, popout)
                         }
                     }
