@@ -100,6 +100,14 @@ PluginComponent {
         root.refresh();
     }
 
+    // Nothing to install anywhere, and every source answered. A failed tools
+    // check is an unknown rather than a clear result, so it is not allClear:
+    // the upgrade buttons stay in that case.
+    readonly property bool allClear: !root.loading
+        && root.errorText.length === 0
+        && root.toolsError.length === 0
+        && root.totalCount === 0
+
     readonly property bool refreshBusy: root.useBackend
         ? (SystemUpdateService.isChecking || SystemUpdateService.isUpgrading)
         : (root.loading || countProc.running)
@@ -372,7 +380,7 @@ PluginComponent {
             id: popout
 
             headerText: "System Updates"
-            detailsText: root.loading ? "Checking…" : (root.errorText.length > 0 ? root.errorText : (root.totalCount > 0 ? (root.totalCount + " available  (" + root.repoCount + " repo - " + root.aurCount + " aur" + (root.toolsAvailable ? " - " + (root.toolsError ? "tools ?" : root.toolsCount + " tools") : "") + ")") : (root.toolsError ? "Up to date (tools check failed)" : "Up to date")))
+            detailsText: root.loading ? "Checking…" : (root.errorText.length > 0 ? root.errorText : (root.totalCount > 0 ? (root.totalCount + " available  (" + root.repoCount + " repo - " + root.aurCount + " aur" + (root.toolsAvailable ? " - " + (root.toolsError ? "tools ?" : root.toolsCount + " tools") : "") + ")") : (root.toolsError ? "Up to date (tools check failed)" : "")))
             showCloseButton: true
 
             Column {
@@ -426,14 +434,6 @@ PluginComponent {
                         id: updatesBody
                         width: parent.width
                         spacing: Theme.spacingM
-
-                        // Nothing to install anywhere, and every source answered.
-                        // A failed tools check is not "up to date": it is an unknown,
-                        // so the buttons stay so the user can still run an upgrade.
-                        readonly property bool allClear: !root.loading
-                            && root.errorText.length === 0
-                            && root.toolsError.length === 0
-                            && root.totalCount === 0
 
                         opacity: root.showOrphans ? 0 : 1
                         visible: opacity > 0
@@ -543,13 +543,13 @@ PluginComponent {
 
                         UpToDateState {
                             width: parent.width
-                            visible: updatesBody.allClear
+                            visible: root.allClear
                             toolsAvailable: root.toolsAvailable
                         }
 
                         UpdateActions {
                             width: parent.width
-                            visible: !updatesBody.allClear
+                            visible: !root.allClear
                             toolsAvailable: root.toolsAvailable
                             onLaunchRequested: mode => root.launch(mode, popout)
                         }
@@ -666,7 +666,7 @@ PluginComponent {
                     // duplicate "Counts come from …"). Only the CLI/paru path needs it.
                     StyledText {
                         width: parent.width
-                        visible: !root.useBackend && root.errorText.length === 0 && !updatesBody.allClear
+                        visible: !root.useBackend && root.errorText.length === 0 && !root.allClear
                         text: "For repo packages use Update System / Update All (or paru -Syu); paru -S <pkg> may still show the old local sync DB."
                         wrapMode: Text.WordWrap
                         font.pixelSize: Theme.fontSizeSmall - 1
