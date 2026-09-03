@@ -387,6 +387,7 @@ team; they serve other projects (hyprtrade), so never assign them in VGS.
 | `frontend` | UI-surface work: shell surfaces, widgets, modals, settings screens under `quickshell/vshell/`. |
 | `design` | Visual design language, tokens, typography, surface layout — the Flatline language in `docs/architecture/design-language.md`. |
 | `component` | Reusable widget/control work, especially primitives in `quickshell/vshell/Widgets/`. |
+| `releases` | Cutting a release, versioning, and publishing to the distribution channels — the work the vgs-release and vgs-distro-publish skills own. |
 
 Priority rule: `ci-infra` implies Urgent unless the issue deliberately records
 why it is lower. Everything VGS uses to decide whether a change is safe to merge
@@ -444,6 +445,7 @@ oversight, and gets "fixed" by someone assigning it.
 | `agent:rust` | Same. |
 | `iced` | Same. |
 | `rust-core` | Same. |
+| `1.0` | Kendex's own 1.0 release set, workspace-level only because Linear's API cannot scope an existing label to a team (`IssueLabelUpdateInput` has no `teamId`). All 11 issues carrying it are in team KEN and none are VGS's. |
 | `feature` | Duplicate of `enhancement` ("New capability or product behavior" vs "New feature or request"). VGS uses `enhancement`; `feature` is on zero VGS issues. It is workspace-level and may serve another team, so do not delete it — just do not assign it here. |
 """
 reviewer = """

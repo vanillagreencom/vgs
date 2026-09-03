@@ -35,7 +35,10 @@ LINEAR_CLI = REPO_ROOT / ".agents" / "skills" / "linear" / "scripts" / "linear.s
 # that could itself drift.
 TAXONOMY_START = "## Project issue label taxonomy"
 NEVER_USE_HEADING = "### Never-use labels"
-LABEL_SPAN = re.compile(r"`([A-Za-z][A-Za-z0-9:._-]*)`")
+# A leading digit is a real label name -- kendex's release set is called `1.0`
+# -- and requiring a letter made one invisible to the parser while staying
+# visible to Linear, so the sweep reported it missing however it was documented.
+LABEL_SPAN = re.compile(r"`([A-Za-z0-9][A-Za-z0-9:._-]*)`")
 
 # Prose inside the taxonomy also uses backticks for non-label text.
 NOT_A_LABEL = re.compile(r"^(issues|kendex|linear|docs/|quickshell/|\.github/|\.agents/)")
