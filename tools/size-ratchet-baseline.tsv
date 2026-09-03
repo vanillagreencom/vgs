@@ -33,7 +33,7 @@ config/vshell/plugins/aiUsage/AiUsageWidget.qml	1167
 config/vshell/plugins/cloudSync/CloudSyncWidget.qml	690
 config/vshell/plugins/remoteDesktop/RemoteDesktopWidget.qml	803
 config/vshell/plugins/sudoToggle/SudoToggleWidget.qml	515
-config/vshell/plugins/sysUpdate/SysUpdateWidget.qml	781
+config/vshell/plugins/sysUpdate/SysUpdateWidget.qml	737
 config/vshell/plugins/tailscale/TailscaleWidget.qml	804
 config/vshell/plugins/vgsMenu/VGSMenu.qml	2319
 config/vshell/settings.default.json	754
