@@ -19,6 +19,15 @@ Rectangle {
             return headerRow.height;
         return headerRow.height + bluetoothContent.height + Theme.spacingM;
     }
+
+    // The height this detail would fill exactly, read by the control centre. It
+    // measures the device column below its resolved top, never this item's own
+    // height, so the two cannot chase each other.
+    readonly property real contentPreferredHeight: {
+        if (!BluetoothService.adapter?.enabled)
+            return Theme.spacingS + headerRow.height + Theme.spacingM;
+        return bluetoothContent.y + bluetoothColumn.height + Theme.spacingM;
+    }
     radius: Theme.cornerRadius
     color: Theme.nestedSurface
     border.color: Theme.outlineMedium
@@ -81,6 +90,10 @@ Rectangle {
         return normalizePinList(pins["preferredDevice"]);
     }
 
+    VgsInlineTooltip {
+        id: pinTooltip
+    }
+
     Row {
         id: headerRow
         anchors.left: parent.left
@@ -101,7 +114,7 @@ Rectangle {
         }
 
         Item {
-            width: Math.max(0, parent.width - headerText.implicitWidth - scanButton.width - Theme.spacingM)
+            width: Math.max(0, parent.width - headerText.implicitWidth - scanButton.width)
             height: parent.height
         }
 
@@ -111,7 +124,9 @@ Rectangle {
             readonly property bool adapterEnabled: BluetoothService.adapter?.enabled ?? false
             readonly property bool isDiscovering: BluetoothService.adapter?.discovering ?? false
 
-            width: 100
+            // Sized to its label, so both labels end at the header's right
+            // margin; a fixed 100 left "Scan" short of it.
+            width: scanRow.implicitWidth + Theme.spacingS * 2
             height: 36
             radius: Theme.controlRadius
             color: scanMouseArea.containsMouse && adapterEnabled ? Theme.withAlpha(Theme.surfaceContainerHigh, Theme.popupTransparency) : Theme.withAlpha(Theme.surfaceContainerHigh, 0)
@@ -120,6 +135,7 @@ Rectangle {
             visible: adapterEnabled
 
             Row {
+                id: scanRow
                 anchors.centerIn: parent
                 spacing: Theme.spacingXS
 
@@ -332,38 +348,32 @@ Rectangle {
                         }
                     }
 
+                    // Pin state is the icon alone: the word repeated on every
+                    // row and crowded the device name. The tooltip carries it.
                     Rectangle {
+                        id: pinBluetoothPill
                         anchors.right: pairedOptionsButton.left
                         anchors.rightMargin: Theme.spacingS
                         anchors.verticalCenter: parent.verticalCenter
-                        width: pinBluetoothRow.width + Theme.spacingS * 2
+                        width: 28
                         height: 28
                         radius: height / 2
                         color: pairedDelegate.isPinned ? Theme.primaryHover : Theme.withAlpha(Theme.surfaceText, 0.05)
 
-                        Row {
-                            id: pinBluetoothRow
+                        VgsIcon {
                             anchors.centerIn: parent
-                            spacing: Theme.spacingXS
-
-                            VgsIcon {
-                                name: "push_pin"
-                                size: 16
-                                color: pairedDelegate.isPinned ? Theme.primary : Theme.surfaceText
-                                anchors.verticalCenter: parent.verticalCenter
-                            }
-
-                            StyledText {
-                                text: pairedDelegate.isPinned ? I18n.tr("Pinned") : I18n.tr("Pin")
-                                font.pixelSize: Theme.fontSizeSmall
-                                color: pairedDelegate.isPinned ? Theme.primary : Theme.surfaceText
-                                anchors.verticalCenter: parent.verticalCenter
-                            }
+                            name: "push_pin"
+                            size: 16
+                            color: pairedDelegate.isPinned ? Theme.primary : Theme.surfaceText
                         }
 
                         MouseArea {
+                            id: pinBluetoothArea
                             anchors.fill: parent
+                            hoverEnabled: true
                             cursorShape: Qt.PointingHandCursor
+                            onEntered: pinTooltip.show(pairedDelegate.isPinned ? I18n.tr("Pinned") : I18n.tr("Pin"), pinBluetoothPill, 0, 0, "bottom")
+                            onExited: pinTooltip.hide()
                             onClicked: {
                                 const pins = JSON.parse(JSON.stringify(SettingsData.bluetoothDevicePins || {}));
                                 let pinnedList = root.normalizePinList(pins["preferredDevice"]);
@@ -413,7 +423,7 @@ Rectangle {
                     MouseArea {
                         id: deviceMouseArea
                         anchors.fill: parent
-                        anchors.rightMargin: pairedOptionsButton.width + Theme.spacingM + pinBluetoothRow.width + Theme.spacingS * 4
+                        anchors.rightMargin: pairedOptionsButton.width + Theme.spacingM + pinBluetoothPill.width + Theme.spacingS * 4
                         hoverEnabled: true
                         cursorShape: Qt.PointingHandCursor
                         onPressed: mouse => {
