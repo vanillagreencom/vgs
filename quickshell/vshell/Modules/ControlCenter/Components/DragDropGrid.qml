@@ -36,6 +36,8 @@ Column {
     property int expandedRowIndex: -1
     property var colorPickerModal: null
     property var activePluginDetailInstance: null
+    // The expanded detail's own height request; 0 while nothing publishes one.
+    property real activeCoreDetailHeight: 0
 
     readonly property real _maxDetailHeight: {
         const rows = layoutResult.rows;
@@ -71,7 +73,7 @@ Column {
     }
 
     function detailHeightForSection(section) {
-        return DetailHeightUtils.detailHeightForSection(section, _maxDetailHeight, activePluginDetailInstance);
+        return DetailHeightUtils.detailHeightForSection(section, _maxDetailHeight, activePluginDetailInstance, activeCoreDetailHeight);
     }
 
     function calculateRowsAndWidgets() {
@@ -401,10 +403,27 @@ Column {
                     }
                 }
 
+                // Only the expanded host sets the shared height request, and
+                // clears it on collapse so a stale value cannot size the next
+                // section. The loader drops its item then, so the flag rather
+                // than the published height says who owns the value.
+                property bool ownsDetailHeight: false
+                function syncCoreDetailHeight() {
+                    if (active) {
+                        root.activeCoreDetailHeight = preferredContentHeight;
+                        ownsDetailHeight = true;
+                    } else if (ownsDetailHeight) {
+                        root.activeCoreDetailHeight = 0;
+                        ownsDetailHeight = false;
+                    }
+                }
+
                 onActiveChanged: {
                     retainActiveDetail();
                     syncActivePluginDetail();
+                    syncCoreDetailHeight();
                 }
+                onPreferredContentHeightChanged: syncCoreDetailHeight()
                 onPluginDetailInstanceChanged: syncActivePluginDetail()
                 onHeightChanged: {
                     if (!active && height <= 0.5) {

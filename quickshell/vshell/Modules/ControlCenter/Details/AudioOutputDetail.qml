@@ -17,6 +17,10 @@ Rectangle {
     }
 
     implicitHeight: headerRow.height + (!hasVolumeSliderInCC ? volumeSlider.height : 0) + (notifSoundToggle.visible ? notifSoundToggle.height + Theme.spacingXS : 0) + audioContent.height + Theme.spacingM
+
+    // The height this detail would fill exactly, read by the control centre. The
+    // column is measured below its resolved top, never below this item's height.
+    readonly property real contentPreferredHeight: audioContent.y + audioColumn.height + Theme.spacingM
     radius: Theme.cornerRadius
     color: Theme.nestedSurface
     border.color: Theme.outlineMedium
