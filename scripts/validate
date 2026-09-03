@@ -216,6 +216,7 @@ packaging | scripts/check-aur-sync.py
 -         | scripts/test-paste-lifecycle.js
 -         | scripts/test-compositor-focus.js
 -         | scripts/check-paste-injection.py
+-         | scripts/test-label-taxonomy.py
 -         | scripts/test-launcher-search-gate.js
 -         | scripts/check-notification-takeover.js
 -         | scripts/test-remote-desktop-state.js

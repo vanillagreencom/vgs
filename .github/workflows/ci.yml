@@ -138,6 +138,11 @@ jobs:
       # controls run beside the guard, which has no inline self-test.
       - name: Doc section pointers
         run: scripts/check-section-pointers.py
+      # The label taxonomy is the allow-list the issue preflight consults; the
+      # guard itself needs Linear and cannot run here, but its parser can.
+      - name: Label taxonomy parser controls
+        run: scripts/test-label-taxonomy.py
+
       - name: Doc section pointer controls
         run: |
           scripts/test-section-pointers.py
