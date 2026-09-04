@@ -1,7 +1,7 @@
 package sysupdate
 
 // mise is the user-level tool manager behind coding-agent harnesses and
-// language toolchains (docs/architecture/dev-tools.md). It contributes a
+// language toolchains (docs/architecture/helper.md). It contributes a
 // "tools" backend: `mise outdated --json` for the count, and `vshell update
 // run tools` for the upgrade.
 
