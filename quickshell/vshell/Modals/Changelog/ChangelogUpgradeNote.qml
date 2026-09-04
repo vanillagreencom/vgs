@@ -2,7 +2,7 @@ import QtQuick
 import qs.Common
 import qs.Widgets
 
-// Render an upgrade note within the changelog. Notes show to every user whose .changelog-<version> marker (ChangelogService) predates the shipped VERSION.
+// Render an upgrade note within the changelog. Notes show once per shipped VERSION: to every user with no .changelog-<version> marker for it (ChangelogService), except fresh installs, which write the marker without showing notes.
 Row {
     id: root
 

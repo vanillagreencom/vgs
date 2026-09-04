@@ -93,7 +93,7 @@ def main() -> int:
         "  object, which builds a fresh SessionLockManager and aborts the shell:\n"
         "      FATAL: Tried to show lockscreen surfaces without active lock\n"
         "  Add new children AFTER the pinned ones.\n"
-        "  See docs/architecture/idle-lock-screensaver.md.",
+        "  See docs/architecture/session.md.",
         file=sys.stderr,
     )
     return 1
