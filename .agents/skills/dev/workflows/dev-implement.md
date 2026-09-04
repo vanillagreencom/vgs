@@ -24,14 +24,6 @@ In the sub-issue tree, complete blockers before the issues they block; entries m
 
 Every path is worktree-scoped: `git -C [WORKTREE_PATH] ...` for Bash, `[WORKTREE_PATH]/...` for file tools, once the working-directory check at the top of this file has passed.
 
-Verify possession before reading or writing anything else. **Skip if** the delegation carries no `Worktree Lease:` line.
-
-```bash
-.agents/skills/worktree/scripts/worktree-session-guard refresh [WORKTREE_PATH] --owner [ARTIFACT_KEY]
-```
-
-Any non-zero exit ends the round here: change nothing in the worktree and return the command's stderr verbatim.
-
 ```bash
 .agents/skills/orch/scripts/resolve-base-branch [WORKTREE_PATH]
 git -C [WORKTREE_PATH] fetch origin [BASE_BRANCH_FROM_PREVIOUS_COMMAND]
@@ -154,18 +146,21 @@ Update docs when the implementation changes a documented API or architecture.
 
 ## 5. Validate
 
+Before deterministic validation, run `git grep -n -F --untracked --exclude-standard -e <callee> --` for every callee whose call the change deletes, then apply [code-quality § Cleanup](../../code-quality/SKILL.md#cleanup); the build and tests below validate every deletion.
+
 Deterministic gates first — every finding is fixed here, never carried into review. Preflight runs when installed (`test -x .agents/skills/preflight/scripts/preflight`); the size-ratchet gate runs in a repo where a baseline exists:
 
 ```bash
 .agents/skills/preflight/scripts/preflight --repo [WORKTREE_PATH]
 ```
+
 ```bash
 .agents/skills/size-ratchet/scripts/size-ratchet
 ```
 
 Then the project's validation command — the one `.agents/skills/orch/scripts/orch-env DEV_VALIDATE_CMD ""` prints (empty → the project's documented build/test/lint command), run from the worktree root — plus the delegation's required verification commands in their § 2.4 normalized form. Failure handling and long-running runs: [dev SKILL.md § Validation](../SKILL.md#validation).
 
-Every check, guard, assertion, or test this change adds or modifies must have a must-fail control that runs red once ([code-quality § Prove Your Guards](../../code-quality/SKILL.md#prove-your-guards)).
+A script written only to produce a number for the issue is not committed; put its result in the PR body. Every check, guard, assertion, or test this change adds or modifies must have a must-fail control that runs red once ([code-quality § Prove Your Guards](../../code-quality/SKILL.md#prove-your-guards)); an uncommitted measurement is not a check the change adds or modifies.
 
 **Visual QA** — **skip if** the issue has no `design` label. Otherwise use the project's visual QA skills to confirm what your change affects renders correctly, not the full checklist. Do NOT capture golden baselines.
 
@@ -261,19 +256,6 @@ With every applicable section above complete, write the artifact per [dev SKILL.
 ```
 
 One `--qa-label` per § 8 signal, none if nothing triggered. GitHub and ad-hoc rounds append `--no-summary --summary-file tmp/completion-summary-[ISSUE_ID].md`. Bundled rounds add `--bundled` and one `--item` per sub-issue — § 11.
-
-**A read-only analysis round**: § 5, § 7, and § 8 do not apply. Pass the recommendation inline or as a file — exactly one of the two:
-
-```bash
-# Single-quote inline text so dollars and double quotes pass literally; keep it
-# plain (no backticks) and spell an embedded apostrophe as '\''.
-.agents/skills/orch/scripts/dev-return-write --worktree [WORKTREE_PATH] --kind analysis --issue [ARTIFACT_KEY] --round-id [DEV_ROUND_ID] --branch [BRANCH] --summary '[RECOMMENDATION_TEXT]' [--no-summary]
-```
-```bash
-.agents/skills/orch/scripts/dev-return-write --worktree [WORKTREE_PATH] --kind analysis --issue [ARTIFACT_KEY] --round-id [DEV_ROUND_ID] --branch [BRANCH] --summary-file tmp/analysis-[ARTIFACT_KEY].md [--no-summary]
-```
-
-Then return the recommendation in place of the block below.
 
 **Issue state.** A bundled Linear sub-issue is marked Done (`linear.sh issues update [ISSUE_ID] --state "Done"`) and aggregated by the parent session in § 11. The worktree's top-level managed issue is NOT — it stays In Progress or In Review until the PR merges. GitHub and ad-hoc issues close through the PR body or merge, never here.
 

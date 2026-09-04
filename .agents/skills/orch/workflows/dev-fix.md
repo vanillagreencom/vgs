@@ -41,14 +41,10 @@ Recommendation: "[HOW TO FIX]"
 Then resolve the decision mode:
 
 ```bash
-.agents/skills/orch/scripts/orch-env ORCH_DECISION_MODE ask
+.agents/skills/orch/scripts/orch-env ORCH_DECISION_MODE auto-recommended
 ```
 
-`auto-recommended` takes the recommended option (`Fix all`) without asking and logs it; anything else asks `Fix all` | multi-select `#N: [TITLE]` | `Cancel`. The always-ask set in [SKILL.md § The Cycle](../SKILL.md#the-cycle) applies in every mode.
-
-```bash
-.agents/skills/orch/scripts/workflow-state append [ISSUE_ID] auto_decisions '"auto-selected: Fix all — [REASON]"'
-```
+`auto-recommended` takes the recommended option (`Fix all`) without asking; anything else asks `Fix all` | multi-select `#N: [TITLE]` | `Cancel`. The always-ask set in [SKILL.md § The Cycle](../SKILL.md#the-cycle) applies in every mode.
 
 Cancel ends the workflow; a selection goes to § 2.
 
@@ -60,7 +56,7 @@ Cancel ends the workflow; a selection goes to § 2.
    .agents/skills/orch/scripts/workflow-state get [ISSUE_ID] '.agent // empty'
    ```
 
-2. **Group items by agent domain** when multi-domain, ordered per [SKILL.md § Coordination](../SKILL.md#coordination). Prefer two scoped rounds over one broad round past roughly eight items.
+2. **Group items by agent domain** when multi-domain, ordered per [references/skill-rules.md § Coordination](../references/skill-rules.md#coordination). Prefer two scoped rounds over one broad round past roughly eight items.
 
 3. **Gather decision context**:
 
@@ -76,19 +72,15 @@ Cancel ends the workflow; a selection goes to § 2.
 
    A failed check omits the path and carries `- decision index lookup failed for [DECISION_ID]` instead.
 
-4. **Stamp the round**, as separate tool calls immediately before delegating, then arm the watchdog per [SKILL.md § Round Closure](../SKILL.md#round-closure):
+4. **Stamp the round**, as separate tool calls immediately before delegating, then arm the watchdog per [references/skill-rules.md § Round Closure](../references/skill-rules.md#round-closure):
 
-   ```bash
-   .agents/skills/orch/scripts/worktree-claim --worktree [WORKTREE_PATH] --issue [ISSUE_ID]
-   ```
    ```bash
    .agents/skills/orch/scripts/workflow-state set-now [ISSUE_ID] dev_delegated_at
    ```
+
    ```bash
    .agents/skills/orch/scripts/workflow-state new-round-id [ISSUE_ID] dev_round_id
    ```
-
-   `worktree-claim` exit 75 aborts the delegation (another session holds this worktree; stderr names the holder); exit 1 stops the workflow and is reported. Its printed owner is the delegation's `Worktree Lease:` line.
 
    Then persist the delegated item set on disk. Write `[WORKTREE_PATH]/tmp/dev-round-items-[DEV_ROUND_ID].json` with the harness file-write tool as a JSON array of `{"n": [N], "text": "[ITEM_TEXT]", "reach": "[REACH]"}`, one per delegated item. `[ITEM_TEXT]` is that item's formatted block verbatim. `[REACH]` names the shipped producer, user action, or fixture that reaches the finding — a command a person runs, a file a shipped writer emits, a test in the tree. An item with no reach is a `Declined:` reply, not a fix: disposition it per [`../references/finding-disposition.md` § Filing bar](../references/finding-disposition.md#filing-bar) instead of delegating it. The writer refuses a short list of shapes, enumerated in [`../schemas/dev-round.md`](../schemas/dev-round.md) and in `dev-round-write --help`; it is a backstop and not the judgement — a reach it accepts has been recorded, not approved.
 
@@ -100,13 +92,21 @@ Cancel ends the workflow; a selection goes to § 2.
    .agents/skills/orch/scripts/dev-round-write --worktree [WORKTREE_PATH] --issue [ISSUE_ID] --round-id [DEV_ROUND_ID] --items-file [WORKTREE_PATH]/tmp/dev-round-items-[DEV_ROUND_ID].json [--adds "[REPO_RELATIVE_PATHS]"]
    ```
 
-   Exit 3 is the branch-size refusal. Stop before delegation, discard this item set, and report the current and baseline counts with `Cut required`. After the branch is cut back to the Done-when, mint a fresh round. Every other nonzero exit is an environment or authorization failure and also stops the workflow.
+   Exit 3 is the branch-size refusal. Stop before delegation, discard this item set, and report the current and baseline counts with `Cut required`. Every other nonzero exit is an environment or authorization failure and also stops the workflow.
+
+   **The cut is a round of its own**, and the only one that runs while the branch is over the cap. Mint a fresh round id for it, delegate cutting back to the Done-when as its items, and stamp the record with `--cut`, which skips the over-limit refusal and nothing else — the branch is still measured, so an unreadable or non-positive `pr.baseline_lines` still exits 2 here:
+
+   ```bash
+   .agents/skills/orch/scripts/dev-round-write --worktree [WORKTREE_PATH] --issue [ISSUE_ID] --round-id [DEV_ROUND_ID] --items-file [WORKTREE_PATH]/tmp/dev-round-items-[DEV_ROUND_ID].json --cut
+   ```
+
+   A cut item's `reach` is the branch this round shrinks — cut items name work, not a finding, so do not improvise a finding-shaped value; `the finding` is on the writer's refusal list and exits 2.
+
+   Accept it through step 5 like any other round: its item set is checked the same way, and `--expect-items-from-round` additionally refuses the receipt unless the branch came back to the cap. Declare `--cut` only on the round that does the cutting — a round declared a cut that leaves the branch oversized cannot be accepted at all. Resume the item-by-item fix path with another fresh round once the branch is under the cap.
 
    `--issue` takes the normalized workflow-state key — the value the delegation's `Artifact Key:` line carries. Only when every item's text is plain (no backticks or quotes) may you pass `--item [N] '[ITEM_TEXT]' '[REACH]'` groups inline in one command instead.
 
-   **An analysis (read-only) round has no delegated item set** — skip `dev-round-write` entirely and run step 5's Check A without an expected-set flag.
-
-   ⚠ Fill placeholders only ([Format Tags Are Literal](../SKILL.md#format-tags-are-literal)). `Recommendation:` is the technical fix, never procedure steps — the agent owns validate, commit, and return.
+   ⚠ Fill placeholders only ([Format Tags Are Literal](../references/skill-rules.md#format-tags-are-literal)). `Recommendation:` is the technical fix, never procedure steps — the agent owns validate, commit, and return.
 
    <delegation_format>
    Follow workflow: .agents/skills/dev/workflows/dev-fix.md
@@ -114,7 +114,6 @@ Cancel ends the workflow; a selection goes to § 2.
    Source: [SOURCE]
    Issue: [ISSUE_ID]
    Worktree: [WORKTREE_PATH]
-   Worktree Lease: [WORKTREE_LEASE]
    Round ID: [DEV_ROUND_ID]
    Artifact Key: [ISSUE_ID]
    QA: [QA_AGENT]
@@ -136,6 +135,7 @@ Cancel ends the workflow; a selection goes to § 2.
    ```bash
    .agents/skills/orch/scripts/workflow-state get [ISSUE_ID] '.dev_round_id // empty'
    ```
+
    ```bash
    .agents/skills/orch/scripts/dev-artifact-check --worktree [WORKTREE_PATH] --issue [ISSUE_ID] --round-id [DEV_ROUND_ID_FROM_PREVIOUS_COMMAND] --expect-items-from-round
    ```
@@ -156,10 +156,8 @@ Cancel ends the workflow; a selection goes to § 2.
    | `accept` | pass | **Accept.** First confirm exact-commit binding: the artifact's `.commit` equals `git -C [WORKTREE_PATH] rev-parse HEAD` (an all-skipped round's `.commit` is the unchanged HEAD). Then read the item decisions, commits, and validate status from the return when present, else from the artifact. → step 6. |
    | `accept` | fail | The artifact claims done but the worktree is dirty or the commit is missing. Re-read git ONCE after a brief pause, then re-delegate only the missing step: commit, or revert leftover work. |
    | `wait` | pass | Do NOT re-run the fix and do NOT accept on git alone. Send ONE report-only nudge: *"re-run only your completion tail — write your dev-return artifact (`dev-return-write --kind fix … --round-id [DEV_ROUND_ID]` with one `--item` per review item; if the delegation is gone from your context, your item set is on disk at `tmp/dev-round-[ISSUE_ID]-[DEV_ROUND_ID].json`) and re-report your item decisions; do NOT re-run the fix."* Accept only when a valid artifact for THIS round appears. |
-   | `wait` | fail | **Not done.** Wait to the deadline, then escalate per [SKILL.md § Round Closure](../SKILL.md#round-closure). |
-| `retry` | any | An artifact for THIS round exists but fails a gate. The check's `reason` names it. `unapproved_additions` also returns every refused path in `files`; start a fresh round that names each deliberate path in `Adds:`, or order the files cut. A failing `validate` re-delegates fixing the validation; an identity/schema failure gets the report-only tail-rewrite nudge. `comparison_failed` means git cannot compare the round's recorded base commit against HEAD, so the dev agent has nothing to repair; mint a fresh round. Never accept, and never treat it as absent. |
-
-   **Analysis rounds** run Check A without an expected-set flag, and B expects no new commit and a clean worktree. On accept, read the `summary` recommendation and decide the next step: delegate the actual fixes as a fresh round, or close and re-scope with reasoning.
+   | `wait` | fail | **Not done.** Wait to the deadline, then escalate per [references/skill-rules.md § Round Closure](../references/skill-rules.md#round-closure). |
+| `retry` | any | An artifact for THIS round exists but fails a gate. The check's `reason` names it. `unapproved_additions` also returns every refused path in `files`; start a fresh round that names each deliberate path in `Adds:`, or order the files cut. A failing `validate` re-delegates fixing the validation; an identity/schema failure gets the report-only tail-rewrite nudge. `comparison_failed` means git cannot compare the round's recorded base commit against HEAD, so the dev agent has nothing to repair; mint a fresh round. `additions_unattributable` means a rebase moved that base off the branch, so the round's additions were never gated and no path is named. A fresh round does not recover the gate — `dev-round-write` stamps its `base_sha` at the rebased HEAD, which already contains anything this round added — so read the blocked round's own commits for paths in [`../schemas/dev-round.md` § Protected additions](../schemas/dev-round.md#protected-additions), name each deliberate one in the fresh round's `Adds:` line, and cut the rest before delegating it. That `Adds:` line is the authorization itself here, not something the fresh round's gate re-derives from its base, which is why the reading is not optional. The blocked round then closes through the fresh round, as it does for any other retry reason. `cut_not_shrunk` means a round declared a cut left the branch above the cap — the cut is unfinished, so delegate the rest of it in a fresh `--cut` round. `cut_unmeasurable` means the cap itself could not be read, which is an environment failure, not the agent's; fix the state or the base ref and re-run the check. Never accept, and never treat it as absent. |
 
 6. **Record the outcome** — one write per item, and the item's own text never enters a shell word:
 

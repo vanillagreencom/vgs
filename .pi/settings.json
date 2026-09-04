@@ -1,0 +1,5 @@
+{
+  "packages": [
+    "./packages/@vanillagreen/pi-nested-agents-md"
+  ]
+}

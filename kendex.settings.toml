@@ -38,7 +38,7 @@ WORKTREE_CLI = ".agents/skills/worktree/scripts/worktree"
 WORKTREE_COPIES = ".kendex-lock.json"
 WORKTREE_DEFAULT_BRANCH = "main"
 WORKTREE_MKDIRS = "tmp"
-WORKTREE_RELATIVE_SYMLINKS = ".claude/CLAUDE.md=../AGENTS.md"
+WORKTREE_RELATIVE_SYMLINKS = ""
 WORKTREE_SYMLINKS = ".env.local .cache"
 
 # Seconds of reviewer silence on a head before the one nudge; a push resets

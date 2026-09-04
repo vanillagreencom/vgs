@@ -7,6 +7,7 @@
 #     dotenv boundary (PR #1615)
 #   - -h/--help and unknown-flag argument parsing (kendex#981, KEN-556)
 set -euo pipefail
+source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$TEST_DIR/../../.." && pwd)"
@@ -253,7 +254,6 @@ assert_eq "$rc" "0" "--help exits 0" "$stderr"
 assert_contains "$output" "Usage: approval-wait" "--help prints usage"
 assert_contains "$output" "Exit codes:" "--help carries the exit-code table"
 assert_contains "$output" "proceeded" "--help carries the proceeded status"
-assert_contains "$output" "PR_REVIEW_QUORUM" "--help carries the quorum setting"
 assert_contains "$output" "PR_REVIEW_ON_TIMEOUT" "--help carries the on-timeout setting"
 if [[ -e "$TMP_ROOT/argval-gh.calls" ]]; then
   assert_eq "$(cat "$TMP_ROOT/argval-gh.calls")" "" "--help never invokes gh"

@@ -16,9 +16,10 @@
 # worktree CLI and gh, and stubs ghostty to capture the composed command it
 # would launch.
 set -euo pipefail
+source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 
-# The terminal-condition tail every rendered brief carries (open-terminal start_cmd).
-TC=" — complete means the PR is MERGED and the worktree cleaned up, not merely opened"
+# The brief ends at the start command; start.md owns completion.
+TC=""
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SCRIPTS_DIR="$(cd "$TEST_DIR/.." && pwd)/scripts"

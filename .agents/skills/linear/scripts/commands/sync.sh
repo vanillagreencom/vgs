@@ -7,9 +7,6 @@ set -euo pipefail
 shopt -s inherit_errexit  # Propagate set -e into command substitutions
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-source "$SCRIPT_DIR/../lib/common.sh"
-source "$SCRIPT_DIR/../lib/cache.sh"
-source "$SCRIPT_DIR/../lib/attachments.sh"
 
 show_help() {
     cat << 'EOF'
@@ -38,6 +35,11 @@ Examples:
   sync.sh --stats               # Sync and show statistics
 EOF
 }
+case "${1:-}" in help|--help|-h) show_help; exit 0 ;; esac
+
+source "$SCRIPT_DIR/../lib/common.sh"
+source "$SCRIPT_DIR/../lib/cache.sh"
+source "$SCRIPT_DIR/../lib/attachments.sh"
 
 # =============================================================================
 # SYNC FUNCTIONS
@@ -100,7 +102,14 @@ sync_issues() {
 
         page_count=$((page_count + 1))
 
-        if [[ "$has_next" != "true" ]] || (( page_count >= max_pages )); then
+        if [[ "$has_next" != "true" ]]; then
+            break
+        fi
+
+        if (( page_count >= max_pages )); then
+            local issue_count
+            issue_count=$(echo "$all_nodes" | jq 'length')
+            echo "Sync warning: issues stopped at the $max_pages-page safety cap after fetching $issue_count issues; more pages remain, so this pull is incomplete." >&2
             break
         fi
 
@@ -201,7 +210,7 @@ write_comments() {
 
     comm -23 <(jq -r '.[]' "$scope" | LC_ALL=C sort -u) \
              <(LC_ALL=C sort -u "$written") | while IFS= read -r issue_id; do
-        rm -f "$CACHE_DIR/comments/$issue_id.json" "$CACHE_DIR/comments/$issue_id.json.lock"
+        rm -f "$CACHE_DIR/comments/$issue_id.json"
     done
 
     rm -f "$written" "$scope"
@@ -662,6 +671,18 @@ main() {
     fi
     cache_ensure_dir
 
+    # One-time sweep of the per-issue lock files a pre-kendex#799 cache
+    # accumulated. Nothing opens those paths any more — comment writes share
+    # $CACHE_DIR/.comments.lock — so this disturbs no live lock, and without it
+    # a cache that carries them keeps them forever. It sits inside the sync lock
+    # and above the full/delta branch because a sync that finds nothing changed
+    # must sweep too; on a write path the common case never reaches it. Then
+    # `|| true`, because cleanup of files nothing opens must never refuse a
+    # sync: an unmatched glob exits 0 already, but one matched file that will
+    # not unlink would end the run right here, before any sync work and short
+    # of cache_unlock, blaming a dead lock file for it.
+    rm -f "$CACHE_DIR"/comments/*.json.lock || true
+
     local start_time
     start_time=$(date +%s)
     local summary_parts=()
@@ -728,7 +749,7 @@ main() {
                     "$CACHE_DIR/.delta_issues_raw.json" | while IFS=$'\t' read -r uuid identifier; do
                     cache_remove_issue "$uuid"
                     # Clean comment file even if issue wasn't in cache (already removed)
-                    [[ -n "$identifier" ]] && rm -f "$CACHE_DIR/comments/$identifier.json" "$CACHE_DIR/comments/$identifier.json.lock"
+                    [[ -n "$identifier" ]] && rm -f "$CACHE_DIR/comments/$identifier.json"
                 done
                 summary_parts+=("$archived_delta_count archived removed")
             fi

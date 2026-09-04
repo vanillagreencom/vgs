@@ -8,6 +8,7 @@ set -euo pipefail
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$TEST_DIR/../../.." && pwd)"
 PR_MERGE="$REPO_ROOT/skills/github/scripts/commands/pr-merge.sh"
+GITHUB="$REPO_ROOT/skills/github/scripts/github.sh"
 
 # shellcheck source=lib/check-stub.sh
 source "$TEST_DIR/lib/check-stub.sh"
@@ -39,6 +40,14 @@ run_merge_immediate() {
 
 run_merge_force() {
     (cd "$TMPDIR/repo" && PATH="$TMPDIR/bin:$PATH" env -u GH_TOKEN -u GITHUB_TOKEN "$PR_MERGE" 123 --force --keep-branch)
+}
+
+run_merge_admin() {
+    (cd "$TMPDIR/repo" && PATH="$TMPDIR/bin:$PATH" env -u GH_TOKEN -u GITHUB_TOKEN "$PR_MERGE" 123 --admin "$@" --keep-branch)
+}
+
+run_merge_router() {
+    (cd "$TMPDIR/repo" && PATH="$TMPDIR/bin:$PATH" "$GITHUB" -C "$TMPDIR/repo" pr-merge 123 "$@" --keep-branch)
 }
 
 run_merge_force_auto() {
@@ -208,6 +217,37 @@ status=$?
 set -e
 assert_eq "$status" "0" "documented --force remains a deliberate override"
 assert_contains "$(cat "$call_log")" "pr merge" "--force deliberately invokes gh pr merge"
+assert_not_contains "$(cat "$call_log")" "--admin" "--force never escalates to GitHub admin mode"
+
+: >"$call_log"
+set +e
+out=$(STUB_CHECKS="$checks" \
+    STUB_THREADS_JSON="$actionable_threads" \
+    STUB_CALL_LOG="$call_log" \
+    STUB_POST_STATE=MERGED \
+    STUB_MERGE_COMMIT=admin-merge-oid \
+    run_merge_admin 2>&1)
+status=$?
+set -e
+assert_eq "$status" "0" "explicit --admin bypass merges immediately"
+assert_contains "$(cat "$call_log")" "--admin" "--admin reaches the guarded gh merge mutation"
+assert_contains "$out" "current-user admin mode" "admin warning names the deliberate current-user mode"
+assert_not_contains "$out" "GH_BOT_TOKEN not configured" "admin warning does not report bot-token misconfiguration"
+
+out=$(run_merge_admin --dry-run 2>&1)
+assert_contains "$out" "current-user admin mode" "admin dry-run names current-user mode"
+
+auth_log="$TMPDIR/admin-auth.log"; : >"$auth_log"
+out=$(STUB_AUTH_LOG="$auth_log" STUB_POST_STATE=MERGED STUB_MERGE_COMMIT=admin-merge-oid \
+    GH_TOKEN=ghp_user GH_BOT_TOKEN=ghp_test_token run_merge_router --admin 2>&1)
+assert_not_contains "$(cat "$auth_log")" "ghp_user" "admin router clears a caller token from every gh call"
+assert_not_contains "$(cat "$auth_log")" "ghp_test_token" "admin router never promotes the project bot token"
+assert_contains "$(cat "$auth_log")" "GH=<unset>|GITHUB=<unset>" "admin preflight, mutation, snapshot, and cleanup use keyring auth"
+
+: >"$auth_log"
+out=$(STUB_AUTH_LOG="$auth_log" STUB_REQUIRE_TOKEN=true STUB_POST_STATE=MERGED STUB_MERGE_COMMIT=forced-merge-oid \
+    GH_BOT_TOKEN=ghp_test_token run_merge_router --force 2>&1)
+assert_contains "$(cat "$auth_log")" "GH=ghp_test_token" "non-admin router control still promotes bot auth"
 
 echo
 echo "=== pr-merge --check superseded-run scoping (kendex#492/#494) ==="
@@ -290,8 +330,18 @@ assert_eq "$status" "75" "active mergeQueueEntry is success-pending"
 assert_contains "$out" "QUEUED IN MERGE QUEUE PR #123" "merge-queue outcome is explicit"
 assert_contains "$out" "queueState=QUEUED" "merge-queue state is preserved"
 assert_contains "$out" "VOLATILE" "queued exit 75 states the state is volatile"
-assert_contains "$out" ".agents/skills/orch/scripts/merge-queue-watch once" "queued exit 75 names the durable lifecycle by installed path"
+assert_contains "$out" ".agents/skills/orch/scripts/queue-wait 123 --json once, with a poll interval and budget" "queued exit 75 names the verdict producer by installed path, budgeted"
 assert_contains "$out" ".agents/skills/github/scripts/github.sh pr-merge 123 --auto" "queued exit 75 names the re-arm by runnable path"
+
+# show_help carries the same exit-75 handoff as volatile_note above, and only
+# the stderr half was pinned. A revert of the help text alone put an agent
+# reading --help on queue-wait's own budget, which no harness holds long enough
+# to reach a verdict.
+help_out=$("$PR_MERGE" --help 2>&1)
+assert_contains "$help_out" ".agents/skills/orch/scripts/queue-wait <N> <poll> <budget> --json" \
+    "--help gives the exit-75 handoff a poll and budget"
+assert_contains "$help_out" "Size the poll and budget as orch merge-pr.md" \
+    "--help delegates the sizing rather than restating it"
 
 set +e
 out=$(STUB_CHECKS="$checks" \
@@ -305,7 +355,7 @@ set -e
 assert_eq "$status" "75" "classic auto-merge remains success-pending"
 assert_contains "$out" "AUTO-MERGE ENABLED PR #123" "classic auto-merge outcome is distinct"
 assert_contains "$out" "VOLATILE" "auto-merge exit 75 states the state is volatile"
-assert_contains "$out" ".agents/skills/orch/scripts/merge-queue-watch once" "auto-merge exit 75 names the durable lifecycle by installed path"
+assert_contains "$out" ".agents/skills/orch/scripts/queue-wait 123 --json once, with a poll interval and budget" "auto-merge exit 75 names the verdict producer by installed path, budgeted"
 
 set +e
 out=$(STUB_CHECKS="$checks" \
@@ -412,7 +462,7 @@ out=$(STUB_CALL_LOG="$call_log" run_merge_force_auto 2>&1)
 status=$?
 set -e
 assert_eq "$status" "1" "--force and --auto are rejected as conflicting modes"
-assert_contains "$out" "--force and --auto cannot be combined" "conflicting modes report a clear usage error"
+assert_contains "$out" "--force/--admin and --auto cannot be combined" "conflicting modes report a clear usage error"
 assert_eq "$(cat "$call_log")" "" "conflicting modes make no GitHub API or mutation calls"
 
 # The authoritative exact-head postcondition wins over a CLI transport/status

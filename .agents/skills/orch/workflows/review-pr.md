@@ -12,8 +12,7 @@ Pre-submission review: reviewer fan-out, bounded fix rounds, QA checks, and the 
 
 **With a PR number**: `github.sh pr-issue [PR_NUMBER] --format=text` gives `ISSUE`. Apply [Worktree Scope](../SKILL.md#workflow-execution); ask before `worktree create $ISSUE --pr [PR_NUMBER]`. With no argument, `WT_PATH` is `git-context repo-root .`.
 
-Fill `Worktree:` from `git -C "[DIR]" rev-parse --show-toplevel`.
-`[DIR]` is the checkout the paragraph above resolves `WT_PATH` from.
+Fill `Worktree:` from `git -C "[DIR]" rev-parse --show-toplevel`. `[DIR]` is the checkout the paragraph above resolves `WT_PATH` from.
 
 **Standalone init** (`lifecycle: "self"`): resolve `ISSUE_ID` with `git-context issue-from-branch .`, then `workflow-state exists --json [ISSUE_ID]`; when absent, initialize with `git-context branch [WT_PATH]` and `workflow-state init`, and resolve `TRACKER`. On this path § 5 derives its QA signals from the diff scan and judgment — there is no dev artifact.
 
@@ -29,11 +28,7 @@ git -C [WORKTREE_PATH] diff "origin/[BASE_BRANCH_FROM_PREVIOUS_COMMAND]"...HEAD 
 
 A non-empty `status --porcelain` stops the review. Managed with a `dev_agent`: re-delegate to commit or revert the leftovers, then re-enter § 1. Standalone: report the dirty files and ask the user to commit, revert, or run `orch review all` for an ad-hoc uncommitted review. No committed diff after that check → report "No committed changes to review" and **END**.
 
-**Trivial diffs skip review by rule, not by asking.** A diff that is docs- or comments-only, or under ten changed lines with no logic change, records the skip and goes to § 9 with verdict `pass`:
-
-```bash
-.agents/skills/orch/scripts/workflow-state set [ISSUE_ID] review_skipped "tiny-docs"
-```
+**Trivial diffs skip review by rule, not by asking.** A diff that is docs- or comments-only, or under ten changed lines with no logic change goes straight to § 9 with verdict `pass`.
 
 ### 1.1 Decision Context
 
@@ -61,7 +56,7 @@ A failed check omits the path and carries `- decision index lookup failed for [D
 
 `[AGENTS]` is the caller's `agents` context when provided, otherwise every `reviewer-*` agent this harness exposes. Do not hardcode a count or a list. Where the harness exposes `reviewer-error`, a diff owning a subprocess, a transport (stream, socket, SSE), or a teardown path always carries it: relevance never drops it from the panel. With no reviewers available, skip to § 5 with verdict `pass`.
 
-Resolve the reviewer mode per [SKILL.md § Agent Lifecycle](../SKILL.md#agent-lifecycle):
+Resolve the reviewer mode per [references/skill-rules.md § Agent Lifecycle](../references/skill-rules.md#agent-lifecycle):
 
 ```bash
 .agents/skills/orch/scripts/orch-env REVIEWER_SLOT_BUDGET 0
@@ -313,17 +308,13 @@ Re-review is scoped to what the fix round actually changed. Read the round's dif
 | Round | Next |
 |-------|------|
 | No files changed | → § 5 |
-| Only minor suggestions applied, no blocker cleared, and the diff stays inside already-reviewed domains | Record the skip below → § 5 |
+| Only minor suggestions applied, no blocker cleared, and the diff stays inside already-reviewed domains | → § 5 |
 | Anything else | → § 2 with caller context `agents` = the scoped panel below |
 
 The scoped panel is the union of the reviewers whose domains the round's diff touched, the reviewers who found the blockers it cleared, and external review when available. Record the scoping:
 
 ```bash
 .agents/skills/orch/scripts/workflow-state set [ISSUE_ID] rereview_panel '{"agents": [PANEL_AGENTS_JSON], "reason": "[DOMAINS_TOUCHED] + blocker finders + external"}'
-```
-
-```bash
-.agents/skills/orch/scripts/workflow-state set [ISSUE_ID] rereview_skipped '[REASON]'
 ```
 
 **The loop ends** when two consecutive cycles surface no new blocker, or when the At The Cap check above ends it (the `rereview_panel` write raises `rereview_cycles` and refuses once that count reaches the cap). The cap bounds NEW cycles, never verification: a fix diff no reviewer has seen gets one focused verification pass — the `rereview_panel` rule above, scoped to exactly that diff — and this loop's last fix round has budget for it. A pass over a diff no reviewer has seen once the budget is spent takes `verification_panel` instead, which the cap does not gate. That pass's items re-enter § 4, where the `fix set` decides what still delegates. In wave mode the panel replaces `[AGENTS]` for the cycle and wave mechanics apply unchanged.
@@ -365,8 +356,7 @@ Drop a signal when the triggering code is trivial or test-only; never drop one f
 
 Map each signal to its agent — `needs-safety-audit` → `reviewer-safety`, `needs-perf-test` → `reviewer-perf`, `needs-review` → `reviewer-correctness`; a project may override the mapping in its instructions. For each, delegate and wait.
 
-Fill `Worktree:` from `git -C "[DIR]" rev-parse --show-toplevel`.
-`[DIR]` is the checkout the top of this workflow resolves `WT_PATH` from.
+Fill `Worktree:` from `git -C "[DIR]" rev-parse --show-toplevel`. `[DIR]` is the checkout the top of this workflow resolves `WT_PATH` from.
 
 <delegation_format>
 Follow workflow: .agents/skills/reviewer/workflows/qa-review.md

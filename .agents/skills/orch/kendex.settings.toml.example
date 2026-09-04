@@ -29,14 +29,6 @@ REVIEW_GATE_MODE = "enforce"
 # an explicit max_wait argument always wins.
 PR_REVIEW_WAIT_SECS = "900"
 
-# Seconds of reviewer silence on a head before the one nudge; a push resets
-# the clock. "0" disables.
-PR_REVIEW_NUDGE_SECS = "600"
-
-# Comment posted as the nudge — whatever summons this repo's review bot.
-# Empty = GitHub's native re-review request.
-PR_REVIEW_NUDGE = ""
-
 # Check-run or commit-status name a trusted review bot publishes on
 # analyzed heads; a
 # success counts as review-received. SECURITY: matched by NAME and anyone
@@ -44,16 +36,8 @@ PR_REVIEW_NUDGE = ""
 # review objects only.
 PR_REVIEW_CHECK = ""
 
-# Reviewer logins (comma/space separated, ONE line — the loader reads a
-# value per line) that must EACH review the current head with zero open
-# threads before the gate opens. Empty = off. On timeout, "proceed" needs
-# EVERY listed reviewer silent — a partial quorum is engagement.
-PR_REVIEW_QUORUM = ""
-
-# When the review signal never arrives: "block" reports a timeout;
-# "proceed" records a reviewer-down override and moves on, but only with
-# zero unresolved threads — a real comment is never bypassed.
-PR_REVIEW_ON_TIMEOUT = "block"
+# Review timeout: "proceed" advances only when no reviewer engaged and no thread is open; "block" stops.
+PR_REVIEW_ON_TIMEOUT = "proceed"
 
 # Seconds ci-wait keeps polling before failing when no CI checks registered
 # yet; raise for approval-gated CI with slow dispatch.
@@ -76,14 +60,11 @@ REVIEW_MAX_EXTERNAL_ROUNDS = "4"
 # On the Codex runtime, set the cap `spawn-adapter slots` reports.
 REVIEWER_SLOT_BUDGET = "0"
 
-# "ask" presents workflow decision points; "auto-recommended" executes the
-# recommended option and logs it. Findings disposition is by rule in every
-# mode; some decisions always ask; merge is governed by ORCH_MERGE_AUTONOMY.
-ORCH_DECISION_MODE = "ask"
+# Post-PR choices: "auto-recommended" continues within each budget; "ask" prompts.
+ORCH_DECISION_MODE = "auto-recommended"
 
-# "ask" presents the merge decision; "auto" merges once every gate is green.
-# MERGE_READY = false never auto-merges.
-ORCH_MERGE_AUTONOMY = "ask"
+# Merge consent only: "auto" merges after every gate passes; "ask" prompts.
+ORCH_MERGE_AUTONOMY = "auto"
 
 # Seconds per brief-delivery verification pass on tmux handoff lanes.
 ORCH_TMUX_VERIFY_SECS = "15"

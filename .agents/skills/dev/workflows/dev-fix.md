@@ -6,15 +6,7 @@ The workflow for a dev agent receiving a review-fix delegation. Every path is wo
 
 ## 1. Read Context
 
-Confirm the shell's real working directory is the delegation's `Worktree:` path before any repo-relative command, by the check [dev-implement.md § 1](./dev-implement.md#1-environment-setup) states.
-
-Verify possession before reading or writing anything else. **Skip if** the delegation carries no `Worktree Lease:` line.
-
-```bash
-.agents/skills/worktree/scripts/worktree-session-guard refresh [WORKTREE_PATH] --owner [ARTIFACT_KEY]
-```
-
-Any non-zero exit ends the round here: change nothing in the worktree and return the command's stderr verbatim.
+Confirm the shell's real working directory is the delegation's `Worktree:` path before any repo-relative command, by the check at the top of [dev-implement.md](./dev-implement.md).
 
 **Skip if** the delegation is ad-hoc. Read prior work, decisions, and handoff notes before evaluating any item.
 
@@ -40,7 +32,7 @@ An optional `Adds:` line is the complete blank-separated list of protected addit
 
 Before writing a refusal, a validator, a lock, a retry, or a test, read [dev SKILL.md § Engineering Rules](../SKILL.md#engineering-rules).
 
-Update architecture docs when a fix changes documented behavior. For **UI lifecycle or cache fixes** — cached or mirrored UI state, changed window or event handling — trace every invalidation and event-entry path before returning, prefer extending an existing listener over a parallel subscription for the same event family, and add regression coverage for the non-obvious paths you touched.
+Update the architecture docs when a fix changes an invariant, boundary or decision they state; the `arch-docs` skill says what belongs there. For **UI lifecycle or cache fixes** — cached or mirrored UI state, changed window or event handling — trace every invalidation and event-entry path before returning, prefer extending an existing listener over a parallel subscription for the same event family, and add regression coverage for the non-obvious paths you touched.
 
 Before a fix returns, grep for every other reader of the field, caller of the helper, or surface stating the rule the fix changed, and fix each one; name the sweep in the item reasoning. A fix at one site with its sibling untouched comes back as the next round.
 
@@ -89,8 +81,6 @@ Write the artifact first, per [dev SKILL.md § Round Contract](../SKILL.md#round
 One `--item N DECISION REASONING` per **delegated** item — Applied, Skipped, and Blocked alike; the artifact must cover exactly the delegated set, `N` being the item's `#[N]` number (value shapes: `dev-return-write --help`; keep `REASONING` free of backticks). `--commit` is HEAD after the commit, or the prior HEAD when no commit was needed.
 
 **Respawned mid-round without the `Review items:` list?** Do not reconstruct it from the raw review JSONs and do not guess. Read `[WORKTREE_PATH]/tmp/dev-round-[ARTIFACT_KEY]-[DEV_ROUND_ID].json`, whose `items[]` entries each carry the delegated number `n`, the item's full text, and the `reach` the orchestrator recorded, and write one `--item` per entry. If that file is missing too, report the gap and write no artifact.
-
-**A read-only analysis round** has no items to apply: use `--kind analysis` with `--summary '[TEXT]'` (single-quoted plain text, no backticks, an embedded apostrophe spelled `'\''`) or `--summary-file [FILE]`, and return the recommendation in place of the table below.
 
 **Return exactly**:
 

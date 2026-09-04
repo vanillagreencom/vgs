@@ -5,9 +5,6 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-source "$SCRIPT_DIR/../lib/common.sh"
-source "$SCRIPT_DIR/../lib/cache.sh"
-source "$SCRIPT_DIR/../lib/attachments.sh"
 
 show_help() {
     cat << 'EOF'
@@ -47,6 +44,11 @@ Examples:
   comments.sh delete <comment-id>
 EOF
 }
+case "${1:-help}" in help|--help|-h) show_help; exit 0 ;; esac
+
+source "$SCRIPT_DIR/../lib/common.sh"
+source "$SCRIPT_DIR/../lib/cache.sh"
+source "$SCRIPT_DIR/../lib/attachments.sh"
 
 read_body_file() {
     local body_file="$1"
@@ -215,7 +217,7 @@ create_comment() {
     if [[ -n "$created_comment" && "$created_comment" != "null" ]]; then
         local cache_comment
         cache_comment=$(echo "$created_comment" | jq 'del(.issue)')
-        cache_append_comment "$issue_id" "$cache_comment" 2>/dev/null || true
+        cache_append_comment "$issue_id" "$cache_comment" || true
         local _issue_ts
         _issue_ts=$(echo "$created_comment" | jq -r '.issue.updatedAt // empty')
         [[ -n "$_issue_ts" ]] && cache_touch_issue "$issue_id" "$_issue_ts" 2>/dev/null || true
@@ -286,7 +288,7 @@ update_comment() {
     if [[ -n "$issue_id" && -n "$updated_comment" && "$updated_comment" != "null" ]]; then
         local cache_comment
         cache_comment=$(echo "$updated_comment" | jq 'del(.issue)')
-        cache_update_comment "$issue_id" "$cache_comment" 2>/dev/null || true
+        cache_update_comment "$issue_id" "$cache_comment" || true
         local _issue_ts
         _issue_ts=$(echo "$updated_comment" | jq -r '.issue.updatedAt // empty')
         [[ -n "$_issue_ts" ]] && cache_touch_issue "$issue_id" "$_issue_ts" 2>/dev/null || true
@@ -313,7 +315,7 @@ delete_comment() {
     # Write-through: remove comment from cache
     local success
     success=$(echo "$result" | jq -r '.commentDelete.success // "false"')
-    [[ "$success" == "true" ]] && cache_delete_comment "$comment_id" 2>/dev/null || true
+    [[ "$success" == "true" ]] && cache_delete_comment "$comment_id" || true
     normalize_mutation_response "$result" "commentDelete" "comment"
 }
 
